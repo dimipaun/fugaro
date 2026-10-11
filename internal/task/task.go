@@ -224,11 +224,11 @@ func (s *Spec) Validate() error {
 	if anyFollowUp && !allFollowUp {
 		bad("task spec: branch, pr and previous_run must be set together")
 	}
-	anyReview := len(s.ReviewPRs) > 0
+	anyReview := s.ReviewPRs != nil
 	switch {
 	case anyReview && anyFollowUp:
 		bad("task spec: review_prs and branch/pr/previous_run don't go together: review mode never continues a pull request")
-	case anyReview && (len(s.ReviewPRs) > 4):
+	case anyReview && (len(s.ReviewPRs) == 0 || len(s.ReviewPRs) > 4):
 		bad("task spec: review_prs must name 1 to 4 pull requests")
 	case anyReview:
 		seen := map[int]bool{}

@@ -103,6 +103,44 @@ func TestReviewModeNeverPushes(t *testing.T) {
 	}
 }
 
+// TestReviewModeCommentIsRedacted: the review stage's own output is
+// untrusted (it may quote whatever secret-looking text a fork's prompt
+// injection got the model to echo back), so the comment ReviewComment
+// builds must be redacted the same way every other published string is
+// before postReviewComments posts it. The fixture's own ANTHROPIC_API_KEY
+// ("test-key") is already registered as a secret by bootstrap, so a
+// finding that quotes it is enough to prove this without inventing a
+// secret of the test's own.
+//
+// Mutation (drop the agent.Redact call in postReviewComments): this test
+// fails, finding the raw secret in the posted comment.
+func TestReviewModeCommentIsRedacted(t *testing.T) {
+	h := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	pushReviewBranch(t, h, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h, 7, "feature", "")
+	secret := envValue(h.deps.Env, "ANTHROPIC_API_KEY")
+	leaky := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		b, _ := json.Marshal(map[string]any{"verdict": "changes",
+			"findings": []map[string]string{{"summary": "found the key " + secret + " in a log line"}}})
+		return agent.Result{Structured: b, CostUSD: 0.5}, nil
+	}
+	if _, err := h.run(t, leaky); err != nil {
+		t.Fatal(err)
+	}
+	c := h.provider.State.PRs[0].Comments
+	if len(c) != 1 {
+		t.Fatalf("comments = %q", c)
+	}
+	if strings.Contains(c[0], secret) {
+		t.Fatalf("the posted comment leaks the secret unredacted: %q", c[0])
+	}
+	if !strings.Contains(c[0], "[REDACTED]") {
+		t.Fatalf("the posted comment was not redacted at all: %q", c[0])
+	}
+}
+
 // TestReviewModeAgentHasNoGitToken: the review stage's agent gets no git
 // credentials and no GH_TOKEN (design generic-tool §3.6, G12), exactly as
 // a follow-up's agent has none (runner.go's authVars and refreshGitAuth
@@ -254,6 +292,31 @@ func TestReviewModeRefusesForkWithoutOptIn(t *testing.T) {
 	}
 	if rec2.Outcome != runstore.OutcomeReviewed {
 		t.Fatalf("allow_forks did not allow it: rec = %+v", rec2)
+	}
+}
+
+// TestReviewModeForksOwnAllowForksIsIgnored: review mode reads fugaro.yaml
+// from the base branch (readBaseConfig), never from a reviewed pull
+// request's own tree — the same rule a follow-up already follows. A fork
+// that pushes its own fugaro.yaml setting review.allow_forks: true must
+// still be refused: that key can only ever come from the base branch,
+// which a fork can't touch.
+//
+// Mutation (in readBaseConfig, read fugaro.yaml from the pull request's own
+// branch instead of origin/<ref>): this test fails, finding the fork
+// reviewed instead of refused.
+func TestReviewModeForksOwnAllowForksIsIgnored(t *testing.T) {
+	h := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	pushReviewBranch(t, h, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{
+			"other.txt":   "x\n",
+			"fugaro.yaml": allowForksCfg(t),
+		})
+	})
+	addPR(h, 7, "feature", "outsider/repo")
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "review.allow_forks") {
+		t.Fatalf("a fork's own review.allow_forks: true was honoured; rec = %+v, err = %v", rec, err)
 	}
 }
 

@@ -216,6 +216,7 @@ func TestReviewPRsValidation(t *testing.T) {
 		},
 			"review_prs and branch/pr/previous_run don't go together"},
 		{"five", func(s *Spec) { s.ReviewPRs = []int{1, 2, 3, 4, 5} }, "1 to 4 pull requests"},
+		{"empty but present", func(s *Spec) { s.ReviewPRs = []int{} }, "1 to 4 pull requests"},
 		{"zero entry", func(s *Spec) { s.ReviewPRs = []int{0} }, "positive pull request numbers"},
 		{"negative entry", func(s *Spec) { s.ReviewPRs = []int{-1} }, "positive pull request numbers"},
 		{"duplicate", func(s *Spec) { s.ReviewPRs = []int{3, 3} }, "repeats #3"},
