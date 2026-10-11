@@ -6,7 +6,7 @@ gcp_project: fugaro-dev
 
 git:
   provider: github
-  base_branch: next # the 0.7.0 integration branch; restore to main when next is merged into main
+  base_branch: base-cut # the base-image hard cut (plan Group 4, Tasks 17-21): its PRs target this branch, which merges into next at Task 21 with the suite green; restore to next when base-cut is merged into next
   pr:
     # TODO(user): add your GitHub login (and a label if you want one) once the first run works.
     reviewers: []
