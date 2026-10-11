@@ -374,6 +374,10 @@ func splitShellWords(command string) []string {
 	return words
 }
 
+// shellExpansionMarkers are the constructs splitShellWords cannot group, so
+// a command containing one is not summarised at all (see safeBashSummary).
+var shellExpansionMarkers = []string{"$(", "${", "$'", "`", "=("}
+
 // safeBashSummary is argv0 (reduced through safeArgv0) and, only when it is
 // a known dispatcher and the next word is one of its allowlisted
 // subcommands, that word too: never anything after it. A run of leading
@@ -382,6 +386,16 @@ func splitShellWords(command string) []string {
 // simply left out, never guessed at: an unsafe guess here is a secret on a
 // dashboard every launcher can read.
 func safeBashSummary(command string) string {
+	// splitShellWords does not understand command substitution, parameter
+	// expansion, ANSI-C quoting or array parens: inside a leading
+	// assignment their inner words would land where argv0 is read and be
+	// published (TOKEN=$(echo hunter2 | base64) curl u gives "hunter2").
+	// Fail safe: a command using any of them reports only the tool name.
+	for _, marker := range shellExpansionMarkers {
+		if strings.Contains(command, marker) {
+			return ""
+		}
+	}
 	fields := splitShellWords(command)
 	i := 0
 	for i < len(fields) && isAssignment(fields[i]) {

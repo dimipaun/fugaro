@@ -473,6 +473,16 @@ func TestRelayOnToolNeverRepeatsTheRawCommand(t *testing.T) {
 		// review item 2: only an allowlisted subcommand word is kept after
 		// a dispatcher; a short, plain-looking secret is not one.
 		{"a dispatcher's argument that merely looks like a subcommand", "git " + secret, "tool Bash: git"},
+		// review round 2 (HIGH): the splitter does not group $(...), ${...},
+		// $'...' or array parens, so their inner words used to land where
+		// argv0 is read ("hunter2" is NOT a registered secret here: only the
+		// summary's own refusal keeps it off the dashboard).
+		{"command substitution in an assignment", "TOKEN=$(echo hunter2 | base64) curl https://u/", "tool Bash"},
+		{"parameter expansion with a default in an assignment", "PW=${PW:-default hunter2 x} psql", "tool Bash"},
+		{"an array assignment", "PASSWORDS=( hunter2 s3cr3tw0rd ) ls", "tool Bash"},
+		{"ANSI-C quoting with an escaped quote", "PW=$'x\\' hunter2 more' ls", "tool Bash"},
+		{"a backtick substitution", "PW=`echo hunter2 x` psql", "tool Bash"},
+		{"a substitution after a plain command is refused too (fail safe)", "go test $(go list ./...)", "tool Bash"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
