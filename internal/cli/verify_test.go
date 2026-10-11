@@ -36,3 +36,25 @@ func TestVerifyExitCodes(t *testing.T) {
 		t.Fatalf("failing test: exit %d stderr %q", ExitCode(err), stderr)
 	}
 }
+
+// TestVerifyLintIsAValidArg: "lint" is accepted (it was refused before the
+// check gate, Task 11), and runs Settings.Lint.
+func TestVerifyLintIsAValidArg(t *testing.T) {
+	testutil.IsolateGit(t)
+	remote := testutil.NewRemote(t, map[string]string{"README.md": "x\n"})
+	parent := t.TempDir()
+	repo := filepath.Join(parent, "repo")
+	testutil.Git(t, parent, "clone", "--quiet", remote, repo)
+	state := t.TempDir()
+	if err := verify.WriteSettings(state, verify.Settings{RepoDir: repo, Build: "true", Test: "true", Lint: "false"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FUGARO_STATE_DIR", state)
+	_, stderr, err := execute(t, "verify", "lint")
+	if ExitCode(err) != ExitUserError || !strings.Contains(stderr, "FAILED") {
+		t.Fatalf("failing lint: exit %d stderr %q", ExitCode(err), stderr)
+	}
+	if _, _, err := execute(t, "verify", "bogus"); err == nil {
+		t.Fatal("want an error for an invalid verify argument")
+	}
+}

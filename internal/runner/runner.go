@@ -129,6 +129,9 @@ type run struct {
 	// bootstrap (resolveRecipe) with its rounds decided (planOf); it always
 	// ends with a review step.
 	plan []planStep
+	// gateSteps are the recipe's leading check steps (gate.go), run before
+	// implement; nil for a recipe with none.
+	gateSteps []recipe.Step
 	// bounce counts how many times a senior rejection has sent the run back
 	// to the cheap loop (review: {bounce: first_line}); 0 until the first
 	// one. Stamped onto each first-line ReviewSummary (firstLine) so the
@@ -220,6 +223,10 @@ type run struct {
 	baseSHA, startSHA string
 	// ckpt is the checkpoint pushes' state (checkpoint.go).
 	ckpt checkpointState
+	// skipPR is set when the check gate already ended the run (clean, or an
+	// infra error of its own, gate.go): finalize, which still runs after,
+	// does nothing more.
+	skipPR bool
 }
 
 // Git credential lifetimes (design §6.2). A stage must not outlive its
@@ -843,6 +850,10 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("recipe %s: %w", rrec.Name, err)
 	}
 	r.plan = plan
+	r.gateSteps = checkGateSteps(rcp)
+	if err := checkGateCommands(r.gateSteps, wf.Commands, spec.Ref); err != nil {
+		return fmt.Errorf("recipe %s: %w", rrec.Name, err)
+	}
 	if rcp.ReviewerIsCoder && cfg.Agent.Models.Reviewer != "" {
 		r.d.Log.Info("agent.models.reviewer ignored: recipe maps reviewer to coder", "recipe", rrec.Name, "reviewer", cfg.Agent.Models.Reviewer)
 	}
@@ -935,7 +946,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("clearing state dir %s: %w", r.d.StateDir, err)
 	}
 	if err := verify.WriteSettings(r.d.StateDir, verify.Settings{
-		RepoDir: r.d.WorkDir, Build: wf.Commands.Build, Test: wf.Commands.Test,
+		RepoDir: r.d.WorkDir, Build: wf.Commands.Build, Test: wf.Commands.Test, Lint: wf.Commands.Lint,
 		RerunFailed: wf.Commands.RerunFailed, Reports: wf.Commands.Reports,
 		TimeoutS: int(wf.Timeouts.Verify.Seconds()),
 	}); err != nil {
@@ -1130,26 +1141,48 @@ func (r *run) agentLoop(ctx context.Context) {
 			opts.Recoverable = func(err error) bool { return errors.Is(err, agent.ErrNoSession) }
 		}
 	}
-	res, ok, err := r.stage(ctx, "implement", req, opts)
-	r.noteSession(req, res)
-	r.countTokens(res)
-	// Only an error stage recovered from, and so recorded nothing about:
-	// one that came with a timeout or a cancel is a failed stage.
-	if rec := (recoveredError{}); !ok && errors.As(err, &rec) {
-		r.fellBackFresh(ctx)
-		req = agent.Request{Prompt: followup.ImplementPrompt(r.promptData(), r.follow.sel), SessionID: agent.NewSessionID(), AppendSystemPrompt: sys}
-		res, ok, _ = r.stage(ctx, "implement", req, stageOpts{})
-		r.noteSession(req, res)
-		r.countTokens(res)
-	}
-	if !ok || r.capReached() {
-		return
-	}
-	r.afterStage(ctx, "implement")
-	if r.pr.gone {
-		return // a person closed the PR: nothing more to spend on it
+	skipImplement := false
+	if len(r.gateSteps) > 0 {
+		r.rec.Stage = "check"
+		switch g, err := r.runGate(ctx, r.gateSteps); {
+		case err != nil:
+			r.failInfra(ctx, err)
+			return
+		case g.Clean:
+			r.rec.Gate = "clean"
+			r.endWithoutPR(ctx, "every check passed: nothing to fix")
+			return
+		case g.Fixed:
+			r.rec.Gate = "fixed"
+			r.verifyOnce(ctx, verify.KindTest)
+			skipImplement = true
+		default:
+			req.Prompt = GatePrompt(req.Prompt, g)
+		}
 	}
 	sessionID := req.SessionID
+	if !skipImplement {
+		res, ok, err := r.stage(ctx, "implement", req, opts)
+		r.noteSession(req, res)
+		r.countTokens(res)
+		// Only an error stage recovered from, and so recorded nothing about:
+		// one that came with a timeout or a cancel is a failed stage.
+		if rec := (recoveredError{}); !ok && errors.As(err, &rec) {
+			r.fellBackFresh(ctx)
+			req = agent.Request{Prompt: followup.ImplementPrompt(r.promptData(), r.follow.sel), SessionID: agent.NewSessionID(), AppendSystemPrompt: sys}
+			res, ok, _ = r.stage(ctx, "implement", req, stageOpts{})
+			r.noteSession(req, res)
+			r.countTokens(res)
+		}
+		if !ok || r.capReached() {
+			return
+		}
+		r.afterStage(ctx, "implement")
+		if r.pr.gone {
+			return // a person closed the PR: nothing more to spend on it
+		}
+		sessionID = req.SessionID
+	}
 	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.cfg.Git.BaseBranch)
 	if f := r.follow; f != nil {
 		if add := followup.ReviewAddendum(f.sel, f.nonce); add != "" {
@@ -1602,6 +1635,12 @@ func (r *run) logTail(ready bool, records []verify.Record) *LogTail {
 func (r *run) finalize(ctx context.Context) error {
 	r.rec.Stage = "finalize"
 	r.save(ctx)
+	if r.skipPR {
+		// The check gate already ended the run (gate.go: endWithoutPR or
+		// failInfra), status, outcome and the stored report all theirs:
+		// there is nothing left to commit, push or open a pull request for.
+		return nil
+	}
 	base := r.cfg.Git.BaseBranch
 	halt := r.haltValue()
 	if halt != nil && r.isCancelled() {

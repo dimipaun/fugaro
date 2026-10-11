@@ -2,7 +2,10 @@ package runner
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
+
+	"github.com/dimipaun/fugaro/internal/followup"
 )
 
 // PromptData fills the run contract in the system prompt.
@@ -72,6 +75,41 @@ func ReviewPrompt(review, promptFile, base string) string {
 	default:
 		return defaultReview + "\n\n" + scope + tail
 	}
+}
+
+// GatePrompt is the implement prompt with the check gate's failures (gate.go)
+// added as untrusted output: one block per failure, each wrapped against
+// prompt injection (gateBlock). task is the prompt the gate ran ahead of
+// (r.spec.Task for a first run, the follow-up's implement prompt otherwise).
+func GatePrompt(task string, g gateResult) string {
+	var b strings.Builder
+	b.WriteString(task)
+	for i, f := range g.Failures {
+		var tail string
+		if i < len(g.Tails) {
+			tail = g.Tails[i]
+		}
+		fmt.Fprintf(&b, "\n\nThe check gate ran before you started and found a failure: %s\n\nuntrusted output of commands.%s:\n\n%s", f.Summary(), f.Kind, gateBlock(tail))
+	}
+	return b.String()
+}
+
+// gateDelimiterRemoved replaces anything in an untrusted check command's
+// output that looks like gateBlock's own delimiters, the same hygiene
+// internal/followup.Block uses for a pull request's comments: a nonce picked
+// fresh for each block, so the output cannot forge the block's end and
+// smuggle instructions of its own into the prompt. The delimiter is
+// hygiene, not a security boundary: what runs is still only the recipe's
+// own check steps.
+const gateDelimiterRemoved = "[fugaro-delimiter removed]"
+
+// gateBlock wraps text (an untrusted command's log tail) in a nonce-delimited
+// block.
+func gateBlock(text string) string {
+	nonce := followup.NewNonce()
+	neutralize := regexp.MustCompile(`(?i)(end-)?fugaro-gate-|` + nonce)
+	clean := neutralize.ReplaceAllString(text, gateDelimiterRemoved)
+	return "<<<fugaro-gate-" + nonce + ">>>\n" + clean + "\n<<<end-fugaro-gate-" + nonce + ">>>\n"
 }
 
 // FixPrompt asks the implementing session to address review findings.

@@ -48,6 +48,19 @@ func (f fixture) fails(t *testing.T, names string) {
 	}
 }
 
+// lint rewrites the fixture's commands.lint, everything else as setup left it.
+func (f fixture) lint(t *testing.T, cmd string) {
+	t.Helper()
+	err := WriteSettings(f.stateDir, Settings{
+		RepoDir: f.repoDir, Build: "sh build.sh", Test: "sh test.sh", Lint: cmd,
+		RerunFailed: &config.RerunFailed{Command: "sh test.sh", Each: "{id}"},
+		Reports:     []string{"build/test-results/*.xml"}, TimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func run(t *testing.T, f fixture, kind Kind, rerun bool) Record {
 	t.Helper()
 	rec, err := Run(context.Background(), Options{StateDir: f.stateDir, Kind: kind, Rerun: rerun, Stdout: io.Discard, Stderr: io.Discard})
@@ -65,6 +78,23 @@ func TestBuildPassAndFail(t *testing.T) {
 	t.Setenv("FIXTURE_BUILD_EXIT", "1")
 	if rec := run(t, f, KindBuild, false); rec.Passed || rec.ExitCode != 1 || rec.N != 2 {
 		t.Fatalf("failing build = %+v", rec)
+	}
+}
+
+// TestLintPassAndFail: KindLint runs Settings.Lint, not Build or Test, and
+// --rerun-failed, which only applies to Test, is refused for it.
+func TestLintPassAndFail(t *testing.T) {
+	f := setup(t)
+	f.lint(t, "exit 1")
+	if rec := run(t, f, KindLint, false); rec.Passed || rec.ExitCode != 1 || rec.Kind != KindLint {
+		t.Fatalf("failing lint = %+v", rec)
+	}
+	f.lint(t, "exit 0")
+	if rec := run(t, f, KindLint, false); !rec.Passed {
+		t.Fatalf("passing lint = %+v", rec)
+	}
+	if _, err := Run(context.Background(), Options{StateDir: f.stateDir, Kind: KindLint, Rerun: true, Stdout: io.Discard, Stderr: io.Discard}); err == nil || !strings.Contains(err.Error(), "--rerun-failed only applies to test") {
+		t.Fatalf("lint --rerun-failed err = %v", err)
 	}
 }
 
