@@ -472,13 +472,17 @@ func (c *repoCtx) platformEnv() map[string]string {
 
 func (c *repoCtx) registryPath() string { return c.registryHost + "/" + gcp.RegistryRepoID(c.slug) }
 
-// Workflow is the spec of one workflow of the repository.
+// Workflow is the spec of one workflow of the repository, its default
+// Claude account (config.DefaultClaudeAccount). Repo builds one WorkflowSpec
+// per account a repository may choose among (docs/design/named-oauth-tokens.md
+// §4); this exported helper only ever builds the default one, which is what
+// every caller outside this package wants.
 func Workflow(in Inputs, name string) (WorkflowSpec, error) {
 	c, err := resolve(in)
 	if err != nil {
 		return WorkflowSpec{}, err
 	}
-	return c.workflow(name)
+	return c.workflow(name, config.DefaultClaudeAccount)
 }
 
 // GitSecret is the logical name of the git credential of provider (the
@@ -498,12 +502,14 @@ func GitSecret(provider string) (string, bool) {
 // fugaro secrets set takes) and the variable it becomes.
 type SecretMount struct{ Logical, Env string }
 
-// SecretMounts is what the job of workflow name (w) mounts, in order: the
-// git provider's credential (gitSecret), the one Claude credential agent.auth
-// names (none for vertex), the keys of the model providers the owner's local
-// config allows repo to send code to (only with api-key: a run does not mix
-// credentials), and the workflow's own secrets. It is the one place that
-// decides it, for the job's spec and for the secrets init asks for.
+// SecretMounts is what the job of workflow name, for Claude account token
+// (w) mounts, in order: the git provider's credential (gitSecret), the one
+// Claude credential agent.auth names (none for vertex; token's own derived
+// secret, config.ClaudeAccountSecret, for oauth), the keys of the model
+// providers the owner's local config allows repo to send code to (only with
+// api-key: a run does not mix credentials), and the workflow's own secrets.
+// It is the one place that decides it, for the job's spec and for the
+// secrets init asks for.
 //
 // A provider's key is the runner's, for its gateway, and only a repository
 // the owner allowed to send code there gets it, as a variable the agent's
@@ -517,11 +523,11 @@ type SecretMount struct{ Logical, Env string }
 // make a run that pins a provider model later fail for a missing key. The
 // key reaches only the runner, never the agent, and the repository is
 // already one the owner allowed to send code to the provider.
-func SecretMounts(gitSecret string, cfg *config.Config, name string, w config.Workflow, lc *localcfg.Config, repo string) ([]SecretMount, error) {
+func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w config.Workflow, lc *localcfg.Config, repo string) ([]SecretMount, error) {
 	out := []SecretMount{{gitSecret, config.ReservedSecrets[gitSecret]}}
 	switch cfg.Agent.Auth {
 	case "oauth":
-		out = append(out, SecretMount{"claude-oauth-token", config.ReservedSecrets["claude-oauth-token"]})
+		out = append(out, SecretMount{config.ClaudeAccountSecret(token), config.ReservedSecrets["claude-oauth-token"]})
 	case "api-key":
 		out = append(out, SecretMount{"anthropic-api-key", config.ReservedSecrets["anthropic-api-key"]})
 		for _, pn := range slices.Sorted(maps.Keys(lc.Providers)) {
@@ -539,7 +545,17 @@ func SecretMounts(gitSecret string, cfg *config.Config, name string, w config.Wo
 	return out, nil
 }
 
-func (c *repoCtx) workflow(name string) (WorkflowSpec, error) {
+// workflow is the spec of (name, token): fugaro.yaml's logical workflow
+// commands, base, resources and timeouts, for the Cloud Run job of the
+// variant gcp.WorkflowVariant(name, token) (identity for the repository's
+// default account, so an installation with no named accounts gets a job,
+// account and labels byte-identical to before this field existed, design
+// docs/design/named-oauth-tokens.md §5). Only the job's own identity (Job,
+// ServiceAccount, the fugaro_workflow label) and its mounted Claude secret
+// (SecretMounts) vary by token; the image, commands and resources are the
+// one fugaro.yaml workflow entry's, shared by every variant (they are built
+// once, not once per account).
+func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	w, ok := c.in.Cfg.Workflows[name]
 	if !ok {
 		return WorkflowSpec{}, userErr("fugaro.yaml has no workflow %q", name)
@@ -548,10 +564,11 @@ func (c *repoCtx) workflow(name string) (WorkflowSpec, error) {
 		return WorkflowSpec{}, userErr("workflow %s: resources.%s: %s", name, issues[0].Field, issues[0].Message)
 	}
 	lc, slug := c.lc, c.slug
-	saID := gcp.ServiceAccountID(slug, name)
+	variant := gcp.WorkflowVariant(name, token)
+	saID := gcp.ServiceAccountID(slug, variant)
 	ws := WorkflowSpec{
-		Job:            gcp.JobName(slug, name),
-		ServiceAccount: ServiceAccount{AccountID: saID, DisplayName: gcp.JobSADisplayName(slug, name)},
+		Job:            gcp.JobName(slug, variant),
+		ServiceAccount: ServiceAccount{AccountID: saID, DisplayName: gcp.JobSADisplayName(slug, variant)},
 		Image:          gcp.ImageName(c.registryPath(), slug, name) + ":latest",
 		CPU:            strconv.Itoa(w.Resources.CPU),
 		Memory:         w.Resources.Memory,
@@ -568,7 +585,7 @@ func (c *repoCtx) workflow(name string) (WorkflowSpec, error) {
 		Name:                name,
 		Slug:                slug,
 		ServiceAccountEmail: serviceAccountEmail(saID, lc.GCPProject),
-		Labels:              map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: c.label, gcp.LabelWorkflow: name},
+		Labels:              map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: c.label, gcp.LabelWorkflow: variant},
 		SecretIDs:           map[string]string{},
 		GitSecret:           c.gitSecret,
 	}

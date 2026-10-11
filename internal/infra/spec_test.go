@@ -1335,3 +1335,91 @@ func TestRepoSpecBaseBranchFallsBackToTheCheckout(t *testing.T) {
 		t.Errorf("no base_branch anywhere: %q, %v (config base_branch %q)", rs.BaseBranch, err, cfg.Git.BaseBranch)
 	}
 }
+
+// claudeAccountsLC configures two named Claude accounts: "acme-personal",
+// allowed for acme/sandbox (sandboxInputs' repo, oauth by default), and
+// "acme-overflow", allowed for a different repository only.
+const claudeAccountsLC = `claude_accounts:
+  acme-personal:
+    allow_data_to: ["acme/sandbox"]
+  acme-overflow:
+    allow_data_to: ["acme/other"]
+`
+
+// An installation that configures no claude_accounts at all gets exactly
+// the workflow keys fugaro.yaml names, unchanged: gcp.WorkflowVariant is the
+// identity function for the repository's default account, so
+// BuildRepoSpec's loop produces exactly the one WorkflowSpec per workflow it
+// produced before this task (design docs/design/named-oauth-tokens.md §5).
+// TestGoldenTfvars is the byte-for-byte proof of this over the fixture
+// corpus; this test pins the one fact that proof depends on, directly.
+func TestBuildRepoSpecUnchangedWithNoClaudeAccounts(t *testing.T) {
+	in := sandboxInputs(t, m5Additions)
+	if in.LC.ClaudeAccounts != nil {
+		t.Fatal("the fixture already configures claude_accounts")
+	}
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := slices.Sorted(maps.Keys(rs.Workflows)), slices.Sorted(maps.Keys(in.Cfg.Workflows)); !slices.Equal(got, want) {
+		t.Fatalf("rs.Workflows keys = %v, want exactly the fugaro.yaml workflow names %v", got, want)
+	}
+}
+
+// A repository not listed in a named account's allow_data_to gets no job
+// variant for that name: the hard backstop of the allow-list (design §6b.3,
+// "a job for a disallowed name simply does not exist").
+func TestRepoSpecHasNoVariantForDisallowedName(t *testing.T) {
+	in := sandboxInputs(t, m5Additions+claudeAccountsLC)
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := rs.Workflows[gcp.WorkflowVariant("web", "acme-overflow")]; ok {
+		t.Fatal("a job variant exists for a name this repository is not allowed to use")
+	}
+	if _, ok := rs.Workflows["web"]; !ok {
+		t.Fatal("the default variant is missing")
+	}
+	if _, ok := rs.Workflows[gcp.WorkflowVariant("web", "acme-personal")]; !ok {
+		t.Fatal("the allowed named account's variant is missing")
+	}
+}
+
+// Each named account's job variant mounts only its own token, under its own
+// secret ID: never another allowed name's, and never the bare default's
+// (the regression option A, §4 of the design, would mount every allowed
+// name into every variant).
+func TestRepoSpecSecretMountsOnlyTheVariantsOwnToken(t *testing.T) {
+	in := sandboxInputs(t, m5Additions+claudeAccountsLC)
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := config.ReservedSecrets["claude-oauth-token"]
+	cases := []struct {
+		variant, wantSecret string
+	}{
+		{"web", "claude-oauth-token"},
+		{gcp.WorkflowVariant("web", "acme-personal"), "claude-oauth-token-acme-personal"},
+	}
+	for _, c := range cases {
+		ws, ok := rs.Workflows[c.variant]
+		if !ok {
+			t.Fatalf("no workflow spec for variant %q", c.variant)
+		}
+		if got := ws.SecretEnv[env]; got != c.wantSecret {
+			t.Errorf("%s: SecretEnv[%s] = %q, want %q", c.variant, env, got, c.wantSecret)
+		}
+		var claudeSecrets []string
+		for logical := range ws.SecretIDs {
+			if logical == c.wantSecret || strings.HasPrefix(logical, "claude-oauth-token") {
+				claudeSecrets = append(claudeSecrets, logical)
+			}
+		}
+		if want := []string{c.wantSecret}; !slices.Equal(slices.Sorted(slices.Values(claudeSecrets)), want) {
+			t.Errorf("%s: claude secrets mounted = %v, want exactly %v", c.variant, claudeSecrets, want)
+		}
+	}
+}
