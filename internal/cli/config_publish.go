@@ -260,13 +260,13 @@ func executableKeyValues(out map[string]string, p config.Profile, key string) er
 		out["image.apt"] = fmt.Sprintf("%q", p.Image.Apt)
 	case "workflows.*.image.setup":
 		out["image.setup"] = fmt.Sprintf("%q", p.Image.Setup)
-	case "workflows.*.image.skip_build_scripts":
-		out["image.skip_build_scripts"] = strconv.FormatBool(p.Image.SkipBuildScripts)
 	case "workflows.*.image.tools":
 		// %q of the whole map, not of each entry: fmt sorts a map's keys
 		// before printing it, so this is deterministic, and a tool added,
 		// removed or repinned to another version is a change.
 		out["image.tools"] = fmt.Sprintf("%q", p.Image.Tools)
+	case "workflows.*.image.skip_build_scripts":
+		out["image.skip_build_scripts"] = strconv.FormatBool(p.Image.SkipBuildScripts)
 	default:
 		return fmt.Errorf("%s", key)
 	}
