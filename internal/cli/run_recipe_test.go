@@ -85,17 +85,38 @@ func TestRunUnknownRecipeFailsBeforeCloudWork(t *testing.T) {
 	}
 }
 
-// TestRunRefusesNotYetRunnableRecipe: no runner executes a check step as a
-// gate, or mode: review's implement skip, yet. fugaro run must refuse these
-// catalog recipes before any cloud work, not launch a job that silently
-// falls back to running implement despite review-only's and pick's own
-// "No coding" and test-and-fix's/lint-fix's "a green run ends with no pull
-// request" (docs/recipes.md §2).
+// TestRunRefusesNotYetRunnableRecipe: no runner executes mode: review's
+// implement skip yet. fugaro run must refuse these catalog recipes before
+// any cloud work, not launch a job that silently falls back to running
+// implement despite review-only's and pick's own "No coding" (docs/recipes.md
+// §2). A check step is no longer such a gap: Task 11's runner executes it
+// (TestRunAllowsCheckStepRecipe).
 func TestRunRefusesNotYetRunnableRecipe(t *testing.T) {
 	f := newCloudFixture(t)
 	writeBuildRecord(t, f, appSlug, "web", release070)
-	for _, name := range []string{"review-only", "pick", "test-and-fix", "lint-fix"} {
+	for _, name := range []string{"review-only", "pick"} {
 		wantRefused(t, f, "recipe "+name+" cannot be launched yet", "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", name, "x")
+	}
+}
+
+// TestRunAllowsCheckStepRecipe: test-and-fix and lint-fix use a check step,
+// no longer refused as not-yet-runnable now that Task 11's runner executes
+// it as a gate.
+//
+// Mutation (restore the StepCheck branch of recipe.NotYetRunnable): this
+// test fails with "cannot be launched yet", and no execution starts.
+func TestRunAllowsCheckStepRecipe(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", release070)
+	for i, name := range []string{"test-and-fix", "lint-fix"} {
+		runID := "2026100" + string(rune('7'+i)) + "-100000-abcd"
+		_, errOut, err := execute(t, "run", "--repo", "acme/app", "--run-id", runID, "--recipe", name, "x")
+		if err != nil || !strings.Contains(errOut, "recipe: "+name+" (catalog)") {
+			t.Fatalf("%s: err = %v, stderr %q", name, err, errOut)
+		}
+		if n := len(f.run.Executions()); n != i+1 {
+			t.Fatalf("%s: %d executions, want %d", name, n, i+1)
+		}
 	}
 }
 

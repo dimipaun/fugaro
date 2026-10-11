@@ -28,20 +28,32 @@ func writeRecipeFile(t *testing.T, dir, rel, text string) string {
 	return filepath.Join(dir, filepath.FromSlash(rel))
 }
 
-// TestRecipesValidateRefusesNotYetRunnable: a check step and mode: review
-// both parse (the format, Task 8) but no runner executes either yet, so
-// fugaro recipes validate must refuse them, not call them valid.
+// TestRecipesValidateRefusesNotYetRunnable: mode: review parses (the
+// format, Task 8) but no runner executes it yet, so fugaro recipes
+// validate must refuse it, not call it valid. A check step is no longer
+// such a gap (Task 11's runner gates the run on it): see
+// TestRecipesValidateAllowsCheckStep below.
 func TestRecipesValidateRefusesNotYetRunnable(t *testing.T) {
 	dir := t.TempDir()
-	for name, text := range map[string]string{
-		"gated":      "version: 1\nname: gated\nsteps:\n  - check: { command: test }\n  - review: {}\n",
-		"reviewonly": "version: 1\nname: reviewonly\nmode: review\nsteps:\n  - review: { max_rounds: 1 }\n",
-	} {
-		path := writeRecipeFile(t, dir, name+".yaml", text)
-		out, _, err := execute(t, "recipes", "validate", path)
-		if ExitCode(err) != ExitUserError || !strings.Contains(out, "cannot be launched yet") {
-			t.Errorf("%s: out = %q, err = %v", name, out, err)
-		}
+	path := writeRecipeFile(t, dir, "reviewonly.yaml", "version: 1\nname: reviewonly\nmode: review\nsteps:\n  - review: { max_rounds: 1 }\n")
+	out, _, err := execute(t, "recipes", "validate", path)
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "cannot be launched yet") {
+		t.Errorf("out = %q, err = %v", out, err)
+	}
+}
+
+// TestRecipesValidateAllowsCheckStep: a check step recipe is launchable now
+// (Task 11's runner gates the run on it), so fugaro recipes validate must
+// call it valid, not refuse it as not-yet-runnable.
+//
+// Mutation (restore the StepCheck branch of recipe.NotYetRunnable): this
+// test fails with "cannot be launched yet".
+func TestRecipesValidateAllowsCheckStep(t *testing.T) {
+	dir := t.TempDir()
+	path := writeRecipeFile(t, dir, "gated.yaml", "version: 1\nname: gated\nsteps:\n  - check: { command: test }\n  - review: {}\n")
+	out, _, err := execute(t, "recipes", "validate", path)
+	if err != nil || strings.Contains(out, "cannot be launched yet") {
+		t.Fatalf("out = %q, err = %v", out, err)
 	}
 }
 
@@ -52,13 +64,32 @@ func TestRecipesPublishRefusesNotYetRunnable(t *testing.T) {
 	f := newCloudFixture(t)
 	projectRecipesFixture(t, f, nil)
 	noAgentSession(t)
-	path := writeRecipeFile(t, t.TempDir(), "gated.yaml", "version: 1\nname: gated\nsteps:\n  - check: { command: test }\n  - review: {}\n")
+	path := writeRecipeFile(t, t.TempDir(), "reviewonly.yaml", "version: 1\nname: reviewonly\nmode: review\nsteps:\n  - review: { max_rounds: 1 }\n")
 	_, _, err := execute(t, "recipes", "publish", path)
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "cannot be launched yet") {
 		t.Fatalf("err = %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(f.dir, "runs", filepath.FromSlash(recipe.ObjectKey("gated")))); err == nil {
+	if _, err := os.Stat(filepath.Join(f.dir, "runs", filepath.FromSlash(recipe.ObjectKey("reviewonly")))); err == nil {
 		t.Fatal("published a not-yet-runnable recipe")
+	}
+}
+
+// TestRecipesPublishAllowsCheckStep: a check step recipe is launchable now
+// (Task 11's runner gates the run on it), so fugaro recipes publish must
+// let it reach the bucket.
+//
+// Mutation (restore the StepCheck branch of recipe.NotYetRunnable): this
+// test fails with "cannot be launched yet", and nothing is published.
+func TestRecipesPublishAllowsCheckStep(t *testing.T) {
+	f := newCloudFixture(t)
+	projectRecipesFixture(t, f, nil)
+	noAgentSession(t)
+	path := writeRecipeFile(t, t.TempDir(), "gated.yaml", "version: 1\nname: gated\nsteps:\n  - check: { command: test }\n  - review: {}\n")
+	if _, _, err := execute(t, "recipes", "publish", path); err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(f.dir, "runs", filepath.FromSlash(recipe.ObjectKey("gated")))); err != nil {
+		t.Fatalf("gated.yaml was not published: %v", err)
 	}
 }
 
@@ -367,7 +398,13 @@ func TestRecipesLsNotesMissingUseWhen(t *testing.T) {
 // TestRecipesLsJSONFlagsNotYetLaunchable: the routing skill reads fugaro
 // recipes ls --json (design generic-tool.md §3.2), so a recipe
 // recipe.NotYetRunnable refuses to launch must say so there too, or the
-// skill would pick one and then be refused.
+// skill would pick one and then be refused. A check step is no longer such
+// a gap (Task 11's runner executes it): test-and-fix and lint-fix are
+// launchable, alongside every non-mode:review catalog recipe.
+//
+// Mutation (restore the StepCheck branch of recipe.NotYetRunnable):
+// test-and-fix and lint-fix come back launchable=false, failing the second
+// loop below.
 func TestRecipesLsJSONFlagsNotYetLaunchable(t *testing.T) {
 	newCloudFixture(t)
 	out, _, err := execute(t, "recipes", "ls", "--json")
@@ -384,7 +421,7 @@ func TestRecipesLsJSONFlagsNotYetLaunchable(t *testing.T) {
 	for _, r := range doc.Recipes {
 		byName[r.Name] = r
 	}
-	for _, name := range []string{"review-only", "pick", "test-and-fix", "lint-fix"} {
+	for _, name := range []string{"review-only", "pick"} {
 		r, ok := byName[name]
 		if !ok {
 			t.Fatalf("no row for %s", name)
@@ -393,7 +430,7 @@ func TestRecipesLsJSONFlagsNotYetLaunchable(t *testing.T) {
 			t.Errorf("%s: launchable=%v reason=%q, want launchable=false with a reason", name, r.Launchable, r.NotLaunchableReason)
 		}
 	}
-	for _, name := range []string{"default", "solo", "standard", "premium"} {
+	for _, name := range []string{"default", "solo", "standard", "premium", "test-and-fix", "lint-fix"} {
 		r, ok := byName[name]
 		if !ok {
 			t.Fatalf("no row for %s", name)
