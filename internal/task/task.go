@@ -29,23 +29,6 @@ var BatchRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 // branch a follow-up may continue.
 var BranchRE = regexp.MustCompile(`^fugaro/[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$`)
 
-// oauthTokenRE is a named Claude OAuth account's name (docs/design/
-// named-oauth-tokens.md), matching schemas/task.schema.json's oauth_token
-// pattern exactly: one "-" between alphanumerics, never trailing. This is
-// deliberately *stricter* than the regex the plan's own Task 1 section
-// writes verbatim for config.ClaudeAccountNameRE
-// (`^[a-z][a-z0-9-]{0,30}$`, docs/plans/2026-10-09-named-oauth-tokens.md:
-// 103,232, which still allows "a--b" and a trailing "-"): an external
-// review of this PR asked for the tighter grammar used here, but that
-// tightening was never written back into Task 1's own plan/design text
-// (a known gap, out of scope for Task 3, flagged in this PR's body). This
-// is a local copy, not an import (Task 1 is not yet landed on this
-// branch), so until Task 1 lands and either adopts this grammar or this
-// copy is loosened to match it, the two are deliberately not identical.
-// "default" is checked separately (below), since it matches this pattern
-// too but is reserved for the omitted value.
-var oauthTokenRE = regexp.MustCompile(`^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$`)
-
 // ValidRunID reports whether id has a run ID's form, as Validate requires
 // of run_id: check it before id names any object.
 func ValidRunID(id string) bool { return runIDRE.MatchString(id) }
@@ -87,12 +70,13 @@ type Spec struct {
 	// this field reaches has already passed that gate.
 	ProjectLayer *ProjectLayer `json:"project_layer,omitempty"`
 	// OAuthToken is the named Claude account (config.ClaudeAccountNameRE,
-	// or "" for config.DefaultClaudeAccount) this run's agent.auth: oauth
-	// workflow used (docs/design/named-oauth-tokens.md). A runner before
-	// namedTokensSince refuses the field, since it is new and this
-	// package's decoder disallows unknown fields; the launching CLI checks
-	// the job's build record first, the same way it already does for
-	// ProjectLayer.
+	// at most config.MaxClaudeAccountNameLen characters, never
+	// config.DefaultClaudeAccount itself — "" means that) this run's
+	// agent.auth: oauth workflow used (docs/design/named-oauth-tokens.md).
+	// A runner before namedTokensSince refuses the field, since it is new
+	// and this package's decoder disallows unknown fields; the launching
+	// CLI checks the job's build record first, the same way it already
+	// does for ProjectLayer.
 	OAuthToken string `json:"oauth_token,omitempty"`
 }
 
@@ -253,11 +237,18 @@ func (s *Spec) Validate() error {
 	if s.Batch != "" && !BatchRE.MatchString(s.Batch) {
 		bad("task spec: batch %q must be 1-63 lower-case letters, digits, '.', '_' or '-'", s.Batch)
 	}
+	// config.ClaudeAccountNameRE and config.MaxClaudeAccountNameLen are the
+	// single source of truth for a named account's shape (internal/config/
+	// claude_accounts.go, Task 1): this package imports them rather than
+	// keeping its own copy, so the two can never silently drift apart the
+	// way an earlier version of this check did.
 	switch {
 	case s.OAuthToken == "":
-	case s.OAuthToken == "default":
+	case s.OAuthToken == config.DefaultClaudeAccount:
 		bad(`task spec: oauth_token must not be "default": the empty value already means the repository's default account`)
-	case !oauthTokenRE.MatchString(s.OAuthToken):
+	case len(s.OAuthToken) > config.MaxClaudeAccountNameLen:
+		bad("task spec: oauth_token %q must be at most %d characters", s.OAuthToken, config.MaxClaudeAccountNameLen)
+	case !config.ClaudeAccountNameRE.MatchString(s.OAuthToken):
 		bad("task spec: oauth_token %q is not a Claude account name", s.OAuthToken)
 	}
 	o := s.Overrides
