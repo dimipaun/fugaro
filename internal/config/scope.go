@@ -110,7 +110,7 @@ var Scopes = []ScopeRow{
 // the image build; going from false to true is reported too (the owner's
 // ruling: a direction being safer is not a reason to leave it ungated).
 //
-// workflows.*.image.tools is here because it is exactly as powerful as
+// workflows.*.image.tools is here too because it is exactly as powerful as
 // image.setup: every mise backend with a URL or host form (cargo:, go:,
 // npm:, asdf:/vfox:, ubi:/github:/aqua:) passes ValidMiseTool's charset, and
 // a build installs it with the workflow's build secrets mounted, so a mise
@@ -122,6 +122,17 @@ var ExecutableKeys = []string{
 	"workflows.*.commands.build", "workflows.*.commands.test", "workflows.*.commands.lint", "workflows.*.commands.fix",
 	"workflows.*.commands.rerun_failed", "workflows.*.image.apt", "workflows.*.image.setup", "workflows.*.image.tools",
 	"workflows.*.image.skip_build_scripts",
+}
+
+// NonExecutableImageKeys are the Image struct's fields ExecutableKeys
+// deliberately leaves out, each with why its value never runs as shell.
+// TestEveryImageFieldIsClassified walks Image by reflection and fails if a
+// future field is in neither this map nor ExecutableKeys, so a field that
+// slips past config publish's --executable-changes gate (PR #244) is a
+// compile-time-visible test failure, not a silent gap.
+var NonExecutableImageKeys = map[string]string{
+	"workflows.*.image.node": "a pinned Node major or exact version (nodeVersionRE); never a command",
+	"workflows.*.image.jdk":  "refused on every base (validateImage); never reaches a Dockerfile",
 }
 
 // ScopeOf is the row of path, a fugaro.yaml path with a real workflow name
