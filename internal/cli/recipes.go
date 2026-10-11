@@ -25,8 +25,9 @@ import (
 
 func newRecipesCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "recipes",
-		Short: "List, show, validate and publish recipes, the task loop a run follows after implement",
+		Use:     "recipes",
+		Aliases: []string{"recipe"},
+		Short:   "List, show, validate and publish recipes, the task loop a run follows after implement",
 		Long: "A recipe is found by name in .fugaro/recipes/NAME.yaml in the repository, then in the\n" +
 			"project's fugaro/recipes/NAME.yaml in the runs bucket, then in the catalog\n" +
 			"(default, cheap-loop-senior, claude-solo). See docs/recipes.md.",

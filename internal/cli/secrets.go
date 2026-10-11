@@ -36,8 +36,9 @@ const multilineSecret = "github-app-key"
 
 func newSecretsCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "secrets",
-		Short: "Store and list a repository's secrets in Secret Manager",
+		Use:     "secrets",
+		Aliases: []string{"secret"},
+		Short:   "Store and list a repository's secrets in Secret Manager",
 		// Set so cobra doesn't answer an unknown subcommand by quoting it:
 		// `fugaro secrets <value>` must not echo the value.
 		Args: cobra.ArbitraryArgs,

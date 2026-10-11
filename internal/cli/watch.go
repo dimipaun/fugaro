@@ -143,8 +143,8 @@ func newWatchCmd() *cobra.Command {
 			"most one per --interval, 10s) or, with --json, one JSON document per change\n" +
 			"(at most one a second); --once prints one snapshot and exits. Those modes have\n" +
 			"no kill keys: fugaro budget kill and resume are the script path.\n\n" +
-			"A project with no budget backend shows its run records only (as fugaro ls\n" +
-			"does, for the last 24 hours) and says so; fugaro ls --watch stays for the\n" +
+			"A project with no budget backend shows its run records only (as fugaro runs ls\n" +
+			"does, for the last 24 hours) and says so; fugaro runs ls --watch stays for the\n" +
 			"question \"did my runs finish\".\n\n" +
 			"A finished run stays shown for --keep (default 6h) or among the most recent\n" +
 			"--keep-count (default 15), whichever is stricter; a failed one stays until it\n" +

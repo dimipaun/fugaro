@@ -63,7 +63,7 @@ const queuedLookback = 30 * time.Minute
 // and the launch, so the bucket listing starts at now − queuedLookback −
 // queuedMintMargin. A run launched later than that after its ID was minted
 // (fugaro run --retry of an old stored task) is not found: it shows once
-// its runner starts, and fugaro ls shows it pending meanwhile.
+// its runner starts, and fugaro runs ls shows it pending meanwhile.
 const queuedMintMargin = 5 * time.Minute
 
 // finishedLookback bounds how long a run whose result.json exists still
@@ -114,7 +114,7 @@ const queuedDropAfter = 3
 
 // openQueueBucket opens just the runs bucket, never the compute backend:
 // queued-run detection only ever reads task.json, launch.json, result.json,
-// the launch claim and the cancel marker, the same objects fugaro ls reads,
+// the launch claim and the cancel marker, the same objects fugaro runs ls reads,
 // so it works for anyone who can read the bucket, Cloud Run role or not.
 // A var so tests can make it hang.
 var openQueueBucket = func(ctx context.Context, lc *localcfg.Config) (*blobx.Bucket, error) {

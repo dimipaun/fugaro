@@ -180,7 +180,7 @@ func TestReadIsCapped(t *testing.T) {
 // key is rewritten returns the old or the new content. With fileblob's
 // default attribute sidecar, a read that lands while the sidecar is being
 // truncated fails with EOF; this was the flaky "reading result.json: EOF"
-// of `fugaro ls` against a run that was still writing its record.
+// of `fugaro runs ls` against a run that was still writing its record.
 func TestFileBucketReadsAreNeverTorn(t *testing.T) {
 	ctx := context.Background()
 	b, err := blobx.Open(ctx, "file://"+t.TempDir())

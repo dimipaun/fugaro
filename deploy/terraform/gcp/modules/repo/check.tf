@@ -1,6 +1,6 @@
 # The daily image check: a Cloud Run job that runs fugaro image check --job
 # from the base image, as the build account, and a Scheduler job that
-# starts it. Its name starts with fugarochk-, so fugaro ls and max_parallel,
+# starts it. Its name starts with fugarochk-, so fugaro runs ls and max_parallel,
 # which count the fugaro- jobs, ignore it. There is none when every
 # workflow has rebuild.check: off.
 #

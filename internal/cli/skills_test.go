@@ -61,7 +61,7 @@ func init() {
 		}
 	}
 	add("run", launchResult{}, "run", "repo", "run_id", "branch", "execution", "log_url", "status", "previous_run")
-	add("ls", lsDoc{}, "project", "runs", "totals", "warnings",
+	add("runs ls", lsDoc{}, "project", "runs", "totals", "warnings",
 		"runs[].run", "runs[].repo", "runs[].status", "runs[].stage", "runs[].reason", "runs[].halt", "runs[].pr_url",
 		"runs[].branch", "runs[].outcome", "runs[].created", "runs[].cost", "runs[].cost.route_by", "runs[].cost.reported_usd",
 		"runs[].terminal", "runs[].settled", "runs[].base_branch", "runs[].stale_draft", "runs[].draft_fallback", "runs[].pr_status_at")
