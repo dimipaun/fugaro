@@ -1,0 +1,8 @@
+version: 1
+name: solo
+description: One model codes and reviews its own work in a fresh session.
+use_when: Small, low-risk changes confined to one or two files, where a second model's review would cost more than it finds.
+roles:
+  reviewer: coder
+steps:
+  - review: {}

@@ -1,0 +1,8 @@
+version: 1
+name: pick
+description: No coding. The senior model compares several pull requests for the same task and says which to keep.
+use_when: After fugaro run --attempts N, once every attempt has a pull request. Launch with one --pr per attempt.
+mode: review
+steps:
+  - review:
+      max_rounds: 1
