@@ -272,6 +272,43 @@ func TestReviewModeCommentNeutralizesFindingText(t *testing.T) {
 	}
 }
 
+// TestReviewModeCommentNeutralizesLongFenceRuns: a fence opener only needs
+// 3 consecutive backticks or tildes anywhere in a longer run — inserting a
+// zero-width space after just the first character of the run (an earlier,
+// incomplete version of neutralizeFinding) still leaves the remaining
+// characters of a 4-or-more-length run consecutive and unescaped, still a
+// valid opener. A finding is free to use any run length, so every
+// character of the run must be separated, not only the first.
+//
+// Mutation (insert the zero-width space after only the first character of
+// the match, `m[:1] + "​" + m[1:]`, the earlier code this replaces): this
+// test fails, finding a run of 3 consecutive backticks (or tildes) surface
+// in the posted comment from the tail of a 4-or-5-length input run.
+func TestReviewModeCommentNeutralizesLongFenceRuns(t *testing.T) {
+	h := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	pushReviewBranch(t, h, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h, 7, "feature", "")
+	summary := "four backticks: ````, five tildes: ~~~~~"
+	leaky := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		b, _ := json.Marshal(map[string]any{"verdict": "changes",
+			"findings": []map[string]string{{"summary": summary}}})
+		return agent.Result{Structured: b, CostUSD: 0.5}, nil
+	}
+	if _, err := h.run(t, leaky); err != nil {
+		t.Fatal(err)
+	}
+	c := h.provider.State.PRs[0].Comments
+	if len(c) != 1 {
+		t.Fatalf("comments = %d, want 1", len(c))
+	}
+	body := c[0]
+	if strings.Contains(body, "```") || strings.Contains(body, "~~~") {
+		t.Fatalf("posted comment still contains an unbroken fence run:\n%s", body)
+	}
+}
+
 // TestReviewModeCommentNeutralizesForgedMarker: gitprov.FugaroRun takes the
 // LAST marker in a body to decide which run posted a comment, so a
 // fork-controlled finding that quotes Fugaro's own marker syntax could
@@ -356,6 +393,40 @@ func TestReviewModeCommentCarriesReportMarker(t *testing.T) {
 	c := h.provider.State.PRs[0].Comments
 	if len(c) != 1 || !strings.Contains(c[0], gitprov.ReportMarker(runID)) {
 		t.Fatalf("comment missing report marker: %q", c)
+	}
+}
+
+// TestReviewModeMissingSecretFailsBootstrap: the ordinary (non-review)
+// path's agent.BuildEnv hard-fails bootstrap ("secret %s is not set in the
+// runner environment") when a declared workflow secret's env var is
+// missing (TestRunnerDependencies/"missing secret"). Review mode skips
+// BuildEnv's own validation of these on purpose (secretEnvs is left empty
+// so the agent's environment never gets them at all) and instead registers
+// each one's value for redaction directly — but envLookup returns "" on a
+// miss and addSecret no-ops on "", so without its own check this would be
+// a silent gap exactly where the design calls this registration review
+// mode's "last line of defense": a misconfigured or unmounted secret would
+// never reach r.secretList(), so a model that somehow read its empty value
+// (or the literal env var) would have it posted unredacted with nothing to
+// catch it. Bootstrap must fail here the same way the ordinary path does.
+//
+// Mutation (drop the `if v == "" { return ... }` check added to review
+// mode's secret-registration loop in runner.go, back to
+// `r.addSecret(envLookup(r.d.Env, s.Env))` unchecked): this test fails,
+// finding no error and rec.Status succeeded instead of infra_error.
+func TestReviewModeMissingSecretFailsBootstrap(t *testing.T) {
+	h := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	h.deps.Env = filterEnv(h.deps.Env, "FIXTURE_FAILS_FILE")
+	pushReviewBranch(t, h, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h, 7, "feature", "")
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "FIXTURE_FAILS_FILE") {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if len(h.agent.calls) != 0 {
+		t.Fatalf("%d agent calls, want none (bootstrap must fail first)", len(h.agent.calls))
 	}
 }
 

@@ -107,3 +107,26 @@ func TestRecipesGuideMatchesTheCLI(t *testing.T) {
 		t.Error("README.md does not link docs/recipes.md")
 	}
 }
+
+// TestLaunchSkillAllowsReviewModeTaskText: the working skill's launch.md
+// guides the agent's own `fugaro run` invocations, so a wrong claim there
+// about review-only/pick taking "never a task description" (true once,
+// before task 12 wired TEXT/--task-file through to the review prompt as
+// optional extra instructions — see TestReviewModeIncludesLauncherTaskText,
+// internal/runner/reviewmode_test.go) could make the agent wrongly omit a
+// user's review instructions when launching one of these recipes. Must
+// agree with docs/recipes.md's own, correct claim ("TEXT, or --task-file,
+// is optional then too").
+func TestLaunchSkillAllowsReviewModeTaskText(t *testing.T) {
+	data, err := os.ReadFile("../../plugin/skills/working/reference/launch.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	if strings.Contains(doc, "never a task description") {
+		t.Error("launch.md still claims review-only/pick take no task description; they take one, optionally")
+	}
+	if !strings.Contains(doc, "a task description is optional for either") {
+		t.Error("launch.md no longer says a task description is optional for review-only/pick")
+	}
+}

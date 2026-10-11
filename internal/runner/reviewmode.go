@@ -468,7 +468,10 @@ var (
 // escaping every '<' and '>'), turn a bare or disguised ("[text](url)")
 // link clickable (breaking the URL scheme, and Markdown-escaping the
 // bracket syntax), or open a fenced code block with no matching close
-// (breaking any run of 3+ backticks or tildes).
+// (breaking any run of 3+ backticks or tildes, at any length — a
+// zero-width space between every character of the run, not only after the
+// first, since an opener needs only 3 consecutive fence characters
+// anywhere in a longer run to still work).
 func neutralizeFinding(s string) string {
 	s = strings.ReplaceAll(s, "<", "&lt;")
 	s = strings.ReplaceAll(s, ">", "&gt;")
@@ -478,7 +481,7 @@ func neutralizeFinding(s string) string {
 	s = strings.ReplaceAll(s, "]", "\\]")
 	s = findingSchemeRE.ReplaceAllString(s, "$1\u200b://")
 	s = findingFenceRE.ReplaceAllStringFunc(s, func(m string) string {
-		return m[:1] + "\u200b" + m[1:]
+		return strings.Join(strings.Split(m, ""), "\u200b")
 	})
 	return s
 }

@@ -1031,9 +1031,21 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// exfiltrate one of these into the posted comment, the report or a
 		// transcript unredacted: register the values for redaction
 		// (r.secretList(), which every one of those goes through) even
-		// though they never reach its environment.
+		// though they never reach its environment. Because secretEnvs is
+		// empty here, agent.BuildEnv never runs its own "secret %s is not
+		// set" check for these (that check walks spec.Secrets, which
+		// review mode leaves empty on purpose) — so this is the only place
+		// a declared-but-unmounted workflow secret would ever be caught in
+		// review mode; failing here, the same as BuildEnv would for every
+		// other run, is this registration's whole point: a secret that
+		// silently isn't here to redact is exactly the "last line of
+		// defense" the comment above describes failing open.
 		for _, s := range wf.Secrets {
-			r.addSecret(envLookup(r.d.Env, s.Env))
+			v := envLookup(r.d.Env, s.Env)
+			if v == "" {
+				return fmt.Errorf("secret %s is not set in the runner environment", s.Env)
+			}
+			r.addSecret(v)
 		}
 	}
 	// Claude Code's Bash tool defaults to a 2-minute timeout (10 minutes at

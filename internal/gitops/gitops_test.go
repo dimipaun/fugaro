@@ -127,6 +127,54 @@ func TestWorktreeAddsDetachedCopy(t *testing.T) {
 	}
 }
 
+// TestWorktreeReusesExistingDir: a pick run's review/<N> directory is not
+// part of the image or clone that gets reset between runs the way
+// r.d.WorkDir itself is (reviewDir's own doc), and nothing removes it after
+// a run — so a retried execution, or a later pick run comparing the same
+// pull request number again, finds the directory (and its worktree
+// registration) left over from before. `git worktree add` fails outright
+// if the target directory already exists; Worktree must handle this the
+// same way CheckoutDetached's force checkout already handles reusing
+// r.d.WorkDir itself, not leave it to error out as infra_error.
+func TestWorktreeReusesExistingDir(t *testing.T) {
+	repo, remote := setup(t)
+	testutil.Git(t, remote, "update-ref", "refs/heads/other", "refs/heads/main")
+	seed := filepath.Join(t.TempDir(), "seed3")
+	testutil.Git(t, filepath.Dir(seed), "clone", "--quiet", remote, seed)
+	testutil.WriteFiles(t, seed, map[string]string{"first.txt": "first attempt\n"})
+	testutil.Git(t, seed, "add", "-A")
+	testutil.Git(t, seed, "commit", "--quiet", "-m", "first attempt")
+	testutil.Git(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/other")
+	firstSHA := testutil.Git(t, remote, "rev-parse", "refs/heads/other")
+
+	dir := filepath.Join(t.TempDir(), "review", "9")
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Worktree(ctx, firstSHA, dir); err != nil {
+		t.Fatal(err)
+	}
+
+	testutil.WriteFiles(t, seed, map[string]string{"first.txt": "second attempt\n"})
+	testutil.Git(t, seed, "add", "-A")
+	testutil.Git(t, seed, "commit", "--quiet", "-m", "second attempt")
+	testutil.Git(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/other")
+	secondSHA := testutil.Git(t, remote, "rev-parse", "refs/heads/other")
+
+	// dir, and the worktree Worktree just registered for it, are both left
+	// exactly as the first call made them — nothing removes either, the
+	// same as the real runner never does between runs on a warm container.
+	if err := repo.Worktree(ctx, secondSHA, dir); err != nil {
+		t.Fatalf("second Worktree call on the same dir failed: %v", err)
+	}
+	if got := testutil.Git(t, dir, "rev-parse", "HEAD"); got != secondSHA {
+		t.Fatalf("worktree HEAD = %s, want %s (the second attempt)", got, secondSHA)
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, "first.txt")); err != nil || string(got) != "second attempt\n" {
+		t.Fatalf("first.txt = %q, %v, want the second attempt's content", got, err)
+	}
+}
+
 // TestResetToRevertsTrackedRemovesUntrackedKeepsIgnored: a tracked file's
 // modification is reverted, an untracked file is removed, and an ignored
 // file (a warm dependency cache) survives — the same guarantee

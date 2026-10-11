@@ -202,8 +202,24 @@ func (r *Repo) CheckoutDetached(ctx context.Context, rev string) error {
 // attempt at once. dir's parent must already exist. Filters (lfsFiltersOff)
 // are off for the fetch and the worktree add, the two steps that could run
 // one.
+//
+// dir is removed first, and any worktree administration left over for it
+// pruned, so a dir left behind by an earlier run on the same warm
+// container or retried execution (reviewDir's own doc: pick's checkouts
+// are not part of the image or clone that gets reset between runs the way
+// r.d.WorkDir itself is) does not make `worktree add` fail outright — the
+// same reuse `CheckoutDetached`'s own force checkout and clean already
+// handle for the single-pull-request case, just reached a different way
+// here since a worktree's target directory, unlike a checked-out branch,
+// cannot simply be overwritten in place.
 func (r *Repo) Worktree(ctx context.Context, rev, dir string) error {
 	if _, err := r.git(ctx, withLFSFiltersOff("fetch", "--quiet", "origin", rev)...); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("removing %s before adding it as a worktree: %w", dir, err)
+	}
+	if _, err := r.git(ctx, "worktree", "prune"); err != nil {
 		return err
 	}
 	_, err := r.git(ctx, withLFSFiltersOff("worktree", "add", "--quiet", "--detach", dir, "FETCH_HEAD")...)
