@@ -263,6 +263,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	for _, c := range preflight.IAMPolicy(ctx, crmSvc, lc.GCPProject, sameProjectFirebase) {
 		o.Checks = append(o.Checks, fromPreflight(c))
 	}
+	o.Checks = append(o.Checks, doctorRunsBucketIAM(ctx, lc, crmSvc)...)
 
 	if lc.Budget != nil && lc.Budget.FirebaseProject != "" {
 		iamSvc, err := iam.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.IAM)...)
