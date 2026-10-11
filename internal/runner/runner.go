@@ -132,6 +132,20 @@ type run struct {
 	// gateSteps are the recipe's leading check steps (gate.go), run before
 	// implement; nil for a recipe with none.
 	gateSteps []recipe.Step
+	// review is whether this run is mode: review (reviewmode.go, Task 12
+	// of the generic-tool plan): set from spec.ReviewPRs at bootstrap,
+	// before the recipe is resolved, the same way follow is set from
+	// spec.IsFollowUp(); cross-checked against the resolved recipe's own
+	// Mode once it is known, since the two must always agree.
+	review bool
+	// reviewHeads is what bootstrap's checkReviewPRs resolved for a review
+	// run: one entry per spec.ReviewPRs, in order, each already past the
+	// fork and open checks. Empty for any other run.
+	reviewHeads []reviewHead
+	// commentsFailed are the pull request numbers whose review comment
+	// (reviewmode.go, postReviewComments) failed to post; reported in
+	// review mode's report.md, never retried in a loop.
+	commentsFailed []int
 	// bounce counts how many times a senior rejection has sent the run back
 	// to the cheap loop (review: {bounce: first_line}); 0 until the first
 	// one. Stamped onto each first-line ReviewSummary (firstLine) so the
@@ -373,7 +387,11 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		}
 		return nil, fmt.Errorf("bootstrap: %w", err)
 	}
-	r.runAgentLoop(runCtx)
+	if r.review {
+		r.runReviewMode(runCtx)
+	} else {
+		r.runAgentLoop(runCtx)
+	}
 	// From here nothing the backend says can stop a stage.
 	r.freezeHalts()
 	// Finalize makes no model calls: the gateway is closed first, and the
@@ -602,8 +620,10 @@ func (r *run) refreshGitAuth(ctx context.Context, minValid time.Duration) error 
 		r.repo.Env = gitops.WithVars(r.repo.Env, vars)
 	}
 	// A follow-up's agent gets no git credentials (design §6.1): the
-	// runner fetches and pushes for it.
-	if r.env != nil && r.follow == nil {
+	// runner fetches and pushes for it. Neither does a review run's
+	// (design generic-tool §3.6, G12): the runner fetches its checkout(s)
+	// itself, and never pushes or opens anything on its behalf.
+	if r.env != nil && r.follow == nil && !r.review {
 		r.env = gitops.WithVars(r.env, vars)
 	}
 	return nil
@@ -772,6 +792,9 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if spec.IsFollowUp() {
 		r.follow = &followState{}
 	}
+	if len(spec.ReviewPRs) > 0 {
+		r.review = true
+	}
 	if err := stateDirOutsideCheckout(r.d.WorkDir, r.d.StateDir); err != nil {
 		return err
 	}
@@ -806,7 +829,8 @@ func (r *run) bootstrap(ctx context.Context) error {
 	r.repo = strip(repo)
 	var cfg *config.Config
 	var startErr error // reading a first run's start commit (checkpoints)
-	if r.follow != nil {
+	switch {
+	case r.follow != nil:
 		// The pull request's branch, with the configuration of its base.
 		if err := r.checkoutFollowUp(ctx, repo); err != nil {
 			return err
@@ -815,7 +839,18 @@ func (r *run) bootstrap(ctx context.Context) error {
 		if cfg, err = r.readBaseConfig(ctx); err != nil {
 			return err
 		}
-	} else {
+	case r.review:
+		// mode: review skips CheckoutNewBranch entirely: there is no
+		// branch of this run's own, and r.rec.Branch is set only as the
+		// branch lock's key (acquireLock), never pushed or read back as a
+		// ref. The configuration comes from the base branch, exactly as a
+		// follow-up's does (readBaseConfig), since review mode never
+		// trusts a pull request's own fugaro.yaml.
+		r.rec.Branch = "fugaro/" + spec.RunID
+		if cfg, err = r.readBaseConfig(ctx); err != nil {
+			return err
+		}
+	default:
 		branch := "fugaro/" + spec.RunID
 		if err := repo.CheckoutNewBranch(ctx, spec.Ref, branch); err != nil {
 			return fmt.Errorf("checking out %s: %w", spec.Ref, err)
@@ -843,8 +878,11 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if gap := recipe.NotYetRunnable(rcp); gap != "" {
-		return fmt.Errorf("recipe %s cannot be run yet: %s", rrec.Name, gap)
+	switch {
+	case r.review && rcp.Mode != recipe.ModeReview:
+		return fmt.Errorf("recipe %s is not mode: review, but the task names pull requests to review", rrec.Name)
+	case !r.review && rcp.Mode == recipe.ModeReview:
+		return fmt.Errorf("recipe %s is mode: review, but the task names no pull request to review", rrec.Name)
 	}
 	r.rec.Recipe = &rrec
 	derived := rrec.Name == recipe.DefaultName && rrec.Source == string(recipe.SourceCatalog)
@@ -868,9 +906,10 @@ func (r *run) bootstrap(ctx context.Context) error {
 	r.rec.FinalizeReserveS = wf.Timeouts.FinalizeReserve.Seconds()
 	dl := r.lockDeadline()
 	r.rec.Deadline = &dl
-	if r.follow == nil {
-		// A read, so it comes before the lock; a follow-up fetched its
-		// base, and read its configuration from it, above.
+	if r.follow == nil && !r.review {
+		// A read, so it comes before the lock; a follow-up or a review run
+		// fetched its base, and read its configuration from it, above
+		// (readBaseConfig); neither ever checkpoints.
 		if err := repo.FetchBase(ctx, cfg.Git.BaseBranch); err != nil {
 			return fmt.Errorf("fetching base %s: %w", cfg.Git.BaseBranch, err)
 		}
@@ -932,9 +971,15 @@ func (r *run) bootstrap(ctx context.Context) error {
 			return err
 		}
 	}
+	if r.review {
+		if err := r.checkReviewPRs(ctx); err != nil {
+			return err
+		}
+	}
 	r.restoreCaches(ctx)
-	if r.follow == nil {
-		// A follow-up fetched its base, and read these from it, above.
+	if r.follow == nil && !r.review {
+		// A follow-up or a review run fetched its base, and read these
+		// from it, above (readBaseConfig).
 		if r.instructions, err = r.readRepoFile(cfg.Agent.Instructions); err != nil {
 			return fmt.Errorf("agent.instructions: %w", err)
 		}
@@ -971,10 +1016,13 @@ func (r *run) bootstrap(ctx context.Context) error {
 	for k, v := range gitops.Identity {
 		set[k] = v
 	}
-	if r.follow == nil {
+	if r.follow == nil && !r.review {
 		// A follow-up's agent gets no git credentials and no GH_TOKEN
 		// (design §6.1): the runner fetched the branch and pushes it, and
-		// the comments arrive in the prompt.
+		// the comments arrive in the prompt. A review run's agent gets
+		// none either (design generic-tool §3.6, G12): it only ever reads
+		// the checkout, and the runner never pushes or opens anything on
+		// its behalf.
 		agentAuthVars, err := r.authVars()
 		if err != nil {
 			return fmt.Errorf("building git credentials: %w", err)

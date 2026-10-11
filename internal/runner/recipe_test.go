@@ -120,23 +120,26 @@ func TestRecipeRepoInvalidFailsNoFallback(t *testing.T) {
 	}
 }
 
-// TestRecipeNotYetRunnableFailsBeforeImplement: mode: review's implement
-// skip is not executed by this runner (agentLoop never reads Recipe.Mode),
-// so a recipe using it must refuse before implement ever runs, not
-// silently fall back to today's loop. This is the runner's own guard
-// (recipe.NotYetRunnable), independent of the CLI's: it is what actually
-// protects a repository recipe or a bare agent.recipe name, which the CLI
-// never reads the text of before launch. A check step is no longer such a
-// gap: Task 11's runner gates the run on it (TestRecipeCheckStepReachesTheGate).
+// TestRecipeModeReviewMismatchFailsBeforeImplement: bootstrap cross-checks
+// a resolved recipe's Mode against the task (r.review, decided from
+// spec.ReviewPRs before the recipe is even known) and refuses a mismatch
+// before implement ever runs — the runner's own guard, independent of the
+// CLI's: it is what actually protects a repository recipe or a bare
+// agent.recipe name, which the CLI never reads the text of before launch.
+// This task (a first run, Task: "Add a feature", no ReviewPRs) can never
+// carry a mode: review recipe and run it as ordinary implement; Task 12's
+// bootstrap refuses it instead of silently running implement regardless (as
+// it did before review mode existed at all). A check step is no gap at
+// all: Task 11's runner gates the run on it (TestRecipeCheckStepReachesTheGate).
 //
-// Mutation (run, restore): comment out the NotYetRunnable check in
-// runner.go's run loop, and this test fails: implement runs and the record
-// is not an infra_error.
-func TestRecipeNotYetRunnableFailsBeforeImplement(t *testing.T) {
+// Mutation (run, restore): comment out the Mode-mismatch check in
+// runner.go's bootstrap, and this test fails: implement runs and the
+// record is not an infra_error.
+func TestRecipeModeReviewMismatchFailsBeforeImplement(t *testing.T) {
 	const yaml = "version: 1\nname: reviewonly\nmode: review\nsteps:\n  - review: { max_rounds: 1 }\n"
 	h := newHarness(t, firstLineCfg(t, 2, ""), recipeSpec(embeddedTask("reviewonly", yaml)))
 	rec, err := h.run(t)
-	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "cannot be run yet") {
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "the task names no pull request to review") {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 	if len(h.agent.calls) != 0 {
