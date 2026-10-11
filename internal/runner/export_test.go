@@ -188,3 +188,11 @@ func SetCheckoutReviewHeadsSeam(t *testing.T, f func()) {
 	checkoutReviewHeadsSeam = f
 	t.Cleanup(func() { checkoutReviewHeadsSeam = prev })
 }
+
+// SetReviewStageDoneSeam runs f in reviewMode right after the review stage
+// returns successfully, for the rest of t.
+func SetReviewStageDoneSeam(t *testing.T, f func()) {
+	prev := reviewStageDoneSeam
+	reviewStageDoneSeam = f
+	t.Cleanup(func() { reviewStageDoneSeam = prev })
+}

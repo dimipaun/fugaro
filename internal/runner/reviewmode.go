@@ -22,6 +22,13 @@ import (
 // deterministically ahead of it.
 var checkoutReviewHeadsSeam func()
 
+// reviewStageDoneSeam, when set by a test, runs in reviewMode right after
+// the review stage returns successfully, before the halt re-check that
+// follows it: the only point where a test can land a halt deterministically
+// inside the otherwise very narrow real window between r.stage's own
+// halt check and reviewMode's.
+var reviewStageDoneSeam func()
+
 // reviewHead is one pull request review mode resolved at bootstrap
 // (checkReviewPRs): its number and the commit it will check out. The fork
 // and open checks gitprov.PRHead also carries have already passed by the
@@ -250,6 +257,14 @@ func stripCommandFrontmatter(text string) string {
 func (r *run) runReviewMode(ctx context.Context) {
 	defer func() {
 		if p := recover(); p != nil {
+			// The same priority every other end branch in this file gives
+			// a halt: it decides the run whatever else is true, a panic
+			// mid-stage included, so this never reports infra_error over a
+			// halt that was already recorded.
+			if h := r.haltValue(); h != nil {
+				r.endReviewHalted(ctx, h)
+				return
+			}
 			r.failReviewInfra(ctx, fmt.Errorf("stage %s panicked: %v", r.rec.Stage, p))
 		}
 	}()
@@ -303,7 +318,22 @@ func (r *run) reviewMode(ctx context.Context) {
 		r.endReviewFailed(ctx)
 		return
 	}
+	if reviewStageDoneSeam != nil {
+		reviewStageDoneSeam()
+	}
 	v := ParseVerdict(res)
+	// r.stage already checked haltValue() right before returning ok=true,
+	// but a halt can still land in the window between that check and here
+	// (parsing the verdict takes no real time, but the race is the same
+	// one gate.go's own g.Clean branch guards against): checked once more,
+	// before either end branch below, so a halt always wins over "posted a
+	// comment and ended reviewed" or "ended failed over an unparseable
+	// verdict", the same priority every other branch in this function
+	// gives it.
+	if h := r.haltValue(); h != nil {
+		r.endReviewHalted(ctx, h)
+		return
+	}
 	if n := len(r.reviewHeads); n > 1 && !r.keepIsOneOfReviewed(v.Keep) {
 		// A pick run's verdict names no pull request to keep among the
 		// ones actually compared (zero, because the stage's structured

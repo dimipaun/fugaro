@@ -319,6 +319,63 @@ func TestReviewModeHaltDuringCheckoutEndsHalted(t *testing.T) {
 	}
 }
 
+// TestReviewModeHaltAfterStageSucceedsEndsHalted: a halt landing in the
+// window between r.stage's own halt check and reviewMode's (parsing the
+// verdict, deciding the keep, posting the comment) must still end the run
+// halted, never post a comment, and never report reviewed — the same race
+// gate.go's g.Clean branch guards against.
+//
+// Mutation (drop the haltValue() check reviewStageDoneSeam sits right
+// before): this test fails, finding the run reported reviewed and a
+// comment posted.
+func TestReviewModeHaltAfterStageSucceedsEndsHalted(t *testing.T) {
+	h := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	pushReviewBranch(t, h, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h, 7, "feature", "")
+	var handle *runner.RunHandle
+	runner.OnRun(t, func(rh *runner.RunHandle) { handle = rh })
+	runner.SetReviewStageDoneSeam(t, func() { handle.HaltNow(runCapHalt) })
+	rec, err := h.run(t, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Outcome != runstore.OutcomeNone || rec.Halt == nil {
+		t.Fatalf("rec = %+v", rec)
+	}
+	if len(h.provider.State.PRs[0].Comments) != 0 {
+		t.Fatalf("a halted run still posted a comment: %q", h.provider.State.PRs[0].Comments)
+	}
+}
+
+// TestReviewModePanicDuringHaltEndsHalted: a halt recorded before a panic
+// unwinds reviewMode must still end the run halted, never infra_error —
+// the same priority every other end branch in reviewMode gives a halt.
+//
+// Mutation (drop the haltValue() check from runReviewMode's recover()):
+// this test fails, reporting infra_error with rec.Halt nil.
+func TestReviewModePanicDuringHaltEndsHalted(t *testing.T) {
+	h := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	pushReviewBranch(t, h, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h, 7, "feature", "")
+	var handle *runner.RunHandle
+	runner.OnRun(t, func(rh *runner.RunHandle) { handle = rh })
+	runner.SetCheckoutReviewHeadsSeam(t, func() {
+		handle.HaltNow(runCapHalt)
+		panic("simulated panic racing the halt")
+	})
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Outcome != runstore.OutcomeNone || rec.Halt == nil {
+		t.Fatalf("rec = %+v", rec)
+	}
+}
+
 // TestReviewModeRefusesForkWithoutOptIn: a pull request whose head is in a
 // fork is refused unless the base branch's fugaro.yaml sets
 // review.allow_forks: true (design generic-tool §3.6, G12); with it set,
