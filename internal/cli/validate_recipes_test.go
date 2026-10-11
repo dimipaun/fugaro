@@ -107,6 +107,33 @@ func TestValidateAliasesReviewerForRecipe(t *testing.T) {
 	}
 }
 
+// The mirror of TestValidateAliasesReviewerForRecipe: roles: {coder:
+// reviewer} aliases the coder to the reviewer's model (here, agent.model,
+// since models.reviewer isn't set), so an off-list agent.models.coder stops
+// being a problem.
+func TestValidateAliasesCoderForRecipe(t *testing.T) {
+	const agent = "  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5, coder: claude-opus-5-5 }"
+	const ceiling = "budget: { allowed_models: [claude-sonnet-5-5, claude-haiku-4-5] }\n"
+	// Without a recipe the coder is off the list.
+	path := budgetProject(t, ceiling, agent)
+	out, err := validateProblems(t, path)
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.models.coder") {
+		t.Fatalf("no recipe: exit %d: %s", ExitCode(err), out)
+	}
+	// A recipe of the checkout mapping coder: reviewer makes the coder the
+	// reviewer's model.
+	path = budgetProject(t, ceiling, agent+"\n  recipe: mine")
+	testutil.WriteFiles(t, filepath.Dir(path), map[string]string{".fugaro/recipes/mine.yaml": "version: 1\nname: mine\nroles:\n  coder: reviewer\nsteps:\n  - review: {}\n"})
+	if out, err = validateProblems(t, path); err != nil || strings.Contains(out, "agent.models.coder") {
+		t.Fatalf("repo recipe: %v: %s", err, out)
+	}
+	// A recipe that does not alias leaves the problem.
+	path = budgetProject(t, ceiling, agent+"\n  recipe: default")
+	if out, err = validateProblems(t, path); ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.models.coder") {
+		t.Fatalf("default recipe: exit %d: %s", ExitCode(err), out)
+	}
+}
+
 func TestRecipeDirRefusesSymlinks(t *testing.T) {
 	// A symlinked recipe file.
 	isolateProjects(t, t.TempDir())
@@ -178,6 +205,24 @@ func TestValidateProjectRecipeAnnotatesReviewerProblems(t *testing.T) {
 	// A recipe found locally gets no such hint.
 	path = budgetProject(t, ceiling, agent+"\n  recipe: default")
 	if out, err = validateProblems(t, path); !strings.Contains(out, "agent.models.reviewer") || strings.Contains(out, "if project recipe") {
+		t.Fatalf("exit %d: %s", ExitCode(err), out)
+	}
+}
+
+// The mirror of TestValidateProjectRecipeAnnotatesReviewerProblems: an
+// unreadable project recipe may map coder: reviewer, so an
+// agent.models.coder problem gets the matching hint.
+func TestValidateProjectRecipeAnnotatesCoderProblems(t *testing.T) {
+	const agent = "  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5, coder: claude-opus-5-5 }"
+	const ceiling = "budget: { allowed_models: [claude-sonnet-5-5, claude-haiku-4-5] }\n"
+	path := budgetProject(t, ceiling, agent+"\n  recipe: team")
+	out, err := validateProblems(t, path)
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.models.coder") || !strings.Contains(out, "(if project recipe team maps coder to reviewer, this key is ignored; remove it)") {
+		t.Fatalf("exit %d: %s", ExitCode(err), out)
+	}
+	// A recipe found locally gets no such hint.
+	path = budgetProject(t, ceiling, agent+"\n  recipe: default")
+	if out, err = validateProblems(t, path); !strings.Contains(out, "agent.models.coder") || strings.Contains(out, "if project recipe") {
 		t.Fatalf("exit %d: %s", ExitCode(err), out)
 	}
 }
