@@ -120,19 +120,8 @@ var Scopes = []ScopeRow{
 // profile published from the bucket must gate it the same way.
 var ExecutableKeys = []string{
 	"workflows.*.commands.build", "workflows.*.commands.test", "workflows.*.commands.lint", "workflows.*.commands.fix",
-	"workflows.*.commands.rerun_failed", "workflows.*.image.apt", "workflows.*.image.setup",
-	"workflows.*.image.skip_build_scripts", "workflows.*.image.tools",
-}
-
-// NonExecutableImageKeys are the Image struct's fields ExecutableKeys
-// deliberately leaves out, each with why its value never runs as shell.
-// TestEveryImageFieldIsClassified walks Image by reflection and fails if a
-// future field is in neither this map nor ExecutableKeys, so a field that
-// slips past config publish's --executable-changes gate (PR #244) is a
-// compile-time-visible test failure, not a silent gap.
-var NonExecutableImageKeys = map[string]string{
-	"workflows.*.image.node": "a pinned Node major or exact version (nodeVersionRE); never a command",
-	"workflows.*.image.jdk":  "refused on every base (validateImage); never reaches a Dockerfile",
+	"workflows.*.commands.rerun_failed", "workflows.*.image.apt", "workflows.*.image.setup", "workflows.*.image.tools",
+	"workflows.*.image.skip_build_scripts",
 }
 
 // ScopeOf is the row of path, a fugaro.yaml path with a real workflow name

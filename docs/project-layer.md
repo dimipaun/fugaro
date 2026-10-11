@@ -196,8 +196,8 @@ Its shape is checked strictly, with the shared config's trust rules: one documen
 - `workflows.*.commands.rerun_failed`
 - `workflows.*.image.apt`
 - `workflows.*.image.setup`
-- `workflows.*.image.skip_build_scripts`
 - `workflows.*.image.tools`
+- `workflows.*.image.skip_build_scripts`
 <!-- executable-keys:end -->
 
 — values that run as shell, or (`image.skip_build_scripts`) control whether shell a profile already describes runs, in the job or in the image build. `commands.reports` is not gated: it only lists paths to collect, and runs nothing. `config publish` refuses a change to any of these keys, in either direction (`image.skip_build_scripts` going from `false` to `true` is reported too, not only the unsafe direction), unless `--executable-changes` is given, printing each one's before and after under an `EXECUTABLE CHANGES` banner first; changing `default_profile` itself is gated the same way, whenever either the old or the new default profile sets one of these keys.
