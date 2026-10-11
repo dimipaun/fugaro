@@ -222,17 +222,77 @@ func (r *initRun) askBuild(what string) (confirmed, reachable bool, err error) {
 	return r.askTyped(what)
 }
 
+// refreshCloneJobs is part of step 4: a checkout: clone workflow has no
+// derived image to rebuild, so its job's container image moves to the
+// local config's base_images.base directly, through the Cloud Run Admin
+// API (as refreshCheckJob moves the daily check job's), after its own
+// confirmation; no Cloud Build is ever submitted for it.
+func (r *initRun) refreshCloneJobs(ctx context.Context, p *refreshPlan, t *refreshTarget) error {
+	var clones []string
+	for _, wf := range p.workflows {
+		if t.cfg.Workflows[wf].Checkout == config.CheckoutClone {
+			clones = append(clones, wf)
+		}
+	}
+	if len(clones) == 0 {
+		return nil
+	}
+	newImage := t.lc.BaseImage(config.BaseKind)
+	if newImage == "" {
+		return userErr("the local config has no base_images.%s after the base step, which every checkout: clone workflow's job runs (%s)", config.BaseKind, strings.Join(clones, ", "))
+	}
+	c, err := newInitClients(ctx, t.lc)
+	if err != nil {
+		return err
+	}
+	owner := infra.CheckJobOwner{Repo: t.spec.Name, Label: t.spec.Label}
+	for _, wf := range clones {
+		ws := t.spec.Workflows[wf]
+		u, err := infra.PlanWorkflowJob(ctx, c, t.lc.GCPProject, t.lc.Region, ws.Job, wf, newImage, owner)
+		switch {
+		case errors.Is(err, infra.ErrCheckJobShape):
+			return userErr("%v", err)
+		case err != nil:
+			return remote(err)
+		case u == nil:
+			fmt.Fprintf(r.w, "  %s: the job %s was not found: run fugaro init --repo in the checkout to deploy it (nothing was updated)\n", wf, pluginwire.Printable(ws.Job))
+			continue
+		case !u.Changes():
+			fmt.Fprintf(r.w, "  %s: No changes: the job already runs from %s\n", wf, pluginwire.Printable(u.NewImage()))
+			continue
+		}
+		fmt.Fprintf(r.w, "  %s: image %s -> %s\n", wf, pluginwire.Printable(u.OldImage()), pluginwire.Printable(u.NewImage()))
+		if err := r.confirm(fmt.Sprintf("updates the checkout: clone workflow %s's job %s in place through the Cloud Run Admin API, as you: its container image moves to %s; no Cloud Build runs, and no other field of the job changes",
+			wf, pluginwire.Printable(u.Job()), pluginwire.Printable(u.NewImage())), "the job was not updated"); err != nil {
+			return err
+		}
+		if err := infra.ApplyWorkflowJob(ctx, c, u); err != nil {
+			return remote(err)
+		}
+		fmt.Fprintf(r.w, "  updated %s's job\n", wf)
+	}
+	return nil
+}
+
 // refreshBuilds is step 4 (D8, D9): each selected workflow whose image is
 // not built from its current base is rebuilt, after its own confirmation
 // (askBuild), from the base the local config now records. A declined or
-// failed build stops the loop: the builds after it are never submitted.
+// failed build stops the loop: the builds after it are never submitted. A
+// checkout: clone workflow has no build to decide (refreshCloneJobs moves
+// its job's image directly instead) and is skipped here.
 func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshTarget) error {
+	if err := r.refreshCloneJobs(ctx, p, t); err != nil {
+		return err
+	}
 	host, err := infra.RegistryHost(t.lc)
 	if err != nil {
 		return userErr("%v", err)
 	}
 	var todo, unrecorded []string
 	for _, wf := range p.workflows {
+		if t.cfg.Workflows[wf].Checkout == config.CheckoutClone {
+			continue
+		}
 		kind := t.cfg.Workflows[wf].Base
 		want := t.lc.BaseImage(kind)
 		if want == "" {

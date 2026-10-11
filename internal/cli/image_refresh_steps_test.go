@@ -576,6 +576,58 @@ func TestRefreshBuildsDeclineStopsSubsequentBuilds(t *testing.T) {
 	}
 }
 
+// TestRefreshMovesCloneJobsToTheNewBase (design generic-tool.md §2): on the
+// refresh rig, a checkout: clone workflow's job gets its container image
+// patched to the local config's new base_images.base through the Cloud Run
+// Admin API, after its own confirmation, and no Cloud Build is submitted
+// for it.
+//
+// Mutation (run, restore): remove the `if err := r.refreshCloneJobs(ctx, p,
+// t); err != nil { return err }` call at the top of refreshBuilds — this
+// test then fails: r.run.Patches() is empty (the job's image is never
+// moved) and the output lacks "updated app's job".
+func TestRefreshMovesCloneJobsToTheNewBase(t *testing.T) {
+	r := newInitRig(t)
+	e := rigEngine(t, r, &initOptions{})
+	fb := useFakeBuilder(t)
+	slug, label := checkJobOwner(t, "github", "acme/app")
+	oldRef, newRef := managedRef("base", "0.4.0"), managedRef("base", "0.5.1")
+	jobName := gcp.JobName(slug, "app")
+	r.run.SetJob(jobName, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelWorkflow: "app"}, oldRef)
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc.BaseImages = map[string]string{config.BaseKind: newRef}
+	cfg, problems := config.Parse([]byte("version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n  app: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"))
+	if cfg == nil {
+		t.Fatal(problems)
+	}
+	p := &refreshPlan{workflows: []string{"app"}}
+	tg := &refreshTarget{lc: lc, cfg: cfg, spec: infra.RepoSpec{Name: "acme/app", Slug: slug, Label: label,
+		Workflows: map[string]infra.WorkflowSpec{"app": {Job: jobName}}}}
+	out := atTerminal(t, e, initProjectName+"\n")
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	for _, want := range []string{"image " + oldRef + " -> " + newRef, "⚠ CONFIRM", "updated app's job"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, out.String())
+		}
+	}
+	if len(r.run.Patches()) != 1 {
+		t.Fatalf("%d patches", len(r.run.Patches()))
+	}
+	if len(fb.specs) != 0 {
+		t.Fatalf("a Cloud Build was submitted for a checkout: clone workflow: %+v", fb.specs)
+	}
+	// A rerun with nothing changed says so and patches nothing more.
+	out = atTerminal(t, e, "")
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil || len(r.run.Patches()) != 1 || !strings.Contains(out.String(), "No changes") {
+		t.Fatalf("rerun: %v\n%s", err, out.String())
+	}
+}
+
 // Review fix (code review on the prior fix): submitAndWait's project-layer
 // copy write now opens the record bucket through openRecordBucket (the
 // test seam every other record-bucket caller uses), not blobx.Open
