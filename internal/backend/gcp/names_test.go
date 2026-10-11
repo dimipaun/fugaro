@@ -630,7 +630,7 @@ func TestWorkflowVariantMatchesTerraformWorkflowLabel(t *testing.T) {
 	}
 
 	maxWorkflow := strings.Repeat("a", 20) // config.WorkflowNameRE's longest
-	maxToken := strings.Repeat("a", 31)    // the planned config.ClaudeAccountNameRE's longest
+	maxToken := strings.Repeat("a", 31)    // config.MaxClaudeAccountNameLen's longest
 	for _, c := range []struct{ workflow, token string }{
 		{"build", "default"},
 		{"build", ""},
@@ -651,7 +651,7 @@ func TestWorkflowVariantMatchesTerraformWorkflowLabel(t *testing.T) {
 // workflow and any token equal the plain workflow name again, silently
 // reintroducing the identity-for-default collision for named accounts.
 // Every check here is run at the boundary lengths config.WorkflowNameRE
-// (20) and the planned config.ClaudeAccountNameRE (31) actually allow, not
+// (20) and config.MaxClaudeAccountNameLen (31) actually allow, not
 // just short illustrative names, since a truncation bug only shows up once
 // the join is long enough to hit it.
 func TestWorkflowVariantAtMaximumLengths(t *testing.T) {
@@ -793,5 +793,20 @@ func TestJobSADisplayNameFitsIAMLimitForVariants(t *testing.T) {
 func TestDefaultRegistryHost(t *testing.T) {
 	if got := DefaultRegistryHost("us-east5", "my-proj"); got != "us-east5-docker.pkg.dev/my-proj" || !registryHostRE.MatchString(got) {
 		t.Errorf("DefaultRegistryHost = %q, want us-east5-docker.pkg.dev/my-proj", got)
+	}
+}
+
+// TestJobSADisplayNameMaxLengthIsPinned pins the EXACT truncated display name
+// for the longest slug and variant. internal/infra/discover.go compares a
+// service account's display name exactly as its ownership mark and reports
+// anything else as a ForeignError, so changing the truncation, the hash width
+// or the hash input would make discovery refuse every existing named-account
+// service account. If this test must change, the change needs a migration.
+func TestJobSADisplayNameMaxLengthIsPinned(t *testing.T) {
+	maxSlug := strings.Repeat("a", 46) + "-0123456789abcdef"
+	maxVariant := WorkflowVariant(strings.Repeat("a", 20), strings.Repeat("b", 31))
+	const want = "Fugaro job aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-0123456789abcdef aaaaaaaaaaaaaaaa d4964ee5"
+	if got := JobSADisplayName(maxSlug, maxVariant); got != want {
+		t.Fatalf("JobSADisplayName(max slug, max variant) = %q, want the pinned %q (discover.go compares it exactly)", got, want)
 	}
 }

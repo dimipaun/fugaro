@@ -323,11 +323,14 @@ const jobSADisplayNameHashHex = 8
 // short, stable hash of the full (slug, workflow) pair, the same
 // derive-style pattern JobName/ServiceAccountID/SecretID already use, so
 // the result is always <= 100 characters and deterministic. A display name
-// is not an identifier Fugaro parses back (service accounts carry no
-// labels; the account ID and email are the real identity), so exact
-// global uniqueness is not a correctness requirement here the way it is
-// for JobName/SecretID — the hash is a practical collision guard among a
-// repository's own variants, not an invariant anything else depends on.
+// is its ownership mark: internal/infra/discover.go compares it EXACTLY and
+// reports any other value as a ForeignError, so the truncated form below
+// must stay stable once a named-account service account exists (changing
+// the hash width or its input would make discovery treat existing named-
+// account service accounts as foreign). TestJobSADisplayNameMaxLengthIsPinned
+// pins the exact maximum-length value. Distinct variants still get distinct
+// display names in practice through the hash, but uniqueness here is a
+// cosmetic guard: each service account's email and ID are its real identity.
 func JobSADisplayName(slug, workflow string) string {
 	const prefix = "Fugaro job "
 	name := prefix + slug + " " + workflow
