@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -247,6 +248,160 @@ func TestRecipesLsVerbose(t *testing.T) {
 		standard.Steps[1].Kind != "review" || !standard.Steps[1].Bounce {
 		t.Fatalf("standard row = %+v", standard)
 	}
+	if !standard.Launchable || standard.NotLaunchableReason != "" {
+		t.Fatalf("standard launchable = %+v", standard)
+	}
+}
+
+// TestWriteRecipesTableEscapesInjection: name, description and use_when are
+// untrusted (a project recipe is anyone-with-bucket-write's text), and
+// recipe.Parse's own refusal of control, bidi and invisible characters is
+// one layer, not the only one this relies on (a pre-existing stored object,
+// or any future caller that does not route through Parse, must still be
+// safe to print). ESC, an OSC 8 terminal hyperlink, an 8-bit C1 CSI, a bidi
+// override and a newline must each come out escaped, never as the raw byte.
+//
+// Mutation (run, restore): drop the pluginwire.Printable call on desc and
+// r.UseWhen in writeRecipesTable (oneLine alone), and this test fails: the
+// escaped \uXXXX markers this asserts on are gone (oneLine drops or masks
+// the same bytes a different way, which is still safe but not what this
+// pins).
+func TestWriteRecipesTableEscapesInjection(t *testing.T) {
+	const (
+		esc  = "\x1b"
+		osc8 = esc + "]8;;http://evil.example\x07click\x1b]8;;\x07"
+	)
+	rows := []recipeRow{{
+		Name:        "x",
+		Source:      "catalog",
+		Description: "d" + esc + "[31mred",
+		UseWhen:     "use" + osc8 + "when\u009bCSI\u202ebidi\nline",
+		Steps:       []stepView{{Kind: "review"}},
+	}}
+	var buf bytes.Buffer
+	if err := writeRecipesTable(&buf, rows, true); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if strings.ContainsAny(out, "\x1b\x07\u009b\u202e") {
+		t.Fatalf("a raw dangerous byte reached the table: %q", out)
+	}
+	for _, want := range []string{"\\u001b", "\\u0007", "\\u009b", "\\u202e"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing the escaped marker %q in %q", want, out)
+		}
+	}
+}
+
+// TestWriteRecipesTableKeepsColumnsAligned: a --verbose use-when/steps
+// block has no tabs of its own (fugaro.yaml review's finding #4), which
+// breaks the tabwriter's column block at that point unless those lines are
+// tab-terminated like every other row: the SOURCE column of the row after
+// a verbose block must still line up with the row before it.
+func TestWriteRecipesTableKeepsColumnsAligned(t *testing.T) {
+	rows := []recipeRow{
+		{Name: "aaa", Source: "catalog", Description: "short desc", UseWhen: "when", Steps: []stepView{{Kind: "review"}}},
+		{Name: "bb", Source: "catalog", Description: "d2", Steps: []stepView{{Kind: "review"}}},
+	}
+	var buf bytes.Buffer
+	if err := writeRecipesTable(&buf, rows, true); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != 6 {
+		t.Fatalf("lines = %q", lines)
+	}
+	col := func(line string) int { return strings.Index(line, "catalog") }
+	first, second := col(lines[1]), col(lines[4])
+	if first < 0 || second < 0 || first != second {
+		t.Fatalf("SOURCE column misaligned: row 1 at %d, row 2 at %d:\n%s", first, second, buf.String())
+	}
+}
+
+// TestRecipesLsVerboseDoesNotTruncateUseWhen: a use_when at its own 300
+// byte parser limit must print in full under --verbose, not cut at
+// pluginwire.MaxPrintable's unrelated 200-rune default.
+//
+// Mutation (run, restore): change writeRecipesTable's PrintableN(r.UseWhen,
+// recipe.MaxUseWhen) back to Printable(r.UseWhen), and this test fails: the
+// 300-byte use_when is cut at 200 runes.
+func TestRecipesLsVerboseDoesNotTruncateUseWhen(t *testing.T) {
+	f := newCloudFixture(t)
+	long := strings.Repeat("x", recipe.MaxUseWhen)
+	projectRecipesFixture(t, f, map[string]string{"longuw": "version: 1\nname: longuw\nuse_when: \"" + long + "\"\nsteps:\n  - review: {}\n"})
+	out, _, err := execute(t, "recipes", "ls", "--verbose")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "use when: "+long) {
+		t.Fatalf("use_when was cut: %q", out)
+	}
+	if strings.Contains(out, "(truncated)") {
+		t.Fatalf("use_when (at its own 300-byte limit) was truncated: %q", out)
+	}
+}
+
+// TestRecipesLsNotesMissingUseWhen: design generic-tool.md §3.2 ("A custom
+// recipe without use_when gets a recipes ls note"). A catalog recipe
+// (default) is exempt: it is not custom, and every other catalog entry is
+// required to have one (TestCatalogIsTheStarterSet).
+func TestRecipesLsNotesMissingUseWhen(t *testing.T) {
+	newCloudFixture(t)
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	writeRecipeFile(t, dir, ".fugaro/recipes/no-use-when.yaml", "version: 1\nname: no-use-when\nsteps:\n  - review: {}\n")
+	t.Chdir(dir)
+	_, errOut, err := execute(t, "recipes", "ls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut, "repo recipe no-use-when has no use_when; the routing skill matches on use_when, add one") {
+		t.Fatalf("stderr = %q", errOut)
+	}
+	if strings.Contains(errOut, "default has no use_when") {
+		t.Fatalf("the catalog's own default was wrongly noted: %q", errOut)
+	}
+}
+
+// TestRecipesLsJSONFlagsNotYetLaunchable: the routing skill reads fugaro
+// recipes ls --json (design generic-tool.md §3.2), so a recipe
+// recipe.NotYetRunnable refuses to launch must say so there too, or the
+// skill would pick one and then be refused.
+func TestRecipesLsJSONFlagsNotYetLaunchable(t *testing.T) {
+	newCloudFixture(t)
+	out, _, err := execute(t, "recipes", "ls", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Recipes []recipeRow `json:"recipes"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]recipeRow{}
+	for _, r := range doc.Recipes {
+		byName[r.Name] = r
+	}
+	for _, name := range []string{"review-only", "pick", "test-and-fix", "lint-fix"} {
+		r, ok := byName[name]
+		if !ok {
+			t.Fatalf("no row for %s", name)
+		}
+		if r.Launchable || r.NotLaunchableReason == "" {
+			t.Errorf("%s: launchable=%v reason=%q, want launchable=false with a reason", name, r.Launchable, r.NotLaunchableReason)
+		}
+	}
+	for _, name := range []string{"default", "solo", "standard", "premium"} {
+		r, ok := byName[name]
+		if !ok {
+			t.Fatalf("no row for %s", name)
+		}
+		if !r.Launchable || r.NotLaunchableReason != "" {
+			t.Errorf("%s: launchable=%v reason=%q, want launchable=true with no reason", name, r.Launchable, r.NotLaunchableReason)
+		}
+	}
 }
 
 func TestRecipesShowSource(t *testing.T) {
@@ -395,8 +550,12 @@ func TestRecipesValidateStemRule(t *testing.T) {
 	}
 }
 
-// A bidi override in a description (valid YAML) and an escape sequence in
-// an old object (invalid, so only the replacement diff shows it).
+// A bidi override in a description is refused at parse (hasControlChar, a
+// field the generic-tool task 14 review added this check to), so unlike
+// before it never reaches ls or show for them to escape; an escape sequence
+// in an old object's YAML comment (recipes publish's replacement diff) is
+// not a recipe field Parse looks at, so it is still displayed raw-then-
+// escaped, not refused.
 const (
 	bidiRecipe = "version: 1\nname: team\ndescription: \"evil \\u202e txt\"\nsteps:\n  - review: {}\n"
 	escRecipe  = "version: 1\nname: team\n# \x1b[2Jclear\nsteps:\n  - review: {}\n"
@@ -407,11 +566,13 @@ func TestRecipesOutputIsPrintable(t *testing.T) {
 	projectRecipesFixture(t, f, map[string]string{"team": bidiRecipe})
 	testutil.IsolateGit(t)
 	t.Chdir(t.TempDir())
-	for _, args := range [][]string{{"recipes", "ls"}, {"recipes", "show", "team"}} {
-		out, errOut, err := execute(t, args...)
-		if err != nil || strings.ContainsRune(out+errOut, '\u202e') || !strings.Contains(out, "\\u202e") {
-			t.Fatalf("%v: out %q, stderr %q, err %v", args, out, errOut, err)
-		}
+	out, _, err := execute(t, "recipes", "ls")
+	if err != nil || strings.ContainsRune(out, '\u202e') || !strings.Contains(out, "INVALID: description") || !strings.Contains(out, "must not contain control characters, bidi overrides, invisible characters or line/paragraph separators") {
+		t.Fatalf("ls: out %q, err %v", out, err)
+	}
+	_, _, err = execute(t, "recipes", "show", "team")
+	if ExitCode(err) != ExitUserError || strings.ContainsRune(err.Error(), '\u202e') || !strings.Contains(err.Error(), "must not contain control characters, bidi overrides, invisible characters or line/paragraph separators") {
+		t.Fatalf("show: err %v", err)
 	}
 	writeBucketFile(t, f, recipe.ObjectKey("team"), escRecipe)
 	noAgentSession(t)

@@ -61,8 +61,18 @@ type recipeRow struct {
 	Description string     `json:"description,omitempty"`
 	UseWhen     string     `json:"use_when,omitempty"`
 	Steps       []stepView `json:"steps,omitempty"`
-	ShadowedBy  string     `json:"shadowed_by,omitempty"`
-	Problem     string     `json:"problem,omitempty"`
+	// Launchable is false when Problem is set (an invalid or misnamed
+	// recipe) or NotLaunchableReason is (recipe.NotYetRunnable): a routing
+	// skill must not pick a recipe this is false for.
+	Launchable bool `json:"launchable"`
+	// NotLaunchableReason is recipe.NotYetRunnable's reason a valid recipe
+	// still can't be launched (a check step or mode: review no runner
+	// executes yet), "" when there is none. Remove this field, and the
+	// guard it reflects, once that runner work lands (Tasks 11 and 12 of
+	// the generic-tool plan).
+	NotLaunchableReason string `json:"not_launchable_reason,omitempty"`
+	ShadowedBy          string `json:"shadowed_by,omitempty"`
+	Problem             string `json:"problem,omitempty"`
 }
 
 // stepView is one of a recipe's steps, for recipes ls --verbose and --json.
@@ -147,7 +157,12 @@ func listRecipes(ctx context.Context, env *cloudEnv, root string, now time.Time)
 			r.Description = rcp.Description
 			r.UseWhen = rcp.UseWhen
 			r.Steps = stepViews(rcp.Steps)
+			r.NotLaunchableReason = recipe.NotYetRunnable(rcp)
+			if r.UseWhen == "" && src != recipe.SourceCatalog {
+				notes = append(notes, fmt.Sprintf("%s recipe %s has no use_when; the routing skill matches on use_when, add one", src, name))
+			}
 		}
+		r.Launchable = r.Problem == "" && r.NotLaunchableReason == ""
 		return r
 	}
 	var repo []recipeRow
@@ -207,6 +222,42 @@ func listRecipes(ctx context.Context, env *cloudEnv, root string, now time.Time)
 	return rows, notes, nil
 }
 
+// writeRecipesTable writes rows as fugaro recipes ls's human-readable
+// table to w: NAME, SOURCE and DESCRIPTION columns, plus, when verbose, a
+// "use when:" and a "steps:" line per recipe, tab-aligned under the same
+// columns so a verbose block never breaks the table into one piece per row.
+//
+// Every field here is untrusted (a project recipe is anyone-with-
+// bucket-write's text in the runs bucket): recipe.Parse already refuses a
+// control, bidi or invisible character in name, description and use_when
+// (recipe.hasControlChar), but this is a second, independent layer that
+// must escape such a character on its own, not rely on the parser never
+// changing or never having parsed the text in the first place (a repo
+// recipe's steps summary, for instance, is built from already-parsed data
+// that never passes through this function's own escaping otherwise).
+func writeRecipesTable(w io.Writer, rows []recipeRow, verbose bool) error {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "NAME\tSOURCE\tDESCRIPTION")
+	for _, r := range rows {
+		name := pluginwire.Printable(r.Name)
+		src, desc := r.Source, r.Description
+		if r.ShadowedBy != "" {
+			src += " (shadowed by " + r.ShadowedBy + ")"
+		}
+		if r.Problem != "" {
+			desc = "INVALID: " + r.Problem
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", name, src, oneLine(pluginwire.Printable(desc)))
+		if verbose && r.Problem == "" {
+			if r.UseWhen != "" {
+				fmt.Fprintf(tw, "\t\tuse when: %s\n", oneLine(pluginwire.PrintableN(r.UseWhen, recipe.MaxUseWhen)))
+			}
+			fmt.Fprintf(tw, "\t\tsteps: %s\n", oneLine(pluginwire.Printable(stepsSummary(r.Steps))))
+		}
+	}
+	return tw.Flush()
+}
+
 func newRecipesLsCmd() *cobra.Command {
 	var o cloudOptions
 	var asJSON, verbose bool
@@ -233,25 +284,7 @@ func newRecipesLsCmd() *cobra.Command {
 			for _, n := range notes {
 				fmt.Fprintf(cmd.ErrOrStderr(), "note: %s\n", pluginwire.Printable(n))
 			}
-			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "NAME\tSOURCE\tDESCRIPTION")
-			for _, r := range rows {
-				src, desc := r.Source, r.Description
-				if r.ShadowedBy != "" {
-					src += " (shadowed by " + r.ShadowedBy + ")"
-				}
-				if r.Problem != "" {
-					desc = "INVALID: " + r.Problem
-				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\n", r.Name, src, oneLine(pluginwire.Printable(desc)))
-				if verbose && r.Problem == "" {
-					if r.UseWhen != "" {
-						fmt.Fprintf(tw, "    use when: %s\n", oneLine(pluginwire.Printable(r.UseWhen)))
-					}
-					fmt.Fprintf(tw, "    steps: %s\n", oneLine(pluginwire.Printable(stepsSummary(r.Steps))))
-				}
-			}
-			return tw.Flush()
+			return writeRecipesTable(cmd.OutOrStdout(), rows, verbose)
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
