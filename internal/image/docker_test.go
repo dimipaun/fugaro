@@ -300,6 +300,34 @@ workflows:
 	}
 }
 
+// The acceptance criterion (design base-image.md): a project with Node and
+// Python in mise.toml builds on the base, its image passes the selftest,
+// mise-tools included, and its tests run on the declared versions.
+func TestSampleProjectNodePythonOnTheBase(t *testing.T) {
+	base := testutil.BaseImageOf(t, "base")
+	testutil.IsolateGit(t)
+	files := map[string]string{
+		"mise.toml":         "[tools]\nnode = \"24.21.0\"\npython = \"3.12\"\n",
+		"package.json":      `{"name":"sample","version":"1.0.0","private":true,"scripts":{"test":"node test.js"}}`,
+		"package-lock.json": `{"name":"sample","version":"1.0.0","lockfileVersion":3,"requires":true,"packages":{"":{"name":"sample","version":"1.0.0"}}}`,
+		"test.js":           `if (!process.version.startsWith("v24.21.")) { console.error("node " + process.version); process.exit(1) }` + "\n",
+		"test_sample.py":    "import sys\nassert sys.version_info[:2] == (3, 12), sys.version\n",
+		"fugaro.yaml": `version: 1
+project: aurora
+git: { provider: github }
+workflows:
+  app:
+    commands: { build: node --version && python3 --version, test: npm test && python3 test_sample.py }
+`,
+	}
+	res := buildImage(t, checkout(t, files), base, "fugaro-test-sample:local")
+	for _, name := range []string{"mise-tools", "tool:mise", "tool:claude", "verify-build"} {
+		if c := smokeCheck(res, name); !c.OK {
+			t.Errorf("%s: %+v", name, c)
+		}
+	}
+}
+
 func untar(t *testing.T, data []byte) map[string]string {
 	t.Helper()
 	files := map[string]string{}

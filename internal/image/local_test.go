@@ -345,3 +345,39 @@ func TestDefaultTag(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildLocalPassesThePlatformToSelftest(t *testing.T) {
+	root, cfg := localFixture(t)
+	f := &fakeDocker{t: t, report: &Report{Passed: true, Checks: []Check{{Name: "claude", OK: true}}}}
+	var log bytes.Buffer
+	o := localOptions(root, cfg, f, &log)
+	o.Platform = "linux/arm64"
+	if _, err := BuildLocal(context.Background(), o); err != nil {
+		t.Fatalf("%v\n%s", err, log.String())
+	}
+	if !slices.Contains(f.builds[0], "linux/arm64") {
+		t.Errorf("build: %q", f.builds[0])
+	}
+	for i, r := range f.runs {
+		if !slices.Contains(r, "linux/arm64") {
+			t.Errorf("selftest run %d lacks the platform: %q", i, r)
+		}
+	}
+}
+
+// TestBuildLocalSpecOnTheBase pins localSelftestSpec, the helper BuildLocal
+// calls to build the smoke step's SelftestSpec, as a direct unit test of
+// that helper. The full round trip (a workflow with no base: through
+// BuildLocal's smoke step) needs a Docker daemon and is pinned by
+// TestSampleProjectNodePythonOnTheBase in docker_test.go.
+func TestBuildLocalSpecOnTheBase(t *testing.T) {
+	res := &LocalResult{Commit: "c0ffee", Origin: "https://github.com/acme/app.git"}
+	base := localSelftestSpec(config.Workflow{}, res)
+	if base.Tools != "critical" || !base.Mise || base.Node != "" || base.Base != config.BaseKind {
+		t.Errorf("base: spec = %+v", base)
+	}
+	web := localSelftestSpec(config.Workflow{Base: "web-node", Image: config.Image{Node: "24"}}, res)
+	if web.Tools != "" || web.Mise || web.Node != "24" {
+		t.Errorf("web-node: spec = %+v", web)
+	}
+}
