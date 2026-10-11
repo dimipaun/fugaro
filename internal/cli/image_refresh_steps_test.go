@@ -137,6 +137,49 @@ func TestRefreshBaseStepNeverReplacesCustomBase(t *testing.T) {
 	}
 }
 
+// implicitBaseRefreshYAML is refreshYAML's checkout with one workflow that
+// has no base: (the implicit Fugaro base).
+const implicitBaseRefreshYAML = "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n" +
+	"  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+
+// Today's installations have no fugaro-base image published yet (the base
+// image's own release and publish pipeline is a later task): fugaro image
+// refresh's base step (step 2) on a checkout whose workflow has no base:
+// must refuse with a clear error naming the missing image and saying it has
+// no published image, write nothing to the local config or the registry,
+// and never reach the builds step: runImageRefresh returns at
+// refreshStopped(2, ...) when step 2 fails, before s.builds (step 4) is
+// ever called, so the fake builder sees no submission.
+//
+// Mutation (run, restore): publish "fugaro-base" on the fake source
+// registry (letting the copy proceed, as it would once the base image is
+// actually published), and this test's assertions fail: the base step
+// succeeds, base_images.base is recorded, and the image is copied.
+func TestRefreshBaseStepRefusesWhenFugaroBaseIsNotPublished(t *testing.T) {
+	r := newImagesRig(t, "1.2.3")
+	delete(r.src.tags, "dimipaun/fugaro-base:1.2.3")
+	t.Chdir(repoCheckout(t, githubOrigin, implicitBaseRefreshYAML))
+	fb := useFakeBuilder(t)
+	e := rigEngine(t, r.initRig, &initOptions{})
+	out := atTerminal(t, e, initProjectName+"\n")
+	err := e.r.refreshBase(t.Context(), e, []string{"base"})
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out.String())
+	}
+	if !strings.Contains(err.Error(), "fugaro-base") || !strings.Contains(err.Error(), "no published image") {
+		t.Fatalf("err = %v, want it to name the missing image and say it has no published image", err)
+	}
+	if r.dst.puts != 0 {
+		t.Errorf("the registry was written to: %d puts", r.dst.puts)
+	}
+	if got := r.localConfig(t).BaseImages["base"]; got != "" {
+		t.Errorf("base_images.base was recorded: %s", got)
+	}
+	if len(fb.specs) != 0 {
+		t.Errorf("a build was submitted: %+v", fb.specs)
+	}
+}
+
 // refreshReload re-reads the local config the base step wrote (not the
 // plan's own, now-stale copy) and re-resolves the checkout's config
 // strictly against it (decision L16: this leads to a billable Cloud Build

@@ -84,6 +84,23 @@ func TestImagePredates(t *testing.T) {
 	}
 }
 
+// A workflow with no base: (the implicit Fugaro base) is seen by the anchor
+// health check as "base", not as an unknown/empty kind: gcpProjectProblems
+// skips the custom-base and stale-base checks entirely for a kind not in
+// config.Bases (bases[wf], customBase := ...; if
+// !slices.Contains(config.Bases, kind) { kind = "" }), so an implicit-base
+// workflow must come out of workflowBases as "base" to be checked at all.
+//
+// Mutation (run, restore): change workflowBases' m[name] = w.BaseKind() back
+// to w.Base, and this test fails: m["app"] is "" instead of "base".
+func TestWorkflowBasesSeesTheImplicitBaseKind(t *testing.T) {
+	cfg := &config.Config{Workflows: map[string]config.Workflow{"app": {}, "api": {Base: "go"}}}
+	m := workflowBases(cfg, nil)
+	if m["app"] != config.BaseKind || m["api"] != "go" {
+		t.Fatalf("workflowBases = %v, want app: %s, api: go", m, config.BaseKind)
+	}
+}
+
 // anchorRig is a checkout whose fugaro.yaml the repository stage edits, with
 // a fake runs bucket holding build records.
 func anchorRig(t *testing.T, lc *localcfg.Config, yaml, stdin string) (*repositoryStage, *syncBuf, string) {

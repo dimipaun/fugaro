@@ -111,6 +111,29 @@ func TestRunAgentRecipeTriggersImageCheck(t *testing.T) {
 	}
 }
 
+// A workflow with no base: (the implicit Fugaro base) is named as "base" in
+// the recipe-image refusal, not left unnamed: runRun resolves kind through
+// w.BaseKind(), not the raw (empty) w.Base field.
+//
+// Mutation (run, restore): change runRun's `kind = w.BaseKind()` back to
+// `kind = w.Base`, and this test fails: the refusal says "it copies this
+// release's base image" (the no-kind-known wording) instead of "it copies
+// this release's base base image" (kind "base" named explicitly).
+func TestRunRecipeImageNamesTheImplicitBaseKind(t *testing.T) {
+	f := newCloudFixture(t)
+	testutil.IsolateGit(t)
+	f.run.AddJob(gcp.JobName(mustSlug("github", "acme/other"), "svc"), "2", "4Gi")
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nagent:\n  auth: api-key\n  recipe: claude-solo\n" +
+		"workflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n"})
+	t.Chdir(dir)
+	other := mustSlug("github", "acme/other")
+	writeBuildRecord(t, f, other, "svc", "ghcr.io/dimipaun/fugaro-base:0.4.0")
+	wantRefused(t, f, "it copies this release's base base image", "run", "--run-id", "20261007-100000-abcd", "A task")
+}
+
 func TestRunRepoRecipeFromCheckout(t *testing.T) {
 	f := newCloudFixture(t)
 	recipeCheckout(t, f, "", map[string]string{".fugaro/recipes/mine.yaml": "version: 1\nname: mine\nsteps:\n  - review: { max_rounds: 1 }\n"})

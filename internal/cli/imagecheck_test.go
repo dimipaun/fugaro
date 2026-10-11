@@ -1009,6 +1009,33 @@ func TestCheckJobResolvesSpecWithAKindAddedSinceInstall(t *testing.T) {
 	}
 }
 
+// A workflow with no base: (the implicit Fugaro base) added to fugaro.yaml
+// after the job was installed is back-filled under the "base" key, like
+// TestCheckJobResolvesSpecWithAKindAddedSinceInstall pins for an explicit
+// kind, not under the empty-string key.
+//
+// Mutation (run, restore): change repoSpec's `kind := w.BaseKind()` back to
+// `kind := w.Base`, and this test fails: the local config's base_images has
+// no "base" entry (the back-fill wrote to base_images[""] instead).
+func TestCheckJobBackfillsTheImplicitBaseKind(t *testing.T) {
+	newCheckJob(t, checkFiles(), bitbucketYAML)
+	e, err := readJobEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, problems := config.Parse([]byte(bitbucketYAML + "  server: { commands: { build: make, test: make test } }\n"))
+	if len(problems) > 0 {
+		t.Fatal(problems)
+	}
+	_, lc, err := e.repoSpec(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lc.BaseImages["base"] == "" {
+		t.Fatalf("base_images = %v, want a stand-in under base", lc.BaseImages)
+	}
+}
+
 // executeJob runs a command as the Cloud Run check job does: its environment
 // names the job.
 func executeJob(t *testing.T, args ...string) (string, string, error) {
