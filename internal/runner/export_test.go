@@ -37,6 +37,20 @@ func SetSlowRestore(t *testing.T) {
 	t.Cleanup(func() { restoreCache = prev })
 }
 
+// CountRestoreCacheCalls makes every cache restore for the rest of t
+// increment the returned counter before running as usual, so a test can
+// assert restoreCaches never even attempted one (review mode, lockcache.go).
+func CountRestoreCacheCalls(t *testing.T) *int {
+	prev := restoreCache
+	n := 0
+	restoreCache = func(ctx context.Context, s *cache.Store, key string, roots []string) (bool, error) {
+		n++
+		return prev(ctx, s, key, roots)
+	}
+	t.Cleanup(func() { restoreCache = prev })
+	return &n
+}
+
 // SetCreateRecord replaces the runner's create-if-absent record write for
 // the rest of t.
 func SetCreateRecord(t *testing.T, f func(s *runstore.Store, ctx context.Context, rec *runstore.Record) error) {

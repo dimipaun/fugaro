@@ -1000,9 +1000,19 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}); err != nil {
 		return fmt.Errorf("writing verify settings: %w", err)
 	}
-	secretEnvs := make([]string, len(wf.Secrets))
-	for i, s := range wf.Secrets {
-		secretEnvs[i] = s.Env
+	// A review run's agent gets none of the workflow's secrets (design
+	// generic-tool §3.6, G12): it runs a reviewed pull request's own,
+	// untrusted checkout and prompt (a hook, an auto-loaded CLAUDE.md), so
+	// a workflow secret in its environment would be reachable by that
+	// code. The model credential it still needs (cfg.Agent.Auth, below)
+	// is the one exception, and stays reachable by fork code behind
+	// review.allow_forks: that is the residual risk the design accepts.
+	var secretEnvs []string
+	if !r.review {
+		secretEnvs = make([]string, len(wf.Secrets))
+		for i, s := range wf.Secrets {
+			secretEnvs[i] = s.Env
+		}
 	}
 	// Claude Code's Bash tool defaults to a 2-minute timeout (10 minutes at
 	// most), which would kill a long `fugaro verify` long before

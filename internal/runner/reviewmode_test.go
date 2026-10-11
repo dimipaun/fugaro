@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -133,6 +135,63 @@ func TestReviewModeAgentHasNoGitToken(t *testing.T) {
 	}
 }
 
+// TestReviewModeAgentHasNoWorkflowSecrets: a review run's agent sees none
+// of wf.Secrets (design generic-tool §3.6, G12): it runs a reviewed pull
+// request's own prompt and checkout (a hook, an auto-loaded CLAUDE.md),
+// which must never reach a workflow secret meant for commands.build/test.
+// The model credential the agent still needs (cfg.Agent.Auth) is not one
+// of these and is unaffected — that residual reachability is the design's
+// own accepted risk behind review.allow_forks, not this guard's job.
+// followUpYAML's second secret (PLANTED_SECRET) proves this isn't special
+// to the fixture's own fixture-fails/FIXTURE_FAILS_FILE pair. A plain
+// (non-review) run still gets both, proving the guard is specific to
+// review mode, not a general regression.
+//
+// Mutation (drop the `if !r.review` guard around secretEnvs in runner.go):
+// the review-mode half of this test fails, finding FIXTURE_FAILS_FILE (and
+// PLANTED_SECRET) in the agent's environment.
+func TestReviewModeAgentHasNoWorkflowSecrets(t *testing.T) {
+	cfg := followUpYAML(t, "")
+	t.Run("review mode", func(t *testing.T) {
+		h := newHarness(t, cfg, reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+		h.deps.Env = append(h.deps.Env, "PLANTED_SECRET="+plantedSecret)
+		pushReviewBranch(t, h, "feature", func(dir string) {
+			testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+		})
+		addPR(h, 7, "feature", "")
+		var envAtReview []string
+		capture := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			envAtReview = req.Env
+			return review("ship", 0)(t, ctx, req)
+		}
+		if _, err := h.run(t, capture); err != nil {
+			t.Fatal(err)
+		}
+		for _, k := range []string{"FIXTURE_FAILS_FILE", "PLANTED_SECRET"} {
+			if envValue(envAtReview, k) != "" {
+				t.Errorf("review-mode agent has workflow secret %s", k)
+			}
+		}
+	})
+	t.Run("ordinary run still gets them", func(t *testing.T) {
+		h := newHarness(t, cfg, nil)
+		h.deps.Env = append(h.deps.Env, "PLANTED_SECRET="+plantedSecret)
+		var envAtImplement []string
+		capture := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			envAtImplement = req.Env
+			return implement("feature")(t, ctx, req)
+		}
+		if _, err := h.run(t, capture, review("ship", 0)); err != nil {
+			t.Fatal(err)
+		}
+		for _, k := range []string{"FIXTURE_FAILS_FILE", "PLANTED_SECRET"} {
+			if envValue(envAtImplement, k) == "" {
+				t.Errorf("ordinary run's agent is missing workflow secret %s", k)
+			}
+		}
+	})
+}
+
 // TestReviewModeRefusesForkWithoutOptIn: a pull request whose head is in a
 // fork is refused unless the base branch's fugaro.yaml sets
 // review.allow_forks: true (design generic-tool §3.6, G12); with it set,
@@ -189,6 +248,56 @@ func TestReviewModeLeavesDraftState(t *testing.T) {
 		if c.Op == "UpdatePR" || c.Op == "EnsurePR" {
 			t.Fatalf("review mode wrote to the pull request: %+v", c)
 		}
+	}
+}
+
+// TestReviewModeNeverTouchesCache: a review run's checkout (CheckoutDetached)
+// is a reviewed pull request's own, untrusted even past the fork and open
+// checks — it must never be fed into restoreCaches (which would let a
+// fork's checkout restore whatever a trusted run cached under the same
+// key) and must never write one back either (which would let a fork plant
+// files under the key its own lockfile computes, poisoning the cache for
+// every later trusted run that computes the same key). cacheYAML's key
+// file is README.md, which the "fork" branch changes, so this run would
+// compute a key of its own if it ever looked; its cache path
+// (~/.fugaro-test-cache) already holds a planted file, so there is
+// something for a writeback to find if it ever ran.
+//
+// Mutation (drop the `|| r.review` from restoreCaches' guard): this test
+// fails, finding restoreCache called. writeback's own `&& !r.review` guard
+// is not independently exercised by this test: restoreCaches' guard alone
+// already keeps r.caches empty for a review run, so writeback's loop never
+// runs regardless of its own guard; it is kept anyway as defense in depth
+// (so the two can never silently drift apart if restoreCaches' guard is
+// ever loosened), documented as inert rather than claimed as tested.
+func TestReviewModeNeverTouchesCache(t *testing.T) {
+	restores := runner.CountRestoreCacheCalls(t)
+	h := newHarness(t, cacheYAML, reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	withBucket(h)
+	home := envValue(h.deps.Env, "HOME")
+	cacheDir := filepath.Join(home, ".fugaro-test-cache")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "planted"), []byte("payload a fork checkout would plant\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pushReviewBranch(t, h, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"README.md": "a different lockfile, from the fork\n"})
+	})
+	addPR(h, 7, "feature", "")
+	rec, err := h.run(t, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Outcome != runstore.OutcomeReviewed {
+		t.Fatalf("rec = %+v", rec)
+	}
+	if n := cacheArchives(t, h); n != 0 {
+		t.Fatalf("%d cache archives written during review mode", n)
+	}
+	if *restores != 0 {
+		t.Fatalf("restoreCache was called %d times during review mode, want 0: a review run must never restore a trusted cache into a reviewed pull request's checkout either", *restores)
 	}
 }
 
