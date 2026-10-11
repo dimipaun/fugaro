@@ -501,6 +501,66 @@ func TestCheckJobNeedsItsSpec(t *testing.T) {
 	}
 }
 
+// TestCheckedWorkflowsExcludesClone pins checkedWorkflows's own rule
+// directly: a checkout: clone workflow is never checked, whatever its
+// rebuild.check says; one with rebuild.check: off still isn't either, and
+// an ordinary workflow still is.
+//
+// Mutation (run, restore): change `w.Checkout != config.CheckoutClone &&
+// w.Rebuild...` to drop the Checkout clause — this test then fails: "web"
+// (checkout: clone) joins "api" in the result.
+func TestCheckedWorkflowsExcludesClone(t *testing.T) {
+	cfg := &config.Config{Workflows: map[string]config.Workflow{
+		"web": {Checkout: config.CheckoutClone},
+		"api": {},
+		"off": {Rebuild: config.Rebuild{Check: "off"}},
+	}}
+	if got, want := checkedWorkflows(cfg), []string{"api"}; !slices.Equal(got, want) {
+		t.Fatalf("checkedWorkflows = %v, want %v", got, want)
+	}
+}
+
+// TestLocalCheckRefusesCloneWorkflowFlag: fugaro image check --workflow
+// naming a checkout: clone workflow is refused (it has no image to check
+// or rebuild), even though checkedWorkflows already excludes it from the
+// default run; an ordinary workflow named the same way still works.
+//
+// Mutation (run, restore): remove the `if w.Checkout == config.CheckoutClone`
+// guard in runImageCheckLocal's --workflow handling — this test's first
+// case then fails: --workflow web proceeds into evaluate/Decide instead of
+// refusing, and the error (if any) no longer contains "checkout: clone".
+func TestLocalCheckRefusesCloneWorkflowFlag(t *testing.T) {
+	files := checkFiles()
+	files["fugaro.yaml"] = bitbucketYAML + "  web: { checkout: clone, commands: { build: \"true\", test: \"true\" } }\n"
+	f := checkRemote(t, files)
+	f.hookCheck(t)
+	dir := filepath.Join(t.TempDir(), "app")
+	testutil.Git(t, filepath.Dir(dir), "clone", "--quiet", checkRepoURL, dir)
+	testutil.Git(t, dir, "remote", "set-url", "origin", checkRepoURL)
+	t.Chdir(dir)
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	old := checkLocalEnv
+	t.Cleanup(func() { checkLocalEnv = old })
+	checkLocalEnv = func() []string { return append(os.Environ(), "GIT_CONFIG_GLOBAL="+f.gitCfg) }
+	cf := newCloudFixture(t, "cloud_build: "+f.fb.URL+"/")
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(string(data), "provider: github", "provider: bitbucket", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cf.appendConfig(t, "base_images: {web-node: "+checkBase+", base: "+checkBase+"}\n")
+
+	if _, _, err := execute(t, "image", "check", "--workflow", "web"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "checkout: clone") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	if out, _, err := execute(t, "image", "check", "--workflow", "app"); err != nil || !strings.Contains(out, "app:") {
+		t.Fatalf("app: %v\n%s", err, out)
+	}
+}
+
 func TestCheckNotInstalledWorkflow(t *testing.T) {
 	// Head has a second daily workflow the installed job doesn't know.
 	files := checkFiles()
