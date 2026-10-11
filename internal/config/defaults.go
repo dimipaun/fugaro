@@ -7,12 +7,9 @@ import "time"
 // base_images.
 const BaseKind = "base"
 
-// MigrationDoc is the guide every refusal of a removed base setting names.
-// docs/base-image-migration.md is the 0.7.0 hard-cut task's own deliverable
-// (design/base-image.md §10) and does not exist until that task lands;
-// until then this points at the design doc that already carries the same
-// guidance, so the refusal names a real file.
-const MigrationDoc = "docs/design/base-image.md"
+// MigrationDoc is the guide every refusal of a removed base setting names
+// (design/base-image.md §10).
+const MigrationDoc = "docs/base-image-migration.md"
 
 // Bases are the base kinds: BaseKind and, until the 0.7.0 cut, the legacy
 // kinds a workflow's base: may still name.
