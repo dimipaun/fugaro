@@ -219,7 +219,7 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 	}
 	set := map[string]bool{}
 	for _, w := range wfs {
-		set[cfg.Workflows[w].Base] = true
+		set[cfg.Workflows[w].BaseKind()] = true
 	}
 	kinds := slices.Sorted(maps.Keys(set))
 	host, err := infra.RegistryHost(lc)
@@ -250,7 +250,7 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 		}
 	}
 	for _, w := range wfs {
-		kind := cfg.Workflows[w].Base
+		kind := cfg.Workflows[w].BaseKind()
 		rec, err := readRefreshRecord(ctx, lc, slug, w)
 		if err != nil {
 			return nil, err

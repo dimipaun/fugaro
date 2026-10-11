@@ -121,8 +121,8 @@ func (s *imagesStage) kinds(ctx context.Context) []string {
 	}
 	if _, cfg, err := loadCheckoutConfigAt(ctx, "."); err == nil && cfg != nil {
 		for _, w := range cfg.Workflows {
-			if slices.Contains(config.Bases, w.Base) {
-				set[w.Base] = true
+			if k := w.BaseKind(); slices.Contains(config.Bases, k) {
+				set[k] = true
 			}
 		}
 	}
