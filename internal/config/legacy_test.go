@@ -29,6 +29,34 @@ func TestLegacyImageNodeAndJDKRefused(t *testing.T) {
 	}
 }
 
+// TestLegacyImageNodeAndJDKEchoIsBounded pins that the legacy value these
+// refusals echo is bounded in length and stripped of control, Cf and
+// line-separator characters (U+2028/2029): image.node and image.jdk reach
+// this from a project layer's profile, which is other repositories' text,
+// so an unbounded, unescaped echo would let one profile fill another
+// repository's `fugaro validate` output or a dashboard.
+func TestLegacyImageNodeAndJDKEchoIsBounded(t *testing.T) {
+	long := strings.Repeat("9", 3000)
+	y := strings.Replace(baseYAML, "    commands:", "    image: { node: \""+long+"\" }\n    commands:", 1)
+	_, problems := Parse([]byte(y))
+	if len(problems) != 1 {
+		t.Fatalf("image.node: %v", problems)
+	}
+	if strings.Contains(problems[0].Message, long) {
+		t.Errorf("image.node: echoed the full %d-byte value", len(long))
+	}
+	if len(problems[0].Message) >= len(long) {
+		t.Errorf("image.node: message (%d bytes) is not bounded: %v", len(problems[0].Message), problems[0])
+	}
+
+	bidi := "24‮"
+	y = strings.Replace(baseYAML, "    commands:", "    image: { jdk: \""+bidi+"\" }\n    commands:", 1)
+	_, problems = Parse([]byte(y))
+	if len(problems) != 1 || strings.Contains(problems[0].Message, bidi) || !strings.Contains(problems[0].Message, "202e") {
+		t.Errorf("image.jdk: %v, want the bidi character escaped", problems)
+	}
+}
+
 func TestLintNamesTheMigrationDocForALegacyFrom(t *testing.T) {
 	df := []byte("FROM ghcr.io/dimipaun/fugaro-web-node:0.6.0\nRUN git clone x /work/repo\n")
 	msgs := LintDockerfile(df)

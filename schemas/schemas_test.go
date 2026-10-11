@@ -89,6 +89,69 @@ func TestFugaroSchemaCorpus(t *testing.T) {
 	}
 }
 
+// schemaDescriptionAt walks file's raw JSON (not through the jsonschema
+// compiler, which drops "description") down path and returns the
+// "description" string at the end of it.
+func schemaDescriptionAt(t *testing.T, file string, path ...string) string {
+	t.Helper()
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var node any = doc
+	for _, key := range path {
+		m, ok := node.(map[string]any)
+		if !ok {
+			t.Fatalf("%s: %v: not an object at %q", file, path, key)
+		}
+		node, ok = m[key]
+		if !ok {
+			t.Fatalf("%s: %v: missing %q", file, path, key)
+		}
+	}
+	m, ok := node.(map[string]any)
+	if !ok {
+		t.Fatalf("%s: %v: not an object", file, path)
+	}
+	desc, _ := m["description"].(string)
+	return desc
+}
+
+// TestSchemaDescriptionsNameMigrationDoc pins that every removed-key
+// description in both schemas (base, image.node and image.jdk, in
+// fugaro.schema.json and in project-layer.schema.json) names
+// config.MigrationDoc, the same doc every Go-side refusal message names
+// (internal/config/validate.go, image.go, layer.go, dockerfile.go): a later
+// change to the constant, or an edit to only one of the two schema files,
+// is caught here instead of quietly drifting into a stale doc link. It also
+// pins that the doc itself exists, so the constant can never name a dead
+// file again.
+func TestSchemaDescriptionsNameMigrationDoc(t *testing.T) {
+	if _, err := os.Stat("../" + config.MigrationDoc); err != nil {
+		t.Fatalf("config.MigrationDoc names %s, which does not exist: %v", config.MigrationDoc, err)
+	}
+	for _, tc := range []struct {
+		file string
+		path []string
+	}{
+		{"fugaro.schema.json", []string{"$defs", "workflow", "properties", "base"}},
+		{"fugaro.schema.json", []string{"$defs", "workflow", "properties", "image", "properties", "node"}},
+		{"fugaro.schema.json", []string{"$defs", "workflow", "properties", "image", "properties", "jdk"}},
+		{"project-layer.schema.json", []string{"$defs", "profile", "properties", "base"}},
+		{"project-layer.schema.json", []string{"$defs", "profile", "properties", "image", "properties", "node"}},
+		{"project-layer.schema.json", []string{"$defs", "profile", "properties", "image", "properties", "jdk"}},
+	} {
+		desc := schemaDescriptionAt(t, tc.file, tc.path...)
+		if !strings.Contains(desc, config.MigrationDoc) {
+			t.Errorf("%s %v: description %q does not name config.MigrationDoc (%s)", tc.file, tc.path, desc, config.MigrationDoc)
+		}
+	}
+}
+
 func TestSchemaBudgetBlock(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	base := "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  s: { commands: { build: make, test: make } }\n"

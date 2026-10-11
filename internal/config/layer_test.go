@@ -146,6 +146,37 @@ func TestParseProjectLayerRefuses(t *testing.T) {
 	}
 }
 
+// TestProjectLayerRefusesLegacyBaseEvenIfNoWorkflowUsesTheProfile pins that
+// a profile's own base: or image.node is refused by ParseProjectLayer
+// itself (the check a publish, fugaro config publish, runs before a
+// profile ever reaches the shared bucket), not only later, when some
+// repository's Resolve happens to select the profile through a workflow's
+// profile: key. TestParseProjectLayerRefuses's "a bad base" case only
+// proves an arbitrary bad value (java-17) is refused; this proves a value
+// that was a real, accepted base kind before the 0.7.0 cut (go) is refused
+// the same way, with no workflow anywhere naming the profile.
+func TestProjectLayerRefusesLegacyBaseEvenIfNoWorkflowUsesTheProfile(t *testing.T) {
+	a := LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
+	for _, tc := range []struct{ name, text, want string }{
+		{"base: go", "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  unused:\n    base: go\n    commands: { build: make, test: make test }\n", "profiles.unused.base: base: was removed in 0.7.0"},
+		{"image.node", "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  unused:\n    image: { node: \"24\" }\n    commands: { build: make, test: make test }\n", "profiles.unused.image.node: was removed in 0.7.0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l, ps := ParseProjectLayer([]byte(tc.text), a)
+			if l != nil {
+				t.Fatal("expected no layer when a profile is invalid")
+			}
+			var msgs []string
+			for _, p := range ps {
+				msgs = append(msgs, p.String())
+			}
+			if got := strings.Join(msgs, "; "); !strings.Contains(got, tc.want) {
+				t.Fatalf("problems %q, want one containing %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // layerProblems is the problems of text, joined, as a caller prints them.
 func layerProblems(t *testing.T, text string) string {
 	t.Helper()

@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
 var (
@@ -97,10 +99,10 @@ func validateImage(p string, w Workflow) []Problem {
 		add(p+".dockerfile", "image and dockerfile are mutually exclusive; move the image settings into the Dockerfile")
 	}
 	if img.Node != "" {
-		add(p+".image.node", "was removed in 0.7.0: declare node in mise.toml ([tools] node = %q) or in image.tools (%s)", img.Node, MigrationDoc)
+		add(p+".image.node", "was removed in 0.7.0: declare node in mise.toml ([tools] node = %q) or in image.tools (%s)", pluginwire.Printable(img.Node), MigrationDoc)
 	}
 	if img.JDK != "" {
-		add(p+".image.jdk", "was removed in 0.7.0: declare Java in mise.toml ([tools] java = %q) (%s)", "temurin-"+img.JDK, MigrationDoc)
+		add(p+".image.jdk", "was removed in 0.7.0: declare Java in mise.toml ([tools] java = %q) (%s)", "temurin-"+pluginwire.Printable(img.JDK), MigrationDoc)
 	}
 	for _, name := range sortedKeys(img.Tools) {
 		tp := p + ".image.tools." + name
