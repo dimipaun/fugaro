@@ -342,10 +342,10 @@ secrets stage is behind the same gate.`,
 	f.StringVar(&o.runsBucket, "runs-bucket", "", "the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>)")
 	f.StringVar(&o.stateBucket, "state-bucket", "", "the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>)")
 	f.StringArrayVar(&o.baseImages, "base-image", nil, "a base image the image checks run and builds start from, recorded in the local config under its base kind (repeatable; KIND=IMAGE, or just IMAGE when its repository is named fugaro-<kind>; the kinds you don't name keep theirs)")
-	f.StringSliceVar(&o.baseKinds, "base", nil, "base kinds (go, java-services, web-node) whose release image init copies into the project's registry now, besides the ones the checkout's fugaro.yaml names (comma-separated or repeated)")
+	f.StringSliceVar(&o.baseKinds, "base", nil, "base kinds whose release image init copies into the project's registry now: base (the Fugaro base), or until 0.7.0 go, java-services, web-node; besides the ones the checkout's fugaro.yaml names (comma-separated or repeated)")
 	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release images are copied from (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme)")
-	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "pin the digest of a release image copied by init, KIND=sha256:<hex> (KIND is go, java-services, web-node or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. Without it init trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag")
-	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history, go, java-services or web-node; repeatable): let init replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). It names the intent only: replacing is confirmed by typing the project's name at a real terminal, never by --yes, --non-interactive or --json")
+	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "pin the digest of a release image copied by init, KIND=sha256:<hex> (KIND is base, go, java-services, web-node or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. Without it init trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag")
+	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history, base, go, java-services or web-node; repeatable): let init replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). It names the intent only: replacing is confirmed by typing the project's name at a real terminal, never by --yes, --non-interactive or --json")
 	f.StringArrayVar(&o.launchers, "launcher", nil, "an IAM member who launches and watches runs (repeatable; default: the local config's, and for a new config you, the authenticated user)")
 	f.StringArrayVar(&o.operators, "operator", nil, "an IAM member who onboards repositories (repeatable; default: the local config's, and for a new config you, the authenticated user)")
 	f.Int64Var(&o.budget, "budget", 0, "a monthly budget on the project, in whole units of --budget-currency")
@@ -2410,9 +2410,9 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 	}
 	built := 0
 	for _, name := range names {
-		base := lc.BaseImage(cfg.Workflows[name].Base)
+		base := lc.BaseImage(cfg.Workflows[name].BaseKind())
 		if base == "" {
-			if base, err = image.BaseRef(cfg.Workflows[name].Base, Version); err != nil {
+			if base, err = image.BaseRef(cfg.Workflows[name].BaseKind(), Version); err != nil {
 				return built, userErr("%v", err)
 			}
 		}

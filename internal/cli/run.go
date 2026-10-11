@@ -244,7 +244,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		if co := checkoutConfig(ctx, spec.Repo); co != nil {
 			agentRecipe = co.Agent.Recipe
 			if w, ok := co.Workflows[spec.Workflow]; ok {
-				kind = w.Base
+				kind = w.BaseKind()
 			}
 		}
 		if needsRecipeImage(spec, agentRecipe) {

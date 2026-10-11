@@ -784,7 +784,7 @@ func (c *repoCtx) check(rs RepoSpec, checked []string) (*CheckSpec, error) {
 	bases := map[string]string{}
 	var missing []string
 	for _, name := range checked {
-		kind := c.in.Cfg.Workflows[name].Base
+		kind := c.in.Cfg.Workflows[name].BaseKind()
 		if ref := lc.BaseImage(kind); ref != "" {
 			bases[kind] = ref
 		} else if !slices.Contains(missing, kind) {
@@ -820,7 +820,7 @@ func (c *repoCtx) check(rs RepoSpec, checked []string) (*CheckSpec, error) {
 	env[runner.SecretEnvsVar] = gitEnv
 	return &CheckSpec{
 		Job:             gcp.CheckJobName(c.slug),
-		Image:           bases[c.in.Cfg.Workflows[checked[0]].Base],
+		Image:           bases[c.in.Cfg.Workflows[checked[0]].BaseKind()],
 		SchedulerJob:    gcp.SchedulerJobName(c.slug),
 		SchedulerRegion: region,
 		Schedule:        Schedule(c.slug),

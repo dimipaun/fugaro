@@ -86,8 +86,9 @@ func refreshReload(ctx context.Context, p *refreshPlan) (*refreshTarget, error) 
 		specLC.BaseImages = map[string]string{}
 	}
 	for _, w := range cfg.Workflows {
-		if specLC.BaseImages[w.Base] == "" {
-			if specLC.BaseImages[w.Base], err = image.BaseRef(w.Base, Version); err != nil {
+		kind := w.BaseKind()
+		if specLC.BaseImages[kind] == "" {
+			if specLC.BaseImages[kind], err = image.BaseRef(kind, Version); err != nil {
 				return nil, userErr("%v", err)
 			}
 		}
@@ -233,7 +234,7 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 	}
 	var todo, unrecorded []string
 	for _, wf := range p.workflows {
-		kind := t.cfg.Workflows[wf].Base
+		kind := t.cfg.Workflows[wf].BaseKind()
 		want := t.lc.BaseImage(kind)
 		if want == "" {
 			return userErr("the local config has no base image for kind %s after the base step", kind)
@@ -278,7 +279,7 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 			notes()
 			return builtSoFar(userErr("the build of %s/%s was not confirmed (the project's name was not typed), so it and the builds after it were not submitted", t.spec.Name, wf), built)
 		}
-		if id, err := r.submitAndWait(ctx, b, t.lc, t.cfg, t.spec, wf, t.lc.BaseImage(t.cfg.Workflows[wf].Base)); err != nil {
+		if id, err := r.submitAndWait(ctx, b, t.lc, t.cfg, t.spec, wf, t.lc.BaseImage(t.cfg.Workflows[wf].BaseKind())); err != nil {
 			notes()
 			if id != "" {
 				// Submitted, then the wait failed (Ctrl-C included): the
