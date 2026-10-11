@@ -4,6 +4,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // TestRunRecipeReviewModeWritesReviewPRs: --recipe review-only --pr 7
@@ -127,5 +130,36 @@ func TestRunReviewModeWithoutPR(t *testing.T) {
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--recipe", "review-only", "x")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "mode: review") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// TestRunReviewModeWarnsAllowForksEnabled: a review-mode launch against a
+// local checkout whose fugaro.yaml sets review.allow_forks: true gets a
+// one-line stderr reminder naming the actual exposure (the GitHub App's
+// private key), not just fugaro validate's own warning when the file is
+// edited (TestValidateWarnsAllowForks, validate_test.go) — a launcher may
+// never have run validate on this exact file.
+//
+// Mutation (drop the `if c := checkout(); c != nil && c.Review.AllowForks`
+// block from reviewSpec): this test fails, finding no note on stderr.
+func TestRunReviewModeWarnsAllowForksEnabled(t *testing.T) {
+	f := newCloudFixture(t)
+	testutil.IsolateGit(t)
+	f.run.AddJob(gcp.JobName(mustSlug("github", "acme/other"), "svc"), "2", "4Gi")
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nagent:\n  auth: api-key\n" +
+		"review:\n  allow_forks: true\n" +
+		"workflows:\n  svc: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"})
+	t.Chdir(dir)
+	other := mustSlug("github", "acme/other")
+	writeBuildRecord(t, f, other, "svc", release070)
+	_, errOut, err := execute(t, "run", "--recipe", "review-only", "--pr", "7", "--run-id", "20261007-100000-abcd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut, "note:") || !strings.Contains(errOut, "GitHub App's private key") {
+		t.Fatalf("errOut = %q", errOut)
 	}
 }
