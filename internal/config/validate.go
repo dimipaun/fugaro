@@ -388,7 +388,7 @@ func CheckWarnings(c *Config, root string) []Problem {
 	var ps []Problem
 	for _, name := range sortedKeys(c.Workflows) {
 		w := c.Workflows[name]
-		if w.BaseKind() != BaseKind || w.Dockerfile != "" || len(w.Image.Tools) > 0 {
+		if w.Dockerfile != "" || len(w.Image.Tools) > 0 {
 			continue
 		}
 		if files, err := MiseConfigFiles(root); err == nil && len(files) == 0 {

@@ -29,6 +29,6 @@ profiles:
     timeouts: { total: 2h, stage: 50m, verify: 30m, finalize_reserve: 5m }
     rebuild: { check: daily, max_age: 14d, lockfiles: true, base: true, paths: [build.gradle.kts] }
   node-web:
-    image: { node: "22", skip_build_scripts: true }
+    image: { tools: { node: "22" }, skip_build_scripts: true }
     commands: { build: npm run build, test: npm test }
 default_profile: java-service

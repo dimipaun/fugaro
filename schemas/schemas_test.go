@@ -91,7 +91,7 @@ func TestFugaroSchemaCorpus(t *testing.T) {
 
 func TestSchemaBudgetBlock(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
-	base := "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  s: { base: java-services, commands: { build: make, test: make } }\n"
+	base := "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  s: { commands: { build: make, test: make } }\n"
 	for _, c := range []struct {
 		budget string
 		ok     bool
@@ -242,7 +242,7 @@ func TestResultSchemaImageBlock(t *testing.T) {
 func TestFugaroSchemaReservesTheSameEnv(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	doc := func(env string) []byte {
-		return []byte("version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  server:\n    base: java-services\n" +
+		return []byte("version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  server:\n" +
 			"    commands: { build: make, test: make test }\n    secrets: [{ name: tok, env: " + env + " }]\n")
 	}
 	if err := sch.Validate(yamlInstance(t, doc("NPM_TOKEN"))); err != nil {
@@ -311,7 +311,7 @@ func TestFugaroSchemaReservesTheSameSecretNames(t *testing.T) {
 // are fugaro's to check.
 func TestFugaroSchemaMaxAgeAgreesWithGo(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
-	const base = "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  web:\n    base: web-node\n    commands: { build: npm run build, test: npm test }\n    rebuild: { max_age: "
+	const base = "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  web:\n    commands: { build: npm run build, test: npm test }\n    rebuild: { max_age: "
 	for _, v := range []string{`0`, `"0"`, `0d`, `0s`, `0m`, `0h`, `0h0m`, `"00"`, `1h`, `14d`, `1d12h`, `90d`,
 		`soon`, `""`, `-1h`, `2d-5h`, `"0x"`, `1`, `0d-0h`} {
 		doc := []byte(base + v + " }\n")
@@ -384,7 +384,7 @@ func TestResultSchemaFollowUp(t *testing.T) {
 func TestFugaroSchemaTrustedAgreesWithGo(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	doc := func(provider, trusted string) []byte {
-		return []byte("version: 1\nproject: aurora\ngit: { provider: " + provider + " }\nworkflows:\n  web:\n    base: web-node\n    commands: { build: npm run build, test: npm test }\nfollowup:\n  trusted: " + trusted + "\n")
+		return []byte("version: 1\nproject: aurora\ngit: { provider: " + provider + " }\nworkflows:\n  web:\n    commands: { build: npm run build, test: npm test }\nfollowup:\n  trusted: " + trusted + "\n")
 	}
 	looser := map[string]bool{
 		"github " + `[01234567]`:           true,
@@ -610,26 +610,24 @@ func TestSchemaAcceptsReviewFirstStage(t *testing.T) {
 	}
 }
 
-// The repository's own fugaro.yaml (Fugaro dogfooding itself) must pass the
-// schema, the Go validator and the checkout checks, so a base or command rename
-// can't leave it broken until a run reads it.
+// The repository's own fugaro.yaml (Fugaro dogfooding itself) still reads
+// base: go: deleting it is Task 22's own release-gated step (plan
+// docs/plans/2026-10-08-base-image.md, Task 22 Step 4), run by the owner
+// only after fugaro-base is published and `fugaro image refresh` has moved
+// this checkout onto it. Until then, the schema and the Go parser must
+// agree that base: go is refused, for the same reason, so a schema or
+// parser change that quietly re-admits it is caught here.
 func TestRepositoryFugaroYAML(t *testing.T) {
 	data, err := os.ReadFile("../fugaro.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := compile(t, "fugaro.schema.json").Validate(yamlInstance(t, data)); err != nil {
-		t.Errorf("schema rejects fugaro.yaml: %v", err)
+	if err := compile(t, "fugaro.schema.json").Validate(yamlInstance(t, data)); err == nil {
+		t.Error("schema accepts fugaro.yaml's base: go, removed in 0.7.0")
 	}
-	cfg, problems := config.Parse(data)
-	if len(problems) > 0 {
-		t.Fatalf("fugaro.yaml: %v", problems)
-	}
-	if problems := config.Check(cfg, ".."); len(problems) > 0 {
-		t.Errorf("fugaro.yaml against the checkout: %v", problems)
-	}
-	if w := cfg.Workflows["go"]; cfg.Project != "fugaro" || w.Base != "go" {
-		t.Errorf("project %q, workflow go = %+v", cfg.Project, w)
+	_, problems := config.Parse(data)
+	if len(problems) != 1 || problems[0].Path != "workflows.go.base" || !strings.Contains(problems[0].Message, "removed in 0.7.0") {
+		t.Errorf("fugaro.yaml: problems = %v, want exactly one at workflows.go.base naming the 0.7.0 removal", problems)
 	}
 }
 
@@ -757,7 +755,7 @@ func TestProjectLayerSchemaCorpus(t *testing.T) {
 // worst, never a false negative, so it doesn't need Go to agree.
 func TestProjectLayerSchemaCommandsLintFix(t *testing.T) {
 	sch := compile(t, "project-layer.schema.json")
-	const base = "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  p:\n    base: java-services\n    commands: "
+	const base = "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  p:\n    commands: "
 	for _, c := range []struct {
 		commands string
 		ok       bool

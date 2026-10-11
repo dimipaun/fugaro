@@ -97,15 +97,6 @@ func TestMiseConfigFilesIgnoresASymlinkInConfD(t *testing.T) {
 	}
 }
 
-func TestBaseKind(t *testing.T) {
-	if got := (Workflow{}).BaseKind(); got != BaseKind {
-		t.Errorf("no base: = %q", got)
-	}
-	if got := (Workflow{Base: "go"}).BaseKind(); got != "go" {
-		t.Errorf("base: go = %q", got)
-	}
-}
-
 // TestBadBaseMessageConsistency pins that an unknown base: gives the exact
 // same message at the repo's workflows.*.base (validate.go) and the project
 // layer's profiles.*.base (layer.go): both share the Bases list, and a
@@ -177,10 +168,6 @@ func TestValidateImageTools(t *testing.T) {
 			t.Errorf("%s: problems %q, want %q", tc.image, got, tc.want)
 		}
 	}
-	y := strings.Replace(baseYAML, "    commands:", "    base: web-node\n    image: { tools: { node: \"24\" } }\n    commands:", 1)
-	if _, problems := Parse([]byte(y)); len(problems) == 0 || !strings.Contains(problems[0].Message, "the Fugaro base only") {
-		t.Errorf("tools on web-node: %v", problems)
-	}
 }
 
 func TestValidateRefusesToolsWithARepositoryMiseConfig(t *testing.T) {
@@ -243,16 +230,15 @@ func TestCheckWarningsRedactsTheWorkflowName(t *testing.T) {
 	}
 }
 
-// TestCheckWarningsSkipConditions covers CheckWarnings' three independent
-// skip conditions (a legacy base, a dockerfile:, or image.tools set): each
-// alone must silence the "installs no language runtime" warning that an
-// otherwise-identical Fugaro-base workflow with no mise config gets. It
-// also confirms a MiseConfigFiles error is swallowed (no warning, no
-// panic), which is intentional: CheckWarnings is best-effort, not
-// authoritative (Check is what refuses a config).
+// TestCheckWarningsSkipConditions covers CheckWarnings' two independent skip
+// conditions (a dockerfile:, or image.tools set): each alone must silence
+// the "installs no language runtime" warning that an otherwise-identical
+// workflow with no mise config gets. It also confirms a MiseConfigFiles
+// error is swallowed (no warning, no panic), which is intentional:
+// CheckWarnings is best-effort, not authoritative (Check is what refuses a
+// config).
 func TestCheckWarningsSkipConditions(t *testing.T) {
 	for name, y := range map[string]string{
-		"legacy base": strings.Replace(baseYAML, "    commands:", "    base: web-node\n    commands:", 1),
 		"dockerfile":  strings.Replace(baseYAML, "    commands:", "    dockerfile: .fugaro/app.Dockerfile\n    commands:", 1),
 		"image.tools": strings.Replace(baseYAML, "    commands:", "    image: { tools: { node: \"24\" } }\n    commands:", 1),
 	} {
