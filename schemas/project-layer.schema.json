@@ -85,14 +85,14 @@
       ],
       "properties": {
         "description": { "type": "string", "maxLength": 200, "pattern": "^[^\\r\\n]*$" },
-        "base": { "not": {}, "description": "Removed in 0.7.0: delete it and declare runtimes in mise.toml (docs/base-image-migration.md)" },
+        "base": { "not": {}, "description": "Removed in 0.7.0: delete it and declare runtimes in mise.toml (docs/design/base-image.md)" },
         "checkout": { "enum": ["baked", "clone"] },
         "image": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "node": { "not": {}, "description": "Removed in 0.7.0: declare node in mise.toml ([tools] node = \"24\") or in image.tools (docs/base-image-migration.md)" },
-            "jdk": { "not": {}, "description": "Removed in 0.7.0: declare Java in mise.toml ([tools] java = \"temurin-25\") (docs/base-image-migration.md)" },
+            "node": { "not": {}, "description": "Removed in 0.7.0: declare node in mise.toml ([tools] node = \"24\") or in image.tools (docs/design/base-image.md)" },
+            "jdk": { "not": {}, "description": "Removed in 0.7.0: declare Java in mise.toml ([tools] java = \"temurin-25\") (docs/design/base-image.md)" },
             "skip_build_scripts": { "type": "boolean" },
             "apt": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9+.-]+(=[A-Za-z0-9.+~:-]+)?$" } },
             "setup": { "type": "array", "items": { "type": "string", "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$", "not": { "pattern": "<<|\\\\\\s*$|^[\\s\\v]*[-\\[]" } } },
