@@ -286,6 +286,19 @@ func (r *run) endCancelled(ctx context.Context, reason string) {
 	r.storeEnded(ctx, nil)
 }
 
+// endHalted ends a run whose check gate concluded clean, but a halt (a
+// budget cap, a kill switch, the token cap) was recorded while its commands
+// ran: status halted, outcome none — never succeeded, which would leave an
+// internally contradictory record once the top-level deferred code in
+// Run also carries Record.Halt. finalize, which still runs after, does
+// nothing more (r.skipPR).
+func (r *run) endHalted(ctx context.Context, h *runstore.Halt) {
+	r.rec.Status, r.rec.Outcome, r.rec.Halt = runstore.StatusHalted, runstore.OutcomeNone, h
+	r.rec.Reason = (&HaltError{*h}).Error()
+	r.skipPR = true
+	r.storeEnded(ctx, nil)
+}
+
 // verifyOnce runs a verify record for kind exactly as the agent's own
 // `fugaro verify` would, so the readiness rule (Decide) has an ordinary
 // verified record for the autofix commit a fixed gate just made. A failure

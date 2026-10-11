@@ -218,6 +218,15 @@ func Run(ctx context.Context, o Options) (Record, error) {
 		if o.Rerun {
 			return Record{}, errors.New("--rerun-failed only applies to test")
 		}
+		if strings.TrimSpace(s.Lint) == "" {
+			// Unlike build and test, commands.lint is optional
+			// (config.Validate never requires it): most repositories have
+			// none configured. Running "" through sh -c would exit 0 and
+			// record a bogus pass instead of refusing outright, the same
+			// failure mode gate.go's runAutofix already fails closed
+			// against for an empty commands.fix.
+			return Record{}, errors.New("this repository does not configure commands.lint")
+		}
 		command = s.Lint
 	default:
 		return Record{}, fmt.Errorf("unknown verify kind %q (want build, test or lint)", o.Kind)

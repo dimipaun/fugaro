@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -330,5 +331,79 @@ func TestGateFixTimeoutIsDiscardedAndRed(t *testing.T) {
 	}
 	if p := h.agent.calls[0].Prompt; !strings.Contains(p, "commands.fix timed out") {
 		t.Fatalf("implement prompt = %q", p)
+	}
+}
+
+// TestGateHaltEndsHaltedNotSucceeded: a halt (a budget cap, a kill switch,
+// the token cap) recorded while the check gate's command is running must
+// not be shadowed by a clean gate's own "succeeded": the gate bypasses
+// r.stage(), which is the only place a halt is otherwise re-checked, so a
+// clean conclusion here is the one path that must check it for itself.
+func TestGateHaltEndsHaltedNotSucceeded(t *testing.T) {
+	// A channel, not newHandleBox's plain field: the background goroutine
+	// below must not read the handle until runner.Run has actually sent it
+	// (onNewRun fires on the harness's own goroutine, concurrently with
+	// this one), or it's a data race, not just a timing one.
+	handles := make(chan *runner.RunHandle, 1)
+	runner.OnRun(t, func(h *runner.RunHandle) { handles <- h })
+	cfg := gateCfg(t, "test-and-fix", 2, "touch gate-halt-marker && sleep 2", "", "")
+	h := newHarnessFiles(t, cfg, nil, gateFiles("test-and-fix", testAndFixRecipe))
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		handle := <-handles
+		marker := filepath.Join(h.deps.WorkDir, "gate-halt-marker")
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(marker); err == nil {
+				handle.HaltNow(runCapHalt)
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+	rec, err := h.run(t)
+	<-done
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Outcome != runstore.OutcomeNone || rec.Halt == nil {
+		t.Fatalf("record = %+v", rec)
+	}
+}
+
+// TestGateStageSavedBeforeRunning: the persisted record must show stage
+// "check" while the gate's command runs (potentially a full build, test or
+// lint), the same as every other stage transition in this file pairs its
+// Stage assignment with an immediate save.
+func TestGateStageSavedBeforeRunning(t *testing.T) {
+	cfg := gateCfg(t, "test-and-fix", 2, "touch gate-stage-marker && sleep 1", "", "")
+	h := newHarnessFiles(t, cfg, nil, gateFiles("test-and-fix", testAndFixRecipe))
+	done := make(chan struct{})
+	var sawCheck bool
+	go func() {
+		defer close(done)
+		marker := filepath.Join(h.deps.WorkDir, "gate-stage-marker")
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(marker); err == nil {
+				// r.save(ctx) runs before runGate (which runs this shell
+				// command), so by the time the command has even started —
+				// let alone created this marker — the save has already
+				// completed: no race to win here, just a read.
+				if rec, err := h.store.ReadRecord(context.Background()); err == nil && rec.Stage == "check" {
+					sawCheck = true
+				}
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+	if _, err := h.run(t); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	if !sawCheck {
+		t.Fatal(`the persisted record never showed stage "check" while the gate's command ran`)
 	}
 }

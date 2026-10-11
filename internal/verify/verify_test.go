@@ -98,6 +98,21 @@ func TestLintPassAndFail(t *testing.T) {
 	}
 }
 
+// TestLintRefusesWhenNotConfigured: unlike build and test, commands.lint is
+// optional; running "" through sh -c would exit 0 and record a bogus pass,
+// so KindLint must refuse outright instead, whether commands.lint is unset
+// or only whitespace.
+func TestLintRefusesWhenNotConfigured(t *testing.T) {
+	f := setup(t) // setup never sets Lint: it defaults to ""
+	if _, err := Run(context.Background(), Options{StateDir: f.stateDir, Kind: KindLint, Stdout: io.Discard, Stderr: io.Discard}); err == nil || !strings.Contains(err.Error(), "does not configure commands.lint") {
+		t.Fatalf("unset lint err = %v", err)
+	}
+	f.lint(t, "   ")
+	if _, err := Run(context.Background(), Options{StateDir: f.stateDir, Kind: KindLint, Stdout: io.Discard, Stderr: io.Discard}); err == nil || !strings.Contains(err.Error(), "does not configure commands.lint") {
+		t.Fatalf("whitespace-only lint err = %v", err)
+	}
+}
+
 func TestTestParsesReports(t *testing.T) {
 	f := setup(t)
 	f.fails(t, "beta")

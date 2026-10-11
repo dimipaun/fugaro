@@ -1144,6 +1144,7 @@ func (r *run) agentLoop(ctx context.Context) {
 	skipImplement := false
 	if len(r.gateSteps) > 0 {
 		r.rec.Stage = "check"
+		r.save(ctx)
 		switch g, err := r.runGate(ctx, r.gateSteps); {
 		case err != nil:
 			// A cancel landing mid-command (verify.Run / procgroup.Run)
@@ -1159,6 +1160,16 @@ func (r *run) agentLoop(ctx context.Context) {
 			return
 		case g.Clean:
 			r.rec.Gate = "clean"
+			// The gate's commands run outside r.stage(), so nothing re-checks
+			// a halt (a budget cap, a kill switch, the token cap) recorded
+			// while they ran; this path is the only one that would otherwise
+			// finalize as succeeded despite it (fixed and red both still
+			// reach a real r.stage() call before any outcome is decided,
+			// which checks haltValue() at its own top).
+			if h := r.haltValue(); h != nil {
+				r.endHalted(ctx, h)
+				return
+			}
 			r.endWithoutPR(ctx, "every check passed: nothing to fix")
 			return
 		case g.Fixed:
