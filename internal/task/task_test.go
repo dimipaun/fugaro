@@ -325,6 +325,28 @@ func TestOAuthTokenOmittedWhenAbsent(t *testing.T) {
 	}
 }
 
+// TestOAuthTokenValidate pins the same rule schemas/task.schema.json
+// enforces (oauthTokenRE, and "default" refused separately): the shared
+// testdata/task/invalid corpus relies on Validate rejecting these exact
+// shapes, not just the schema.
+func TestOAuthTokenValidate(t *testing.T) {
+	ok := Spec{Version: 1, RunID: "20261009-101010-abcd", Repo: "acme/app", Ref: "main", Task: "x"}
+	for _, name := range []string{"", "a", "acme-personal", "a-b-c0"} {
+		s := ok
+		s.OAuthToken = name
+		if err := s.Validate(); err != nil {
+			t.Errorf("oauth_token %q: %v", name, err)
+		}
+	}
+	for _, name := range []string{"default", "Bad_Name", "a-", "a--b", "a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a"} {
+		s := ok
+		s.OAuthToken = name
+		if err := s.Validate(); err == nil {
+			t.Errorf("oauth_token %q: accepted, want refused", name)
+		}
+	}
+}
+
 func TestMarshalRoundTrip(t *testing.T) {
 	data, _ := os.ReadFile("../../testdata/task/valid/new.json")
 	s, err := Parse(data)

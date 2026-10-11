@@ -50,7 +50,13 @@
         "yaml": { "type": "string", "minLength": 1, "maxLength": 65536 }
       }
     },
-    "batch": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$" }
+    "batch": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$" },
+    "oauth_token": {
+      "type": "string",
+      "pattern": "^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$",
+      "not": { "const": "default" },
+      "description": "The named Claude OAuth account this run's agent.auth: oauth workflow used (docs/design/named-oauth-tokens.md). Absent, or \"default\" itself, name the repository's unnamed claude-oauth-token secret; \"default\" is therefore never a value here, which is why the pattern alone (matching \"default\") is not enough."
+    }
   },
   "dependentRequired": {
     "branch": ["pr", "previous_run"],

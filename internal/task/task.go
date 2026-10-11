@@ -29,6 +29,16 @@ var BatchRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 // branch a follow-up may continue.
 var BranchRE = regexp.MustCompile(`^fugaro/[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$`)
 
+// oauthTokenRE is a named Claude OAuth account's name (docs/design/
+// named-oauth-tokens.md): one "-" between alphanumerics, never trailing,
+// matching schemas/task.schema.json's oauth_token pattern and the planned
+// config.ClaudeAccountNameRE (Task 1, not yet landed on this branch: this
+// is a local copy, not an import, so the two must be kept in sync by hand
+// until Task 1 lands and this can reference it instead). "default" is
+// checked separately (below), since it matches this pattern too but is
+// reserved for the omitted value.
+var oauthTokenRE = regexp.MustCompile(`^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$`)
+
 // ValidRunID reports whether id has a run ID's form, as Validate requires
 // of run_id: check it before id names any object.
 func ValidRunID(id string) bool { return runIDRE.MatchString(id) }
@@ -235,6 +245,13 @@ func (s *Spec) Validate() error {
 	}
 	if s.Batch != "" && !BatchRE.MatchString(s.Batch) {
 		bad("task spec: batch %q must be 1-63 lower-case letters, digits, '.', '_' or '-'", s.Batch)
+	}
+	switch {
+	case s.OAuthToken == "":
+	case s.OAuthToken == "default":
+		bad(`task spec: oauth_token must not be "default": the empty value already means the repository's default account`)
+	case !oauthTokenRE.MatchString(s.OAuthToken):
+		bad("task spec: oauth_token %q is not a Claude account name", s.OAuthToken)
 	}
 	o := s.Overrides
 	if o.ReviewRounds != nil && (*o.ReviewRounds < 1 || *o.ReviewRounds > 10) {
