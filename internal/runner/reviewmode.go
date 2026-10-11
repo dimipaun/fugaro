@@ -142,10 +142,33 @@ func (r *run) reviewMode(ctx context.Context) {
 		return
 	}
 	v := ParseVerdict(res)
+	if n := len(r.reviewHeads); n > 1 && !r.keepIsOneOfReviewed(v.Keep) {
+		// A pick run's verdict names no pull request to keep among the
+		// ones actually compared (zero, because the stage's structured
+		// output didn't parse at all, or a number the model hallucinated):
+		// posting a comment and a result.json that claim a keep would be
+		// misleading rather than merely incomplete, so this ends the run
+		// failed instead, the same way an unparseable verdict ends any
+		// other stage failed.
+		r.endReviewInvalidVerdict(ctx, fmt.Sprintf("pick's verdict named keep #%d, which is not one of the %d pull requests compared", v.Keep, n))
+		return
+	}
 	r.postReviewComments(ctx, v)
 	r.rec.Status, r.rec.Outcome = runstore.StatusSucceeded, runstore.OutcomeReviewed
 	r.skipPR = true
 	r.storeReviewEnded(ctx)
+}
+
+// keepIsOneOfReviewed reports whether keep names one of r.reviewHeads'
+// pull requests: a pick run's verdict must choose among the ones it was
+// actually shown, never zero (no choice at all) or a number outside them.
+func (r *run) keepIsOneOfReviewed(keep int) bool {
+	for _, h := range r.reviewHeads {
+		if h.Number == keep {
+			return true
+		}
+	}
+	return false
 }
 
 // postReviewComments posts the same comment on every reviewed pull
@@ -299,6 +322,19 @@ func (r *run) endReviewFailed(ctx context.Context) {
 	if reason == "" {
 		reason = "the review stage ended without a verdict"
 	}
+	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, reason
+	r.skipPR = true
+	r.storeReviewEnded(ctx)
+}
+
+// endReviewInvalidVerdict ends a review run whose stage returned a verdict
+// that cannot be trusted as is (a pick run's keep, reviewMode): status
+// failed, outcome none, the same family endReviewFailed is, since no
+// comment is posted for a verdict this is never called on to trust. The
+// comment and result.json for a pull request's own entry go only once the
+// verdict passes this; a failure here leaves no Reviewed entry and posts
+// no comment at all, rather than one claiming a keep that isn't real.
+func (r *run) endReviewInvalidVerdict(ctx context.Context, reason string) {
 	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, reason
 	r.skipPR = true
 	r.storeReviewEnded(ctx)

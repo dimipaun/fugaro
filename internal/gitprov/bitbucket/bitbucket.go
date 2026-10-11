@@ -398,8 +398,8 @@ func (pr pullRequest) isDraft() bool {
 // FetchPRHead implements gitprov.Provider (design generic-tool §3.6, G12).
 // Unlike GitHub, Bitbucket keeps no base-repository ref for a pull
 // request's head, so review mode's actual checkout of a fork PR is
-// unverified here (docs/recipes.md says so): this reads the same metadata
-// PullRequest does. Fork is decided the same way a follow-up's own check
+// unverified here (docs/recipes.md §3 says so): this reads the same
+// metadata PullRequest does. Fork is decided the same way a follow-up's own check
 // does (followup.go, runner.checkPullRequest): the head repository's full
 // name differs from this Provider's own workspace/slug, which fails closed
 // (Fork: true) when Bitbucket reports no source repository at all.

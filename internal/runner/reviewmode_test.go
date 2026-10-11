@@ -236,3 +236,59 @@ func TestPickCommentsOnEveryPR(t *testing.T) {
 		t.Fatalf("PRs got different comments:\n#7: %q\n#9: %q", bodies[7], bodies[9])
 	}
 }
+
+// TestPickInvalidKeepFailsWithoutPosting: a pick run whose verdict names a
+// keep that isn't one of the pull requests it actually compared (here, a
+// number outside {7, 9}) must not post a misleading comment or record a
+// keep that was never real; it ends the run failed instead.
+//
+// Mutation (drop the `n > 1 && !r.keepIsOneOfReviewed(v.Keep)` check from
+// reviewMode): this test fails, finding the run succeeded and a comment
+// posted on both PRs naming "keep #404".
+func TestPickInvalidKeepFailsWithoutPosting(t *testing.T) {
+	h := newHarness(t, "", reviewTaskSpec("pick", pickYAML, 7, 9))
+	pushReviewBranch(t, h, "a", func(dir string) { testutil.WriteFiles(t, dir, map[string]string{"a.txt": "x\n"}) })
+	pushReviewBranch(t, h, "b", func(dir string) { testutil.WriteFiles(t, dir, map[string]string{"b.txt": "x\n"}) })
+	addPR(h, 7, "a", "")
+	addPR(h, 9, "b", "")
+	rec, err := h.run(t, pickVerdict(404))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone || !strings.Contains(rec.Reason, "keep #404") {
+		t.Fatalf("rec = %+v", rec)
+	}
+	if len(rec.Reviewed) != 0 {
+		t.Fatalf("reviewed = %+v, want none", rec.Reviewed)
+	}
+	for _, n := range []int{7, 9} {
+		for i := range h.provider.State.PRs {
+			if h.provider.State.PRs[i].Number == n && len(h.provider.State.PRs[i].Comments) != 0 {
+				t.Fatalf("PR %d got a comment: %q", n, h.provider.State.PRs[i].Comments)
+			}
+		}
+	}
+}
+
+// TestPickMissingKeepFailsWithoutPosting covers the same refusal when the
+// stage's structured output has no keep at all (the zero value, which can
+// never name a real pull request): an unparseable or incomplete pick
+// verdict must not be posted as if it had chosen one.
+func TestPickMissingKeepFailsWithoutPosting(t *testing.T) {
+	noKeep := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		b, _ := json.Marshal(map[string]any{"verdict": "ship", "findings": []map[string]string{}})
+		return agent.Result{Structured: b, CostUSD: 0.5}, nil
+	}
+	h := newHarness(t, "", reviewTaskSpec("pick", pickYAML, 7, 9))
+	pushReviewBranch(t, h, "a", func(dir string) { testutil.WriteFiles(t, dir, map[string]string{"a.txt": "x\n"}) })
+	pushReviewBranch(t, h, "b", func(dir string) { testutil.WriteFiles(t, dir, map[string]string{"b.txt": "x\n"}) })
+	addPR(h, 7, "a", "")
+	addPR(h, 9, "b", "")
+	rec, err := h.run(t, noKeep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone || !strings.Contains(rec.Reason, "keep #0") {
+		t.Fatalf("rec = %+v", rec)
+	}
+}
