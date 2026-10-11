@@ -13,7 +13,7 @@ import (
 func TestOpenCloudRefusesNameMismatch(t *testing.T) {
 	f := newCloudFixture(t)
 	f.writeMarker(t, "borealis", "proj-1234")
-	_, stderr, err := execute(t, "ls")
+	_, stderr, err := execute(t, "runs", "ls")
 	if ExitCode(err) != ExitUserError || err == nil {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -30,7 +30,7 @@ func TestOpenCloudRefusesNameMismatch(t *testing.T) {
 func TestOpenCloudRefusesGCPProjectMismatch(t *testing.T) {
 	f := newCloudFixture(t)
 	f.writeMarker(t, "aurora", "other-proj")
-	_, _, err := execute(t, "ls")
+	_, _, err := execute(t, "runs", "ls")
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "other-proj") || !strings.Contains(err.Error(), "proj-1234") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -42,7 +42,7 @@ func TestOpenCloudMissingMarker(t *testing.T) {
 	if err := os.Remove(f.markerPath()); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := execute(t, "ls")
+	_, _, err := execute(t, "runs", "ls")
 	if ExitCode(err) != ExitUserError || err == nil {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -58,7 +58,7 @@ func TestOpenCloudMarkerGarbageIsRefused(t *testing.T) {
 	if err := os.WriteFile(f.markerPath(), []byte("{not json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := execute(t, "ls")
+	_, _, err := execute(t, "runs", "ls")
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "project.json") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -76,7 +76,7 @@ func TestOpenCloudMarkerReadErrorIsRemote(t *testing.T) {
 		f.Close()
 		t.Skip("the file is readable despite mode 0 (running as root?)")
 	}
-	_, _, err := execute(t, "ls")
+	_, _, err := execute(t, "runs", "ls")
 	if ExitCode(err) != ExitRemoteError || err == nil {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -86,13 +86,13 @@ func TestOpenCloudMarkerReadErrorIsRemote(t *testing.T) {
 // object.
 func TestOpenCloudUsesCache(t *testing.T) {
 	f := newCloudFixture(t)
-	if _, _, err := execute(t, "ls"); err != nil {
+	if _, _, err := execute(t, "runs", "ls"); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(f.markerPath()); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := execute(t, "ls"); err != nil {
+	if _, _, err := execute(t, "runs", "ls"); err != nil {
 		t.Fatalf("the second command read the marker again: %v", err)
 	}
 	cached := filepath.Join(os.Getenv("XDG_CACHE_HOME"), "fugaro", "project-check", "aurora.json")
@@ -105,7 +105,7 @@ func TestOpenCloudUsesCache(t *testing.T) {
 // bucket or GCP project doesn't count.
 func TestOpenCloudCacheIgnoresOtherBucket(t *testing.T) {
 	f := newCloudFixture(t)
-	if _, _, err := execute(t, "ls"); err != nil {
+	if _, _, err := execute(t, "runs", "ls"); err != nil {
 		t.Fatal(err)
 	}
 	// Point the config at another bucket (an empty one, so no marker): the
@@ -121,7 +121,7 @@ func TestOpenCloudCacheIgnoresOtherBucket(t *testing.T) {
 	if err := os.WriteFile(os.Getenv("FUGARO_CONFIG"), []byte(strings.Replace(string(data), "bucket_url: "+f.bucket, "bucket_url: file://"+other, 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = execute(t, "ls")
+	_, _, err = execute(t, "runs", "ls")
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "no project name yet") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -130,11 +130,11 @@ func TestOpenCloudCacheIgnoresOtherBucket(t *testing.T) {
 func TestOpenCloudFailedCheckIsNotCached(t *testing.T) {
 	f := newCloudFixture(t)
 	f.writeMarker(t, "borealis", "proj-1234")
-	if _, _, err := execute(t, "ls"); err == nil {
+	if _, _, err := execute(t, "runs", "ls"); err == nil {
 		t.Fatal("a mismatch passed")
 	}
 	f.writeMarker(t, "aurora", "proj-1234")
-	if _, _, err := execute(t, "ls"); err != nil {
+	if _, _, err := execute(t, "runs", "ls"); err != nil {
 		t.Fatalf("after the fix: %v", err)
 	}
 }

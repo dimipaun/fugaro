@@ -483,7 +483,7 @@ func (r *liveRig) deleteTree(ctx context.Context, prefix string) {
 
 // lsLive is ls --json of the batch.
 func (r *liveRig) lsLive(batch string) (rows []map[string]any, totals map[string]any, err error) {
-	out, err := r.cli("ls", "--json", "--repo", liveRepo, "--batch", batch, "--since", "1d")
+	out, err := r.cli("runs", "ls", "--json", "--repo", liveRepo, "--batch", batch, "--since", "1d")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1012,7 +1012,7 @@ func TestLiveSandboxFollowUp(t *testing.T) {
 	if ok, err := r.bucket.Exists(ctx, lock.Key(r.slug, branch)); err != nil || ok {
 		t.Errorf("the lock of %s exists=%v (%v) after the follow-up", branch, ok, err)
 	}
-	out, err := r.cli("ls", "--json", "--repo", liveRepo, "--pr", strconv.Itoa(n))
+	out, err := r.cli("runs", "ls", "--json", "--repo", liveRepo, "--pr", strconv.Itoa(n))
 	var ls struct {
 		Runs   []map[string]any `json:"runs"`
 		Totals map[string]any   `json:"totals"`
