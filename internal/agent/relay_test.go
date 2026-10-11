@@ -477,6 +477,12 @@ func TestRelayOnToolNeverRepeatsTheRawCommand(t *testing.T) {
 		{"a negated extglob", "A=!(x hunter2 ) cmd", "tool Bash"},
 		{"an unterminated quote after an assignment", "A=x 'hunter2", "tool Bash"},
 		{"an unterminated quote alone", "'hunter2", "tool Bash"},
+		// review round 4: a trailing slash returns the directory's own name,
+		// and a leading hyphen is a flag, not a command word.
+		{"a directory path with a trailing slash", "/x/hunter2/ run", "tool Bash"},
+		{"a relative directory with a trailing slash", "hunter2/ run", "tool Bash"},
+		{"a flag in the command position", "-hunter2 run", "tool Bash"},
+		{"a long flag in the command position", "--hunter2 run", "tool Bash"},
 		{"process substitution in an assignment", "VAR=<(echo hunter2 ) cmd", "tool Bash"},
 		{"output process substitution in an assignment", "A=>(cat hunter2 ) ls", "tool Bash"},
 		{"legacy arithmetic expansion", "A=$[ hunter2 ] ls", "tool Bash"},

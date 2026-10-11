@@ -287,6 +287,12 @@ func isBareword(s string) bool {
 // no test here that tells them apart except refusing anything that is not
 // obviously a name or a path to one.
 func safeArgv0(s string) string {
+	// A trailing slash makes filepath.Base return the directory's own name
+	// (hunter2/ -> hunter2), and a leading hyphen is a flag, never a command
+	// word: neither is a command name, so neither is reported.
+	if strings.HasSuffix(s, "/") || strings.HasPrefix(s, "-") {
+		return ""
+	}
 	if isBareword(s) {
 		return s
 	}
