@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
@@ -27,6 +28,14 @@ import (
 
 // lsWorkers is how many runs' objects are read at once.
 const lsWorkers = 8
+
+// maxAccountNameRunes bounds an OAuth account name (untrusted text read
+// back from a run's own result.json, never validated against
+// config.ClaudeAccountNameRE by this binary) before it reaches a table
+// cell or diagnose line: pluginwire.PrintableN cuts and escapes it so a
+// hostile 10 KB name, or one with a tab or newline, can't widen a column
+// or add a row.
+const maxAccountNameRunes = 64
 
 type lsOptions struct {
 	cloud                    cloudOptions
@@ -547,7 +556,7 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 			if name == "" {
 				name = "default"
 			}
-			line += "\t" + oneLine(name)
+			line += "\t" + pluginwire.PrintableN(name, maxAccountNameRunes)
 		}
 		fmt.Fprintln(tw, line)
 	}

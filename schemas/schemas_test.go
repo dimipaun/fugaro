@@ -196,6 +196,41 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	}
 }
 
+// TestResultSchemaOAuthAccount: a record naming a Claude OAuth account
+// (docs/design/named-oauth-tokens.md) validates; a non-string value (what a
+// hand-edited or corrupt result.json could carry) does not. config.
+// ClaudeAccount's name regex (plan Task 1) has not landed on this branch, so
+// the schema only bounds the length, not the charset; this test (and the
+// property itself) is the thing to tighten once Task 1's
+// ClaudeAccountNameRE exists.
+func TestResultSchemaOAuthAccount(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC)
+	rec := runstore.Record{Version: 1, RunID: "20261009-100000-abcd", Repo: "acme/app",
+		Status: runstore.StatusRunning, Stage: "implement", StartedAt: at, OAuthAccount: "acme-personal"}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a record with a named oauth_account: %v\n%s", err, data)
+	}
+	bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, []byte(`"oauth_account":"acme-personal"`), []byte(`"oauth_account":5`), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte(`"oauth_account":"acme-personal"`)) {
+		t.Fatalf("fixture lacks the literal this test replaces: %s", data)
+	}
+	if err := sch.Validate(bad); err == nil {
+		t.Fatal("schema accepts a non-string oauth_account")
+	}
+}
+
 func TestResultSchemaImageBlock(t *testing.T) {
 	sch := compile(t, "result.schema.json")
 	base := `{"version":1,"run_id":"20260927-100000-abcd","status":"running","stage":"bootstrap","outcome":"none","cost_usd":0,"started_at":"2026-09-27T10:00:00Z"`

@@ -7,11 +7,13 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"gocloud.dev/blob"
 
@@ -970,6 +972,51 @@ func TestLsAccountColumn(t *testing.T) {
 	}
 	if !strings.HasSuffix(strings.TrimSpace(line), "default") {
 		t.Fatalf("default row's ACCOUNT cell %q in:\n%s", line, b.String())
+	}
+}
+
+// TestLsAccountColumnSanitizesHostileNames: an OAuth account name is
+// untrusted text read back from a run's own result.json (bucket data, not
+// validated by this binary), not something only "default" can hold. A tab
+// or newline in it must not add a tabwriter column or a row, an ESC/bidi/
+// line-separator rune must not reach the terminal raw, and a 10 KB name
+// must not widen the table to match.
+func TestLsAccountColumnSanitizesHostileNames(t *testing.T) {
+	fields := func(line string) []string {
+		return regexp.MustCompile(`  +`).Split(strings.TrimRight(line, " "), -1)
+	}
+	huge := strings.Repeat("x", 10_000)
+	hostile := []string{
+		"a\tb", "a\nb", "a\rb", "esc\x1b[2Jc",
+		"bidi" + string(rune(0x202e)) + "evil",
+		"line" + string(rune(0x2028)) + "sep",
+		"para" + string(rune(0x2029)) + "graph",
+		huge,
+	}
+	for _, name := range hostile {
+		var b strings.Builder
+		rows := []runview.Row{{Run: "acme-app/20261007-100000-abcd", Status: "succeeded", Stage: "implement",
+			PR: 7, PRURL: "https://example.com/pr/7", OAuthAccount: name}}
+		if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil {
+			t.Fatal(err)
+		}
+		out := b.String()
+		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+		if len(lines) != 3 {
+			t.Fatalf("name %q: %d lines, want 3 (header, row, totals):\n%q", name, len(lines), out)
+		}
+		hdr, row := fields(lines[0]), fields(lines[1])
+		if len(row) != len(hdr) {
+			t.Fatalf("name %q: row has %d fields, header has %d (a tab or newline widened/split the table):\n%q", name, len(row), len(hdr), out)
+		}
+		if n := utf8.RuneCountInString(out); n > 600 {
+			t.Fatalf("name %q: output is %d runes, not bounded:\n%.80q...", name, n, out)
+		}
+		for _, r := range out {
+			if r == '\x1b' || (r >= 0x202a && r <= 0x202e) || r == 0x2028 || r == 0x2029 {
+				t.Fatalf("name %q: hostile rune %U survived in:\n%q", name, r, out)
+			}
+		}
 	}
 }
 

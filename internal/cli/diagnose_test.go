@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"gocloud.dev/blob"
 
@@ -414,6 +415,54 @@ func TestDiagnosePrintsAccountOnlyWhenNamed(t *testing.T) {
 	}
 	if !strings.Contains(b.String(), "Account:  acme-personal\n") {
 		t.Fatalf("named account missing its line:\n%s", b.String())
+	}
+}
+
+// TestDiagnosePrintsAccountSanitizesHostileNames: like
+// TestLsAccountColumnSanitizesHostileNames, the account name is untrusted
+// text from a run's own result.json. An embedded newline must not forge a
+// second report field, an ESC/bidi/line-separator rune must not reach the
+// terminal raw, and a 10 KB name must not blow up the report.
+func TestDiagnosePrintsAccountSanitizesHostileNames(t *testing.T) {
+	huge := strings.Repeat("x", 10_000)
+	hostile := []string{
+		"a\tb", "a\nFake: injected\nb", "esc\x1b[2Jc",
+		"bidi" + string(rune(0x202e)) + "evil",
+		"line" + string(rune(0x2028)) + "sep",
+		"para" + string(rune(0x2029)) + "graph",
+		huge,
+	}
+	for _, name := range hostile {
+		r := runview.Row{Run: "a/b", Status: "succeeded", OAuthAccount: name}
+		var b strings.Builder
+		d := &Diagnosis{Row: r}
+		if err := printDiagnosis(&b, d, false); err != nil {
+			t.Fatal(err)
+		}
+		out := b.String()
+		if n := utf8.RuneCountInString(out); n > 700 {
+			t.Fatalf("name %q: diagnosis is %d runes, not bounded:\n%.80q...", name, n, out)
+		}
+		for _, r := range out {
+			if r == '\x1b' || (r >= 0x202a && r <= 0x202e) || r == 0x2028 || r == 0x2029 {
+				t.Fatalf("name %q: hostile rune %U survived in:\n%q", name, r, out)
+			}
+		}
+		accountLines := 0
+		for _, l := range strings.Split(out, "\n") {
+			if strings.HasPrefix(l, "Account:") {
+				accountLines++
+				if strings.Contains(l, "\t") {
+					t.Fatalf("name %q: the Account line keeps a raw tab:\n%q", name, l)
+				}
+			}
+			if l == "Fake: injected" {
+				t.Fatalf("name %q: an embedded newline forged its own report line:\n%q", name, out)
+			}
+		}
+		if accountLines != 1 {
+			t.Fatalf("name %q: %d lines start with Account:, want 1:\n%q", name, accountLines, out)
+		}
 	}
 }
 

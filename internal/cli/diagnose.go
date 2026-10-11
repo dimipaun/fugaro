@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/logtail"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -459,7 +460,7 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		fmt.Fprintf(&b, "Reason:   %s\n", oneLine(r.Reason))
 	}
 	if acct := r.OAuthAccount; acct != "" && acct != "default" {
-		fmt.Fprintf(&b, "Account:  %s\n", oneLine(acct))
+		fmt.Fprintf(&b, "Account:  %s\n", pluginwire.PrintableN(acct, maxAccountNameRunes))
 	}
 	if pl := r.ProjectLayer; pl != nil && validGeneration(pl.Generation) {
 		line := fmt.Sprintf("Config:   project layer generation %d (sha256 %s)", pl.Generation, shortSHA(pl.SHA256))
