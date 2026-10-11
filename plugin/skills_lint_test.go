@@ -1094,7 +1094,7 @@ func TestSkillFilesQuoteCommands(t *testing.T) {
 			t.Errorf("%s quotes `fugaro ...` but no command was found to check", f.path)
 		}
 	}
-	good := demoTree(t, "Run `fugaro ls`.\n\n```bash\n$ fugaro validate --json\n```\n")
+	good := demoTree(t, "Run `fugaro runs ls`.\n\n```bash\n$ fugaro validate --json\n```\n")
 	fs, _ := loadSkillFiles(good)
 	if n := ci.countCommands(fs[0]); n != 2 {
 		t.Errorf("counted %d commands in the fixture, want 2", n)
