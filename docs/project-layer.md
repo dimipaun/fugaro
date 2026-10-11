@@ -141,7 +141,7 @@ defaults:
   agent:
     auth: oauth
     review_rounds: 2
-    recipe: cheap-loop-senior
+    recipe: standard
 profiles:
   java-service:
     description: Gradle service with Postgres
