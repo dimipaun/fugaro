@@ -104,15 +104,21 @@ func (r *run) readRepoRecipe(ctx context.Context, name string) (data []byte, fou
 	return data, true, nil
 }
 
-// ApplyRoles makes the reviewer role run as the coder role does when the
-// recipe maps reviewer to coder: the coder's model and per-call output
-// limit. The review prompt, its fresh session and the readiness rule stay
-// the reviewer's. It runs before every model check, so the pins, the
-// allow-list and the prices see ordinary model IDs.
+// ApplyRoles makes one role run as the other does, when the recipe maps
+// them: the coder's model and per-call output limit become the reviewer's
+// (roles: {reviewer: coder}), or the reviewer's become the coder's (roles:
+// {coder: reviewer}, the mirror image: premium's "coder on the reviewer's
+// model"). Parse refuses setting both at once. The review prompt, its fresh
+// session and the readiness rule always stay the reviewer's. It runs before
+// every model check, so the pins, the allow-list and the prices see
+// ordinary model IDs.
 func ApplyRoles(a *config.Agent, rcp *recipe.Recipe) {
-	if !rcp.ReviewerIsCoder {
-		return
+	switch {
+	case rcp.ReviewerIsCoder:
+		a.Models.Reviewer = a.ModelFor(config.RoleCoder)
+		a.MaxOutputTokens.Reviewer = a.MaxOutputTokens.Coder
+	case rcp.CoderIsReviewer:
+		a.Models.Coder = a.ModelFor(config.RoleReviewer)
+		a.MaxOutputTokens.Coder = a.MaxOutputTokens.Reviewer
 	}
-	a.Models.Reviewer = a.ModelFor(config.RoleCoder)
-	a.MaxOutputTokens.Reviewer = a.MaxOutputTokens.Coder
 }

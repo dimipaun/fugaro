@@ -99,14 +99,15 @@ func localRecipe(root string, cfg *config.Config) *recipe.Recipe {
 }
 
 // withRecipeRoles is cfg as the runner will see it for the recipe the file
-// selects: when that recipe maps reviewer to coder, the reviewer role is the
-// coder's (runner.ApplyRoles, the runner's own), so the pin, allow-list and
-// provider checks judge the models the run uses and not an
-// agent.models.reviewer it ignores. A project recipe is not readable here,
-// so cfg is returned as it is.
+// selects: when that recipe maps reviewer to coder, or coder to reviewer,
+// the aliased role takes the other's model and output limit
+// (runner.ApplyRoles, the runner's own), so the pin, allow-list, provider
+// and policy-tightening checks judge the models and limits the run really
+// uses and not an agent.models.reviewer or agent.models.coder it ignores. A
+// project recipe is not readable here, so cfg is returned as it is.
 func withRecipeRoles(root string, cfg *config.Config) *config.Config {
 	rcp := localRecipe(root, cfg)
-	if rcp == nil || !rcp.ReviewerIsCoder {
+	if rcp == nil || (!rcp.ReviewerIsCoder && !rcp.CoderIsReviewer) {
 		return cfg
 	}
 	aliased := *cfg
@@ -114,18 +115,21 @@ func withRecipeRoles(root string, cfg *config.Config) *config.Config {
 	return &aliased
 }
 
-// annotateProjectRecipe tells, on the reviewer's problems, that they may not
-// apply: agent.recipe names a recipe found neither in the checkout nor in the
-// catalog, so a project recipe that maps reviewer to coder would ignore the
-// key the problem is about.
+// annotateProjectRecipe tells, on the coder's and reviewer's problems, that
+// they may not apply: agent.recipe names a recipe found neither in the
+// checkout nor in the catalog, so a project recipe that maps reviewer to
+// coder (or coder to reviewer) would ignore the key the problem is about.
 func annotateProjectRecipe(root string, cfg *config.Config, problems []config.Problem) {
 	n := cfg.Agent.Recipe
 	if n == "" || localRecipe(root, cfg) != nil || !recipe.NameRE.MatchString(n) {
 		return
 	}
 	for i, p := range problems {
-		if strings.HasPrefix(p.Path, "agent.models.reviewer") {
+		switch {
+		case strings.HasPrefix(p.Path, "agent.models.reviewer"):
 			problems[i].Message += fmt.Sprintf(" (if project recipe %s maps reviewer to coder, this key is ignored; remove it)", n)
+		case strings.HasPrefix(p.Path, "agent.models.coder"):
+			problems[i].Message += fmt.Sprintf(" (if project recipe %s maps coder to reviewer, this key is ignored; remove it)", n)
 		}
 	}
 }

@@ -87,6 +87,11 @@ type ReviewSummary struct {
 	Tier     string `json:"tier,omitempty"`
 	Verdict  string `json:"verdict"`
 	Findings int    `json:"findings"`
+	// Bounce is which cheap loop this review followed, under review:
+	// {bounce: first_line}: 0 for a review before any senior rejection, 1
+	// for the cheap loop after the first one, and so on. Always 0 on a
+	// senior (tier "" or "senior") review.
+	Bounce int `json:"bounce,omitempty"`
 }
 
 // Review tiers (ReviewSummary.Tier).
