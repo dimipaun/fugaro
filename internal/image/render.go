@@ -85,7 +85,20 @@ func secretMounts(vars []string) (mounts, prefix string) {
 	return mounts, prefix
 }
 
+// checkBase accepts any base kind this package's template can render: every
+// config.Bases entry, and "" — config.Workflow.Base's documented way to
+// select the Fugaro base (Workflow.BaseKind() resolves it the same way).
+// Dockerfile already calls w.BaseKind() before reaching here, so this
+// normalization is for Render's other callers, which pass a workflow's raw
+// Base field directly (plugin/setup_skill_test.go,
+// plugin/setup_fixtures_test.go): without it, an omitted base: produced a
+// confusing refusal ("base  has no published image yet", with a double
+// space) instead of the Fugaro base those callers' BaseKind()-normalized
+// Dockerfile() calls already accept.
 func checkBase(base string) error {
+	if base == "" {
+		base = config.BaseKind
+	}
 	if slices.Contains(config.Bases, base) {
 		return nil
 	}

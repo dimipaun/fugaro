@@ -418,6 +418,30 @@ func TestRenderRefusesUnpublishedBase(t *testing.T) {
 	}
 }
 
+// TestRenderTreatsAnOmittedBaseAsTheFugaroBase: config.Workflow.Base's doc
+// comment says "" means the one Fugaro base, and Workflow.BaseKind()
+// resolves "" to config.BaseKind. Dockerfile always calls w.BaseKind()
+// before Render, so it never passes "" through, but Render is exported and
+// its own callers (plugin/setup_skill_test.go, plugin/setup_fixtures_test.go)
+// pass a workflow's raw Base field directly, which is "" for a workflow with
+// no base: set — Render must honor the same "" means the Fugaro base"
+// contract on its own, not only through BaseKind()-normalized callers.
+func TestRenderTreatsAnOmittedBaseAsTheFugaroBase(t *testing.T) {
+	in := RenderInput{Workflow: "app", Mise: true, Version: "dev", Image: config.Image{Tools: map[string]string{"node": "24.19.0"}}}
+	withEmptyBase, err := Render(in)
+	if err != nil {
+		t.Fatalf("Base \"\": %v", err)
+	}
+	in.Base = config.BaseKind
+	withBaseKind, err := Render(in)
+	if err != nil {
+		t.Fatalf("Base %q: %v", config.BaseKind, err)
+	}
+	if string(withEmptyBase) != string(withBaseKind) {
+		t.Errorf("Base \"\" rendered differently from Base %q:\n%s\nvs\n%s", config.BaseKind, withEmptyBase, withBaseKind)
+	}
+}
+
 func parseConfig(t *testing.T, yaml string) *config.Config {
 	t.Helper()
 	cfg, problems := config.Parse([]byte(yaml))
