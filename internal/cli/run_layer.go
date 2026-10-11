@@ -23,7 +23,7 @@ import (
 // image.apt/image.setup run later, in Cloud Build, the next time the
 // image is rebuilt (fugaro image build/refresh or the daily check job),
 // never as part of this launch, so a launch never announces them.
-var layerAnnounceKeys = []string{"commands.build", "commands.test", "commands.rerun_failed"}
+var layerAnnounceKeys = []string{"commands.build", "commands.test", "commands.lint", "commands.fix", "commands.rerun_failed"}
 
 // readCheckoutFugaroYAML is readFugaroYAML; a test seam, so a read
 // failure's exact text can be controlled without touching the filesystem.
