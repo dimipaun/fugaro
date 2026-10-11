@@ -15,11 +15,15 @@ const SharedMaxBytes = 64 << 10
 // (terraform:), personal (user:, endpoints:), derived (bucket_url, the
 // legacy registry), deprecated (build.service_account) or local-only:
 // providers:, whose base_url is where a key and a repository's code are
-// sent, and each repo's base_branch, which the checkout's reviewed
-// fugaro.yaml names. The receiver is not modified. The copy is shallow
-// except for repos: its other maps, slices and pointers alias the
-// receiver's, which is safe because the result is only marshalled, and
-// Marshal only reads.
+// sent, claude_accounts:, whose allow-list is decision T1's operator-only
+// trust anchor (design docs/design/named-oauth-tokens.md §3: never
+// published, never settable from fugaro.yaml or the project layer, so it
+// must not round-trip through the runs bucket either, which any launcher
+// with objectAdmin on it can write), and each repo's base_branch, which the
+// checkout's reviewed fugaro.yaml names. The receiver is not modified. The
+// copy is shallow except for repos: its other maps, slices and pointers
+// alias the receiver's, which is safe because the result is only
+// marshalled, and Marshal only reads.
 func (c *Config) Shared() *Config {
 	s := *c
 	s.Terraform = Terraform{}
@@ -28,6 +32,7 @@ func (c *Config) Shared() *Config {
 	s.Bucket = ""
 	s.Registry = ""
 	s.Providers = nil
+	s.ClaudeAccounts = nil
 	s.Build.ServiceAccount = ""
 	s.Repos = withoutBaseBranches(c.Repos)
 	return &s
