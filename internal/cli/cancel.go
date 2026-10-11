@@ -21,7 +21,7 @@ const (
 	cancelAlreadyFinished = "already-finished"  // the execution had ended; no marker written
 	cancelNotLaunched     = "not-launched"      // never launched; the marker stops a --retry
 	cancelLaunching       = "launching"         // a launch is in flight; the marker stops it (launcher or runner)
-	cancelFinalized       = "finalized"         // the runner finalized (the PR exists) after the marker
+	cancelFinalized       = "finalized"         // the runner finalized after the marker (a PR, draft or ready, unless the run needed none: cancelResult.NoPR)
 	cancelCancelled       = "cancelled"         // the execution was cancelled through the backend
 	cancelUnfinalized     = "ended-unfinalized" // the execution ended (or vanished) without a final record
 )
@@ -49,6 +49,12 @@ type cancelResult struct {
 	Marker  bool   `json:"marker"`       // the cancel marker was written
 	Hard    bool   `json:"hard"`         // the execution was cancelled through the backend
 	PR      string `json:"pr,omitempty"` // the run's PR URL, when result.json names one
+	// NoPR is set with Status cancelFinalized when result.json's outcome is
+	// "none": the run finalized needing no PR at all (a clean check gate),
+	// or reached a terminal state before ever pushing (an infra_error or a
+	// cancel during bootstrap) — never that a PR exists but this command
+	// just doesn't have its URL.
+	NoPR bool `json:"no_pr,omitempty"`
 	// LockHeld is set with Status cancelAlreadyFinished, cancelUnfinalized
 	// or cancelCancelled: the run's own branch lock is still live, naming
 	// it, after cancel's own attempt to clear it (clearStaleLock) — which
@@ -351,8 +357,12 @@ func finalizeReserve(ctx context.Context, s *runstore.Store) (time.Duration, str
 	return defaultFinalizeReserve, "the default finalize reserve"
 }
 
-// hasFinalized reports whether rec shows the runner past opening its PR:
-// a final status, or writeback, which runs after finalize.
+// hasFinalized reports whether rec shows the run past the point finalize
+// decides its outcome: a final status, or writeback, which runs after
+// finalize. This is not the same as "a PR exists": a clean check gate
+// (outcome none) finalizes with no PR at all, and a terminal status reached
+// before any push (an infra_error or a cancel during bootstrap) never
+// opened one either.
 func hasFinalized(rec *runstore.Record) bool {
 	return rec != nil && (rec.Status != runstore.StatusRunning || rec.Stage == "writeback")
 }
@@ -444,12 +454,18 @@ func ended(ctx context.Context, env *cloudEnv, s *runstore.Store, slug, id, exec
 	return cancelResult{Run: ref, Status: cancelUnfinalized, Marker: marker, LockHeld: held}, note
 }
 
-// finalized is a finalized result, with rec's PR when it names one.
+// finalized is a finalized result, with rec's PR when it names one, and
+// NoPR when rec says definitively that none exists (outcome none): a clean
+// check gate, or a terminal state reached before any push.
 func finalized(ref string, marker bool, rec *runstore.Record) cancelResult {
 	r := cancelResult{Run: ref, Status: cancelFinalized, Marker: marker}
-	if rec != nil && rec.PR != nil {
+	if rec == nil {
+		return r
+	}
+	if rec.PR != nil {
 		r.PR = rec.PR.URL
 	}
+	r.NoPR = rec.Outcome == runstore.OutcomeNone
 	return r
 }
 
@@ -481,9 +497,12 @@ func printCancel(w io.Writer, r cancelResult, o *cancelOptions) error {
 	case cancelLaunching:
 		msg = fmt.Sprintf("a launch of %s is in flight; marked it cancelled, so the launch is refused or its runner stops at bootstrap; check fugaro runs ls", r.Run)
 	case cancelFinalized:
-		if r.PR != "" {
+		switch {
+		case r.PR != "":
 			msg = fmt.Sprintf("finalized (draft PR %s)", r.PR)
-		} else {
+		case r.NoPR:
+			msg = "finalized; no pull request was needed"
+		default:
 			msg = fmt.Sprintf("finalized; check fugaro diagnose %s for its PR", r.Run)
 		}
 	case cancelUnfinalized:
