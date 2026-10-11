@@ -925,6 +925,9 @@ func (ci *commandIndex) checkCommand(f *skillFile, line int, text string, c fuga
 	if c.unknown != "" {
 		return []string{fmt.Sprintf("%s:%d: `%s`: %s has no subcommand %q", f.path, line, text, c.path, c.unknown)}
 	}
+	if c.cmd.Hidden {
+		return []string{fmt.Sprintf("%s:%d: `%s`: %s is a hidden command and may not be named by a skill", f.path, line, text, c.path)}
+	}
 	var out []string
 	for _, w := range c.args {
 		if !strings.HasPrefix(w, "--") || w == "--" {
@@ -1148,8 +1151,14 @@ func TestLintRejectsHiddenText(t *testing.T) {
 }
 
 func TestLintRejectsUnclosedFence(t *testing.T) {
-	expectViolation(t, demoTree(t, "```bash\nfugaro ls\n"), "a code fence is never closed")
-	expectClean(t, demoTree(t, "```bash\nfugaro ls\n```\n"))
+	expectViolation(t, demoTree(t, "```bash\nfugaro validate\n"), "a code fence is never closed")
+	expectClean(t, demoTree(t, "```bash\nfugaro validate\n```\n"))
+}
+
+func TestLintRefusesHiddenCommands(t *testing.T) {
+	expectViolation(t, demoTree(t, "Run `fugaro ls`.\n"), "is a hidden command and may not be named by a skill")
+	expectViolation(t, demoTree(t, "```bash\nfugaro exec\n```\n"), "is a hidden command and may not be named by a skill")
+	expectViolation(t, demoTree(t, "```bash\nfugaro image gate\n```\n"), "is a hidden command and may not be named by a skill")
 }
 
 func TestLintRejectsUnknownCommand(t *testing.T) {
@@ -1465,7 +1474,7 @@ func TestLintOwnerCommandsHoweverTheyAreWritten(t *testing.T) {
 	expectViolation(t, demoTree(t, "A paragraph that is\nwrapped: fugaro\nbudget set is here.\n"), "an owner's command")
 	expectViolation(t, demoTree(t, "    fugaro budget kill\n"), "an owner's command")
 	expectViolation(t, demoTree(t, "Then fugaro init applies.\n"), "an applying fugaro init")
-	expectClean(t, demoTree(t, "Run `fugaro budget show`, `fugaro --project p ls` and `fugaro init --repo --plan-only`.\n"))
+	expectClean(t, demoTree(t, "Run `fugaro budget show`, `fugaro --project p runs ls` and `fugaro init --repo --plan-only`.\n"))
 }
 
 // TestLintUserRunsBlocksAreNotExempt: a user-runs block is for a short list
