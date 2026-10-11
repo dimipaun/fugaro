@@ -223,6 +223,19 @@ func SchedulerRegion(region string) (string, error) {
 	return "", fmt.Errorf("region %s has no Cloud Scheduler location fugaro knows of; pass --scheduler-region with one of %s", region, strings.Join(SchedulerRegions, ", "))
 }
 
+// WorkflowVariant is the key JobName, ServiceAccountID and SecretID derive
+// a token-scoped workflow's resources from: workflow unchanged for the
+// repository's default account ("" or "default", config.DefaultClaudeAccount),
+// so an installation with no named accounts configured gets byte-identical
+// names (design docs/design/named-oauth-tokens.md §5); workflow+"--"+token
+// otherwise. It is a plain string key, not a secret: never log-redacted.
+func WorkflowVariant(workflow, token string) string {
+	if token == "" || token == "default" {
+		return workflow
+	}
+	return workflow + "--" + token
+}
+
 // JobSADisplayName is a job service account's display name, its ownership
 // mark (service accounts carry no labels). At most 11+63+1+20 = 95
 // characters, within the 100 IAM allows.

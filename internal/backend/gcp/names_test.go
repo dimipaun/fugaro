@@ -362,6 +362,23 @@ func TestNewNamesOfRealSlugs(t *testing.T) {
 	}
 }
 
+func TestWorkflowVariantIsIdentityForDefault(t *testing.T) {
+	for _, tok := range []string{"", "default"} {
+		if got := WorkflowVariant("build", tok); got != "build" {
+			t.Errorf("WorkflowVariant(build, %q) = %q, want build", tok, got)
+		}
+	}
+	if got := WorkflowVariant("build", "acme-personal"); got != "build--acme-personal" {
+		t.Errorf("WorkflowVariant(build, acme-personal) = %q", got)
+	}
+	// Every downstream name-deriving function must still produce a distinct,
+	// valid name for a variant: this is what JobName, ServiceAccountID and
+	// SecretID are exercised against.
+	if JobName("s", WorkflowVariant("build", "acme-personal")) == JobName("s", "build") {
+		t.Fatal("a variant collided with the plain workflow's job name")
+	}
+}
+
 func TestDefaultRegistryHost(t *testing.T) {
 	if got := DefaultRegistryHost("us-east5", "my-proj"); got != "us-east5-docker.pkg.dev/my-proj" || !registryHostRE.MatchString(got) {
 		t.Errorf("DefaultRegistryHost = %q, want us-east5-docker.pkg.dev/my-proj", got)
