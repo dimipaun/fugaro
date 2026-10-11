@@ -13,7 +13,8 @@
 #                render step read, and without it the branch's head is used
 # Build secrets, all optional: git-credentials (a git credential-store file
 # for REPO_URL) and one per workflow secret, mounted as a file and exported
-# as that variable inside the warm-up and setup commands only.
+# as that variable inside the warm-up and setup commands only. mise's
+# download cache (fugaro-mise) is a BuildKit cache mount.
 ARG FUGARO_BASE
 FROM ${FUGARO_BASE}
 # The base as built FROM (Cloud Build passes its digest); cache keys use it.
