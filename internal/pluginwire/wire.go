@@ -48,31 +48,16 @@ const MaxPrintable = 200
 // terminal: control characters (escape sequences) and invisible or
 // direction-changing format characters (bidi overrides) become \uXXXX, and
 // what is longer than MaxPrintable runes is cut, so a hostile file cannot
-// fill a screen or the --json result. Tab is kept literal: Printable's
-// callers are paths, commands and similar text where a tab is ordinary and
-// never lands in a single tabwriter cell.
-func Printable(s string) string { return printable(s, MaxPrintable, true) }
-
-// PrintableN is Printable for an untrusted value headed into one table cell
-// or one line, with a caller-chosen rune bound instead of MaxPrintable and
-// no tab exception: a tab there would widen a column (or, with a bare
-// newline, add a row), not just sit in running text. Used for values read
-// back from a run's own bucket objects (an account name, say), never from
-// the repository's files.
-func PrintableN(s string, n int) string { return printable(s, n, false) }
-
-// printable is Printable and PrintableN's shared implementation; keepTab
-// exempts a literal tab from escaping (Printable's behavior) or not
-// (PrintableN's).
-func printable(s string, n int, keepTab bool) string {
+// fill a screen or the --json result.
+func Printable(s string) string {
 	var b strings.Builder
-	count := 0
+	n := 0
 	for _, r := range s {
-		if count++; count > n {
+		if n++; n > MaxPrintable {
 			b.WriteString("... (truncated)")
 			break
 		}
-		if (unicode.IsControl(r) && !(keepTab && r == '\t')) || unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029' || r == utf8.RuneError {
+		if (unicode.IsControl(r) && r != '\t') || unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029' || r == utf8.RuneError {
 			fmt.Fprintf(&b, "\\u%04x", r)
 			continue
 		}
