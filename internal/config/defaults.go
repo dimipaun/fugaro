@@ -14,26 +14,9 @@ const BaseKind = "base"
 // guidance, so the refusal names a real file.
 const MigrationDoc = "docs/design/base-image.md"
 
-// Bases are the base kinds: BaseKind and, until the 0.7.0 cut, the legacy
-// kinds a workflow's base: may still name.
-var Bases = []string{BaseKind, "go", "java-services", "web-node"}
-
-type baseDefault struct {
-	reports []string
-	cpu     int
-	memory  string
-}
-
-var baseDefaults = map[string]baseDefault{
-	// java-services runs the repository's services (Postgres, Redis, the
-	// Firebase emulators) next to Gradle and the test JVM in one container,
-	// and the services' data lives in memory on Cloud Run: 16Gi, the most a
-	// 4 vCPU container may have.
-	"java-services": {reports: []string{"**/build/test-results/**/*.xml"}, cpu: 4, memory: "16Gi"},
-	"go":            {reports: []string{"**/junit*.xml"}, cpu: 4, memory: "8Gi"},
-	"web-node":      {reports: []string{"**/junit*.xml"}, cpu: 4, memory: "8Gi"},
-	BaseKind:        {reports: []string{"**/junit*.xml", "**/build/test-results/**/*.xml"}, cpu: 4, memory: "8Gi"},
-}
+// Bases are the base kinds: the one Fugaro base (the legacy kinds were
+// removed in 0.7.0).
+var Bases = []string{BaseKind}
 
 // applyDefaults fills in every field fugaro.yaml may omit. The per-base cache
 // default depends on the checkout's lockfile, so it is not applied here:
@@ -62,16 +45,14 @@ func applyDefaults(c *Config) {
 		c.Agent.MaxBudgetUSD = 25
 	}
 	for name, w := range c.Workflows {
-		if d, ok := baseDefaults[w.BaseKind()]; ok {
-			if len(w.Commands.Reports) == 0 {
-				w.Commands.Reports = d.reports
-			}
-			if w.Resources.CPU == 0 {
-				w.Resources.CPU = d.cpu
-			}
-			if w.Resources.Memory == "" {
-				w.Resources.Memory = d.memory
-			}
+		if len(w.Commands.Reports) == 0 {
+			w.Commands.Reports = []string{"**/junit*.xml", "**/build/test-results/**/*.xml"}
+		}
+		if w.Resources.CPU == 0 {
+			w.Resources.CPU = 4
+		}
+		if w.Resources.Memory == "" {
+			w.Resources.Memory = "8Gi"
 		}
 		if w.Checkout == "" {
 			w.Checkout = CheckoutBaked

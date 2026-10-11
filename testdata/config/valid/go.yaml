@@ -3,6 +3,5 @@ project: aurora
 git: { provider: github }
 workflows:
   go:
-    base: go
     image: { apt: [jq], setup: ["go mod download"] }
     commands: { build: go build ./..., test: go test ./... }

@@ -3,7 +3,6 @@ project: aurora
 git: { provider: github }
 workflows:
   web:
-    base: web-node
     checkout: clone
     image: { apt: [], setup: [], skip_build_scripts: false }
     commands: { build: npm run build, test: npm test }

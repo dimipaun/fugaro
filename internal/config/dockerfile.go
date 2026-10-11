@@ -125,13 +125,13 @@ func splitStages(ins []instruction) (globalArgs []string, stages []stage) {
 }
 
 // LintDockerfile checks a repository Dockerfile (the dockerfile: escape
-// hatch) against the derived-image contract for a workflow on base (design
-// §7.2). The final stage, followed back through any earlier stages it builds
-// on, must start FROM a Fugaro base image, bake the checkout into
-// /work/repo, and leave the base's user, working directory and init process
-// in place. It returns one message per broken rule. `fugaro image build
-// --local` checks the rest when it smoke-tests the built image.
-func LintDockerfile(data []byte, base string) []string {
+// hatch) against the derived-image contract (design §7.2). The final stage,
+// followed back through any earlier stages it builds on, must start FROM the
+// one Fugaro base image, bake the checkout into /work/repo, and leave the
+// base's user, working directory and init process in place. It returns one
+// message per broken rule. `fugaro image build --local` checks the rest when
+// it smoke-tests the built image.
+func LintDockerfile(data []byte) []string {
 	globalArgs, stages := splitStages(parseDockerfile(data))
 	if len(stages) == 0 {
 		return []string{"has no FROM instruction"}
@@ -152,12 +152,11 @@ func LintDockerfile(data []byte, base string) []string {
 		if !slices.Contains(globalArgs, "FUGARO_BASE") {
 			msgs = append(msgs, "uses ${FUGARO_BASE} without declaring ARG FUGARO_BASE before the first FROM")
 		}
-	case m != nil:
-		if m[1] != base {
-			msgs = append(msgs, fmt.Sprintf("builds FROM fugaro-%s, but the workflow's base is %s", m[1], base))
-		}
+	case m != nil && m[1] == BaseKind:
+	case m != nil && slices.Contains([]string{"go", "java-services", "web-node"}, m[1]):
+		msgs = append(msgs, fmt.Sprintf("builds FROM fugaro-%s, a base removed in 0.7.0: build FROM ${FUGARO_BASE} (%s)", m[1], MigrationDoc))
 	default:
-		msgs = append(msgs, fmt.Sprintf("must build its final stage FROM ${FUGARO_BASE} or ghcr.io/dimipaun/fugaro-%s, not %s", base, root))
+		msgs = append(msgs, fmt.Sprintf("must build its final stage FROM ${FUGARO_BASE} or ghcr.io/dimipaun/fugaro-base, not %s", root))
 	}
 	var workdir, user string
 	bakes := false

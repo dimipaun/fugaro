@@ -23,7 +23,7 @@ RUN /usr/local/lib/fugaro/finalize-checkout /work/repo
 func TestLintDockerfileAccepts(t *testing.T) {
 	cases := map[string]string{
 		"minimal":                  validRepoDockerfile,
-		"literal base with digest": "FROM ghcr.io/dimipaun/fugaro-web-node:1.2.3@sha256:" + strings.Repeat("a", 64) + "\nCOPY --chown=fugaro . /work/repo\n",
+		"literal base with digest": "FROM ghcr.io/dimipaun/fugaro-base:1.2.3@sha256:" + strings.Repeat("a", 64) + "\nCOPY --chown=fugaro . /work/repo\n",
 		"multi-stage chain": `ARG FUGARO_BASE
 FROM node:24 AS tools
 RUN echo not the final stage
@@ -47,7 +47,7 @@ EOF
 	}
 	for name, df := range cases {
 		t.Run(name, func(t *testing.T) {
-			if msgs := LintDockerfile([]byte(df), "web-node"); len(msgs) != 0 {
+			if msgs := LintDockerfile([]byte(df)); len(msgs) != 0 {
 				t.Fatalf("unexpected problems: %v", msgs)
 			}
 		})
@@ -57,9 +57,9 @@ EOF
 func TestLintDockerfileRejects(t *testing.T) {
 	cases := []struct{ name, df, want string }{
 		{"no FROM", "RUN true\n", "has no FROM instruction"},
-		{"foreign base", "FROM node:24\nRUN git clone x /work/repo\n", "must build its final stage FROM ${FUGARO_BASE} or ghcr.io/dimipaun/fugaro-web-node, not node:24"},
+		{"foreign base", "FROM node:24\nRUN git clone x /work/repo\n", "must build its final stage FROM ${FUGARO_BASE} or ghcr.io/dimipaun/fugaro-base, not node:24"},
 		{"final stage not on base", validRepoDockerfile + "FROM ubuntu:24.04\nRUN true /work/repo\n", "not ubuntu:24.04"},
-		{"wrong base", "FROM ghcr.io/dimipaun/fugaro-java-services:1\nRUN git clone x /work/repo\n", "builds FROM fugaro-java-services, but the workflow's base is web-node"},
+		{"legacy base", "FROM ghcr.io/dimipaun/fugaro-java-services:1\nRUN git clone x /work/repo\n", "builds FROM fugaro-java-services, a base removed in 0.7.0"},
 		{"undeclared arg", "FROM ${FUGARO_BASE}\nRUN git clone x /work/repo\n", "without declaring ARG FUGARO_BASE"},
 		{"no checkout", "ARG FUGARO_BASE\nFROM ${FUGARO_BASE}\nRUN npm ci\n", "must bake the checkout into /work/repo"},
 		{"workdir moved", validRepoDockerfile + "WORKDIR /app\n", "must leave WORKDIR at /work/repo, not /app"},
@@ -69,7 +69,7 @@ func TestLintDockerfileRejects(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			msgs := LintDockerfile([]byte(tc.df), "web-node")
+			msgs := LintDockerfile([]byte(tc.df))
 			if !strings.Contains(strings.Join(msgs, "\n"), tc.want) {
 				t.Fatalf("want a problem containing %q, got %v", tc.want, msgs)
 			}
@@ -96,12 +96,9 @@ func TestCheckLintsDockerfile(t *testing.T) {
 	}
 }
 
-// TestCheckLintsDockerfileOnTheFugaroBase: a workflow with no base: (the
-// default Fugaro base, BaseKind) lints its repository Dockerfile against
-// "base", not against the raw, empty Workflow.Base: checkDockerfile must
-// pass w.BaseKind() to LintDockerfile, or a literal FROM
-// ghcr.io/dimipaun/fugaro-base reference is always flagged as building from
-// the wrong base.
+// TestCheckLintsDockerfileOnTheFugaroBase: a workflow (base: is removed in
+// 0.7.0, so every workflow builds on BaseKind) with a repository Dockerfile
+// FROM the literal ghcr.io/dimipaun/fugaro-base reference passes.
 func TestCheckLintsDockerfileOnTheFugaroBase(t *testing.T) {
 	root := t.TempDir()
 	y := strings.Replace(baseYAML, "    commands:", "    dockerfile: .fugaro/app.Dockerfile\n    commands:", 1)

@@ -239,8 +239,9 @@ type Workflow struct {
 	// the workflow's own keys override it field by field. "" is none.
 	// Binaries before 0.6.0 refuse the key.
 	Profile string `yaml:"profile,omitempty"`
-	// Base is a legacy base kind (go, java-services, web-node); empty means
-	// the one Fugaro base. Read it through BaseKind.
+	// Base is removed in 0.7.0: kept so Validate can refuse it with the
+	// migration (MigrationDoc). Read the workflow's base kind through
+	// BaseKind, which always returns BaseKind now.
 	Base       string       `yaml:"base"`
 	Image      Image        `yaml:"image"`
 	Dockerfile string       `yaml:"dockerfile"`
@@ -266,11 +267,9 @@ const (
 	CheckoutClone = "clone"
 )
 
-// BaseKind is the base kind w builds on: its legacy base:, or BaseKind.
+// BaseKind is the base kind w builds on: always BaseKind, the one Fugaro
+// base. A non-empty w.Base is a removed legacy value, refused by Validate.
 func (w Workflow) BaseKind() string {
-	if w.Base != "" {
-		return w.Base
-	}
 	return BaseKind
 }
 
@@ -317,10 +316,11 @@ func (r Rebuild) Defaults() Rebuild {
 // Image customizes the workflow's generated derived image (design §7.2). The
 // zero value means the base image's defaults.
 type Image struct {
-	Node string `yaml:"node"` // web-node: Node.js version, N or N.N.N
-	// JDK is refused on every base: the java-services base ships one pinned
-	// JDK. The field stays so the image-check and cache hashes, which cover
-	// it, do not change for existing images.
+	// Node is removed in 0.7.0: kept so Validate can refuse it with the
+	// migration (MigrationDoc).
+	Node string `yaml:"node"`
+	// JDK is removed in 0.7.0: kept so Validate can refuse it with the
+	// migration (MigrationDoc).
 	JDK   string   `yaml:"jdk"`
 	Apt   []string `yaml:"apt"`   // extra system packages, installed as root
 	Setup []string `yaml:"setup"` // extra RUN steps, run as fugaro in /work/repo after the warm-up

@@ -5,10 +5,8 @@ git:
   base_branch: develop
 workflows:
   server:
-    base: java-services
     commands: { build: ./gradlew assemble, test: ./gradlew test }
   web:
-    base: web-node
     commands: { build: pnpm build, test: pnpm test }
     secrets:
       - { name: npm-token, env: NPM_TOKEN }
