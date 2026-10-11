@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/logtail"
@@ -247,24 +248,6 @@ func set(words ...string) map[string]bool {
 	return m
 }
 
-// isAssignment reports whether s is a shell-style VAR=value word, the shape
-// of a leading env prefix (FOO=bar go test) or an export.
-func isAssignment(s string) bool {
-	name, _, found := strings.Cut(s, "=")
-	if !found || name == "" {
-		return false
-	}
-	for i, r := range name {
-		switch {
-		case r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z':
-		case i > 0 && r >= '0' && r <= '9':
-		default:
-			return false
-		}
-	}
-	return true
-}
-
 // isBareword reports whether s is short enough, and plain enough, to be a
 // plain name rather than a path, a URL or an arbitrary value: letters,
 // digits, underscore and hyphen only (one leading hyphen allowed, for a
@@ -313,71 +296,6 @@ func safeArgv0(s string) string {
 	return ""
 }
 
-// splitShellWords splits command the way a shell would for the purpose of
-// finding argv0: single quotes take everything up to the next one
-// literally, double quotes the same but with backslash recognised before
-// ", \, $ and ` (POSIX's double-quote escapes), and a bare backslash
-// escapes the one character after it. An unterminated quote runs to the
-// end of the string instead of erroring: this is a best-effort summary,
-// not a shell, and a malformed command must still fail safe. This is what
-// makes safeBashSummary quote-aware (review item 1): naive whitespace
-// splitting breaks PGPASSWORD='hunter2 s3cr3tw0rd' into two words, and the
-// second one (the tail of the secret) would land where argv0 is read from.
-func splitShellWords(command string) []string {
-	var words []string
-	var buf strings.Builder
-	has := false
-	i := 0
-	for i < len(command) {
-		switch c := command[i]; {
-		case c == ' ' || c == '\t':
-			if has {
-				words = append(words, buf.String())
-				buf.Reset()
-				has = false
-			}
-			i++
-		case c == '\'':
-			has = true
-			i++
-			for i < len(command) && command[i] != '\'' {
-				buf.WriteByte(command[i])
-				i++
-			}
-			i++ // the closing quote, or past the end if there was none
-		case c == '"':
-			has = true
-			i++
-			for i < len(command) && command[i] != '"' {
-				if command[i] == '\\' && i+1 < len(command) && strings.IndexByte(`"\$`+"`", command[i+1]) >= 0 {
-					buf.WriteByte(command[i+1])
-					i += 2
-					continue
-				}
-				buf.WriteByte(command[i])
-				i++
-			}
-			i++
-		case c == '\\' && i+1 < len(command):
-			has = true
-			buf.WriteByte(command[i+1])
-			i += 2
-		default:
-			has = true
-			buf.WriteByte(c)
-			i++
-		}
-	}
-	if has {
-		words = append(words, buf.String())
-	}
-	return words
-}
-
-// shellExpansionMarkers are the constructs splitShellWords cannot group, so
-// a command containing one is not summarised at all (see safeBashSummary).
-var shellExpansionMarkers = []string{"$(", "${", "$'", "`", "=(", "<(", ">(", "$[", "\\\n", "\\\r"}
-
 // safeBashSummary is argv0 (reduced through safeArgv0) and, only when it is
 // a known dispatcher and the next word is one of its allowlisted
 // subcommands, that word too: never anything after it. A run of leading
@@ -386,22 +304,21 @@ var shellExpansionMarkers = []string{"$(", "${", "$'", "`", "=(", "<(", ">(", "$
 // simply left out, never guessed at: an unsafe guess here is a secret on a
 // dashboard every launcher can read.
 func safeBashSummary(command string) string {
-	// splitShellWords does not understand command substitution, parameter
-	// expansion, ANSI-C quoting or array parens: inside a leading
-	// assignment their inner words would land where argv0 is read and be
-	// published (TOKEN=$(echo hunter2 | base64) curl u gives "hunter2").
-	// Fail safe: a command using any of them reports only the tool name.
-	for _, marker := range shellExpansionMarkers {
-		if strings.Contains(command, marker) {
-			return ""
-		}
-	}
-	fields := splitShellWords(command)
+	// A WHITELIST over a plain whitespace split, not a shell parser: every
+	// attempt to understand quoting, expansion and redirection (review
+	// rounds 1-3) left another construct that put a fragment of a secret
+	// where argv0 is read. Here a leading word is skipped only when it is a
+	// plain VAR=plainvalue assignment, and argv0 must be made of plain
+	// characters only; anything else (quotes, $, backticks, redirections,
+	// parens, backslashes...) reports the tool name alone. A quoted
+	// assignment value with a space therefore stops the summary at the
+	// first fragment, which is not plain: fail safe.
+	fields := strings.FieldsFunc(command, func(r rune) bool { return r == ' ' || r == '\t' })
 	i := 0
-	for i < len(fields) && isAssignment(fields[i]) {
+	for i < len(fields) && plainAssignRE.MatchString(fields[i]) {
 		i++
 	}
-	if i >= len(fields) {
+	if i >= len(fields) || !plainArgv0RE.MatchString(fields[i]) {
 		return ""
 	}
 	argv0 := safeArgv0(fields[i])
@@ -413,6 +330,14 @@ func safeBashSummary(command string) string {
 	}
 	return argv0
 }
+
+// plainAssignRE is a leading VAR=value word safe to skip: a plain name and
+// a value of plain characters only. plainArgv0RE is the same for the
+// command word, before safeArgv0 reduces it to a bareword or its basename.
+var (
+	plainAssignRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=[A-Za-z0-9_./:@%+,~-]*$`)
+	plainArgv0RE  = regexp.MustCompile(`^[A-Za-z0-9_./~-]+$`)
+)
 
 // fileToolField is the input field actionSummary reads as a path, by tool
 // name: Read, Edit and Write name the file directly; Grep and Glob name the

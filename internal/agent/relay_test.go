@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -413,36 +412,6 @@ func onToolLine(t *testing.T, r *Relay, name, inputJSON string) string {
 // secrets and /agents is readable by every launcher. A dispatcher's
 // subcommand is kept (go test, npm run, git commit, bash -c); anything a
 // plain command's next word could be, which is anything at all, is not.
-// TestSplitShellWordsHandlesEscapesAndQuotes pins splitShellWords's own
-// tokenisation directly (review item 1): a quoted value keeps an inner
-// space, an escaped quote inside double quotes is literal rather than a
-// terminator, and an unterminated quote runs to the end of the string
-// rather than panicking or looping. safeBashSummary's "an escaped quote"
-// case in TestRelayOnToolNeverRepeatsTheRawCommand is already safe (no
-// secret leaks) whether or not escapes are handled correctly, because the
-// fragments a mishandled escape produces still fail isBareword by
-// accident; this test is what actually fails when escape handling itself
-// breaks.
-func TestSplitShellWordsHandlesEscapesAndQuotes(t *testing.T) {
-	for _, tc := range []struct {
-		name, in string
-		want     []string
-	}{
-		{"single quotes keep a space literal", `echo 'a b'`, []string{"echo", "a b"}},
-		{"double quotes keep a space literal", `echo "a b"`, []string{"echo", "a b"}},
-		{"an escaped double quote inside double quotes is literal, not a terminator", `echo "a\"b c"`, []string{"echo", `a"b c`}},
-		{"a backslash outside quotes escapes the next character", `echo a\ b`, []string{"echo", "a b"}},
-		{"an unterminated single quote runs to the end of the string", `echo 'a b`, []string{"echo", "a b"}},
-		{"an unterminated double quote runs to the end of the string", `echo "a b`, []string{"echo", "a b"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := splitShellWords(tc.in); !slices.Equal(got, tc.want) {
-				t.Fatalf("splitShellWords(%q) = %#v, want %#v", tc.in, got, tc.want)
-			}
-		})
-	}
-}
-
 func TestRelayOnToolNeverRepeatsTheRawCommand(t *testing.T) {
 	const secret = "fake-secret-0123456789"
 	for _, tc := range []struct {
@@ -465,9 +434,9 @@ func TestRelayOnToolNeverRepeatsTheRawCommand(t *testing.T) {
 		// whitespace splitting, and the broken-off tail used to become
 		// argv0 (a real published secret: PGPASSWORD='hunter2 s3cr3tw0rd'
 		// psql used to report "s3cr3tw0rd'").
-		{"a quoted assignment value with a space inside it", "PGPASSWORD='hunter2 " + secret + "' psql --host db", "tool Bash: psql"},
-		{"a double-quoted value with a space publishes nothing of it", `AUTH="Bearer ` + secret + `" curl https://api.example/`, "tool Bash: curl"},
-		{"an escaped quote inside a quoted value", `AUTH="abc\"` + secret + `\"xyz" curl https://api.example/`, "tool Bash: curl"},
+		{"a quoted assignment value with a space inside it", "PGPASSWORD='hunter2 " + secret + "' psql --host db", "tool Bash"},
+		{"a double-quoted value with a space publishes nothing of it", `AUTH="Bearer ` + secret + `" curl https://api.example/`, "tool Bash"},
+		{"an escaped quote inside a quoted value", `AUTH="abc\"` + secret + `\"xyz" curl https://api.example/`, "tool Bash"},
 		{"an unterminated quote swallows the rest of the line, not just the value", `TOKEN="unterminated ` + secret + ` curl --fail`, "tool Bash"},
 		{"an absolute argv0 reduces to its basename, not the full path", "/home/alice/" + secret + "/bin/deploy --flag", "tool Bash: deploy"},
 		// review item 2: only an allowlisted subcommand word is kept after
@@ -482,7 +451,32 @@ func TestRelayOnToolNeverRepeatsTheRawCommand(t *testing.T) {
 		{"an array assignment", "PASSWORDS=( hunter2 s3cr3tw0rd ) ls", "tool Bash"},
 		{"ANSI-C quoting with an escaped quote", "PW=$'x\\' hunter2 more' ls", "tool Bash"},
 		{"a backtick substitution", "PW=`echo hunter2 x` psql", "tool Bash"},
-		{"a substitution after a plain command is refused too (fail safe)", "go test $(go list ./...)", "tool Bash"},
+		{"a substitution after argv0 is never reported (arguments never are)", "go test $(go list ./...)", "tool Bash: go test"},
+		// review round 3 (adversarial, 113 commands): a whitelist over a plain
+		// whitespace split replaced the blacklist. Each of these used to
+		// publish "hunter2" (not a registered secret: only the summary's own
+		// refusal keeps it off the dashboard).
+		{"redirection glued to a path tail", ">/k/hunter2 cmd", "tool Bash"},
+		{"stderr redirection with a path", "2>/k/hunter2 cmd", "tool Bash"},
+		{"append redirection with a path", "2>>/k/hunter2 cmd", "tool Bash"},
+		{"both-streams redirection with a path", "&>/k/hunter2 cmd", "tool Bash"},
+		{"clobber redirection with a path", ">|/k/hunter2 cmd", "tool Bash"},
+		{"input redirection with a path", "</run/secrets/hunter2 cat", "tool Bash"},
+		{"here-string with a path", "<<</k/hunter2 cat", "tool Bash"},
+		{"a quoted heredoc delimiter path", "<<'/x/hunter2' cat", "tool Bash"},
+		{"redirection after a command name", "echo>/k/hunter2 hi", "tool Bash"},
+		{"redirection with no space", "cat</k/hunter2", "tool Bash"},
+		{"colon builtin with redirection", ":>/k/hunter2", "tool Bash"},
+		{"a += assignment the shell accepts", "A+=/k/hunter2 cmd", "tool Bash"},
+		{"an array element assignment", "a[1]=/k/hunter2 cmd", "tool Bash"},
+		{"a quoted name is not an assignment", `"A"=x hunter2`, "tool Bash"},
+		{"a single-quoted assignment is a command", `'A=x' hunter2`, "tool Bash"},
+		{"an escaped equals sign", `A\=x hunter2`, "tool Bash"},
+		{"an escaped first letter", `\A=x hunter2`, "tool Bash"},
+		{"an extglob in an assignment", "A=@(x hunter2 ) cmd", "tool Bash"},
+		{"a negated extglob", "A=!(x hunter2 ) cmd", "tool Bash"},
+		{"an unterminated quote after an assignment", "A=x 'hunter2", "tool Bash"},
+		{"an unterminated quote alone", "'hunter2", "tool Bash"},
 		{"process substitution in an assignment", "VAR=<(echo hunter2 ) cmd", "tool Bash"},
 		{"output process substitution in an assignment", "A=>(cat hunter2 ) ls", "tool Bash"},
 		{"legacy arithmetic expansion", "A=$[ hunter2 ] ls", "tool Bash"},
