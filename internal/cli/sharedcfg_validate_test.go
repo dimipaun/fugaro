@@ -96,6 +96,10 @@ func TestParseSharedRefusals(t *testing.T) {
 			return s + "providers:\n    evil:\n        kind: anthropic-compat\n        base_url: https://evil.example\n        auth: bearer\n        secret: evil-key\n        models: [\"claude-*\"]\n        allow_data_to: [belong/edgeweb]\n"
 		}, "providers"},
 		{"empty providers section", func(s string) string { return s + "providers: {}\n" }, "providers"},
+		{"claude_accounts section", func(s string) string {
+			return s + "claude_accounts:\n    attacker:\n        allow_data_to: [belong/edgeweb]\n"
+		}, "claude_accounts"},
+		{"empty claude_accounts section", func(s string) string { return s + "claude_accounts: {}\n" }, "claude_accounts"},
 		{"firebase triple of another project", func(s string) string {
 			s = strings.Replace(s, "https://fugaro-belong-default-rtdb.firebaseio.com", "https://evil-proj-default-rtdb.firebaseio.com", 1)
 			s = strings.Replace(s, "firebase_project: fugaro-belong", "firebase_project: evil-proj", 1)

@@ -727,6 +727,47 @@ func TestProviderDecodeStrict(t *testing.T) {
 	}
 }
 
+func TestClaudeAccountsDecodeStrict(t *testing.T) {
+	base := "name: belong\ngcp_project: edge-devel-dimi\nregion: us-east5\nruns_bucket: belong-runs\nrepos: {}\n"
+	good := base + `claude_accounts:
+  acme-personal:
+    allow_data_to: [edgeappinc/fugarosandbox, dimipaun/fugaro]
+`
+	c, err := Parse([]byte(good))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := c.ClaudeAccounts["acme-personal"]; !a.AllowsData("dimipaun/fugaro") || a.AllowsData("someone/else") {
+		t.Errorf("decoded claude account = %+v", a)
+	}
+	if _, err := Parse([]byte(strings.Replace(good, "allow_data_to:", "secret: claude-oauth-token-acme-personal\n    allow_data_to:", 1))); err == nil {
+		t.Error("an unknown claude_accounts field (secret) was accepted")
+	}
+	// Validate's wiring: a reserved or malformed name is refused, not
+	// silently dropped (config.ValidateClaudeAccounts's own rules are
+	// tested in internal/config; this only proves the call is wired in).
+	bad := base + "claude_accounts:\n  default: {}\n"
+	if _, err := Parse([]byte(bad)); err == nil || !strings.Contains(err.Error(), "claude_accounts.default") {
+		t.Errorf("a reserved claude account name was accepted: %v", err)
+	}
+}
+
+// TestClaudeAccountsDuplicateKeyRefused: two claude_accounts entries with
+// the same name must not let the second silently win (a bucket writer or a
+// hand-edited file repeating a key to mean something different from what a
+// reviewer sees once). yaml.v3 already refuses a repeated mapping key by
+// default; this pins that behavior for claude_accounts specifically, the
+// same way ParseShared's own sharedTopLevel checks a repeated key.
+func TestClaudeAccountsDuplicateKeyRefused(t *testing.T) {
+	base := "name: belong\ngcp_project: edge-devel-dimi\nregion: us-east5\nruns_bucket: belong-runs\nrepos: {}\n"
+	dup := base + "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/one]\n  acme-personal:\n    allow_data_to: [acme/two]\n"
+	if _, err := Parse([]byte(dup)); err == nil {
+		t.Fatal("a repeated claude_accounts key was accepted")
+	} else if !strings.Contains(err.Error(), "acme-personal") {
+		t.Errorf("the refusal does not name the repeated key: %v", err)
+	}
+}
+
 func TestParseOldBaseImageKey(t *testing.T) {
 	ref := "us-east5-docker.pkg.dev/p/fugaro-base/fugaro-web-node:dev-1"
 	_, err := Parse([]byte(sample + "base_image: " + ref + "\n"))
