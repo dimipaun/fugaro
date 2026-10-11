@@ -58,6 +58,12 @@ type Row struct {
 	Run      string `json:"run"`
 	Repo     string `json:"repo"`
 	Workflow string `json:"workflow,omitempty"`
+	// OAuthAccount is the named Claude OAuth account the run's record says
+	// it used ("" for the repository's default account,
+	// docs/design/named-oauth-tokens.md); "" for a run whose record hasn't
+	// set one (every run before this field existed, and any run not using
+	// agent.auth: oauth). Informational only.
+	OAuthAccount string `json:"oauth_account,omitempty"`
 	// Recipe is the run's recipe: the record's, else the task's; "" when
 	// neither names one (a default run launched before 0.5.0, or not started).
 	Recipe string `json:"recipe,omitempty"`
@@ -172,6 +178,7 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 	}
 	if r != nil {
 		row.ProjectLayer, row.ConfigSHA256 = r.ProjectLayer, r.ConfigSHA256
+		row.OAuthAccount = r.OAuthAccount
 		row.Stage = r.Stage
 		if r.Reason != "" {
 			row.Reason = r.Reason

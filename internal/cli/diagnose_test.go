@@ -385,6 +385,38 @@ func TestDiagnoseDraftTextIsSanitised(t *testing.T) {
 	}
 }
 
+func TestDiagnosePrintsAccountOnlyWhenNamed(t *testing.T) {
+	r := runview.Row{Run: "a/b", Status: "succeeded"}
+	var b strings.Builder
+	d := &Diagnosis{Row: r}
+	if err := printDiagnosis(&b, d, false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(b.String(), "Account:") {
+		t.Fatalf("default account printed a line:\n%s", b.String())
+	}
+
+	r.OAuthAccount = "default"
+	b.Reset()
+	d = &Diagnosis{Row: r}
+	if err := printDiagnosis(&b, d, false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(b.String(), "Account:") {
+		t.Fatalf("explicit default account printed a line:\n%s", b.String())
+	}
+
+	r.OAuthAccount = "acme-personal"
+	b.Reset()
+	d = &Diagnosis{Row: r}
+	if err := printDiagnosis(&b, d, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "Account:  acme-personal\n") {
+		t.Fatalf("named account missing its line:\n%s", b.String())
+	}
+}
+
 func TestDiagnoseShowsRouteReportedAndPinWarnings(t *testing.T) {
 	const key = "sk-or-v1-testkeyshouldneverprint"
 	t.Setenv("OPENROUTER_API_KEY", key)

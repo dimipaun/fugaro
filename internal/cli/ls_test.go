@@ -951,6 +951,51 @@ func TestLsRecipeColumnDefaultsEmpty(t *testing.T) {
 	}
 }
 
+func TestLsAccountColumn(t *testing.T) {
+	var b strings.Builder
+	rows := []runview.Row{{Run: "acme-app/20261007-100000-abcd", Status: "succeeded"}}
+	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil || strings.Contains(b.String(), "ACCOUNT") {
+		t.Fatalf("no named account:\n%s", b.String())
+	}
+	b.Reset()
+	rows = append(rows, runview.Row{Run: "acme-app/20261007-110000-abcd", Status: "running", OAuthAccount: "acme-personal"})
+	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil || !strings.Contains(b.String(), "ACCOUNT") || !strings.Contains(b.String(), "acme-personal") {
+		t.Fatalf("with a named account:\n%s", b.String())
+	}
+	var line string
+	for _, l := range strings.Split(b.String(), "\n") {
+		if strings.Contains(l, "100000") {
+			line = l
+		}
+	}
+	if !strings.HasSuffix(strings.TrimSpace(line), "default") {
+		t.Fatalf("default row's ACCOUNT cell %q in:\n%s", line, b.String())
+	}
+}
+
+func TestLsJSONOAuthAccountOmitempty(t *testing.T) {
+	var b strings.Builder
+	rows := []runview.Row{
+		{Run: "acme-app/20261007-100000-abcd", Status: "succeeded"},
+		{Run: "acme-app/20261007-110000-abcd", Status: "running", OAuthAccount: "acme-personal"},
+	}
+	if err := printRows(&b, "aurora", rows, nil, time.Now(), true); err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Runs []map[string]any `json:"runs"`
+	}
+	if err := json.Unmarshal([]byte(b.String()), &doc); err != nil || len(doc.Runs) != 2 {
+		t.Fatalf("%v\n%s", err, b.String())
+	}
+	if _, ok := doc.Runs[0]["oauth_account"]; ok {
+		t.Fatalf("unset oauth_account present: %v", doc.Runs[0])
+	}
+	if doc.Runs[1]["oauth_account"] != "acme-personal" {
+		t.Fatalf("oauth_account = %v", doc.Runs[1])
+	}
+}
+
 func TestLsJSONRecipeOmitempty(t *testing.T) {
 	var b strings.Builder
 	rows := []runview.Row{

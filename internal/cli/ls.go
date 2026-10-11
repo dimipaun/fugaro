@@ -511,12 +511,16 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	showRecipe := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.Recipe != "" && r.Recipe != recipe.DefaultName })
 	showLayer := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.ProjectLayer != nil })
+	showAccount := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.OAuthAccount != "" && r.OAuthAccount != "default" })
 	header := "RUN\tSTATUS\tSTAGE\tAGE\tCOST\tPR"
 	if showRecipe {
 		header += "\tRECIPE"
 	}
 	if showLayer {
 		header += "\tLAYER"
+	}
+	if showAccount {
+		header += "\tACCOUNT"
 	}
 	fmt.Fprintln(tw, header)
 	for _, r := range rows {
@@ -537,6 +541,13 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 		}
 		if showLayer {
 			line += "\t" + layerCell(r)
+		}
+		if showAccount {
+			name := r.OAuthAccount
+			if name == "" {
+				name = "default"
+			}
+			line += "\t" + oneLine(name)
 		}
 		fmt.Fprintln(tw, line)
 	}

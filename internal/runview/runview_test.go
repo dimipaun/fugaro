@@ -390,6 +390,18 @@ func TestJoinRecipe(t *testing.T) {
 	}
 }
 
+func TestJoinCarriesOAuthAccount(t *testing.T) {
+	r := rec(runstore.StatusSucceeded, nil)
+	r.OAuthAccount = "acme-personal"
+	row := Join(Input{Task: spec, Launch: launch, Record: r, Exec: exec(backend.StateSucceeded)}, prices, now)
+	if row.OAuthAccount != "acme-personal" {
+		t.Fatalf("row.OAuthAccount = %q, want acme-personal", row.OAuthAccount)
+	}
+	if got := Join(Input{Task: spec}, prices, now); got.OAuthAccount != "" {
+		t.Fatalf("no record: %q", got.OAuthAccount)
+	}
+}
+
 func TestJoinCarriesTheProjectLayer(t *testing.T) {
 	r := rec(runstore.StatusSucceeded, nil)
 	r.ProjectLayer = &runstore.ProjectLayerRecord{SHA256: strings.Repeat("a", 64), Generation: 3, Applied: true}
