@@ -682,7 +682,7 @@ func (c *Config) validate() error {
 	for _, kind := range slices.Sorted(maps.Keys(c.BaseImages)) {
 		switch ref := c.BaseImages[kind]; {
 		case !slices.Contains(config.Bases, kind):
-			bad("base_images: %q is not a base kind (%s)", kind, strings.Join(config.Bases, ", "))
+			bad("base_images: %q is not a base kind (%s): go, java-services and web-node were removed in 0.7.0 (%s)", kind, strings.Join(config.Bases, ", "), config.MigrationDoc)
 		case ref == "" || strings.ContainsAny(ref, " \t\r\n"):
 			bad("base_images.%s: %q is not an image reference", kind, ref)
 		}

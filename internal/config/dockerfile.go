@@ -11,6 +11,14 @@ import (
 // baseImageRE matches a published Fugaro base image reference and captures the base name.
 var baseImageRE = regexp.MustCompile(`^ghcr\.io/dimipaun/fugaro-([a-z0-9-]+)(:[A-Za-z0-9._-]+)?(@sha256:[0-9a-f]{64})?$`)
 
+// legacyBaseKinds are the base kinds the 0.7.0 cut removed from Bases: a
+// Dockerfile that still builds FROM one of their published images
+// (ghcr.io/dimipaun/fugaro-<kind>) gets a refusal naming MigrationDoc,
+// instead of LintDockerfile's generic "not a known base" message. This list
+// is migration-window-only: once the images themselves are deleted (plan
+// Task 20), delete it along with the case that reads it.
+var legacyBaseKinds = []string{"go", "java-services", "web-node"}
+
 // heredocRE finds heredoc openers such as <<EOF, <<-EOF and <<'EOF'.
 var heredocRE = regexp.MustCompile(`<<-?["']?([A-Za-z_][A-Za-z0-9_]*)["']?`)
 
@@ -153,7 +161,7 @@ func LintDockerfile(data []byte) []string {
 			msgs = append(msgs, "uses ${FUGARO_BASE} without declaring ARG FUGARO_BASE before the first FROM")
 		}
 	case m != nil && m[1] == BaseKind:
-	case m != nil && slices.Contains([]string{"go", "java-services", "web-node"}, m[1]):
+	case m != nil && slices.Contains(legacyBaseKinds, m[1]):
 		msgs = append(msgs, fmt.Sprintf("builds FROM fugaro-%s, a base removed in 0.7.0: build FROM ${FUGARO_BASE} (%s)", m[1], MigrationDoc))
 	default:
 		msgs = append(msgs, fmt.Sprintf("must build its final stage FROM ${FUGARO_BASE} or ghcr.io/dimipaun/fugaro-base, not %s", root))

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -764,6 +765,17 @@ func TestBaseImages(t *testing.T) {
 		if _, err := Parse([]byte(sample + yaml)); err == nil || !strings.Contains(err.Error(), "base_images") {
 			t.Errorf("%s: err = %v", name, err)
 		}
+	}
+}
+
+// TestBaseImagesLegacyKindNamesTheMigrationDoc: a base_images key that is
+// not a base kind (go, java-services, web-node included: each was removed
+// in 0.7.0, not just any unrecognized string) names config.MigrationDoc,
+// the same as the analogous base: refusals in config.Validate (validate.go,
+// layer.go).
+func TestBaseImagesLegacyKindNamesTheMigrationDoc(t *testing.T) {
+	if _, err := Parse([]byte(sample + "base_images: { web-node: reg/x:1 }\n")); err == nil || !strings.Contains(err.Error(), config.MigrationDoc) {
+		t.Errorf("err = %v, want it to name %s", err, config.MigrationDoc)
 	}
 }
 

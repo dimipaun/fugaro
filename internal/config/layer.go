@@ -573,7 +573,7 @@ func validateProfile(p string, pr Profile) []Problem {
 		add(p+".description", "must be one line of at most %d characters, with no control or formatting characters", maxProfileDescription)
 	}
 	if pr.Base != "" {
-		add(p+".base", "base: was removed in 0.7.0: every workflow builds on the one Fugaro base image. Delete this line and declare the workflow's runtimes in mise.toml (%s)", MigrationDoc)
+		add(p+".base", legacyBaseMessage, MigrationDoc)
 	}
 	ps = append(ps, validateImage(p, Workflow{Base: pr.Base, Image: pr.Image})...)
 	if pr.Checkout != "" {

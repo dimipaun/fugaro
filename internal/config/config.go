@@ -324,9 +324,10 @@ type Image struct {
 	JDK   string   `yaml:"jdk"`
 	Apt   []string `yaml:"apt"`   // extra system packages, installed as root
 	Setup []string `yaml:"setup"` // extra RUN steps, run as fugaro in /work/repo after the warm-up
-	// SkipBuildScripts makes web-node's dependency warm-up install without
-	// running package lifecycle or build scripts, leaving those builds to
-	// the workflow's build command (design §7.2).
+	// SkipBuildScripts makes a Node dependency warm-up (detected by content,
+	// not by base kind: design base-image.md §4, decision B8) install
+	// without running package lifecycle or build scripts, leaving those
+	// builds to the workflow's build command (design §7.2).
 	SkipBuildScripts bool `yaml:"skip_build_scripts"`
 	// Tools are mise tools, name to version, written to the image's global
 	// mise config for a repository without a mise config of its own (design

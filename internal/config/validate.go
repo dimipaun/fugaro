@@ -152,7 +152,7 @@ func Validate(c *Config) []Problem {
 			add(p+".profile", "must be a profile name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
 		}
 		if w.Base != "" {
-			add(p+".base", "base: was removed in 0.7.0: every workflow builds on the one Fugaro base image. Delete this line and declare the workflow's runtimes in mise.toml (%s)", MigrationDoc)
+			add(p+".base", legacyBaseMessage, MigrationDoc)
 		}
 		ps = append(ps, validateImage(p, w)...)
 		ps = append(ps, validateCheckout(p, w)...)
