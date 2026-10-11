@@ -155,3 +155,34 @@ func TestRecipeSoloTakesTheCodersOutputLimit(t *testing.T) {
 		t.Fatalf("without the recipe the reviewer's own limit applies: statuses = %v", st)
 	}
 }
+
+// The coder takes the reviewer's per-call output limit too, the mirror of
+// TestRecipeSoloTakesTheCodersOutputLimit: under roles: {coder: reviewer} a
+// 3,000-token implement call passes the reviewer's 4,096 limit; without the
+// recipe the coder's own limit of 100 refuses it.
+func TestCoderReviewerTakesTheReviewersOutputLimit(t *testing.T) {
+	files := map[string]string{".fugaro/recipes/coder-reviewer.yaml": coderIsReviewerRecipe}
+	limits := func(t *testing.T, recipeLine string) string {
+		cfg := gwConfig(t, recipeLine)
+		out := strings.Replace(cfg, "max_output_tokens: { coder: 4096, reviewer: 4096 }", "max_output_tokens: { coder: 100, reviewer: 4096 }", 1)
+		if out == cfg {
+			t.Fatal("fixture has no max_output_tokens line")
+		}
+		return out
+	}
+	reply := anthropicfake.MessageOK(sonnet, pricing.Usage{Output: 10})
+	var st []int
+	g := newGWFiles(t, limits(t, "  recipe: coder-reviewer\n"), "observe", "", files, reply)
+	rec, err := g.run(t, calling(&st, implement("feature"), call{sonnet, 3000}), review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady || len(st) != 1 || st[0] != 200 {
+		t.Fatalf("rec = %+v, err = %v, statuses = %v", rec, err, st)
+	}
+	st = nil
+	g = newGWFiles(t, limits(t, ""), "observe", "", files, reply)
+	if _, err = g.run(t, calling(&st, implement("feature"), call{sonnet, 3000})); err != nil {
+		t.Fatal(err)
+	}
+	if len(st) != 1 || st[0] != 400 {
+		t.Fatalf("without the recipe the coder's own limit applies: statuses = %v", st)
+	}
+}
