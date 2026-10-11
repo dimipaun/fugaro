@@ -166,6 +166,9 @@ func validateCheckout(p string, w Workflow) []Problem {
 		return ps
 	}
 	const msg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
+	if w.Base != "" && w.Base != BaseKind {
+		add(p+".base", "checkout: clone always runs the Fugaro base image, never base: %s (which it would silently ignore): remove base: (or set it to %s) or use checkout: baked", w.Base, BaseKind)
+	}
 	if len(w.Image.Apt) > 0 {
 		add(p+".image.apt", "%s", msg)
 	}

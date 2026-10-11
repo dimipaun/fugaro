@@ -71,6 +71,7 @@
           "if": { "required": ["checkout"], "properties": { "checkout": { "const": "clone" } } },
           "then": {
             "properties": {
+              "base": { "enum": ["base"] },
               "image": {
                 "properties": {
                   "apt": { "maxItems": 0 },

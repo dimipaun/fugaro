@@ -172,10 +172,26 @@ func TestCloneRefusesImageBuildKeys(t *testing.T) {
 	}
 }
 
+// cloneYAML is webYAML without base: web-node: checkout: clone always runs
+// the Fugaro base image, so combining it with a legacy base is refused
+// (TestCheckoutCloneRefusesLegacyBase), and these two tests must not
+// trip that rule while pinning something else.
+const cloneYAML = `
+version: 1
+project: aurora
+git:
+  provider: github
+workflows:
+  web:
+    commands:
+      build: npm run build
+      test: npm test
+`
+
 // TestCheckoutCloneAlone is the companion to TestCloneRefusesImageBuildKeys:
 // checkout: clone with no build keys set is valid.
 func TestCheckoutCloneAlone(t *testing.T) {
-	cfg, problems := Parse([]byte(webYAML + "    checkout: clone\n"))
+	cfg, problems := Parse([]byte(cloneYAML + "    checkout: clone\n"))
 	if len(problems) > 0 {
 		t.Fatalf("unexpected problems: %v", problems)
 	}
@@ -190,7 +206,7 @@ func TestCheckoutCloneAlone(t *testing.T) {
 // corpus: testdata/config/valid/checkout-clone-empty-apt.yaml exercises the
 // same boundary against fugaro.schema.json).
 func TestCheckoutCloneAllowsEmptyBuildKeys(t *testing.T) {
-	cfg, problems := Parse([]byte(webYAML + "    checkout: clone\n    image: { apt: [], setup: [], tools: {}, skip_build_scripts: false }\n"))
+	cfg, problems := Parse([]byte(cloneYAML + "    checkout: clone\n    image: { apt: [], setup: [], tools: {}, skip_build_scripts: false }\n"))
 	if len(problems) > 0 {
 		t.Fatalf("unexpected problems: %v", problems)
 	}
@@ -250,6 +266,50 @@ func TestCheckoutCloneSkipBuildCorpus(t *testing.T) {
 	const msg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
 	if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != "workflows.web.image.skip_build_scripts" || !strings.Contains(ps[0].Message, msg) {
 		t.Fatalf("problems = %v, want exactly one at workflows.web.image.skip_build_scripts: %s", ps, msg)
+	}
+}
+
+// TestCheckoutCloneRefusesLegacyBase (review finding 4, LOW): checkout:
+// clone always runs the Fugaro base image, so a legacy base: (go,
+// java-services, web-node) alongside it is refused rather than silently
+// ignored. base: base (the explicit modern kind, equivalent to leaving
+// base: out) is still allowed, since it names the same kind clone uses
+// anyway.
+//
+// Mutation (run, restore): remove the `if w.Base != "" && w.Base != BaseKind`
+// block from validateCheckout — this test's first case then wrongly accepts
+// base: go with checkout: clone.
+func TestCheckoutCloneRefusesLegacyBase(t *testing.T) {
+	const msg = "checkout: clone always runs the Fugaro base image"
+	for _, base := range []string{"go", "java-services", "web-node"} {
+		yaml := "\nversion: 1\nproject: aurora\ngit:\n  provider: github\nworkflows:\n  web:\n    base: " + base +
+			"\n    checkout: clone\n    commands:\n      build: x\n      test: x\n"
+		_, problems := Parse([]byte(yaml))
+		if !hasProblem(problems, "workflows.web.base", msg, 0) {
+			t.Errorf("base %s: problems = %v, want one at workflows.web.base: %s", base, problems, msg)
+		}
+	}
+	// base: base (explicit, equivalent to no base:) is allowed with clone.
+	cfg, problems := Parse([]byte(cloneYAML + "    base: base\n    checkout: clone\n"))
+	if len(problems) > 0 {
+		t.Fatalf("base: base with checkout: clone: unexpected problems: %v", problems)
+	}
+	if cfg.Workflows["web"].Checkout != CheckoutClone {
+		t.Fatalf("checkout = %q, want %q", cfg.Workflows["web"].Checkout, CheckoutClone)
+	}
+}
+
+// TestCheckoutCloneLegacyBaseCorpus is
+// testdata/config/invalid/checkout-clone-legacy-base.yaml, read from disk
+// like TestCheckoutCloneSkipBuildCorpus.
+func TestCheckoutCloneLegacyBaseCorpus(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/config/invalid/checkout-clone-legacy-base.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const msg = "checkout: clone always runs the Fugaro base image"
+	if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != "workflows.web.base" || !strings.Contains(ps[0].Message, msg) {
+		t.Fatalf("problems = %v, want exactly one at workflows.web.base: %s", ps, msg)
 	}
 }
 

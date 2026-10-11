@@ -67,7 +67,9 @@ func TestParseProjectLayer(t *testing.T) {
 // field.
 func TestProfileCheckout(t *testing.T) {
 	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
-	l := mustLayer(t, head+"profiles:\n  p:\n    base: go\n    checkout: clone\n    commands: { build: make, test: make test }\n")
+	// No base: here: checkout: clone always runs the Fugaro base image, so
+	// combining it with a legacy base: go is refused (TestParseProjectLayerRefuses).
+	l := mustLayer(t, head+"profiles:\n  p:\n    checkout: clone\n    commands: { build: make, test: make test }\n")
 	if l.Profiles["p"].Checkout != CheckoutClone {
 		t.Fatalf("Profiles[p].Checkout = %q, want %q", l.Profiles["p"].Checkout, CheckoutClone)
 	}
@@ -84,12 +86,13 @@ func TestCheckoutProfileCorpusOneReason(t *testing.T) {
 	a := LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
 	const cloneMsg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
 	for file, want := range map[string]struct{ path, msg string }{
-		"checkout-bad-value-profile":        {"profiles.p.checkout", "must be baked or clone"},
-		"checkout-clone-apt-profile":        {"profiles.p.image.apt", cloneMsg},
-		"checkout-clone-setup-profile":      {"profiles.p.image.setup", cloneMsg},
-		"checkout-clone-skip-build-profile": {"profiles.p.image.skip_build_scripts", cloneMsg},
-		"checkout-clone-tools-profile":      {"profiles.p.image.tools", cloneMsg},
-		"image-tools-on-web-node-profile":   {"profiles.p.image.tools", "applies to the Fugaro base only"},
+		"checkout-bad-value-profile":         {"profiles.p.checkout", "must be baked or clone"},
+		"checkout-clone-apt-profile":         {"profiles.p.image.apt", cloneMsg},
+		"checkout-clone-setup-profile":       {"profiles.p.image.setup", cloneMsg},
+		"checkout-clone-skip-build-profile":  {"profiles.p.image.skip_build_scripts", cloneMsg},
+		"checkout-clone-tools-profile":       {"profiles.p.image.tools", cloneMsg},
+		"checkout-clone-legacy-base-profile": {"profiles.p.base", "always runs the Fugaro base image"},
+		"image-tools-on-web-node-profile":    {"profiles.p.image.tools", "applies to the Fugaro base only"},
 	} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "project-layer", "invalid", file+".yaml"))
 		if err != nil {
@@ -129,6 +132,7 @@ func TestParseProjectLayerRefuses(t *testing.T) {
 		{"node off web-node", head + "profiles:\n  p: { base: go, image: { node: '20' } }\n", "only applies to base web-node"},
 		{"a bad checkout", head + "profiles:\n  p: { checkout: sometimes }\n", "profiles.p.checkout: must be baked or clone"},
 		{"clone refuses apt in a profile", head + "profiles:\n  p: { checkout: clone, image: { apt: [jq] } }\n", "profiles.p.image.apt: checkout: clone runs the base image with no build; use checkout: baked to build an image"},
+		{"clone refuses a legacy base in a profile", head + "profiles:\n  p: { base: go, checkout: clone }\n", "profiles.p.base: checkout: clone always runs the Fugaro base image"},
 		{"oversized", head + "# " + strings.Repeat("x", LayerMaxBytes) + "\n", "over the 64 KiB limit"},
 		// A null profile would otherwise decode as a valid empty Profile
 		// (even as default_profile) with no scope check ever run on it,
