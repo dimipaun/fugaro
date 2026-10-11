@@ -15,6 +15,12 @@ import (
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
+// checkoutReviewHeadsSeam, when set by a test, runs in reviewMode right
+// before checkoutReviewHeads: the only point between bootstrap's own halt
+// check and the checkout's possible error where a test can land a halt
+// deterministically ahead of it.
+var checkoutReviewHeadsSeam func()
+
 // reviewHead is one pull request review mode resolved at bootstrap
 // (checkReviewPRs): its number and the commit it will check out. The fork
 // and open checks gitprov.PRHead also carries have already passed by the
@@ -62,10 +68,16 @@ func (r *run) reviewDir(n int) string {
 
 // checkoutReviewHeads fetches and checks out every resolved head: directly
 // into r.d.WorkDir, detached, for a single pull request (review-only); into
-// its own worktree under reviewDir, for several (pick).
+// its own worktree under reviewDir, for several (pick). Each checkout's own
+// Claude Code configuration is stripped immediately after (stripClaudeConfig):
+// it is a reviewed pull request's untrusted text, never configuration the
+// headless agent — which runs with --dangerously-skip-permissions — executes.
 func (r *run) checkoutReviewHeads(ctx context.Context) error {
 	if len(r.reviewHeads) == 1 {
-		return r.repo.CheckoutDetached(ctx, r.reviewHeads[0].SHA)
+		if err := r.repo.CheckoutDetached(ctx, r.reviewHeads[0].SHA); err != nil {
+			return err
+		}
+		return stripClaudeConfig(r.d.WorkDir)
 	}
 	for _, h := range r.reviewHeads {
 		dir := r.reviewDir(h.Number)
@@ -75,6 +87,51 @@ func (r *run) checkoutReviewHeads(ctx context.Context) error {
 		if err := r.repo.Worktree(ctx, h.SHA, dir); err != nil {
 			return err
 		}
+		if err := stripClaudeConfig(dir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// stripClaudeConfig removes Claude Code's own configuration from a
+// reviewed pull request's checkout before the agent ever starts (design
+// generic-tool §3.6, G12): a fork's .claude/settings.json or
+// .claude/settings.local.json can declare hooks (SessionStart and the
+// rest) that the headless agent — run with --dangerously-skip-permissions
+// — would otherwise execute, and .mcp.json can point it at a server of
+// the fork's own choosing. CLAUDE.md and .claude/commands are left: they
+// are untrusted prompt text the model reads, never configuration it runs,
+// and review mode's prompt already treats the whole checkout that way.
+//
+// Every removal is of a leaf path (os.Remove never follows a symlink to
+// delete its target, only the symlink entry itself, so a settings file
+// that is itself a symlink is always safe to remove); the one exception is
+// .claude, checked with Lstat before anything under it is touched, since a
+// symlinked .claude would otherwise have every path beneath it resolve
+// through it: if .claude itself is a symlink, only the symlink entry is
+// removed (not whatever it points to), which still keeps Claude Code from
+// loading anything through it.
+func stripClaudeConfig(dir string) error {
+	claudeDir := filepath.Join(dir, ".claude")
+	switch fi, err := os.Lstat(claudeDir); {
+	case errors.Is(err, os.ErrNotExist):
+		// nothing to strip
+	case err != nil:
+		return err
+	case fi.Mode()&os.ModeSymlink != 0:
+		if err := os.Remove(claudeDir); err != nil {
+			return err
+		}
+	case fi.IsDir():
+		for _, name := range []string{"settings.json", "settings.local.json"} {
+			if err := os.Remove(filepath.Join(claudeDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+	}
+	if err := os.Remove(filepath.Join(dir, ".mcp.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	return nil
 }
@@ -115,7 +172,18 @@ func (r *run) runReviewMode(ctx context.Context) {
 func (r *run) reviewMode(ctx context.Context) {
 	r.rec.Stage = "review"
 	r.save(ctx)
+	if checkoutReviewHeadsSeam != nil {
+		checkoutReviewHeadsSeam()
+	}
 	if err := r.checkoutReviewHeads(ctx); err != nil {
+		// The same priority gate.go's own error branch follows: a halt
+		// decides the run whatever else is true, before cancel is even
+		// asked about (haltNow and markCancelled exclude each other, but a
+		// halt recorded first must never be read back as a plain cancel).
+		if h := r.haltValue(); h != nil {
+			r.endReviewHalted(ctx, h)
+			return
+		}
 		if errors.Is(context.Cause(ctx), ErrCancelled) && r.markCancelled() {
 			r.endReviewCancelled(ctx, "cancelled checking out the pull request")
 			return

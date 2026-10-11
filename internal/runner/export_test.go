@@ -180,3 +180,11 @@ func SetFetchedBaseSeam(t *testing.T, f func()) {
 	fetchedBaseSeam = f
 	t.Cleanup(func() { fetchedBaseSeam = prev })
 }
+
+// SetCheckoutReviewHeadsSeam runs f in reviewMode right before
+// checkoutReviewHeads, for the rest of t.
+func SetCheckoutReviewHeadsSeam(t *testing.T, f func()) {
+	prev := checkoutReviewHeadsSeam
+	checkoutReviewHeadsSeam = f
+	t.Cleanup(func() { checkoutReviewHeadsSeam = prev })
+}
