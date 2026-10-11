@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/mirror"
+	"github.com/dimipaun/fugaro/internal/testutil"
 	"golang.org/x/oauth2"
 )
 
@@ -147,7 +148,7 @@ func newImagesRigFor(t *testing.T, version, fp string) *imagesRig {
 	t.Helper()
 	r := &imagesRig{fbRig: newFBRigFor(t, fp), src: newImagesRegistry(t), dst: newImagesRegistry(t)}
 	t.Chdir(t.TempDir()) // outside any checkout: no fugaro.yaml names a base
-	for _, n := range []string{"fugaro-history", "fugaro-go", "fugaro-web-node"} {
+	for _, n := range []string{"fugaro-history", "fugaro-base", "fugaro-go", "fugaro-web-node"} {
 		r.src.publish("dimipaun/"+n, "1.2.3")
 	}
 	r.dst.onTag = func(repo, tag string) {
@@ -261,6 +262,70 @@ func TestBaseImagesRecordedInConfig(t *testing.T) {
 	out, _, err = executeStdin(t, "", "init", "--yes", "--base", "go")
 	if err != nil || r.dst.puts != puts || !strings.Contains(out, "nothing to copy") {
 		t.Fatalf("rerun: %v, %d writes\n%s", err, r.dst.puts-puts, out)
+	}
+}
+
+func TestBaseKindIsCopiedAsFugaroBase(t *testing.T) {
+	r := newImagesRig(t, "v1.2.3")
+	out, _, err := executeStdin(t, "", "init", "--yes", "--base", "base")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	want := "us-east5-docker.pkg.dev/" + initProject + "/fugaro-base/fugaro-base:1.2.3"
+	if bi := r.localConfig(t).BaseImages; bi["base"] != want || len(bi) != 1 {
+		t.Errorf("base_images = %v, want base: %s", bi, want)
+	}
+	if r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] == "" {
+		t.Errorf("not copied: %v", r.dst.tags)
+	}
+}
+
+// Today's installations have no fugaro-base image published yet (the base
+// image's own release and publish pipeline is a later task): fugaro init on
+// a checkout whose workflow has no base: (the implicit Fugaro base) must
+// refuse with a clear error naming the missing image and saying it has no
+// published image, write NOTHING to the local config, and copy nothing to
+// the project's registry.
+//
+// Mutation (run, restore): publish "fugaro-base" on the fake source
+// registry (letting the copy proceed, as it would once the base image is
+// actually published), and this test's assertions fail: init succeeds,
+// writes base_images.base, and a manifest is copied to the registry.
+func TestInitRefusesWhenFugaroBaseIsNotPublished(t *testing.T) {
+	r := newImagesRig(t, "v1.2.3")
+	delete(r.src.tags, "dimipaun/fugaro-base:1.2.3")
+	testutil.Git(t, ".", "init", "--quiet")
+	if err := os.WriteFile("fugaro.yaml", []byte("version: 1\nproject: "+initProjectName+"\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: make, test: make test } }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := executeStdin(t, "", "init", "--yes")
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
+	}
+	if !strings.Contains(err.Error(), "fugaro-base") || !strings.Contains(err.Error(), "no published image") {
+		t.Fatalf("err = %v, want it to name the missing image and say it has no published image", err)
+	}
+	if bi := r.localConfig(t).BaseImages; len(bi) != 0 {
+		t.Errorf("base_images was written: %v", bi)
+	}
+	if r.dst.puts != 0 {
+		t.Errorf("the registry was written to: %d manifest/blob writes", r.dst.puts)
+	}
+}
+
+// A checkout whose workflow has no base: names the base kind.
+func TestCheckoutWithoutBaseAsksForTheBaseKind(t *testing.T) {
+	r := newImagesRig(t, "v1.2.3")
+	testutil.Git(t, ".", "init", "--quiet")
+	if err := os.WriteFile("fugaro.yaml", []byte("version: 1\nproject: "+initProjectName+"\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: make, test: make test } }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := executeStdin(t, "", "init", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if r.localConfig(t).BaseImages["base"] == "" {
+		t.Errorf("the checkout's base kind was not copied: %v\n%s", r.localConfig(t).BaseImages, out)
 	}
 }
 

@@ -475,7 +475,7 @@ func gcpProjectProblems(ctx context.Context, lc *localcfg.Config, lcPath, provid
 func workflowBases(cfg *config.Config, extra []string) map[string]string {
 	m := map[string]string{}
 	for name, w := range cfg.Workflows {
-		m[name] = w.Base
+		m[name] = w.BaseKind()
 	}
 	for _, n := range extra {
 		if _, ok := m[n]; !ok {

@@ -44,6 +44,32 @@ func TestMirrorCopiesTheAmd64ImageDigestVerified(t *testing.T) {
 	}
 }
 
+// A multi-platform index copies its linux/amd64 image only: the arm64
+// image's blobs and manifest never reach the project's registry, and the
+// digest --expect-digest pins is the index's.
+func TestMirrorLeavesTheArm64ImageBehind(t *testing.T) {
+	e := newEnv(t)
+	arm := makeImage("arm64", "arm-layer")
+	p, err := e.plan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.SourceDigest == p.Digest || p.Digest != e.img.digest {
+		t.Errorf("source %s, copied %s: want the index and its amd64 child", p.SourceDigest, p.Digest)
+	}
+	if _, err := e.m.Copy(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range append([][]byte{arm.cfg}, arm.layers...) {
+		if _, ok := e.dst2.blobs[dg(b)]; ok {
+			t.Errorf("the arm64 blob %s was copied", dg(b))
+		}
+	}
+	if _, ok := e.dst2.manifests[arm.digest]; ok {
+		t.Error("the arm64 manifest was copied")
+	}
+}
+
 func TestMirrorVerifiesDigest(t *testing.T) {
 	e := newEnv(t)
 	e.src.tamperBlob = func(d string, b []byte) []byte {

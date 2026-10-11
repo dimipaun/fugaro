@@ -190,7 +190,7 @@ func (c *checkTarget) evaluate(ctx context.Context, name string) (evaluation, er
 			}
 		}
 	}
-	kind := c.cfg.Workflows[name].Base
+	kind := c.cfg.Workflows[name].BaseKind()
 	in := imagecheck.Inputs{
 		Config: c.cfg, Workflow: name, Record: rec, LastCheck: ev.prev, LastBuildStatus: ev.lastStatus,
 		Head: c.tree.Head(), Tree: c.tree, Changed: c.tree.Changed,
@@ -469,8 +469,9 @@ func (e jobEnv) repoSpec(cfg *config.Config) (infra.RepoSpec, *localcfg.Config, 
 	bases := maps.Clone(s.BaseImages)
 	stand := bases[slices.Sorted(maps.Keys(bases))[0]]
 	for _, w := range cfg.Workflows {
-		if bases[w.Base] == "" {
-			bases[w.Base] = stand
+		kind := w.BaseKind()
+		if bases[kind] == "" {
+			bases[kind] = stand
 		}
 	}
 	lc := &localcfg.Config{
@@ -687,7 +688,7 @@ func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 // build sends, generated now by this fugaro. The check never skips the
 // smoke test: a request without it is refused before it is sent.
 func submitRebuild(ctx context.Context, b *gcp.Builder, project string, rs infra.RepoSpec, cfg *config.Config, name string, s infra.CheckJobSpec, recordBucket string) (id, status string, err error) {
-	kind := cfg.Workflows[name].Base
+	kind := cfg.Workflows[name].BaseKind()
 	base := s.BaseImages[kind]
 	if base == "" {
 		return "", "", fmt.Errorf("the installed check job has no %s base image: %s", kind, notInstalledReason)
@@ -747,7 +748,7 @@ func runImageCheckLocal(cmd *cobra.Command, o imageCheckOptions) error {
 	}
 	checkoutCfg := rf.Cfg
 	for _, name := range checkedWorkflows(checkoutCfg) {
-		if kind := checkoutCfg.Workflows[name].Base; lc.BaseImage(kind) == "" {
+		if kind := checkoutCfg.Workflows[name].BaseKind(); lc.BaseImage(kind) == "" {
 			return userErr("the local config has no base_images.%s, which the daily check builds %s from; set it first", kind, name)
 		}
 	}

@@ -420,6 +420,64 @@ func TestCachesRestoredAndWrittenBack(t *testing.T) {
 	}
 }
 
+// implicitBaseCacheYAML is cacheYAML's workflow with no base: (the implicit
+// Fugaro base) and no cache: entries, so restoreCaches falls to
+// config.DefaultCache.
+const implicitBaseCacheYAML = `version: 1
+project: aurora
+git: { provider: github, base_branch: main }
+agent: { auth: api-key, review_rounds: 1 }
+workflows:
+  app:
+    commands:
+      build: sh build.sh
+      test: sh test.sh
+      reports: ["build/test-results/*.xml"]
+    secrets:
+      - { name: fixture-fails, env: FIXTURE_FAILS_FILE }
+    timeouts: { total: 5m, stage: 2m, verify: 1m, finalize_reserve: 30s }
+`
+
+// A workflow with no base: (the implicit Fugaro base) gets the same default
+// npm cache a base: web-node workflow would (TestCachesRestoredAndWrittenBack),
+// not no cache at all: restoreCaches resolves the default-cache kind through
+// w.BaseKind(), not the raw (empty) w.Base field, and config.DefaultCache
+// only recognizes "web-node" and config.BaseKind ("base").
+//
+// Mutation (run, restore): change restoreCaches' call from
+// config.DefaultCache(r.wf.BaseKind(), r.d.WorkDir) back to
+// config.DefaultCache(r.wf.Base, r.d.WorkDir), and this test fails:
+// DefaultCache("", ...) returns no entries (nil, nil) for any kind but
+// "web-node"/"base", so no cache archive is ever written.
+func TestDefaultCacheOnTheImplicitBaseKind(t *testing.T) {
+	h := newHarnessFiles(t, implicitBaseCacheYAML, nil, map[string]string{"package.json": "{}", "package-lock.json": "{}"})
+	b := withBucket(h)
+	home := envValue(h.deps.Env, "HOME")
+	cacheDir := filepath.Join(home, ".npm")
+	fill := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(cacheDir, "pkg.tgz"), []byte("deps"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return implement("feature")(t, ctx, req)
+	}
+	if _, err := h.run(t, fill, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	it := b.List(nil)
+	var archives int
+	for obj, err := it.Next(context.Background()); err == nil; obj, err = it.Next(context.Background()) {
+		if strings.HasPrefix(obj.Key, "cache/acme-app/app/") && strings.HasSuffix(obj.Key, ".tar.zst") {
+			archives++
+		}
+	}
+	if archives != 1 {
+		t.Fatalf("%d cache archives written, want 1 (the default npm cache)", archives)
+	}
+}
+
 func TestCorruptCacheDoesNotFailTheRun(t *testing.T) {
 	h := newHarness(t, cacheYAML, nil)
 	b := withBucket(h)
