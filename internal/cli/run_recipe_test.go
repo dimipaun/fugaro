@@ -160,7 +160,7 @@ func TestRunRecipeImageNamesTheImplicitBaseKind(t *testing.T) {
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
-	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nagent:\n  auth: api-key\n  recipe: claude-solo\n" +
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nagent:\n  auth: api-key\n  recipe: solo\n" +
 		"workflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n"})
 	t.Chdir(dir)
 	other := mustSlug("github", "acme/other")
