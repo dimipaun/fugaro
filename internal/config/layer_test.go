@@ -74,6 +74,15 @@ func TestParseProjectLayerRefuses(t *testing.T) {
 		{"dockerfile is repo-only", head + "profiles:\n  p:\n    dockerfile: x.Dockerfile\n", "workflows.*.dockerfile may only be set in: repo"},
 		{"workflow keys are not defaults", head + "defaults:\n  workflows:\n    web:\n      commands: { test: x }\n", "may only be set in: profile, repo"},
 		{"unknown key", head + "defaults:\n  agent:\n    colour: red\n", "defaults.agent.colour: is not a fugaro.yaml key"},
+		// claude_accounts is a local-config-only key (design
+		// docs/design/named-oauth-tokens.md §3, decision T1): the project
+		// layer, published to the runs bucket and writable by anyone with
+		// objectAdmin on it, must never be able to carry or widen the
+		// named-account allow-list, at the top level, under defaults:, or
+		// inside a profile.
+		{"claude_accounts at the top level", head + "claude_accounts:\n  x: {}\n", "is not a project layer key"},
+		{"claude_accounts under defaults", head + "defaults:\n  claude_accounts:\n    x: {}\n", "defaults.claude_accounts: is not a fugaro.yaml key"},
+		{"claude_accounts inside a profile", head + "profiles:\n  p:\n    base: go\n    claude_accounts:\n      x: {}\n", "profiles.p.claude_accounts: is not a fugaro.yaml key"},
 		{"the catalog is reserved", head + "environments:\n  java-17: {}\n", "arrives with the single base image"},
 		{"a credential", head + "profiles:\n  p:\n    commands: { test: 'curl -H \"x: ghp_abcdefghijklmnopqrstuvwxyz0123\" x' }\n", "shaped like a credential"},
 		{"another project", "version: 1\nproject: other\ngcp_project: acme-fugaro\n", `project: is "other", but it is read for project "acme"`},
