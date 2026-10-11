@@ -145,7 +145,7 @@ jobs:
       - name: Save the image for the publish job
         if: contains(needs.version.outputs.kinds, format(',{0},', matrix.base)) && needs.version.outputs.publish == 'true'
         run: docker save "fugaro-${{ matrix.base }}:ci" | gzip > "fugaro-${{ matrix.base }}.tar.gz"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: contains(needs.version.outputs.kinds, format(',{0},', matrix.base)) && needs.version.outputs.publish == 'true'
         with:
           name: fugaro-${{ matrix.base }}-image
@@ -184,7 +184,7 @@ jobs:
       - name: Save the image for the publish job
         if: contains(needs.version.outputs.kinds, ',history,') && needs.version.outputs.publish == 'true'
         run: docker save "fugaro-history:ci" | gzip > "fugaro-history.tar.gz"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: contains(needs.version.outputs.kinds, ',history,') && needs.version.outputs.publish == 'true'
         with:
           name: fugaro-history-image
@@ -247,7 +247,7 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
         run: docker save fugaro-base:ci | gzip > "fugaro-base-$ARCH.tar.gz"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: contains(needs.version.outputs.kinds, ',base,') && needs.version.outputs.publish == 'true'
         with:
           name: fugaro-base-${{ matrix.arch }}-image
@@ -269,7 +269,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: fugaro-base-*-image
           merge-multiple: true
@@ -330,7 +330,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: contains(needs.version.outputs.kinds, format(',{0},', matrix.base))
         with:
           name: fugaro-${{ matrix.base }}-image
@@ -362,7 +362,19 @@ jobs:
   # to the run summary.
   verify-public:
     needs: [version, publish, publish-base]
-    if: needs.version.outputs.publish == 'true'
+    # publish-base is legitimately skipped when kinds has no base (an older
+    # tag's tree, e.g. a backport): GitHub's default auto-skip ("a job is
+    # skipped if any of its needs did not succeed") would then skip this job
+    # too, leaving the legacy images published with no anonymous-pull check.
+    # always() overrides that default; the explicit checks below still
+    # require publish to have succeeded and only refuse a publish-base that
+    # actually failed or was cancelled (not one that was merely skipped).
+    if: >-
+      always() &&
+      needs.version.outputs.publish == 'true' &&
+      needs.publish.result == 'success' &&
+      needs['publish-base'].result != 'failure' &&
+      needs['publish-base'].result != 'cancelled'
     permissions:
       contents: read
     runs-on: ubuntu-latest

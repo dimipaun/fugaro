@@ -3,17 +3,32 @@
 Fugaro refuses to push a commit that touches `.github/workflows/**`
 (GitHub rejects the push). When a Fugaro run needs to change a workflow
 file, it writes the file's full intended new content here instead, under
-the same name, and the owner copies it into `.github/workflows/` by hand
-after reviewing it.
+the same name, for a human to copy in by hand after reviewing it.
 
-The static Go tests that pin these workflows' shape (e.g.
-`images/base_workflow_test.go`'s `TestImagesWorkflowPublishesAMultiArchBase`
-and `TestOnlyPublishJobsHoldPackagesWrite`) read the real workflow file and
-fall back to the matching file here when the real file doesn't hold the
-change yet (see `readImagesWorkflow` / `imagesWorkflowPath` /
-`pendingImagesWorkflowPath` in that file). That means they're green before
-the copy and keep guarding the same jobs after it, with no test edit
-needed at copy time.
+**Copying a file in:**
+
+```sh
+cp docs/pending-workflows/images.yml .github/workflows/images.yml
+git add .github/workflows/images.yml
+git rm docs/pending-workflows/images.yml
+git commit -m "..."
+```
+
+The `git rm` is not cleanup, it's load-bearing: the static Go tests that pin
+these workflows' shape (`images/base_workflow_test.go`'s `readWorkflow`,
+used by `TestImagesWorkflowPublishesAMultiArchBase`,
+`TestOnlyPublishJobsHoldPackagesWrite` and
+`TestVerifyPublicRunsEvenWhenPublishBaseIsSkipped`) read the pending file
+**while it exists** and only fall back to the real
+`.github/workflows/images.yml` once it is gone. If the pending file were
+left in place after the copy, those tests would keep reading its frozen
+content forever and would never notice a later edit — including an
+accidental deletion — to the real file's `fugaro-base`/`publish-base`
+jobs. Once the pending file is removed, the real file is read on its own
+and *must* contain the base jobs, so deleting them (by hand, by a bad
+merge, anything) fails the tests immediately.
+`TestReadWorkflowFallsBackOnlyWhilePending` pins this fallback directly,
+against temp files, independent of the real repository state.
 
 ## `images.yml`
 
@@ -35,7 +50,15 @@ Replaces `.github/workflows/images.yml` (base image task 6, design
 - `verify-public`'s script now also checks `ghcr.io/dimipaun/fugaro-base`
   with `images/verify-public.sh --arm64`, which fails unless the published
   reference is a multi-platform index holding *both* `linux/amd64` and
-  `linux/arm64`. Its `needs` grows to `[version, publish, publish-base]`.
+  `linux/arm64`. Its `needs` grows to `[version, publish, publish-base]`,
+  and its `if` changes (see "publish-base can be skipped" below).
+- `actions/upload-artifact` and `actions/download-artifact` are pinned to
+  `v7.0.2` (`cf430e030ddbb5b0abf93d22962f4752f3646cd9`) and `v8.0.2`
+  (`9000827ccba6bdab643e8b6fd33ac0654aef8333`) respectively, matching
+  `origin/main`'s pins as of this writing (`main` bumped both since this
+  branch diverged — PRs #278/#279 — so using main's SHAs here avoids this
+  branch downgrading or conflicting with them when `next` is later merged
+  into `main`).
 
 **Permissions (the security-relevant part):** only two jobs in this file
 hold `packages: write` — the pre-existing **`publish`** job (pushes
@@ -51,6 +74,36 @@ job and publish-base are the only ones that need packages: write" instead.
 this: it fails if any job other than `publish`/`publish-base` ever gains
 `packages: write`, or if either of those two loses it.
 
+**`publish-base` can be skipped without skipping `verify-public`:**
+`publish-base`'s `if` already requires `base` in `kinds`, so on a tag tree
+with no `images/base` (a backport off an old release line) it is skipped,
+not failed. GitHub's default job gate treats "a needed job was skipped" the
+same as "not satisfied" and would then skip `verify-public` too — silently
+dropping the anonymous-pull check for the legacy images that `publish` did
+still push. `verify-public`'s `if` therefore opens with `always()` and
+checks `needs.publish.result == 'success'` (unchanged behavior: still
+requires the legacy publish to have succeeded) together with
+`needs['publish-base'].result != 'failure'` and
+`!= 'cancelled'` (an actual publish-base failure or cancellation still
+blocks verify-public; a skip does not).
+`TestVerifyPublicRunsEvenWhenPublishBaseIsSkipped` pins the exact
+substrings of that `if` expression.
+
+### Operational note: the first copy publishes a new package
+
+The first nightly/release run after this file is copied in publishes
+`ghcr.io/dimipaun/fugaro-base:<version>` and `:<major>` as a **brand-new**
+ghcr.io package (it has never been pushed before). Per `docs/release.md`,
+a package a workflow publishes from this public repository is public from
+the start — but `verify-public` is exactly the proof of that, not an
+assumption: if the new `fugaro-base` package is not public yet for any
+reason, `verify-public --arm64` will fail against it with "cannot be read
+without a login". If that happens: check that the package is public (a
+passing `verify-public` run is the proof it is); if it isn't, make it
+public once by hand in the package's GitHub settings (an owner action,
+same one-time step `docs/release.md` describes for the existing
+`fugaro-*` packages) and re-run the workflow.
+
 ### Not verified
 
 This file has never run in GitHub Actions: no Docker daemon and no network
@@ -60,6 +113,10 @@ access were available in this run, so `images/build-base.sh`,
 exercised end-to-end. What's verified is the YAML shape and the shell
 scripts' plain logic (`images/verify-public.sh`'s `--arm64` flag, tested
 with a fake `docker`) — not a real build, a real multi-arch push, or a real
-anonymous pull from `ghcr.io`. The real workflow run is CI's, once this
-file is copied into `.github/workflows/images.yml` and a PR touching
-`images/**` runs it.
+anonymous pull from `ghcr.io`. The `always()`/`needs[...].result` gate on
+`verify-public` is likewise checked only as a pinned string in the YAML,
+never exercised against a real skipped/failed `publish-base` job (GitHub
+Actions' job-gating semantics are not something a local test can execute).
+The real workflow run is CI's, once this file is copied into
+`.github/workflows/images.yml` (removing it from here, see above) and a PR
+touching `images/**` runs it.
