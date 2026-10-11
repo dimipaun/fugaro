@@ -192,7 +192,7 @@ func TestRenderFull(t *testing.T) {
 	if string(got) != wantFull {
 		t.Errorf("Render =\n%s\nwant\n%s", got, wantFull)
 	}
-	if msgs := config.LintDockerfile(got, "web-node"); len(msgs) > 0 {
+	if msgs := config.LintDockerfile(got); len(msgs) > 0 {
 		t.Errorf("the rendered Dockerfile breaks the repository-Dockerfile contract: %v", msgs)
 	}
 	// Once image.setup steps run as fugaro with
@@ -312,7 +312,7 @@ func TestRenderMinimal(t *testing.T) {
 	if string(got) != wantMinimal {
 		t.Errorf("Render =\n%s\nwant\n%s", got, wantMinimal)
 	}
-	if msgs := config.LintDockerfile(got, "web-node"); len(msgs) > 0 {
+	if msgs := config.LintDockerfile(got); len(msgs) > 0 {
 		t.Errorf("the rendered Dockerfile breaks the repository-Dockerfile contract: %v", msgs)
 	}
 }
@@ -375,7 +375,7 @@ func TestRenderSkipBuildScripts(t *testing.T) {
 			if string(got) != want {
 				t.Errorf("Render =\n%s\nwant\n%s", got, want)
 			}
-			if msgs := config.LintDockerfile(got, "web-node"); len(msgs) > 0 {
+			if msgs := config.LintDockerfile(got); len(msgs) > 0 {
 				t.Errorf("the rendered Dockerfile breaks the repository-Dockerfile contract: %v", msgs)
 			}
 		})
@@ -670,7 +670,7 @@ func TestRenderMiseInstallWhenTheCheckoutHasAConfig(t *testing.T) {
 	if i < 0 || clone < 0 || warm < 0 || !(clone < i && i < warm) {
 		t.Fatalf("the mise step is missing or out of order (clone %d, mise %d, warm-up %d):\n%s", clone, i, warm, s)
 	}
-	if msgs := config.LintDockerfile(got, config.BaseKind); len(msgs) > 0 {
+	if msgs := config.LintDockerfile(got); len(msgs) > 0 {
 		t.Errorf("the rendered Dockerfile breaks the contract: %v", msgs)
 	}
 }
