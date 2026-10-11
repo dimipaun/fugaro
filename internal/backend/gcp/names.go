@@ -223,57 +223,90 @@ func SchedulerRegion(region string) (string, error) {
 	return "", fmt.Errorf("region %s has no Cloud Scheduler location fugaro knows of; pass --scheduler-region with one of %s", region, strings.Join(SchedulerRegions, ", "))
 }
 
-// workflowVariantPartRE is the charset WorkflowVariant trusts workflow and
-// token to stay within: config.WorkflowNameRE
-// (`^[a-z][a-z0-9-]{0,19}$`, internal/config/validate.go) and the planned
-// config.ClaudeAccountNameRE (`^[a-z][a-z0-9-]{0,30}$`,
-// docs/plans/2026-10-09-named-oauth-tokens.md Task 1) both match this,
-// length aside; neither can ever contain '.'. This package does not import
-// internal/config (see WorkflowVariant's own comment), so the charset is
-// pinned here, once, instead of trusting callers silently.
-var workflowVariantPartRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+// workflowVariantWorkflowRE mirrors config.WorkflowNameRE exactly
+// (`^[a-z][a-z0-9-]{0,19}$`, internal/config/validate.go): a workflow's
+// name in fugaro.yaml. This package does not import internal/config (see
+// WorkflowVariant's own comment), so the charset is pinned here, once.
+var workflowVariantWorkflowRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,19}$`)
+
+// workflowVariantTokenRE mirrors the planned config.ClaudeAccountNameRE as
+// Task 1's own code review revised it (docs/plans/2026-10-09-named-oauth-tokens.md
+// Task 1): no leading, trailing or doubled hyphen, so a name like "a--b" or
+// "a-" (which the plan's original `^[a-z][a-z0-9-]{0,30}$` would have
+// accepted) is refused. internal/config does not define
+// ClaudeAccountNameRE yet on this branch (Task 1 hasn't landed): mirrored
+// here, with this comment, until it does — the two copies must then be
+// reconciled so they can never drift apart.
+var workflowVariantTokenRE = regexp.MustCompile(`^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$`)
 
 // WorkflowVariant is the key JobName, ServiceAccountID and SecretID derive
 // a token-scoped workflow's resources from: workflow unchanged for the
 // repository's default account ("" or "default", config.DefaultClaudeAccount),
 // so an installation with no named accounts configured gets byte-identical
 // names (design docs/design/named-oauth-tokens.md §5); otherwise
-// workflow+"."+token. It is a plain string key, not a secret: never
+// workflow+"_"+token. It is a plain string key, not a secret: never
 // log-redacted.
 //
-// The join must be exactly injective over (workflow, token): this string
-// becomes the "second" argument JobName, ServiceAccountID and SecretID hash
-// together with the slug (derive, above), so two different pairs that
-// WorkflowVariant collapsed into one string would collapse onto the same
-// Cloud Run job, the same dedicated service account and the same secret,
-// defeating this feature's whole point (one secretAccessor grant per named
-// account, design docs/design/named-oauth-tokens.md §4 option B). A plain
-// "--" join is not injective here even though it looks like the rest of
-// this file's names: workflow and token both already allow hyphens,
-// including consecutive ones (workflowVariantPartRE above), so
-// WorkflowVariant("ab--cd", "ef") and WorkflowVariant("ab", "cd--ef") would
-// both read "ab--cd--ef". "." is never a byte either charset allows, so
-// workflow+"."+token has exactly one (workflow, token) reading: the
-// standard "separator outside both alphabets" argument, not merely a hash
-// that makes collisions improbable. The charset check panics rather than
-// silently reproduce that ambiguity if some future caller ever passes a
-// workflow or token outside the charset this function trusts (fail
-// closed, the same posture LauncherBucketCondition takes below for the
-// same reason: a name that looks plausible but secretly is not what it
-// claims is worse than a crash).
+// This string is also the map key of the repository's tfvars
+// `workflows` object (decision T5: Go-only, zero Terraform diff) — Terraform
+// passes it straight through as `each.key` (modules/repo/workflows.tf) into
+// modules/workflow's `name` variable, which validates `^[a-z0-9_-]{1,63}$`
+// and uses it as the job's `fugaro_workflow` GCP label
+// (modules/workflow/variables.tf, modules/workflow/job.tf): GCP label
+// values may hold only lowercase letters, digits, '_' and '-', so a
+// separator outside that charset (a literal "." was tried first and
+// reverted — see git history) would make every named-account `terraform
+// apply` fail validation before any resource is even planned.
+// TestWorkflowVariantMatchesTerraformWorkflowLabel pins this by reading the
+// module's own regex out of variables.tf, so a future change to either
+// side is caught here, not at apply time.
+//
+// The join must also be exactly injective over (workflow, token): this
+// string becomes the "second" argument JobName, ServiceAccountID and
+// SecretID hash together with the slug (derive, above), so two different
+// pairs that WorkflowVariant collapsed into one string would collapse onto
+// the same Cloud Run job, the same dedicated service account and the same
+// secret, defeating this feature's whole point (one secretAccessor grant
+// per named account, design docs/design/named-oauth-tokens.md §4 option
+// B). A plain "--" join is not injective here even though it looks like
+// the rest of this file's names: workflow and token both already allow
+// hyphens, including consecutive ones, so WorkflowVariant("ab--cd", "ef")
+// and WorkflowVariant("ab", "cd--ef") would both read "ab--cd--ef". "_" is
+// never a byte either charset allows (workflowVariantWorkflowRE,
+// workflowVariantTokenRE), so workflow+"_"+token has exactly one
+// (workflow, token) reading: the standard "separator outside both
+// alphabets" argument, not merely a hash that makes collisions improbable.
+// The charset check panics rather than silently reproduce that ambiguity
+// if some future caller ever passes a workflow or token outside the
+// charset this function trusts (fail closed, the same posture
+// LauncherBucketCondition takes below for the same reason: a name that
+// looks plausible but secretly is not what it claims is worse than a
+// crash).
 func WorkflowVariant(workflow, token string) string {
 	if token == "" || token == "default" {
 		return workflow
 	}
-	if !workflowVariantPartRE.MatchString(workflow) || !workflowVariantPartRE.MatchString(token) {
-		panic(fmt.Sprintf("gcp.WorkflowVariant: workflow %q or token %q has a byte outside [a-z][a-z0-9-]*, so a \".\" join would not be unambiguous", workflow, token))
+	if !workflowVariantWorkflowRE.MatchString(workflow) || !workflowVariantTokenRE.MatchString(token) {
+		panic(fmt.Sprintf("gcp.WorkflowVariant: workflow %q or token %q is outside its expected charset, so a \"_\" join would not be unambiguous", workflow, token))
 	}
-	return workflow + "." + token
+	return workflow + "_" + token
 }
 
 // JobSADisplayName is a job service account's display name, its ownership
 // mark (service accounts carry no labels). At most 11+63+1+20 = 95
-// characters, within the 100 IAM allows.
+// characters, within the 100 IAM allows, for today's one caller
+// (internal/infra/spec.go), which always passes the plain fugaro.yaml
+// workflow name (config.WorkflowNameRE, <= 20 characters).
+//
+// TASK 4 TODO: this bound assumes workflow is a plain workflow name, never
+// a gcp.WorkflowVariant string (up to 20+1+31 = 52 characters). Once
+// infra's repo-spec builder starts deriving a variant's service account
+// display name, the worst case becomes 11+63+1+52 = 127, over the 100-char
+// IAM limit, and this function must hash/truncate deterministically first
+// (the derive pattern JobName/ServiceAccountID/SecretID already use).
+// TestJobSADisplayNameFitsIAMLimit pins today's plain-workflow bound only;
+// it must gain a variant-length case (and this function a fix) before any
+// caller passes it a variant.
 func JobSADisplayName(slug, workflow string) string {
 	return "Fugaro job " + slug + " " + workflow
 }
