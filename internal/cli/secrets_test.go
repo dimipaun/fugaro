@@ -357,6 +357,92 @@ func TestReadSecret(t *testing.T) {
 	}
 }
 
+// claudeAccountFixture appends a claude_accounts block to the fixture's
+// local config file (the same append-to-FUGARO_CONFIG pattern
+// TestSecretsSetProviderKey uses for providers:).
+func claudeAccountFixture(t *testing.T, yaml string) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(yaml); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+}
+
+// TestSecretsSetAcceptsAllowedNamedAccount: a named Claude account's secret
+// stores like a provider's key, for a repository its allow_data_to lists;
+// the reserved default secret is unaffected by claude_accounts existing.
+func TestSecretsSetAcceptsAllowedNamedAccount(t *testing.T) {
+	sm := secretsFixture(t)
+	claudeAccountFixture(t, "claude_accounts:\n  acme-personal: { allow_data_to: [acme/app] }\n")
+	id := gcp.SecretID(appSlug, "claude-oauth-token-acme-personal")
+	out, errOut, err := executeStdin(t, tokenValue, "secrets", "set", "claude-oauth-token-acme-personal", "--repo", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(sm.Latest(id)); got != tokenValue {
+		t.Fatalf("stored %q", got)
+	}
+	if !strings.Contains(out, id) || strings.Contains(out+errOut, tokenValue) {
+		t.Fatalf("out %q errOut %q", out, errOut)
+	}
+	// The reserved default secret still stores unmodified.
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", "claude-oauth-token", "--repo", "acme/app"); err != nil {
+		t.Fatalf("the default secret: %v", err)
+	}
+}
+
+// TestSecretsSetRefusesDisallowedNamedAccount: a configured named account
+// whose allow_data_to does not list this repository is refused before
+// stdin is ever read, and nothing is stored.
+func TestSecretsSetRefusesDisallowedNamedAccount(t *testing.T) {
+	sm := secretsFixture(t)
+	claudeAccountFixture(t, "claude_accounts:\n  acme-personal: { allow_data_to: [acme/other] }\n")
+	spy := &readerSpy{Reader: strings.NewReader(tokenValue)}
+	cmd := NewRootCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetIn(spy)
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"secrets", "set", "claude-oauth-token-acme-personal", "--repo", "acme/app"})
+	err := cmd.Execute()
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "allow_data_to") ||
+		strings.Contains(out.String()+errOut.String()+err.Error(), tokenValue) {
+		t.Fatalf("err = %v", err)
+	}
+	if spy.read {
+		t.Fatal("the value was read before the refusal")
+	}
+	if sm.Latest(gcp.SecretID(appSlug, "claude-oauth-token-acme-personal")) != nil {
+		t.Fatal("a refused value was stored")
+	}
+}
+
+// TestSecretsLsNamedAccountNeverPrintsValue: a stored named-account secret
+// appears in secrets ls by its fugaro_secret label and version count only;
+// no value-reading (:access) request is ever made.
+func TestSecretsLsNamedAccountNeverPrintsValue(t *testing.T) {
+	sm := secretsFixture(t)
+	claudeAccountFixture(t, "claude_accounts:\n  acme-personal: { allow_data_to: [acme/app] }\n")
+	id := gcp.SecretID(appSlug, "claude-oauth-token-acme-personal")
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", "claude-oauth-token-acme-personal", "--repo", "acme/app"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "secrets", "ls", "--repo", "acme/app")
+	if err != nil || !strings.Contains(out, id) || !strings.Contains(out, "claude-oauth-token-acme-personal") || strings.Contains(out, tokenValue) {
+		t.Fatalf("ls = %s, %v", out, err)
+	}
+	for _, r := range sm.Requests() {
+		if strings.Contains(r.Path, ":access") {
+			t.Fatalf("ls read a value: %s", r.Path)
+		}
+	}
+}
+
 // TestSecretsSetProviderKey: a model provider's key is stored from anywhere,
 // like a reserved secret, but only for a repository the owner allowed to
 // send code to that provider.

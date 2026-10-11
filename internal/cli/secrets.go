@@ -141,6 +141,14 @@ func resolveSecretRepo(cmd *cobra.Command, env *cloudEnv, flag string) (*secretR
 	return r, nil
 }
 
+// isClaudeOAuthSecret reports whether name is the bare default Claude OAuth
+// secret or a named account's derived one (config.ClaudeAccountSecret's
+// shape): the set of secrets claude setup-token mints a value for, so
+// init's prompts (initsecrets.go) know when to mention it.
+func isClaudeOAuthSecret(name string) bool {
+	return name == "claude-oauth-token" || strings.HasPrefix(name, "claude-oauth-token-")
+}
+
 // declares reports whether some workflow of cfg lists secret name.
 func declares(cfg *config.Config, name string) bool {
 	for _, wf := range cfg.Workflows {
@@ -170,7 +178,14 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 		return err
 	}
 	_, reserved := config.ReservedSecrets[name]
-	if p, ok := config.ProviderBySecret(env.lc.Providers, name); ok && !reserved {
+	if n, ok := config.ClaudeAccountBySecret(env.lc.ClaudeAccounts, name); ok && n != config.DefaultClaudeAccount {
+		// The owner's, from the local config, parallel to the provider
+		// branch below: a named Claude account's secret is only stored for
+		// a repository its allow_data_to lists.
+		if !env.lc.ClaudeAccounts[n].AllowsData(r.repo) {
+			return userErr("named Claude account %s does not list %s in allow_data_to, so its token is not stored for it", n, r.repo)
+		}
+	} else if p, ok := config.ProviderBySecret(env.lc.Providers, name); ok && !reserved {
 		// The owner's, from the local config, so any checkout will do. The
 		// key is only ever mounted for a repository the provider may see.
 		if !env.lc.Providers[p].AllowsData(r.repo) {

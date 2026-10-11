@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -471,6 +472,42 @@ func TestSecretsWithoutFugaroYAMLTakesOnlyTheGitCredential(t *testing.T) {
 	}
 	if !strings.Contains(detail, "no fugaro.yaml") {
 		t.Errorf("the assumption is not said: %q", detail)
+	}
+}
+
+// A repository the local config allows two named Claude accounts for is
+// asked for both, each as its own claude setup-token + secrets set pair, in
+// addition to the default; a name that already has a stored version is not
+// asked for again.
+func TestInitSecretsListsEveryAllowedName(t *testing.T) {
+	r := newSecretsRig(t, githubOrigin, strings.NewReader(""))
+	r.e.lc.ClaudeAccounts = map[string]config.ClaudeAccount{
+		"acme-personal": {AllowDataTo: []string{"acme/app"}},
+		"acme-overflow": {AllowDataTo: []string{"acme/app"}},
+		"other-team":    {AllowDataTo: []string{"acme/other"}}, // not this repository
+	}
+	r.store.seed(mustSlug("github", "acme/app"), "claude-oauth-token-acme-overflow", "stored-already-0001")
+	res, err := r.run(t)
+	if err != nil || len(res.Left) != 1 {
+		t.Fatalf("%v, left %v", err, res.Left)
+	}
+	cmds := strings.Join(res.Left[0].Commands, "\n")
+	for _, want := range []string{
+		"fugaro secrets set claude-oauth-token --repo acme/app",
+		"fugaro secrets set claude-oauth-token-acme-personal --repo acme/app",
+	} {
+		if !strings.Contains(cmds, want) {
+			t.Errorf("missing %q in %q", want, cmds)
+		}
+	}
+	if strings.Contains(cmds, "acme-overflow") {
+		t.Errorf("a stored name was asked for again: %q", cmds)
+	}
+	if strings.Contains(cmds, "other-team") {
+		t.Errorf("a name this repository is not allowed got asked for: %q", cmds)
+	}
+	if n := strings.Count(cmds, "claude setup-token"); n != 2 {
+		t.Errorf("claude setup-token count = %d, want 2 (default + acme-personal)", n)
 	}
 }
 

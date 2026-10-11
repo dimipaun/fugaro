@@ -282,6 +282,22 @@ func (s *secretsStage) resolve(ctx context.Context) {
 				}
 			}
 		}
+		// Every named Claude account this repository may choose (beyond the
+		// bare default, which SecretMounts above already asked for when
+		// agent.auth is oauth) gets its own claude setup-token + secrets set
+		// pair, so init prompts for every account the owner has allowed,
+		// not just the one SecretMounts already knows about per workflow
+		// (design docs/design/named-oauth-tokens.md §3 T3, §4).
+		if cfg.Agent.Auth == "oauth" {
+			for _, n := range config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo) {
+				if n == config.DefaultClaudeAccount {
+					continue
+				}
+				if secret := config.ClaudeAccountSecret(n); !slices.Contains(tg.wanted, secret) {
+					tg.wanted = append(tg.wanted, secret)
+				}
+			}
+		}
 	}
 	s.tg, s.origin, s.root = tg, oi, root
 }
@@ -413,10 +429,10 @@ func (s *secretsStage) Left() initflow.Left {
 	var cmds []string
 	for _, name := range needs {
 		set := selfCommand() + " secrets set " + quoteWord(name) + " --repo " + quoteWord(s.tg.repo)
-		switch name {
-		case "claude-oauth-token":
+		switch {
+		case isClaudeOAuthSecret(name):
 			cmds = append(cmds, "claude setup-token", set)
-		case multilineSecret:
+		case name == multilineSecret:
 			cmds = append(cmds, set+" < PATH-TO-THE-KEY-FILE")
 		default:
 			cmds = append(cmds, set)
@@ -503,8 +519,8 @@ func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w i
 		err   error
 	)
 	fmt.Fprintf(w, "%s for %s on %s (stored in project %s's Secret Manager):\n", name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject))
-	if name == "claude-oauth-token" {
-		fmt.Fprintln(w, "claude-oauth-token: run claude setup-token in your own terminal first, then paste the token it prints")
+	if isClaudeOAuthSecret(name) {
+		fmt.Fprintln(w, name+": run claude setup-token in your own terminal first, then paste the token it prints")
 	}
 	if name == multilineSecret {
 		value, err = readHiddenPEM(ctx, f, w, name)
