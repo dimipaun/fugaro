@@ -98,20 +98,24 @@ func (r *run) checkoutReviewHeads(ctx context.Context) error {
 // reviewed pull request's checkout before the agent ever starts (design
 // generic-tool §3.6, G12): a fork's .claude/settings.json or
 // .claude/settings.local.json can declare hooks (SessionStart and the
-// rest) that the headless agent — run with --dangerously-skip-permissions
-// — would otherwise execute, and .mcp.json can point it at a server of
-// the fork's own choosing. CLAUDE.md and .claude/commands are left: they
-// are untrusted prompt text the model reads, never configuration it runs,
-// and review mode's prompt already treats the whole checkout that way.
+// rest), .claude/agents can define a subagent and .claude/skills a skill,
+// each one configuration the orchestrating model can invoke under
+// --dangerously-skip-permissions, and .mcp.json can point it at a server
+// of the fork's own choosing. SECURITY.md already names skills, settings
+// and subagents together for this identical untrusted-checkout threat
+// model (there, a follow-up's agent-written branch). CLAUDE.md and
+// .claude/commands are left: they are untrusted prompt text the model
+// reads, never configuration it runs, and review mode's prompt already
+// treats the whole checkout that way.
 //
-// Every removal is of a leaf path (os.Remove never follows a symlink to
-// delete its target, only the symlink entry itself, so a settings file
-// that is itself a symlink is always safe to remove); the one exception is
-// .claude, checked with Lstat before anything under it is touched, since a
-// symlinked .claude would otherwise have every path beneath it resolve
-// through it: if .claude itself is a symlink, only the symlink entry is
-// removed (not whatever it points to), which still keeps Claude Code from
-// loading anything through it.
+// Every removal is Lstat-checked first, never a bare os.Remove/os.RemoveAll
+// on an unexamined path: a symlink (whether .claude itself, or an entry
+// under it such as agents or skills) has only its own directory entry
+// removed, never whatever it points to, wherever that is. A real,
+// non-symlink directory is then removed whole (removeClaudeEntry's
+// os.RemoveAll), which is safe precisely because the top-level path was
+// just confirmed not to be a symlink — RemoveAll does not follow one found
+// deeper in the tree either.
 func stripClaudeConfig(dir string) error {
 	claudeDir := filepath.Join(dir, ".claude")
 	switch fi, err := os.Lstat(claudeDir); {
@@ -129,11 +133,46 @@ func stripClaudeConfig(dir string) error {
 				return err
 			}
 		}
+		// agents (subagents) and skills are configuration the orchestrating
+		// model can invoke under --dangerously-skip-permissions, the same
+		// threat settings.json's hooks are: SECURITY.md already names all
+		// three ("skills, settings, subagents") for this identical
+		// untrusted-checkout threat model (the follow-up case). Each is
+		// removed whole (removeClaudeEntry), not file by file: a skill is a
+		// directory of its own (SKILL.md plus whatever it names), and a
+		// repository can define any number of subagents under agents/.
+		for _, name := range []string{"agents", "skills"} {
+			if err := removeClaudeEntry(filepath.Join(claudeDir, name)); err != nil {
+				return err
+			}
+		}
 	}
 	if err := os.Remove(filepath.Join(dir, ".mcp.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil
+}
+
+// removeClaudeEntry removes path (a file or directory under a checkout's
+// .claude), Lstat-checked first so a symlink only ever loses its own entry
+// (os.Remove never follows it to delete whatever it points to, wherever
+// that is); a real, non-symlink directory is removed whole (os.RemoveAll),
+// safe here precisely because path itself is confirmed not to be a
+// symlink — RemoveAll does not follow one found deeper in the tree either,
+// the same guarantee stripClaudeConfig's own top-level .claude check
+// relies on.
+func removeClaudeEntry(path string) error {
+	fi, err := os.Lstat(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	case err != nil:
+		return err
+	case fi.Mode()&os.ModeSymlink != 0:
+		return os.Remove(path)
+	default:
+		return os.RemoveAll(path)
+	}
 }
 
 // reviewModePrompt is the review stage's prompt: ReviewPrompt for a single

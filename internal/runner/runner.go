@@ -1013,6 +1013,20 @@ func (r *run) bootstrap(ctx context.Context) error {
 		for i, s := range wf.Secrets {
 			secretEnvs[i] = s.Env
 		}
+	} else {
+		// Keeping secretEnvs empty stops agent.BuildEnv from putting these
+		// in the agent's own environment, but the runner process still
+		// holds their values in r.d.Env, readable by the agent through
+		// /proc of a sibling process in the same container (SECURITY.md).
+		// A review run's agent, unlike every other run's, reads an
+		// untrusted checkout and prompt, so it must never be able to
+		// exfiltrate one of these into the posted comment, the report or a
+		// transcript unredacted: register the values for redaction
+		// (r.secretList(), which every one of those goes through) even
+		// though they never reach its environment.
+		for _, s := range wf.Secrets {
+			r.addSecret(envLookup(r.d.Env, s.Env))
+		}
 	}
 	// Claude Code's Bash tool defaults to a 2-minute timeout (10 minutes at
 	// most), which would kill a long `fugaro verify` long before
