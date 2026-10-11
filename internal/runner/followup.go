@@ -82,9 +82,10 @@ func (r *run) checkoutFollowUp(ctx context.Context, repo *gitops.Repo) error {
 }
 
 // readBaseConfig reads fugaro.yaml, and the files it names, from the base
-// branch (origin/<ref>) rather than the checked-out pull request branch,
-// which an earlier agent or a comment could have changed. The base named
-// in it must be the task's ref.
+// branch (origin/<ref>): a follow-up's, rather than the checked-out pull
+// request branch, which an earlier agent or a comment could have changed;
+// a review run's (reviewmode.go), which never trusts a reviewed pull
+// request's own tree at all. The base named in it must be the task's ref.
 func (r *run) readBaseConfig(ctx context.Context) (*config.Config, error) {
 	ref := r.spec.Ref
 	if err := r.repo.FetchBase(ctx, ref); err != nil {
@@ -107,7 +108,7 @@ func (r *run) readBaseConfig(ctx context.Context) (*config.Config, error) {
 		return nil, err
 	}
 	if b := cfg.Git.BaseBranch; b != ref {
-		return nil, fmt.Errorf("fugaro.yaml on %s names base %s; a follow-up's base must be the branch its configuration comes from", ref, b)
+		return nil, fmt.Errorf("fugaro.yaml on %s names base %s; the run's base must be the branch its configuration comes from", ref, b)
 	}
 	read := func(rel string) (string, error) { return r.readBaseFile(ctx, rev, rel) }
 	if r.instructions, err = read(cfg.Agent.Instructions); err != nil {
