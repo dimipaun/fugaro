@@ -93,6 +93,22 @@ func TestVerifyPublicNeedsAReference(t *testing.T) {
 	}
 }
 
+const indexAmd64Only = `{"manifests":[{"platform":{"architecture":"amd64","os":"linux"}}]}`
+
+func TestVerifyPublicRequiresArm64ForTheBase(t *testing.T) {
+	if out, _, err := runVerify(t, indexAmd64, nil, "--arm64", "ghcr.io/o/base:1"); err != nil {
+		t.Fatalf("an amd64+arm64 index failed: %v\n%s", err, out)
+	}
+	out, _, err := runVerify(t, indexAmd64Only, nil, "--arm64", "ghcr.io/o/base:1")
+	if err == nil || !strings.Contains(out, "no linux/arm64 entry") {
+		t.Fatalf("an amd64-only index passed --arm64: %v\n%s", err, out)
+	}
+	out, _, err = runVerify(t, singleManifest, nil, "--arm64", "ghcr.io/o/base:1")
+	if err == nil || !strings.Contains(out, "is not a multi-platform index") {
+		t.Fatalf("a single manifest passed --arm64: %v\n%s", err, out)
+	}
+}
+
 // TestImagesWorkflowPublishesAndVerifiesEveryImage: the history image is
 // published beside the bases, and a job with no packages permission and no
 // login fails the release when any published image is not anonymously

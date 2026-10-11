@@ -31,6 +31,10 @@ Compute is not the only thing a backend needs. The `Backend` interface above is 
 
 **Firebase stays GCP-bound regardless of compute backend** (see above): a second compute backend (AWS, Azure) still talks to the same Firebase project for budget, dashboard and history. The seam is not abstracted, and will not be before a second control plane is actually needed: `internal/budget`, `internal/rtdb`, `internal/firestore` and `internal/watch` depend on Firebase's REST APIs directly. Neither `internal/rtdb` nor `internal/firestore` uses a Firebase SDK — both are small, hand-rolled REST clients (the Realtime Database Admin SDK cannot authenticate as a single run's own ID token, and the Firestore SDK is more than the handful of calls Fugaro needs), but the dependency on Firebase's own HTTP APIs, and on their specific behaviour (ETags, if-match, multi-path PATCH, Server-Sent-Event streams), is just as direct. This section is documentation only; no interface exists here yet.
 
+## Your own image
+
+A project that needs more than `image.apt`, `image.tools` and `image.setup` can give a repository Dockerfile built `FROM ${FUGARO_BASE}`, or point the installation at a base image of its own. [base-image.md](base-image.md)'s "Bring your own" section covers both, and the contract a custom base must keep.
+
 ## Live checks
 
 The offline suites above prove a backend's logic, not the real service. The GCP backend's provisioning stages (project creation, the image mirror, the secrets and plugin-wiring stages, `doctor`) are exercised against real Google, ghcr.io and Artifact Registry by [Check 27](gcp-live-checklist.md) of the live checklist: user-run on a throwaway project, with exact steps, expected results and what to paste back. **It has not been run**; until it is, those stages' claims about Google and registry behaviour are from documentation, as the M11 design's §14 says. A second backend brings its own checklist entry for the stages it adds.
