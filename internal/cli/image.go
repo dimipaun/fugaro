@@ -219,7 +219,8 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 		specLC.BaseImages = map[string]string{}
 	}
 	for _, w := range cfg.Workflows {
-		specLC.BaseImages[w.BaseKind()] = cmp.Or(specLC.BaseImages[w.BaseKind()], base)
+		kind := w.BaseKind()
+		specLC.BaseImages[kind] = cmp.Or(specLC.BaseImages[kind], base)
 	}
 	rs, err := infra.Repo(infra.Inputs{LC: &specLC, Repo: repo, Cfg: cfg, RepoURL: repoURL})
 	if err != nil {

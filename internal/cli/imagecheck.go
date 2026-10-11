@@ -469,8 +469,9 @@ func (e jobEnv) repoSpec(cfg *config.Config) (infra.RepoSpec, *localcfg.Config, 
 	bases := maps.Clone(s.BaseImages)
 	stand := bases[slices.Sorted(maps.Keys(bases))[0]]
 	for _, w := range cfg.Workflows {
-		if bases[w.BaseKind()] == "" {
-			bases[w.BaseKind()] = stand
+		kind := w.BaseKind()
+		if bases[kind] == "" {
+			bases[kind] = stand
 		}
 	}
 	lc := &localcfg.Config{

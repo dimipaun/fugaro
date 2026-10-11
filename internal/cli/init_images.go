@@ -120,10 +120,11 @@ func (s *imagesStage) kinds(ctx context.Context) []string {
 		set[k] = true
 	}
 	if _, cfg, err := loadCheckoutConfigAt(ctx, "."); err == nil && cfg != nil {
+		// loadCheckoutConfigAt only returns a cfg that validated (validate.go
+		// checks w.Base against config.Bases), so every w.BaseKind() here is
+		// already a member of config.Bases.
 		for _, w := range cfg.Workflows {
-			if k := w.BaseKind(); slices.Contains(config.Bases, k) {
-				set[k] = true
-			}
+			set[w.BaseKind()] = true
 		}
 	}
 	return slices.Sorted(maps.Keys(set))

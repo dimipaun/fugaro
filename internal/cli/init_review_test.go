@@ -877,6 +877,33 @@ func TestFirstBuildsUseSubmitAndWait(t *testing.T) {
 	}
 }
 
+// A workflow with no base: (the implicit Fugaro base) builds from
+// base_images.base, not a malformed ref for kind "".
+//
+// Mutation (run, restore): change buildImages' lc.BaseImage/image.BaseRef
+// calls back to the raw cfg.Workflows[name].Base, and this test fails:
+// lc.BaseImage("") misses the base_images.base entry entirely, so it falls
+// through to image.BaseRef("", Version), computing the malformed
+// ghcr.io/dimipaun/fugaro-:1.2.3 instead of reusing lc.BaseImages["base"].
+func TestFirstBuildsOnTheBaseKindUseSubmitAndWait(t *testing.T) {
+	fb := useFakeBuilder(t)
+	fakeTerminal(t)
+	e, out := stageEngine(t, initProjectName+"\n", nil)
+	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5",
+		BaseImages: map[string]string{"base": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"}}
+	e.r.setProject(lc)
+	cfg := &config.Config{Workflows: map[string]config.Workflow{"app": {}}}
+	spec := infra.RepoSpec{Name: "acme/app", Slug: "acme-app", BuildServiceAccountEmail: "b@x.iam", RegistryPath: "r",
+		Workflows: map[string]infra.WorkflowSpec{"app": {}}}
+	built, err := e.r.buildImages(t.Context(), lc, cfg, spec, []string{"app"})
+	if err != nil || built != 1 || len(fb.specs) != 1 || fb.specs[0].Base != lc.BaseImages["base"] {
+		t.Fatalf("built %d, err %v, specs %+v", built, err, fb.specs)
+	}
+	if !strings.Contains(out.String(), "built acme/app/app (Cloud Build build b0001)") || len(e.r.res.Builds) != 1 {
+		t.Fatalf("output %s, builds %v", out.String(), e.r.res.Builds)
+	}
+}
+
 // twoWorkflowBuild is a project with two workflows to build, the typed
 // confirmation for each on stdin.
 func twoWorkflowBuild(t *testing.T) (*initEngine, *syncBuf, *localcfg.Config, *config.Config, infra.RepoSpec) {

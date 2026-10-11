@@ -2410,9 +2410,9 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 	}
 	built := 0
 	for _, name := range names {
-		base := lc.BaseImage(cfg.Workflows[name].Base)
+		base := lc.BaseImage(cfg.Workflows[name].BaseKind())
 		if base == "" {
-			if base, err = image.BaseRef(cfg.Workflows[name].Base, Version); err != nil {
+			if base, err = image.BaseRef(cfg.Workflows[name].BaseKind(), Version); err != nil {
 				return built, userErr("%v", err)
 			}
 		}
