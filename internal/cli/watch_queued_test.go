@@ -418,7 +418,7 @@ func TestWatchCancelledPendingRunNotQueued(t *testing.T) {
 // lookback (plus queuedMintMargin), never the repository's history, so a
 // fugaro run --retry of an old stored task (old ID, fresh launch.json) is
 // not shown queued; it shows as a live row once its runner starts, and
-// fugaro ls shows it pending meanwhile.
+// fugaro runs ls shows it pending meanwhile.
 func TestWatchRetriedOldRunNotQueued(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	seedWatch(f, "mine")

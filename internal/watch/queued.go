@@ -10,7 +10,7 @@ import (
 // QueuedStuckAfter is how long a queued run may go since its launch claim or
 // launch.json without a registry entry showing up before watch flags it
 // "not started after N min". It is runstore.ClaimTTL on purpose: past
-// ClaimTTL, runview (and so fugaro ls) gives the launch up (a claim alone is
+// ClaimTTL, runview (and so fugaro runs ls) gives the launch up (a claim alone is
 // unlaunched, a launch.json with no record is lost), and watch keeps showing
 // exactly those runs, flagged Stale, as stuck queued rows within its
 // lookback (design docs/design/watch-queued.md §3).

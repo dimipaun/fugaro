@@ -81,7 +81,7 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 		case runview.StatusError:
 			return nil, userErr("run %s on PR #%d can't be read (%s), so the PR's state is unknown; see fugaro diagnose %s", r.Run, pr, oneLine(r.Reason), r.Run)
 		case runview.StatusLaunching, runview.StatusPending, string(runstore.StatusRunning):
-			return nil, userErr("run %s on PR #%d is still %s; wait for it to finish (fugaro ls --pr %d --repo %s) or cancel it", r.Run, pr, r.Status, pr, repo)
+			return nil, userErr("run %s on PR #%d is still %s; wait for it to finish (fugaro runs ls --pr %d --repo %s) or cancel it", r.Run, pr, r.Status, pr, repo)
 		case runview.StatusUnlaunched:
 			fmt.Fprintf(warn, "warning: run %s on PR #%d never launched; leaving it out\n", oneLine(r.Run), pr)
 			continue
