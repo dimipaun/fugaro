@@ -1372,6 +1372,33 @@ func TestCheckUsesTheBaseOfEachCheckedKind(t *testing.T) {
 	}
 }
 
+// A checked workflow without base: builds from base_images.base, and the
+// check job runs from it.
+func TestCheckJobOnTheBaseKind(t *testing.T) {
+	in := webappInputs(t)
+	for name, w := range in.Cfg.Workflows {
+		w.Base, w.Image.Node = "", ""
+		w.Rebuild.Check = "auto"
+		in.Cfg.Workflows[name] = w
+	}
+	base := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"
+	in.LC.BaseImages = map[string]string{"base": base}
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Check.Image != base {
+		t.Errorf("check image = %s, want %s", rs.Check.Image, base)
+	}
+	var spec CheckJobSpec
+	if err := json.Unmarshal([]byte(rs.Check.Env[CheckSpecEnv]), &spec); err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]string{"base": base}; !maps.Equal(spec.BaseImages, want) {
+		t.Errorf("job spec base images = %v, want %v", spec.BaseImages, want)
+	}
+}
+
 // tf.Cover reads the registry and base images out of FUGARO_CHECK_SPEC with
 // its own struct (the tf package cannot import this one): these are the two
 // JSON keys it decodes, so renaming either here fails until Cover follows.

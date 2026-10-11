@@ -245,7 +245,7 @@ variable "enable_budget" {
 }
 
 variable "history" {
-  description = "The history job (it sweeps the run registry of crashed runs), used only with enable_budget. Its job name must not start with fugaro-, which fugaro ls and max_parallel count as workflow jobs. deploy_job stays false in the first apply and is set once the Firebase root has output rtdb_url (the third apply), when the job's image exists."
+  description = "The history job (it sweeps the run registry of crashed runs), used only with enable_budget. Its job name must not start with fugaro-, which fugaro runs ls and max_parallel count as workflow jobs. deploy_job stays false in the first apply and is set once the Firebase root has output rtdb_url (the third apply), when the job's image exists."
   type = object({
     account_id             = string
     job                    = string

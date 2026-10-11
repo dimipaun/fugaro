@@ -57,7 +57,7 @@ func TestLsFiltersAndTotals(t *testing.T) {
 	seedRun(t, f, "20200101-000000-dddd", "b1", "someone@example.com", false) // outside --since
 	f.run.SetState(e1, backend.StateRunning)
 
-	out, _, err := execute(t, "ls", "--json")
+	out, _, err := execute(t, "runs", "ls", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,17 +68,17 @@ func TestLsFiltersAndTotals(t *testing.T) {
 	if len(got.Runs) != 3 || got.Runs[0].Status != runview.StatusUnlaunched || got.Totals.Runs != 3 {
 		t.Fatalf("ls = %+v", got)
 	}
-	out, _, _ = execute(t, "ls", "--json", "--mine", "--batch", "b1")
+	out, _, _ = execute(t, "runs", "ls", "--json", "--mine", "--batch", "b1")
 	_ = json.Unmarshal([]byte(out), &got)
 	if len(got.Runs) != 1 || got.Runs[0].Status != "running" || got.Runs[0].Cost.ComputeUSD <= 0 {
 		t.Fatalf("ls --mine --batch b1 = %+v", got.Runs)
 	}
-	out, _, _ = execute(t, "ls", "--json", "--since", "0")
+	out, _, _ = execute(t, "runs", "ls", "--json", "--since", "0")
 	_ = json.Unmarshal([]byte(out), &got)
 	if len(got.Runs) != 4 {
 		t.Fatalf("ls --since 0 = %d runs", len(got.Runs))
 	}
-	human, _, err := execute(t, "ls")
+	human, _, err := execute(t, "runs", "ls")
 	if err != nil || !strings.Contains(human, "unlaunched") || !strings.Contains(human, "3 runs") {
 		t.Fatalf("human ls = %s, %v", human, err)
 	}
@@ -109,7 +109,7 @@ func writeRecord(t *testing.T, f *cloudFixture, id string, r *runstore.Record) {
 
 func lsJSON(t *testing.T, args ...string) (lsOut, string) {
 	t.Helper()
-	out, errOut, err := execute(t, append([]string{"ls", "--json"}, args...)...)
+	out, errOut, err := execute(t, append([]string{"runs", "ls", "--json"}, args...)...)
 	if err != nil {
 		t.Fatalf("ls: %v (%s)", err, errOut)
 	}
@@ -229,7 +229,7 @@ func executeWatch(t *testing.T, n int, fn func()) (string, error) {
 	out := &afterWrites{n: n, fn: fn}
 	cmd.SetOut(out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"ls", "--watch", "--json", "--interval", "10ms"})
+	cmd.SetArgs([]string{"runs", "ls", "--watch", "--json", "--interval", "10ms"})
 	err := cmd.Execute()
 	return out.buf.String(), err
 }
@@ -265,7 +265,7 @@ func TestLsWatchReadsImageStatusOnce(t *testing.T) {
 
 func TestLsFlagErrors(t *testing.T) {
 	newCloudFixture(t)
-	for _, args := range [][]string{{"ls", "--since", "7w"}, {"ls", "--all", "--repo", "acme/app"}} {
+	for _, args := range [][]string{{"runs", "ls", "--since", "7w"}, {"runs", "ls", "--all", "--repo", "acme/app"}} {
 		if _, _, err := execute(t, args...); ExitCode(err) != ExitUserError {
 			t.Errorf("%v: %v", args, err)
 		}
@@ -301,7 +301,7 @@ func TestLsUsesPriceOverride(t *testing.T) {
 	f := newCloudFixture(t)
 	seedFinishedRun(t, f, time.Now().UTC().Format("20060102")+"-090000-aaaa")
 	compute := func() float64 {
-		out, _, err := execute(t, "ls", "--json")
+		out, _, err := execute(t, "runs", "ls", "--json")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -362,7 +362,7 @@ func TestLsImageAgeJSON(t *testing.T) {
 	writeRecord(t, f, skewed, &runstore.Record{Version: 1, RunID: skewed, Status: runstore.StatusSucceeded, Stage: "writeback",
 		StartedAt: started, Image: &runstore.ImageInfo{BuiltAt: &future, BakedCommit: "abc123"}})
 
-	out, _, err := execute(t, "ls", "--json")
+	out, _, err := execute(t, "runs", "ls", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +382,7 @@ func TestLsImageAgeJSON(t *testing.T) {
 		t.Fatalf("image_age_s by run = %v", ages)
 	}
 	// The human table is unchanged.
-	human, _, err := execute(t, "ls")
+	human, _, err := execute(t, "runs", "ls")
 	if err != nil || strings.Contains(human, "image") {
 		t.Fatalf("human ls = %s, %v", human, err)
 	}
@@ -399,7 +399,7 @@ func TestLsWarnsRebuildFailed(t *testing.T) {
 	putCheckState(t, f, failed)
 
 	want := "warning: acme/app web: the image rebuild of " + isoDay(failedAt) + " failed (FAILURE); runs still use the image built " + isoDay(built) + ". See fugaro image status.\n"
-	out, _, err := execute(t, "ls")
+	out, _, err := execute(t, "runs", "ls")
 	if err != nil || !strings.HasPrefix(out, want) {
 		t.Fatalf("ls = %q, %v\nwant a first line %q", out, err, want)
 	}
@@ -410,7 +410,7 @@ func TestLsWarnsRebuildFailed(t *testing.T) {
 	if len(got.Warnings) != 1 || got.Warnings[0]+"\n" != want {
 		t.Fatalf("warnings = %q", got.Warnings)
 	}
-	if out, _, _ := execute(t, "ls", "--json"); strings.Contains(out, "\nwarning:") || !strings.Contains(out, `"warnings": [`) {
+	if out, _, _ := execute(t, "runs", "ls", "--json"); strings.Contains(out, "\nwarning:") || !strings.Contains(out, `"warnings": [`) {
 		t.Fatalf("json output has a human warning line, or no array: %s", out)
 	}
 
@@ -431,11 +431,11 @@ func TestLsWarnsRebuildFailed(t *testing.T) {
 	}
 	// A healthy check warns about nothing, and the array is still there.
 	putCheckState(t, f, imagecheck.CheckState{CheckedAt: now.Add(-time.Hour), Decision: imagecheck.Skip})
-	out, _, _ = execute(t, "ls", "--json")
+	out, _, _ = execute(t, "runs", "ls", "--json")
 	if !strings.Contains(out, `"warnings": []`) {
 		t.Fatalf("json = %s", out)
 	}
-	if human, _, _ := execute(t, "ls"); strings.Contains(human, "warning:") {
+	if human, _, _ := execute(t, "runs", "ls"); strings.Contains(human, "warning:") {
 		t.Fatalf("human ls warned: %s", human)
 	}
 }
@@ -596,7 +596,7 @@ func TestLsWarnsUnreadableStatus(t *testing.T) {
 		if name == "unparsable" && !strings.Contains(got.Warnings[0], imagecheck.CheckKey(appSlug, "web")) {
 			t.Fatalf("the warning doesn't name the object: %q", got.Warnings)
 		}
-		human, _, _ := execute(t, "ls")
+		human, _, _ := execute(t, "runs", "ls")
 		if !strings.HasPrefix(human, got.Warnings[0]+"\n") {
 			t.Fatalf("%s: human ls = %q", name, human)
 		}
@@ -752,11 +752,11 @@ func TestLsPRJoinsExecutionsOnlyForPR(t *testing.T) {
 
 func TestLsPRNeedsOneRepo(t *testing.T) {
 	f := newCloudFixture(t)
-	if _, _, err := execute(t, "ls", "--pr", "7", "--all"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "ls --pr needs --repo") {
+	if _, _, err := execute(t, "runs", "ls", "--pr", "7", "--all"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "ls --pr needs --repo") {
 		t.Fatalf("--pr --all: %v", err)
 	}
 	for _, bad := range []string{"0", "-3"} {
-		if _, _, err := execute(t, "ls", "--pr", bad); ExitCode(err) != ExitUserError {
+		if _, _, err := execute(t, "runs", "ls", "--pr", bad); ExitCode(err) != ExitUserError {
 			t.Fatalf("--pr %s: %v", bad, err)
 		}
 	}
@@ -770,7 +770,7 @@ func TestLsPRNeedsOneRepo(t *testing.T) {
 	if err := os.WriteFile(path, []byte(two), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := execute(t, "ls", "--pr", "7"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "ls --pr needs --repo") {
+	if _, _, err := execute(t, "runs", "ls", "--pr", "7"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "ls --pr needs --repo") {
 		t.Fatalf("two repositories: %v", err)
 	}
 	seedPRRuns(t, f)
@@ -785,7 +785,7 @@ func TestLsPRNeedsOneRepo(t *testing.T) {
 	if err := os.WriteFile(path, []byte(none), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := execute(t, "ls", "--pr", "7"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "ls --pr needs --repo") {
+	if _, _, err := execute(t, "runs", "ls", "--pr", "7"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "ls --pr needs --repo") {
 		t.Fatalf("no repositories: %v", err)
 	}
 }
@@ -817,7 +817,7 @@ func TestLsPRTotals(t *testing.T) {
 	if got.Totals.Runs != 3 || math.Abs(got.Totals.ModelUSD-3) > 1e-9 || math.Abs(got.Totals.ComputeUSD-1) > 1e-9 {
 		t.Fatalf("totals = %+v (runs %v; other %s)", got.Totals, runIDs(got.Runs), r.other)
 	}
-	human, _, err := execute(t, "ls", "--pr", "7")
+	human, _, err := execute(t, "runs", "ls", "--pr", "7")
 	if err != nil || !strings.Contains(human, "3 runs · ≈ $4.00 billed") {
 		t.Fatalf("human ls --pr 7 = %s, %v", human, err)
 	}
@@ -829,7 +829,7 @@ func TestLsPRColumn(t *testing.T) {
 	r := seedPRRuns(t, f)
 	waiting := runIDAt(0, "000500", "ffff") // a follow-up not launched yet: its task knows the PR, no record yet
 	seedSpec(t, f, followUpSpec(waiting, r.root, r.fu1, 7), false)
-	human, _, err := execute(t, "ls", "--pr", "7")
+	human, _, err := execute(t, "runs", "ls", "--pr", "7")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -865,7 +865,7 @@ func TestLsShowsHalted(t *testing.T) {
 	if len(got.Runs) != 1 || got.Runs[0].Status != "halted" || got.Runs[0].Halt == nil || got.Runs[0].Halt.Reason != runstore.HaltTokenCap || !got.Runs[0].Terminal {
 		t.Fatalf("rows = %+v", got.Runs)
 	}
-	out, _, err := execute(t, "ls")
+	out, _, err := execute(t, "runs", "ls")
 	if err != nil || !strings.Contains(out, "halted (token_cap)") {
 		t.Fatalf("ls = %s, %v", out, err)
 	}
@@ -887,7 +887,7 @@ func TestLsShowsDraftInProgress(t *testing.T) {
 	f.run.SetState(e3, backend.StateFailed)
 	writeRecord(t, f, stale, staleRecord(stale, e3, time.Now().Add(-5*time.Hour)))
 
-	human, _, err := execute(t, "ls", "--since", "0")
+	human, _, err := execute(t, "runs", "ls", "--since", "0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -971,5 +971,37 @@ func TestLsJSONRecipeOmitempty(t *testing.T) {
 	}
 	if doc.Runs[1]["recipe"] != "claude-solo" {
 		t.Fatalf("recipe = %v", doc.Runs[1])
+	}
+}
+
+func TestRunsLsIsTheOldLs(t *testing.T) {
+	f := newCloudFixture(t)
+	// ls hides runs older than its window, so the ID's date must follow the clock.
+	id := time.Now().UTC().Format("20060102") + "-100000-abcd"
+	seedRun(t, f, id, "", "someone@example.com", true)
+	out, _, err := execute(t, "runs", "ls", "--json")
+	if err != nil || !strings.Contains(out, id) {
+		t.Fatalf("runs ls = %s, %v", out, err)
+	}
+}
+
+func TestLsIsATombstone(t *testing.T) {
+	newCloudFixture(t)
+	_, _, err := execute(t, "ls", "--all", "--since", "1d") // its old flags are accepted and ignored
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro ls was renamed in 0.7.0: use fugaro runs ls") {
+		t.Fatalf("ls: %v", err)
+	}
+	for _, c := range NewRootCmd().Commands() {
+		if c.Name() == "ls" && !c.Hidden {
+			t.Fatal("the tombstone is listed in help")
+		}
+	}
+}
+
+func TestSingularNounAliases(t *testing.T) {
+	for _, args := range [][]string{{"recipe", "validate", "--help"}, {"secret", "ls", "--help"}, {"run", "--help"}} {
+		if _, _, err := execute(t, args...); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
 	}
 }

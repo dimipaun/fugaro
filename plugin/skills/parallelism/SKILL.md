@@ -22,7 +22,7 @@ fugaro run --batch <name> --run-id <id> --task-file - <<'TASK'
 TASK
 ```
 
-`fugaro ls --batch <name>` lists the batch, and `fugaro ls --watch --batch <name>` follows it.
+`fugaro runs ls --batch <name>` lists the batch, and `fugaro runs ls --watch --batch <name>` follows it.
 
 ## Stay narrow for coupled work
 

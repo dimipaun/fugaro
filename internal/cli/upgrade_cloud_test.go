@@ -50,6 +50,32 @@ func TestCloudCheckReadsOnlyLocalFiles(t *testing.T) {
 	}
 }
 
+// A workflow with no base: (the implicit Fugaro base) is checked against
+// base_images.base, not against the empty-string key (which always misses),
+// so it doesn't permanently misreport the base as stale with a malformed
+// image reference.
+//
+// Mutation (run, restore): change cloudCheck's set[w.BaseKind()] = true back
+// to set[w.Base] = true, and this test fails: the kind set becomes {""}
+// instead of {"base"}, lc.BaseImage("") always misses the base_images.base
+// entry this test records, and the verdict is cloudStale (reporting a
+// malformed ghcr.io/dimipaun/fugaro-:0.5.1 "this release's is" reference)
+// instead of cloudCurrent.
+func TestCloudCheckOnTheBaseKind(t *testing.T) {
+	useVersion(t, "0.5.1")
+	useSelf(t)
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n" +
+		"  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	r := newAnchorModeRig(t, yaml, true)
+	r.appendConfig(t, "base_images: {base: "+managedRef("base", "0.5.1")+"}\n")
+	noRecordReads(t)
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", filepath.Join(t.TempDir(), "none.json"))
+	v := cloudCheck(t.Context(), r.root, cloudOptions{}, "")
+	if v.state != cloudCurrent {
+		t.Fatalf("%+v, want current: base_images.base already matches this release", v)
+	}
+}
+
 // TestCloudCheckReadsOnlyLocalFilesWhenAnchored is
 // TestCloudCheckReadsOnlyLocalFiles for a checkout that already has
 // gcp_project: (an anchored repository, the common case once fugaro init

@@ -225,7 +225,7 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 			set[config.BaseKind] = true
 			continue
 		}
-		set[cfg.Workflows[w].Base] = true
+		set[cfg.Workflows[w].BaseKind()] = true
 	}
 	kinds := slices.Sorted(maps.Keys(set))
 	host, err := infra.RegistryHost(lc)
@@ -263,7 +263,7 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 			p.why[w] = "runs the base image directly (checkout: clone): its job's image moves to base_images." + config.BaseKind + ", no build"
 			continue
 		}
-		kind := cfg.Workflows[w].Base
+		kind := cfg.Workflows[w].BaseKind()
 		rec, err := readRefreshRecord(ctx, lc, slug, w)
 		if err != nil {
 			return nil, err

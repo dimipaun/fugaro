@@ -162,7 +162,7 @@ func TestJoinProblemIsAnErrorRow(t *testing.T) {
 // A launched run that never wrote a record, and whose execution the
 // backend doesn't know, is lost once the claim TTL has passed: it failed
 // before the runner started (an image pull, a crash at start) and was
-// garbage-collected. It must settle, so ls --watch can stop.
+// garbage-collected. It must settle, so runs ls --watch can stop.
 func TestJoinLaunchedRunLostWithoutRecord(t *testing.T) {
 	old := *launch
 	old.LaunchedAt = now.Add(-runstore.ClaimTTL - time.Second)

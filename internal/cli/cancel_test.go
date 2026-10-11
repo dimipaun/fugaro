@@ -121,7 +121,7 @@ func TestDoubleLaunchViewsFollowTheRecord(t *testing.T) {
 	f.run.SetState(dup, backend.StateFailed)
 	f.run.SetState(owner, backend.StateRunning)
 	writeStage(t, f, id, owner, "implement")
-	out, _, err := execute(t, "ls", "--json")
+	out, _, err := execute(t, "runs", "ls", "--json")
 	var got lsOut
 	if err != nil || json.Unmarshal([]byte(out), &got) != nil || len(got.Runs) != 1 {
 		t.Fatalf("ls = %s, %v", out, err)

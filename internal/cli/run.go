@@ -131,7 +131,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.ref, "ref", "", "base branch or ref (default: the repo's base_branch)")
 	f.StringVar(&o.workflow, "workflow", "", "workflow to run (default: the repo's only workflow)")
 	f.StringVar(&o.runID, "run-id", "", "run ID to use; repeating one reports its launch instead of starting another")
-	f.StringVar(&o.batch, "batch", "", "batch label, to group runs in fugaro ls")
+	f.StringVar(&o.batch, "batch", "", "batch label, to group runs in fugaro runs ls")
 	f.StringVar(&o.tf, "task-file", "", "read the task from this file, or - for stdin")
 	f.StringVar(&o.retry, "retry", "", "launch the stored task of RUN (<repo-slug>/<run-id> or a run ID) that never started")
 	f.StringVar(&o.totalTimeout, "total-timeout", "", "override the workflow's timeouts.total for this run, such as 45m")
@@ -244,7 +244,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		if co := checkoutConfig(ctx, spec.Repo); co != nil {
 			agentRecipe = co.Agent.Recipe
 			if w, ok := co.Workflows[spec.Workflow]; ok {
-				kind = w.Base
+				kind = w.BaseKind()
 			}
 		}
 		if needsRecipeImage(spec, agentRecipe) {
@@ -978,7 +978,7 @@ func waitForLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec *
 			return nil, errClaimReleased
 		}
 		if !time.Now().Before(deadline) {
-			return nil, userErr("a launch of %s by %s (claimed %s) is still in flight after %s; run fugaro ls, or fugaro run --retry %s after %s",
+			return nil, userErr("a launch of %s by %s (claimed %s) is still in flight after %s; run fugaro runs ls, or fugaro run --retry %s after %s",
 				run, holder.Holder, holder.At.UTC().Format(time.RFC3339), claimWait, run, holder.At.Add(claimTTL).UTC().Format(time.RFC3339))
 		}
 		select {

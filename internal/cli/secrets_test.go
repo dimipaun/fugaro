@@ -207,7 +207,7 @@ func TestSecretsAndCloudCommandsRefuseHTTP2Debug(t *testing.T) {
 			{"secrets", "ls", "--repo", "acme/app"},
 			{"run", "--repo", "acme/app", "A task"},
 			{"image", "build", "--repo", "acme/app"},
-			{"ls"},
+			{"runs", "ls"},
 			{"logs", "some-run"},
 			{"diagnose", "some-run"},
 			{"cancel", "some-run"},

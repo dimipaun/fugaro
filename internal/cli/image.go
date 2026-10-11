@@ -122,7 +122,7 @@ func runImageBuild(cmd *cobra.Command, o imageBuildOptions) error {
 	}
 	base := o.base
 	if base == "" {
-		if base, err = image.BaseRef(cfg.Workflows[name].Base, Version); err != nil {
+		if base, err = image.BaseRef(cfg.Workflows[name].BaseKind(), Version); err != nil {
 			return &ExitError{Code: ExitUserError, Err: err}
 		}
 	}
@@ -206,10 +206,10 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	}
 	base := o.base
 	if base == "" {
-		base = lc.BaseImage(cfg.Workflows[name].Base)
+		base = lc.BaseImage(cfg.Workflows[name].BaseKind())
 	}
 	if base == "" {
-		if base, err = image.BaseRef(cfg.Workflows[name].Base, Version); err != nil {
+		if base, err = image.BaseRef(cfg.Workflows[name].BaseKind(), Version); err != nil {
 			return userErr("%v", err)
 		}
 	}
@@ -225,7 +225,8 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 		specLC.BaseImages = map[string]string{}
 	}
 	for _, w := range cfg.Workflows {
-		specLC.BaseImages[w.Base] = cmp.Or(specLC.BaseImages[w.Base], base)
+		kind := w.BaseKind()
+		specLC.BaseImages[kind] = cmp.Or(specLC.BaseImages[kind], base)
 	}
 	rs, err := infra.Repo(infra.Inputs{LC: &specLC, Repo: repo, Cfg: cfg, RepoURL: repoURL})
 	if err != nil {
