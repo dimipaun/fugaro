@@ -356,7 +356,7 @@ func prSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tota
 			return slug, spec, spec != nil, err
 		}
 	}
-	c, err := resolvePR(ctx, env, repo, slug, o.pr, o.runID, warn)
+	c, err := resolvePR(ctx, env, repo, slug, o.pr[0], o.runID, warn)
 	if err != nil {
 		return "", nil, false, err
 	}
@@ -389,7 +389,7 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 	if have.Recipe != nil {
 		haveRecipe = have.Recipe.Name
 	}
-	if have.PR != o.pr || have.Task != text || have.Batch != o.batch || string(a) != string(b) || (o.recipe != "" && o.recipe != haveRecipe) {
+	if have.PR != o.pr[0] || have.Task != text || have.Batch != o.batch || string(a) != string(b) || (o.recipe != "" && o.recipe != haveRecipe) {
 		return nil, userErr("run ID %s already holds a different task", o.runID)
 	}
 	return have, nil
@@ -433,7 +433,7 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		if err != nil {
 			return nil, err
 		}
-		if err := refuseIfNotYetRunnable(rr.Recipe, rr.Name); err != nil {
+		if err := refuseFollowUpReviewMode(rr.Recipe, rr.Name); err != nil {
 			return nil, err
 		}
 		printRecipeNote(warn, rr, true)
@@ -449,12 +449,12 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		if err != nil {
 			return nil, err
 		}
-		if err := refuseIfNotYetRunnable(inherited, rcp.Name); err != nil {
+		if err := refuseFollowUpReviewMode(inherited, rcp.Name); err != nil {
 			return nil, err
 		}
 	}
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: c.Ref, Workflow: workflow, Task: text,
-		Branch: c.Branch, PR: o.pr, PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp}
+		Branch: c.Branch, PR: o.pr[0], PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
 	}
@@ -508,7 +508,7 @@ func carryChosenRecipe(ctx context.Context, env *cloudEnv, repo string, c *prCha
 		if err != nil {
 			return nil, wrap(err)
 		}
-		if err := refuseIfNotYetRunnable(rr.Recipe, rr.Name); err != nil {
+		if err := refuseFollowUpReviewMode(rr.Recipe, rr.Name); err != nil {
 			return nil, wrap(err)
 		}
 		printRecipeNote(warn, rr, true)

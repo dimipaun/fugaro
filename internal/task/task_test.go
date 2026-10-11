@@ -210,7 +210,10 @@ func TestReviewPRsValidation(t *testing.T) {
 		edit func(*Spec)
 		want string
 	}{
-		{"with a follow-up", func(s *Spec) { s.ReviewPRs = []int{7}; s.Branch, s.PR, s.PreviousRun = "fugaro/20260926-221530-a1b2", 7, "20260926-221530-a1b2" },
+		{"with a follow-up", func(s *Spec) {
+			s.ReviewPRs = []int{7}
+			s.Branch, s.PR, s.PreviousRun = "fugaro/20260926-221530-a1b2", 7, "20260926-221530-a1b2"
+		},
 			"review_prs and branch/pr/previous_run don't go together"},
 		{"five", func(s *Spec) { s.ReviewPRs = []int{1, 2, 3, 4, 5} }, "1 to 4 pull requests"},
 		{"zero entry", func(s *Spec) { s.ReviewPRs = []int{0} }, "positive pull request numbers"},

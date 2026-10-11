@@ -53,4 +53,3 @@ func TestUsesV07DecidesByKeyPresence(t *testing.T) {
 		t.Fatal("UsesV07 = true, want false for a recipe with no 0.7.0 construct")
 	}
 }
-
