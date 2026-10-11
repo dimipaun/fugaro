@@ -1160,7 +1160,9 @@ func (r *run) agentLoop(ctx context.Context) {
 			req.Prompt = GatePrompt(req.Prompt, g)
 		}
 	}
-	sessionID := req.SessionID
+	// "" until implement actually runs and starts one: a Fixed gate skips
+	// implement, so there is no session yet for fix (below) to resume.
+	var sessionID string
 	if !skipImplement {
 		res, ok, err := r.stage(ctx, "implement", req, opts)
 		r.noteSession(req, res)
@@ -1250,15 +1252,26 @@ func (r *run) fix(ctx context.Context, v Verdict, sys, sessionID string) (string
 	if r.sessionID != "" {
 		sessionID = r.sessionID
 	}
-	req := agent.Request{Prompt: FixPrompt(v), SessionID: sessionID, Resume: true, AppendSystemPrompt: sys}
+	req := agent.Request{Prompt: FixPrompt(v), AppendSystemPrompt: sys}
+	if sessionID == "" {
+		// No session exists to resume: a Fixed check gate (gate.go) skipped
+		// implement entirely, so this fix is the run's first real agent
+		// stage. Start fresh, exactly as implement would have; resuming ""
+		// (or any session no stage ever started) would raise
+		// agent.ErrNoSession against the real binary, which this call,
+		// unlike implement's, has no Recoverable handling for.
+		req.SessionID = agent.NewSessionID()
+	} else {
+		req.SessionID, req.Resume = sessionID, true
+	}
 	res, ok, _ := r.stage(ctx, "fix", req, stageOpts{})
 	r.noteSession(req, res)
 	r.countTokens(res)
 	if !ok || r.capReached() {
-		return sessionID, false
+		return req.SessionID, false
 	}
 	r.afterStage(ctx, "fix")
-	return sessionID, !r.pr.gone
+	return req.SessionID, !r.pr.gone
 }
 
 // firstLine is the first-line review (design m10 §11a): up to rounds

@@ -1,12 +1,14 @@
 package runner_test
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -157,6 +159,42 @@ func TestLintAutofixCommitsAndSkipsImplement(t *testing.T) {
 	}
 	if lastCommitMsg(t, h.remote, "fugaro/"+runID) != "fugaro: autofix (commands.fix)" {
 		t.Fatalf("branch log head = %q", lastCommitMsg(t, h.remote, "fugaro/"+runID))
+	}
+	if rec.Gate != "fixed" || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("record = %+v", rec)
+	}
+}
+
+// fixTrackedFile is a fix step for the Fixed-gate path: it modifies "fixed",
+// the file autofix already committed (so `git commit -am` has something
+// tracked to stage), rather than fixStep's "feature.txt", which only
+// implement ever creates.
+func fixTrackedFile(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+	shell(t, req, "echo more >> fixed && git commit -qam 'Address review'")
+	verifyTest(t, ctx, req)
+	return agent.Result{}, nil
+}
+
+// TestLintAutofixReviewChangesStartsFreshFix: on the Fixed-gate path (no
+// implement stage ever ran, so there is no session for fix to resume), a
+// senior review that asks for changes must not try to resume a session
+// that was never started (against the real agent binary, Resume: true on
+// such a session raises agent.ErrNoSession, which fix's stage call has no
+// Recoverable handling for, so the run would hard-fail instead of
+// recovering).
+func TestLintAutofixReviewChangesStartsFreshFix(t *testing.T) {
+	cfg := gateCfg(t, "lint-fix", 2, "true", "test -f fixed", "touch fixed")
+	h := newHarnessFiles(t, cfg, nil, gateFiles("lint-fix", lintFixRecipe))
+	rec, err := h.run(t, review("changes", 1), fixTrackedFile, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(rec); !eq(got, "review", "fix", "review") {
+		t.Fatalf("stages = %v", got)
+	}
+	fixReq := h.agent.calls[1]
+	if fixReq.Resume || fixReq.SessionID == "" {
+		t.Fatalf("fix resumed a session the gate never started: %+v", fixReq)
 	}
 	if rec.Gate != "fixed" || rec.Outcome != runstore.OutcomeReady {
 		t.Fatalf("record = %+v", rec)
