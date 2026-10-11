@@ -31,7 +31,7 @@ Commit the `.claude/settings.json` change: a teammate who opens the folder in a 
 
 ```sh
 fugaro run "add a --verbose flag to the export command"
-fugaro ls --watch          # your runs until they settle
+fugaro runs ls --watch          # your runs until they settle
 fugaro diagnose <run>      # what happened: tests, review findings, cost, PR
 fugaro run --pr 42         # continue PR 42 from its trusted review comments
 ```

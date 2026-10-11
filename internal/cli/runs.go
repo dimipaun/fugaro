@@ -36,7 +36,7 @@ type lsOptions struct {
 	pr                       int // only the runs on this pull request, when set
 }
 
-// prLookback is ls --pr's default --since: run --pr's window
+// prLookback is runs ls --pr's default --since: run --pr's window
 // (followUpLookback), the runs bucket's lifecycle age, so every run the
 // bucket still holds is listed.
 var prLookback = fmt.Sprintf("%dd", int(followUpLookback/(24*time.Hour)))
@@ -59,6 +59,17 @@ type lsDoc struct {
 	Totals  runview.Totals `json:"totals"`
 	// Warnings are the lines a human listing prints before its table.
 	Warnings []string `json:"warnings"`
+}
+
+// newRunsCmd is "fugaro runs", with ls (the renamed "fugaro ls") as its
+// only subcommand today.
+func newRunsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "runs",
+		Short: "List and inspect runs",
+	}
+	cmd.AddCommand(newLsCmd())
+	return cmd
 }
 
 func newLsCmd() *cobra.Command {
@@ -102,7 +113,7 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 		return userErr("--pr %d: use a pull request number", o.pr)
 	}
 	if prSet && o.all {
-		return userErr("ls --pr needs --repo: a pull request number means something only in one repository")
+		return userErr("runs ls --pr needs --repo: a pull request number means something only in one repository")
 	}
 	if prSet && !cmd.Flags().Changed("since") {
 		o.since = prLookback
@@ -122,13 +133,13 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 
 	f := lsFilter{batch: o.batch, pr: o.pr, warn: cmd.ErrOrStderr()}
 	if prSet && o.repo == "" && len(env.lc.Repos) != 1 {
-		return userErr("ls --pr needs --repo: the local config lists %d repositories", len(env.lc.Repos))
+		return userErr("runs ls --pr needs --repo: the local config lists %d repositories", len(env.lc.Repos))
 	}
 	if f.slugs, err = lsSlugs(ctx, env, o, cmd.ErrOrStderr()); err != nil {
 		return err
 	}
 	if prSet && len(f.slugs) != 1 {
-		return userErr("ls --pr needs --repo: %d repositories to list", len(f.slugs))
+		return userErr("runs ls --pr needs --repo: %d repositories to list", len(f.slugs))
 	}
 	if o.mine {
 		if f.mine, err = env.lc.Me(ctx); err != nil {

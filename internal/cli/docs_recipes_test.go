@@ -72,7 +72,7 @@ func TestRecipesGuideMatchesTheCLI(t *testing.T) {
 			t.Errorf("fugaro %s has no --%s", strings.Join(want.path, " "), want.flag)
 		}
 	}
-	for _, c := range []string{"fugaro validate", "fugaro watch", "fugaro ls", "fugaro image build", "fugaro init"} {
+	for _, c := range []string{"fugaro validate", "fugaro watch", "fugaro runs ls", "fugaro image build", "fugaro init"} {
 		if !strings.Contains(doc, c) {
 			continue
 		}

@@ -43,7 +43,7 @@ func TestLostRunIsInfraErrorEverywhere(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, _, err := execute(t, "ls", "--watch", "--json", "--interval", "10ms")
+		_, _, err := execute(t, "runs", "ls", "--watch", "--json", "--interval", "10ms")
 		done <- err
 	}()
 	select {
@@ -295,7 +295,7 @@ func TestLsMarksUnestimatedCompute(t *testing.T) {
 	seedRun(t, f, today+"-091000-bbbb", "", "someone@example.com", false)
 	c := runstore.ModelOnlyCost(1.5, runstore.BasisAPIList)
 	writeRecord(t, f, today+"-091000-bbbb", &runstore.Record{Version: 1, RunID: today + "-091000-bbbb", Status: runstore.StatusFailed, Stage: "implement", CostUSD: 1.5, Cost: &c})
-	human, _, err := execute(t, "ls")
+	human, _, err := execute(t, "runs", "ls")
 	if err != nil || strings.Count(human, "compute not estimated") != 2 || !strings.Contains(human, "compute not estimated for 1 run") {
 		t.Fatalf("ls =\n%s%v", human, err)
 	}
