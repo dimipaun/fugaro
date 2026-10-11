@@ -53,8 +53,8 @@ steps:
 | `solo` | `roles: { reviewer: coder }`; `review: {}`. | Small, low-risk changes confined to one or two files, where a second model's review would cost more than it finds. |
 | `standard` | `first_line: {}`; `review: { bounce: first_line }`. | Typical feature or bug-fix work that needs a real review. Choose it when nothing more specific fits. |
 | `premium` | `roles: { coder: reviewer } `; `review: {}`. No cheap stage. | High-stakes or subtle work (concurrency, security, data migrations) where a cheap model's attempt is likely to waste the review. |
-| `review-only` | `mode: review`; `review: { max_rounds: 1 }`. No coding. | Reviewing a human-written or external pull request. Launch with `--pr N`. **Not yet launchable, section 8.** |
-| `pick` | `mode: review`; `review: { max_rounds: 1 }`. No coding. | Comparing several pull requests for the same task to decide which to keep, once every attempt has one. **Not yet launchable, section 8**: needs a best-of-N launch flow `fugaro run` does not yet have (today's `--pr` takes one pull request, not several). |
+| `review-only` | `mode: review`; `review: { max_rounds: 1 }`. No coding. | Reviewing a human-written or external pull request. Launch with `--recipe review-only --pr N`. |
+| `pick` | `mode: review`; `review: { max_rounds: 1 }`. No coding. | Comparing several pull requests for the same task to decide which to keep, once every attempt has settled. Launch with `--recipe pick --pr A --pr B [--pr C]` (2 to 4 pull requests). |
 | `test-and-fix` | `check: { command: test }`; `first_line: {}`; `review: { bounce: first_line }`. | Keeping a branch green, chasing a failing or flaky test, CI babysitting. A green run ends with no pull request. |
 | `lint-fix` | `roles: { reviewer: coder }`; `check: { command: lint, autofix: true }`; `review: {}`. | Routine mechanical cleanup (formatting, lint and type-check errors) in a repository with `commands.lint` and `commands.fix`. |
 
@@ -62,11 +62,24 @@ Only the catalog's own `default` follows `agent.first_line_review`. Every other 
 
 `use_when` is required for every catalog recipe but `default`. A repository or project recipe without one gets a `fugaro recipes ls` note ("the routing skill matches on use_when, add one"): the routing skill falls back to `description`, but a good `use_when` is what it actually matches the task against.
 
-**`mode: review` is not yet launchable.** It is part of the 0.7.0 recipe format (Task 8 of the generic-tool plan), and `fugaro recipes ls`/`show` list and print a recipe using it like any other, but no runner yet skips `implement` under it (that lands in a later release). Rather than silently fall back to running `implement` regardless, `fugaro run`, `fugaro recipes validate` and `fugaro recipes publish` all refuse a recipe using it, with "recipe NAME cannot be launched yet: ...". This means every catalog recipe but `review-only` and `pick` is launchable today (section 8 has the exact refusal). A `check` step, the format's other 0.7.0 construct, is executed by the runner as a gate before `implement`, so `test-and-fix` and `lint-fix` are launchable too. `commands.lint`, `commands.fix` and `review.allow_forks` already exist in `fugaro.yaml` (validated, schema'd).
+Every catalog recipe is launchable. `commands.lint`, `commands.fix` and `review.allow_forks` exist in `fugaro.yaml` (validated, schema'd); a `check` step is executed by the runner as a gate before `implement` (so `test-and-fix` and `lint-fix` run), and `mode: review` is executed directly, in place of `implement` (so `review-only` and `pick` run) — section 3.
 
-## 3. Review mode and best-of-N (format only: not yet launchable, section 8)
+## 3. Review mode and pick
 
-`mode: review` (default `mode: implement`) means the recipe has no `implement` and no `fix`: exactly one `review` step, `max_rounds: 1`, and no `roles` (there is no coder step to map them onto). `review-only` and `pick` are both `mode: review`; the difference is how they are meant to be launched, not the format. `review.allow_forks` (repository scope only, read from the default branch like `followup.trusted`) will let review mode run a fork pull request's code next to the job's secrets; `false` (the default) is meant to refuse a fork PR once review mode runs.
+`mode: review` (default `mode: implement`) means the recipe has no `implement` and no `fix`: exactly one `review` step, `max_rounds: 1`, and no `roles` (there is no coder step to map them onto). `review-only` and `pick` are both `mode: review`; the difference is how they are launched, not the format.
+
+A `mode: review` recipe always needs `--pr` (`fugaro run --recipe NAME --pr N`, 1 to 4 times): it reviews **any open pull request of the repository, not only Fugaro's own**, and is never a follow-up (`--pr` without a mode: review recipe keeps its older, follow-up meaning — section 5). The runner:
+
+- checks out each pull request's head read-only (fetched by commit, never a branch of its own) and reads `fugaro.yaml` from the base branch, like a follow-up does — never from the pull request's own tree, which a follow-up doesn't trust either;
+- refuses a pull request that is closed or merged, or whose head is in a fork, unless the base branch's `fugaro.yaml` sets `review.allow_forks: true` (repository scope only, read from the base branch like `followup.trusted`, so a fork PR can't opt itself in): reviewing means the agent can run that code next to the job's secrets;
+- runs the one `review` step with no git credentials and no `GH_TOKEN` in the agent's environment at all (the same rule a follow-up's agent already follows): it only ever reads the checkout;
+- posts one comment per pull request (`Provider.Comment`, redacted, capped at 60 KiB) naming the recipe and the verdict (`Fugaro review (review-only): ship`, or `changes` with the findings); a `pick` run's comment also names which pull request to keep (`keep #N`) and is posted, identical, on every one it compared;
+- never pushes, and never opens, updates or changes the draft state of any pull request;
+- ends the run with a new outcome, `reviewed` (`result.json`'s `reviewed` array names each pull request, its commit and the verdict).
+
+`review-only` reviews one pull request, checked out in place. `pick` compares 2 to 4: each head gets its own directory (a git worktree), and the prompt lists them so the agent reads every one before naming which to keep. A launch flag that starts several independent runs of the same task, so `pick` has something to compare, is a later addition; `pick` itself only ever needs the pull requests its own `--pr` already names.
+
+A follow-up (`fugaro run --pr N` with no `--recipe`, or one naming an ordinary recipe) never runs a `mode: review` recipe, even one it would otherwise inherit from the pull request's own history (a prior run's recipe, or the one the runner chose for it): `fugaro run` refuses it before any cloud work, since a follow-up only ever continues a pull request Fugaro itself opened, which `mode: review` never does.
 
 ## 4. Loop knobs stay outside the recipe
 
@@ -80,7 +93,7 @@ The first of these wins:
 2. `agent.recipe: NAME` in `fugaro.yaml`
 3. `default`
 
-`agent.recipe` applies to first runs only. A follow-up (`fugaro run --pr`) keeps the recipe of the run it continues unless `--recipe` names another.
+`agent.recipe` applies to first runs only. A follow-up (`fugaro run --pr N`, one PR, no `mode: review` recipe named) keeps the recipe of the run it continues unless `--recipe` names another — never one that is `mode: review` (section 3). `--recipe NAME --pr N` where NAME is `mode: review` is not a follow-up at all: `--pr` then means which pull request(s) to review (section 3), and is repeatable.
 
 `fugaro run` prints one line to stderr before it launches: `recipe: <name> (<source>)` when the CLI resolved the recipe; `recipe: default (catalog)` when it resolved the catalog `default`; and `recipe: chosen by the runner (agent.recipe in fugaro.yaml at <ref>, else default)` when you launch with no `--recipe`, there is no local checkout of the repository, and the project has no recipe named `default`. In that case the CLI validates nothing about `agent.recipe` locally: the runner reads it at the ref, so a malformed or unknown recipe fails in the run, not at your terminal, and a project recipe other than `default` is not found there (name it with `--recipe` instead). If the project has a `default`, the CLI embeds it and the line reads `recipe: default (project)`.
 
@@ -100,7 +113,7 @@ When the CLI resolves the recipe (`--recipe`, or a local checkout), it does so b
 
 ## 7. Commands
 
-- `fugaro recipes ls` lists the recipes of this checkout, the project and the catalog, and which layer wins for each name. `--verbose` also prints each recipe's `use_when` and `steps`; `--json` always carries both, plus `launchable` (a boolean) and, when it is `false`, `not_launchable_reason`: the routing skill reads these so it never picks a recipe only to have `fugaro run` refuse it (section 2's not-yet-launchable recipes, or any recipe with a parse problem, both report `launchable: false`). `not_launchable_reason` reflects `recipe.NotYetRunnable` and goes away, along with that guard, once the runner executes `mode: review` too (Task 12 of the generic-tool plan; Task 11 already covers `check` steps).
+- `fugaro recipes ls` lists the recipes of this checkout, the project and the catalog, and which layer wins for each name. `--verbose` also prints each recipe's `use_when` and `steps`; `--json` always carries both, plus `launchable` (a boolean, `false` only for a recipe with a parse problem, which `problem` then names): the routing skill reads it so it never picks a recipe only to have `fugaro run` refuse it.
 - `fugaro recipes show NAME` prints the recipe a run would get, the layer it comes from and its sha256.
 - `fugaro recipes validate FILE` checks a recipe file; it needs no cloud access.
 - `ls`, `show` and `validate` take `--json` for machine-readable output.
@@ -126,7 +139,7 @@ A recipe that uses a reserved key is refused with a message that says so:
 
 There are no task-shaped catalog recipes (fix a bug, add a feature) yet.
 
-A recipe that is valid but uses a construct no runner yet executes is refused too, separately from the parser: `mode: review` (section 2). The message says so: `recipe NAME cannot be launched yet: mode: review is not yet executed by any runner: it would run implement and open a pull request instead of only reviewing`. This applies to `fugaro run` (a first run or a follow-up, including one inheriting or keeping a prior run's recipe), `fugaro recipes validate` and `fugaro recipes publish`; `fugaro recipes ls` and `show` still display such a recipe, since looking at one is not launching it. A `check` step is executed by the runner as a gate before `implement` (section 1), so it is never refused here.
+`fugaro run` also refuses, separately from the parser, two launch-shaped mismatches between `--pr` and the recipe (section 3): a `mode: review` recipe with no `--pr` at all ("recipe NAME is mode: review, which only reviews pull requests; launch it with --recipe NAME --pr N"), and a follow-up (`--pr` naming no `mode: review` recipe of its own) that would inherit one from the pull request's history ("recipe NAME is mode: review, which only reviews an existing pull request and cannot continue one"). Several `--pr` (`pick`'s case) need an explicit `mode: review` recipe too, and at most 4.
 
 ## 9. Rolling out 0.5.0 and 0.7.0
 
@@ -136,7 +149,7 @@ Order matters:
 2. `fugaro run` checks the workflow's build record and refuses a recipe run (or a checkout that sets `agent.recipe`) on a job image too old for what it carries. The fix is `fugaro image refresh --repo <owner/name> --workflow <name>` in the repository's checkout, in your own terminal window, or with `--yes` from CI or a script (it copies this release's base image, points the daily image check job at it and rebuilds the image; refused in a coding agent's session either way, and there is still no `--json` or `--plan-only`). Then use the recipe. A launch of the catalog `default` carries no recipe and needs no job-image gate, unless `--recipe default` must override an `agent.recipe` that could apply; a project or repository recipe named `default` is a recipe-carrying launch and does need it.
 3. `cheap-loop-senior` and `claude-solo`, the 0.6 catalog's two non-default recipes, are gone from the 0.7.0 catalog: `agent.recipe` or `--recipe` naming either is refused with its replacement (`standard`, `solo`), unless a repository or project recipe of that exact name still exists, which wins as it always did.
 4. Deployed Firebase rules are updated only by `fugaro init --firebase <firebase-project-id>` (its Firebase stage). Until you rerun it, the dashboard shows no recipe name; the runs still work, and the run logs a warning that names that command.
-5. `review-only` and `pick` are in the catalog ahead of the runner work that executes `mode: review`: launching either is refused (section 8) until a later release. `test-and-fix` and `lint-fix` are launchable: Task 11's runner already executes their `check` step.
+5. `review-only` and `pick` are launchable, with `--pr` (section 3), like every other catalog recipe; `test-and-fix` and `lint-fix` are too, with their `check` step run as a gate.
 
 ## 10. Safety
 
