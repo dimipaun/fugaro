@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
 // DefaultClaudeAccount is the always-available, implicit name: the
@@ -15,7 +17,15 @@ const DefaultClaudeAccount = "default"
 
 // ClaudeAccountNameRE is a named Claude OAuth account's name: never
 // "default" (checked separately, so the message names the reservation).
-var ClaudeAccountNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,30}$`)
+// This tightens the plan text's `^[a-z][a-z0-9-]{0,30}$` on purpose: that
+// regex accepts a trailing dash ("a-") and a doubled dash ("a--b"). A
+// trailing dash would make an invalid Cloud Run job name once Task 2 builds
+// the workflow--account variant name, and "--" inside the name would make
+// the variant key ambiguous (workflow "w" + account "x--y" collides with
+// workflow "w--x" + account "y" in gcp.WorkflowVariant's "--"-joined key).
+// Requiring every dash to be immediately followed by an alphanumeric rules
+// out both.
+var ClaudeAccountNameRE = regexp.MustCompile(`^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$`)
 
 // ClaudeAccount is one named Claude OAuth credential the owner has
 // configured in the local config (never fugaro.yaml or the project layer:
@@ -77,10 +87,15 @@ func AllowedClaudeAccounts(accounts map[string]ClaudeAccount, repo string) []str
 
 // ValidateClaudeAccounts reports every rule the local config's
 // claude_accounts block breaks, the same shape as ValidateModelProviders.
+// A name or repository slug that fails its own check is never echoed raw:
+// Path and Message run it through pluginwire.Printable first (the same
+// treatment layer.go's showKey gives a project layer key), since the value
+// that triggers this function reached it exactly because it is untrusted
+// input (a bad regex match), and this text is printed to a terminal.
 func ValidateClaudeAccounts(accounts map[string]ClaudeAccount) []Problem {
 	var ps []Problem
 	for _, name := range sortedKeys(accounts) {
-		at := "claude_accounts." + name
+		at := "claude_accounts." + pluginwire.Printable(name)
 		switch {
 		case name == DefaultClaudeAccount:
 			ps = append(ps, Problem{Path: at, Message: `"default" is reserved for the unnamed claude-oauth-token secret and may not be configured here`})
@@ -88,10 +103,21 @@ func ValidateClaudeAccounts(accounts map[string]ClaudeAccount) []Problem {
 			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("account name must match %s", ClaudeAccountNameRE)})
 		}
 		for _, r := range accounts[name].AllowDataTo {
-			if !repoSlugRE.MatchString(r) {
-				ps = append(ps, Problem{Path: at + ".allow_data_to", Message: fmt.Sprintf("%q must be a repository as owner/name", r)})
+			if !repoSlugRE.MatchString(r) || hasDotSegment(r) {
+				ps = append(ps, Problem{Path: at + ".allow_data_to", Message: fmt.Sprintf("%q must be a repository as owner/name", pluginwire.Printable(r))})
 			}
 		}
 	}
 	return ps
+}
+
+// hasDotSegment reports whether repo's owner or name half is "." or "..":
+// repoSlugRE's charset allows both (it permits '.', for a dotted owner or
+// repository name), so "../.." and "./." pass it but name no repository.
+// Checked for claude_accounts.*.allow_data_to only: a provider's
+// allow_data_to (ValidateModelProviders) is a pre-existing, separate check
+// this task does not touch.
+func hasDotSegment(repo string) bool {
+	owner, name, ok := strings.Cut(repo, "/")
+	return !ok || owner == "." || owner == ".." || name == "." || name == ".."
 }

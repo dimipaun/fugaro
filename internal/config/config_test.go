@@ -68,6 +68,13 @@ func TestParseProblems(t *testing.T) {
 	}{
 		{"empty", "", "", "file is empty", 0},
 		{"unknown field", minimalYAML + "    color: blue\n", "", "field color not found", 12},
+		// claude_accounts is a local-config-only key (design
+		// docs/design/named-oauth-tokens.md §3, decision T1): a fugaro.yaml
+		// may never define or widen the named-account allow-list, so the
+		// repository layer's strict decoder (the same KnownFields(true)
+		// decoder as the "unknown field" case above) must refuse it exactly
+		// like any other field the Config struct does not have.
+		{"claude_accounts is not a fugaro.yaml key", minimalYAML + "claude_accounts:\n  x: {}\n", "", "field claude_accounts not found", 0},
 		{"bad duration", minimalYAML + "    timeouts: { total: soon }\n", "", "invalid duration", 12},
 		{"version", strings.Replace(minimalYAML, "version: 1", "version: 2", 1), "version", "must be 1", 0},
 		{"provider", strings.Replace(minimalYAML, "github", "gitlab", 1), "git.provider", "must be one of github, bitbucket", 0},
