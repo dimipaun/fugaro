@@ -237,7 +237,35 @@ var workflowVariantWorkflowRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,19}$`)
 // ClaudeAccountNameRE yet on this branch (Task 1 hasn't landed): mirrored
 // here, with this comment, until it does — the two copies must then be
 // reconciled so they can never drift apart.
-var workflowVariantTokenRE = regexp.MustCompile(`^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$`)
+//
+// This regex checks the hyphen-adjacency structure only, with no length
+// bound: workflowVariantTokenMaxLen (below) checks the length separately,
+// in Go, rather than as part of the pattern. A `{0,30}` quantifier on the
+// `(?:[a-z0-9]|-[a-z0-9])` group counts repetition units, not characters —
+// each unit is 1 byte (a bare alnum) or 2 bytes (a hyphen plus an alnum),
+// so `^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$` actually accepts up to 61
+// characters (e.g. "a"+30×"-a"), not the intended 31 (a real review
+// finding against an earlier version of this line). The natural one-regex
+// fix would be a bounding lookahead
+// (`^(?=[a-z][a-z0-9-]{0,30}$)[a-z](?:[a-z0-9]|-[a-z0-9])*$`), but Go's
+// regexp package (RE2) does not support lookahead at all, so that pattern
+// does not even compile here — the length must be checked outside the
+// regex instead.
+var workflowVariantTokenRE = regexp.MustCompile(`^[a-z](?:[a-z0-9]|-[a-z0-9])*$`)
+
+// workflowVariantTokenMaxLen is the planned config.ClaudeAccountNameRE's
+// length cap (the plan's original `^[a-z][a-z0-9-]{0,30}$`: 1 + 30 = 31
+// characters), checked in Go because workflowVariantTokenRE's own
+// quantifier cannot express it (see that regex's comment).
+const workflowVariantTokenMaxLen = 31
+
+// validWorkflowVariantToken reports whether token is a name
+// WorkflowVariant accepts: the hyphen-adjacency structure
+// (workflowVariantTokenRE) and the length cap
+// (workflowVariantTokenMaxLen) both hold.
+func validWorkflowVariantToken(token string) bool {
+	return len(token) <= workflowVariantTokenMaxLen && workflowVariantTokenRE.MatchString(token)
+}
 
 // WorkflowVariant is the key JobName, ServiceAccountID and SecretID derive
 // a token-scoped workflow's resources from: workflow unchanged for the
@@ -286,7 +314,7 @@ func WorkflowVariant(workflow, token string) string {
 	if token == "" || token == "default" {
 		return workflow
 	}
-	if !workflowVariantWorkflowRE.MatchString(workflow) || !workflowVariantTokenRE.MatchString(token) {
+	if !workflowVariantWorkflowRE.MatchString(workflow) || !validWorkflowVariantToken(token) {
 		panic(fmt.Sprintf("gcp.WorkflowVariant: workflow %q or token %q is outside its expected charset, so a \"_\" join would not be unambiguous", workflow, token))
 	}
 	return workflow + "_" + token

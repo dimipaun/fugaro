@@ -395,11 +395,11 @@ func TestWorkflowVariantIsIdentityForDefault(t *testing.T) {
 }
 
 // workflowVariantValid reports whether (workflow, token) is a pair
-// WorkflowVariant accepts (would not panic on): the same charset check
-// WorkflowVariant itself makes, duplicated in the test so a test case can
-// decide up front whether to expect a result or a panic.
+// WorkflowVariant accepts (would not panic on): the same charset and
+// length checks WorkflowVariant itself makes, duplicated in the test so a
+// test case can decide up front whether to expect a result or a panic.
 func workflowVariantValid(workflow, token string) bool {
-	return workflowVariantWorkflowRE.MatchString(workflow) && workflowVariantTokenRE.MatchString(token)
+	return workflowVariantWorkflowRE.MatchString(workflow) && validWorkflowVariantToken(token)
 }
 
 // workflowVariantTrickyPairs are (workflow, token) pairs a naive "--" join
@@ -516,6 +516,54 @@ func TestWorkflowVariantRejectsOutOfCharsetInput(t *testing.T) {
 			t.Errorf("WorkflowVariant(%q, %q) panicked", c.workflow, c.token)
 		}
 	}
+}
+
+// TestWorkflowVariantTokenLengthCap is the review finding that
+// workflowVariantTokenRE's `{0,30}` quantifier counts repetition units, not
+// characters, so `^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$` alone actually
+// accepted tokens up to 61 characters (each of the 30 repeated units can be
+// 2 bytes, a hyphen plus an alnum), not the 31-character bound every
+// comment, TestWorkflowVariantAtMaximumLengths and the Task 4 TODO on
+// JobSADisplayName assume. validWorkflowVariantToken now checks the length
+// separately in Go (workflowVariantTokenRE has no quantifier bound at all
+// any more): this test exercises exactly the boundary and the reviewer's
+// own counterexample, not just an all-alphanumeric 31-character token.
+func TestWorkflowVariantTokenLengthCap(t *testing.T) {
+	maxLenAllAlnum := strings.Repeat("a", 31)
+	maxLenHyphenated := "a" + strings.Repeat("-a", 15) // 1 + 15*2 = 31 characters
+	if !validWorkflowVariantToken(maxLenAllAlnum) {
+		t.Errorf("a 31-character all-alphanumeric token was rejected: %q", maxLenAllAlnum)
+	}
+	if !validWorkflowVariantToken(maxLenHyphenated) {
+		t.Errorf("a 31-character hyphenated token was rejected: %q", maxLenHyphenated)
+	}
+
+	oneOver := strings.Repeat("a", 32)
+	if validWorkflowVariantToken(oneOver) {
+		t.Errorf("a 32-character token was accepted: %q", oneOver)
+	}
+	// The reviewer's own counterexample: structurally valid (no leading,
+	// trailing or doubled hyphen) but 61 characters — the length a bare
+	// `{0,30}` quantifier on the hyphen-adjacency group would have allowed.
+	adversarial := "a" + strings.Repeat("-a", 30)
+	if len(adversarial) != 61 {
+		t.Fatalf("test fixture adversarial is %d characters, want 61", len(adversarial))
+	}
+	if !workflowVariantTokenRE.MatchString(adversarial) {
+		t.Fatalf("test fixture adversarial does not even match the hyphen-adjacency structure; fixture is wrong")
+	}
+	if validWorkflowVariantToken(adversarial) {
+		t.Errorf("a 61-character structurally-valid token was accepted (the exact bound-escape the review found): %q", adversarial)
+	}
+
+	// WorkflowVariant itself must refuse the over-length token (panic), not
+	// just the lower-level helper.
+	defer func() {
+		if recover() == nil {
+			t.Error("WorkflowVariant(\"build\", 61-character adversarial token) did not panic")
+		}
+	}()
+	WorkflowVariant("build", adversarial)
 }
 
 // readTerraformNameVariableRegex extracts the regular expression
