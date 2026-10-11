@@ -60,9 +60,15 @@ func recipeDirProblems(root string, cfg *config.Config) (problems, warnings []co
 	}
 	if n := cfg.Agent.Recipe; n != "" {
 		warnings = append(warnings, config.Problem{Path: "agent.recipe", Message: "fugaro before " + recipesSince + " refuses this key: every teammate's CLI, every CI pin and every workflow's job image must be on " + recipesSince + " or later before you merge it"})
-		if _, inCatalog := recipe.CatalogText(n); inCatalog && !have[n] {
+		_, inCatalog := recipe.CatalogText(n)
+		renamedTo, renamed := recipe.Renamed[n]
+		switch {
+		case have[n]:
+		case renamed:
+			warnings = append(warnings, config.Problem{Path: "agent.recipe", Message: fmt.Sprintf("%s was renamed in 0.7.0: use %s (a project or repository recipe of this name still wins over the rename)", n, renamedTo)})
+		case inCatalog:
 			warnings = append(warnings, config.Problem{Path: "agent.recipe", Message: fmt.Sprintf("%s is a catalog recipe here, but a project recipe of this name takes precedence over the catalog for every run (fugaro recipes show %s)", n, n)})
-		} else if !have[n] && !inCatalog {
+		default:
 			warnings = append(warnings, config.Problem{Path: "agent.recipe", Message: fmt.Sprintf("%s is neither in %s nor in the catalog, so it must be a project recipe (fugaro recipes ls); a run launched outside a checkout of this repository can't get one", n, recipe.RepoDir)})
 		}
 	}

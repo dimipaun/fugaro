@@ -136,7 +136,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.retry, "retry", "", "launch the stored task of RUN (<repo-slug>/<run-id> or a run ID) that never started")
 	f.StringVar(&o.totalTimeout, "total-timeout", "", "override the workflow's timeouts.total for this run, such as 45m")
 	f.IntVar(&o.pr, "pr", 0, "continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions)")
-	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's (default, cheap-loop-senior, claude-solo); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
+	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	f.BoolVar(&o.noBudgetCheck, "no-budget-check", false, "skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts")
 	addCloudFlags(cmd, &o.cloud)
@@ -408,6 +408,9 @@ func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func
 	}
 	rr, err := resolveRecipe(ctx, env, root, name, time.Now(), false)
 	if err != nil {
+		return nil, err
+	}
+	if err := refuseIfNotYetRunnable(rr.Recipe, rr.Name); err != nil {
 		return nil, err
 	}
 	printRecipeNote(warn, rr, explicit)

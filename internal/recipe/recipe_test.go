@@ -325,12 +325,62 @@ func TestOrderWithChecksAndModes(t *testing.T) {
 // echoed to a terminal or a skill prompt.
 func TestUseWhenRefusesControlChars(t *testing.T) {
 	_, ps := Parse([]byte("version: 1\nname: x\nuse_when: \"a\\e[2Jb\\nc\"\nsteps:\n  - review: {}\n"))
-	if !strings.Contains(ProblemsText(ps), "must not contain control characters, tabs or newlines") {
+	if !strings.Contains(ProblemsText(ps), unsafeCharMsg) {
 		t.Fatal(ProblemsText(ps))
 	}
 	_, ps = Parse([]byte("version: 1\nname: x\nuse_when: \"a\\tb\"\nsteps:\n  - review: {}\n"))
-	if !strings.Contains(ProblemsText(ps), "must not contain control characters, tabs or newlines") {
+	if !strings.Contains(ProblemsText(ps), unsafeCharMsg) {
 		t.Fatalf("tab: %s", ProblemsText(ps))
+	}
+}
+
+// TestHasControlCharClasses: every class hasControlChar refuses, each alone
+// so a mutation that drops one class cannot hide behind another still
+// tripping the function on the same input. A string with none of them is
+// not flagged.
+func TestHasControlCharClasses(t *testing.T) {
+	for name, r := range map[string]rune{
+		"C0 (tab)":            '\t',
+		"C0 (newline)":        '\n',
+		"DEL":                 0x7f,
+		"C1 (0x80)":           0x80,
+		"C1 (NEL, 0x85)":      0x85,
+		"C1 (CSI, 0x9b)":      0x9b,
+		"C1 (0x9f)":           0x9f,
+		"Cf (RLO bidi)":       '‮',
+		"Cf (zero-width sp)":  '​',
+		"line separator":      ' ',
+		"paragraph separator": ' ',
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !hasControlChar("a" + string(r) + "b") {
+				t.Fatalf("hasControlChar(%q) = false, want true", string(r))
+			}
+		})
+	}
+	if hasControlChar("plain ascii, no funny business") {
+		t.Fatal("hasControlChar(plain) = true, want false")
+	}
+	if hasControlChar("unicode café, 日本語, emoji 🎉 are all fine") {
+		t.Fatal("hasControlChar(ordinary unicode) = true, want false")
+	}
+}
+
+// TestDescriptionRefusesUnsafeChars: description is shown verbatim too
+// (recipes ls, --json), and is just as untrusted as use_when for a project
+// or repository recipe, so it gets the same refusal.
+func TestDescriptionRefusesUnsafeChars(t *testing.T) {
+	for name, desc := range map[string]string{
+		"C1 CSI":         "a\\u009b31mb",
+		"bidi override":  "evil ‮ txt",
+		"line separator": "a b",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, ps := Parse([]byte("version: 1\nname: x\ndescription: \"" + desc + "\"\nsteps:\n  - review: {}\n"))
+			if !strings.Contains(ProblemsText(ps), unsafeCharMsg) {
+				t.Fatalf("problems: %s", ProblemsText(ps))
+			}
+		})
 	}
 }
 

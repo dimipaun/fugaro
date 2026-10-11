@@ -388,7 +388,7 @@ func TestSetupSkillAsksRecipe(t *testing.T) {
 			}
 		}
 	}
-	for _, want := range []string{"`default`", "`cheap-loop-senior`", "`claude-solo`", "fugaro recipes ls", "leave `agent.recipe` out", "turns it on for a provider coder with a non-provider reviewer"} {
+	for _, want := range []string{"`default`", "`standard`", "`solo`", "fugaro recipes ls", "leave `agent.recipe` out", "turns it on for a provider coder with a non-provider reviewer"} {
 		if !strings.Contains(dec, want) {
 			t.Errorf("decisions.md never says %q", want)
 		}

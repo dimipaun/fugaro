@@ -10,7 +10,7 @@ import (
 )
 
 func TestRecipeClaudeSolo(t *testing.T) {
-	h := newHarness(t, firstLineCfg(t, 3, ""), recipeSpec(catalogTask(t, "claude-solo")))
+	h := newHarness(t, firstLineCfg(t, 3, ""), recipeSpec(embeddedTask("claude-solo", retiredClaudeSolo)))
 	rec, err := h.run(t, implement("feature"), review("ship", 0))
 	if err != nil || rec.Outcome != runstore.OutcomeReady {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
@@ -23,7 +23,7 @@ func TestRecipeClaudeSolo(t *testing.T) {
 
 // Solo still needs a ship: one round that asks for changes is a draft.
 func TestRecipeClaudeSoloStillNeedsShip(t *testing.T) {
-	h := newHarness(t, firstLineCfg(t, 3, ""), recipeSpec(catalogTask(t, "claude-solo")))
+	h := newHarness(t, firstLineCfg(t, 3, ""), recipeSpec(embeddedTask("claude-solo", retiredClaudeSolo)))
 	rec, err := h.run(t, implement("feature"), review("changes", 2))
 	if err != nil || rec.Outcome != runstore.OutcomeDraft || rec.Reason != "review round 1 still has 2 findings" {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
@@ -31,7 +31,7 @@ func TestRecipeClaudeSoloStillNeedsShip(t *testing.T) {
 }
 
 // soloGW is the gateway fixture with an opus reviewer, a sonnet coder and
-// agent.recipe: claude-solo; extra is appended at the top level.
+// agent.recipe: solo; extra is appended at the top level.
 func soloGW(t *testing.T, recipeLine, extra string) string {
 	t.Helper()
 	cfg := gwConfig(t, recipeLine)
@@ -41,7 +41,7 @@ func soloGW(t *testing.T, recipeLine, extra string) string {
 
 func TestRecipeSoloPinsTheCoder(t *testing.T) {
 	reply := anthropicfake.MessageOK(sonnet, pricing.Usage{Output: 10})
-	g := newGW(t, soloGW(t, "  recipe: claude-solo\n", ""), "observe", "", reply)
+	g := newGW(t, soloGW(t, "  recipe: solo\n", ""), "observe", "", reply)
 	var st []int
 	rec, err := g.run(t, implement("feature"), calling(&st, review("ship", 0), call{sonnet, 100}, call{opus, 100}))
 	if err != nil || len(st) != 2 || st[0] != 200 || st[1] != 400 {
@@ -60,12 +60,12 @@ func TestRecipeSoloPinsTheCoder(t *testing.T) {
 }
 
 // The alias resolves before the allow-list: the opus reviewer is not on the
-// list, but under claude-solo the reviewer runs sonnet, which is.
+// list, but under solo the reviewer runs sonnet, which is.
 func TestRecipeSoloAllowListSeesCoderModel(t *testing.T) {
 	list := "budget:\n  allowed_models: [" + sonnet + ", " + haiku + "]\n"
 	g := newGW(t, soloGW(t, "", list), "observe", "")
 	refusedBeforeAnyCall(t, g, "agent.models.reviewer")
-	g = newGW(t, soloGW(t, "  recipe: claude-solo\n", list), "observe", "")
+	g = newGW(t, soloGW(t, "  recipe: solo\n", list), "observe", "")
 	rec, err := g.run(t, implement("feature"), review("ship", 0))
 	if err != nil || rec.Outcome != runstore.OutcomeReady {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
@@ -74,7 +74,7 @@ func TestRecipeSoloAllowListSeesCoderModel(t *testing.T) {
 
 // The alias cannot launder a coder that is off the list.
 func TestRecipeSoloCannotEscapeAllowList(t *testing.T) {
-	cfg := strings.Replace(soloGW(t, "  recipe: claude-solo\n", "budget:\n  allowed_models: ["+sonnet+", "+haiku+"]\n"),
+	cfg := strings.Replace(soloGW(t, "  recipe: solo\n", "budget:\n  allowed_models: ["+sonnet+", "+haiku+"]\n"),
 		"coder: "+sonnet, "coder: "+opus, 1)
 	refusedBeforeAnyCall(t, newGW(t, cfg, "observe", ""), "agent.models.coder")
 }
@@ -141,7 +141,7 @@ func TestRecipeSoloTakesTheCodersOutputLimit(t *testing.T) {
 	}
 	reply := anthropicfake.MessageOK(sonnet, pricing.Usage{Output: 10})
 	var st []int
-	g := newGW(t, limits(t, "  recipe: claude-solo\n"), "observe", "", reply)
+	g := newGW(t, limits(t, "  recipe: solo\n"), "observe", "", reply)
 	rec, err := g.run(t, implement("feature"), calling(&st, review("ship", 0), call{sonnet, 3000}))
 	if err != nil || rec.Outcome != runstore.OutcomeReady || len(st) != 1 || st[0] != 200 {
 		t.Fatalf("rec = %+v, err = %v, statuses = %v", rec, err, st)
