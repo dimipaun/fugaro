@@ -137,6 +137,49 @@ func TestRefreshBaseStepNeverReplacesCustomBase(t *testing.T) {
 	}
 }
 
+// implicitBaseRefreshYAML is refreshYAML's checkout with one workflow that
+// has no base: (the implicit Fugaro base).
+const implicitBaseRefreshYAML = "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n" +
+	"  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+
+// Today's installations have no fugaro-base image published yet (the base
+// image's own release and publish pipeline is a later task): fugaro image
+// refresh's base step (step 2) on a checkout whose workflow has no base:
+// must refuse with a clear error naming the missing image and saying it has
+// no published image, write nothing to the local config or the registry,
+// and never reach the builds step: runImageRefresh returns at
+// refreshStopped(2, ...) when step 2 fails, before s.builds (step 4) is
+// ever called, so the fake builder sees no submission.
+//
+// Mutation (run, restore): publish "fugaro-base" on the fake source
+// registry (letting the copy proceed, as it would once the base image is
+// actually published), and this test's assertions fail: the base step
+// succeeds, base_images.base is recorded, and the image is copied.
+func TestRefreshBaseStepRefusesWhenFugaroBaseIsNotPublished(t *testing.T) {
+	r := newImagesRig(t, "1.2.3")
+	delete(r.src.tags, "dimipaun/fugaro-base:1.2.3")
+	t.Chdir(repoCheckout(t, githubOrigin, implicitBaseRefreshYAML))
+	fb := useFakeBuilder(t)
+	e := rigEngine(t, r.initRig, &initOptions{})
+	out := atTerminal(t, e, initProjectName+"\n")
+	err := e.r.refreshBase(t.Context(), e, []string{"base"})
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out.String())
+	}
+	if !strings.Contains(err.Error(), "fugaro-base") || !strings.Contains(err.Error(), "no published image") {
+		t.Fatalf("err = %v, want it to name the missing image and say it has no published image", err)
+	}
+	if r.dst.puts != 0 {
+		t.Errorf("the registry was written to: %d puts", r.dst.puts)
+	}
+	if got := r.localConfig(t).BaseImages["base"]; got != "" {
+		t.Errorf("base_images.base was recorded: %s", got)
+	}
+	if len(fb.specs) != 0 {
+		t.Errorf("a build was submitted: %+v", fb.specs)
+	}
+}
+
 // refreshReload re-reads the local config the base step wrote (not the
 // plan's own, now-stale copy) and re-resolves the checkout's config
 // strictly against it (decision L16: this leads to a billable Cloud Build
@@ -211,6 +254,43 @@ func TestRefreshReloadFillsMissingBaseFromRelease(t *testing.T) {
 		t.Fatalf("refreshReload wrote base_images.go to the local config: %v", tg.lc.BaseImages)
 	}
 	want, err := image.BaseRef("go", "0.5.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tg.spec.Check == nil || tg.spec.Check.Image != want {
+		t.Fatalf("check image = %+v, want the release fallback %s", tg.spec.Check, want)
+	}
+}
+
+// A workflow with no base: (the implicit Fugaro base) falls back to this
+// release's own fugaro-base image, not a malformed ref under the
+// empty-string key.
+//
+// Mutation (run, restore): change refreshReload's specLC.BaseImages[kind]
+// lookups back to specLC.BaseImages[w.Base], and this test fails: the
+// fallback is written under base_images[""] (ghcr.io/.../fugaro-:0.5.1)
+// instead of base_images.base, so infra.Repo refuses the checked workflow
+// with "no base_images entry for base".
+func TestRefreshReloadOnTheBaseKind(t *testing.T) {
+	useVersion(t, "0.5.1")
+	useSelf(t)
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n" +
+		"  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	r := newAnchorModeRig(t, yaml, false)
+	r.appendConfig(t, "  acme/app: { provider: github, workflows: [app], github_app_id: \"12345\" }\n")
+	putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.5.1"))
+	p, err := refreshPreflight(t.Context(), refreshOptions{}, &initOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tg, err := refreshReload(t.Context(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tg.lc.BaseImages["base"] != "" {
+		t.Fatalf("refreshReload wrote base_images.base to the local config: %v", tg.lc.BaseImages)
+	}
+	want, err := image.BaseRef("base", "0.5.1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -557,6 +637,43 @@ func TestRefreshBuildsStartFromTheNewBase(t *testing.T) {
 	}
 	if calls := r.calls(t); len(calls) != 0 {
 		t.Errorf("the builds step ran terraform: %q", calls)
+	}
+}
+
+// A workflow with no base: (the implicit Fugaro base) is rebuilt from
+// base_images.base, not from a malformed ref for kind "".
+//
+// Mutation (run, restore): change refreshBuilds' `kind :=
+// t.cfg.Workflows[wf].BaseKind()` back to `.Base`, and this test fails: tg.lc
+// has no base_images[""] entry, so refreshBuilds refuses with "no base image
+// for kind " instead of submitting the build.
+func TestRefreshBuildsOnTheBaseKind(t *testing.T) {
+	useVersion(t, "0.5.1")
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n" +
+		"  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	r := newAnchorModeRig(t, yaml, true)
+	fb := useFakeBuilder(t)
+	e := rigEngine(t, r.initRig, &initOptions{})
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := managedRef("base", "0.5.1")
+	lc.BaseImages = map[string]string{"base": base}
+	cfg, problems := config.Parse([]byte(yaml))
+	if cfg == nil {
+		t.Fatal(problems)
+	}
+	slug := mustSlug("github", "acme/app")
+	tg := &refreshTarget{lc: lc, cfg: cfg, spec: infra.RepoSpec{Name: "acme/app", Slug: slug, RegistryPath: "r", BuildServiceAccountEmail: "b@x.iam",
+		Workflows: map[string]infra.WorkflowSpec{"app": {}}}}
+	p := &refreshPlan{workflows: []string{"app"}}
+	atTerminal(t, e, initProjectName+"\n")
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
+		t.Fatalf("%v", err)
+	}
+	if len(fb.specs) != 1 || fb.specs[0].Base != base {
+		t.Fatalf("builds %+v, want one from %s", fb.specs, base)
 	}
 }
 
