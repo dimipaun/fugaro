@@ -214,6 +214,21 @@ func (r *Repo) CommitEmpty(ctx context.Context, msg string) error {
 	return err
 }
 
+// DiscardChanges resets the working tree to HEAD, discarding every change
+// to a tracked file, then removes untracked files and directories (git
+// clean -fd, never -x): anything git already ignores — a warm dependency
+// cache, a restored toolchain — survives, the same guarantee
+// CheckoutNewBranch's own clean -fd gives a fresh checkout. Used when a
+// command's output cannot be trusted (gate.go: commands.fix killed
+// mid-write by its timeout).
+func (r *Repo) DiscardChanges(ctx context.Context) error {
+	if _, err := r.git(ctx, "reset", "--quiet", "--hard", "HEAD"); err != nil {
+		return err
+	}
+	_, err := r.git(ctx, "clean", "-fd", "--quiet")
+	return err
+}
+
 // AheadOf counts commits on HEAD that origin/<base> does not have.
 func (r *Repo) AheadOf(ctx context.Context, base string) (int, error) {
 	return r.countAhead(ctx, base, "HEAD")

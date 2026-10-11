@@ -215,8 +215,17 @@ func (r *run) runAutofix(ctx context.Context) (autofixOutcome, error) {
 	// The exit code and whether it timed out are the only facts about this
 	// run ever recorded or logged: never commands.fix's output, which may
 	// hold whatever the repository's own command prints.
+	r.rec.Autofix = &runstore.AutofixRecord{ExitCode: code, TimedOut: timedOut}
 	if timedOut {
-		r.d.Log.Warn("commands.fix timed out; its changes were not committed", "timeout", r.wf.Timeouts.Verify.Duration)
+		// A process SIGKILLed mid-write can leave a tracked file half
+		// written, not just uncommitted: discard whatever it left (reset
+		// to HEAD, remove untracked files and directories) rather than
+		// leave it for the agent's own `git add -A` or finalize's leftover
+		// commit to pick up and publish.
+		r.d.Log.Warn("commands.fix timed out; discarding its changes", "timeout", r.wf.Timeouts.Verify.Duration)
+		if err := r.repo.DiscardChanges(ctx); err != nil {
+			return autofixOutcome{}, err
+		}
 		return autofixOutcome{TimedOut: true}, nil
 	}
 	if code == 127 {

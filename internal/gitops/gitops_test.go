@@ -58,6 +58,39 @@ func TestCheckoutNewBranchKeepsIgnored(t *testing.T) {
 	}
 }
 
+// TestDiscardChangesRevertsTrackedRemovesUntrackedKeepsIgnored: a tracked
+// file's modification is reverted, an untracked file is removed, and an
+// ignored file (a warm dependency cache) survives — the same guarantee
+// CheckoutNewBranch's own clean -fd gives a fresh checkout, used instead
+// when a command's output (gate.go: a timed-out commands.fix) cannot be
+// trusted.
+func TestDiscardChangesRevertsTrackedRemovesUntrackedKeepsIgnored(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{
+		"README.md":                 "half-written\n",
+		"half.txt":                  "untracked\n",
+		"node_modules/dep/index.js": "warm cache\n",
+	})
+	if err := repo.DiscardChanges(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if clean, err := repo.IsClean(ctx); err != nil || !clean {
+		t.Fatalf("IsClean after DiscardChanges = %v, %v", clean, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(repo.Dir, "README.md")); err != nil || string(data) != "hello\n" {
+		t.Fatalf("README.md = %q, %v, want it reverted to \"hello\\n\"", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(repo.Dir, "half.txt")); !os.IsNotExist(err) {
+		t.Fatal("untracked file survived DiscardChanges")
+	}
+	if _, err := os.Stat(filepath.Join(repo.Dir, "node_modules", "dep", "index.js")); err != nil {
+		t.Fatal("ignored warm cache was wiped:", err)
+	}
+}
+
 func TestCommitAllAheadAndClean(t *testing.T) {
 	repo, _ := setup(t)
 	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {

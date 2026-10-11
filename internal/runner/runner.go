@@ -1169,17 +1169,30 @@ func (r *run) agentLoop(ctx context.Context) {
 			// while they ran; this path is the only one that would otherwise
 			// finalize as succeeded despite it (fixed and red both still
 			// reach a real r.stage() call before any outcome is decided,
-			// which checks haltValue() at its own top).
+			// which checks haltValue() at its own top). A halt ends the run
+			// regardless of follow-up status.
 			if h := r.haltValue(); h != nil {
 				r.endHalted(ctx, h)
 				return
 			}
-			r.endWithoutPR(ctx, "every check passed: nothing to fix")
-			return
+			if r.follow == nil {
+				r.endWithoutPR(ctx, "every check passed: nothing to fix")
+				return
+			}
+			// A follow-up: the launcher asked for a specific action (reply
+			// to comments, apply instructions) that a clean gate must not
+			// silently swallow. req.Prompt is already the follow-up's own
+			// ImplementPrompt (set above); fall through to implement as
+			// usual, on top of whatever the gate found (nothing, here).
 		case g.Fixed:
 			r.rec.Gate = "fixed"
 			r.verifyOnce(ctx, verify.KindTest)
-			skipImplement = true
+			// A follow-up still runs implement with its own instructions,
+			// on top of the autofix commit the gate already made; only a
+			// first run (nothing else asked of it) skips straight to review.
+			if r.follow == nil {
+				skipImplement = true
+			}
 		default:
 			req.Prompt = GatePrompt(req.Prompt, g)
 		}

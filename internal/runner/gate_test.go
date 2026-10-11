@@ -301,13 +301,34 @@ func TestGateCancelEndsCancelledNotInfraError(t *testing.T) {
 	}
 }
 
+// fileInTree reports whether path exists in ref's tree in remote.
+func fileInTree(t *testing.T, remote, ref, path string) bool {
+	t.Helper()
+	cmd := exec.Command("git", "-C", remote, "cat-file", "-e", ref+":"+path)
+	return cmd.Run() == nil
+}
+
+// fileEverCommitted reports whether path appears in any commit reachable
+// from ref in remote: a tighter check than "not in the tip", which a later
+// commit covering it up (or, here, the agent's own unrelated commit
+// landing after it) would still pass.
+func fileEverCommitted(t *testing.T, remote, ref, path string) bool {
+	t.Helper()
+	return testutil.Git(t, remote, "log", "--oneline", ref, "--", path) != ""
+}
+
 // TestGateFixTimeoutIsDiscardedAndRed: commands.fix that runs longer than
-// the workflow's timeouts.verify is killed; its changes are never
-// committed, the check command is skipped (there is nothing meaningful to
-// judge), the step ends red (reaching implement, with a plain explanation),
-// and the run is never infra_error over it.
+// the workflow's timeouts.verify is killed partway through writing a file;
+// its changes are discarded (reset to HEAD, untracked files removed), never
+// committed — neither by the gate itself nor by the implement stage that
+// follows, whose own `git add -A` would otherwise pick up and commit
+// whatever a half-written fix left lying around, exactly as a human
+// reading only the latest commit's message could miss. The check command
+// is skipped (there is nothing meaningful to judge), the step ends red
+// (reaching implement, with a plain explanation), and the run is never
+// infra_error over it.
 func TestGateFixTimeoutIsDiscardedAndRed(t *testing.T) {
-	cfg := gateCfg(t, "lint-fix", 1, "true", "test -f fixed", "sleep 5")
+	cfg := gateCfg(t, "lint-fix", 1, "true", "test -f fixed", "echo half > half.txt; sleep 5")
 	cfg = strings.Replace(cfg, "verify: 1m", "verify: 300ms", 1)
 	if !strings.Contains(cfg, "verify: 300ms") {
 		t.Fatal("fixture has no timeouts.verify: 1m to shorten")
@@ -323,14 +344,24 @@ func TestGateFixTimeoutIsDiscardedAndRed(t *testing.T) {
 	if rec.Gate != "" {
 		t.Fatalf("gate = %q, want neither clean nor fixed (red)", rec.Gate)
 	}
-	if lastCommitMsg(t, h.remote, "fugaro/"+runID) == "fugaro: autofix (commands.fix)" {
-		t.Fatal("a timed-out fix's changes were committed")
+	if rec.Autofix == nil || !rec.Autofix.TimedOut {
+		t.Fatalf("Autofix = %+v, want TimedOut true", rec.Autofix)
 	}
 	if len(h.agent.calls) == 0 {
 		t.Fatal("a timed-out fix never reached implement")
 	}
 	if p := h.agent.calls[0].Prompt; !strings.Contains(p, "commands.fix timed out") {
 		t.Fatalf("implement prompt = %q", p)
+	}
+	if _, err := os.Stat(filepath.Join(h.deps.WorkDir, "half.txt")); err == nil {
+		t.Fatal("the timed-out fix's half-written file survived in the working tree")
+	}
+	branch := "fugaro/" + runID
+	if fileInTree(t, h.remote, branch, "half.txt") {
+		t.Fatal("the timed-out fix's half-written file reached the pushed branch's tree")
+	}
+	if fileEverCommitted(t, h.remote, branch, "half.txt") {
+		t.Fatal("the timed-out fix's half-written file was committed at some point in the branch's history")
 	}
 }
 
@@ -405,5 +436,117 @@ func TestGateStageSavedBeforeRunning(t *testing.T) {
 	<-done
 	if !sawCheck {
 		t.Fatal(`the persisted record never showed stage "check" while the gate's command ran`)
+	}
+}
+
+// TestGateRecordsAutofixExitCode: commands.fix's exit code and whether it
+// timed out are written to the run's record — never its output — so
+// "ran and changed nothing" can be told apart from a bad exit without
+// reading the gate's own log.
+//
+// Mutation (drop the r.rec.Autofix assignment in runAutofix): this test
+// fails, Autofix stays nil.
+func TestGateRecordsAutofixExitCode(t *testing.T) {
+	cfg := gateCfg(t, "lint-fix", 1, "true", "test -f fixed", "exit 3")
+	h := newHarnessFiles(t, cfg, nil, gateFiles("lint-fix", lintFixRecipe))
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Autofix == nil || rec.Autofix.ExitCode != 3 || rec.Autofix.TimedOut {
+		t.Fatalf("Autofix = %+v, want {ExitCode:3 TimedOut:false}", rec.Autofix)
+	}
+}
+
+// followUpWithRecipe is fuHarness.followUp, but the task carries rcp: a
+// follow-up never reads agent.recipe (resolveRecipe only does for a first
+// run), so embedding the recipe in the task is how a follow-up actually
+// gets a check-step recipe.
+func (h *fuHarness) followUpWithRecipe(t *testing.T, id, previous, text string, rcp *task.Recipe) {
+	t.Helper()
+	spec := &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Task: text,
+		Branch: "fugaro/" + runID, PR: 1, PreviousRun: previous, Workflow: h.first.Workflow, Recipe: rcp}
+	store := runstore.Open(h.bucket, "acme-app", id)
+	if err := store.WriteTask(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	h.store, h.deps.Store = store, store
+	for _, dir := range []string{h.deps.WorkDir, h.deps.StateDir} {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.deps.Env = append(filterEnv(h.deps.Env, "HOME"), "HOME="+t.TempDir())
+	h.agent = &scriptedAgent{t: t}
+	h.deps.Agent = h.agent
+}
+
+// followUpYAMLWithLintFix is followUpYAML with commands.lint and
+// commands.fix added, for a follow-up test that needs the gate's autofix.
+func followUpYAMLWithLintFix(t *testing.T, lint, fix string) string {
+	t.Helper()
+	cfg := followUpYAML(t, "")
+	extra := "      lint: " + yamlQuote(lint) + "\n      fix: " + yamlQuote(fix) + "\n"
+	out := strings.Replace(cfg, "      rerun_failed:\n", extra+"      rerun_failed:\n", 1)
+	if out == cfg {
+		t.Fatal("fixture has no commands.rerun_failed line")
+	}
+	return out
+}
+
+// TestFollowUpCleanGateDoesNotShortCircuit: a follow-up (fugaro run --pr N)
+// keeps its recipe, so the check gate runs for it too. A clean gate ending
+// the run succeeded/none — correct for a first run, which asked only for
+// the gate to pass — would otherwise silently swallow a follow-up the
+// launcher specifically asked for (reply to comments, apply instructions):
+// the design (generic-tool.md G10, G11) and the plan say nothing about
+// follow-ups, so this run takes the conservative reading and never lets a
+// clean gate end a follow-up without running it.
+//
+// Mutation (drop the `if r.follow == nil` guard on endWithoutPR, so every
+// clean gate short-circuits): this test fails, back to outcome none with
+// zero agent calls.
+func TestFollowUpCleanGateDoesNotShortCircuit(t *testing.T) {
+	const yaml = "version: 1\nname: gated\nsteps:\n  - check: { command: test }\n  - review: {}\n"
+	h := followUpHarness(t, "", nil)
+	h.comment(t, "alice", aliceID, "Please rename the helper to fooBar.")
+	h.followUpWithRecipe(t, followID, runID, "", embeddedTask("gated", yaml))
+	rec, err := h.run(t, withAnswer(implement("rename"), "Renamed the helper to fooBar."), review("ship", 0))
+	mustReady(t, rec, err)
+	if rec.Gate != "clean" {
+		t.Fatalf("gate = %q, want clean", rec.Gate)
+	}
+	if len(h.agent.calls) == 0 {
+		t.Fatal("a clean gate short-circuited the follow-up: implement never ran")
+	}
+	if impl := h.agent.calls[0]; !strings.Contains(impl.Prompt, "Please rename the helper to fooBar.") {
+		t.Fatalf("implement prompt = %q, want the follow-up's own instructions", impl.Prompt)
+	}
+}
+
+// TestFollowUpFixedGateDoesNotSkipImplement: the same reasoning as
+// TestFollowUpCleanGateDoesNotShortCircuit, for a fixed gate (autofix
+// committed a change and the check then passed): a first run skips
+// implement because nothing else is asked of it, but a follow-up's own
+// instructions must still run through implement.
+//
+// Mutation (drop the `if r.follow == nil` guard around skipImplement =
+// true): this test fails, zero agent calls (stage review only).
+func TestFollowUpFixedGateDoesNotSkipImplement(t *testing.T) {
+	const yaml = "version: 1\nname: gatedfix\nsteps:\n  - check: { command: lint, autofix: true }\n  - review: {}\n"
+	cfg := followUpYAMLWithLintFix(t, "test -f fixed", "touch fixed")
+	h := followUpHarness(t, cfg, nil)
+	h.comment(t, "alice", aliceID, "Please rename the helper to fooBar.")
+	h.followUpWithRecipe(t, followID, runID, "", embeddedTask("gatedfix", yaml))
+	rec, err := h.run(t, withAnswer(implement("rename"), "Renamed the helper to fooBar."), review("ship", 0))
+	mustReady(t, rec, err)
+	if rec.Gate != "fixed" {
+		t.Fatalf("gate = %q, want fixed", rec.Gate)
+	}
+	if len(h.agent.calls) == 0 {
+		t.Fatal("a fixed gate short-circuited the follow-up: implement never ran")
+	}
+	if impl := h.agent.calls[0]; !strings.Contains(impl.Prompt, "Please rename the helper to fooBar.") {
+		t.Fatalf("implement prompt = %q, want the follow-up's own instructions", impl.Prompt)
 	}
 }
