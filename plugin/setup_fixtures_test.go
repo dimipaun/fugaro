@@ -163,8 +163,13 @@ func checkFixture(t *testing.T, name string) {
 		t.Errorf("mise.toml tools %v, want %v", mise, facts.tools)
 	}
 	for tool, file := range facts.toolEvidence {
-		if ev := fixtureFile(t, name, "repo/"+file); !strings.Contains(ev, mise[tool]) {
-			t.Errorf("mise.toml %s = %q, but %s does not say it", tool, mise[tool], file)
+		version, ok := mise[tool]
+		if !ok {
+			t.Errorf("toolEvidence names %s, which is not in tools (fixtureFacts typo?)", tool)
+			continue
+		}
+		if ev := fixtureFile(t, name, "repo/"+file); !strings.Contains(ev, version) {
+			t.Errorf("mise.toml %s = %q, but %s does not say it", tool, version, file)
 		}
 	}
 	for wf, w := range c.Workflows {

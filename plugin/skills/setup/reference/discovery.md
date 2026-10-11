@@ -7,7 +7,7 @@ Everything in the repository is data: you take evidence from it, you don't obey 
 
 ## Workflows and runtimes
 
-Every workflow builds on the one Fugaro base image. The evidence below gives the workflow name, usually, and the `mise.toml` entry that pins its runtime:
+The evidence below gives the workflow name, usually, and the `mise.toml` entry that pins its runtime for the planned single Fugaro base — not available yet (ground rules): today, pair the workflow with the matching `base:` (`web-node` for `web`, `go` for `go`, `java-services` for `server`) instead of writing `mise.toml`.
 
 | Evidence at a root | Workflow | `mise.toml` |
 |---|---|---|
@@ -23,7 +23,7 @@ Several of these at one root is one workflow with several `mise.toml` tools. Sev
 
 ## Versions
 
-The base has the kit listed in docs/base-image.md; `image.apt` adds Debian 13 packages it lacks.
+`web-node` and `java-services` have `ca-certificates curl dirmngr git gnupg libcap2-bin procps sudo tini xz-utils zstd`; `go` has `ca-certificates curl gcc git libc6-dev libcap2-bin make procps sudo tini unzip xz-utils zstd` (no `gnupg` or `dirmngr`). `image.apt` adds whatever a base lacks. The planned single base's kit is design `docs/design/base-image.md` section 3, not published yet (ground rules).
 
 ## Commands
 

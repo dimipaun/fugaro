@@ -311,7 +311,7 @@ func TestSetupSkillContent(t *testing.T) {
 			".github/workflows", "Docker daemon", "`fugaro_yaml`", "WSL2", "agent.instructions",
 		},
 		"skills/setup/reference/services-and-images.md": {
-			"fugaro-services start", "mise.toml", "mise install", "image.tools", "apt-get install", "image.setup", "save the output as `.fugaro/<workflow>.Dockerfile`", "Pin every download by version and checksum", "Never start from a blank Dockerfile", "does **not** enforce", "illustrative", "Docker daemon", "docs/base-image-migration.md", "--platform linux/arm64",
+			"fugaro-services start", "mise.toml", "mise install", "image.tools", "apt-get install", "image.setup", "save the output as `.fugaro/<workflow>.Dockerfile`", "Pin every download by version and checksum", "Never start from a blank Dockerfile", "does **not** enforce", "illustrative", "Docker daemon", "docs/design/base-image.md", "not published yet", "--platform linux/arm64",
 		},
 		"skills/setup/reference/decisions.md": {
 			"followup.allow_public", "agent.max_run_tokens", "agent.max_budget_usd", "fugaro budget prices", "never set `allow_public` without their explicit decision",

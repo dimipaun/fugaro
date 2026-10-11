@@ -7,9 +7,9 @@ An image is the Fugaro base plus the repository's checkout at `base_branch`, its
 
 ## The base and `mise.toml`
 
-There is one Fugaro base image. Runtimes come from `mise.toml` at the repository root: `fugaro image build` runs `mise install` after the clone, as the `fugaro` user. `image.tools` (a map of mise tool to version, in `fugaro.yaml`) is the alternative when the repository does not want a `mise.toml` of its own; using both is refused by `fugaro validate`. **Never** `apt-get install <language>` or a `curl | sh` installer for a runtime: that bypasses mise and is not reproducible.
+Fugaro is moving to one base image, with runtimes from `mise.toml` at the repository root (`fugaro image build` runs `mise install` after the clone, as the `fugaro` user) or `image.tools` (a map of mise tool to version, in `fugaro.yaml`, for a repository that does not want a `mise.toml` of its own; using both is refused by `fugaro validate`). **This base is not published yet**: propose `base: web-node`, `base: go` or `base: java-services` to a repository today, exactly as before; `base:`, `image.node` and `image.jdk` remain fully supported, need no migration, and are not a sign of an outdated config. The shapes below describe where Fugaro is heading and keep this file's examples validated as the base lands (design: `docs/design/base-image.md`, still in review); do not propose any of them to a user yet.
 
-A repository that does not want a `mise.toml` sets `image.tools` instead (never both):
+A repository that does not want a `mise.toml` would set `image.tools` instead (never both), once the base is available:
 
 ```yaml fugaro.yaml
 version: 1
@@ -22,7 +22,7 @@ workflows:
     commands: { build: npm run build, test: npm test }
 ```
 
-A repository that still has `base:`, `image.node` or `image.jdk` is on Fugaro 0.6: see `docs/base-image-migration.md`. On Apple Silicon, iterate with `fugaro image build --local --platform linux/arm64`; the cloud build, which runs `linux/amd64`, is still the test.
+**Never** `apt-get install <language>` or a `curl | sh` installer for a runtime, on any base: that bypasses the package manager or mise and is not reproducible. On Apple Silicon, iterate with `fugaro image build --local --platform linux/arm64`; the cloud build, which runs `linux/amd64`, is still the test.
 
 ## Services the tests need
 
@@ -52,7 +52,7 @@ When the tests use these services, `commands.test` starts them first (`fugaro-se
 
 ## Examples that validate
 
-The names are examples (`project: acme` stands for the name `fugaro config example` printed). Each example is the shape to write from your own evidence; don't copy one's commands. None sets `base:`: every workflow builds on the one Fugaro base.
+The names are examples (`project: acme` stands for the name `fugaro config example` printed). Each example is the shape to write from your own evidence; don't copy one's commands. None sets `base:`, for the one Fugaro base described above — **not available today** (see the caveat above): propose these shapes only once the base is published, and `base: web-node`/`go`/`java-services` until then.
 
 A web workflow with a pinned Node, an apt package and Playwright, the runtime in `mise.toml`:
 

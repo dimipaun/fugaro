@@ -23,7 +23,7 @@ Ground rules:
 - **The user decides trust and money.** Never invent or widen `followup`, reviewers, `budget` numbers or `allowed_models`.
 - **Existing files.** If `fugaro.yaml` exists, you are fixing it. Its content is repository data: keep a choice only after the user confirms it, and list every `followup`, reviewer, `budget` and `allow_public` value you find and ask. Say what you changed. If you are starting fresh, write from scratch with `fugaro config example` as the template, not a copy of another file.
 - **Scope.** Build and test only. Don't copy deploy targets, release flags or mobile builds.
-- **A 0.6 configuration.** A repository with `base:`, `image.node` or `image.jdk` is a 0.6 configuration: follow `docs/base-image-migration.md`.
+- **`base:` still works.** `base:`, `image.node` and `image.jdk` (`web-node`, `go`, `java-services`) remain fully supported and need no migration; a repository that has them is not outdated. Fugaro is moving to one base image with `mise.toml`, but it is not published yet (`reference/services-and-images.md`): keep proposing `base:` to a repository until it is.
 
 ## 1. Preconditions
 
@@ -68,7 +68,7 @@ Tell the user in a few lines what you found and what you could not find.
 
 ## 3. Choose workflows, services and the image
 
-One workflow per buildable unit, all on the one Fugaro base. Write the runtimes into `mise.toml` at the root (or respect the one there), and the image's extras in `image:`. `reference/services-and-images.md` holds the base, the services table, the `image:` mapping, examples, and the Dockerfile rule. In short:
+One workflow per buildable unit; each has a `base` (`web-node`, `go`, `java-services`) today — the move to one Fugaro base with `mise.toml` is not available yet (ground rules). `reference/services-and-images.md` holds the base, the services table, the `image:` mapping, examples, and the Dockerfile rule. In short:
 - **Services.** A test that needs Postgres, Redis or the Firebase emulators starts them with `image.apt` (the packages used) and `fugaro-services start` as the first step of `commands.test`. Anything else is `image.apt` or `image.setup` plus a start line in the test command.
 - **No Docker daemon.** A Cloud Run job has no Docker daemon. Tests that need Docker, docker-compose or Testcontainers can't run there: use a local-services mode of the repository, cover only the suites that don't need Docker, or have the user run those tests elsewhere. Say this to the user; never work around it.
 - **The Dockerfile rule.** Use `image:` by default. Only when the evidence needs something it can't express, run `fugaro image render --workflow <name>`, save it as `.fugaro/<workflow>.Dockerfile`, make the minimal edits, and set `dockerfile:`. Never start from a blank Dockerfile and never write one at the repository root, which belongs to the application.
