@@ -34,7 +34,9 @@ const layeredSince = "0.6.0"
 // whether or not it also uses a recipe or a project layer: nothing else
 // here checks that base_images.base is actually this recent (fugaro-base
 // could first be published from an older release, or --image-source could
-// mirror one).
+// mirror one). It must equal the release that ships plan Task 17's runner
+// bootstrap: docs/release.md ("Before you tag") has the release checklist
+// verify it.
 const cloneSince = "0.7.0"
 
 // needsRecipeImage reports whether a launch needs a runner that knows
