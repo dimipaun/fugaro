@@ -69,6 +69,14 @@ type Spec struct {
 	// it after the fact. Nothing in this package enforces that; a launch
 	// this field reaches has already passed that gate.
 	ProjectLayer *ProjectLayer `json:"project_layer,omitempty"`
+	// OAuthToken is the named Claude account (config.ClaudeAccountNameRE,
+	// or "" for config.DefaultClaudeAccount) this run's agent.auth: oauth
+	// workflow used (docs/design/named-oauth-tokens.md). A runner before
+	// namedTokensSince refuses the field, since it is new and this
+	// package's decoder disallows unknown fields; the launching CLI checks
+	// the job's build record first, the same way it already does for
+	// ProjectLayer.
+	OAuthToken string `json:"oauth_token,omitempty"`
 }
 
 // Recipe is the recipe the launching CLI resolved (docs/design/recipes.md §5).
