@@ -458,6 +458,9 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	if r.Reason != "" {
 		fmt.Fprintf(&b, "Reason:   %s\n", oneLine(r.Reason))
 	}
+	if acct := r.OAuthAccount; acct != "" && acct != "default" {
+		fmt.Fprintf(&b, "Account:  %s\n", oneLine(clipRunes(acct, maxNameCellRunes)))
+	}
 	if pl := r.ProjectLayer; pl != nil && validGeneration(pl.Generation) {
 		line := fmt.Sprintf("Config:   project layer generation %d (sha256 %s)", pl.Generation, shortSHA(pl.SHA256))
 		if !pl.Applied {

@@ -104,16 +104,22 @@ type StageTiming struct {
 
 // Record is result.json, the run record (design §4.6).
 type Record struct {
-	Version   int     `json:"version"`
-	RunID     string  `json:"run_id"`
-	Repo      string  `json:"repo"`
-	Workflow  string  `json:"workflow,omitempty"`
-	Execution string  `json:"execution,omitempty"` // canonical full name, never the short CLOUD_RUN_EXECUTION; compare only via backend.SameExecution
-	Status    Status  `json:"status"`
-	Stage     string  `json:"stage"`
-	Outcome   Outcome `json:"outcome"`
-	Reason    string  `json:"reason,omitempty"`
-	Branch    string  `json:"branch,omitempty"`
+	Version  int    `json:"version"`
+	RunID    string `json:"run_id"`
+	Repo     string `json:"repo"`
+	Workflow string `json:"workflow,omitempty"`
+	// OAuthAccount is the named Claude OAuth account this run's agent.auth:
+	// oauth workflow used ("" meaning the repository's default account,
+	// docs/design/named-oauth-tokens.md); informational only, never read by
+	// anything that makes a security decision. Absent in records from
+	// before this field existed.
+	OAuthAccount string  `json:"oauth_account,omitempty"`
+	Execution    string  `json:"execution,omitempty"` // canonical full name, never the short CLOUD_RUN_EXECUTION; compare only via backend.SameExecution
+	Status       Status  `json:"status"`
+	Stage        string  `json:"stage"`
+	Outcome      Outcome `json:"outcome"`
+	Reason       string  `json:"reason,omitempty"`
+	Branch       string  `json:"branch,omitempty"`
 	// BaseBranch is the base the run's pull request targets, the
 	// git.base_branch of the config it ran with (not the task's ref, which
 	// a first run may set to another branch). A follow-up takes it as its

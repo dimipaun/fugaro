@@ -54,6 +54,38 @@ func TestRecordRoundTripAndNotFound(t *testing.T) {
 	}
 }
 
+func TestRecordRoundTripsOAuthAccount(t *testing.T) {
+	s := newStore(t)
+	rec := &Record{Version: 1, RunID: runID, Status: StatusSucceeded, Outcome: OutcomeReady,
+		StartedAt: time.Now().UTC(), OAuthAccount: "acme-personal"}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil || got.OAuthAccount != "acme-personal" {
+		t.Fatalf("ReadRecord oauth_account = %+v, %v", got, err)
+	}
+
+	// Empty is omitted, like Workflow's own omitempty convention.
+	data, err := json.Marshal(&Record{Version: 1, RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "oauth_account") {
+		t.Fatalf("empty OAuthAccount encoded: %s", data)
+	}
+
+	// A record written before this field existed still parses, without one.
+	old := `{"version":1,"run_id":"` + runID + `","status":"succeeded","stage":"writeback","outcome":"ready","cost_usd":1,"started_at":"2026-09-26T22:15:30Z"}`
+	if err := s.PutFile(ctx, "result.json", []byte(old), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.ReadRecord(ctx)
+	if err != nil || got.OAuthAccount != "" {
+		t.Fatalf("old record = %+v, %v", got, err)
+	}
+}
+
 func TestCancelMarker(t *testing.T) {
 	s := newStore(t)
 	if ok, err := s.CancelRequested(ctx); err != nil || ok {
