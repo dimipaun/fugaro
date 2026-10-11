@@ -1,0 +1,97 @@
+package config
+
+import (
+	"fmt"
+	"regexp"
+	"slices"
+	"strings"
+)
+
+// DefaultClaudeAccount is the always-available, implicit name: the
+// unsuffixed claude-oauth-token secret every repository already uses
+// (design docs/design/named-oauth-tokens.md §1). It is reserved and may
+// not appear as a key of claude_accounts.
+const DefaultClaudeAccount = "default"
+
+// ClaudeAccountNameRE is a named Claude OAuth account's name: never
+// "default" (checked separately, so the message names the reservation).
+var ClaudeAccountNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,30}$`)
+
+// ClaudeAccount is one named Claude OAuth credential the owner has
+// configured in the local config (never fugaro.yaml or the project layer:
+// design §3 T1), parallel to ModelProvider. Its secret is derived
+// (ClaudeAccountSecret), never independently settable (design §3 T4).
+type ClaudeAccount struct {
+	// AllowDataTo are the repositories (owner/name) whose runs may choose
+	// this account; empty means none.
+	AllowDataTo []string `yaml:"allow_data_to,omitempty" json:"allow_data_to,omitempty"`
+}
+
+// AllowsData reports whether repo (owner/name) may choose a. Case-folded,
+// like ModelProvider.AllowsData.
+func (a ClaudeAccount) AllowsData(repo string) bool {
+	return slices.ContainsFunc(a.AllowDataTo, func(r string) bool { return strings.EqualFold(r, repo) })
+}
+
+// ClaudeAccountSecret is the logical secret name holding name's token:
+// "claude-oauth-token" for "" or "default", else
+// "claude-oauth-token-"+name. It is a pure function of name: no local
+// config lookup, so it never needs claude_accounts to exist for the
+// default account, which is how backward compatibility holds (design §5).
+func ClaudeAccountSecret(name string) string {
+	if name == "" || name == DefaultClaudeAccount {
+		return "claude-oauth-token"
+	}
+	return "claude-oauth-token-" + name
+}
+
+// ClaudeAccountBySecret is the account name whose secret is secret, the
+// mirror of ProviderBySecret: used where a secret ID must be traced back
+// to the name a human chose (fugaro secrets set's validation, Task 5).
+func ClaudeAccountBySecret(accounts map[string]ClaudeAccount, secret string) (name string, ok bool) {
+	if secret == ClaudeAccountSecret(DefaultClaudeAccount) {
+		return DefaultClaudeAccount, true
+	}
+	for _, n := range sortedKeys(accounts) {
+		if ClaudeAccountSecret(n) == secret {
+			return n, true
+		}
+	}
+	return "", false
+}
+
+// AllowedClaudeAccounts are the names repo may choose among: "default"
+// always, plus every configured name whose allow_data_to lists repo,
+// sorted. This is the one place that decides the question in design §6a;
+// infra's job-variant loop (Task 4) and the CLI's --token resolution
+// (Task 6) both call it, never duplicate the logic.
+func AllowedClaudeAccounts(accounts map[string]ClaudeAccount, repo string) []string {
+	out := []string{DefaultClaudeAccount}
+	for _, n := range sortedKeys(accounts) {
+		if accounts[n].AllowsData(repo) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// ValidateClaudeAccounts reports every rule the local config's
+// claude_accounts block breaks, the same shape as ValidateModelProviders.
+func ValidateClaudeAccounts(accounts map[string]ClaudeAccount) []Problem {
+	var ps []Problem
+	for _, name := range sortedKeys(accounts) {
+		at := "claude_accounts." + name
+		switch {
+		case name == DefaultClaudeAccount:
+			ps = append(ps, Problem{Path: at, Message: `"default" is reserved for the unnamed claude-oauth-token secret and may not be configured here`})
+		case !ClaudeAccountNameRE.MatchString(name):
+			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("account name must match %s", ClaudeAccountNameRE)})
+		}
+		for _, r := range accounts[name].AllowDataTo {
+			if !repoSlugRE.MatchString(r) {
+				ps = append(ps, Problem{Path: at + ".allow_data_to", Message: fmt.Sprintf("%q must be a repository as owner/name", r)})
+			}
+		}
+	}
+	return ps
+}

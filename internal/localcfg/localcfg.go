@@ -78,6 +78,10 @@ type Config struct {
 	// Providers are the non-Anthropic backends models may be routed to
 	// (design m10-multi-model.md §3), by name. Only the owner sets them.
 	Providers map[string]config.ModelProvider `yaml:"providers,omitempty"`
+	// ClaudeAccounts are named Claude OAuth credentials a repository may
+	// choose among by name (design docs/design/named-oauth-tokens.md).
+	// Only the owner sets them, here, never in fugaro.yaml.
+	ClaudeAccounts map[string]config.ClaudeAccount `yaml:"claude_accounts,omitempty"`
 	// Watch tunes fugaro watch.
 	Watch       *Watch          `yaml:"watch,omitempty"`
 	User        string          `yaml:"user,omitempty"`
@@ -689,6 +693,9 @@ func (c *Config) validate() error {
 	}
 	c.validateBudget(bad)
 	for _, p := range config.ValidateModelProviders(c.Providers) {
+		bad("%s: %s", p.Path, p.Message)
+	}
+	for _, p := range config.ValidateClaudeAccounts(c.ClaudeAccounts) {
 		bad("%s: %s", p.Path, p.Message)
 	}
 	if w := c.Watch; w != nil && w.BurnAlertUSDPerHour != nil {
