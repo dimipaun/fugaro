@@ -281,10 +281,18 @@ func (r *initRun) refreshCloneJobs(ctx context.Context, p *refreshPlan, t *refre
 // failed build stops the loop: the builds after it are never submitted. A
 // checkout: clone workflow has no build to decide (refreshCloneJobs moves
 // its job's image directly instead) and is skipped here.
+//
+// refreshCloneJobs runs first, but its outcome (including a declined
+// confirmation) never stops the baked rebuild offers below: moving a clone
+// workflow's job image and rebuilding a baked workflow's are independent
+// per-workflow actions, bundled into this one step only because neither
+// touches Terraform (review fix: a decline on the clone side used to short-
+// circuit the whole step, so a mixed repository's baked rebuilds were never
+// even offered). cloneErr is returned only once the baked section below has
+// had its own chance to run; a baked-side error, which already carries its
+// own "built so far" detail, takes precedence over it.
 func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshTarget) error {
-	if err := r.refreshCloneJobs(ctx, p, t); err != nil {
-		return err
-	}
+	cloneErr := r.refreshCloneJobs(ctx, p, t)
 	host, err := infra.RegistryHost(t.lc)
 	if err != nil {
 		return userErr("%v", err)
@@ -314,7 +322,7 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 	}
 	if len(todo) == 0 {
 		fmt.Fprintln(r.w, "  No changes: every selected image is built from its current base")
-		return nil
+		return cloneErr
 	}
 	b, err := newCloudBuilder(ctx, t.lc)
 	if err != nil {
@@ -352,5 +360,5 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 		built = append(built, wf)
 	}
 	notes()
-	return nil
+	return cloneErr
 }

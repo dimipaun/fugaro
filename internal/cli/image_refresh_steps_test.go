@@ -745,6 +745,62 @@ func TestRefreshMovesCloneJobsToTheNewBase(t *testing.T) {
 	}
 }
 
+// mixedCloneYAML is acme/app with one checkout: clone workflow (app) and
+// one baked workflow (api, base go).
+const mixedCloneYAML = "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n" +
+	"  app: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n" +
+	"  api: { base: go, commands: { build: sh build.sh, test: sh test.sh } }\n"
+
+// TestRefreshDeclinedCloneJobDoesNotBlockBakedRebuilds (review finding 3,
+// LOW): a declined checkout: clone job confirmation must not stop the baked
+// rebuild offers for the rest of the repository: moving a clone workflow's
+// job image and rebuilding a baked workflow's are independent per-workflow
+// actions, bundled into step 4 only because neither touches Terraform.
+//
+// Mutation (run, restore): revert refreshBuilds to `if err :=
+// r.refreshCloneJobs(ctx, p, t); err != nil { return err }` (dropping the
+// cloneErr capture) — this test then fails: the baked workflow's rebuild is
+// never even offered (0 Cloud Builds submitted), because the clone
+// decline's error returns before the baked loop is ever reached.
+func TestRefreshDeclinedCloneJobDoesNotBlockBakedRebuilds(t *testing.T) {
+	useVersion(t, "0.5.1")
+	r := newAnchorModeRig(t, mixedCloneYAML, true)
+	fb := useFakeBuilder(t)
+	e := rigEngine(t, r.initRig, &initOptions{})
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc.BaseImages = map[string]string{config.BaseKind: managedRef("base", "0.5.1"), "go": managedRef("go", "0.5.1")}
+	cfg, problems := config.Parse([]byte(mixedCloneYAML))
+	if cfg == nil {
+		t.Fatal(problems)
+	}
+	slug := mustSlug("github", "acme/app")
+	label, err := gcp.RepoLabel(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobName := gcp.JobName(slug, "app")
+	r.run.SetJob(jobName, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelWorkflow: "app"}, managedRef("base", "0.4.0"))
+	tg := &refreshTarget{lc: lc, cfg: cfg, spec: infra.RepoSpec{Name: "acme/app", Slug: slug, Label: label, RegistryPath: "r", BuildServiceAccountEmail: "b@x.iam",
+		Workflows: map[string]infra.WorkflowSpec{"app": {Job: jobName}, "api": {}}}}
+	p := &refreshPlan{workflows: []string{"api", "app"}}
+	putWorkflowRecordFrom("api", "0.4.0", managedRef("go", "0.4.0"))
+	// Decline the clone job's confirmation (the first typed prompt), then
+	// confirm the baked rebuild (the second).
+	out := atTerminal(t, e, "nope\n"+initProjectName+"\n")
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err == nil || !strings.Contains(err.Error(), "the job was not updated") {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(fb.specs) != 1 || fb.specs[0].Workflow != "api" {
+		t.Fatalf("the baked rebuild was not offered despite the clone decline: %+v", fb.specs)
+	}
+	if len(r.run.Patches()) != 0 {
+		t.Fatalf("the declined clone job was patched anyway: %d patches", len(r.run.Patches()))
+	}
+}
+
 // Review fix (code review on the prior fix): submitAndWait's project-layer
 // copy write now opens the record bucket through openRecordBucket (the
 // test seam every other record-bucket caller uses), not blobx.Open
