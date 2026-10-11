@@ -133,13 +133,18 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 			if !built {
 				if current == "" {
 					// Nothing live to keep, and the spec's image doesn't
-					// exist: either would leave the job without an image.
+					// exist: either would leave the job without an image. A
+					// clone workflow's ws.Image is empty in this case (there
+					// is no base_images.base to name), so the message names
+					// the missing config key instead of an empty image.
+					what := fmt.Sprintf("%s is not built yet", ws.Image)
 					fix := fmt.Sprintf("build it (fugaro image build --repo %s --workflow %s)", spec.Name, name)
 					if ws.Checkout == config.CheckoutClone {
-						fix = fmt.Sprintf("set the local config's base_images.%s (fugaro init --base %s)", config.BaseKind, config.BaseKind)
+						what = fmt.Sprintf("the local config has no base_images.%s", config.BaseKind)
+						fix = fmt.Sprintf("set it (fugaro init --base %s)", config.BaseKind)
 					}
-					return RepoSpec{}, nil, userErr("Cloud Run job %s exists but has no container image, and %s is not built yet; %s or fix the job, then run fugaro init --repo again",
-						ws.Job, ws.Image, fix)
+					return RepoSpec{}, nil, userErr("Cloud Run job %s exists but has no container image, and %s; %s or fix the job, then run fugaro init --repo again",
+						ws.Job, what, fix)
 				}
 				ws.Image = current
 			}

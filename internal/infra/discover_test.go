@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 )
@@ -1111,6 +1112,54 @@ func TestReadinessRefusesJobWithoutImage(t *testing.T) {
 	var ue *UserError
 	if !errors.As(err, &ue) || !strings.Contains(err.Error(), spec.Workflows["web"].Job) {
 		t.Errorf("err = %v; want a user error naming the job", err)
+	}
+}
+
+// TestReadinessCloneJobWithoutImageNamesTheConfig (review fix): a checkout:
+// clone workflow's job existing with no container image, and the local
+// config lacking base_images.base too, must not interpolate an empty
+// ws.Image into the hard-failure message — unlike a baked workflow's
+// (TestReadinessRefusesJobWithoutImage), ws.Image can itself be empty here
+// (there is no base_images.base to name), so the message must say what is
+// actually missing instead of leaving a blank.
+//
+// Mutation (run, restore): revert the `what`/`fix` branch in Readiness back
+// to the single `userErr(..., ws.Image, fix)` call it replaced — this test
+// then fails: the message reads "...and  is not built yet..." (a double
+// space, naming nothing).
+func TestReadinessCloneJobWithoutImageNamesTheConfig(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	in := cloneInputs(t)
+	in.LC.BaseImages = maps.Clone(in.LC.BaseImages)
+	delete(in.LC.BaseImages, config.BaseKind)
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Workflows["web"].Image != "" {
+		t.Fatalf("fixture bug: web's image = %q, want empty (no base_images.%s)", rs.Workflows["web"].Image, config.BaseKind)
+	}
+	f.gcs.AddBucket(rs.Installation.RunsBucket, testProjectNumber, managed)
+	for logical, id := range rs.Secrets {
+		f.sm.Seed(id, with(managed, gcp.LabelRepo, rs.Label, gcp.LabelSecret, logical), []byte("v"))
+	}
+	f.run.SetJob(rs.Workflows["web"].Job, rs.Workflows["web"].Labels, "")
+	_, ex, err := DiscoverRepo(ctx, f.c, rs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = Readiness(ctx, f.c, rs, ex)
+	var ue *UserError
+	if !errors.As(err, &ue) {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "and  is") || strings.Contains(msg, "  ") {
+		t.Fatalf("malformed message (an empty %%s left a double space): %q", msg)
+	}
+	if !strings.Contains(msg, "base_images."+config.BaseKind) {
+		t.Errorf("message does not name the missing config key: %q", msg)
 	}
 }
 
