@@ -114,8 +114,27 @@ func (r *run) readBaseConfig(ctx context.Context) (*config.Config, error) {
 	if r.instructions, err = read(cfg.Agent.Instructions); err != nil {
 		return nil, fmt.Errorf("agent.instructions: %w", err)
 	}
-	if cfg.Agent.Review != "" && !strings.HasPrefix(cfg.Agent.Review, "/") {
-		if r.reviewFile, err = read(cfg.Agent.Review); err != nil {
+	switch {
+	case cfg.Agent.Review == "" || !strings.HasPrefix(cfg.Agent.Review, "/"):
+		if cfg.Agent.Review != "" {
+			if r.reviewFile, err = read(cfg.Agent.Review); err != nil {
+				return nil, fmt.Errorf("agent.review: %w", err)
+			}
+		}
+	case r.review:
+		// A review run never resolves agent.review: /name the way a first
+		// run or a follow-up does (Claude Code looking up
+		// .claude/commands/<name>.md in the checkout itself): review
+		// mode's own checkout is a reviewed pull request's, which
+		// stripClaudeConfig already empties of every .claude directory —
+		// and even before that strip runs, a fork's own command file
+		// (frontmatter allowed-tools, a body line starting with `!`) would
+		// execute before the model ever reads anything, under a headless
+		// agent run with every permission prompt off. The command's text
+		// is read from the base branch instead, as plain prompt text
+		// (readReviewCommandFromBase), the same way a non-slash
+		// agent.review file already is here.
+		if r.reviewFile, err = r.readReviewCommandFromBase(ctx, rev, cfg.Agent.Review); err != nil {
 			return nil, fmt.Errorf("agent.review: %w", err)
 		}
 	}

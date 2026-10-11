@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -94,100 +95,154 @@ func (r *run) checkoutReviewHeads(ctx context.Context) error {
 	return nil
 }
 
-// stripClaudeConfig removes Claude Code's own configuration from a
-// reviewed pull request's checkout before the agent ever starts (design
-// generic-tool §3.6, G12): a fork's .claude/settings.json or
-// .claude/settings.local.json can declare hooks (SessionStart and the
-// rest), .claude/agents can define a subagent and .claude/skills a skill,
-// each one configuration the orchestrating model can invoke under
-// --dangerously-skip-permissions, and .mcp.json can point it at a server
-// of the fork's own choosing. SECURITY.md already names skills, settings
-// and subagents together for this identical untrusted-checkout threat
-// model (there, a follow-up's agent-written branch). CLAUDE.md and
-// .claude/commands are left: they are untrusted prompt text the model
-// reads, never configuration it runs, and review mode's prompt already
-// treats the whole checkout that way.
+// stripClaudeConfig removes every trace of Claude Code's own configuration
+// from a reviewed pull request's checkout, at any depth, before the agent
+// ever starts (design generic-tool §3.6, G12): a .claude directory, at the
+// root or nested under any package (pkg/.claude/skills, pkg/.claude/
+// settings.json, .claude/hooks, .claude/rules, .claude/output-styles,
+// .claude/commands and everything else Claude Code loads from it) is
+// configuration the orchestrating model can invoke or that runs outright
+// — a hook, a subagent, a skill, an MCP server, or a custom command's own
+// pre-execution shell line (see readReviewCommandFromBase, below, for why
+// agent.review: /name never resolves one from this checkout at all) —
+// under a headless agent run with every permission prompt off. So is a
+// stray .mcp.json or
+// CLAUDE.local.md anywhere in the tree. SECURITY.md already names skills,
+// settings and subagents together for this identical untrusted-checkout
+// threat model (there, a follow-up's agent-written branch).
 //
-// Every removal is Lstat-checked first, never a bare os.Remove/os.RemoveAll
-// on an unexamined path: a symlink (whether .claude itself, or an entry
-// under it such as agents or skills) has only its own directory entry
-// removed, never whatever it points to, wherever that is. A real,
-// non-symlink directory is then removed whole (removeClaudeEntry's
-// os.RemoveAll), which is safe precisely because the top-level path was
-// just confirmed not to be a symlink — RemoveAll does not follow one found
-// deeper in the tree either.
+// CLAUDE.md is the one file left, everywhere it appears: it is untrusted
+// prompt text the model merely reads, never configuration Claude Code
+// runs, and review mode's prompt already treats the whole checkout that
+// way (SECURITY.md, docs/recipes.md §3).
+//
+// The walk is Lstat-based throughout (fs.DirEntry's type comes from the
+// directory read itself, never a follow) and never descends into a
+// symlinked directory (filepath.WalkDir's own guarantee) or into .git. A
+// .claude found to be a real directory is removed whole (os.RemoveAll,
+// safe here precisely because the top-level entry was just confirmed not
+// to be a symlink — RemoveAll does not follow one found deeper inside
+// either) and the walk does not try to continue into it
+// (filepath.SkipDir). A .claude that is itself a symlink (or, oddly, a
+// plain file) has only that directory entry removed (os.Remove never
+// follows a symlink to delete whatever it points to, wherever that is).
 func stripClaudeConfig(dir string) error {
-	claudeDir := filepath.Join(dir, ".claude")
-	switch fi, err := os.Lstat(claudeDir); {
-	case errors.Is(err, os.ErrNotExist):
-		// nothing to strip
-	case err != nil:
-		return err
-	case fi.Mode()&os.ModeSymlink != 0:
-		if err := os.Remove(claudeDir); err != nil {
+	return filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			return nil
+		case err != nil:
 			return err
+		case p == dir:
+			return nil
 		}
-	case fi.IsDir():
-		for _, name := range []string{"settings.json", "settings.local.json"} {
-			if err := os.Remove(filepath.Join(claudeDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		switch name := d.Name(); {
+		case name == ".git" && d.IsDir():
+			return filepath.SkipDir
+		case name == ".claude":
+			if d.IsDir() {
+				if err := os.RemoveAll(p); err != nil {
+					return err
+				}
+				return filepath.SkipDir
+			}
+			if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return err
+			}
+		case (name == "CLAUDE.local.md" || name == ".mcp.json") && !d.IsDir():
+			if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				return err
 			}
 		}
-		// agents (subagents) and skills are configuration the orchestrating
-		// model can invoke under --dangerously-skip-permissions, the same
-		// threat settings.json's hooks are: SECURITY.md already names all
-		// three ("skills, settings, subagents") for this identical
-		// untrusted-checkout threat model (the follow-up case). Each is
-		// removed whole (removeClaudeEntry), not file by file: a skill is a
-		// directory of its own (SKILL.md plus whatever it names), and a
-		// repository can define any number of subagents under agents/.
-		for _, name := range []string{"agents", "skills"} {
-			if err := removeClaudeEntry(filepath.Join(claudeDir, name)); err != nil {
-				return err
-			}
-		}
-	}
-	if err := os.Remove(filepath.Join(dir, ".mcp.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return nil
-}
-
-// removeClaudeEntry removes path (a file or directory under a checkout's
-// .claude), Lstat-checked first so a symlink only ever loses its own entry
-// (os.Remove never follows it to delete whatever it points to, wherever
-// that is); a real, non-symlink directory is removed whole (os.RemoveAll),
-// safe here precisely because path itself is confirmed not to be a
-// symlink — RemoveAll does not follow one found deeper in the tree either,
-// the same guarantee stripClaudeConfig's own top-level .claude check
-// relies on.
-func removeClaudeEntry(path string) error {
-	fi, err := os.Lstat(path)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
 		return nil
-	case err != nil:
-		return err
-	case fi.Mode()&os.ModeSymlink != 0:
-		return os.Remove(path)
-	default:
-		return os.RemoveAll(path)
-	}
+	})
 }
 
 // reviewModePrompt is the review stage's prompt: ReviewPrompt for a single
 // pull request (r.d.WorkDir is checked out to it), PickPrompt listing every
 // directory for several.
+// reviewModePrompt is the review stage's prompt. Unlike an ordinary run or
+// a follow-up, it never passes a leading-slash agent.review straight to
+// ReviewPrompt/PickPrompt: readBaseConfig already resolved that case into
+// r.reviewFile, as plain text read from the base branch
+// (readReviewCommandFromBase), precisely so Claude Code is never asked to
+// resolve /name from the reviewed checkout itself. Passing "" here is what
+// makes ReviewPrompt/PickPrompt fall through to the promptFile branch
+// instead of the leading-slash one.
 func (r *run) reviewModePrompt() string {
 	if len(r.reviewHeads) == 1 {
-		return ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.cfg.Git.BaseBranch)
+		return ReviewPrompt("", r.reviewFile, r.cfg.Git.BaseBranch)
 	}
 	nums := make([]int, len(r.reviewHeads))
 	dirs := make([]string, len(r.reviewHeads))
 	for i, h := range r.reviewHeads {
 		nums[i], dirs[i] = h.Number, r.reviewDir(h.Number)
 	}
-	return PickPrompt(r.cfg.Agent.Review, r.reviewFile, nums, dirs)
+	return PickPrompt("", r.reviewFile, nums, dirs)
+}
+
+// reviewCommandPath maps a leading-slash agent.review (a Claude Code custom
+// command reference) to the project command file Claude Code itself would
+// resolve: .claude/commands/<name>.md. Only the plain, undecorated form is
+// handled — no arguments, no namespacing (a ':' in the name, which some
+// Claude Code versions use for a subdirectory, is a mapping this code does
+// not know with confidence) — refused rather than guessed, since a wrong
+// guess would read the wrong file, or none, silently.
+func reviewCommandPath(review string) (string, bool) {
+	name := strings.TrimPrefix(review, "/")
+	if name == "" || strings.ContainsAny(name, ": \t\r\n") {
+		return "", false
+	}
+	return ".claude/commands/" + name + ".md", true
+}
+
+// readReviewCommandFromBase reads review's (agent.review, a leading-slash
+// command reference) command file from rev (origin/<ref>, the base
+// branch): review mode's own replacement for Claude Code resolving /name
+// from the checkout, which review mode never trusts (stripClaudeConfig
+// removes every .claude directory from it outright, but the base
+// branch's own copy of the command is what the prompt actually uses,
+// read directly, same as a non-slash agent.review file already is).
+// Frontmatter (between --- lines at the top, where Claude Code's own
+// command files put allowed-tools and the rest) is stripped: the result
+// is spliced into the prompt as plain text ReviewPrompt/PickPrompt
+// already treat a promptFile's content as, never interpreted as a command
+// Claude Code itself expands, so a body line starting with `!` (its own
+// pre-execution shell syntax) is inert here, the same as in any other
+// prompt file.
+func (r *run) readReviewCommandFromBase(ctx context.Context, rev, review string) (string, error) {
+	path, ok := reviewCommandPath(review)
+	if !ok {
+		return "", fmt.Errorf("%s: review mode needs a plain custom-command name (no arguments or namespace) to read its text from the base branch", review)
+	}
+	text, err := r.readBaseFile(ctx, rev, path)
+	if err != nil {
+		return "", fmt.Errorf("%s: reading %s from the base branch: %w", review, path, err)
+	}
+	return stripCommandFrontmatter(text), nil
+}
+
+// stripCommandFrontmatter removes a Claude Code command file's YAML
+// frontmatter (between --- lines at the top), leaving only the prompt
+// body. Leaving the frontmatter in, if this doesn't recognise its shape,
+// is harmless (it is never interpreted, just read as more plain text by
+// the model) — this is cosmetic, not a safety boundary.
+func stripCommandFrontmatter(text string) string {
+	rest, ok := strings.CutPrefix(text, "---\n")
+	if !ok {
+		rest, ok = strings.CutPrefix(text, "---\r\n")
+	}
+	if !ok {
+		return text
+	}
+	i := strings.Index(rest, "\n---")
+	if i < 0 {
+		return text
+	}
+	after := rest[i+len("\n---"):]
+	after = strings.TrimPrefix(after, "\r\n")
+	after = strings.TrimPrefix(after, "\n")
+	return after
 }
 
 // runReviewMode runs reviewMode, recovering a panic so the run always ends

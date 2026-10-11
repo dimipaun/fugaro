@@ -1278,3 +1278,50 @@ func TestCommitOfAndIsAncestor(t *testing.T) {
 		}
 	}
 }
+
+// TestCheckoutDetachedNeverRunsLFSFilters: a reviewed pull request's own
+// .gitattributes can mark any path filter=lfs; wherever git-lfs (or any
+// other command registered under that name) is already configured in
+// this git config — locally or, in a real environment, globally, from an
+// earlier `git lfs install` — checking out that content would otherwise
+// run it. CheckoutDetached must never do that (design generic-tool §3.6,
+// G12, reviewmode.go's stripClaudeConfig and the fork threat model it
+// guards against): review mode never builds or tests the checkout, so
+// there is no reason to run an externally-configured filter command at
+// all, let alone one a fork's own .gitattributes pointed at.
+//
+// Mutation (drop withLFSFiltersOff from the checkout call, leaving the
+// fetch's own in place): this test fails — the checkout itself errors
+// (filter.lfs.process's long-running protocol speaks pkt-lines, and
+// "touch" doesn't, so git reports a broken pipe as "the remote end hung
+// up unexpectedly"), which the test treats as a failure the same as
+// finding the marker would, since neither one is the clean, filter-free
+// checkout this is pinning.
+func TestCheckoutDetachedNeverRunsLFSFilters(t *testing.T) {
+	repo, remote := setup(t)
+	marker := filepath.Join(t.TempDir(), "smudge-ran")
+	testutil.Git(t, repo.Dir, "config", "filter.lfs.smudge", "touch "+marker)
+	testutil.Git(t, repo.Dir, "config", "filter.lfs.process", "touch "+marker)
+	testutil.Git(t, repo.Dir, "config", "filter.lfs.required", "true")
+
+	seed := filepath.Join(t.TempDir(), "seed-lfs")
+	testutil.Git(t, filepath.Dir(seed), "clone", "--quiet", remote, seed)
+	testutil.WriteFiles(t, seed, map[string]string{
+		".gitattributes": "secret.bin filter=lfs -text\n",
+		"secret.bin":     "pretend-lfs-pointer\n",
+	})
+	testutil.Git(t, seed, "add", "-A")
+	testutil.Git(t, seed, "commit", "--quiet", "-m", "lfs file")
+	testutil.Git(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/lfs")
+	sha := testutil.Git(t, remote, "rev-parse", "refs/heads/lfs")
+
+	if err := repo.CheckoutDetached(ctx, sha); err != nil {
+		t.Fatal(err)
+	}
+	if got := testutil.Git(t, repo.Dir, "rev-parse", "HEAD"); got != sha {
+		t.Fatalf("HEAD = %s, want %s", got, sha)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the lfs filter ran during the checkout")
+	}
+}

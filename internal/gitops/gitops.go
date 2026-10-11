@@ -160,18 +160,36 @@ func (r *Repo) CheckoutNewBranch(ctx context.Context, ref, branch string) error 
 	return err
 }
 
+// lfsFiltersOff are -c overrides that keep git from running any
+// externally-configured smudge/process/clean filter — in practice,
+// git-lfs, wherever a prior `git lfs install` left it configured, locally
+// or globally — while fetching or checking out a reviewed pull request's
+// head (reviewmode.go, design generic-tool §3.6, G12). Review mode never
+// builds or tests the checkout, so there is no reason to run whatever
+// external command a fork's own .gitattributes points a filter at before
+// stripClaudeConfig has had a chance to run, or at all.
+var lfsFiltersOff = []string{"-c", "filter.lfs.process=", "-c", "filter.lfs.smudge=", "-c", "filter.lfs.clean=", "-c", "filter.lfs.required=false"}
+
+// withLFSFiltersOff returns args with lfsFiltersOff's -c overrides first,
+// as a fresh slice each call (never aliasing lfsFiltersOff's own backing
+// array).
+func withLFSFiltersOff(args ...string) []string {
+	return append(append([]string{}, lfsFiltersOff...), args...)
+}
+
 // CheckoutDetached fetches rev (a commit, full or abbreviated) from origin
 // and checks it out with a detached HEAD, review mode's single-pull-request
 // case (design generic-tool §3.6, G12): the commit is never a branch of its
 // own, and gitprov.Provider.FetchPRHead already named the exact one to
 // read, so this never resolves a ref of its own. Untracked files are
 // removed but ignored ones (warm build caches) are kept, the same as
-// CheckoutNewBranch.
+// CheckoutNewBranch. Filters (lfsFiltersOff) are off for the fetch and the
+// checkout, the two steps that could run one.
 func (r *Repo) CheckoutDetached(ctx context.Context, rev string) error {
-	if _, err := r.git(ctx, "fetch", "--quiet", "origin", rev); err != nil {
+	if _, err := r.git(ctx, withLFSFiltersOff("fetch", "--quiet", "origin", rev)...); err != nil {
 		return err
 	}
-	if _, err := r.git(ctx, "checkout", "--quiet", "-f", "--detach", "FETCH_HEAD"); err != nil {
+	if _, err := r.git(ctx, withLFSFiltersOff("checkout", "--quiet", "-f", "--detach", "FETCH_HEAD")...); err != nil {
 		return err
 	}
 	_, err := r.git(ctx, "clean", "-fd", "--quiet")
@@ -181,12 +199,14 @@ func (r *Repo) CheckoutDetached(ctx context.Context, rev string) error {
 // Worktree fetches rev from origin and adds it as a detached worktree at
 // dir: review mode's pick case (design generic-tool §3.6, G12), one
 // directory per pull request it compares, so the reviewer can read every
-// attempt at once. dir's parent must already exist.
+// attempt at once. dir's parent must already exist. Filters (lfsFiltersOff)
+// are off for the fetch and the worktree add, the two steps that could run
+// one.
 func (r *Repo) Worktree(ctx context.Context, rev, dir string) error {
-	if _, err := r.git(ctx, "fetch", "--quiet", "origin", rev); err != nil {
+	if _, err := r.git(ctx, withLFSFiltersOff("fetch", "--quiet", "origin", rev)...); err != nil {
 		return err
 	}
-	_, err := r.git(ctx, "worktree", "add", "--quiet", "--detach", dir, "FETCH_HEAD")
+	_, err := r.git(ctx, withLFSFiltersOff("worktree", "add", "--quiet", "--detach", dir, "FETCH_HEAD")...)
 	return err
 }
 
