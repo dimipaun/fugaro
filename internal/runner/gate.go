@@ -337,12 +337,13 @@ func (r *run) endCancelled(ctx context.Context, reason string) {
 	r.storeEnded(ctx, nil)
 }
 
-// endHalted ends a run whose check gate concluded clean, but a halt (a
-// budget cap, a kill switch, the token cap) was recorded while its commands
-// ran: status halted, outcome none — never succeeded, which would leave an
-// internally contradictory record once the top-level deferred code in
-// Run also carries Record.Halt. finalize, which still runs after, does
-// nothing more (r.skipPR).
+// endHalted ends a run whose check gate was running when a halt (a budget
+// cap, a kill switch, the token cap) was recorded — whether its commands
+// then concluded clean or ended in an error a concurrent cancel made look
+// like an ordinary failure: status halted, outcome none — never succeeded
+// or infra_error, either of which would leave an internally contradictory
+// record once the top-level deferred code in Run also carries Record.Halt.
+// finalize, which still runs after, does nothing more (r.skipPR).
 func (r *run) endHalted(ctx context.Context, h *runstore.Halt) {
 	r.rec.Status, r.rec.Outcome, r.rec.Halt = runstore.StatusHalted, runstore.OutcomeNone, h
 	r.rec.Reason = (&HaltError{*h}).Error()

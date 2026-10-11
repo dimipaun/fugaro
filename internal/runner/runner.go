@@ -1151,6 +1151,18 @@ func (r *run) agentLoop(ctx context.Context) {
 		r.save(ctx)
 		switch g, err := r.runGate(ctx, r.gateSteps); {
 		case err != nil:
+			// Halt takes priority over everything else here, the same
+			// convention the g.Clean case below follows: WatchCancel's
+			// context is cancelled with ErrCancelled unconditionally, even
+			// when markCancelled() loses the race to a concurrent haltNow
+			// (a budget cap, a kill switch, the token cap), so
+			// context.Cause(ctx) == ErrCancelled is not proof this was a
+			// plain cancel — a halt may have landed first and must not be
+			// lost as an infra_error.
+			if h := r.haltValue(); h != nil {
+				r.endHalted(ctx, h)
+				return
+			}
 			// A cancel landing mid-command (verify.Run / procgroup.Run)
 			// returns an ordinary context error, indistinguishable from any
 			// other process failure by err alone: context.Cause(ctx) still

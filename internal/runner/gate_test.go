@@ -403,6 +403,54 @@ func TestGateHaltEndsHaltedNotSucceeded(t *testing.T) {
 	}
 }
 
+// TestGateHaltDuringCancelDoesNotBecomeInfraError: WatchCancel cancels its
+// context with ErrCancelled unconditionally once a cancel marker is seen,
+// even when its onCancel hook (markCancelled) loses the race to a halt
+// recorded first (haltNow) — so the check gate's command, killed by that
+// cancellation, returns a plain context error indistinguishable by err
+// alone from any other failure. agentLoop's gate error branch must still
+// check the halt before falling back to "was this a cancel, or
+// infra_error", the same halt-first convention the g.Clean branch (just
+// above it) follows, or the halt — and rec.Halt — is lost to infra_error.
+//
+// Mutation (drop the `if h := r.haltValue(); h != nil { r.endHalted(...);
+// return }` check just added to the err != nil branch): this test fails,
+// ending infra_error with rec.Halt nil.
+func TestGateHaltDuringCancelDoesNotBecomeInfraError(t *testing.T) {
+	handles := make(chan *runner.RunHandle, 1)
+	runner.OnRun(t, func(h *runner.RunHandle) { handles <- h })
+	cfg := gateCfg(t, "test-and-fix", 2, "touch gate-halt-cancel-marker && sleep 2", "", "")
+	h := newHarnessFiles(t, cfg, nil, gateFiles("test-and-fix", testAndFixRecipe))
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		handle := <-handles
+		marker := filepath.Join(h.deps.WorkDir, "gate-halt-cancel-marker")
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(marker); err == nil {
+				// Order matters: the halt must be recorded before the cancel
+				// marker is polled, so markCancelled() (called inside
+				// WatchCancel, then again in agentLoop's own check) finds
+				// r.halt already set and returns false both times — exactly
+				// the race the finding describes, made deterministic.
+				handle.HaltNow(runCapHalt)
+				_ = h.store.RequestCancel(context.Background())
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+	rec, err := h.run(t)
+	<-done
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Outcome != runstore.OutcomeNone || rec.Halt == nil {
+		t.Fatalf("record = %+v", rec)
+	}
+}
+
 // TestGateStageSavedBeforeRunning: the persisted record must show stage
 // "check" while the gate's command runs (potentially a full build, test or
 // lint), the same as every other stage transition in this file pairs its
