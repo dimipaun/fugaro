@@ -366,15 +366,18 @@ jobs:
     # tag's tree, e.g. a backport): GitHub's default auto-skip ("a job is
     # skipped if any of its needs did not succeed") would then skip this job
     # too, leaving the legacy images published with no anonymous-pull check.
-    # always() overrides that default; the explicit checks below still
-    # require publish to have succeeded and only refuse a publish-base that
-    # actually failed or was cancelled (not one that was merely skipped).
+    # always() overrides that default, so the explicit checks below carry the
+    # whole gate: publish must have succeeded, and when the kinds include base
+    # publish-base must have SUCCEEDED too (a failed, cancelled or skipped
+    # publish-base, say after the secret scan failed, must not let this job
+    # report a green for yesterday's image that was never refreshed). Only
+    # when there is no base kind is a skipped publish-base fine.
     if: >-
       always() &&
       needs.version.outputs.publish == 'true' &&
       needs.publish.result == 'success' &&
-      needs['publish-base'].result != 'failure' &&
-      needs['publish-base'].result != 'cancelled'
+      (needs['publish-base'].result == 'success' ||
+      !contains(needs.version.outputs.kinds, ',base,'))
     permissions:
       contents: read
     runs-on: ubuntu-latest

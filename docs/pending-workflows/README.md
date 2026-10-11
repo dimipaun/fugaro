@@ -120,3 +120,7 @@ Actions' job-gating semantics are not something a local test can execute).
 The real workflow run is CI's, once this file is copied into
 `.github/workflows/images.yml` (removing it from here, see above) and a PR
 touching `images/**` runs it.
+
+## Before you copy: check the action pins
+
+Dependabot does not watch this directory, and `next` can lag `main`'s Dependabot bumps of the workflow files, so the pins in `images.yml` here can differ from the ones `main` has moved to. `TestActionPinsAreFullSHAs` requires every `uses:` here to be a full commit SHA; once the pending file is gone it also requires the real file's pins to agree with the other workflows. Before copying, compare `grep -h 'uses:' .github/workflows/*.yml docs/pending-workflows/images.yml | sort -u` and keep the NEWER SHA for each action (verify it against the upstream tag with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`), so the copy never downgrades a pin.
