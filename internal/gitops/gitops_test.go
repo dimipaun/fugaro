@@ -58,15 +58,18 @@ func TestCheckoutNewBranchKeepsIgnored(t *testing.T) {
 	}
 }
 
-// TestDiscardChangesRevertsTrackedRemovesUntrackedKeepsIgnored: a tracked
-// file's modification is reverted, an untracked file is removed, and an
-// ignored file (a warm dependency cache) survives — the same guarantee
+// TestResetToRevertsTrackedRemovesUntrackedKeepsIgnored: a tracked file's
+// modification is reverted, an untracked file is removed, and an ignored
+// file (a warm dependency cache) survives — the same guarantee
 // CheckoutNewBranch's own clean -fd gives a fresh checkout, used instead
-// when a command's output (gate.go: a timed-out commands.fix) cannot be
-// trusted.
-func TestDiscardChangesRevertsTrackedRemovesUntrackedKeepsIgnored(t *testing.T) {
+// when a command's output (gate.go: commands.fix) cannot be trusted.
+func TestResetToRevertsTrackedRemovesUntrackedKeepsIgnored(t *testing.T) {
 	repo, _ := setup(t)
 	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	head, err := repo.HeadSHA(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
 	testutil.WriteFiles(t, repo.Dir, map[string]string{
@@ -74,20 +77,48 @@ func TestDiscardChangesRevertsTrackedRemovesUntrackedKeepsIgnored(t *testing.T) 
 		"half.txt":                  "untracked\n",
 		"node_modules/dep/index.js": "warm cache\n",
 	})
-	if err := repo.DiscardChanges(ctx); err != nil {
+	if err := repo.ResetTo(ctx, head); err != nil {
 		t.Fatal(err)
 	}
 	if clean, err := repo.IsClean(ctx); err != nil || !clean {
-		t.Fatalf("IsClean after DiscardChanges = %v, %v", clean, err)
+		t.Fatalf("IsClean after ResetTo = %v, %v", clean, err)
 	}
 	if data, err := os.ReadFile(filepath.Join(repo.Dir, "README.md")); err != nil || string(data) != "hello\n" {
 		t.Fatalf("README.md = %q, %v, want it reverted to \"hello\\n\"", data, err)
 	}
 	if _, err := os.Stat(filepath.Join(repo.Dir, "half.txt")); !os.IsNotExist(err) {
-		t.Fatal("untracked file survived DiscardChanges")
+		t.Fatal("untracked file survived ResetTo")
 	}
 	if _, err := os.Stat(filepath.Join(repo.Dir, "node_modules", "dep", "index.js")); err != nil {
 		t.Fatal("ignored warm cache was wiped:", err)
+	}
+}
+
+// TestResetToDiscardsACommitMadeAfterRef: ResetTo(ctx, ref) must move HEAD
+// back to ref, discarding a commit made on top of it — the exact gap
+// gate.go's runAutofix closes: a fix that commits on its own moves HEAD, so
+// resetting to the literal string "HEAD" (what the code used to pass)
+// would be a no-op that leaves the fix's own commit in place.
+func TestResetToDiscardsACommitMadeAfterRef(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	preFixHEAD, err := repo.HeadSHA(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"evil.txt": "evil\n"})
+	testutil.Git(t, repo.Dir, "add", "evil.txt")
+	testutil.Git(t, repo.Dir, "commit", "--quiet", "-m", "evil")
+	if err := repo.ResetTo(ctx, preFixHEAD); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := repo.HeadSHA(ctx); err != nil || got != preFixHEAD {
+		t.Fatalf("HEAD = %s, %v, want %s", got, err, preFixHEAD)
+	}
+	if _, err := os.Stat(filepath.Join(repo.Dir, "evil.txt")); !os.IsNotExist(err) {
+		t.Fatal("the commit made after ref survived ResetTo")
 	}
 }
 

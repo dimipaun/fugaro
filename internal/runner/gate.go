@@ -30,13 +30,14 @@ type gateResult struct {
 	// Tails are Failures' redacted log tails (at most logtail.DefaultLines
 	// lines each), same index as Failures.
 	Tails []string
-	// FixProblem, non-"" when a step's autofix could not be judged: its
-	// commands.fix timed out. The step's check command is then skipped
-	// entirely (running it against a tree a timed-out, possibly
-	// half-written fix left behind would judge nothing meaningful), and
-	// the gate is red (neither Clean nor Fixed). This never quotes
-	// commands.fix's own output: runAutofix discards it and records only
-	// the exit code and whether it timed out.
+	// FixProblem, non-"" when a step's autofix was discarded rather than
+	// judged (runAutofix's autofixOutcome.Discarded): commands.fix timed
+	// out, exited non-zero, or committed on its own. The step's check
+	// command is then skipped entirely (there is nothing of the fix's own
+	// left to judge: runAutofix already reset the tree, and any commit the
+	// fix made, before returning), and the gate is red (neither Clean nor
+	// Fixed). This never quotes commands.fix's own output: runAutofix
+	// discards it and records only the exit code and whether it timed out.
 	FixProblem string
 }
 
@@ -137,12 +138,12 @@ func (r *run) runGate(ctx context.Context, steps []recipe.Step) (gateResult, err
 			if err != nil {
 				return gateResult{}, err
 			}
-			if out.TimedOut {
-				// The tree is whatever a half-written fix left, uncommitted
-				// (runAutofix never commits a timed-out fix's changes):
-				// judging it with the check command would judge nothing
-				// meaningful, so the step ends here, red.
-				g.FixProblem = fmt.Sprintf("commands.fix timed out after %s; its changes were not committed", r.wf.Timeouts.Verify.Duration)
+			if out.Discarded != "" {
+				// Nothing of the fix's own survived (runAutofix already
+				// reset the tree and any commit it made): judging it with
+				// the check command would judge nothing meaningful, so the
+				// step ends here, red.
+				g.FixProblem = out.Discarded
 				return g, nil
 			}
 			fixed = fixed || out.Changed
@@ -183,25 +184,50 @@ type autofixOutcome struct {
 	// placeholder, -1 or negative) when TimedOut.
 	ExitCode int
 	// TimedOut is whether the workflow's timeouts.verify killed commands.fix
-	// before it exited on its own. A timed-out fix's changes are never
-	// committed, whatever they are: runGate ends the step red instead of
-	// judging a half-written tree.
+	// before it exited on its own.
 	TimedOut bool
+	// Discarded, non-"" naming why, is set whenever commands.fix's changes
+	// were reset away rather than judged or committed: a timeout, a
+	// non-zero exit (fail closed: §"runAutofix" below explains why this
+	// supersedes committing a merely-failed fix), or the fix having
+	// committed on its own (discarding then resets past that commit too,
+	// not only the working tree). runGate ends the step red on this,
+	// skipping the check command entirely: a tree reset out from under a
+	// discarded fix has nothing left for it to meaningfully judge.
+	Discarded string
 }
 
-// runAutofix runs commands.fix and reports what it did, committing any
-// change it leaves with the runner's identity (the same gitops call
-// finalize's own leftover commit uses) — unless it timed out, in which case
-// nothing is committed. A command that exits non-zero but does not time out
-// is not itself an error here: whatever it left is still committed, and the
-// check step that follows judges the result, the same as it would judge a
-// hand-written fix that didn't fully work. Fails closed: with no
-// commands.fix (bootstrap's checkGateCommands should already have refused
-// this recipe, but a caller is never trusted to have checked first), this
-// refuses rather than run an empty command that would look like a no-op fix.
+// runAutofix runs commands.fix and reports what it did. Only a fix that
+// exits 0, does not time out, and leaves HEAD exactly where it found it is
+// trusted: its working-tree change, if any, is committed with the runner's
+// identity (the same gitops call finalize's own leftover commit uses), and
+// the check step that follows judges the result. Every other case is
+// discarded, fail closed — reset to the commit read before the fix ran
+// (never "HEAD", which the fix may have moved by committing on its own) and
+// untracked files and directories removed:
+//   - a timeout: the process was SIGKILLed mid-write, which can leave a
+//     tracked file truncated or inconsistent, not just incomplete;
+//   - a non-zero exit: this used to be committed on the theory that a
+//     hand-written fix that didn't fully work is still worth judging by
+//     the check step that follows; superseded by an explicit ruling that a
+//     failed commands.fix must never produce a runner-identity commit,
+//     whatever partial content it leaves;
+//   - HEAD moved: a fix that committed on its own put content on the
+//     branch the check step never had a chance to judge first, so its
+//     commit (not only its working-tree changes) is discarded too, never
+//     accepted on the theory that its content might otherwise pass.
+//
+// Fails closed before running anything too: with no commands.fix
+// (bootstrap's checkGateCommands should already have refused this recipe,
+// but a caller is never trusted to have checked first), this refuses
+// rather than run an empty command that would look like a no-op fix.
 func (r *run) runAutofix(ctx context.Context) (autofixOutcome, error) {
 	if strings.TrimSpace(r.wf.Commands.Fix) == "" {
 		return autofixOutcome{}, errors.New("commands.fix is empty")
+	}
+	preFixHEAD, err := r.repo.HeadSHA(ctx)
+	if err != nil {
+		return autofixOutcome{}, err
 	}
 	fctx, cancel := context.WithTimeout(ctx, r.wf.Timeouts.Verify.Duration)
 	defer cancel()
@@ -216,22 +242,38 @@ func (r *run) runAutofix(ctx context.Context) (autofixOutcome, error) {
 	// run ever recorded or logged: never commands.fix's output, which may
 	// hold whatever the repository's own command prints.
 	r.rec.Autofix = &runstore.AutofixRecord{ExitCode: code, TimedOut: timedOut}
-	if timedOut {
-		// A process SIGKILLed mid-write can leave a tracked file half
-		// written, not just uncommitted: discard whatever it left (reset
-		// to HEAD, remove untracked files and directories) rather than
-		// leave it for the agent's own `git add -A` or finalize's leftover
-		// commit to pick up and publish.
+	switch {
+	case timedOut:
 		r.d.Log.Warn("commands.fix timed out; discarding its changes", "timeout", r.wf.Timeouts.Verify.Duration)
-		if err := r.repo.DiscardChanges(ctx); err != nil {
+		if err := r.repo.ResetTo(ctx, preFixHEAD); err != nil {
 			return autofixOutcome{}, err
 		}
-		return autofixOutcome{TimedOut: true}, nil
+		return autofixOutcome{TimedOut: true,
+			Discarded: fmt.Sprintf("commands.fix timed out after %s; its changes were discarded", r.wf.Timeouts.Verify.Duration)}, nil
+	case code != 0:
+		if code == 127 {
+			r.d.Log.Warn("commands.fix could not run; discarding its changes", "exit_code", code)
+		} else {
+			r.d.Log.Warn("commands.fix failed; discarding its changes", "exit_code", code)
+		}
+		if err := r.repo.ResetTo(ctx, preFixHEAD); err != nil {
+			return autofixOutcome{}, err
+		}
+		return autofixOutcome{ExitCode: code,
+			Discarded: fmt.Sprintf("commands.fix failed (exit %d); its changes were discarded", code)}, nil
 	}
-	if code == 127 {
-		r.d.Log.Warn("commands.fix could not run", "exit_code", code)
-	} else {
-		r.d.Log.Info("commands.fix ran", "exit_code", code)
+	r.d.Log.Info("commands.fix ran", "exit_code", code)
+	headAfter, err := r.repo.HeadSHA(ctx)
+	if err != nil {
+		return autofixOutcome{}, err
+	}
+	if headAfter != preFixHEAD {
+		r.d.Log.Warn("commands.fix committed on its own; discarding its changes", "exit_code", code)
+		if err := r.repo.ResetTo(ctx, preFixHEAD); err != nil {
+			return autofixOutcome{}, err
+		}
+		return autofixOutcome{ExitCode: code,
+			Discarded: "commands.fix committed on its own; its changes were discarded"}, nil
 	}
 	clean, err := r.repo.IsClean(ctx)
 	if err != nil {

@@ -458,6 +458,169 @@ func TestGateRecordsAutofixExitCode(t *testing.T) {
 	}
 }
 
+// TestGateFailedFixDiscardsChanges: commands.fix that exits non-zero without
+// timing out is discarded exactly like a timed-out one (an owner ruling that
+// supersedes the earlier design, which committed a merely-failed fix on the
+// theory that whatever it left was still worth judging): a fix that appends
+// to a tracked file and fails must not produce a runner-identity commit or a
+// "fixed" gate, and the tracked file must come back exactly as it was.
+//
+// Mutation (in runAutofix, change `case code != 0:` to commit and judge the
+// change instead of discarding it, as the pre-this-round code did): this
+// test fails, seeing rec.Gate == "fixed" and README.md left modified.
+func TestGateFailedFixDiscardsChanges(t *testing.T) {
+	cfg := gateCfg(t, "lint-fix", 1, "true", "test -f fixed", "echo more >> README.md; exit 2")
+	h := newHarnessFiles(t, cfg, nil, gateFiles("lint-fix", lintFixRecipe))
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status == runstore.StatusInfraError {
+		t.Fatalf("a failed fix was treated as infra_error: %+v", rec)
+	}
+	if rec.Gate == "fixed" || rec.Gate == "clean" {
+		t.Fatalf("gate = %q, want red (a failed fix is discarded, never fixed)", rec.Gate)
+	}
+	if rec.Autofix == nil || rec.Autofix.ExitCode != 2 || rec.Autofix.TimedOut {
+		t.Fatalf("Autofix = %+v, want {ExitCode:2 TimedOut:false}", rec.Autofix)
+	}
+	if len(h.agent.calls) == 0 {
+		t.Fatal("a failed fix never reached implement")
+	}
+	if p := h.agent.calls[0].Prompt; !strings.Contains(p, "commands.fix failed (exit 2)") {
+		t.Fatalf("implement prompt = %q", p)
+	}
+	data, err := os.ReadFile(filepath.Join(h.deps.WorkDir, "README.md"))
+	if err != nil || string(data) != "Fixture repository used by Fugaro's tests.\n" {
+		t.Fatalf("README.md = %q, %v, want it restored to its original content", data, err)
+	}
+	branch := "fugaro/" + runID
+	if lastCommitMsg(t, h.remote, branch) == "fugaro: autofix (commands.fix)" {
+		t.Fatal("a failed fix's changes were committed under the runner's identity")
+	}
+	if got := fileContentAt(t, h.remote, branch, "README.md"); got != "Fixture repository used by Fugaro's tests." {
+		t.Fatalf("README.md on the pushed branch = %q, want it restored", got)
+	}
+}
+
+// TestGateFixTimeoutOnTrackedFileIsRestored: TestGateFixTimeoutIsDiscardedAndRed
+// covers a timed-out fix that only ever creates an untracked file; a fix
+// that instead half-writes a change to a file the repository already
+// tracks must be restored exactly the same way (git reset --hard, not just
+// a clean of untracked files, is what undoes this one).
+//
+// Mutation (same as TestGateFixTimeoutIsDiscardedAndRed: drop the ResetTo
+// call in the timeout branch of runAutofix): this test fails, seeing
+// README.md left with "half-written" appended.
+func TestGateFixTimeoutOnTrackedFileIsRestored(t *testing.T) {
+	cfg := gateCfg(t, "lint-fix", 1, "true", "test -f fixed", "echo half-written >> README.md; sleep 5")
+	cfg = strings.Replace(cfg, "verify: 1m", "verify: 300ms", 1)
+	if !strings.Contains(cfg, "verify: 300ms") {
+		t.Fatal("fixture has no timeouts.verify: 1m to shorten")
+	}
+	h := newHarnessFiles(t, cfg, nil, gateFiles("lint-fix", lintFixRecipe))
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Autofix == nil || !rec.Autofix.TimedOut {
+		t.Fatalf("Autofix = %+v, want TimedOut true", rec.Autofix)
+	}
+	data, err := os.ReadFile(filepath.Join(h.deps.WorkDir, "README.md"))
+	if err != nil || string(data) != "Fixture repository used by Fugaro's tests.\n" {
+		t.Fatalf("README.md = %q, %v, want it restored to its original content", data, err)
+	}
+	branch := "fugaro/" + runID
+	if got := fileContentAt(t, h.remote, branch, "README.md"); got != "Fixture repository used by Fugaro's tests." {
+		t.Fatalf("README.md on the pushed branch = %q, want it restored", got)
+	}
+}
+
+// fileContentAt is path's blob content at ref in remote.
+func fileContentAt(t *testing.T, remote, ref, path string) string {
+	t.Helper()
+	return testutil.Git(t, remote, "show", ref+":"+path)
+}
+
+// TestGateFixThatCommitsThenTimesOutIsDiscarded: a fix that commits on its
+// own and then runs long enough to be killed by timeouts.verify must lose
+// that commit too, not just whatever it changed afterward — ResetTo is
+// given the commit read before the fix ran, never the literal "HEAD" (which
+// the fix's own commit has by then moved), so the reset reaches back past
+// it.
+//
+// Mutation (in runAutofix, capture preFixHEAD but pass "HEAD" to ResetTo
+// instead, reproducing the pre-this-round bug): this test fails, finding
+// evil.txt in the pushed branch's tree and history.
+func TestGateFixThatCommitsThenTimesOutIsDiscarded(t *testing.T) {
+	cfg := gateCfg(t, "lint-fix", 1, "true", "test -f fixed",
+		"echo X > evil.txt; git add evil.txt; git commit -q -m evil; sleep 5")
+	cfg = strings.Replace(cfg, "verify: 1m", "verify: 300ms", 1)
+	if !strings.Contains(cfg, "verify: 300ms") {
+		t.Fatal("fixture has no timeouts.verify: 1m to shorten")
+	}
+	h := newHarnessFiles(t, cfg, nil, gateFiles("lint-fix", lintFixRecipe))
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Autofix == nil || !rec.Autofix.TimedOut {
+		t.Fatalf("Autofix = %+v, want TimedOut true", rec.Autofix)
+	}
+	if _, err := os.Stat(filepath.Join(h.deps.WorkDir, "evil.txt")); err == nil {
+		t.Fatal("the self-committed file survived in the working tree")
+	}
+	branch := "fugaro/" + runID
+	if fileInTree(t, h.remote, branch, "evil.txt") {
+		t.Fatal("the fix's self-commit reached the pushed branch's tree")
+	}
+	if fileEverCommitted(t, h.remote, branch, "evil.txt") {
+		t.Fatal("the fix's self-commit survived somewhere in the branch's history")
+	}
+}
+
+// TestGateFixThatCommitsThenExitsZeroIsDiscarded: a fix that commits on its
+// own and then exits 0 is not trusted just because it reported success: a
+// commit the check step never had a chance to judge first must be
+// discarded exactly like a timed-out or failed fix, not accepted because
+// nothing else looks wrong with it.
+//
+// Mutation (in runAutofix, drop the `headAfter != preFixHEAD` check — the
+// self-commit case entirely — so a fix that exits 0 is always committed as
+// Changed): this test fails, finding evil.txt in the pushed branch's tree
+// and history, and the prompt missing "committed on its own".
+func TestGateFixThatCommitsThenExitsZeroIsDiscarded(t *testing.T) {
+	cfg := gateCfg(t, "lint-fix", 1, "true", "test -f fixed",
+		"echo X > evil.txt; git add evil.txt; git commit -q -m evil")
+	h := newHarnessFiles(t, cfg, nil, gateFiles("lint-fix", lintFixRecipe))
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Gate == "fixed" || rec.Gate == "clean" {
+		t.Fatalf("gate = %q, want red (a self-committing fix is discarded, never fixed)", rec.Gate)
+	}
+	if rec.Autofix == nil || rec.Autofix.ExitCode != 0 || rec.Autofix.TimedOut {
+		t.Fatalf("Autofix = %+v, want {ExitCode:0 TimedOut:false}", rec.Autofix)
+	}
+	if len(h.agent.calls) == 0 {
+		t.Fatal("a self-committing fix never reached implement")
+	}
+	if p := h.agent.calls[0].Prompt; !strings.Contains(p, "committed on its own") {
+		t.Fatalf("implement prompt = %q", p)
+	}
+	if _, err := os.Stat(filepath.Join(h.deps.WorkDir, "evil.txt")); err == nil {
+		t.Fatal("the self-committed file survived in the working tree")
+	}
+	branch := "fugaro/" + runID
+	if fileInTree(t, h.remote, branch, "evil.txt") {
+		t.Fatal("the fix's self-commit reached the pushed branch's tree")
+	}
+	if fileEverCommitted(t, h.remote, branch, "evil.txt") {
+		t.Fatal("the fix's self-commit survived somewhere in the branch's history")
+	}
+}
+
 // followUpWithRecipe is fuHarness.followUp, but the task carries rcp: a
 // follow-up never reads agent.recipe (resolveRecipe only does for a first
 // run), so embedding the recipe in the task is how a follow-up actually
