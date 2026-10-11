@@ -30,13 +30,20 @@ var BatchRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 var BranchRE = regexp.MustCompile(`^fugaro/[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$`)
 
 // oauthTokenRE is a named Claude OAuth account's name (docs/design/
-// named-oauth-tokens.md): one "-" between alphanumerics, never trailing,
-// matching schemas/task.schema.json's oauth_token pattern and the planned
-// config.ClaudeAccountNameRE (Task 1, not yet landed on this branch: this
-// is a local copy, not an import, so the two must be kept in sync by hand
-// until Task 1 lands and this can reference it instead). "default" is
-// checked separately (below), since it matches this pattern too but is
-// reserved for the omitted value.
+// named-oauth-tokens.md), matching schemas/task.schema.json's oauth_token
+// pattern exactly: one "-" between alphanumerics, never trailing. This is
+// deliberately *stricter* than the regex the plan's own Task 1 section
+// writes verbatim for config.ClaudeAccountNameRE
+// (`^[a-z][a-z0-9-]{0,30}$`, docs/plans/2026-10-09-named-oauth-tokens.md:
+// 103,232, which still allows "a--b" and a trailing "-"): an external
+// review of this PR asked for the tighter grammar used here, but that
+// tightening was never written back into Task 1's own plan/design text
+// (a known gap, out of scope for Task 3, flagged in this PR's body). This
+// is a local copy, not an import (Task 1 is not yet landed on this
+// branch), so until Task 1 lands and either adopts this grammar or this
+// copy is loosened to match it, the two are deliberately not identical.
+// "default" is checked separately (below), since it matches this pattern
+// too but is reserved for the omitted value.
 var oauthTokenRE = regexp.MustCompile(`^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$`)
 
 // ValidRunID reports whether id has a run ID's form, as Validate requires
