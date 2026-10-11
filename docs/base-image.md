@@ -2,6 +2,8 @@
 
 Every workflow's image is built on one base, `ghcr.io/dimipaun/fugaro-base` (for `linux/amd64` and `linux/arm64`), plus the repository's checkout, its runtimes and its dependencies. The base carries what Fugaro and the agents need, and a generous tool kit; **your project declares its language runtimes in `mise.toml`**, and the image installs them. The design is [design/base-image.md](design/base-image.md).
 
+**Not yet published.** `ghcr.io/dimipaun/fugaro-base` has not been published by any release yet: the workflow change that builds and publishes it is written and tested, but staged at `docs/pending-workflows/images.yml` until a maintainer copies it into `.github/workflows/images.yml` and a release runs with it (`docs/pending-workflows/README.md` says why Fugaro can't do that copy itself). Until then, `fugaro init --base base` and `fugaro image refresh` find no image to copy and refuse with a clear error; [Bring your own](#bring-your-own) below (your own build of `images/base/`) still works today.
+
 ## What is in it
 
 - **Debian 13 (trixie) slim**, pinned by digest, with Debian's current security fixes at every rebuild.
@@ -11,7 +13,24 @@ Every workflow's image is built on one base, `ghcr.io/dimipaun/fugaro-base` (for
 - **Agent harnesses:** `claude` (Claude Code), `codex` (Codex CLI), `gemini` (Gemini CLI), `pi` (Pi), `qwen` (Qwen Code), `opencode` (OpenCode), `goose` (Goose) and `crush` (Crush). **Today only Claude Code is driven by Fugaro**; the others are installed and answer `--version`, and choosing one per run is a later feature.
 - **Fugaro's plumbing:** `fugaro`, `tini` (PID 1), `finalize-checkout`, `fugaro-services`, the `fugaro` user (uid 1000) and `/work/repo`.
 
-No credential is in the image. Every key and token reaches a run at run time, through the environment and the runner; never bake one into your image either. The tables of what each tool reads are in the design, section 6.
+No credential is in the image. Every key and token reaches a run at run time, through the environment and the runner; never bake one into your image either. What each tool reads, for whoever wires a harness later (names marked *unverified* come from each tool's documentation, not from running it):
+
+| Tool | Environment | Files |
+|---|---|---|
+| Claude Code | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`; Vertex: `CLAUDE_CODE_USE_VERTEX`, `CLOUD_ML_REGION`, `ANTHROPIC_VERTEX_PROJECT_ID` | `/etc/claude-code/managed-settings.json` (the runner writes it), `~/.claude/` |
+| Codex CLI | `OPENAI_API_KEY`, `CODEX_HOME`; OpenRouter through a `model_providers` entry with `base_url` and `env_key` | `~/.codex/config.toml`, `~/.codex/auth.json` |
+| Gemini CLI | `GEMINI_API_KEY`; Vertex: `GOOGLE_GENAI_USE_VERTEXAI`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION` | `~/.gemini/settings.json` |
+| Pi | the provider's key variable (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, …) *unverified* | `~/.pi/agent/` *unverified* |
+| Qwen Code | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL` | `~/.qwen/settings.json` *unverified* |
+| OpenCode | provider key variables, `OPENROUTER_API_KEY` | `~/.config/opencode/opencode.json`, `~/.local/share/opencode/auth.json` *unverified* |
+| Goose | `GOOSE_PROVIDER`, `GOOSE_MODEL`, provider keys | `~/.config/goose/config.yaml` |
+| Crush | provider key variables | `~/.config/crush/crush.json` *unverified* |
+| gh | `GH_TOKEN` (or `GITHUB_TOKEN`), `GH_HOST`, `GH_ENTERPRISE_TOKEN` | `~/.config/gh/hosts.yml` (the runner configures gh at run time) |
+| gcloud | the metadata server (the job's service account, nothing to set on Cloud Run), `CLOUDSDK_CORE_PROJECT`, `CLOUDSDK_CONFIG`, `CLOUDSDK_AUTH_ACCESS_TOKEN_FILE` | `~/.config/gcloud/` |
+| Docker CLI | `DOCKER_HOST`, `DOCKER_CONFIG` | `~/.docker/config.json` |
+| mise | `GITHUB_TOKEN` or `MISE_GITHUB_TOKEN` (rate limits) | `/etc/mise/config.toml`, `~/.config/mise/config.toml` |
+
+Only Claude Code's row is wired today; the rest exist for whoever adds that harness later (above). The agent's own environment is an allowlist; none of these variables is added to it by this doc. The design's reasoning is in [design/base-image.md](design/base-image.md) section 6.
 
 ## Your runtimes: `mise.toml`
 
@@ -73,7 +92,7 @@ Run `fugaro image render --workflow <name>`, save it as `.fugaro/<name>.Dockerfi
 
 ## Building it locally
 
-`fugaro image build --local` builds and smoke-tests the image with your Docker. It defaults to `linux/amd64`, what Cloud Run runs; on Apple silicon, `--platform linux/arm64` is much faster, and the cloud build is then the amd64 test.
+`fugaro image build --local` builds and smoke-tests the image with your Docker. It defaults to `linux/amd64`, what Cloud Run runs; on Apple silicon, `--platform linux/arm64` is much faster, and the cloud build is then the amd64 test. With no `--base`, it pulls the published base matching your `fugaro` version — which, until `fugaro-base` is published (above), it won't find; pass `--base <image>` with your own build of `images/base/` meanwhile.
 
 ## Bring your own
 

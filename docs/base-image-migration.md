@@ -2,11 +2,13 @@
 
 Fugaro 0.7.0 replaces the `go`, `web-node` and `java-services` bases with one base image (see [base-image.md](base-image.md)). There is no transition release: a 0.7.0 CLI refuses `base:`, `image.node` and `image.jdk`, and a 0.6 one refuses a `fugaro.yaml` without `base:`. So each repository moves in one pull request, and the installation follows right after, in the order below.
 
+**Not enforced yet.** The refusals this document describes (`base:`, `image.node`, `base_images.go`/`web-node`/`java-services`) arrive together with the 0.7.0 release; the work that adds them is in flight in this tree but not merged. Until 0.7.0 ships, `base:` still accepts `go`, `web-node` and `java-services`, and `image.node` still works on `web-node`. This guide is written ahead of that enforcement, so every repository can move in one step once it lands; `image.jdk` is the one exception already refused today, on every base.
+
 ## The order
 
 1. Every operator upgrades the CLI to 0.7.0 (`fugaro upgrade --local`, then Homebrew for the binary).
 2. Per repository, one pull request: the `mise.toml` and the `fugaro.yaml` change below (the `/fugaro:setup` skill writes both). Before opening it, `fugaro validate` must pass and `fugaro image build --local` must pass the smoke test.
-3. Merge it, then **at once**, in that checkout: `fugaro image refresh`. It copies `fugaro-base` into your registry, records `base_images.base`, moves the daily check job onto it, and rebuilds every workflow's image.
+3. Merge it, then **at once**, in that checkout: `fugaro image refresh`. It copies `fugaro-base` into your registry, records `base_images.base`, moves the daily check job onto it, and rebuilds every workflow's image. **This step needs `fugaro-base` to be published on ghcr.io first** (not yet true as of this writing — `docs/pending-workflows/README.md`); until then `fugaro image refresh` finds no release image and refuses with a clear error.
 4. **Between the merge and the refresh finishing, don't launch runs**: the old image's 0.6 runner refuses the new `fugaro.yaml`. It takes minutes.
 5. `fugaro doctor` in the checkout reports nothing about bases.
 
@@ -78,7 +80,7 @@ workflows:
 
 ## `image.jdk` and other removed settings
 
-`image.jdk` was refused on every base. Declare Java in `mise.toml` (`java = "temurin-21"`, `java = "zulu-17"`, …). `base:` and `image.node` are refused with the fixes above.
+`image.jdk` was refused on every base (already true today). Declare Java in `mise.toml` (`java = "temurin-21"`, `java = "zulu-17"`, …). `base:` and `image.node` get the same treatment once 0.7.0 ships (see the note at the top); the fixes above apply either way.
 
 ## Checklist for a repository with services (Belong-style)
 
