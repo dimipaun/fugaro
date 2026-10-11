@@ -535,6 +535,162 @@ func TestDoctorGitHubApp(t *testing.T) {
 	})
 }
 
+// addClaudeAccounts appends a claude_accounts: block to the rig's local
+// config, as an owner's own hand edit would (claude_accounts is
+// local-config-only, never written by any Fugaro command itself; design
+// docs/design/named-oauth-tokens.md §3 T1).
+func addClaudeAccounts(t *testing.T, r *doctorRig, yaml string) {
+	t.Helper()
+	data, err := os.ReadFile(r.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfgPath, append(data, []byte(yaml)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// claudeAccountsRig is a doctor rig inside a checkout of github.com/acme/app,
+// whose local config allows acme/app to choose the named Claude account
+// acme-personal.
+func claudeAccountsRig(t *testing.T) *doctorRig {
+	t.Helper()
+	r := newDoctorRig(t)
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	addClaudeAccounts(t, r, "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/app]\n")
+	return r
+}
+
+// TestDoctorClaudeAccountsStoredMissing: a repository allowed to choose a
+// named Claude account, whose secret was never stored, fails doctor and
+// names the exact commands to run — never the secret's own value.
+func TestDoctorClaudeAccountsStoredMissing(t *testing.T) {
+	r := claudeAccountsRig(t)
+	out, _, err := execute(t, "doctor", "--json")
+	if err == nil {
+		t.Fatal("want doctor to fail: the allowed named account has no stored token")
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "claude-accounts-stored")
+	if !ok || c.OK || c.Severity != "" {
+		t.Fatalf("claude-accounts-stored = %+v", c)
+	}
+	if !strings.Contains(c.Problem, "acme-personal") {
+		t.Fatalf("problem doesn't name the account: %q", c.Problem)
+	}
+	if !strings.Contains(c.Fix, "claude setup-token") || !strings.Contains(c.Fix, "secrets set claude-oauth-token-acme-personal --repo acme/app") {
+		t.Fatalf("fix doesn't name the exact commands: %q", c.Fix)
+	}
+	if a := r.sm.Accessed(); len(a) != 0 {
+		t.Fatalf("doctor read a secret value: %v", a)
+	}
+}
+
+// TestDoctorClaudeAccountsStoredPresent: once the secret is stored, the
+// check passes and no value ever reaches doctor's output.
+func TestDoctorClaudeAccountsStoredPresent(t *testing.T) {
+	r := claudeAccountsRig(t)
+	const value = "fake-token-0123456789"
+	putSecret(t, r.sm, "proj-1234", mustSlug("github", "acme/app"), "claude-oauth-token-acme-personal", []byte(value))
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "claude-accounts-stored")
+	if !ok || !c.OK {
+		t.Fatalf("claude-accounts-stored = %+v", c)
+	}
+	if strings.Contains(out, value) {
+		t.Fatalf("the value leaked: %s", out)
+	}
+	if a := r.sm.Accessed(); len(a) != 0 {
+		t.Fatalf("doctor read a secret value: %v", a)
+	}
+}
+
+// TestDoctorClaudeAccountsStoredExcludesDisallowedRepo: a named account this
+// repository is not allowed to choose never asks for its token to be
+// stored, mirroring config.AllowedClaudeAccounts's own exclusion.
+func TestDoctorClaudeAccountsStoredExcludesDisallowedRepo(t *testing.T) {
+	r := newDoctorRig(t)
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	addClaudeAccounts(t, r, "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/other]\n")
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	if c, ok := doctorCheckByID(o.Checks, "claude-accounts-stored"); ok {
+		t.Fatalf("a repository got a check for an account it isn't allowed: %+v", c)
+	}
+}
+
+// TestDoctorClaudeAccountsStoredSilentWithNoAccounts: an installation that
+// configures no claude_accounts at all gets no new check — byte-identical
+// to doctor's output before this feature (design §5; carry-forward T8).
+func TestDoctorClaudeAccountsStoredSilentWithNoAccounts(t *testing.T) {
+	newDoctorRig(t)
+	checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	if c, ok := doctorCheckByID(o.Checks, "claude-accounts-stored"); ok {
+		t.Fatalf("an installation with no claude_accounts got a new check: %+v", c)
+	}
+}
+
+// TestDoctorClaudeAccountsStoredFailsClosedWhenUnreachable: when the
+// repository and its allowed named account are both known, but the secrets
+// list itself could not be read, the check must warn, not go silent (fail
+// closed: carry-forward T8).
+func TestDoctorClaudeAccountsStoredFailsClosedWhenUnreachable(t *testing.T) {
+	r := claudeAccountsRig(t)
+	data, err := os.ReadFile(r.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken := strings.Replace(string(data), r.sm.URL, "http://127.0.0.1:1", 1)
+	if broken == string(data) {
+		t.Fatal("secret_manager endpoint not found in the local config to break")
+	}
+	if err := os.WriteFile(r.cfgPath, []byte(broken), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("a warning must not fail doctor without --strict: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "claude-accounts-stored")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("claude-accounts-stored = %+v", c)
+	}
+	if _, _, err := execute(t, "doctor", "--strict", "--json"); err == nil {
+		t.Fatal("--strict: want a failure, since the check could not be answered")
+	}
+}
+
 // doctor without --check-github-app (what the setup skill runs, in an agent's
 // session) never reads the App's key and never asks GitHub: the fake refuses
 // any access call.
