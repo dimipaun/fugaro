@@ -162,8 +162,12 @@ func TestExtendedFormatParses(t *testing.T) {
 		"standard": "version: 1\nname: standard\nuse_when: typical work\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n",
 		"premium":  "version: 1\nname: premium\nroles: { coder: reviewer }\nsteps:\n  - review: {}\n",
 		"review":   "version: 1\nname: review-only\nmode: review\nsteps:\n  - review: { max_rounds: 1 }\n",
-		"testfix":  "version: 1\nname: test-and-fix\nsteps:\n  - check: { command: test }\n  - first_line: {}\n  - review: { bounce: first_line }\n",
-		"lintfix":  "version: 1\nname: lint-fix\nroles: { reviewer: coder }\nsteps:\n  - check: { command: lint, autofix: true }\n  - review: {}\n",
+		// use_when is deliberately not restricted by mode: review (unlike
+		// roles): it only describes when the routing skill should pick the
+		// recipe, and a review-only recipe needs that as much as any other.
+		"reviewdesc": "version: 1\nname: review-desc\nmode: review\nuse_when: a second opinion on an open PR\nsteps:\n  - review: { max_rounds: 1 }\n",
+		"testfix":    "version: 1\nname: test-and-fix\nsteps:\n  - check: { command: test }\n  - first_line: {}\n  - review: { bounce: first_line }\n",
+		"lintfix":    "version: 1\nname: lint-fix\nroles: { reviewer: coder }\nsteps:\n  - check: { command: lint, autofix: true }\n  - review: {}\n",
 	} {
 		r, ps := Parse([]byte(src))
 		if len(ps) != 0 {
@@ -303,6 +307,8 @@ func TestOrderWithChecksAndModes(t *testing.T) {
 		"steps:\n  - first_line: {}\n  - check: { command: test }\n  - review: {}\n": "check steps must come first",
 		"mode: review\nsteps:\n  - first_line: {}\n  - review: {}\n":                 "mode: review allows exactly one review step and nothing else",
 		"mode: review\nsteps:\n  - review: { max_rounds: 2 }\n":                      "mode: review reviews once: max_rounds must be 1",
+		"mode: review\nroles: { coder: reviewer }\nsteps:\n  - review: {}\n":         "mode: review has no coder step to map roles onto",
+		"mode: review\nroles: { reviewer: coder }\nsteps:\n  - review: {}\n":         "mode: review has no coder step to map roles onto",
 		"mode: plan\nsteps:\n  - review: {}\n":                                       "must be implement or review",
 		"use_when: " + strings.Repeat("x", 301) + "\nsteps:\n  - review: {}\n":       "must be at most 300 bytes",
 	} {

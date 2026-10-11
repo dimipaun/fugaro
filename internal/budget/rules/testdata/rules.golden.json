@@ -202,6 +202,12 @@
           "prUrl": {
             ".validate": "(newData.isString() && newData.val().length <= 200) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
           },
+          "action": {
+            ".validate": "(newData.isString() && newData.val().length <= 200) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
+          "tokens": {
+            ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1000000000 && newData.val() % 1 == 0 && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
           "halted": {
             ".validate": "(newData.isString() && newData.val().length <= 200) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
           },

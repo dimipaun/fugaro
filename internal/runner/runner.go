@@ -1373,6 +1373,15 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 	// LineWriter does: a stalled log stalls the agent rather than dropping
 	// events or buffering without bound.
 	relay := agent.NewRelay(log, r.secretList())
+	relay.Dir = r.d.WorkDir
+	relay.OnTool = func(s string) {
+		r.mu.Lock()
+		sess := r.sess
+		r.mu.Unlock()
+		if sess != nil {
+			sess.Update(func(e *budget.AgentEntry) { e.Action = s })
+		}
+	}
 	tw := agent.NewRedactor(io.MultiWriter(&transcript, transcriptTail, relay), r.secretList())
 	sw := agent.NewRedactor(io.MultiWriter(NewLineWriter(log, "agent"), stderrTail), r.secretList())
 	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, gitops.WithVars(r.env, pins), tw, sw
@@ -1421,6 +1430,21 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 	// An oauth run has no gateway: its stage's own cost figure is its
 	// notional spend, reported whatever became of the stage.
 	r.reportNotional(ctx, res)
+	r.mu.Lock()
+	sess := r.sess
+	r.mu.Unlock()
+	if sess != nil && err == nil {
+		// Only a stage whose stream reached a result event has a real
+		// token count: Usage/ModelUsage are set from that event alone, so
+		// a killed, timed-out or crashed stage's res is a zero Result and
+		// StageTokens() would be 0. Tokens is one key of the whole-entry
+		// registry write, which a 0 (omitempty) would delete outright,
+		// erasing the last completed stage's real total instead of simply
+		// leaving it in place until a real completion overwrites it (the
+		// same way beginBudgetStage leaves Tokens alone at stage start).
+		tokens := res.StageTokens()
+		sess.Update(func(e *budget.AgentEntry) { e.Tokens = tokens })
+	}
 	_ = tw.Flush()
 	relay.Flush()
 	_ = sw.Flush()

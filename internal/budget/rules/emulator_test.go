@@ -252,6 +252,48 @@ func TestAllowedPaths(t *testing.T) {
 		h.mustAllow(c, "delete the entry at the end of the run", map[string]any{budget.PathAgent("aurora", "r1"): nil})
 		h.wantValue(budget.PathAgent("aurora", "r1"), "null")
 	})
+	// generic-tool task 3 review item 4: action and tokens have no cases of
+	// their own yet. action is STR && RBOK, like every other registry
+	// string; tokens is bounded, integer and RBOK.
+	t.Run("action and tokens", func(t *testing.T) {
+		h := newHarness(t)
+		w := leased(2 * usd)
+		h.seed(w)
+		c := w.client(h)
+		agent := budget.PathAgent("aurora", "r1")
+		h.mustAllow(c, "create the entry", map[string]any{agent: map[string]any{"repo": "aurora/web", "requestedBy": "alice@example.invalid"}})
+		h.mustAllow(c, "action at the 200 character limit", map[string]any{agent + "/action": strings.Repeat("a", 200)})
+		h.mustDeny(c, "action over 200 characters", map[string]any{agent + "/action": strings.Repeat("a", 201)})
+		h.mustDeny(c, "action that is not a string", map[string]any{agent + "/action": 7})
+		h.mustAllow(c, "tokens at 0", map[string]any{agent + "/tokens": 0})
+		h.mustAllow(c, "tokens at 1200", map[string]any{agent + "/tokens": 1200})
+		h.mustAllow(c, "tokens at the 1e9 limit", map[string]any{agent + "/tokens": 1_000_000_000})
+		h.mustDeny(c, "tokens one over the limit", map[string]any{agent + "/tokens": 1_000_000_001})
+		h.mustDeny(c, "negative tokens", map[string]any{agent + "/tokens": -1})
+		h.mustDeny(c, "tokens as a string", map[string]any{agent + "/tokens": "5"})
+		h.mustDeny(c, "tokens not an integer", map[string]any{agent + "/tokens": 1.5})
+		h.mustDeny(c, "an unknown field next to action and tokens", map[string]any{agent: map[string]any{
+			"repo": "x", "requestedBy": "alice@example.invalid", "actionLog": "x",
+		}})
+		h.mustAllow(c, "a whole entry carrying both new keys", map[string]any{agent: map[string]any{
+			"repo": "aurora/web", "requestedBy": "alice@example.invalid", "action": "tool Bash: go test", "tokens": 1200,
+		}})
+		// RBOK on the new keys specifically: a leaf write from a token whose
+		// rb does not own the entry is refused. This is the plan's own
+		// mutation check for this review (remove RBOK from action's
+		// validate rule) — it must fail here, not only in the generated
+		// rules' golden.
+		mallory := h.as(claims{slug: "aurora", run: "r1", rb: "mallory@example.invalid"})
+		h.mustDeny(mallory, "an action write from a token whose rb does not own the entry", map[string]any{agent + "/action": "tool Bash: rm -rf /"})
+		h.mustDeny(mallory, "a tokens write from a token whose rb does not own the entry", map[string]any{agent + "/tokens": 1})
+		norb := h.as(claims{slug: "aurora", run: "r1", rb: "-"})
+		h.mustDeny(norb, "an action write from a token without rb", map[string]any{agent + "/action": "tool Bash: go test"})
+		h.mustDeny(norb, "a tokens write from a token without rb", map[string]any{agent + "/tokens": 1})
+		// Another run's or repository's entry: this run's token never
+		// satisfies RUN for a different $slug/$run, whatever the field.
+		h.mustDeny(c, "an action write to another run's entry", map[string]any{budget.PathAgent("aurora", "r9") + "/action": "tool Bash: go test"})
+		h.mustDeny(c, "an action write to another repository's entry", map[string]any{budget.PathAgent("other-repo", "r1") + "/action": "tool Bash: go test"})
+	})
 	t.Run("outcome is written once", func(t *testing.T) {
 		h := newHarness(t)
 		w := stdWorld()
@@ -714,6 +756,9 @@ func TestRbMismatchDenied(t *testing.T) {
 	norb := h.as(claims{slug: "aurora", run: "r1", rb: "-"})
 	h.mustDeny(norb, "an entry from a token without rb", map[string]any{agent + "2": nil, agent + "/stage": "verify"})
 	h.mustDeny(norb, "an entry with requestedBy but no rb claim", map[string]any{budget.PathAgent("aurora", "r1") + "/requestedBy": "alice@example.invalid"})
+	// generic-tool task 3 review item 4: action and tokens are no different.
+	h.mustDeny(norb, "an action write from a token without rb", map[string]any{agent + "/action": "tool Bash: go test"})
+	h.mustDeny(norb, "a tokens write from a token without rb", map[string]any{agent + "/tokens": 1200})
 	out := budget.PathOutcome(w.day, "aurora", "r1")
 	h.mustDeny(c, "an outcome of someone else", map[string]any{out: map[string]any{"status": "failed", "requestedBy": "mallory@example.invalid"}})
 	h.mustDeny(c, "an outcome without requestedBy", map[string]any{out: map[string]any{"status": "failed"}})

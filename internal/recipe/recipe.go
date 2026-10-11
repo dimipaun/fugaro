@@ -576,9 +576,16 @@ func (p *parser) order(r *Recipe, src []int) {
 		p.add("steps", 0, "review must be the last step")
 	}
 	if r.Mode == ModeReview {
-		if checks > 0 || firsts > 0 || reviews != 1 {
+		// use_when is deliberately not restricted here: it is the routing
+		// skill's description of when to pick the recipe, which a
+		// review-only recipe needs exactly as much as any other, and it
+		// names nothing to run.
+		switch {
+		case checks > 0 || firsts > 0 || reviews != 1:
 			p.add("steps", 0, "mode: review allows exactly one review step and nothing else")
-		} else if steps[len(steps)-1].MaxRounds > 1 {
+		case r.ReviewerIsCoder || r.CoderIsReviewer:
+			p.add("roles", 0, "mode: review has no coder step to map roles onto: remove roles")
+		case steps[len(steps)-1].MaxRounds > 1:
 			p.add("steps", 0, "mode: review reviews once: max_rounds must be 1")
 		}
 	}

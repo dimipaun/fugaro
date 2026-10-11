@@ -278,7 +278,7 @@ func (r *run) registryEntry() budget.AgentEntry {
 func (r *run) beginBudgetStage(name string, n int, deadline time.Time) {
 	now := r.d.Now().UnixMilli()
 	r.noteRegistry(func(e *budget.AgentEntry) {
-		e.Stage, e.StageStartedAt, e.StageDeadline = name, now, deadline.UnixMilli()
+		e.Stage, e.StageStartedAt, e.StageDeadline, e.Action = name, now, deadline.UnixMilli(), ""
 		if name == "review" || name == "review_first" {
 			e.Round = n
 		}

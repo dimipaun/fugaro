@@ -155,6 +155,14 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 	if !strings.HasPrefix(bucket, "fugaro-runs-") {
 		return InstallationSpec{}, userErr("the runs bucket %s must be named fugaro-runs-…", bucket)
 	}
+	// bucket came from bucket_url when the local config sets one; localcfg
+	// only charset-checks runs_bucket, so an invalid one reaches here
+	// unvalidated. gcp.LauncherBucketCondition panics rather than widen on
+	// a bad bucket name (H2's CEL expression must be byte-exact), so this
+	// must refuse cleanly before calling it.
+	if !gcp.ValidBucketName(bucket) {
+		return InstallationSpec{}, userErr("the runs bucket %q has a byte outside a-z, 0-9, '.', '_' and '-'", bucket)
+	}
 	s := InstallationSpec{
 		Project:       lc.GCPProject,
 		FugaroProject: lc.Name,

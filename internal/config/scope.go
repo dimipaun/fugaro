@@ -119,6 +119,11 @@ var Scopes = []ScopeRow{
 // (install scripts, build.rs, a plugin). That is within the threat model
 // for a repository's own reviewed fugaro.yaml, the same as image.setup; a
 // profile published from the bucket must gate it the same way.
+//
+// workflows.*.image.skip_build_scripts going from true to false (or being
+// dropped) turns the dependency install/build scripts back on in the image
+// build; going from false to true is reported too (the owner's ruling: a
+// direction being safer is not a reason to leave it ungated).
 var ExecutableKeys = []string{
 	"workflows.*.commands.build", "workflows.*.commands.test", "workflows.*.commands.lint", "workflows.*.commands.fix",
 	"workflows.*.commands.rerun_failed", "workflows.*.image.apt", "workflows.*.image.setup", "workflows.*.image.tools",
