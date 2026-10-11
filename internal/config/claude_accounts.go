@@ -20,11 +20,14 @@ const DefaultClaudeAccount = "default"
 // This tightens the plan text's `^[a-z][a-z0-9-]{0,30}$` on purpose: that
 // regex accepts a trailing dash ("a-") and a doubled dash ("a--b"). A
 // trailing dash would make an invalid Cloud Run job name once Task 2 builds
-// the workflow--account variant name, and "--" inside the name would make
-// the variant key ambiguous (workflow "w" + account "x--y" collides with
-// workflow "w--x" + account "y" in gcp.WorkflowVariant's "--"-joined key).
-// Requiring every dash to be immediately followed by an alphanumeric rules
-// out both.
+// the workflow_account variant name (gcp.WorkflowVariant joins workflow and
+// account with "_", not "-"); requiring every dash to be immediately
+// followed by an alphanumeric rules that out, and a doubled dash along with
+// it, even though a doubled dash is no longer the collision risk it once
+// was when an earlier draft of gcp.WorkflowVariant joined with "--" instead
+// of "_" (that separator could not tell "w" + "x--y" apart from "w--x" +
+// "y"; "_" never appears in either name's charset, so no such collision is
+// possible any more).
 //
 // This regex alone does not bound a name's length to MaxClaudeAccountNameLen:
 // each of its {0,30} repetitions may consume either one character or, via
@@ -38,7 +41,7 @@ var ClaudeAccountNameRE = regexp.MustCompile(`^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}
 // ClaudeAccountSecret prepends "claude-oauth-token-" (19 characters) to
 // build the secret name, which SecretNameRE elsewhere caps at 63
 // characters; the name is also concatenated into gcp.WorkflowVariant's
-// "workflow--name" key, which Cloud Run job and service-account identifiers
+// "workflow_name" key, which Cloud Run job and service-account identifiers
 // bound tightly (design docs/design/named-oauth-tokens.md). 31 keeps every
 // derived identifier comfortably inside those limits.
 const MaxClaudeAccountNameLen = 31
