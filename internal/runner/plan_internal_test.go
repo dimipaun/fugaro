@@ -57,7 +57,10 @@ func TestPlanDefaultFollowsAgent(t *testing.T) {
 }
 
 func TestPlanPrecedence(t *testing.T) {
-	cheap := catalogRecipe(t, "cheap-loop-senior") // first_line 2, review 1
+	// A 0.6-shaped recipe with pinned rounds (the retired cheap-loop-senior's
+	// exact shape): the 0.7.0 catalog's own recipes take the knobs instead
+	// (G6), so this is no longer a catalog lookup.
+	cheap := parseRecipe(t, "version: 1\nname: cheap-loop-senior\nsteps:\n  - first_line: { max_rounds: 2 }\n  - review: { max_rounds: 1 }\n")
 	a := config.Agent{ReviewRounds: 5, FirstLineReview: config.FirstLineOff, FirstLineRounds: 3}
 	// The recipe's own values win over agent.*, and first_line_review: off
 	// does not switch off a recipe's first_line step.
@@ -75,7 +78,7 @@ func TestPlanPrecedence(t *testing.T) {
 	}) {
 		t.Fatalf("override: %v", got)
 	}
-	solo := catalogRecipe(t, "claude-solo")
+	solo := parseRecipe(t, "version: 1\nname: claude-solo\nroles:\n  reviewer: coder\nsteps:\n  - review: { max_rounds: 1 }\n")
 	if got := planOf(solo, false, a, nil, nil); !slices.Equal(got, []planStep{{Kind: recipe.StepReview, Rounds: 1}}) {
 		t.Fatalf("solo: %v", got)
 	}

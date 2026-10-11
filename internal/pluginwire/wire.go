@@ -49,11 +49,18 @@ const MaxPrintable = 200
 // direction-changing format characters (bidi overrides) become \uXXXX, and
 // what is longer than MaxPrintable runes is cut, so a hostile file cannot
 // fill a screen or the --json result.
-func Printable(s string) string {
+func Printable(s string) string { return PrintableN(s, MaxPrintable) }
+
+// PrintableN is Printable with its own rune limit instead of MaxPrintable,
+// for a field already bounded at parse time to a different size (recipe.
+// MaxUseWhen is bytes, so its rune count is never more than that byte
+// count): it would be lossy to show less of it than the field's own limit
+// already allows, and pointless to allow more.
+func PrintableN(s string, maxRunes int) string {
 	var b strings.Builder
 	n := 0
 	for _, r := range s {
-		if n++; n > MaxPrintable {
+		if n++; n > maxRunes {
 			b.WriteString("... (truncated)")
 			break
 		}

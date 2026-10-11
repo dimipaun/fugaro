@@ -21,21 +21,26 @@ import (
 
 const release050 = "ghcr.io/dimipaun/fugaro-web-node:0.5.0"
 
+// release070 is a job image new enough for a catalog recipe that uses a
+// 0.7.0 construct: every catalog recipe but default carries use_when, so
+// launching one needs this, not release050 (recipesV07Since).
+const release070 = "ghcr.io/dimipaun/fugaro-web-node:0.7.0"
+
 func TestRunRecipeFlagEmbedsCatalog(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release050)
-	out, errOut, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "claude-solo", "--json", "Add a feature")
+	writeBuildRecord(t, f, appSlug, "web", release070)
+	out, errOut, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "solo", "--json", "Add a feature")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var res launchResult
-	if err := json.Unmarshal([]byte(out), &res); err != nil || res.Recipe == nil || *res.Recipe != (launchRecipe{Name: "claude-solo", Source: "catalog"}) {
+	if err := json.Unmarshal([]byte(out), &res); err != nil || res.Recipe == nil || *res.Recipe != (launchRecipe{Name: "solo", Source: "catalog"}) {
 		t.Fatalf("result = %s, %v", out, err)
 	}
-	if !strings.Contains(errOut, "recipe: claude-solo (catalog)\n") {
+	if !strings.Contains(errOut, "recipe: solo (catalog)\n") {
 		t.Fatalf("stderr = %q", errOut)
 	}
-	text, _ := recipe.CatalogText("claude-solo")
+	text, _ := recipe.CatalogText("solo")
 	if r := readSpec(t, f, "20261007-100000-abcd").Recipe; r == nil || r.SHA256 != recipe.Sum(text) || r.YAML != string(text) {
 		t.Fatalf("task recipe = %+v", r)
 	}
@@ -69,7 +74,7 @@ func TestRunExplicitDefaultWithoutCheckoutEmbeds(t *testing.T) {
 func TestRunRecipeRefusedOnOldImage(t *testing.T) {
 	f := newCloudFixture(t)
 	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-web-node:0.4.1")
-	wantRefused(t, f, "release 0.4.1", "run", "--repo", "acme/app", "--recipe", "claude-solo", "x")
+	wantRefused(t, f, "release 0.4.1", "run", "--repo", "acme/app", "--recipe", "solo", "x")
 }
 
 func TestRunUnknownRecipeFailsBeforeCloudWork(t *testing.T) {
@@ -77,6 +82,35 @@ func TestRunUnknownRecipeFailsBeforeCloudWork(t *testing.T) {
 	wantRefused(t, f, "recipe nope is not in .fugaro/recipes", "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "nope", "x")
 	if _, err := os.Stat(filepath.Join(f.dir, "runs", "runs", appSlug, "20261007-100000-abcd", "task.json")); err == nil {
 		t.Fatal("a task.json was written for a refused recipe")
+	}
+}
+
+// TestRunRefusesNotYetRunnableRecipe: no runner executes a check step as a
+// gate, or mode: review's implement skip, yet. fugaro run must refuse these
+// catalog recipes before any cloud work, not launch a job that silently
+// falls back to running implement despite review-only's and pick's own
+// "No coding" and test-and-fix's/lint-fix's "a green run ends with no pull
+// request" (docs/recipes.md §2).
+func TestRunRefusesNotYetRunnableRecipe(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", release070)
+	for _, name := range []string{"review-only", "pick", "test-and-fix", "lint-fix"} {
+		wantRefused(t, f, "recipe "+name+" cannot be launched yet", "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", name, "x")
+	}
+}
+
+// TestRenamedRecipeNamesTheReplacement: a 0.6 catalog name 0.7.0 retired
+// (recipe.Renamed) is refused with its replacement, both at fugaro run
+// --recipe and at fugaro validate's agent.recipe warning; a repository or
+// project recipe that itself defines the old name still wins (the catalog
+// rows of TestResolveRecipeLayers and the repo row of
+// TestValidateWarnsRenamedAgentRecipe cover that precedence).
+func TestRenamedRecipeNamesTheReplacement(t *testing.T) {
+	f := newCloudFixture(t)
+	wantRefused(t, f, "claude-solo was renamed in 0.7.0: use solo", "run", "--repo", "acme/app", "--recipe", "claude-solo", "x")
+	doc, err := validateDir(t, "  recipe: cheap-loop-senior\n", map[string]string{})
+	if err != nil || !has(doc.Warnings, "agent.recipe", "cheap-loop-senior was renamed in 0.7.0: use standard") {
+		t.Fatalf("validate: doc = %+v, err = %v", doc, err)
 	}
 }
 
@@ -101,12 +135,12 @@ func recipeCheckout(t *testing.T, f *cloudFixture, agentLines string, extra map[
 // Review Focus 1.
 func TestRunAgentRecipeTriggersImageCheck(t *testing.T) {
 	f := newCloudFixture(t)
-	recipeCheckout(t, f, "  recipe: claude-solo\n", nil)
+	recipeCheckout(t, f, "  recipe: solo\n", nil)
 	wantRefused(t, f, "has no build record", "run", "--run-id", "20261007-100000-abcd", "A task")
 	other := mustSlug("github", "acme/other")
-	writeBuildRecord(t, f, other, "svc", release050)
+	writeBuildRecord(t, f, other, "svc", release070)
 	_, errOut, err := execute(t, "run", "--run-id", "20261007-100000-abcd", "A task")
-	if err != nil || !strings.Contains(errOut, "recipe: claude-solo (catalog)") {
+	if err != nil || !strings.Contains(errOut, "recipe: solo (catalog)") {
 		t.Fatalf("err = %v, stderr %q", err, errOut)
 	}
 }
@@ -126,7 +160,7 @@ func TestRunRecipeImageNamesTheImplicitBaseKind(t *testing.T) {
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
-	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nagent:\n  auth: api-key\n  recipe: claude-solo\n" +
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nagent:\n  auth: api-key\n  recipe: solo\n" +
 		"workflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n"})
 	t.Chdir(dir)
 	other := mustSlug("github", "acme/other")
@@ -178,26 +212,66 @@ func TestRunPRKeepsEmbeddedRecipeAfterProjectDelete(t *testing.T) {
 	}
 }
 
+// TestRunPRRefusesNotYetRunnableRecipe covers the three follow-up paths that
+// resolve or re-check a recipe (newPRSpec's --recipe flag, its inherited-YAML
+// re-parse, and carryChosenRecipe): none may let a not-yet-runnable recipe
+// through just because the launch is a follow-up rather than a first run.
+func TestRunPRRefusesNotYetRunnableRecipe(t *testing.T) {
+	t.Run("--recipe flag", func(t *testing.T) {
+		f := newCloudFixture(t)
+		writeBuildRecord(t, f, appSlug, "web", release070)
+		seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--recipe", "review-only")
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "recipe review-only cannot be launched yet") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("inherited recipe", func(t *testing.T) {
+		f := newCloudFixture(t)
+		writeBuildRecord(t, f, appSlug, "web", release070)
+		text, _ := recipe.CatalogText("review-only")
+		root := firstRunSpec(rootID)
+		root.Recipe = &task.Recipe{Name: "review-only", Source: "catalog", SHA256: recipe.Sum(text), YAML: string(text)}
+		seedSpec(t, f, root, false)
+		rec := prRecord(rootID, "", 7, 1)
+		rec.StartedAt = time.Now().Add(-72 * time.Hour)
+		writeRecord(t, f, rootID, rec)
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "also rename x")
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "recipe review-only cannot be launched yet") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("runner-chosen recipe", func(t *testing.T) {
+		f := newCloudFixture(t)
+		seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "review-only", Source: "catalog", SHA256: strings.Repeat("a", 64)})
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "x")
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "ran (review-only) cannot be used") ||
+			!strings.Contains(err.Error(), "recipe review-only cannot be launched yet") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+}
+
 func TestRunPRRecipeFlagWins(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release050)
+	writeBuildRecord(t, f, appSlug, "web", release070)
 	root := firstRunSpec(rootID)
 	root.Recipe = &task.Recipe{Name: "mine", Source: "repo"}
 	seedSpec(t, f, root, false)
 	rec := prRecord(rootID, "", 7, 1)
 	rec.StartedAt = time.Now().Add(-72 * time.Hour)
 	writeRecord(t, f, rootID, rec)
-	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--recipe", "cheap-loop-senior"); err != nil {
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--recipe", "solo"); err != nil {
 		t.Fatal(err)
 	}
-	if got := readSpec(t, f, fuID).Recipe; got == nil || got.Name != "cheap-loop-senior" || got.Source != "catalog" {
+	if got := readSpec(t, f, fuID).Recipe; got == nil || got.Name != "solo" || got.Source != "catalog" {
 		t.Fatalf("follow-up recipe = %+v", got)
 	}
 }
 
 func TestRunRetryTakesNoRecipe(t *testing.T) {
 	newCloudFixture(t)
-	_, _, err := execute(t, "run", "--retry", "20261007-100000-abcd", "--recipe", "claude-solo")
+	_, _, err := execute(t, "run", "--retry", "20261007-100000-abcd", "--recipe", "solo")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "it takes no --recipe") {
 		t.Fatalf("err = %v", err)
 	}
@@ -207,8 +281,8 @@ func TestRunRetryTakesNoRecipe(t *testing.T) {
 // stderr, escaped like other bucket-derived text.
 func TestRunPrintsRecipeNote(t *testing.T) {
 	f := newCloudFixture(t) // its runs bucket is not the default name: the note applies
-	writeBuildRecord(t, f, appSlug, "web", release050)
-	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "claude-solo", "x")
+	writeBuildRecord(t, f, appSlug, "web", release070)
+	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", "solo", "x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +299,7 @@ func TestRunPrintsRecipeNote(t *testing.T) {
 // applies without offering --recipe default as the way out.
 func TestRunExplicitDefaultOverridesAgentRecipe(t *testing.T) {
 	f := newCloudFixture(t)
-	recipeCheckout(t, f, "  recipe: claude-solo\n", nil)
+	recipeCheckout(t, f, "  recipe: solo\n", nil)
 	other := mustSlug("github", "acme/other")
 	writeBuildRecord(t, f, other, "svc", release050)
 	out, errOut, err := execute(t, "run", "--run-id", "20261007-100000-abcd", "--recipe", "default", "--json", "A task")
@@ -254,7 +328,7 @@ func TestRunExplicitDefaultOverridesAgentRecipe(t *testing.T) {
 
 func TestRunExplicitDefaultOverRefusedOnOldImage(t *testing.T) {
 	f := newCloudFixture(t)
-	recipeCheckout(t, f, "  recipe: claude-solo\n", nil)
+	recipeCheckout(t, f, "  recipe: solo\n", nil)
 	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-web-node:0.4.1")
 	_, _, err := execute(t, "run", "--run-id", "20261007-100000-abcd", "--recipe", "default", "A task")
 	if err == nil || !strings.Contains(err.Error(), "release 0.4.1") || strings.Contains(err.Error(), "--recipe default") {
@@ -379,16 +453,16 @@ func TestRunPRInheritedBadRecipeFailsBeforeLaunch(t *testing.T) {
 // A repeated --run-id with another --recipe is a different task.
 func TestRunPRRepeatRunIDWithAnotherRecipe(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release050)
+	writeBuildRecord(t, f, appSlug, "web", release070)
 	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
 	args := []string{"run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID}
-	if _, _, err := execute(t, append(args, "--recipe", "claude-solo")...); err != nil {
+	if _, _, err := execute(t, append(args, "--recipe", "solo")...); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := execute(t, append(args, "--recipe", "claude-solo")...); err != nil {
+	if _, _, err := execute(t, append(args, "--recipe", "solo")...); err != nil {
 		t.Fatalf("same recipe: %v", err)
 	}
-	_, _, err := execute(t, append(args, "--recipe", "cheap-loop-senior")...)
+	_, _, err := execute(t, append(args, "--recipe", "standard")...)
 	if err == nil || !strings.Contains(err.Error(), "already holds a different task") {
 		t.Fatalf("err = %v", err)
 	}
@@ -398,7 +472,7 @@ func TestRunPRRepeatRunIDWithAnotherRecipe(t *testing.T) {
 // chose) and whose record says chosen; nil chosen leaves the record without.
 func seedChosenRoot(t *testing.T, f *cloudFixture, chosen *runstore.RecipeRecord) {
 	t.Helper()
-	writeBuildRecord(t, f, appSlug, "web", release050)
+	writeBuildRecord(t, f, appSlug, "web", release070)
 	seedSpec(t, f, firstRunSpec(rootID), false)
 	rec := prRecord(rootID, "", 7, 1)
 	rec.StartedAt = time.Now().Add(-72 * time.Hour)
@@ -408,17 +482,17 @@ func seedChosenRoot(t *testing.T, f *cloudFixture, chosen *runstore.RecipeRecord
 
 func TestRunPRKeepsRecipeTheRunnerChose(t *testing.T) {
 	f := newCloudFixture(t)
-	text, _ := recipe.CatalogText("cheap-loop-senior")
-	seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "cheap-loop-senior", Source: "catalog", SHA256: recipe.Sum(text)})
+	text, _ := recipe.CatalogText("solo")
+	seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "solo", Source: "catalog", SHA256: recipe.Sum(text)})
 	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "x")
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := readSpec(t, f, fuID).Recipe
-	if got == nil || got.Name != "cheap-loop-senior" || got.Source != "catalog" || got.YAML != string(text) {
+	if got == nil || got.Name != "solo" || got.Source != "catalog" || got.YAML != string(text) {
 		t.Fatalf("follow-up recipe = %+v", got)
 	}
-	if !strings.Contains(errOut, "recipe: cheap-loop-senior (catalog)") || !strings.Contains(errOut, "keeping recipe cheap-loop-senior, which the runner chose for run") ||
+	if !strings.Contains(errOut, "recipe: solo (catalog)") || !strings.Contains(errOut, "keeping recipe solo, which the runner chose for run") ||
 		strings.Contains(errOut, "has changed since") {
 		t.Fatalf("stderr = %q", errOut)
 	}
@@ -426,7 +500,7 @@ func TestRunPRKeepsRecipeTheRunnerChose(t *testing.T) {
 
 func TestRunPRKeepsChosenRecipeAndSaysItChanged(t *testing.T) {
 	f := newCloudFixture(t)
-	seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "cheap-loop-senior", Source: "catalog", SHA256: strings.Repeat("a", 64)})
+	seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "solo", Source: "catalog", SHA256: strings.Repeat("a", 64)})
 	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "x")
 	if err != nil || !strings.Contains(errOut, "has changed since run") {
 		t.Fatalf("err = %v, stderr %q", err, errOut)
@@ -462,10 +536,10 @@ func TestRunPRChosenRecipeNothingToKeep(t *testing.T) {
 
 func TestRunPRChosenRecipeRefusedOnOldImage(t *testing.T) {
 	f := newCloudFixture(t)
-	seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "cheap-loop-senior", Source: "catalog", SHA256: strings.Repeat("a", 64)})
+	seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "standard", Source: "catalog", SHA256: strings.Repeat("a", 64)})
 	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-web-node:0.4.1")
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "x")
-	if err == nil || !strings.Contains(err.Error(), "recipe cheap-loop-senior needs a job image") {
+	if err == nil || !strings.Contains(err.Error(), "recipe standard needs a job image") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -487,7 +561,7 @@ func TestRunPRChosenRecipeRecordReadFailures(t *testing.T) {
 		"corrupt":   {&json.SyntaxError{}, "result.json is unreadable"},
 	} {
 		f := newCloudFixture(t)
-		seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "cheap-loop-senior", Source: "catalog", SHA256: strings.Repeat("a", 64)})
+		seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "standard", Source: "catalog", SHA256: strings.Repeat("a", 64)})
 		failRecordRead(t, tc.err)
 		_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "x")
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -504,7 +578,7 @@ func TestRunPRChosenRecipeRecordReadFailures(t *testing.T) {
 
 func TestRunPRChosenRecipeRecordNotFoundCarriesNothing(t *testing.T) {
 	f := newCloudFixture(t)
-	seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "cheap-loop-senior", Source: "catalog", SHA256: strings.Repeat("a", 64)})
+	seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "standard", Source: "catalog", SHA256: strings.Repeat("a", 64)})
 	failRecordRead(t, runstore.ErrNotFound)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "x"); err != nil {
 		t.Fatal(err)

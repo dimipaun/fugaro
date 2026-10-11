@@ -1,0 +1,10 @@
+version: 1
+name: test-and-fix
+description: Runs the tests first; only when they fail does the cheap loop fix them, with a senior review.
+use_when: Keeping a branch green, chasing a failing or flaky test, CI babysitting. A green run ends with no pull request.
+steps:
+  - check:
+      command: test
+  - first_line: {}
+  - review:
+      bounce: first_line

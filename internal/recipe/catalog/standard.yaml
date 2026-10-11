@@ -1,0 +1,8 @@
+version: 1
+name: standard
+description: The cheap coder loops review and fix, then the senior reviews; a rejection goes back to the cheap loop.
+use_when: Typical feature or bug-fix work that needs a real review. Choose it when nothing more specific fits.
+steps:
+  - first_line: {}
+  - review:
+      bounce: first_line

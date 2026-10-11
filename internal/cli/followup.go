@@ -433,6 +433,9 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		if err != nil {
 			return nil, err
 		}
+		if err := refuseIfNotYetRunnable(rr.Recipe, rr.Name); err != nil {
+			return nil, err
+		}
 		printRecipeNote(warn, rr, true)
 		rcp = rr.taskRecipe()
 	} else if rcp == nil && c.Chosen != nil {
@@ -442,7 +445,11 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		}
 	} else if rcp != nil && rcp.YAML != "" {
 		// An inherited recipe is parsed again: a bad one fails here, not in the cloud.
-		if _, err := parseRecipeAt([]byte(rcp.YAML), rcp.Name, "the recipe of the previous run ("+rcp.Name+")"); err != nil {
+		inherited, err := parseRecipeAt([]byte(rcp.YAML), rcp.Name, "the recipe of the previous run ("+rcp.Name+")")
+		if err != nil {
+			return nil, err
+		}
+		if err := refuseIfNotYetRunnable(inherited, rcp.Name); err != nil {
 			return nil, err
 		}
 	}
@@ -487,16 +494,22 @@ func carryChosenRecipe(ctx context.Context, env *cloudEnv, repo string, c *prCha
 	if ch.Source == string(recipe.SourceRepo) {
 		rcp = &task.Recipe{Name: ch.Name, Source: ch.Source}
 	} else {
-		rr, err := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), ch.Name, time.Now(), false)
-		if err != nil {
-			msg := func(cause error) error {
-				return fmt.Errorf("the recipe run %s ran (%s) cannot be used: %w; pass --recipe NAME to choose another", pluginwire.Printable(oneLineCLI(c.Previous.Run)), ch.Name, cause)
-			}
+		msg := func(cause error) error {
+			return fmt.Errorf("the recipe run %s ran (%s) cannot be used: %w; pass --recipe NAME to choose another", pluginwire.Printable(oneLineCLI(c.Previous.Run)), ch.Name, cause)
+		}
+		wrap := func(err error) error {
 			var ee *ExitError
 			if errors.As(err, &ee) {
-				return nil, &ExitError{Code: ee.Code, Err: msg(ee.Err)}
+				return &ExitError{Code: ee.Code, Err: msg(ee.Err)}
 			}
-			return nil, msg(err)
+			return msg(err)
+		}
+		rr, err := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), ch.Name, time.Now(), false)
+		if err != nil {
+			return nil, wrap(err)
+		}
+		if err := refuseIfNotYetRunnable(rr.Recipe, rr.Name); err != nil {
+			return nil, wrap(err)
 		}
 		printRecipeNote(warn, rr, true)
 		rcp = rr.taskRecipe()

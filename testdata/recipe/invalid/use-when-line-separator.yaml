@@ -1,0 +1,5 @@
+version: 1
+name: use-when-line-separator
+use_when: "a b"
+steps:
+  - review: {}
