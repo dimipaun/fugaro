@@ -124,7 +124,7 @@ A recipe that uses a reserved key is refused with a message that says so:
 - any role other than `reviewer` or `coder`; any `reviewer` value other than `coder`; any `coder` value other than `reviewer`; and both mapped at once (`reviewer: coder` and `coder: reviewer` exclude each other).
 - `check.command` other than `build`, `test` or `lint`; `autofix` on anything but `command: lint`.
 
-What recipes do not do in 0.5.0: jump with `goto`, extend another recipe, pin a model per recipe, or configure `on_pass` and `on_fail`. (A `check` step, which does run a build, test or lint command, shipped later; see the generic-tool design.) There are no task-shaped catalog recipes (fix a bug, add a feature) yet.
+There are no task-shaped catalog recipes (fix a bug, add a feature) yet.
 
 A recipe that is valid but uses a construct no runner yet executes is refused too, separately from the parser: `mode: review` (section 2). The message says so: `recipe NAME cannot be launched yet: mode: review is not yet executed by any runner: it would run implement and open a pull request instead of only reviewing`. This applies to `fugaro run` (a first run or a follow-up, including one inheriting or keeping a prior run's recipe), `fugaro recipes validate` and `fugaro recipes publish`; `fugaro recipes ls` and `show` still display such a recipe, since looking at one is not launching it. A `check` step is executed by the runner as a gate before `implement` (section 1), so it is never refused here.
 
