@@ -1,15 +1,17 @@
 package runner_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
-	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -37,10 +39,10 @@ func allowForksCfg(t *testing.T) string {
 	return testutil.FixtureFiles(t)["fugaro.yaml"] + "review:\n  allow_forks: true\n"
 }
 
-// pushBranch commits change in a fresh clone of h's remote and pushes it to
+// pushReviewBranch commits change in a fresh clone of h's remote and pushes it to
 // branch: review mode's pull requests are never the run's own branch, so
 // this never touches main or a fugaro/<run-id> branch.
-func pushBranch(t *testing.T, h *harness, branch string, change func(dir string)) string {
+func pushReviewBranch(t *testing.T, h *harness, branch string, change func(dir string)) string {
 	t.Helper()
 	seed := filepath.Join(t.TempDir(), "seed-"+branch)
 	testutil.Git(t, filepath.Dir(seed), "clone", "--quiet", h.remote, seed)
@@ -71,7 +73,7 @@ func addPR(h *harness, number int, branch, source string) {
 // recorded.
 func TestReviewModeNeverPushes(t *testing.T) {
 	h := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
-	pushBranch(t, h, "someone-elses-change", func(dir string) {
+	sha := pushReviewBranch(t, h, "someone-elses-change", func(dir string) {
 		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
 	})
 	addPR(h, 7, "someone-elses-change", "")
@@ -94,7 +96,7 @@ func TestReviewModeNeverPushes(t *testing.T) {
 	if len(c) != 1 || !strings.Contains(c[0], "Fugaro review (reviewonly): changes") {
 		t.Fatalf("comments = %q", c)
 	}
-	if len(rec.Reviewed) != 1 || rec.Reviewed[0] != (runstore.ReviewedPR{Number: 7, SHA: h.provider.State.PRs[0].Head, Verdict: "changes"}) {
+	if len(rec.Reviewed) != 1 || rec.Reviewed[0] != (runstore.ReviewedPR{Number: 7, SHA: sha, Verdict: "changes"}) {
 		t.Fatalf("reviewed = %+v", rec.Reviewed)
 	}
 }
@@ -112,12 +114,12 @@ func TestReviewModeAgentHasNoGitToken(t *testing.T) {
 	h.provider.Auth = func(time.Duration) gitprov.GitAuth {
 		return gitprov.GitAuth{Username: "x-access-token", Token: "ghs-fixture", Env: map[string]string{"GH_TOKEN": "ghs-fixture"}}
 	}
-	pushBranch(t, h, "feature", func(dir string) {
+	pushReviewBranch(t, h, "feature", func(dir string) {
 		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
 	})
 	addPR(h, 7, "feature", "")
 	var envAtReview []string
-	capture := func(t *testing.T, ctx testingContext, req agent.Request) (agent.Result, error) {
+	capture := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		envAtReview = req.Env
 		return review("ship", 0)(t, ctx, req)
 	}
@@ -141,7 +143,7 @@ func TestReviewModeAgentHasNoGitToken(t *testing.T) {
 // of refused.
 func TestReviewModeRefusesForkWithoutOptIn(t *testing.T) {
 	h := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
-	pushBranch(t, h, "feature", func(dir string) {
+	pushReviewBranch(t, h, "feature", func(dir string) {
 		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
 	})
 	addPR(h, 7, "feature", "outsider/repo")
@@ -151,7 +153,7 @@ func TestReviewModeRefusesForkWithoutOptIn(t *testing.T) {
 	}
 
 	h2 := newHarness(t, allowForksCfg(t), reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
-	pushBranch(t, h2, "feature", func(dir string) {
+	pushReviewBranch(t, h2, "feature", func(dir string) {
 		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
 	})
 	addPR(h2, 7, "feature", "outsider/repo")
@@ -172,7 +174,7 @@ func TestReviewModeRefusesForkWithoutOptIn(t *testing.T) {
 // reviewMode): this test fails, finding an UpdatePR/EnsurePR call.
 func TestReviewModeLeavesDraftState(t *testing.T) {
 	h := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
-	pushBranch(t, h, "feature", func(dir string) {
+	pushReviewBranch(t, h, "feature", func(dir string) {
 		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
 	})
 	addPR(h, 7, "feature", "")
@@ -193,7 +195,7 @@ func TestReviewModeLeavesDraftState(t *testing.T) {
 // pickVerdict is a review step whose structured output names keep, for a
 // pick run's "keep #N" comment.
 func pickVerdict(keep int) step {
-	return func(t *testing.T, ctx testingContext, req agent.Request) (agent.Result, error) {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		b, _ := json.Marshal(map[string]any{"verdict": "ship", "findings": []map[string]string{}, "keep": keep})
 		return agent.Result{Structured: b, CostUSD: 0.5}, nil
 	}
@@ -206,8 +208,8 @@ func pickVerdict(keep int) step {
 // second PR's comment check fails.
 func TestPickCommentsOnEveryPR(t *testing.T) {
 	h := newHarness(t, "", reviewTaskSpec("pick", pickYAML, 7, 9))
-	pushBranch(t, h, "a", func(dir string) { testutil.WriteFiles(t, dir, map[string]string{"a.txt": "x\n"}) })
-	pushBranch(t, h, "b", func(dir string) { testutil.WriteFiles(t, dir, map[string]string{"b.txt": "x\n"}) })
+	pushReviewBranch(t, h, "a", func(dir string) { testutil.WriteFiles(t, dir, map[string]string{"a.txt": "x\n"}) })
+	pushReviewBranch(t, h, "b", func(dir string) { testutil.WriteFiles(t, dir, map[string]string{"b.txt": "x\n"}) })
 	addPR(h, 7, "a", "")
 	addPR(h, 9, "b", "")
 	rec, err := h.run(t, pickVerdict(9))
@@ -217,6 +219,7 @@ func TestPickCommentsOnEveryPR(t *testing.T) {
 	if rec.Outcome != runstore.OutcomeReviewed {
 		t.Fatalf("rec = %+v", rec)
 	}
+	bodies := map[int]string{}
 	for _, n := range []int{7, 9} {
 		var c []string
 		for i := range h.provider.State.PRs {
@@ -227,5 +230,9 @@ func TestPickCommentsOnEveryPR(t *testing.T) {
 		if len(c) != 1 || !strings.Contains(c[0], "keep #9") {
 			t.Fatalf("PR %d comments = %q", n, c)
 		}
+		bodies[n] = c[0]
+	}
+	if bodies[7] != bodies[9] {
+		t.Fatalf("PRs got different comments:\n#7: %q\n#9: %q", bodies[7], bodies[9])
 	}
 }
