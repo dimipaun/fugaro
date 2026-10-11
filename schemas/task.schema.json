@@ -16,6 +16,14 @@
     "branch": { "type": "string", "pattern": "^fugaro/[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
     "pr": { "type": "integer", "minimum": 1 },
     "previous_run": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
+    "review_prs": {
+      "type": "array",
+      "description": "Set only for a mode: review recipe (design generic-tool §3.6): the pull requests to review, 1 to 4, never together with branch/pr/previous_run.",
+      "items": { "type": "integer", "minimum": 1 },
+      "minItems": 1,
+      "maxItems": 4,
+      "uniqueItems": true
+    },
     "overrides": {
       "type": "object",
       "additionalProperties": false,
@@ -57,6 +65,7 @@
     "pr": ["branch", "previous_run"],
     "previous_run": ["branch", "pr"]
   },
-  "if": { "not": { "required": ["branch"] } },
+  "not": { "allOf": [{ "required": ["review_prs"] }, { "anyOf": [{ "required": ["branch"] }, { "required": ["pr"] }, { "required": ["previous_run"] }] }] },
+  "if": { "not": { "anyOf": [{ "required": ["branch"] }, { "required": ["review_prs"] }] } },
   "then": { "required": ["task"], "properties": { "task": { "minLength": 1 } } }
 }

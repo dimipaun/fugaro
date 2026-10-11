@@ -58,6 +58,75 @@ func TestCheckoutNewBranchKeepsIgnored(t *testing.T) {
 	}
 }
 
+// TestCheckoutDetachedKeepsIgnored: review mode's single-pull-request
+// checkout (design generic-tool §3.6, G12). It fetches by SHA alone (no
+// branch name, as a PR's commit may belong to another repository's fork)
+// and lands with a detached HEAD at exactly that commit, the same ignored-
+// file and untracked-file behaviour as CheckoutNewBranch.
+//
+// Mutation (drop --detach from the checkout args): this still passes on a
+// bare rev, since git then creates a local branch instead, UNLESS asked to
+// check out a commit with no branch pointing at it (a second commit after
+// the fetch, below): then "checkout" alone resolves FETCH_HEAD to that
+// branch's current tip, not the fetched commit, and the HEAD assertion
+// below fails.
+func TestCheckoutDetachedKeepsIgnored(t *testing.T) {
+	repo, remote := setup(t)
+	testutil.WriteFiles(t, repo.Dir, map[string]string{
+		"node_modules/dep/index.js": "warm cache\n",
+		"stray.txt":                 "untracked\n",
+	})
+	sha := testutil.Git(t, remote, "rev-parse", "refs/heads/main")
+	if err := repo.CheckoutDetached(ctx, sha); err != nil {
+		t.Fatal(err)
+	}
+	if got := testutil.Git(t, repo.Dir, "rev-parse", "HEAD"); got != sha {
+		t.Fatalf("HEAD = %s, want %s", got, sha)
+	}
+	if got := testutil.Git(t, repo.Dir, "rev-parse", "--abbrev-ref", "HEAD"); got != "HEAD" {
+		t.Fatalf("branch = %q, want a detached HEAD", got)
+	}
+	if _, err := os.Stat(filepath.Join(repo.Dir, "stray.txt")); !os.IsNotExist(err) {
+		t.Fatal("untracked file survived the checkout")
+	}
+	if _, err := os.Stat(filepath.Join(repo.Dir, "node_modules", "dep", "index.js")); err != nil {
+		t.Fatal("ignored warm cache was wiped:", err)
+	}
+}
+
+// TestWorktreeAddsDetachedCopy: review mode's pick case, one directory per
+// pull request it compares (design generic-tool §3.6, G12). The main
+// checkout is left exactly where it was: only the new worktree moves.
+func TestWorktreeAddsDetachedCopy(t *testing.T) {
+	repo, remote := setup(t)
+	before := testutil.Git(t, repo.Dir, "rev-parse", "HEAD")
+	testutil.Git(t, remote, "update-ref", "refs/heads/other", "refs/heads/main")
+	seed := filepath.Join(t.TempDir(), "seed2")
+	testutil.Git(t, filepath.Dir(seed), "clone", "--quiet", remote, seed)
+	testutil.WriteFiles(t, seed, map[string]string{"other.txt": "from another attempt\n"})
+	testutil.Git(t, seed, "add", "-A")
+	testutil.Git(t, seed, "commit", "--quiet", "-m", "other attempt")
+	testutil.Git(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/other")
+	sha := testutil.Git(t, remote, "rev-parse", "refs/heads/other")
+
+	dir := filepath.Join(t.TempDir(), "review", "9")
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Worktree(ctx, sha, dir); err != nil {
+		t.Fatal(err)
+	}
+	if got := testutil.Git(t, dir, "rev-parse", "HEAD"); got != sha {
+		t.Fatalf("worktree HEAD = %s, want %s", got, sha)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "other.txt")); err != nil {
+		t.Fatal("worktree is missing the other attempt's file:", err)
+	}
+	if got := testutil.Git(t, repo.Dir, "rev-parse", "HEAD"); got != before {
+		t.Fatalf("main checkout moved to %s, want %s", got, before)
+	}
+}
+
 // TestResetToRevertsTrackedRemovesUntrackedKeepsIgnored: a tracked file's
 // modification is reverted, an untracked file is removed, and an ignored
 // file (a warm dependency cache) survives — the same guarantee

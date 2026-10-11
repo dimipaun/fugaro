@@ -280,6 +280,59 @@ func TestGitHubPullRequestFork(t *testing.T) {
 	}
 }
 
+// TestGitHubFetchPRHeadOpenSameRepo covers review mode's own-repository
+// case: not a fork, open, the head commit named.
+//
+// Mutation (invert the Fork comparison in FetchPRHead to ==): this test
+// fails, wanting Fork=false but getting true.
+func TestGitHubFetchPRHeadOpenSameRepo(t *testing.T) {
+	got, err := open(t, "pull_open.json").FetchPRHead(ctx, 12)
+	want := gitprov.PRHead{SHA: headSHA, Fork: false, Open: true}
+	if err != nil || got != want {
+		t.Fatalf("got %+v, %v, want %+v", got, err, want)
+	}
+}
+
+// TestGitHubFetchPRHeadMerged covers a pull request already merged: not
+// open, review mode must refuse it.
+//
+// Mutation (drop the Open field, always true): this test fails.
+func TestGitHubFetchPRHeadMerged(t *testing.T) {
+	got, err := open(t, "pull_merged.json").FetchPRHead(ctx, 12)
+	if err != nil || got.Open {
+		t.Fatalf("got %+v, %v, want Open=false", got, err)
+	}
+}
+
+// TestGitHubFetchPRHeadFork covers a head repository that really is a
+// fork (full_name differs from the Provider's own): Fork must be true, so
+// review mode refuses it without review.allow_forks.
+//
+// Mutation (compare info.SourceRepo against "" instead of the owner/repo):
+// this test fails, wanting Fork=true but getting false.
+func TestGitHubFetchPRHeadFork(t *testing.T) {
+	got, err := open(t, "pull_real_fork.json").FetchPRHead(ctx, 12)
+	want := gitprov.PRHead{SHA: headSHA, Fork: true, Open: true}
+	if err != nil || got != want {
+		t.Fatalf("got %+v, %v, want %+v", got, err, want)
+	}
+}
+
+// TestGitHubFetchPRHeadDeletedForkFailsClosed covers a head repository
+// GitHub reports as null (a deleted fork, TestGitHubPullRequestFork):
+// SourceRepo is "", which can never equal the Provider's own repository, so
+// Fork must still be true: an unknown head repository is never silently
+// treated as the Provider's own.
+//
+// Mutation (guard the comparison with `info.SourceRepo != "" && ...`): this
+// test fails, wanting Fork=true but getting false.
+func TestGitHubFetchPRHeadDeletedForkFailsClosed(t *testing.T) {
+	got, err := open(t, "pull_fork.json").FetchPRHead(ctx, 12)
+	if err != nil || !got.Fork {
+		t.Fatalf("got %+v, %v, want Fork=true", got, err)
+	}
+}
+
 func at(s string) time.Time {
 	t, err := time.Parse(time.RFC3339, s)
 	if err != nil {

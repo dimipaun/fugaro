@@ -60,6 +60,14 @@ type Spec struct {
 	// leaves the choice to the runner (agent.recipe at the ref, else default);
 	// nil on a follow-up is default.
 	Recipe *Recipe `json:"recipe,omitempty"`
+	// ReviewPRs is set only for a mode: review recipe (design generic-tool
+	// §3.6, G12): the pull requests to review, 1 to 4, in launch order.
+	// Mutually exclusive with Branch/PR/PreviousRun (review mode never
+	// continues a pull request of its own); the runner refuses a mismatch
+	// against the resolved recipe's mode either way (defense in depth: a
+	// CLI older than this one, or a hand-built task, could set either
+	// alone).
+	ReviewPRs []int `json:"review_prs,omitempty"`
 	// ProjectLayer is the project layer the launching CLI read
 	// (docs/design/layered-config.md §8): its exact text, which the runner
 	// resolves fugaro.yaml against. Nil: none. A runner before 0.6.0
@@ -216,7 +224,24 @@ func (s *Spec) Validate() error {
 	if anyFollowUp && !allFollowUp {
 		bad("task spec: branch, pr and previous_run must be set together")
 	}
-	if !anyFollowUp && strings.TrimSpace(s.Task) == "" {
+	anyReview := len(s.ReviewPRs) > 0
+	switch {
+	case anyReview && anyFollowUp:
+		bad("task spec: review_prs and branch/pr/previous_run don't go together: review mode never continues a pull request")
+	case anyReview && (len(s.ReviewPRs) > 4):
+		bad("task spec: review_prs must name 1 to 4 pull requests")
+	case anyReview:
+		seen := map[int]bool{}
+		for _, n := range s.ReviewPRs {
+			if n <= 0 {
+				bad("task spec: review_prs must be positive pull request numbers")
+			} else if seen[n] {
+				bad("task spec: review_prs repeats #%d", n)
+			}
+			seen[n] = true
+		}
+	}
+	if !anyFollowUp && !anyReview && strings.TrimSpace(s.Task) == "" {
 		bad("task spec: task is required")
 	}
 	if s.Branch != "" && !BranchRE.MatchString(s.Branch) {

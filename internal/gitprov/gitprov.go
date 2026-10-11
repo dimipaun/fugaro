@@ -64,6 +64,21 @@ type PRUpdate struct {
 // back or reuse a pull request that isn't open on its branch.
 var ErrPRNotOpen = errors.New("pull request is not open on this branch")
 
+// PRHead is a pull request's head as review mode (design generic-tool §3.6,
+// G12) needs it: just enough to decide whether the run may check it out,
+// never the rest of PRInfo (title, body, comments), which review mode
+// reads from the checkout itself, not from the provider.
+type PRHead struct {
+	// SHA is the head commit; review mode fetches and checks it out.
+	SHA string
+	// Fork is whether the head repository differs from the one the
+	// provider was opened for: refused unless review.allow_forks.
+	Fork bool
+	// Open is whether the pull request is still open; a merged or closed
+	// one is refused.
+	Open bool
+}
+
 // RepoInfo is what a follow-up needs to know about the repository.
 type RepoInfo struct {
 	Private bool
@@ -186,6 +201,11 @@ type Provider interface {
 	// the Bitbucket adapter fails the call. Callers must work either way:
 	// trust never rests on Self.
 	Comments(ctx context.Context, number int) ([]Comment, error)
+	// FetchPRHead reads pull request number's head for review mode (design
+	// generic-tool §3.6, G12): its commit, whether it is open, and whether
+	// its head repository is a fork of the one this Provider was opened
+	// for. It never writes anything.
+	FetchPRHead(ctx context.Context, number int) (PRHead, error)
 }
 
 // Opener opens the provider of kind (KindGitHub or KindBitbucket) for repo

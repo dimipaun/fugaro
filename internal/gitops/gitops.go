@@ -160,6 +160,36 @@ func (r *Repo) CheckoutNewBranch(ctx context.Context, ref, branch string) error 
 	return err
 }
 
+// CheckoutDetached fetches rev (a commit, full or abbreviated) from origin
+// and checks it out with a detached HEAD, review mode's single-pull-request
+// case (design generic-tool §3.6, G12): the commit is never a branch of its
+// own, and gitprov.Provider.FetchPRHead already named the exact one to
+// read, so this never resolves a ref of its own. Untracked files are
+// removed but ignored ones (warm build caches) are kept, the same as
+// CheckoutNewBranch.
+func (r *Repo) CheckoutDetached(ctx context.Context, rev string) error {
+	if _, err := r.git(ctx, "fetch", "--quiet", "origin", rev); err != nil {
+		return err
+	}
+	if _, err := r.git(ctx, "checkout", "--quiet", "-f", "--detach", "FETCH_HEAD"); err != nil {
+		return err
+	}
+	_, err := r.git(ctx, "clean", "-fd", "--quiet")
+	return err
+}
+
+// Worktree fetches rev from origin and adds it as a detached worktree at
+// dir: review mode's pick case (design generic-tool §3.6, G12), one
+// directory per pull request it compares, so the reviewer can read every
+// attempt at once. dir's parent must already exist.
+func (r *Repo) Worktree(ctx context.Context, rev, dir string) error {
+	if _, err := r.git(ctx, "fetch", "--quiet", "origin", rev); err != nil {
+		return err
+	}
+	_, err := r.git(ctx, "worktree", "add", "--quiet", "--detach", dir, "FETCH_HEAD")
+	return err
+}
+
 // FetchBase updates origin/<base>, which AheadOf and the reviewer diff against.
 func (r *Repo) FetchBase(ctx context.Context, base string) error {
 	_, err := r.git(ctx, "fetch", "--quiet", "origin", "+refs/heads/"+base+":refs/remotes/origin/"+base)

@@ -440,6 +440,24 @@ func (p *Provider) PullRequest(ctx context.Context, number int) (gitprov.PRInfo,
 	return info, err
 }
 
+// FetchPRHead implements gitprov.Provider (design generic-tool §3.6, G12).
+// The head commit is reachable from origin through the PR's own ref
+// (refs/pull/<number>/head), which GitHub keeps on the base repository
+// whether or not the head is in a fork, so review mode fetches it by SHA
+// alone (gitops.Repo.CheckoutDetached/Worktree) without adding the fork as
+// a remote. Fork is decided the same way a follow-up's own check does
+// (followup.go, runner.checkPullRequest): the head repository's full name
+// differs from this Provider's own, which fails closed (Fork: true) when
+// GitHub reports no head repository at all (a deleted fork).
+func (p *Provider) FetchPRHead(ctx context.Context, number int) (gitprov.PRHead, error) {
+	_, info, err := p.getPull(ctx, number)
+	if err != nil {
+		return gitprov.PRHead{}, err
+	}
+	fork := !strings.EqualFold(info.SourceRepo, p.owner+"/"+p.repo)
+	return gitprov.PRHead{SHA: info.HeadSHA, Fork: fork, Open: info.State == gitprov.PROpen}, nil
+}
+
 // updateByNumber is EnsurePR for spec.Number: it reads that pull request
 // and changes its draft state only when it is still open on spec.Branch.
 // It never looks a pull request up by branch, and never creates one.

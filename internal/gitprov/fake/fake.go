@@ -453,6 +453,18 @@ func (p *Provider) Comments(_ context.Context, number int) ([]gitprov.Comment, e
 	return out, nil
 }
 
+// FetchPRHead implements gitprov.Provider: the same lookup PullRequest uses
+// (PRState.Head when set, else the tip of the PR's branch in Remote), plus
+// the fork test injects (PRState.Source set to something other than Repo).
+func (p *Provider) FetchPRHead(ctx context.Context, number int) (gitprov.PRHead, error) {
+	info, err := p.PullRequest(ctx, number)
+	if err != nil {
+		return gitprov.PRHead{}, err
+	}
+	fork := !strings.EqualFold(info.SourceRepo, p.Repo)
+	return gitprov.PRHead{SHA: info.HeadSHA, Fork: fork, Open: info.State == gitprov.PROpen}, nil
+}
+
 // GitAuth implements gitprov.Provider.
 func (p *Provider) GitAuth(_ context.Context, minValid time.Duration) (gitprov.GitAuth, error) {
 	p.mu.Lock()

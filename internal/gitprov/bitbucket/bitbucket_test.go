@@ -420,6 +420,40 @@ func TestBitbucketPullRequestOpen(t *testing.T) {
 	}
 }
 
+// TestBitbucketFetchPRHead covers review mode's three cases against the
+// same fixture TestBitbucketPullRequestOpen uses: PR #12 is open and not a
+// fork, #14's source repository is unknown (a deleted fork: fails closed,
+// Fork=true), and #15 really is a fork.
+//
+// Mutation (invert the Fork comparison to ==): #12 fails, wanting
+// Fork=false but getting true.
+func TestBitbucketFetchPRHead(t *testing.T) {
+	p := open(t, "pull_open.json")
+	got, err := p.FetchPRHead(ctx, 12)
+	want := gitprov.PRHead{SHA: "0123456789ab", Fork: false, Open: true}
+	if err != nil || got != want {
+		t.Fatalf("FetchPRHead(12) = %+v, %v, want %+v", got, err, want)
+	}
+	// Mutation (guard the comparison with `info.SourceRepo != "" && ...`):
+	// this fails, wanting Fork=true but getting false (PR #14's source
+	// repository is unknown, which must fail closed, not read as a match).
+	if got, err := p.FetchPRHead(ctx, 14); err != nil || !got.Fork {
+		t.Fatalf("FetchPRHead(14) = %+v, %v, want Fork=true", got, err)
+	}
+	if got, err := p.FetchPRHead(ctx, 15); err != nil || !got.Fork {
+		t.Fatalf("FetchPRHead(15) = %+v, %v, want Fork=true", got, err)
+	}
+}
+
+// TestBitbucketFetchPRHeadMerged covers a pull request already merged: not
+// open, review mode must refuse it.
+func TestBitbucketFetchPRHeadMerged(t *testing.T) {
+	got, err := open(t, "pull_merged.json").FetchPRHead(ctx, 12)
+	if err != nil || got.Open {
+		t.Fatalf("got %+v, %v, want Open=false", got, err)
+	}
+}
+
 // TestBitbucketPullRequestWrongID: a response naming another pull request
 // than the one asked for is an error, and an update by number never
 // writes to it.
