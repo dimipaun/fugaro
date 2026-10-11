@@ -96,10 +96,13 @@ func TestAllowedClaudeAccountsEmptyOrNullAllowListMeansNone(t *testing.T) {
 // ClaudeAccountNameRE is ever widened to accept any of these.
 func TestClaudeAccountNameCharset(t *testing.T) {
 	for _, bad := range []string{
-		"a/b",                            // a path separator
-		"x_y",                            // underscore is not in the charset
-		"a.b",                            // a dot is not in the charset
-		strings.Repeat("a", 32),          // one character over the 31-char cap
+		"a/b",                          // a path separator
+		"x_y",                          // underscore is not in the charset
+		"a.b",                          // a dot is not in the charset
+		strings.Repeat("a", 32),        // one character over the 31-char cap
+		"a" + strings.Repeat("-a", 30), // 61 chars: matches ClaudeAccountNameRE despite being
+		// far over the cap (each "-a" repetition is 2 chars);
+		// only the explicit length check catches this.
 		"Acme",                           // uppercase
 		"",                               // empty
 		"default",                        // reserved (caught by its own case, still refused)
@@ -115,6 +118,38 @@ func TestClaudeAccountNameCharset(t *testing.T) {
 		if ps := ValidateClaudeAccounts(accounts); len(ps) != 0 {
 			t.Errorf("name %q was refused: %+v", good, ps)
 		}
+	}
+}
+
+// TestClaudeAccountNameLengthCapIsExplicit: ClaudeAccountNameRE's
+// {0,30}-repetition alone does not bound a name to MaxClaudeAccountNameLen
+// characters, because each repetition may consume two characters via its
+// dash alternative ("-" plus the alphanumeric it must precede): a name of
+// 30 "-a" repetitions after the leading letter is 61 characters and still
+// matches the regex. Red if the length check in ValidateClaudeAccounts
+// were removed and the regex alone were relied on, since a dash-heavy name
+// that long would then be accepted even though ClaudeAccountSecret's
+// "claude-oauth-token-" prefix (19 characters) would push the derived
+// secret name past SecretNameRE's 63-character bound.
+func TestClaudeAccountNameLengthCapIsExplicit(t *testing.T) {
+	longButRegexMatching := "a" + strings.Repeat("-a", 30)
+	if len(longButRegexMatching) != 61 {
+		t.Fatalf("fixture: want 61 characters, got %d", len(longButRegexMatching))
+	}
+	if !ClaudeAccountNameRE.MatchString(longButRegexMatching) {
+		t.Fatalf("fixture: %q must match ClaudeAccountNameRE despite being over the cap (that's the gap this test pins)", longButRegexMatching)
+	}
+	ps := ValidateClaudeAccounts(map[string]ClaudeAccount{longButRegexMatching: {}})
+	if len(ps) == 0 {
+		t.Fatal("a 61-character, regex-matching name was accepted")
+	}
+	for _, p := range ps {
+		if !strings.Contains(p.Message, "31 characters") {
+			t.Errorf("refusal does not name the length cap: %+v", p)
+		}
+	}
+	if secret := ClaudeAccountSecret(longButRegexMatching); len(secret) <= 63 {
+		t.Fatalf("fixture: want the derived secret name to exceed SecretNameRE's 63-character bound, got %d: %q", len(secret), secret)
 	}
 }
 

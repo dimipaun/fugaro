@@ -25,7 +25,23 @@ const DefaultClaudeAccount = "default"
 // workflow "w--x" + account "y" in gcp.WorkflowVariant's "--"-joined key).
 // Requiring every dash to be immediately followed by an alphanumeric rules
 // out both.
+//
+// This regex alone does not bound a name's length to MaxClaudeAccountNameLen:
+// each of its {0,30} repetitions may consume either one character or, via
+// the dash alternative, two ("-" plus the alphanumeric it must precede), so
+// a dash-heavy name such as "a-a-a-...-a" (30 repetitions of "-a") is 61
+// characters and still matches. ValidateClaudeAccounts checks the length
+// explicitly, separately from this regex.
 var ClaudeAccountNameRE = regexp.MustCompile(`^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$`)
+
+// MaxClaudeAccountNameLen is the longest a claude_accounts name may be.
+// ClaudeAccountSecret prepends "claude-oauth-token-" (19 characters) to
+// build the secret name, which SecretNameRE elsewhere caps at 63
+// characters; the name is also concatenated into gcp.WorkflowVariant's
+// "workflow--name" key, which Cloud Run job and service-account identifiers
+// bound tightly (design docs/design/named-oauth-tokens.md). 31 keeps every
+// derived identifier comfortably inside those limits.
+const MaxClaudeAccountNameLen = 31
 
 // ClaudeAccount is one named Claude OAuth credential the owner has
 // configured in the local config (never fugaro.yaml or the project layer:
@@ -99,6 +115,8 @@ func ValidateClaudeAccounts(accounts map[string]ClaudeAccount) []Problem {
 		switch {
 		case name == DefaultClaudeAccount:
 			ps = append(ps, Problem{Path: at, Message: `"default" is reserved for the unnamed claude-oauth-token secret and may not be configured here`})
+		case len(name) > MaxClaudeAccountNameLen:
+			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("account name must be at most %d characters", MaxClaudeAccountNameLen)})
 		case !ClaudeAccountNameRE.MatchString(name):
 			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("account name must match %s", ClaudeAccountNameRE)})
 		}
