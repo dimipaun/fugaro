@@ -52,16 +52,16 @@ steps:
 | `solo` | `roles: { reviewer: coder }`; `review: {}`. | Small, low-risk changes confined to one or two files, where a second model's review would cost more than it finds. |
 | `standard` | `first_line: {}`; `review: { bounce: first_line }`. | Typical feature or bug-fix work that needs a real review. Choose it when nothing more specific fits. |
 | `premium` | `roles: { coder: reviewer } `; `review: {}`. No cheap stage. | High-stakes or subtle work (concurrency, security, data migrations) where a cheap model's attempt is likely to waste the review. |
-| `review-only` | `mode: review`; `review: { max_rounds: 1 }`. No coding. | Reviewing a human-written or external pull request. Launch with `--pr N`. |
-| `pick` | `mode: review`; `review: { max_rounds: 1 }`. No coding. | After launching several attempts of the same task, once every attempt has a pull request. Launch with one `--pr` per attempt. |
-| `test-and-fix` | `check: { command: test }`; `first_line: {}`; `review: { bounce: first_line }`. | Keeping a branch green, chasing a failing or flaky test, CI babysitting. A green run ends with no pull request. |
-| `lint-fix` | `roles: { reviewer: coder }`; `check: { command: lint, autofix: true }`; `review: {}`. | Routine mechanical cleanup (formatting, lint and type-check errors) in a repository with `commands.lint` and `commands.fix`. |
+| `review-only` | `mode: review`; `review: { max_rounds: 1 }`. No coding. | Reviewing a human-written or external pull request. Launch with `--pr N`. **Not yet launchable, section 8.** |
+| `pick` | `mode: review`; `review: { max_rounds: 1 }`. No coding. | Comparing several pull requests for the same task to decide which to keep, once every attempt has one. **Not yet launchable, section 8**: needs a best-of-N launch flow `fugaro run` does not yet have (today's `--pr` takes one pull request, not several). |
+| `test-and-fix` | `check: { command: test }`; `first_line: {}`; `review: { bounce: first_line }`. | Keeping a branch green, chasing a failing or flaky test, CI babysitting. A green run ends with no pull request. **Not yet launchable, section 8.** |
+| `lint-fix` | `roles: { reviewer: coder }`; `check: { command: lint, autofix: true }`; `review: {}`. | Routine mechanical cleanup (formatting, lint and type-check errors) in a repository with `commands.lint` and `commands.fix`. **Not yet launchable, section 8.** |
 
 Only the catalog's own `default` follows `agent.first_line_review`. Every other recipe, including a `default` you define yourself in the repository or the project, is taken as written: a `first_line` step in it always runs.
 
-**What is not yet wired into the runner.** `check` steps and `mode: review` are part of the 0.7.0 recipe format, and the catalog above (and `fugaro recipes validate`) already accepts and lists them. Whether a `check` step actually gates `implement`, whether `mode: review` actually skips `implement`, and the best-of-N launch flow `pick` is meant for are separate runner changes that land in a later release; until they do, a recipe with a `check` step or `mode: review` parses and validates but a launched run does not yet enforce the gate or skip `implement` the way this table describes. `commands.lint`, `commands.fix` and `review.allow_forks` already exist in `fugaro.yaml` (validated, schema'd) ahead of that runner work.
+**`check` steps and `mode: review` are not yet launchable.** Both are part of the 0.7.0 recipe format (Task 8 of the generic-tool plan), and `fugaro recipes ls`/`show` list and print them like any other recipe, but no runner yet executes a `check` step as a gate or skips `implement` under `mode: review` (that lands in a later release). Rather than silently fall back to running `implement` regardless, `fugaro run`, `fugaro recipes validate` and `fugaro recipes publish` all refuse a recipe using either, with "recipe NAME cannot be launched yet: ...", naming which construct. This means `solo`, `standard`, `premium` and `default` are launchable today; `review-only`, `pick`, `test-and-fix` and `lint-fix` are not, until that runner work lands (section 8 has the exact refusal). `commands.lint`, `commands.fix` and `review.allow_forks` already exist in `fugaro.yaml` (validated, schema'd) ahead of it.
 
-## 3. Review mode and best-of-N (format only; see the note above)
+## 3. Review mode and best-of-N (format only: not yet launchable, section 8)
 
 `mode: review` (default `mode: implement`) means the recipe has no `implement` and no `fix`: exactly one `review` step, `max_rounds: 1`, and no `roles` (there is no coder step to map them onto). `review-only` and `pick` are both `mode: review`; the difference is how they are meant to be launched, not the format. `review.allow_forks` (repository scope only, read from the default branch like `followup.trusted`) will let review mode run a fork pull request's code next to the job's secrets; `false` (the default) is meant to refuse a fork PR once review mode runs.
 
@@ -121,6 +121,8 @@ A recipe that uses a reserved key is refused with a message that says so:
 - any role other than `reviewer` or `coder`; any `reviewer` value other than `coder`; any `coder` value other than `reviewer`; and both mapped at once (`reviewer: coder` and `coder: reviewer` exclude each other).
 - `check.command` other than `build`, `test` or `lint`; `autofix` on anything but `command: lint`.
 
+A recipe that is valid but uses a construct no runner yet executes is refused too, separately from the parser: a `check` step, or `mode: review` (section 2). The message says which: `recipe NAME cannot be launched yet: a check step is not yet executed by any runner: it would be silently skipped, not gate the run`, or the same for `mode: review is not yet executed by any runner: it would run implement and open a pull request instead of only reviewing`. This applies to `fugaro run` (a first run or a follow-up, including one inheriting or keeping a prior run's recipe), `fugaro recipes validate` and `fugaro recipes publish`; `fugaro recipes ls` and `show` still display such a recipe, since looking at one is not launching it.
+
 ## 9. Rolling out 0.5.0 and 0.7.0
 
 Order matters:
@@ -129,6 +131,7 @@ Order matters:
 2. `fugaro run` checks the workflow's build record and refuses a recipe run (or a checkout that sets `agent.recipe`) on a job image too old for what it carries. The fix is `fugaro image refresh --repo <owner/name> --workflow <name>` in the repository's checkout, in your own terminal window, or with `--yes` from CI or a script (it copies this release's base image, points the daily image check job at it and rebuilds the image; refused in a coding agent's session either way, and there is still no `--json` or `--plan-only`). Then use the recipe. A launch of the catalog `default` carries no recipe and needs no job-image gate, unless `--recipe default` must override an `agent.recipe` that could apply; a project or repository recipe named `default` is a recipe-carrying launch and does need it.
 3. `cheap-loop-senior` and `claude-solo`, the 0.6 catalog's two non-default recipes, are gone from the 0.7.0 catalog: `agent.recipe` or `--recipe` naming either is refused with its replacement (`standard`, `solo`), unless a repository or project recipe of that exact name still exists, which wins as it always did.
 4. Deployed Firebase rules are updated only by `fugaro init --firebase <firebase-project-id>` (its Firebase stage). Until you rerun it, the dashboard shows no recipe name; the runs still work, and the run logs a warning that names that command.
+5. `review-only`, `pick`, `test-and-fix` and `lint-fix` are in the catalog ahead of the runner work that executes them: launching any of them is refused (section 8) until a later release.
 
 ## 10. Safety
 

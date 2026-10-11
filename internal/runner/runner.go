@@ -836,6 +836,9 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if gap := recipe.NotYetRunnable(rcp); gap != "" {
+		return fmt.Errorf("recipe %s cannot be run yet: %s", rrec.Name, gap)
+	}
 	r.rec.Recipe = &rrec
 	derived := rrec.Name == recipe.DefaultName && rrec.Source == string(recipe.SourceCatalog)
 	plan := planOf(rcp, derived, cfg.Agent, r.d.Providers, spec.Overrides.ReviewRounds)

@@ -366,6 +366,9 @@ func recipeFileProblems(path string, data []byte) []recipe.Problem {
 	if base != rcp.Name+".yaml" {
 		return []recipe.Problem{{Path: "name", Message: fmt.Sprintf("the file is %s but the recipe names itself %q; the file name must be %s.yaml, the file name and the name must agree (the runner looks a recipe up by its file name)", base, rcp.Name, rcp.Name)}}
 	}
+	if gap := recipe.NotYetRunnable(rcp); gap != "" {
+		return []recipe.Problem{{Message: "cannot be launched yet: " + gap}}
+	}
 	return nil
 }
 

@@ -120,6 +120,38 @@ func TestRecipeRepoInvalidFailsNoFallback(t *testing.T) {
 	}
 }
 
+// TestRecipeNotYetRunnableFailsBeforeImplement: neither the check gate nor
+// mode: review's implement skip is executed by this runner (no case for
+// recipe.StepCheck in planOf, and agentLoop never reads Recipe.Mode), so a
+// recipe using either must refuse before implement ever runs, not silently
+// fall back to today's loop. This is the runner's own guard (recipe.
+// NotYetRunnable), independent of the CLI's: it is what actually protects a
+// repository recipe or a bare agent.recipe name, which the CLI never reads
+// the text of before launch.
+//
+// Mutation (run, restore): comment out the NotYetRunnable check in
+// runner.go's run loop, and this test fails: implement runs and the record
+// is not an infra_error.
+func TestRecipeNotYetRunnableFailsBeforeImplement(t *testing.T) {
+	for _, tc := range []struct {
+		name, recipeName, yaml string
+	}{
+		{"check step", "gated", "version: 1\nname: gated\nsteps:\n  - check: { command: test }\n  - review: {}\n"},
+		{"mode review", "reviewonly", "version: 1\nname: reviewonly\nmode: review\nsteps:\n  - review: { max_rounds: 1 }\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, firstLineCfg(t, 2, ""), recipeSpec(embeddedTask(tc.recipeName, tc.yaml)))
+			rec, err := h.run(t)
+			if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "cannot be run yet") {
+				t.Fatalf("rec = %+v, err = %v", rec, err)
+			}
+			if len(h.agent.calls) != 0 {
+				t.Fatalf("%d agent calls, want none (implement must not run)", len(h.agent.calls))
+			}
+		})
+	}
+}
+
 // Review Focus 4.
 func TestRecipeRepoNameMismatch(t *testing.T) {
 	h := newHarnessFiles(t, firstLineCfg(t, 2, "  recipe: mine\n"), nil,

@@ -27,6 +27,40 @@ func writeRecipeFile(t *testing.T, dir, rel, text string) string {
 	return filepath.Join(dir, filepath.FromSlash(rel))
 }
 
+// TestRecipesValidateRefusesNotYetRunnable: a check step and mode: review
+// both parse (the format, Task 8) but no runner executes either yet, so
+// fugaro recipes validate must refuse them, not call them valid.
+func TestRecipesValidateRefusesNotYetRunnable(t *testing.T) {
+	dir := t.TempDir()
+	for name, text := range map[string]string{
+		"gated":      "version: 1\nname: gated\nsteps:\n  - check: { command: test }\n  - review: {}\n",
+		"reviewonly": "version: 1\nname: reviewonly\nmode: review\nsteps:\n  - review: { max_rounds: 1 }\n",
+	} {
+		path := writeRecipeFile(t, dir, name+".yaml", text)
+		out, _, err := execute(t, "recipes", "validate", path)
+		if ExitCode(err) != ExitUserError || !strings.Contains(out, "cannot be launched yet") {
+			t.Errorf("%s: out = %q, err = %v", name, out, err)
+		}
+	}
+}
+
+// TestRecipesPublishRefusesNotYetRunnable: the same gate applies to
+// publishing a project recipe, so a not-yet-runnable recipe can't reach the
+// bucket and be picked up by a run either.
+func TestRecipesPublishRefusesNotYetRunnable(t *testing.T) {
+	f := newCloudFixture(t)
+	projectRecipesFixture(t, f, nil)
+	noAgentSession(t)
+	path := writeRecipeFile(t, t.TempDir(), "gated.yaml", "version: 1\nname: gated\nsteps:\n  - check: { command: test }\n  - review: {}\n")
+	_, _, err := execute(t, "recipes", "publish", path)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "cannot be launched yet") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(f.dir, "runs", filepath.FromSlash(recipe.ObjectKey("gated")))); err == nil {
+		t.Fatal("published a not-yet-runnable recipe")
+	}
+}
+
 func TestRecipesValidate(t *testing.T) {
 	dir := t.TempDir()
 	good := writeRecipeFile(t, dir, "team.yaml", projectTeam)

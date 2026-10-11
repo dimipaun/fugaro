@@ -410,6 +410,9 @@ func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func
 	if err != nil {
 		return nil, err
 	}
+	if err := refuseIfNotYetRunnable(rr.Recipe, rr.Name); err != nil {
+		return nil, err
+	}
 	printRecipeNote(warn, rr, explicit)
 	// An explicit --recipe default overrides agent.recipe, which applies when
 	// the checkout sets it, or when there is no checkout and the runner reads

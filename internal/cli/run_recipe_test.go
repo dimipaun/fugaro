@@ -85,6 +85,20 @@ func TestRunUnknownRecipeFailsBeforeCloudWork(t *testing.T) {
 	}
 }
 
+// TestRunRefusesNotYetRunnableRecipe: no runner executes a check step as a
+// gate, or mode: review's implement skip, yet. fugaro run must refuse these
+// catalog recipes before any cloud work, not launch a job that silently
+// falls back to running implement despite review-only's and pick's own
+// "No coding" and test-and-fix's/lint-fix's "a green run ends with no pull
+// request" (docs/recipes.md §2).
+func TestRunRefusesNotYetRunnableRecipe(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", release070)
+	for _, name := range []string{"review-only", "pick", "test-and-fix", "lint-fix"} {
+		wantRefused(t, f, "recipe "+name+" cannot be launched yet", "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", name, "x")
+	}
+}
+
 // TestRenamedRecipeNamesTheReplacement: a 0.6 catalog name 0.7.0 retired
 // (recipe.Renamed) is refused with its replacement, both at fugaro run
 // --recipe and at fugaro validate's agent.recipe warning; a repository or
@@ -173,6 +187,46 @@ func TestRunPRKeepsEmbeddedRecipeAfterProjectDelete(t *testing.T) {
 	if !strings.Contains(errOut, "recipe: team (project)") {
 		t.Fatalf("stderr = %q", errOut)
 	}
+}
+
+// TestRunPRRefusesNotYetRunnableRecipe covers the three follow-up paths that
+// resolve or re-check a recipe (newPRSpec's --recipe flag, its inherited-YAML
+// re-parse, and carryChosenRecipe): none may let a not-yet-runnable recipe
+// through just because the launch is a follow-up rather than a first run.
+func TestRunPRRefusesNotYetRunnableRecipe(t *testing.T) {
+	t.Run("--recipe flag", func(t *testing.T) {
+		f := newCloudFixture(t)
+		writeBuildRecord(t, f, appSlug, "web", release070)
+		seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--recipe", "review-only")
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "recipe review-only cannot be launched yet") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("inherited recipe", func(t *testing.T) {
+		f := newCloudFixture(t)
+		writeBuildRecord(t, f, appSlug, "web", release070)
+		text, _ := recipe.CatalogText("review-only")
+		root := firstRunSpec(rootID)
+		root.Recipe = &task.Recipe{Name: "review-only", Source: "catalog", SHA256: recipe.Sum(text), YAML: string(text)}
+		seedSpec(t, f, root, false)
+		rec := prRecord(rootID, "", 7, 1)
+		rec.StartedAt = time.Now().Add(-72 * time.Hour)
+		writeRecord(t, f, rootID, rec)
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "also rename x")
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "recipe review-only cannot be launched yet") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("runner-chosen recipe", func(t *testing.T) {
+		f := newCloudFixture(t)
+		seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "review-only", Source: "catalog", SHA256: strings.Repeat("a", 64)})
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "x")
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "ran (review-only) cannot be used") ||
+			!strings.Contains(err.Error(), "recipe review-only cannot be launched yet") {
+			t.Fatalf("err = %v", err)
+		}
+	})
 }
 
 func TestRunPRRecipeFlagWins(t *testing.T) {

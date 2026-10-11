@@ -53,3 +53,32 @@ func TestUsesV07DecidesByKeyPresence(t *testing.T) {
 		t.Fatal("UsesV07 = true, want false for a recipe with no 0.7.0 construct")
 	}
 }
+
+// TestNotYetRunnableNamesTheGap: no runner executes a check step as a gate,
+// or mode: review's implement skip, yet (Tasks 11 and 12 of the generic-tool
+// plan); NotYetRunnable names which one a recipe uses, so a caller can
+// refuse it instead of silently running implement regardless. A recipe
+// using neither is fine.
+func TestNotYetRunnableNamesTheGap(t *testing.T) {
+	check, ps := Parse([]byte("version: 1\nname: x\nsteps:\n  - check: { command: test }\n  - review: {}\n"))
+	if len(ps) != 0 {
+		t.Fatalf("problems: %s", ProblemsText(ps))
+	}
+	if got := NotYetRunnable(check); got == "" {
+		t.Fatal("a check step: NotYetRunnable = \"\", want a reason")
+	}
+	ro, ps := Parse([]byte("version: 1\nname: x\nmode: review\nsteps:\n  - review: { max_rounds: 1 }\n"))
+	if len(ps) != 0 {
+		t.Fatalf("problems: %s", ProblemsText(ps))
+	}
+	if got := NotYetRunnable(ro); got == "" {
+		t.Fatal("mode: review: NotYetRunnable = \"\", want a reason")
+	}
+	fine, ps := Parse([]byte("version: 1\nname: x\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n"))
+	if len(ps) != 0 {
+		t.Fatalf("problems: %s", ProblemsText(ps))
+	}
+	if got := NotYetRunnable(fine); got != "" {
+		t.Fatalf("a recipe with no check step and no mode: review: NotYetRunnable = %q, want \"\"", got)
+	}
+}

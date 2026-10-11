@@ -56,6 +56,19 @@ func parseRecipeAt(data []byte, name, where string) (*recipe.Recipe, error) {
 	return rcp, nil
 }
 
+// refuseIfNotYetRunnable is parseRecipeAt's or resolveRecipe's result,
+// refused when rcp uses a construct no runner executes yet (recipe.
+// NotYetRunnable): fugaro recipes show and ls still display such a recipe
+// (inspection, not a launch), but every launch decision calls this first, so
+// a run never silently falls back to today's loop for a recipe that was
+// supposed to gate on a check or skip implement under mode: review.
+func refuseIfNotYetRunnable(rcp *recipe.Recipe, name string) error {
+	if gap := recipe.NotYetRunnable(rcp); gap != "" {
+		return userErr("recipe %s cannot be launched yet: %s", name, gap)
+	}
+	return nil
+}
+
 // projectRecipesNote is why lc's project recipes are not read, or "": as
 // for the shared config, only the default runs bucket name is supported.
 func projectRecipesNote(lc *localcfg.Config) string {
