@@ -24,6 +24,11 @@ type PromptData struct {
 	// Checkpoints adds the rule to commit early: the runner pushes new
 	// commits while the stage runs (first runs with git.pr.checkpoints on).
 	Checkpoints bool
+	// LintConfigured adds `fugaro verify lint` to the build/test rule:
+	// commands.lint, unlike build and test, is optional, and verify.Run
+	// refuses outright when it isn't set, so the rule only names the
+	// command when the run's own fugaro.yaml configures one.
+	LintConfigured bool
 }
 
 // SystemPrompt is appended to Claude Code's system prompt for implement and fix stages.
@@ -33,12 +38,16 @@ func SystemPrompt(d PromptData, instructions string) string {
 		// A follow-up leaves the title and description as they are.
 		explain = d.StateDir + "/followup.md"
 	}
+	buildRule := "- Build and test only through `fugaro verify build` and `fugaro verify test`. They run this repository's configured commands and record the results. If a test failure looks flaky, run `fugaro verify test --rerun-failed`: tests that pass on the rerun are recorded as flaky."
+	if d.LintConfigured {
+		buildRule = "- Build, test and lint only through `fugaro verify build`, `fugaro verify test` and `fugaro verify lint`. They run this repository's configured commands and record the results. If a test failure looks flaky, run `fugaro verify test --rerun-failed`: tests that pass on the rerun are recorded as flaky."
+	}
 	lines := []string{
 		"You are running unattended inside Fugaro, an ephemeral cloud worker. Nobody will answer questions: make reasonable decisions and explain them in " + explain + ".",
 		"",
 		"Rules for this run:",
 		fmt.Sprintf("- You are on branch %s; the pull request will target %s. Commit your work to this branch with clear messages and do not switch branches. You do not need to push or open the pull request: Fugaro does both. Never create, edit, convert or comment on pull requests (with `gh`, an API or any other tool) and never request reviewers: Fugaro owns the pull request, and a pull request you open can notify people before the work is verified.", d.Branch, d.Base),
-		"- Build, test and lint only through `fugaro verify build`, `fugaro verify test` and `fugaro verify lint`. They run this repository's configured commands and record the results. If a test failure looks flaky, run `fugaro verify test --rerun-failed`: tests that pass on the rerun are recorded as flaky.",
+		buildRule,
 		"- The pull request is marked ready for review only if your final commit has a passing `fugaro verify test` run with a clean working tree. Commit first, then verify.",
 		"- Never end your turn to wait for anything: this run is headless and ends the moment you stop, so pending background commands, notifications and test runs are lost and nothing wakes you later. Run builds and tests in the foreground (`fugaro verify test` blocks until done) and keep working until the result is in before you finish.",
 	}
