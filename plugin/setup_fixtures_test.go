@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/images"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/image"
 )
@@ -455,7 +456,7 @@ func TestSetupFixtureExistingKeepsNothingUnconfirmed(t *testing.T) {
 	if len(c.Followup.Trusted) > 0 || c.Followup.AllowPublic || (c.Budget != nil && c.Budget.Mode != "") {
 		t.Errorf("the expected output keeps followup or budget values the user did not confirm: %+v %+v", c.Followup, c.Budget)
 	}
-	if c.Workflows["go"].Base != "go" {
-		t.Errorf("the stale web-node base was not corrected to go")
+	if c.Workflows["go"].Base != "" {
+		t.Errorf("the stale web-node base was not corrected to the Fugaro base: %q", c.Workflows["go"].Base)
 	}
 }
