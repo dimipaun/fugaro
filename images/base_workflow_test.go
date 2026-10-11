@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -210,9 +211,107 @@ func TestVerifyPublicRunsEvenWhenPublishBaseIsSkipped(t *testing.T) {
 	if !strings.Contains(v.If, "needs.publish.result == 'success'") {
 		t.Errorf("verify-public's if does not require publish to have succeeded: %q", v.If)
 	}
-	for _, want := range []string{"needs['publish-base'].result != 'failure'", "needs['publish-base'].result != 'cancelled'"} {
+	// publish-base must have SUCCEEDED when the kinds include base; a skipped
+	// publish-base is fine only when there is no base kind (a backport tree).
+	for _, want := range []string{"needs['publish-base'].result == 'success'", "!contains(needs.version.outputs.kinds, ',base,')"} {
 		if !strings.Contains(v.If, want) {
-			t.Errorf("verify-public's if does not guard publish-base's result (want %q): %q", want, v.If)
+			t.Errorf("verify-public's if does not gate on publish-base correctly (want %q): %q", want, v.If)
+		}
+	}
+	for _, bad := range []string{"!= 'failure'", "!= 'cancelled'"} {
+		if strings.Contains(v.If, "needs['publish-base'].result "+bad) {
+			t.Errorf("verify-public's if lets a failed or cancelled publish-base through (%q): %q", bad, v.If)
+		}
+	}
+}
+
+var (
+	usesRE = regexp.MustCompile(`(?m)^\s*-?\s*uses:\s*([^@\s]+)@(\S+)`)
+	shaRE  = regexp.MustCompile(`^[0-9a-f]{40}$`)
+)
+
+type actionPin struct{ action, ref string }
+
+// actionPins lists EVERY `uses: owner/repo@ref` in a workflow, one entry per
+// occurrence: an action used several times must be checked each time, or a
+// floating ref on one line hides behind a pinned later line.
+func actionPins(data []byte) []actionPin {
+	var out []actionPin
+	for _, g := range usesRE.FindAllSubmatch(data, -1) {
+		out = append(out, actionPin{string(g[1]), string(g[2])})
+	}
+	return out
+}
+
+// pinProblems names every occurrence in mine that is not pinned by a full
+// commit SHA, and every occurrence of an action that another workflow also
+// uses but pins to a different SHA. other is that workflow's pins and name
+// is its file name.
+func pinProblems(mine []actionPin, name string, other []actionPin) []string {
+	var out []string
+	for _, p := range mine {
+		if !shaRE.MatchString(p.ref) && !strings.HasPrefix(p.action, "./") {
+			out = append(out, fmt.Sprintf("%s is pinned by %q, not a full commit SHA", p.action, p.ref))
+		}
+	}
+	for _, o := range other {
+		for _, p := range mine {
+			if p.action == o.action && p.ref != o.ref {
+				out = append(out, fmt.Sprintf("the images workflow pins %s to %s, %s pins it to %s", p.action, p.ref, name, o.ref))
+				break
+			}
+		}
+	}
+	return out
+}
+
+// TestPinProblemsFindsDriftAndFloatingRefs pins pinProblems itself: a floating
+// tag and a pin that differs from another workflow's are both reported, and a
+// matching pin is not.
+func TestPinProblemsFindsDriftAndFloatingRefs(t *testing.T) {
+	const a, b = "cf430e030ddbb5b0abf93d22962f4752f3646cd9", "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+	mine := []actionPin{{"actions/upload-artifact", a}, {"actions/checkout", a}, {"actions/checkout", "v4"}}
+	got := pinProblems(mine, "release.yml", []actionPin{{"actions/upload-artifact", b}, {"actions/setup-go", a}})
+	if len(got) != 2 {
+		t.Fatalf("want a floating-ref (on the SECOND checkout occurrence) and a drift problem, got %q", got)
+	}
+	if p := pinProblems([]actionPin{{"actions/upload-artifact", a}}, "release.yml", []actionPin{{"actions/upload-artifact", a}}); len(p) != 0 {
+		t.Fatalf("matching pins reported: %q", p)
+	}
+}
+
+// TestActionPinsAreFullSHAs: every `uses:` in the images workflow (the pending
+// file until it is copied) is pinned by a full commit SHA. Once the pending
+// file is gone and the workflow is the real one, it must also agree with the
+// pin of every action another workflow in .github/workflows uses (while it is
+// pending, next's other workflows can lag main's Dependabot bumps, and
+// Dependabot does not watch docs/pending-workflows/, so only the SHA form is
+// enforced then; the person copying it checks the README's drift note).
+func TestActionPinsAreFullSHAs(t *testing.T) {
+	mine := actionPins(readImagesWorkflow(t))
+	if len(mine) == 0 {
+		t.Fatal("no `uses:` found in the images workflow")
+	}
+	for _, p := range pinProblems(mine, "", nil) {
+		t.Error(p)
+	}
+	if _, err := os.Stat(pendingImagesWorkflowPath); err == nil {
+		return // pending: the cross-workflow comparison starts after the copy
+	}
+	others, err := filepath.Glob("../.github/workflows/*.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range others {
+		if filepath.Base(f) == "images.yml" {
+			continue
+		}
+		data, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range pinProblems(mine, filepath.Base(f), actionPins(data)) {
+			t.Error(p)
 		}
 	}
 }
