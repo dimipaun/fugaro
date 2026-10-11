@@ -1146,7 +1146,16 @@ func (r *run) agentLoop(ctx context.Context) {
 		r.rec.Stage = "check"
 		switch g, err := r.runGate(ctx, r.gateSteps); {
 		case err != nil:
-			r.failInfra(ctx, err)
+			// A cancel landing mid-command (verify.Run / procgroup.Run)
+			// returns an ordinary context error, indistinguishable from any
+			// other process failure by err alone: context.Cause(ctx) still
+			// carries ErrCancelled, so it ends cancelled, not infra_error,
+			// exactly as a cancel during any other stage does.
+			if errors.Is(context.Cause(ctx), ErrCancelled) && r.markCancelled() {
+				r.endCancelled(ctx, "cancelled during the check gate")
+			} else {
+				r.failInfra(ctx, err)
+			}
 			return
 		case g.Clean:
 			r.rec.Gate = "clean"

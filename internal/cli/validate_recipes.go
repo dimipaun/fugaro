@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -96,6 +98,26 @@ func localRecipe(root string, cfg *config.Config) *recipe.Recipe {
 		return nil
 	}
 	return rcp
+}
+
+// gateCheckProblems is `fugaro validate`'s check that the recipe the file
+// selects (localRecipe) never leaves a check step's gate silently doing
+// nothing: the same two refusals bootstrap's checkGateCommands makes at
+// launch (runner.RecipeGateProblems), checked against every workflow since
+// validate has no one run to pick a single workflow for. nil when the
+// recipe can't be read locally (a project recipe) or has no check step.
+func gateCheckProblems(root string, cfg *config.Config) []config.Problem {
+	rcp := localRecipe(root, cfg)
+	if rcp == nil {
+		return nil
+	}
+	var problems []config.Problem
+	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
+		for _, msg := range runner.RecipeGateProblems(rcp, cfg.Workflows[name].Commands) {
+			problems = append(problems, config.Problem{Path: "workflows." + name + ".commands", Message: "the " + msg})
+		}
+	}
+	return problems
 }
 
 // withRecipeRoles is cfg as the runner will see it for the recipe the file

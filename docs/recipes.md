@@ -99,7 +99,7 @@ A recipe that uses a reserved key is refused with a message that says so:
 - `model` and `models`: a recipe never names a model; models come from `agent.models`.
 - any role other than `reviewer` or `coder`; any `reviewer` value other than `coder`; any `coder` value other than `reviewer`; and both mapped at once (`reviewer: coder` and `coder: reviewer` exclude each other).
 
-What recipes do not do in 0.5.0: run check steps, jump with `goto`, extend another recipe, pin a model per recipe, or configure `on_pass` and `on_fail`. There are no task-shaped catalog recipes (fix a bug, add a feature) yet.
+What recipes do not do in 0.5.0: jump with `goto`, extend another recipe, pin a model per recipe, or configure `on_pass` and `on_fail`. (A `check` step, which does run a build, test or lint command, shipped later; see the generic-tool design.) There are no task-shaped catalog recipes (fix a bug, add a feature) yet.
 
 ## 7. Rolling out 0.5.0
 

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -21,6 +22,10 @@ const testAndFixRecipe = "version: 1\nname: test-and-fix\nsteps:\n  - check: { c
 // lintFixRecipe is a repo recipe with one check step (command: lint,
 // autofix: true) followed by the mandatory review step.
 const lintFixRecipe = "version: 1\nname: lint-fix\nsteps:\n  - check: { command: lint, autofix: true }\n  - review: {}\n"
+
+// lintOnlyRecipe is a repo recipe with one check step (command: lint, no
+// autofix) followed by the mandatory review step.
+const lintOnlyRecipe = "version: 1\nname: lint-only\nsteps:\n  - check: { command: lint }\n  - review: {}\n"
 
 // yamlQuote double-quotes s for a YAML scalar, so a shell command with
 // metacharacters (";", "|", ...) is always read as a single string value.
@@ -205,14 +210,125 @@ func TestLintAutofixReviewChangesStartsFreshFix(t *testing.T) {
 // repository with no commands.lint ends the run as infra_error at
 // bootstrap; it never silently skips.
 func TestGateMissingCommandFailsTheRun(t *testing.T) {
-	const lintOnly = "version: 1\nname: lint-only\nsteps:\n  - check: { command: lint }\n  - review: {}\n"
 	cfg := gateCfg(t, "lint-only", 2, "", "", "")
-	h := newHarnessFiles(t, cfg, nil, gateFiles("lint-only", lintOnly))
+	h := newHarnessFiles(t, cfg, nil, gateFiles("lint-only", lintOnlyRecipe))
 	rec, err := h.run(t)
 	if err == nil || !strings.Contains(err.Error(), "the recipe's check step needs commands.lint in fugaro.yaml at main") {
 		t.Fatalf("err = %v", err)
 	}
 	if rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone || len(h.provider.State.PRs) != 0 {
 		t.Fatalf("record = %+v", rec)
+	}
+}
+
+// TestGateAutofixNeedsFixCommand: autofix: true on a repository with
+// commands.lint but no commands.fix ends the run as infra_error at
+// bootstrap; it never silently runs an empty fix and reports "clean".
+func TestGateAutofixNeedsFixCommand(t *testing.T) {
+	cfg := gateCfg(t, "lint-fix", 2, "", "test -f fixed", "")
+	h := newHarnessFiles(t, cfg, nil, gateFiles("lint-fix", lintFixRecipe))
+	rec, err := h.run(t)
+	if err == nil || !strings.Contains(err.Error(), "the recipe's check step has autofix: true but no commands.fix") {
+		t.Fatalf("err = %v", err)
+	}
+	if rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone || len(h.provider.State.PRs) != 0 {
+		t.Fatalf("record = %+v", rec)
+	}
+}
+
+// TestGateCommandWhitespaceOnlyIsRefused: commands.lint set to only
+// whitespace is the same as empty; it is not config.Validate's own
+// "required" check (commands.lint has none), so this specifically proves
+// checkGateCommands trims before comparing.
+func TestGateCommandWhitespaceOnlyIsRefused(t *testing.T) {
+	cfg := gateCfg(t, "lint-only", 2, "", "   ", "")
+	h := newHarnessFiles(t, cfg, nil, gateFiles("lint-only", lintOnlyRecipe))
+	rec, err := h.run(t)
+	if err == nil || !strings.Contains(err.Error(), "the recipe's check step needs commands.lint in fugaro.yaml at main") {
+		t.Fatalf("err = %v", err)
+	}
+	if rec.Status != runstore.StatusInfraError {
+		t.Fatalf("record = %+v", rec)
+	}
+}
+
+// TestGateAutofixWhitespaceOnlyFixIsRefused: commands.fix set to only
+// whitespace is the same as empty for autofix: true; config.Validate's own
+// "fix needs lint" rule never fires for it (TrimSpace(fix) == "" there
+// too), so this specifically proves checkGateCommands' own autofix check
+// trims before comparing.
+func TestGateAutofixWhitespaceOnlyFixIsRefused(t *testing.T) {
+	cfg := gateCfg(t, "lint-fix", 2, "", "test -f fixed", "   ")
+	h := newHarnessFiles(t, cfg, nil, gateFiles("lint-fix", lintFixRecipe))
+	rec, err := h.run(t)
+	if err == nil || !strings.Contains(err.Error(), "the recipe's check step has autofix: true but no commands.fix") {
+		t.Fatalf("err = %v", err)
+	}
+	if rec.Status != runstore.StatusInfraError {
+		t.Fatalf("record = %+v", rec)
+	}
+}
+
+// TestGateCancelEndsCancelledNotInfraError: a cancel landing while the gate
+// runs a long check command ends the run cancelled, not infra_error: the
+// context error verify.Run/procgroup.Run returns when killed by a cancel
+// looks, to the gate, like any other process failure, so the cause
+// (ErrCancelled) is what tells it apart.
+func TestGateCancelEndsCancelledNotInfraError(t *testing.T) {
+	cfg := gateCfg(t, "test-and-fix", 2, "touch gate-cancel-marker && sleep 2", "", "")
+	h := newHarnessFiles(t, cfg, nil, gateFiles("test-and-fix", testAndFixRecipe))
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		marker := filepath.Join(h.deps.WorkDir, "gate-cancel-marker")
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(marker); err == nil {
+				_ = h.store.RequestCancel(context.Background())
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+	rec, err := h.run(t)
+	<-done
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusCancelled || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+}
+
+// TestGateFixTimeoutIsDiscardedAndRed: commands.fix that runs longer than
+// the workflow's timeouts.verify is killed; its changes are never
+// committed, the check command is skipped (there is nothing meaningful to
+// judge), the step ends red (reaching implement, with a plain explanation),
+// and the run is never infra_error over it.
+func TestGateFixTimeoutIsDiscardedAndRed(t *testing.T) {
+	cfg := gateCfg(t, "lint-fix", 1, "true", "test -f fixed", "sleep 5")
+	cfg = strings.Replace(cfg, "verify: 1m", "verify: 300ms", 1)
+	if !strings.Contains(cfg, "verify: 300ms") {
+		t.Fatal("fixture has no timeouts.verify: 1m to shorten")
+	}
+	h := newHarnessFiles(t, cfg, nil, gateFiles("lint-fix", lintFixRecipe))
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status == runstore.StatusInfraError {
+		t.Fatalf("a fix timeout was treated as infra_error: %+v", rec)
+	}
+	if rec.Gate != "" {
+		t.Fatalf("gate = %q, want neither clean nor fixed (red)", rec.Gate)
+	}
+	if lastCommitMsg(t, h.remote, "fugaro/"+runID) == "fugaro: autofix (commands.fix)" {
+		t.Fatal("a timed-out fix's changes were committed")
+	}
+	if len(h.agent.calls) == 0 {
+		t.Fatal("a timed-out fix never reached implement")
+	}
+	if p := h.agent.calls[0].Prompt; !strings.Contains(p, "commands.fix timed out") {
+		t.Fatalf("implement prompt = %q", p)
 	}
 }

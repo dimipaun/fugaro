@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/followup"
+	"github.com/dimipaun/fugaro/internal/verify"
 )
 
 // PromptData fills the run contract in the system prompt.
@@ -37,7 +38,7 @@ func SystemPrompt(d PromptData, instructions string) string {
 		"",
 		"Rules for this run:",
 		fmt.Sprintf("- You are on branch %s; the pull request will target %s. Commit your work to this branch with clear messages and do not switch branches. You do not need to push or open the pull request: Fugaro does both. Never create, edit, convert or comment on pull requests (with `gh`, an API or any other tool) and never request reviewers: Fugaro owns the pull request, and a pull request you open can notify people before the work is verified.", d.Branch, d.Base),
-		"- Build and test only through `fugaro verify build` and `fugaro verify test`. They run this repository's configured commands and record the results. If a test failure looks flaky, run `fugaro verify test --rerun-failed`: tests that pass on the rerun are recorded as flaky.",
+		"- Build, test and lint only through `fugaro verify build`, `fugaro verify test` and `fugaro verify lint`. They run this repository's configured commands and record the results. If a test failure looks flaky, run `fugaro verify test --rerun-failed`: tests that pass on the rerun are recorded as flaky.",
 		"- The pull request is marked ready for review only if your final commit has a passing `fugaro verify test` run with a clean working tree. Commit first, then verify.",
 		"- Never end your turn to wait for anything: this run is headless and ends the moment you stop, so pending background commands, notifications and test runs are lost and nothing wakes you later. Run builds and tests in the foreground (`fugaro verify test` blocks until done) and keep working until the result is in before you finish.",
 	}
@@ -84,12 +85,18 @@ func ReviewPrompt(review, promptFile, base string) string {
 func GatePrompt(task string, g gateResult) string {
 	var b strings.Builder
 	b.WriteString(task)
+	if g.FixProblem != "" {
+		fmt.Fprintf(&b, "\n\nThe check gate's autofix did not finish: %s. Fix it yourself, then commit.", g.FixProblem)
+	}
 	for i, f := range g.Failures {
 		var tail string
 		if i < len(g.Tails) {
 			tail = g.Tails[i]
 		}
 		fmt.Fprintf(&b, "\n\nThe check gate ran before you started and found a failure: %s\n\nuntrusted output of commands.%s:\n\n%s", f.Summary(), f.Kind, gateBlock(tail))
+		if f.Kind == verify.KindLint {
+			b.WriteString("\nOnce you've fixed it, you can check with `fugaro verify lint` before committing.")
+		}
 	}
 	return b.String()
 }
