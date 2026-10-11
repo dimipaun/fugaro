@@ -11,7 +11,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 )
 
 func readDoc(t *testing.T, path string) string {
@@ -88,34 +87,129 @@ func docFlagToken(f string) string {
 	return strings.TrimRight(name, "-")
 }
 
-// TestBaseImageDocFlagsAreReal: every --flag docs/base-image.md and
-// docs/base-image-migration.md name for fugaro itself (not another tool
-// such as gradlew or playwright) exists on at least one of init, image
-// build or image render. A renamed flag on either side -- the doc's text
-// or the command's own definition -- drops out of this union and fails.
-// Not a tool this test owns: a flag that exists on the WRONG one of the
-// three commands (e.g. --base on render instead of build) would still
-// pass; distinguishing that would need per-sentence command binding, which
-// the docs' prose (flags and command names interleaved in one paragraph)
-// makes fragile to do reliably. The two docs are short enough that this
-// was checked by hand instead (see the PR body).
-func TestBaseImageDocFlagsAreReal(t *testing.T) {
-	union := map[string]bool{}
-	for _, cmd := range []*cobra.Command{newInitCmd(), newImageBuildCmd(), newImageRenderCmd()} {
-		cmd.Flags().VisitAll(func(f *pflag.Flag) { union[f.Name] = true })
-	}
-	// Not fugaro's own flags: other tools these docs also quote.
-	notFugaro := map[string]bool{"version": true, "no-daemon": true, "with-deps": true}
-	for _, path := range []string{"docs/base-image.md", "docs/base-image-migration.md"} {
+// trackedDocCommands maps the exact doc phrase of a base-image-related
+// fugaro command to the cobra command it names, for TestBaseImageDocCommandFlagsAreReal.
+var trackedDocCommands = map[string]func() *cobra.Command{
+	"fugaro init":          newInitCmd,
+	"fugaro image build":   newImageBuildCmd,
+	"fugaro image render":  newImageRenderCmd,
+	"fugaro image refresh": newImageRefreshCmd,
+}
+
+// mustBeAbsentFlags lists, per tracked command phrase, flag names a doc may
+// mention while saying the command does NOT have them (a documented
+// negative, such as gcp-setup.md and release.md's "there is still no --json
+// or --plan-only" about fugaro image refresh): checked for absence, the
+// opposite of every other flag this test finds.
+var mustBeAbsentFlags = map[string]map[string]bool{
+	"fugaro image refresh": {"json": true, "plan-only": true},
+}
+
+// commandBoundaryRE finds every "fugaro <subcommand>" mention in a doc --
+// every real top-level fugaro command (root.go's AddCommand list) and every
+// "image" subcommand, not just the four trackedDocCommands names -- so a
+// tracked command's flag window stops at the next command's own mention
+// rather than absorbing its flags too. This repo's docs often name several
+// commands in one long paragraph or bullet (gcp-setup.md especially), so
+// without this a flag of, say, "fugaro doctor" right after an aside about
+// "fugaro init" in the same sentence would be wrongly checked against init.
+// "runs" must precede "run" in the alternation: Go's regexp alternation is
+// leftmost-first, not longest-match, so the shorter alternative would win
+// and leave a dangling "s" otherwise.
+var commandBoundaryRE = regexp.MustCompile(`fugaro (image (?:build|render|refresh|check|gate|record|status|selftest|git-credential)|version|validate|config|verify|exec|image|runs|run|ls|logs|diagnose|cancel|secrets|init|budget|watch|report|update-skills|upgrade|doctor)\b`)
+
+// otherToolBoundaryRE closes a tracked command's flag window at the next
+// mention of another real CLI this repo's docs quote flags of (gcloud,
+// Docker, npm/npx, Gradle, Playwright, git, Homebrew): without it, e.g.
+// gcp-setup.md's "gcloud scheduler jobs list --location ..." right after an
+// aside about fugaro init, with no further "fugaro X" mention in between,
+// would attribute gcloud's --location to init.
+var otherToolBoundaryRE = regexp.MustCompile(`\b(?:gcloud|docker|npx|npm|gradlew|playwright|git|brew|go)\b`)
+
+// commandFlagExceptions lists, per (document, command phrase), a flag name
+// that belongs to a DIFFERENT command mentioned in the same sentence, where
+// neither commandBoundaryRE nor otherToolBoundaryRE finds a mention to
+// anchor a fresh segment on before the flag appears. Each entry is a
+// specific, audited case, not a blanket skip.
+var commandFlagExceptions = map[string]map[string]map[string]bool{
+	"docs/release.md": {
+		// "...rebuild it with `fugaro image build --repo ... --workflow
+		// ...`. `--yes` confirms every step unattended... there is still
+		// no `--json` or `--plan-only`." -- yes/json/plan-only here
+		// describe fugaro image refresh (the paragraph's actual subject,
+		// named two sentences earlier), not this image build aside; no
+		// "fugaro image refresh" mention recurs between them for the
+		// boundary regex to reopen on.
+		"fugaro image build": {"yes": true, "json": true, "plan-only": true},
+	},
+	"docs/gcp-setup.md": {
+		// "Upgrading: fugaro upgrade. ... then runs the cloud step... The
+		// cloud step is `fugaro image refresh` for that repository. `--yes`
+		// confirms every cloud step...; `--local` skips the cloud step;
+		// `--check` writes nothing..." -- yes/local/check here are
+		// fugaro upgrade's own flags (it names fugaro image refresh only
+		// to say what its cloud step runs); no "fugaro upgrade" mention
+		// recurs before them. yes is real on refresh too, so only the two
+		// that are not need the exception.
+		"fugaro image refresh": {"local": true, "check": true,
+			// "Moving a repository... (2) The base step copies this
+			// release's base image of each selected workflow's kind as
+			// `init --base` does..." -- init's own flag, named without
+			// repeating "fugaro" (already established at the top of the
+			// same bullet).
+			"base": true},
+	},
+}
+
+// TestBaseImageDocCommandFlagsAreReal: every --flag token that follows a
+// mention of fugaro init, image build, image render or image refresh in
+// docs/base-image.md, docs/base-image-migration.md, docs/gcp-setup.md,
+// docs/release.md, docs/dogfooding.md and README.md -- up to the next
+// mention of ANY fugaro command or other CLI, or the end of the line -- is
+// checked with Flags().Lookup against THAT command's real cobra flag set,
+// not a union of the four. A flag renamed on either side (the doc's text or
+// the command's own definition), or one attributed to the wrong command by
+// name, fails.
+func TestBaseImageDocCommandFlagsAreReal(t *testing.T) {
+	for _, path := range []string{
+		"docs/base-image.md", "docs/base-image-migration.md", "docs/gcp-setup.md",
+		"docs/release.md", "docs/dogfooding.md", "README.md",
+	} {
 		doc := readDoc(t, path)
 		for _, line := range strings.Split(doc, "\n") {
-			for _, f := range strings.Fields(line) {
-				name := docFlagToken(f)
-				if name == "" || notFugaro[name] {
-					continue
+			var bounds [][2]int
+			for _, b := range commandBoundaryRE.FindAllStringIndex(line, -1) {
+				bounds = append(bounds, [2]int{b[0], b[1]})
+			}
+			for _, b := range otherToolBoundaryRE.FindAllStringIndex(line, -1) {
+				bounds = append(bounds, [2]int{b[0], b[1]})
+			}
+			slices.SortFunc(bounds, func(a, b [2]int) int { return a[0] - b[0] })
+			for i, b := range bounds {
+				phrase := line[b[0]:b[1]]
+				newCmd, tracked := trackedDocCommands[phrase]
+				if !tracked {
+					continue // a real command (fugaro's or another tool's), but not one this test owns
 				}
-				if !union[name] {
-					t.Errorf("%s: --%s is not a flag of fugaro init, image build or image render", path, name)
+				segEnd := len(line)
+				if i+1 < len(bounds) {
+					segEnd = bounds[i+1][0]
+				}
+				seg := line[b[1]:segEnd]
+				cmd := newCmd()
+				except := commandFlagExceptions[path][phrase]
+				absent := mustBeAbsentFlags[phrase]
+				for _, f := range strings.Fields(seg) {
+					name := docFlagToken(f)
+					if name == "" || except[name] {
+						continue
+					}
+					switch exists := cmd.Flags().Lookup(name) != nil; {
+					case absent[name] && exists:
+						t.Errorf("%s: %q documents --%s as absent, but it exists (segment: %q)", path, phrase, name, strings.TrimSpace(seg))
+					case !absent[name] && !exists:
+						t.Errorf("%s: %q has no flag --%s (segment: %q)", path, phrase, name, strings.TrimSpace(seg))
+					}
 				}
 			}
 		}
@@ -189,6 +283,70 @@ func TestMigrationDocCitationIsExactAndSectioned(t *testing.T) {
 	for _, want := range []string{"## From `go`", "image.tools"} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("%s lacks %q, the section this refusal (base: go, image.tools) should point a reader at", path, want)
+		}
+	}
+}
+
+// migrationDocCitationRE finds every "(docs/....md)" citation in a chunk of
+// text, the shape every refusal message in design/base-image.md section 10
+// uses to name the migration doc.
+var migrationDocCitationRE = regexp.MustCompile(`\(docs/[a-zA-Z0-9/_.-]+\.md\)`)
+
+// migrationRefusalSections is every removed-setting refusal design section
+// 10 describes (D2, the hard cut), and the docs/base-image-migration.md
+// content each one should point a reader at. Task 17 (the plan's task that
+// implements these refusals for base:, image.node and base_images) is not
+// merged on this branch (internal/config/image.go only refuses image.tools
+// today; grep MigrationDoc there to confirm if this ever changes), so these
+// are read from the design doc's own canonical message list -- "the doc's
+// own list" -- rather than triggered through config.Parse like
+// TestMigrationDocCitationIsExactAndSectioned's single, already-real case.
+var migrationRefusalSections = []struct {
+	name     string   // the removed setting or value this refusal is about
+	sections []string // substrings docs/base-image-migration.md must carry
+}{
+	{"base: go", []string{"## From `go`"}},
+	{"base: web-node", []string{"## From `web-node`"}},
+	{"base: java-services", []string{"## From `java-services`"}},
+	{"image.node", []string{"image.node` moves to `mise.toml`"}},
+	{"image.jdk", []string{"## `image.jdk` and other removed settings"}},
+	{"a legacy base_images key", []string{"base_images.go", "base_images.web-node", "base_images.java-services", "base_images.base"}},
+	{"a legacy FROM in a project Dockerfile", []string{"FROM ghcr.io/dimipaun/fugaro-web-node", "${FUGARO_BASE}"}},
+}
+
+// TestDesignRefusalsCiteTheExactMigrationDocAndItsSections covers every
+// removed-base-setting refusal design/base-image.md section 10 (D2, the
+// hard cut) describes, not just the one config.Parse can trigger today:
+// every "(docs/....md)" citation in that section must name exactly
+// config.MigrationDoc (not merely an existing file), and
+// docs/base-image-migration.md must carry the section each refusal is
+// about. A section 10 bullet whose citation drifted to another doc, or
+// whose heading the migration doc dropped or renamed, fails here.
+func TestDesignRefusalsCiteTheExactMigrationDocAndItsSections(t *testing.T) {
+	design := readDoc(t, "docs/design/base-image.md")
+	start := strings.Index(design, "## 10. Migration: a hard cut")
+	end := strings.Index(design, "## 11. Bring your own image")
+	if start < 0 || end < 0 || end <= start {
+		t.Fatal("docs/design/base-image.md's migration section (## 10 ... ## 11) was renamed or reordered; update this test's markers")
+	}
+	section := design[start:end]
+	cites := migrationDocCitationRE.FindAllString(section, -1)
+	if len(cites) == 0 {
+		t.Fatal("design/base-image.md section 10 names no (docs/....md) citation to check")
+	}
+	want := "(" + config.MigrationDoc + ")"
+	for _, c := range cites {
+		if c != want {
+			t.Errorf("design/base-image.md section 10 cites %q, want %q (config.MigrationDoc)", c, want)
+		}
+	}
+
+	migration := readDoc(t, config.MigrationDoc)
+	for _, c := range migrationRefusalSections {
+		for _, want := range c.sections {
+			if !strings.Contains(migration, want) {
+				t.Errorf("%s lacks %q, the section the %s refusal (design section 10) should point a reader at", config.MigrationDoc, want, c.name)
+			}
 		}
 	}
 }
