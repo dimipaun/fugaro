@@ -483,6 +483,10 @@ func TestRelayOnToolNeverRepeatsTheRawCommand(t *testing.T) {
 		{"ANSI-C quoting with an escaped quote", "PW=$'x\\' hunter2 more' ls", "tool Bash"},
 		{"a backtick substitution", "PW=`echo hunter2 x` psql", "tool Bash"},
 		{"a substitution after a plain command is refused too (fail safe)", "go test $(go list ./...)", "tool Bash"},
+		{"process substitution in an assignment", "VAR=<(echo hunter2 ) cmd", "tool Bash"},
+		{"output process substitution in an assignment", "A=>(cat hunter2 ) ls", "tool Bash"},
+		{"legacy arithmetic expansion", "A=$[ hunter2 ] ls", "tool Bash"},
+		{"a backslash-newline splitting a command substitution", "A=$\\\n(echo hunter2 ) ls", "tool Bash"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer

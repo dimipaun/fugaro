@@ -376,7 +376,7 @@ func splitShellWords(command string) []string {
 
 // shellExpansionMarkers are the constructs splitShellWords cannot group, so
 // a command containing one is not summarised at all (see safeBashSummary).
-var shellExpansionMarkers = []string{"$(", "${", "$'", "`", "=("}
+var shellExpansionMarkers = []string{"$(", "${", "$'", "`", "=(", "<(", ">(", "$[", "\\\n", "\\\r"}
 
 // safeBashSummary is argv0 (reduced through safeArgv0) and, only when it is
 // a known dispatcher and the next word is one of its allowlisted
