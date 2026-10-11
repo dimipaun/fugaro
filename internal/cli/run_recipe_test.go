@@ -147,6 +147,7 @@ func TestRunRecipeImageNamesTheImplicitBaseKind(t *testing.T) {
 // refused "has no build record".
 func TestRunClonedWorkflowWithRecipeLaunchesWithNoBuildRecord(t *testing.T) {
 	f := newCloudFixture(t)
+	f.appendConfig(t, "base_images: {base: ghcr.io/dimipaun/fugaro-base:0.7.0}\n")
 	testutil.IsolateGit(t)
 	other := mustSlug("github", "acme/other")
 	f.run.AddJob(gcp.JobName(other, "svc"), "2", "4Gi")
@@ -161,6 +162,32 @@ func TestRunClonedWorkflowWithRecipeLaunchesWithNoBuildRecord(t *testing.T) {
 	}
 	if r := readSpecOf(t, f, other, "20261008-100000-abcd").Recipe; r == nil || r.Name != "claude-solo" {
 		t.Fatalf("recipe = %+v", r)
+	}
+}
+
+// TestRunClonedWorkflowRefusedBelowCloneSince (review finding 1, HIGH): a
+// checkout: clone workflow is refused on a base image that predates
+// cloneSince even when it uses neither a recipe nor a project layer. The
+// floor plan Task 17's runner support needs applies unconditionally,
+// because nothing else here checks that base_images.base is actually that
+// recent: fugaro-base could first be published from an older release, or
+// --image-source could mirror one.
+func TestRunClonedWorkflowRefusedBelowCloneSince(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, "base_images: {base: ghcr.io/dimipaun/fugaro-base:0.6.0}\n")
+	testutil.IsolateGit(t)
+	other := mustSlug("github", "acme/other")
+	f.run.AddJob(gcp.JobName(other, "svc"), "2", "4Gi")
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nworkflows:\n" +
+		"  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"})
+	t.Chdir(dir)
+	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "how to provision a blobless clone (FUGARO_CHECKOUT) (fugaro 0.7.0 or later)") ||
+		!strings.Contains(err.Error(), "is ghcr.io/dimipaun/fugaro-base:0.6.0, release 0.6.0") {
+		t.Fatalf("err = %v", err)
 	}
 }
 

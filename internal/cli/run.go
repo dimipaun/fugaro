@@ -251,12 +251,28 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		// checkRecipeImage and checkImageSince judge a workflow's derived
 		// image by its build record, which a checkout: clone workflow never
 		// has (it runs the installation's base image directly, not a
-		// per-repository build): refusing it there would point at fugaro
-		// image refresh, which never writes one either, a permanent dead
-		// end. Skipping is safe: checkout: clone is itself a key no runner
-		// before 0.7.0 understands, so any job able to run one already
-		// postdates recipesSince (0.5.0) and layeredSince (0.6.0).
-		if !clone {
+		// per-repository build): checkCloneImageSince judges base_images.base
+		// itself instead. cloneSince is unconditional: a clone workflow needs
+		// the runner's own blobless-clone bootstrap (plan Task 17,
+		// FUGARO_CHECKOUT) whether or not it uses a recipe or a project
+		// layer, and nothing else here enforces that base_images.base is
+		// actually that recent: fugaro-base could first be published from an
+		// older release, or --image-source could mirror one.
+		if clone {
+			if err := checkCloneImageSince(env.lc, spec, cloneSince, "this checkout: clone workflow", "how to provision a blobless clone (FUGARO_CHECKOUT)", "", cmd.ErrOrStderr()); err != nil {
+				return err
+			}
+			if needsRecipeImage(spec, agentRecipe) {
+				if err := checkCloneRecipeImage(env.lc, spec, cmd.ErrOrStderr()); err != nil {
+					return err
+				}
+			}
+			if spec.ProjectLayer != nil {
+				if err := checkCloneImageSince(env.lc, spec, layeredSince, "the project layer", "the project layer", "", cmd.ErrOrStderr()); err != nil {
+					return err
+				}
+			}
+		} else {
 			if needsRecipeImage(spec, agentRecipe) {
 				if err := checkRecipeImage(ctx, env, slug, spec, kind, cmd.ErrOrStderr()); err != nil {
 					return err
