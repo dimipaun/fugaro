@@ -10,6 +10,7 @@ import (
 
 	secretmanager "google.golang.org/api/secretmanager/v1"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 )
 
@@ -105,12 +106,25 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 				reasons = append(reasons, gate{MissingSecret, fmt.Sprintf("secret %s has no version: fugaro secrets set %s --repo %s", logical, logical, spec.Name)})
 			}
 		}
-		built, err := hasLatest(ctx, c, tg, spec, ws.Image)
-		if err != nil {
-			return RepoSpec{}, nil, err
-		}
-		if !built {
-			reasons = append(reasons, gate{MissingImage, fmt.Sprintf("image not built yet: fugaro image build --repo %s --workflow %s", spec.Name, name)})
+		var built bool
+		if ws.Checkout == config.CheckoutClone {
+			// A clone workflow's image is the installation's base
+			// (base_images.base), never a tag in the repository's own
+			// registry: there is nothing for hasLatest to check, and the
+			// job is ready as soon as the local config names one.
+			built = ws.Image != ""
+			if !built {
+				reasons = append(reasons, gate{MissingImage, fmt.Sprintf("the local config has no base_images.%s, which workflow %s's checkout: clone job runs: fugaro init --base %s", config.BaseKind, name, config.BaseKind)})
+			}
+		} else {
+			b, err := hasLatest(ctx, c, tg, spec, ws.Image)
+			if err != nil {
+				return RepoSpec{}, nil, err
+			}
+			built = b
+			if !built {
+				reasons = append(reasons, gate{MissingImage, fmt.Sprintf("image not built yet: fugaro image build --repo %s --workflow %s", spec.Name, name)})
+			}
 		}
 		current, exists := ex.Jobs[name]
 		switch {
@@ -120,8 +134,12 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 				if current == "" {
 					// Nothing live to keep, and the spec's image doesn't
 					// exist: either would leave the job without an image.
-					return RepoSpec{}, nil, userErr("Cloud Run job %s exists but has no container image, and %s is not built yet; build it (fugaro image build --repo %s --workflow %s) or fix the job, then run fugaro init --repo again",
-						ws.Job, ws.Image, spec.Name, name)
+					fix := fmt.Sprintf("build it (fugaro image build --repo %s --workflow %s)", spec.Name, name)
+					if ws.Checkout == config.CheckoutClone {
+						fix = fmt.Sprintf("set the local config's base_images.%s (fugaro init --base %s)", config.BaseKind, config.BaseKind)
+					}
+					return RepoSpec{}, nil, userErr("Cloud Run job %s exists but has no container image, and %s is not built yet; %s or fix the job, then run fugaro init --repo again",
+						ws.Job, ws.Image, fix)
 				}
 				ws.Image = current
 			}

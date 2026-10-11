@@ -154,6 +154,10 @@ type WorkflowSpec struct {
 	// LegacyImage is the M4 image path in the local config's legacy
 	// registry, untagged as M4 printed it; empty without one.
 	LegacyImage string `json:"-"`
+	// Checkout is the workflow's config.Checkout (baked or clone): clone
+	// runs the installation's base image directly (Image is base_images.base,
+	// not a derived image), with no per-repository build or daily check.
+	Checkout string `json:"-"`
 }
 
 // Registry is the repository's own image registry.
@@ -549,10 +553,19 @@ func (c *repoCtx) workflow(name string) (WorkflowSpec, error) {
 	}
 	lc, slug := c.lc, c.slug
 	saID := gcp.ServiceAccountID(slug, name)
+	// checkout: clone runs the installation's base image directly (design
+	// generic-tool.md §2, G3): there is no per-repository derived image, so
+	// the job's image is base_images.base, not a :latest tag in the
+	// repository's own registry.
+	image := gcp.ImageName(c.registryPath(), slug, name) + ":latest"
+	if w.Checkout == config.CheckoutClone {
+		image = lc.BaseImage(config.BaseKind)
+	}
 	ws := WorkflowSpec{
 		Job:            gcp.JobName(slug, name),
 		ServiceAccount: ServiceAccount{AccountID: saID, DisplayName: gcp.JobSADisplayName(slug, name)},
-		Image:          gcp.ImageName(c.registryPath(), slug, name) + ":latest",
+		Image:          image,
+		Checkout:       w.Checkout,
 		CPU:            strconv.Itoa(w.Resources.CPU),
 		Memory:         w.Resources.Memory,
 		TaskTimeoutS:   int((w.Timeouts.Total.Duration + backend.TaskTimeoutSlack) / time.Second),
@@ -731,7 +744,9 @@ func Repo(in Inputs) (RepoSpec, error) {
 		rs.Workflows[name] = ws
 		maps.Copy(rs.Secrets, ws.SecretIDs)
 		rs.BuildSecrets = append(rs.BuildSecrets, ws.BuildSecrets...)
-		if in.Cfg.Workflows[name].Rebuild.Defaults().Check != "off" {
+		// A checkout: clone workflow has no derived image to rebuild, so the
+		// daily check never covers it, whatever its rebuild.check says.
+		if ws.Checkout != config.CheckoutClone && in.Cfg.Workflows[name].Rebuild.Defaults().Check != "off" {
 			checked = append(checked, name)
 		}
 	}

@@ -851,6 +851,63 @@ func TestReadinessWaitsForImageAndSecrets(t *testing.T) {
 	}
 }
 
+// TestReadinessCloneDeploysWithoutAnImageBuild (design generic-tool.md §2):
+// a checkout: clone workflow's job is ready as soon as its secrets have
+// versions, with no Artifact Registry "latest" tag to wait for — its image
+// is the installation's base, never a tag in the repository's own registry.
+// Without one (an empty base_images.base), it is reported missing instead
+// of making Readiness fail outright.
+//
+// Mutation (run, restore): in Readiness, change the checkout: clone branch's
+// `built = ws.Image != ""` to instead call hasLatest unconditionally (as the
+// non-clone branch does) — this test then fails with a *UserError ("is not
+// <registry>/<package>:latest in the repository's registry"), because
+// base_images.base is never a tag in the repository's own registry.
+func TestReadinessCloneDeploysWithoutAnImageBuild(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	rs, err := Repo(cloneInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.gcs.AddBucket(rs.Installation.RunsBucket, testProjectNumber, managed)
+	for logical, id := range rs.Secrets {
+		f.sm.Seed(id, with(managed, gcp.LabelRepo, rs.Label, gcp.LabelSecret, logical), []byte("v"))
+	}
+	_, ex, err := DiscoverRepo(ctx, f.c, rs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, missing, err := Readiness(ctx, f.c, rs, ex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Workflows["web"].DeployJob {
+		t.Errorf("web (checkout: clone) not ready: missing = %v", missing)
+	}
+	for _, m := range missing {
+		if m.Workflow == "web" {
+			t.Errorf("web (checkout: clone) has a missing reason: %v", m)
+		}
+	}
+	// Without a base image, web is reported missing, not a hard failure.
+	rs.Workflows = maps.Clone(rs.Workflows)
+	w := rs.Workflows["web"]
+	w.Image = ""
+	rs.Workflows["web"] = w
+	_, ex, err = DiscoverRepo(ctx, f.c, rs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, missing, err = Readiness(ctx, f.c, rs, ex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(missing, func(m Missing) bool { return m.Workflow == "web" && m.Kind == MissingImage }) {
+		t.Errorf("no MissingImage for web without base_images.base: %v", missing)
+	}
+}
+
 // The check job mounts the provider credential at latest, which Cloud Run
 // checks when it creates the job, so like a workflow job it waits until
 // the credential has a version; the invoker grant and the Scheduler job

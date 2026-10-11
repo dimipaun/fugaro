@@ -146,6 +146,41 @@ func TestImageBuildDevBuildNeedsBase(t *testing.T) {
 	}
 }
 
+// cloneWorkflowYAML is cliMinimalYAML with app switched to checkout: clone.
+var cloneWorkflowYAML = strings.Replace(cliMinimalYAML, "base: web-node, ", "checkout: clone, ", 1)
+
+// TestImageBuildRefusesClone: a checkout: clone workflow has no
+// per-repository image to build, --local or on Cloud Build.
+//
+// Mutations (run, restore): (1) in runImageBuild, remove the `if
+// cfg.Workflows[name].Checkout == config.CheckoutClone` guard — the --local
+// case then fails differently ("fugaro dev is a development build with no
+// published base image", from image.BaseRef("", Version), not the
+// clone-specific message). (2) the same removal in runImageBuildCloud — the
+// cloud case fails the same way instead of refusing with the clone message.
+func TestImageBuildRefusesClone(t *testing.T) {
+	const want = "this workflow runs the base image (checkout: clone): there is nothing to build"
+	checkoutWith(t, map[string]string{"fugaro.yaml": cloneWorkflowYAML})
+	if _, _, err := execute(t, "image", "build", "--local"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), want) {
+		t.Fatalf("--local: exit %d, err %v", ExitCode(err), err)
+	}
+
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": strings.Replace(bitbucketYAML, "base: web-node,", "checkout: clone,", 1)})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://bitbucket.org/acme/app.git")
+	newCloudFixture(t)
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(string(data), "provider: github", "provider: bitbucket", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := executeBuild(t, "image", "build"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), want) {
+		t.Fatalf("cloud: exit %d, err %v", ExitCode(err), err)
+	}
+}
+
 func TestImageBuildReportsConfigProblems(t *testing.T) {
 	files := npmFiles()
 	files["fugaro.yaml"] = strings.Replace(cliMinimalYAML, "github", "gitlab", 1)

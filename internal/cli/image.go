@@ -117,6 +117,9 @@ func runImageBuild(cmd *cobra.Command, o imageBuildOptions) error {
 	if err != nil {
 		return err
 	}
+	if cfg.Workflows[name].Checkout == config.CheckoutClone {
+		return &ExitError{Code: ExitUserError, Err: errors.New("this workflow runs the base image (checkout: clone): there is nothing to build")}
+	}
 	base := o.base
 	if base == "" {
 		if base, err = image.BaseRef(cfg.Workflows[name].Base, Version); err != nil {
@@ -178,6 +181,9 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	_, cfg, name, err := loadCheckoutWorkflow(ctx, o.workflow, lc, layerOptions{})
 	if err != nil {
 		return err
+	}
+	if cfg.Workflows[name].Checkout == config.CheckoutClone {
+		return userErr("this workflow runs the base image (checkout: clone): there is nothing to build")
 	}
 	origin, err := originRepo(ctx)
 	if err != nil {

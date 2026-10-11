@@ -506,6 +506,79 @@ func TestNoCheckWhenAllOff(t *testing.T) {
 	}
 }
 
+const cloneYAML = `version: 1
+project: aurora
+git: { provider: github, base_branch: main }
+agent: { auth: vertex }
+workflows:
+  web:
+    checkout: clone
+    commands: { build: npm run build, test: npm test }
+  api:
+    base: web-node
+    commands: { build: ./gradlew assemble, test: ./gradlew test }
+`
+
+// cloneInputs is a GitHub repository with one checkout: clone workflow
+// (web) and one ordinarily-built workflow (api, checked daily).
+func cloneInputs(t *testing.T) Inputs {
+	t.Helper()
+	lc := parseLC(t, `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry_host: us-east5-docker.pkg.dev/proj-1234
+base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-0123abc, base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
+repos:
+  acme/webapp: { provider: github, base_branch: main, workflows: [web, api], github_app_id: "123456" }
+`)
+	return Inputs{LC: lc, Repo: "acme/webapp", Cfg: parseCfg(t, []byte(cloneYAML)), Installation: installationOutputs()}
+}
+
+// TestSpecCloneWorkflowRunsTheBase (design generic-tool.md §2, G3): a
+// checkout: clone workflow's job image is the local config's
+// base_images.base, not a derived image in the repository's own registry,
+// and the daily check never lists it, though it still checks a baked
+// sibling.
+//
+// Mutations (run, restore): (1) in workflow(), remove the `if w.Checkout ==
+// config.CheckoutClone` branch so Image is always the derived
+// ":latest" tag — the image assertion below fails (it would equal
+// ".../acme-webapp-<hash>/web:latest", not the base_images.base ref). (2) in
+// Repo()'s checked loop, remove the `ws.Checkout != config.CheckoutClone &&`
+// clause — web (no base:, so kind "") then joins checked too, and Repo
+// itself fails with "the local config has no base_images entry for ,
+// which the daily image check ... needs" (checked's existing kind lookup
+// predates the base kind, base-image plan Task 13) before this test's own
+// assertions run; either way the test fails.
+func TestSpecCloneWorkflowRunsTheBase(t *testing.T) {
+	in := cloneInputs(t)
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := in.LC.BaseImage(config.BaseKind)
+	if want == "" {
+		t.Fatal("fixture bug: no base_images.base")
+	}
+	if got := rs.Workflows["web"].Image; got != want {
+		t.Errorf("web's image = %q, want base_images.base %q", got, want)
+	}
+	if rs.Workflows["web"].Checkout != config.CheckoutClone {
+		t.Errorf("web's Checkout = %q, want %q", rs.Workflows["web"].Checkout, config.CheckoutClone)
+	}
+	if rs.Check == nil {
+		t.Fatal("no check job, want one covering api")
+	}
+	if slices.Contains(rs.Check.Workflows, "web") {
+		t.Errorf("check covers web, a checkout: clone workflow: %v", rs.Check.Workflows)
+	}
+	if !slices.Contains(rs.Check.Workflows, "api") {
+		t.Errorf("check does not cover api: %v", rs.Check.Workflows)
+	}
+}
+
 func TestSpecRefuses(t *testing.T) {
 	var ue *UserError
 	for name, mutate := range map[string]func(*Inputs){
