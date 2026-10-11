@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -374,17 +375,25 @@ func (r *run) keepIsOneOfReviewed(keep int) bool {
 }
 
 // postReviewComments posts the same comment on every reviewed pull
-// request: the verdict and findings, redacted, capped at 60 KiB through
-// the existing PR-body clipper, and for a pick run (len > 1) which one to
-// keep. A posting failure is logged and recorded in the report (never the
-// structured Reviewed entry, whose Verdict is set regardless) and never
-// retried in a loop: every other pull request still gets its comment.
+// request: the verdict and findings, redacted *before* clipping (so a
+// secret that straddles the 60 KiB cut is never partly leaked by a clip
+// that lands inside it, only wholly redacted or wholly dropped), with room
+// reserved in the clip for the trailing gitprov.ReportMarker, appended only
+// after clipping — so a long finding list can never truncate the marker
+// itself away, which would misattribute the comment to a later run that
+// happens to quote it (gitprov.FugaroRun takes the last marker in a body)
+// — and for a pick run (len > 1) which one to keep. A posting failure is
+// logged and recorded in the report (never the structured Reviewed entry,
+// whose Verdict is set regardless) and never retried in a loop: every
+// other pull request still gets its comment.
 func (r *run) postReviewComments(ctx context.Context, v Verdict) {
 	nums := make([]int, len(r.reviewHeads))
 	for i, h := range r.reviewHeads {
 		nums[i] = h.Number
 	}
-	body := agent.Redact(clipBody(ReviewComment(r.rec.Recipe.Name, r.rec.RunID, v, nums), maxBodyBytes), r.secretList())
+	marker := "\n" + gitprov.ReportMarker(r.rec.RunID) + "\n"
+	content := agent.Redact(ReviewComment(r.rec.Recipe.Name, v, nums), r.secretList())
+	body := clipBody(content, maxBodyBytes-len(marker)) + marker
 	reviewed := make([]runstore.ReviewedPR, 0, len(r.reviewHeads))
 	for _, h := range r.reviewHeads {
 		reviewed = append(reviewed, runstore.ReviewedPR{Number: h.Number, SHA: h.SHA, Verdict: v.Verdict})
@@ -397,12 +406,17 @@ func (r *run) postReviewComments(ctx context.Context, v Verdict) {
 }
 
 // ReviewComment is review mode's comment body (design generic-tool §3.6,
-// G12): the header names the recipe and the verdict, a pick run (len(prs)
-// > 1) also says which pull request to keep, the findings follow as a
-// list, and the run ID closes it (gitprov.ReportMarker, the same marker
-// every other Fugaro comment carries, so a later run can tell this one
-// apart).
-func ReviewComment(recipeName, runID string, v Verdict, prs []int) string {
+// G12), without the trailing run marker (postReviewComments appends
+// gitprov.ReportMarker itself, after redacting and clipping, so clipping
+// can reserve it room): the header names the recipe and the verdict (both
+// Fugaro's own text, never the model's), a pick run (len(prs) > 1) also
+// says which pull request to keep, and the findings follow as a list. Each
+// finding's own free text (Severity, File, Summary) comes from the
+// reviewed pull request's own model turn — as untrusted as the diff it
+// read, even more so for a fork — so it is neutralised (neutralizeFinding)
+// before being pasted into a comment Fugaro posts on the repository's
+// behalf.
+func ReviewComment(recipeName string, v Verdict, prs []int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Fugaro review (%s): %s\n", recipeName, v.Verdict)
 	if len(prs) > 1 {
@@ -418,17 +432,55 @@ func ReviewComment(recipeName, runID string, v Verdict, prs []int) string {
 		for _, f := range v.Findings {
 			b.WriteString("- ")
 			if f.Severity != "" {
-				fmt.Fprintf(&b, "[%s] ", f.Severity)
+				fmt.Fprintf(&b, "[%s] ", neutralizeFinding(f.Severity))
 			}
 			if f.File != "" {
-				fmt.Fprintf(&b, "%s: ", f.File)
+				fmt.Fprintf(&b, "%s: ", neutralizeFinding(f.File))
 			}
-			b.WriteString(f.Summary)
+			b.WriteString(neutralizeFinding(f.Summary))
 			b.WriteString("\n")
 		}
 	}
-	b.WriteString("\n" + gitprov.ReportMarker(runID) + "\n")
 	return b.String()
+}
+
+// findingHashRE, findingSchemeRE and findingFenceRE are neutralizeFinding's
+// patterns: a bare issue/pull-request autolink (#N, also inside
+// org/repo#N, since it is the bare "#" immediately before digits that
+// triggers it either way), a URL scheme that would otherwise auto-link a
+// bare or markdown-linked URL, and a run of 3 or more backticks or tildes,
+// which opens a Markdown fenced code block that would otherwise run to the
+// next matching fence or the end of the comment, swallowing (visually, in
+// the rendered comment) whatever followed it, including the real marker.
+var (
+	findingHashRE   = regexp.MustCompile(`#(\d+)`)
+	findingSchemeRE = regexp.MustCompile(`(?i)(https?)://`)
+	findingFenceRE  = regexp.MustCompile("(`{3,}|~{3,})")
+)
+
+// neutralizeFinding makes one finding field safe to paste as-is into a
+// comment Fugaro posts on a repository's behalf, without the reviewed pull
+// request's own model turn being able to use it to: @mention an arbitrary
+// person (zero-width space breaks the mention), auto-link an issue or pull
+// request of this repository or, with the org/repo#N form, another one
+// (same trick, right after the '#'), render or load HTML (an <img> tag, or
+// forge Fugaro's own "<!-- fugaro:report -->" marker, both broken by
+// escaping every '<' and '>'), turn a bare or disguised ("[text](url)")
+// link clickable (breaking the URL scheme, and Markdown-escaping the
+// bracket syntax), or open a fenced code block with no matching close
+// (breaking any run of 3+ backticks or tildes).
+func neutralizeFinding(s string) string {
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, "@", "@\u200b")
+	s = findingHashRE.ReplaceAllString(s, "#\u200b$1")
+	s = strings.ReplaceAll(s, "[", "\\[")
+	s = strings.ReplaceAll(s, "]", "\\]")
+	s = findingSchemeRE.ReplaceAllString(s, "$1\u200b://")
+	s = findingFenceRE.ReplaceAllStringFunc(s, func(m string) string {
+		return m[:1] + "\u200b" + m[1:]
+	})
+	return s
 }
 
 // reviewReport renders a review-mode run's report.md: what it reviewed and
