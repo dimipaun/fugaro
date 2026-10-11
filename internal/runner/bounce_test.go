@@ -81,6 +81,11 @@ func TestBounceStopsAtReviewRounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The full order, not just the counts: the senior round's own fix runs
+	// before the bounce-back first-line round, never after it.
+	if got := stageNames(rec); !eq(got, "implement", "review_first", "review", "fix", "review_first", "review") {
+		t.Fatalf("stages = %v", got)
+	}
 	if n := countStage(rec, "review"); n != 2 {
 		t.Fatalf("senior reviews = %d, want 2", n)
 	}
