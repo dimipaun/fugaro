@@ -27,7 +27,7 @@ A good task is bounded, checkable and needs no local-only context (a local datab
 ## 2. Confirm the target
 
 Find the defaults:
-- the repository: `--repo`, else the checkout's origin. `fugaro ls --json` shows the repositories that have runs.
+- the repository: `--repo`, else the checkout's origin. `fugaro runs ls --json` shows the repositories that have runs.
 - the workflow: `--workflow`, else the repository's only workflow. A repository with several needs one named; ask which.
 - the base branch: `--ref`, else `git.base_branch` of the configuration. The run's own branch is `fugaro/<run-id>`, and the pull request goes back to the base branch.
 
@@ -53,14 +53,14 @@ fugaro run --repo <owner/name> --workflow <name> --ref <base-branch> --run-id <i
 TASK
 ```
 
-Leave out `--repo`, `--workflow` and `--ref` only when the defaults are what the user confirmed. `--batch <name>` groups runs in `fugaro ls`, and `--total-timeout <duration>` (for example `45m`) shortens or lengthens the run's overall time limit. Use them only when the user asks.
+Leave out `--repo`, `--workflow` and `--ref` only when the defaults are what the user confirmed. `--batch <name>` groups runs in `fugaro runs ls`, and `--total-timeout <duration>` (for example `45m`) shortens or lengthens the run's overall time limit. Use them only when the user asks.
 
 `--recipe NAME` picks the task loop after implement: `default` (today's), `cheap-loop-senior` (a cheap first-line loop, then one senior review) or `claude-solo` (the coder's model also reviews), or a recipe of the repository or project (`fugaro recipes ls`). Without it the run uses `agent.recipe` from `fugaro.yaml`, else `default`; `--pr` keeps the previous run's recipe. A recipe run needs a 0.5.0 job image; if the launch is refused for that, tell the user the fix it names. An explicit `--recipe default` needs no 0.5.0 image unless `agent.recipe` could apply (the default is then carried in the task so that it wins over that key). If the project defines a recipe named `default`, every launch carries it and needs 0.5.0 images; so does a repository `default`, but the CLI sees that file only from a local checkout of the repository. Use `--recipe` only when the user asks.
 
 The JSON has `run`, `repo`, `run_id`, `branch`, `execution`, `log_url` and `status` (`launched`, or `already-launched` when this run ID was launched before). Tell the user:
 - the run (`run`), the repository and the branch
 - the log link (`log_url`), if there is one
-- how to follow it: `fugaro ls --repo <owner/name>`, `fugaro logs <run> -f` for its live output, and `fugaro watch` for the live screen (the user runs that one themselves, it is a terminal screen)
+- how to follow it: `fugaro runs ls --repo <owner/name>`, `fugaro logs <run> -f` for its live output, and `fugaro watch` for the live screen (the user runs that one themselves, it is a terminal screen)
 
 When the run ends, the pull request has a report comment. `fugaro diagnose <run>` explains a run that failed or halted.
 
@@ -74,7 +74,7 @@ The CLI exits 1 and says why, and you don't work around it. Report the message a
 | `the budget database could not be read` | The launch fails closed. Tell the user; they may retry later, or choose `--no-budget-check` themselves. |
 | `a launch of … is still in flight` | Another launch of this run ID may still be starting. Wait a few minutes, then repeat the same command. |
 | `run ID <id> already holds a different task` | You reused a run ID for another task. Choose a new ID. |
-| a message about `max_parallel` | Too many runs are active. Wait, or ask the user to look at `fugaro ls`. |
+| a message about `max_parallel` | Too many runs are active. Wait, or ask the user to look at `fugaro runs ls`. |
 | a message that a repository, workflow or `project:` is unknown or ambiguous | Ask the user which one they mean. Don't guess. |
 | anything else | Show the user the message and stop. |
 

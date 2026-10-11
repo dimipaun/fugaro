@@ -22,7 +22,7 @@ From a fresh clone of the real remote, as the person who owns the GCP project, i
 4. **`fugaro.yaml`.** This repository already has one. In another repository, run `/fugaro:setup` in your coding agent and merge its PR; Fugaro reads `fugaro.yaml` from the default branch.
 5. **`fugaro init` again** after the merge: the `repository` stage (its first image build is billable and has its own confirmation, then the job is deployed and the daily check unpaused). It asks once for the App's ID, or take `--github-app-id`.
 
-Then `fugaro run --workflow go "<task>"`, `fugaro ls`, `fugaro watch`, `fugaro logs`, `fugaro diagnose`, or the plugin's `working` skill.
+Then `fugaro run --workflow go "<task>"`, `fugaro runs ls`, `fugaro watch`, `fugaro logs`, `fugaro diagnose`, or the plugin's `working` skill.
 
 ## What a run does, and what it doesn't
 
@@ -45,7 +45,7 @@ GitHub refuses a push from the App that creates or updates a workflow file unles
 
 ## Parallel runs and `--batch`
 
-Each run has its own worker, branch and PR, so independent tasks run side by side: one `fugaro run` per piece, with a shared `--batch <name>` and a `--run-id` of its own so a repeated launch cannot start a piece twice; `fugaro ls --batch <name>` lists them and `--watch` follows them. What worked:
+Each run has its own worker, branch and PR, so independent tasks run side by side: one `fugaro run` per piece, with a shared `--batch <name>` and a `--run-id` of its own so a repeated launch cannot start a piece twice; `fugaro runs ls --batch <name>` lists them and `--watch` follows them. What worked:
 
 - **One owner per file.** Two runs that edit the same file give conflicting PRs. Settle shared names and interfaces first and put them in every task's text.
 - **Merge in dependency order**, and launch a dependent task only after its base has merged.

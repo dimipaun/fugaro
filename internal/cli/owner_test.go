@@ -59,7 +59,7 @@ func TestForgedRecordExecutionIsRefused(t *testing.T) {
 	}
 
 	// ls shows each such run as a per-row error, with a warning, and goes on.
-	out, errOut, err := execute(t, "ls", "--json", "--since", "0")
+	out, errOut, err := execute(t, "runs", "ls", "--json", "--since", "0")
 	var got lsOut
 	if err != nil || json.Unmarshal([]byte(out), &got) != nil || len(got.Runs) != 2 {
 		t.Fatalf("ls = %s, %v (%s)", out, err, errOut)
@@ -81,7 +81,7 @@ func TestLsInAnotherRegionNamesTheRunsRegion(t *testing.T) {
 	f.run.Project, f.run.Region = "proj-1234", "us-east5"
 	const id = "20260927-100000-abcd"
 	seedRun(t, f, id, "", "someone@example.com", true)
-	out, errOut, err := execute(t, "ls", "--json", "--since", "0", "--region", "us-west1")
+	out, errOut, err := execute(t, "runs", "ls", "--json", "--since", "0", "--region", "us-west1")
 	var got lsOut
 	if err != nil || json.Unmarshal([]byte(out), &got) != nil || len(got.Runs) != 1 {
 		t.Fatalf("ls = %s, %v (%s)", out, err, errOut)

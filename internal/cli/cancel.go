@@ -479,7 +479,7 @@ func printCancel(w io.Writer, r cancelResult, o *cancelOptions) error {
 	case cancelNotLaunched:
 		msg = fmt.Sprintf("%s was never launched; marked it cancelled, so fugaro run --retry refuses it", r.Run)
 	case cancelLaunching:
-		msg = fmt.Sprintf("a launch of %s is in flight; marked it cancelled, so the launch is refused or its runner stops at bootstrap; check fugaro ls", r.Run)
+		msg = fmt.Sprintf("a launch of %s is in flight; marked it cancelled, so the launch is refused or its runner stops at bootstrap; check fugaro runs ls", r.Run)
 	case cancelFinalized:
 		if r.PR != "" {
 			msg = fmt.Sprintf("finalized (draft PR %s)", r.PR)
