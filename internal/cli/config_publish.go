@@ -261,6 +261,9 @@ func executableKeyValues(out map[string]string, p config.Profile, key string) er
 	case "workflows.*.image.setup":
 		out["image.setup"] = fmt.Sprintf("%q", p.Image.Setup)
 	case "workflows.*.image.tools":
+		// fmt's %q on a map sorts its keys before formatting, so a reorder
+		// of the YAML source is never a change: only a tool added, removed,
+		// renamed or repinned changes the quoted text.
 		out["image.tools"] = fmt.Sprintf("%q", p.Image.Tools)
 	case "workflows.*.image.skip_build_scripts":
 		out["image.skip_build_scripts"] = strconv.FormatBool(p.Image.SkipBuildScripts)
