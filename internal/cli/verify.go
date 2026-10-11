@@ -13,10 +13,10 @@ import (
 func newVerifyCmd() *cobra.Command {
 	var rerun bool
 	cmd := &cobra.Command{
-		Use:       "verify build|test",
-		Short:     "Run and record this repository's build or tests (inside a Fugaro run)",
+		Use:       "verify build|test|lint",
+		Short:     "Run and record this repository's build, test or lint command (inside a Fugaro run)",
 		Args:      cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
-		ValidArgs: []string{string(verify.KindBuild), string(verify.KindTest)},
+		ValidArgs: []string{string(verify.KindBuild), string(verify.KindTest), string(verify.KindLint)},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			stateDir := os.Getenv("FUGARO_STATE_DIR")
 			if stateDir == "" {

@@ -228,6 +228,41 @@ func TestCancelFinalizedReportsThePR(t *testing.T) {
 	}
 }
 
+// TestCancelFinalizedCleanGateNeverMentionsAPR: a clean check gate (gate.go's
+// endWithoutPR) finalizes succeeded with outcome none and no PR ever opened.
+// cancel on an already-finished run like this must not tell the caller to
+// go look one up with fugaro diagnose, the way it would for a run whose PR
+// exists but isn't in result.json for some other reason.
+//
+// Mutation (drop the NoPR case in printCancel's cancelFinalized switch, so
+// it falls through to the default "check fugaro diagnose" branch): this
+// test fails.
+func TestCancelFinalizedCleanGateNeverMentionsAPR(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	exec := seedRun(t, f, id, "", "", true)
+	f.run.SetState(exec, backend.StateRunning)
+	b, _ := blob.OpenBucket(context.Background(), f.bucket)
+	defer b.Close()
+	_ = runstore.Open(b, appSlug, id).WriteRecord(context.Background(), &runstore.Record{Version: 1, RunID: id, Execution: exec,
+		Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeNone, Gate: "clean", Stage: "writeback"})
+	out, _, err := execute(t, "cancel", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r cancelResult
+	if jerr := json.Unmarshal([]byte(out), &r); jerr != nil {
+		t.Fatal(jerr)
+	}
+	if r.Status != cancelFinalized || r.PR != "" || !r.NoPR {
+		t.Fatalf("cancelResult = %+v", r)
+	}
+	plain, _, err := execute(t, "cancel", id)
+	if err != nil || !strings.Contains(plain, "finalized; no pull request was needed") || strings.Contains(plain, "diagnose") {
+		t.Fatalf("cancel = %q, %v", plain, err)
+	}
+}
+
 // entryHook runs fire synchronously right after Execution's first call
 // returns: cancelRun's entry read, before it writes the marker or starts
 // its poll loop. Tests use it to land a state change exactly where a

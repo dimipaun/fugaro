@@ -284,6 +284,7 @@ func newValidateCmd() *cobra.Command {
 				lc := selectedProjectConfig(cmd.Context())
 				rp, rw := recipeDirProblems(filepath.Dir(path), cfg)
 				problems = append(problems, rp...)
+				problems = append(problems, gateCheckProblems(filepath.Dir(path), cfg)...)
 				// The model checks judge the roles as the effective recipe
 				// leaves them.
 				ecfg := withRecipeRoles(filepath.Dir(path), cfg)

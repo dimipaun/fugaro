@@ -214,6 +214,26 @@ func (r *Repo) CommitEmpty(ctx context.Context, msg string) error {
 	return err
 }
 
+// ResetTo resets HEAD and the working tree to ref (a commit, never a
+// symbolic ref the command being discarded could itself have moved —
+// gate.go passes the commit it read before running commands.fix, not
+// "HEAD", which a fix that committed on its own would have moved out from
+// under a literal HEAD reset), discarding every change to a tracked file —
+// including any commit the discarded command made on top of ref — then
+// removes untracked files and directories (git clean -fd, never -x):
+// anything git already ignores — a warm dependency cache, a restored
+// toolchain — survives, the same guarantee CheckoutNewBranch's own clean
+// -fd gives a fresh checkout. Used when a command's output, or its own
+// history, cannot be trusted (gate.go: commands.fix timed out, failed, or
+// committed on its own).
+func (r *Repo) ResetTo(ctx context.Context, ref string) error {
+	if _, err := r.git(ctx, "reset", "--quiet", "--hard", ref); err != nil {
+		return err
+	}
+	_, err := r.git(ctx, "clean", "-fd", "--quiet")
+	return err
+}
+
 // AheadOf counts commits on HEAD that origin/<base> does not have.
 func (r *Repo) AheadOf(ctx context.Context, base string) (int, error) {
 	return r.countAhead(ctx, base, "HEAD")

@@ -24,9 +24,11 @@ import (
 type Status string
 
 const (
-	StatusRunning    Status = "running"
-	StatusSucceeded  Status = "succeeded" // a ready PR exists
-	StatusFailed     Status = "failed"    // a draft PR exists
+	StatusRunning Status = "running"
+	// StatusSucceeded is a ready PR, or (outcome none, Record.Gate "clean")
+	// a check gate that found nothing to fix, so no PR was ever needed.
+	StatusSucceeded  Status = "succeeded"
+	StatusFailed     Status = "failed" // a draft PR exists
 	StatusInfraError Status = "infra_error"
 	StatusCancelled  Status = "cancelled"
 	StatusHalted     Status = "halted" // a budget or token limit stopped the run
@@ -118,7 +120,15 @@ type Record struct {
 	Stage     string  `json:"stage"`
 	Outcome   Outcome `json:"outcome"`
 	Reason    string  `json:"reason,omitempty"`
-	Branch    string  `json:"branch,omitempty"`
+	// Gate is "clean" or "fixed" when the recipe's check step decided the
+	// run (gate.go); "" when the recipe has no check step, or it found a
+	// failure and the run went on to implement as usual.
+	Gate string `json:"gate,omitempty"`
+	// Autofix is what the check step's commands.fix did (gate.go), when the
+	// recipe's check step has autofix: true; nil otherwise. Never carries
+	// the command's own output.
+	Autofix *AutofixRecord `json:"autofix,omitempty"`
+	Branch  string         `json:"branch,omitempty"`
 	// BaseBranch is the base the run's pull request targets, the
 	// git.base_branch of the config it ran with (not the task's ref, which
 	// a first run may set to another branch). A follow-up takes it as its
@@ -267,6 +277,18 @@ type ImageInfo struct {
 	BuiltAt *time.Time `json:"built_at,omitempty"`
 	// BakedCommit is the baked checkout's HEAD when the run started.
 	BakedCommit string `json:"baked_commit"`
+}
+
+// AutofixRecord is what the check gate's commands.fix did (gate.go's
+// autofixOutcome): its exit code and whether the workflow's timeouts.verify
+// killed it before it exited on its own. Never its output.
+type AutofixRecord struct {
+	ExitCode int `json:"exit_code"`
+	// TimedOut is whether commands.fix was killed before it exited; its
+	// changes are never committed when this is true (gate.go), so
+	// ExitCode is then procgroup's own placeholder for a killed process,
+	// not a real exit status.
+	TimedOut bool `json:"timed_out,omitempty"`
 }
 
 // FinalizeReserve is the run's finalize reserve, for cancel's grace floor

@@ -120,35 +120,54 @@ func TestRecipeRepoInvalidFailsNoFallback(t *testing.T) {
 	}
 }
 
-// TestRecipeNotYetRunnableFailsBeforeImplement: neither the check gate nor
-// mode: review's implement skip is executed by this runner (no case for
-// recipe.StepCheck in planOf, and agentLoop never reads Recipe.Mode), so a
-// recipe using either must refuse before implement ever runs, not silently
-// fall back to today's loop. This is the runner's own guard (recipe.
-// NotYetRunnable), independent of the CLI's: it is what actually protects a
-// repository recipe or a bare agent.recipe name, which the CLI never reads
-// the text of before launch.
+// TestRecipeNotYetRunnableFailsBeforeImplement: mode: review's implement
+// skip is not executed by this runner (agentLoop never reads Recipe.Mode),
+// so a recipe using it must refuse before implement ever runs, not
+// silently fall back to today's loop. This is the runner's own guard
+// (recipe.NotYetRunnable), independent of the CLI's: it is what actually
+// protects a repository recipe or a bare agent.recipe name, which the CLI
+// never reads the text of before launch. A check step is no longer such a
+// gap: Task 11's runner gates the run on it (TestRecipeCheckStepReachesTheGate).
 //
 // Mutation (run, restore): comment out the NotYetRunnable check in
 // runner.go's run loop, and this test fails: implement runs and the record
 // is not an infra_error.
 func TestRecipeNotYetRunnableFailsBeforeImplement(t *testing.T) {
-	for _, tc := range []struct {
-		name, recipeName, yaml string
-	}{
-		{"check step", "gated", "version: 1\nname: gated\nsteps:\n  - check: { command: test }\n  - review: {}\n"},
-		{"mode review", "reviewonly", "version: 1\nname: reviewonly\nmode: review\nsteps:\n  - review: { max_rounds: 1 }\n"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			h := newHarness(t, firstLineCfg(t, 2, ""), recipeSpec(embeddedTask(tc.recipeName, tc.yaml)))
-			rec, err := h.run(t)
-			if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "cannot be run yet") {
-				t.Fatalf("rec = %+v, err = %v", rec, err)
-			}
-			if len(h.agent.calls) != 0 {
-				t.Fatalf("%d agent calls, want none (implement must not run)", len(h.agent.calls))
-			}
-		})
+	const yaml = "version: 1\nname: reviewonly\nmode: review\nsteps:\n  - review: { max_rounds: 1 }\n"
+	h := newHarness(t, firstLineCfg(t, 2, ""), recipeSpec(embeddedTask("reviewonly", yaml)))
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "cannot be run yet") {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if len(h.agent.calls) != 0 {
+		t.Fatalf("%d agent calls, want none (implement must not run)", len(h.agent.calls))
+	}
+}
+
+// TestRecipeCheckStepReachesTheGate: an embedded recipe with a check step —
+// the same resolution path recipe.NotYetRunnable used to refuse before
+// Task 11's runner gated the run on it — now runs the gate instead: a clean
+// check ends the run at once, with no implement stage and no pull request.
+// (internal/runner/gate_test.go covers the gate's own behaviour in full;
+// this test is only that the *embedded-task* resolution path, which
+// TestRecipeNotYetRunnableFailsBeforeImplement above also uses, really
+// reaches it — the repo-recipe path gate_test.go exercises is a different
+// branch of resolveRecipe.)
+//
+// Mutation (restore the StepCheck branch of recipe.NotYetRunnable): this
+// test fails, back to infra_error "cannot be run yet", zero agent calls.
+func TestRecipeCheckStepReachesTheGate(t *testing.T) {
+	const yaml = "version: 1\nname: gated\nsteps:\n  - check: { command: test }\n  - review: {}\n"
+	h := newHarness(t, firstLineCfg(t, 2, ""), recipeSpec(embeddedTask("gated", yaml)))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeNone || rec.Gate != "clean" {
+		t.Fatalf("rec = %+v", rec)
+	}
+	if len(h.agent.calls) != 0 {
+		t.Fatalf("%d agent calls, want none (a clean gate never reaches implement)", len(h.agent.calls))
 	}
 }
 
