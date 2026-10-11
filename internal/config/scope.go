@@ -71,6 +71,7 @@ var Scopes = []ScopeRow{
 	{Key: "budget.per_day_usd", In: InRepo, Why: whyPolicy},
 	{Key: "workflows.*.profile", In: InRepo, Why: "it chooses a profile"},
 	{Key: "workflows.*.base", In: InProfile | InRepo},
+	{Key: "workflows.*.checkout", In: InProfile | InRepo},
 	{Key: "workflows.*.image.node", In: InProfile | InRepo},
 	{Key: "workflows.*.image.jdk", In: InRepo, Why: "it is refused on every base"},
 	{Key: "workflows.*.image.apt", In: InProfile | InRepo},

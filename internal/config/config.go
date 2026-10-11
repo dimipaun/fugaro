@@ -250,7 +250,21 @@ type Workflow struct {
 	Resources  Resources    `yaml:"resources"`
 	Timeouts   Timeouts     `yaml:"timeouts"`
 	Rebuild    Rebuild      `yaml:"rebuild"`
+	// Checkout is baked (the derived image holds a clone the runner moves
+	// to the task's ref) or clone (the job is meant to run the
+	// installation's base image, with the runner making a blobless clone at
+	// start); "" defaults to baked (design generic-tool.md §2, G3, G5).
+	// Validates only today: the runner and the build do not yet act on
+	// clone (Tasks 16/17, not merged), so every workflow still builds and
+	// runs the baked image regardless of this value.
+	Checkout string `yaml:"checkout,omitempty"`
 }
+
+// Checkout values of a workflow (design generic-tool.md §2, G3).
+const (
+	CheckoutBaked = "baked"
+	CheckoutClone = "clone"
+)
 
 // BaseKind is the base kind w builds on: its legacy base:, or BaseKind.
 func (w Workflow) BaseKind() string {

@@ -1,0 +1,9 @@
+version: 1
+project: aurora
+gcp_project: proj-1234
+profiles:
+  p:
+    base: web-node
+    checkout: clone
+    image: { apt: [jq] }
+    commands: { build: npm run build, test: npm test }

@@ -128,6 +128,127 @@ func TestImageProblems(t *testing.T) {
 	}
 }
 
+// TestCloneRefusesImageBuildKeys pins design generic-tool.md §2 (G3): a
+// checkout: clone workflow runs the installation's base image with no
+// build, so a key that only a build can honor is refused, naming
+// checkout: baked.
+func TestCloneRefusesImageBuildKeys(t *testing.T) {
+	const msg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
+	cases := []struct{ name, extra, path string }{
+		{"image.apt", "    image: { apt: [jq] }\n", "workflows.web.image.apt"},
+		{"image.setup", "    image: { setup: [\"make deps\"] }\n", "workflows.web.image.setup"},
+		{"image.skip_build_scripts", "    image: { skip_build_scripts: true }\n", "workflows.web.image.skip_build_scripts"},
+		{"dockerfile", "    dockerfile: .fugaro/web.Dockerfile\n", "workflows.web.dockerfile"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, problems := Parse([]byte(webYAML + "    checkout: clone\n" + tc.extra))
+			if !hasProblem(problems, tc.path, msg, 0) {
+				t.Errorf("problems = %v, want one at %s: %s", problems, tc.path, msg)
+			}
+		})
+	}
+	// image.tools needs the Fugaro base (BaseKind), not web-node, so it is
+	// its own case rather than a loop entry over webYAML (base: web-node):
+	// combining tools with a legacy base would also trip the unrelated
+	// "applies to the Fugaro base only" rule, muddying what this pins.
+	t.Run("image.tools", func(t *testing.T) {
+		yaml := "\nversion: 1\nproject: aurora\ngit:\n  provider: github\nworkflows:\n  web:\n    checkout: clone\n    image: { tools: { node: \"24\" } }\n    commands:\n      build: npm run build\n      test: npm test\n"
+		_, problems := Parse([]byte(yaml))
+		if !hasProblem(problems, "workflows.web.image.tools", msg, 0) {
+			t.Errorf("problems = %v, want one at workflows.web.image.tools: %s", problems, msg)
+		}
+	})
+	cfg, problems := Parse([]byte(webYAML))
+	if len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+	if cfg.Workflows["web"].Checkout != CheckoutBaked {
+		t.Fatalf("default checkout = %q, want %q", cfg.Workflows["web"].Checkout, CheckoutBaked)
+	}
+}
+
+// TestCheckoutCloneAlone is the companion to TestCloneRefusesImageBuildKeys:
+// checkout: clone with no build keys set is valid.
+func TestCheckoutCloneAlone(t *testing.T) {
+	cfg, problems := Parse([]byte(webYAML + "    checkout: clone\n"))
+	if len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+	if cfg.Workflows["web"].Checkout != CheckoutClone {
+		t.Fatalf("checkout = %q, want %q", cfg.Workflows["web"].Checkout, CheckoutClone)
+	}
+}
+
+// TestCheckoutCloneAllowsEmptyBuildKeys pins that checkout: clone checks a
+// build key's value, not its mere presence: an empty image.apt, image.setup
+// or image.tools, or an empty dockerfile:, means nothing to refuse (schema
+// corpus: testdata/config/valid/checkout-clone-empty-apt.yaml exercises the
+// same boundary against fugaro.schema.json).
+func TestCheckoutCloneAllowsEmptyBuildKeys(t *testing.T) {
+	cfg, problems := Parse([]byte(webYAML + "    checkout: clone\n    image: { apt: [], setup: [], tools: {}, skip_build_scripts: false }\n"))
+	if len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+	if cfg.Workflows["web"].Checkout != CheckoutClone {
+		t.Fatalf("checkout = %q, want %q", cfg.Workflows["web"].Checkout, CheckoutClone)
+	}
+}
+
+// TestCheckoutInvalidValue pins that checkout: is an enum of baked and clone.
+func TestCheckoutInvalidValue(t *testing.T) {
+	_, problems := Parse([]byte(webYAML + "    checkout: sometimes\n"))
+	if !hasProblem(problems, "workflows.web.checkout", "must be baked or clone", 0) {
+		t.Fatalf("problems = %v", problems)
+	}
+}
+
+// TestCheckoutBadValueCorpus is testdata/config/invalid/checkout-bad-value.yaml
+// (the schema corpus: fugaro.schema.json's checkout enum had no corpus case),
+// read from disk like TestGoBase's and TestJavaServicesBase's corpus cases:
+// it must fail for exactly the one reason the file exists to pin.
+func TestCheckoutBadValueCorpus(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/config/invalid/checkout-bad-value.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != "workflows.web.checkout" || !strings.Contains(ps[0].Message, "must be baked or clone") {
+		t.Fatalf("problems = %v, want exactly one at workflows.web.checkout: must be baked or clone", ps)
+	}
+}
+
+// TestCheckoutCloneToolsCorpus is testdata/config/invalid/checkout-clone-tools.yaml:
+// checkout: clone refuses image.tools exactly like image.apt and
+// image.setup, read from disk like TestCheckoutBadValueCorpus.
+func TestCheckoutCloneToolsCorpus(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/config/invalid/checkout-clone-tools.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const msg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
+	if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != "workflows.web.image.tools" || !strings.Contains(ps[0].Message, msg) {
+		t.Fatalf("problems = %v, want exactly one at workflows.web.image.tools: %s", ps, msg)
+	}
+}
+
+// TestCheckoutCloneSkipBuildCorpus is
+// testdata/config/invalid/checkout-clone-skip-build.yaml: checkout: clone
+// refuses image.skip_build_scripts, read from disk like
+// TestCheckoutCloneToolsCorpus. It closes a schema corpus gap: fugaro.schema.json's
+// checkout: clone branch has a skip_build_scripts: {const: false} clause
+// with no corpus file exercising it (every other clause in that branch had
+// one).
+func TestCheckoutCloneSkipBuildCorpus(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/config/invalid/checkout-clone-skip-build.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const msg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
+	if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != "workflows.web.image.skip_build_scripts" || !strings.Contains(ps[0].Message, msg) {
+		t.Fatalf("problems = %v, want exactly one at workflows.web.image.skip_build_scripts: %s", ps, msg)
+	}
+}
+
 func TestGoBase(t *testing.T) {
 	data, err := os.ReadFile("../../testdata/config/valid/go.yaml")
 	if err != nil {

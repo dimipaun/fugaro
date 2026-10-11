@@ -69,6 +69,9 @@ func applyDefaults(c *Config) {
 				w.Resources.Memory = d.memory
 			}
 		}
+		if w.Checkout == "" {
+			w.Checkout = CheckoutBaked
+		}
 		w.Rebuild = w.Rebuild.Defaults()
 		t := &w.Timeouts
 		if t.Total.Duration == 0 {

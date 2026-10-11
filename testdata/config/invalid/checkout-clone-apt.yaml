@@ -1,0 +1,9 @@
+version: 1
+project: aurora
+git: { provider: github }
+workflows:
+  web:
+    base: web-node
+    checkout: clone
+    image: { apt: [jq] }
+    commands: { build: npm run build, test: npm test }

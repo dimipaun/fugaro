@@ -93,6 +93,7 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `budget.per_day_usd` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it |
 | `workflows.*.profile` | repo | it chooses a profile |
 | `workflows.*.base` | profile, repo |  |
+| `workflows.*.checkout` | profile, repo |  |
 | `workflows.*.image.node` | profile, repo |  |
 | `workflows.*.image.jdk` | repo | it is refused on every base |
 | `workflows.*.image.apt` | profile, repo |  |
