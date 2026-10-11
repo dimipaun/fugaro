@@ -134,6 +134,36 @@ func TestRunRecipeImageNamesTheImplicitBaseKind(t *testing.T) {
 	wantRefused(t, f, "it copies this release's base base image", "run", "--run-id", "20261007-100000-abcd", "A task")
 }
 
+// TestRunClonedWorkflowWithRecipeLaunchesWithNoBuildRecord (review finding
+// 1, HIGH): checkRecipeImage judges a workflow's derived-image build
+// record, which a checkout: clone workflow never has (it runs the
+// installation's base image directly, not a per-repository build).
+// Without a skip for it, this launch would be refused "has no build
+// record", and the refusal's own fix line (fugaro image refresh) never
+// writes one for a clone workflow either — a permanent dead end.
+//
+// Mutation (run, restore): in runRun, change `clone = w.Checkout ==
+// config.CheckoutClone` to `clone = false` — this test then fails,
+// refused "has no build record".
+func TestRunClonedWorkflowWithRecipeLaunchesWithNoBuildRecord(t *testing.T) {
+	f := newCloudFixture(t)
+	testutil.IsolateGit(t)
+	other := mustSlug("github", "acme/other")
+	f.run.AddJob(gcp.JobName(other, "svc"), "2", "4Gi")
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nagent:\n  auth: api-key\n  recipe: claude-solo\n" +
+		"workflows:\n  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"})
+	t.Chdir(dir)
+	if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err != nil {
+		t.Fatal(err)
+	}
+	if r := readSpecOf(t, f, other, "20261008-100000-abcd").Recipe; r == nil || r.Name != "claude-solo" {
+		t.Fatalf("recipe = %+v", r)
+	}
+}
+
 func TestRunRepoRecipeFromCheckout(t *testing.T) {
 	f := newCloudFixture(t)
 	recipeCheckout(t, f, "", map[string]string{".fugaro/recipes/mine.yaml": "version: 1\nname: mine\nsteps:\n  - review: { max_rounds: 1 }\n"})

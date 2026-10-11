@@ -240,21 +240,32 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		}
 	}
 	if prior == nil {
-		agentRecipe, kind := "", ""
+		agentRecipe, kind, clone := "", "", false
 		if co := checkoutConfig(ctx, spec.Repo); co != nil {
 			agentRecipe = co.Agent.Recipe
 			if w, ok := co.Workflows[spec.Workflow]; ok {
 				kind = w.BaseKind()
+				clone = w.Checkout == config.CheckoutClone
 			}
 		}
-		if needsRecipeImage(spec, agentRecipe) {
-			if err := checkRecipeImage(ctx, env, slug, spec, kind, cmd.ErrOrStderr()); err != nil {
-				return err
+		// checkRecipeImage and checkImageSince judge a workflow's derived
+		// image by its build record, which a checkout: clone workflow never
+		// has (it runs the installation's base image directly, not a
+		// per-repository build): refusing it there would point at fugaro
+		// image refresh, which never writes one either, a permanent dead
+		// end. Skipping is safe: checkout: clone is itself a key no runner
+		// before 0.7.0 understands, so any job able to run one already
+		// postdates recipesSince (0.5.0) and layeredSince (0.6.0).
+		if !clone {
+			if needsRecipeImage(spec, agentRecipe) {
+				if err := checkRecipeImage(ctx, env, slug, spec, kind, cmd.ErrOrStderr()); err != nil {
+					return err
+				}
 			}
-		}
-		if spec.ProjectLayer != nil {
-			if err := checkImageSince(ctx, env, slug, spec, kind, layeredSince, "the project layer", "the project layer", "", cmd.ErrOrStderr()); err != nil {
-				return err
+			if spec.ProjectLayer != nil {
+				if err := checkImageSince(ctx, env, slug, spec, kind, layeredSince, "the project layer", "the project layer", "", cmd.ErrOrStderr()); err != nil {
+					return err
+				}
 			}
 		}
 		if err := checkMaxParallel(ctx, env); err != nil {

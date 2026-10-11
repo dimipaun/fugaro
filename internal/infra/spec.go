@@ -61,6 +61,13 @@ const (
 	RTDBURLEnv        = runner.RTDBURLEnv
 	FirebaseAPIKeyEnv = runner.FirebaseAPIKeyEnv
 	BudgetGraceEnv    = runner.BudgetGraceEnv
+	// CheckoutEnv, set to config.CheckoutClone on a checkout: clone
+	// workflow's job (never on a baked one, whose spec stays exactly what
+	// it was before clone existed), tells the runner's bootstrap to make a
+	// blobless clone at start instead of moving a baked-in one (design
+	// generic-tool.md §2, G4; plan Task 17, not yet merged: this value is
+	// inert until the runner reads it).
+	CheckoutEnv = "FUGARO_CHECKOUT"
 )
 
 // githubGitUser is the HTTPS username of a GitHub App installation token.
@@ -587,6 +594,9 @@ func (c *repoCtx) workflow(name string) (WorkflowSpec, error) {
 	}
 	if lc.Registry != "" {
 		ws.LegacyImage = gcp.ImageName(lc.Registry, slug, name)
+	}
+	if w.Checkout == config.CheckoutClone {
+		ws.Env[CheckoutEnv] = config.CheckoutClone
 	}
 	if ws.Vertex {
 		ws.Env["CLOUD_ML_REGION"] = lc.Region

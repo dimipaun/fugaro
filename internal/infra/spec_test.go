@@ -579,6 +579,31 @@ func TestSpecCloneWorkflowRunsTheBase(t *testing.T) {
 	}
 }
 
+// TestSpecCloneSetsCheckoutEnv (review finding 2, MED; plan Task 17 says to
+// add this to Task 16's spec change if it is not there): a checkout: clone
+// workflow's job gets FUGARO_CHECKOUT=clone, which the runner's bootstrap
+// (plan Task 17, not yet merged) will read to decide to clone blobless
+// instead of moving a baked-in checkout; a baked workflow's spec carries no
+// such key at all, so every baked workflow's env stays exactly what it was
+// before checkout: clone existed (golden tfvars unchanged, TestRepoRootVars
+// MatchModule's own sandbox fixture has none).
+//
+// Mutation (run, restore): delete the `if w.Checkout == config.CheckoutClone
+// { ws.Env[CheckoutEnv] = config.CheckoutClone }` block in workflow() — this
+// test then fails: web's env lacks FUGARO_CHECKOUT.
+func TestSpecCloneSetsCheckoutEnv(t *testing.T) {
+	rs, err := Repo(cloneInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rs.Workflows["web"].Env[CheckoutEnv]; got != config.CheckoutClone {
+		t.Errorf("web's %s = %q, want %q", CheckoutEnv, got, config.CheckoutClone)
+	}
+	if _, ok := rs.Workflows["api"].Env[CheckoutEnv]; ok {
+		t.Errorf("api (baked) carries %s = %q, want no such key", CheckoutEnv, rs.Workflows["api"].Env[CheckoutEnv])
+	}
+}
+
 func TestSpecRefuses(t *testing.T) {
 	var ue *UserError
 	for name, mutate := range map[string]func(*Inputs){
