@@ -153,6 +153,52 @@ func TestReviewModeCommentIsRedacted(t *testing.T) {
 	}
 }
 
+// TestReviewOnlyRefusesSeveralPRAtBootstrap: the runner's own guard against
+// a mismatched PR count (independent of the CLI's, which a repository or
+// agent.recipe-named "review-only"/"pick" recipe never passes through) —
+// the same defense-in-depth relationship TestRecipeModeReviewMismatchFailsBeforeImplement
+// already establishes for Mode itself. A task naming the catalog's
+// review-only recipe but carrying two pull requests to review must be
+// refused before checkout, let alone the review stage, ever runs.
+//
+// Mutation (drop the `recipe.ReviewPRRange` check added to runner.go's
+// bootstrap, right after the Mode-mismatch switch): this test fails,
+// finding no error and an agent call.
+func TestReviewOnlyRefusesSeveralPRAtBootstrap(t *testing.T) {
+	const yaml = "version: 1\nname: review-only\nmode: review\nsteps:\n  - review: { max_rounds: 1 }\n"
+	h := newHarness(t, "", reviewTaskSpec("review-only", yaml, 7, 9))
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "review-only needs exactly 1 pull request") {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if len(h.agent.calls) != 0 {
+		t.Fatalf("%d agent calls, want none", len(h.agent.calls))
+	}
+}
+
+// TestReviewModeCommentCarriesReportMarker: every other comment Fugaro
+// posts (followup.go, report.go, refused.go, runner.go) ends with
+// gitprov.ReportMarker(runID), so a later run can tell its own comment
+// apart from anything else on the pull request. The review comment must
+// carry the same marker.
+//
+// Mutation (drop the `"\n" + gitprov.ReportMarker(runID) + "\n"` line from
+// ReviewComment): this test fails, finding no marker in the posted comment.
+func TestReviewModeCommentCarriesReportMarker(t *testing.T) {
+	h := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	pushReviewBranch(t, h, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h, 7, "feature", "")
+	if _, err := h.run(t, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	c := h.provider.State.PRs[0].Comments
+	if len(c) != 1 || !strings.Contains(c[0], gitprov.ReportMarker(runID)) {
+		t.Fatalf("comment missing report marker: %q", c)
+	}
+}
+
 // TestReviewModeRedactsWorkflowSecretEvenThoughAgentNeverGetsIt: a
 // workflow secret never reaches the review agent's own environment
 // (TestReviewModeAgentHasNoWorkflowSecrets), but the runner process itself
@@ -457,6 +503,37 @@ func TestReviewModeLeavesDraftState(t *testing.T) {
 		if c.Op == "UpdatePR" || c.Op == "EnsurePR" {
 			t.Fatalf("review mode wrote to the pull request: %+v", c)
 		}
+	}
+}
+
+// TestReviewModeIncludesLauncherTaskText: a TEXT argument (or --task-file)
+// given alongside --recipe NAME --pr N must reach the review stage's
+// prompt, not be silently stored in task.json and never delivered — the
+// same "TEXT adds instructions" contract a follow-up's own --pr already
+// honours. It is trusted launcher text, so it is not expected to be
+// redacted or stripped the way the checkout's own content is.
+//
+// Mutation (drop the `if task := strings.TrimSpace(r.spec.Task); task !=
+// "" { ... }` block from reviewModePrompt): this test fails, finding the
+// launcher's instructions missing from the prompt.
+func TestReviewModeIncludesLauncherTaskText(t *testing.T) {
+	spec := reviewTaskSpec("reviewonly", reviewOnlyYAML, 7)
+	spec.Task = "focus on the auth changes"
+	h := newHarness(t, "", spec)
+	pushReviewBranch(t, h, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h, 7, "feature", "")
+	var prompt string
+	capture := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		prompt = req.Prompt
+		return review("ship", 0)(t, ctx, req)
+	}
+	if _, err := h.run(t, capture); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(prompt, "focus on the auth changes") {
+		t.Fatalf("the launcher's TEXT never reached the prompt: %q", prompt)
 	}
 }
 

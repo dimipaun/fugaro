@@ -112,6 +112,28 @@ type Recipe struct {
 // Renamed are catalog names removed in 0.7.0 and what replaced them.
 var Renamed = map[string]string{"cheap-loop-senior": "standard", "claude-solo": "solo"}
 
+// reviewPRCounts is how many --pr the catalog's two mode: review recipes
+// need: review-only reviews exactly one pull request and has no "keep"
+// verdict to give; pick compares 2 to 4 and always gives one. A custom
+// mode: review recipe (any other name) is unconstrained beyond the 1-to-4
+// range --pr itself already enforces.
+var reviewPRCounts = map[string][2]int{
+	"review-only": {1, 1},
+	"pick":        {2, 4},
+}
+
+// ReviewPRRange reports the number of --pr a named catalog mode: review
+// recipe requires, min and max inclusive. ok is false for any other name:
+// a custom mode: review recipe is unconstrained, and a project or agent
+// recipe that merely reuses "review-only" or "pick" as its own name (rare,
+// but resolveRecipe lets it shadow the catalog one) is refused by this
+// check exactly like the catalog recipe it is named after would be, which
+// is the conservative side to be wrong on.
+func ReviewPRRange(name string) (min, max int, ok bool) {
+	r, ok := reviewPRCounts[name]
+	return r[0], r[1], ok
+}
+
 // Problem is one reason a recipe is invalid.
 type Problem struct {
 	Path    string `json:"path,omitempty"`

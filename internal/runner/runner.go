@@ -884,6 +884,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 	case !r.review && rcp.Mode == recipe.ModeReview:
 		return fmt.Errorf("recipe %s is mode: review, but the task names no pull request to review", rrec.Name)
 	}
+	if lo, hi, ok := recipe.ReviewPRRange(rrec.Name); ok {
+		if n := len(spec.ReviewPRs); n < lo || n > hi {
+			if lo == hi {
+				return fmt.Errorf("recipe %s needs exactly %d pull request(s) to review, got %d", rrec.Name, lo, n)
+			}
+			return fmt.Errorf("recipe %s needs %d to %d pull requests to review, got %d", rrec.Name, lo, hi, n)
+		}
+	}
 	r.rec.Recipe = &rrec
 	derived := rrec.Name == recipe.DefaultName && rrec.Source == string(recipe.SourceCatalog)
 	plan := planOf(rcp, derived, cfg.Agent, r.d.Providers, spec.Overrides.ReviewRounds)

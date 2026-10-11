@@ -128,7 +128,8 @@ func newRunCmd() *cobra.Command {
 			"optional then, and adds instructions.\n\n" +
 			"--recipe NAME --pr N, NAME naming a mode: review recipe such as review-only or pick,\n" +
 			"reviews any open pull request of the repository instead (not only Fugaro's own) and\n" +
-			"never pushes or opens one; repeat --pr (2 to 4 times) for pick, which compares them.",
+			"never pushes or opens one; repeat --pr (2 to 4 times) for pick, which compares them.\n" +
+			"TEXT, or --task-file, is optional then too, and adds instructions to the review.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runRun(cmd, &o, args) },
 	}
@@ -226,6 +227,14 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 				return rerr
 			}
 			if rr.Recipe.Mode == recipe.ModeReview {
+				if lo, hi, ok := recipe.ReviewPRRange(rr.Name); ok {
+					if n := len(o.pr); n < lo || n > hi {
+						if lo == hi {
+							return userErr("--recipe %s needs exactly %d --pr, got %d", rr.Name, lo, n)
+						}
+						return userErr("--recipe %s needs %d to %d --pr, got %d", rr.Name, lo, hi, n)
+					}
+				}
 				reviewRecipe = rr
 			} else if len(o.pr) > 1 {
 				return userErr("several --pr need a review-mode recipe such as pick")

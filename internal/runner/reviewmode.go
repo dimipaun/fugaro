@@ -167,25 +167,35 @@ func stripClaudeConfig(dir string) error {
 
 // reviewModePrompt is the review stage's prompt: ReviewPrompt for a single
 // pull request (r.d.WorkDir is checked out to it), PickPrompt listing every
-// directory for several.
-// reviewModePrompt is the review stage's prompt. Unlike an ordinary run or
-// a follow-up, it never passes a leading-slash agent.review straight to
-// ReviewPrompt/PickPrompt: readBaseConfig already resolved that case into
-// r.reviewFile, as plain text read from the base branch
-// (readReviewCommandFromBase), precisely so Claude Code is never asked to
-// resolve /name from the reviewed checkout itself. Passing "" here is what
-// makes ReviewPrompt/PickPrompt fall through to the promptFile branch
-// instead of the leading-slash one.
+// directory for several, with r.spec.Task appended when the launcher gave
+// one (fugaro run --recipe NAME --pr N TEXT, the same "TEXT adds
+// instructions" rule a follow-up's --pr already follows) — trusted text
+// from the launcher, not the reviewed checkout, so it needs no redaction
+// of its own before being spliced in, unlike r.reviewFile's content.
+//
+// Unlike an ordinary run or a follow-up, this never passes a leading-slash
+// agent.review straight to ReviewPrompt/PickPrompt: readBaseConfig already
+// resolved that case into r.reviewFile, as plain text read from the base
+// branch (readReviewCommandFromBase), precisely so Claude Code is never
+// asked to resolve /name from the reviewed checkout itself. Passing "" for
+// that argument is what makes ReviewPrompt/PickPrompt fall through to the
+// promptFile branch instead of the leading-slash one.
 func (r *run) reviewModePrompt() string {
+	var p string
 	if len(r.reviewHeads) == 1 {
-		return ReviewPrompt("", r.reviewFile, r.cfg.Git.BaseBranch)
+		p = ReviewPrompt("", r.reviewFile, r.cfg.Git.BaseBranch)
+	} else {
+		nums := make([]int, len(r.reviewHeads))
+		dirs := make([]string, len(r.reviewHeads))
+		for i, h := range r.reviewHeads {
+			nums[i], dirs[i] = h.Number, r.reviewDir(h.Number)
+		}
+		p = PickPrompt("", r.reviewFile, nums, dirs)
 	}
-	nums := make([]int, len(r.reviewHeads))
-	dirs := make([]string, len(r.reviewHeads))
-	for i, h := range r.reviewHeads {
-		nums[i], dirs[i] = h.Number, r.reviewDir(h.Number)
+	if task := strings.TrimSpace(r.spec.Task); task != "" {
+		p += "\n\nAdditional instructions from the launcher:\n\n" + task
 	}
-	return PickPrompt("", r.reviewFile, nums, dirs)
+	return p
 }
 
 // reviewCommandPath maps a leading-slash agent.review (a Claude Code custom
@@ -374,7 +384,7 @@ func (r *run) postReviewComments(ctx context.Context, v Verdict) {
 	for i, h := range r.reviewHeads {
 		nums[i] = h.Number
 	}
-	body := agent.Redact(clipBody(ReviewComment(r.rec.Recipe.Name, v, nums), maxBodyBytes), r.secretList())
+	body := agent.Redact(clipBody(ReviewComment(r.rec.Recipe.Name, r.rec.RunID, v, nums), maxBodyBytes), r.secretList())
 	reviewed := make([]runstore.ReviewedPR, 0, len(r.reviewHeads))
 	for _, h := range r.reviewHeads {
 		reviewed = append(reviewed, runstore.ReviewedPR{Number: h.Number, SHA: h.SHA, Verdict: v.Verdict})
@@ -392,7 +402,7 @@ func (r *run) postReviewComments(ctx context.Context, v Verdict) {
 // list, and the run ID closes it (gitprov.ReportMarker, the same marker
 // every other Fugaro comment carries, so a later run can tell this one
 // apart).
-func ReviewComment(recipeName string, v Verdict, prs []int) string {
+func ReviewComment(recipeName, runID string, v Verdict, prs []int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Fugaro review (%s): %s\n", recipeName, v.Verdict)
 	if len(prs) > 1 {
@@ -417,7 +427,7 @@ func ReviewComment(recipeName string, v Verdict, prs []int) string {
 			b.WriteString("\n")
 		}
 	}
-	b.WriteString("\n")
+	b.WriteString("\n" + gitprov.ReportMarker(runID) + "\n")
 	return b.String()
 }
 

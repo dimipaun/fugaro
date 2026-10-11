@@ -104,6 +104,33 @@ func TestRunPickWritesSeveralReviewPRs(t *testing.T) {
 	}
 }
 
+// TestRunReviewOnlyRefusesSeveralPR: review-only reviews exactly one pull
+// request (it has no "keep" verdict to give between several); unlike a
+// bare --recipe-less several --pr, naming review-only explicitly must
+// still be refused rather than silently reviewing only the first or
+// somehow comparing them.
+//
+// Mutation (drop the `recipe.ReviewPRRange` check in runRun's reviewRecipe
+// branch): this test fails, finding no error for --recipe review-only with
+// two --pr.
+func TestRunReviewOnlyRefusesSeveralPR(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", release070)
+	wantRefused(t, f, "review-only needs exactly 1 --pr, got 2", "run", "--repo", "acme/app", "--recipe", "review-only", "--pr", "7", "--pr", "9")
+}
+
+// TestRunPickRefusesSinglePR: pick compares several pull requests; one
+// --pr has nothing to compare it against, so it is refused rather than
+// run as a review-only-shaped review with no "keep" semantics.
+//
+// Mutation (same as TestRunReviewOnlyRefusesSeveralPR): this test fails,
+// finding no error for --recipe pick with one --pr.
+func TestRunPickRefusesSinglePR(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", release070)
+	wantRefused(t, f, "pick needs 2 to 4 --pr, got 1", "run", "--repo", "acme/app", "--recipe", "pick", "--pr", "7")
+}
+
 // TestRunReviewModeKeepsRefWorkflowFlags: unlike an ordinary --pr
 // follow-up, review mode takes --ref and --workflow (it inherits nothing
 // from a pull request's own history).
