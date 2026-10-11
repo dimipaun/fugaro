@@ -801,3 +801,36 @@ func TestFugaroSchemaLayeredCorpus(t *testing.T) {
 		}
 	}
 }
+
+// TestTaskSchemaOAuthTokenMatchesTheGoRules ties the task schema's
+// `oauth_token` property to the Go rules it mirrors (config.ClaudeAccountNameRE
+// and config.MaxClaudeAccountNameLen): the schema pattern and maxLength are
+// separate copies, so without this a change to the Go rule would drift from the
+// schema with only the corpus fixtures noticing. The pattern alone admits 61
+// characters (it counts repetition units of one or two), which is why the
+// bound is a separate maxLength.
+func TestTaskSchemaOAuthTokenMatchesTheGoRules(t *testing.T) {
+	data, err := os.ReadFile("task.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]struct {
+			Pattern   string `json:"pattern"`
+			MaxLength int    `json:"maxLength"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	p, ok := doc.Properties["oauth_token"]
+	if !ok {
+		t.Fatal("task.schema.json has no oauth_token property")
+	}
+	if p.Pattern != config.ClaudeAccountNameRE.String() {
+		t.Errorf("schema pattern %q != config.ClaudeAccountNameRE %q", p.Pattern, config.ClaudeAccountNameRE.String())
+	}
+	if p.MaxLength != config.MaxClaudeAccountNameLen {
+		t.Errorf("schema maxLength %d != config.MaxClaudeAccountNameLen %d", p.MaxLength, config.MaxClaudeAccountNameLen)
+	}
+}

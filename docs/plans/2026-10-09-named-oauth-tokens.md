@@ -6,6 +6,8 @@
 
 **Depends on:** release 0.7.0 merged to `main` first (bucket-IAM hardening and the base-image consolidation both touch `internal/infra` heavily; this is a scheduling dependency, not a functional one — see design §8). No task here starts before 0.7.0 ships.
 
+**Precondition override (2026-10-11):** unmet when Task 3 started — `origin/main`'s latest release commit was `931ae11` ("v0.6.0"), no 0.7.0 anywhere in its history. Proceeded anyway on explicit run instructions placing this feature at release **0.6.1 on `main` directly**, superseding this line and the design's §8 placement. Task 4 onward should re-verify `main`'s state rather than assume 0.7.0 shipped.
+
 **Checked before this plan was written:** every fact the design doc cites was read from the code at commit `4df3021` (this branch's base) — `internal/config/config.go`, `internal/config/providers.go`, `internal/config/validate.go`, `internal/infra/spec.go`, `internal/infra/repo.go`, `internal/agent/env.go`, `internal/backend/gcp/run.go`, `internal/backend/gcp/names.go`, `internal/cli/secrets.go`, `internal/cli/initsecrets.go`, `internal/cli/run.go`, `internal/task/task.go`, `internal/runstore/runstore.go`, `internal/localcfg/localcfg.go`, `deploy/terraform/gcp/modules/{repo,workflow}/*.tf`, `docs/design/v1.md` §5 and §6, `docs/design/layered-config.md`, `SECURITY.md`. If the merged code differs when a task starts (especially `internal/infra/spec.go`, mid-churn from 0.7.0's base-image work), that task's implementer adapts its edits to the then-current file, not the other way round — the same rule `docs/plans/2026-10-08-upgrade.md` used for its own Task 3.
 
 ## Decisions (veto any before execution starts)
@@ -43,7 +45,7 @@ The failure modes most likely to hit an owner, each pinned by a test that would 
 1. **A disallowed repository gets a job variant anyway**, or a disallowed name is accepted by `secrets set`/`run --token`. Pinned by: `TestAllowedClaudeAccountsExcludesUnlistedRepo` (Task 1 — asserts the *set* a repository may choose from, not just that one call refuses); `TestRepoSpecHasNoVariantForDisallowedName` (Task 4 — asserts the Terraform-bound map has no such key at all, not just that launching it fails); `TestRunTokenRefusesDisallowedName` (Task 6).
 2. **A configuration with no `claude_accounts` entry produces a different job, SA, or secret mount than today.** Pinned by `TestWorkflowVariantIsIdentityForDefault` (Task 2) and the golden `TestBuildRepoSpecUnchangedWithNoClaudeAccounts` (Task 4), which diffs the full tfvars JSON of the existing fixture corpus before and after.
 3. **A follow-up changes which account a run uses, via a PR comment or a re-launch flag.** Pinned by `TestFollowUpInheritsOAuthToken` (Task 6), which asserts the follow-up's task.json token equals the original's even when a different `--token` is passed to the follow-up command (it must be refused or ignored — see Task 6's exact rule) and even when a trusted comment's text contains a token name.
-4. **An old runner silently ignores the new field instead of refusing.** Pinned by `TestOldRunnerRefusesOAuthTokenField` (Task 3): strict-decoding a `task.json` with `oauth_token` set, through a decoder built the way a pre-feature runner's was, must error, not silently drop the field.
+4. **An old runner silently ignores the new field instead of refusing, or a launch reaches an old runner at all.** Two layers, not one: `TestOldRunnerRefusesOAuthTokenField` (Task 3) pins the runner's own strict decode — a pre-feature decoder must error on `oauth_token`, not drop it. That is the backstop, not the first line: Task 6's `namedTokensSince` gate (`TestRunTokenImageGateRefusesOldFirstRun`/`...OldFollowUp`/`...RegardlessOfWorkflowFlag`/`...WithBatch`) must refuse the *launch itself*, before a task carrying `oauth_token` ever reaches such a runner, on every launch path — Task 3 alone leaves this gate as an unused constant (see Task 6's new step, added by review).
 5. **`fugaro secrets ls`/`doctor` ever print or imply a secret value.** Pinned by the existing redaction test pattern, extended: `TestSecretsLsNamedAccountNeverPrintsValue` (Task 5), `TestDoctorNamedAccountCheckReadsNoValue` (Task 8) — both assert the fake Secret Manager's `Access` (value-reading) call is never made, only `List`/metadata calls.
 
 ## File Structure
@@ -418,6 +420,7 @@ git commit -m "named oauth tokens task 2: gcp.WorkflowVariant, the identity-for-
 
 **Interfaces:**
 - Produces: `Spec.OAuthToken string` (json `oauth_token,omitempty`); `const namedTokensSince = "0.8.0"` (or the actual target version at ship time — the implementer confirms against `docs/release.md`'s in-flight version when this task starts, since 0.7.0 may have shipped as something other than exactly "0.7.0" by then).
+  *(Note, 2026-10-11: the owner moved this to 0.6.1 on `main`; Task 3 shipped with `namedTokensSince = "0.6.1"`.)*
 
 - [ ] **Step 1: Write the failing test**
 
@@ -478,6 +481,7 @@ Add, near wherever `layeredSince` is defined:
 // record is refused (design §5).
 const namedTokensSince = "0.8.0" // confirm against docs/release.md when this task starts
 ```
+(Note, 2026-10-11: the owner moved this to 0.6.1 on `main`; Task 3 shipped with `namedTokensSince = "0.6.1"`.)
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -683,6 +687,31 @@ git commit -m "named oauth tokens task 5: secrets set/ls and init's prompts know
   and the `backend.LaunchSpec{Workflow: ...}` passed to `Launch` uses `gcp.WorkflowVariant(workflow, tokenName)`, not the bare `workflow`.
 - Adds `config.Agent.OAuthToken string `yaml:"oauth_token,omitempty"`` to `internal/config/config.go`'s `Agent` struct (next to `Recipe`), plus its row in `config.Scopes` (`docs/design/layered-config.md` §5's table — Project: no, Profile: **no**, Repo: yes, Override: yes, "it names a credential identity that only the repository's own, PR-reviewed fugaro.yaml may choose among names the local config (never the project layer) allow-lists" as the Why, per design §3 T2 — Profile is no for the same reason Project is: a profile is a key of the same launcher-writable `fugaro/project-layer.yaml` object as `defaults:`, so it gets no more trust) **only if Task 4's merge already landed the layered-config `Scopes`/`Resolve` machinery** — if `config.Scopes` does not exist yet at this task's start (layered config's 0.6.0 work may or may not include it depending on timing), this task adds the field without a `Scopes` row and flags the gap in its commit message for a follow-up once `Resolve` exists. A test asserts `Resolve` refuses `agent.oauth_token` set inside a `profiles.<name>` block with a message naming the layer, the same way `profile:` at top level is refused outside a workflow-less file (`layered-config.md` §4 "Errors name the layer") — this is the one new negative case `config.Scopes`'s existing enforcement (`ParseProjectLayer` refusing an out-of-scope key, `layered-config.md:107`) must cover without any code change, since the mechanism is already generic over the table; the test exists to prove the row was added correctly, not to add new refusal logic.
 - Changes: a follow-up's launch path (wherever it builds the new run's `task.Spec` from the previous run's `result.json`/`task.json`) copies `OAuthToken` from the previous run unconditionally, ignoring any `--token` the follow-up command line passes (T6: log a warning if one was passed and differs, but never honor it).
+- **Changes: the version-skew gate itself (added by review; the paragraphs above describe resolving and refusing a *disallowed* name, which is a different check from refusing an *old runner*, and nothing before this edit wired the second one — see mutation-proof note #4 below, which this closes).** `checkImageSince`'s existing block in `runRun` (`internal/cli/run.go`, today the `if prior == nil { ... }` block starting at line 242, immediately after the `checkRecipeImage` and `checkImageSince(..., layeredSince, ...)` calls) runs once per freshly submitted spec, whichever of `newSpec` (a first run — every `--workflow`/`--batch` combination included, since those are just fields of the one `task.Spec` `newSpec` builds, not separate launch functions) or `newFollowUpSpec` (a follow-up) built it: both return into `runRun` before this block, so **one call site here, keyed on `spec.OAuthToken != ""`, covers every launch path** — add it right after the `layeredSince` call:
+  ```go
+  if spec.OAuthToken != "" {
+      if err := checkImageSince(ctx, env, slug, spec, kind, namedTokensSince,
+          "Claude account "+pluginwire.Printable(spec.OAuthToken), "named Claude accounts", "", cmd.ErrOrStderr()); err != nil {
+          return err
+      }
+  }
+  ```
+  Like every `checkImageSince` call, a base that is not a release ref only warns, never refuses; this is acceptable here specifically because `task.Parse`'s strict decoding (Task 3) is the backstop — a runner that does not know `oauth_token` refuses the whole task outright, it can never silently fall back to the repository's default account, so a dev build that races ahead of `namedTokensSince` fails closed, not open.
+  **This requires moving token resolution earlier than the sketch two bullets above places it.** That sketch's `tokenName := o.token; ...; spec.OAuthToken = tokenName` is shown "around run.go:742, the env.be.Launch call" — inside `launchRun` (`run.go:764` today), which runs *after* the `if prior == nil` gate block, so a check keyed on `spec.OAuthToken` at line ~242 would never see a token resolved that late. Move the resolution into `newSpec` itself, before its own `spec.Validate()` call (`run.go:386` today) — the same place `newSpec` already resolves `workflow`, `ref` and `rcp` (recipe) — for a first run; for a follow-up, move the equivalent (inherit-only, `--token` ignored but warned about if different) resolution into `newFollowUpSpec`, before its own `spec.Validate()` call, reading the previous run's stored `OAuthToken` the same way `c.Previous`/`c.Chosen` already carry `Recipe` forward (the implementer reads `internal/cli/followup.go`'s `prChain` construction first, since it may need a new field to carry this; this plan was not written against its current shape).
+  **Tests, one per launch path this task must not silently exempt, each also asserting the fake backend's `Launch` was never called on a refusal:**
+  ```go
+  func TestRunTokenImageGateRefusesOldFirstRun(t *testing.T)           { /* fresh run, OAuthToken set, build record predates namedTokensSince: refused */ }
+  func TestRunTokenImageGateRefusesOldFollowUp(t *testing.T)           { /* inherited OAuthToken, same old build record: refused on the follow-up too — it must not be skipped just because it is a follow-up */ }
+  func TestRunTokenImageGateAppliesRegardlessOfWorkflowFlag(t *testing.T) { /* --workflow names a non-default workflow whose build record predates namedTokensSince: still refused */ }
+  func TestRunTokenImageGateAppliesWithBatch(t *testing.T)             { /* --batch set alongside --token: still refused; batch is a label, not a separate launch path */ }
+  func TestRunTokenImageGateWarnsOnNonReleaseBase(t *testing.T)        { /* dev build base: warns, does not refuse, mirroring checkImageSince's existing sibling behavior for recipesSince/layeredSince */ }
+  func TestRunTokenImageGateSkippedForDefaultAccount(t *testing.T)     { /* OAuthToken == "" (config.DefaultClaudeAccount): no new check runs at all — zero image-check behavior change for every installation with no claude_accounts, design §5 */ }
+  ```
+  **Mutations to run and restore when this step is implemented, listed since this plan's own review focus (below) requires every pinning test to be proven, not merely present** — each must turn at least one test above red:
+  1. Lower the constant used at the call site by one release (hardcode `"0.5.0"` in place of `namedTokensSince`) — `TestRunTokenImageGateRefusesOldFirstRun` must fail (an old image now passes).
+  2. Make the new call conditional on `!spec.IsFollowUp()` — `TestRunTokenImageGateRefusesOldFollowUp` must fail.
+  3. Make the new call conditional on `o.workflow == ""` (i.e., skip it whenever `--workflow` was explicitly passed) — `TestRunTokenImageGateAppliesRegardlessOfWorkflowFlag` must fail.
+  4. Replace the new call's `return err` with a printed warning (`fmt.Fprintln(cmd.ErrOrStderr(), err)`) — every refusal test above must fail, since the fake backend's `Launch` gets called where it shouldn't.
 
 **Tests:**
 

@@ -25,6 +25,17 @@ const recipesSince = "0.5.0"
 // docs/release.md ("Before you tag") has the checklist verify it.
 const layeredSince = "0.6.0"
 
+// namedTokensSince is the first fugaro release whose runner reads a task's
+// oauth_token field (docs/design/named-oauth-tokens.md); an older runner
+// refuses it, since task.Spec's decoder disallows unknown fields. It must
+// equal the release that ships task.Spec.OAuthToken: docs/release.md
+// ("Before you tag") has the release checklist verify it. A launch that
+// would set OAuthToken to a non-default name against an older build record
+// must be refused before Launch is called (internal/cli/run.go, Task 6 of
+// the plan) the same way checkImageSince already gates recipesSince and
+// layeredSince; nothing in this task wires that check yet.
+const namedTokensSince = "0.6.1"
+
 // needsRecipeImage reports whether a launch needs a runner that knows
 // recipes: the task carries one, or the checkout's fugaro.yaml sets
 // agent.recipe (an unknown key to an older runner).
