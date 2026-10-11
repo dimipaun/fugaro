@@ -368,14 +368,128 @@ func TestWorkflowVariantIsIdentityForDefault(t *testing.T) {
 			t.Errorf("WorkflowVariant(build, %q) = %q, want build", tok, got)
 		}
 	}
-	if got := WorkflowVariant("build", "acme-personal"); got != "build--acme-personal" {
+	if got := WorkflowVariant("build", "acme-personal"); got != "build.acme-personal" {
 		t.Errorf("WorkflowVariant(build, acme-personal) = %q", got)
 	}
 	// Every downstream name-deriving function must still produce a distinct,
-	// valid name for a variant: this is what JobName, ServiceAccountID and
-	// SecretID are exercised against.
-	if JobName("s", WorkflowVariant("build", "acme-personal")) == JobName("s", "build") {
-		t.Fatal("a variant collided with the plain workflow's job name")
+	// valid name for a variant: JobName, ServiceAccountID and SecretID are
+	// all exercised against the plain workflow's own name, not just one of
+	// them (TestWorkflowVariantIsInjective below covers the harder case of
+	// two distinct (workflow, token) pairs colliding with each other).
+	variant := WorkflowVariant("build", "acme-personal")
+	if JobName("s", variant) == JobName("s", "build") {
+		t.Error("a variant collided with the plain workflow's job name")
+	}
+	if ServiceAccountID("s", variant) == ServiceAccountID("s", "build") {
+		t.Error("a variant collided with the plain workflow's service account ID")
+	}
+	if SecretID("s", variant) == SecretID("s", "build") {
+		t.Error("a variant collided with the plain workflow's secret ID")
+	}
+}
+
+// workflowVariantTrickyPairs are (workflow, token) pairs a naive "--" join
+// (or any join using a byte either charset already allows) would conflate:
+// workflowVariantPartRE lets both components hold hyphens, including
+// consecutive ones, so where the hyphen "boundary" falls between the two
+// fields is ambiguous unless the separator itself is a byte neither field
+// can contain.
+var workflowVariantTrickyPairs = [][2][2]string{
+	{{"ab--cd", "ef"}, {"ab", "cd--ef"}},
+	{{"build", "acme-personal"}, {"build-acme", "personal"}},
+	{{"a-b-c", "d"}, {"a-b", "c-d"}},
+	{{"a", "b-c-d"}, {"a-b", "c-d"}},
+	{{"a-", "b"}, {"a", "-b"}}, // not charset-valid starts, still worth covering
+}
+
+// TestWorkflowVariantIsInjective is the property TestNamesAreInjective (and
+// FuzzNamesAreInjective) already pin for every other name in this file,
+// extended to WorkflowVariant: two distinct (workflow, token) pairs must
+// never produce the same variant, and the collision must not reappear one
+// layer down in JobName, ServiceAccountID or SecretID either (the finding
+// this test was added for: a "--" join let two unrelated pairs share a job,
+// a service account and a secret, defeating the one-secretAccessor-grant-
+// per-named-account design, docs/design/named-oauth-tokens.md §4 option B).
+func TestWorkflowVariantIsInjective(t *testing.T) {
+	for _, p := range workflowVariantTrickyPairs {
+		if !workflowVariantPartRE.MatchString(p[0][0]) || !workflowVariantPartRE.MatchString(p[0][1]) ||
+			!workflowVariantPartRE.MatchString(p[1][0]) || !workflowVariantPartRE.MatchString(p[1][1]) {
+			continue // covered by TestWorkflowVariantRejectsOutOfCharsetInput instead
+		}
+		a, b := WorkflowVariant(p[0][0], p[0][1]), WorkflowVariant(p[1][0], p[1][1])
+		if a == b {
+			t.Errorf("WorkflowVariant(%q,%q) == WorkflowVariant(%q,%q) == %q", p[0][0], p[0][1], p[1][0], p[1][1], a)
+			continue
+		}
+		if JobName("s", a) == JobName("s", b) {
+			t.Errorf("JobName collided for distinct variants %q and %q", a, b)
+		}
+		if ServiceAccountID("s", a) == ServiceAccountID("s", b) {
+			t.Errorf("ServiceAccountID collided for distinct variants %q and %q", a, b)
+		}
+		if SecretID("s", a) == SecretID("s", b) {
+			t.Errorf("SecretID collided for distinct variants %q and %q", a, b)
+		}
+	}
+
+	// A dense grid of short, charset-valid workflow/token names made of the
+	// characters that merge in a naive join, the same style
+	// TestNamesAreInjective uses for JobName/ServiceAccountID/SecretID/ImageName.
+	seen := map[string][2]string{}
+	parts := []string{"a", "b", "a-b", "ab", "a-b-c", "x"}
+	for _, w := range parts {
+		for _, tok := range parts {
+			v := WorkflowVariant(w, tok)
+			if prev, dup := seen[v]; dup && prev != ([2]string{w, tok}) {
+				t.Errorf("WorkflowVariant(%q,%q) == WorkflowVariant(%q,%q) == %q", w, tok, prev[0], prev[1], v)
+			}
+			seen[v] = [2]string{w, tok}
+		}
+	}
+}
+
+func FuzzWorkflowVariantIsInjective(f *testing.F) {
+	f.Add("ab--cd", "ef", "ab", "cd--ef")
+	f.Add("build", "acme-personal", "build-acme", "personal")
+	f.Fuzz(func(t *testing.T, w1, tok1, w2, tok2 string) {
+		if !workflowVariantPartRE.MatchString(w1) || !workflowVariantPartRE.MatchString(tok1) ||
+			!workflowVariantPartRE.MatchString(w2) || !workflowVariantPartRE.MatchString(tok2) {
+			return // only charset-valid inputs are WorkflowVariant's contract
+		}
+		if w1 == w2 && tok1 == tok2 {
+			return
+		}
+		if a, b := WorkflowVariant(w1, tok1), WorkflowVariant(w2, tok2); a == b {
+			t.Errorf("WorkflowVariant(%q,%q) == WorkflowVariant(%q,%q) == %q", w1, tok1, w2, tok2, a)
+		}
+	})
+}
+
+// TestWorkflowVariantRejectsOutOfCharsetInput proves the fail-closed guard
+// is real: WorkflowVariant panics rather than silently return a variant
+// string that looks plausible but is ambiguous, if ever called (a bug
+// elsewhere, since every caller is expected to pass already-validated
+// workflow and token names) with a token or workflow outside
+// workflowVariantPartRE.
+func TestWorkflowVariantRejectsOutOfCharsetInput(t *testing.T) {
+	for _, c := range []struct{ workflow, token string }{
+		{"build", "a.b"},
+		{"build.x", "acme-personal"},
+		{"Build", "acme-personal"},
+		{"build", "Acme-Personal"},
+	} {
+		t.Run(c.workflow+"/"+c.token, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("WorkflowVariant(%q, %q) did not panic", c.workflow, c.token)
+				}
+			}()
+			WorkflowVariant(c.workflow, c.token)
+		})
+	}
+	// A charset-valid pair never panics.
+	if got := WorkflowVariant("build", "acme-personal"); got == "" {
+		t.Error("a valid (workflow, token) pair panicked")
 	}
 }
 

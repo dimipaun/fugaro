@@ -223,17 +223,52 @@ func SchedulerRegion(region string) (string, error) {
 	return "", fmt.Errorf("region %s has no Cloud Scheduler location fugaro knows of; pass --scheduler-region with one of %s", region, strings.Join(SchedulerRegions, ", "))
 }
 
+// workflowVariantPartRE is the charset WorkflowVariant trusts workflow and
+// token to stay within: config.WorkflowNameRE
+// (`^[a-z][a-z0-9-]{0,19}$`, internal/config/validate.go) and the planned
+// config.ClaudeAccountNameRE (`^[a-z][a-z0-9-]{0,30}$`,
+// docs/plans/2026-10-09-named-oauth-tokens.md Task 1) both match this,
+// length aside; neither can ever contain '.'. This package does not import
+// internal/config (see WorkflowVariant's own comment), so the charset is
+// pinned here, once, instead of trusting callers silently.
+var workflowVariantPartRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+
 // WorkflowVariant is the key JobName, ServiceAccountID and SecretID derive
 // a token-scoped workflow's resources from: workflow unchanged for the
 // repository's default account ("" or "default", config.DefaultClaudeAccount),
 // so an installation with no named accounts configured gets byte-identical
-// names (design docs/design/named-oauth-tokens.md §5); workflow+"--"+token
-// otherwise. It is a plain string key, not a secret: never log-redacted.
+// names (design docs/design/named-oauth-tokens.md §5); otherwise
+// workflow+"."+token. It is a plain string key, not a secret: never
+// log-redacted.
+//
+// The join must be exactly injective over (workflow, token): this string
+// becomes the "second" argument JobName, ServiceAccountID and SecretID hash
+// together with the slug (derive, above), so two different pairs that
+// WorkflowVariant collapsed into one string would collapse onto the same
+// Cloud Run job, the same dedicated service account and the same secret,
+// defeating this feature's whole point (one secretAccessor grant per named
+// account, design docs/design/named-oauth-tokens.md §4 option B). A plain
+// "--" join is not injective here even though it looks like the rest of
+// this file's names: workflow and token both already allow hyphens,
+// including consecutive ones (workflowVariantPartRE above), so
+// WorkflowVariant("ab--cd", "ef") and WorkflowVariant("ab", "cd--ef") would
+// both read "ab--cd--ef". "." is never a byte either charset allows, so
+// workflow+"."+token has exactly one (workflow, token) reading: the
+// standard "separator outside both alphabets" argument, not merely a hash
+// that makes collisions improbable. The charset check panics rather than
+// silently reproduce that ambiguity if some future caller ever passes a
+// workflow or token outside the charset this function trusts (fail
+// closed, the same posture LauncherBucketCondition takes below for the
+// same reason: a name that looks plausible but secretly is not what it
+// claims is worse than a crash).
 func WorkflowVariant(workflow, token string) string {
 	if token == "" || token == "default" {
 		return workflow
 	}
-	return workflow + "--" + token
+	if !workflowVariantPartRE.MatchString(workflow) || !workflowVariantPartRE.MatchString(token) {
+		panic(fmt.Sprintf("gcp.WorkflowVariant: workflow %q or token %q has a byte outside [a-z][a-z0-9-]*, so a \".\" join would not be unambiguous", workflow, token))
+	}
+	return workflow + "." + token
 }
 
 // JobSADisplayName is a job service account's display name, its ownership
