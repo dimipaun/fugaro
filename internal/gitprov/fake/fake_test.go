@@ -435,6 +435,7 @@ func TestSnapshotCannotMutateProvider(t *testing.T) {
 // Mutation (invert the Fork comparison to ==): the "own repository" case
 // fails, wanting Fork=false but getting true.
 func TestFetchPRHead(t *testing.T) {
+	testutil.IsolateGit(t) // a CI runner has no global git identity to seed the remote with
 	remote := testutil.NewRemote(t, map[string]string{"f": "x"})
 	p := &Provider{Repo: "acme/app", Remote: remote}
 	ctx := context.Background()
