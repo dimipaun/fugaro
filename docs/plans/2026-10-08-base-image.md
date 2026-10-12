@@ -58,7 +58,7 @@ Tests:
   - Gemini CLI 0.63.0, Pi 0.73.1, Qwen Code 0.25.0 (npm).
 - The mise setting names (`trusted_config_paths`, `idiomatic_version_file_enable_tools`, `auto_install`, `not_found_auto_install`, `yes`, `node.corepack`, `offline`) and `mise ls --missing --json` were read from mise's `settings.toml` and `src/cli/ls.rs` at v2026.10.4.
 - The Debian 13 package names were checked on packages.debian.org, including `postgresql-17-postgis-3`, `postgresql-17-pgvector`, `redis-server` (8.0.2), `eza`, `fd-find`, `bat`, `bind9-dnsutils` and `vim-tiny`.
-- DeepSeek publishes no coding-agent CLI. npm's `deepseek-cli` belongs to a third party and has not been touched since 2025-01.
+- DeepSeek publishes no coding-agent CLI. npm's `deepseek-cli` belongs to a third party and has not been touched since 2025-01. **Superseded 2026-10-12:** DeepSeek now publishes DeepSeek Harness (`dsh`, `@deepseek-ai/dsh`, MIT); see docs/design/base-image.md §6's dated update and B12 below. Its exact npm version is left for the owner to pin (no `npm` was available to regenerate the lockfile safely).
 - The mirror already reads an amd64+arm64 index, compares `--expect-digest` with the index digest, and copies only the amd64 child: `TestMirrorCopiesTheAmd64ImageDigestVerified` publishes exactly such an index.
 - `docs/design/layered-config.md` was not on `origin` when this was written.
 
@@ -105,7 +105,8 @@ Decisions this plan makes:
 - **B12. The harnesses:**
   - critical: Claude Code;
   - bundled but unsupported by the runner: Codex CLI, Gemini CLI, Pi, Qwen Code, OpenCode, Goose, Crush;
-  - excluded: DeepSeek (no official CLI), GitHub Copilot CLI and Amp (proprietary licences need reading before redistribution), Cursor CLI (only a `curl | bash` installer), Aider and Kimi (need a Python runtime).
+  - excluded: GitHub Copilot CLI and Amp (proprietary licences need reading before redistribution), Cursor CLI (only a `curl | bash` installer), Aider and Kimi (need a Python runtime).
+  - **2026-10-12 addendum, not yet bundled:** DeepSeek Harness (`dsh`, `@deepseek-ai/dsh`, MIT). This decision originally excluded DeepSeek for having no official CLI; DeepSeek now publishes one, so it is no longer a deliberate exclusion, but it is also not yet wired into `images/base/tools.tsv` or the Dockerfile's harness loop (docs/design/base-image.md §6 has the full account, including the PR #302 CI failure a first, half-wired attempt caused). It is blocked only on an exact npm version pin and a regenerated `images/base/harnesses/package-lock.json` (`npm install --package-lock-only`), which need `npm` and a careful read of the resulting lockfile (install scripts, licence, arm64 availability) that the environment which first looked at this did not have.
 
   Crush's FSL-1.1-MIT licence is flagged.
 - **B13. The Node harnesses** run on a private Node 24.21.0 in `/opt/fugaro/node`, not on `PATH`, through wrappers. They are installed by `npm ci --ignore-scripts` from a committed lockfile into root-owned `/opt/fugaro/harnesses`.
