@@ -56,11 +56,18 @@ func NewRootCmd() *cobra.Command {
 		Short:         "Fleeting cloud workers for coding agents",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		// The plugin staleness line (design 4.5). No command defines its own
-		// PersistentPreRun, which would replace this one.
+		// The plugin staleness line (design 4.5) and the update-check kickoff
+		// (docs/gcp-setup.md "Staying up to date"). No command defines its own
+		// PersistentPreRun or PersistentPostRun, which would replace these.
 		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
 			cmd.SetContext(withCheckoutParseCache(cmd.Context()))
 			warnStaleSkills(cmd)
+			disabled := updateCheckDisabled(cmd)
+			cmd.SetContext(withUpdateCheckDisabled(cmd.Context(), disabled))
+			startUpdateCheck(cmd, disabled)
+		},
+		PersistentPostRun: func(cmd *cobra.Command, _ []string) {
+			warnUpdateAvailable(cmd, updateCheckDisabledFromContext(cmd.Context()))
 		},
 	}
 	root.AddCommand(

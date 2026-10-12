@@ -28,6 +28,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/preflight"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/updatecheck"
 )
 
 // doctorCheck is one read-only check's result, in the shape `doctor --json`
@@ -45,6 +46,36 @@ type doctorCheck struct {
 
 func fromPreflight(c preflight.Check) doctorCheck {
 	return doctorCheck{ID: c.ID, OK: c.OK, Problem: c.Problem, Fix: c.Fix}
+}
+
+// cliVersionCheck is doctor's "cli-version" check: whether this binary is
+// the latest stable fugaro release. Unlike the background nag
+// (warnUpdateAvailable), it always attempts the (cached, bounded) lookup
+// and always reports it: the update-check disable switches
+// (FUGARO_NO_UPDATE_CHECK, update_check: false) silence only the nag, not
+// doctor's own explicit report. It never fails doctor on its own: a dev or
+// unparseable version has nothing to compare (ok, silent), a lookup that
+// can't produce an answer (no cache, fetch failed) is an informational
+// line, never red, and only an actually older binary is a (non-red)
+// warning, with the brew command as its fix.
+func cliVersionCheck(ctx context.Context, version string, now time.Time) doctorCheck {
+	if !updatecheck.Valid(version) {
+		return doctorCheck{ID: "cli-version", OK: true}
+	}
+	updatecheck.Refresh(ctx, os.Getenv, updateCheckHTTPClient, updateCheckEndpoint, now)
+	e := updatecheck.Load(os.Getenv)
+	switch {
+	case e.Latest == "":
+		return doctorCheck{ID: "cli-version", Severity: "info",
+			Problem: "could not check whether a newer fugaro release is available",
+			Fix:     "check https://github.com/" + updatecheck.Repo + "/releases, or rerun doctor once the network is reachable"}
+	case !updatecheck.Newer(e.Latest, version):
+		return doctorCheck{ID: "cli-version", OK: true}
+	default:
+		return doctorCheck{ID: "cli-version", Severity: "warning",
+			Problem: fmt.Sprintf("fugaro %s is available; this is %s", e.Latest, version),
+			Fix:     updatecheck.BrewCommand}
+	}
 }
 
 // doctorProject is the installation doctor names, read from the local
@@ -182,9 +213,13 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	o := doctorOutput{Plugin: pluginReport, Checks: pluginChecks, Release: release()}
 
 	if pluginOnly {
+		// --plugin is documented offline and safe for CI: no credentials, no
+		// network call of any kind. cli-version would need one, so it is
+		// skipped here; the full run below always includes it.
 		o.OK = !checksFail(o.Checks, strict)
 		return emitDoctor(cmd, o, asJSON)
 	}
+	o.Checks = append(o.Checks, cliVersionCheck(ctx, Version, time.Now()))
 
 	// Distinguishing "no installation at all" from every other selection
 	// refusal (ambiguous projects, a wrong --project) needs the raw list,

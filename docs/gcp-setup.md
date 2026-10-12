@@ -529,6 +529,16 @@ Finish with `fugaro init --repo --forget` if any state remains, and remove the r
 
 `fugaro init` never enables billing, edits project-wide IAM authoritatively (every grant is an additive member resource), deletes anything you didn't name, or starts a billable build without a confirmation.
 
+## Staying up to date
+
+Once a day, any command makes one bounded, anonymous GET to GitHub's "latest release" API for `dimipaun/fugaro` (no token, no identifying data, pre-releases and drafts never returned, a ~1 second timeout that never slows the command down or changes its exit code) and caches the answer under `$XDG_CACHE_HOME/fugaro` (`~/.cache` by default; a corrupt or unreadable cache is treated as no cache, never an error). When the cached answer names a stable release newer than this binary, the next command run at a real terminal (never under `--json`, `--plain`, inside a Cloud Run job, for a `dev` build, or for `version`, `completion` and `help` themselves) prints one line on stderr, after the command's own output, at most once a day per release:
+
+```
+fugaro 0.6.2 is available (you have 0.6.1): brew upgrade dimipaun/tap/fugaro
+```
+
+Two independent switches turn off both the daily check and the line: the environment variable `FUGARO_NO_UPDATE_CHECK=1`, and the local config key `update_check: false` (`~/.config/fugaro/projects/<project>.yaml`, operator-only like `claude_accounts`: never published to the runs bucket). `fugaro doctor` always reports the comparison itself, as its `cli-version` check, regardless of either switch (a diagnostic is not a nag): ok when this binary is current or its version can't be told at all (a `dev` build, or the lookup itself failing with nothing cached yet), a warning — never a failing, red check — naming the brew command when it is behind. Nothing here is verified against a live GitHub release lookup: no test, in this repository's own suite or CI, ever reaches the real network for it.
+
 ## Troubleshooting
 
 ### The /fugaro: skills are not listed
