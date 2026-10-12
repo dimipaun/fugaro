@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -134,5 +135,75 @@ func TestDocsUsageLimitSwitchNamesTheAccountsCommand(t *testing.T) {
 		if !strings.Contains(doc, "fugaro accounts ls") {
 			t.Errorf("%s never names fugaro accounts ls", path)
 		}
+	}
+}
+
+// TestDocsUsageLimitSwitchSeedsTriedListFromOAuthAccount pins task 9b round
+// 2 review comment #2: the skill must identify the account that actually
+// failed from row.oauth_account, not assume it, and seed the tried list
+// with it; "" means the default account (or a run whose record predates
+// the field), and a checkout's agent.oauth_token is the same fallback.
+func TestDocsUsageLimitSwitchSeedsTriedListFromOAuthAccount(t *testing.T) {
+	diagnose := readSkillFile(t, "../../plugin/skills/working/reference/diagnose.md")
+	for _, want := range []string{
+		"row.oauth_account",
+		"the repository's default account, or a run whose record predates this field",
+		"agent.oauth_token",
+		"seed a tried list for this task with it",
+	} {
+		if !strings.Contains(diagnose, want) {
+			t.Errorf("reference/diagnose.md no longer says %q", want)
+		}
+	}
+	if !hasJSONField(reflect.TypeOf(Diagnosis{}), "row.oauth_account") {
+		t.Fatal("Diagnosis has no row.oauth_account field any more, but the skill tells the agent to read it")
+	}
+}
+
+// TestDocsUsageLimitSwitchExcludesCompletedWorkAndMentions pins review
+// comment #3: the trigger is Claude Code's own error (row.reason, log_tail,
+// or an agent_message that reads as an error), never a summary of
+// completed work, and a task that merely discusses usage limits in its
+// summary (without ever hitting one) must not look like a match.
+func TestDocsUsageLimitSwitchExcludesCompletedWorkAndMentions(t *testing.T) {
+	diagnose := readSkillFile(t, "../../plugin/skills/working/reference/diagnose.md")
+	for _, want := range []string{
+		"Claude Code's own error",
+		"not a summary of work it did",
+		"log_tail",
+		"that reads as an error",
+		"otherwise finished its task normally never counts",
+		"was *about* usage limits",
+	} {
+		if !strings.Contains(diagnose, want) {
+			t.Errorf("reference/diagnose.md no longer says %q", want)
+		}
+	}
+}
+
+// TestDocsUsageLimitSwitchSaysAMissIsSafe pins review comment #4: the real
+// Claude Code wording may not contain "usage limit" at all, and a miss is
+// the safe direction — no switch, tell the user — never a forced match.
+func TestDocsUsageLimitSwitchSaysAMissIsSafe(t *testing.T) {
+	diagnose := readSkillFile(t, "../../plugin/skills/working/reference/diagnose.md")
+	for _, want := range []string{
+		`may not contain the words "usage limit" at all`,
+		"limit reached",
+		"A miss is the safe direction",
+		"has not been verified against a live run",
+	} {
+		if !strings.Contains(diagnose, want) {
+			t.Errorf("reference/diagnose.md no longer says %q", want)
+		}
+	}
+}
+
+// TestDocsUsageLimitSwitchOnlyForOAuthWorkflows pins review comment #6: the
+// switch only ever applies to a workflow whose agent.auth is oauth, the
+// same rule claudeAccountAllowed enforces at launch.
+func TestDocsUsageLimitSwitchOnlyForOAuthWorkflows(t *testing.T) {
+	diagnose := readSkillFile(t, "../../plugin/skills/working/reference/diagnose.md")
+	if !strings.Contains(diagnose, "applies only to a workflow whose `agent.auth` is `oauth`") {
+		t.Error("reference/diagnose.md no longer scopes the usage-limit switch to agent.auth: oauth workflows")
 	}
 }
