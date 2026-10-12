@@ -145,7 +145,14 @@ type SharedAnchor struct{ Name, GCPProject, Bucket string }
 
 // sharedForbidden are the top-level keys the publisher never writes
 // (localcfg.Config.Shared): owner-only, personal, derived or local-only.
-var sharedForbidden = []string{"terraform", "user", "endpoints", "bucket_url", "registry", "providers"}
+// claude_accounts is here for the same reason providers is: decision T1
+// (design docs/design/named-oauth-tokens.md §3) keeps the named-account
+// allow-list in the operator-only local config exclusively, so a launcher
+// with objectAdmin on the runs bucket (anyone who could write this file)
+// must never be able to inject or widen it by publishing one. update_check
+// is operator-only the same way: a machine's choice to silence the nag
+// must never be flippable by whoever can write the shared file.
+var sharedForbidden = []string{"terraform", "user", "endpoints", "bucket_url", "registry", "providers", "claude_accounts", "update_check"}
 
 // ParseShared validates a published shared config against its anchor and
 // returns it (docs/design/shared-config.md §5). Anyone holding objectAdmin
@@ -154,10 +161,11 @@ var sharedForbidden = []string{"terraform", "user", "endpoints", "bucket_url", "
 // anchor's GCP project: another name, GCP project or bucket, a registry,
 // base image or log view elsewhere, a budget block whose Firebase project
 // is not the anchor's GCP project or whose database or signer is not its
-// Firebase project's, a forbidden section (providers among them), an unknown
-// key, YAML anchors, aliases, merge keys, explicit tags, repeated keys or
-// documents, and anything over localcfg.SharedMaxBytes. Every refusal
-// names the field and says to have fugaro init run again.
+// Firebase project's, a forbidden section (providers and claude_accounts
+// among them), an unknown key, YAML anchors, aliases, merge keys, explicit
+// tags, repeated keys or documents, and anything over
+// localcfg.SharedMaxBytes. Every refusal names the field and says to have
+// fugaro init run again.
 func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 	refuse := func(format string, args ...any) (*localcfg.Config, error) {
 		return nil, fmt.Errorf("the shared config "+format+"; ask an operator to run fugaro init again", args...)
@@ -203,7 +211,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 		return bad("gcp_project", "%q is not %s", c.GCPProject, a.GCPProject)
 	case c.RunsBucket != a.Bucket || c.RunsBucketName() != a.Bucket:
 		return bad("runs_bucket", "%q is not the bucket it was read from, %s", c.RunsBucket, a.Bucket)
-	case c.User != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil:
+	case c.User != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.ClaudeAccounts != nil || c.UpdateCheck != nil:
 		return refuse("carries a section that is never published (%s)", strings.Join(sharedForbidden, ", "))
 	case c.RegistryHost != c.Region+"-docker.pkg.dev/"+a.GCPProject:
 		return bad("registry_host", "%q is not this project's registry, %s-docker.pkg.dev/%s", c.RegistryHost, c.Region, a.GCPProject)

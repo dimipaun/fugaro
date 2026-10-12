@@ -228,6 +228,30 @@ func TestCloudPricesFollowTheRegion(t *testing.T) {
 	}
 }
 
+// TestJobWorkflowRefusesInsteadOfPanicking is review finding #1's "confirm
+// it cannot panic" follow-up: unlike OAuthToken (config.ClaudeAccountNameRE,
+// enforced by task.Spec.Validate on every task.Parse), task.Spec's Workflow
+// field is never shape-checked, so a task this process didn't just build —
+// another CLI's unvalidated --workflow flag, or bucket data a launcher wrote
+// directly — can carry a value gcp.WorkflowVariant itself refuses outright
+// (a panic, by design, so two distinct inputs can never collide on its "_"
+// join unnoticed). jobWorkflow is the panic-safe wrapper checkExecution and
+// launchRun both use; it must turn that panic into ok == false, never crash
+// the process reading an old or hostile task.json.
+func TestJobWorkflowRefusesInsteadOfPanicking(t *testing.T) {
+	for _, bad := range []string{"Not-Lowercase", "has a space", "", "way-too-long-a-workflow-name-for-the-charset"} {
+		if _, ok := jobWorkflow(bad, "acme-personal"); ok {
+			t.Errorf("jobWorkflow(%q, acme-personal) = ok, want refused", bad)
+		}
+	}
+	if v, ok := jobWorkflow("web", ""); !ok || v != "web" {
+		t.Fatalf("jobWorkflow(web, \"\") = %q, %v, want web, true (the default account is the identity)", v, ok)
+	}
+	if v, ok := jobWorkflow("web", "acme-personal"); !ok || v != "web_acme-personal" {
+		t.Fatalf("jobWorkflow(web, acme-personal) = %q, %v", v, ok)
+	}
+}
+
 // "." and ".." are no slug: path.Join would take them out of runs/.
 func TestRunRefRefusesDotSlugs(t *testing.T) {
 	newCloudFixture(t)

@@ -467,3 +467,30 @@ func TestRunFXFollowsTargetJobTimeout(t *testing.T) {
 		})
 	}
 }
+
+// TestRunFXFollowsNamedAccountJobTimeout is review finding #1's audit of
+// every other place that derives a job from a workflow without the token:
+// mintBudgetToken used to read the DEFAULT account's job timeout
+// (e.be.TaskTimeout(ctx, slug, spec.Workflow)) even for a named run, which
+// actually starts gcp.WorkflowVariant(spec.Workflow, spec.OAuthToken) — a
+// distinct job that can have its own, different timeout. Fixed: the mint
+// now reads the variant job's timeout.
+func TestRunFXFollowsNamedAccountJobTimeout(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	f.appendConfig(t, "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/app]\n")
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", release065)
+	variant := gcp.WorkflowVariant("web", "acme-personal")
+	f.run.AddJob(gcp.JobName(appSlug, variant), "4", "8Gi")
+	f.run.SetJobTimeout(gcp.JobName(appSlug, variant), 30*time.Minute)
+	f.run.SetJobTimeout(gcp.JobName(appSlug, "web"), 6*time.Hour) // the default account's job: must not be read
+
+	start := time.Now()
+	if _, _, err := runBudget(t, "--token", "acme-personal"); err != nil {
+		t.Fatal(err)
+	}
+	got := fxOf(t, f).Sub(start)
+	want := 30*time.Minute + time.Hour + 5*time.Minute
+	if got < want || got > want+2*time.Minute {
+		t.Fatalf("fx - launch = %v, want about %v (the named job's timeout, not the default job's 6h)", got, want)
+	}
+}

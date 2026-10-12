@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"gocloud.dev/blob"
 
@@ -382,6 +383,86 @@ func TestDiagnoseDraftTextIsSanitised(t *testing.T) {
 	}
 	if strings.Contains(b.String(), "\x1b") {
 		t.Fatalf("control sequence printed: %q", b.String())
+	}
+}
+
+func TestDiagnosePrintsAccountOnlyWhenNamed(t *testing.T) {
+	r := runview.Row{Run: "a/b", Status: "succeeded"}
+	var b strings.Builder
+	d := &Diagnosis{Row: r}
+	if err := printDiagnosis(&b, d, false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(b.String(), "Account:") {
+		t.Fatalf("default account printed a line:\n%s", b.String())
+	}
+
+	r.OAuthAccount = "default"
+	b.Reset()
+	d = &Diagnosis{Row: r}
+	if err := printDiagnosis(&b, d, false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(b.String(), "Account:") {
+		t.Fatalf("explicit default account printed a line:\n%s", b.String())
+	}
+
+	r.OAuthAccount = "acme-personal"
+	b.Reset()
+	d = &Diagnosis{Row: r}
+	if err := printDiagnosis(&b, d, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "Account:  acme-personal\n") {
+		t.Fatalf("named account missing its line:\n%s", b.String())
+	}
+}
+
+// TestDiagnosePrintsAccountSanitizesHostileNames: like
+// TestLsAccountColumnSanitizesHostileNames, the account name is untrusted
+// text from a run's own result.json. printDiagnosis is not a tabwriter
+// table (one oneLine-formatted field per line via strings.Builder), so a
+// tab is ordinary here, same as in every other field (Reason, PR URL);
+// what must not happen is an embedded newline forging a second report
+// field, a raw ESC/bidi/line-separator rune reaching the terminal, or a
+// 10 KB name blowing up the report.
+func TestDiagnosePrintsAccountSanitizesHostileNames(t *testing.T) {
+	huge := strings.Repeat("x", 10_000)
+	hostile := []string{
+		"a\nFake: injected\nb", "esc\x1b[2Jc",
+		"bidi" + string(rune(0x202e)) + "evil",
+		"line" + string(rune(0x2028)) + "sep",
+		"para" + string(rune(0x2029)) + "graph",
+		huge,
+	}
+	for _, name := range hostile {
+		r := runview.Row{Run: "a/b", Status: "succeeded", OAuthAccount: name}
+		var b strings.Builder
+		d := &Diagnosis{Row: r}
+		if err := printDiagnosis(&b, d, false); err != nil {
+			t.Fatal(err)
+		}
+		out := b.String()
+		if n := utf8.RuneCountInString(out); n > 700 {
+			t.Fatalf("name %q: diagnosis is %d runes, not bounded:\n%.80q...", name, n, out)
+		}
+		for _, r := range out {
+			if r == '\x1b' || (r >= 0x202a && r <= 0x202e) || r == 0x2028 || r == 0x2029 {
+				t.Fatalf("name %q: hostile rune %U survived in:\n%q", name, r, out)
+			}
+		}
+		accountLines := 0
+		for _, l := range strings.Split(out, "\n") {
+			if strings.HasPrefix(l, "Account:") {
+				accountLines++
+			}
+			if l == "Fake: injected" {
+				t.Fatalf("name %q: an embedded newline forged its own report line:\n%q", name, out)
+			}
+		}
+		if accountLines != 1 {
+			t.Fatalf("name %q: %d lines start with Account:, want 1:\n%q", name, accountLines, out)
+		}
 	}
 }
 

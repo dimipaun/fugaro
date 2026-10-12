@@ -28,6 +28,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/preflight"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/updatecheck"
 )
 
 // doctorCheck is one read-only check's result, in the shape `doctor --json`
@@ -45,6 +46,36 @@ type doctorCheck struct {
 
 func fromPreflight(c preflight.Check) doctorCheck {
 	return doctorCheck{ID: c.ID, OK: c.OK, Problem: c.Problem, Fix: c.Fix}
+}
+
+// cliVersionCheck is doctor's "cli-version" check: whether this binary is
+// the latest stable fugaro release. Unlike the background nag
+// (warnUpdateAvailable), it always attempts the (cached, bounded) lookup
+// and always reports it: the update-check disable switches
+// (FUGARO_NO_UPDATE_CHECK, update_check: false) silence only the nag, not
+// doctor's own explicit report. It never fails doctor on its own: a dev or
+// unparseable version has nothing to compare (ok, silent), a lookup that
+// can't produce an answer (no cache, fetch failed) is an informational
+// line, never red, and only an actually older binary is a (non-red)
+// warning, with the brew command as its fix.
+func cliVersionCheck(ctx context.Context, version string, now time.Time) doctorCheck {
+	if !updatecheck.Valid(version) {
+		return doctorCheck{ID: "cli-version", OK: true}
+	}
+	updatecheck.Refresh(ctx, os.Getenv, updateCheckHTTPClient, updateCheckEndpoint, now)
+	e := updatecheck.Load(os.Getenv)
+	switch {
+	case e.Latest == "":
+		return doctorCheck{ID: "cli-version", Severity: "info",
+			Problem: "could not check whether a newer fugaro release is available",
+			Fix:     "check https://github.com/" + updatecheck.Repo + "/releases, or rerun doctor once the network is reachable"}
+	case !updatecheck.Newer(e.Latest, version):
+		return doctorCheck{ID: "cli-version", OK: true}
+	default:
+		return doctorCheck{ID: "cli-version", Severity: "warning",
+			Problem: fmt.Sprintf("fugaro %s is available; this is %s", e.Latest, version),
+			Fix:     updatecheck.BrewCommand}
+	}
 }
 
 // doctorProject is the installation doctor names, read from the local
@@ -182,9 +213,13 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	o := doctorOutput{Plugin: pluginReport, Checks: pluginChecks, Release: release()}
 
 	if pluginOnly {
+		// --plugin is documented offline and safe for CI: no credentials, no
+		// network call of any kind. cli-version would need one, so it is
+		// skipped here; the full run below always includes it.
 		o.OK = !checksFail(o.Checks, strict)
 		return emitDoctor(cmd, o, asJSON)
 	}
+	o.Checks = append(o.Checks, cliVersionCheck(ctx, Version, time.Now()))
 
 	// Distinguishing "no installation at all" from every other selection
 	// refusal (ambiguous projects, a wrong --project) needs the raw list,
@@ -280,14 +315,46 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	o.Project = &doctorProject{Name: lc.Name, GCPProject: lc.GCPProject, Region: lc.Region, RegistryHost: lc.RegistryHost, BaseImages: lc.BaseImages}
 
 	if co, _ := checkoutProject(ctx, ""); co != nil {
+		var resolved *resolvedFile
 		if c, fy, rf := fugaroYAMLCheck(ctx, co.Root, lc); c != nil {
 			o.Checks = append(o.Checks, *c)
 			o.FugaroYAML = fy
 			if fy.Valid && rf != nil {
 				o.Checks = append(o.Checks, doctorLayerChecks(ctx, lc, co.Root, *rf)...)
+				resolved = rf
 			}
 		}
 		o.Secrets = doctorSecrets(cmd, lc)
+		token := oauthTokenOf(resolved)
+		if repo, err := originRepo(ctx); err == nil {
+			if c := claudeAccountsStoredCheck(lc, repo, o.Secrets); c != nil {
+				o.Checks = append(o.Checks, *c)
+			}
+			if c := oauthTokenAllowedCheck(lc, repo, token, authOf(resolved)); c != nil {
+				o.Checks = append(o.Checks, *c)
+			}
+		} else {
+			if len(lc.ClaudeAccounts) > 0 {
+				// The repository itself could not be determined (no origin
+				// remote), so it is impossible to tell which named accounts, if
+				// any, apply to it. claude_accounts is configured for at least
+				// one repository somewhere, so staying silent here would fail
+				// open: an owner could not tell this checkout was never actually
+				// checked. Warn instead (fail closed).
+				o.Checks = append(o.Checks, doctorCheck{ID: "claude-accounts-stored", Severity: "warning",
+					Problem: "could not determine this checkout's repository (no origin remote), so whether its named Claude account(s) have a stored token could not be checked",
+					Fix:     "run doctor from a checkout with a parseable owner/name origin remote, or check by hand: " + selfCommand() + " secrets ls --repo OWNER/NAME"})
+			}
+			if token != "" {
+				// Same fail-closed reasoning as claude-accounts-stored just
+				// above: agent.oauth_token is set, but with no resolvable
+				// repository there is nothing to check it against. Warn
+				// rather than stay silent.
+				o.Checks = append(o.Checks, doctorCheck{ID: "oauth-token-allowed", Severity: "warning",
+					Problem: "could not determine this checkout's repository (no origin remote), so whether its agent.oauth_token names an allowed account could not be checked",
+					Fix:     "run doctor from a checkout with a parseable owner/name origin remote, or check fugaro.yaml and the local config's claude_accounts by hand"})
+			}
+		}
 	}
 
 	o.OK = !checksFail(o.Checks, strict)
@@ -425,6 +492,131 @@ func doctorSecrets(cmd *cobra.Command, lc *localcfg.Config) []secretEntry {
 		return strings.Compare(a.Name+"\x00"+a.ID, b.Name+"\x00"+b.ID)
 	})
 	return entries
+}
+
+// claudeAccountsStoredCheck is doctor's "claude-accounts-stored" check
+// (design docs/design/named-oauth-tokens.md §6f, plan Task 8): every named
+// Claude account repo may choose (config.AllowedClaudeAccounts, "default"
+// excluded, since that is the repository's existing, unconditionally
+// required secret and already covered by doctor's other checks) should have
+// a stored token. It adds no Secret Manager call of its own: listed is
+// whatever doctorSecrets already fetched (metadata only, by label, never a
+// value), so an installation with no claude_accounts configured for repo
+// triggers no new read at all. listed == nil means that listing itself
+// could not be attempted or failed (no origin, no credentials, Secret
+// Manager unreachable): this is reported as a warning, never silence,
+// since otherwise an owner could not tell whether a configured account is
+// actually usable (fail closed). Every name or slug this check echoes is
+// bounded by pluginwire.Printable, since a repository's origin remote and
+// the owner's own local config are both outside this function's control.
+func claudeAccountsStoredCheck(lc *localcfg.Config, repo string, listed []secretEntry) *doctorCheck {
+	var named []string
+	for _, n := range config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo) {
+		if n != config.DefaultClaudeAccount {
+			named = append(named, n)
+		}
+	}
+	if len(named) == 0 {
+		return nil
+	}
+	printableNamed := make([]string, len(named))
+	for i, n := range named {
+		printableNamed[i] = pluginwire.Printable(n)
+	}
+	printableRepo := pluginwire.Printable(repo)
+	if listed == nil {
+		return &doctorCheck{ID: "claude-accounts-stored", Severity: "warning",
+			Problem: fmt.Sprintf("could not list %s's secrets, so whether its named Claude account(s) (%s) have a stored token could not be checked",
+				printableRepo, strings.Join(printableNamed, ", ")),
+			Fix: "rerun doctor with Secret Manager reachable and your credentials available, or check by hand: " + selfCommand() + " secrets ls --repo " + quoteWord(repo)}
+	}
+	have := make(map[string]bool, len(listed))
+	for _, s := range listed {
+		have[s.Name] = true
+	}
+	var missing []string
+	var cmds []string
+	for _, n := range named {
+		secret := config.ClaudeAccountSecret(n)
+		if !have[secret] {
+			missing = append(missing, pluginwire.Printable(n))
+			cmds = append(cmds, "claude setup-token", selfCommand()+" secrets set "+quoteWord(secret)+" --repo "+quoteWord(repo))
+		}
+	}
+	if len(missing) == 0 {
+		return &doctorCheck{ID: "claude-accounts-stored", OK: true}
+	}
+	return &doctorCheck{ID: "claude-accounts-stored",
+		Problem: fmt.Sprintf("named Claude account(s) %s have no stored token for %s", strings.Join(missing, ", "), printableRepo),
+		Fix:     strings.Join(cmds, "; ")}
+}
+
+// oauthTokenAllowedCheck is doctor's "oauth-token-allowed" check (design
+// docs/design/named-oauth-tokens.md §6f, plan Task 8): the checkout's
+// agent.oauth_token, if set, must name an account config.AllowedClaudeAccounts
+// says repo may actually use, for a workflow whose agent.auth is oauth — a
+// name the local config does not know, one whose allow_data_to omits repo,
+// or one named for a non-oauth workflow (fugaro run already refuses that
+// combination; doctor must not disagree) would otherwise only surface at
+// fugaro run time, after a PR already merged the fugaro.yaml change that
+// sets it. Pure offline: no GCP call of any kind, only the already-loaded
+// local config and the checkout's own already-resolved fugaro.yaml (token,
+// auth). token == "" (the key unset, meaning the repository's default
+// account) makes no check at all: an installation that never sets
+// agent.oauth_token sees no new output. Every name this check echoes is
+// bounded by pluginwire.Printable, since the checkout's fugaro.yaml and the
+// owner's local config are both outside this function's control.
+func oauthTokenAllowedCheck(lc *localcfg.Config, repo, token, auth string) *doctorCheck {
+	if token == "" {
+		return nil
+	}
+	// Mirrors claudeAccountAllowed's own rule (internal/cli/run.go): naming
+	// an account for a workflow whose agent.auth isn't oauth is refused
+	// outright, never merely left unchecked — no secret is ever mounted for
+	// it, so the name would be silently unused. Review finding (round 2):
+	// doctor used to report this combination OK, disagreeing with fugaro
+	// run, which already refuses it.
+	if auth != "oauth" {
+		return &doctorCheck{ID: "oauth-token-allowed",
+			Problem: fmt.Sprintf("fugaro.yaml's agent.oauth_token %s only applies to a workflow whose agent.auth is oauth; %s's agent.auth is %s",
+				pluginwire.Printable(token), pluginwire.Printable(repo), pluginwire.Printable(auth)),
+			Fix: "remove agent.oauth_token, or change agent.auth to oauth"}
+	}
+	allowed := config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo)
+	if slices.Contains(allowed, token) {
+		return &doctorCheck{ID: "oauth-token-allowed", OK: true}
+	}
+	printableAllowed := make([]string, len(allowed))
+	for i, n := range allowed {
+		printableAllowed[i] = pluginwire.Printable(n)
+	}
+	return &doctorCheck{ID: "oauth-token-allowed",
+		Problem: fmt.Sprintf("fugaro.yaml's agent.oauth_token %s is not one %s may use (allowed: %s)",
+			pluginwire.Printable(token), pluginwire.Printable(repo), strings.Join(printableAllowed, ", ")),
+		Fix: fmt.Sprintf("add claude_accounts.%s.allow_data_to: [%s] to the operator's local config, or change agent.oauth_token in fugaro.yaml to one of the allowed names",
+			pluginwire.Printable(token), pluginwire.Printable(repo))}
+}
+
+// oauthTokenOf is token's resolvedFile.Cfg.Agent.OAuthToken, "" when rf
+// (fugaroYAMLCheck's third return) is nil: an invalid fugaro.yaml, or one
+// whose project layer resolution failed, already has its own failing
+// "fugaro-yaml" check, so oauthTokenAllowedCheck simply has nothing to say
+// rather than guessing at a value that was never resolved.
+func oauthTokenOf(rf *resolvedFile) string {
+	if rf == nil || rf.Cfg == nil {
+		return ""
+	}
+	return rf.Cfg.Agent.OAuthToken
+}
+
+// authOf is rf's resolvedFile.Cfg.Agent.Auth, "" when rf is nil: the same
+// "nothing resolved" case oauthTokenOf already treats as having nothing to
+// say.
+func authOf(rf *resolvedFile) string {
+	if rf == nil || rf.Cfg == nil {
+		return ""
+	}
+	return rf.Cfg.Agent.Auth
 }
 
 // pluginDoctorChecks turns a plugin report's states into doctor checks.

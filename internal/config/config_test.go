@@ -68,6 +68,13 @@ func TestParseProblems(t *testing.T) {
 	}{
 		{"empty", "", "", "file is empty", 0},
 		{"unknown field", minimalYAML + "    color: blue\n", "", "field color not found", 12},
+		// claude_accounts is a local-config-only key (design
+		// docs/design/named-oauth-tokens.md §3, decision T1): a fugaro.yaml
+		// may never define or widen the named-account allow-list, so the
+		// repository layer's strict decoder (the same KnownFields(true)
+		// decoder as the "unknown field" case above) must refuse it exactly
+		// like any other field the Config struct does not have.
+		{"claude_accounts is not a fugaro.yaml key", minimalYAML + "claude_accounts:\n  x: {}\n", "", "field claude_accounts not found", 0},
 		{"bad duration", minimalYAML + "    timeouts: { total: soon }\n", "", "invalid duration", 12},
 		{"version", strings.Replace(minimalYAML, "version: 1", "version: 2", 1), "version", "must be 1", 0},
 		{"provider", strings.Replace(minimalYAML, "github", "gitlab", 1), "git.provider", "must be one of github, bitbucket", 0},
@@ -82,6 +89,16 @@ func TestParseProblems(t *testing.T) {
 		{"memory", minimalYAML + "    resources: { memory: 32GB }\n", "workflows.server.resources.memory", "must look like", 0},
 		{"cpu", minimalYAML + "    resources: { cpu: -1 }\n", "workflows.server.resources.cpu", "must be at least 1", 0},
 		{"reserved secret", minimalYAML + "    secrets:\n      - { name: claude-oauth-token, env: TOK }\n", "workflows.server.secrets[0].name", "reserved", 0},
+		// claude-oauth-token-<name> is the derived secret ID of a named
+		// Claude account (config.ClaudeAccountSecret, design
+		// docs/design/named-oauth-tokens.md §5): a workflow must never be
+		// able to declare a secret of that shape as its own, since a name
+		// that happens to collide with (or merely look like) a real or
+		// fictitious account name would let fugaro.yaml itself steer where
+		// the owner's pasted Claude token value goes, bypassing
+		// claude_accounts' allow_data_to allow-list entirely (the local
+		// config, never fugaro.yaml, controls that list — T1).
+		{"claude-oauth-token-prefixed workflow secret reserved", minimalYAML + "    secrets:\n      - { name: claude-oauth-token-acme-personal, env: TOK }\n", "workflows.server.secrets[0].name", "reserved for named Claude accounts", 0},
 		{"cache key", minimalYAML + "    cache:\n      - { key: [], paths: [~/.gradle] }\n", "workflows.server.cache[0].key", "at least one file", 0},
 		// A verbatim tag's own text stands in for !!str in yaml.v3's type
 		// error, so a fugaro.yaml can put anything a YAML tag allows,
@@ -617,6 +634,37 @@ func TestAgentRecipe(t *testing.T) {
 		if cfg, ps := Parse(data); (cfg != nil) != ok {
 			t.Errorf("%s: %+v, %v", file, cfg, ps)
 		}
+	}
+}
+
+// TestAgentOAuthToken is TestAgentRecipe's shape for agent.oauth_token
+// (named oauth tokens plan Task 6): the field decodes, and Validate applies
+// the same shape rules task.Spec.OAuthToken does (config.ClaudeAccountNameRE,
+// MaxClaudeAccountNameLen, never "default" literally) — a membership check
+// (config.AllowedClaudeAccounts) is not this function's job, since it never
+// sees the local config.
+func TestAgentOAuthToken(t *testing.T) {
+	base := "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: oauth\n%s" +
+		"workflows:\n  app: { base: go, commands: { build: go build ./..., test: go test ./... } }\n"
+	cfg, ps := Parse([]byte(fmt.Sprintf(base, "  oauth_token: acme-personal\n")))
+	if len(ps) > 0 || cfg.Agent.OAuthToken != "acme-personal" {
+		t.Fatalf("cfg = %+v, problems %v", cfg, ps)
+	}
+	cfg, ps = Parse([]byte(fmt.Sprintf(base, "")))
+	if len(ps) > 0 || cfg.Agent.OAuthToken != "" {
+		t.Fatalf("unset: %+v, %v", cfg, ps)
+	}
+	_, ps = Parse([]byte(fmt.Sprintf(base, "  oauth_token: default\n")))
+	if len(ps) != 1 || ps[0].Path != "agent.oauth_token" || !strings.Contains(ps[0].Message, `must not be "default"`) {
+		t.Fatalf("literal default: %v", ps)
+	}
+	_, ps = Parse([]byte(fmt.Sprintf(base, "  oauth_token: Acme\n")))
+	if len(ps) != 1 || ps[0].Path != "agent.oauth_token" || !strings.Contains(ps[0].Message, "must be a Claude account name") {
+		t.Fatalf("bad shape: %v", ps)
+	}
+	_, ps = Parse([]byte(fmt.Sprintf(base, "  oauth_token: "+strings.Repeat("a", MaxClaudeAccountNameLen+1)+"\n")))
+	if len(ps) != 1 || ps[0].Path != "agent.oauth_token" || !strings.Contains(ps[0].Message, "must be at most") {
+		t.Fatalf("too long: %v", ps)
 	}
 }
 
