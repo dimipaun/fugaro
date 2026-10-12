@@ -344,9 +344,38 @@ func TestFugaroSchemaReservesTheSameSecretNames(t *testing.T) {
 		return out
 	}
 	wf := at(doc, "$defs", "workflow")
-	names := strs(at(wf, "properties", "secrets", "items", "properties", "name", "not", "enum"))
+	// secrets[].name's "not" clause now reserves two shapes: the platform's
+	// fixed names (an enum, unchanged) and the whole claude-oauth-token-
+	// prefix, config.ClaudeOAuthTokenPrefix's namespace (a pattern, added
+	// alongside config.Validate's own refusal of it as a workflow secret —
+	// a schema/parser pair, kept aligned the same way the enum already is).
+	notClause, ok := at(wf, "properties", "secrets", "items", "properties", "name", "not").(map[string]any)
+	if !ok {
+		t.Fatalf("schema's secrets[].name.not is not an object: %v", at(wf, "properties", "secrets", "items", "properties", "name", "not"))
+	}
+	anyOf, ok := notClause["anyOf"].([]any)
+	if !ok {
+		t.Fatalf("schema's secrets[].name.not has no anyOf: %v", notClause)
+	}
+	var names []string
+	var prefix string
+	for _, c := range anyOf {
+		m, ok := c.(map[string]any)
+		if !ok {
+			t.Fatalf("anyOf entry is not an object: %v", c)
+		}
+		if e, ok := m["enum"]; ok {
+			names = strs(e)
+		}
+		if p, ok := m["pattern"].(string); ok {
+			prefix = p
+		}
+	}
 	if want := slices.Sorted(maps.Keys(config.ReservedSecrets)); !slices.Equal(names, want) {
 		t.Errorf("schema reserves secret names %v, config.ReservedSecrets has %v", names, want)
+	}
+	if want := "^" + config.ClaudeOAuthTokenPrefix; prefix != want {
+		t.Errorf("schema reserves the claude-oauth-token- prefix as %q, want %q (config.ClaudeOAuthTokenPrefix)", prefix, want)
 	}
 	providers := strs(at(doc, "properties", "git", "properties", "provider", "enum"))
 	if want := slices.Sorted(slices.Values(config.Providers)); !slices.Equal(providers, want) {

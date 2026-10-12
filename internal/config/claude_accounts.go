@@ -46,6 +46,16 @@ var ClaudeAccountNameRE = regexp.MustCompile(`^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}
 // derived identifier comfortably inside those limits.
 const MaxClaudeAccountNameLen = 31
 
+// ClaudeOAuthTokenPrefix is ClaudeAccountSecret's prefix for every name but
+// the default: the whole claude-oauth-token-<name> namespace is reserved
+// for a named Claude account's derived secret ID and may never be a
+// workflow's own secret (Validate, below) or a model provider's key — a
+// name merely shaped like one, whether or not its suffix names a
+// configured account, must be refused wherever a secret name is accepted
+// (internal/cli/secrets.go, internal/cli/initsecrets.go), not only when it
+// happens to collide with a real one.
+const ClaudeOAuthTokenPrefix = "claude-oauth-token-"
+
 // ClaudeAccount is one named Claude OAuth credential the owner has
 // configured in the local config (never fugaro.yaml or the project layer:
 // design §3 T1), parallel to ModelProvider. Its secret is derived
@@ -71,7 +81,7 @@ func ClaudeAccountSecret(name string) string {
 	if name == "" || name == DefaultClaudeAccount {
 		return "claude-oauth-token"
 	}
-	return "claude-oauth-token-" + name
+	return ClaudeOAuthTokenPrefix + name
 }
 
 // ClaudeAccountBySecret is the account name whose secret is secret, the
