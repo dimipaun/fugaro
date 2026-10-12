@@ -87,9 +87,11 @@ combination, and `docs/design/base-image.md` §6's env-variable table lists
 `ANTHROPIC_BASE_URL` for Claude Code generally, without saying whether it
 composes with the OAuth token. This is Headroom integration's first open
 question, and it has a sharp security edge: Anthropic's OAuth bearer token
-is the subscription account's own live credential (`SECURITY.md`, "f.
-Expired or revoked token" treats it as "Anthropic's own credential"). A
-proxy terminating in front of it would see that bearer token on every
+is the subscription account's own live credential
+(`docs/design/named-oauth-tokens.md` §6c, "Fugaro has no way to scope what a
+`claude setup-token` token can do (it is Anthropic's own credential, unlike a
+GitHub App installation token or a Bitbucket repo-scoped token)"). A proxy
+terminating in front of it would see that bearer token on every
 request header — a new kind of exposure that does not exist today, since
 oauth traffic currently has **no intermediary at all** (§2 goes into this).
 
@@ -172,16 +174,42 @@ which is not driven as a library). Recommendation: treat it as equivalent to
 ### 1.3 MCP server
 
 Would only compress what flows through **MCP tool calls** Claude Code makes
-to it. Fugaro's workflows do not route tool use through MCP: Bash, Read,
-Edit, Write, Grep and Glob are Claude Code's native built-in tools, and
-nothing in the base image or any catalog recipe front-ends them with an MCP
-bridge (`docs/design/base-image.md` §6's harness table lists no MCP layer;
-`docs/design/recipes.md` §7 keeps "a recipe names no command" as a safety
-rule — introducing a tool-call intermediary is a materially bigger and
-different project, closer to generic-tool.md's deferred "pluggable control
-plane", §11 there). **Recommendation: out of scope for v1.** It would need
-Fugaro to restructure how Claude Code's tools are exposed, which this design
-does not propose and the owner did not ask for.
+to it — and Claude Code's native MCP support is already part of this
+codebase's trust model, not a hypothetical to design around. A repository
+can declare MCP servers in `.mcp.json`, which Claude Code loads from the
+**working tree** (the PR's branch for a follow-up, not the base branch) and
+can run or call with the job's full environment and secrets;
+`docs/design/v1.md:862` names this directly as a residual risk ("Hooks and
+MCP servers planted there run with the job's environment and its secrets...
+review the PR's diff with it in mind before launching a follow-up on it"),
+and `internal/pluginwire/notices.go`'s `mcpNotices` (lines 32-38) exists
+specifically to flag a repository's `.mcp.json` on `fugaro init`'s diff
+screen ("the repository has a .mcp.json, which declares MCP servers
+(commands or services Claude Code can run or call): read it before trusting
+them"); the same file also flags a settings file's
+`enableAllProjectMcpServers: true` as "every MCP server the repository
+declares is trusted without asking." So Claude Code calling MCP tools is a
+real, already-documented path, not something this design would have to
+introduce.
+
+What is still true, and is the actual reason this mode doesn't help: **none
+of the tool traffic this design is trying to shrink goes through MCP.**
+Bash, Read, Edit, Write, Grep and Glob — the tools every stage's
+implement/fix/review loop actually generates its volume with — are Claude
+Code's native, built-in tools, never MCP tool calls, and no Fugaro-authored
+recipe or base-image convention wires an MCP server into that path
+(`docs/design/base-image.md` §6's harness table lists no MCP bridge). A
+Headroom MCP server would only ever see traffic from an MCP server a
+**repository itself** declared — exactly the untrusted, residual-risk path
+`v1.md` §6 already warns about, not Fugaro's own tool-execution volume — so
+fronting that path with compression does nothing for the traffic this
+design is actually about. Making it do more than that — routing Fugaro's
+own built-in tool calls through an MCP intermediary — would be a materially
+bigger and different project, closer to generic-tool.md's deferred
+"pluggable control plane" (§11 there) than to anything proposed here.
+**Recommendation unchanged: out of scope for v1** — not because MCP is
+foreign to this codebase, but because an MCP-server-shaped integration
+doesn't reach the tool calls this design needs to shrink.
 
 ### 1.4 Library
 
@@ -640,12 +668,21 @@ similarly-shaped work:
   model call) in the same release "doubles what a failed upgrade can break"
   — the identical reasoning the owner already used to defer the Docker
   backend.
-- Named OAuth tokens, a comparably-scoped feature, was explicitly sequenced
-  to start only after 0.7.0 merges, "to avoid `internal/infra` merge churn
-  with the base-image consolidation" (`named-oauth-tokens.md` §8) — this
-  design touches `internal/agent/env.go` and the base image's harness
-  layer, both squarely inside 0.7.0's own change surface, for the same
-  scheduling reason, not a functional dependency.
+- Named OAuth tokens was originally sequenced the same way — "to avoid
+  `internal/infra` merge churn with the base-image consolidation"
+  (`named-oauth-tokens.md` §8) — but this is a weaker precedent than it
+  looks: the owner overrode that reasoning and shipped it at 0.6.5, ahead of
+  0.7.0, and `named-oauth-tokens.md` §8 says plainly "this reasoning was not
+  revisited." So this bullet is cited for the *shape* of the scheduling
+  argument, not as a settled precedent the owner has stuck to — the stronger
+  case for waiting is the two bullets above (measure-first, and not
+  overloading the 0.7.0 freeze), which the owner has not overridden for any
+  feature to date. If the owner wants this sooner, the named-oauth-tokens
+  precedent is itself evidence that "after 0.7.0" is a default this design
+  recommends, not a hard constraint — this design touches
+  `internal/agent/env.go` and the base image's harness layer, both squarely
+  inside 0.7.0's own change surface, which is the scheduling reason either
+  way.
 
 **What gates it, concretely, before any code merges:** the §6 measurement
 protocol must run in the sandbox and clear its thresholds; independently,

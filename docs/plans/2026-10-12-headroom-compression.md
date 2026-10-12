@@ -211,9 +211,9 @@ semantics. Each is flagged for review at high effort (Opus) specifically for
 the security question — does this change widen what the agent, or anything
 running alongside it, can reach or read — separate from an ordinary
 correctness review of the same diff, the same split
-`docs/design/layered-config.md` §17 draws for its own Task 4 and Task 13
-("the second with a security reviewer, since they are the merge and the
-trust boundary").
+`docs/plans/2026-10-08-layered-config.md:174` draws for its own Task 4 and
+Task 13 ("the second with a security reviewer, since they are the merge and
+the trust boundary").
 
 ---
 
