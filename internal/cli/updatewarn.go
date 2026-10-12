@@ -59,10 +59,18 @@ func updateCheckDisabledFromContext(ctx context.Context) bool {
 // updateCheckDisabled reports whether the whole feature is off for this
 // command: FUGARO_NO_UPDATE_CHECK=1, or the selected project's local
 // config says update_check: false. The local config lookup
-// (selectedProjectConfig) makes no network call and no cloud call; it is
-// only reached once the cheap env check has already passed.
+// (selectedProjectConfig: a git rev-parse and a config file read, no
+// network or cloud call) is the most expensive check here, so it is only
+// reached once every cheaper reason to skip it entirely — the env switch,
+// an excluded command, running inside a Cloud Run job — has already not
+// applied; shouldStartUpdateCheck and shouldWarnUpdateAvailable check the
+// same two conditions again regardless of what this returns, so treating
+// them as "disabled" here changes nothing observable.
 func updateCheckDisabled(cmd *cobra.Command) bool {
 	if os.Getenv(noUpdateCheckEnv) == "1" {
+		return true
+	}
+	if updateCheckExcluded[cmd.Name()] || backend.OnCloudRun(os.Getenv) {
 		return true
 	}
 	if lc := selectedProjectConfig(cmd.Context()); lc != nil {
