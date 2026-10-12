@@ -567,9 +567,6 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 			}
 			line += "\t" + cellOneLine(clipRunes(name, maxNameCellRunes))
 		}
-		if showLayer {
-			line += "\t" + layerCell(r)
-		}
 		fmt.Fprintln(tw, line)
 	}
 	if err := tw.Flush(); err != nil {
