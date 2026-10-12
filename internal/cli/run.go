@@ -111,8 +111,10 @@ type runOptions struct {
 	noBudgetCheck                         bool
 	recipe                                string
 	// token is the named Claude account (docs/design/named-oauth-tokens.md)
-	// this run uses: fugaro run --token. A follow-up (--pr) ignores it (with
-	// a warning if it differs): T6, the account is inherited, never re-chosen.
+	// this run uses: fugaro run --token. A follow-up (--pr) inherits its
+	// previous run's account when this is empty; an explicit value overrides
+	// it instead (owner ruling, 2026-10-12, task 9b review), through the
+	// same allow-list, agent.auth and version-gate checks a first run's does.
 	token string
 }
 
@@ -143,7 +145,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.totalTimeout, "total-timeout", "", "override the workflow's timeouts.total for this run, such as 45m")
 	f.IntVar(&o.pr, "pr", 0, "continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions)")
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's (default, cheap-loop-senior, claude-solo); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
-	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account and warns if this differs")
+	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's)")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	f.BoolVar(&o.noBudgetCheck, "no-budget-check", false, "skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts")
 	addCloudFlags(cmd, &o.cloud)
