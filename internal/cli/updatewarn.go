@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -39,19 +40,29 @@ var (
 var stderrIsTerminal = isTTY
 
 // updateCheckCtxKey is the PersistentPreRun-computed disable state, carried
-// to PersistentPostRun so it is resolved (env plus a local config lookup)
-// only once per command.
+// on the command's context to wherever the command ends up (WarnUpdateAvailable,
+// called from cmd/fugaro/main.go after the command returns, success or
+// not) so it is resolved (env plus a local config lookup) only once per
+// command.
 type updateCheckCtxKey struct{}
 
 // withUpdateCheckDisabled and updateCheckDisabledFromContext carry
-// updateCheckDisabled's result from PersistentPreRun to PersistentPostRun,
-// so a command that resolves a project (selectedProjectConfig: a git
-// rev-parse and a config file read) only pays for it once.
+// updateCheckDisabled's result from PersistentPreRun onward, so a command
+// that resolves a project (selectedProjectConfig: a git rev-parse and a
+// config file read) only pays for it once.
 func withUpdateCheckDisabled(ctx context.Context, disabled bool) context.Context {
 	return context.WithValue(ctx, updateCheckCtxKey{}, disabled)
 }
 
+// updateCheckDisabledFromContext tolerates a nil ctx: cobra leaves a
+// matched command's own ctx unset when Find/Traverse itself fails (an
+// unknown command, a bad flag) before PersistentPreRun ever runs, and
+// WarnUpdateAvailable is called unconditionally on whatever ExecuteContextC
+// returns.
 func updateCheckDisabledFromContext(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
 	v, _ := ctx.Value(updateCheckCtxKey{}).(bool)
 	return v
 }
@@ -88,6 +99,17 @@ func shouldStartUpdateCheck(cmd *cobra.Command, disabled bool) bool {
 	return !disabled && !updateCheckExcluded[cmd.Name()] && !backend.OnCloudRun(os.Getenv) && updatecheck.Valid(Version)
 }
 
+// updateCheckWG tracks the background Refresh goroutine startUpdateCheck
+// may launch. main.go calls WaitForUpdateCheck before the process exits:
+// without joining it, a command whose own work finishes before the HTTP
+// GET and the cache Save do (common for a fast, local-only command racing
+// FetchTimeout's ~1s budget) would have main return and the process exit
+// right under it, silently dropping that day's check instead of
+// completing it — unlike every other background goroutine in this
+// package (ls.go, watch_queued.go, initsecrets.go, secrets.go), which all
+// join before their command returns.
+var updateCheckWG sync.WaitGroup
+
 // startUpdateCheck kicks the daily GitHub lookup in the background
 // (design "update warnings", point 1): it never blocks the command. It
 // uses its own context, independent of cmd's: main unregisters cmd's
@@ -97,7 +119,21 @@ func startUpdateCheck(cmd *cobra.Command, disabled bool) {
 	if !shouldStartUpdateCheck(cmd, disabled) {
 		return
 	}
-	go updatecheck.Refresh(context.Background(), os.Getenv, updateCheckHTTPClient, updateCheckEndpoint, time.Now())
+	updateCheckWG.Add(1)
+	go func() {
+		defer updateCheckWG.Done()
+		updatecheck.Refresh(context.Background(), os.Getenv, updateCheckHTTPClient, updateCheckEndpoint, time.Now())
+	}()
+}
+
+// WaitForUpdateCheck blocks until any background daily-check goroutine
+// startUpdateCheck launched for the command that just ran has finished,
+// bounded by its own FetchTimeout (~1s). cmd/fugaro/main.go calls it right
+// after ExecuteContextC returns and before the process can exit; a command
+// that never started one (excluded, disabled, inside a Cloud Run job, a
+// dev build) returns at once, since updateCheckWG was never incremented.
+func WaitForUpdateCheck() {
+	updateCheckWG.Wait()
 }
 
 // shouldWarnUpdateAvailable is warnUpdateAvailable's decision, pulled out
@@ -119,6 +155,23 @@ func warnUpdateAvailable(cmd *cobra.Command, disabled bool) {
 	if line := updatecheck.Warn(os.Getenv, time.Now(), Version); line != "" {
 		fmt.Fprintln(cmd.ErrOrStderr(), line)
 	}
+}
+
+// WarnUpdateAvailable is warnUpdateAvailable for cmd/fugaro/main.go: the
+// command this package's root.go attached PersistentPreRun to, whatever
+// ExecuteContextC returned, success or failure (cmd is never nil there,
+// but nil is tolerated so this is safe to call unconditionally). The nag
+// is not printed from a PersistentPostRun (see root.go's NewRootCmd
+// comment): cobra's Command.execute returns immediately when the leaf
+// command's RunE errors, which most command failures do, skipping
+// PostRun and PersistentPostRun entirely — so main must call this itself,
+// after the command's own output (including any printed error), whether
+// or not it errored.
+func WarnUpdateAvailable(cmd *cobra.Command) {
+	if cmd == nil {
+		return
+	}
+	warnUpdateAvailable(cmd, updateCheckDisabledFromContext(cmd.Context()))
 }
 
 // machineReadable reports whether cmd was asked for --json or --plain

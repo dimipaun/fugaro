@@ -3,11 +3,13 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +17,12 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/updatecheck"
 )
+
+// fakeHTTPClient adapts a function to updatecheck.Client, for tests that
+// need to control exactly when a "request" returns.
+type fakeHTTPClient func(*http.Request) (*http.Response, error)
+
+func (f fakeHTTPClient) Do(req *http.Request) (*http.Response, error) { return f(req) }
 
 // cmdNamed is a bare cobra command with the given name, a "json" and
 // "plain" flag (as real commands that have them declare), and a buffer
@@ -285,5 +293,119 @@ func TestDoctorReportsCLIVersionCheck(t *testing.T) {
 	}
 	if !bytes.Contains([]byte(out), []byte(`"cli-version"`)) {
 		t.Fatalf("doctor --json has no cli-version check:\n%s", out)
+	}
+}
+
+// TestRootHasNoPersistentPostRun pins that the nag is never wired through
+// a PersistentPostRun(E) field on the root command: that hook is skipped
+// by cobra's Command.execute whenever the matched command's RunE returns
+// an error (the vendored spf13/cobra v1.10.2 behavior
+// TestWarnUpdateAvailableFiresWhenExecuteErrors exercises below), which is
+// most command failures, so relying on it would silently drop the nag on
+// them. cmd/fugaro/main.go calls WarnUpdateAvailable itself instead.
+func TestRootHasNoPersistentPostRun(t *testing.T) {
+	root := NewRootCmd()
+	if root.PersistentPostRun != nil || root.PersistentPostRunE != nil {
+		t.Fatal("root command has a PersistentPostRun(E): it is skipped whenever a command's RunE errors, so it must not be how the update-available nag is printed; call WarnUpdateAvailable from cmd/fugaro/main.go instead")
+	}
+}
+
+// TestWarnUpdateAvailableFiresWhenExecuteErrors drives a full cobra
+// ExecuteC() that errors (doctor with no installation configured, which
+// returns a real RunE error, not just non-zero output), then calls
+// WarnUpdateAvailable the way cmd/fugaro/main.go does: unconditionally,
+// after Execute returns, regardless of its error. This is the case
+// cobra's own PersistentPostRun cannot cover at all — Command.execute
+// returns as soon as RunE errors, skipping PostRun and PersistentPostRun
+// — which is exactly why root.go no longer has one and main.go calls
+// WarnUpdateAvailable itself instead.
+//
+// Mutation: making WarnUpdateAvailable return early whenever cmd carries
+// a non-nil error (threading err into it, as a PersistentPostRun-based
+// design would effectively require) makes this test fail: the whole
+// point is that it must still print on this exact path.
+func TestWarnUpdateAvailableFiresWhenExecuteErrors(t *testing.T) {
+	withVersion(t, "0.6.1")
+	dir := t.TempDir()
+	isolateProjects(t, dir)
+	if err := updatecheck.Save(os.Getenv, updatecheck.Entry{Latest: "0.7.0"}); err != nil {
+		t.Fatal(err)
+	}
+	oldTTY := stderrIsTerminal
+	stderrIsTerminal = func(io.Writer) bool { return true }
+	t.Cleanup(func() { stderrIsTerminal = oldTTY })
+
+	root := NewRootCmd()
+	var out, errOut bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errOut)
+	root.SetArgs([]string{"doctor", "--dir", t.TempDir()})
+	cmd, err := root.ExecuteC()
+	if err == nil {
+		t.Fatal("doctor with no installation configured = nil error, want one (TestDoctorWithNoInstallationSaysRunInit pins the same case)")
+	}
+
+	// What cmd/fugaro/main.go does right after ExecuteContextC returns,
+	// whatever err is.
+	WaitForUpdateCheck()
+	WarnUpdateAvailable(cmd)
+
+	want := "fugaro 0.7.0 is available (you have 0.6.1): " + updatecheck.BrewCommand
+	if got := errOut.String(); !strings.Contains(got, want) {
+		t.Fatalf("stderr after an erroring Execute = %q, want it to contain %q", got, want)
+	}
+}
+
+// TestWaitForUpdateCheckJoinsTheGoroutine pins that WaitForUpdateCheck
+// actually blocks until startUpdateCheck's background goroutine finishes,
+// rather than returning immediately regardless: without the WaitGroup,
+// main.go exiting right after Execute would kill a slow fetch mid-flight
+// instead of completing it.
+//
+// Mutation: dropping updateCheckWG.Add(1)/Done() (launching the goroutine
+// bare, `go updatecheck.Refresh(...)`) makes WaitForUpdateCheck a no-op,
+// and this test's first select (asserting it has NOT returned yet) fails.
+func TestWaitForUpdateCheckJoinsTheGoroutine(t *testing.T) {
+	withVersion(t, "0.6.1")
+	dir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", dir)
+	t.Setenv("CLOUD_RUN_EXECUTION", "")
+
+	called := make(chan struct{})
+	release := make(chan struct{})
+	oldClient, oldEndpoint := updateCheckHTTPClient, updateCheckEndpoint
+	updateCheckHTTPClient = fakeHTTPClient(func(*http.Request) (*http.Response, error) {
+		close(called)
+		<-release
+		return nil, errors.New("stopped by the test")
+	})
+	updateCheckEndpoint = "http://127.0.0.1:1/unused"
+	t.Cleanup(func() { updateCheckHTTPClient, updateCheckEndpoint = oldClient, oldEndpoint })
+
+	cmd, _ := cmdNamed("doctor")
+	startUpdateCheck(cmd, false)
+
+	select {
+	case <-called:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the background HTTP client was never invoked")
+	}
+
+	waitDone := make(chan struct{})
+	go func() {
+		WaitForUpdateCheck()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+		t.Fatal("WaitForUpdateCheck returned before the background goroutine finished")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case <-waitDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("WaitForUpdateCheck did not return after the background goroutine finished")
 	}
 }
