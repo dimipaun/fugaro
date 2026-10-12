@@ -207,3 +207,30 @@ func TestDocsUsageLimitSwitchOnlyForOAuthWorkflows(t *testing.T) {
 		t.Error("reference/diagnose.md no longer scopes the usage-limit switch to agent.auth: oauth workflows")
 	}
 }
+
+// TestDocsAccountsLsCompleteFieldIsReal pins review comment #5: fugaro
+// accounts ls --json's "complete" and "note" fields (added so a --json
+// caller can tell a genuine "no other accounts" from "selection failed,
+// this list may be short") are real fields of accountsListDoc, and the
+// skill step that reads them (reference/diagnose.md step 1) says so.
+// fieldTokenRE (skills_test.go) only catches underscore- or dot-shaped
+// backtick tokens, so a bare word like `complete` or `note` would silently
+// pass TestSkillJSONClaimsMatchTheTable even if renamed — this test closes
+// that gap directly against the struct, the same way
+// TestProjectLayerSkillClaimsRealFields does for config layer --json.
+func TestDocsAccountsLsCompleteFieldIsReal(t *testing.T) {
+	for _, f := range []string{"repo", "accounts", "complete", "note"} {
+		if !hasJSONField(reflect.TypeOf(accountsListDoc{}), f) {
+			t.Errorf("accountsListDoc has no %q field any more, but reference/diagnose.md tells the agent to read it from fugaro accounts ls --json", f)
+		}
+	}
+	diagnose := readSkillFile(t, "../../plugin/skills/working/reference/diagnose.md")
+	for _, want := range []string{
+		"Check `complete` first",
+		"`note` says which",
+	} {
+		if !strings.Contains(diagnose, want) {
+			t.Errorf("reference/diagnose.md no longer says %q", want)
+		}
+	}
+}
