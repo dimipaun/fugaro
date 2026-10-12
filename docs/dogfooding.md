@@ -2,6 +2,8 @@
 
 The repository's root `fugaro.yaml` points a Fugaro installation at this repository: project `fugaro`, one workflow `go` on the `go` base image. This page is the guide to running Fugaro on its own code, as it was done on the GCP project `fugaro-dev` from 2026-10-04: what to set up, what a run is and is not trusted with, what stays out of runs, and what the first weeks taught. The step-by-step behaviour of `init` is in [gcp-setup.md](gcp-setup.md); this page says what is different here.
 
+**Self-hosted runs are broken right now (base-image hard cut, Task 17).** `internal/config` already refuses `base: go` in any `fugaro.yaml` it validates, and this repository's own `fugaro.yaml` still has one (deliberately: see `docs/base-image-migration.md`, "This repository's own dogfood run is broken until Task 22"). So `fugaro run --workflow go "<task>"` below fails at config-validate, before any agent work starts, until Task 22 flips this file over (after `fugaro-base` is published and `fugaro image refresh` runs). Until then, do the remaining base-image tasks directly — a local session or a person, not a run — the same as the security-sensitive work in "What went through runs, and what did not" below.
+
 **What is recorded and what is not.** The layout, the first runs and the lessons below were observed on `fugaro-dev` by its maintainer; they are not a test. The simple setup this page leads with (`fugaro init`, `/fugaro:setup`, `fugaro init`) is merged but has **not** been run from a clean project: the first install on `fugaro-dev` used the manual steps and hit the frictions that M11 removes. That clean run is the milestone's acceptance and is written up as Check 27 in [gcp-live-checklist.md](gcp-live-checklist.md), **NOT RUN**.
 
 ## The layout

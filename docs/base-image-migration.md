@@ -2,7 +2,13 @@
 
 Fugaro 0.7.0 replaces the `go`, `web-node` and `java-services` bases with one base image (see [base-image.md](base-image.md)). There is no transition release: a 0.7.0 CLI refuses `base:`, `image.node` and `image.jdk`, and a 0.6 one refuses a `fugaro.yaml` without `base:`. So each repository moves in one pull request, and the installation follows right after, in the order below.
 
-**Not enforced yet.** The refusals this document describes (`base:`, `image.node`, `base_images.go`/`web-node`/`java-services`) arrive together with the 0.7.0 release; the work that adds them is in flight in this tree but not merged. Until 0.7.0 ships, `base:` still accepts `go`, `web-node` and `java-services`, and `image.node` still works on `web-node`. This guide is written ahead of that enforcement, so every repository can move in one step once it lands; `image.jdk` is the one exception already refused today, on every base.
+**Already enforced in this tree, not yet in a release.** The base-image plan's hard cut (Task 17) is merged on this branch: a `fugaro` built from this source already refuses `base:`, `image.node` and `image.jdk` in any `fugaro.yaml` it validates, ahead of a 0.7.0 release tag. **This repository's own `fugaro.yaml` is the one deliberate exception**: its `go` workflow still reads `base: go` (see "This repository's own dogfood run" below) — don't take that as evidence the refusal is inactive elsewhere.
+
+## This repository's own dogfood run is broken until Task 22
+
+Fugaro's own `fugaro.yaml` (project `fugaro`, workflow `go`) still reads `base: go` — deliberately not migrated yet: Task 22 ("Release 0.7.0, Fugaro's switch") reserves that flip for the owner, run only after `fugaro-base` is published and `fugaro image refresh` has moved this checkout onto it (today, `fugaro-base` is not published: the `images.yml` workflow's `fugaro-base`/`publish-base` jobs exist, but no release has triggered them yet).
+
+**From the moment the base-image hard cut (Task 17) is in this checkout, `fugaro run --workflow go "<task>"` (docs/dogfooding.md) fails immediately at the config-validate stage, before any agent work starts**, with `workflows.go.base: base: was removed in 0.7.0: ... (docs/base-image-migration.md)`. This is not a bug in the cut: it is `internal/config`'s refusal doing exactly what it is meant to do, applied to a `fugaro.yaml` nobody has migrated yet. It does mean no self-hosted Fugaro run can execute against this repository's `go` workflow between the cut landing and Task 22's flip — any further work on this plan's remaining tasks in that window has to be done directly (a local session or a person, not `fugaro run`), exactly as `docs/dogfooding.md`'s "What went through runs, and what did not" section already describes for security-sensitive code.
 
 ## The order
 
