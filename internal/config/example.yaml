@@ -63,6 +63,9 @@ workflows:
       test: npm test
       reports: ["**/junit*.xml"]   # JUnit XML, such as jest-junit or Vitest's junit reporter
     secrets:                  # logical names; infrastructure maps them to Secret Manager
+      # bitbucket-token, github-app-key, claude-oauth-token, anthropic-api-key, and anything
+      # starting claude-oauth-token- (a named Claude account's own secret, set in the local
+      # config's claude_accounts, never here) are reserved and refused as a workflow's own name
       - { name: npm-token, env: NPM_TOKEN }
     resources: { cpu: 4, memory: 8Gi }
     timeouts: { total: 90m, stage: 40m, verify: 30m, finalize_reserve: 5m }

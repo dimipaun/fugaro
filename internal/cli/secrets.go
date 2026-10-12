@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -146,7 +147,33 @@ func resolveSecretRepo(cmd *cobra.Command, env *cloudEnv, flag string) (*secretR
 // shape): the set of secrets claude setup-token mints a value for, so
 // init's prompts (initsecrets.go) know when to mention it.
 func isClaudeOAuthSecret(name string) bool {
-	return name == "claude-oauth-token" || strings.HasPrefix(name, "claude-oauth-token-")
+	return name == "claude-oauth-token" || strings.HasPrefix(name, config.ClaudeOAuthTokenPrefix)
+}
+
+// claudeOAuthAccountAllowed reports whether name (shaped
+// config.ClaudeOAuthTokenPrefix+<account>) is a named Claude account repo
+// is actually configured and allowed to use. config.Validate
+// (internal/config/validate.go) already refuses a workflow from ever
+// declaring a secret in this reserved namespace, but neither secretsSet
+// nor init's secrets stage (initsecrets.go) trusts that upstream refusal
+// alone: a name in this namespace that is not a configured, allowed
+// account is refused wherever it is checked, whatever path tried to
+// declare or reach it (a bypassed or future-weakened Validate, a cached
+// config, or any other caller).
+func claudeOAuthAccountAllowed(accounts map[string]config.ClaudeAccount, name, repo string) bool {
+	n, ok := config.ClaudeAccountBySecret(accounts, name)
+	return ok && accounts[n].AllowsData(repo)
+}
+
+// claudeOAuthAccountRefusal is the one message every claude-oauth-token-*
+// refusal uses: name and repo both go through Printable, since this path
+// must never assume a name reaching it already passed
+// config.SecretNameRE, or that repo already passed task.CanonicalRepo (a
+// cached or hand-edited local config's account name or allow_data_to
+// entry, for one).
+func claudeOAuthAccountRefusal(name, repo string) error {
+	return userErr("%s is not a configured claude_accounts name for %s; see claude_accounts in the local config",
+		pluginwire.Printable(name), pluginwire.Printable(repo))
 }
 
 // declares reports whether some workflow of cfg lists secret name.
@@ -178,12 +205,15 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 		return err
 	}
 	_, reserved := config.ReservedSecrets[name]
-	if n, ok := config.ClaudeAccountBySecret(env.lc.ClaudeAccounts, name); ok && n != config.DefaultClaudeAccount {
-		// The owner's, from the local config, parallel to the provider
-		// branch below: a named Claude account's secret is only stored for
-		// a repository its allow_data_to lists.
-		if !env.lc.ClaudeAccounts[n].AllowsData(r.repo) {
-			return userErr("named Claude account %s does not list %s in allow_data_to, so its token is not stored for it", n, r.repo)
+	if strings.HasPrefix(name, config.ClaudeOAuthTokenPrefix) {
+		// The whole claude-oauth-token-<name> namespace is reserved for a
+		// named Claude account's derived secret ID, never a provider's or a
+		// workflow's own: config.Validate refuses a workflow from ever
+		// declaring one, but this check does not assume that ran — it is
+		// refused here too, whatever reached it, unless it is a configured
+		// account this repository's allow_data_to actually lists.
+		if !claudeOAuthAccountAllowed(env.lc.ClaudeAccounts, name, r.repo) {
+			return claudeOAuthAccountRefusal(name, r.repo)
 		}
 	} else if p, ok := config.ProviderBySecret(env.lc.Providers, name); ok && !reserved {
 		// The owner's, from the local config, so any checkout will do. The

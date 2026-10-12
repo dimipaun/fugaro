@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -410,7 +412,7 @@ func TestSecretsSetRefusesDisallowedNamedAccount(t *testing.T) {
 	cmd.SetErr(&errOut)
 	cmd.SetArgs([]string{"secrets", "set", "claude-oauth-token-acme-personal", "--repo", "acme/app"})
 	err := cmd.Execute()
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "allow_data_to") ||
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "not a configured claude_accounts name") ||
 		strings.Contains(out.String()+errOut.String()+err.Error(), tokenValue) {
 		t.Fatalf("err = %v", err)
 	}
@@ -419,6 +421,85 @@ func TestSecretsSetRefusesDisallowedNamedAccount(t *testing.T) {
 	}
 	if sm.Latest(gcp.SecretID(appSlug, "claude-oauth-token-acme-personal")) != nil {
 		t.Fatal("a refused value was stored")
+	}
+}
+
+// TestSecretsSetRefusesUnconfiguredClaudeOAuthName: a name shaped
+// claude-oauth-token-<x> whose <x> is not a claude_accounts key at all
+// (never configured, not merely disallowed) is refused with the same
+// "not a configured claude_accounts name" message, before stdin is read —
+// not the generic "no workflow declares" message a workflow-secret typo
+// gets. Review finding: the whole claude-oauth-token- namespace is
+// reserved for named Claude accounts, whether or not a workflow happens to
+// declare a secret of that exact name (config.Validate separately refuses
+// that declaration; this is this command's own, independent check).
+func TestSecretsSetRefusesUnconfiguredClaudeOAuthName(t *testing.T) {
+	sm := secretsFixture(t)
+	spy := &readerSpy{Reader: strings.NewReader(tokenValue)}
+	cmd := NewRootCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetIn(spy)
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"secrets", "set", "claude-oauth-token-nobody", "--repo", "acme/app"})
+	err := cmd.Execute()
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "not a configured claude_accounts name") ||
+		strings.Contains(err.Error(), "declares") || strings.Contains(err.Error(), "checkout") ||
+		strings.Contains(out.String()+errOut.String()+err.Error(), tokenValue) {
+		t.Fatalf("err = %v", err)
+	}
+	if spy.read {
+		t.Fatal("the value was read before the refusal")
+	}
+	if sm.Latest(gcp.SecretID(appSlug, "claude-oauth-token-nobody")) != nil {
+		t.Fatal("a refused value was stored")
+	}
+}
+
+// TestClaudeOAuthAccountAllowed is a surgical, bypass-the-YAML-pipeline
+// unit test of the defense-in-depth guard itself: whatever route a
+// claude-oauth-token-<name> secret name reaches secretsSet or init's
+// take() by (config.Validate is supposed to stop a workflow from ever
+// declaring one, but this helper never assumes that upstream refusal ran),
+// only a configured, allowed account passes.
+func TestClaudeOAuthAccountAllowed(t *testing.T) {
+	accounts := map[string]config.ClaudeAccount{
+		"acme-personal": {AllowDataTo: []string{"acme/app"}},
+		"other-team":    {AllowDataTo: []string{"acme/other"}},
+	}
+	for _, tc := range []struct {
+		name, repo string
+		want       bool
+	}{
+		{"claude-oauth-token-acme-personal", "acme/app", true},
+		{"claude-oauth-token-acme-personal", "acme/unrelated", false},
+		{"claude-oauth-token-other-team", "acme/app", false}, // configured, not allowed here
+		{"claude-oauth-token-nobody", "acme/app", false},     // not configured at all
+		{"claude-oauth-token-", "acme/app", false},           // the empty suffix names nothing
+	} {
+		if got := claudeOAuthAccountAllowed(accounts, tc.name, tc.repo); got != tc.want {
+			t.Errorf("claudeOAuthAccountAllowed(%q, %q) = %v, want %v", tc.name, tc.repo, got, tc.want)
+		}
+	}
+}
+
+// TestClaudeOAuthAccountRefusalIsPrintable: the refusal message never
+// echoes a control or bidi-override character raw, whatever reached it (a
+// cached or hand-edited local config's account name, say) — the same
+// bounding every other config-sourced name gets (pluginwire.Printable).
+func TestClaudeOAuthAccountRefusalIsPrintable(t *testing.T) {
+	bidi := string(rune(0x202e)) // a right-to-left override character
+	hostile := "claude-oauth-token-\x1b[2Jpwned"
+	err := claudeOAuthAccountRefusal(hostile, "acme/"+bidi+"app")
+	if err == nil {
+		t.Fatal("nil error")
+	}
+	if strings.ContainsAny(err.Error(), "\x1b") || strings.Contains(err.Error(), bidi) {
+		t.Fatalf("a control or bidi character leaked raw: %q", err.Error())
+	}
+	escEsc, escBidi := fmt.Sprintf("\\u%04x", 0x1b), fmt.Sprintf("\\u%04x", 0x202e)
+	if !strings.Contains(err.Error(), escEsc) || !strings.Contains(err.Error(), escBidi) {
+		t.Fatalf("the escaped form is missing: %q", err.Error())
 	}
 }
 

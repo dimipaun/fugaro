@@ -201,6 +201,27 @@ func (s *secretsStage) canPrompt() bool {
 		stdinIsTerminal(cmd.InOrStdin()) && writerIsTerminal(cmd.ErrOrStderr()) && writerIsTerminal(cmd.OutOrStdout())
 }
 
+// allowedClaudeOAuthMounts is mounts with every claude-oauth-token-<name>
+// entry this repository is not a configured, allowed account for dropped —
+// never prompted for, never stored. config.Validate (internal/config/validate.go)
+// already refuses a workflow from ever declaring a secret in this reserved
+// namespace, so in practice mounts (infra.SecretMounts's output, which
+// includes a workflow's own declared secrets unfiltered) never carries one
+// once a checkout's fugaro.yaml parses at all; this is the second,
+// independent layer that drops it regardless, whatever path it arrived by
+// (a bypassed or future-weakened Validate, a cached config, or any other
+// caller), matching secretsSet's own refusal of the same shape.
+func allowedClaudeOAuthMounts(accounts map[string]config.ClaudeAccount, repo string, mounts []infra.SecretMount) []infra.SecretMount {
+	out := make([]infra.SecretMount, 0, len(mounts))
+	for _, m := range mounts {
+		if strings.HasPrefix(m.Logical, config.ClaudeOAuthTokenPrefix) && !claudeOAuthAccountAllowed(accounts, m.Logical, repo) {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
 // resolve finds the repository the stage works on and what its jobs mount.
 // It applies only to a checkout of a repository of this project, found as
 // fugaro secrets set finds one: the provider comes from the local config's
@@ -276,7 +297,7 @@ func (s *secretsStage) resolve(ctx context.Context) {
 				s.skip = "fugaro.yaml's secrets cannot be worked out: " + oneLine(err.Error())
 				return
 			}
-			for _, m := range mounts {
+			for _, m := range allowedClaudeOAuthMounts(lc.ClaudeAccounts, repo, mounts) {
 				if !slices.Contains(tg.wanted, m.Logical) {
 					tg.wanted = append(tg.wanted, m.Logical)
 				}
@@ -513,6 +534,13 @@ func (s *secretsStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 // take prompts for one secret, validates it and stores it. The value is
 // held only inside this call, with core dumps off while it is.
 func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w io.Writer, name string) error {
+	if strings.HasPrefix(name, config.ClaudeOAuthTokenPrefix) && !claudeOAuthAccountAllowed(s.e.lc.ClaudeAccounts, name, s.tg.repo) {
+		// The resolve()-time filter above already keeps such a name out of
+		// tg.wanted; this is the independent backstop that never reads or
+		// stores a value for one even if that filter were ever wrong or
+		// skipped (defense in depth, review finding).
+		return claudeOAuthAccountRefusal(name, s.tg.repo)
+	}
 	defer noCoreDumps()()
 	var (
 		value []byte
