@@ -1406,6 +1406,29 @@ func TestRepoSpecHasNoVariantForDisallowedName(t *testing.T) {
 	}
 }
 
+// A named account's variants exist ONLY for oauth repositories: an api-key or
+// vertex repository that an account happens to list in allow_data_to still
+// gets exactly the one default job per workflow (the oauth gate at the loop in
+// Repo(): removing it stayed green until this test).
+func TestRepoSpecHasNoVariantForNonOAuthRepositories(t *testing.T) {
+	for _, auth := range []string{"api-key", "vertex"} {
+		in := sandboxInputs(t, m5Additions+claudeAccountsLC)
+		in.Cfg.Agent.Auth = auth
+		rs, err := Repo(in)
+		if err != nil {
+			t.Fatalf("auth %s: %v", auth, err)
+		}
+		if len(rs.Workflows) != len(in.Cfg.Workflows) {
+			t.Errorf("auth %s: %d jobs for %d workflows: a variant was built for a non-oauth repository (keys %v)", auth, len(rs.Workflows), len(in.Cfg.Workflows), slices.Sorted(maps.Keys(rs.Workflows)))
+		}
+		for key := range rs.Workflows {
+			if _, ok := in.Cfg.Workflows[key]; !ok {
+				t.Errorf("auth %s: job key %q is not a fugaro.yaml workflow name (a variant)", auth, key)
+			}
+		}
+	}
+}
+
 // Each named account's job variant mounts only its own token, under its own
 // secret ID: never another allowed name's, and never the bare default's
 // (the regression option A, §4 of the design, would mount every allowed
