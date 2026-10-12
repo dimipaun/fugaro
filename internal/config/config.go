@@ -145,6 +145,16 @@ type Agent struct {
 	// or the catalog's. "" is default. fugaro run --recipe wins over it.
 	// Binaries before 0.5.0 refuse the key.
 	Recipe string `yaml:"recipe"`
+	// OAuthToken names the Claude account (claude_accounts in the local
+	// config, ClaudeAccountNameRE) this workflow's agent.auth: oauth uses;
+	// "" is the repository's default account, the existing claude-oauth-token
+	// secret (docs/design/named-oauth-tokens.md). fugaro run --token wins
+	// over it. A name must still be allowed for this repository
+	// (AllowedClaudeAccounts), checked at launch, not here: Validate only
+	// checks the name's own shape. Repo and override scope only (Scopes):
+	// neither the project layer nor a profile may set it (design §3 T2).
+	// Binaries before 0.6.1 refuse this key (fugaro.yaml's strict decoder).
+	OAuthToken string `yaml:"oauth_token,omitempty" json:"OAuthToken,omitempty"`
 }
 
 // First-line review settings (Agent.FirstLineReview).

@@ -608,6 +608,37 @@ func TestAgentRecipe(t *testing.T) {
 	}
 }
 
+// TestAgentOAuthToken is TestAgentRecipe's shape for agent.oauth_token
+// (named oauth tokens plan Task 6): the field decodes, and Validate applies
+// the same shape rules task.Spec.OAuthToken does (config.ClaudeAccountNameRE,
+// MaxClaudeAccountNameLen, never "default" literally) — a membership check
+// (config.AllowedClaudeAccounts) is not this function's job, since it never
+// sees the local config.
+func TestAgentOAuthToken(t *testing.T) {
+	base := "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: oauth\n%s" +
+		"workflows:\n  app: { base: go, commands: { build: go build ./..., test: go test ./... } }\n"
+	cfg, ps := Parse([]byte(fmt.Sprintf(base, "  oauth_token: acme-personal\n")))
+	if len(ps) > 0 || cfg.Agent.OAuthToken != "acme-personal" {
+		t.Fatalf("cfg = %+v, problems %v", cfg, ps)
+	}
+	cfg, ps = Parse([]byte(fmt.Sprintf(base, "")))
+	if len(ps) > 0 || cfg.Agent.OAuthToken != "" {
+		t.Fatalf("unset: %+v, %v", cfg, ps)
+	}
+	_, ps = Parse([]byte(fmt.Sprintf(base, "  oauth_token: default\n")))
+	if len(ps) != 1 || ps[0].Path != "agent.oauth_token" || !strings.Contains(ps[0].Message, `must not be "default"`) {
+		t.Fatalf("literal default: %v", ps)
+	}
+	_, ps = Parse([]byte(fmt.Sprintf(base, "  oauth_token: Acme\n")))
+	if len(ps) != 1 || ps[0].Path != "agent.oauth_token" || !strings.Contains(ps[0].Message, "must be a Claude account name") {
+		t.Fatalf("bad shape: %v", ps)
+	}
+	_, ps = Parse([]byte(fmt.Sprintf(base, "  oauth_token: "+strings.Repeat("a", MaxClaudeAccountNameLen+1)+"\n")))
+	if len(ps) != 1 || ps[0].Path != "agent.oauth_token" || !strings.Contains(ps[0].Message, "must be at most") {
+		t.Fatalf("too long: %v", ps)
+	}
+}
+
 const profileBase = "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  web: { base: go, commands: { build: make, test: make test } }\n"
 
 func TestProfileKeysDecode(t *testing.T) {
