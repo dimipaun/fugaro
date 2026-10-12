@@ -114,10 +114,13 @@ func (r *run) checkoutReviewHeads(ctx context.Context) error {
 // pre-execution shell line (see readReviewCommandFromBase, below, for why
 // agent.review: /name never resolves one from this checkout at all) —
 // under a headless agent run with every permission prompt off. So is a
-// stray .mcp.json or
-// CLAUDE.local.md anywhere in the tree. SECURITY.md already names skills,
-// settings and subagents together for this identical untrusted-checkout
-// threat model (there, a follow-up's agent-written branch).
+// .claude-plugin directory (plugin.json can declare the identical hooks,
+// MCP servers and commands a .claude/ tree can — this repo's own
+// plugin/.claude-plugin/plugin.json is that same mechanism), and so is a
+// stray .mcp.json or CLAUDE.local.md anywhere in the tree. SECURITY.md
+// already names skills, settings and subagents together for this
+// identical untrusted-checkout threat model (there, a follow-up's
+// agent-written branch).
 //
 // CLAUDE.md is the one file left, everywhere it appears: it is untrusted
 // prompt text the model merely reads, never configuration Claude Code
@@ -127,13 +130,13 @@ func (r *run) checkoutReviewHeads(ctx context.Context) error {
 // The walk is Lstat-based throughout (fs.DirEntry's type comes from the
 // directory read itself, never a follow) and never descends into a
 // symlinked directory (filepath.WalkDir's own guarantee) or into .git. A
-// .claude found to be a real directory is removed whole (os.RemoveAll,
-// safe here precisely because the top-level entry was just confirmed not
-// to be a symlink — RemoveAll does not follow one found deeper inside
-// either) and the walk does not try to continue into it
-// (filepath.SkipDir). A .claude that is itself a symlink (or, oddly, a
-// plain file) has only that directory entry removed (os.Remove never
-// follows a symlink to delete whatever it points to, wherever that is).
+// .claude or .claude-plugin found to be a real directory is removed whole
+// (os.RemoveAll, safe here precisely because the top-level entry was just
+// confirmed not to be a symlink — RemoveAll does not follow one found
+// deeper inside either) and the walk does not try to continue into it
+// (filepath.SkipDir). One that is itself a symlink (or, oddly, a plain
+// file) has only that directory entry removed (os.Remove never follows a
+// symlink to delete whatever it points to, wherever that is).
 func stripClaudeConfig(dir string) error {
 	return filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		switch {
@@ -147,7 +150,7 @@ func stripClaudeConfig(dir string) error {
 		switch name := d.Name(); {
 		case name == ".git" && d.IsDir():
 			return filepath.SkipDir
-		case name == ".claude":
+		case name == ".claude" || name == ".claude-plugin":
 			if d.IsDir() {
 				if err := os.RemoveAll(p); err != nil {
 					return err
