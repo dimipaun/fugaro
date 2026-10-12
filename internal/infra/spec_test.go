@@ -1354,16 +1354,21 @@ const claudeAccountsLC = `claude_accounts:
 // TestGoldenTfvars is the byte-for-byte proof of this over the fixture
 // corpus; this test pins the one fact that proof depends on, directly.
 func TestBuildRepoSpecUnchangedWithNoClaudeAccounts(t *testing.T) {
-	in := sandboxInputs(t, m5Additions)
-	if in.LC.ClaudeAccounts != nil {
-		t.Fatal("the fixture already configures claude_accounts")
-	}
-	rs, err := Repo(in)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := slices.Sorted(maps.Keys(rs.Workflows)), slices.Sorted(maps.Keys(in.Cfg.Workflows)); !slices.Equal(got, want) {
-		t.Fatalf("rs.Workflows keys = %v, want exactly the fugaro.yaml workflow names %v", got, want)
+	// Both an oauth fixture (sandboxInputs) and a non-oauth one
+	// (webappInputs, vertex): named accounts only ever apply to oauth
+	// workflows, so both must independently prove the identity holds,
+	// whatever auth kind in.Cfg.Agent.Auth names.
+	for _, in := range []Inputs{sandboxInputs(t, m5Additions), webappInputs(t)} {
+		if in.LC.ClaudeAccounts != nil {
+			t.Fatal("the fixture already configures claude_accounts")
+		}
+		rs, err := Repo(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := slices.Sorted(maps.Keys(rs.Workflows)), slices.Sorted(maps.Keys(in.Cfg.Workflows)); !slices.Equal(got, want) {
+			t.Fatalf("%s: rs.Workflows keys = %v, want exactly the fugaro.yaml workflow names %v", in.Cfg.Agent.Auth, got, want)
+		}
 	}
 }
 
@@ -1384,6 +1389,20 @@ func TestRepoSpecHasNoVariantForDisallowedName(t *testing.T) {
 	}
 	if _, ok := rs.Workflows[gcp.WorkflowVariant("web", "acme-personal")]; !ok {
 		t.Fatal("the allowed named account's variant is missing")
+	}
+	// The variant's Cloud Run job and dedicated service account must be
+	// distinct from the default's: their map keys already differ, but Job
+	// and ServiceAccount.AccountID are independently derived fields that a
+	// mutation could leave keyed on the logical workflow name alone.
+	def, named := rs.Workflows["web"], rs.Workflows[gcp.WorkflowVariant("web", "acme-personal")]
+	if def.Job == named.Job {
+		t.Errorf("the named variant's job %q collides with the default's", named.Job)
+	}
+	if def.ServiceAccount.AccountID == named.ServiceAccount.AccountID {
+		t.Errorf("the named variant's service account %q collides with the default's", named.ServiceAccount.AccountID)
+	}
+	if def.Labels[gcp.LabelWorkflow] == named.Labels[gcp.LabelWorkflow] {
+		t.Errorf("the named variant's fugaro_workflow label %q collides with the default's", named.Labels[gcp.LabelWorkflow])
 	}
 }
 

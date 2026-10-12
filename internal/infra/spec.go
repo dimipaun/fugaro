@@ -616,7 +616,7 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	}
 
 	var collisions []string
-	mounts, err := SecretMounts(c.gitSecret, c.in.Cfg, name, w, lc, c.in.Repo)
+	mounts, err := SecretMounts(c.gitSecret, c.in.Cfg, name, token, w, lc, c.in.Repo)
 	if err != nil {
 		return WorkflowSpec{}, err
 	}
@@ -741,13 +741,30 @@ func Repo(in Inputs) (RepoSpec, error) {
 	}
 	var checked []string
 	for _, name := range slices.Sorted(maps.Keys(in.Cfg.Workflows)) {
-		ws, err := c.workflow(name)
-		if err != nil {
-			return RepoSpec{}, err
+		// One WorkflowSpec per Claude account this repository may choose for
+		// an oauth workflow (design docs/design/named-oauth-tokens.md §4 T3):
+		// config.AllowedClaudeAccounts is the one place that decides the
+		// set, so a name not on it never gets a key here at all (the hard
+		// backstop of the allow-list, design §6b.3). Every other auth kind
+		// has exactly the default account, unchanged from before this field
+		// existed.
+		tokens := []string{config.DefaultClaudeAccount}
+		if in.Cfg.Agent.Auth == "oauth" {
+			tokens = config.AllowedClaudeAccounts(lc.ClaudeAccounts, in.Repo)
 		}
-		rs.Workflows[name] = ws
-		maps.Copy(rs.Secrets, ws.SecretIDs)
-		rs.BuildSecrets = append(rs.BuildSecrets, ws.BuildSecrets...)
+		for _, tok := range tokens {
+			ws, err := c.workflow(name, tok)
+			if err != nil {
+				return RepoSpec{}, err
+			}
+			key := gcp.WorkflowVariant(name, tok)
+			rs.Workflows[key] = ws
+			maps.Copy(rs.Secrets, ws.SecretIDs)
+			rs.BuildSecrets = append(rs.BuildSecrets, ws.BuildSecrets...)
+		}
+		// The daily check covers the workflow's image, the same image
+		// across every token variant: once per logical workflow, not once
+		// per variant.
 		if in.Cfg.Workflows[name].Rebuild.Defaults().Check != "off" {
 			checked = append(checked, name)
 		}
