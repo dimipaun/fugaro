@@ -1134,7 +1134,7 @@ func TestLsIsATombstone(t *testing.T) {
 }
 
 func TestSingularNounAliases(t *testing.T) {
-	for _, args := range [][]string{{"recipe", "validate", "--help"}, {"secret", "ls", "--help"}, {"run", "--help"}} {
+	for _, args := range [][]string{{"recipe", "validate", "--help"}, {"secret", "ls", "--help"}, {"account", "ls", "--help"}, {"run", "--help"}} {
 		if _, _, err := execute(t, args...); err != nil {
 			t.Fatalf("%v: %v", args, err)
 		}

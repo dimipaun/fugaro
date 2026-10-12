@@ -212,11 +212,11 @@ In the commands below, `T` is short for
 | 29 | Adopting an existing Firebase root: `terraform state rm` of the four singletons in the SANDBOX's Firebase root, `init --firebase` imports them (`Plan: 4 to import`), a rerun shows `No changes`; then the squat (an extra permission on the minter role) and a foreign minter on the signer are refused | See "Check 29" below; **you** run it at your own terminal, on the **sandbox's Firebase project only**, never a real installation's. | No cost beyond the sandbox's own backend. **USER-RUN, NOT RUN.** |
 | 30 | `fugaro image refresh`'s direct check-job update against the real Cloud Run Admin API: the read-back output-only fields round-trip through `jobs.patch`, the job's etag is enforced against a concurrent change, the patch starts no execution, and a later `init --repo` plans no change (design/image-refresh.md, "The check job and Terraform") | See "Check 30" below; **you** run it at your own terminal, on the **sandbox's check job only**, never EdgeWeb or EdgeServer. | No cost beyond the sandbox's own Cloud Run job and, if needed, a second base image copy. **USER-RUN, NOT RUN.** |
 | 31 | `fugaro upgrade` with the real `claude` CLI: the marketplace add or update, the install or update at the right scope, the settings file untouched by `claude`, a rerun that changes nothing, and the cloud step skipped in a Claude Code session | See "Check 31" below; **you** run it, on the sandbox checkout only. | USER-RUN, NOT RUN |
-| 32 | Named Claude accounts, U1: Cloud Run Jobs execution overrides cannot carry a secret reference (design `named-oauth-tokens.md` §4, option D) | See "Check 32" below; reads published API docs only, no project needed. | No cost. **NOT RUN.** |
 | 33 | A vendor's own Anthropic-compatible endpoint, the same question check 25 settles for OpenRouter (optional) | See "Check 33" below; **you** run it at your own terminal, on the sandbox repository only. | One small sandbox run. **USER-RUN, NOT RUN.** |
-| 34 | Named Claude accounts, U2: `claude setup-token` and multi-account switching | See "Check 34" below; **you** run it, on your own machine, no GCP project needed. | No cost. **NOT RUN.** |
-| 35 | Named Claude accounts, U3: per-project Cloud Run job count comfort at the installation's intended (workflow × account) scale | See "Check 35" below; **you** read the sandbox project's quota. | No cost. **NOT RUN.** |
-| 36 | Named Claude accounts, U4: the real Claude Code error text for an expired or revoked oauth token, and `fugaro diagnose`'s rendering of it | See "Check 36" below; **you** run it, on the sandbox repository only. | One minimal sandbox run (about the cost of check 13). **USER-RUN, NOT RUN.** |
+| 34 | Named Claude accounts, U1: Cloud Run Jobs execution overrides cannot carry a secret reference (design `named-oauth-tokens.md` §4, option D) | See "Check 34" below; reads published API docs only, no project needed. | No cost. **NOT RUN.** |
+| 35 | Named Claude accounts, U2: `claude setup-token` and multi-account switching | See "Check 35" below; **you** run it, on your own machine, no GCP project needed. | No cost. **NOT RUN.** |
+| 36 | Named Claude accounts, U3: per-project Cloud Run job count comfort at the installation's intended (workflow × account) scale | See "Check 36" below; **you** read the sandbox project's quota. | No cost. **NOT RUN.** |
+| 37 | Named Claude accounts, U4: the real Claude Code error text for an expired or revoked oauth token, and `fugaro diagnose`'s rendering of it | See "Check 37" below; **you** run it, on the sandbox repository only. | One minimal sandbox run (about the cost of check 13). **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -934,17 +934,6 @@ Expect the four addresses under `module.firebase.`.
 
 **Restore.** Nothing to restore beyond `git checkout -- .claude/settings.json` if you do not want the pin.
 
-## Check 32: Cloud Run Jobs execution overrides cannot carry a secret reference (no project needed; run by you; NOT RUN)
-
-Named Claude accounts (`docs/design/named-oauth-tokens.md` §4) are built on one job variant per allowed account (option B), rejecting option D — a single job whose per-execution override names which secret to mount — because nothing in this repository's code or its vendored `run/v2` client shows that Cloud Run execution overrides can carry a secret reference. That is evidence about the generated bindings, not about the live `run.googleapis.com` API surface, so the design calls it unverified (§7, U1).
-
-1. Read the current `run.googleapis.com` v2 REST reference for `jobs.run`'s request body (`Overrides`, `ContainerOverride`) directly from Google's own published API documentation, not this repository's vendored client.
-2. Separately, run `gcloud run jobs execute --help` with any real `gcloud` installation (no project needed) and read its own description of the override flags.
-3. **FACT:** whether either source documents a secret-reference field on an execution override, quoting the exact field name if one exists.
-4. If one exists, also check Google's IAM documentation (not a live call) for whether a job's service account needs `secretAccessor` granted on that secret beforehand, or whether Cloud Run grants it implicitly for the one execution.
-
-**Paste back:** the exact quoted text (or confirmed absence) from both sources, and the IAM finding if a field exists. No GCP project, billing or sandbox resource is touched by this check.
-
 ## Check 33: a vendor's own endpoint (sandbox only, run by you; optional; USER-RUN, NOT RUN)
 
 **No step below has been run; nothing here is a claim that it works.** Check 25 settles OpenRouter; this is the same question for a vendor's own Anthropic-compatible endpoint (`docs/multi-model.md`, "Direct to the vendor", design `generic-tool.md` §6, G18): whether it accepts the gateway's forwarded request bodies byte for byte and reports usage the way the gateway reads it. **Optional**: skip it if you only route through OpenRouter.
@@ -957,7 +946,18 @@ Named Claude accounts (`docs/design/named-oauth-tokens.md` §4) are built on one
 
 **Restore.** Revoke the vendor key if one was created for this check alone, and remove the `providers.<name>` entry (or its `allow_data_to` line) from the local project config if you do not want to keep it.
 
-## Check 34: `claude setup-token` and multi-account switching (your own machine; run by you; NOT RUN)
+## Check 34: Cloud Run Jobs execution overrides cannot carry a secret reference (no project needed; run by you; NOT RUN)
+
+Named Claude accounts (`docs/design/named-oauth-tokens.md` §4) are built on one job variant per allowed account (option B), rejecting option D — a single job whose per-execution override names which secret to mount — because nothing in this repository's code or its vendored `run/v2` client shows that Cloud Run execution overrides can carry a secret reference. That is evidence about the generated bindings, not about the live `run.googleapis.com` API surface, so the design calls it unverified (§7, U1).
+
+1. Read the current `run.googleapis.com` v2 REST reference for `jobs.run`'s request body (`Overrides`, `ContainerOverride`) directly from Google's own published API documentation, not this repository's vendored client.
+2. Separately, run `gcloud run jobs execute --help` with any real `gcloud` installation (no project needed) and read its own description of the override flags.
+3. **FACT:** whether either source documents a secret-reference field on an execution override, quoting the exact field name if one exists.
+4. If one exists, also check Google's IAM documentation (not a live call) for whether a job's service account needs `secretAccessor` granted on that secret beforehand, or whether Cloud Run grants it implicitly for the one execution.
+
+**Paste back:** the exact quoted text (or confirmed absence) from both sources, and the IAM finding if a field exists. No GCP project, billing or sandbox resource is touched by this check.
+
+## Check 35: `claude setup-token` and multi-account switching (your own machine; run by you; NOT RUN)
 
 The setup skill (`plugin/skills/setup/SKILL.md`, "Named Claude accounts") and `reference/decisions.md` currently say the exact sequence for minting a *second* Claude account's `claude setup-token` value is not yet verified (design §7, U2). This check settles it, so the skill text can quote the real steps instead of a placeholder.
 
@@ -967,7 +967,7 @@ The setup skill (`plugin/skills/setup/SKILL.md`, "Named Claude accounts") and `r
 
 **Paste back:** the exact transcript of both `claude setup-token` runs (never a token value), the Claude Code version and the OS. Once answered, replace the "not yet verified" sentence in `plugin/skills/setup/SKILL.md`'s "Named Claude accounts" paragraph and `reference/decisions.md`'s topic 2 with the real sequence this check found — never invent one ahead of this check.
 
-## Check 35: per-project Cloud Run job count comfort (sandbox project; run by you; NOT RUN)
+## Check 36: per-project Cloud Run job count comfort (sandbox project; run by you; NOT RUN)
 
 No code in this repository reads or enforces a Cloud Run jobs-per-project/region ceiling (design §4, "why a variant per name, not per name-and-workflow combinatorially out of control"). Named accounts multiply the (workflow × allowed account) job count, so this confirms there is comfortable headroom at the installation's intended scale (design §7, U3).
 
@@ -976,7 +976,7 @@ No code in this repository reads or enforces a Cloud Run jobs-per-project/region
 
 **Paste back:** the quota figure, the command or page used to read it, and the installation's intended job count. No job is created, changed or deleted by this check.
 
-## Check 36: the real error text for an expired or revoked oauth token (sandbox only; run by you; NOT RUN)
+## Check 37: the real error text for an expired or revoked oauth token (sandbox only; run by you; NOT RUN)
 
 The runner's stage-failure path is unchanged by named accounts (design §6f), but the exact text Claude Code prints for an expired or revoked `CLAUDE_CODE_OAUTH_TOKEN`, and how `fugaro diagnose` renders it, has never been recorded (design §7, U4).
 

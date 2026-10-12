@@ -18,9 +18,10 @@ import (
 // config's claude_accounts, parallel to secrets' and recipes' group commands.
 func newAccountsCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "accounts",
-		Short: "List the named Claude accounts a repository may use",
-		Args:  cobra.ArbitraryArgs,
+		Use:     "accounts",
+		Aliases: []string{"account"},
+		Short:   "List the named Claude accounts a repository may use",
+		Args:    cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return cmd.Help()
