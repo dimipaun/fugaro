@@ -120,6 +120,7 @@ The table is `config.Scopes` in code; `docs/project-layer.md` prints it, and a d
 | `git.pr.reviewers` | | | yes | | reviewers are people of one repository |
 | `agent.auth`, `models.*`, `first_line_review`, `first_line_rounds` | yes | | yes | | |
 | `agent.model`, `review_rounds`, `max_budget_usd`, `recipe` | yes | | yes | yes | |
+| `agent.oauth_token` | | | yes | yes | it names a credential identity that only the repository's own, PR-reviewed `fugaro.yaml` may choose among names the local config (never the project layer) allow-lists ([named-oauth-tokens.md](named-oauth-tokens.md)) |
 | `agent.instructions`, `agent.review` | | | yes | | they name files in the repository (and are prompt text) |
 | `agent.max_run_tokens`, `agent.max_output_tokens.*`, `budget.*` | | | yes | | policy: the ceiling is the owner's, in the installation config; a repository only tightens it |
 | `workflows.*.profile` | | | yes | | it chooses a profile |

@@ -24,6 +24,16 @@ func TestMain(m *testing.M) {
 	os.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
 	os.Setenv("https_proxy", "http://127.0.0.1:1")
 	os.Unsetenv("STORAGE_EMULATOR_HOST")
+	// warnUpdateAvailable/startUpdateCheck run on every command (PreRun and
+	// PostRun), so every test in this package that executes one touches the
+	// update-check cache; without this, a test that never calls
+	// isolateProjects itself would read and write the developer's own
+	// ~/.cache/fugaro/update-check.json. The HTTPS_PROXY above already
+	// stops the (rare, info-severity) doctor lookup that reaches it from
+	// going anywhere real.
+	if dir, err := os.MkdirTemp("", "fugaro-test-cache-"); err == nil {
+		os.Setenv("XDG_CACHE_HOME", dir)
+	}
 	// init refuses to apply anything in a coding agent's session, and the
 	// tests are often run from one: a test that means to be in one sets a
 	// marker itself.

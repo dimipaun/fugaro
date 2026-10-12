@@ -18,7 +18,7 @@ func TestSecretMounts(t *testing.T) {
 	}}
 	w := config.Workflow{Secrets: []config.Secret{{Name: "npm-token", Env: "NPM_TOKEN"}}}
 	names := func(auth string) []string {
-		ms, err := SecretMounts("bitbucket-token", &config.Config{Agent: config.Agent{Auth: auth}}, "app", w, lc, "acme/app")
+		ms, err := SecretMounts("bitbucket-token", &config.Config{Agent: config.Agent{Auth: auth}}, "app", config.DefaultClaudeAccount, w, lc, "acme/app")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -37,8 +37,24 @@ func TestSecretMounts(t *testing.T) {
 			t.Errorf("%s: %v, want %v", auth, got, want)
 		}
 	}
+	// A named account's token is mounted under its own derived secret, not
+	// the bare default: config.ClaudeAccountSecret is the one place that
+	// decides the name, so this is the same behavior as calling it directly.
+	ms, err := SecretMounts("bitbucket-token", &config.Config{Agent: config.Agent{Auth: "oauth"}}, "app", "acme-personal", w, lc, "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claude string
+	for _, m := range ms {
+		if m.Env == config.ReservedSecrets["claude-oauth-token"] {
+			claude = m.Logical
+		}
+	}
+	if claude != "claude-oauth-token-acme-personal" {
+		t.Errorf("named account acme-personal mounts logical secret %q, want claude-oauth-token-acme-personal", claude)
+	}
 	// Each mount carries the variable its secret becomes.
-	ms, err := SecretMounts("github-app-key", &config.Config{Agent: config.Agent{Auth: "api-key"}}, "app", w, lc, "acme/app")
+	ms, err = SecretMounts("github-app-key", &config.Config{Agent: config.Agent{Auth: "api-key"}}, "app", config.DefaultClaudeAccount, w, lc, "acme/app")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +69,7 @@ func TestSecretMounts(t *testing.T) {
 	}
 	// A workflow may not declare a provider's key.
 	bad := config.Workflow{Secrets: []config.Secret{{Name: "openrouter-api-key", Env: "X"}}}
-	if _, err := SecretMounts("bitbucket-token", &config.Config{}, "app", bad, lc, "acme/app"); err == nil {
+	if _, err := SecretMounts("bitbucket-token", &config.Config{}, "app", config.DefaultClaudeAccount, bad, lc, "acme/app"); err == nil {
 		t.Error("a workflow secret naming a provider's key was accepted")
 	}
 }

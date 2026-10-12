@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 // Name limits and hash widths (checked 2026-09-28):
@@ -223,11 +225,126 @@ func SchedulerRegion(region string) (string, error) {
 	return "", fmt.Errorf("region %s has no Cloud Scheduler location fugaro knows of; pass --scheduler-region with one of %s", region, strings.Join(SchedulerRegions, ", "))
 }
 
+// validWorkflowVariantToken reports whether token is a name WorkflowVariant
+// accepts for the account half of a variant key: config.ClaudeAccountNameRE
+// (the hyphen-adjacency structure) and config.MaxClaudeAccountNameLen (the
+// length cap config.ClaudeAccountNameRE's own `{0,30}` quantifier cannot
+// express — it counts repetition units, not characters, so the regex alone
+// accepts up to 61 characters; see that var's doc comment in
+// internal/config/claude_accounts.go) both hold. This package already
+// imports internal/config (build.go, limits.go), so there is nothing to
+// mirror here: calling config's symbols directly means this check and
+// Task 1's own rule can never drift apart.
+func validWorkflowVariantToken(token string) bool {
+	return len(token) <= config.MaxClaudeAccountNameLen && config.ClaudeAccountNameRE.MatchString(token)
+}
+
+// WorkflowVariant is the key JobName, ServiceAccountID and SecretID derive
+// a token-scoped workflow's resources from: workflow unchanged for the
+// repository's default account ("" or "default", config.DefaultClaudeAccount),
+// so an installation with no named accounts configured gets byte-identical
+// names (design docs/design/named-oauth-tokens.md §5); otherwise
+// workflow+"_"+token. It is a plain string key, not a secret: never
+// log-redacted.
+//
+// This string is also the map key of the repository's tfvars
+// `workflows` object (decision T5: Go-only, zero Terraform diff) — Terraform
+// passes it straight through as `each.key` (modules/repo/workflows.tf) into
+// modules/workflow's `name` variable, which validates `^[a-z0-9_-]{1,63}$`
+// and uses it as the job's `fugaro_workflow` GCP label
+// (modules/workflow/variables.tf, modules/workflow/job.tf): GCP label
+// values may hold only lowercase letters, digits, '_' and '-', so a
+// separator outside that charset (a literal "." was tried first and
+// reverted — see git history) would make every named-account `terraform
+// apply` fail validation before any resource is even planned.
+// TestWorkflowVariantMatchesTerraformWorkflowLabel pins this by reading the
+// module's own regex out of variables.tf, so a future change to either
+// side is caught here, not at apply time.
+//
+// The join must also be exactly injective over (workflow, token): this
+// string becomes the "second" argument JobName, ServiceAccountID and
+// SecretID hash together with the slug (derive, above), so two different
+// pairs that WorkflowVariant collapsed into one string would collapse onto
+// the same Cloud Run job, the same dedicated service account and the same
+// secret, defeating this feature's whole point (one secretAccessor grant
+// per named account, design docs/design/named-oauth-tokens.md §4 option
+// B). A plain "--" join is not injective here even though it looks like
+// the rest of this file's names: workflow and token both already allow
+// hyphens, including consecutive ones, so WorkflowVariant("ab--cd", "ef")
+// and WorkflowVariant("ab", "cd--ef") would both read "ab--cd--ef". "_" is
+// never a byte either charset allows (config.WorkflowNameRE,
+// config.ClaudeAccountNameRE), so workflow+"_"+token has exactly one
+// (workflow, token) reading: the standard "separator outside both
+// alphabets" argument, not merely a hash that makes collisions improbable.
+// The charset check panics rather than silently reproduce that ambiguity
+// if some future caller ever passes a workflow or token outside the
+// charset this function trusts (fail closed, the same posture
+// LauncherBucketCondition takes below for the same reason: a name that
+// looks plausible but secretly is not what it claims is worse than a
+// crash).
+func WorkflowVariant(workflow, token string) string {
+	if token == "" || token == config.DefaultClaudeAccount {
+		return workflow
+	}
+	if !config.WorkflowNameRE.MatchString(workflow) || !validWorkflowVariantToken(token) {
+		panic(fmt.Sprintf("gcp.WorkflowVariant: workflow %q or token %q is outside its expected charset, so a \"_\" join would not be unambiguous", workflow, token))
+	}
+	return workflow + "_" + token
+}
+
+// jobSADisplayNameMaxLen is IAM's own display-name limit (checked
+// 2026-09-28, like the rest of this file's name limits).
+const jobSADisplayNameMaxLen = 100
+
+// jobSADisplayNameHashHex is the width of the hash suffix JobSADisplayName
+// falls back to once the natural concatenation would be too long: wide
+// enough that two distinct (slug, workflow) pairs truncating to the same
+// readable text essentially never also share a hash, narrow enough to
+// leave most of the 100-character budget for the readable part.
+const jobSADisplayNameHashHex = 8
+
 // JobSADisplayName is a job service account's display name, its ownership
-// mark (service accounts carry no labels). At most 11+63+1+20 = 95
-// characters, within the 100 IAM allows.
+// mark (service accounts carry no labels).
+//
+// For today's one real caller (internal/infra/spec.go), which always
+// passes the plain fugaro.yaml workflow name (config.WorkflowNameRE, <= 20
+// characters), this is always exactly "Fugaro job "+slug+" "+workflow,
+// unchanged: at most 11+63+1+20 = 95 characters, within IAM's 100-character
+// limit, so the fallback below never triggers for that caller (confirmed
+// by internal/infra's existing golden tfvars tests, byte-identical before
+// and after this function changed).
+//
+// Once a caller starts deriving workflow from gcp.WorkflowVariant (up to
+// config.WorkflowNameRE's 20 + "_" + config.MaxClaudeAccountNameLen's 31 =
+// 52 characters), the natural concatenation can reach 11+63+1+52 = 127,
+// over the limit — with a 63-character slug alone, truncation already
+// starts once the variant passes roughly 25 characters. When that happens,
+// this function truncates the readable "slug workflow" part and appends a
+// short, stable hash of the full (slug, workflow) pair, the same
+// derive-style pattern JobName/ServiceAccountID/SecretID already use, so
+// the result is always <= 100 characters and deterministic. A display name
+// is its ownership mark: internal/infra/discover.go compares it EXACTLY and
+// reports any other value as a ForeignError, so the truncated form below
+// must stay stable once a named-account service account exists (changing
+// the hash width or its input would make discovery treat existing named-
+// account service accounts as foreign). TestJobSADisplayNameMaxLengthIsPinned
+// pins the exact maximum-length value. Distinct variants still get distinct
+// display names in practice through the hash, but uniqueness here is a
+// cosmetic guard: each service account's email and ID are its real identity.
 func JobSADisplayName(slug, workflow string) string {
-	return "Fugaro job " + slug + " " + workflow
+	const prefix = "Fugaro job "
+	name := prefix + slug + " " + workflow
+	if len(name) <= jobSADisplayNameMaxLen {
+		return name
+	}
+	sum := sha256.Sum256([]byte(slug + "\x00" + workflow))
+	suffix := " " + hex.EncodeToString(sum[:])[:jobSADisplayNameHashHex]
+	readable := slug + " " + workflow
+	if budget := jobSADisplayNameMaxLen - len(prefix) - len(suffix); len(readable) > budget {
+		readable = readable[:budget]
+	}
+	readable = strings.TrimRight(readable, " ")
+	return prefix + readable + suffix
 }
 
 // LegacyJobSADisplayName is the display name the M4 bootstrap gave job

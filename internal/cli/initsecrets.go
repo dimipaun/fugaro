@@ -201,6 +201,27 @@ func (s *secretsStage) canPrompt() bool {
 		stdinIsTerminal(cmd.InOrStdin()) && writerIsTerminal(cmd.ErrOrStderr()) && writerIsTerminal(cmd.OutOrStdout())
 }
 
+// allowedClaudeOAuthMounts is mounts with every claude-oauth-token-<name>
+// entry this repository is not a configured, allowed account for dropped —
+// never prompted for, never stored. config.Validate (internal/config/validate.go)
+// already refuses a workflow from ever declaring a secret in this reserved
+// namespace, so in practice mounts (infra.SecretMounts's output, which
+// includes a workflow's own declared secrets unfiltered) never carries one
+// once a checkout's fugaro.yaml parses at all; this is the second,
+// independent layer that drops it regardless, whatever path it arrived by
+// (a bypassed or future-weakened Validate, a cached config, or any other
+// caller), matching secretsSet's own refusal of the same shape.
+func allowedClaudeOAuthMounts(accounts map[string]config.ClaudeAccount, repo string, mounts []infra.SecretMount) []infra.SecretMount {
+	out := make([]infra.SecretMount, 0, len(mounts))
+	for _, m := range mounts {
+		if strings.HasPrefix(m.Logical, config.ClaudeOAuthTokenPrefix) && !claudeOAuthAccountAllowed(accounts, m.Logical, repo) {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
 // resolve finds the repository the stage works on and what its jobs mount.
 // It applies only to a checkout of a repository of this project, found as
 // fugaro secrets set finds one: the provider comes from the local config's
@@ -271,14 +292,33 @@ func (s *secretsStage) resolve(ctx context.Context) {
 		tg.noConfig = true
 	} else {
 		for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
-			mounts, err := infra.SecretMounts(gitSecret, cfg, name, cfg.Workflows[name], lc, repo)
+			// The default account only: Task 5 extends this to every name
+			// config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo) allows,
+			// so init also prompts for each named account's own token.
+			mounts, err := infra.SecretMounts(gitSecret, cfg, name, config.DefaultClaudeAccount, cfg.Workflows[name], lc, repo)
 			if err != nil {
 				s.skip = "fugaro.yaml's secrets cannot be worked out: " + oneLine(err.Error())
 				return
 			}
-			for _, m := range mounts {
+			for _, m := range allowedClaudeOAuthMounts(lc.ClaudeAccounts, repo, mounts) {
 				if !slices.Contains(tg.wanted, m.Logical) {
 					tg.wanted = append(tg.wanted, m.Logical)
+				}
+			}
+		}
+		// Every named Claude account this repository may choose (beyond the
+		// bare default, which SecretMounts above already asked for when
+		// agent.auth is oauth) gets its own claude setup-token + secrets set
+		// pair, so init prompts for every account the owner has allowed,
+		// not just the one SecretMounts already knows about per workflow
+		// (design docs/design/named-oauth-tokens.md §3 T3, §4).
+		if cfg.Agent.Auth == "oauth" {
+			for _, n := range config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo) {
+				if n == config.DefaultClaudeAccount {
+					continue
+				}
+				if secret := config.ClaudeAccountSecret(n); !slices.Contains(tg.wanted, secret) {
+					tg.wanted = append(tg.wanted, secret)
 				}
 			}
 		}
@@ -413,10 +453,10 @@ func (s *secretsStage) Left() initflow.Left {
 	var cmds []string
 	for _, name := range needs {
 		set := selfCommand() + " secrets set " + quoteWord(name) + " --repo " + quoteWord(s.tg.repo)
-		switch name {
-		case "claude-oauth-token":
+		switch {
+		case isClaudeOAuthSecret(name):
 			cmds = append(cmds, "claude setup-token", set)
-		case multilineSecret:
+		case name == multilineSecret:
 			cmds = append(cmds, set+" < PATH-TO-THE-KEY-FILE")
 		default:
 			cmds = append(cmds, set)
@@ -497,14 +537,21 @@ func (s *secretsStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 // take prompts for one secret, validates it and stores it. The value is
 // held only inside this call, with core dumps off while it is.
 func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w io.Writer, name string) error {
+	if strings.HasPrefix(name, config.ClaudeOAuthTokenPrefix) && !claudeOAuthAccountAllowed(s.e.lc.ClaudeAccounts, name, s.tg.repo) {
+		// The resolve()-time filter above already keeps such a name out of
+		// tg.wanted; this is the independent backstop that never reads or
+		// stores a value for one even if that filter were ever wrong or
+		// skipped (defense in depth, review finding).
+		return claudeOAuthAccountRefusal(name, s.tg.repo)
+	}
 	defer noCoreDumps()()
 	var (
 		value []byte
 		err   error
 	)
 	fmt.Fprintf(w, "%s for %s on %s (stored in project %s's Secret Manager):\n", name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject))
-	if name == "claude-oauth-token" {
-		fmt.Fprintln(w, "claude-oauth-token: run claude setup-token in your own terminal first, then paste the token it prints")
+	if isClaudeOAuthSecret(name) {
+		fmt.Fprintln(w, name+": run claude setup-token in your own terminal first, then paste the token it prints")
 	}
 	if name == multilineSecret {
 		value, err = readHiddenPEM(ctx, f, w, name)

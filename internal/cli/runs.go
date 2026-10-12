@@ -28,6 +28,13 @@ import (
 // lsWorkers is how many runs' objects are read at once.
 const lsWorkers = 8
 
+// maxNameCellRunes bounds a name read back from a run's own result.json
+// (an OAuth account or a recipe name, neither validated by this binary
+// against its own name rule before display) before it reaches a tabwriter
+// cell: clipRunes cuts it, then cellOneLine escapes it, so a hostile 10 KB
+// name can't blow up a column's width.
+const maxNameCellRunes = 64
+
 type lsOptions struct {
 	cloud                    cloudOptions
 	repo, since, batch       string
@@ -522,12 +529,16 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	showRecipe := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.Recipe != "" && r.Recipe != recipe.DefaultName })
 	showLayer := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.ProjectLayer != nil })
+	showAccount := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.OAuthAccount != "" && r.OAuthAccount != "default" })
 	header := "RUN\tSTATUS\tSTAGE\tAGE\tCOST\tPR"
 	if showRecipe {
 		header += "\tRECIPE"
 	}
 	if showLayer {
 		header += "\tLAYER"
+	}
+	if showAccount {
+		header += "\tACCOUNT"
 	}
 	fmt.Fprintln(tw, header)
 	for _, r := range rows {
@@ -544,10 +555,17 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 			if name == "" {
 				name = recipe.DefaultName
 			}
-			line += "\t" + oneLine(name)
+			line += "\t" + cellOneLine(clipRunes(name, maxNameCellRunes))
 		}
 		if showLayer {
 			line += "\t" + layerCell(r)
+		}
+		if showAccount {
+			name := r.OAuthAccount
+			if name == "" {
+				name = "default"
+			}
+			line += "\t" + cellOneLine(clipRunes(name, maxNameCellRunes))
 		}
 		fmt.Fprintln(tw, line)
 	}
