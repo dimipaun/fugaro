@@ -18,9 +18,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-// release061 is a build record's base_ref at exactly namedTokensSince: a
+// release065 is a build record's base_ref at exactly namedTokensSince: a
 // runner built from it knows task.Spec.OAuthToken.
-const release061 = "ghcr.io/dimipaun/fugaro-web-node:0.6.1"
+const release065 = "ghcr.io/dimipaun/fugaro-web-node:0.6.5"
 
 // otherSlug is acme/other's storage slug, the repository oauthCheckout anchors.
 var otherSlug = mustSlug("github", "acme/other")
@@ -69,7 +69,7 @@ func TestRunTokenDefaultsToConfiguredThenDefaultAccount(t *testing.T) {
 		f := newCloudFixture(t)
 		f.appendConfig(t, claudeAccountsConfig)
 		oauthCheckout(t, f, "  oauth_token: acme-personal\n")
-		writeBuildRecord(t, f, otherSlug, "svc", release061)
+		writeBuildRecord(t, f, otherSlug, "svc", release065)
 		f.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-overflow")), "2", "4Gi")
 		if _, _, err := execute(t, "run", "--run-id", "20261012-100000-aaaa", "--token", "acme-overflow", "A task"); err != nil {
 			t.Fatal(err)
@@ -82,7 +82,7 @@ func TestRunTokenDefaultsToConfiguredThenDefaultAccount(t *testing.T) {
 		f := newCloudFixture(t)
 		f.appendConfig(t, claudeAccountsConfig)
 		oauthCheckout(t, f, "  oauth_token: acme-personal\n")
-		writeBuildRecord(t, f, otherSlug, "svc", release061)
+		writeBuildRecord(t, f, otherSlug, "svc", release065)
 		f.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-personal")), "2", "4Gi")
 		if _, _, err := execute(t, "run", "--run-id", "20261012-100000-bbbb", "A task"); err != nil {
 			t.Fatal(err)
@@ -124,7 +124,7 @@ func TestRunLaunchesTheVariantJob(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, claudeAccountsConfig)
 	oauthCheckout(t, f, "")
-	writeBuildRecord(t, f, otherSlug, "svc", release061)
+	writeBuildRecord(t, f, otherSlug, "svc", release065)
 	variant := gcp.WorkflowVariant("svc", "acme-personal")
 	f.run.AddJob(gcp.JobName(otherSlug, variant), "2", "4Gi")
 	var got gcpfake.RunCall
@@ -145,7 +145,7 @@ func TestRunTokenVariantJobMissingNeverFallsBackToDefault(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, claudeAccountsConfig)
 	oauthCheckout(t, f, "")
-	writeBuildRecord(t, f, otherSlug, "svc", release061)
+	writeBuildRecord(t, f, otherSlug, "svc", release065)
 	// No AddJob for the "svc_acme-personal" variant: it does not exist yet.
 	_, _, err := execute(t, "run", "--run-id", "20261012-100000-ffff", "--token", "acme-personal", "A task")
 	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "fugaro init --repo") {
@@ -181,7 +181,7 @@ func TestFollowUpNoTokenInheritsPreviousAccount(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, appClaudeAccountsConfig)
 	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-personal")), "4", "8Gi")
-	writeBuildRecord(t, f, appSlug, "web", release061)
+	writeBuildRecord(t, f, appSlug, "web", release065)
 	seedAppFollowUpRoot(t, f, "acme-personal")
 	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "more work")
 	if err != nil {
@@ -206,7 +206,7 @@ func TestFollowUpExplicitTokenOverridesInheritedAccount(t *testing.T) {
 	f.appendConfig(t, appClaudeAccountsConfig)
 	variant := gcp.WorkflowVariant("web", "acme-personal")
 	f.run.AddJob(gcp.JobName(appSlug, variant), "4", "8Gi")
-	writeBuildRecord(t, f, appSlug, "web", release061)
+	writeBuildRecord(t, f, appSlug, "web", release065)
 	seedAppFollowUpRoot(t, f, "") // root used the default account
 	var got gcpfake.RunCall
 	f.run.OnRun = func(c gcpfake.RunCall) { got = c }
@@ -279,7 +279,7 @@ func TestFollowUpTokenOverrideRefusedWhenVersionGated(t *testing.T) {
 	writeBuildRecord(t, f, appSlug, "web", release060)
 	seedAppFollowUpRoot(t, f, "") // root used the default account; old build predates the gate too, but default never triggers it
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--token", "acme-personal", "more work")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "named Claude accounts") || !strings.Contains(err.Error(), "fugaro 0.6.1 or later") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "named Claude accounts") || !strings.Contains(err.Error(), "fugaro 0.6.5 or later") {
 		t.Fatalf("err = %v", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {
@@ -312,7 +312,7 @@ func TestFollowUpTokenOverrideRefusedWhenAuthNotOAuth(t *testing.T) {
 func TestFollowUpTokenOverrideRefusedWhenVariantJobMissing(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, appClaudeAccountsConfig)
-	writeBuildRecord(t, f, appSlug, "web", release061)
+	writeBuildRecord(t, f, appSlug, "web", release065)
 	// No AddJob for "web_acme-personal": it does not exist yet.
 	seedAppFollowUpRoot(t, f, "")
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--token", "acme-personal", "more work")
@@ -337,7 +337,7 @@ func TestFollowUpDocumentedTokenOverrideCommandWorks(t *testing.T) {
 	f.appendConfig(t, appClaudeAccountsConfig)
 	variant := gcp.WorkflowVariant("web", "acme-personal")
 	f.run.AddJob(gcp.JobName(appSlug, variant), "4", "8Gi")
-	writeBuildRecord(t, f, appSlug, "web", release061)
+	writeBuildRecord(t, f, appSlug, "web", release065)
 	seedAppFollowUpRoot(t, f, "")
 	var got gcpfake.RunCall
 	f.run.OnRun = func(c gcpfake.RunCall) { got = c }
@@ -369,7 +369,7 @@ func TestFollowUpRepeatRunIDRefusesDifferentToken(t *testing.T) {
 	f.appendConfig(t, appClaudeAccountsConfig) // allows acme-personal and acme-overflow for acme/app
 	variant := gcp.WorkflowVariant("web", "acme-personal")
 	f.run.AddJob(gcp.JobName(appSlug, variant), "4", "8Gi")
-	writeBuildRecord(t, f, appSlug, "web", release061)
+	writeBuildRecord(t, f, appSlug, "web", release065)
 	seedAppFollowUpRoot(t, f, "")
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--token", "acme-personal", "more work"); err != nil {
 		t.Fatal(err)
@@ -410,7 +410,7 @@ func TestFollowUpRepeatRunIDRefusesDifferentToken(t *testing.T) {
 func TestFollowUpRepeatRunIDUnlaunchedRefusesDifferentToken(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, appClaudeAccountsConfig)
-	writeBuildRecord(t, f, appSlug, "web", release061)
+	writeBuildRecord(t, f, appSlug, "web", release065)
 	seedAppFollowUpRoot(t, f, "")
 	fu := followUpSpec(fuID, rootID, rootID, 7)
 	fu.Task = "more work"
@@ -436,7 +436,7 @@ func TestFollowUpRepeatRunIDUnlaunchedRefusesDifferentToken(t *testing.T) {
 func TestFollowUpRefusesDisallowedInheritedAccount(t *testing.T) {
 	f := newCloudFixture(t)
 	oauthCheckout(t, f, "")
-	writeBuildRecord(t, f, otherSlug, "svc", release061)
+	writeBuildRecord(t, f, otherSlug, "svc", release065)
 	ctx := context.Background()
 	b, err := blob.OpenBucket(ctx, f.bucket)
 	if err != nil {
@@ -474,7 +474,7 @@ func TestRunTokenImageGateRefusesOldFirstRun(t *testing.T) {
 	oauthCheckout(t, f, "")
 	writeBuildRecord(t, f, otherSlug, "svc", release060)
 	_, _, err := execute(t, "run", "--run-id", "20261012-100000-a1a1", "--token", "acme-personal", "A task")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "named Claude accounts") || !strings.Contains(err.Error(), "fugaro 0.6.1 or later") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "named Claude accounts") || !strings.Contains(err.Error(), "fugaro 0.6.5 or later") {
 		t.Fatalf("err = %v", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {
@@ -498,7 +498,7 @@ func TestRunTokenImageGateRefusesOldFollowUp(t *testing.T) {
 	rec.StartedAt = time.Now().Add(-time.Hour)
 	writeRecord(t, f, rootID, rec)
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "more work")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "named Claude accounts") || !strings.Contains(err.Error(), "fugaro 0.6.1 or later") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "named Claude accounts") || !strings.Contains(err.Error(), "fugaro 0.6.5 or later") {
 		t.Fatalf("err = %v", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {
@@ -514,7 +514,7 @@ func TestRunTokenImageGateAppliesRegardlessOfWorkflowFlag(t *testing.T) {
 	oauthCheckout(t, f, "")
 	writeBuildRecord(t, f, otherSlug, "svc", release060)
 	_, _, err := execute(t, "run", "--run-id", "20261012-100000-a1a2", "--workflow", "svc", "--token", "acme-personal", "A task")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro 0.6.1 or later") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro 0.6.5 or later") {
 		t.Fatalf("err = %v", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {
@@ -530,7 +530,7 @@ func TestRunTokenImageGateAppliesWithBatch(t *testing.T) {
 	oauthCheckout(t, f, "")
 	writeBuildRecord(t, f, otherSlug, "svc", release060)
 	_, _, err := execute(t, "run", "--run-id", "20261012-100000-a1a3", "--batch", "nightly", "--token", "acme-personal", "A task")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro 0.6.1 or later") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro 0.6.5 or later") {
 		t.Fatalf("err = %v", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {

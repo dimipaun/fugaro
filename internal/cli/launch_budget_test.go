@@ -478,7 +478,7 @@ func TestRunFXFollowsTargetJobTimeout(t *testing.T) {
 func TestRunFXFollowsNamedAccountJobTimeout(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
 	f.appendConfig(t, "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/app]\n")
-	writeBuildRecord(t, f.cloudFixture, appSlug, "web", release061)
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", release065)
 	variant := gcp.WorkflowVariant("web", "acme-personal")
 	f.run.AddJob(gcp.JobName(appSlug, variant), "4", "8Gi")
 	f.run.SetJobTimeout(gcp.JobName(appSlug, variant), 30*time.Minute)

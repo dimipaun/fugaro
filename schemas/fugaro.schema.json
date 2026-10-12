@@ -83,7 +83,7 @@
           "pattern": "^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$",
           "maxLength": 31,
           "not": { "const": "default" },
-          "description": "The named Claude account (claude_accounts in the local config) this workflow's agent.auth: oauth uses; absent means the repository's default account, the existing claude-oauth-token secret (docs/design/named-oauth-tokens.md). fugaro run --token NAME overrides it per run. The local config's claude_accounts.<name>.allow_data_to must list this repository, checked at launch, not by this schema. Fugaro before 0.6.1 refuses this key."
+          "description": "The named Claude account (claude_accounts in the local config) this workflow's agent.auth: oauth uses; absent means the repository's default account, the existing claude-oauth-token secret (docs/design/named-oauth-tokens.md). fugaro run --token NAME overrides it per run. The local config's claude_accounts.<name>.allow_data_to must list this repository, checked at launch, not by this schema. Fugaro before 0.6.5 refuses this key."
         },
         "max_budget_usd": { "type": "number", "minimum": 0 },
         "instructions": { "type": "string" },

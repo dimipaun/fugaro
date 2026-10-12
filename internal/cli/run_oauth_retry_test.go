@@ -35,7 +35,7 @@ func TestRunTokenImageGateAppliesOnRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _, err = execute(t, "run", "--retry", spec.RunID)
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "named Claude accounts") || !strings.Contains(err.Error(), "fugaro 0.6.1 or later") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "named Claude accounts") || !strings.Contains(err.Error(), "fugaro 0.6.5 or later") {
 		t.Fatalf("err = %v", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {
@@ -66,7 +66,7 @@ func TestRunTokenImageGateAppliesOnReusedStoredFollowUp(t *testing.T) {
 	seedSpec(t, f, fu, false)
 
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID)
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "named Claude accounts") || !strings.Contains(err.Error(), "fugaro 0.6.1 or later") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "named Claude accounts") || !strings.Contains(err.Error(), "fugaro 0.6.5 or later") {
 		t.Fatalf("err = %v", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {

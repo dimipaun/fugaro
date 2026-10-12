@@ -34,7 +34,7 @@ const layeredSince = "0.6.0"
 // must be refused before Launch is called (internal/cli/run.go, Task 6 of
 // the plan) the same way checkImageSince already gates recipesSince and
 // layeredSince; nothing in this task wires that check yet.
-const namedTokensSince = "0.6.1"
+const namedTokensSince = "0.6.5"
 
 // needsRecipeImage reports whether a launch needs a runner that knows
 // recipes: the task carries one, or the checkout's fugaro.yaml sets
