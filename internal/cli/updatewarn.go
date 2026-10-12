@@ -3,11 +3,13 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/updatecheck"
@@ -21,10 +23,42 @@ const noUpdateCheckEnv = "FUGARO_NO_UPDATE_CHECK"
 // updateCheckExcluded are the commands the nag and the background check
 // never run for: the in-container runner (also caught by
 // backend.OnCloudRun, but named here too so a local `fugaro exec` never
-// fires either), the two commands meant for a script or a shell's own
-// completion wiring (sourced on every new shell for some users), and
-// `version` itself, which already answers "what version is this".
-var updateCheckExcluded = map[string]bool{"exec": true, "completion": true, "help": true, "version": true}
+// fires either), `help`, and `version` itself, which already answers
+// "what version is this". Completion is excluded separately
+// (excludedCommand/inCompletionTree below): cobra dispatches `fugaro
+// completion zsh` to a real "zsh" subcommand, and a shell's completion
+// script invokes the hidden `__complete`/`__completeNoDesc` commands
+// directly, so cmd.Name() alone never reads "completion" for any of them.
+var updateCheckExcluded = map[string]bool{"exec": true, "help": true, "version": true}
+
+// inCompletionTree reports whether cmd is cobra's own completion
+// machinery: a generated shell subcommand of `completion`
+// (`completion zsh`, `completion bash`, ... — cmd.Name() is "zsh"/"bash",
+// never "completion", so this walks the parent chain instead) or one of
+// the two hidden completion-request commands a shell's completion script
+// runs on every Tab press (`__complete`, `__completeNoDesc`), which
+// cmd.Name() does name directly. Reproduced (PR #296 review): without
+// this, `source <(fugaro completion zsh)` in a shell rc file, and every
+// Tab press afterward, nagged and could spend the day's one GitHub
+// request on a keystroke.
+func inCompletionTree(cmd *cobra.Command) bool {
+	switch cmd.Name() {
+	case "__complete", "__completeNoDesc":
+		return true
+	}
+	for c := cmd; c != nil; c = c.Parent() {
+		if c.Name() == "completion" {
+			return true
+		}
+	}
+	return false
+}
+
+// excludedCommand reports whether cmd is one the nag and the background
+// check never run for at all.
+func excludedCommand(cmd *cobra.Command) bool {
+	return updateCheckExcluded[cmd.Name()] || inCompletionTree(cmd)
+}
 
 // updateCheckHTTPClient and updateCheckEndpoint are test seams: production
 // uses the real client and GitHub's endpoint, tests point at a fake
@@ -45,9 +79,29 @@ func refuseRedirect(*http.Request, []*http.Request) error {
 	return http.ErrUseLastResponse
 }
 
-// stderrIsTerminal is isTTY, a test seam (as watchStdoutTTY already is for
-// stdout).
-var stderrIsTerminal = isTTY
+// stderrIsTerminal is a test seam (as stdinIsTerminal and watchStdoutTTY
+// already are for their own streams). It deliberately does NOT reuse
+// isTTY: isTTY only checks os.ModeCharDevice, and /dev/null is a character
+// device too, so isTTY alone would treat `fugaro ... 2>/dev/null` as a
+// real terminal — exactly what cobra's generated shell completion scripts
+// redirect stderr to (reproduced, PR #296 review: `fugaro config example
+// 2>/dev/null` with a cached newer release wrote "warned" to the cache
+// without a real terminal ever seeing the line that day). realTerminal
+// uses golang.org/x/term's IsTerminal, an actual ioctl, already a
+// dependency here for secrets' hidden prompts (stdinIsTerminal in
+// init.go); not changed: isTTY itself and its other caller,
+// watchStdoutTTY, whose own stdout-is-a-screen question isTTY already
+// answers correctly (a redirected `fugaro watch > file` should draw no
+// screen, which ModeCharDevice alone gets right for that case).
+var stderrIsTerminal = realTerminal
+
+// realTerminal reports whether w is an actual terminal (not a pipe, not
+// /dev/null, not any other character device masquerading as one to
+// isTTY's cruder check).
+func realTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	return ok && term.IsTerminal(int(f.Fd()))
+}
 
 // updateCheckCtxKey is the PersistentPreRun-computed disable state, carried
 // on the command's context to wherever the command ends up (WarnUpdateAvailable,
@@ -98,7 +152,7 @@ func updateCheckDisabled(cmd *cobra.Command) bool {
 	if os.Getenv(noUpdateCheckEnv) == "1" {
 		return true
 	}
-	if updateCheckExcluded[cmd.Name()] || backend.OnCloudRun(os.Getenv) {
+	if excludedCommand(cmd) || backend.OnCloudRun(os.Getenv) {
 		return true
 	}
 	if lc := selectedProjectConfig(cmd.Context()); lc != nil {
@@ -127,7 +181,7 @@ const ciEnv = "CI"
 // binary version (there would be nothing to ever compare the result
 // against).
 func shouldStartUpdateCheck(cmd *cobra.Command, disabled bool) bool {
-	return !disabled && !updateCheckExcluded[cmd.Name()] && cmd.Name() != "doctor" &&
+	return !disabled && !excludedCommand(cmd) && cmd.Name() != "doctor" &&
 		os.Getenv(ciEnv) == "" && stderrIsTerminal(cmd.ErrOrStderr()) &&
 		!backend.OnCloudRun(os.Getenv) && updatecheck.Valid(Version)
 }
@@ -202,7 +256,7 @@ func WaitForUpdateCheck() {
 // ask again and must never depend on that resolution having happened.
 func shouldWarnUpdateAvailable(cmd *cobra.Command, disabled bool) bool {
 	return !disabled && os.Getenv(noUpdateCheckEnv) != "1" &&
-		!updateCheckExcluded[cmd.Name()] && !helpRequested(cmd) &&
+		!excludedCommand(cmd) && !helpRequested(cmd) &&
 		!machineReadable(cmd) && stderrIsTerminal(cmd.ErrOrStderr()) && !backend.OnCloudRun(os.Getenv)
 }
 

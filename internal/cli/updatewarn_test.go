@@ -639,3 +639,127 @@ func TestUpdateCheckHTTPClientNeverFollowsARedirect(t *testing.T) {
 		t.Fatal("the second (redirect target) server received a request: the client followed the redirect instead of refusing it")
 	}
 }
+
+// TestCompletionTreeExcludedThroughRealCommandTree reproduces PR #296's
+// review finding exactly: cmd.Name() for `completion zsh`/`completion
+// bash` is "zsh"/"bash" (cobra dispatches to a real generated subcommand),
+// never "completion", and a shell's completion script invokes the hidden
+// `__complete` command directly. A fake command literally named
+// "completion" (as the table-driven tests above use) can't catch a
+// regression here at all, since it never exercises cmd.Name() returning
+// anything else — this drives the real tree through root.ExecuteC().
+//
+// Mutation: reverting excludedCommand to plain `updateCheckExcluded[cmd.Name()]`
+// (dropping inCompletionTree) makes every case here nag and start the
+// background check again.
+func TestCompletionTreeExcludedThroughRealCommandTree(t *testing.T) {
+	withVersion(t, "0.6.1")
+	oldTTY := stderrIsTerminal
+	stderrIsTerminal = func(io.Writer) bool { return true }
+	t.Cleanup(func() { stderrIsTerminal = oldTTY })
+
+	for _, args := range [][]string{
+		{"completion", "zsh"},
+		{"completion", "bash"},
+		{"completion", "fish"},
+		{"__complete", "l"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("XDG_CACHE_HOME", dir)
+			t.Setenv("CLOUD_RUN_EXECUTION", "")
+			t.Setenv(ciEnv, "")
+			if err := updatecheck.Save(os.Getenv, updatecheck.Entry{Latest: "0.7.0"}); err != nil {
+				t.Fatal(err)
+			}
+			root := NewRootCmd()
+			var out, errOut bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&errOut)
+			root.SetArgs(args)
+			cmd, err := root.ExecuteC()
+			if err != nil {
+				t.Fatalf("%v failed: %v", args, err)
+			}
+			if shouldStartUpdateCheck(cmd, false) {
+				t.Errorf("shouldStartUpdateCheck(%q) = true, want false: the background check must never run for completion machinery", cmd.Name())
+			}
+			WaitForUpdateCheck()
+			WarnUpdateAvailable(cmd)
+			if errOut.Len() > 0 && strings.Contains(errOut.String(), "is available") {
+				t.Fatalf("stderr = %q, want no update nag: completion commands must stay silent", errOut.String())
+			}
+		})
+	}
+}
+
+// TestStderrIsTerminalRejectsDevNull pins the real terminal check:
+// /dev/null is a character device, so isTTY's cruder ModeCharDevice check
+// would wrongly call it a terminal, which is exactly what cobra's
+// generated completion scripts redirect stderr to (`2>/dev/null`).
+//
+// Mutation: reverting stderrIsTerminal to isTTY makes this true.
+func TestStderrIsTerminalRejectsDevNull(t *testing.T) {
+	f, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if realTerminal(f) {
+		t.Fatal("realTerminal(/dev/null) = true, want false")
+	}
+	if !isTTY(f) {
+		t.Skip("isTTY(/dev/null) is already false on this platform (not a character device here); nothing to contrast")
+	}
+	// Reaching here means isTTY(/dev/null) = true on this platform (/dev/null
+	// is a character device, which is all isTTY checks): exactly the bug
+	// realTerminal fixes, confirmed above to no longer be true of it.
+}
+
+// TestStderrRedirectedToDevNullNeverChecksOrPrints drives the real command
+// tree with stderr actually redirected to /dev/null (not a bytes.Buffer,
+// which isTTY/realTerminal both already treat as non-terminal — this
+// specifically exercises the character-device case the review flagged):
+// a cached newer release must not be reported as "warned" (the real
+// terminal would never see the line that day), and the background check
+// must never start either.
+//
+// Mutation: reverting stderrIsTerminal to isTTY makes this test fail, both
+// on the "no request" assertion (shouldStartUpdateCheck would say true)
+// and the "cache untouched" one (Warn would mark it warned).
+func TestStderrRedirectedToDevNullNeverChecksOrPrints(t *testing.T) {
+	withVersion(t, "0.6.1")
+	dir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", dir)
+	t.Setenv("CLOUD_RUN_EXECUTION", "")
+	t.Setenv(ciEnv, "")
+	if err := updatecheck.Save(os.Getenv, updatecheck.Entry{Latest: "0.7.0"}); err != nil {
+		t.Fatal(err)
+	}
+
+	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer devNull.Close()
+
+	root := NewRootCmd()
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(devNull)
+	root.SetArgs([]string{"config", "example"})
+	cmd, err := root.ExecuteC()
+	if err != nil {
+		t.Fatalf("config example failed: %v", err)
+	}
+	if shouldStartUpdateCheck(cmd, false) {
+		t.Fatal("shouldStartUpdateCheck with stderr = /dev/null returned true, want false")
+	}
+	WaitForUpdateCheck()
+	WarnUpdateAvailable(cmd)
+
+	e := updatecheck.Load(os.Getenv)
+	if e.Warned != "" {
+		t.Fatalf("cache Warned = %q after a /dev/null run, want \"\": the real terminal never saw the line today, so it must not be spent", e.Warned)
+	}
+}
