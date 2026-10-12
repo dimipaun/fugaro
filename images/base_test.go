@@ -275,62 +275,66 @@ func TestInstallNodePutsPrefixOnPathBeforeNpmAndCorepack(t *testing.T) {
 	}
 }
 
-// TestDeepSeekHarnessInTheTable: dsh (DeepSeek Harness, @deepseek-ai/dsh)
-// has a tools.tsv row, tier harness, as design base-image.md section 6's
-// 2026-10-12 update requires. The check is presence-only (no argv): dsh's
-// --version credential-safety is UNVERIFIED, so this is the conservative
-// choice rather than a command that might need a provider.
-func TestDeepSeekHarnessInTheTable(t *testing.T) {
+// TestDeepSeekHarnessNotHalfWired: dsh (DeepSeek Harness, @deepseek-ai/dsh)
+// must move into tools.tsv, images/base/harnesses/package.json and the
+// Dockerfile's Node-harness install loop together, in one change, or stay
+// out of all three -- never a subset. A first attempt wired the tools.tsv
+// row and the Dockerfile loop entry without a package.json/package-lock.json
+// pin; npm ci then installed nothing for it, and the loop's own "entry
+// point is missing" guard failed the base image's build on every PR
+// (confirmed on PR #302's fugaro-base (amd64/arm64) and docker-tests
+// checks, design base-image.md section 6). This pins that regression
+// against reappearing in either direction: a tools.tsv row with no install
+// step fails the base's own CI smoke; an install-loop entry with no
+// package.json dependency fails npm ci's "entry point is missing" guard.
+func TestDeepSeekHarnessNotHalfWired(t *testing.T) {
 	tools, err := image.ParseTools(images.BaseTools)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var found *image.Tool
-	for i := range tools {
-		if tools[i].Name == "dsh" {
-			found = &tools[i]
+	inTable := false
+	for _, tool := range tools {
+		if tool.Name == "dsh" {
+			inTable = true
 		}
 	}
-	if found == nil {
-		t.Fatal("tools.tsv has no dsh row (DeepSeek Harness)")
+	inLoop := false
+	for _, line := range strings.Split(baseDockerfile(t), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue // a comment mentioning dsh is not the executable loop
+		}
+		if strings.HasPrefix(trimmed, "for h in") && strings.Contains(trimmed, "dsh:@deepseek-ai/dsh/lib/bin.js") {
+			inLoop = true
+		}
 	}
-	if found.Tier != "harness" {
-		t.Errorf("dsh's tier is %q, want harness", found.Tier)
+	var pkg struct {
+		Dependencies map[string]string `json:"dependencies"`
 	}
-	if found.Argv != nil {
-		t.Errorf("dsh's check runs %v, want presence-only (its --version credential-safety is unverified)", found.Argv)
+	pkgData, err := os.ReadFile("base/harnesses/package.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(pkgData, &pkg); err != nil {
+		t.Fatal(err)
+	}
+	_, inPackageJSON := pkg.Dependencies["@deepseek-ai/dsh"]
+	if inTable != inLoop || inLoop != inPackageJSON {
+		t.Errorf("dsh is half-wired: tools.tsv row=%v, Dockerfile loop entry=%v, package.json dependency=%v -- all three must move together", inTable, inLoop, inPackageJSON)
 	}
 }
 
-// TestDeepSeekHarnessWrapperStaysInTheHarnessLayer: dsh is installed by the
-// same Node-harness loop as Gemini, Pi and Qwen (section 3), which must stay
-// after mise (section 2) and before the Fugaro CLI's own COPY (the last
-// instruction of the Dockerfile) -- design base-image.md section 7's layer
-// order, from slowest-changing to fastest.
-func TestDeepSeekHarnessWrapperStaysInTheHarnessLayer(t *testing.T) {
-	df := baseDockerfile(t)
-	if !strings.Contains(df, "dsh:@deepseek-ai/dsh/lib/bin.js") {
-		t.Fatal("no dsh entry in the Node harness wrapper loop")
-	}
-	miseIdx := strings.Index(df, "# 2. mise")
-	harnessIdx := strings.Index(df, "# 3. The agent harnesses")
-	dshIdx := strings.Index(df, "dsh:@deepseek-ai/dsh/lib/bin.js")
-	fugaroCopyIdx := strings.LastIndex(df, "COPY --from=fugaro /out/fugaro /usr/local/bin/fugaro")
-	for name, idx := range map[string]int{"mise": miseIdx, "the harness layer": harnessIdx, "dsh": dshIdx, "the fugaro CLI copy": fugaroCopyIdx} {
-		if idx < 0 {
-			t.Fatalf("could not find %s in the Dockerfile", name)
-		}
-	}
-	if !(miseIdx < harnessIdx && harnessIdx < dshIdx && dshIdx < fugaroCopyIdx) {
-		t.Errorf("dsh is not between mise and the fugaro CLI copy (mise=%d harness=%d dsh=%d fugaro=%d)", miseIdx, harnessIdx, dshIdx, fugaroCopyIdx)
-	}
-}
-
-// TestDeepSeekHarnessBakesNoCredential: adding dsh must not bake a DeepSeek
-// API key, token or auth file into the image or its harness package files
-// (design base-image.md section 9: no secret in any layer).
+// TestDeepSeekHarnessBakesNoCredential: today's not-yet-bundled DeepSeek
+// Harness notes (tools.tsv, the Dockerfile, package.json/package-lock.json)
+// must not bake a DeepSeek API key, token or auth file into the image or
+// its harness package files (design base-image.md section 9: no secret in
+// any layer) -- and the same must hold once it actually is wired in.
 func TestDeepSeekHarnessBakesNoCredential(t *testing.T) {
 	df := baseDockerfile(t)
+	tsv, err := os.ReadFile("base/tools.tsv")
+	if err != nil {
+		t.Fatal(err)
+	}
 	pkgJSON, err := os.ReadFile("base/harnesses/package.json")
 	if err != nil {
 		t.Fatal(err)
@@ -340,7 +344,7 @@ func TestDeepSeekHarnessBakesNoCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, needle := range []string{"DEEPSEEK_API_KEY", "DEEPSEEK_TOKEN", "deepseek.com/anthropic", ".dsh/auth", ".dsh/credentials"} {
-		for name, content := range map[string]string{"Dockerfile": df, "harnesses/package.json": string(pkgJSON), "harnesses/package-lock.json": string(pkgLock)} {
+		for name, content := range map[string]string{"Dockerfile": df, "tools.tsv": string(tsv), "harnesses/package.json": string(pkgJSON), "harnesses/package-lock.json": string(pkgLock)} {
 			if strings.Contains(content, needle) {
 				t.Errorf("%s contains %q, which looks like a baked DeepSeek credential or endpoint", name, needle)
 			}

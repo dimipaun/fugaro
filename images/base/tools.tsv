@@ -63,9 +63,10 @@ qwen	qwen --version	all	harness
 opencode	opencode --version	all	harness
 goose	goose --version	all	harness
 crush	crush --version	all	harness
-# dsh (DeepSeek Harness, @deepseek-ai/dsh), added 2026-10-12: DeepSeek now
-# publishes a coding-agent CLI (design base-image.md section 6), so it is no
-# longer excluded. Presence-only: dsh's --version credential-safety is
-# UNVERIFIED (no instance to check offline), the conservative check design
-# section 6 calls for when a claim about a tool is unverified.
-dsh	-	all	harness
+# dsh (DeepSeek Harness, @deepseek-ai/dsh, MIT) is intentionally NOT a row
+# yet (design base-image.md section 6, updated 2026-10-12): the Dockerfile's
+# harness-install loop does not install it either (no npm was available to
+# pin an exact version and regenerate harnesses/package-lock.json). Add
+# "dsh	-	all	harness" (presence-only: its --version credential-safety is
+# unverified) only in the same change that wires the Dockerfile loop and the
+# lockfile -- not before, or the base's own CI smoke fails on tool:dsh.
