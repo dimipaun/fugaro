@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	crand "crypto/rand"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -111,6 +113,12 @@ type runOptions struct {
 	asJSON        bool
 	noBudgetCheck bool
 	recipe        string
+	// token is the named Claude account (docs/design/named-oauth-tokens.md)
+	// this run uses: fugaro run --token. A follow-up (--pr) inherits its
+	// previous run's account when this is empty; an explicit value overrides
+	// it instead (owner ruling, 2026-10-12, task 9b review), through the
+	// same allow-list, agent.auth and version-gate checks a first run's does.
+	token string
 }
 
 func newRunCmd() *cobra.Command {
@@ -144,6 +152,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.totalTimeout, "total-timeout", "", "override the workflow's timeouts.total for this run, such as 45m")
 	f.IntSliceVar(&o.pr, "pr", nil, "continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR)")
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
+	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's)")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	f.BoolVar(&o.noBudgetCheck, "no-budget-check", false, "skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts")
 	addCloudFlags(cmd, &o.cloud)
@@ -151,7 +160,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "task-file", "total-timeout", "pr", "recipe"}
+var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "task-file", "total-timeout", "pr", "recipe", "token"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -223,10 +232,8 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			}
 			o.repo = repo
 			rr, rerr := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), o.recipe, time.Now(), false)
-			if rerr != nil {
-				return rerr
-			}
-			if rr.Recipe.Mode == recipe.ModeReview {
+			switch {
+			case rerr == nil && rr.Recipe.Mode == recipe.ModeReview:
 				if lo, hi, ok := recipe.ReviewPRRange(rr.Name); ok {
 					if n := len(o.pr); n < lo || n > hi {
 						if lo == hi {
@@ -236,8 +243,17 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 					}
 				}
 				reviewRecipe = rr
-			} else if len(o.pr) > 1 {
+			case len(o.pr) > 1:
 				return userErr("several --pr need a review-mode recipe such as pick")
+			case rerr != nil:
+				// A single --pr with a --recipe that does not resolve (or
+				// resolves but is not mode: review) is an ordinary
+				// follow-up candidate: prSpec below re-resolves --recipe
+				// itself, but only after its own account check (review
+				// finding E, named-oauth-tokens task 9b) — returning rerr
+				// here instead, unconditionally, would run this read
+				// before that check ever has a chance to refuse a
+				// disallowed --token or inherited account.
 			}
 		}
 	}
@@ -314,6 +330,12 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		}
 		if spec.ProjectLayer != nil {
 			if err := checkImageSince(ctx, env, slug, spec, kind, layeredSince, "the project layer", "the project layer", "", cmd.ErrOrStderr()); err != nil {
+				return err
+			}
+		}
+		if spec.OAuthToken != "" {
+			if err := checkImageSince(ctx, env, slug, spec, kind, namedTokensSince,
+				"Claude account "+pluginwire.Printable(spec.OAuthToken), "named Claude accounts", "", cmd.ErrOrStderr()); err != nil {
 				return err
 			}
 		}
@@ -435,6 +457,15 @@ func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tot
 			return "", nil, err
 		}
 	}
+	// Resolved before chooseRecipe (review finding E): chooseRecipe's
+	// resolveRecipe can read a project or catalog recipe from the bucket, a
+	// network call a disallowed --token should never trigger — the account
+	// is checked against config.AllowedClaudeAccounts first, using only the
+	// local config and the checkout already in hand, no network of its own.
+	account, err := claudeAccountFor(env, repo, o.token, checkout())
+	if err != nil {
+		return "", nil, err
+	}
 	rcp, err := chooseRecipe(ctx, env, o.recipe, checkout, checkoutRoot(ctx, repo), warn)
 	if err != nil {
 		return "", nil, err
@@ -442,6 +473,9 @@ func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tot
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, Workflow: workflow, Task: text, RequestedBy: me, Batch: o.batch, Recipe: rcp}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
+	}
+	if account != config.DefaultClaudeAccount {
+		spec.OAuthToken = account
 	}
 	if err := spec.Validate(); err != nil {
 		return "", nil, userErr("%v", err)
@@ -454,7 +488,10 @@ func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tot
 // resolved and confirmed by the caller). It reviews any open pull request
 // of the repository, not only Fugaro's own (design generic-tool §3.6,
 // G12): there is no branch, no previous run and no follow-up chain, unlike
-// prSpec's.
+// prSpec's. --token is honoured the same way a first run's is (newSpec):
+// there is no previous run's account to inherit, so a review-mode launch
+// is always resolved from the flag, else agent.oauth_token, else default,
+// never silently ignored.
 func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedRecipe, text string, total time.Duration, warn io.Writer) (string, *task.Spec, error) {
 	repo := o.repo
 	if repo == "" {
@@ -502,6 +539,10 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 			return "", nil, err
 		}
 	}
+	account, err := claudeAccountFor(env, repo, o.token, checkout())
+	if err != nil {
+		return "", nil, err
+	}
 	// review.allow_forks is a standing risk (docs/recipes.md §3, SECURITY.md):
 	// every review-mode launch against a repository that has it set is
 	// reminded, not only `fugaro validate`'s own warning when the file is
@@ -517,10 +558,61 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
 	}
+	if account != config.DefaultClaudeAccount {
+		spec.OAuthToken = account
+	}
 	if err := spec.Validate(); err != nil {
 		return "", nil, userErr("%v", err)
 	}
 	return slug, spec, nil
+}
+
+// claudeAccountFor is the named Claude account a first run uses: flag
+// (fugaro run --token), else the checkout's fugaro.yaml agent.oauth_token,
+// else the repository's default (config.DefaultClaudeAccount). A non-default
+// name is refused (claudeAccountAllowed) unless config.AllowedClaudeAccounts
+// (the local config's claude_accounts) lists it for repo, before any launch
+// (design docs/design/named-oauth-tokens.md §3 T7) — checked whether or not
+// a checkout is available here, so --repo X --token N outside any checkout
+// is held to the same rule a checkout's own resolution would be.
+func claudeAccountFor(env *cloudEnv, repo, flag string, co *config.Config) (string, error) {
+	name := flag
+	if name == "" && co != nil {
+		name = co.Agent.OAuthToken
+	}
+	if name == "" {
+		name = config.DefaultClaudeAccount
+	}
+	return name, claudeAccountAllowed(env, repo, name, co)
+}
+
+// claudeAccountAllowed refuses name (already resolved: flag, agent.oauth_token
+// or an inherited follow-up value) unless it is the repository's default
+// account. Checked before any network call, build-record read or task.json
+// write (design §3 T7), and regardless of whether a local checkout exists:
+// fugaro run --repo X --token N run from outside any checkout, and a
+// follow-up's inherited name (bucket data a launcher can write directly),
+// must both be checked exactly as a fresh resolution from a checkout would
+// be — review finding: skipping the check just because there is no checkout
+// here let either one through with its shape checked but never its
+// membership in config.AllowedClaudeAccounts. When a checkout IS known and
+// its workflow's agent.auth is not oauth, naming an account makes no sense
+// at all (no secret is ever mounted for it, so the name would be silently
+// unused) and is refused outright, not merely left unchecked.
+func claudeAccountAllowed(env *cloudEnv, repo, name string, co *config.Config) error {
+	if name == config.DefaultClaudeAccount {
+		return nil
+	}
+	if co != nil && co.Agent.Auth != "oauth" {
+		return userErr("named Claude account %s only applies to a workflow whose agent.auth is oauth; %s's agent.auth is %s",
+			pluginwire.Printable(name), repo, co.Agent.Auth)
+	}
+	allowed := config.AllowedClaudeAccounts(env.lc.ClaudeAccounts, repo)
+	if !slices.Contains(allowed, name) {
+		return userErr("named Claude account %s is not one %s may use (allowed: %s); ask the operator to add it to claude_accounts in their local config",
+			pluginwire.Printable(name), repo, strings.Join(allowed, ", "))
+	}
+	return nil
 }
 
 // chooseRecipe is the recipe of a new first run: --recipe, else the
@@ -689,10 +781,19 @@ func retrySpec(ctx context.Context, env *cloudEnv, ref string) (string, *task.Sp
 	if spec.RunID != runID {
 		return "", nil, userErr("run %s/%s holds the task of run %s; it can't be retried", slug, runID, spec.RunID)
 	}
+	checkout := checkoutOf(ctx, spec.Repo)
 	if spec.Workflow == "" {
-		if spec.Workflow, err = resolveWorkflow(env, spec.Repo, "", checkoutOf(ctx, spec.Repo)); err != nil {
+		if spec.Workflow, err = resolveWorkflow(env, spec.Repo, "", checkout); err != nil {
 			return "", nil, err
 		}
+	}
+	// spec is stored bucket data nobody vouches for (review finding A): its
+	// OAuthToken's shape was checked when it was first written (task.Parse),
+	// but whether this repository may still use that account was never
+	// re-checked here, the one place --retry resolves what it is about to
+	// launch, before any build-record read or the launch itself.
+	if err := claudeAccountAllowed(env, spec.Repo, cmp.Or(spec.OAuthToken, config.DefaultClaudeAccount), checkout()); err != nil {
+		return "", nil, err
 	}
 	return slug, spec, nil
 }
@@ -976,8 +1077,23 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		rcancel()
 		return res, err
 	}
+	variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken)
+	if !ok {
+		// spec.Workflow, unlike spec.OAuthToken, is never shape-checked by
+		// task.Parse: a bad --workflow, a stored task from before this
+		// feature validated anything about it, or tampered bucket data could
+		// all reach here. Definitive, same cleanup as a platform refusal:
+		// nothing started.
+		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		releaseClaim(rctx, env, s, holder)
+		if minted {
+			env.dropBudgetToken(rctx, slug, spec.RunID)
+		}
+		rcancel()
+		return res, userErr("workflow %s is not a plain workflow name, so it can't be combined with Claude account %s; nothing started", oneLineCLI(spec.Workflow), pluginwire.Printable(spec.OAuthToken))
+	}
 	lctx, cancel := context.WithTimeout(hctx, launchTimeout)
-	ref, err := env.be.Launch(lctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: spec.Repo, Slug: slug}, Workflow: spec.Workflow, RunID: spec.RunID, Timeout: launchTimeoutOf(spec)})
+	ref, err := env.be.Launch(lctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: spec.Repo, Slug: slug}, Workflow: variant, RunID: spec.RunID, Timeout: launchTimeoutOf(spec)})
 	cancel()
 	if err != nil {
 		if errors.Is(err, backend.ErrRejected) {

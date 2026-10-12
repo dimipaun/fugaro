@@ -87,6 +87,7 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `agent.first_line_review` | project, repo |  |
 | `agent.first_line_rounds` | project, repo |  |
 | `agent.recipe` | project, repo, override |  |
+| `agent.oauth_token` | repo, override | it names a credential identity that only the repository's own, PR-reviewed fugaro.yaml may choose among names the local config (never the project layer) allow-lists |
 | `budget.mode` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it |
 | `budget.per_run_usd` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it |
 | `budget.allowed_models` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it |

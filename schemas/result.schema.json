@@ -11,6 +11,7 @@
     "run_id": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
     "repo": { "type": "string" },
     "workflow": { "type": "string" },
+    "oauth_account": { "type": "string", "maxLength": 64 },
     "execution": { "type": "string", "description": "The canonical full execution name; empty or absent for local runs." },
     "status": { "enum": ["running", "succeeded", "failed", "infra_error", "cancelled", "halted"] },
     "stage": { "enum": ["bootstrap", "implement", "review_first", "review", "fix", "finalize", "writeback"] },

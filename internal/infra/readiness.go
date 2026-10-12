@@ -110,7 +110,10 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 			return RepoSpec{}, nil, err
 		}
 		if !built {
-			reasons = append(reasons, gate{MissingImage, fmt.Sprintf("image not built yet: fugaro image build --repo %s --workflow %s", spec.Name, name)})
+			// --workflow takes a fugaro.yaml workflow name, never a
+			// gcp.WorkflowVariant key (several of out.Workflows' keys can
+			// share one ws.Name and its one shared image).
+			reasons = append(reasons, gate{MissingImage, fmt.Sprintf("image not built yet: fugaro image build --repo %s --workflow %s", spec.Name, ws.Name)})
 		}
 		current, exists := ex.Jobs[name]
 		switch {
@@ -121,7 +124,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 					// Nothing live to keep, and the spec's image doesn't
 					// exist: either would leave the job without an image.
 					return RepoSpec{}, nil, userErr("Cloud Run job %s exists but has no container image, and %s is not built yet; build it (fugaro image build --repo %s --workflow %s) or fix the job, then run fugaro init --repo again",
-						ws.Job, ws.Image, spec.Name, name)
+						ws.Job, ws.Image, spec.Name, ws.Name)
 				}
 				ws.Image = current
 			}

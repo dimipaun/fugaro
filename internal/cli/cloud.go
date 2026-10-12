@@ -267,16 +267,47 @@ func locateRun(ctx context.Context, env *cloudEnv, ref string) (slug, runID stri
 // the run's own job in this region (gcp.CheckRunExecution): the run's service account can write those
 // objects, so they could name another repository's job. Without
 // a readable task there is no job to bind it to, so it is refused too.
+//
+// The run's own job is gcp.WorkflowVariant(spec.Workflow, spec.OAuthToken),
+// not the bare workflow: a named run (docs/design/named-oauth-tokens.md)
+// starts JobName(slug, WorkflowVariant(...)), so comparing against the
+// plain workflow would refuse every one of its own executions (review
+// finding: this broke --run-id repeats, ls, logs, diagnose and follow-up
+// alike for any run that used --token or agent.oauth_token).
 func (e *cloudEnv) checkExecution(name, slug string, spec *task.Spec) error {
 	if spec == nil || spec.Workflow == "" {
 		return fmt.Errorf("its task.json is unreadable or names no workflow, so execution %s can't be tied to the run's job", name)
 	}
-	err := gcp.CheckRunExecution(name, e.lc.Region, slug, spec.Workflow)
+	variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken)
+	if !ok {
+		return fmt.Errorf("its task.json names workflow %q, which is not a workflow name, so execution %s can't be tied to the run's job", oneLineCLI(spec.Workflow), name)
+	}
+	err := gcp.CheckRunExecution(name, e.lc.Region, slug, variant)
 	var wr *gcp.WrongRegionError
 	if errors.As(err, &wr) {
 		return fmt.Errorf("the run's execution is in region %s, not %s; pass --region %s to follow it", wr.Region, wr.Want, wr.Region)
 	}
 	return err
+}
+
+// jobWorkflow is gcp.WorkflowVariant(workflow, token), refusing instead of
+// panicking when workflow is not a name WorkflowVariant accepts. Unlike
+// OAuthToken (config.ClaudeAccountNameRE, enforced by task.Spec.Validate on
+// every task.Parse), task.Spec's Workflow field is never shape-checked:
+// config.WorkflowNameRE only constrains fugaro.yaml's own workflow: keys, not
+// what reaches task.Spec.Workflow, which an unvalidated --workflow flag, a
+// stored task a different process wrote, or bucket data a launcher wrote
+// directly, can all carry unchanged. Every caller here (a fresh launch, and
+// checkExecution's correlation of ls/logs/diagnose/--retry/follow-up) must
+// treat "not a workflow name" as "no job can be derived from it", never as a
+// reason to crash.
+func jobWorkflow(workflow, token string) (variant string, ok bool) {
+	defer func() {
+		if recover() != nil {
+			variant, ok = "", false
+		}
+	}()
+	return gcp.WorkflowVariant(workflow, token), true
 }
 
 // parseRunRef is runstore.ParseRef, with a bad reference as a user error.

@@ -18,13 +18,22 @@ func OneLine(s string) string { return Text(s, false) }
 func MultiLine(s string) string { return Text(s, true) }
 
 // Text implements OneLine and MultiLine.
-func Text(s string, keepNewlines bool) string { return text(s, keepNewlines, true) }
+func Text(s string, keepNewlines bool) string { return text(s, keepNewlines, true, true) }
+
+// TableCell is OneLine for a value that will sit in one cell of a
+// tabwriter table, such as an account or recipe name read back from a
+// run's own result.json: a literal tab there would open a new column
+// instead of staying in the cell, so, unlike OneLine, it is escaped ("?")
+// too. Everything else OneLine already escapes (ESC/CSI/OSC sequences,
+// bidi and zero-width characters, the line/paragraph separators, newline)
+// is escaped here the same way.
+func TableCell(s string) string { return text(s, false, false, true) }
 
 // Strip is s as typed or pasted input: what OneLine would replace is dropped
 // instead of marked, and so are tabs and the Unicode line separators, so the
 // result is one run of printable characters.
 func Strip(s string) string {
-	s = text(s, false, false)
+	s = text(s, false, true, false)
 	return strings.Map(func(r rune) rune {
 		if r == '\t' || r == 0x2028 || r == 0x2029 {
 			return -1
@@ -41,9 +50,11 @@ func Clip(s string, n int) string {
 	return string([]rune(s)[:max(n, 0)])
 }
 
-// text implements Text and Strip; repl says whether a rejected character
-// leaves a "?" (Text) or nothing (Strip).
-func text(s string, keepNewlines, repl bool) string {
+// text implements Text, TableCell and Strip; repl says whether a rejected
+// character leaves a "?" (Text, TableCell) or nothing (Strip); keepTab
+// exempts a literal tab from escaping (Text's behavior) or not (TableCell's,
+// where a tab must not open a new column of its own).
+func text(s string, keepNewlines, keepTab, repl bool) string {
 	mark := func(b *strings.Builder) {
 		if repl {
 			b.WriteByte('?')
@@ -51,7 +62,7 @@ func text(s string, keepNewlines, repl bool) string {
 	}
 	clean := true
 	for i := 0; i < len(s); i++ {
-		if c := s[i]; c < 0x20 && c != '\t' && (c != '\n' || !keepNewlines) || c >= 0x7f {
+		if c := s[i]; c < 0x20 && (c != '\t' || !keepTab) && (c != '\n' || !keepNewlines) || c >= 0x7f {
 			clean = false
 			break
 		}
@@ -73,7 +84,7 @@ func text(s string, keepNewlines, repl bool) string {
 			i = skipCSI(s, i+size)
 		case r == 0x9d || r == 0x90 || r == 0x98 || r == 0x9e || r == 0x9f: // 8-bit OSC, DCS, SOS, PM, APC
 			i = skipString(s, i+size)
-		case r == '\t' || (r == '\n' && keepNewlines):
+		case (r == '\t' && keepTab) || (r == '\n' && keepNewlines):
 			b.WriteRune(r)
 			i += size
 		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) || spoofing(r):
@@ -96,6 +107,8 @@ func spoofing(r rune) bool {
 	case r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069: // embeddings, overrides, isolates
 		return true
 	case r == 0x200e || r == 0x200f || r == 0x061c: // LRM, RLM, ALM
+		return true
+	case r == 0x2028 || r == 0x2029: // LINE SEPARATOR, PARAGRAPH SEPARATOR: some terminals break a line here too
 		return true
 	case r >= 0x200b && r <= 0x200d, r == 0x2060, r == 0xfeff: // zero-width space, non-joiner, joiner; word joiner; BOM
 		return true

@@ -2,6 +2,7 @@ package task
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -305,6 +306,101 @@ func TestProjectLayerOmittedWhenAbsent(t *testing.T) {
 	data, _ = s.Marshal()
 	if !strings.Contains(string(data), `"project_layer"`) || strings.Contains(string(data), "generation") {
 		t.Errorf("generation 0 must be omitted, layer present: %s", data)
+	}
+}
+
+// TestOldRunnerRefusesOAuthTokenField simulates a pre-feature runner's
+// strict decode: oldSpec is Spec's shape before this task, copied field for
+// field (not re-derived), so this proves what an old binary actually did,
+// not what this task wishes it did.
+func TestOldRunnerRefusesOAuthTokenField(t *testing.T) {
+	spec := Spec{Version: 1, RunID: "20261009-101010-abcd", Repo: "acme/app", Ref: "main", Task: "x", OAuthToken: "acme-personal"}
+	data, err := spec.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	type oldSpec struct {
+		Version      int           `json:"version"`
+		RunID        string        `json:"run_id"`
+		Repo         string        `json:"repo"`
+		Ref          string        `json:"ref"`
+		Workflow     string        `json:"workflow,omitempty"`
+		Task         string        `json:"task,omitempty"`
+		Branch       string        `json:"branch,omitempty"`
+		PR           int           `json:"pr,omitempty"`
+		PreviousRun  string        `json:"previous_run,omitempty"`
+		Overrides    Overrides     `json:"overrides"`
+		RequestedBy  string        `json:"requested_by,omitempty"`
+		Batch        string        `json:"batch,omitempty"`
+		Recipe       *Recipe       `json:"recipe,omitempty"`
+		ProjectLayer *ProjectLayer `json:"project_layer,omitempty"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var old oldSpec
+	if err := dec.Decode(&old); err == nil {
+		t.Fatal("an old-shaped decoder accepted oauth_token silently")
+	}
+}
+
+// TestOAuthTokenOmittedWhenAbsent mirrors TestProjectLayerOmittedWhenAbsent:
+// a spec with no oauth_token marshals exactly as before this task, so a
+// runner that refuses unknown fields still accepts it.
+func TestOAuthTokenOmittedWhenAbsent(t *testing.T) {
+	s := Spec{Version: 1, RunID: "20261008-100000-abcd", Repo: "acme/app", Ref: "main", Task: "x"}
+	data, err := s.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "oauth_token") {
+		t.Errorf("no token, yet the task has oauth_token: %s", data)
+	}
+	s.OAuthToken = "acme-personal"
+	data, err = s.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"oauth_token": "acme-personal"`) {
+		t.Errorf("oauth_token set but missing from marshal: %s", data)
+	}
+	got, err := Parse(data)
+	if err != nil || got.OAuthToken != "acme-personal" {
+		t.Fatalf("round trip = %+v, %v", got, err)
+	}
+}
+
+// TestOAuthTokenValidate pins the same rule schemas/task.schema.json
+// enforces (config.ClaudeAccountNameRE and config.MaxClaudeAccountNameLen,
+// and "default" refused separately): the shared testdata/task/invalid
+// corpus relies on Validate rejecting these exact shapes, not just the
+// schema. The 61- and 32-character cases both match ClaudeAccountNameRE
+// (its {0,30} repetitions may each consume one or two characters, so the
+// pattern alone admits up to 61 characters) and are refused only by the
+// explicit length check, not the regex — this is what a maxLength keyword
+// missing from the schema, or a missing len() check here, would miss.
+func TestOAuthTokenValidate(t *testing.T) {
+	ok := Spec{Version: 1, RunID: "20261009-101010-abcd", Repo: "acme/app", Ref: "main", Task: "x"}
+	for _, name := range []string{
+		"", "a", "acme-personal", "a-b-c0",
+		strings.Repeat("a", config.MaxClaudeAccountNameLen),              // 31 plain characters: the boundary
+		"a" + strings.Repeat("-a", (config.MaxClaudeAccountNameLen-1)/2), // 31 characters, dash-heavy: the boundary
+	} {
+		s := ok
+		s.OAuthToken = name
+		if err := s.Validate(); err != nil {
+			t.Errorf("oauth_token %q (%d chars): %v", name, len(name), err)
+		}
+	}
+	for _, name := range []string{
+		"default", "Bad_Name", "a-", "a--b",
+		"a" + strings.Repeat("-a", 30),       // 61 characters, matches the pattern, over the length cap
+		"a" + strings.Repeat("-a", 15) + "b", // 32 characters, matches the pattern, one over the cap
+	} {
+		s := ok
+		s.OAuthToken = name
+		if err := s.Validate(); err == nil {
+			t.Errorf("oauth_token %q (%d chars): accepted, want refused", name, len(name))
+		}
 	}
 }
 

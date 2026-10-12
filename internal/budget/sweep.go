@@ -214,6 +214,15 @@ func (s *Sweeper) isLive(ix executionIndex, slug, run string, e AgentEntry, now 
 		if e.Workflow == "" || s.JobOf == nil {
 			return true
 		}
+		// JobOf names the plain workflow's job, never
+		// gcp.WorkflowVariant(e.Workflow, token): a named run's anonymous
+		// execution (one the platform doesn't say which run it belongs to)
+		// would be looked up under the wrong job here. Backlog item, not
+		// fixed here (review, named oauth tokens Task 6 round 2): in
+		// practice near-zero impact, since every execution this package
+		// starts sets FUGARO_RUN, so ix.anon only ever matters for an
+		// execution some other process started, which a named run's own
+		// variant job never has reason to see.
 		if ix.anon[s.JobOf(slug, e.Workflow)] {
 			return true
 		}
