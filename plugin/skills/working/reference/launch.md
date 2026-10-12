@@ -79,3 +79,13 @@ The CLI exits 1 and says why, and you don't work around it. Report the message a
 | anything else | Show the user the message and stop. |
 
 **When you don't know whether the launch went through** (the command timed out, the connection dropped, or it exited 2): run the same command again with the same run ID. It reports `already-launched` if the first attempt got through. `fugaro run --retry <run>` launches a stored run that never started.
+
+## 6. Relaunching after a usage limit, with no pull request yet
+
+A run that failed before it ever pushed (outcome `none`, no pull request to follow up) can still have hit its Claude account's usage limit; `reference/diagnose.md`'s usage-limit section has the evidence to check and the full switching procedure. Nothing here is inherited, so the chosen account is simply named on a plain, fresh launch (steps 1 to 4 above, the same approved task, a fresh run ID):
+
+```bash
+fugaro run --repo <owner/name> --workflow <name> --ref <base-branch> --token NAME --run-id <id> --json --task-file - <<'TASK'
+<the same task text the user already approved>
+TASK
+```

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -138,6 +139,25 @@ func TestAccountsLsNoOriginRefused(t *testing.T) {
 	_, _, err := execute(t, "accounts", "ls")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--repo") {
 		t.Fatalf("err = %v, want a user error naming --repo", err)
+	}
+}
+
+// TestPrintAccountsTextGoesThroughPrintable: the text path never writes a
+// name's raw control characters to the terminal, the same defense
+// ValidateClaudeAccounts and claudeOAuthAccountRefusal already give an
+// account name everywhere else it is printed (internal/config/claude_accounts.go).
+// A real claude_accounts name can never actually contain one (ClaudeAccountNameRE),
+// but printAccounts does not assume that upstream check ran.
+func TestPrintAccountsTextGoesThroughPrintable(t *testing.T) {
+	var buf bytes.Buffer
+	if err := printAccounts(&buf, "acme/app", []string{"default", "evil\x1b[31mname"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "\x1b") {
+		t.Fatalf("output %q still has a raw control character", buf.String())
+	}
+	if !strings.Contains(buf.String(), `\u001b`) {
+		t.Fatalf("output %q does not show the escaped form", buf.String())
 	}
 }
 

@@ -76,10 +76,26 @@ fugaro budget resume
 
 Don't edit the project's config or `fugaro.yaml` to get around a halt.
 
-## 5. Recommend
+## 5. A Claude usage limit
+
+A `failed` run's `row.reason` or `agent_message` can say the run's Claude account ran out of its subscription's usage limit. That wording is Claude Code's own (Anthropic's CLI, not Fugaro's) and has not been verified against a live run in this repository (`docs/design/named-oauth-tokens.md`, item U4), so match it loosely rather than a fixed sentence: the phrase "usage limit", case-insensitively, anywhere in `row.reason` or `agent_message`.
+
+That is the only evidence that counts. Never treat any other failure as a usage limit: a revoked or expired token, a failing test, a review finding or a plain bug in the task are ordinary `failed` runs (above), each with their own `reason` and `agent_message` and no "usage limit" wording, and are diagnosed and followed up as usual, never by switching accounts.
+
+When the evidence is there, the account the run used is out of headroom, not refused by anything Fugaro enforces, and the repository may be allowed to use another. A follow-up (when there is a pull request, `reference/followup.md`) or a fresh launch (when there is none yet, `reference/launch.md`) inherits or defaults to that same account, so switching is a deliberate extra step, not something either one does on its own:
+
+1. `fugaro accounts ls --repo <owner/name> --json`: the allowed names, `default` first, then every named account the local config allows this repository, sorted.
+2. Keep a tried list for this task, in the conversation: the account that just failed, plus every account a prior run on this same task already tried. Never try one twice, and never loop back through the list once every allowed account is on it.
+3. Pick the next allowed account not yet tried. None left: tell the user every allowed account has hit its limit, and stop. Fugaro does not track when a Claude usage limit resets (that is Anthropic's own schedule, not read anywhere in this codebase), so say that plainly rather than naming a time.
+4. Relaunch the same work on that account, with the user's go-ahead: a follow-up needs `--token NAME` given explicitly (`reference/followup.md`), since it would otherwise inherit the account that just failed; a fresh launch with no pull request yet names it the same way (`reference/launch.md`).
+5. Tell the user, in one line, which account hit the limit and which one this switched to. In a batch, do this per run without blocking the rest, then summarize.
+
+Never print or ask for a token value, or add a name (or widen an `allow_data_to`) to get around the allow-list: it is the owner's local config, enforced by the CLI itself.
+
+## 6. Recommend
 
 Tie it together in a few lines: the status and reason, the evidence for it, and one next step:
-- **A follow-up run** (`reference/followup.md`) when there is a pull request and the remaining work is clear: failing tests the agent could fix, review findings, or a halt whose cap has been raised.
+- **A follow-up run** (`reference/followup.md`) when there is a pull request and the remaining work is clear: failing tests the agent could fix, review findings, a halt whose cap has been raised, or (above) a usage limit and another allowed account to try.
 - **A fresh run** (`reference/launch.md`) when nothing was pushed, or the task was wrong.
 - **A local fix** when the cause is in the repository's setup, such as a build command that is wrong or a missing secret, and the user can correct it.
 - **Wait and retry** for an `infra_error` that looks transient.

@@ -54,6 +54,10 @@ The remote agent cannot see this conversation, your files or the user's machine.
 - **Cost.** `fugaro diagnose` shows it, and its JSON has `row.cost.route_by`, which splits the spend by route (a provider model's route, for example), and `row.cost.reported_usd`, what a provider claimed, kept beside the priced figure and never replacing it. Subscription (`oauth`) spend is notional, never billed.
 - **Statuses and halts** are in `reference/status.md` and `reference/diagnose.md`. A halt is a budget cap or a kill switch working as intended.
 
+## A usage limit on the Claude account
+
+A `failed` run whose `fugaro diagnose` shows "usage limit" (case-insensitively, in `row.reason` or `agent_message`) ran out of its Claude account's subscription quota, never any other kind of failure. `reference/diagnose.md` says how to tell that apart from a revoked token, a failing test or a plain bug, and `fugaro accounts ls --repo <owner/name> --json` lists the other accounts the repository may use. `reference/followup.md` (with a pull request) or `reference/launch.md` (with none yet) relaunches the same work on one of them, naming it with `--token`, never in a loop past every allowed account.
+
 ## What dogfooding taught
 
 - On GitHub, Fugaro can never change `.github/workflows/*`: GitHub refuses a push to a workflow file from an App without the workflows permission. Tell the user such a task is theirs to do, or leave those files out of the run's task.
