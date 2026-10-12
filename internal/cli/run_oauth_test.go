@@ -356,6 +356,75 @@ func TestFollowUpDocumentedTokenOverrideCommandWorks(t *testing.T) {
 	}
 }
 
+// TestFollowUpRepeatRunIDRefusesDifferentToken is review finding (task 9b
+// round 3): storedFollowUp's "different task" comparison checked PR, text,
+// batch, overrides and recipe, but never --token, so a repeated --run-id
+// naming a DIFFERENT account than the one already stored silently reported
+// "already-launched" instead of refusing — the opposite of what the
+// skill's own account-switch procedure needs (a repeated --run-id there
+// means "confirm this launch went through," never "silently keep the
+// account that was already launched").
+func TestFollowUpRepeatRunIDRefusesDifferentToken(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, appClaudeAccountsConfig) // allows acme-personal and acme-overflow for acme/app
+	variant := gcp.WorkflowVariant("web", "acme-personal")
+	f.run.AddJob(gcp.JobName(appSlug, variant), "4", "8Gi")
+	writeBuildRecord(t, f, appSlug, "web", release061)
+	seedAppFollowUpRoot(t, f, "")
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--token", "acme-personal", "more work"); err != nil {
+		t.Fatal(err)
+	}
+	// A different --token on the repeat is refused as a different task,
+	// before any second launch: the stored task is acme-personal's.
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--token", "acme-overflow", "more work")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "different task") {
+		t.Fatalf("different --token: err = %v", err)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want 1 (no launch under acme-overflow)", n)
+	}
+	// The SAME --token the stored task already has still reports
+	// already-launched, not a refusal.
+	out, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--token", "acme-personal", "--json", "more work")
+	if err != nil || !strings.Contains(out, `"already-launched"`) {
+		t.Fatalf("same --token: %s, %v", out, err)
+	}
+	// No --token at all is the ordinary idempotent repeat and is unchanged.
+	out, _, err = execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--json", "more work")
+	if err != nil || !strings.Contains(out, `"already-launched"`) {
+		t.Fatalf("no --token: %s, %v", out, err)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want 1 (still, after both idempotent repeats)", n)
+	}
+	if got := readSpec(t, f, fuID).OAuthToken; got != "acme-personal" {
+		t.Fatalf("stored OAuthToken = %q, want acme-personal (unchanged)", got)
+	}
+}
+
+// TestFollowUpRepeatRunIDUnlaunchedRefusesDifferentToken is the more
+// dangerous half of the same bug: a stored-but-never-launched follow-up
+// (the probe the review comment gave) repeated with a different --token
+// must never actually launch — under the stored (old) account or any
+// other — before being refused.
+func TestFollowUpRepeatRunIDUnlaunchedRefusesDifferentToken(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, appClaudeAccountsConfig)
+	writeBuildRecord(t, f, appSlug, "web", release061)
+	seedAppFollowUpRoot(t, f, "")
+	fu := followUpSpec(fuID, rootID, rootID, 7)
+	fu.Task = "more work"
+	fu.OAuthToken = "acme-personal"
+	seedSpec(t, f, fu, false) // stored but never launched
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--token", "acme-overflow", "more work")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "different task") {
+		t.Fatalf("err = %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none: must never launch under the stored (old) account", n)
+	}
+}
+
 // TestFollowUpRefusesDisallowedInheritedAccount: the previous run's
 // task.json is bucket data a launcher can write directly; a follow-up must
 // not launch under the account it names when this repository is not (or no

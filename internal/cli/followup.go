@@ -400,7 +400,8 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 	if have.Recipe != nil {
 		haveRecipe = have.Recipe.Name
 	}
-	if have.PR != o.pr || have.Task != text || have.Batch != o.batch || string(a) != string(b) || (o.recipe != "" && o.recipe != haveRecipe) {
+	if have.PR != o.pr || have.Task != text || have.Batch != o.batch || string(a) != string(b) || (o.recipe != "" && o.recipe != haveRecipe) ||
+		(o.token != "" && o.token != cmp.Or(have.OAuthToken, config.DefaultClaudeAccount)) {
 		return nil, userErr("run ID %s already holds a different task", o.runID)
 	}
 	// have is stored bucket data nobody vouches for (review finding A): its
