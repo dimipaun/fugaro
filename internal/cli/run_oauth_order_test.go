@@ -72,3 +72,32 @@ func TestFollowUpTokenCheckedBeforeRecipeResolution(t *testing.T) {
 		t.Fatalf("%d executions, want none", n)
 	}
 }
+
+// TestRunReviewModeTokenCheckedBeforeRecipeResolution: --pr with an
+// explicit --recipe has its own dispatch path in runRun (deciding whether
+// --recipe names a mode: review recipe at all, so --pr can mean "any open
+// pull request" rather than a follow-up), added after the two fixes above
+// and with the identical bug: it called resolveRecipe (the same project/
+// catalog bucket read) before any account check. projectRecipesFixture
+// makes "fugaro-runs-proj-1234" this installation's runs bucket, so
+// --recipe nope would reach fetchProjectRecipe's bucket read if dispatch's
+// own resolveRecipe call ran at all; no claude_accounts configured, so
+// evil-name is disallowed regardless of what --recipe resolves to.
+//
+// Mutation (move the `claudeAccountFor` call added to runRun's --pr/--recipe
+// dispatch to after the `resolveRecipe` call instead of before): this test
+// fails, finding "recipe nope" in the error instead of the account refusal.
+func TestRunReviewModeTokenCheckedBeforeRecipeResolution(t *testing.T) {
+	f := newCloudFixture(t)
+	projectRecipesFixture(t, f, nil) // no claude_accounts: evil-name is disallowed
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--token", "evil-name", "--pr", "7", "--recipe", "nope")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "evil-name") || !strings.Contains(err.Error(), "claude_accounts") {
+		t.Fatalf("err = %v, want the disallowed-account refusal, checked before recipe resolution", err)
+	}
+	if strings.Contains(err.Error(), "recipe nope") {
+		t.Fatalf("err = %v: resolveRecipe ran (and so fetchProjectRecipe's bucket read was attempted) before the account check", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}

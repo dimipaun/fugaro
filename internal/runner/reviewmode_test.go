@@ -667,6 +667,38 @@ func TestReviewModeRedactsWorkflowSecretEvenThoughAgentNeverGetsIt(t *testing.T)
 	}
 }
 
+// TestReviewModeFailedStageReasonIsRedacted: endReviewFailed's reason
+// (r.failure(), ultimately the review stage's own agent error, "stage
+// review: <err>") is stored in rec.Reason unredacted today, unlike every
+// sibling end-branch in this file (refuseReview, failReviewInfra both
+// redact). A workflow secret the runner process holds (SECURITY.md: the
+// agent's own error can quote it, the same as anything else a run
+// publishes) must not survive into the stored reason.
+//
+// Mutation (drop the `reason = r.redact(reason)` line from endReviewFailed):
+// this test fails, finding the raw secret in rec.Reason.
+func TestReviewModeFailedStageReasonIsRedacted(t *testing.T) {
+	h := newHarness(t, followUpYAML(t, ""), reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	h.deps.Env = append(h.deps.Env, "PLANTED_SECRET="+plantedSecret)
+	pushReviewBranch(t, h, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h, 7, "feature", "")
+	failing := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		return agent.Result{}, fmt.Errorf("boom, saw %s in a log line", plantedSecret)
+	}
+	rec, err := h.run(t, failing)
+	if err != nil || rec.Status != runstore.StatusFailed {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if strings.Contains(rec.Reason, plantedSecret) {
+		t.Fatalf("the stored reason leaks the secret unredacted: %q", rec.Reason)
+	}
+	if !strings.Contains(rec.Reason, "REDACTED") {
+		t.Fatalf("the stored reason was not redacted at all: %q", rec.Reason)
+	}
+}
+
 // TestReviewModeAgentHasNoGitToken: the review stage's agent gets no git
 // credentials and no GH_TOKEN (design generic-tool §3.6, G12), exactly as
 // a follow-up's agent has none (runner.go's authVars and refreshGitAuth

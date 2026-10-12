@@ -231,6 +231,17 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 				}
 			}
 			o.repo = repo
+			// Checked before resolveRecipe (review finding E, the same
+			// ordering newSpec/prSpec already enforce internally):
+			// resolveRecipe can read a project or catalog recipe from the
+			// bucket, a network call a disallowed --token should never
+			// trigger. reviewSpec repeats this same check once a review
+			// recipe is confirmed below (it is pure and local, so doing it
+			// twice costs nothing); this call is what stops the read
+			// itself from ever running for a refused account.
+			if _, err := claudeAccountFor(env, repo, o.token, checkoutOf(ctx, repo)()); err != nil {
+				return err
+			}
 			rr, rerr := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), o.recipe, time.Now(), false)
 			switch {
 			case rerr == nil && rr.Recipe.Mode == recipe.ModeReview:

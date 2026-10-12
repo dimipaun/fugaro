@@ -694,6 +694,7 @@ func (r *run) endReviewFailed(ctx context.Context) {
 	if reason == "" {
 		reason = "the review stage ended without a verdict"
 	}
+	reason = r.redact(reason)
 	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, reason
 	r.skipPR = true
 	r.storeReviewEnded(ctx)
