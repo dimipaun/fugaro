@@ -11,8 +11,10 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -692,6 +694,121 @@ func TestDoctorClaudeAccountsStoredFailsClosedWhenUnreachable(t *testing.T) {
 	}
 	if _, _, err := execute(t, "doctor", "--strict", "--json"); err == nil {
 		t.Fatal("--strict: want a failure, since the check could not be answered")
+	}
+}
+
+// TestDoctorClaudeAccountsStoredWarnsWhenRepoUnknown: claude_accounts is
+// configured (for some repository), but this checkout's origin remote
+// cannot be parsed as owner/name, so it is impossible to tell whether any
+// named account applies here. Review finding: this used to fail open
+// (silence); fixed to warn instead (fail closed, never silence).
+func TestDoctorClaudeAccountsStoredWarnsWhenRepoUnknown(t *testing.T) {
+	r := newDoctorRig(t)
+	// No testutil.Git ... remote set-url: checkoutWith's default origin is a
+	// local bare-repo path, which repoFromOrigin cannot parse as owner/name.
+	checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	addClaudeAccounts(t, r, "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/app]\n")
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("a warning must not fail doctor without --strict: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "claude-accounts-stored")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("claude-accounts-stored = %+v", c)
+	}
+	if !strings.Contains(c.Problem, "no origin remote") {
+		t.Fatalf("problem doesn't explain why: %q", c.Problem)
+	}
+	if _, _, err := execute(t, "doctor", "--strict", "--json"); err == nil {
+		t.Fatal("--strict: want a failure, since the check could not be answered")
+	}
+}
+
+// TestDoctorClaudeAccountsStoredSilentWhenRepoUnknownAndNoAccounts: with no
+// claude_accounts configured at all, an unparseable origin still produces no
+// new check — byte-identical output (design §5; carry-forward T8).
+func TestDoctorClaudeAccountsStoredSilentWhenRepoUnknownAndNoAccounts(t *testing.T) {
+	newDoctorRig(t)
+	checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	if c, ok := doctorCheckByID(o.Checks, "claude-accounts-stored"); ok {
+		t.Fatalf("an installation with no claude_accounts got a new check: %+v", c)
+	}
+}
+
+// TestDoctorNamedAccountCheckReadsNoValue is the plan's own named test
+// (Task 8): doctor's named-account check reads secrets' metadata only
+// (List, by label) and never a value (Access), proven here with a fake that
+// fatals the test on any Access call (gcpfake.Secrets' default: Access is
+// refused unless a test explicitly calls AllowAccess, which this test never
+// does). Exercises every branch that touches o.Secrets: present, missing,
+// and the repository-unknown path that makes no Secret Manager call at all.
+func TestDoctorNamedAccountCheckReadsNoValue(t *testing.T) {
+	r := claudeAccountsRig(t)
+	putSecret(t, r.sm, "proj-1234", mustSlug("github", "acme/app"), "claude-oauth-token-acme-personal", []byte("fake-token-0123456789"))
+	if _, _, err := execute(t, "doctor", "--json"); err != nil {
+		t.Fatal(err)
+	}
+	if a := r.sm.Accessed(); len(a) != 0 {
+		t.Fatalf("doctor read a secret value: %v", a)
+	}
+
+	r2 := newDoctorRig(t)
+	checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	addClaudeAccounts(t, r2, "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/app]\n")
+	if _, _, err := execute(t, "doctor", "--json"); err != nil {
+		t.Fatal(err)
+	}
+	if a := r2.sm.Accessed(); len(a) != 0 {
+		t.Fatalf("doctor read a secret value with no resolvable repository: %v", a)
+	}
+}
+
+// TestDoctorClaudeAccountsStoredCheckEscapesHostileInput is a direct, function-level
+// test of claudeAccountsStoredCheck (bypassing config.ValidateClaudeAccounts,
+// which already refuses hostile account names and non-slug allow_data_to
+// entries at parse time — this test is defense in depth, proving the
+// function's own output is safe even if fed input no real parse path can
+// produce today). A control character, a bidi override and an over-long
+// name must all come out escaped and length-bounded in the human-readable
+// Problem text. The Fix text is deliberately exempted: it carries the exact,
+// literal secret ID and repo an operator must paste into a real command
+// (the same convention githubapp.go's Fix lines already use), so escaping it
+// would print a command that cannot actually be run.
+func TestDoctorClaudeAccountsStoredCheckEscapesHostileInput(t *testing.T) {
+	const bell = "\x07"
+	bidi := "‮"
+	long := strings.Repeat("x", 500)
+	hostileRepo := "acme/app" + bell + bidi
+	hostileAccount := "acme-personal-" + long
+	lc := &localcfg.Config{ClaudeAccounts: map[string]config.ClaudeAccount{
+		hostileAccount: {AllowDataTo: []string{hostileRepo}},
+	}}
+	c := claudeAccountsStoredCheck(lc, hostileRepo, []secretEntry{})
+	if c == nil || c.OK {
+		t.Fatalf("claudeAccountsStoredCheck = %+v", c)
+	}
+	for _, raw := range []string{bell, bidi} {
+		if strings.Contains(c.Problem, raw) {
+			t.Fatalf("a control/bidi character leaked raw into Problem: %q", c.Problem)
+		}
+	}
+	if strings.Contains(c.Problem, long) {
+		t.Fatalf("an over-long name was not bounded in Problem: %q", c.Problem)
+	}
+	if n := len([]rune(c.Problem)); n > 2*pluginwire.MaxPrintable+200 {
+		t.Fatalf("Problem is not length-bounded: %d runes", n)
 	}
 }
 

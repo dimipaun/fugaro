@@ -291,6 +291,16 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 			if c := claudeAccountsStoredCheck(lc, repo, o.Secrets); c != nil {
 				o.Checks = append(o.Checks, *c)
 			}
+		} else if len(lc.ClaudeAccounts) > 0 {
+			// The repository itself could not be determined (no origin
+			// remote), so it is impossible to tell which named accounts, if
+			// any, apply to it. claude_accounts is configured for at least
+			// one repository somewhere, so staying silent here would fail
+			// open: an owner could not tell this checkout was never actually
+			// checked. Warn instead (fail closed).
+			o.Checks = append(o.Checks, doctorCheck{ID: "claude-accounts-stored", Severity: "warning",
+				Problem: "could not determine this checkout's repository (no origin remote), so whether its named Claude account(s) have a stored token could not be checked",
+				Fix:     "run doctor from a checkout with a parseable owner/name origin remote, or check by hand: " + selfCommand() + " secrets ls --repo OWNER/NAME"})
 		}
 	}
 
