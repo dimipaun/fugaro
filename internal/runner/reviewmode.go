@@ -41,11 +41,10 @@ type reviewHead struct {
 }
 
 // checkReviewPRs resolves and validates every pull request r.spec.ReviewPRs
-// names (design generic-tool §3.6, G12): FetchPRHead, then its open state
-// and, for a fork, r.cfg.Review.AllowForks (read from the base branch, like
-// followup.trusted: a fork PR cannot opt itself in). Any failure ends
-// bootstrap with the reason, before anything is checked out; the runner
-// never silently skips a pull request the task named.
+// names (design generic-tool §3.6, G12; owner ruling 2026-10-12): FetchPRHead,
+// then its open state and checkReviewAuthor's trusted-author gate. Any
+// failure ends bootstrap with the reason, before anything is checked out;
+// the runner never silently skips a pull request the task named.
 func (r *run) checkReviewPRs(ctx context.Context) error {
 	trustedIDs := make(map[string]bool, len(r.cfg.Followup.Trusted))
 	for _, id := range r.cfg.Followup.Trusted {

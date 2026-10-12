@@ -704,7 +704,8 @@ func TestReviewModeAgentHasNoGitToken(t *testing.T) {
 // which must never reach a workflow secret meant for commands.build/test.
 // The model credential the agent still needs (cfg.Agent.Auth) is not one
 // of these and is unaffected — that residual reachability is the design's
-// own accepted risk behind review.allow_forks, not this guard's job.
+// own accepted risk for any trusted author's PR review mode runs, not
+// this guard's job.
 // followUpYAML's second secret (PLANTED_SECRET) proves this isn't special
 // to the fixture's own fixture-fails/FIXTURE_FAILS_FILE pair. A plain
 // (non-review) run still gets both, proving the guard is specific to

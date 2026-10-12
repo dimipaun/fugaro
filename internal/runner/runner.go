@@ -1013,8 +1013,8 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// untrusted checkout and prompt (a hook, an auto-loaded CLAUDE.md), so
 	// a workflow secret in its environment would be reachable by that
 	// code. The model credential it still needs (cfg.Agent.Auth, below)
-	// is the one exception, and stays reachable by fork code behind
-	// review.allow_forks: that is the residual risk the design accepts.
+	// is the one exception, and stays reachable by a trusted author's own
+	// prompt injection: that is the residual risk the design accepts.
 	var secretEnvs []string
 	if !r.review {
 		secretEnvs = make([]string, len(wf.Secrets))

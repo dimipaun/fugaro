@@ -415,9 +415,7 @@ func checkBaseWorkflow(p, root string, w Workflow) []Problem {
 
 // CheckWarnings are what Check finds that doesn't make the config wrong, for
 // fugaro validate to print as warnings: a generated image on the Fugaro base
-// with no mise config and no image.tools installs no language runtime, and
-// review.allow_forks: true is a standing risk worth repeating every time
-// (docs/recipes.md §3, SECURITY.md).
+// with no mise config and no image.tools installs no language runtime.
 func CheckWarnings(c *Config, root string) []Problem {
 	var ps []Problem
 	for _, name := range sortedKeys(c.Workflows) {
