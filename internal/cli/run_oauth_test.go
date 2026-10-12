@@ -158,6 +158,10 @@ func TestRunTokenVariantJobMissingNeverFallsBackToDefault(t *testing.T) {
 // is printed instead of an error.
 func TestFollowUpInheritsOAuthToken(t *testing.T) {
 	f := newCloudFixture(t)
+	// claudeAccountAllowed now checks the allow-list regardless of whether a
+	// checkout is present (review finding #2): acme-personal must be allowed
+	// for acme/app here, the same as a fresh resolution would require.
+	f.appendConfig(t, "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/app]\n")
 	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-personal")), "4", "8Gi")
 	writeBuildRecord(t, f, appSlug, "web", release061)
 	root := firstRunSpec(rootID)
@@ -239,6 +243,10 @@ func TestRunTokenImageGateRefusesOldFirstRun(t *testing.T) {
 // because the launch is a follow-up.
 func TestRunTokenImageGateRefusesOldFollowUp(t *testing.T) {
 	f := newCloudFixture(t)
+	// claudeAccountAllowed now checks the allow-list regardless of whether a
+	// checkout is present (review finding #2): acme-personal must be allowed
+	// for acme/app so this test reaches the image gate it means to exercise.
+	f.appendConfig(t, "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/app]\n")
 	writeBuildRecord(t, f, appSlug, "web", release060)
 	root := firstRunSpec(rootID)
 	root.OAuthToken = "acme-personal"

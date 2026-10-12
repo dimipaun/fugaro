@@ -410,11 +410,12 @@ func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tot
 
 // claudeAccountFor is the named Claude account a first run uses: flag
 // (fugaro run --token), else the checkout's fugaro.yaml agent.oauth_token,
-// else the repository's default (config.DefaultClaudeAccount). A workflow
-// whose agent.auth is oauth refuses a name config.AllowedClaudeAccounts (the
-// local config's claude_accounts) does not list for repo, before any launch
-// (design docs/design/named-oauth-tokens.md §3 T7); any other auth leaves
-// the choice unchecked, since no secret is ever mounted for it either way.
+// else the repository's default (config.DefaultClaudeAccount). A non-default
+// name is refused (claudeAccountAllowed) unless config.AllowedClaudeAccounts
+// (the local config's claude_accounts) lists it for repo, before any launch
+// (design docs/design/named-oauth-tokens.md §3 T7) — checked whether or not
+// a checkout is available here, so --repo X --token N outside any checkout
+// is held to the same rule a checkout's own resolution would be.
 func claudeAccountFor(env *cloudEnv, repo, flag string, co *config.Config) (string, error) {
 	name := flag
 	if name == "" && co != nil {
@@ -427,18 +428,29 @@ func claudeAccountFor(env *cloudEnv, repo, flag string, co *config.Config) (stri
 }
 
 // claudeAccountAllowed refuses name (already resolved: flag, agent.oauth_token
-// or an inherited follow-up value) when co's workflow uses agent.auth: oauth
-// and the local config's claude_accounts does not allow repo to use it. Any
-// other auth, or no checkout here, leaves name unchecked: the same
-// local-checkout dependency needsRecipeImage and the project-layer gate
-// above already have.
+// or an inherited follow-up value) unless it is the repository's default
+// account. Checked before any network call, build-record read or task.json
+// write (design §3 T7), and regardless of whether a local checkout exists:
+// fugaro run --repo X --token N run from outside any checkout, and a
+// follow-up's inherited name (bucket data a launcher can write directly),
+// must both be checked exactly as a fresh resolution from a checkout would
+// be — review finding: skipping the check just because there is no checkout
+// here let either one through with its shape checked but never its
+// membership in config.AllowedClaudeAccounts. When a checkout IS known and
+// its workflow's agent.auth is not oauth, naming an account makes no sense
+// at all (no secret is ever mounted for it, so the name would be silently
+// unused) and is refused outright, not merely left unchecked.
 func claudeAccountAllowed(env *cloudEnv, repo, name string, co *config.Config) error {
-	if co == nil || co.Agent.Auth != "oauth" {
+	if name == config.DefaultClaudeAccount {
 		return nil
+	}
+	if co != nil && co.Agent.Auth != "oauth" {
+		return userErr("named Claude account %s only applies to a workflow whose agent.auth is oauth; %s's agent.auth is %s",
+			pluginwire.Printable(name), repo, co.Agent.Auth)
 	}
 	allowed := config.AllowedClaudeAccounts(env.lc.ClaudeAccounts, repo)
 	if !slices.Contains(allowed, name) {
-		return userErr("named Claude account %s is not one %s may use (allowed: %s); ask the owner to add it to claude_accounts in the project config",
+		return userErr("named Claude account %s is not one %s may use (allowed: %s); ask the operator to add it to claude_accounts in their local config",
 			pluginwire.Printable(name), repo, strings.Join(allowed, ", "))
 	}
 	return nil
@@ -894,8 +906,23 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		rcancel()
 		return res, err
 	}
+	variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken)
+	if !ok {
+		// spec.Workflow, unlike spec.OAuthToken, is never shape-checked by
+		// task.Parse: a bad --workflow, a stored task from before this
+		// feature validated anything about it, or tampered bucket data could
+		// all reach here. Definitive, same cleanup as a platform refusal:
+		// nothing started.
+		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		releaseClaim(rctx, env, s, holder)
+		if minted {
+			env.dropBudgetToken(rctx, slug, spec.RunID)
+		}
+		rcancel()
+		return res, userErr("workflow %s is not a plain workflow name, so it can't be combined with Claude account %s; nothing started", oneLineCLI(spec.Workflow), pluginwire.Printable(spec.OAuthToken))
+	}
 	lctx, cancel := context.WithTimeout(hctx, launchTimeout)
-	ref, err := env.be.Launch(lctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: spec.Repo, Slug: slug}, Workflow: gcp.WorkflowVariant(spec.Workflow, spec.OAuthToken), RunID: spec.RunID, Timeout: launchTimeoutOf(spec)})
+	ref, err := env.be.Launch(lctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: spec.Repo, Slug: slug}, Workflow: variant, RunID: spec.RunID, Timeout: launchTimeoutOf(spec)})
 	cancel()
 	if err != nil {
 		if errors.Is(err, backend.ErrRejected) {
