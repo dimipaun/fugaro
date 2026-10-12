@@ -234,3 +234,29 @@ func TestDocsAccountsLsCompleteFieldIsReal(t *testing.T) {
 		}
 	}
 }
+
+// TestDocsSkillSummaryDoesNotRestateTheOldLooseTrigger pins review finding
+// (task 9b round 3): SKILL.md's top-level "usage limit" paragraph used to
+// restate the trigger itself ("usage limit" in row.reason or
+// agent_message), which went stale and contradicted
+// reference/diagnose.md's own section once that section was narrowed to
+// Claude Code's own error text, excluding log_tail and finished work
+// (task 9b round 2). SKILL.md must point to diagnose.md's section instead
+// of restating the rule, so the two can never drift apart silently again.
+func TestDocsSkillSummaryDoesNotRestateTheOldLooseTrigger(t *testing.T) {
+	skill := readSkillFile(t, "../../plugin/skills/working/SKILL.md")
+	if !strings.Contains(skill, "A usage limit on the Claude account") {
+		t.Fatal("SKILL.md no longer has its usage-limit summary paragraph")
+	}
+	for _, stale := range []string{
+		`"usage limit" (case-insensitively, in`,
+		"row.reason` or `agent_message`) ran out",
+	} {
+		if strings.Contains(skill, stale) {
+			t.Errorf("SKILL.md restates the old loose trigger (%q); it must point to reference/diagnose.md's section instead", stale)
+		}
+	}
+	if !strings.Contains(skill, "reference/diagnose.md") || !strings.Contains(skill, "usage-limit section") {
+		t.Error("SKILL.md's usage-limit paragraph no longer points to reference/diagnose.md's usage-limit section")
+	}
+}

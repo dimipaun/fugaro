@@ -56,7 +56,7 @@ The remote agent cannot see this conversation, your files or the user's machine.
 
 ## A usage limit on the Claude account
 
-A `failed` run whose `fugaro diagnose` shows "usage limit" (case-insensitively, in `row.reason` or `agent_message`) ran out of its Claude account's subscription quota, never any other kind of failure. `reference/diagnose.md` says how to tell that apart from a revoked token, a failing test or a plain bug, and `fugaro accounts ls --repo <owner/name> --json` lists the other accounts the repository may use. `reference/followup.md` (with a pull request) or `reference/launch.md` (with none yet) relaunches the same work on one of them, naming it with `--token`, never in a loop past every allowed account.
+A `failed` run can mean its Claude account ran out of its subscription's usage limit, never any other kind of failure. `reference/diagnose.md`'s usage-limit section says exactly what counts as that evidence and what doesn't — read it before concluding a run hit a limit, never infer one from this paragraph alone. When it applies, `fugaro accounts ls --repo <owner/name> --json` lists the other accounts the repository may use, and `reference/followup.md` (with a pull request) or `reference/launch.md` (with none yet) relaunches the same work on one of them, naming it with `--token`, never in a loop past every allowed account.
 
 ## What dogfooding taught
 
