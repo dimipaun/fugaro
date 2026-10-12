@@ -27,8 +27,12 @@ const (
 	StatusRunning Status = "running"
 	// StatusSucceeded is a ready PR, or (outcome none, Record.Gate "clean")
 	// a check gate that found nothing to fix, so no PR was ever needed.
-	StatusSucceeded  Status = "succeeded"
-	StatusFailed     Status = "failed" // a draft PR exists
+	StatusSucceeded Status = "succeeded"
+	// StatusFailed is a draft PR exists, or (outcome none) review mode
+	// refusing a pull request before checkout (no PR of its own ever
+	// exists): a policy decision the runner made correctly, not an
+	// infrastructure fault.
+	StatusFailed     Status = "failed"
 	StatusInfraError Status = "infra_error"
 	StatusCancelled  Status = "cancelled"
 	StatusHalted     Status = "halted" // a budget or token limit stopped the run

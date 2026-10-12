@@ -390,6 +390,7 @@ func TestReviewModeCommentRedactsBeforeNeutralizing(t *testing.T) {
 		secret string
 	}{
 		{"at-sign", "pa55@db.internal-host"},
+		{"angle-bracket", "tok<en>secretvalue"},
 		{"brackets", "ab[cd]ef-secretval"},
 		{"hash-digit", "hunter2024xyz#1secret"},
 		{"scheme", "https://tok.en-secretvalue"},
@@ -863,7 +864,7 @@ func TestReviewModeRefusesUntrustedAuthor(t *testing.T) {
 	addPR(h, 7, "feature", "")
 	h.provider.State.PRs[0].AuthorID = "outsider-id"
 	rec, err := h.run(t)
-	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "not a trusted author") || len(stageNames(rec)) != 0 {
+	if err == nil || rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "not a trusted author") || len(stageNames(rec)) != 0 {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 
@@ -898,7 +899,7 @@ func TestReviewModeRefusesUntrustedFork(t *testing.T) {
 	})
 	addPR(h, 7, "feature", "outsider/repo")
 	rec, err := h.run(t)
-	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "not a trusted author") {
+	if err == nil || rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "not a trusted author") {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 
@@ -910,8 +911,169 @@ func TestReviewModeRefusesUntrustedFork(t *testing.T) {
 	h2.provider.State.PRs[0].AuthorID = aliceID
 	h2.provider.State.PRs[0].AuthorLogin = "alice"
 	rec2, err := h2.run(t)
-	if err == nil || rec2.Status != runstore.StatusInfraError || !strings.Contains(rec2.Reason, "not owned by its trusted author") {
+	if err == nil || rec2.Status != runstore.StatusFailed || !strings.Contains(rec2.Reason, "not owned by its trusted author") {
 		t.Fatalf("mismatched fork owner: rec = %+v, err = %v", rec2, err)
+	}
+}
+
+// TestReviewModeTrustedForkWithMatchingOwnerAccepted: the positive half of
+// TestReviewModeRefusesUntrustedFork's second sub-case — a trusted
+// author's own fork, where the fork repository's owner really is that
+// same author, is reviewed (not merely "not refused for the wrong
+// reason"): it reaches the review stage and ends outcome reviewed.
+//
+// Mutation (drop the whole `if h.Fork { ... }` ownership block in
+// checkReviewAuthor, not just its condition): this test still passes (a
+// matching owner was never going to be refused either way), which is
+// exactly why TestReviewModeRefusesUntrustedFork's mismatched-owner case
+// is the one that actually proves the check exists — this test instead
+// guards the OPPOSITE regression: mutating the trust OR itself (e.g.
+// dropping `trustedIDs[h.AuthorID]`) to always deny makes this fail,
+// finding the matching-owner fork refused instead of reviewed.
+func TestReviewModeTrustedForkWithMatchingOwnerAccepted(t *testing.T) {
+	h := newHarness(t, followUpYAML(t, ""), reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	h.deps.Env = append(h.deps.Env, "PLANTED_SECRET=x")
+	pushReviewBranch(t, h, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h, 7, "feature", "alice/repo")
+	h.provider.State.PRs[0].AuthorID = aliceID
+	h.provider.State.PRs[0].AuthorLogin = "alice"
+	rec, err := h.run(t, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Outcome != runstore.OutcomeReviewed {
+		t.Fatalf("a trusted author's own-owned fork was refused: rec = %+v", rec)
+	}
+}
+
+// TestReviewModeFugaroOwnPRAccepted: Fugaro's own pull request (the
+// author is the provider's own identity, the fake's default when a test
+// never sets PRState.AuthorID — "it is a self PR" is the one case that
+// must stay accepted with NO followup.trusted entry at all, core review-
+// mode use) is reviewed. Dozens of other tests in this file rely on this
+// implicitly (addPR never sets AuthorID); this one pins it explicitly and
+// names the mechanism.
+//
+// Mutation (drop the `(!h.Fork && h.Self)` disjunct from checkReviewAuthor's
+// `trusted := ...` line): this test fails, finding Fugaro's own same-
+// repository PR refused as untrusted.
+func TestReviewModeFugaroOwnPRAccepted(t *testing.T) {
+	h := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	pushReviewBranch(t, h, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h, 7, "feature", "") // same repo, AuthorID left unset: Fugaro's own
+	rec, err := h.run(t, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Outcome != runstore.OutcomeReviewed {
+		t.Fatalf("Fugaro's own pull request was refused: rec = %+v", rec)
+	}
+}
+
+// bitbucketCfg is the fixture's fugaro.yaml with git.provider: bitbucket,
+// for checkReviewAuthor's Bitbucket-specific branch: the fake provider
+// itself is unchanged (gitprov.Static ignores the kind string), only
+// r.providerKind changes, which is all that branch reads.
+func bitbucketCfg(t *testing.T) string {
+	t.Helper()
+	return strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "provider: github", "provider: bitbucket", 1)
+}
+
+// TestReviewModeBitbucketForkRefusedSameRepoAccepted: Bitbucket has no
+// author_association at all, so review mode fails closed there instead of
+// consulting trust: a same-repository pull request needs no author check
+// (pushing a branch there already needs write access) and is reviewed
+// unconditionally; every fork is refused, even one followup.trusted would
+// otherwise have trusted.
+//
+// Mutation (drop the `if r.providerKind == gitprov.KindBitbucket { ... }`
+// branch in checkReviewAuthor): the fork sub-case fails, finding it
+// reviewed instead of refused (it would pass the general trust check,
+// since its author is listed in followup.trusted).
+func TestReviewModeBitbucketForkRefusedSameRepoAccepted(t *testing.T) {
+	h := newHarness(t, bitbucketCfg(t), reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	pushReviewBranch(t, h, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h, 7, "feature", "")
+	rec, err := h.run(t, review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Outcome != runstore.OutcomeReviewed {
+		t.Fatalf("Bitbucket same-repository PR was refused: rec = %+v", rec)
+	}
+
+	const bitbucketAliceID = "557058:00000000-0000-0000-0000-000000000001"
+	h2 := newHarness(t, bitbucketCfg(t)+"followup:\n  trusted: [\""+bitbucketAliceID+"\"]\n", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	pushReviewBranch(t, h2, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h2, 7, "feature", "alice/repo")
+	h2.provider.State.PRs[0].AuthorID = bitbucketAliceID
+	h2.provider.State.PRs[0].AuthorLogin = "alice"
+	rec2, err := h2.run(t)
+	if err == nil || rec2.Status != runstore.StatusFailed || !strings.Contains(rec2.Reason, "only reviews same-repository pull requests on Bitbucket") {
+		t.Fatalf("Bitbucket fork (even a followup.trusted author's own) was not refused: rec = %+v, err = %v", rec2, err)
+	}
+}
+
+// TestReviewModeRefusalTextSafeWithHostileLogin: AuthorLogin is an
+// attacker-controlled string (the PR author chooses their own GitHub
+// login), spliced into the refusal message and posted on the pull
+// request; it must not carry ANSI/terminal escapes or bidi/zero-width
+// characters that could make the printed reason read as something other
+// than what it says (safetext.OneLine's whole job).
+//
+// Mutation (drop the `safetext.OneLine(...)` calls in checkReviewAuthor,
+// splicing h.AuthorLogin/Association in raw): this test fails, finding
+// the raw ESC sequence and the zero-width space in rec.Reason.
+func TestReviewModeRefusalTextSafeWithHostileLogin(t *testing.T) {
+	h := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	pushReviewBranch(t, h, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h, 7, "feature", "")
+	hostile := "alice\x1b[31mADMIN\x1b[0m​bob"
+	h.provider.State.PRs[0].AuthorID = "outsider-id"
+	h.provider.State.PRs[0].AuthorLogin = hostile
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusFailed {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if strings.Contains(rec.Reason, "\x1b") || strings.Contains(rec.Reason, "​") {
+		t.Fatalf("the hostile login's raw escape/zero-width bytes survived into the reason: %q", rec.Reason)
+	}
+}
+
+// TestReviewModeRefusalStatusIsFailedNotInfraError: a trusted-author
+// refusal is a policy decision the runner made correctly, not an
+// infrastructure fault — StatusFailed/OutcomeNone (the same shape a draft
+// PR's own StatusFailed already uses; review mode just never has a draft
+// PR of its own), never StatusInfraError.
+//
+// Mutation (in refuseReview, swap StatusFailed back to StatusInfraError):
+// this test fails, finding StatusInfraError.
+func TestReviewModeRefusalStatusIsFailedNotInfraError(t *testing.T) {
+	h := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	pushReviewBranch(t, h, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h, 7, "feature", "")
+	h.provider.State.PRs[0].AuthorID = "outsider-id"
+	rec, err := h.run(t)
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if rec.Status == runstore.StatusInfraError {
+		t.Fatalf("rec.Status = infra_error, want failed (a policy decision, not an infrastructure fault): rec = %+v", rec)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("rec = %+v, want Status=failed, Outcome=none", rec)
 	}
 }
 

@@ -125,18 +125,18 @@ func (r *run) checkReviewAuthor(ctx context.Context, n int, h gitprov.PRHead, tr
 	return nil
 }
 
-// refuseReview ends checkReviewAuthor's refusal of pull request n: the
-// same infra_error/outcome-none shape every bootstrap-time refusal in
-// this file already has (there is no draft pull request for a review run
-// to be StatusFailed's "a draft PR exists"), set directly here (not
-// wrapped by Run's generic "bootstrap: %w") so the stored reason stays
-// exactly reason, and a best-effort note posted on the pull request
-// itself, the same as a push refused for touching .github/workflows/
-// already gets (endRefused) — nothing before this ever posted anything,
-// so the refusal was otherwise invisible to anyone but Fugaro's own logs.
+// refuseReview ends checkReviewAuthor's refusal of pull request n:
+// StatusFailed/OutcomeNone (not StatusInfraError — nothing about the
+// runner or its infrastructure failed; the policy decision is the whole
+// point, and was made correctly), set directly here (not wrapped by Run's
+// generic "bootstrap: %w") so the stored reason stays exactly reason, and
+// a best-effort note posted on the pull request itself, the same as a
+// push refused for touching .github/workflows/ already gets (endRefused)
+// — nothing before this ever posted anything, so the refusal was
+// otherwise invisible to anyone but Fugaro's own logs.
 func (r *run) refuseReview(ctx context.Context, n int, reason string) error {
 	reason = r.redact(reason)
-	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusInfraError, runstore.OutcomeNone, reason
+	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, reason
 	note := "**Fugaro:** " + reason + ". Nothing was checked out or reviewed.\n" + gitprov.ReportMarker(r.rec.RunID) + "\n"
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), giveUpCommentTimeout)
 	defer cancel()
