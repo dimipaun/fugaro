@@ -121,6 +121,15 @@ fugaro secrets set github-app-key --repo <owner/name> < <path-to-pem-file>
 fugaro secrets set claude-oauth-token --repo <owner/name>
 ```
 
+**Named Claude accounts (optional).** The operator may have configured more than one Claude account in their own local config (`claude_accounts`; never in `fugaro.yaml`, and not something you can set up here) — `fugaro doctor --json`'s `secrets` field, or `fugaro secrets ls --json`, then lists more than one name starting `claude-oauth-token-`. If so, ask the user which account this repository's `agent.auth: oauth` workflow should use by default (or confirm its existing default is fine), and write `agent.oauth_token: <name>` under `agent` in `fugaro.yaml`, using the part of the secret name after `claude-oauth-token-`. Leave the key out to keep the repository on its default account, and never guess a name: `fugaro run` refuses one the operator's local config does not list this repository under, and `fugaro validate --json` only checks its shape, not whether it is allowed. The user runs this in their own terminal window, not through the agent, the same as every secret above, to store a chosen account's token with its full secret name:
+
+```bash user-runs
+# a one-line token, typed at a hidden prompt (<name> is the account the user chose)
+fugaro secrets set claude-oauth-token-<name> --repo <owner/name>
+```
+
+Minting a *second* Claude account's token, when this terminal already holds one from `claude setup-token` for another account, is not yet verified by Fugaro: tell the user to run `claude setup-token` again and follow whatever it prompts for switching accounts, rather than assuming a flag or a log-out step.
+
 ## 9. Hand off
 
 1. Run `fugaro init --repo --plan-only` (read-only; on a GitHub repository add `--github-app-id <id>` with the ID from step 5, topic 1) and show the user what init would create for this repository. It uses the user's own credentials and may refuse without a terminal or an installation: a refusal is normal, and then the user runs it themselves and reads you the plan.
