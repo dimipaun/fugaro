@@ -65,7 +65,7 @@ func NewRootCmd() *cobra.Command {
 	}
 	root.AddCommand(
 		newVersionCmd(), newValidateCmd(), newConfigCmd(), newVerifyCmd(), newExecCmd(), newImageCmd(),
-		newRunCmd(), newRecipesCmd(), newLsCmd(), newLogsCmd(), newDiagnoseCmd(), newCancelCmd(), newSecretsCmd(), newInitCmd(), newBudgetCmd(), newWatchCmd(), newReportCmd(), newUpdateSkillsCmd(), newUpgradeCmd(), newDoctorCmd(),
+		newRunCmd(), newRecipesCmd(), newLsCmd(), newLogsCmd(), newDiagnoseCmd(), newCancelCmd(), newSecretsCmd(), newAccountsCmd(), newInitCmd(), newBudgetCmd(), newWatchCmd(), newReportCmd(), newUpdateSkillsCmd(), newUpgradeCmd(), newDoctorCmd(),
 	)
 	return root
 }
