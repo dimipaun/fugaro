@@ -6,7 +6,7 @@
 
 **Depends on:** release 0.7.0 merged to `main` first (bucket-IAM hardening and the base-image consolidation both touch `internal/infra` heavily; this is a scheduling dependency, not a functional one — see design §8). No task here starts before 0.7.0 ships.
 
-**Precondition override (2026-10-11):** unmet when Task 3 started — `origin/main`'s latest release commit was `931ae11` ("v0.6.0"), no 0.7.0 anywhere in its history. Proceeded anyway on explicit run instructions placing this feature at release **0.6.1 on `main` directly**, superseding this line and the design's §8 placement. Task 4 onward should re-verify `main`'s state rather than assume 0.7.0 shipped.
+**Precondition override (2026-10-11):** unmet when Task 3 started — `origin/main`'s latest release commit was `931ae11` ("v0.6.0"), no 0.7.0 anywhere in its history. Proceeded anyway on explicit run instructions placing this feature at release **0.6.5 on `main` directly**, superseding this line and the design's §8 placement. Task 4 onward should re-verify `main`'s state rather than assume 0.7.0 shipped.
 
 **Checked before this plan was written:** every fact the design doc cites was read from the code at commit `4df3021` (this branch's base) — `internal/config/config.go`, `internal/config/providers.go`, `internal/config/validate.go`, `internal/infra/spec.go`, `internal/infra/repo.go`, `internal/agent/env.go`, `internal/backend/gcp/run.go`, `internal/backend/gcp/names.go`, `internal/cli/secrets.go`, `internal/cli/initsecrets.go`, `internal/cli/run.go`, `internal/task/task.go`, `internal/runstore/runstore.go`, `internal/localcfg/localcfg.go`, `deploy/terraform/gcp/modules/{repo,workflow}/*.tf`, `docs/design/v1.md` §5 and §6, `docs/design/layered-config.md`, `SECURITY.md`. If the merged code differs when a task starts (especially `internal/infra/spec.go`, mid-churn from 0.7.0's base-image work), that task's implementer adapts its edits to the then-current file, not the other way round — the same rule `docs/plans/2026-10-08-upgrade.md` used for its own Task 3.
 
@@ -422,7 +422,7 @@ git commit -m "named oauth tokens task 2: gcp.WorkflowVariant, the identity-for-
 
 **Interfaces:**
 - Produces: `Spec.OAuthToken string` (json `oauth_token,omitempty`); `const namedTokensSince = "0.8.0"` (or the actual target version at ship time — the implementer confirms against `docs/release.md`'s in-flight version when this task starts, since 0.7.0 may have shipped as something other than exactly "0.7.0" by then).
-  *(Note, 2026-10-11: the owner moved this to 0.6.1 on `main`; Task 3 shipped with `namedTokensSince = "0.6.1"`.)*
+  *(Note, 2026-10-11: the owner moved this to 0.6.5 on `main`; Task 3 shipped with `namedTokensSince = "0.6.5"`.)*
 
 - [ ] **Step 1: Write the failing test**
 
@@ -483,7 +483,7 @@ Add, near wherever `layeredSince` is defined:
 // record is refused (design §5).
 const namedTokensSince = "0.8.0" // confirm against docs/release.md when this task starts
 ```
-(Note, 2026-10-11: the owner moved this to 0.6.1 on `main`; Task 3 shipped with `namedTokensSince = "0.6.1"`.)
+(Note, 2026-10-11: the owner moved this to 0.6.5 on `main`; Task 3 shipped with `namedTokensSince = "0.6.5"`.)
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
