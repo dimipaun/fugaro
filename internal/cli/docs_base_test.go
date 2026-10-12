@@ -248,42 +248,72 @@ func TestGCPSetupBaseImageSectionNamesRealKinds(t *testing.T) {
 // message, the shape every MigrationDoc-citing error uses.
 var docPathRE = regexp.MustCompile(`\(([^()]+\.md)\)$`)
 
-// TestMigrationDocCitationIsExactAndSectioned exercises the one refusal
-// wired to config.MigrationDoc today (image.tools on a non-base kind,
-// internal/config/image.go), reads the doc path straight out of the real
-// error text (not the constant: a hardcoded wrong path in the add() call
-// would still be caught), asserts it is exactly "docs/base-image-migration.md"
-// and not merely an existing file, and that the file actually carries the
-// section this specific refusal (base: go, plus image.tools) points a
-// reader at.
-func TestMigrationDocCitationIsExactAndSectioned(t *testing.T) {
-	yaml := "\nversion: 1\nproject: aurora\ngit:\n  provider: github\nworkflows:\n  web:\n    base: go\n    image: { tools: { node: \"24\" } }\n    commands:\n      build: npm run build\n      test: npm test\n"
+// problemMessage parses yaml with config.Parse and returns the message of
+// the one problem at path, failing the test if there is none.
+func problemMessage(t *testing.T, yaml, path string) string {
+	t.Helper()
 	_, problems := config.Parse([]byte(yaml))
-	var msg string
 	for _, p := range problems {
-		if p.Path == "workflows.web.image.tools" {
-			msg = p.Message
+		if p.Path == path {
+			return p.Message
 		}
 	}
-	if msg == "" {
-		t.Fatalf("no workflows.web.image.tools problem among %v", problems)
+	t.Fatalf("no %s problem among %v", path, problems)
+	return ""
+}
+
+// legacyFromMessage lints a repository Dockerfile that still builds FROM a
+// published legacy base image, through config.LintDockerfile (not
+// config.Parse: this refusal is the Dockerfile-lint path, not a fugaro.yaml
+// field), and returns its one message.
+func legacyFromMessage(t *testing.T) string {
+	t.Helper()
+	msgs := config.LintDockerfile([]byte("FROM ghcr.io/dimipaun/fugaro-web-node:0.6.0\nRUN git clone x /work/repo\n"))
+	if len(msgs) != 1 {
+		t.Fatalf("LintDockerfile = %v, want exactly one message", msgs)
 	}
-	m := docPathRE.FindStringSubmatch(msg)
-	if m == nil {
-		t.Fatalf("message %q names no (doc.md) citation", msg)
-	}
-	path := m[1]
-	if path != "docs/base-image-migration.md" {
-		t.Errorf("the image.tools refusal cites %q, want exactly %q", path, "docs/base-image-migration.md")
-	}
-	if path != config.MigrationDoc {
-		t.Errorf("the cited path %q and config.MigrationDoc %q have drifted apart", path, config.MigrationDoc)
-	}
-	doc := readDoc(t, path)
-	for _, want := range []string{"## From `go`", "image.tools"} {
-		if !strings.Contains(doc, want) {
-			t.Errorf("%s lacks %q, the section this refusal (base: go, image.tools) should point a reader at", path, want)
-		}
+	return msgs[0]
+}
+
+// TestMigrationDocCitationIsExactAndSectioned exercises every refusal Task
+// 17 wired to config.MigrationDoc (base:, image.node and image.jdk through
+// config.Parse; a legacy FROM through config.LintDockerfile), reads the doc
+// path straight out of each real error text (not the constant: a
+// hardcoded wrong path in an add() call would still be caught), asserts it
+// is exactly "docs/base-image-migration.md" and not merely an existing
+// file, and that the file actually carries the section each specific
+// refusal points a reader at.
+func TestMigrationDocCitationIsExactAndSectioned(t *testing.T) {
+	head := "\nversion: 1\nproject: aurora\ngit:\n  provider: github\nworkflows:\n  web:\n"
+	tail := "    commands:\n      build: npm run build\n      test: npm test\n"
+	for _, tc := range []struct {
+		name, msg string
+		sections  []string
+	}{
+		{"base: go", problemMessage(t, head+"    base: go\n"+tail, "workflows.web.base"), []string{"## From `go`"}},
+		{"image.node", problemMessage(t, head+"    image: { node: \"24\" }\n"+tail, "workflows.web.image.node"), []string{"image.node` moves to `mise.toml`"}},
+		{"image.jdk", problemMessage(t, head+"    image: { jdk: \"21\" }\n"+tail, "workflows.web.image.jdk"), []string{"## `image.jdk` and other removed settings"}},
+		{"a legacy FROM in a project Dockerfile", legacyFromMessage(t), []string{"FROM ghcr.io/dimipaun/fugaro-web-node", "${FUGARO_BASE}"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := docPathRE.FindStringSubmatch(tc.msg)
+			if m == nil {
+				t.Fatalf("message %q names no (doc.md) citation", tc.msg)
+			}
+			path := m[1]
+			if path != "docs/base-image-migration.md" {
+				t.Errorf("the %s refusal cites %q, want exactly %q", tc.name, path, "docs/base-image-migration.md")
+			}
+			if path != config.MigrationDoc {
+				t.Errorf("the cited path %q and config.MigrationDoc %q have drifted apart", path, config.MigrationDoc)
+			}
+			doc := readDoc(t, path)
+			for _, want := range tc.sections {
+				if !strings.Contains(doc, want) {
+					t.Errorf("%s lacks %q, the section the %s refusal should point a reader at", path, want, tc.name)
+				}
+			}
+		})
 	}
 }
 
@@ -294,13 +324,17 @@ var migrationDocCitationRE = regexp.MustCompile(`\(docs/[a-zA-Z0-9/_.-]+\.md\)`)
 
 // migrationRefusalSections is every removed-setting refusal design section
 // 10 describes (D2, the hard cut), and the docs/base-image-migration.md
-// content each one should point a reader at. Task 17 (the plan's task that
-// implements these refusals for base:, image.node and base_images) is not
-// merged on this branch (internal/config/image.go only refuses image.tools
-// today; grep MigrationDoc there to confirm if this ever changes), so these
-// are read from the design doc's own canonical message list -- "the doc's
-// own list" -- rather than triggered through config.Parse like
-// TestMigrationDocCitationIsExactAndSectioned's single, already-real case.
+// content each one should point a reader at. Task 17 is merged on this
+// branch: base:, image.node, image.jdk and a legacy Dockerfile FROM are
+// real, live refusals today, and TestMigrationDocCitationIsExactAndSectioned
+// triggers each of those through config.Parse / config.LintDockerfile
+// directly, reading the doc path out of the real error text. This table
+// covers what that test does not re-trigger for brevity (base: web-node and
+// base: java-services take the same code path as base: go, just a
+// different value) and what internal/config cannot trigger at all (a
+// legacy base_images key is internal/localcfg's refusal, not
+// internal/config's), reading the design doc's own canonical message list
+// instead -- "the doc's own list" -- rather than triggering them.
 var migrationRefusalSections = []struct {
 	name     string   // the removed setting or value this refusal is about
 	sections []string // substrings docs/base-image-migration.md must carry

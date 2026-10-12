@@ -19,8 +19,12 @@ var Bases = []string{BaseKind}
 // validate.go's workflows.*.base check and layer.go's profiles.*.base
 // check: TestBadBaseMessageConsistency pins that both give byte-for-byte
 // the same message, which a shared constant, not two independent literals,
-// is what actually guarantees. %s is MigrationDoc.
-const legacyBaseMessage = "base: was removed in 0.7.0: every workflow builds on the one Fugaro base image. Delete this line and declare the workflow's runtimes in mise.toml (%s)"
+// is what actually guarantees. %s is MigrationDoc. It does not repeat
+// "base:" at the front: both callers add() this at a path already ending
+// in ".base" (such as "workflows.web.base"), and Problem.String() joins
+// path and message with ": ", so a leading "base:" here used to print as
+// "workflows.web.base: base: was removed in 0.7.0...", the word doubled.
+const legacyBaseMessage = "was removed in 0.7.0: every workflow builds on the one Fugaro base image. Delete this line and declare the workflow's runtimes in mise.toml (%s)"
 
 // applyDefaults fills in every field fugaro.yaml may omit. The per-base cache
 // default depends on the checkout's lockfile, so it is not applied here:

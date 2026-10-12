@@ -138,7 +138,7 @@ func TestParseProjectLayerRefuses(t *testing.T) {
 		{"a merge key", head + "profiles:\n  p:\n    <<: {base: go}\n", "merge key"},
 		{"a repeated key", head + "profiles:\n  p: {base: go}\n  p: {base: go}\n", `repeats the key "p"`},
 		{"two documents", head + "---\nversion: 1\n", "more than one YAML document"},
-		{"a bad base", head + "profiles:\n  p: { base: java-17 }\n", "profiles.p.base: base: was removed in 0.7.0"},
+		{"a bad base", head + "profiles:\n  p: { base: java-17 }\n", "profiles.p.base: was removed in 0.7.0"},
 		{"an unknown default profile", head + "profiles:\n  p: {}\ndefault_profile: q\n", `default_profile: names "q"`},
 		{"a bad profile name", head + "profiles:\n  P_1: {}\n", "a profile name must be"},
 		{"legacy image.node in a profile", head + "profiles:\n  p: { image: { node: '20' } }\n", "profiles.p.image.node: was removed in 0.7.0"},
@@ -176,7 +176,7 @@ func TestParseProjectLayerRefuses(t *testing.T) {
 func TestProjectLayerRefusesLegacyBaseEvenIfNoWorkflowUsesTheProfile(t *testing.T) {
 	a := LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
 	for _, tc := range []struct{ name, text, want string }{
-		{"base: go", "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  unused:\n    base: go\n    commands: { build: make, test: make test }\n", "profiles.unused.base: base: was removed in 0.7.0"},
+		{"base: go", "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  unused:\n    base: go\n    commands: { build: make, test: make test }\n", "profiles.unused.base: was removed in 0.7.0"},
 		{"image.node", "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  unused:\n    image: { node: \"24\" }\n    commands: { build: make, test: make test }\n", "profiles.unused.image.node: was removed in 0.7.0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

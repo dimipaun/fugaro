@@ -4320,9 +4320,11 @@ Expected: build failure (`LintDockerfile` takes two arguments). Once that compil
 
 ```go
 		if w.Base != "" {
-			add(p+".base", "base: was removed in 0.7.0: every workflow builds on the one Fugaro base image. Delete this line and declare the workflow's runtimes in mise.toml (%s)", MigrationDoc)
+			add(p+".base", "was removed in 0.7.0: every workflow builds on the one Fugaro base image. Delete this line and declare the workflow's runtimes in mise.toml (%s)", MigrationDoc)
 		}
 ```
+
+(The code as actually landed does not repeat "base:" at the front of the message: `add` writes it at a path already ending in ".base", and `Problem.String()` would otherwise print "workflows.web.base: base: was removed...", the word doubled. Review round 3 caught this; the message text above reflects the fix, not this plan's original, doubled-prefix draft.)
 
 In `Check`, the `web-node` case goes, and `checkDockerfile` calls `LintDockerfile(data)`.
 
@@ -4477,6 +4479,8 @@ git commit -m "base cut task 18: render, selftest and the hash know only the Fug
 **Files:**
 - Modify: `internal/localcfg/localcfg.go`, `localcfg_test.go`, `testdata/shared.golden.yaml`; `internal/cli/sharedcfg.go`, `sharedcfg_validate_test.go`; `internal/infra/checkjob.go`, `checkjob_test.go`, `spec_test.go`, `tf/testdata/golden/*.json`; `internal/cli/init.go`, `init_images.go`, `image.go`, `image_refresh_rules.go`, `doctor.go`, `sharedcfg.go`; every `internal/cli/*_test.go`, `internal/e2e/*_test.go` and `internal/backend/gcp/*_test.go` that names a legacy kind; `deploy/sandbox/fugaro.yaml`, `testdata/fixture-repo/fugaro.yaml`, `deploy/terraform/gcp/roots/repo/tests/testdata/*.tfvars.json`
 - Regenerate: `internal/infra/tf/testdata/golden/repo*.plan.json` with `scripts/gen-golden-plans.sh`
+
+**Named-account tests, forward-merged after this plan was written.** `main`'s named-Claude-accounts work (forward-merged into `next`, then into this branch, after Task 17 landed) added `internal/infra` tests that also build their fixtures on a legacy base kind: `TestBuildRepoSpecUnchangedWithNoClaudeAccounts`, `TestNeedsBuildDedupesNamedAccountVariants`, `TestRepoSpecHasNoVariantForDisallowedName`, `TestRepoSpecHasNoVariantForNonOAuthRepositories`, `TestRepoSpecSecretMountsOnlyTheVariantsOwnToken`, `TestWorkflowEnvOAuthGetsTokenCap` and `TestApplyCheckJobDropsExecutionTokens`. These are real, independently-added coverage of the named-account feature, not base-image scaffolding: Task 19 must **repair** them (move their fixtures off the legacy base kind, the same as every other `internal/infra` test this task's fixture migration touches), not delete them or weaken what they pin.
 
 **Interfaces:**
 - Produces:

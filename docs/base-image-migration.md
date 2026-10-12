@@ -8,7 +8,7 @@ Fugaro 0.7.0 replaces the `go`, `web-node` and `java-services` bases with one ba
 
 Fugaro's own `fugaro.yaml` (project `fugaro`, workflow `go`) still reads `base: go` — deliberately not migrated yet: Task 22 ("Release 0.7.0, Fugaro's switch") reserves that flip for the owner, run only after `fugaro-base` is published and `fugaro image refresh` has moved this checkout onto it (today, `fugaro-base` is not published: the `images.yml` workflow's `fugaro-base`/`publish-base` jobs exist, but no release has triggered them yet).
 
-**From the moment the base-image hard cut (Task 17) is in this checkout, `fugaro run --workflow go "<task>"` (docs/dogfooding.md) fails immediately at the config-validate stage, before any agent work starts**, with `workflows.go.base: base: was removed in 0.7.0: ... (docs/base-image-migration.md)`. This is not a bug in the cut: it is `internal/config`'s refusal doing exactly what it is meant to do, applied to a `fugaro.yaml` nobody has migrated yet. It does mean no self-hosted Fugaro run can execute against this repository's `go` workflow between the cut landing and Task 22's flip — any further work on this plan's remaining tasks in that window has to be done directly (a local session or a person, not `fugaro run`), exactly as `docs/dogfooding.md`'s "What went through runs, and what did not" section already describes for security-sensitive code.
+**If the `fugaro` launching the run is itself built from a checkout that has the base-image hard cut (Task 17) — this branch, or any build made from it — `fugaro run --workflow go "<task>"` (docs/dogfooding.md) fails immediately at the config-validate stage, before any agent work starts**, with `workflows.go.base: was removed in 0.7.0: ... (docs/base-image-migration.md)`. A `fugaro` built from an older checkout, or an installed release that predates Task 17, has not read this cut into its `internal/config` package and does not see this failure; the refusal lives in the CLI binary, not in the repository or the job it launches. This is not a bug in the cut: it is `internal/config`'s refusal doing exactly what it is meant to do, applied to a `fugaro.yaml` nobody has migrated yet. It does mean no run launched by a cut-aware `fugaro` can execute against this repository's `go` workflow between the cut landing and Task 22's flip — any further work on this plan's remaining tasks in that window, done with such a build, has to happen directly (a local session or a person, not `fugaro run`), exactly as `docs/dogfooding.md`'s "What went through runs, and what did not" section already describes for security-sensitive code.
 
 ## The order
 
@@ -18,7 +18,7 @@ Fugaro's own `fugaro.yaml` (project `fugaro`, workflow `go`) still reads `base: 
 4. **Between the merge and the refresh finishing, don't launch runs**: the old image's 0.6 runner refuses the new `fugaro.yaml`. It takes minutes.
 5. `fugaro doctor` in the checkout reports nothing about bases.
 
-The local config: delete every `base_images` line other than `base`; `fugaro image refresh` writes `base_images.base`. A 0.7.0 CLI refuses a local config with `base_images.go`, `base_images.web-node` or `base_images.java-services`, naming this doc. Old entries in the project's shared config are ignored with a warning until the next `fugaro init` or `fugaro image refresh` republishes it.
+The local config: delete every `base_images` line other than `base`; `fugaro image refresh` writes `base_images.base`. A 0.7.0 CLI refuses a local config with `base_images.go`, `base_images.web-node` or `base_images.java-services`, naming this doc. Old entries in the project's shared config are meant to be dropped with a warning until the next `fugaro init` or `fugaro image refresh` republishes it; **in this tree today they are refused outright, the same as the local config**, since `internal/localcfg` does not yet parse a published shared config any differently from a local one. Until that split lands, an installation whose shared config still has a legacy `base_images` key cannot parse its own config at all.
 
 ## Everywhere
 
@@ -86,7 +86,7 @@ workflows:
 
 ## `image.jdk` and other removed settings
 
-`image.jdk` was refused on every base (already true today). Declare Java in `mise.toml` (`java = "temurin-21"`, `java = "zulu-17"`, …). `base:` and `image.node` get the same treatment once 0.7.0 ships (see the note at the top); the fixes above apply either way.
+`image.jdk`, `base:` and `image.node` are all already refused in this tree (see the note at the top), not merely scheduled for 0.7.0: `image.jdk` was refused on every base even before the cut; `base:` and `image.node` are refused now too. Declare Java in `mise.toml` (`java = "temurin-21"`, `java = "zulu-17"`, …); the fixes above apply either way.
 
 ## Checklist for a repository with services (Belong-style)
 
