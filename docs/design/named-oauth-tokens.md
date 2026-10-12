@@ -130,7 +130,7 @@ Cloud Run mounts secrets at the **job**, not the execution (§1). Four shapes we
 - A per-account dollar/token rollup in `fugaro budget show`/`watch` (needs new Realtime Database and Firestore schema, its own security review, §6e).
 - Runner-side fetch (option C, §4) if a live check (U1/U3) shows the job-multiplication cost of option B is a real operational problem at the owner's scale — trading a static IAM guarantee for fewer Cloud Run resources, a decision that needs re-litigating with actual numbers, not assumed here.
 - Cloud Run execution overrides carrying a secret selection (option D), if U1 turns out wrong.
-- A `fugaro accounts` command to list configured names and which repositories may use each (today, `fugaro secrets ls` and reading the local config file cover this by hand).
+- ~~A `fugaro accounts` command to list configured names and which repositories may use each~~ — built in task 9b (§12): `fugaro accounts ls [--repo OWNER/NAME] [--json]`, offline, no Secret Manager call.
 - Extending the same `claude_accounts`/`AllowsData` shape to `anthropic-api-key` (today also a single reserved secret), which this design does not touch: API-key billing already goes through the gateway's dollar cap per repository, so "multiple named api-key accounts" is a different, lower-priority problem (budget accounting already works there) left for a separate design if ever requested.
 
 ## 10. Testing
@@ -146,3 +146,15 @@ Cloud Run mounts secrets at the **job**, not the execution (§1). Four shapes we
 - This file and the setup skill (`plugin/skills/setup/reference/decisions.md:24`, `plugin/skills/setup/SKILL.md:100-108`) gain the named-account shape and the exact `claude setup-token` sequence once U2 is answered.
 - `docs/design/v1.md` §5.4 (local config) and §6.1 (trust boundary, the per-job-account bullet) get a cross-reference to this design, since both are factual claims this design extends rather than restates.
 - `docs/gcp-live-checklist.md` gets U1 to U4 as new numbered checks.
+
+## 12. Task 9b: `fugaro accounts ls` and switching on a usage limit (owner request, 2026-10-12)
+
+The owner asked, once several named accounts existed, that the working skill relaunch a run on another allowed account when a run fails because its Claude account hit its usage limit, rather than leaving that to the user by hand.
+
+**`fugaro accounts ls [--repo OWNER/NAME] [--json]`** (§9's bigger-version item, now built) is the read-only, offline surface the skill calls to learn which accounts it may try: it prints `config.AllowedClaudeAccounts`'s own list (`default` first, then every allowed named account, sorted), names only, reading the local config the same way `fugaro run --token`'s own allow-list check already does (§3 T1, §6a) — no Secret Manager call, no token value, no new trust decision (the CLI's own `claudeAccountAllowed` still enforces the allow-list at launch; the skill cannot work around it by choosing a name `accounts ls` did not list).
+
+**The trigger is deliberately loose and explicitly unverified.** §7 item U4 already says the real Claude Code failure text for an expired or revoked token is unverified; the same is true of a *usage limit* message, which is Anthropic's own CLI output, not Fugaro's, and no fixture or test in this repository has ever captured it. Rather than guess a sentence, the skill (`plugin/skills/working/reference/diagnose.md`) matches the phrase "usage limit", case-insensitively, anywhere in `fugaro diagnose`'s `row.reason` or `agent_message` — and nowhere else: a revoked token, a failing test, a review finding or a plain bug are ordinary failures, never a reason to switch accounts. Tightening or confirming this match is future work once U4 (or a new, equivalent live check) answers what Claude Code actually prints; nothing in this task ran a live Claude Code session to find out.
+
+**No new CLI enforcement was added or needed.** The switch is entirely a skill-level procedure: list the allowed accounts, keep a tried list for the task in the conversation (an account is tried at most once, and the skill stops rather than looping once every allowed account has been tried), and relaunch with `--token NAME` given explicitly — required because a follow-up inherits its previous run's account by design (§6b, `claudeAccountFor`/the follow-up lineage check) and would otherwise silently retry the very account that just hit its limit. The skill does not, and cannot, add a name to `claude_accounts` or widen an `allow_data_to` entry to get another account allowed: those remain local-config, operator-only changes (§3 T1).
+
+**Not done, and explicitly out of scope for this task:** a release-notes entry (`docs/releases/v0.6.1.md` is not created here; that is Task 10's placement, still open), and any change to `routing` or `parallelism` — neither skill chooses a Claude account, so neither needed an edit.

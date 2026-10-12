@@ -80,6 +80,31 @@ func TestDocsUsageLimitSwitchRequiresExplicitToken(t *testing.T) {
 	}
 }
 
+// TestDocsNamedOAuthTokensAccountsCommandDesign pins
+// docs/design/named-oauth-tokens.md §12's claims about fugaro accounts ls
+// against the real command: its flags, that it is offline (no Secret
+// Manager client is ever opened), and that the design no longer lists the
+// command as an unbuilt bigger-version item.
+func TestDocsNamedOAuthTokensAccountsCommandDesign(t *testing.T) {
+	doc := readSkillFile(t, "../../docs/design/named-oauth-tokens.md")
+	for _, want := range []string{
+		"fugaro accounts ls [--repo OWNER/NAME] [--json]",
+		"no Secret Manager call",
+		"explicitly unverified",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/design/named-oauth-tokens.md no longer says %q", want)
+		}
+	}
+	if strings.Contains(doc, "A `fugaro accounts` command to list configured names and which repositories may use each (today,") {
+		t.Error(`docs/design/named-oauth-tokens.md still lists fugaro accounts as an unbuilt bigger-version item, but it is now built`)
+	}
+	ls := newAccountsLsCmd()
+	if ls.Flags().Lookup("repo") == nil || ls.Flags().Lookup("json") == nil {
+		t.Fatal("fugaro accounts ls has no --repo or --json flag, but the design doc claims both")
+	}
+}
+
 // TestDocsUsageLimitSwitchNamesTheAccountsCommand ties the skill files'
 // `fugaro accounts ls` mentions to the real command (not just prose the
 // plugin lint's commandIndex happens to resolve): the command exists, is
