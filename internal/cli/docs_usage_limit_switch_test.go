@@ -141,13 +141,15 @@ func TestDocsUsageLimitSwitchNamesTheAccountsCommand(t *testing.T) {
 // TestDocsUsageLimitSwitchSeedsTriedListFromOAuthAccount pins task 9b round
 // 2 review comment #2: the skill must identify the account that actually
 // failed from row.oauth_account, not assume it, and seed the tried list
-// with it; "" means the default account (or a run whose record predates
-// the field), and a checkout's agent.oauth_token is the same fallback.
+// with it; "" means the default account (runview.Join falls back to the
+// launching task's own account when a run died before recording one,
+// round 3 comment #3, so this no longer needs its own "or predates the
+// field" caveat), and a checkout's agent.oauth_token is the same fallback.
 func TestDocsUsageLimitSwitchSeedsTriedListFromOAuthAccount(t *testing.T) {
 	diagnose := readSkillFile(t, "../../plugin/skills/working/reference/diagnose.md")
 	for _, want := range []string{
 		"row.oauth_account",
-		"the repository's default account, or a run whose record predates this field",
+		"falling back to the launching task's own account when a run died before ever recording one",
 		"agent.oauth_token",
 		"seed a tried list for this task with it",
 	} {
