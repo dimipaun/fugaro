@@ -390,6 +390,54 @@ func TestJoinRecipe(t *testing.T) {
 	}
 }
 
+func TestJoinCarriesOAuthAccount(t *testing.T) {
+	r := rec(runstore.StatusSucceeded, nil)
+	r.OAuthAccount = "acme-personal"
+	row := Join(Input{Task: spec, Launch: launch, Record: r, Exec: exec(backend.StateSucceeded)}, prices, now)
+	if row.OAuthAccount != "acme-personal" {
+		t.Fatalf("row.OAuthAccount = %q, want acme-personal", row.OAuthAccount)
+	}
+	if got := Join(Input{Task: spec}, prices, now); got.OAuthAccount != "" {
+		t.Fatalf("no record: %q", got.OAuthAccount)
+	}
+}
+
+// TestJoinOAuthAccountFallsBackToTask is named oauth tokens task 9b's third
+// review round, comment 3: a run that died before finalize has no
+// result.json (Record nil) at all, and an older record predates the
+// OAuthAccount field entirely — both read "" exactly like a run that used
+// the default account, so the skill's own tried-list seeding
+// (reference/diagnose.md step 2) could start from the wrong account. The
+// task the run actually launched under (task.Spec.OAuthToken, set once at
+// launch and never changed afterward) is the best evidence left in either
+// case.
+func TestJoinOAuthAccountFallsBackToTask(t *testing.T) {
+	t2 := *spec
+	t2.OAuthToken = "acme-personal"
+
+	// No record at all (died before finalize): falls back to the task.
+	if got := Join(Input{Task: &t2}, prices, now); got.OAuthAccount != "acme-personal" {
+		t.Fatalf("no record: OAuthAccount = %q, want acme-personal (from the task)", got.OAuthAccount)
+	}
+	// A record that exists but predates the field (OAuthAccount ""): falls
+	// back to the task too, not left at "".
+	r := rec(runstore.StatusSucceeded, nil)
+	if got := Join(Input{Task: &t2, Launch: launch, Record: r, Exec: exec(backend.StateSucceeded)}, prices, now); got.OAuthAccount != "acme-personal" {
+		t.Fatalf("pre-field record: OAuthAccount = %q, want acme-personal (from the task)", got.OAuthAccount)
+	}
+	// The record's own OAuthAccount, when it has one, still wins over the
+	// task's (the runner's own confirmation at finalize is authoritative).
+	r2 := rec(runstore.StatusSucceeded, nil)
+	r2.OAuthAccount = "acme-overflow"
+	if got := Join(Input{Task: &t2, Launch: launch, Record: r2, Exec: exec(backend.StateSucceeded)}, prices, now); got.OAuthAccount != "acme-overflow" {
+		t.Fatalf("record wins: OAuthAccount = %q, want acme-overflow", got.OAuthAccount)
+	}
+	// No task and no record: still "" (nothing to fall back to).
+	if got := Join(Input{}, prices, now); got.OAuthAccount != "" {
+		t.Fatalf("neither: OAuthAccount = %q, want empty", got.OAuthAccount)
+	}
+}
+
 func TestJoinCarriesTheProjectLayer(t *testing.T) {
 	r := rec(runstore.StatusSucceeded, nil)
 	r.ProjectLayer = &runstore.ProjectLayerRecord{SHA256: strings.Repeat("a", 64), Generation: 3, Applied: true}

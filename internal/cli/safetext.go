@@ -17,6 +17,11 @@ import "github.com/dimipaun/fugaro/internal/safetext"
 // field can't forge a line of its own.
 func oneLine(s string) string { return safetext.OneLine(s) }
 
+// cellOneLine is oneLine for a value that shares a tabwriter row with other
+// cells (ls's table): unlike oneLine, a literal tab also becomes "?", since
+// one would open a new column instead of staying inside this cell.
+func cellOneLine(s string) string { return safetext.TableCell(s) }
+
 // ErrorText is err's message made safe for the terminal, for the command's
 // top-level error line. An error can quote a stored or remote value, so
 // its controls go the way a view's do; its newlines stay, because some

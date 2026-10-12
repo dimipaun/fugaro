@@ -69,6 +69,15 @@ type Spec struct {
 	// it after the fact. Nothing in this package enforces that; a launch
 	// this field reaches has already passed that gate.
 	ProjectLayer *ProjectLayer `json:"project_layer,omitempty"`
+	// OAuthToken is the named Claude account (config.ClaudeAccountNameRE,
+	// at most config.MaxClaudeAccountNameLen characters, never
+	// config.DefaultClaudeAccount itself — "" means that) this run's
+	// agent.auth: oauth workflow used (docs/design/named-oauth-tokens.md).
+	// A runner before namedTokensSince refuses the field, since it is new
+	// and this package's decoder disallows unknown fields; the launching
+	// CLI checks the job's build record first, the same way it already
+	// does for ProjectLayer.
+	OAuthToken string `json:"oauth_token,omitempty"`
 }
 
 // Recipe is the recipe the launching CLI resolved (docs/design/recipes.md §5).
@@ -227,6 +236,20 @@ func (s *Spec) Validate() error {
 	}
 	if s.Batch != "" && !BatchRE.MatchString(s.Batch) {
 		bad("task spec: batch %q must be 1-63 lower-case letters, digits, '.', '_' or '-'", s.Batch)
+	}
+	// config.ClaudeAccountNameRE and config.MaxClaudeAccountNameLen are the
+	// single source of truth for a named account's shape (internal/config/
+	// claude_accounts.go, Task 1): this package imports them rather than
+	// keeping its own copy, so the two can never silently drift apart the
+	// way an earlier version of this check did.
+	switch {
+	case s.OAuthToken == "":
+	case s.OAuthToken == config.DefaultClaudeAccount:
+		bad(`task spec: oauth_token must not be "default": the empty value already means the repository's default account`)
+	case len(s.OAuthToken) > config.MaxClaudeAccountNameLen:
+		bad("task spec: oauth_token %q must be at most %d characters", s.OAuthToken, config.MaxClaudeAccountNameLen)
+	case !config.ClaudeAccountNameRE.MatchString(s.OAuthToken):
+		bad("task spec: oauth_token %q is not a Claude account name", s.OAuthToken)
 	}
 	o := s.Overrides
 	if o.ReviewRounds != nil && (*o.ReviewRounds < 1 || *o.ReviewRounds > 10) {

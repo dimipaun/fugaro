@@ -108,10 +108,28 @@ func TestParseProjectLayerRefuses(t *testing.T) {
 		{"instructions are repo-only", head + "defaults:\n  agent:\n    instructions: AGENTS.md\n", "agent.instructions may only be set in: repo"},
 		{"policy is the owner's", head + "defaults:\n  budget:\n    per_run_usd: 100\n", "budget.per_run_usd may only be set in: repo"},
 		{"run tokens are policy", head + "defaults:\n  agent:\n    max_run_tokens: 9\n", "agent.max_run_tokens may only be set in: repo"},
+		// Named oauth tokens design §3 T2: agent.oauth_token is repo-only
+		// (and override, for fugaro run --token), never the project layer —
+		// for the identical reason claude_accounts itself is local-config-only
+		// (the claude_accounts cases below): a bucket write must never be
+		// able to redirect which Claude account's credential a run spends
+		// against. This is the one new negative case config.Scopes's
+		// existing, generic enforcement covers once the row exists; no code
+		// change backs it.
+		{"named Claude accounts are repo-only", head + "defaults:\n  agent:\n    oauth_token: acme-personal\n", "agent.oauth_token may only be set in: repo, override"},
 		{"base branch is repo-only", head + "defaults:\n  git:\n    base_branch: evil\n", "git.base_branch may only be set in: repo"},
 		{"dockerfile is repo-only", head + "profiles:\n  p:\n    dockerfile: x.Dockerfile\n", "workflows.*.dockerfile may only be set in: repo"},
 		{"workflow keys are not defaults", head + "defaults:\n  workflows:\n    web:\n      commands: { test: x }\n", "may only be set in: profile, repo"},
 		{"unknown key", head + "defaults:\n  agent:\n    colour: red\n", "defaults.agent.colour: is not a fugaro.yaml key"},
+		// claude_accounts is a local-config-only key (design
+		// docs/design/named-oauth-tokens.md §3, decision T1): the project
+		// layer, published to the runs bucket and writable by anyone with
+		// objectAdmin on it, must never be able to carry or widen the
+		// named-account allow-list, at the top level, under defaults:, or
+		// inside a profile.
+		{"claude_accounts at the top level", head + "claude_accounts:\n  x: {}\n", "is not a project layer key"},
+		{"claude_accounts under defaults", head + "defaults:\n  claude_accounts:\n    x: {}\n", "defaults.claude_accounts: is not a fugaro.yaml key"},
+		{"claude_accounts inside a profile", head + "profiles:\n  p:\n    base: go\n    claude_accounts:\n      x: {}\n", "profiles.p.claude_accounts: is not a fugaro.yaml key"},
 		{"the catalog is reserved", head + "environments:\n  java-17: {}\n", "arrives with the single base image"},
 		{"a credential", head + "profiles:\n  p:\n    commands: { test: 'curl -H \"x: ghp_abcdefghijklmnopqrstuvwxyz0123\" x' }\n", "shaped like a credential"},
 		{"another project", "version: 1\nproject: other\ngcp_project: acme-fugaro\n", `project: is "other", but it is read for project "acme"`},

@@ -2,10 +2,12 @@ package gcp
 
 import (
 	"math/rand/v2"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -362,8 +364,449 @@ func TestNewNamesOfRealSlugs(t *testing.T) {
 	}
 }
 
+func TestWorkflowVariantIsIdentityForDefault(t *testing.T) {
+	for _, tok := range []string{"", "default"} {
+		if got := WorkflowVariant("build", tok); got != "build" {
+			t.Errorf("WorkflowVariant(build, %q) = %q, want build", tok, got)
+		}
+	}
+	// The separator is "_", not "." or "--": "." would fail Terraform's
+	// label validation (TestWorkflowVariantMatchesTerraformWorkflowLabel),
+	// and a bare "--" is not injective (TestWorkflowVariantIsInjective).
+	// This exact-match check also catches a join that silently reorders
+	// its operands (token first instead of workflow first).
+	if got := WorkflowVariant("build", "acme-personal"); got != "build_acme-personal" {
+		t.Errorf("WorkflowVariant(build, acme-personal) = %q, want build_acme-personal", got)
+	}
+	// Every downstream name-deriving function must still produce a distinct,
+	// valid name for a variant: JobName, ServiceAccountID and SecretID are
+	// all exercised against the plain workflow's own name, not just one of
+	// them (TestWorkflowVariantIsInjective below covers the harder case of
+	// two distinct (workflow, token) pairs colliding with each other).
+	variant := WorkflowVariant("build", "acme-personal")
+	if JobName("s", variant) == JobName("s", "build") {
+		t.Error("a variant collided with the plain workflow's job name")
+	}
+	if ServiceAccountID("s", variant) == ServiceAccountID("s", "build") {
+		t.Error("a variant collided with the plain workflow's service account ID")
+	}
+	if SecretID("s", variant) == SecretID("s", "build") {
+		t.Error("a variant collided with the plain workflow's secret ID")
+	}
+}
+
+// workflowVariantValid reports whether (workflow, token) is a pair
+// WorkflowVariant accepts (would not panic on): the same checks
+// WorkflowVariant itself makes (config.WorkflowNameRE directly, and the
+// package's own validWorkflowVariantToken, itself a thin wrapper over
+// config.ClaudeAccountNameRE/config.MaxClaudeAccountNameLen), so a test
+// case can decide up front whether to expect a result or a panic.
+func workflowVariantValid(workflow, token string) bool {
+	return config.WorkflowNameRE.MatchString(workflow) && validWorkflowVariantToken(token)
+}
+
+// workflowVariantTrickyPairs are (workflow, token) pairs a naive "--" join
+// (or any join using a byte either charset already allows) would conflate:
+// both components may hold hyphens, so where the hyphen "boundary" falls
+// between the two fields is ambiguous unless the separator itself is a
+// byte neither field can contain.
+var workflowVariantTrickyPairs = [][2][2]string{
+	{{"ab--cd", "ef"}, {"ab", "cd--ef"}},
+	{{"build", "acme-personal"}, {"build-acme", "personal"}},
+	{{"a-b-c", "d"}, {"a-b", "c-d"}},
+	{{"a", "b-c-d"}, {"a-b", "c-d"}},
+	{{"a-", "b"}, {"a", "-b"}}, // not charset-valid starts, still worth covering
+}
+
+// TestWorkflowVariantIsInjective is the property TestNamesAreInjective (and
+// FuzzNamesAreInjective) already pin for every other name in this file,
+// extended to WorkflowVariant: two distinct (workflow, token) pairs must
+// never produce the same variant, and the collision must not reappear one
+// layer down in JobName, ServiceAccountID or SecretID either (the finding
+// this test was added for: a "--" join let two unrelated pairs share a job,
+// a service account and a secret, defeating the one-secretAccessor-grant-
+// per-named-account design, docs/design/named-oauth-tokens.md §4 option B).
+func TestWorkflowVariantIsInjective(t *testing.T) {
+	labelRE := readTerraformNameVariableRegex(t)
+	for _, p := range workflowVariantTrickyPairs {
+		if !workflowVariantValid(p[0][0], p[0][1]) || !workflowVariantValid(p[1][0], p[1][1]) {
+			continue // covered by TestWorkflowVariantRejectsOutOfCharsetInput instead
+		}
+		a, b := WorkflowVariant(p[0][0], p[0][1]), WorkflowVariant(p[1][0], p[1][1])
+		if a == b {
+			t.Errorf("WorkflowVariant(%q,%q) == WorkflowVariant(%q,%q) == %q", p[0][0], p[0][1], p[1][0], p[1][1], a)
+			continue
+		}
+		for _, v := range []string{a, b} {
+			if !labelRE.MatchString(v) {
+				t.Errorf("WorkflowVariant produced %q, which does not match the Terraform module's name/label regex %s", v, labelRE)
+			}
+		}
+		if JobName("s", a) == JobName("s", b) {
+			t.Errorf("JobName collided for distinct variants %q and %q", a, b)
+		}
+		if ServiceAccountID("s", a) == ServiceAccountID("s", b) {
+			t.Errorf("ServiceAccountID collided for distinct variants %q and %q", a, b)
+		}
+		if SecretID("s", a) == SecretID("s", b) {
+			t.Errorf("SecretID collided for distinct variants %q and %q", a, b)
+		}
+	}
+
+	// A dense grid of short, charset-valid workflow/token names made of the
+	// characters that merge in a naive join, the same style
+	// TestNamesAreInjective uses for JobName/ServiceAccountID/SecretID/ImageName.
+	// Every variant produced here is also checked against the Terraform
+	// module's own label regex, not just one hand-picked long input (a
+	// review finding: a mutation that only mishandled long tokens survived
+	// when only a single maximum-length case was checked elsewhere).
+	seen := map[string][2]string{}
+	parts := []string{"a", "b", "a-b", "ab", "a-b-c", "x"}
+	for _, w := range parts {
+		for _, tok := range parts {
+			v := WorkflowVariant(w, tok)
+			if prev, dup := seen[v]; dup && prev != ([2]string{w, tok}) {
+				t.Errorf("WorkflowVariant(%q,%q) == WorkflowVariant(%q,%q) == %q", w, tok, prev[0], prev[1], v)
+			}
+			seen[v] = [2]string{w, tok}
+			if !labelRE.MatchString(v) {
+				t.Errorf("WorkflowVariant(%q,%q) = %q does not match the Terraform module's name/label regex %s", w, tok, v, labelRE)
+			}
+		}
+	}
+}
+
+func FuzzWorkflowVariantIsInjective(f *testing.F) {
+	f.Add("ab--cd", "ef", "ab", "cd--ef")
+	f.Add("build", "acme-personal", "build-acme", "personal")
+	f.Fuzz(func(t *testing.T, w1, tok1, w2, tok2 string) {
+		if !workflowVariantValid(w1, tok1) || !workflowVariantValid(w2, tok2) {
+			return // only charset-valid inputs are WorkflowVariant's contract
+		}
+		if w1 == w2 && tok1 == tok2 {
+			return
+		}
+		if a, b := WorkflowVariant(w1, tok1), WorkflowVariant(w2, tok2); a == b {
+			t.Errorf("WorkflowVariant(%q,%q) == WorkflowVariant(%q,%q) == %q", w1, tok1, w2, tok2, a)
+		}
+	})
+}
+
+// TestWorkflowVariantRejectsOutOfCharsetInput proves the fail-closed guard
+// is real: WorkflowVariant panics rather than silently return a variant
+// string that looks plausible but is ambiguous, if ever called (a bug
+// elsewhere, since every caller is expected to pass already-validated
+// workflow and token names) with a workflow or token outside its own
+// charset. The token cases include a trailing and a doubled hyphen,
+// which config.ClaudeAccountNameRE refuses but a looser, workflow-shaped
+// charset would have silently accepted (the charset-tightening finding
+// this test was extended for).
+func TestWorkflowVariantRejectsOutOfCharsetInput(t *testing.T) {
+	for _, c := range []struct{ workflow, token string }{
+		{"build", "a.b"},
+		{"build.x", "acme-personal"},
+		{"Build", "acme-personal"},
+		{"build", "Acme-Personal"},
+		{"build", "acme-"},   // token: trailing hyphen, refused since Task 1's review
+		{"build", "acme--x"}, // token: doubled hyphen, refused since Task 1's review
+		{"build", "-acme"},   // token: leading hyphen
+	} {
+		t.Run(c.workflow+"/"+c.token, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("WorkflowVariant(%q, %q) did not panic", c.workflow, c.token)
+				}
+			}()
+			WorkflowVariant(c.workflow, c.token)
+		})
+	}
+	// A charset-valid pair never panics. The workflow side still allows a
+	// trailing/doubled hyphen (config.WorkflowNameRE itself allows it; this
+	// package only mirrors that rule, it does not tighten it).
+	for _, c := range []struct{ workflow, token string }{
+		{"build", "acme-personal"},
+		{"build-", "acme"},
+		{"build--x", "acme"},
+	} {
+		if got := WorkflowVariant(c.workflow, c.token); got == "" {
+			t.Errorf("WorkflowVariant(%q, %q) panicked", c.workflow, c.token)
+		}
+	}
+}
+
+// TestWorkflowVariantTokenLengthCap is the review finding that
+// config.ClaudeAccountNameRE's `{0,30}` quantifier counts repetition units,
+// not characters, so `^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$` alone actually
+// accepts tokens up to 61 characters (each of the 30 repeated units can be
+// 2 bytes, a hyphen plus an alnum), not the 31-character bound every
+// comment, TestWorkflowVariantAtMaximumLengths and the former Task 4 TODO
+// on JobSADisplayName assumed. validWorkflowVariantToken checks the length
+// separately in Go, against config.MaxClaudeAccountNameLen: this test
+// exercises exactly the boundary and the reviewer's own counterexample,
+// not just an all-alphanumeric 31-character token.
+func TestWorkflowVariantTokenLengthCap(t *testing.T) {
+	maxLenAllAlnum := strings.Repeat("a", 31)
+	maxLenHyphenated := "a" + strings.Repeat("-a", 15) // 1 + 15*2 = 31 characters
+	if !validWorkflowVariantToken(maxLenAllAlnum) {
+		t.Errorf("a 31-character all-alphanumeric token was rejected: %q", maxLenAllAlnum)
+	}
+	if !validWorkflowVariantToken(maxLenHyphenated) {
+		t.Errorf("a 31-character hyphenated token was rejected: %q", maxLenHyphenated)
+	}
+
+	oneOver := strings.Repeat("a", 32)
+	if validWorkflowVariantToken(oneOver) {
+		t.Errorf("a 32-character token was accepted: %q", oneOver)
+	}
+	// The reviewer's own counterexample: structurally valid (no leading,
+	// trailing or doubled hyphen) but 61 characters — the length a bare
+	// `{0,30}` quantifier on the hyphen-adjacency group would have allowed.
+	adversarial := "a" + strings.Repeat("-a", 30)
+	if len(adversarial) != 61 {
+		t.Fatalf("test fixture adversarial is %d characters, want 61", len(adversarial))
+	}
+	if !config.ClaudeAccountNameRE.MatchString(adversarial) {
+		t.Fatalf("test fixture adversarial does not even match the hyphen-adjacency structure; fixture is wrong")
+	}
+	if validWorkflowVariantToken(adversarial) {
+		t.Errorf("a 61-character structurally-valid token was accepted (the exact bound-escape the review found): %q", adversarial)
+	}
+
+	// WorkflowVariant itself must refuse the over-length token (panic), not
+	// just the lower-level helper.
+	defer func() {
+		if recover() == nil {
+			t.Error("WorkflowVariant(\"build\", 61-character adversarial token) did not panic")
+		}
+	}()
+	WorkflowVariant("build", adversarial)
+}
+
+// readTerraformNameVariableRegex extracts the regular expression
+// deploy/terraform/gcp/modules/workflow/variables.tf's "name" variable
+// validates against, straight out of the .tf file's text (never edited by
+// this package: decision T5 forbids a Terraform diff for this feature).
+// Reading it live, rather than hard-coding a copy, means a future change to
+// that validation breaks this test immediately, pointing at the one place
+// gcp.WorkflowVariant's separator and charset choice must be reconciled
+// with it, instead of silently drifting until a real `terraform apply`
+// fails.
+func readTerraformNameVariableRegex(t *testing.T) *regexp.Regexp {
+	t.Helper()
+	path := "../../../deploy/terraform/gcp/modules/workflow/variables.tf"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	block := regexp.MustCompile(`variable\s+"name"\s*\{[\s\S]*?\n\}`).FindString(string(data))
+	if block == "" {
+		t.Fatalf(`%s: no variable "name" { ... } block found; this test must be updated to match the current file`, path)
+	}
+	m := regexp.MustCompile(`regex\("(\^.*?\$)",\s*var\.name\)`).FindStringSubmatch(block)
+	if m == nil {
+		t.Fatalf(`%s: var.name's "name" block has no regex("...", var.name) validation; this test must be updated to match the current file:
+%s`, path, block)
+	}
+	re, err := regexp.Compile(m[1])
+	if err != nil {
+		t.Fatalf("%s: var.name's regex %q does not compile: %v", path, m[1], err)
+	}
+	return re
+}
+
+// TestWorkflowVariantMatchesTerraformWorkflowLabel is decision T5's own
+// guarantee, checked: WorkflowVariant's output becomes the Terraform
+// `workflows` map's key (modules/repo/workflows.tf's `for_each`/`each.key`),
+// which modules/workflow passes straight into the job's fugaro_workflow GCP
+// label. A byte outside the label charset would make every named-account
+// `terraform apply` fail validation with no code change on the Terraform
+// side at all — exactly the kind of silent breakage T5 promises never
+// happens. This also pins the module's regex to the value this package was
+// written against, so an unrelated .tf edit that changes it is caught here.
+func TestWorkflowVariantMatchesTerraformWorkflowLabel(t *testing.T) {
+	labelRE := readTerraformNameVariableRegex(t)
+	if labelRE.String() != `^[a-z0-9_-]{1,63}$` {
+		t.Fatalf(`deploy/terraform/gcp/modules/workflow/variables.tf's var.name regex changed to %s (this test was written against ^[a-z0-9_-]{1,63}$); reconcile WorkflowVariant's separator and charset assumptions with the new rule before updating this constant`, labelRE)
+	}
+
+	maxWorkflow := strings.Repeat("a", 20) // config.WorkflowNameRE's longest
+	maxToken := strings.Repeat("a", 31)    // config.MaxClaudeAccountNameLen's longest
+	for _, c := range []struct{ workflow, token string }{
+		{"build", "default"},
+		{"build", ""},
+		{"build", "acme-personal"},
+		{"a", "a"},
+		{maxWorkflow, maxToken},
+	} {
+		v := WorkflowVariant(c.workflow, c.token)
+		if !labelRE.MatchString(v) {
+			t.Errorf("WorkflowVariant(%q, %q) = %q does not match the Terraform module's name/label regex %s (modules/workflow/variables.tf's \"name\" variable, the job's fugaro_workflow label); terraform apply would refuse it", c.workflow, c.token, v, labelRE)
+		}
+	}
+}
+
+// TestWorkflowVariantAtMaximumLengths is the property test for finding 2:
+// a reviewer's mutation that truncated the joined string
+// ("(workflow+"_"+token)[:20]") made WorkflowVariant of a 20-character
+// workflow and any token equal the plain workflow name again, silently
+// reintroducing the identity-for-default collision for named accounts.
+// Every check here is run at the boundary lengths config.WorkflowNameRE
+// (20) and config.MaxClaudeAccountNameLen (31) actually allow, not
+// just short illustrative names, since a truncation bug only shows up once
+// the join is long enough to hit it.
+func TestWorkflowVariantAtMaximumLengths(t *testing.T) {
+	labelRE := readTerraformNameVariableRegex(t)
+	maxWorkflow := strings.Repeat("a", 20)
+	maxToken := strings.Repeat("a", 31)
+	// task.Slug's own shape: a readable part trimmed to 46, "-", 16 hex.
+	longSlug := strings.Repeat("a", 46) + "-0123456789abcdef"
+
+	variant := WorkflowVariant(maxWorkflow, maxToken)
+	if variant == maxWorkflow {
+		t.Fatalf("WorkflowVariant at maximum lengths equals the plain workflow name: %q", variant)
+	}
+	if want := len(maxWorkflow) + 1 + len(maxToken); len(variant) != want {
+		t.Fatalf("len(WorkflowVariant(maxWorkflow, maxToken)) = %d, want %d (20+1+31)", len(variant), want)
+	}
+
+	// A grid of boundary-length (workflow, token) pairs: shortest and
+	// longest of each, crossed, must stay injective and keep producing
+	// valid, unique derived names. Every variant in the grid (not just one
+	// hand-picked maximum-length pair) is checked against the Terraform
+	// label regex: a review finding showed a mutation that mishandled long
+	// tokens specifically (e.g. falling back to a dotted separator past a
+	// length threshold) can pass if only a single long case is ever
+	// checked against it.
+	workflows := []string{"a", maxWorkflow, strings.Repeat("a", 19) + "z"}
+	tokens := []string{"a", maxToken, strings.Repeat("a", 30) + "z"}
+	variants := map[string][2]string{}
+	for _, w := range workflows {
+		for _, tok := range tokens {
+			v := WorkflowVariant(w, tok)
+			if prev, dup := variants[v]; dup && prev != ([2]string{w, tok}) {
+				t.Errorf("WorkflowVariant(%q,%q) == WorkflowVariant(%q,%q) == %q", w, tok, prev[0], prev[1], v)
+			}
+			variants[v] = [2]string{w, tok}
+
+			if !labelRE.MatchString(v) {
+				t.Errorf("WorkflowVariant(%q,%q) = %q does not match the Terraform module's name/label regex %s", w, tok, v, labelRE)
+			}
+			if j := JobName(longSlug, v); len(j) > maxJobName || !jobNameRE.MatchString(j) {
+				t.Errorf("JobName(longSlug, %q) = %q (%d chars), want <= %d matching %s", v, j, len(j), maxJobName, jobNameRE)
+			}
+			if sa := ServiceAccountID(longSlug, v); len(sa) < 6 || len(sa) > maxSAID || !saIDRE.MatchString(sa) {
+				t.Errorf("ServiceAccountID(longSlug, %q) = %q (%d chars)", v, sa, len(sa))
+			}
+			if id := SecretID(longSlug, v); !secretIDRE.MatchString(id) {
+				t.Errorf("SecretID(longSlug, %q) = %q", v, id)
+			}
+		}
+	}
+
+	// Distinct variants must still give distinct derived names: format
+	// validity alone (above) would not catch a collision.
+	jobs, sas, secrets := map[string]string{}, map[string]string{}, map[string]string{}
+	for v := range variants {
+		if other, dup := jobs[JobName(longSlug, v)]; dup && other != v {
+			t.Errorf("JobName collided for variants %q and %q", v, other)
+		}
+		jobs[JobName(longSlug, v)] = v
+		if other, dup := sas[ServiceAccountID(longSlug, v)]; dup && other != v {
+			t.Errorf("ServiceAccountID collided for variants %q and %q", v, other)
+		}
+		sas[ServiceAccountID(longSlug, v)] = v
+		if other, dup := secrets[SecretID(longSlug, v)]; dup && other != v {
+			t.Errorf("SecretID collided for variants %q and %q", v, other)
+		}
+		secrets[SecretID(longSlug, v)] = v
+	}
+}
+
+// TestJobSADisplayNameFitsIAMLimit pins the "at most 95" bound for today's
+// one real caller (internal/infra/spec.go, which always passes the plain
+// fugaro.yaml workflow name, config.WorkflowNameRE, <= 20 characters) and
+// today's longest possible slug (task.Slug's own 63-character bound): the
+// natural concatenation, unchanged, exactly as it is today — this is the
+// golden-compatibility case internal/infra's own golden tfvars tests also
+// cover indirectly, byte-identical before and after JobSADisplayName
+// gained its length-cap fallback.
+func TestJobSADisplayNameFitsIAMLimit(t *testing.T) {
+	maxSlug := strings.Repeat("a", 46) + "-0123456789abcdef" // task.Slug's own 63-char shape
+	if len(maxSlug) != 63 {
+		t.Fatalf("test fixture maxSlug is %d characters, want 63", len(maxSlug))
+	}
+	maxWorkflow := strings.Repeat("a", 20) // config.WorkflowNameRE's longest
+	name := JobSADisplayName(maxSlug, maxWorkflow)
+	if len(name) > 100 {
+		t.Fatalf("JobSADisplayName(63-char slug, 20-char workflow) = %d characters, want <= 100 (IAM's display-name limit): %q", len(name), name)
+	}
+	if want := len("Fugaro job ") + len(maxSlug) + 1 + len(maxWorkflow); len(name) != want {
+		t.Fatalf("JobSADisplayName length = %d, want the documented %d (11+63+1+20), meaning the fallback incorrectly triggered for a plain workflow name", len(name), want)
+	}
+}
+
+// TestJobSADisplayNameFitsIAMLimitForVariants is the fix for a review
+// finding: JobSADisplayName's old, unconditional "Fugaro job "+slug+"
+// "+workflow concatenation goes over IAM's 100-character display-name
+// limit once workflow is a gcp.WorkflowVariant string instead of a plain
+// fugaro.yaml name — worst case 11+63+1+52 = 127, and with a 63-character
+// slug alone, truncation starts once the variant passes roughly 25
+// characters. JobSADisplayName now falls back to a truncated, hashed form
+// once the natural concatenation would exceed the limit; this test
+// exercises that fallback at the true maximum variant length
+// (config.WorkflowNameRE's 20 + "_" + config.MaxClaudeAccountNameLen's 31
+// = 52 characters) and checks it is deterministic and, as a practical (not
+// load-bearing) guard, distinct across different variants of the same
+// repository.
+func TestJobSADisplayNameFitsIAMLimitForVariants(t *testing.T) {
+	maxSlug := strings.Repeat("a", 46) + "-0123456789abcdef" // task.Slug's own 63-char shape
+	maxVariant := WorkflowVariant(strings.Repeat("a", 20), strings.Repeat("b", 31))
+	if len(maxVariant) != 52 {
+		t.Fatalf("test fixture maxVariant is %d characters, want 52", len(maxVariant))
+	}
+
+	name := JobSADisplayName(maxSlug, maxVariant)
+	if len(name) > jobSADisplayNameMaxLen {
+		t.Fatalf("JobSADisplayName(63-char slug, 52-char variant) = %d characters, want <= %d (IAM's display-name limit): %q", len(name), jobSADisplayNameMaxLen, name)
+	}
+	if name2 := JobSADisplayName(maxSlug, maxVariant); name2 != name {
+		t.Fatalf("JobSADisplayName is not deterministic: %q then %q for the same inputs", name, name2)
+	}
+
+	// A practical collision guard, not a hard invariant (service accounts
+	// carry no labels; a display name is never parsed back): distinct
+	// variants of the same repository still get distinct display names.
+	other := JobSADisplayName(maxSlug, WorkflowVariant(strings.Repeat("a", 20), strings.Repeat("c", 31)))
+	if other == name {
+		t.Errorf("two distinct variants produced the same display name: %q", name)
+	}
+
+	// Shorter, more realistic variant lengths also stay within the limit.
+	for _, tok := range []string{"a", "acme-personal", strings.Repeat("a", 25)} {
+		v := WorkflowVariant("build", tok)
+		if n := JobSADisplayName(maxSlug, v); len(n) > jobSADisplayNameMaxLen {
+			t.Errorf("JobSADisplayName(63-char slug, %q) = %d characters, want <= %d: %q", v, len(n), jobSADisplayNameMaxLen, n)
+		}
+	}
+}
+
 func TestDefaultRegistryHost(t *testing.T) {
 	if got := DefaultRegistryHost("us-east5", "my-proj"); got != "us-east5-docker.pkg.dev/my-proj" || !registryHostRE.MatchString(got) {
 		t.Errorf("DefaultRegistryHost = %q, want us-east5-docker.pkg.dev/my-proj", got)
+	}
+}
+
+// TestJobSADisplayNameMaxLengthIsPinned pins the EXACT truncated display name
+// for the longest slug and variant. internal/infra/discover.go compares a
+// service account's display name exactly as its ownership mark and reports
+// anything else as a ForeignError, so changing the truncation, the hash width
+// or the hash input would make discovery refuse every existing named-account
+// service account. If this test must change, the change needs a migration.
+func TestJobSADisplayNameMaxLengthIsPinned(t *testing.T) {
+	maxSlug := strings.Repeat("a", 46) + "-0123456789abcdef"
+	maxVariant := WorkflowVariant(strings.Repeat("a", 20), strings.Repeat("b", 31))
+	const want = "Fugaro job aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-0123456789abcdef aaaaaaaaaaaaaaaa d4964ee5"
+	if got := JobSADisplayName(maxSlug, maxVariant); got != want {
+		t.Fatalf("JobSADisplayName(max slug, max variant) = %q, want the pinned %q (discover.go compares it exactly)", got, want)
 	}
 }

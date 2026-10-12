@@ -136,6 +136,21 @@ func Validate(c *Config) []Problem {
 	if badUSD(c.Agent.MaxBudgetUSD) {
 		add("agent.max_budget_usd", "must be a finite number, not negative")
 	}
+	// Same rules as task.Spec.OAuthToken (internal/task/task.go), which
+	// mirrors these from config.ClaudeAccountNameRE and
+	// MaxClaudeAccountNameLen: this is a plain shape check, not a membership
+	// check. Whether the name is one this repository may actually use
+	// (config.AllowedClaudeAccounts) depends on the local config, which this
+	// function never sees; fugaro run checks that at launch.
+	switch {
+	case c.Agent.OAuthToken == "":
+	case c.Agent.OAuthToken == DefaultClaudeAccount:
+		add("agent.oauth_token", `must not be "default": the empty value already means the repository's default account`)
+	case len(c.Agent.OAuthToken) > MaxClaudeAccountNameLen:
+		add("agent.oauth_token", "must be at most %d characters", MaxClaudeAccountNameLen)
+	case !ClaudeAccountNameRE.MatchString(c.Agent.OAuthToken):
+		add("agent.oauth_token", "must be a Claude account name")
+	}
 	ps = append(ps, validateAgentModels(c.Agent)...)
 	ps = append(ps, validateBudget(c.Budget)...)
 	ps = append(ps, validateFollowup(c.Git.Provider, c.Followup)...)
@@ -190,6 +205,18 @@ func Validate(c *Config) []Problem {
 			}
 			if _, reserved := ReservedSecrets[s.Name]; reserved {
 				add(sp+".name", "%s is reserved for the platform's own secrets", s.Name)
+			} else if strings.HasPrefix(s.Name, ClaudeOAuthTokenPrefix) {
+				// The whole claude-oauth-token-<name> namespace is a named
+				// Claude account's derived secret ID (ClaudeAccountSecret,
+				// design docs/design/named-oauth-tokens.md §5), never a
+				// workflow's own: a name that merely looks like one would
+				// let fugaro.yaml steer where the owner's pasted token
+				// value goes (claude setup-token's prompt in init matches
+				// on this same prefix), bypassing claude_accounts'
+				// allow_data_to allow-list, which only the local config
+				// may ever set (T1). Reserved whether or not the suffix
+				// happens to name a configured account.
+				add(sp+".name", "names starting %s are reserved for named Claude accounts (claude_accounts in the local config), not a workflow secret", ClaudeOAuthTokenPrefix)
 			}
 			switch {
 			case !envNameRE.MatchString(s.Env):

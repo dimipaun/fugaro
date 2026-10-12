@@ -7,11 +7,13 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"gocloud.dev/blob"
 
@@ -951,6 +953,139 @@ func TestLsRecipeColumnDefaultsEmpty(t *testing.T) {
 	}
 }
 
+func TestLsAccountColumn(t *testing.T) {
+	var b strings.Builder
+	rows := []runview.Row{{Run: "acme-app/20261007-100000-abcd", Status: "succeeded"}}
+	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil || strings.Contains(b.String(), "ACCOUNT") {
+		t.Fatalf("no named account:\n%s", b.String())
+	}
+	b.Reset()
+	rows = append(rows, runview.Row{Run: "acme-app/20261007-110000-abcd", Status: "running", OAuthAccount: "acme-personal"})
+	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil || !strings.Contains(b.String(), "ACCOUNT") || !strings.Contains(b.String(), "acme-personal") {
+		t.Fatalf("with a named account:\n%s", b.String())
+	}
+	var line string
+	for _, l := range strings.Split(b.String(), "\n") {
+		if strings.Contains(l, "100000") {
+			line = l
+		}
+	}
+	if !strings.HasSuffix(strings.TrimSpace(line), "default") {
+		t.Fatalf("default row's ACCOUNT cell %q in:\n%s", line, b.String())
+	}
+}
+
+// TestLsAccountColumnSanitizesHostileNames: an OAuth account name is
+// untrusted text read back from a run's own result.json (bucket data, not
+// validated by this binary), not something only "default" can hold. A tab
+// or newline in it must not add a tabwriter column or a row, an ESC/bidi/
+// line-separator rune must not reach the terminal raw, and a 10 KB name
+// must not widen the table to match.
+func TestLsAccountColumnSanitizesHostileNames(t *testing.T) {
+	fields := func(line string) []string {
+		return regexp.MustCompile(`  +`).Split(strings.TrimRight(line, " "), -1)
+	}
+	huge := strings.Repeat("x", 10_000)
+	hostile := []string{
+		"a\tb", "a\nb", "a\rb", "esc\x1b[2Jc",
+		"bidi" + string(rune(0x202e)) + "evil",
+		"line" + string(rune(0x2028)) + "sep",
+		"para" + string(rune(0x2029)) + "graph",
+		huge,
+	}
+	for _, name := range hostile {
+		var b strings.Builder
+		rows := []runview.Row{{Run: "acme-app/20261007-100000-abcd", Status: "succeeded", Stage: "implement",
+			PR: 7, PRURL: "https://example.com/pr/7", OAuthAccount: name}}
+		if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil {
+			t.Fatal(err)
+		}
+		out := b.String()
+		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+		if len(lines) != 3 {
+			t.Fatalf("name %q: %d lines, want 3 (header, row, totals):\n%q", name, len(lines), out)
+		}
+		hdr, row := fields(lines[0]), fields(lines[1])
+		if len(row) != len(hdr) {
+			t.Fatalf("name %q: row has %d fields, header has %d (a tab or newline widened/split the table):\n%q", name, len(row), len(hdr), out)
+		}
+		if n := utf8.RuneCountInString(out); n > 600 {
+			t.Fatalf("name %q: output is %d runes, not bounded:\n%.80q...", name, n, out)
+		}
+		for _, r := range out {
+			if r == '\x1b' || (r >= 0x202a && r <= 0x202e) || r == 0x2028 || r == 0x2029 {
+				t.Fatalf("name %q: hostile rune %U survived in:\n%q", name, r, out)
+			}
+		}
+	}
+}
+
+// TestLsRecipeColumnSanitizesHostileNames: a recipe name is the same kind
+// of untrusted, result.json/task.json-sourced text as an OAuth account
+// name (TestLsAccountColumnSanitizesHostileNames), and shares its column
+// in the same table, so it must be held to the same bar.
+func TestLsRecipeColumnSanitizesHostileNames(t *testing.T) {
+	fields := func(line string) []string {
+		return regexp.MustCompile(`  +`).Split(strings.TrimRight(line, " "), -1)
+	}
+	huge := strings.Repeat("x", 10_000)
+	hostile := []string{
+		"a\tb", "a\nb", "a\rb", "esc\x1b[2Jc",
+		"bidi" + string(rune(0x202e)) + "evil",
+		"line" + string(rune(0x2028)) + "sep",
+		"para" + string(rune(0x2029)) + "graph",
+		huge,
+	}
+	for _, name := range hostile {
+		var b strings.Builder
+		rows := []runview.Row{{Run: "acme-app/20261007-100000-abcd", Status: "succeeded", Stage: "implement",
+			PR: 7, PRURL: "https://example.com/pr/7", Recipe: name}}
+		if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil {
+			t.Fatal(err)
+		}
+		out := b.String()
+		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+		if len(lines) != 3 {
+			t.Fatalf("name %q: %d lines, want 3 (header, row, totals):\n%q", name, len(lines), out)
+		}
+		hdr, row := fields(lines[0]), fields(lines[1])
+		if len(row) != len(hdr) {
+			t.Fatalf("name %q: row has %d fields, header has %d (a tab or newline widened/split the table):\n%q", name, len(row), len(hdr), out)
+		}
+		if n := utf8.RuneCountInString(out); n > 600 {
+			t.Fatalf("name %q: output is %d runes, not bounded:\n%.80q...", name, n, out)
+		}
+		for _, r := range out {
+			if r == '\x1b' || (r >= 0x202a && r <= 0x202e) || r == 0x2028 || r == 0x2029 {
+				t.Fatalf("name %q: hostile rune %U survived in:\n%q", name, r, out)
+			}
+		}
+	}
+}
+
+func TestLsJSONOAuthAccountOmitempty(t *testing.T) {
+	var b strings.Builder
+	rows := []runview.Row{
+		{Run: "acme-app/20261007-100000-abcd", Status: "succeeded"},
+		{Run: "acme-app/20261007-110000-abcd", Status: "running", OAuthAccount: "acme-personal"},
+	}
+	if err := printRows(&b, "aurora", rows, nil, time.Now(), true); err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Runs []map[string]any `json:"runs"`
+	}
+	if err := json.Unmarshal([]byte(b.String()), &doc); err != nil || len(doc.Runs) != 2 {
+		t.Fatalf("%v\n%s", err, b.String())
+	}
+	if _, ok := doc.Runs[0]["oauth_account"]; ok {
+		t.Fatalf("unset oauth_account present: %v", doc.Runs[0])
+	}
+	if doc.Runs[1]["oauth_account"] != "acme-personal" {
+		t.Fatalf("oauth_account = %v", doc.Runs[1])
+	}
+}
+
 func TestLsJSONRecipeOmitempty(t *testing.T) {
 	var b strings.Builder
 	rows := []runview.Row{
@@ -999,7 +1134,7 @@ func TestLsIsATombstone(t *testing.T) {
 }
 
 func TestSingularNounAliases(t *testing.T) {
-	for _, args := range [][]string{{"recipe", "validate", "--help"}, {"secret", "ls", "--help"}, {"run", "--help"}} {
+	for _, args := range [][]string{{"recipe", "validate", "--help"}, {"secret", "ls", "--help"}, {"account", "ls", "--help"}, {"run", "--help"}} {
 		if _, _, err := execute(t, args...); err != nil {
 			t.Fatalf("%v: %v", args, err)
 		}
