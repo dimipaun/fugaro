@@ -160,10 +160,19 @@ RUN --mount=type=bind,source=images/base/fetch.sh,target=/tmp/fetch.sh \
     rm -rf /root/.local /root/.cache /root/.config
 
 # 3. The agent harnesses (design section 6). Only Claude Code is driven by the
-# runner; the others are present for later. The Node ones run on a private
-# Node in /opt/fugaro/node, never on PATH, through wrappers that exec it
-# without touching PATH, so neither side sees the other's Node. They come
-# from the committed lockfile, without install scripts, into root-owned /opt.
+# runner; the others are present for later. The Node ones (Gemini, Pi, Qwen,
+# DeepSeek Harness) run on a private Node in /opt/fugaro/node, never on PATH,
+# through wrappers that exec it without touching PATH, so neither side sees
+# the other's Node. They come from the committed lockfile, without install
+# scripts, into root-owned /opt.
+# DeepSeek Harness (dsh, @deepseek-ai/dsh) is wired into the loop below, but
+# harnesses/package.json has no version for it yet: this environment had no
+# npm and could not safely hand-write package-lock.json's integrity hashes
+# for a package with this many transitive dependencies (design base-image.md
+# section 6, updated 2026-10-12). Until an exact version is pinned there and
+# the lockfile regenerated with `npm install --package-lock-only`, this RUN
+# step fails loudly at "dsh's entry point ... is missing" -- the same fail-
+# loud contract every other harness already has, not a new one.
 COPY --chmod=0755 images/base/install-node.sh /usr/local/lib/fugaro/install-node
 COPY images/base/harnesses/package.json images/base/harnesses/package-lock.json /opt/fugaro/harnesses/
 RUN set -eu; \
@@ -172,7 +181,7 @@ RUN set -eu; \
     cd /opt/fugaro/harnesses; \
     HOME=/root PATH=/opt/fugaro/node/bin:$PATH npm ci --ignore-scripts --no-audit --no-fund --omit=dev; \
     rm -rf /root/.npm; \
-    for h in gemini:@google/gemini-cli/bundle/gemini.js pi:@mariozechner/pi-coding-agent/dist/cli.js qwen:@qwen-code/qwen-code/cli-entry.js; do \
+    for h in gemini:@google/gemini-cli/bundle/gemini.js pi:@mariozechner/pi-coding-agent/dist/cli.js qwen:@qwen-code/qwen-code/cli-entry.js dsh:@deepseek-ai/dsh/lib/bin.js; do \
       name=${h%%:*}; entry=/opt/fugaro/harnesses/node_modules/${h#*:}; \
       [ -f "$entry" ] || { echo "base: $name's entry point $entry is missing" >&2; exit 1; }; \
       printf '#!/bin/sh\n# %s on the harnesses'"'"' own Node, which is not on PATH (design base-image.md section 6).\nexec /opt/fugaro/node/bin/node %s "$@"\n' \

@@ -63,3 +63,9 @@ qwen	qwen --version	all	harness
 opencode	opencode --version	all	harness
 goose	goose --version	all	harness
 crush	crush --version	all	harness
+# dsh (DeepSeek Harness, @deepseek-ai/dsh), added 2026-10-12: DeepSeek now
+# publishes a coding-agent CLI (design base-image.md section 6), so it is no
+# longer excluded. Presence-only: dsh's --version credential-safety is
+# UNVERIFIED (no instance to check offline), the conservative check design
+# section 6 calls for when a claim about a tool is unverified.
+dsh	-	all	harness
