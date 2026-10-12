@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	crand "crypto/rand"
 	"encoding/json"
@@ -387,6 +388,15 @@ func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tot
 			return "", nil, err
 		}
 	}
+	// Resolved before chooseRecipe (review finding E): chooseRecipe's
+	// resolveRecipe can read a project or catalog recipe from the bucket, a
+	// network call a disallowed --token should never trigger — the account
+	// is checked against config.AllowedClaudeAccounts first, using only the
+	// local config and the checkout already in hand, no network of its own.
+	account, err := claudeAccountFor(env, repo, o.token, checkout())
+	if err != nil {
+		return "", nil, err
+	}
 	rcp, err := chooseRecipe(ctx, env, o.recipe, checkout, checkoutRoot(ctx, repo), warn)
 	if err != nil {
 		return "", nil, err
@@ -394,10 +404,6 @@ func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tot
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, Workflow: workflow, Task: text, RequestedBy: me, Batch: o.batch, Recipe: rcp}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
-	}
-	account, err := claudeAccountFor(env, repo, o.token, checkout())
-	if err != nil {
-		return "", nil, err
 	}
 	if account != config.DefaultClaudeAccount {
 		spec.OAuthToken = account
@@ -619,10 +625,19 @@ func retrySpec(ctx context.Context, env *cloudEnv, ref string) (string, *task.Sp
 	if spec.RunID != runID {
 		return "", nil, userErr("run %s/%s holds the task of run %s; it can't be retried", slug, runID, spec.RunID)
 	}
+	checkout := checkoutOf(ctx, spec.Repo)
 	if spec.Workflow == "" {
-		if spec.Workflow, err = resolveWorkflow(env, spec.Repo, "", checkoutOf(ctx, spec.Repo)); err != nil {
+		if spec.Workflow, err = resolveWorkflow(env, spec.Repo, "", checkout); err != nil {
 			return "", nil, err
 		}
+	}
+	// spec is stored bucket data nobody vouches for (review finding A): its
+	// OAuthToken's shape was checked when it was first written (task.Parse),
+	// but whether this repository may still use that account was never
+	// re-checked here, the one place --retry resolves what it is about to
+	// launch, before any build-record read or the launch itself.
+	if err := claudeAccountAllowed(env, spec.Repo, cmp.Or(spec.OAuthToken, config.DefaultClaudeAccount), checkout()); err != nil {
+		return "", nil, err
 	}
 	return slug, spec, nil
 }

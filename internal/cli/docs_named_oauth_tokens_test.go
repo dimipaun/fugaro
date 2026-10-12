@@ -52,10 +52,10 @@ func TestDocsNamedOAuthTokensDoctorSeverity(t *testing.T) {
 	// failing check; an empty token (the repository's default account) is
 	// no check at all.
 	lc := &localcfg.Config{ClaudeAccounts: map[string]config.ClaudeAccount{"acme-personal": {AllowDataTo: []string{"acme/other"}}}}
-	if c := oauthTokenAllowedCheck(lc, "acme/app", "acme-personal"); c == nil || c.OK || c.Severity != "" {
+	if c := oauthTokenAllowedCheck(lc, "acme/app", "acme-personal", "oauth"); c == nil || c.OK || c.Severity != "" {
 		t.Fatalf("oauthTokenAllowedCheck(disallowed) = %+v, want an ordinary, red finding", c)
 	}
-	if c := oauthTokenAllowedCheck(lc, "acme/app", ""); c != nil {
+	if c := oauthTokenAllowedCheck(lc, "acme/app", "", "oauth"); c != nil {
 		t.Fatalf("oauthTokenAllowedCheck(empty) = %+v, want no check at all", c)
 	}
 }

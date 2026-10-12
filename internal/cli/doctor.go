@@ -294,7 +294,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 			if c := claudeAccountsStoredCheck(lc, repo, o.Secrets); c != nil {
 				o.Checks = append(o.Checks, *c)
 			}
-			if c := oauthTokenAllowedCheck(lc, repo, token); c != nil {
+			if c := oauthTokenAllowedCheck(lc, repo, token, authOf(resolved)); c != nil {
 				o.Checks = append(o.Checks, *c)
 			}
 		} else {
@@ -518,19 +518,33 @@ func claudeAccountsStoredCheck(lc *localcfg.Config, repo string, listed []secret
 // oauthTokenAllowedCheck is doctor's "oauth-token-allowed" check (design
 // docs/design/named-oauth-tokens.md §6f, plan Task 8): the checkout's
 // agent.oauth_token, if set, must name an account config.AllowedClaudeAccounts
-// says repo may actually use — a name the local config does not know, or
-// whose allow_data_to omits repo, would otherwise only surface at fugaro run
-// time, after a PR already merged the fugaro.yaml change that sets it. Pure
-// offline: no GCP call of any kind, only the already-loaded local config and
-// the checkout's own already-resolved fugaro.yaml (token). token == "" (the
-// key unset, meaning the repository's default account) makes no check at
-// all: an installation that never sets agent.oauth_token sees no new
-// output. Every name this check echoes is bounded by pluginwire.Printable,
-// since both the checkout's fugaro.yaml and the owner's local config are
-// outside this function's control.
-func oauthTokenAllowedCheck(lc *localcfg.Config, repo, token string) *doctorCheck {
+// says repo may actually use, for a workflow whose agent.auth is oauth — a
+// name the local config does not know, one whose allow_data_to omits repo,
+// or one named for a non-oauth workflow (fugaro run already refuses that
+// combination; doctor must not disagree) would otherwise only surface at
+// fugaro run time, after a PR already merged the fugaro.yaml change that
+// sets it. Pure offline: no GCP call of any kind, only the already-loaded
+// local config and the checkout's own already-resolved fugaro.yaml (token,
+// auth). token == "" (the key unset, meaning the repository's default
+// account) makes no check at all: an installation that never sets
+// agent.oauth_token sees no new output. Every name this check echoes is
+// bounded by pluginwire.Printable, since the checkout's fugaro.yaml and the
+// owner's local config are both outside this function's control.
+func oauthTokenAllowedCheck(lc *localcfg.Config, repo, token, auth string) *doctorCheck {
 	if token == "" {
 		return nil
+	}
+	// Mirrors claudeAccountAllowed's own rule (internal/cli/run.go): naming
+	// an account for a workflow whose agent.auth isn't oauth is refused
+	// outright, never merely left unchecked — no secret is ever mounted for
+	// it, so the name would be silently unused. Review finding (round 2):
+	// doctor used to report this combination OK, disagreeing with fugaro
+	// run, which already refuses it.
+	if auth != "oauth" {
+		return &doctorCheck{ID: "oauth-token-allowed",
+			Problem: fmt.Sprintf("fugaro.yaml's agent.oauth_token %s only applies to a workflow whose agent.auth is oauth; %s's agent.auth is %s",
+				pluginwire.Printable(token), pluginwire.Printable(repo), pluginwire.Printable(auth)),
+			Fix: "remove agent.oauth_token, or change agent.auth to oauth"}
 	}
 	allowed := config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo)
 	if slices.Contains(allowed, token) {
@@ -557,6 +571,16 @@ func oauthTokenOf(rf *resolvedFile) string {
 		return ""
 	}
 	return rf.Cfg.Agent.OAuthToken
+}
+
+// authOf is rf's resolvedFile.Cfg.Agent.Auth, "" when rf is nil: the same
+// "nothing resolved" case oauthTokenOf already treats as having nothing to
+// say.
+func authOf(rf *resolvedFile) string {
+	if rf == nil || rf.Cfg == nil {
+		return ""
+	}
+	return rf.Cfg.Agent.Auth
 }
 
 // pluginDoctorChecks turns a plugin report's states into doctor checks.

@@ -18,7 +18,8 @@ import (
 func TestRunTokenOutsideACheckoutRefusesDisallowedName(t *testing.T) {
 	f := newCloudFixture(t) // acme/app, no local checkout anywhere in this test
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--token", "evil-name", "A task")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "evil-name") || !strings.Contains(err.Error(), "claude_accounts") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "evil-name") || !strings.Contains(err.Error(), "claude_accounts") ||
+		!strings.Contains(err.Error(), "local config") {
 		t.Fatalf("err = %v", err)
 	}
 	if n := len(f.run.Executions()); n != 0 {

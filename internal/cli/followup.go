@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	crand "crypto/rand"
 	"encoding/json"
@@ -399,6 +400,14 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 	if have.PR != o.pr || have.Task != text || have.Batch != o.batch || string(a) != string(b) || (o.recipe != "" && o.recipe != haveRecipe) {
 		return nil, userErr("run ID %s already holds a different task", o.runID)
 	}
+	// have is stored bucket data nobody vouches for (review finding A): its
+	// OAuthToken's shape was checked when it was first written (task.Parse),
+	// but whether this repository may still use that account was never
+	// re-checked here, the one place a repeated --run-id reuses it as is,
+	// before any build-record read or the launch itself.
+	if err := claudeAccountAllowed(env, have.Repo, cmp.Or(have.OAuthToken, config.DefaultClaudeAccount), checkoutOf(ctx, have.Repo)()); err != nil {
+		return nil, err
+	}
 	return have, nil
 }
 
@@ -434,6 +443,27 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 			return nil, err
 		}
 	}
+	// Resolved before the recipe (review finding E, the same ordering bug
+	// newSpec had): resolveRecipe/carryChosenRecipe below can read a project
+	// or catalog recipe from the bucket, a network call a disallowed
+	// inherited account should never trigger.
+	account := c.OAuthToken
+	if account == "" {
+		account = config.DefaultClaudeAccount
+	}
+	if o.token != "" && o.token != account {
+		fmt.Fprintf(warn, "warning: --token %s is ignored on a follow-up; it keeps %s's Claude account %s\n",
+			pluginwire.Printable(o.token), pluginwire.Printable(oneLineCLI(c.Previous.Run)), pluginwire.Printable(account))
+	}
+	// c.OAuthToken came from the previous run's task.json, bucket data a
+	// launcher can write directly: its shape was already checked when
+	// readTask parsed it (task.Parse validates), but whether this repository
+	// may still use it (claude_accounts.<name>.allow_data_to) is not — a
+	// name that was allowed when the first run launched, or a forged record
+	// naming one that never was, must not let a follow-up launch under it.
+	if err := claudeAccountAllowed(env, repo, account, checkout()); err != nil {
+		return nil, err
+	}
 	rcp := c.Recipe
 	if o.recipe != "" {
 		rr, err := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), o.recipe, time.Now(), false)
@@ -457,23 +487,6 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		Branch: c.Branch, PR: o.pr, PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
-	}
-	account := c.OAuthToken
-	if account == "" {
-		account = config.DefaultClaudeAccount
-	}
-	if o.token != "" && o.token != account {
-		fmt.Fprintf(warn, "warning: --token %s is ignored on a follow-up; it keeps %s's Claude account %s\n",
-			pluginwire.Printable(o.token), pluginwire.Printable(oneLineCLI(c.Previous.Run)), pluginwire.Printable(account))
-	}
-	// c.OAuthToken came from the previous run's task.json, bucket data a
-	// launcher can write directly: its shape was already checked when
-	// readTask parsed it (task.Parse validates), but whether this repository
-	// may still use it (claude_accounts.<name>.allow_data_to) is not — a
-	// name that was allowed when the first run launched, or a forged record
-	// naming one that never was, must not let a follow-up launch under it.
-	if err := claudeAccountAllowed(env, repo, account, checkout()); err != nil {
-		return nil, err
 	}
 	if account != config.DefaultClaudeAccount {
 		spec.OAuthToken = account

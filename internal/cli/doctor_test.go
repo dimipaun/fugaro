@@ -831,14 +831,15 @@ func TestDoctorClaudeAccountsStoredCheckEscapesHostileInput(t *testing.T) {
 	}
 }
 
-// oauthTokenYAML is cliMinimalYAML with agent.oauth_token set, for
-// oauth-token-allowed's tests: the check is auth-agnostic (plan Task 8 says
-// nothing about agent.auth), so the default auth (vertex, unset here) is
-// deliberately left alone.
+// oauthTokenYAML is cliMinimalYAML with agent.auth: oauth and
+// agent.oauth_token set, for oauth-token-allowed's allow-list tests: auth:
+// oauth so they exercise the allow-list check, not the (review finding D)
+// auth-mismatch refusal TestDoctorFlagsOAuthTokenWhenAuthIsNotOAuth covers
+// on its own, with a plain (non-oauth) auth.
 const oauthTokenYAML = `version: 1
 project: aurora
 git: { provider: github }
-agent: { oauth_token: acme-overflow }
+agent: { auth: oauth, oauth_token: acme-overflow }
 workflows:
   app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }
 `
@@ -868,6 +869,40 @@ func TestDoctorFlagsOAuthTokenNotAllowed(t *testing.T) {
 	}
 	if !strings.Contains(c.Problem, "acme-overflow") || !strings.Contains(c.Problem, "acme/app") {
 		t.Fatalf("problem doesn't name both: %q", c.Problem)
+	}
+}
+
+// TestDoctorFlagsOAuthTokenWhenAuthIsNotOAuth is review finding D (round 2):
+// doctor used to report oauth-token-allowed OK for an agent.oauth_token the
+// local config DOES allow, even when the workflow's agent.auth isn't oauth
+// — disagreeing with fugaro run, which already refuses that combination
+// outright (claudeAccountAllowed, internal/cli/run.go). The account is
+// allowed here (allow_data_to lists acme/app) precisely to isolate the
+// auth-mismatch rule: it must still fail, not fall through to the
+// allow-list check that would otherwise pass.
+func TestDoctorFlagsOAuthTokenWhenAuthIsNotOAuth(t *testing.T) {
+	r := newDoctorRig(t)
+	yaml := strings.Replace(oauthTokenYAML, "auth: oauth", "auth: api-key", 1)
+	if yaml == oauthTokenYAML {
+		t.Fatal("oauthTokenYAML's auth: oauth line not found to replace")
+	}
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": yaml})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	addClaudeAccounts(t, r, "claude_accounts:\n  acme-overflow:\n    allow_data_to: [acme/app]\n")
+	out, _, err := execute(t, "doctor", "--json")
+	if err == nil {
+		t.Fatal("want doctor to fail: agent.oauth_token is set but agent.auth is not oauth")
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "oauth-token-allowed")
+	if !ok || c.OK || c.Severity != "" {
+		t.Fatalf("oauth-token-allowed = %+v", c)
+	}
+	if !strings.Contains(c.Problem, "acme-overflow") || !strings.Contains(c.Problem, "agent.auth is oauth") || !strings.Contains(c.Problem, "api-key") {
+		t.Fatalf("problem doesn't explain the auth mismatch: %q", c.Problem)
 	}
 }
 
@@ -1007,7 +1042,7 @@ func TestDoctorOAuthTokenAllowedCheckEscapesHostileInput(t *testing.T) {
 	lc := &localcfg.Config{ClaudeAccounts: map[string]config.ClaudeAccount{
 		"acme-personal": {AllowDataTo: []string{hostileRepo}},
 	}}
-	c := oauthTokenAllowedCheck(lc, hostileRepo, hostileToken)
+	c := oauthTokenAllowedCheck(lc, hostileRepo, hostileToken, "oauth")
 	if c == nil || c.OK {
 		t.Fatalf("oauthTokenAllowedCheck = %+v", c)
 	}
