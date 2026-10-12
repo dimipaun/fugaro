@@ -78,6 +78,13 @@
         "first_line_review": { "enum": ["auto", "on", "off"], "description": "A review by the coder's own model, with a fix between, before the senior review. auto: on only when a provider serves the coder and not the reviewer." },
         "first_line_rounds": { "type": "integer", "minimum": 1, "maximum": 3, "description": "First-line review/fix cycles, counted apart from review_rounds." },
         "recipe": { "type": "string", "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?)?$", "description": "The recipe (task loop) runs use unless fugaro run --recipe names one: .fugaro/recipes/<name>.yaml, the project's fugaro/recipes/<name>.yaml, or the catalog (default, cheap-loop-senior, claude-solo). Fugaro before 0.5.0 refuses this key." },
+        "oauth_token": {
+          "type": "string",
+          "pattern": "^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$",
+          "maxLength": 31,
+          "not": { "const": "default" },
+          "description": "The named Claude account (claude_accounts in the local config) this workflow's agent.auth: oauth uses; absent means the repository's default account, the existing claude-oauth-token secret (docs/design/named-oauth-tokens.md). fugaro run --token NAME overrides it per run. The local config's claude_accounts.<name>.allow_data_to must list this repository, checked at launch, not by this schema. Fugaro before 0.6.1 refuses this key."
+        },
         "max_budget_usd": { "type": "number", "minimum": 0 },
         "instructions": { "type": "string" },
         "review": { "type": "string" }

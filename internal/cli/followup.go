@@ -14,6 +14,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/recipe"
@@ -35,7 +36,12 @@ type prChain struct {
 	// Ref and Workflow are the previous run's: a follow-up keeps the base
 	// branch and workflow of the runs before it.
 	Ref, Workflow string
-	Recipe        *task.Recipe // the previous run's: a follow-up keeps it unless --recipe names one
+	// OAuthToken is the previous run's resolved named Claude account
+	// (task.Spec.OAuthToken; "" is the repository's default): a follow-up
+	// inherits it unconditionally, never re-resolving fugaro run --token
+	// (design docs/design/named-oauth-tokens.md §3 T6).
+	OAuthToken string
+	Recipe     *task.Recipe // the previous run's: a follow-up keeps it unless --recipe names one
 	// Chosen is the recipe the runner chose for the previous run (its record's),
 	// when that run's task named none; nil when unknown, absent or default.
 	Chosen *runstore.RecipeRecord
@@ -124,6 +130,7 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 	// The base the PR targets, which the previous run recorded; a record
 	// from before it was kept falls back to that run's ref.
 	c.Ref, c.Workflow = c.Previous.BaseBranch, prev.Workflow
+	c.OAuthToken = prev.OAuthToken
 	c.Recipe = prev.Recipe
 	if c.Recipe == nil {
 		// The runner chose this run's recipe (agent.recipe at the ref); a
@@ -450,6 +457,26 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		Branch: c.Branch, PR: o.pr, PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
+	}
+	account := c.OAuthToken
+	if account == "" {
+		account = config.DefaultClaudeAccount
+	}
+	if o.token != "" && o.token != account {
+		fmt.Fprintf(warn, "warning: --token %s is ignored on a follow-up; it keeps %s's Claude account %s\n",
+			pluginwire.Printable(o.token), pluginwire.Printable(oneLineCLI(c.Previous.Run)), pluginwire.Printable(account))
+	}
+	// c.OAuthToken came from the previous run's task.json, bucket data a
+	// launcher can write directly: its shape was already checked when
+	// readTask parsed it (task.Parse validates), but whether this repository
+	// may still use it (claude_accounts.<name>.allow_data_to) is not — a
+	// name that was allowed when the first run launched, or a forged record
+	// naming one that never was, must not let a follow-up launch under it.
+	if err := claudeAccountAllowed(env, repo, account, checkout()); err != nil {
+		return nil, err
+	}
+	if account != config.DefaultClaudeAccount {
+		spec.OAuthToken = account
 	}
 	if err := spec.Validate(); err != nil {
 		return nil, userErr("%v", err)

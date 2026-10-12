@@ -834,3 +834,58 @@ func TestTaskSchemaOAuthTokenMatchesTheGoRules(t *testing.T) {
 		t.Errorf("schema maxLength %d != config.MaxClaudeAccountNameLen %d", p.MaxLength, config.MaxClaudeAccountNameLen)
 	}
 }
+
+// TestFugaroSchemaOAuthTokenMatchesTheGoRules is TestTaskSchemaOAuthToken
+// MatchesTheGoRules's sibling for fugaro.schema.json's agent.oauth_token
+// (named oauth tokens plan Task 6): the two schema copies, and the Go rules
+// both mirror, must never drift apart.
+func TestFugaroSchemaOAuthTokenMatchesTheGoRules(t *testing.T) {
+	data, err := os.ReadFile("fugaro.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties struct {
+			Agent struct {
+				Properties map[string]struct {
+					Pattern   string `json:"pattern"`
+					MaxLength int    `json:"maxLength"`
+				} `json:"properties"`
+			} `json:"agent"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	p, ok := doc.Properties.Agent.Properties["oauth_token"]
+	if !ok {
+		t.Fatal("fugaro.schema.json's agent has no oauth_token property")
+	}
+	if p.Pattern != config.ClaudeAccountNameRE.String() {
+		t.Errorf("schema pattern %q != config.ClaudeAccountNameRE %q", p.Pattern, config.ClaudeAccountNameRE.String())
+	}
+	if p.MaxLength != config.MaxClaudeAccountNameLen {
+		t.Errorf("schema maxLength %d != config.MaxClaudeAccountNameLen %d", p.MaxLength, config.MaxClaudeAccountNameLen)
+	}
+}
+
+// TestFugaroSchemaAgentOAuthToken is TestFugaroSchemaProfileKeys's shape for
+// agent.oauth_token: "default" is reserved (the empty value already means
+// it), and the schema's maxLength must refuse what the pattern alone would
+// still accept (schemas_test.go's own TestTaskSchemaOAuthTokenMatchesTheGoRules
+// doc comment explains why the pattern alone is not enough).
+func TestFugaroSchemaAgentOAuthToken(t *testing.T) {
+	sch := compile(t, "fugaro.schema.json")
+	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	dashHeavy := "a" + strings.Repeat("-a", 30) // 61 chars, matches the pattern alone
+	for text, valid := range map[string]bool{
+		head + "agent: { oauth_token: acme-personal }\n":     true,
+		head + "agent: { oauth_token: default }\n":           false,
+		head + "agent: { oauth_token: Acme }\n":              false,
+		head + "agent: { oauth_token: " + dashHeavy + " }\n": false,
+	} {
+		if err := sch.Validate(yamlInstance(t, []byte(text))); (err == nil) != valid {
+			t.Errorf("%q: valid = %v, want %v (%v)", text, err == nil, valid, err)
+		}
+	}
+}

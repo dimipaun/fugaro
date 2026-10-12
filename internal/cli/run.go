@@ -9,6 +9,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -108,6 +109,10 @@ type runOptions struct {
 	asJSON                                bool
 	noBudgetCheck                         bool
 	recipe                                string
+	// token is the named Claude account (docs/design/named-oauth-tokens.md)
+	// this run uses: fugaro run --token. A follow-up (--pr) ignores it (with
+	// a warning if it differs): T6, the account is inherited, never re-chosen.
+	token string
 }
 
 func newRunCmd() *cobra.Command {
@@ -137,6 +142,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.totalTimeout, "total-timeout", "", "override the workflow's timeouts.total for this run, such as 45m")
 	f.IntVar(&o.pr, "pr", 0, "continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions)")
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's (default, cheap-loop-senior, claude-solo); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
+	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account and warns if this differs")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	f.BoolVar(&o.noBudgetCheck, "no-budget-check", false, "skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts")
 	addCloudFlags(cmd, &o.cloud)
@@ -144,7 +150,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "task-file", "total-timeout", "pr", "recipe"}
+var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "task-file", "total-timeout", "pr", "recipe", "token"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -254,6 +260,12 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		}
 		if spec.ProjectLayer != nil {
 			if err := checkImageSince(ctx, env, slug, spec, kind, layeredSince, "the project layer", "the project layer", "", cmd.ErrOrStderr()); err != nil {
+				return err
+			}
+		}
+		if spec.OAuthToken != "" {
+			if err := checkImageSince(ctx, env, slug, spec, kind, namedTokensSince,
+				"Claude account "+pluginwire.Printable(spec.OAuthToken), "named Claude accounts", "", cmd.ErrOrStderr()); err != nil {
 				return err
 			}
 		}
@@ -383,10 +395,53 @@ func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tot
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
 	}
+	account, err := claudeAccountFor(env, repo, o.token, checkout())
+	if err != nil {
+		return "", nil, err
+	}
+	if account != config.DefaultClaudeAccount {
+		spec.OAuthToken = account
+	}
 	if err := spec.Validate(); err != nil {
 		return "", nil, userErr("%v", err)
 	}
 	return slug, spec, nil
+}
+
+// claudeAccountFor is the named Claude account a first run uses: flag
+// (fugaro run --token), else the checkout's fugaro.yaml agent.oauth_token,
+// else the repository's default (config.DefaultClaudeAccount). A workflow
+// whose agent.auth is oauth refuses a name config.AllowedClaudeAccounts (the
+// local config's claude_accounts) does not list for repo, before any launch
+// (design docs/design/named-oauth-tokens.md §3 T7); any other auth leaves
+// the choice unchecked, since no secret is ever mounted for it either way.
+func claudeAccountFor(env *cloudEnv, repo, flag string, co *config.Config) (string, error) {
+	name := flag
+	if name == "" && co != nil {
+		name = co.Agent.OAuthToken
+	}
+	if name == "" {
+		name = config.DefaultClaudeAccount
+	}
+	return name, claudeAccountAllowed(env, repo, name, co)
+}
+
+// claudeAccountAllowed refuses name (already resolved: flag, agent.oauth_token
+// or an inherited follow-up value) when co's workflow uses agent.auth: oauth
+// and the local config's claude_accounts does not allow repo to use it. Any
+// other auth, or no checkout here, leaves name unchecked: the same
+// local-checkout dependency needsRecipeImage and the project-layer gate
+// above already have.
+func claudeAccountAllowed(env *cloudEnv, repo, name string, co *config.Config) error {
+	if co == nil || co.Agent.Auth != "oauth" {
+		return nil
+	}
+	allowed := config.AllowedClaudeAccounts(env.lc.ClaudeAccounts, repo)
+	if !slices.Contains(allowed, name) {
+		return userErr("named Claude account %s is not one %s may use (allowed: %s); ask the owner to add it to claude_accounts in the project config",
+			pluginwire.Printable(name), repo, strings.Join(allowed, ", "))
+	}
+	return nil
 }
 
 // chooseRecipe is the recipe of a new first run: --recipe, else the
@@ -840,7 +895,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		return res, err
 	}
 	lctx, cancel := context.WithTimeout(hctx, launchTimeout)
-	ref, err := env.be.Launch(lctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: spec.Repo, Slug: slug}, Workflow: spec.Workflow, RunID: spec.RunID, Timeout: launchTimeoutOf(spec)})
+	ref, err := env.be.Launch(lctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: spec.Repo, Slug: slug}, Workflow: gcp.WorkflowVariant(spec.Workflow, spec.OAuthToken), RunID: spec.RunID, Timeout: launchTimeoutOf(spec)})
 	cancel()
 	if err != nil {
 		if errors.Is(err, backend.ErrRejected) {
