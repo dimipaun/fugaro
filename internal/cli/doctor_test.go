@@ -642,7 +642,11 @@ func TestDoctorClaudeAccountsStoredExcludesDisallowedRepo(t *testing.T) {
 // to doctor's output before this feature (design §5; carry-forward T8).
 func TestDoctorClaudeAccountsStoredSilentWithNoAccounts(t *testing.T) {
 	newDoctorRig(t)
-	checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	// A real owner/name origin, so this actually exercises "no accounts
+	// configured" inside claudeAccountsStoredCheck, not just "no origin to
+	// resolve a repository from" (a different, weaker case).
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
 	out, _, err := execute(t, "doctor", "--json")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
