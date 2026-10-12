@@ -60,8 +60,13 @@ reaches Claude Code, which matters for §3's bypass list) as a child process
 via
 `procgroup.Run`, with the prompt on stdin and a **scrubbed environment**
 (`agent.BuildEnv`, `internal/agent/env.go:51-153`, an allowlist — `baseEnv`
-plus auth variables plus declared workflow secrets; `req.Env` must never be
-nil, "which would inherit the runner's full environment"). The runner reads
+plus auth variables plus declared workflow secrets). `Claude.Run` itself
+refuses a nil `req.Env` outright (`internal/agent/agent.go:99-108`: "req.Env
+must not be nil: procgroup treats a nil Env as 'inherit the whole runner
+environment', which would hand the permission-bypassed agent every
+credential the runner holds" — a distinct check from `BuildEnv`, in a
+different file, which an earlier draft of this paragraph conflated). The
+runner reads
 only `claude`'s stdout, as a stream of `stream-json` events
 (`ParseStream`), through `Relay` for a live log view
 (`internal/agent/relay.go`) and a `Redactor` for secrets. **The runner has
@@ -320,7 +325,7 @@ can run or call with the job's full environment and secrets;
 `docs/design/v1.md:862` names this directly as a residual risk ("Hooks and
 MCP servers planted there run with the job's environment and its secrets...
 review the PR's diff with it in mind before launching a follow-up on it"),
-and `internal/pluginwire/notices.go`'s `mcpNotices` (lines 32-38) exists
+and `internal/pluginwire/notices.go`'s `mcpNotices` (lines 32-39) exists
 specifically to flag a repository's `.mcp.json` on `fugaro init`'s diff
 screen ("the repository has a .mcp.json, which declares MCP servers
 (commands or services Claude Code can run or call): read it before trusting
@@ -480,9 +485,15 @@ model and provider keys" and "the job's service account, through the
 metadata server" via `/proc` (`SECURITY.md`, "What one run's agent can
 reach"). Headroom running in the same container, as the same unprivileged
 `fugaro` user, adds **no new privilege boundary to cross** — it is already
-inside the blast radius SECURITY.md describes as the trust boundary ("the
-agent doing harmful things inside its own container... is out of scope" —
-`SECURITY.md`, Scope). What it *does* add is new: a second network-facing
+inside the blast radius SECURITY.md describes as the trust boundary:
+`SECURITY.md`'s "Out of scope" list (the Scope section) names "An agent
+doing harmful things inside its own container with the credentials that
+job's service account is allowed to hold: the trust boundary is the
+container, and the design says so openly" — an earlier draft of this
+sentence spliced the heading's own words "is out of scope" onto that quote
+as if they appeared in it, which they don't; the heading says it, the
+sentence under it doesn't need to repeat it. What it *does* add is new: a
+second network-facing
 process that sees every byte of model traffic, including the live OAuth
 bearer token if §1.1's open question resolves in favor of routing oauth
 through it, and a new place a credential could leave the container if
@@ -752,8 +763,9 @@ it (a go/no-go live check, not a built feature):**
   Findings}`, `internal/runner/runner.go:1271-1277`) is the model's own
   *output*, not an input being compressed — but the untrusted gate-failure
   blocks the runner itself feeds back into a later `implement` prompt
-  (`GatePrompt`/`gateBlock`, `internal/runner/prompts.go:85-104`, already
-  wrapped as "untrusted output of commands.%s") must reach the model intact:
+  (`GatePrompt`, `internal/runner/prompts.go:94-111`, calling `gateBlock`, a
+  separate function at `prompts.go:124-129`, already wrapped as "untrusted
+  output of commands.%s") must reach the model intact:
   this is Fugaro's own, already-bounded (`logtail`, 40 lines) summary of a
   check failure, and a second, independent compression pass over text that
   is already a deliberately curated excerpt risks losing the one line that
@@ -796,7 +808,7 @@ price (the gateway already parses this distinction from Anthropic's own
 usage response — `internal/gateway/sse.go:144-169`'s
 `cache_creation_input_tokens`/`cache_read_input_tokens` — and prices it
 distinctly: `Rates.Cost(u)`, `internal/pricing/pricing.go:311`, is where the
-dollar figure actually comes from; `forward.go:758`'s `o.tokens =
+dollar figure actually comes from; `forward.go:759`'s `o.tokens =
 u.Input + u.CacheWrite5m + u.CacheWrite1h + u.CacheRead + u.Output` is a
 plain **token** sum kept for a different purpose, not a cost figure — an
 earlier draft of this paragraph conflated the two). **If Headroom rewrites

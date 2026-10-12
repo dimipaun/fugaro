@@ -21,13 +21,14 @@ requiring the gateway, refused with `auth: oauth` or `auth: vertex` until
 their respective live checks settle them) and H2 (fail closed, not fall back
 to direct) are settled there; this plan's own decisions continue the same
 letter, P1 onward, each independently vetoable. **A code review of this
-plan's first draft found eight blocking gaps and several smaller ones**
-(the managed settings file, the real-key exposure without the gateway,
-Vertex's different routing variables, the bypass list having no enforcement
-point, a merge/release gate contradiction, a silent no-op config key, a
-mischaracterized fail-closed rationale, several scope/schema omissions, and
-some invented test placeholders); this revision folds every one of them in,
-and the design doc carries the same fixes. Where this plan now differs from
+plan's first draft found nine gaps**, several of them architecture-level
+rather than wording (the managed settings file, the real-key exposure
+without the gateway, Vertex's different routing variables, the bypass list
+having no enforcement point, a merge/release gate contradiction, a silent
+no-op config key, a mischaracterized fail-closed rationale, several
+scope/schema omissions, and some invented test placeholders); this revision
+folds every one of them in, and the design doc carries the same fixes.
+Where this plan now differs from
 an earlier draft, the text says so rather than silently rewriting history.
 
 **Depends on:** release 0.7.0 merged to `main` first (the base-image
@@ -318,7 +319,7 @@ Continuing the design doc's H1 and H2:
   `CacheReadUSD`/`CacheWriteUSD` "summed from per-call pricing," which
   doesn't exist**: `Rates.Cost(u)` (`internal/pricing/pricing.go:311`)
   returns one blended total for a call's whole `Usage`, never a
-  per-category breakdown, and `forward.go:758`'s `o.tokens = u.Input +
+  per-category breakdown, and `forward.go:759`'s `o.tokens = u.Input +
   u.CacheWrite5m + u.CacheWrite1h + u.CacheRead + u.Output` (which an
   earlier draft also cited as if it computed cost) is a plain token sum, not
   a cost figure. This plan adds `CacheReadTokens`/`CacheWriteTokens`
@@ -457,12 +458,12 @@ would fail if the fix were subtly wrong:
 
 | Path | Responsibility | Task |
 |---|---|---|
-| `internal/config/config.go`, `validate.go`, `scope.go`, `schemas/fugaro.schema.json` (enum admits only `""`), `testdata/config/invalid/*` | `Agent.Compression` (reserved and refused, P11), the `agent.auth` refusal (an ordinary `Validate` rule, P9), the `Scopes` row (the fourth edit an earlier draft omitted), the corpus fixture (in `invalid/` until Task 10) | 1 |
+| `internal/config/config.go`, `validate.go`, `scope.go`, `schemas/fugaro.schema.json` (enum admits only `""`), `docs/project-layer.md`, `testdata/config/invalid/*` | `Agent.Compression` (reserved and refused, P11), the `agent.auth` refusal (an ordinary `Validate` rule, P9), the `Scopes` row and its printed copy (the fourth edit an earlier draft omitted), the corpus fixture (in `invalid/` until Task 10) | 1 |
 | `internal/headroomproc/headroomproc.go` (new), `headroomproc_test.go` (new) | Process supervision: `Start`, origin-proof readiness probe, liveness probe, an `RLIMIT_AS`/`prlimit`-or-Headroom-flag memory bound (P8), `Stop`/process-group kill, `URL()` | 2 |
 | `internal/agent/env.go`, `env_test.go` | `EnvSpec.Compression`, the chaining/refusal logic in `BuildEnv`/`GatewayVars` (P3, P7) | 3 |
-| `internal/runner/agentenv.go`, `agentenv_test.go` | `writeManagedSettings` carries Headroom's URL, written **after** `GatewayVars` (P5); `checkSettingsRouting`'s existing condition proven to already cover compression (P6) | 3 |
+| `internal/runner/agentenv.go`, `runner.go` (the new `run.compression` field), their tests | `writeManagedSettings` carries Headroom's URL, written **after** `GatewayVars` (P5); `checkSettingsRouting`'s existing condition proven to already cover compression (P6) | 3 |
 | `internal/runner/gateway.go` (or a new `internal/runner/compression.go`), `runner.go`, their tests | Starting/supervising/stopping the sidecar per run after `startGateway` (P4); the gateway-on bootstrap check (P9); the ordinary stage-failure path on a crash or hang (P10, no new status) | 4 |
-| `internal/runstore/cost.go`, `runstore_test.go`, `internal/cli/diagnose.go` | `Cost.CacheReadTokens`/`CacheWriteTokens` (P12, independent of G20); the `Compression:` diagnose line once a dollar figure exists | 5 |
+| `internal/runstore/cost.go`, `cost_test.go`, `schemas/result.schema.json`, `internal/cli/diagnose.go`, `diagnose_test.go` | `Cost.CacheReadTokens`/`CacheWriteTokens` (P12, independent of G20); the unconditional-on-nonzero `Cache: N read, M write (tokens)` diagnose line | 5 |
 | `internal/task/task.go`, `task_test.go`, `schemas/task.schema.json` | `Spec.CompressionOff bool` (off-only, one-shot, strictly decoded) | 6 |
 | `internal/cli/run.go`, `internal/cli/recipes_skew.go`, `run_test.go` | `--no-compression` (off-only; no force-on flag); `compressionSince`, defined in `recipes_skew.go` next to `namedTokensSince`, not `run.go` | 6 |
 | `images/base/Dockerfile`, `images/base/tools.tsv`, the base image's selftest, a new CI docker test | The pin, the `harness`-tier presence row, the real no-egress compression-pass test (not only `--version`) | 7 |
@@ -917,6 +918,14 @@ named directly or in substance by `SECURITY.md`'s scope.
 **Files:**
 - Edit: `internal/agent/env.go`, `env_test.go`
 - Edit: `internal/runner/agentenv.go`, `agentenv_test.go`
+- Edit: `internal/runner/runner.go` (the `run` struct gains `compression
+  *agent.CompressionProxy`, declared **here**, next to the existing
+  `gwAgent *agent.Gateway` field — not in Task 4, which an earlier draft of
+  this plan assumed and which made the two tasks circular: Task 4 was
+  listed as needing Task 3, but Task 3's own test set a field on `run` that
+  the earlier draft said Task 4 added. This task declares the field and
+  sets it directly in its own tests, with no real sidecar behind it; Task 4
+  is the only task that *populates* it for a real run, via `startCompression`)
 
 **Interfaces:**
 ```go
@@ -950,12 +959,14 @@ type CompressionProxy struct{ BaseURL string }
   Review Focus as a test that would have failed against the earlier,
   wrongly-ordered sketch — it isn't a decorative addition, it's the test
   that catches exactly this mistake.
-- `internal/runner/agentenv.go`'s `writeManagedSettings` (P5) takes the same
-  `*agent.CompressionProxy` (via a new field on `run`, set by Task 4) and,
-  when non-nil, overwrites the `ANTHROPIC_BASE_URL` entry in the `vars` map
-  `GatewayVars` returned, before the call to `agent.WriteManagedSettings` —
-  the same single write, not a second one, and the same "after, not before"
-  ordering as `BuildEnv` above.
+- `internal/runner/agentenv.go`'s `writeManagedSettings` (P5) reads
+  `r.compression` (the `*agent.CompressionProxy` field this task declares on
+  `run`, above — set directly by this task's own tests, populated for a
+  real run only once Task 4 exists) and, when non-nil, overwrites the
+  `ANTHROPIC_BASE_URL` entry in the `vars` map `GatewayVars` returned,
+  before the call to `agent.WriteManagedSettings` — the same single write,
+  not a second one, and the same "after, not before" ordering as `BuildEnv`
+  above.
 - `checkSettingsRouting` itself is **unchanged** (P6): its existing
   `if r.gatewayOn()` call site already covers every compression-eligible
   run once Task 4's gateway-required bootstrap check is in place. This task
@@ -1012,7 +1023,7 @@ func TestBuildEnvRoutesThroughCompressionNotGateway(t *testing.T) {
 
 func TestWriteManagedSettingsCarriesCompressionURL(t *testing.T) {
 	h := newGW(t, gwConfig(t, ""), "observe", "", anthropicfake.MessageOK(sonnet, pricing.Usage{Output: 1})).harness
-	h.compression = &agent.CompressionProxy{BaseURL: "http://127.0.0.1:9100"} // the field Task 4 adds to run
+	h.compression = &agent.CompressionProxy{BaseURL: "http://127.0.0.1:9100"} // the run field this task itself declares (above); Task 4 is what populates it for a real sidecar
 	if _, err := h.run(t, implement("feature"), review("ship", 0)); err != nil {
 		t.Fatal(err)
 	}
@@ -1056,7 +1067,7 @@ Expected: `ok`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add internal/agent/env.go internal/agent/env_test.go internal/runner/agentenv.go internal/runner/agentenv_test.go
+git add internal/agent/env.go internal/agent/env_test.go internal/runner/agentenv.go internal/runner/agentenv_test.go internal/runner/runner.go
 git commit -m "headroom compression task 3: EnvSpec and the managed settings file both chain the sidecar in"
 ```
 
@@ -1142,8 +1153,33 @@ func TestStartCompressionRefusesWithoutGateway(t *testing.T) {
 	// never called.
 }
 
+// compressionConfig extends gwConfig with agent.compression: headroom
+// (bypassing Task 1/10's Validate refusal directly on the fixture's Config,
+// the same way existing gateway tests bypass unrelated refusals to isolate
+// this behavior) and, deliberately, git.pr.checkpoints: false. **The
+// checkpoint-off choice is load-bearing, not incidental**: the early draft
+// PR can open mid-stage, not only after a stage ends — a running stage's
+// branch tip is polled every checkpointPoll (10s) and pushed, opening the
+// draft, once a commit has been quiet for checkpointQuiet (5s)
+// (`internal/runner/checkpoint_schedule.go:8-25`, `docs/design/
+// checkpoint-pushes.md`). An earlier draft of this plan killed the sidecar
+// "during implement" and asserted no PR existed yet, which is not
+// guaranteed with checkpoints on — the outcome would depend on an unstated
+// race between the kill and the checkpoint goroutine. Disabling checkpoints
+// for these tests removes the race outright, rather than trying to win it
+// deterministically in a fake harness.
+func compressionConfig(t *testing.T) string {
+	t.Helper()
+	cfg := gwConfig(t, "    compression: headroom\n")
+	out := strings.Replace(cfg, "git:\n  provider: github\n", "git:\n  provider: github\n  pr: { checkpoints: false }\n", 1)
+	if out == cfg {
+		t.Fatal("fixture has no git:/provider: github line to attach pr.checkpoints to")
+	}
+	return out
+}
+
 func TestRunnerBuildsANarrowSidecarEnv(t *testing.T) {
-	h := newGW(t, compressionConfig(t), "observe", "").harness // a fixture with agent.compression: headroom (bypassing Task 1/10's Validate refusal directly on the fixture's Config, the same way existing gateway tests bypass unrelated refusals to isolate this behavior)
+	h := newGW(t, compressionConfig(t), "observe", "").harness
 	if _, err := h.run(t, implement("feature"), review("ship", 0)); err != nil {
 		t.Fatal(err)
 	}
@@ -1154,6 +1190,10 @@ func TestRunnerBuildsANarrowSidecarEnv(t *testing.T) {
 	}
 }
 
+// TestRunnerFailsStageOnSidecarDeath relies on compressionConfig's
+// checkpoints: false to guarantee no PR exists yet when implement is
+// killed -- without it, this test's own pass/fail would depend on whether
+// the checkpoint-push goroutine won an unstated race against the kill.
 func TestRunnerFailsStageOnSidecarDeath(t *testing.T) {
 	h := newGW(t, compressionConfig(t), "observe", "").harness
 	h.killSidecarDuring("implement") // closes the fake Dead() channel mid-stage
@@ -1162,13 +1202,20 @@ func TestRunnerFailsStageOnSidecarDeath(t *testing.T) {
 		t.Fatal("a sidecar death did not fail the run")
 	}
 	if rec.Status != runstore.StatusInfraError {
-		t.Errorf("a bootstrap-time sidecar death (no PR yet) ended %s, want infra_error", rec.Status)
+		t.Errorf("a bootstrap-time sidecar death (no PR yet, checkpoints off) ended %s, want infra_error", rec.Status)
 	}
 }
 
+// TestSidecarDeathAfterPRKeepsItAsDraft needs no checkpoint control: it
+// kills the sidecar during fix, after implement has already run to
+// completion, by which point a PR exists regardless of
+// git.pr.checkpoints (the ordinary post-implement PR creation, not only
+// the checkpoint path) -- so compressionConfig's checkpoints: false here
+// only removes a second, unrelated source of mid-implement nondeterminism,
+// not the thing this test's own assertion depends on.
 func TestSidecarDeathAfterPRKeepsItAsDraft(t *testing.T) {
 	h := newGW(t, compressionConfig(t), "observe", "").harness
-	h.killSidecarDuring("fix") // after implement has already opened the early draft PR
+	h.killSidecarDuring("fix") // after implement has already completed and opened its PR
 	rec, _ := h.run(t, implement("feature"), review("revise", 1))
 	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft || rec.PR == nil {
 		t.Fatalf("a sidecar death after a PR existed = %s/%s, pr=%v; want failed/draft with the PR kept", rec.Status, rec.Outcome, rec.PR)
