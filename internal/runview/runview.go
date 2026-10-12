@@ -58,11 +58,14 @@ type Row struct {
 	Run      string `json:"run"`
 	Repo     string `json:"repo"`
 	Workflow string `json:"workflow,omitempty"`
-	// OAuthAccount is the named Claude OAuth account the run's record says
-	// it used ("" for the repository's default account,
-	// docs/design/named-oauth-tokens.md); "" for a run whose record hasn't
-	// set one (every run before this field existed, and any run not using
-	// agent.auth: oauth). Informational only.
+	// OAuthAccount is the named Claude OAuth account the run used ("" for
+	// the repository's default account, docs/design/named-oauth-tokens.md):
+	// the record's own value when it has one (confirmed by the runner
+	// itself at finalize), else the launching task's OAuthToken (Join falls
+	// back to it when the record has none — a run that died before
+	// finalize, or whose record predates this field). Still "" for a run
+	// with neither a record nor a task carrying an account (not using
+	// agent.auth: oauth, or neither is readable). Informational only.
 	OAuthAccount string `json:"oauth_account,omitempty"`
 	// Recipe is the run's recipe: the record's, else the task's; "" when
 	// neither names one (a default run launched before 0.5.0, or not started).
