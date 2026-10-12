@@ -395,7 +395,7 @@ func (r *run) postReviewComments(ctx context.Context, v Verdict) {
 		nums[i] = h.Number
 	}
 	marker := "\n" + gitprov.ReportMarker(r.rec.RunID) + "\n"
-	content := agent.Redact(ReviewComment(r.rec.Recipe.Name, v, nums), r.secretList())
+	content := agent.Redact(ReviewComment(r.rec.Recipe.Name, v, nums, r.secretList()), r.secretList())
 	body := clipBody(content, maxBodyBytes-len(marker)) + marker
 	reviewed := make([]runstore.ReviewedPR, 0, len(r.reviewHeads))
 	for _, h := range r.reviewHeads {
@@ -416,10 +416,15 @@ func (r *run) postReviewComments(ctx context.Context, v Verdict) {
 // says which pull request to keep, and the findings follow as a list. Each
 // finding's own free text (Severity, File, Summary) comes from the
 // reviewed pull request's own model turn — as untrusted as the diff it
-// read, even more so for a fork — so it is neutralised (neutralizeFinding)
-// before being pasted into a comment Fugaro posts on the repository's
-// behalf.
-func ReviewComment(recipeName string, v Verdict, prs []int) string {
+// read, even more so for a fork — so each field is first redacted against
+// secrets, raw, before it is neutralised (neutralizeFinding): neutralising
+// first would let a secret containing a character neutralizeFinding
+// rewrites (an '@', a '<', a bracket, "#1", "://", a backtick fence, ...)
+// survive almost whole, since the redactor's patterns are the secret's raw
+// form and no longer match the altered text. postReviewComments redacts
+// the whole assembled body again afterwards, as a second, defense-in-depth
+// pass, before clipping.
+func ReviewComment(recipeName string, v Verdict, prs []int, secrets []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Fugaro review (%s): %s\n", recipeName, v.Verdict)
 	if len(prs) > 1 {
@@ -435,47 +440,72 @@ func ReviewComment(recipeName string, v Verdict, prs []int) string {
 		for _, f := range v.Findings {
 			b.WriteString("- ")
 			if f.Severity != "" {
-				fmt.Fprintf(&b, "[%s] ", neutralizeFinding(f.Severity))
+				fmt.Fprintf(&b, "[%s] ", neutralizeFinding(agent.Redact(f.Severity, secrets)))
 			}
 			if f.File != "" {
-				fmt.Fprintf(&b, "%s: ", neutralizeFinding(f.File))
+				fmt.Fprintf(&b, "%s: ", neutralizeFinding(agent.Redact(f.File, secrets)))
 			}
-			b.WriteString(neutralizeFinding(f.Summary))
+			b.WriteString(neutralizeFinding(agent.Redact(f.Summary, secrets)))
 			b.WriteString("\n")
 		}
 	}
 	return b.String()
 }
 
-// findingHashRE, findingSchemeRE and findingFenceRE are neutralizeFinding's
-// patterns: a bare issue/pull-request autolink (#N, also inside
+// findingLineBreakRE, findingHashRE, findingSchemeRE, findingWWWRE and
+// findingFenceRE are neutralizeFinding's patterns: any line break (bare CR
+// or LF, CRLF, or the Unicode line/paragraph separators, which Markdown
+// renderers and GitHub's own display both treat as breaking a line the
+// same as LF), a bare issue/pull-request autolink (#N, also inside
 // org/repo#N, since it is the bare "#" immediately before digits that
-// triggers it either way), a URL scheme that would otherwise auto-link a
-// bare or markdown-linked URL, and a run of 3 or more backticks or tildes,
-// which opens a Markdown fenced code block that would otherwise run to the
-// next matching fence or the end of the comment, swallowing (visually, in
-// the rendered comment) whatever followed it, including the real marker.
+// triggers it either way), a URL scheme or a bare "www." host that would
+// otherwise auto-link a bare or markdown-linked URL, and a run of 3 or
+// more backticks or tildes, which opens a Markdown fenced code block that
+// would otherwise run to the next matching fence or the end of the
+// comment, swallowing (visually, in the rendered comment) whatever
+// followed it, including the real marker.
 var (
-	findingHashRE   = regexp.MustCompile(`#(\d+)`)
-	findingSchemeRE = regexp.MustCompile(`(?i)(https?)://`)
-	findingFenceRE  = regexp.MustCompile("(`{3,}|~{3,})")
+	findingLineBreakRE = regexp.MustCompile("\r\n|[\r\n\u2028\u2029]")
+	findingHashRE      = regexp.MustCompile(`#(\d+)`)
+	findingSchemeRE    = regexp.MustCompile(`(?i)(https?)://`)
+	findingWWWRE       = regexp.MustCompile(`(?i)www\.`)
+	findingFenceRE     = regexp.MustCompile("(`{3,}|~{3,})")
 )
 
 // neutralizeFinding makes one finding field safe to paste as-is into a
 // comment Fugaro posts on a repository's behalf, without the reviewed pull
-// request's own model turn being able to use it to: @mention an arbitrary
-// person (zero-width space breaks the mention), auto-link an issue or pull
-// request of this repository or, with the org/repo#N form, another one
-// (same trick, right after the '#'), render or load HTML (an <img> tag, or
-// forge Fugaro's own "<!-- fugaro:report -->" marker, both broken by
-// escaping every '<' and '>'), turn a bare or disguised ("[text](url)")
-// link clickable (breaking the URL scheme, and Markdown-escaping the
-// bracket syntax), or open a fenced code block with no matching close
-// (breaking any run of 3+ backticks or tildes, at any length — a
-// zero-width space between every character of the run, not only after the
-// first, since an opener needs only 3 consecutive fence characters
-// anywhere in a longer run to still work).
+// request's own model turn being able to use it to: forge a fake heading
+// or a second "Fugaro review" line by breaking out of its own bullet with
+// a line break (every line break collapses to a space first, before
+// anything else, so nothing later in this function ever has to reason
+// about more than one line); use a literal backslash to swallow the
+// escape this function itself adds to a bracket right after it, turning
+// "\[click\](//evil.example/login)" into a working link once this
+// function's own "\[" escape lands next to it (every backslash is doubled
+// before any other substitution runs, which is also why this step comes
+// before, not after, the bracket escape below); smuggle any of the
+// characters this function treats specially past it by spelling it as an
+// HTML entity instead ('&#x40;' for '@', '&num;' for '#', ...), which
+// GitHub's renderer decodes to the literal character before the stage
+// that would otherwise be fooled ever sees the text (every '&' is escaped
+// to '&amp;' before this function's own '<'/'>' escaping introduces any
+// new ones, which must not be escaped a second time); @mention an
+// arbitrary person (zero-width space breaks the mention); auto-link an
+// issue or pull request of this repository or, with the org/repo#N form,
+// another one (same zero-width-space trick, right after the '#'); render
+// or load HTML (an <img> tag, or forge Fugaro's own
+// "<!-- fugaro:report -->" marker, both broken by escaping every '<' and
+// '>'); turn a bare or disguised ("[text](url)") link, or a bare "www."
+// host, clickable (breaking the URL scheme or the "www." prefix, and
+// Markdown-escaping the bracket syntax); or open a fenced code block with
+// no matching close (breaking any run of 3+ backticks or tildes, at any
+// length — a zero-width space between every character of the run, not
+// only after the first, since an opener needs only 3 consecutive fence
+// characters anywhere in a longer run to still work).
 func neutralizeFinding(s string) string {
+	s = findingLineBreakRE.ReplaceAllString(s, " ")
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "&", "&amp;")
 	s = strings.ReplaceAll(s, "<", "&lt;")
 	s = strings.ReplaceAll(s, ">", "&gt;")
 	s = strings.ReplaceAll(s, "@", "@\u200b")
@@ -483,6 +513,9 @@ func neutralizeFinding(s string) string {
 	s = strings.ReplaceAll(s, "[", "\\[")
 	s = strings.ReplaceAll(s, "]", "\\]")
 	s = findingSchemeRE.ReplaceAllString(s, "$1\u200b://")
+	s = findingWWWRE.ReplaceAllStringFunc(s, func(m string) string {
+		return m[:3] + "\u200b" + m[3:]
+	})
 	s = findingFenceRE.ReplaceAllStringFunc(s, func(m string) string {
 		return strings.Join(strings.Split(m, ""), "\u200b")
 	})

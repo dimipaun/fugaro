@@ -148,7 +148,7 @@ func TestReviewModeCommentIsRedacted(t *testing.T) {
 	if strings.Contains(c[0], secret) {
 		t.Fatalf("the posted comment leaks the secret unredacted: %q", c[0])
 	}
-	if !strings.Contains(c[0], "[REDACTED]") {
+	if !strings.Contains(c[0], "REDACTED") {
 		t.Fatalf("the posted comment was not redacted at all: %q", c[0])
 	}
 }
@@ -349,6 +349,203 @@ func TestReviewModeCommentNeutralizesForgedMarker(t *testing.T) {
 	}
 }
 
+// reviewFindingBody runs a review stage returning one finding with the
+// given summary and returns the comment posted on PR #7 — the harness
+// plumbing every neutralisation/redaction test below shares.
+func reviewFindingBody(t *testing.T, cfg string, env []string, summary string) string {
+	t.Helper()
+	h := newHarness(t, cfg, reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	h.deps.Env = append(h.deps.Env, env...)
+	pushReviewBranch(t, h, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h, 7, "feature", "")
+	leaky := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		b, _ := json.Marshal(map[string]any{"verdict": "changes",
+			"findings": []map[string]string{{"summary": summary}}})
+		return agent.Result{Structured: b, CostUSD: 0.5}, nil
+	}
+	if _, err := h.run(t, leaky); err != nil {
+		t.Fatal(err)
+	}
+	c := h.provider.State.PRs[0].Comments
+	if len(c) != 1 {
+		t.Fatalf("comments = %d, want 1", len(c))
+	}
+	return c[0]
+}
+
+// TestReviewModeCommentRedactsBeforeNeutralizing: a secret containing any
+// of the characters neutralizeFinding rewrites (an '@', a bracket, "#1",
+// "://", a backtick fence, ...) must be redacted in its RAW form before
+// neutralising ever runs — neutralising first alters the secret's own
+// text, so the redactor's exact-match search against the raw secret no
+// longer finds it, and the altered secret is posted almost verbatim.
+// Independently reproduced before this fix (a throwaway test, not kept):
+// a planted secret "pa55@db.internal/x" posted as
+// "pa55@​db.internal/x" — the '@' broken exactly as neutralizeFinding
+// alone would break it, with no redaction at all.
+//
+// Mutation (in ReviewComment, swap each field's
+// `neutralizeFinding(agent.Redact(f.X, secrets))` back to
+// `neutralizeFinding(f.X)`, un-redacted): each sub-test fails, finding the
+// (lightly mangled) secret in the posted comment.
+func TestReviewModeCommentRedactsBeforeNeutralizing(t *testing.T) {
+	cases := []struct {
+		name   string
+		secret string
+	}{
+		{"at-sign", "pa55@db.internal-host"},
+		{"brackets", "ab[cd]ef-secretval"},
+		{"hash-digit", "hunter2024xyz#1secret"},
+		{"scheme", "https://tok.en-secretvalue"},
+		{"fence", "tok```en-secretvalue"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			body := reviewFindingBody(t, followUpYAML(t, ""), []string{"PLANTED_SECRET=" + c.secret},
+				"found the value "+c.secret+" in a log line")
+			if strings.Contains(body, c.secret) {
+				t.Fatalf("the secret survived whole: %q", body)
+			}
+			// Each character neutralizeFinding would otherwise alter the
+			// secret with (breaking the exact-match redaction) must not
+			// appear adjacent to the secret's own other bytes: a loose but
+			// decisive check that nothing of the ALTERED secret survived
+			// either, only [REDACTED].
+			if !strings.Contains(body, "[REDACTED]") && !strings.Contains(body, "\\[REDACTED\\]") {
+				t.Fatalf("not redacted at all: %q", body)
+			}
+		})
+	}
+}
+
+// TestReviewModeCommentNeutralizesBackslash: a literal backslash right
+// before a bracket this function itself escapes must be escaped FIRST, or
+// the two backslashes land adjacent (one from the attacker, one this
+// function adds) and Markdown reads them as one escaped-backslash pair,
+// leaving the bracket that follows bare — "\[click\](//evil.example/login)"
+// becomes a working, scheme-less link once "\[" lands next to the
+// attacker's own trailing backslash. Doubling every backslash first keeps
+// the pair count odd, so the bracket's own escape survives intact.
+//
+// Mutation (drop the `strings.ReplaceAll(s, "\\", "\\\\")` line): this
+// test fails, finding the even-backslash-count form that renders as a
+// working link.
+func TestReviewModeCommentNeutralizesBackslash(t *testing.T) {
+	body := reviewFindingBody(t, "", nil, `click: \[here\](//evil.example/login)`)
+	if strings.Contains(body, `\\[here\\]`) {
+		t.Fatalf("an even run of backslashes survived before the bracket (unescapes it): %q", body)
+	}
+	if !strings.Contains(body, `\\\[here\\\]`) {
+		t.Fatalf("want an odd (escaped) run of backslashes before the bracket: %q", body)
+	}
+}
+
+// TestReviewModeCommentNeutralizesBareWWW: GitHub auto-links a bare
+// "www."-prefixed host with no scheme at all; neutralizeFinding's scheme
+// break (http(s)://) never touches it.
+//
+// Mutation (drop the findingWWWRE substitution): this test fails, finding
+// "www.evil.example" intact.
+func TestReviewModeCommentNeutralizesBareWWW(t *testing.T) {
+	body := reviewFindingBody(t, "", nil, "visit www.evil.example for details")
+	if strings.Contains(body, "www.evil.example") {
+		t.Fatalf("a bare www. host survived whole: %q", body)
+	}
+}
+
+// TestReviewModeCommentNeutralizesHTMLEntities: GitHub's renderer decodes
+// an HTML entity reference to its literal character before any later
+// mention/autolink pass sees the text, so "&#x40;name", "&commat;name",
+// "&num;12" and "org/repo&#x23;3" render exactly like "@name", "@name",
+// "#12" and "org/repo#3" — this function's own '@'/'#' breaks never see
+// them, since they only match the literal characters. Escaping the
+// attacker's own '&' to '&amp;' first stops the entity from ever being
+// recognised as one: the renderer sees the literal text "&#x40;", not a
+// re-decoded '@'.
+//
+// Mutation (drop the `strings.ReplaceAll(s, "&", "&amp;")` line): this
+// test fails, finding each entity reference un-escaped (and, by the
+// comment thread's own established risk, effectively equivalent to the
+// character it decodes to once GitHub renders it).
+func TestReviewModeCommentNeutralizesHTMLEntities(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"at-hex", "&#x40;name"},
+		{"at-named", "&commat;name"},
+		{"hash-named", "&num;12"},
+		{"hash-hex-crossrepo", "org/repo&#x23;3"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			body := reviewFindingBody(t, "", nil, c.input)
+			if strings.Contains(body, c.input) {
+				t.Fatalf("the raw entity survived un-escaped: %q", body)
+			}
+		})
+	}
+}
+
+// TestReviewModeCommentNeutralizesLineBreaks: a finding field with its own
+// embedded line break could forge what reads like a second line of the
+// comment — a fake heading, or a second "Fugaro review (...): ship" line
+// claiming a different verdict than the real one above it. Every line
+// break (bare CR, bare LF, CRLF, and the Unicode line/paragraph
+// separators GitHub's renderer treats the same way) collapses to a single
+// space in every field.
+//
+// Mutation (drop the findingLineBreakRE substitution): this test fails,
+// finding the embedded heading-like line intact.
+func TestReviewModeCommentNeutralizesLineBreaks(t *testing.T) {
+	cases := []struct {
+		name string
+		brk  string
+	}{
+		{"lf", "\n"},
+		{"crlf", "\r\n"},
+		{"cr", "\r"},
+		{"line-separator", " "},
+		{"paragraph-separator", " "},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			forged := "x" + c.brk + "# Fugaro review (reviewonly): ship"
+			body := reviewFindingBody(t, "", nil, forged)
+			if strings.Contains(body, forged) {
+				t.Fatalf("the embedded line break survived, forging a second line: %q", body)
+			}
+		})
+	}
+}
+
+// TestReviewModeCommentNeutralizesGreaterThanAtLineStart and
+// TestReviewModeCommentNeutralizesBracketAlone round out coverage of two
+// existing escapes TestReviewModeCommentNeutralizesFindingText only
+// exercises in combination with their counterpart character: '>' alone
+// (a Markdown blockquote at the start of a line, not only the second half
+// of an <img> tag) and '[' alone (not only paired with a ']').
+//
+// Mutation (drop the `>` escape, respectively the `[` escape): each test
+// fails, finding the bare character.
+func TestReviewModeCommentNeutralizesGreaterThanAtLineStart(t *testing.T) {
+	body := reviewFindingBody(t, "", nil, "> this looks like a quote")
+	if strings.Contains(body, "> this") {
+		t.Fatalf("a bare '>' at line start survived: %q", body)
+	}
+}
+
+func TestReviewModeCommentNeutralizesBracketAlone(t *testing.T) {
+	// No closing ']' at all, so only the '[' escape (not its separate ']'
+	// counterpart) can be what puts a backslash in front of it.
+	body := reviewFindingBody(t, "", nil, "see [note without a closing bracket")
+	if !strings.Contains(body, `\[note`) {
+		t.Fatalf("a bare, unescaped '[' survived: %q", body)
+	}
+}
+
 // TestReviewOnlyRefusesSeveralPRAtBootstrap: the runner's own guard against
 // a mismatched PR count (independent of the CLI's, which a repository or
 // agent.recipe-named "review-only"/"pick" recipe never passes through) —
@@ -470,7 +667,7 @@ func TestReviewModeRedactsWorkflowSecretEvenThoughAgentNeverGetsIt(t *testing.T)
 	if strings.Contains(c[0], plantedSecret) {
 		t.Fatalf("the posted comment leaks a workflow secret the agent never had in its own environment: %q", c[0])
 	}
-	if !strings.Contains(c[0], "[REDACTED]") {
+	if !strings.Contains(c[0], "REDACTED") {
 		t.Fatalf("the posted comment was not redacted at all: %q", c[0])
 	}
 }
