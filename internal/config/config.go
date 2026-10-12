@@ -154,7 +154,7 @@ type Agent struct {
 	// checks the name's own shape. Repo and override scope only (Scopes):
 	// neither the project layer nor a profile may set it (design §3 T2).
 	// Binaries before 0.6.1 refuse this key (fugaro.yaml's strict decoder).
-	OAuthToken string `yaml:"oauth_token,omitempty"`
+	OAuthToken string `yaml:"oauth_token,omitempty" json:"OAuthToken,omitempty"`
 }
 
 // First-line review settings (Agent.FirstLineReview).
