@@ -503,6 +503,38 @@ func TestBudgetDefaultsOff(t *testing.T) {
 	}
 }
 
+// TestUpdateCheckEnabled pins all three states: absent (on), explicit
+// true (on), explicit false (off). Only "false" being tested before left
+// a flipped condition (`*c.UpdateCheck` without the `||`, or an inverted
+// `!*c.UpdateCheck`) free to survive for the "explicit true" case.
+//
+// Mutation: changing UpdateCheckEnabled's body to `return c.UpdateCheck ==
+// nil` (dropping `|| *c.UpdateCheck`) makes "explicit true" wrongly report
+// disabled.
+func TestUpdateCheckEnabled(t *testing.T) {
+	c, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.UpdateCheckEnabled() {
+		t.Error("no update_check key: UpdateCheckEnabled() = false, want true")
+	}
+	c, err = Parse([]byte(sample + "update_check: true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.UpdateCheckEnabled() {
+		t.Error("update_check: true: UpdateCheckEnabled() = false, want true")
+	}
+	c, err = Parse([]byte(sample + "update_check: false\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.UpdateCheckEnabled() {
+		t.Error("update_check: false: UpdateCheckEnabled() = true, want false")
+	}
+}
+
 func TestBudgetValidation(t *testing.T) {
 	for name, tc := range map[string]struct{ yaml, msg string }{
 		"unknown mode":          {"budget: { mode: strict, per_run_usd: 5 }\n", "budget.mode"},

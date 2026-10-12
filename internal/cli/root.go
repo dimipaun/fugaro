@@ -56,11 +56,20 @@ func NewRootCmd() *cobra.Command {
 		Short:         "Fleeting cloud workers for coding agents",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		// The plugin staleness line (design 4.5). No command defines its own
-		// PersistentPreRun, which would replace this one.
+		// The plugin staleness line (design 4.5) and the update-check kickoff
+		// (docs/gcp-setup.md "Staying up to date"). No command defines its own
+		// PersistentPreRun, which would replace this one. The update-available
+		// nag is NOT printed from a PersistentPostRun: cobra's Command.execute
+		// returns as soon as RunE errors, skipping PostRun and
+		// PersistentPostRun entirely, so most command failures would never
+		// carry it. cmd/fugaro/main.go instead calls WarnUpdateAvailable
+		// itself, after ExecuteContextC returns, whether or not it errored.
 		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
 			cmd.SetContext(withCheckoutParseCache(cmd.Context()))
 			warnStaleSkills(cmd)
+			disabled := updateCheckDisabled(cmd)
+			cmd.SetContext(withUpdateCheckDisabled(cmd.Context(), disabled))
+			startUpdateCheck(cmd, disabled)
 		},
 	}
 	root.AddCommand(

@@ -83,7 +83,13 @@ type Config struct {
 	// Only the owner sets them, here, never in fugaro.yaml.
 	ClaudeAccounts map[string]config.ClaudeAccount `yaml:"claude_accounts,omitempty"`
 	// Watch tunes fugaro watch.
-	Watch       *Watch          `yaml:"watch,omitempty"`
+	Watch *Watch `yaml:"watch,omitempty"`
+	// UpdateCheck turns off the daily check for a newer fugaro release and
+	// its one-line stderr nag (FUGARO_NO_UPDATE_CHECK=1 does the same;
+	// `fugaro doctor`'s own cli-version check ignores both); nil or true
+	// leaves it on. Operator-only, like claude_accounts: never published to
+	// the runs bucket (Shared).
+	UpdateCheck *bool           `yaml:"update_check,omitempty"`
 	User        string          `yaml:"user,omitempty"`
 	MaxParallel int             `yaml:"max_parallel"`
 	Endpoints   Endpoints       `yaml:"endpoints,omitempty"`
@@ -167,6 +173,12 @@ type LongContext struct {
 	AboveInputTokens int64    `yaml:"above_input_tokens"`
 	InputPerM        *float64 `yaml:"input_per_m"`
 	OutputPerM       *float64 `yaml:"output_per_m"`
+}
+
+// UpdateCheckEnabled reports whether the daily update check and its stderr
+// nag run for this config: true unless update_check: false.
+func (c *Config) UpdateCheckEnabled() bool {
+	return c.UpdateCheck == nil || *c.UpdateCheck
 }
 
 // BudgetMode is the budget's mode: "off" when there is no budget block or
