@@ -271,7 +271,10 @@ func (s *secretsStage) resolve(ctx context.Context) {
 		tg.noConfig = true
 	} else {
 		for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
-			mounts, err := infra.SecretMounts(gitSecret, cfg, name, cfg.Workflows[name], lc, repo)
+			// The default account only: Task 5 extends this to every name
+			// config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo) allows,
+			// so init also prompts for each named account's own token.
+			mounts, err := infra.SecretMounts(gitSecret, cfg, name, config.DefaultClaudeAccount, cfg.Workflows[name], lc, repo)
 			if err != nil {
 				s.skip = "fugaro.yaml's secrets cannot be worked out: " + oneLine(err.Error())
 				return

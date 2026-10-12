@@ -69,6 +69,13 @@ Cloud Run mounts secrets at the **job**, not the execution (§1). Four shapes we
 
 **Why a variant per name, not per name-and-workflow combinatorially out of control:** names are owner-chosen and expected to be few (a handful of accounts, not dozens); the plan's live-check task (§7) asks the owner to confirm Cloud Run's per-project job-count ceiling is comfortable at the scale they intend (no code in this repository reads or enforces such a ceiling today — it is a GCP account limit, unverified here).
 
+### 4a. Operational notes found in the Task 4 review (what `infra` now does)
+
+- **Removing an account, or unlisting a repository from an account's `allow_data_to`, plans DELETES** of that variant's service account, its bindings, its Cloud Run job and the `claude-oauth-token-<name>` secret, including the stored token. `tf.Guard` refuses every one of them (it fails closed), so the person applying needs `--allow-delete` for each address, plus `--allow-job-delete` for a deployed job (the job has `deletion_protection`). That is deliberate: removing an account is destructive, and it should take a typed confirmation, never happen as a side effect of editing the local config.
+- **A second operator's `fugaro init --repo` with a local config that lacks the accounts** also plans those deletes, because `claude_accounts` is operator-only local config and is never published (`Shared()` strips it). The guard blocks their init rather than destroying anything; they need the same local config as the first operator, or the plan will show the deletes and be refused.
+- **Until Task 5 lands,** once an account lists a repository `init --repo` prints `fugaro secrets set claude-oauth-token-<name> --repo X` and `secrets set` refuses it (it is neither the reserved name nor declared): that is the gap Task 5 closes.
+- A variant job is never deployed until its secret has a version; the one image is shared by the default job and every variant (built once).
+
 ## 5. Compatibility
 
 - **An installation that adds no `claude_accounts` entry is unaffected, in full.** `gcp.WorkflowVariant` is the identity function for `"" | "default"`; the `infra` loop produces exactly the one `WorkflowSpec` per workflow it produces today; no new Terraform resource is created (the `for_each` set is unchanged); `task.Spec.OAuthToken` is omitted (`omitempty`); `runstore.Record.OAuthAccount` is omitted. A golden test (plan Task 2) diffs `BuildRepoSpec`'s JSON tfvars output, byte for byte, between the code before and after this feature, over the existing corpus of `fugaro.yaml` fixtures, with no `claude_accounts` configured.
