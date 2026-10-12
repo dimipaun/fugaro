@@ -611,7 +611,8 @@ git commit -m "named oauth tokens task 4: infra builds one job variant per allow
   }
   ```
   The exact boolean wiring must respect the existing `reserved`/provider branch order (so `claude-oauth-token` itself, still reserved, is unaffected) — read `secrets.go:156-193` at task start and insert the new branch as a sibling of the provider one, not nested inside it.
-- Changes: `SecretCommands` (`internal/cli/initsecrets.go:190-211`) and the interactive stage's `Left()`/`take()` (`initsecrets.go:414-439`, `506-528`) list one `claude setup-token` + `secrets set claude-oauth-token-<name>` pair **per name in `config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo)` that is not yet stored**, not just the bare default — so `fugaro init` on a repository the owner has already allowed two named accounts for prompts for both.
+- Changes: the interactive stage's `resolve()` (which builds `secretTarget.wanted`), `Left()` and `take()` (`internal/cli/initsecrets.go`) list one `claude setup-token` + `secrets set claude-oauth-token-<name>` pair **per name in `config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo)` that is not yet stored**, not just the bare default — so `fugaro init` on a repository the owner has already allowed two named accounts for prompts for both.
+  *(Note, 2026-10-12: corrected against the shipped code — there is no `SecretCommands` function in `internal/cli/initsecrets.go`; that name belongs to a different function in `internal/infra/repo.go`, used by `fugaro init --repo`'s repository stage (fed from `infra.RepoSpec`, which Task 4 builds), not by the secrets stage this task edits. The line numbers this bullet originally cited (`190-211`, `414-439`, `506-528`) were approximate at plan-writing time and no longer match; Task 5 instead extends `resolve()`'s `tg.wanted` construction, which is the actual place the secrets stage decides what to ask for.)*
 
 **Tests:**
 
