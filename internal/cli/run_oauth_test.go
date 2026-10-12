@@ -196,7 +196,7 @@ func TestFollowUpNoTokenInheritsPreviousAccount(t *testing.T) {
 }
 
 // TestFollowUpExplicitTokenOverridesInheritedAccount is the owner's ruling
-// (2026-10-13, task 9b review): an EXPLICIT --token on a follow-up now
+// (2026-10-12, task 9b review): an EXPLICIT --token on a follow-up now
 // overrides the inherited account instead of being ignored. The root run
 // used the default account; the follow-up switches to acme-personal and
 // must launch THAT account's variant job (gcp.WorkflowVariant("web",

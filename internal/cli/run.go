@@ -113,7 +113,7 @@ type runOptions struct {
 	// token is the named Claude account (docs/design/named-oauth-tokens.md)
 	// this run uses: fugaro run --token. A follow-up (--pr) inherits its
 	// previous run's account when this is empty; an explicit value overrides
-	// it instead (owner ruling, 2026-10-13, task 9b review), through the
+	// it instead (owner ruling, 2026-10-12, task 9b review), through the
 	// same allow-list, agent.auth and version-gate checks a first run's does.
 	token string
 }

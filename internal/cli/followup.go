@@ -42,7 +42,7 @@ type prChain struct {
 	// inherits it by default, never re-deriving it from fugaro.yaml or
 	// anything else a first run would read — but an explicit --token on the
 	// follow-up command overrides it (newFollowUpSpec, owner ruling
-	// 2026-10-13, task 9b review; design docs/design/named-oauth-tokens.md
+	// 2026-10-12, task 9b review; design docs/design/named-oauth-tokens.md
 	// §3 T6 and §6b).
 	OAuthToken string
 	Recipe     *task.Recipe // the previous run's: a follow-up keeps it unless --recipe names one
@@ -453,7 +453,7 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	// (inherited or overridden) should never trigger.
 	//
 	// A follow-up inherits its previous run's account by default, but an
-	// EXPLICIT --token now overrides it (owner ruling, 2026-10-13, named
+	// EXPLICIT --token now overrides it (owner ruling, 2026-10-12, named
 	// oauth tokens task 9b review): switching accounts after a usage limit
 	// needs this, and it widens nothing a launcher could not already do with
 	// a fresh run — the override is resolved exactly like claudeAccountFor
