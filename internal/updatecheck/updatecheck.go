@@ -149,6 +149,21 @@ func cachePath(getenv func(string) string) (string, error) {
 	return filepath.Join(dir, "fugaro", "update-check.json"), nil
 }
 
+// readBounded reads all of r, up to 2*maxBody bytes; ok is false when that
+// bound is hit (r had more to give) or the read itself failed. Pulled out
+// of Load so a test can prove the bound with a counting io.Reader wrapping
+// an arbitrarily large (even synthetic, never-ending) source, without
+// needing a real oversized file on disk: an attacker- or
+// corruption-controlled cache file must never be buffered in full before
+// this decides to give up on it.
+func readBounded(r io.Reader) (data []byte, ok bool) {
+	data, err := io.ReadAll(io.LimitReader(r, 2*maxBody+1))
+	if err != nil || len(data) > 2*maxBody {
+		return nil, false
+	}
+	return data, true
+}
+
 // Load is the cached entry, the zero Entry when there is none or it can't
 // be read: a missing, truncated or corrupt cache is treated as no cache,
 // never an error.
@@ -170,12 +185,8 @@ func Load(getenv func(string) string) Entry {
 		return Entry{}
 	}
 	defer f.Close()
-	// Bounded before anything is buffered: opening a regular file can't
-	// block the way a FIFO would, but the read itself still must not
-	// grow without limit for a cache file that is, somehow, both regular
-	// and huge.
-	data, err := io.ReadAll(io.LimitReader(f, 2*maxBody+1))
-	if err != nil || len(data) > 2*maxBody {
+	data, ok := readBounded(f)
+	if !ok {
 		return Entry{}
 	}
 	var e Entry
@@ -201,6 +212,11 @@ func Save(getenv func(string) string, e Entry) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
+	// A process exit (crash, kill, or the normal exit WaitForUpdateCheck's
+	// abandonment can lead to) between here and the Rename below skips the
+	// deferred Remove, leaving a stray, harmless (a few dozen bytes) .tmp-*
+	// file behind; not cleaned up, since nothing else in this package ever
+	// lists the directory to do so.
 	tmp, err := os.CreateTemp(dir, ".tmp-*")
 	if err != nil {
 		return err
@@ -281,6 +297,17 @@ func Fetch(ctx context.Context, client Client, endpoint string) (version string,
 // good value otherwise. A cache that can't be loaded or saved is treated
 // as best effort, same as everywhere else in this package. Refresh does
 // nothing when the cache is already fresh.
+//
+// The entry is re-Loaded right before the final Save, rather than reusing
+// the snapshot Due was checked against: the HTTP round trip can take up to
+// FetchTimeout, and WaitForUpdateCheck may have already given up on this
+// very call and let the command finish — printing the nag (Warn, which
+// also Loads then Saves) from the stale snapshot's state. Re-reading keeps
+// whatever Warn already wrote (Warned, WarnedAt) instead of clobbering it
+// with this call's older view; it narrows the overwrite race to the gap
+// between that re-read and this Save, rather than eliminating it (a
+// concurrent writer in that exact instant could still lose an update),
+// which is an acceptable best-effort tradeoff for a cache this disposable.
 func Refresh(ctx context.Context, getenv func(string) string, client Client, endpoint string, now time.Time) {
 	e := Load(getenv)
 	if !e.Due(now) {
@@ -288,7 +315,9 @@ func Refresh(ctx context.Context, getenv func(string) string, client Client, end
 	}
 	cctx, cancel := context.WithTimeout(ctx, FetchTimeout)
 	defer cancel()
-	if v, ok := Fetch(cctx, client, endpoint); ok {
+	v, ok := Fetch(cctx, client, endpoint)
+	e = Load(getenv)
+	if ok {
 		e.Latest = v
 	}
 	e.CheckedAt = now

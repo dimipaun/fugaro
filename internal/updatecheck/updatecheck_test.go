@@ -187,6 +187,91 @@ func TestLoadRefusesAFIFO(t *testing.T) {
 	}
 }
 
+// countingReader counts the bytes actually Read from it.
+type countingReader struct {
+	r io.Reader
+	n *int
+}
+
+func (c countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	*c.n += n
+	return n, err
+}
+
+// endlessReader always fills p with 'x' and never returns an error or EOF:
+// a stand-in for a cache file (or anything else) with far more data than
+// any sane cache entry, to prove readBounded gives up rather than reading
+// forever or without limit.
+type endlessReader struct{}
+
+func (endlessReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'x'
+	}
+	return len(p), nil
+}
+
+// TestReadBoundedNeverReadsMoreThanTheBound isolates io.LimitReader in
+// readBounded: wrapping an endless source, the bytes actually read must
+// never exceed 2*maxBody+1, regardless of readBounded's final ok/not-ok
+// answer (which a plain unbounded read would also eventually report false
+// for, once it ran out of memory or patience — this proves the bound is
+// enforced before that point, not after).
+//
+// Mutation: replacing `io.LimitReader(r, 2*maxBody+1)` with a bare `r`
+// makes this test hang (an endless reader never returns io.EOF), rather
+// than merely reporting a wrong byte count — confirmed by running the
+// mutation with a short per-test timeout rather than leaving it in the
+// suite to hang indefinitely.
+func TestReadBoundedNeverReadsMoreThanTheBound(t *testing.T) {
+	var read int
+	data, ok := readBounded(countingReader{endlessReader{}, &read})
+	if ok {
+		t.Fatalf("readBounded of an endless source ok = true, len(data) = %d, want ok = false", len(data))
+	}
+	if read > 2*maxBody+1 {
+		t.Fatalf("readBounded read %d bytes, want at most %d (2*maxBody+1): an oversized or endless source must never be read without bound", read, 2*maxBody+1)
+	}
+}
+
+// TestReadBoundedExactlyAtTheLimit isolates the `len(data) > 2*maxBody`
+// check: a source of exactly 2*maxBody+1 bytes is not truncated at all by
+// the LimitReader (it fits exactly), so only the explicit size check can
+// be refusing it.
+//
+// Mutation: dropping `len(data) > 2*maxBody` (leaving only `err != nil`)
+// makes this exact-boundary input wrongly ok = true.
+func TestReadBoundedExactlyAtTheLimit(t *testing.T) {
+	data, ok := readBounded(strings.NewReader(strings.Repeat("x", 2*maxBody+1)))
+	if ok {
+		t.Fatalf("readBounded of a %d-byte (2*maxBody+1) source ok = true, len(data) = %d, want ok = false", 2*maxBody+1, len(data))
+	}
+}
+
+// TestLoadRefusesAnOversizedFile is readBounded's guarantee exercised
+// through the real, file-based Load path: a cache file padded well past
+// the limit (with a valid-looking JSON prefix, so a regression that only
+// weakens the bound — not removes it entirely — would still have
+// something parseable to return if it got that far) must be treated as no
+// cache at all.
+func TestLoadRefusesAnOversizedFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fugaro", "update-check.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const prefix, suffix = `{"latest":"9.9.9","padding":"`, `"}`
+	total := 4 * maxBody
+	body := prefix + strings.Repeat("x", total-len(prefix)-len(suffix)) + suffix
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if e := Load(getenvFor(dir)); e != (Entry{}) {
+		t.Fatalf("Load of an oversized cache file = %+v, want the zero Entry", e)
+	}
+}
+
 // TestSaveLoadRoundTrip and file mode: 0600, atomic (no partial file ever
 // visible at the final path, since Save renames a temp file over it).
 func TestSaveLoadRoundTrip(t *testing.T) {
@@ -506,6 +591,61 @@ func TestRefreshLearnsANewRelease(t *testing.T) {
 	e := Load(getenv)
 	if e.Latest != "0.8.0" || !e.CheckedAt.Equal(now) {
 		t.Fatalf("entry = %+v, want latest 0.8.0 checked at %v", e, now)
+	}
+}
+
+// TestRefreshDoesNotClobberAConcurrentWarn pins Refresh's re-read-before-save:
+// if, while the HTTP round trip is in flight, something else (Warn, from
+// the same process's nag print, which can run concurrently with an
+// abandoned background check that keeps running past WaitForUpdateCheck's
+// bound) writes Warned/WarnedAt to the cache, Refresh's own Save at the
+// end must not overwrite that with the stale snapshot it Loaded before the
+// request started.
+//
+// Mutation: reusing the pre-fetch snapshot instead of re-Loading right
+// before Save (`e := Load(getenv)` once at the top, removing the second
+// `e = Load(getenv)` after Fetch) makes this test fail: the final entry's
+// Warned reverts to "" instead of keeping what was written during the
+// fetch.
+func TestRefreshDoesNotClobberAConcurrentWarn(t *testing.T) {
+	dir := t.TempDir()
+	getenv := getenvFor(dir)
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	if err := Save(getenv, Entry{CheckedAt: now.Add(-25 * time.Hour), Latest: "0.6.0"}); err != nil {
+		t.Fatal(err)
+	}
+
+	release := make(chan struct{})
+	client := fakeClient{do: func(*http.Request) (*http.Response, error) {
+		// Simulate Warn() running concurrently, mid-fetch: a nag printed
+		// by this same process for a command whose own work outlasted
+		// WaitForUpdateCheck's bound.
+		if err := Save(getenv, Entry{CheckedAt: now.Add(-25 * time.Hour), Latest: "0.6.0", Warned: "0.6.0", WarnedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+		<-release
+		resp := httptest.NewRecorder()
+		resp.WriteHeader(http.StatusOK)
+		_, _ = resp.WriteString(`{"tag_name":"v0.7.0"}`)
+		return resp.Result(), nil
+	}}
+	done := make(chan struct{})
+	go func() {
+		Refresh(context.Background(), getenv, client, "http://unused.example/", now)
+		close(done)
+	}()
+	// Give Refresh a moment to Load its pre-fetch snapshot and reach the
+	// fake client before the concurrent "Warn" write above happens.
+	time.Sleep(20 * time.Millisecond)
+	close(release)
+	<-done
+
+	e := Load(getenv)
+	if e.Warned != "0.6.0" || e.WarnedAt.IsZero() {
+		t.Fatalf("entry after Refresh = %+v, want Warned/WarnedAt kept from the concurrent write, not clobbered", e)
+	}
+	if e.Latest != "0.7.0" {
+		t.Fatalf("entry.Latest = %q, want the newly fetched 0.7.0", e.Latest)
 	}
 }
 

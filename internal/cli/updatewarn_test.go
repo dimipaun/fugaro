@@ -399,9 +399,18 @@ func TestWarnUpdateAvailableFiresWhenExecuteErrors(t *testing.T) {
 // "not disabled" and printed the nag anyway in every one of these cases,
 // even with the env switch set; it must now fail closed and print nothing.
 //
-// Mutation: reverting updateCheckDisabledFromContext to its one-return-value
-// form (treating a missing context value as disabled=false, ok implied
-// true) makes every case here print the line again.
+// This pins the user-visible outcome, not one specific internal mechanism:
+// with FUGARO_NO_UPDATE_CHECK=1 set (as it is here), shouldWarnUpdateAvailable's
+// own direct os.Getenv re-check already keeps every case silent on its
+// own, so reverting updateCheckDisabledFromContext to its old
+// one-return-value form does NOT turn this test red (confirmed by running
+// that mutation) — only TestWarnUpdateAvailableFailsClosedWithLocalConfigDisable
+// below exercises the ok-based fail-closed path in isolation, since
+// update_check: false has no equivalent direct-recheck shortcut (it needs
+// PersistentPreRun's local-config lookup to ever be known at all). This
+// test still earns its place: it is the literal reproduction of the five
+// cases the review reported, and guards the combined behavior even though
+// either single defense here happens to cover all of them today.
 func TestWarnUpdateAvailableFailsClosedWhenPersistentPreRunNeverRan(t *testing.T) {
 	withVersion(t, "0.6.1")
 	oldTTY := stderrIsTerminal
@@ -570,8 +579,15 @@ func TestWaitForUpdateCheckAbandonsASlowCheck(t *testing.T) {
 	if elapsed < updateCheckJoinBound {
 		t.Fatalf("WaitForUpdateCheck returned after %v, want at least the join bound %v: the background check never finished, so it must have been abandoned at the bound, not short-circuited", elapsed, updateCheckJoinBound)
 	}
-	if elapsed > 2*time.Second {
-		t.Fatalf("WaitForUpdateCheck took %v, want it bounded near %v: a blackholed network must never visibly slow the command", elapsed, updateCheckJoinBound)
+	// Well under FetchTimeout (1s), not just "under 2s": dropping the
+	// `case <-time.After(updateCheckJoinBound)` arm of WaitForUpdateCheck's
+	// select entirely (leaving only `case <-updateCheckDone`) makes it
+	// block until the fake client's own req.Context().Done() fires
+	// instead — Refresh's internal ~1s FetchTimeout — which a 2s ceiling
+	// would not have caught (1s < 2s), silently passing with the join
+	// bound completely bypassed.
+	if ceiling := updateCheckJoinBound + 400*time.Millisecond; elapsed > ceiling {
+		t.Fatalf("WaitForUpdateCheck took %v, want it bounded near %v (ceiling %v, well under Refresh's own ~1s FetchTimeout): a blackholed network must never visibly slow the command", elapsed, updateCheckJoinBound, ceiling)
 	}
 }
 
