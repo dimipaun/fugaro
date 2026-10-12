@@ -89,6 +89,16 @@ func TestParseProblems(t *testing.T) {
 		{"memory", minimalYAML + "    resources: { memory: 32GB }\n", "workflows.server.resources.memory", "must look like", 0},
 		{"cpu", minimalYAML + "    resources: { cpu: -1 }\n", "workflows.server.resources.cpu", "must be at least 1", 0},
 		{"reserved secret", minimalYAML + "    secrets:\n      - { name: claude-oauth-token, env: TOK }\n", "workflows.server.secrets[0].name", "reserved", 0},
+		// claude-oauth-token-<name> is the derived secret ID of a named
+		// Claude account (config.ClaudeAccountSecret, design
+		// docs/design/named-oauth-tokens.md §5): a workflow must never be
+		// able to declare a secret of that shape as its own, since a name
+		// that happens to collide with (or merely look like) a real or
+		// fictitious account name would let fugaro.yaml itself steer where
+		// the owner's pasted Claude token value goes, bypassing
+		// claude_accounts' allow_data_to allow-list entirely (the local
+		// config, never fugaro.yaml, controls that list — T1).
+		{"claude-oauth-token-prefixed workflow secret reserved", minimalYAML + "    secrets:\n      - { name: claude-oauth-token-acme-personal, env: TOK }\n", "workflows.server.secrets[0].name", "reserved for named Claude accounts", 0},
 		{"cache key", minimalYAML + "    cache:\n      - { key: [], paths: [~/.gradle] }\n", "workflows.server.cache[0].key", "at least one file", 0},
 		// A verbatim tag's own text stands in for !!str in yaml.v3's type
 		// error, so a fugaro.yaml can put anything a YAML tag allows,

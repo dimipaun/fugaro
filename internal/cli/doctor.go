@@ -287,6 +287,21 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 			}
 		}
 		o.Secrets = doctorSecrets(cmd, lc)
+		if repo, err := originRepo(ctx); err == nil {
+			if c := claudeAccountsStoredCheck(lc, repo, o.Secrets); c != nil {
+				o.Checks = append(o.Checks, *c)
+			}
+		} else if len(lc.ClaudeAccounts) > 0 {
+			// The repository itself could not be determined (no origin
+			// remote), so it is impossible to tell which named accounts, if
+			// any, apply to it. claude_accounts is configured for at least
+			// one repository somewhere, so staying silent here would fail
+			// open: an owner could not tell this checkout was never actually
+			// checked. Warn instead (fail closed).
+			o.Checks = append(o.Checks, doctorCheck{ID: "claude-accounts-stored", Severity: "warning",
+				Problem: "could not determine this checkout's repository (no origin remote), so whether its named Claude account(s) have a stored token could not be checked",
+				Fix:     "run doctor from a checkout with a parseable owner/name origin remote, or check by hand: " + selfCommand() + " secrets ls --repo OWNER/NAME"})
+		}
 	}
 
 	o.OK = !checksFail(o.Checks, strict)
@@ -424,6 +439,63 @@ func doctorSecrets(cmd *cobra.Command, lc *localcfg.Config) []secretEntry {
 		return strings.Compare(a.Name+"\x00"+a.ID, b.Name+"\x00"+b.ID)
 	})
 	return entries
+}
+
+// claudeAccountsStoredCheck is doctor's "claude-accounts-stored" check
+// (design docs/design/named-oauth-tokens.md §6f, plan Task 8): every named
+// Claude account repo may choose (config.AllowedClaudeAccounts, "default"
+// excluded, since that is the repository's existing, unconditionally
+// required secret and already covered by doctor's other checks) should have
+// a stored token. It adds no Secret Manager call of its own: listed is
+// whatever doctorSecrets already fetched (metadata only, by label, never a
+// value), so an installation with no claude_accounts configured for repo
+// triggers no new read at all. listed == nil means that listing itself
+// could not be attempted or failed (no origin, no credentials, Secret
+// Manager unreachable): this is reported as a warning, never silence,
+// since otherwise an owner could not tell whether a configured account is
+// actually usable (fail closed). Every name or slug this check echoes is
+// bounded by pluginwire.Printable, since a repository's origin remote and
+// the owner's own local config are both outside this function's control.
+func claudeAccountsStoredCheck(lc *localcfg.Config, repo string, listed []secretEntry) *doctorCheck {
+	var named []string
+	for _, n := range config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo) {
+		if n != config.DefaultClaudeAccount {
+			named = append(named, n)
+		}
+	}
+	if len(named) == 0 {
+		return nil
+	}
+	printableNamed := make([]string, len(named))
+	for i, n := range named {
+		printableNamed[i] = pluginwire.Printable(n)
+	}
+	printableRepo := pluginwire.Printable(repo)
+	if listed == nil {
+		return &doctorCheck{ID: "claude-accounts-stored", Severity: "warning",
+			Problem: fmt.Sprintf("could not list %s's secrets, so whether its named Claude account(s) (%s) have a stored token could not be checked",
+				printableRepo, strings.Join(printableNamed, ", ")),
+			Fix: "rerun doctor with Secret Manager reachable and your credentials available, or check by hand: " + selfCommand() + " secrets ls --repo " + quoteWord(repo)}
+	}
+	have := make(map[string]bool, len(listed))
+	for _, s := range listed {
+		have[s.Name] = true
+	}
+	var missing []string
+	var cmds []string
+	for _, n := range named {
+		secret := config.ClaudeAccountSecret(n)
+		if !have[secret] {
+			missing = append(missing, pluginwire.Printable(n))
+			cmds = append(cmds, "claude setup-token", selfCommand()+" secrets set "+quoteWord(secret)+" --repo "+quoteWord(repo))
+		}
+	}
+	if len(missing) == 0 {
+		return &doctorCheck{ID: "claude-accounts-stored", OK: true}
+	}
+	return &doctorCheck{ID: "claude-accounts-stored",
+		Problem: fmt.Sprintf("named Claude account(s) %s have no stored token for %s", strings.Join(missing, ", "), printableRepo),
+		Fix:     strings.Join(cmds, "; ")}
 }
 
 // pluginDoctorChecks turns a plugin report's states into doctor checks.
