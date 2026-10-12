@@ -810,6 +810,25 @@ func TestDoctorClaudeAccountsStoredCheckEscapesHostileInput(t *testing.T) {
 	if n := len([]rune(c.Problem)); n > 2*pluginwire.MaxPrintable+200 {
 		t.Fatalf("Problem is not length-bounded: %d runes", n)
 	}
+
+	// The "could not list" warning branch (listed == nil) prints the repo and
+	// the names too: it must escape and bound them just the same (replacing
+	// printableRepo/printableNamed with the raw values there stayed green).
+	w := claudeAccountsStoredCheck(lc, hostileRepo, nil)
+	if w == nil || w.OK {
+		t.Fatalf("claudeAccountsStoredCheck(listed=nil) = %+v, want a warning", w)
+	}
+	for _, raw := range []string{bell, bidi} {
+		if strings.Contains(w.Problem, raw) {
+			t.Fatalf("a control/bidi character leaked raw into the could-not-list warning: %q", w.Problem)
+		}
+	}
+	if strings.Contains(w.Problem, long) {
+		t.Fatalf("an over-long name was not bounded in the could-not-list warning: %q", w.Problem)
+	}
+	if n := len([]rune(w.Problem)); n > 2*pluginwire.MaxPrintable+200 {
+		t.Fatalf("the could-not-list warning is not length-bounded: %d runes", n)
+	}
 }
 
 // doctor without --check-github-app (what the setup skill runs, in an agent's
