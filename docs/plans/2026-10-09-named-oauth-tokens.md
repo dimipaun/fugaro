@@ -398,6 +398,8 @@ func WorkflowVariant(workflow, token string) string {
 
 (This package does not import `internal/config`, so the literal `"default"` is repeated rather than referencing `config.DefaultClaudeAccount`; a comment says so. The implementer confirms there is no import cycle risk either way before choosing.)
 
+*(Note, 2026-10-12, Task 9: corrected against the shipped code — `internal/backend/gcp/names.go`'s `WorkflowVariant` joins with `"_"`, not `"--"`: a workflow name and an account name can each already contain `-` (including doubled), so a `"--"` join is not unique over the two inputs, which this snippet's own charset did not yet account for. The shipped function also imports `internal/config` directly, validates both arguments against `config.WorkflowNameRE`/`config.ClaudeAccountNameRE` and panics outside them, rather than repeating the `"default"` literal as this snippet assumed.)*
+
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `go vet ./internal/backend/gcp/... && go test -count=1 ./internal/backend/gcp/...`
