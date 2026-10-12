@@ -53,9 +53,11 @@ stream-json output). Fugaro's `agent.Claude.Run`
 (`internal/agent/agent.go:105-169`) launches `claude -p --output-format
 stream-json --verbose --dangerously-skip-permissions [--resume|--session-id]
 [--append-system-prompt] [--model] [--max-budget-usd] [--json-schema]`
-(`Args`, `agent.go:77-97`; `--append-system-prompt` is how `SystemPrompt`'s
-run contract reaches Claude Code, `internal/runner/prompts.go:32`, which
-matters for §3's bypass list) as a child process via
+(`Args`, `agent.go:77-97`; `--append-system-prompt` is set from
+`req.AppendSystemPrompt` at `agent.go:85`, which `runner.go:1136-1137` fills
+with `SystemPrompt`'s run contract — so that is how `SystemPrompt`'s output
+reaches Claude Code, which matters for §3's bypass list) as a child process
+via
 `procgroup.Run`, with the prompt on stdin and a **scrubbed environment**
 (`agent.BuildEnv`, `internal/agent/env.go:51-153`, an allowlist — `baseEnv`
 plus auth variables plus declared workflow secrets; `req.Env` must never be
@@ -87,8 +89,9 @@ gateway (`internal/gateway`, package doc: "a loopback proxy between Claude
 Code and the model API that holds the real credential"). It is **not** a
 sidecar process — it is an in-process Go HTTP server, started as a
 goroutine on an ephemeral loopback port (`gateway.Start`,
-`internal/gateway/gateway.go:192-225`: `net.ListenConfig.Listen(ctx, "tcp",
-"127.0.0.1:0")`, then `go func() { s.srv.Serve(ln) }()`), torn down with the
+`internal/gateway/gateway.go:192-230`: `net.ListenConfig.Listen(ctx, "tcp",
+"127.0.0.1:0")` at line 202, then `go func() { _ = s.srv.Serve(ln) }()` at
+line 228), torn down with the
 run's context. `internal/runner/gateway.go:105-120` points Claude Code at it
 by setting `agent.Gateway{BaseURL, Token}`, which `GatewayVars`
 (`internal/agent/env.go:169-201`) turns into `ANTHROPIC_BASE_URL` and
@@ -389,14 +392,24 @@ Two existing patterns almost fit, and neither is quite right:
   unrouted."
 
 **This design proposes new runner machinery**, modeled on `gateway.Start`'s
-shape but launching a real subprocess: start it with its own context before
-`startGateway` (or instead of needing the gateway's own BaseURL mechanics
-for oauth, which refuses it — §1.1), wait on a readiness probe (a local
-health endpoint, since nothing here should depend on network access — see
-§2), and kill its process group on run end exactly as `procgroup` does for
-`claude` (SIGTERM, then SIGKILL after a grace period), so a leaked
-descendant cannot survive the container. This is new code, not a reuse of
-an existing primitive, and it sits next to the code SECURITY.md already
+shape but launching a real subprocess — and it must start **after**
+`startGateway` succeeds, not before, which an earlier draft of this section
+had backwards. §1.1's recommendation is to chain the sidecar in front of the
+gateway, which means Headroom's own upstream configuration must be the
+gateway's loopback URL and per-run token — and those don't exist until
+`gateway.Start` (`internal/gateway/gateway.go:192-230`) returns them. There
+is no way to tell Headroom where to forward before the gateway it forwards
+to has a listening address. Concretely: call `startGateway` first, read
+`r.gwAgent`'s `BaseURL`/`Token` (already set by it,
+`internal/runner/gateway.go:105-120`), pass them into the sidecar's own
+configuration (its `Env`, or whatever file it reads — Task 7's live check
+settles which), then start the sidecar and wait on its readiness probe (a
+local health endpoint, since nothing here should depend on network access —
+see §2) before the first stage runs. Kill its process group on run end
+exactly as `procgroup` does for `claude` (SIGTERM, then SIGKILL after a
+grace period), so a leaked descendant cannot survive the container. This is
+new code, not a reuse of an existing primitive, and it sits next to the code
+SECURITY.md already
 names as in scope ("the runner's use of provider and model tokens") — §7's
 plan flags it for a security-focused review.
 
@@ -844,7 +857,7 @@ strict-parsed in three places"), concretely, following the shape
 this is a correction, not a restatement.** `Validate` runs over one
 layer's raw `fugaro.yaml` (`config.Parse`'s single-file decode), but
 `agent.auth` itself is `InProject | InRepo`
-(`internal/config/scope.go:52`) — a *project layer's* `defaults:` may set
+(`internal/config/scope.go:53`) — a *project layer's* `defaults:` may set
 it, not only the repository's own file. A repository whose `fugaro.yaml`
 sets `agent.compression: headroom` and relies on the project layer for
 `agent.auth: api-key` would pass a raw-file `Validate` check that only looks

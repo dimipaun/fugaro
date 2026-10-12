@@ -113,14 +113,26 @@ Continuing the design doc's H1 and H2:
   completely separate code path; rejected because it would duplicate the
   "last writer wins, deliberately" comment's guarantee instead of extending
   it.
-- **P4. The sidecar is started by the runner, once per run, before the first
-  stage that needs it — not once per stage.** A run's stages share one
-  Claude Code identity and one budget session already; starting a fresh
-  Headroom process per stage adds startup latency on every stage for no
-  benefit this design can identify. *Veto alternative:* per-stage restart,
-  for a stronger "always-fresh" guarantee against a misbehaving sidecar;
-  rejected as unnecessary given Task 4's health monitoring already fails
-  the stage (not silently continues) on a crash or a hang.
+- **P4. The sidecar is started by the runner, once per run, after
+  `startGateway` succeeds and before the first stage that needs it — not
+  once per stage, and not before the gateway.** Two separate points, both
+  settled here: (a) a run's stages share one Claude Code identity and one
+  budget session already, so starting a fresh Headroom process per stage
+  adds startup latency on every stage for no benefit this design can
+  identify; (b) **the ordering relative to the gateway is not a choice, it
+  is forced** — design §1.1's chained-in-front-of-the-gateway architecture
+  means Headroom's own upstream configuration must be the gateway's
+  loopback URL and token, which do not exist until `gateway.Start`
+  (`internal/gateway/gateway.go:192-230`) returns them inside
+  `startGateway`. An earlier draft of this plan had `startCompression`
+  called "before `startGateway`," which cannot work: there is no mechanism
+  to tell Headroom where to forward before the gateway it forwards to has
+  a listening address. *Veto alternative (for point (a) only):* per-stage
+  restart, for a stronger "always-fresh" guarantee against a misbehaving
+  sidecar; rejected as unnecessary given Task 4's health monitoring already
+  fails the stage (not silently continues) on a crash or a hang. There is
+  no veto alternative for point (b) — the ordering is a hard dependency,
+  not a design choice.
 - **P5. `writeManagedSettings` — not a second, independent code path — also
   writes Headroom's URL into the managed settings file whenever compression
   is on, in the same call that already writes the gateway's variables.**
@@ -185,7 +197,7 @@ Continuing the design doc's H1 and H2:
   `budget.mode: observe` or `enforce`.** Resolved against the final,
   layered config (`config.Resolve`), not a single file's raw `Validate` —
   `agent.auth` is itself `InProject | InRepo`
-  (`internal/config/scope.go:52`), so a repository file alone cannot always
+  (`internal/config/scope.go:53`), so a repository file alone cannot always
   say what the effective auth mode is; the check has to run after
   resolution, in the launching CLI's and the runner's shared path, not
   inside `config.Validate` (which only ever sees one file). This closes two
@@ -944,14 +956,26 @@ makes `agent.compression` usable end to end.
 
 **Interfaces:**
 - A new `(r *run) startCompression(ctx context.Context) error`, called once
-  per run (P4), before the first `startGateway`/first stage, only when
-  `r.cfg.Agent.Compression != ""`. It builds `headroomproc.Options.Env`
-  explicitly (P7 — never `r.d.Env`, never any form of "inherit"), resolves
-  the pinned binary's path (from `/etc/fugaro/base.json`'s pins, the same
-  place Claude Code's own version is recorded, `docs/design/base-image.md`
-  §3), calls `headroomproc.Start`, and on success sets
+  per run (P4), **after `startGateway` has returned successfully and before
+  the first stage**, only when `r.cfg.Agent.Compression != ""` (which, by
+  Task 1b's resolved-config refusal, only ever fires when the gateway is
+  already on — so this ordering is always satisfiable, never a race). It
+  reads the gateway's own `BaseURL`/`Token` from `r.gwAgent` (already set by
+  `startGateway`, `internal/runner/gateway.go:105-120`) and builds
+  `headroomproc.Options.Env` explicitly (P7 — never `r.d.Env`, never any
+  form of "inherit") to carry them into Headroom's own upstream
+  configuration — this is the one, deliberate exception to "never pass the
+  runner's environment through": the gateway's URL and token are exactly
+  what Headroom needs to know where to forward, and nothing else from the
+  runner's environment is included. It resolves the pinned binary's path
+  (from `/etc/fugaro/base.json`'s pins, the same place Claude Code's own
+  version is recorded, `docs/design/base-image.md` §3), calls
+  `headroomproc.Start`, and on success sets
   `r.compression = &agent.CompressionProxy{BaseURL: p.URL()}` for
-  `agent.BuildEnv` (Task 3) and `writeManagedSettings` (Task 3) to pick up.
+  `agent.BuildEnv` (Task 3) and `writeManagedSettings` (Task 3) to pick up
+  as *Claude Code's* upstream — a different URL from the one just given to
+  Headroom, which is intentional: Claude Code talks to the sidecar, the
+  sidecar talks to the gateway.
 - `r.compression`'s sidecar `Dead()` channel (closed on crash **or** a
   detected hang, P8) is selected alongside the gateway's `Halted()` channel
   wherever stages already watch for a halt
