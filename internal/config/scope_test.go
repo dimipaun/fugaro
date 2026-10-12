@@ -117,7 +117,6 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 
 		"followup.trusted":      InRepo,
 		"followup.allow_public": InRepo,
-
 	}
 
 	seen := make(map[string]bool, len(Scopes))

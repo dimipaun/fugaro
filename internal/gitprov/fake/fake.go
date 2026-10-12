@@ -484,7 +484,11 @@ func (p *Provider) FetchPRHead(ctx context.Context, number int) (gitprov.PRHead,
 		return gitprov.PRHead{}, ferr
 	}
 	fork := !strings.EqualFold(info.SourceRepo, p.Repo)
-	self := info.AuthorID != "" && info.AuthorID == p.SelfID
+	// st.AuthorID unset is PRState's own documented default ("Fugaro
+	// opened it"), regardless of whether the harness bothered to set a
+	// non-empty SelfID at all (most don't): that must count as self on
+	// its own, not just when it happens to equal a configured SelfID.
+	self := st.AuthorID == "" || (p.SelfID != "" && st.AuthorID == p.SelfID)
 	login := st.AuthorLogin
 	if login == "" && self {
 		login = "fugaro"

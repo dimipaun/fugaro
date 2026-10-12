@@ -35,7 +35,6 @@ func reviewTaskSpec(name, yaml string, prs ...int) *task.Spec {
 	return &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Recipe: embeddedTask(name, yaml), ReviewPRs: prs}
 }
 
-
 // agentReviewSlashCfg is the fixture's fugaro.yaml with agent.review set to
 // a leading-slash custom-command reference.
 func agentReviewSlashCfg(t *testing.T, command string) string {

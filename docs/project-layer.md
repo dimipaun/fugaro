@@ -123,7 +123,6 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `workflows.*.rebuild.paths` | profile, repo |  |
 | `followup.trusted` | repo | it decides whose comments steer a run with the repository's credentials |
 | `followup.allow_public` | repo | it decides whose comments steer a run with the repository's credentials |
-| `review.allow_forks` | repo | review mode would run a fork's code next to the job's secrets; only the repository opts in |
 <!-- scope-table:end -->
 
 Outside this table: secrets' values live in Secret Manager and are never in any layer; per-person Claude tokens are a later project; the individual layer is flags and env only.
