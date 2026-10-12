@@ -212,6 +212,10 @@ In the commands below, `T` is short for
 | 29 | Adopting an existing Firebase root: `terraform state rm` of the four singletons in the SANDBOX's Firebase root, `init --firebase` imports them (`Plan: 4 to import`), a rerun shows `No changes`; then the squat (an extra permission on the minter role) and a foreign minter on the signer are refused | See "Check 29" below; **you** run it at your own terminal, on the **sandbox's Firebase project only**, never a real installation's. | No cost beyond the sandbox's own backend. **USER-RUN, NOT RUN.** |
 | 30 | `fugaro image refresh`'s direct check-job update against the real Cloud Run Admin API: the read-back output-only fields round-trip through `jobs.patch`, the job's etag is enforced against a concurrent change, the patch starts no execution, and a later `init --repo` plans no change (design/image-refresh.md, "The check job and Terraform") | See "Check 30" below; **you** run it at your own terminal, on the **sandbox's check job only**, never EdgeWeb or EdgeServer. | No cost beyond the sandbox's own Cloud Run job and, if needed, a second base image copy. **USER-RUN, NOT RUN.** |
 | 31 | `fugaro upgrade` with the real `claude` CLI: the marketplace add or update, the install or update at the right scope, the settings file untouched by `claude`, a rerun that changes nothing, and the cloud step skipped in a Claude Code session | See "Check 31" below; **you** run it, on the sandbox checkout only. | USER-RUN, NOT RUN |
+| 32 | Named Claude accounts, U1: Cloud Run Jobs execution overrides cannot carry a secret reference (design `named-oauth-tokens.md` §4, option D) | See "Check 32" below; reads published API docs only, no project needed. | No cost. **NOT RUN.** |
+| 33 | Named Claude accounts, U2: `claude setup-token` and multi-account switching | See "Check 33" below; **you** run it, on your own machine, no GCP project needed. | No cost. **NOT RUN.** |
+| 34 | Named Claude accounts, U3: per-project Cloud Run job count comfort at the installation's intended (workflow × account) scale | See "Check 34" below; **you** read the sandbox project's quota. | No cost. **NOT RUN.** |
+| 35 | Named Claude accounts, U4: the real Claude Code error text for an expired or revoked oauth token, and `fugaro diagnose`'s rendering of it | See "Check 35" below; **you** run it, on the sandbox repository only. | One minimal sandbox run (about the cost of check 13). **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -928,6 +932,48 @@ Expect the four addresses under `module.firebase.`.
 **Paste back:** each step's result, and the exact text of every unexpected message (no token, no key).
 
 **Restore.** Nothing to restore beyond `git checkout -- .claude/settings.json` if you do not want the pin.
+
+## Check 32: Cloud Run Jobs execution overrides cannot carry a secret reference (no project needed; run by you; NOT RUN)
+
+Named Claude accounts (`docs/design/named-oauth-tokens.md` §4) are built on one job variant per allowed account (option B), rejecting option D — a single job whose per-execution override names which secret to mount — because nothing in this repository's code or its vendored `run/v2` client shows that Cloud Run execution overrides can carry a secret reference. That is evidence about the generated bindings, not about the live `run.googleapis.com` API surface, so the design calls it unverified (§7, U1).
+
+1. Read the current `run.googleapis.com` v2 REST reference for `jobs.run`'s request body (`Overrides`, `ContainerOverride`) directly from Google's own published API documentation, not this repository's vendored client.
+2. Separately, run `gcloud run jobs execute --help` with any real `gcloud` installation (no project needed) and read its own description of the override flags.
+3. **FACT:** whether either source documents a secret-reference field on an execution override, quoting the exact field name if one exists.
+4. If one exists, also check Google's IAM documentation (not a live call) for whether a job's service account needs `secretAccessor` granted on that secret beforehand, or whether Cloud Run grants it implicitly for the one execution.
+
+**Paste back:** the exact quoted text (or confirmed absence) from both sources, and the IAM finding if a field exists. No GCP project, billing or sandbox resource is touched by this check.
+
+## Check 33: `claude setup-token` and multi-account switching (your own machine; run by you; NOT RUN)
+
+The setup skill (`plugin/skills/setup/SKILL.md`, "Named Claude accounts") and `reference/decisions.md` currently say the exact sequence for minting a *second* Claude account's `claude setup-token` value is not yet verified (design §7, U2). This check settles it, so the skill text can quote the real steps instead of a placeholder.
+
+1. On a machine already signed in to one Claude account through the `claude` CLI (`claude setup-token` already run once for it), run `claude setup-token` again and record exactly what happens: does it silently reuse the signed-in account, prompt to choose one, or refuse until you sign out?
+2. If it needs a sign-out step first, record the exact command(s) or UI steps (for example `claude logout`, a flag, or an OS keychain/credential action), and whether minting the *first* account's token again afterward needs signing back in.
+3. If step 1 shows no in-place way to choose an account, repeat it with a separate `HOME`/config profile for the `claude` CLI, to confirm that is a working fallback, and record the exact environment variable or flag used.
+
+**Paste back:** the exact transcript of both `claude setup-token` runs (never a token value), the Claude Code version and the OS. Once answered, replace the "not yet verified" sentence in `plugin/skills/setup/SKILL.md`'s "Named Claude accounts" paragraph and `reference/decisions.md`'s topic 2 with the real sequence this check found — never invent one ahead of this check.
+
+## Check 34: per-project Cloud Run job count comfort (sandbox project; run by you; NOT RUN)
+
+No code in this repository reads or enforces a Cloud Run jobs-per-project/region ceiling (design §4, "why a variant per name, not per name-and-workflow combinatorially out of control"). Named accounts multiply the (workflow × allowed account) job count, so this confirms there is comfortable headroom at the installation's intended scale (design §7, U3).
+
+1. In `$FUGARO_LIVE_GCP_PROJECT`, read Google's current published Cloud Run jobs-per-project/region quota (the Quotas page in the console, or `gcloud alpha services quota list --service=run.googleapis.com --consumer=projects/$FUGARO_LIVE_GCP_PROJECT` where available) and record the limit.
+2. Compare it against the installation's intended total job count (workflows × accounts, plus one daily-check job per workflow), with margin for repositories the installation expects to add.
+
+**Paste back:** the quota figure, the command or page used to read it, and the installation's intended job count. No job is created, changed or deleted by this check.
+
+## Check 35: the real error text for an expired or revoked oauth token (sandbox only; run by you; NOT RUN)
+
+The runner's stage-failure path is unchanged by named accounts (design §6f), but the exact text Claude Code prints for an expired or revoked `CLAUDE_CODE_OAUTH_TOKEN`, and how `fugaro diagnose` renders it, has never been recorded (design §7, U4).
+
+1. **Cleanup first.** Before storing anything, note the sandbox repository's current `claude-oauth-token` secret's version so it can be restored, and register restoring it as your own cleanup step (ahead of any side effect, as every other check in this file does).
+2. Store a syntactically valid but revoked or expired token as the sandbox's `claude-oauth-token` secret: mint one with `claude setup-token`, revoke it from the Claude account's own settings (or let it expire), then `fugaro secrets set claude-oauth-token --repo $FUGARO_LIVE_REPO`. Never use a fabricated string: Fugaro's own shape checks, not Claude Code's response to a real but dead credential, are not what this check is about.
+3. Launch a minimal sandbox run (as small as check 13's, `--total-timeout` kept short) and let it fail.
+4. **FACT:** the exact stage-failure text the run's log shows, and the exact text `fugaro diagnose` prints for the same run.
+5. **Restore** the sandbox's working token immediately (the version noted in step 1), and confirm a rerun succeeds.
+
+**Paste back:** both exact `FACT` texts (never a token value, before or after revocation), and confirmation the restore succeeded. Once answered, `docs/design/named-oauth-tokens.md` §6f and any user-facing doc that currently calls this unverified can quote the real text.
 
 ## Not covered by these tests (manual)
 

@@ -59,3 +59,39 @@ func TestDocsNamedOAuthTokensDoctorSeverity(t *testing.T) {
 		t.Fatalf("oauthTokenAllowedCheck(empty) = %+v, want no check at all", c)
 	}
 }
+
+// TestDocsNamedOAuthTokensSetupSkill is the docs test the plan's Task 9
+// promises ("keeps the setup skill's commands real, the same pattern
+// plugin/skills_lint_test.go already enforces for every other skill"): it
+// pins the setup skill's named-Claude-account text to the real, derived
+// secret shape (config.ClaudeOAuthTokenPrefix), not merely to wording, so a
+// rename of the prefix or a dropped command in the skill text fails this
+// test the same way TestDocsNamedOAuthTokensDoctorSeverity already holds the
+// design doc to its own code. It also keeps the U2 "not yet verified"
+// placeholder honest: until docs/gcp-live-checklist.md's Check 33 answers
+// U2, the skill must say plainly that it does not know the exact
+// claude-setup-token multi-account sequence, never invent one.
+func TestDocsNamedOAuthTokensSetupSkill(t *testing.T) {
+	skill, err := os.ReadFile("../../plugin/skills/setup/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decisions, err := os.ReadFile("../../plugin/skills/setup/reference/decisions.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(skill) + "\n" + string(decisions)
+	for _, want := range []string{
+		"claude_accounts",
+		"agent.oauth_token",
+		"not yet verified",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("setup skill text no longer says %q", want)
+		}
+	}
+	namedSecretCmd := "fugaro secrets set " + config.ClaudeOAuthTokenPrefix + "<name> --repo"
+	if !strings.Contains(string(skill), namedSecretCmd) {
+		t.Errorf("SKILL.md no longer shows %q (config.ClaudeOAuthTokenPrefix changed, or the command was dropped)", namedSecretCmd)
+	}
+}
