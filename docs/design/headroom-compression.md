@@ -450,14 +450,26 @@ is not the "one-line code change" an earlier draft of this section called
 it.** Claude Code's `ANTHROPIC_BASE_URL` is part of the fixed environment
 `procgroup.Run` hands the process at exec time (`internal/agent/env.go`'s
 `BuildEnv`, built once before `claude` starts); there is no running-process
-hook to repoint it. A real fallback means either restarting the stage (a new
-`claude --resume` invocation with a different environment, losing whatever
-state a mid-flight tool call held) or running a *second*, minimal
-pass-through proxy at the same loopback address Headroom was using, promoted
-automatically on crash detection, so Claude Code's own environment never
-needs to change. Either is real implementation work, not a flag flip;
-rejected for v1 given point 1, but a real option for a future revision that
-wants availability over the stricter guarantee.
+hook to repoint it **mid-stage**. **Between stages it is a different
+question**, worth stating so the claim above isn't read more broadly than it
+should be: `writeManagedSettings` already rewrites the managed settings
+file before every stage (§1.1a), so a dead sidecar discovered at a stage
+boundary could, in principle, have the *next* stage's `claude` process
+started pointed straight at the gateway instead — no restart of anything
+already running, since nothing is yet running for that stage. This does not
+change the conclusion: a crash is far more likely to be discovered
+*mid*-stage, while a stage's `claude` process is already running and already
+holds the pre-crash `ANTHROPIC_BASE_URL`, which is the case with no cheap
+fix, and treating "between stages" as a reliable recovery path would still
+leave mid-stage crashes needing a restart or a hot-spare proxy — real
+implementation work either way. A real fallback for the mid-stage case means
+either restarting the stage (a new `claude --resume` invocation with a
+different environment, losing whatever state a mid-flight tool call held) or
+running a *second*, minimal pass-through proxy at the same loopback address
+Headroom was using, promoted automatically on crash detection, so Claude
+Code's own environment never needs to change. Either is real implementation
+work, not a flag flip; rejected for v1 given point 1, but a real option for
+a future revision that wants availability over the stricter guarantee.
 
 ## 2. Security and trust
 
@@ -487,31 +499,44 @@ non-nil, pre-built `Env`, `internal/agent/agent.go:101-108`) would hand it
 all of it. §7's plan requires the sidecar's launcher to build its own,
 narrow environment the same deliberate way `agent.BuildEnv` does, plus
 whatever telemetry-off variables Headroom's own configuration surface
-exposes (UNVERIFIED whether any exist). **Its logs and any files it writes
-are also a channel worth closing**, not just its environment: the sidecar's
-stdout/stderr may contain request or response fragments (the same material a
-secret or a line of source code could be hiding in, per
-`internal/agent/relay.go`'s own redaction discipline for Claude Code's
-stream), and the base image's log-isolation and redaction machinery is built
-for Fugaro's own processes, not a third-party binary's. The recommendation
-is to discard the sidecar's stdout/stderr entirely (never relay it to Cloud
-Logging unredacted) and to confirm, before shipping, whether Headroom
-persists anything to disk (a cache, a log file) that could hold source code
-or request content past the run.
+exposes (UNVERIFIED whether any exist). **Its logs are a channel worth
+bounding, but not simply discarding** — a correction to an earlier draft of
+this paragraph, which said "discard entirely." The sidecar's stdout/stderr
+may be the *only* way the runner learns why it failed to start (§1.5's own
+plan has the sidecar's own process report its chosen address or an error on
+stdout, which the runner must read to know anything went wrong at all), so
+discarding it outright would also discard the one diagnostic a failed launch
+produces. The recommendation is a small, bounded, **redacted** tail (the
+same shape `internal/logtail` already gives verify output elsewhere in this
+codebase — a fixed number of lines, a fixed width, redacted before it is
+ever shown) kept only long enough to report a startup or crash reason, never
+relayed live to Cloud Logging and never kept once the run ends. Separately,
+confirm before shipping whether Headroom persists anything to disk (a cache,
+a log file) that could hold source code or request content past the run.
 
-**A fixed port invites impersonation.** If the sidecar's address were a
-fixed, well-known loopback port, a command that runs *before* the agent
-starts — the check gate (`docs/design/generic-tool.md` §3.6's `check` step,
-which runs `commands.build`/`test`/`fix` as the agent user, with the agent's
-own environment, ahead of `implement`) — could bind that port first and
-receive whatever Claude Code or the gateway sends there, including a
-gateway or compression token. §1.5 already specifies an ephemeral port
-(`gateway.Start`'s own pattern, `"tcp", "127.0.0.1:0"`); this adds the other
-half, which the original draft omitted: the runner's readiness probe must
-confirm the listener on that port is the process the runner itself started
-(for example, a per-run random token the probe must see echoed back, or
-confirming the listening process's PID matches what `Start` launched),
-not merely that *something* is listening and answers 200.
+**A fixed port invites impersonation — and the fix has a limit worth
+stating plainly.** If the sidecar's address were a fixed, well-known
+loopback port, a command that runs *before* the agent starts — the check
+gate (`docs/design/generic-tool.md` §3.6's `check` step, which runs
+`commands.build`/`test`/`fix` as the agent user, with the agent's own
+environment, ahead of `implement`) — could bind that port first and receive
+whatever Claude Code or the gateway sends there, including a gateway or
+compression token. §1.5 already specifies an ephemeral port (`gateway.Start`'s
+own pattern, `"tcp", "127.0.0.1:0"`); this adds the other half, which the
+original draft omitted: the runner's readiness probe must confirm the
+listener on that port is the process the runner itself started (a per-run
+random token the probe must see echoed back), not merely that *something*
+is listening and answers 200. **This defends against a race with a
+different, less-privileged process (the check gate's commands) — it does
+not, and cannot, defend against the agent itself.** The agent shares the
+sidecar's container and, in the common case, its own unprivileged user, so
+it can already read `/proc/<pid>/environ` of any process that user owns,
+sidecar included — exactly the same residual SECURITY.md already states for
+every other secret in the container ("it shares the container and its user
+with the runner, so it can also read the runner's environment through
+`/proc`"). The origin-proof token stops a stale or impersonating listener,
+not a well-behaved agent reading the sidecar's own environment directly;
+this is not a new gap, it is the existing trust boundary applying here too.
 
 **Hangs and resource limits are unaddressed by §1.5 as written.**
 `headroomproc.Process.Dead()` (§7's plan) only catches the process
@@ -525,12 +550,22 @@ unaddressed bound**: Cloud Run gives one container one memory limit
 the runner, the agent and, now, the sidecar — nothing in this design yet
 stops Headroom from using enough memory (summarizing a very large tool
 output, say) to OOM-kill the whole container, taking the run down with it
-regardless of whether the stage itself needed that much memory. §7's plan
-needs a memory ceiling on the sidecar process (a `cgroup` limit via
-`procgroup`'s process-group mechanism, or an explicit flag if Headroom
-exposes one) rather than only the health-check and fail-closed machinery
-already described, which catches a crash but not a resource fight the
-sidecar wins.
+regardless of whether the stage itself needed that much memory. **A `cgroup`
+limit is not an option here, and an earlier draft of this paragraph was
+wrong to propose one**: a process group (what `procgroup` manipulates for
+signal delivery) is a Unix job-control concept, unrelated to Linux cgroups,
+and creating or writing to a cgroup needs privileges or a delegated
+subtree an unprivileged Cloud Run container user does not have. The
+realistic options, neither verified to actually bound Headroom: an
+`RLIMIT_AS`/`prlimit` address-space limit set on the child before exec
+(unreliable for a Python or a garbage-collected Rust runtime that reserves
+large virtual address ranges up front without committing them, which can
+make `RLIMIT_AS` trip on memory the process never really uses, or fail to
+trip on memory it does), or a memory flag Headroom's own configuration
+surface might expose (UNVERIFIED whether one exists). §7's plan picks
+between these once the real binary is examined, and needs the liveness
+check above regardless, since neither memory option is a substitute for
+detecting a hang.
 
 **Supply chain.** Pin Headroom exactly as the base image already pins every
 other third-party binary (`docs/design/base-image.md` §7, "Pinned... by
@@ -757,24 +792,35 @@ Fugaro-side algorithm, since Fugaro has no hook to run one (above).
 lower.** Claude Code relies on Anthropic's prompt caching — a stable prefix
 of the conversation is cached, so a later request that resends the same
 prefix pays the much cheaper cache-read price instead of the full input
-price (the gateway already prices this distinction: `internal/gateway/sse.go`
-parses `cache_creation_input_tokens`/`cache_read_input_tokens` from
-Anthropic's own usage response, lines 144-169, and `forward.go:759` sums
-`CacheWrite5m`/`CacheWrite1h`/`CacheRead` into what a call actually cost).
-**If Headroom rewrites an earlier turn, it changes the prefix** — the exact
-bytes Anthropic's cache matching is keyed on — so what would have been a
-cheap cache-read on an uncompressed, stable prefix becomes a full cache
-*write* (dearer than a plain input token, let alone a cache read) on the
-now-different, compressed one, potentially on every request for the rest of
-the session if the prefix keeps changing as more turns age into the
-compressed window. **The net dollar cost of a compressed session can rise
-even while its raw token count falls**, which the vendor's "fewer tokens"
-framing does not address and this design cannot resolve without a live
-measurement (§6) that tracks dollars and the cache read/write split, not
-tokens alone. This is UNVERIFIED either way — it depends entirely on how
-(and how stably) Headroom rewrites the prefix, which this design has no way
-to inspect — but it is exactly the kind of effect a tokens-only metric would
-miss, which is why §6's metric is dollars, not tokens (below).
+price (the gateway already parses this distinction from Anthropic's own
+usage response — `internal/gateway/sse.go:144-169`'s
+`cache_creation_input_tokens`/`cache_read_input_tokens` — and prices it
+distinctly: `Rates.Cost(u)`, `internal/pricing/pricing.go:311`, is where the
+dollar figure actually comes from; `forward.go:758`'s `o.tokens =
+u.Input + u.CacheWrite5m + u.CacheWrite1h + u.CacheRead + u.Output` is a
+plain **token** sum kept for a different purpose, not a cost figure — an
+earlier draft of this paragraph conflated the two). **If Headroom rewrites
+an earlier turn, it changes the prefix** — the exact bytes Anthropic's
+cache matching is keyed on — so what would have been a cheap cache-read on
+an uncompressed, stable prefix becomes a full cache *write* (dearer than a
+plain input token, let alone a cache read) on the now-different, compressed
+one, potentially on every request for the rest of the session if the prefix
+keeps changing as more turns age into the compressed window. **The net
+dollar cost of a compressed session can rise even while its raw token count
+falls**, which the vendor's "fewer tokens" framing does not address and
+this design cannot resolve without a live measurement (§6) that tracks
+dollars (the existing, already-priced total) alongside the cache
+read/write **token** totals (a plain sum of fields the gateway's own
+per-call accounting already has, `pricing.Usage{CacheRead, CacheWrite5m,
+CacheWrite1h, ...}` — no new pricing-split code is needed for a token count;
+a true cache-read-vs-write **dollar** split would need one, since
+`Rates.Cost` returns one blended total, not a per-category breakdown, and
+this design does not propose writing it). This is UNVERIFIED either way —
+it depends entirely on how (and how stably) Headroom rewrites the prefix,
+which this design has no way to inspect — but it is exactly the kind of
+effect a tokens-only metric would miss, which is why §6's headline metric is
+dollars, with the cache token totals read alongside it as a diagnostic
+(below).
 
 **Observability.** `result.json`'s `StageTiming` today holds only `{Name,
 StartedAt, DurationS}` (`internal/runstore/runstore.go:106-110`) — there is
@@ -799,7 +845,8 @@ could read is **UNVERIFIED and unnamed by any task in §7's plan** — a field
 with no confirmed source is worse than no field, so it is dropped rather
 than proposed speculatively. The empirical comparison this design actually
 relies on is §6's run-level, paired A/B measurement (dollars, with the
-cache read/write split), not a per-call before/after figure inside one run.
+cache read/write token totals alongside), not a per-call before/after
+figure inside one run.
 
 **How a user disables it.** `agent.compression` is **repository-wide, not
 per-workflow** — it is a single field of `Config.Agent`
@@ -822,9 +869,12 @@ values: `""` (absent, off — the only spelling of "off"; there is no literal
 needs it) and a named tool, `headroom` — a string rather than a bare
 boolean, so a second compressor could be added later without a breaking
 change, the same reasoning `agent.auth` already uses for its own closed
-enum. No sub-options in v1 (no "aggressiveness" knob): the bypass list of
-§3 is Fugaro's own, not configurable per repository, so there is nothing
-else safe to expose yet.
+enum. No sub-options in v1 (no "aggressiveness" knob): §3 is explicit that
+Fugaro has no way to express or enforce a bypass policy of its own, so there
+is no per-repository knob this design could safely expose even if it wanted
+to — the question is entirely whether Headroom's own configuration can be
+set, once, to honor the categories §3 names, not something a repository
+tunes.
 
 **The three edits, plus a fourth this design's first draft omitted**
 (`docs/design/recipes.md` §2, restated by every design since: "Config is
@@ -835,10 +885,12 @@ strict-parsed in three places"), concretely, following the shape
    string \`yaml:"compression,omitempty"\`` next to `Recipe`/`OAuthToken`.
 2. **`Validate`**, `internal/config/validate.go`, next to the existing
    `Agent.OAuthToken` shape check (`validate.go:146-151`): checks the
-   value's *shape* only (`""` or `"headroom"`, a closed set like `agent.auth`'s
+   value's *shape* (`""` or `"headroom"`, a closed set like `agent.auth`'s
    `slices.Contains([]string{"vertex", "api-key", "oauth"}, ...)`,
-   `validate.go:121`) — **not** the oauth/vertex/gateway refusal, which
-   cannot live here (next point).
+   `validate.go:121`) **and** — unlike an earlier draft of this design,
+   which wrongly said this couldn't live in `Validate` — the `agent.auth`
+   refusal (next point explains why `Validate` can see the right value
+   here, but not for the budget-gateway question).
 3. **`schemas/fugaro.schema.json`**, the matching `enum`/`pattern`, plus a
    **`testdata/config` corpus file** exercising it, which
    `TestFugaroSchemaCorpus` already holds every new key to
@@ -853,31 +905,55 @@ strict-parsed in three places"), concretely, following the shape
    `TestScopeTableMatchesDocs` keeps `scope.go` and `docs/project-layer.md`'s
    table equal, so both files move together.
 
-**The oauth/vertex/gateway refusal cannot be a plain `Validate` rule, and
-this is a correction, not a restatement.** `Validate` runs over one
-layer's raw `fugaro.yaml` (`config.Parse`'s single-file decode), but
-`agent.auth` itself is `InProject | InRepo`
-(`internal/config/scope.go:53`) — a *project layer's* `defaults:` may set
-it, not only the repository's own file. A repository whose `fugaro.yaml`
-sets `agent.compression: headroom` and relies on the project layer for
-`agent.auth: api-key` would pass a raw-file `Validate` check that only looks
-at what that one file's `Agent.Auth` field says (which could be empty, with
-the real value coming from the project layer) — the refusal has to run
-**after `config.Resolve`** (`docs/design/layered-config.md` §4), against the
-merged, final `Agent.Auth` and `Agent.Compression`, the same point
-`checkRecipeImage`-style launch-time checks already run at. §7's plan puts
-this check in the launching CLI's resolved-config path (where `fugaro run`,
-`fugaro validate` and the runner's own bootstrap all call `Resolve`), not in
-`Validate`, and a docs test proves a project-layer-sourced `auth: oauth`
-combined with a repo-level `compression: headroom` is refused — a case
-`Validate` alone cannot see.
+**The `agent.auth` refusal belongs in `Validate` after all — a correction
+to a previous round's correction.** A previous draft argued `Validate`
+"only sees one file" and so cannot know `agent.auth` when the project layer
+sets it. That argument is wrong: `config.Resolve` decodes the **merged**
+map (repository file over the project layer's `defaults:`) into one
+`Config`, and only then calls `Validate(&c)` on that merged value
+(`internal/config/resolve.go:143`, `if ps := Validate(&c); ...`) — `Validate`
+is never handed a single layer's raw, unmerged fields; even
+`config.Parse(data)` is `Resolve(data, nil)`, which still runs `Validate` on
+the (trivially merged, layer-less) result. So by the time `Validate` runs,
+`c.Agent.Auth` already reflects whatever the project layer contributed, and
+the `agent.compression` + `agent.auth: oauth`/`vertex` refusal can live in
+`Validate` directly, exactly where the shape check above already is. No
+separate resolved-config check is needed for this part.
 
-**v1 refuses both `vertex` and `oauth`, and requires the gateway (§1.1).**
-Concretely, at the resolved-config check above: `agent.compression` set
-with `agent.auth` anything other than `api-key`, or with `budget.mode`
-anything other than `observe`/`enforce`, is refused, naming the reason
-(auth mode, or "the gateway must be on"). This is narrower than an earlier
-draft of this design, which only refused `oauth`.
+**The budget-gateway requirement is a genuinely different question, and
+cannot live in `Validate` or anywhere in `internal/config` at all.**
+`budget.mode` is not a fact any single `fugaro.yaml` resolution can produce:
+the run's *effective* mode is the tightest of three layers — the
+installation's own ceiling (the job's environment, `FUGARO_BUDGET_MODE`),
+the default branch's `fugaro.yaml`, and the branch's own file — merged by
+`(r *run).resolvePolicy` at runner bootstrap, after the checkout is fetched
+and the default branch's file is read (`internal/runner/policy.go:58-126`,
+`policy.Merge(ceiling, def, FileLayer(cfg))`; `SECURITY.md:34` is the
+installation-ceiling half of this). `config.Resolve` (and therefore
+`Validate`) never sees the ceiling or the default-branch file — it resolves
+only the project layer and the ref's own `fugaro.yaml`. **A check written
+against `cfg.Budget.Mode` (what the repository's own file says, or doesn't)
+would be wrong in exactly the common case this feature targets**: an owner
+who turns the gateway on installation-wide via the ceiling, for a repository
+whose own `fugaro.yaml` sets no `budget:` block at all (`cfg.Budget == nil`,
+the normal, recommended shape per `docs/design/m9-budget-and-dashboard.md`).
+Refusing compression there because the repository's own file "doesn't say
+budget is on" would refuse the single most common, correctly-configured
+case. **The authoritative check has to be `r.gatewayOn()` at runner
+bootstrap, after `resolvePolicy` has run** (`internal/runner/gateway.go:46-48`):
+that is the one place the real, merged answer exists. A CLI-side check
+(`fugaro run`/`fugaro validate`, before the ceiling and default-branch file
+are ever read) can only be **advisory** — a heads-up when the repository's
+own file plainly sets `agent.auth` to something other than `api-key`, never
+a confident "the gateway will be on," since the CLI cannot know the ceiling.
+§7's plan moves this check into the runner's bootstrap, not `config`.
+
+**v1 refuses `vertex` (in `Validate`, with `oauth`) and requires the gateway
+(a runner-bootstrap check, above).** This is narrower than an earlier draft
+of this design, which only refused `oauth`, and the plan's earlier "Task 1b"
+resolved-config check for the gateway question is withdrawn in favor of the
+runner-bootstrap check described above, which is the only place the right
+answer exists.
 
 **Strict-parser consequences for older binaries.** A pre-feature runner's
 `config.Parse` (`dec.KnownFields(true)`, `config.go:489`) refuses an unknown
@@ -900,13 +976,25 @@ the key either. **The fix: `agent.compression` is reserved and refused**
 `goto`, `on_reject`, `extends` and `docs/design/layered-config.md` §6 uses
 for a profile's `extends` — a known key that parses, and is refused with a
 message saying so, rather than an unknown key a strict decoder rejects
-outright) **until the PR that actually wires the sidecar merges.** Config
-and schema land first (reserved, refused, named in the message: "not yet
-implemented"); the refusal is lifted in the same change that makes
-`writeManagedSettings` and the launch-time gate real (§7's plan, Tasks 3-4),
-never before. This also resolves §5's "what gates it" question below: the
-code for `agent.compression` can merge in stages without ever exposing a
-working-but-untested key to a real `fugaro.yaml`.
+outright) **until a dedicated, final lift change merges, after everything
+else is built — not inside the same PR that wires the sidecar up.** An
+earlier draft of this design had the implementing PR both build the feature
+and lift the refusal together, which reintroduces the exact problem it was
+meant to solve: that PR would make `agent.compression: headroom` immediately
+usable by any real run the moment it merges, before the live checks of §6
+have ever confirmed Headroom needs no network or can honor the bypass list
+(§3). The schema has to move in lockstep with the refusal, not ahead of it:
+**while reserved, the schema's own enum for `agent.compression` admits only
+`""`** (not `"headroom"`), so `schemas/fugaro.schema.json` and
+`config.Validate` refuse the real value for the same reason, and the
+corpus fixture exercising `agent.compression: headroom` lives in
+`testdata/config/invalid/` the whole time the feature is being built. The
+**lift** is its own small, final change: it edits the schema's enum to admit
+`"headroom"`, edits `Validate`'s message away from "not yet implemented,"
+and moves that one fixture from `invalid/` to `valid/` — three files, one
+PR, gated on §6's checks having been run. This also replaces §5's "what
+gates it" question below: the live checks gate this one, final, small PR,
+not anything inside the PR that builds the feature.
 
 **Scope (the project-layer table, `docs/design/layered-config.md` §5):
 Project — no; Profile — no; Repo — yes; Override — `--no-compression` only
@@ -988,20 +1076,19 @@ check replaces [the estimates] with measurements") does not account for, and
 the existing CI size budget (`images/size-budget.sh`, 4.0 GB hard limit,
 3.5 GB warning) would need to absorb it.
 
-**arm64 support.** The base image already builds and publishes both
-architectures (`base-image.md` §12); Headroom needs its own arm64 artifact
-for parity. If one is missing, base-image.md's existing fallback applies
-mechanically (an `amd64`-only row in `images/base/tools.tsv`, the install
-step skipping arm64 with a build-log note) — but because this is a
-security- and correctness-relevant component when enabled, not an optional
-convenience harness, this design's recommendation is to **refuse
-`agent.compression: headroom` outright on an arm64 job** (a validate-time or
-launch-time check) rather than silently running an amd64-only image on an
-amd64-only job and calling it "fine because Cloud Run is amd64-only anyway"
-— today's installations are amd64-only (`base-image.md` §12, "the
-installation's copy stays amd64-only, and that is correct"), so this is a
-forward-looking guard, not a current blocker, kept so a future arm64 backend
-does not silently run compression nobody built for that architecture.
+**arm64 support, one recommendation stated once.** The base image already
+builds and publishes both architectures (`base-image.md` §12). **If and
+only if** Task 7's live check (§7) finds no arm64 Headroom artifact, the
+recommendation is to refuse `agent.compression: headroom` on an arm64 job
+(a launch-time check) rather than apply base-image.md's ordinary fallback
+for an optional convenience harness (an `amd64`-only row that silently skips
+arm64) — this *is* a security- and correctness-relevant component when
+enabled, so a job that can't actually run it should refuse, not silently
+run uncompressed. If an arm64 artifact exists, none of this applies and the
+row is `all` like every other harness. Today's installations are amd64-only
+regardless (`base-image.md` §12, "the installation's copy stays amd64-only,
+and that is correct"), so whichever way Task 7 finds it, this is a
+forward-looking guard, not a current blocker.
 
 **Presence verification.** A new row in `images/base/tools.tsv`
 (`images.BaseTools`), tier `harness` (not `critical` — a run with
@@ -1052,23 +1139,36 @@ similarly-shaped work:
   inside 0.7.0's own change surface, which is the scheduling reason either
   way.
 
-**What gates merging vs. what gates releasing, and why they are different
-gates.** §4's "reserved and refused" resolution means code can merge in
-PRs before any live check has run, as long as `agent.compression` stays
-refused for every value until the PR that implements it, and the sidecar
-itself is never started by a run until that refusal lifts (§7's plan
-sequences this explicitly). What the live checks gate is **lifting that
-refusal** — turning the feature from "present in the binary, refused at
-config time" into "usable by a `fugaro.yaml`, opt-in" — and, separately, the
-§6 measurement gates whether this feature is ever proposed as a *default*
-(§6's own closing paragraph). Concretely: the §2 no-outbound-network CI test
-must pass before the base image bakes a Headroom binary in at all (§5
-above); the §1.1 Vertex-proxy question only matters if `vertex` is ever
-reconsidered, not for v1's `api-key`-only scope; and the §6 measurement runs
-*after* the feature can actually be exercised end to end — it needs a merged
-implementation and a built image to run against, which an earlier draft of
-this document had backwards ("before any code merges"). None of these gates
-is this design's to satisfy — they are live, owner-run checks (§6, §7).
+**What gates merging vs. what gates the final lift — and why the lift has to
+be its own, separate, last change.** §4's "reserved and refused" resolution
+means every PR that builds the feature (config, the sidecar package, the
+env/managed-settings wiring, the runner's bootstrap, the CLI override, the
+base image pin) can merge as soon as it is reviewed, since none of them, on
+their own, makes `agent.compression: headroom` accepted by anything — the
+key stays refused the whole time. **A previous draft of this section
+described a gate that was circular**: it said the live checks gate "lifting
+the refusal," while the plan's own task structure lifted the refusal inside
+the same PR that built the runner wiring — before any live check could have
+run, since several of those checks (§6's measurement in particular) need a
+working, mergeable implementation to run *against*. The fix is sequencing,
+not a different gate: the lift is its own, final, small change (§4 above),
+and the live checks that must pass **before that one final change merges**
+are, concretely: Task 7's no-outbound-network CI test (a repeatable build-time
+check, no live cloud needed) and a new check confirming whether Headroom's
+own configuration surface can honor the bypass list of §3 — pin the diff
+under review, verify output and the system/task prompt, or else the lift is
+narrower and excludes the `review`/`review_first` stages from compression
+(§6/§7 name this explicitly as Check H2, and it gates the lift, not merely
+informs it, closing the contradiction an earlier draft of §3 and §8 left
+open: those sections said the bypass list was "Fugaro's own" and
+"a single, Fugaro-chosen... policy," which cannot both be true alongside §3's
+own admission that Fugaro has no enforcement point for it). **What §6's
+full measurement gates is different again**: not the lift, but whether this
+feature is ever proposed as a *default* (§6's own closing paragraph) — and
+it necessarily runs *after* the lift has merged, since it needs a real run
+to actually exercise compression, the ordering an earlier draft of this
+document had backwards ("before any code merges"). None of these gates is
+this design's to satisfy — they are live, owner-run checks (§6, §7).
 
 ## 6. Measurement plan
 
@@ -1090,10 +1190,27 @@ representative real or realistic tasks, spanning at least one small bug fix,
 one feature addition touching several files, and one task expected to need
 several review rounds (to exercise the bounce/fix loop, where intra-session
 compression matters most, §3) — each run **twice**, paired, same model
-pins, same recipe, same repository state: once with `agent.compression: off`
-(control) and once with `agent.compression: headroom` (treatment). Pairing
-(not two independent random samples) controls for task-to-task variance,
-which otherwise swamps a small sample.
+pins, same recipe, same repository state: once with `agent.compression`
+unset (control — there is no literal `"off"` value, §4) and once with
+`agent.compression: headroom` (treatment, after the lift of §4/§5 has
+happened; a pre-lift control-only run proves nothing about the treatment
+arm). Pairing (not two independent random samples) controls for task-to-task
+variance, which otherwise swamps a small sample.
+
+**A pairing hazard this design missed until now: prompt caching favors
+whichever arm runs second.** Anthropic's prompt cache keys on the exact,
+stable prefix (§3) — if a pair's two runs share an identical system prompt
+and early task text and run close together, the *second* run of the pair
+(whichever arm it is) can hit a cache Anthropic's servers still hold from
+the first, understating its cost relative to a cold start, independent of
+whether compression did anything. Two mitigations, either is enough:
+**randomize which arm of each pair runs first** (so the bias falls evenly
+across both arms over the whole batch, rather than systematically favoring
+one), or **space a pair's two runs apart by more than the cache's own TTL**
+(`CacheWrite5m`/`CacheWrite1h` in the gateway's own accounting name the two
+TTLs this codebase already prices, so this is a real, bounded wait, not a
+guess). The owner picks one before running the batch; this plan does not
+itself prescribe which.
 
 **Metrics — dollars, never tokens, for the headline comparison.** §3's
 prompt-caching risk is exactly why: a tokens-only reading could show fewer
@@ -1107,17 +1224,21 @@ proposed addition this plan is actually blocked on:
   — if G20 has not shipped when this measurement runs, fall back to the
   run-level figure and say so in the results, rather than blocking the
   whole measurement on it.
-- **The cache read/write split, per arm** (§3's prompt-caching risk,
-  directly). The gateway already computes this per call
-  (`internal/gateway/sse.go:144-169`'s `cache_creation_input_tokens`/
-  `cache_read_input_tokens` parsing, `forward.go:759`'s
-  `CacheWrite5m + CacheWrite1h + CacheRead` sum) but does not currently
-  surface it in `result.json` at any granularity — this measurement needs
-  it summed per run (control vs. treatment), which is a small, additive
-  instrumentation task (§7's plan) independent of G20: without it, a
-  dollar increase in the treatment arm cannot be distinguished from "the
-  task was just more expensive" versus "compression broke the cache,"
-  which is the one failure mode this whole design most needs to catch.
+- **The cache read/write token totals, per arm** (§3's prompt-caching risk,
+  directly — token totals, not a dollar split: `Rates.Cost` returns one
+  blended total, so a true per-category dollar figure needs new pricing
+  code this design doesn't propose writing). The gateway already computes
+  the token counts per call (`internal/gateway/sse.go:144-169`'s
+  `cache_creation_input_tokens`/`cache_read_input_tokens` parsing feeds
+  `pricing.Usage{CacheRead, CacheWrite5m, CacheWrite1h, ...}`) but does not
+  currently surface them in `result.json` at any granularity — this
+  measurement needs them summed per run (control vs. treatment), a small,
+  additive instrumentation task (§7's plan) independent of G20: without it,
+  a dollar increase in the treatment arm cannot be distinguished from "the
+  task was just more expensive" versus "compression broke the cache" (a
+  jump in cache *writes* relative to control, at roughly the same total
+  cache activity, is the signature to look for), which is the one failure
+  mode this whole design most needs to catch.
 - **Review rounds** — `len(Record.Reviews)` and each entry's `Bounce`
   (`internal/runstore/runstore.go`'s `ReviewSummary`).
 - **Pass rate** — `Record.Outcome == "ready"` (the readiness rule: a
@@ -1125,10 +1246,14 @@ proposed addition this plan is actually blocked on:
   `docs/design/recipes.md` §4) and each `verify.Record.Passed`.
 - **Wall time** — `Record.StartedAt`/`FinishedAt`, and per-stage from
   `Stages []StageTiming`.
-- **Failure modes** — `Record.Status`/`Reason`, counting `infra_error`
-  (a sidecar crash, §1.5 — not `halted`, which `runstore.go:34` reserves for
-  "a budget or token limit stopped the run," a different thing) separately
-  from an ordinary `failed`.
+- **Failure modes** — `Record.Status`/`Reason`, read together: a sidecar
+  crash or hang (§1.5) goes through the same generic failure path any other
+  stage error does, so it can surface as `StatusFailed`+`OutcomeDraft` (a PR
+  already existed) or, only if it happens before the run ever got that far,
+  the bootstrap-only `StatusInfraError`+`OutcomeNone` — never `StatusHalted`,
+  which `runstore.go:34` reserves for "a budget or token limit stopped the
+  run," a different thing. Read `Reason` for a sidecar-shaped message in
+  either status rather than assuming one predictable value.
 - **A class automatic metrics cannot catch:** whether a `ship` verdict or a
   passing-looking fix is *wrong* because the reviewer or the coder acted on
   a compressed summary that silently dropped something load-bearing (§3's
@@ -1218,14 +1343,16 @@ in this repository's existing plan format (see
 `docs/plans/2026-10-09-named-oauth-tokens.md` for the precedent this one
 follows). Nothing in that plan has been written or run; like the named
 OAuth tokens plan before its Task 1, this is a design-to-code plan, gated on
-the owner approving this design and, separately, on the live checks of §1.1,
-§2 and §6 before the feature is ever enabled by default anywhere.
+the owner approving this design and, separately, on the checks of §3, §5
+and §6 before the feature's refusal is ever lifted or the feature is
+proposed as a default.
 
 ## 8. Non-goals
 
 - A per-repository or per-recipe compression *strategy* (aggressiveness
-  knobs, custom bypass lists) — v1 is a single, Fugaro-chosen bypass policy
-  and an on/off switch.
+  knobs, custom bypass lists) — v1 is a single on/off switch; the bypass
+  categories of §3 are a requirement on Headroom's own configuration,
+  confirmed once by Check H2 (§6/§7), never a per-repository choice.
 - `agent.auth: vertex` and `agent.auth: oauth` under compression (§1.1,
   §4) — v1 is `api-key` with the gateway on, only; extending to either is a
   separate, future question, each needing its own live check.
