@@ -403,14 +403,22 @@ func (pr pullRequest) isDraft() bool {
 // does (followup.go, runner.checkPullRequest): the head repository's full
 // name differs from this Provider's own workspace/slug, which fails closed
 // (Fork: true) when Bitbucket reports no source repository at all.
+// Bitbucket has no author_association, so Collaborator and Self are always
+// false: review mode's trusted-author gate (reviewmode.go) does not use
+// them for this provider at all, and fails closed on every fork instead
+// (same-repository pull requests need no author check: pushing a branch
+// here already needs write access).
 func (p *Provider) FetchPRHead(ctx context.Context, number int) (gitprov.PRHead, error) {
-	_, info, err := p.getPull(ctx, number)
+	d, info, err := p.getPull(ctx, number)
 	if err != nil {
 		return gitprov.PRHead{}, err
 	}
 	own := p.o.Workspace + "/" + p.o.Slug
 	fork := !strings.EqualFold(info.SourceRepo, own)
-	return gitprov.PRHead{SHA: info.HeadSHA, Fork: fork, Open: info.State == gitprov.PROpen}, nil
+	return gitprov.PRHead{
+		SHA: info.HeadSHA, Fork: fork, Open: info.State == gitprov.PROpen,
+		AuthorID: info.AuthorID, AuthorLogin: d.Author.displayName(), SourceRepo: info.SourceRepo,
+	}, nil
 }
 
 // PullRequest implements gitprov.Provider.

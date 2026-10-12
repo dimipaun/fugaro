@@ -68,15 +68,52 @@ var ErrPRNotOpen = errors.New("pull request is not open on this branch")
 // G12) needs it: just enough to decide whether the run may check it out,
 // never the rest of PRInfo (title, body, comments), which review mode
 // reads from the checkout itself, not from the provider.
+//
+// Review mode is trusted-author-only (owner ruling 2026-10-12): every
+// field below but SHA and Open exists to decide that, never to drive the
+// checkout itself.
 type PRHead struct {
 	// SHA is the head commit; review mode fetches and checks it out.
 	SHA string
 	// Fork is whether the head repository differs from the one the
-	// provider was opened for: refused unless review.allow_forks.
+	// provider was opened for. A fork is reviewed only when its author is
+	// trusted AND SourceRepo's owner is that same author (reviewmode.go):
+	// a trusted person's shared fork must not be able to carry someone
+	// else's commits.
 	Fork bool
 	// Open is whether the pull request is still open; a merged or closed
 	// one is refused.
 	Open bool
+	// AuthorID is the PR author's stable account ID (GitHub numeric user
+	// ID as a string; Bitbucket account_id), for followup.trusted — the
+	// same list and the same meaning a follow-up comment's trust already
+	// uses (internal/followup/trust.go).
+	AuthorID string
+	// AuthorLogin is the PR author's login (GitHub) or display name
+	// (Bitbucket, which has no stable login), for the refusal message and
+	// the fork-ownership check only — never a trust decision by itself:
+	// a login can be renamed or reused.
+	AuthorLogin string
+	// Association is the raw author_association GitHub reports (OWNER,
+	// MEMBER, COLLABORATOR, CONTRIBUTOR, NONE, ...), for the refusal
+	// message; "" when the provider has no such signal (Bitbucket).
+	Association string
+	// Collaborator is whether Association counts as a collaborator
+	// (OWNER, MEMBER or COLLABORATOR — github.collaborator, the same
+	// classification gitprov.Comment.Collaborator uses); always false on
+	// Bitbucket, which has no such signal and fails closed on a fork
+	// instead of relying on this (reviewmode.go).
+	Collaborator bool
+	// Self is whether the author is Fugaro's own identity (the provider's
+	// own bot/app account) — the same signal gitprov.Comment.Self uses.
+	// Only meaningful, and only ever true, when Fork is false: Fugaro
+	// never opens a pull request from a fork.
+	Self bool
+	// SourceRepo is owner/name of the head repository, as the provider
+	// spells it; "" when it no longer exists (a deleted fork, which fails
+	// closed: Fork is true with no SourceRepo to match AuthorLogin
+	// against).
+	SourceRepo string
 }
 
 // RepoInfo is what a follow-up needs to know about the repository.

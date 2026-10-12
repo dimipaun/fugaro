@@ -281,13 +281,18 @@ func TestGitHubPullRequestFork(t *testing.T) {
 }
 
 // TestGitHubFetchPRHeadOpenSameRepo covers review mode's own-repository
-// case: not a fork, open, the head commit named.
+// case: not a fork, open, the head commit named, and the author is
+// Fugaro's own App identity (fugaro-app[bot], author_association NONE —
+// the association an App's own pull requests always carry, which is why
+// Self, not Collaborator, is what trusted-author review of Fugaro's own
+// pull requests relies on).
 //
 // Mutation (invert the Fork comparison in FetchPRHead to ==): this test
 // fails, wanting Fork=false but getting true.
 func TestGitHubFetchPRHeadOpenSameRepo(t *testing.T) {
-	got, err := open(t, "pull_open.json").FetchPRHead(ctx, 12)
-	want := gitprov.PRHead{SHA: headSHA, Fork: false, Open: true}
+	got, err := open(t, "pull_open_head.json").FetchPRHead(ctx, 12)
+	want := gitprov.PRHead{SHA: headSHA, Fork: false, Open: true, AuthorID: "900001", AuthorLogin: "fugaro-app[bot]",
+		Association: "NONE", Self: true, SourceRepo: "acme/web"}
 	if err != nil || got != want {
 		t.Fatalf("got %+v, %v, want %+v", got, err, want)
 	}
@@ -298,21 +303,25 @@ func TestGitHubFetchPRHeadOpenSameRepo(t *testing.T) {
 //
 // Mutation (drop the Open field, always true): this test fails.
 func TestGitHubFetchPRHeadMerged(t *testing.T) {
-	got, err := open(t, "pull_merged.json").FetchPRHead(ctx, 12)
+	got, err := open(t, "pull_merged_head.json").FetchPRHead(ctx, 12)
 	if err != nil || got.Open {
 		t.Fatalf("got %+v, %v, want Open=false", got, err)
 	}
 }
 
 // TestGitHubFetchPRHeadFork covers a head repository that really is a
-// fork (full_name differs from the Provider's own): Fork must be true, so
-// review mode refuses it without review.allow_forks.
+// fork (full_name differs from the Provider's own), by an author who is
+// neither Fugaro's own identity nor a collaborator (author_association
+// CONTRIBUTOR): Fork must be true and Collaborator/Self false, so review
+// mode's trusted-author gate refuses it (reviewmode.go) unless the author
+// is separately listed in followup.trusted.
 //
 // Mutation (compare info.SourceRepo against "" instead of the owner/repo):
 // this test fails, wanting Fork=true but getting false.
 func TestGitHubFetchPRHeadFork(t *testing.T) {
-	got, err := open(t, "pull_real_fork.json").FetchPRHead(ctx, 12)
-	want := gitprov.PRHead{SHA: headSHA, Fork: true, Open: true}
+	got, err := open(t, "pull_real_fork_head.json").FetchPRHead(ctx, 12)
+	want := gitprov.PRHead{SHA: headSHA, Fork: true, Open: true, AuthorID: "900002", AuthorLogin: "outsider",
+		Association: "CONTRIBUTOR", SourceRepo: "outsider/web"}
 	if err != nil || got != want {
 		t.Fatalf("got %+v, %v, want %+v", got, err, want)
 	}
@@ -327,9 +336,24 @@ func TestGitHubFetchPRHeadFork(t *testing.T) {
 // Mutation (guard the comparison with `info.SourceRepo != "" && ...`): this
 // test fails, wanting Fork=true but getting false.
 func TestGitHubFetchPRHeadDeletedForkFailsClosed(t *testing.T) {
-	got, err := open(t, "pull_fork.json").FetchPRHead(ctx, 12)
+	got, err := open(t, "pull_fork_head.json").FetchPRHead(ctx, 12)
 	if err != nil || !got.Fork {
 		t.Fatalf("got %+v, %v, want Fork=true", got, err)
+	}
+}
+
+// TestGitHubFetchPRHeadCollaborator covers a same-repository pull request
+// by a real collaborator (author_association COLLABORATOR, not Fugaro's
+// own identity): Collaborator must be true, the signal review mode's
+// trusted-author gate relies on for an outside pull request it did not
+// open itself.
+//
+// Mutation (drop the Collaborator field in FetchPRHead): this test fails,
+// wanting Collaborator=true but getting false.
+func TestGitHubFetchPRHeadCollaborator(t *testing.T) {
+	got, err := open(t, "pull_collaborator_head.json").FetchPRHead(ctx, 12)
+	if err != nil || !got.Collaborator || got.Self {
+		t.Fatalf("got %+v, %v, want Collaborator=true, Self=false", got, err)
 	}
 }
 

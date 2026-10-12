@@ -430,9 +430,13 @@ func TestBitbucketPullRequestOpen(t *testing.T) {
 func TestBitbucketFetchPRHead(t *testing.T) {
 	p := open(t, "pull_open.json")
 	got, err := p.FetchPRHead(ctx, 12)
-	want := gitprov.PRHead{SHA: "0123456789ab", Fork: false, Open: true}
+	want := gitprov.PRHead{SHA: "0123456789ab", Fork: false, Open: true,
+		AuthorID: "712020:00000000-0000-4000-8000-00000000b07e", AuthorLogin: "fugaro-bot", SourceRepo: "acme/web"}
 	if err != nil || got != want {
 		t.Fatalf("FetchPRHead(12) = %+v, %v, want %+v", got, err, want)
+	}
+	if got.Collaborator || got.Self {
+		t.Fatalf("FetchPRHead(12) = %+v, want Collaborator=false, Self=false (Bitbucket has no such signal)", got)
 	}
 	// Mutation (guard the comparison with `info.SourceRepo != "" && ...`):
 	// this fails, wanting Fork=true but getting false (PR #14's source

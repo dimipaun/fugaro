@@ -383,10 +383,11 @@ func (u *restUser) login() string {
 // pullDetail is GET /repos/{owner}/{repo}/pulls/{number}.
 type pullDetail struct {
 	pull
-	State  string    `json:"state"` // open or closed
-	Merged bool      `json:"merged"`
-	User   *restUser `json:"user"`
-	Labels []struct {
+	State             string    `json:"state"` // open or closed
+	Merged            bool      `json:"merged"`
+	User              *restUser `json:"user"`
+	AuthorAssociation string    `json:"author_association"`
+	Labels            []struct {
 		Name string `json:"name"`
 	} `json:"labels"`
 	RequestedReviewers []restUser `json:"requested_reviewers"`
@@ -448,14 +449,26 @@ func (p *Provider) PullRequest(ctx context.Context, number int) (gitprov.PRInfo,
 // a remote. Fork is decided the same way a follow-up's own check does
 // (followup.go, runner.checkPullRequest): the head repository's full name
 // differs from this Provider's own, which fails closed (Fork: true) when
-// GitHub reports no head repository at all (a deleted fork).
+// GitHub reports no head repository at all (a deleted fork). Collaborator
+// reuses the same author_association classification Comments already uses
+// (collaborator, comments.go); Self reuses the same App-identity lookup
+// (appSlug) Comments' own Self already does, so review mode's
+// trusted-author gate (reviewmode.go) and a follow-up's comment trust
+// agree on both signals.
 func (p *Provider) FetchPRHead(ctx context.Context, number int) (gitprov.PRHead, error) {
-	_, info, err := p.getPull(ctx, number)
+	d, info, err := p.getPull(ctx, number)
 	if err != nil {
 		return gitprov.PRHead{}, err
 	}
 	fork := !strings.EqualFold(info.SourceRepo, p.owner+"/"+p.repo)
-	return gitprov.PRHead{SHA: info.HeadSHA, Fork: fork, Open: info.State == gitprov.PROpen}, nil
+	slug, known := p.appSlug(ctx)
+	self := known && d.User.login() == slug+"[bot]"
+	return gitprov.PRHead{
+		SHA: info.HeadSHA, Fork: fork, Open: info.State == gitprov.PROpen,
+		AuthorID: d.User.id(), AuthorLogin: d.User.login(),
+		Association: d.AuthorAssociation, Collaborator: collaborator(d.AuthorAssociation),
+		Self: self, SourceRepo: info.SourceRepo,
+	}, nil
 }
 
 // updateByNumber is EnsurePR for spec.Number: it reads that pull request

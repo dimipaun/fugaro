@@ -446,7 +446,7 @@ func TestFetchPRHead(t *testing.T) {
 	p.State.PRs = []PRState{own, fork, merged}
 
 	got, err := p.FetchPRHead(ctx, 1)
-	want := gitprov.PRHead{SHA: n, Fork: false, Open: true}
+	want := gitprov.PRHead{SHA: n, Fork: false, Open: true, SourceRepo: "acme/app"}
 	if err != nil || got != want {
 		t.Fatalf("own repo: got %+v, %v, want %+v", got, err, want)
 	}
