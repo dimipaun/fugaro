@@ -58,11 +58,14 @@ type Row struct {
 	Run      string `json:"run"`
 	Repo     string `json:"repo"`
 	Workflow string `json:"workflow,omitempty"`
-	// OAuthAccount is the named Claude OAuth account the run's record says
-	// it used ("" for the repository's default account,
-	// docs/design/named-oauth-tokens.md); "" for a run whose record hasn't
-	// set one (every run before this field existed, and any run not using
-	// agent.auth: oauth). Informational only.
+	// OAuthAccount is the named Claude OAuth account the run used ("" for
+	// the repository's default account, docs/design/named-oauth-tokens.md):
+	// the record's own value when it has one (confirmed by the runner
+	// itself at finalize), else the launching task's OAuthToken (Join falls
+	// back to it when the record has none — a run that died before
+	// finalize, or whose record predates this field). Still "" for a run
+	// with neither a record nor a task carrying an account (not using
+	// agent.auth: oauth, or neither is readable). Informational only.
 	OAuthAccount string `json:"oauth_account,omitempty"`
 	// Recipe is the run's recipe: the record's, else the task's; "" when
 	// neither names one (a default run launched before 0.5.0, or not started).
@@ -176,9 +179,23 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 	case in.Task != nil && in.Task.Recipe != nil:
 		row.Recipe = in.Task.Recipe.Name
 	}
+	switch {
+	// The record's own OAuthAccount, confirmed by the runner itself at
+	// finalize, is the best evidence once it exists.
+	case r != nil && r.OAuthAccount != "":
+		row.OAuthAccount = r.OAuthAccount
+	// Otherwise fall back to the task's own OAuthToken, the account the
+	// launcher actually resolved the run to run under (task.Spec.OAuthToken,
+	// set once at launch, never changed afterward): a run that died before
+	// finalize (no result.json at all, r == nil) or whose record predates
+	// this field (r != nil but r.OAuthAccount == "") would otherwise read
+	// "" indistinguishably from "used the default account" (named oauth
+	// tokens task 9b, third review round, comment 3).
+	case in.Task != nil:
+		row.OAuthAccount = in.Task.OAuthToken
+	}
 	if r != nil {
 		row.ProjectLayer, row.ConfigSHA256 = r.ProjectLayer, r.ConfigSHA256
-		row.OAuthAccount = r.OAuthAccount
 		row.Stage = r.Stage
 		if r.Reason != "" {
 			row.Reason = r.Reason

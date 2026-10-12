@@ -39,8 +39,11 @@ type prChain struct {
 	Ref, Workflow string
 	// OAuthToken is the previous run's resolved named Claude account
 	// (task.Spec.OAuthToken; "" is the repository's default): a follow-up
-	// inherits it unconditionally, never re-resolving fugaro run --token
-	// (design docs/design/named-oauth-tokens.md §3 T6).
+	// inherits it by default, never re-deriving it from fugaro.yaml or
+	// anything else a first run would read — but an explicit --token on the
+	// follow-up command overrides it (newFollowUpSpec, owner ruling
+	// 2026-10-12, task 9b review; design docs/design/named-oauth-tokens.md
+	// §3 T6 and §6b).
 	OAuthToken string
 	Recipe     *task.Recipe // the previous run's: a follow-up keeps it unless --recipe names one
 	// Chosen is the recipe the runner chose for the previous run (its record's),
@@ -397,7 +400,8 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 	if have.Recipe != nil {
 		haveRecipe = have.Recipe.Name
 	}
-	if have.PR != o.pr || have.Task != text || have.Batch != o.batch || string(a) != string(b) || (o.recipe != "" && o.recipe != haveRecipe) {
+	if have.PR != o.pr || have.Task != text || have.Batch != o.batch || string(a) != string(b) || (o.recipe != "" && o.recipe != haveRecipe) ||
+		(o.token != "" && o.token != cmp.Or(have.OAuthToken, config.DefaultClaudeAccount)) {
 		return nil, userErr("run ID %s already holds a different task", o.runID)
 	}
 	// have is stored bucket data nobody vouches for (review finding A): its
@@ -445,24 +449,44 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	}
 	// Resolved before the recipe (review finding E, the same ordering bug
 	// newSpec had): resolveRecipe/carryChosenRecipe below can read a project
-	// or catalog recipe from the bucket, a network call a disallowed
-	// inherited account should never trigger.
+	// or catalog recipe from the bucket, a network call a disallowed account
+	// (inherited or overridden) should never trigger.
+	//
+	// A follow-up inherits its previous run's account by default, but an
+	// EXPLICIT --token now overrides it (owner ruling, 2026-10-12, named
+	// oauth tokens task 9b review): switching accounts after a usage limit
+	// needs this, and it widens nothing a launcher could not already do with
+	// a fresh run — the override is resolved exactly like claudeAccountFor
+	// resolves a first run's (§6b), and goes through the identical
+	// claudeAccountAllowed gate immediately below: the allow-list, the
+	// agent.auth oauth rule, and (via spec.OAuthToken below, the same field
+	// a first run sets) the namedTokensSince version gate and the
+	// job-variant-must-exist rule at launch. --token default is not
+	// special-cased: like a first run's empty default, it simply makes
+	// account the reserved name, which claudeAccountAllowed always allows.
 	account := c.OAuthToken
 	if account == "" {
 		account = config.DefaultClaudeAccount
 	}
-	if o.token != "" && o.token != account {
-		fmt.Fprintf(warn, "warning: --token %s is ignored on a follow-up; it keeps %s's Claude account %s\n",
-			pluginwire.Printable(o.token), pluginwire.Printable(oneLineCLI(c.Previous.Run)), pluginwire.Printable(account))
+	if o.token != "" {
+		account = o.token
 	}
-	// c.OAuthToken came from the previous run's task.json, bucket data a
-	// launcher can write directly: its shape was already checked when
-	// readTask parsed it (task.Parse validates), but whether this repository
-	// may still use it (claude_accounts.<name>.allow_data_to) is not — a
-	// name that was allowed when the first run launched, or a forged record
-	// naming one that never was, must not let a follow-up launch under it.
+	// c.OAuthToken (the inherited case) came from the previous run's
+	// task.json, bucket data a launcher can write directly: its shape was
+	// already checked when readTask parsed it (task.Parse validates), but
+	// whether this repository may still use it
+	// (claude_accounts.<name>.allow_data_to) is not — a name that was
+	// allowed when the first run launched, or a forged record naming one
+	// that never was, must not let a follow-up launch under it. An explicit
+	// override (o.token, a launcher's own flag) gets the identical check,
+	// never a lesser one.
 	if err := claudeAccountAllowed(env, repo, account, checkout()); err != nil {
 		return nil, err
+	}
+	if o.token != "" && account != cmp.Or(c.OAuthToken, config.DefaultClaudeAccount) {
+		fmt.Fprintf(warn, "note: --token %s switches this follow-up from %s's Claude account %s to %s\n",
+			pluginwire.Printable(o.token), pluginwire.Printable(oneLineCLI(c.Previous.Run)),
+			pluginwire.Printable(cmp.Or(c.OAuthToken, config.DefaultClaudeAccount)), pluginwire.Printable(account))
 	}
 	rcp := c.Recipe
 	if o.recipe != "" {
