@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
@@ -93,5 +94,47 @@ func TestDocsNamedOAuthTokensSetupSkill(t *testing.T) {
 	namedSecretCmd := "fugaro secrets set " + config.ClaudeOAuthTokenPrefix + "<name> --repo"
 	if !strings.Contains(string(skill), namedSecretCmd) {
 		t.Errorf("SKILL.md no longer shows %q (config.ClaudeOAuthTokenPrefix changed, or the command was dropped)", namedSecretCmd)
+	}
+	// U2 (the exact claude-setup-token multi-account sequence) is not
+	// answered yet (docs/gcp-live-checklist.md Check 33): the skill must
+	// never invent a step this repository has not verified, such as a
+	// log-out command or an --account-style flag.
+	for _, invented := range []string{
+		"claude logout",
+		"by running claude logout first",
+	} {
+		if strings.Contains(text, invented) {
+			t.Errorf("setup skill text invents an unverified claude setup-token step (%q); U2 is not yet answered, see docs/gcp-live-checklist.md Check 33", invented)
+		}
+	}
+}
+
+// TestDocsNamedOAuthTokensWorkflowVariantJoin pins two of the design doc's
+// own corrections (follow-up review round) against the real code, not just
+// their wording: gcp.WorkflowVariant's separator is "_", not "--" (a "--"
+// join is not injective, since a workflow or account name may already
+// contain "-"), and config.ClaudeAccount has no settable "secret:" field (it
+// is always derived). A regression of either in the code, or a reverted
+// doc correction, fails this test.
+func TestDocsNamedOAuthTokensWorkflowVariantJoin(t *testing.T) {
+	if got, want := gcp.WorkflowVariant("build", "acme"), "build_acme"; got != want {
+		t.Fatalf("gcp.WorkflowVariant(%q, %q) = %q, want %q: this test's own join assumption is stale", "build", "acme", got, want)
+	}
+	data, err := os.ReadFile("../../docs/design/named-oauth-tokens.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	if want := `workflow + "_" + token`; !strings.Contains(doc, want) {
+		t.Errorf("docs/design/named-oauth-tokens.md no longer describes WorkflowVariant's join as %q", want)
+	}
+	if bad := `workflow + "--" + token`; strings.Contains(doc, bad) {
+		t.Errorf("docs/design/named-oauth-tokens.md still claims WorkflowVariant joins with %q, which gcp.WorkflowVariant does not do", bad)
+	}
+	if _, ok := reflect.TypeOf(config.ClaudeAccount{}).FieldByName("Secret"); ok {
+		t.Fatal("config.ClaudeAccount now has a Secret field: docs/design/named-oauth-tokens.md's §3 example was corrected on the assumption it does not")
+	}
+	if strings.Contains(doc, "secret: claude-oauth-token-acme-personal") {
+		t.Error(`docs/design/named-oauth-tokens.md's §3 example still shows a "secret:" field on a claude_accounts entry; the secret is always derived (ClaudeAccountSecret), never a key of that block`)
 	}
 }

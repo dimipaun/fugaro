@@ -1,6 +1,6 @@
 # Named OAuth tokens (multiple Claude accounts)
 
-Status: design for review (2026-10-10). Source: the owner's request (2026-10-09), "it would be nice to be able to store multiple oauth tokens (from multiple accounts) and pick one by name." Every fact below is cited to the code that was read for it; no cloud call was made. The verified/unverified split is explicit (§7). Plan: [../plans/2026-10-09-named-oauth-tokens.md](../plans/2026-10-09-named-oauth-tokens.md); its decisions T1 to T14 can be vetoed one by one.
+Status: shipped in 0.6.1 (implemented; U2 and U4's live checks are still outstanding, §7). Source: the owner's request (2026-10-09), "it would be nice to be able to store multiple oauth tokens (from multiple accounts) and pick one by name." Every fact below is cited to the code that was read for it; no cloud call was made. The verified/unverified split is explicit (§7). Plan: [../plans/2026-10-09-named-oauth-tokens.md](../plans/2026-10-09-named-oauth-tokens.md); its decisions T1 to T14 can be vetoed one by one.
 
 ## 1. What exists today (verified in the code)
 
@@ -73,7 +73,7 @@ Cloud Run mounts secrets at the **job**, not the execution (§1). Four shapes we
 
 - **Removing an account, or unlisting a repository from an account's `allow_data_to`, plans DELETES** of that variant's service account, its bindings, its Cloud Run job and the `claude-oauth-token-<name>` secret, including the stored token. `tf.Guard` refuses every one of them (it fails closed), so the person applying needs `--allow-delete` for each address, plus `--allow-job-delete` for a deployed job (the job has `deletion_protection`). That is deliberate: removing an account is destructive, and it should take a typed confirmation, never happen as a side effect of editing the local config.
 - **A second operator's `fugaro init --repo` with a local config that lacks the accounts** also plans those deletes, because `claude_accounts` is operator-only local config and is never published (`Shared()` strips it). The guard blocks their init rather than destroying anything; they need the same local config as the first operator, or the plan will show the deletes and be refused.
-- **Until Task 5 lands,** once an account lists a repository `init --repo` prints `fugaro secrets set claude-oauth-token-<name> --repo X` and `secrets set` refuses it (it is neither the reserved name nor declared): that is the gap Task 5 closes.
+- Once an account lists a repository, `init --repo` prints `fugaro secrets set claude-oauth-token-<name> --repo X` and `secrets set` accepts it, validated against the local config's `claude_accounts.<name>.allow_data_to` the same way a provider's secret is (Task 5, merged).
 - A variant job is never deployed until its secret has a version; the one image is shared by the default job and every variant (built once).
 
 ## 5. Compatibility
@@ -136,13 +136,13 @@ Cloud Run mounts secrets at the **job**, not the execution (§1). Four shapes we
 ## 10. Testing
 
 - **Golden compatibility.** `BuildRepoSpec`'s tfvars JSON is unchanged, byte for byte, for every existing fixture with no `claude_accounts` configured (§5).
-- **Allow-list enforcement.** A repository not listed in `allow_data_to` gets no job variant for that name (`infra` test), is refused at `fugaro validate`/`run --token` (CLI test), and a direct Terraform-level attempt is moot because the resource is never declared (no "apply refuses it" test needed — it is not generated).
+- **Allow-list enforcement.** A repository not listed in `allow_data_to` gets no job variant for that name (`infra` test), is refused at `run --token` (and flagged by `doctor`'s `oauth-token-allowed`) (CLI test), and a direct Terraform-level attempt is moot because the resource is never declared (no "apply refuses it" test needed — it is not generated).
 - **`secrets set` validation.** Mirrors `TestAllowsDataIgnoresCase`-style cases already in `model_providers_test.go`, for `ClaudeAccountBySecret`.
 - **Strict decoding.** A pre-feature runner (simulated by decoding with `DisallowUnknownFields` against a `task.json` carrying `oauth_token`) refuses, proving the version-skew gate is real, not just documented.
 - **No live cloud, no live Anthropic call** anywhere in the automated suite; §7's items are the owner's own live-check task, run once in the sandbox project, their FACT lines pasted into `docs/gcp-live-checklist.md` and the PR.
 
 ## 11. Docs
 
-- This file and the setup skill (`plugin/skills/setup/reference/decisions.md:24`, `plugin/skills/setup/SKILL.md:100-108`) gain the named-account shape and the exact `claude setup-token` sequence once U2 is answered.
+- This file and the setup skill (`plugin/skills/setup/reference/decisions.md`, `plugin/skills/setup/SKILL.md`, "Named Claude accounts") already have the named-account shape; only the exact second-account `claude setup-token` sequence waits on U2.
 - `docs/design/v1.md` §5.4 (local config) and §6.1 (trust boundary, the per-job-account bullet) get a cross-reference to this design, since both are factual claims this design extends rather than restates.
 - `docs/gcp-live-checklist.md` gets U1 to U4 as new numbered checks.
