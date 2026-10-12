@@ -39,8 +39,6 @@ type Config struct {
 	Budget    *Budget             `yaml:"budget,omitempty"`
 	Workflows map[string]Workflow `yaml:"workflows"`
 	Followup  Followup            `yaml:"followup"`
-	// Review configures review mode (design generic-tool §1, G12).
-	Review Review `yaml:"review"`
 
 	// Layer is the project layer Resolve resolved this config over, nil
 	// for none. It is never part of the file or of SHA256: a consumer that
@@ -82,15 +80,6 @@ type Followup struct {
 	// AllowPublic lets a follow-up run on a public repository, where
 	// anyone can comment.
 	AllowPublic bool `yaml:"allow_public"`
-}
-
-// Review configures review mode (design generic-tool §1, G12): an agent
-// reviewing a pull request instead of implementing one.
-type Review struct {
-	// AllowForks lets review mode run a fork pull request's code next to
-	// the job's secrets; false (the default) refuses a fork PR. Read from
-	// the base branch, like Followup.Trusted, so a PR can't opt itself in.
-	AllowForks bool `yaml:"allow_forks"`
 }
 
 // Git describes the repository's git provider and pull request settings.

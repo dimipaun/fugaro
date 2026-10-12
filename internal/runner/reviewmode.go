@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // checkoutReviewHeadsSeam, when set by a test, runs in reviewMode right
@@ -46,6 +47,12 @@ type reviewHead struct {
 // bootstrap with the reason, before anything is checked out; the runner
 // never silently skips a pull request the task named.
 func (r *run) checkReviewPRs(ctx context.Context) error {
+	trustedIDs := make(map[string]bool, len(r.cfg.Followup.Trusted))
+	for _, id := range r.cfg.Followup.Trusted {
+		if id != "" {
+			trustedIDs[id] = true
+		}
+	}
 	heads := make([]reviewHead, 0, len(r.spec.ReviewPRs))
 	for _, n := range r.spec.ReviewPRs {
 		h, err := r.provider.FetchPRHead(ctx, n)
@@ -55,16 +62,89 @@ func (r *run) checkReviewPRs(ctx context.Context) error {
 		if !h.Open {
 			return fmt.Errorf("PR #%d is not open", n)
 		}
-		if h.Fork && !r.cfg.Review.AllowForks {
-			return fmt.Errorf("PR #%d's head is in a fork; set review.allow_forks: true in fugaro.yaml on %s to review it", n, r.spec.Ref)
-		}
 		if strings.TrimSpace(h.SHA) == "" {
 			return fmt.Errorf("PR #%d has no head commit", n)
+		}
+		if err := r.checkReviewAuthor(ctx, n, h, trustedIDs); err != nil {
+			return err
 		}
 		heads = append(heads, reviewHead{Number: n, SHA: h.SHA})
 	}
 	r.reviewHeads = heads
 	return nil
+}
+
+// checkReviewAuthor refuses pull request n unless its author is trusted
+// (design generic-tool §3.6, G12; owner ruling 2026-10-12): review mode is
+// trusted-author-only, fork or not — fork status alone no longer decides.
+// "Trusted" reuses the exact two signals a follow-up comment's own trust
+// already does (internal/followup/trust.go, Collaborator —
+// author_association OWNER/MEMBER/COLLABORATOR on GitHub), OR'd rather
+// than AND'd: h.Collaborator, listed in followup.trusted, or Fugaro's own
+// identity on a pull request it opened itself (h.Self, only meaningful
+// when the head is in this same repository). A trusted author's FORK is
+// reviewed only when the fork repository's owner is that same author:
+// otherwise a trusted person's shared/organizational fork could carry
+// someone else's commits under a name the trust check never sees.
+//
+// Bitbucket has no author_association at all (gitprov.PRHead.Collaborator
+// and Self are always false there) and fails closed instead: a
+// same-repository pull request needs no author check (pushing a branch
+// here already needs write access), and every fork is refused outright,
+// regardless of followup.trusted.
+//
+// A refusal posts a short note on the pull request (best effort; a
+// posting failure is only logged) so the author or anyone watching the
+// pull request sees why review mode never ran, the same as a push
+// refused for touching .github/workflows/ already does (endRefused).
+func (r *run) checkReviewAuthor(ctx context.Context, n int, h gitprov.PRHead, trustedIDs map[string]bool) error {
+	if r.providerKind == gitprov.KindBitbucket {
+		if h.Fork {
+			return r.refuseReview(ctx, n, fmt.Sprintf(
+				"PR #%d's head is in a fork; review mode only reviews same-repository pull requests on Bitbucket, which has no author association to decide trust from", n))
+		}
+		return nil
+	}
+	trusted := h.Collaborator || trustedIDs[h.AuthorID] || (!h.Fork && h.Self)
+	if !trusted {
+		assoc := h.Association
+		if assoc == "" {
+			assoc = "none"
+		}
+		return r.refuseReview(ctx, n, fmt.Sprintf(
+			"PR #%d's author %s (%s) is not a trusted author of %s; review mode only reviews pull requests by the repository's owner, members and collaborators, or Fugaro's own",
+			n, safetext.OneLine(h.AuthorLogin), safetext.OneLine(assoc), r.spec.Repo))
+	}
+	if h.Fork {
+		owner, _, _ := strings.Cut(h.SourceRepo, "/")
+		if h.SourceRepo == "" || !strings.EqualFold(owner, h.AuthorLogin) {
+			return r.refuseReview(ctx, n, fmt.Sprintf(
+				"PR #%d's fork repository %s is not owned by its trusted author %s; a shared or organizational fork cannot carry someone else's commits",
+				n, safetext.OneLine(h.SourceRepo), safetext.OneLine(h.AuthorLogin)))
+		}
+	}
+	return nil
+}
+
+// refuseReview ends checkReviewAuthor's refusal of pull request n: the
+// same infra_error/outcome-none shape every bootstrap-time refusal in
+// this file already has (there is no draft pull request for a review run
+// to be StatusFailed's "a draft PR exists"), set directly here (not
+// wrapped by Run's generic "bootstrap: %w") so the stored reason stays
+// exactly reason, and a best-effort note posted on the pull request
+// itself, the same as a push refused for touching .github/workflows/
+// already gets (endRefused) — nothing before this ever posted anything,
+// so the refusal was otherwise invisible to anyone but Fugaro's own logs.
+func (r *run) refuseReview(ctx context.Context, n int, reason string) error {
+	reason = r.redact(reason)
+	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusInfraError, runstore.OutcomeNone, reason
+	note := "**Fugaro:** " + reason + ". Nothing was checked out or reviewed.\n" + gitprov.ReportMarker(r.rec.RunID) + "\n"
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), giveUpCommentTimeout)
+	defer cancel()
+	if err := r.provider.Comment(cctx, gitprov.PR{Number: n}, note); err != nil {
+		r.d.Log.Warn("posting the review refusal note failed", "pr", n, "err", r.redact(err.Error()))
+	}
+	return errors.New(reason)
 }
 
 // reviewDir is where a pick run checks out pull request n (design

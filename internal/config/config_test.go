@@ -145,15 +145,18 @@ func TestCommandsLintAndFix(t *testing.T) {
 	}
 }
 
-// TestReviewAllowForksParses (generic-tool Task 9, G12): review.allow_forks
-// is a plain top-level boolean.
-func TestReviewAllowForksParses(t *testing.T) {
-	cfg, problems := Parse([]byte(minimalYAML + "review:\n  allow_forks: true\n"))
-	if len(problems) > 0 {
-		t.Fatalf("unexpected problems: %v", problems)
-	}
-	if !cfg.Review.AllowForks {
-		t.Fatalf("Review.AllowForks = false, want true")
+// TestReviewAllowForksRemoved (owner ruling 2026-10-12, generic-tool Task
+// 12): review.allow_forks no longer exists — review mode is
+// trusted-author-only, with no opt-in for untrusted ones — so a leftover
+// review: key, from before the removal, is refused by the strict parser
+// (KnownFields) the same as any other unknown key.
+//
+// Mutation (restore the Review field on Config): this test fails, finding
+// no problem for a key that no longer exists.
+func TestReviewAllowForksRemoved(t *testing.T) {
+	_, problems := Parse([]byte(minimalYAML + "review:\n  allow_forks: true\n"))
+	if len(problems) == 0 {
+		t.Fatal("want a problem for the removed review.allow_forks key, got none")
 	}
 }
 

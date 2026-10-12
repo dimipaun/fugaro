@@ -543,15 +543,6 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 	if err != nil {
 		return "", nil, err
 	}
-	// review.allow_forks is a standing risk (docs/recipes.md §3, SECURITY.md):
-	// every review-mode launch against a repository that has it set is
-	// reminded, not only `fugaro validate`'s own warning when the file is
-	// edited. Best effort: a launch with no local checkout of the
-	// repository prints nothing here (the runner still reads the real
-	// fugaro.yaml at the ref and enforces the flag itself either way).
-	if c := checkout(); c != nil && c.Review.AllowForks {
-		fmt.Fprintln(warn, "note: "+config.AllowForksWarning)
-	}
 	printRecipeNote(warn, rr, true)
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, Workflow: workflow, Task: text,
 		RequestedBy: me, Batch: o.batch, Recipe: rr.taskRecipe(), ReviewPRs: append([]int(nil), o.pr...)}

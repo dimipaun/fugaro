@@ -35,11 +35,6 @@ func reviewTaskSpec(name, yaml string, prs ...int) *task.Spec {
 	return &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Recipe: embeddedTask(name, yaml), ReviewPRs: prs}
 }
 
-// allowForksCfg is the fixture's fugaro.yaml with review.allow_forks: true.
-func allowForksCfg(t *testing.T) string {
-	t.Helper()
-	return testutil.FixtureFiles(t)["fugaro.yaml"] + "review:\n  allow_forks: true\n"
-}
 
 // agentReviewSlashCfg is the fixture's fugaro.yaml with agent.review set to
 // a leading-slash custom-command reference.
@@ -850,61 +845,73 @@ func TestReviewModePanicDuringHaltEndsHalted(t *testing.T) {
 	}
 }
 
-// TestReviewModeRefusesForkWithoutOptIn: a pull request whose head is in a
-// fork is refused unless the base branch's fugaro.yaml sets
-// review.allow_forks: true (design generic-tool §3.6, G12); with it set,
-// the same fork is reviewed as any other pull request.
+// TestReviewModeRefusesUntrustedAuthor: owner ruling 2026-10-12 — review
+// mode is trusted-author-only, fork or not. An untrusted same-repository
+// PR is refused exactly like an untrusted fork is; listing the author in
+// followup.trusted (or the provider's own Collaborator signal, exercised
+// by the many other review-mode tests whose PR defaults to Fugaro's own
+// identity) is what review mode now treats as "trusted" (checkReviewAuthor).
 //
-// Mutation (drop the `h.Fork && !r.cfg.Review.AllowForks` check in
-// checkReviewPRs): the first half fails, finding the run succeeded instead
-// of refused.
-func TestReviewModeRefusesForkWithoutOptIn(t *testing.T) {
+// Mutation (drop the `trusted := h.Collaborator || trustedIDs[...] || ...`
+// check in checkReviewAuthor): this test fails, finding the untrusted PR
+// reviewed instead of refused, and the trusted one still reviewed.
+func TestReviewModeRefusesUntrustedAuthor(t *testing.T) {
 	h := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
 	pushReviewBranch(t, h, "feature", func(dir string) {
 		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
 	})
-	addPR(h, 7, "feature", "outsider/repo")
+	addPR(h, 7, "feature", "")
+	h.provider.State.PRs[0].AuthorID = "outsider-id"
 	rec, err := h.run(t)
-	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "review.allow_forks") || len(stageNames(rec)) != 0 {
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "not a trusted author") || len(stageNames(rec)) != 0 {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 
-	h2 := newHarness(t, allowForksCfg(t), reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	h2 := newHarness(t, followUpYAML(t, ""), reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	h2.deps.Env = append(h2.deps.Env, "PLANTED_SECRET=x")
 	pushReviewBranch(t, h2, "feature", func(dir string) {
 		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
 	})
-	addPR(h2, 7, "feature", "outsider/repo")
+	addPR(h2, 7, "feature", "")
+	h2.provider.State.PRs[0].AuthorID = aliceID
 	rec2, err := h2.run(t, review("ship", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if rec2.Outcome != runstore.OutcomeReviewed {
-		t.Fatalf("allow_forks did not allow it: rec = %+v", rec2)
+		t.Fatalf("followup.trusted did not allow it: rec = %+v", rec2)
 	}
 }
 
-// TestReviewModeForksOwnAllowForksIsIgnored: review mode reads fugaro.yaml
-// from the base branch (readBaseConfig), never from a reviewed pull
-// request's own tree — the same rule a follow-up already follows. A fork
-// that pushes its own fugaro.yaml setting review.allow_forks: true must
-// still be refused: that key can only ever come from the base branch,
-// which a fork can't touch.
+// TestReviewModeRefusesUntrustedFork: a fork PR by an untrusted author is
+// refused (same gate as the same-repository case above); a trusted
+// author's fork is only reviewed when the fork repository's own owner is
+// that same author, never when it differs (a shared/organizational fork
+// carrying someone else's commits).
 //
-// Mutation (in readBaseConfig, read fugaro.yaml from the pull request's own
-// branch instead of origin/<ref>): this test fails, finding the fork
-// reviewed instead of refused.
-func TestReviewModeForksOwnAllowForksIsIgnored(t *testing.T) {
+// Mutation (drop the `h.Fork` ownership check in checkReviewAuthor): the
+// second sub-case fails, finding the mismatched-owner fork reviewed.
+func TestReviewModeRefusesUntrustedFork(t *testing.T) {
 	h := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
 	pushReviewBranch(t, h, "feature", func(dir string) {
-		testutil.WriteFiles(t, dir, map[string]string{
-			"other.txt":   "x\n",
-			"fugaro.yaml": allowForksCfg(t),
-		})
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
 	})
 	addPR(h, 7, "feature", "outsider/repo")
 	rec, err := h.run(t)
-	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "review.allow_forks") {
-		t.Fatalf("a fork's own review.allow_forks: true was honoured; rec = %+v, err = %v", rec, err)
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "not a trusted author") {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+
+	h2 := newHarness(t, followUpYAML(t, ""), reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	pushReviewBranch(t, h2, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h2, 7, "feature", "someoneelse/repo")
+	h2.provider.State.PRs[0].AuthorID = aliceID
+	h2.provider.State.PRs[0].AuthorLogin = "alice"
+	rec2, err := h2.run(t)
+	if err == nil || rec2.Status != runstore.StatusInfraError || !strings.Contains(rec2.Reason, "not owned by its trusted author") {
+		t.Fatalf("mismatched fork owner: rec = %+v, err = %v", rec2, err)
 	}
 }
 

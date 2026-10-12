@@ -38,7 +38,7 @@ func TestRecipesGuideMatchesTheCLI(t *testing.T) {
 		}
 	}
 	for _, want := range []string{"fugaro run --recipe", "agent.recipe", ".fugaro/recipes/", "fugaro/recipes/", "16 KiB", "0.5.0", "fugaro init",
-		"use_when", "0.7.0", "commands.lint", "review.allow_forks"} {
+		"use_when", "0.7.0", "commands.lint"} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("docs/recipes.md never says %q", want)
 		}

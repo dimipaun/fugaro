@@ -429,25 +429,8 @@ func CheckWarnings(c *Config, root string) []Problem {
 			ps = append(ps, Problem{Path: "workflows." + showKey(name), Message: "no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)"})
 		}
 	}
-	if c.Review.AllowForks {
-		ps = append(ps, Problem{Path: "review.allow_forks", Message: AllowForksWarning})
-	}
 	return ps
 }
-
-// AllowForksWarning is review.allow_forks: true's own warning (CheckWarnings,
-// and the one-line reminder fugaro run prints when it launches a
-// review-mode recipe against such a repository): the reviewing agent runs
-// as the same unsandboxed, unprivileged-but-not-isolated user as every
-// other run, with every permission prompt off, reading a fork's own
-// CLAUDE.md and diff — one prompt-injected line is code execution that can
-// then read the runner's own /proc environment (every workflow secret, the
-// GitHub App's private key, the provider keys, the job's service account)
-// and send any of it out over the open network egress, or write the runs
-// bucket's cache prefix directly. Not safe on a repository whose
-// installation or job holds secrets worth protecting; see SECURITY.md and
-// docs/recipes.md §3 for the full account.
-const AllowForksWarning = "a review-mode run can check out ANY open pull request, including a fork's, and have the agent read its code and CLAUDE.md with every permission prompt off; that agent runs as the same user as every other run, so it can read the runner's own environment (every workflow secret, the GitHub App's private key, the provider keys, the job's service account) and send any of it anywhere over the open network, or write the runs bucket's cache directly — redaction does not stop that. Do not enable this on a repository whose installation or job holds secrets worth protecting; see SECURITY.md and docs/recipes.md §3"
 
 // badUSD reports a dollar amount no limit may be: negative, NaN or infinite.
 func badUSD(v float64) bool { return v < 0 || math.IsNaN(v) || math.IsInf(v, 0) }

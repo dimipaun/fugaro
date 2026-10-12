@@ -160,16 +160,11 @@ func TestRunReviewModeWithoutPR(t *testing.T) {
 	}
 }
 
-// TestRunReviewModeWarnsAllowForksEnabled: a review-mode launch against a
-// local checkout whose fugaro.yaml sets review.allow_forks: true gets a
-// one-line stderr reminder naming the actual exposure (the GitHub App's
-// private key), not just fugaro validate's own warning when the file is
-// edited (TestValidateWarnsAllowForks, validate_test.go) — a launcher may
-// never have run validate on this exact file.
-//
-// Mutation (drop the `if c := checkout(); c != nil && c.Review.AllowForks`
-// block from reviewSpec): this test fails, finding no note on stderr.
-func TestRunReviewModeWarnsAllowForksEnabled(t *testing.T) {
+// TestRunReviewModeRefusesLeftoverAllowForks (owner ruling 2026-10-12):
+// review.allow_forks is removed outright; a local checkout whose
+// fugaro.yaml still sets it fails to launch at all (the strict parser
+// refuses the unknown key), rather than merely losing the reminder.
+func TestRunReviewModeRefusesLeftoverAllowForks(t *testing.T) {
 	f := newCloudFixture(t)
 	testutil.IsolateGit(t)
 	f.run.AddJob(gcp.JobName(mustSlug("github", "acme/other"), "svc"), "2", "4Gi")
@@ -182,11 +177,7 @@ func TestRunReviewModeWarnsAllowForksEnabled(t *testing.T) {
 	t.Chdir(dir)
 	other := mustSlug("github", "acme/other")
 	writeBuildRecord(t, f, other, "svc", release070)
-	_, errOut, err := execute(t, "run", "--recipe", "review-only", "--pr", "7", "--run-id", "20261007-100000-abcd")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(errOut, "note:") || !strings.Contains(errOut, "GitHub App's private key") {
-		t.Fatalf("errOut = %q", errOut)
+	if _, _, err := execute(t, "run", "--recipe", "review-only", "--pr", "7", "--run-id", "20261007-100000-abcd"); err == nil {
+		t.Fatal("want an error for the removed review.allow_forks key, got none")
 	}
 }

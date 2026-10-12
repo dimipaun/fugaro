@@ -98,32 +98,18 @@ func TestValidateWarnsNoLanguageRuntime(t *testing.T) {
 	}
 }
 
-// TestValidateWarnsAllowForks pins config.CheckWarnings' review.allow_forks
-// warning into `fugaro validate`: a config with review.allow_forks: true is
-// valid but prints the loud warning naming the actual exposure (secrets,
-// the GitHub App key, open egress), in both the plain and --json forms.
+// TestValidateRefusesLeftoverAllowForks (owner ruling 2026-10-12):
+// review.allow_forks is removed outright, not merely undocumented — a
+// fugaro.yaml still setting it is invalid, refused by the strict parser
+// the same as any other unknown key, not a warning.
 //
-// Mutation (drop the `if c.Review.AllowForks` check from CheckWarnings):
-// this test fails, finding no warning.
-func TestValidateWarnsAllowForks(t *testing.T) {
+// Mutation (restore the Config.Review field): this test fails, finding
+// the leftover key accepted instead of refused.
+func TestValidateRefusesLeftoverAllowForks(t *testing.T) {
 	path := writeConfig(t, cliMinimalYAML+"review:\n  allow_forks: true\n")
-	out, errOut, err := execute(t, "validate", path)
-	if err != nil {
-		t.Fatalf("out=%q errOut=%q err=%v", out, errOut, err)
-	}
-	if !strings.Contains(errOut, "warning: review.allow_forks:") || !strings.Contains(errOut, "GitHub App's private key") {
-		t.Fatalf("errOut = %q", errOut)
-	}
-	out, _, err = execute(t, "validate", "--json", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got validateOutput
-	if err := json.Unmarshal([]byte(out), &got); err != nil {
-		t.Fatalf("invalid JSON %q: %v", out, err)
-	}
-	if !got.Valid || len(got.Warnings) != 1 || got.Warnings[0].Path != "review.allow_forks" {
-		t.Fatalf("got %+v", got)
+	_, _, err := execute(t, "validate", path)
+	if err == nil {
+		t.Fatal("want an error for the removed review.allow_forks key, got none")
 	}
 }
 
