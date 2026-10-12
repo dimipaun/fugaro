@@ -11,8 +11,10 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -533,6 +535,528 @@ func TestDoctorGitHubApp(t *testing.T) {
 			t.Fatalf("%+v", c)
 		}
 	})
+}
+
+// addClaudeAccounts appends a claude_accounts: block to the rig's local
+// config, as an owner's own hand edit would (claude_accounts is
+// local-config-only, never written by any Fugaro command itself; design
+// docs/design/named-oauth-tokens.md §3 T1).
+func addClaudeAccounts(t *testing.T, r *doctorRig, yaml string) {
+	t.Helper()
+	data, err := os.ReadFile(r.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfgPath, append(data, []byte(yaml)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// claudeAccountsRig is a doctor rig inside a checkout of github.com/acme/app,
+// whose local config allows acme/app to choose the named Claude account
+// acme-personal.
+func claudeAccountsRig(t *testing.T) *doctorRig {
+	t.Helper()
+	r := newDoctorRig(t)
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	addClaudeAccounts(t, r, "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/app]\n")
+	return r
+}
+
+// TestDoctorClaudeAccountsStoredMissing: a repository allowed to choose a
+// named Claude account, whose secret was never stored, fails doctor and
+// names the exact commands to run — never the secret's own value.
+func TestDoctorClaudeAccountsStoredMissing(t *testing.T) {
+	r := claudeAccountsRig(t)
+	out, _, err := execute(t, "doctor", "--json")
+	if err == nil {
+		t.Fatal("want doctor to fail: the allowed named account has no stored token")
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "claude-accounts-stored")
+	if !ok || c.OK || c.Severity != "" {
+		t.Fatalf("claude-accounts-stored = %+v", c)
+	}
+	if !strings.Contains(c.Problem, "acme-personal") {
+		t.Fatalf("problem doesn't name the account: %q", c.Problem)
+	}
+	if !strings.Contains(c.Fix, "claude setup-token") || !strings.Contains(c.Fix, "secrets set claude-oauth-token-acme-personal --repo acme/app") {
+		t.Fatalf("fix doesn't name the exact commands: %q", c.Fix)
+	}
+	if a := r.sm.Accessed(); len(a) != 0 {
+		t.Fatalf("doctor read a secret value: %v", a)
+	}
+}
+
+// TestDoctorClaudeAccountsStoredPresent: once the secret is stored, the
+// check passes and no value ever reaches doctor's output.
+func TestDoctorClaudeAccountsStoredPresent(t *testing.T) {
+	r := claudeAccountsRig(t)
+	const value = "fake-token-0123456789"
+	putSecret(t, r.sm, "proj-1234", mustSlug("github", "acme/app"), "claude-oauth-token-acme-personal", []byte(value))
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "claude-accounts-stored")
+	if !ok || !c.OK {
+		t.Fatalf("claude-accounts-stored = %+v", c)
+	}
+	if strings.Contains(out, value) {
+		t.Fatalf("the value leaked: %s", out)
+	}
+	if a := r.sm.Accessed(); len(a) != 0 {
+		t.Fatalf("doctor read a secret value: %v", a)
+	}
+}
+
+// TestDoctorClaudeAccountsStoredExcludesDisallowedRepo: a named account this
+// repository is not allowed to choose never asks for its token to be
+// stored, mirroring config.AllowedClaudeAccounts's own exclusion.
+func TestDoctorClaudeAccountsStoredExcludesDisallowedRepo(t *testing.T) {
+	r := newDoctorRig(t)
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	addClaudeAccounts(t, r, "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/other]\n")
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	if c, ok := doctorCheckByID(o.Checks, "claude-accounts-stored"); ok {
+		t.Fatalf("a repository got a check for an account it isn't allowed: %+v", c)
+	}
+}
+
+// TestDoctorClaudeAccountsStoredSilentWithNoAccounts: an installation that
+// configures no claude_accounts at all gets no new check — byte-identical
+// to doctor's output before this feature (design §5; carry-forward T8).
+func TestDoctorClaudeAccountsStoredSilentWithNoAccounts(t *testing.T) {
+	newDoctorRig(t)
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	// A real owner/name origin, so this actually exercises "no accounts
+	// configured" inside claudeAccountsStoredCheck, not just "no origin to
+	// resolve a repository from" (a different, weaker case).
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	if c, ok := doctorCheckByID(o.Checks, "claude-accounts-stored"); ok {
+		t.Fatalf("an installation with no claude_accounts got a new check: %+v", c)
+	}
+}
+
+// TestDoctorClaudeAccountsStoredFailsClosedWhenUnreachable: when the
+// repository and its allowed named account are both known, but the secrets
+// list itself could not be read, the check must warn, not go silent (fail
+// closed: carry-forward T8).
+func TestDoctorClaudeAccountsStoredFailsClosedWhenUnreachable(t *testing.T) {
+	r := claudeAccountsRig(t)
+	data, err := os.ReadFile(r.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken := strings.Replace(string(data), r.sm.URL, "http://127.0.0.1:1", 1)
+	if broken == string(data) {
+		t.Fatal("secret_manager endpoint not found in the local config to break")
+	}
+	if err := os.WriteFile(r.cfgPath, []byte(broken), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("a warning must not fail doctor without --strict: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "claude-accounts-stored")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("claude-accounts-stored = %+v", c)
+	}
+	if _, _, err := execute(t, "doctor", "--strict", "--json"); err == nil {
+		t.Fatal("--strict: want a failure, since the check could not be answered")
+	}
+}
+
+// TestDoctorClaudeAccountsStoredWarnsWhenRepoUnknown: claude_accounts is
+// configured (for some repository), but this checkout's origin remote
+// cannot be parsed as owner/name, so it is impossible to tell whether any
+// named account applies here. Review finding: this used to fail open
+// (silence); fixed to warn instead (fail closed, never silence).
+func TestDoctorClaudeAccountsStoredWarnsWhenRepoUnknown(t *testing.T) {
+	r := newDoctorRig(t)
+	// No testutil.Git ... remote set-url: checkoutWith's default origin is a
+	// local bare-repo path, which repoFromOrigin cannot parse as owner/name.
+	checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	addClaudeAccounts(t, r, "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/app]\n")
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("a warning must not fail doctor without --strict: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "claude-accounts-stored")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("claude-accounts-stored = %+v", c)
+	}
+	if !strings.Contains(c.Problem, "no origin remote") {
+		t.Fatalf("problem doesn't explain why: %q", c.Problem)
+	}
+	if _, _, err := execute(t, "doctor", "--strict", "--json"); err == nil {
+		t.Fatal("--strict: want a failure, since the check could not be answered")
+	}
+}
+
+// TestDoctorClaudeAccountsStoredSilentWhenRepoUnknownAndNoAccounts: with no
+// claude_accounts configured at all, an unparseable origin still produces no
+// new check — byte-identical output (design §5; carry-forward T8).
+func TestDoctorClaudeAccountsStoredSilentWhenRepoUnknownAndNoAccounts(t *testing.T) {
+	newDoctorRig(t)
+	checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	if c, ok := doctorCheckByID(o.Checks, "claude-accounts-stored"); ok {
+		t.Fatalf("an installation with no claude_accounts got a new check: %+v", c)
+	}
+}
+
+// TestDoctorNamedAccountCheckReadsNoValue is the plan's own named test
+// (Task 8): doctor's named-account check reads secrets' metadata only
+// (List, by label) and never a value (Access), proven here with a fake that
+// fatals the test on any Access call (gcpfake.Secrets' default: Access is
+// refused unless a test explicitly calls AllowAccess, which this test never
+// does). Exercises every branch that touches o.Secrets: present, missing,
+// and the repository-unknown path that makes no Secret Manager call at all.
+func TestDoctorNamedAccountCheckReadsNoValue(t *testing.T) {
+	r := claudeAccountsRig(t)
+	putSecret(t, r.sm, "proj-1234", mustSlug("github", "acme/app"), "claude-oauth-token-acme-personal", []byte("fake-token-0123456789"))
+	if _, _, err := execute(t, "doctor", "--json"); err != nil {
+		t.Fatal(err)
+	}
+	if a := r.sm.Accessed(); len(a) != 0 {
+		t.Fatalf("doctor read a secret value: %v", a)
+	}
+
+	r2 := newDoctorRig(t)
+	checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	addClaudeAccounts(t, r2, "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/app]\n")
+	if _, _, err := execute(t, "doctor", "--json"); err != nil {
+		t.Fatal(err)
+	}
+	if a := r2.sm.Accessed(); len(a) != 0 {
+		t.Fatalf("doctor read a secret value with no resolvable repository: %v", a)
+	}
+}
+
+// TestDoctorClaudeAccountsStoredCheckEscapesHostileInput is a direct, function-level
+// test of claudeAccountsStoredCheck (bypassing config.ValidateClaudeAccounts,
+// which already refuses hostile account names and non-slug allow_data_to
+// entries at parse time — this test is defense in depth, proving the
+// function's own output is safe even if fed input no real parse path can
+// produce today). A control character, a bidi override and an over-long
+// name must all come out escaped and length-bounded in the human-readable
+// Problem text. The Fix text is deliberately exempted: it carries the exact,
+// literal secret ID and repo an operator must paste into a real command
+// (the same convention githubapp.go's Fix lines already use), so escaping it
+// would print a command that cannot actually be run.
+func TestDoctorClaudeAccountsStoredCheckEscapesHostileInput(t *testing.T) {
+	const bell = "\x07"
+	bidi := "‮"
+	long := strings.Repeat("x", 500)
+	hostileRepo := "acme/app" + bell + bidi
+	hostileAccount := "acme-personal-" + long
+	lc := &localcfg.Config{ClaudeAccounts: map[string]config.ClaudeAccount{
+		hostileAccount: {AllowDataTo: []string{hostileRepo}},
+	}}
+	c := claudeAccountsStoredCheck(lc, hostileRepo, []secretEntry{})
+	if c == nil || c.OK {
+		t.Fatalf("claudeAccountsStoredCheck = %+v", c)
+	}
+	for _, raw := range []string{bell, bidi} {
+		if strings.Contains(c.Problem, raw) {
+			t.Fatalf("a control/bidi character leaked raw into Problem: %q", c.Problem)
+		}
+	}
+	if strings.Contains(c.Problem, long) {
+		t.Fatalf("an over-long name was not bounded in Problem: %q", c.Problem)
+	}
+	if n := len([]rune(c.Problem)); n > 2*pluginwire.MaxPrintable+200 {
+		t.Fatalf("Problem is not length-bounded: %d runes", n)
+	}
+
+	// The "could not list" warning branch (listed == nil) prints the repo and
+	// the names too: it must escape and bound them just the same (replacing
+	// printableRepo/printableNamed with the raw values there stayed green).
+	w := claudeAccountsStoredCheck(lc, hostileRepo, nil)
+	if w == nil || w.OK {
+		t.Fatalf("claudeAccountsStoredCheck(listed=nil) = %+v, want a warning", w)
+	}
+	for _, raw := range []string{bell, bidi} {
+		if strings.Contains(w.Problem, raw) {
+			t.Fatalf("a control/bidi character leaked raw into the could-not-list warning: %q", w.Problem)
+		}
+	}
+	if strings.Contains(w.Problem, long) {
+		t.Fatalf("an over-long name was not bounded in the could-not-list warning: %q", w.Problem)
+	}
+	if n := len([]rune(w.Problem)); n > 2*pluginwire.MaxPrintable+200 {
+		t.Fatalf("the could-not-list warning is not length-bounded: %d runes", n)
+	}
+}
+
+// oauthTokenYAML is cliMinimalYAML with agent.auth: oauth and
+// agent.oauth_token set, for oauth-token-allowed's allow-list tests: auth:
+// oauth so they exercise the allow-list check, not the (review finding D)
+// auth-mismatch refusal TestDoctorFlagsOAuthTokenWhenAuthIsNotOAuth covers
+// on its own, with a plain (non-oauth) auth.
+const oauthTokenYAML = `version: 1
+project: aurora
+git: { provider: github }
+agent: { auth: oauth, oauth_token: acme-overflow }
+workflows:
+  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }
+`
+
+// TestDoctorFlagsOAuthTokenNotAllowed is the plan's own named test (Task 8):
+// fugaro.yaml names agent.oauth_token: acme-overflow, but the local config's
+// allow_data_to for acme-overflow does not list this repository: the
+// offline check fails, naming both the token and the repository, with no
+// GCP call needed to answer it (TestDoctorOAuthTokenAllowedMakesNoNetworkCall
+// below proves that independently).
+func TestDoctorFlagsOAuthTokenNotAllowed(t *testing.T) {
+	r := newDoctorRig(t)
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": oauthTokenYAML})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	addClaudeAccounts(t, r, "claude_accounts:\n  acme-overflow:\n    allow_data_to: [acme/other]\n")
+	out, _, err := execute(t, "doctor", "--json")
+	if err == nil {
+		t.Fatal("want doctor to fail: agent.oauth_token names an account acme/app isn't allowed")
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "oauth-token-allowed")
+	if !ok || c.OK || c.Severity != "" {
+		t.Fatalf("oauth-token-allowed = %+v", c)
+	}
+	if !strings.Contains(c.Problem, "acme-overflow") || !strings.Contains(c.Problem, "acme/app") {
+		t.Fatalf("problem doesn't name both: %q", c.Problem)
+	}
+}
+
+// TestDoctorFlagsOAuthTokenWhenAuthIsNotOAuth is review finding D (round 2):
+// doctor used to report oauth-token-allowed OK for an agent.oauth_token the
+// local config DOES allow, even when the workflow's agent.auth isn't oauth
+// — disagreeing with fugaro run, which already refuses that combination
+// outright (claudeAccountAllowed, internal/cli/run.go). The account is
+// allowed here (allow_data_to lists acme/app) precisely to isolate the
+// auth-mismatch rule: it must still fail, not fall through to the
+// allow-list check that would otherwise pass.
+func TestDoctorFlagsOAuthTokenWhenAuthIsNotOAuth(t *testing.T) {
+	r := newDoctorRig(t)
+	yaml := strings.Replace(oauthTokenYAML, "auth: oauth", "auth: api-key", 1)
+	if yaml == oauthTokenYAML {
+		t.Fatal("oauthTokenYAML's auth: oauth line not found to replace")
+	}
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": yaml})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	addClaudeAccounts(t, r, "claude_accounts:\n  acme-overflow:\n    allow_data_to: [acme/app]\n")
+	out, _, err := execute(t, "doctor", "--json")
+	if err == nil {
+		t.Fatal("want doctor to fail: agent.oauth_token is set but agent.auth is not oauth")
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "oauth-token-allowed")
+	if !ok || c.OK || c.Severity != "" {
+		t.Fatalf("oauth-token-allowed = %+v", c)
+	}
+	if !strings.Contains(c.Problem, "acme-overflow") || !strings.Contains(c.Problem, "agent.auth is oauth") || !strings.Contains(c.Problem, "api-key") {
+		t.Fatalf("problem doesn't explain the auth mismatch: %q", c.Problem)
+	}
+}
+
+// TestDoctorOAuthTokenAllowedPresent: once the local config allows this
+// repository to choose the named account fugaro.yaml's agent.oauth_token
+// names, the check passes.
+func TestDoctorOAuthTokenAllowedPresent(t *testing.T) {
+	r := newDoctorRig(t)
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": oauthTokenYAML})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	addClaudeAccounts(t, r, "claude_accounts:\n  acme-overflow:\n    allow_data_to: [acme/app]\n")
+	// Stored too, so the unrelated claude-accounts-stored check (same named
+	// account, same repository) doesn't also fail doctor here: this test is
+	// about oauth-token-allowed only.
+	putSecret(t, r.sm, "proj-1234", mustSlug("github", "acme/app"), "claude-oauth-token-acme-overflow", []byte("fake-token-0123456789"))
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "oauth-token-allowed")
+	if !ok || !c.OK {
+		t.Fatalf("oauth-token-allowed = %+v", c)
+	}
+}
+
+// TestDoctorOAuthTokenAllowedSilentWhenUnset: a checkout with no
+// agent.oauth_token at all gets no new check — byte-identical to doctor's
+// output before this feature (design §5; same discipline as
+// claude-accounts-stored's own "silent with no accounts" test).
+func TestDoctorOAuthTokenAllowedSilentWhenUnset(t *testing.T) {
+	newDoctorRig(t)
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	if c, ok := doctorCheckByID(o.Checks, "oauth-token-allowed"); ok {
+		t.Fatalf("a checkout with no agent.oauth_token got a new check: %+v", c)
+	}
+}
+
+// TestDoctorOAuthTokenAllowedWarnsWhenRepoUnknown: agent.oauth_token is set,
+// but this checkout's origin remote cannot be parsed as owner/name, so it is
+// impossible to tell whether the named account applies here. Fail closed
+// (warn), never silence — the same rule claude-accounts-stored already
+// follows for the same situation.
+func TestDoctorOAuthTokenAllowedWarnsWhenRepoUnknown(t *testing.T) {
+	newDoctorRig(t)
+	// No testutil.Git ... remote set-url: checkoutWith's default origin is a
+	// local bare-repo path, which repoFromOrigin cannot parse as owner/name.
+	checkoutWith(t, map[string]string{"fugaro.yaml": oauthTokenYAML})
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("a warning must not fail doctor without --strict: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "oauth-token-allowed")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("oauth-token-allowed = %+v", c)
+	}
+	if !strings.Contains(c.Problem, "no origin remote") {
+		t.Fatalf("problem doesn't explain why: %q", c.Problem)
+	}
+	if _, _, err := execute(t, "doctor", "--strict", "--json"); err == nil {
+		t.Fatal("--strict: want a failure, since the check could not be answered")
+	}
+}
+
+// TestDoctorOAuthTokenAllowedMakesNoNetworkCall: unlike claude-accounts-stored
+// (which needs a Secret Manager listing and degrades to a warning when it's
+// unreachable), oauth-token-allowed is computed purely from the already-loaded
+// local config and the already-resolved fugaro.yaml. With Secret Manager
+// broken, claude-accounts-stored must warn (it can't be answered), while
+// oauth-token-allowed must still give its real answer (OK here) — proving it
+// needed no network call to do so.
+func TestDoctorOAuthTokenAllowedMakesNoNetworkCall(t *testing.T) {
+	r := newDoctorRig(t)
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": oauthTokenYAML})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	addClaudeAccounts(t, r, "claude_accounts:\n  acme-overflow:\n    allow_data_to: [acme/app]\n")
+	data, err := os.ReadFile(r.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken := strings.Replace(string(data), r.sm.URL, "http://127.0.0.1:1", 1)
+	if broken == string(data) {
+		t.Fatal("secret_manager endpoint not found in the local config to break")
+	}
+	if err := os.WriteFile(r.cfgPath, []byte(broken), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("a warning (claude-accounts-stored) must not fail doctor without --strict: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	if c, ok := doctorCheckByID(o.Checks, "claude-accounts-stored"); !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("claude-accounts-stored should warn with Secret Manager unreachable: %+v", c)
+	}
+	c, ok := doctorCheckByID(o.Checks, "oauth-token-allowed")
+	if !ok || !c.OK {
+		t.Fatalf("oauth-token-allowed should still answer OK with no network call needed: %+v", c)
+	}
+	if a := r.sm.Accessed(); len(a) != 0 {
+		t.Fatalf("doctor read a secret value: %v", a)
+	}
+}
+
+// TestDoctorOAuthTokenAllowedCheckEscapesHostileInput is a direct,
+// function-level test of oauthTokenAllowedCheck (bypassing config.Validate,
+// which already refuses a hostile agent.oauth_token at parse time — this is
+// defense in depth, the same posture
+// TestDoctorClaudeAccountsStoredCheckEscapesHostileInput takes for its own
+// sibling check). A control character, a bidi override and an over-long
+// name must all come out escaped and length-bounded.
+func TestDoctorOAuthTokenAllowedCheckEscapesHostileInput(t *testing.T) {
+	const bell = "\x07"
+	bidi := "‮"
+	long := strings.Repeat("x", 500)
+	hostileRepo := "acme/app" + bell + bidi
+	hostileToken := "acme-overflow-" + long
+	lc := &localcfg.Config{ClaudeAccounts: map[string]config.ClaudeAccount{
+		"acme-personal": {AllowDataTo: []string{hostileRepo}},
+	}}
+	c := oauthTokenAllowedCheck(lc, hostileRepo, hostileToken, "oauth")
+	if c == nil || c.OK {
+		t.Fatalf("oauthTokenAllowedCheck = %+v", c)
+	}
+	for _, raw := range []string{bell, bidi} {
+		if strings.Contains(c.Problem, raw) || strings.Contains(c.Fix, raw) {
+			t.Fatalf("a control/bidi character leaked raw: Problem %q, Fix %q", c.Problem, c.Fix)
+		}
+	}
+	if strings.Contains(c.Problem, long) || strings.Contains(c.Fix, long) {
+		t.Fatalf("an over-long name was not bounded: Problem %q, Fix %q", c.Problem, c.Fix)
+	}
+	if n := len([]rune(c.Problem)); n > 4*pluginwire.MaxPrintable+200 {
+		t.Fatalf("Problem is not length-bounded: %d runes", n)
+	}
 }
 
 // doctor without --check-github-app (what the setup skill runs, in an agent's

@@ -107,8 +107,16 @@ func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.
 		return false, err
 	}
 	// The identity window is the target job's own timeout (a long job
-	// elsewhere must not lengthen it).
-	jobTimeout, err := e.be.TaskTimeout(ctx, slug, spec.Workflow)
+	// elsewhere must not lengthen it): the job a named run actually starts,
+	// gcp.WorkflowVariant(spec.Workflow, spec.OAuthToken), not the bare
+	// workflow — the two can have different timeouts (review finding: this
+	// used to read the default account's job's timeout for every named run).
+	var jobTimeout time.Duration
+	if variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken); ok {
+		jobTimeout, err = e.be.TaskTimeout(ctx, slug, variant)
+	} else {
+		err = backend.ErrNotFound // not a workflow name: no job can match it either
+	}
 	if errors.Is(err, backend.ErrNotFound) {
 		// No such job: the launch itself reports that, after the mint.
 		jobTimeout, err = backend.DefaultTaskTimeout, nil

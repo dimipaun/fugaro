@@ -196,6 +196,56 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	}
 }
 
+// TestResultSchemaOAuthAccount: a record naming a Claude OAuth account
+// (docs/design/named-oauth-tokens.md) validates; a non-string value (what a
+// hand-edited or corrupt result.json could carry) does not. config.
+// ClaudeAccount's name regex (plan Task 1) has not landed on this branch, so
+// the schema only bounds the length, not the charset; this test (and the
+// property itself) is the thing to tighten once Task 1's
+// ClaudeAccountNameRE exists.
+func TestResultSchemaOAuthAccount(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC)
+	rec := runstore.Record{Version: 1, RunID: "20261009-100000-abcd", Repo: "acme/app",
+		Status: runstore.StatusRunning, Stage: "implement", StartedAt: at, OAuthAccount: "acme-personal"}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a record with a named oauth_account: %v\n%s", err, data)
+	}
+	bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, []byte(`"oauth_account":"acme-personal"`), []byte(`"oauth_account":5`), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte(`"oauth_account":"acme-personal"`)) {
+		t.Fatalf("fixture lacks the literal this test replaces: %s", data)
+	}
+	if err := sch.Validate(bad); err == nil {
+		t.Fatal("schema accepts a non-string oauth_account")
+	}
+	// The bound: a record's account name is data the runner wrote and the
+	// display sanitises it, so the schema is lenient (a string) but bounded:
+	// 64 runes are accepted, 65 are refused.
+	for _, tc := range []struct {
+		n    int
+		want bool
+	}{{64, true}, {65, false}} {
+		long, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, []byte(`"oauth_account":"acme-personal"`), []byte(`"oauth_account":"`+strings.Repeat("a", tc.n)+`"`), 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := sch.Validate(long) == nil; got != tc.want {
+			t.Errorf("oauth_account of %d runes: schema accepts = %v, want %v", tc.n, got, tc.want)
+		}
+	}
+}
+
 func TestResultSchemaImageBlock(t *testing.T) {
 	sch := compile(t, "result.schema.json")
 	base := `{"version":1,"run_id":"20260927-100000-abcd","status":"running","stage":"bootstrap","outcome":"none","cost_usd":0,"started_at":"2026-09-27T10:00:00Z"`
@@ -294,9 +344,38 @@ func TestFugaroSchemaReservesTheSameSecretNames(t *testing.T) {
 		return out
 	}
 	wf := at(doc, "$defs", "workflow")
-	names := strs(at(wf, "properties", "secrets", "items", "properties", "name", "not", "enum"))
+	// secrets[].name's "not" clause now reserves two shapes: the platform's
+	// fixed names (an enum, unchanged) and the whole claude-oauth-token-
+	// prefix, config.ClaudeOAuthTokenPrefix's namespace (a pattern, added
+	// alongside config.Validate's own refusal of it as a workflow secret —
+	// a schema/parser pair, kept aligned the same way the enum already is).
+	notClause, ok := at(wf, "properties", "secrets", "items", "properties", "name", "not").(map[string]any)
+	if !ok {
+		t.Fatalf("schema's secrets[].name.not is not an object: %v", at(wf, "properties", "secrets", "items", "properties", "name", "not"))
+	}
+	anyOf, ok := notClause["anyOf"].([]any)
+	if !ok {
+		t.Fatalf("schema's secrets[].name.not has no anyOf: %v", notClause)
+	}
+	var names []string
+	var prefix string
+	for _, c := range anyOf {
+		m, ok := c.(map[string]any)
+		if !ok {
+			t.Fatalf("anyOf entry is not an object: %v", c)
+		}
+		if e, ok := m["enum"]; ok {
+			names = strs(e)
+		}
+		if p, ok := m["pattern"].(string); ok {
+			prefix = p
+		}
+	}
 	if want := slices.Sorted(maps.Keys(config.ReservedSecrets)); !slices.Equal(names, want) {
 		t.Errorf("schema reserves secret names %v, config.ReservedSecrets has %v", names, want)
+	}
+	if want := "^" + config.ClaudeOAuthTokenPrefix; prefix != want {
+		t.Errorf("schema reserves the claude-oauth-token- prefix as %q, want %q (config.ClaudeOAuthTokenPrefix)", prefix, want)
 	}
 	providers := strs(at(doc, "properties", "git", "properties", "provider", "enum"))
 	if want := slices.Sorted(slices.Values(config.Providers)); !slices.Equal(providers, want) {
@@ -781,6 +860,94 @@ func TestFugaroSchemaLayeredCorpus(t *testing.T) {
 		data, _ := os.ReadFile(f)
 		if err := sch.Validate(yamlInstance(t, data)); err != nil {
 			t.Errorf("%s: schema rejects a valid layered config: %v", f, err)
+		}
+	}
+}
+
+// TestTaskSchemaOAuthTokenMatchesTheGoRules ties the task schema's
+// `oauth_token` property to the Go rules it mirrors (config.ClaudeAccountNameRE
+// and config.MaxClaudeAccountNameLen): the schema pattern and maxLength are
+// separate copies, so without this a change to the Go rule would drift from the
+// schema with only the corpus fixtures noticing. The pattern alone admits 61
+// characters (it counts repetition units of one or two), which is why the
+// bound is a separate maxLength.
+func TestTaskSchemaOAuthTokenMatchesTheGoRules(t *testing.T) {
+	data, err := os.ReadFile("task.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]struct {
+			Pattern   string `json:"pattern"`
+			MaxLength int    `json:"maxLength"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	p, ok := doc.Properties["oauth_token"]
+	if !ok {
+		t.Fatal("task.schema.json has no oauth_token property")
+	}
+	if p.Pattern != config.ClaudeAccountNameRE.String() {
+		t.Errorf("schema pattern %q != config.ClaudeAccountNameRE %q", p.Pattern, config.ClaudeAccountNameRE.String())
+	}
+	if p.MaxLength != config.MaxClaudeAccountNameLen {
+		t.Errorf("schema maxLength %d != config.MaxClaudeAccountNameLen %d", p.MaxLength, config.MaxClaudeAccountNameLen)
+	}
+}
+
+// TestFugaroSchemaOAuthTokenMatchesTheGoRules is TestTaskSchemaOAuthToken
+// MatchesTheGoRules's sibling for fugaro.schema.json's agent.oauth_token
+// (named oauth tokens plan Task 6): the two schema copies, and the Go rules
+// both mirror, must never drift apart.
+func TestFugaroSchemaOAuthTokenMatchesTheGoRules(t *testing.T) {
+	data, err := os.ReadFile("fugaro.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties struct {
+			Agent struct {
+				Properties map[string]struct {
+					Pattern   string `json:"pattern"`
+					MaxLength int    `json:"maxLength"`
+				} `json:"properties"`
+			} `json:"agent"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	p, ok := doc.Properties.Agent.Properties["oauth_token"]
+	if !ok {
+		t.Fatal("fugaro.schema.json's agent has no oauth_token property")
+	}
+	if p.Pattern != config.ClaudeAccountNameRE.String() {
+		t.Errorf("schema pattern %q != config.ClaudeAccountNameRE %q", p.Pattern, config.ClaudeAccountNameRE.String())
+	}
+	if p.MaxLength != config.MaxClaudeAccountNameLen {
+		t.Errorf("schema maxLength %d != config.MaxClaudeAccountNameLen %d", p.MaxLength, config.MaxClaudeAccountNameLen)
+	}
+}
+
+// TestFugaroSchemaAgentOAuthToken is TestFugaroSchemaProfileKeys's shape for
+// agent.oauth_token: "default" is reserved (the empty value already means
+// it), and the schema's maxLength must refuse what the pattern alone would
+// still accept (schemas_test.go's own TestTaskSchemaOAuthTokenMatchesTheGoRules
+// doc comment explains why the pattern alone is not enough).
+func TestFugaroSchemaAgentOAuthToken(t *testing.T) {
+	sch := compile(t, "fugaro.schema.json")
+	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	dashHeavy := "a" + strings.Repeat("-a", 30) // 61 chars, matches the pattern alone
+	for text, valid := range map[string]bool{
+		head + "agent: { oauth_token: acme-personal }\n":     true,
+		head + "agent: { oauth_token: default }\n":           false,
+		head + "agent: { oauth_token: Acme }\n":              false,
+		head + "agent: { oauth_token: " + dashHeavy + " }\n": false,
+	} {
+		if err := sch.Validate(yamlInstance(t, []byte(text))); (err == nil) != valid {
+			t.Errorf("%q: valid = %v, want %v (%v)", text, err == nil, valid, err)
 		}
 	}
 }

@@ -221,6 +221,46 @@ func TestNeedsBuild(t *testing.T) {
 	}
 }
 
+// With a named Claude account configured, spec.Workflows holds one entry
+// per account ("web" and "web_acme-personal", design
+// docs/design/named-oauth-tokens.md §4): they share one image, so
+// NeedsBuild must report the logical workflow name once, not the variant
+// key, and the named account's own secret (not yet stored) must not block
+// the shared build, which is gated on the default account's secrets only
+// (the same secrets NeedsBuild already gated on before named accounts
+// existed).
+func TestNeedsBuildDedupesNamedAccountVariants(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	in := sandboxInputs(t, m5Additions+claudeAccountsLC)
+	spec, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.gcs.AddBucket(spec.Installation.RunsBucket, testProjectNumber, managed)
+	if _, ok := spec.Workflows["web_acme-personal"]; !ok {
+		t.Fatal("the named account's variant is missing from the fixture")
+	}
+	// Every variant's own secret has a version, so a dedup bug (reporting
+	// one entry per variant key instead of once per logical workflow) would
+	// surface as a second, wrongly-named entry here.
+	versions := map[string]bool{"bitbucket-token": true, "claude-oauth-token": true, "claude-oauth-token-acme-personal": true, "sandbox-probe": true}
+	got, err := NeedsBuild(ctx, f.c, spec, versions)
+	if err != nil || !slices.Equal(got, []string{"web"}) {
+		t.Fatalf("got %q, %v, want exactly [\"web\"] (the logical name once, never a variant key)", got, err)
+	}
+	// The named account's own token has no version yet: the shared build
+	// must still be gated on it like any other mounted secret of the
+	// default variant's own job... but this account's secret is mounted on
+	// a different variant's job, not the default's, so it must not block
+	// the shared build the default variant is ready for.
+	versions = map[string]bool{"bitbucket-token": true, "claude-oauth-token": true, "sandbox-probe": true}
+	got, err = NeedsBuild(ctx, f.c, spec, versions)
+	if err != nil || !slices.Equal(got, []string{"web"}) {
+		t.Fatalf("got %q, %v, want exactly [\"web\"] (gated on the default account only)", got, err)
+	}
+}
+
 // The commands are the bootstrap's: the value from stdin or a hidden
 // prompt, never argv, and claude setup-token run by the user; every command
 // is a line of its own.
