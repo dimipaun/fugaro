@@ -32,41 +32,54 @@ func cmdNamed(name string) (*cobra.Command, *bytes.Buffer) {
 	cmd := &cobra.Command{Use: name}
 	cmd.Flags().Bool("json", false, "")
 	cmd.Flags().Bool("plain", false, "")
+	cmd.Flags().Bool("help", false, "")
 	var errBuf bytes.Buffer
 	cmd.SetErr(&errBuf)
 	return cmd, &errBuf
 }
 
 // TestShouldStartUpdateCheckExclusions pins every reason the background
-// check must never fire, each checked in isolation.
+// check must never fire, each checked in isolation. The baseline ("ordinary
+// command") uses "ls", not "doctor": doctor is itself one of the
+// exclusions (it runs its own synchronous Refresh as part of cli-version),
+// pinned separately below.
 //
 // Mutation: dropping any one of shouldStartUpdateCheck's conditions (for
 // example `&& !backend.OnCloudRun(...)`) makes exactly that case in this
 // table wrongly true.
 func TestShouldStartUpdateCheckExclusions(t *testing.T) {
 	withVersion(t, "0.6.1")
+	oldTTY := stderrIsTerminal
+	t.Cleanup(func() { stderrIsTerminal = oldTTY })
 	cases := []struct {
 		name     string
 		cmdName  string
 		version  string
 		cloudRun string
+		ci       string
+		tty      bool
 		disabled bool
 		want     bool
 	}{
-		{"ordinary command", "doctor", "0.6.1", "", false, true},
-		{"exec (the runner)", "exec", "0.6.1", "", false, false},
-		{"completion", "completion", "0.6.1", "", false, false},
-		{"help", "help", "0.6.1", "", false, false},
-		{"version", "version", "0.6.1", "", false, false},
-		{"dev build", "doctor", "dev", "", false, false},
-		{"unparseable build", "doctor", "0.6.1-rc1+local", "", false, false},
-		{"inside Cloud Run", "doctor", "0.6.1", "exec-1", false, false},
-		{"disabled", "doctor", "0.6.1", "", true, false},
+		{"ordinary command", "ls", "0.6.1", "", "", true, false, true},
+		{"exec (the runner)", "exec", "0.6.1", "", "", true, false, false},
+		{"completion", "completion", "0.6.1", "", "", true, false, false},
+		{"help", "help", "0.6.1", "", "", true, false, false},
+		{"version", "version", "0.6.1", "", "", true, false, false},
+		{"doctor (its own synchronous Refresh)", "doctor", "0.6.1", "", "", true, false, false},
+		{"dev build", "ls", "dev", "", "", true, false, false},
+		{"unparseable build", "ls", "0.6.1-rc1+local", "", "", true, false, false},
+		{"inside Cloud Run", "ls", "0.6.1", "exec-1", "", true, false, false},
+		{"CI", "ls", "0.6.1", "", "true", true, false, false},
+		{"not a terminal", "ls", "0.6.1", "", "", false, false, false},
+		{"disabled", "ls", "0.6.1", "", "", true, true, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			Version = c.version
 			t.Setenv("CLOUD_RUN_EXECUTION", c.cloudRun)
+			t.Setenv(ciEnv, c.ci)
+			stderrIsTerminal = func(io.Writer) bool { return c.tty }
 			cmd, _ := cmdNamed(c.cmdName)
 			if got := shouldStartUpdateCheck(cmd, c.disabled); got != c.want {
 				t.Errorf("shouldStartUpdateCheck = %v, want %v", got, c.want)
@@ -84,6 +97,7 @@ func TestShouldStartUpdateCheckExclusions(t *testing.T) {
 // the "--json" and "--plain" cases wrongly true.
 func TestShouldWarnUpdateAvailableExclusions(t *testing.T) {
 	t.Setenv("CLOUD_RUN_EXECUTION", "")
+	t.Setenv(noUpdateCheckEnv, "")
 	oldTTY := stderrIsTerminal
 	t.Cleanup(func() { stderrIsTerminal = oldTTY })
 
@@ -93,17 +107,24 @@ func TestShouldWarnUpdateAvailableExclusions(t *testing.T) {
 		tty      bool
 		json     bool
 		plain    bool
+		help     bool
 		cloudRun bool
+		env      string
 		disabled bool
 		want     bool
 	}{
-		{"ordinary, a terminal", "doctor", true, false, false, false, false, true},
-		{"not a terminal", "doctor", false, false, false, false, false, false},
-		{"--json", "doctor", true, true, false, false, false, false},
-		{"--plain", "ls", true, false, true, false, false, false},
-		{"excluded command", "version", true, false, false, false, false, false},
-		{"inside Cloud Run", "doctor", true, false, false, true, false, false},
-		{"disabled", "doctor", true, false, false, false, true, false},
+		{"ordinary, a terminal", "doctor", true, false, false, false, false, "", false, true},
+		{"not a terminal", "doctor", false, false, false, false, false, "", false, false},
+		{"--json", "doctor", true, true, false, false, false, "", false, false},
+		{"--plain", "ls", true, false, true, false, false, "", false, false},
+		{"--help", "doctor", true, false, false, true, false, "", false, false},
+		{"excluded command", "version", true, false, false, false, false, "", false, false},
+		{"inside Cloud Run", "doctor", true, false, false, false, true, "", false, false},
+		{"disabled", "doctor", true, false, false, false, false, "", true, false},
+		// disabled is explicitly false here: only the direct os.Getenv
+		// re-check inside shouldWarnUpdateAvailable itself can be making
+		// this silent, independent of whatever the caller resolved.
+		{"env set, caller says not disabled", "doctor", true, false, false, false, false, "1", false, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -113,12 +134,16 @@ func TestShouldWarnUpdateAvailableExclusions(t *testing.T) {
 			} else {
 				t.Setenv("CLOUD_RUN_EXECUTION", "")
 			}
+			t.Setenv(noUpdateCheckEnv, c.env)
 			cmd, _ := cmdNamed(c.cmdName)
 			if c.json {
 				_ = cmd.Flags().Set("json", "true")
 			}
 			if c.plain {
 				_ = cmd.Flags().Set("plain", "true")
+			}
+			if c.help {
+				_ = cmd.Flags().Set("help", "true")
 			}
 			if got := shouldWarnUpdateAvailable(cmd, c.disabled); got != c.want {
 				t.Errorf("shouldWarnUpdateAvailable = %v, want %v", got, c.want)
@@ -310,6 +335,14 @@ func TestRootHasNoPersistentPostRun(t *testing.T) {
 	}
 }
 
+// TestWarnUpdateAvailableNilCommand: cmd/fugaro/main.go calls
+// WarnUpdateAvailable unconditionally on whatever ExecuteContextC returns,
+// so a nil cmd (should ExecuteC's contract ever allow one) must never
+// panic.
+func TestWarnUpdateAvailableNilCommand(t *testing.T) {
+	WarnUpdateAvailable(nil)
+}
+
 // TestWarnUpdateAvailableFiresWhenExecuteErrors drives a full cobra
 // ExecuteC() that errors (doctor with no installation configured, which
 // returns a real RunE error, not just non-zero output), then calls
@@ -356,56 +389,253 @@ func TestWarnUpdateAvailableFiresWhenExecuteErrors(t *testing.T) {
 	}
 }
 
-// TestWaitForUpdateCheckJoinsTheGoroutine pins that WaitForUpdateCheck
-// actually blocks until startUpdateCheck's background goroutine finishes,
-// rather than returning immediately regardless: without the WaitGroup,
-// main.go exiting right after Execute would kill a slow fetch mid-flight
-// instead of completing it.
+// TestWarnUpdateAvailableFailsClosedWhenPersistentPreRunNeverRan reproduces
+// PR #296's review finding exactly: cobra's Command.execute returns out of
+// several paths (a flag parse error, a failing Args validator, Find/Traverse
+// never matching a command, --help) before PersistentPreRun ever runs, so
+// the command's context never carries updateCheckDisabled's resolution —
+// including whether FUGARO_NO_UPDATE_CHECK=1 or update_check: false apply.
+// Before the fix, WarnUpdateAvailable treated "no value in the context" as
+// "not disabled" and printed the nag anyway in every one of these cases,
+// even with the env switch set; it must now fail closed and print nothing.
 //
-// Mutation: dropping updateCheckWG.Add(1)/Done() (launching the goroutine
-// bare, `go updatecheck.Refresh(...)`) makes WaitForUpdateCheck a no-op,
-// and this test's first select (asserting it has NOT returned yet) fails.
-func TestWaitForUpdateCheckJoinsTheGoroutine(t *testing.T) {
+// Mutation: reverting updateCheckDisabledFromContext to its one-return-value
+// form (treating a missing context value as disabled=false, ok implied
+// true) makes every case here print the line again.
+func TestWarnUpdateAvailableFailsClosedWhenPersistentPreRunNeverRan(t *testing.T) {
+	withVersion(t, "0.6.1")
+	oldTTY := stderrIsTerminal
+	stderrIsTerminal = func(io.Writer) bool { return true }
+	t.Cleanup(func() { stderrIsTerminal = oldTTY })
+
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"flag parse error", []string{"ls", "--bogus"}},
+		{"Args validator fails", []string{"doctor", "x", "y", "z"}},
+		{"unknown command", []string{"nosuchcmd"}},
+		{"--help on a real command", []string{"ls", "--help"}},
+		{"bare root (help)", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("XDG_CACHE_HOME", dir)
+			t.Setenv(noUpdateCheckEnv, "1")
+			if err := updatecheck.Save(os.Getenv, updatecheck.Entry{Latest: "0.7.0"}); err != nil {
+				t.Fatal(err)
+			}
+			root := NewRootCmd()
+			var out, errOut bytes.Buffer
+			root.SetOut(&out)
+			root.SetErr(&errOut)
+			root.SetArgs(c.args)
+			cmd, _ := root.ExecuteC()
+			WarnUpdateAvailable(cmd)
+			if errOut.Len() != 0 {
+				t.Fatalf("stderr = %q, want nothing: PersistentPreRun never ran for this invocation (FUGARO_NO_UPDATE_CHECK=1 was set), so the nag must fail closed", errOut.String())
+			}
+		})
+	}
+}
+
+// TestWarnUpdateAvailableFailsClosedWithLocalConfigDisable is the same
+// fail-closed property, but for the local config's update_check: false
+// rather than the env switch: PersistentPreRun never running means that
+// was never resolved either.
+func TestWarnUpdateAvailableFailsClosedWithLocalConfigDisable(t *testing.T) {
+	withVersion(t, "0.6.1")
+	oldTTY := stderrIsTerminal
+	stderrIsTerminal = func(io.Writer) bool { return true }
+	t.Cleanup(func() { stderrIsTerminal = oldTTY })
+	t.Setenv(noUpdateCheckEnv, "")
+	dir := t.TempDir()
+	path := isolateProjects(t, dir)
+	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: fugaro-runs-proj-1234\n" +
+		"user: someone@example.com\nupdate_check: false\n"
+	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := updatecheck.Save(os.Getenv, updatecheck.Entry{Latest: "0.7.0"}); err != nil {
+		t.Fatal(err)
+	}
+
+	root := NewRootCmd()
+	var out, errOut bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errOut)
+	root.SetArgs([]string{"nosuchcmd"})
+	cmd, _ := root.ExecuteC()
+	WarnUpdateAvailable(cmd)
+	if errOut.Len() != 0 {
+		t.Fatalf("stderr = %q, want nothing: update_check: false is set, and the broken invocation never resolved it, so the nag must fail closed", errOut.String())
+	}
+}
+
+// TestWarnUpdateAvailablePrintsOnANormalSuccessfulExecuteC is the
+// counterpart to the fail-closed tests above: a well-formed command that
+// actually reaches PersistentPreRun and RunE must still get the nag,
+// driven through the same full ExecuteC() path (not a direct
+// warnUpdateAvailable call), so the fail-closed fix hasn't swallowed the
+// ordinary case along with the broken ones. `config example` needs no
+// installation or checkout and always succeeds.
+func TestWarnUpdateAvailablePrintsOnANormalSuccessfulExecuteC(t *testing.T) {
+	withVersion(t, "0.6.1")
+	dir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", dir)
+	t.Setenv(noUpdateCheckEnv, "")
+	oldTTY := stderrIsTerminal
+	stderrIsTerminal = func(io.Writer) bool { return true }
+	t.Cleanup(func() { stderrIsTerminal = oldTTY })
+	if err := updatecheck.Save(os.Getenv, updatecheck.Entry{Latest: "0.7.0"}); err != nil {
+		t.Fatal(err)
+	}
+
+	root := NewRootCmd()
+	var out, errOut bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errOut)
+	root.SetArgs([]string{"config", "example"})
+	cmd, err := root.ExecuteC()
+	if err != nil {
+		t.Fatalf("config example failed: %v", err)
+	}
+	WarnUpdateAvailable(cmd)
+	want := "fugaro 0.7.0 is available (you have 0.6.1): " + updatecheck.BrewCommand
+	if got := errOut.String(); !strings.Contains(got, want) {
+		t.Fatalf("stderr = %q, want it to contain %q: a normal, successful command must still get the nag", got, want)
+	}
+}
+
+// TestWaitForUpdateCheckAbandonsASlowCheck pins that WaitForUpdateCheck
+// gives up on a background check that is still running past
+// updateCheckJoinBound, rather than blocking on it indefinitely (or for
+// its own ~1s FetchTimeout): "never slows a command" means a blackholed
+// network must not visibly hold up an otherwise-fast command.
+//
+// Mutation: making startUpdateCheck launch the goroutine bare (`go
+// updatecheck.Refresh(...)`, never setting updateCheckDone at all) makes
+// WaitForUpdateCheck's nil check return at once regardless of the
+// still-blocked fake client; this test's lower bound on the elapsed time
+// catches that.
+func TestWaitForUpdateCheckAbandonsASlowCheck(t *testing.T) {
 	withVersion(t, "0.6.1")
 	dir := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", dir)
 	t.Setenv("CLOUD_RUN_EXECUTION", "")
+	t.Setenv(ciEnv, "")
+	oldBound := updateCheckJoinBound
+	updateCheckJoinBound = 100 * time.Millisecond
+	t.Cleanup(func() { updateCheckJoinBound = oldBound })
+	oldTTY := stderrIsTerminal
+	stderrIsTerminal = func(io.Writer) bool { return true }
+	t.Cleanup(func() { stderrIsTerminal = oldTTY })
 
-	called := make(chan struct{})
-	release := make(chan struct{})
+	// updateCheckHTTPClient/updateCheckEndpoint are package-level vars the
+	// still-running background goroutine reads (as arguments to
+	// updatecheck.Refresh) whenever the Go scheduler gets around to
+	// starting it — not necessarily before WaitForUpdateCheck's bound
+	// elapses. Restoring them before that goroutine is known to be done
+	// would race with its read (`go test -race` caught exactly this with
+	// the first version of this test); waiting on updateCheckDone directly
+	// in t.Cleanup, registered before the restore (cleanups run LIFO, so
+	// it runs after), makes sure the goroutine has actually finished
+	// before anything reassigns them.
+	oldClient, oldEndpoint := updateCheckHTTPClient, updateCheckEndpoint
+	t.Cleanup(func() { updateCheckHTTPClient, updateCheckEndpoint = oldClient, oldEndpoint })
+	block := make(chan struct{})
+	updateCheckHTTPClient = fakeHTTPClient(func(req *http.Request) (*http.Response, error) {
+		select {
+		case <-block:
+		case <-req.Context().Done():
+		}
+		return nil, errors.New("unreachable")
+	})
+	updateCheckEndpoint = "http://127.0.0.1:1/unused"
+
+	cmd, _ := cmdNamed("ls")
+	startUpdateCheck(cmd, false)
+	done := updateCheckDone
+	t.Cleanup(func() {
+		close(block)
+		if done != nil {
+			<-done
+		}
+	})
+
+	start := time.Now()
+	WaitForUpdateCheck()
+	elapsed := time.Since(start)
+	if elapsed < updateCheckJoinBound {
+		t.Fatalf("WaitForUpdateCheck returned after %v, want at least the join bound %v: the background check never finished, so it must have been abandoned at the bound, not short-circuited", elapsed, updateCheckJoinBound)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("WaitForUpdateCheck took %v, want it bounded near %v: a blackholed network must never visibly slow the command", elapsed, updateCheckJoinBound)
+	}
+}
+
+// TestWaitForUpdateCheckReturnsEarlyWhenTheCheckFinishes: with a generous
+// join bound, a background check that fails (or succeeds) immediately
+// must not make WaitForUpdateCheck wait out the bound anyway.
+func TestWaitForUpdateCheckReturnsEarlyWhenTheCheckFinishes(t *testing.T) {
+	withVersion(t, "0.6.1")
+	dir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", dir)
+	t.Setenv("CLOUD_RUN_EXECUTION", "")
+	t.Setenv(ciEnv, "")
+	oldBound := updateCheckJoinBound
+	updateCheckJoinBound = time.Second
+	t.Cleanup(func() { updateCheckJoinBound = oldBound })
+	oldTTY := stderrIsTerminal
+	stderrIsTerminal = func(io.Writer) bool { return true }
+	t.Cleanup(func() { stderrIsTerminal = oldTTY })
+
 	oldClient, oldEndpoint := updateCheckHTTPClient, updateCheckEndpoint
 	updateCheckHTTPClient = fakeHTTPClient(func(*http.Request) (*http.Response, error) {
-		close(called)
-		<-release
-		return nil, errors.New("stopped by the test")
+		return nil, errors.New("fails immediately")
 	})
 	updateCheckEndpoint = "http://127.0.0.1:1/unused"
 	t.Cleanup(func() { updateCheckHTTPClient, updateCheckEndpoint = oldClient, oldEndpoint })
 
-	cmd, _ := cmdNamed("doctor")
+	cmd, _ := cmdNamed("ls")
 	startUpdateCheck(cmd, false)
 
-	select {
-	case <-called:
-	case <-time.After(2 * time.Second):
-		t.Fatal("the background HTTP client was never invoked")
+	start := time.Now()
+	WaitForUpdateCheck()
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("WaitForUpdateCheck took %v for a check that finished immediately, want well under the %v join bound", elapsed, updateCheckJoinBound)
 	}
+}
 
-	waitDone := make(chan struct{})
-	go func() {
-		WaitForUpdateCheck()
-		close(waitDone)
-	}()
-	select {
-	case <-waitDone:
-		t.Fatal("WaitForUpdateCheck returned before the background goroutine finished")
-	case <-time.After(150 * time.Millisecond):
+// TestUpdateCheckHTTPClientNeverFollowsARedirect pins that the production
+// HTTP client (updateCheckHTTPClient) never follows a redirect: two real
+// servers, the first redirecting to the second, which would answer with a
+// valid-looking release and could observe the Referer header naming the
+// first if a redirect were ever followed. Reproduced before the fix: a
+// plain &http.Client{} followed the 302 and the second server received a
+// request (with Referer); after the fix, the second server sees nothing
+// at all, and Fetch (StatusFound != StatusOK) reports ok = false.
+//
+// Mutation: removing CheckRedirect from updateCheckHTTPClient's
+// construction makes the second server receive the request again.
+func TestUpdateCheckHTTPClientNeverFollowsARedirect(t *testing.T) {
+	var secondServerHit bool
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secondServerHit = true
+		_, _ = w.Write([]byte(`{"tag_name":"v9.9.9"}`))
+	}))
+	defer second.Close()
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, second.URL, http.StatusFound)
+	}))
+	defer first.Close()
+
+	version, ok := updatecheck.Fetch(context.Background(), updateCheckHTTPClient, first.URL)
+	if ok {
+		t.Fatalf("Fetch followed the redirect and reported ok = true, version = %q", version)
 	}
-
-	close(release)
-	select {
-	case <-waitDone:
-	case <-time.After(2 * time.Second):
-		t.Fatal("WaitForUpdateCheck did not return after the background goroutine finished")
+	if secondServerHit {
+		t.Fatal("the second (redirect target) server received a request: the client followed the redirect instead of refusing it")
 	}
 }

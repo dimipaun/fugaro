@@ -2,12 +2,15 @@ package updatecheck
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -124,6 +127,66 @@ func TestLoadMissingCacheIsAMiss(t *testing.T) {
 	}
 }
 
+// TestLoadRefusesASymlink pins that the cache path is never followed if it
+// is a symlink: Save only ever creates a regular file (a temp file renamed
+// over the path), so a symlink there is outside tampering (a symlink to
+// /dev/zero would make an unbounded read grow without limit if the target
+// were ever opened) and must be treated the same as no cache, not resolved
+// and read.
+//
+// Mutation: using os.Stat instead of os.Lstat (which follows the symlink)
+// makes this test read the valid target file's content through the link;
+// this test's "must be the zero Entry, not the target's Latest" assertion
+// catches that.
+func TestLoadRefusesASymlink(t *testing.T) {
+	dir := t.TempDir()
+	cacheDir := filepath.Join(dir, "fugaro")
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(cacheDir, "target.json")
+	valid, err := json.Marshal(Entry{Latest: "9.9.9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, valid, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(cacheDir, "update-check.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unsupported here: %v", err)
+	}
+	if e := Load(getenvFor(dir)); e != (Entry{}) {
+		t.Fatalf("Load of a symlinked cache = %+v, want the zero Entry (the symlink must never be followed)", e)
+	}
+}
+
+// TestLoadRefusesAFIFO pins the same refusal for a named pipe: opening one
+// for reading blocks until a writer connects, which Load must never risk.
+// Unlike the symlink case, Lstat alone can't tell a FIFO apart from a
+// regular file by name, so this exercises fi.Mode().IsRegular() directly.
+func TestLoadRefusesAFIFO(t *testing.T) {
+	dir := t.TempDir()
+	cacheDir := filepath.Join(dir, "fugaro")
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(cacheDir, "update-check.json")
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Skipf("FIFOs unsupported here: %v", err)
+	}
+	done := make(chan Entry, 1)
+	go func() { done <- Load(getenvFor(dir)) }()
+	select {
+	case e := <-done:
+		if e != (Entry{}) {
+			t.Fatalf("Load of a FIFO = %+v, want the zero Entry", e)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Load blocked on a FIFO instead of refusing it outright")
+	}
+}
+
 // TestSaveLoadRoundTrip and file mode: 0600, atomic (no partial file ever
 // visible at the final path, since Save renames a temp file over it).
 func TestSaveLoadRoundTrip(t *testing.T) {
@@ -143,7 +206,19 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if fi.Mode().Perm() != 0o600 {
-		t.Fatalf("mode = %v, want 0600", fi.Mode().Perm())
+		t.Fatalf("file mode = %v, want 0600", fi.Mode().Perm())
+	}
+	// Mutation: widening Save's os.MkdirAll(dir, 0o700) to 0o755 survives
+	// a test that only checks the file's own mode, since Go's os.OpenFile
+	// still honors the more restrictive 0600 passed to Chmod regardless of
+	// the directory's permissions; only a direct check of the directory
+	// itself catches it.
+	di, err := os.Stat(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if di.Mode().Perm() != 0o700 {
+		t.Fatalf("directory mode = %v, want 0700", di.Mode().Perm())
 	}
 }
 
@@ -215,7 +290,10 @@ func TestFetchStrictTagShape(t *testing.T) {
 // Mutation: widening the LimitReader bound (or dropping the len(data) >
 // maxBody check) makes a huge body parse through if it happens to carry a
 // valid tag_name; this test's payload does carry one, so only the size
-// check stops it.
+// check stops it. (This test alone doesn't distinguish which of the two
+// lines is doing the stopping, since the truncated read is invalid JSON
+// regardless: TestFetchResponseExactlyAtTheLimit and
+// TestFetchNeverReadsMoreThanTheBound below isolate each one.)
 func TestFetchResponseBounded(t *testing.T) {
 	huge := `{"tag_name":"v0.7.0","padding":"` + strings.Repeat("x", 2*maxBody) + `"}`
 	srv := releaseServer(t, huge, http.StatusOK)
@@ -223,6 +301,84 @@ func TestFetchResponseBounded(t *testing.T) {
 	v, ok := Fetch(context.Background(), http.DefaultClient, srv.URL)
 	if ok {
 		t.Fatalf("Fetch of an oversized body ok = true, v = %q, want ok = false", v)
+	}
+}
+
+// TestFetchResponseExactlyAtTheLimit isolates the `len(data) > maxBody`
+// check: a body of exactly maxBody+1 bytes, complete and valid JSON (not
+// truncated at all by LimitReader's maxBody+1 cap, since it fits exactly),
+// is still refused — only the explicit size check can be doing that here.
+//
+// Mutation: dropping the `len(data) > maxBody` check (leaving only `err !=
+// nil`) makes this exact-boundary body parse through, since LimitReader
+// never actually truncates it.
+func TestFetchResponseExactlyAtTheLimit(t *testing.T) {
+	const prefix, suffix = `{"tag_name":"v0.7.0","padding":"`, `"}`
+	body := prefix + strings.Repeat("x", maxBody+1-len(prefix)-len(suffix)) + suffix
+	if len(body) != maxBody+1 {
+		t.Fatalf("test bug: body is %d bytes, want exactly %d", len(body), maxBody+1)
+	}
+	srv := releaseServer(t, body, http.StatusOK)
+	defer srv.Close()
+	v, ok := Fetch(context.Background(), http.DefaultClient, srv.URL)
+	if ok {
+		t.Fatalf("Fetch of a %d-byte (maxBody+1) body ok = true, v = %q, want ok = false", len(body), v)
+	}
+}
+
+// countingReadCloser counts the bytes actually Read from it, regardless of
+// how many the server behind it would have sent.
+type countingReadCloser struct {
+	r io.ReadCloser
+	n *int
+}
+
+func (c countingReadCloser) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	*c.n += n
+	return n, err
+}
+func (c countingReadCloser) Close() error { return c.r.Close() }
+
+// countingClient wraps a real *http.Client, instrumenting the response
+// body it returns.
+type countingClient struct {
+	inner *http.Client
+	read  *int
+}
+
+func (c countingClient) Do(req *http.Request) (*http.Response, error) {
+	resp, err := c.inner.Do(req)
+	if err == nil {
+		resp.Body = countingReadCloser{resp.Body, c.read}
+	}
+	return resp, err
+}
+
+// TestFetchNeverReadsMoreThanTheBound isolates io.LimitReader: a body much
+// larger than maxBody (complete, valid JSON, so the explicit size check
+// alone would still correctly reject it) must never actually be read past
+// maxBody+1 bytes, regardless of what Fetch finally returns. An
+// attacker-controlled response can otherwise make Fetch buffer without
+// bound before the size check ever runs.
+//
+// Mutation: replacing `io.LimitReader(resp.Body, maxBody+1)` with
+// `resp.Body` (reading it unbounded) makes this test's byte count exceed
+// maxBody+1, even though Fetch's final ok/false answer is unchanged by the
+// mutation (the downstream size check still catches the final length).
+func TestFetchNeverReadsMoreThanTheBound(t *testing.T) {
+	const prefix, suffix = `{"tag_name":"v0.7.0","padding":"`, `"}`
+	total := 4 * maxBody
+	body := prefix + strings.Repeat("x", total-len(prefix)-len(suffix)) + suffix
+	srv := releaseServer(t, body, http.StatusOK)
+	defer srv.Close()
+	var read int
+	client := countingClient{inner: srv.Client(), read: &read}
+	if _, ok := Fetch(context.Background(), client, srv.URL); ok {
+		t.Fatal("Fetch of an oversized body ok = true, want false")
+	}
+	if read > maxBody+1 {
+		t.Fatalf("Fetch read %d bytes from the body, want at most %d (maxBody+1): an oversized response must never be buffered in full", read, maxBody+1)
 	}
 }
 
@@ -261,6 +417,32 @@ func TestFetchTimeout(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Fatalf("Fetch took %v, want it to give up near the 50ms deadline", elapsed)
+	}
+}
+
+// TestRefreshBoundsItsOwnTimeout exercises Refresh itself (not Fetch with
+// an external short context): Refresh must wrap ctx with its own
+// FetchTimeout, not depend on the caller already having a short deadline.
+//
+// Mutation: changing Refresh's `context.WithTimeout(ctx, FetchTimeout)` to
+// use a much longer duration (time.Hour) survives a test that only calls
+// Fetch directly with its own short ctx, since that never exercises
+// Refresh's own wrapping at all; this test calls Refresh with the bare
+// context.Background() (no deadline of its own) against a server that
+// never answers, so only Refresh's internal timeout can ever stop it.
+func TestRefreshBoundsItsOwnTimeout(t *testing.T) {
+	dir := t.TempDir()
+	getenv := getenvFor(dir)
+	block := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-block
+	}))
+	defer srv.Close()
+	defer close(block)
+	start := time.Now()
+	Refresh(context.Background(), getenv, http.DefaultClient, srv.URL, time.Now())
+	if elapsed := time.Since(start); elapsed > 2*FetchTimeout {
+		t.Fatalf("Refresh took %v, want it bounded near its own FetchTimeout (%v)", elapsed, FetchTimeout)
 	}
 }
 
@@ -361,6 +543,27 @@ func TestWarnThrottledPerVersionPerDay(t *testing.T) {
 	}
 	if line := Warn(getenv, now.Add(2*time.Hour), "0.6.1"); line == "" {
 		t.Fatal("Warn for a newly learned release, same day, = \"\", want a line")
+	}
+}
+
+// TestWarnFutureWarnedAtDoesNotSilenceForever pins the `age >= 0` guard in
+// Warn's throttle: a WarnedAt that is somehow in the future (a corrupt
+// cache, a clock that moved back after writing it) must not suppress the
+// line until the clock catches up, however far away that is.
+//
+// Mutation: dropping the `age >= 0 &&` part of the throttle condition
+// (leaving only `age < WarnTTL`) makes a negative age (now before
+// WarnedAt) satisfy "less than 24h" forever, wrongly silencing the line
+// until the real clock reaches WarnedAt.
+func TestWarnFutureWarnedAtDoesNotSilenceForever(t *testing.T) {
+	dir := t.TempDir()
+	getenv := getenvFor(dir)
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	if err := Save(getenv, Entry{Latest: "0.7.0", Warned: "0.7.0", WarnedAt: now.Add(365 * 24 * time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if line := Warn(getenv, now, "0.6.1"); line == "" {
+		t.Fatal("Warn with WarnedAt a year in the future = \"\", want a line: a future timestamp must not silence it forever")
 	}
 }
 

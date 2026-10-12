@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -29,11 +28,22 @@ var updateCheckExcluded = map[string]bool{"exec": true, "completion": true, "hel
 
 // updateCheckHTTPClient and updateCheckEndpoint are test seams: production
 // uses the real client and GitHub's endpoint, tests point at a fake
-// server.
+// server. The client never follows a redirect: GitHub's own API never
+// issues one for this endpoint, so any redirect is either a
+// misconfiguration or a hostile responder, and following one would GET
+// whatever host it names next, Referer header and all (confirmed by
+// reproduction: a plain &http.Client{} followed a 302 to an arbitrary
+// second host and sent it a Referer naming the first).
 var (
-	updateCheckHTTPClient updatecheck.Client = &http.Client{}
+	updateCheckHTTPClient updatecheck.Client = &http.Client{CheckRedirect: refuseRedirect}
 	updateCheckEndpoint                      = updatecheck.Endpoint
 )
+
+// refuseRedirect makes an *http.Client return the redirect response itself
+// (3xx, unread) instead of following it.
+func refuseRedirect(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
+}
 
 // stderrIsTerminal is isTTY, a test seam (as watchStdoutTTY already is for
 // stdout).
@@ -54,17 +64,24 @@ func withUpdateCheckDisabled(ctx context.Context, disabled bool) context.Context
 	return context.WithValue(ctx, updateCheckCtxKey{}, disabled)
 }
 
-// updateCheckDisabledFromContext tolerates a nil ctx: cobra leaves a
-// matched command's own ctx unset when Find/Traverse itself fails (an
-// unknown command, a bad flag) before PersistentPreRun ever runs, and
-// WarnUpdateAvailable is called unconditionally on whatever ExecuteContextC
-// returns.
-func updateCheckDisabledFromContext(ctx context.Context) bool {
+// updateCheckDisabledFromContext reports whether PersistentPreRun ever set
+// a value, and what it was: ok is false when it never ran at all — a nil
+// ctx (cobra leaves a matched command's own ctx unset when Find/Traverse
+// itself fails before cmd.execute is ever called), a flag parse error, a
+// failing Args validator, or --help (all of these return out of cobra's
+// Command.execute before the PersistentPreRun loop; see NewRootCmd's
+// comment) — in which case the local-config half of the decision
+// (update_check: false) was never resolved. WarnUpdateAvailable fails
+// closed on ok == false rather than assume "not disabled": a command this
+// broken is not a real invocation to nag about, and guessing wrong here
+// would print the nag despite FUGARO_NO_UPDATE_CHECK=1 or update_check:
+// false, which it did until this was found by review (PR #296).
+func updateCheckDisabledFromContext(ctx context.Context) (disabled, ok bool) {
 	if ctx == nil {
-		return false
+		return false, false
 	}
-	v, _ := ctx.Value(updateCheckCtxKey{}).(bool)
-	return v
+	disabled, ok = ctx.Value(updateCheckCtxKey{}).(bool)
+	return disabled, ok
 }
 
 // updateCheckDisabled reports whether the whole feature is off for this
@@ -90,25 +107,51 @@ func updateCheckDisabled(cmd *cobra.Command) bool {
 	return false
 }
 
+// ciEnv is set (to any non-empty value) by essentially every CI system
+// (GitHub Actions, Travis, CircleCI and others all set at least CI=true);
+// shouldStartUpdateCheck treats any of them the same as a non-terminal
+// stderr: a CI run would never see the nag printed anyway (CI output is
+// not a terminal, and most CI redirects or captures both streams), so
+// there is nothing to gain from the network call, and a cold CI runner
+// hitting GitHub's unauthenticated rate limit (and WaitForUpdateCheck
+// joining it) on every job is a cost for nothing.
+const ciEnv = "CI"
+
 // shouldStartUpdateCheck is startUpdateCheck's decision, pulled out so
 // tests can check each condition without racing a real goroutine: no call
-// at all when disabled, inside a Cloud Run job, for an excluded command,
-// or for a dev/unparseable binary version (there would be nothing to ever
-// compare the result against).
+// at all when disabled, inside a Cloud Run job, in CI, off a terminal (the
+// nag could never print anyway), for `doctor` (which does its own
+// synchronous Refresh as part of its cli-version check: running the
+// background one too would be a second, redundant GitHub request every
+// time doctor runs), for an excluded command, or for a dev/unparseable
+// binary version (there would be nothing to ever compare the result
+// against).
 func shouldStartUpdateCheck(cmd *cobra.Command, disabled bool) bool {
-	return !disabled && !updateCheckExcluded[cmd.Name()] && !backend.OnCloudRun(os.Getenv) && updatecheck.Valid(Version)
+	return !disabled && !updateCheckExcluded[cmd.Name()] && cmd.Name() != "doctor" &&
+		os.Getenv(ciEnv) == "" && stderrIsTerminal(cmd.ErrOrStderr()) &&
+		!backend.OnCloudRun(os.Getenv) && updatecheck.Valid(Version)
 }
 
-// updateCheckWG tracks the background Refresh goroutine startUpdateCheck
-// may launch. main.go calls WaitForUpdateCheck before the process exits:
-// without joining it, a command whose own work finishes before the HTTP
-// GET and the cache Save do (common for a fast, local-only command racing
-// FetchTimeout's ~1s budget) would have main return and the process exit
-// right under it, silently dropping that day's check instead of
-// completing it — unlike every other background goroutine in this
-// package (ls.go, watch_queued.go, initsecrets.go, secrets.go), which all
-// join before their command returns.
-var updateCheckWG sync.WaitGroup
+// updateCheckDone, when non-nil, is closed when the background Refresh
+// goroutine the most recent startUpdateCheck call launched finishes. Not a
+// sync.WaitGroup: a WaitGroup's contract forbids a new Add from
+// overlapping an older Wait that hasn't fully returned on every goroutine
+// waiting on it, which an abandoned WaitForUpdateCheck call (one that gave
+// up at updateCheckJoinBound while its own helper goroutine is still
+// blocked in Wait) can leave dangling into the next command's Add — a
+// hazard `go test -race` catches across this package's own sequential
+// tests, which call these functions many times in one process the way
+// main.go, calling each exactly once, never does. A fresh channel per
+// check sidesteps the whole class of reuse hazard: closing one with no
+// reader left (because WaitForUpdateCheck already gave up) is always
+// safe, and goroutines reading/writing updateCheckDone itself are never
+// concurrent (PersistentPreRun and the main.go call after Execute returns
+// run strictly one after the other).
+var updateCheckDone chan struct{}
+
+// updateCheckJoinBound is how long WaitForUpdateCheck waits for the
+// background check before giving up on it; a var so a test can shrink it.
+var updateCheckJoinBound = 200 * time.Millisecond
 
 // startUpdateCheck kicks the daily GitHub lookup in the background
 // (design "update warnings", point 1): it never blocks the command. It
@@ -119,29 +162,48 @@ func startUpdateCheck(cmd *cobra.Command, disabled bool) {
 	if !shouldStartUpdateCheck(cmd, disabled) {
 		return
 	}
-	updateCheckWG.Add(1)
+	done := make(chan struct{})
+	updateCheckDone = done
 	go func() {
-		defer updateCheckWG.Done()
+		defer close(done)
 		updatecheck.Refresh(context.Background(), os.Getenv, updateCheckHTTPClient, updateCheckEndpoint, time.Now())
 	}()
 }
 
-// WaitForUpdateCheck blocks until any background daily-check goroutine
-// startUpdateCheck launched for the command that just ran has finished,
-// bounded by its own FetchTimeout (~1s). cmd/fugaro/main.go calls it right
-// after ExecuteContextC returns and before the process can exit; a command
-// that never started one (excluded, disabled, inside a Cloud Run job, a
-// dev build) returns at once, since updateCheckWG was never incremented.
+// WaitForUpdateCheck waits, up to updateCheckJoinBound, for the background
+// daily-check goroutine startUpdateCheck launched for the command that
+// just ran. cmd/fugaro/main.go calls it right after ExecuteContextC
+// returns and before the process can exit. A command that never started
+// one (excluded, disabled, inside a Cloud Run job, a dev build) returns at
+// once, since updateCheckDone is nil; one that is still running past the
+// bound (a slow or blackholed network) is abandoned — the process exits
+// without it, rather than visibly holding up an otherwise-fast command for
+// up to Refresh's own ~1s FetchTimeout.
 func WaitForUpdateCheck() {
-	updateCheckWG.Wait()
+	if updateCheckDone == nil {
+		return
+	}
+	select {
+	case <-updateCheckDone:
+	case <-time.After(updateCheckJoinBound):
+	}
 }
 
 // shouldWarnUpdateAvailable is warnUpdateAvailable's decision, pulled out
 // for the same reason shouldStartUpdateCheck is: silence for an excluded
-// command, under --json/--plain, off a terminal, inside a Cloud Run job,
-// or when disabled.
+// command, --help (cobra normally returns out of Command.execute before
+// PersistentPreRun even runs for --help, so updateCheckDisabledFromContext's
+// ok=false already catches it; this is a second, direct check in case that
+// ever stops being true), under --json/--plain, off a terminal, inside a
+// Cloud Run job, or when disabled. The env switch is re-checked directly
+// here, not only through the disabled parameter: WarnUpdateAvailable
+// already fails closed (never calls this at all) when PersistentPreRun
+// never resolved disabled, but FUGARO_NO_UPDATE_CHECK=1 costs nothing to
+// ask again and must never depend on that resolution having happened.
 func shouldWarnUpdateAvailable(cmd *cobra.Command, disabled bool) bool {
-	return !disabled && !updateCheckExcluded[cmd.Name()] && !machineReadable(cmd) && stderrIsTerminal(cmd.ErrOrStderr()) && !backend.OnCloudRun(os.Getenv)
+	return !disabled && os.Getenv(noUpdateCheckEnv) != "1" &&
+		!updateCheckExcluded[cmd.Name()] && !helpRequested(cmd) &&
+		!machineReadable(cmd) && stderrIsTerminal(cmd.ErrOrStderr()) && !backend.OnCloudRun(os.Getenv)
 }
 
 // warnUpdateAvailable prints the cached nag line (design "update
@@ -167,11 +229,32 @@ func warnUpdateAvailable(cmd *cobra.Command, disabled bool) {
 // PostRun and PersistentPostRun entirely — so main must call this itself,
 // after the command's own output (including any printed error), whether
 // or not it errored.
+//
+// Fails closed when PersistentPreRun never ran at all (a flag parse
+// error, a failing Args validator, an unknown command, --help: see
+// updateCheckDisabledFromContext), rather than assume "not disabled" —
+// reproduced (PR #296 review) as the nag printing for `ls --bogus`,
+// `doctor x y z`, `nosuchcmd`, `ls --help` and bare `fugaro` even with
+// FUGARO_NO_UPDATE_CHECK=1 set, since none of those ever reach the code
+// that resolves the local config's update_check.
 func WarnUpdateAvailable(cmd *cobra.Command) {
 	if cmd == nil {
 		return
 	}
-	warnUpdateAvailable(cmd, updateCheckDisabledFromContext(cmd.Context()))
+	disabled, ok := updateCheckDisabledFromContext(cmd.Context())
+	if !ok {
+		return
+	}
+	warnUpdateAvailable(cmd, disabled)
+}
+
+// helpRequested reports whether cmd's auto-registered --help flag is set;
+// false, never a panic, for a bare test command that never had one
+// registered (machineReadable's "json"/"plain" lookups use the same
+// nil-safe pattern).
+func helpRequested(cmd *cobra.Command) bool {
+	f := cmd.Flags().Lookup("help")
+	return f != nil && f.Value.String() == "true"
 }
 
 // machineReadable reports whether cmd was asked for --json or --plain

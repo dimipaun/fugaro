@@ -18,9 +18,13 @@ func main() {
 	ctx, stop := signalContext()
 	cmd, err := cli.NewRootCmd().ExecuteContextC(ctx)
 	stop()
-	// Before the process can exit: join the background daily update check
-	// (internal/cli/updatewarn.go), bounded by its own ~1s timeout, so a
-	// fast command's own work finishing first doesn't kill it mid-flight.
+	// Before the process can exit: give the background daily update check
+	// (internal/cli/updatewarn.go) a short window to finish rather than
+	// killing it mid-flight the instant the command's own work is done.
+	// Bounded to ~200ms, not its own ~1s FetchTimeout: a command must
+	// never visibly wait out a blackholed network just to exit, so a check
+	// still running past the bound is abandoned instead (that day's check
+	// is lost, not "the command slowed down").
 	cli.WaitForUpdateCheck()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "fugaro:", cli.ErrorText(err))

@@ -74,6 +74,7 @@ claude_accounts:
     allow_data_to: [acme/web]
 max_parallel: 7
 endpoints: { run: "http://127.0.0.1:1/", no_auth: true }
+update_check: false
 repos:
   acme/web: { provider: github, base_branch: main, workflows: [web] }
 `
@@ -93,7 +94,7 @@ func TestSharedSubsetNeverLeaksOwnerOrPersonalFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{"terraform:", "launchers", "alert_email", "user:", "endpoints:", "bucket_url", "registry:", "providers:", "openrouter", "base_branch", "service_account", "claude_accounts:", "acme-personal"} {
+	for _, forbidden := range []string{"terraform:", "launchers", "alert_email", "user:", "endpoints:", "bucket_url", "registry:", "providers:", "openrouter", "base_branch", "service_account", "claude_accounts:", "acme-personal", "update_check"} {
 		if strings.Contains(string(out), forbidden) {
 			t.Errorf("published file contains %q:\n%s", forbidden, out)
 		}
@@ -103,7 +104,7 @@ func TestSharedSubsetNeverLeaksOwnerOrPersonalFields(t *testing.T) {
 		t.Errorf("published file does not parse: %v", err)
 	}
 	// The receiver is untouched.
-	if lc.Terraform.StateBucket == "" || lc.User == "" || lc.Bucket == "" || len(lc.Providers) != 1 || len(lc.ClaudeAccounts) != 1 || lc.Repos["acme/web"].BaseBranch != "main" || lc.Build.ServiceAccount == "" {
+	if lc.Terraform.StateBucket == "" || lc.User == "" || lc.Bucket == "" || len(lc.Providers) != 1 || len(lc.ClaudeAccounts) != 1 || lc.Repos["acme/web"].BaseBranch != "main" || lc.Build.ServiceAccount == "" || lc.UpdateCheck == nil {
 		t.Errorf("Shared modified its receiver: %+v", lc)
 	}
 }

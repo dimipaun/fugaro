@@ -157,7 +157,24 @@ func Load(getenv func(string) string) Entry {
 	if err != nil {
 		return Entry{}
 	}
-	data, err := os.ReadFile(path)
+	// Lstat, not Stat: a symlink (to /dev/zero, to a FIFO, to anything)
+	// must never be followed. Save only ever creates a regular file by
+	// renaming a temp file over the path, so anything else here is
+	// outside tampering, treated the same as no cache at all.
+	fi, err := os.Lstat(path)
+	if err != nil || !fi.Mode().IsRegular() {
+		return Entry{}
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return Entry{}
+	}
+	defer f.Close()
+	// Bounded before anything is buffered: opening a regular file can't
+	// block the way a FIFO would, but the read itself still must not
+	// grow without limit for a cache file that is, somehow, both regular
+	// and huge.
+	data, err := io.ReadAll(io.LimitReader(f, 2*maxBody+1))
 	if err != nil || len(data) > 2*maxBody {
 		return Entry{}
 	}
