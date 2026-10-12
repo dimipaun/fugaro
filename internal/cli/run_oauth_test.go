@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -153,32 +156,203 @@ func TestRunTokenVariantJobMissingNeverFallsBackToDefault(t *testing.T) {
 	}
 }
 
-// TestFollowUpInheritsOAuthToken: a follow-up's task.Spec.OAuthToken is the
-// previous run's, never a --token the follow-up command passes; a warning
-// is printed instead of an error.
-func TestFollowUpInheritsOAuthToken(t *testing.T) {
-	f := newCloudFixture(t)
-	// claudeAccountAllowed now checks the allow-list regardless of whether a
-	// checkout is present (review finding #2): acme-personal must be allowed
-	// for acme/app here, the same as a fresh resolution would require.
-	f.appendConfig(t, "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/app]\n")
-	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-personal")), "4", "8Gi")
-	writeBuildRecord(t, f, appSlug, "web", release061)
+// appClaudeAccountsConfig allows acme-personal and acme-overflow for
+// acme/app, the repository firstRunSpec/followUpSpec/prRecord (ls_test.go)
+// hardcode.
+const appClaudeAccountsConfig = "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/app]\n  acme-overflow:\n    allow_data_to: [acme/app]\n"
+
+// seedAppFollowUpRoot seeds a first run of acme/app (PR 7) whose resolved
+// account is account ("" for the repository's default), ready for a
+// follow-up of fuID to continue.
+func seedAppFollowUpRoot(t *testing.T, f *cloudFixture, account string) {
+	t.Helper()
 	root := firstRunSpec(rootID)
-	root.OAuthToken = "acme-personal"
+	root.OAuthToken = account
 	seedSpec(t, f, root, false)
 	rec := prRecord(rootID, "", 7, 1)
 	rec.StartedAt = time.Now().Add(-time.Hour)
 	writeRecord(t, f, rootID, rec)
-	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--token", "acme-overflow", "more work")
+}
+
+// TestFollowUpNoTokenInheritsPreviousAccount: with no --token at all, a
+// follow-up's task.Spec.OAuthToken is the previous run's, unchanged by the
+// task 9b review's override rule below (no --token means no override).
+func TestFollowUpNoTokenInheritsPreviousAccount(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, appClaudeAccountsConfig)
+	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-personal")), "4", "8Gi")
+	writeBuildRecord(t, f, appSlug, "web", release061)
+	seedAppFollowUpRoot(t, f, "acme-personal")
+	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "more work")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := readSpec(t, f, fuID).OAuthToken; got != "acme-personal" {
 		t.Fatalf("follow-up OAuthToken = %q, want acme-personal (inherited)", got)
 	}
-	if !strings.Contains(errOut, "acme-overflow") || !strings.Contains(errOut, "ignored") || !strings.Contains(errOut, "acme-personal") {
-		t.Fatalf("stderr %q should warn that --token is ignored on a follow-up", errOut)
+	if strings.Contains(errOut, "ignored") || strings.Contains(errOut, "switches") {
+		t.Fatalf("stderr %q should say nothing about a switch when --token was not given", errOut)
+	}
+}
+
+// TestFollowUpExplicitTokenOverridesInheritedAccount is the owner's ruling
+// (2026-10-13, task 9b review): an EXPLICIT --token on a follow-up now
+// overrides the inherited account instead of being ignored. The root run
+// used the default account; the follow-up switches to acme-personal and
+// must launch THAT account's variant job (gcp.WorkflowVariant("web",
+// "acme-personal")), never the default job the root run used.
+func TestFollowUpExplicitTokenOverridesInheritedAccount(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, appClaudeAccountsConfig)
+	variant := gcp.WorkflowVariant("web", "acme-personal")
+	f.run.AddJob(gcp.JobName(appSlug, variant), "4", "8Gi")
+	writeBuildRecord(t, f, appSlug, "web", release061)
+	seedAppFollowUpRoot(t, f, "") // root used the default account
+	var got gcpfake.RunCall
+	f.run.OnRun = func(c gcpfake.RunCall) { got = c }
+	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--token", "acme-personal", "more work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec := readSpec(t, f, fuID); spec.OAuthToken != "acme-personal" {
+		t.Fatalf("follow-up OAuthToken = %q, want acme-personal (the override)", spec.OAuthToken)
+	}
+	if want := gcp.JobName(appSlug, variant); got.Job != want {
+		t.Fatalf("launched job = %q, want the new account's variant %q, not the default job", got.Job, want)
+	}
+	if !strings.Contains(errOut, "acme-personal") || !strings.Contains(errOut, "switches") {
+		t.Fatalf("stderr %q should note the switch from default to acme-personal", errOut)
+	}
+
+	// Followable: a repeated --run-id reports already-launched (checkExecution
+	// compares against the NEW variant, not the job the root run used), and
+	// fugaro ls shows it pending, not an error.
+	out2, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--token", "acme-personal", "--json", "more work")
+	if err != nil {
+		t.Fatalf("repeated --run-id: %v", err)
+	}
+	if !strings.Contains(out2, `"status": "already-launched"`) {
+		t.Fatalf("repeat result = %s, want already-launched", out2)
+	}
+	if len(f.run.Executions()) != 1 {
+		t.Fatalf("%d executions, want exactly 1 (no second launch)", len(f.run.Executions()))
+	}
+	lsGot, lsErrOut := lsJSON(t, "--repo", "acme/app")
+	if len(lsGot.Runs) != 2 { // root (unlaunched here) is not an execution; fuID is
+		t.Fatalf("ls --repo acme/app: %d runs (%s)", len(lsGot.Runs), lsErrOut)
+	}
+	var fuRow *runview.Row
+	for i := range lsGot.Runs {
+		if lsGot.Runs[i].RunID == fuID {
+			fuRow = &lsGot.Runs[i]
+		}
+	}
+	if fuRow == nil || fuRow.Status != "pending" {
+		t.Fatalf("ls row for %s = %+v, want status pending (stderr %q)", fuID, fuRow, lsErrOut)
+	}
+}
+
+// TestFollowUpTokenOverrideRefusedWhenNotAllowed: an override naming an
+// account this repository is not configured to use is refused through the
+// identical claudeAccountAllowed gate a first run's --token goes through,
+// before any network call.
+func TestFollowUpTokenOverrideRefusedWhenNotAllowed(t *testing.T) {
+	f := newCloudFixture(t)
+	// No claude_accounts configured at all: evil-name is disallowed.
+	seedAppFollowUpRoot(t, f, "")
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--token", "evil-name", "more work")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "evil-name") || !strings.Contains(err.Error(), "claude_accounts") {
+		t.Fatalf("err = %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// TestFollowUpTokenOverrideRefusedWhenVersionGated: an override to an
+// allowed account whose job's build record predates namedTokensSince is
+// refused by the same image gate a first run's --token triggers (run.go's
+// checkImageSince, applied via the override's spec.OAuthToken).
+func TestFollowUpTokenOverrideRefusedWhenVersionGated(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, appClaudeAccountsConfig)
+	writeBuildRecord(t, f, appSlug, "web", release060)
+	seedAppFollowUpRoot(t, f, "") // root used the default account; old build predates the gate too, but default never triggers it
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--token", "acme-personal", "more work")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "named Claude accounts") || !strings.Contains(err.Error(), "fugaro 0.6.1 or later") {
+		t.Fatalf("err = %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// TestFollowUpTokenOverrideRefusedWhenAuthNotOAuth: the override goes
+// through the same agent.auth: oauth rule a first run's --token does, when a
+// checkout is present to read it from.
+func TestFollowUpTokenOverrideRefusedWhenAuthNotOAuth(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, appClaudeAccountsConfig)
+	appCheckout(t) // acme/app, no agent.auth: oauth
+	seedAppFollowUpRoot(t, f, "")
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--token", "acme-personal", "more work")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme-personal") || !strings.Contains(err.Error(), "agent.auth is") {
+		t.Fatalf("err = %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// TestFollowUpTokenOverrideRefusedWhenVariantJobMissing: the override never
+// falls back to the default job when the new account's variant was never
+// deployed (fugaro init --repo not yet re-run) — the same carry-forward
+// rule TestRunTokenVariantJobMissingNeverFallsBackToDefault pins for a
+// first run.
+func TestFollowUpTokenOverrideRefusedWhenVariantJobMissing(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, appClaudeAccountsConfig)
+	writeBuildRecord(t, f, appSlug, "web", release061)
+	// No AddJob for "web_acme-personal": it does not exist yet.
+	seedAppFollowUpRoot(t, f, "")
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--token", "acme-personal", "more work")
+	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "fugaro init --repo") {
+		t.Fatalf("err = %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none (the default job must never run instead)", n)
+	}
+}
+
+// TestFollowUpDocumentedTokenOverrideCommandWorks runs the EXACT command
+// reference/followup.md's usage-limit section documents (--token NAME added
+// to a plain follow-up), substituting real values for its placeholders, so
+// the skill's documented command and the CLI's actual behavior cannot drift
+// apart again (review finding, task 9b round 2). A later edit to the
+// skill's command shape, or a regression in the override itself, fails
+// this test.
+func TestFollowUpDocumentedTokenOverrideCommandWorks(t *testing.T) {
+	args := documentedFollowUpOverrideCommand(t, "7", "acme/app", "acme-personal", fuID)
+	f := newCloudFixture(t)
+	f.appendConfig(t, appClaudeAccountsConfig)
+	variant := gcp.WorkflowVariant("web", "acme-personal")
+	f.run.AddJob(gcp.JobName(appSlug, variant), "4", "8Gi")
+	writeBuildRecord(t, f, appSlug, "web", release061)
+	seedAppFollowUpRoot(t, f, "")
+	var got gcpfake.RunCall
+	f.run.OnRun = func(c gcpfake.RunCall) { got = c }
+	out, _, err := execute(t, append(args, "more work")...)
+	if err != nil {
+		t.Fatalf("documented command %v: %v", args, err)
+	}
+	if !strings.Contains(out, `"status": "launched"`) {
+		t.Fatalf("documented command %v: result %s, want launched", args, out)
+	}
+	if want := gcp.JobName(appSlug, variant); got.Job != want {
+		t.Fatalf("documented command %v launched job %q, want %q", args, got.Job, want)
+	}
+	if got := readSpec(t, f, fuID).OAuthToken; got != "acme-personal" {
+		t.Fatalf("documented command %v: OAuthToken = %q, want acme-personal", args, got)
 	}
 }
 
@@ -321,4 +495,40 @@ func TestRunTokenImageGateSkippedForDefaultAccount(t *testing.T) {
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261012-100000-a1a5", "A task"); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// followUpOverrideCommandRE finds reference/followup.md's documented
+// account-switch relaunch: a fenced inline span naming fugaro run --pr,
+// --token and --run-id together, so a later rewording of the skill's own
+// text is read fresh each time, not copied into the test.
+var followUpOverrideCommandRE = regexp.MustCompile("`(fugaro run --pr N --repo <owner/name> --token NAME --run-id <id> --json)`")
+
+// documentedFollowUpOverrideCommand reads reference/followup.md's own
+// account-switch relaunch command and substitutes real values for its
+// placeholders (N, <owner/name>, NAME, <id>), returning it as exec args
+// (without the leading "fugaro"). Fails the test outright if the skill no
+// longer documents that exact command shape, so a doc rewording and a
+// behavior regression are caught by the same test, not two that can drift
+// apart.
+func documentedFollowUpOverrideCommand(t *testing.T, pr, repo, name, runID string) []string {
+	t.Helper()
+	data, err := os.ReadFile("../../plugin/skills/working/reference/followup.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := followUpOverrideCommandRE.FindStringSubmatch(string(data))
+	if m == nil {
+		t.Fatal("reference/followup.md no longer documents the account-switch relaunch command (fugaro run --pr N --repo <owner/name> --token NAME --run-id <id> --json)")
+	}
+	fields := strings.Fields(m[1])
+	if fields[0] != "fugaro" {
+		t.Fatalf("documented command %q does not start with fugaro", m[1])
+	}
+	placeholders := map[string]string{"N": pr, "<owner/name>": repo, "NAME": name, "<id>": runID}
+	for i, f := range fields {
+		if v, ok := placeholders[f]; ok {
+			fields[i] = v
+		}
+	}
+	return fields[1:]
 }
