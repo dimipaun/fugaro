@@ -4452,7 +4452,7 @@ Expected: FAIL. The goldens still carry `install-node`, `Node` is still a field,
   - `Dockerfile` always detects the PM and mise (no kind switch);
   - `Render` refuses a non-empty `Image.Node` with `fmt.Errorf("image.node was removed in 0.7.0 (%s)", config.MigrationDoc)`, for safety.
 - `selftest.go`: delete the `Node` field and the `node` block. `SpecForCloud` sets `Base: config.BaseKind, Tools: "critical", Mise: true`.
-- `local.go`: the spec is `SelftestSpec{Base: config.BaseKind, …, Tools: "critical", Mise: true}`. `BaseRef(version string)` (the kind argument goes) returns `"ghcr.io/dimipaun/fugaro-base:" + v`, and its dev-build message says `images/build-base.sh base`. Its two callers in `internal/cli/image.go` (lines 122 and 206) become `image.BaseRef(Version)`, and `internal/image/local_test.go`'s `BaseRef` cases follow.
+- `local.go`: the spec is `SelftestSpec{Base: config.BaseKind, …, Tools: "critical", Mise: true}`. `BaseRef(version string)` (the kind argument goes) returns `"ghcr.io/dimipaun/fugaro-base:" + v` **[Ruling 2026-10-13, from the Task 18 review: the signature change moves to Task 19.** Task 18 deliberately kept the two-argument `BaseRef(kind, version)`: `internal/cli/image_refresh_steps.go` (~91), `TestRefreshReloadFillsMissingBaseFromRelease` and `init.go` (~2415) still pass legacy kinds until Task 19 removes them. Task 19 changes `BaseRef` and every caller.**], and its dev-build message says `images/build-base.sh base`. Its two callers in `internal/cli/image.go` (lines 122 and 206) become `image.BaseRef(Version)`, and `internal/image/local_test.go`'s `BaseRef` cases follow.
 - `nodepm.go`: `DefaultCache(root string)`, without the base check. Its callers are `internal/runner/lockcache.go` and `internal/imagecheck/record.go`.
 - `record.go`:
   - `imageSettings` drops `Node` and `JDK`;
@@ -4715,7 +4715,7 @@ func doctorBaseImage(lc *localcfg.Config) doctorCheck {
 - `--expect-digest`: "KIND is base or history";
 - `--replace-image`: "history or base".
 
-`image.go`: the `--base` help says "the published fugaro-base" (`image.BaseRef(Version)` changed in Task 18).
+`image.go`: the `--base` help says "the published fugaro-base"; **this task changes `image.BaseRef(version)` and all its callers** (`image_refresh_steps.go`, `init.go` and their tests; moved here from Task 18, see its Step 3 ruling).
 
 **The test sweep.** Every test that names a legacy kind, in YAML or in Go:
 
@@ -4762,6 +4762,8 @@ git commit -F /tmp/task19-msg.txt
 ---
 
 ### Task 20: Delete the legacy images, their CI and their release lines
+
+**Leftovers from Task 18's review (owned by this task or Task 21).** (a) The four docker-tagged tests still build FROM `testutil.BaseImage(t)` (the web-node image, which has no mise) while the smoke now always asks for `Tools: critical, Mise: true`, so they are red until moved to `BaseImageOf(t, "base")`: `TestDerivedNPMSetupSudoAndSecrets`, `TestDerivedSkipBuildScripts`, `TestRepoDockerfileEscapeHatch` (`internal/image`) and `TestExecInDerivedImage` (`internal/e2e`). (b) Stale wording: `internal/image/render_test.go` (~234, 245, 274, 507, 572) still passes `Base: "web-node"` although the template no longer reads `.Base`; the `SelftestSpec.Base` comment in `internal/image/selftest.go` (~31) still says it "decides the toolchain check"; `internal/imagecheck/record_test.go` (~179-183) still says "only web-node is known today" (the plan asked for `BaseKind` against `""`). (c) `internal/runner/lockcache.go` `toolchainHash` (~152-170) still hashes `img.Node`/`img.JDK` (always empty now) and does not hash `image.tools`: decide in Task 21 whether the cache key must follow mise.
 
 **Files:**
 - Delete: `images/go/`, `images/web-node/`, `images/java-services/`, `images/go_test.go`, `images/java_services_test.go` (the services tests moved in Task 3), the legacy parts of `images/smoke.sh` and `images/smoke_test.go`
