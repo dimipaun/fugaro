@@ -557,18 +557,17 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 	if err := checkMaxParallelFor(ctx, env, n); err != nil {
 		return err
 	}
-	userBatch := o.batch
 	results := make([]launchResult, 0, n)
 	for i := 0; i < n; i++ {
 		slug, spec, err := newSpec(ctx, env, o, text, total, warn)
 		if err != nil {
 			return reportBatchFailure(cmd, o.batch, o.asJSON, results, err)
 		}
-		if i == 0 && userBatch == "" {
-			// The first attempt's own run ID names the batch (design
-			// generic-tool §3.6): set once newSpec has generated it, then
-			// kept in o.batch so every later attempt's newSpec carries the
-			// same label.
+		if i == 0 && o.batch == "" {
+			// With no --batch, the first attempt's own run ID names the
+			// batch (design generic-tool §3.6): set once newSpec has
+			// generated it, then kept in o.batch so every later attempt's
+			// newSpec carries the same label.
 			spec.Batch = "bestof-" + spec.RunID
 			if err := spec.Validate(); err != nil {
 				return reportBatchFailure(cmd, o.batch, o.asJSON, results, userErr("%v", err))
@@ -586,12 +585,8 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 		}
 		results = append(results, res)
 	}
-	batch := o.batch
-	if userBatch != "" {
-		batch = userBatch
-	}
 	if o.asJSON {
-		if err := printBatch(cmd.OutOrStdout(), batch, results); err != nil {
+		if err := printBatch(cmd.OutOrStdout(), o.batch, results); err != nil {
 			return err
 		}
 	}
@@ -600,7 +595,7 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 		parts[i] = fmt.Sprintf("--pr <%c>", 'A'+i)
 	}
 	fmt.Fprintf(warn, "pick: fugaro run --recipe pick %s once all have opened PRs (fugaro runs ls --batch %s)\n",
-		strings.Join(parts, " "), batch)
+		strings.Join(parts, " "), o.batch)
 	return nil
 }
 

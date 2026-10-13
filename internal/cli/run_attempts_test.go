@@ -1,11 +1,15 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // bumpMaxParallel rewrites the fixture's local config to raise max_parallel
@@ -33,6 +37,10 @@ func bumpMaxParallel(t *testing.T, n int) {
 func TestRunAttemptsLaunchesNWithOneBatch(t *testing.T) {
 	f := newCloudFixture(t)
 	bumpMaxParallel(t, 5)
+	// review-only needs a job image with a build record (needsRecipeImage);
+	// without one, --recipe review-only would be refused there instead of
+	// by the mode: review check this test means to exercise.
+	writeBuildRecord(t, f, appSlug, "web", release070)
 	out, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "3", "--json", "fix the flaky test")
 	if err != nil {
 		t.Fatal(err)
@@ -118,5 +126,35 @@ func TestRunAttemptsKeepsExplicitBatch(t *testing.T) {
 	}
 	if n := len(f.run.Executions()); n != 2 {
 		t.Fatalf("executions = %d, want 2", n)
+	}
+}
+
+// TestReportBatchFailurePrintsWhatLaunched pins plan Task 13 step 3's
+// "a failure after k launches stops the loop, prints the k launched runs and
+// returns the error": in JSON mode (where nothing was printed per attempt,
+// unlike text mode, which already streamed each run as it launched) the
+// partial batch is printed before the error returns; in text mode nothing
+// more is printed, since each launched run already was.
+func TestReportBatchFailurePrintsWhatLaunched(t *testing.T) {
+	results := []launchResult{{RunID: "20260927-100000-aaaa"}}
+	boom := errors.New("boom")
+
+	var out bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&out)
+	if err := reportBatchFailure(cmd, "bestof-20260927-100000-aaaa", true, results, boom); err != boom {
+		t.Fatalf("err = %v, want boom", err)
+	}
+	var doc batchResult
+	if json.Unmarshal(out.Bytes(), &doc) != nil || doc.Batch != "bestof-20260927-100000-aaaa" || len(doc.Runs) != 1 || doc.Runs[0].RunID != "20260927-100000-aaaa" {
+		t.Fatalf("json mode out = %s", out.String())
+	}
+
+	out.Reset()
+	if err := reportBatchFailure(cmd, "bestof-20260927-100000-aaaa", false, results, boom); err != boom {
+		t.Fatalf("err = %v, want boom", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("text mode printed %q, want nothing", out.String())
 	}
 }
