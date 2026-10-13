@@ -17,6 +17,7 @@ A self-contained coding task with clear acceptance criteria that builds and test
 - a feature or refactor with named files and checkable behaviour
 - tests, docs, migrations of code, dependency bumps the CI covers
 - work for several independent runs at once (see the `parallelism` skill)
+- a codebase question: the image carries `graphify`, which the agent can use to build and query a knowledge graph of the checkout ([base-image.md](https://github.com/dimipaun/fugaro/blob/main/docs/base-image.md))
 
 ## Local
 

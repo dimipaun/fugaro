@@ -1,0 +1,10 @@
+# graphify (design base-image.md section 6): a Python CLI, PyPI name
+# graphifyy, https://github.com/Graphify-Labs/graphify (formerly
+# github.com/safishamsi/graphify; GitHub redirects the old path, same
+# repository). Installed in isolation with uv and its own managed Python
+# (images/base/Dockerfile), never a system Python or pip on the image's
+# PATH. Regenerate the lockfile after bumping the version here:
+#   uv pip compile images/base/graphify/requirements.in --universal \
+#     --python-version 3.12 --generate-hashes --no-emit-package pip \
+#     --output-file images/base/graphify/requirements.lock.txt
+graphifyy==0.9.89
