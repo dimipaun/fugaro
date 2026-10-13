@@ -301,6 +301,15 @@ func (b *Backend) JobEnv(ctx context.Context, job, name string) (string, bool, e
 // JobFullEnv reads job's whole container env in one Jobs.Get call, and
 // whether the job exists. A job with no container env gives an empty, non-nil
 // map, true.
+//
+// Only plain-value entries (ValueSource == nil) are included. deploy/terraform/gcp/modules/workflow/job.tf
+// deploys every secret_env entry (CLAUDE_CODE_OAUTH_TOKEN,
+// FUGARO_GITHUB_APP_PRIVATE_KEY, ANTHROPIC_API_KEY, a provider's key, ...)
+// as an env var whose value comes from value_source.secret_key_ref, never a
+// literal value: the API answers those with Value == "" and ValueSource set.
+// A caller comparing this map against a config-derived one (never a secret)
+// must not see those as present-but-empty, or every one of them reads as
+// "removed" forever.
 func (b *Backend) JobFullEnv(ctx context.Context, job string) (map[string]string, bool, error) {
 	if !nameRE.MatchString(job) {
 		return nil, false, fmt.Errorf("bad job name %q", job)
@@ -317,6 +326,9 @@ func (b *Backend) JobFullEnv(ctx context.Context, job string) (map[string]string
 	if j.Template != nil && j.Template.Template != nil {
 		for _, c := range j.Template.Template.Containers {
 			for _, e := range c.Env {
+				if e.ValueSource != nil {
+					continue
+				}
 				env[e.Name] = e.Value
 			}
 		}

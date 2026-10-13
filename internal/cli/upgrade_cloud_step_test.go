@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -473,6 +474,127 @@ func TestUpgradeCloudUnionsDiffsAcrossWorkflowsDeduplicated(t *testing.T) {
 	if n := strings.Count(out, "providers: added openrouter"); n != 1 {
 		t.Fatalf("the diff appeared %d times, want exactly 1 (deduplicated):\n%s", n, out)
 	}
+}
+
+// jobConfigCopySecretNames are the env vars deploy/terraform/gcp/modules/workflow/job.tf's
+// secret_env dynamic block mounts for refreshYAML's fixture (git: github,
+// agent.auth: oauth): the git credential and the Claude account token. A
+// real deployed job never carries a value for these, only a valueSource;
+// jobBodyWithSecretValueSources models exactly that.
+var jobConfigCopySecretNames = []string{"FUGARO_GITHUB_APP_PRIVATE_KEY", "CLAUDE_CODE_OAUTH_TOKEN"}
+
+// jobBodyWithSecretValueSources is a Cloud Run job's raw jobs.get body (for
+// gcpfake.Run.SetJobJSON): env's entries as plain values, plus
+// jobConfigCopySecretNames mounted the way job.tf deploys every secret_env
+// entry, a valueSource and no value at all. Modeling this in the fake is the
+// point of the test that uses it: JobFullEnv must not read a secret's
+// valueSource entry as config that was "removed".
+func jobBodyWithSecretValueSources(t *testing.T, job string, env map[string]string) string {
+	t.Helper()
+	var entries []map[string]any
+	for _, k := range slices.Sorted(maps.Keys(env)) {
+		entries = append(entries, map[string]any{"name": k, "value": env[k]})
+	}
+	for _, s := range jobConfigCopySecretNames {
+		entries = append(entries, map[string]any{"name": s, "valueSource": map[string]any{
+			"secretKeyRef": map[string]any{"secret": "projects/proj-1234/secrets/x", "version": "latest"},
+		}})
+	}
+	body := map[string]any{
+		"name": "projects/proj-1234/locations/us-east5/jobs/" + job,
+		"template": map[string]any{"taskCount": 1, "template": map[string]any{
+			"maxRetries": 0,
+			"containers": []any{map[string]any{
+				"image":     "img",
+				"resources": map[string]any{"limits": map[string]any{"cpu": "1", "memory": "512Mi"}},
+				"env":       entries,
+			}},
+		}},
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// jobConfigCopyRealSpec is acme/app's workflow spec, computed exactly as
+// jobConfigCopyNote computes it (resolveCloudRepo, checkoutURL,
+// infra.Workflow): the review's own reproduction needs "a job built from
+// exactly today's infra.Workflow spec", so this builds that spec the same
+// way the production code does, not a hand-picked guess at its keys. It
+// must run after a rig has chdir'd into the checkout (upgradeRigWithGitHubAppID).
+func jobConfigCopyRealSpec(t *testing.T, workflow string) infra.WorkflowSpec {
+	t.Helper()
+	loc, ok := pluginwire.Locate(".")
+	if !ok {
+		t.Fatal("not a checkout")
+	}
+	cfg, lc, _, repo, _, v := resolveCloudRepo(t.Context(), loc.Root, cloudOptions{})
+	if v != nil {
+		t.Fatalf("resolveCloudRepo: %+v", v)
+	}
+	repoURL, err := checkoutURL(t.Context(), loc.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := infra.Workflow(infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, RepoURL: repoURL}, workflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return spec
+}
+
+// TestUpgradeCloudSecretValueSourceEntriesAreNeverConfigCopy: review
+// follow-up (PR #324, BLOCKER): a real deployed job mounts its secrets
+// (CLAUDE_CODE_OAUTH_TOKEN, FUGARO_GITHUB_APP_PRIVATE_KEY, a provider's key,
+// ...) as a valueSource, with no value at all (job.tf's secret_env dynamic
+// block); spec.Env never has those keys, so comparing the job's whole env
+// against spec.Env reported every one of them "removed", on every correctly
+// deployed job, on every upgrade, forever. JobFullEnv now drops any entry
+// whose ValueSource is set.
+//
+// Mutation (verified, run and restored): in JobFullEnv (internal/backend/gcp/run.go),
+// drop the `if e.ValueSource != nil { continue }` check: "matches" finds a
+// false STALE note naming the two secret variables.
+func TestUpgradeCloudSecretValueSourceEntriesAreNeverConfigCopy(t *testing.T) {
+	t.Run("matches", func(t *testing.T) {
+		r := upgradeRigWithGitHubAppID(t)
+		r.appendConfig(t, providersConfig)
+		stubCurrentRefresh(t, r)
+		spec := jobConfigCopyRealSpec(t, "api")
+		r.run.SetJobJSON(spec.Job, jobBodyWithSecretValueSources(t, spec.Job, spec.Env))
+		fakeSteps(t, "", nil)
+		out, _, err := executeStdin(t, "", "upgrade", "--yes")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if strings.Contains(out, "job's copy") {
+			t.Fatalf("a false STALE note on a correctly deployed job:\n%s", out)
+		}
+	})
+	t.Run("one field really differs", func(t *testing.T) {
+		r := upgradeRigWithGitHubAppID(t)
+		r.appendConfig(t, providersConfig)
+		stubCurrentRefresh(t, r)
+		spec := jobConfigCopyRealSpec(t, "api")
+		stale := maps.Clone(spec.Env)
+		stale["FUGARO_GITHUB_APP_ID"] = "99999" // the local config's is "12345"
+		r.run.SetJobJSON(spec.Job, jobBodyWithSecretValueSources(t, spec.Job, stale))
+		fakeSteps(t, "", nil)
+		out, _, err := executeStdin(t, "", "upgrade", "--yes")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if !strings.Contains(out, "FUGARO_GITHUB_APP_ID") {
+			t.Fatalf("missing the changed field:\n%s", out)
+		}
+		for _, secret := range jobConfigCopySecretNames {
+			if strings.Contains(out, secret) {
+				t.Fatalf("the note named a secret variable %q:\n%s", secret, out)
+			}
+		}
+	})
 }
 
 // upgradeRig is an onboarded checkout of acme/app (two workflows, kinds go
