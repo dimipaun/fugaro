@@ -1700,3 +1700,29 @@ func TestPickMissingKeepFailsWithoutPosting(t *testing.T) {
 		t.Fatalf("rec = %+v", rec)
 	}
 }
+
+// TestReviewModeRefusesClosedPR: a merged or otherwise closed pull request
+// named by review.prs is a policy refusal like an untrusted author, not an
+// infrastructure fault — refuseReview's StatusFailed/OutcomeNone with a
+// posted note, not StatusInfraError with nothing posted (which is what a
+// real FetchPRHead API error still gets, since that really is one).
+//
+// Mutation (revert checkReviewPRs' `!h.Open` branch to its own plain
+// `fmt.Errorf("PR #%d is not open", n)` instead of calling refuseReview):
+// this test fails, finding StatusInfraError and no posted note.
+func TestReviewModeRefusesClosedPR(t *testing.T) {
+	h := newHarness(t, followUpYAML(t, ""), reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	pushReviewBranch(t, h, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h, 7, "feature", "")
+	h.provider.State.PRs[0].State = gitprov.PRMerged
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone || !strings.Contains(rec.Reason, "is not open") {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	c := h.provider.State.PRs[0].Comments
+	if len(c) != 1 || !strings.Contains(c[0], "is not open") {
+		t.Fatalf("no refusal note was posted on the pull request: comments = %q", c)
+	}
+}

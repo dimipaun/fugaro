@@ -47,9 +47,13 @@ type reviewHead struct {
 // gate, and last the head commit's own hash shape (see the comment on
 // that check: a Bitbucket fork's hash is never resolved, so checking this
 // before the author gate would misreport a fork refusal as an infra
-// error). Any failure ends bootstrap with the reason, before anything is
-// checked out; the runner never silently skips a pull request the task
-// named.
+// error). A closed or merged pull request is refused the same way an
+// untrusted author is — refuseReview, StatusFailed/OutcomeNone with a
+// posted note — since nothing about the runner or its infrastructure
+// failed; FetchPRHead's own error (the provider API call itself failing)
+// stays a plain error, ending bootstrap as StatusInfraError, since that
+// really is one. Any failure ends bootstrap before anything is checked
+// out; the runner never silently skips a pull request the task named.
 func (r *run) checkReviewPRs(ctx context.Context) error {
 	heads := make([]reviewHead, 0, len(r.spec.ReviewPRs))
 	for _, n := range r.spec.ReviewPRs {
@@ -58,7 +62,7 @@ func (r *run) checkReviewPRs(ctx context.Context) error {
 			return fmt.Errorf("reading PR #%d: %w", n, err)
 		}
 		if !h.Open {
-			return fmt.Errorf("PR #%d is not open", n)
+			return r.refuseReview(ctx, n, fmt.Sprintf("PR #%d is not open", n))
 		}
 		if err := r.checkReviewAuthor(ctx, n, h); err != nil {
 			return err
@@ -147,7 +151,8 @@ func (r *run) checkReviewAuthor(ctx context.Context, n int, h gitprov.PRHead) er
 	return nil
 }
 
-// refuseReview ends checkReviewAuthor's refusal of pull request n:
+// refuseReview ends checkReviewPRs' refusal of pull request n — whether
+// checkReviewAuthor's trust gate or the plain "not open" check:
 // StatusFailed/OutcomeNone (not StatusInfraError — nothing about the
 // runner or its infrastructure failed; the policy decision is the whole
 // point, and was made correctly), set directly here (not wrapped by Run's
