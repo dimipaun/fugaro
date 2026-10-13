@@ -639,8 +639,8 @@ mechanism that already ships:
   mechanism behind the precedence rule below, not a separate guarantee to
   build, and it closes the gap an earlier draft of this design left open
   (computing the provider's override in `writeManagedSettings` alone would
-  have left the process-environment channel unprotected — see §5's new
-  precedence test).
+  have left the process-environment channel unprotected — see the plan's
+  Task 5, `TestStagePinsProviderAgentEnvBothChannels`).
 
 **The default itself, unchanged in content, renamed and made
 overridable.** `DefaultProviderAgentEnv` (`internal/config/providers.go`,
@@ -712,8 +712,10 @@ Levels 3-5 are computed once, in `stagePins`, and layered over level 2 (`r.env`,
 itself layered over level 1) in **both** the managed settings file
 (`writeManagedSettings`) and the process environment (`gitops.WithVars(r.env, pins)`,
 `runner.go:1574`) — not levels 3-5 in one channel and level 2 in the
-other. §5 adds a test asserting this precedence holds in both channels at
-once, which an earlier draft of this design lacked.
+other. The plan's Task 5 adds a test
+(`TestStagePinsProviderAgentEnvBothChannels`) asserting this precedence
+holds in both channels at once, which an earlier draft of this design
+lacked.
 
 ## 4. Where each applies
 
@@ -764,7 +766,8 @@ knows `agent_env`" does not imply "the repository's job image does."
 **Fix:** gate the write, not only the read — before `fugaro init --repo`
 calls `runner.ProvidersEnv` (or inside it), check the repository's current
 job-image build record's `base_ref` against a `agentEnvSince` constant
-(the same release `agent.env`'s own gate uses, §2) whenever any provider
+(the same release `agent.env`'s own launch-time gate uses, above in this
+section) whenever any provider
 the repository may use has a non-empty `AgentEnv`; refuse with the same
 "run `fugaro image refresh`" message `checkImageSince` already gives
 (`recipes_skew.go:97-137`'s `refuse` closure), adapted to `init --repo`'s
