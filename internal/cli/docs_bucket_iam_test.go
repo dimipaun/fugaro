@@ -28,6 +28,7 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 		"any **launcher** holding `roles/storage.objectAdmin` on the runs bucket, not only operators",
 		"Until the bucket IAM hardening ships (release 0.7.0,",
 		"any run of the same repository, since they share the job's service account and bucket prefix — can plant context there",
+		"a profile is a key inside the same launcher-writable `fugaro/project-layer.yaml` object T1 already distrusts",
 	}
 	var files []string
 	for _, g := range []string{"../../docs/*.md", "../../docs/design/*.md", "../../README.md", "../../SECURITY.md", "../../plugin/skills/*/SKILL.md", "../../plugin/skills/*/reference/*.md"} {
