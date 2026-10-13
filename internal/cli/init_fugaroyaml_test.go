@@ -93,11 +93,17 @@ func TestImagePredates(t *testing.T) {
 //
 // Mutation (run, restore): change workflowBases' m[name] = w.BaseKind() back
 // to w.Base, and this test fails: m["app"] is "" instead of "base".
+// TestWorkflowBasesSeesTheImplicitBaseKind: every workflow resolves to the
+// one Fugaro base (Workflow.BaseKind ignores Base, a legacy field Validate
+// refuses outright if a real fugaro.yaml sets it); a name workflowBases is
+// told about but that is not one of cfg.Workflows (extra, from a local
+// config's own repo listing) maps to "", not the base kind, since there is
+// no workflow to resolve a kind for.
 func TestWorkflowBasesSeesTheImplicitBaseKind(t *testing.T) {
 	cfg := &config.Config{Workflows: map[string]config.Workflow{"app": {}, "api": {Base: "go"}}}
-	m := workflowBases(cfg, nil)
-	if m["app"] != config.BaseKind || m["api"] != "go" {
-		t.Fatalf("workflowBases = %v, want app: %s, api: go", m, config.BaseKind)
+	m := workflowBases(cfg, []string{"api", "gone"})
+	if m["app"] != config.BaseKind || m["api"] != config.BaseKind || m["gone"] != "" {
+		t.Fatalf("workflowBases = %v, want app and api: %s, gone: \"\"", m, config.BaseKind)
 	}
 }
 
