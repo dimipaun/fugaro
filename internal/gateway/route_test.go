@@ -833,6 +833,17 @@ func TestRoutedForbiddenTopLevelFields(t *testing.T) {
 		`"metadata":{"user_id":"u","provider":{"order":["x"]}}`, // metadata holds only user_id
 		`"metadata":{"plugins":[]}`,
 		`"metadata":"u"`,
+		// context_management is not in routedKeys at all, allowed edit types
+		// or not (contextManagement's own check never runs: the foreign-field
+		// check in check() reports it first). This is what a provider route
+		// refused in the field, before the runner set MAX_THINKING_TOKENS=0
+		// and CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1 for the stage.
+		`"context_management":{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}`,
+		// thinking alone is in routedKeys and so is allowed (see
+		// TestRoutedClaudeCodeShapedRequestPasses); paired with
+		// context_management, as Claude Code sends when thinking is on, the
+		// request is still refused on context_management.
+		`"thinking":{"type":"adaptive"},"context_management":{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}`,
 	} {
 		r := newRouted(t, "bearer", routedStage, anthropicfake.MessageOK(dsModel, pricing.Usage{Input: 1, Output: 1}))
 		resp, b := r.post(msg(dsModel, 100, extra))
@@ -898,6 +909,46 @@ func TestRoutedClaudeCodeShapedRequestPasses(t *testing.T) {
 		if resp, b := r.post(msg(dsModel, 100, `"`+k+`":null`)); resp.StatusCode != 200 {
 			t.Errorf("%s: %d %s", k, resp.StatusCode, b)
 		}
+	}
+	if rep := r.gw.EndStage(); len(rep.Violations) != 0 {
+		t.Errorf("violations %q", rep.Violations)
+	}
+}
+
+// claudeCodeBetaHeader is the anthropic-beta value measured from the real
+// Claude Code 2.1.296 with CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1 and
+// MAX_THINKING_TOKENS=0 both set (docs/multi-model.md §7): the header itself
+// is unaffected by those two variables, which only drop body fields.
+const claudeCodeBetaHeader = "claude-code-20250219,interleaved-thinking-2025-05-14,mid-conversation-system-2026-04-07,effort-2025-11-24"
+
+// TestRoutedAcceptsNoThinkingClaudeCodeShape is the exact body shape measured
+// from the real Claude Code 2.1.296 against a recording server (Check 25's
+// prerequisite, docs/multi-model.md §7) once a provider-model stage's runner
+// sets CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1 and MAX_THINKING_TOKENS=0
+// (agent.ProviderRouteVars): no context_management, no thinking, no
+// safeguards, metadata holding only user_id, output_config.effort, a system
+// array with block-level cache_control (no ttl: that is all the measurement
+// showed), custom tools (no "type" field), the measured anthropic-beta header
+// and a mid-conversation role "system" message. The gateway does not validate
+// a message's role at all, so that item travels like any other.
+func TestRoutedAcceptsNoThinkingClaudeCodeShape(t *testing.T) {
+	u := pricing.Usage{Input: 10, Output: 20}
+	r := newRouted(t, "bearer", routedStage, anthropicfake.MessageOK(dsModel, u))
+	body := `{"model":"` + dsModel + `","max_tokens":100,"stream":true,` +
+		`"system":[{"type":"text","text":"You are Claude Code."},` +
+		`{"type":"text","text":"Tool use policy.","cache_control":{"type":"ephemeral"}},` +
+		`{"type":"text","text":"Project context.","cache_control":{"type":"ephemeral"}}],` +
+		`"messages":[{"role":"user","content":"hi"},{"role":"system","content":"a mid-conversation reminder"}],` +
+		`"metadata":{"user_id":"device-hash-0123456789abcdef"},` +
+		`"output_config":{"effort":"high"},` +
+		`"tools":[{"name":"Read","description":"read a file","input_schema":{"type":"object"}},` +
+		`{"name":"Bash","description":"run a shell command","input_schema":{"type":"object"}}]}`
+	resp, b := r.post(body, "anthropic-beta", claudeCodeBetaHeader)
+	if resp.StatusCode != 200 {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	if string(r.prov.Body(0)) != body {
+		t.Errorf("body changed: %q", r.prov.Body(0))
 	}
 	if rep := r.gw.EndStage(); len(rep.Violations) != 0 {
 		t.Errorf("violations %q", rep.Violations)
