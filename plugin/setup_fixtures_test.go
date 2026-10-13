@@ -424,7 +424,7 @@ type hostileCase struct {
 
 var hostileCases = []hostileCase{{
 	name:    "hostile",
-	sources: []string{"README.md", "package.json", "Makefile", ".fugaro/web.Dockerfile"},
+	sources: []string{"README.md", "package.json", "Makefile", ".fugaro/web.Dockerfile", ".nvmrc"},
 	markers: []string{"evil.example", "bootstrap", "postinstall", "curl", "| sh"},
 }}
 
@@ -471,6 +471,29 @@ func TestSetupFixtureHostileOutputsCopyNothing(t *testing.T) {
 		}
 		if _, err := os.Stat(filepath.Join("testdata", "repos", h.name, "expected", ".fugaro")); err == nil {
 			t.Errorf("expected output of %s ships a .fugaro directory: the hostile Dockerfile is replaced by image:", h.name)
+		}
+		// mise.toml: the same hostile markers must not survive (a version
+		// lifted straight out of the repository's text, such as the injected
+		// .nvmrc line above, instead of the plain one), and the file holds
+		// only the two tables the skill ever writes.
+		mise := fixtureFile(t, h.name, "expected/mise.toml")
+		for _, m := range h.markers {
+			if strings.Contains(mise, m) {
+				t.Errorf("expected mise.toml of %s contains %q", h.name, m)
+			}
+		}
+		for _, line := range strings.Split(mise, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") || line == "[tools]" || line == "[env]" {
+				continue
+			}
+			if strings.HasPrefix(line, "[") {
+				t.Errorf("expected mise.toml of %s has section %q, want only [tools] or [env]", h.name, line)
+				continue
+			}
+			if _, _, ok := strings.Cut(line, " = "); !ok {
+				t.Errorf("expected mise.toml of %s has line %q, not name = \"value\"", h.name, line)
+			}
 		}
 	}
 }
