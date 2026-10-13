@@ -23,6 +23,8 @@ Several of these at one root is one workflow with several `mise.toml` tools. Sev
 
 **A version copied from repository text must be a plain version**: digits and dots (`24.19.0`), or a mise-style tag of letters, digits and hyphens (`temurin-25`). Nothing else — whitespace, `$(...)`, a pipe, a URL, a quote — is a version; if the evidence doesn't give you one of those, it's not evidence, so ask the user rather than writing what you found into `mise.toml` or `image.tools` verbatim.
 
+**No pin anywhere** (no version file, no `engines`/`toolchain`/CI pin, nothing): don't guess a default, the same rule the `java` row already states for its own evidence. Say so and ask the user for the version.
+
 ## Versions
 
 The base has the kit listed in [docs/base-image.md](https://github.com/dimipaun/fugaro/blob/main/docs/base-image.md); `image.apt` adds Debian 13 packages it lacks.

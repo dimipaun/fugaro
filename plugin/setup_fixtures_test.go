@@ -346,19 +346,61 @@ func detectRuntimes(t *testing.T, repo string) []string {
 			}
 		}
 	}
+	existsGlob := func(dir, pattern string) bool {
+		m, _ := filepath.Glob(filepath.Join(dir, pattern))
+		return len(m) > 0
+	}
 	for _, r := range roots {
 		if exists(r, "package.json") && exists(r, "yarn.lock", "pnpm-lock.yaml", "package-lock.json", "npm-shrinkwrap.json") {
 			out = append(out, "node")
 		}
-		if exists(r, "gradlew", "gradlew.sh", "settings.gradle", "settings.gradle.kts") {
+		if exists(r, "gradlew", "gradlew.sh", "settings.gradle", "settings.gradle.kts", "pom.xml") {
 			out = append(out, "java")
 		}
 		if exists(r, "go.mod") {
 			out = append(out, "go")
 		}
+		if exists(r, "pyproject.toml", ".python-version") || existsGlob(r, "requirements*.txt") {
+			out = append(out, "python")
+		}
+		if exists(r, "Gemfile", ".ruby-version") {
+			out = append(out, "ruby")
+		}
+		if exists(r, "rust-toolchain.toml", "Cargo.toml") {
+			out = append(out, "rust")
+		}
 	}
 	slices.Sort(out)
 	return slices.Compact(out)
+}
+
+// TestDetectRuntimesCoversEveryDiscoveryRow: detectRuntimes recognizes the
+// evidence discovery.md's table names for every language row, not only the
+// three (node, go, java) the current fixtures happen to exercise.
+func TestDetectRuntimesCoversEveryDiscoveryRow(t *testing.T) {
+	for _, tc := range []struct {
+		runtime string
+		files   map[string]string
+	}{
+		{"node", map[string]string{"package.json": "{}", "package-lock.json": "{}"}},
+		{"go", map[string]string{"go.mod": "module x\n\ngo 1.25\n"}},
+		{"java", map[string]string{"pom.xml": "<project/>"}},
+		{"python", map[string]string{"pyproject.toml": "[project]\n"}},
+		{"ruby", map[string]string{"Gemfile": "source \"https://rubygems.org\"\n"}},
+		{"rust", map[string]string{"Cargo.toml": "[package]\n"}},
+	} {
+		t.Run(tc.runtime, func(t *testing.T) {
+			dir := t.TempDir()
+			for name, data := range tc.files {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := detectRuntimes(t, dir); !slices.Contains(got, tc.runtime) {
+				t.Errorf("detectRuntimes(%v) = %v, want it to contain %q", tc.files, got, tc.runtime)
+			}
+		})
+	}
 }
 
 // checkDerivedFromRender: a Dockerfile the skill saved from `fugaro image

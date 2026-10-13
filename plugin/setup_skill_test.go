@@ -337,6 +337,7 @@ func TestSetupSkillContent(t *testing.T) {
 		"skills/setup/reference/discovery.md": {
 			"16 GB on a public one", "GOTOOLCHAIN", "go.mod", "must be a plain version",
 			"https://github.com/dimipaun/fugaro/blob/main/docs/base-image.md",
+			"No pin anywhere", "pom.xml", "rust-toolchain.toml",
 		},
 	} {
 		text, ok := files[file]
