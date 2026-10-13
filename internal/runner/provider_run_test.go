@@ -100,6 +100,37 @@ func TestProviderRunEndsInPR(t *testing.T) {
 	}
 }
 
+// TestProviderStageDisablesThinkingVars: a provider route refuses
+// context_management and the extended-thinking additions Claude Code sends
+// once thinking is on (forward.go's routedKeys; Check 25 of
+// docs/gcp-live-checklist.md). providerPinned's coder is deepseek (a
+// provider model) and its reviewer is Claude: the coder stage's agent must
+// see CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1 and MAX_THINKING_TOKENS=0,
+// while the review stage, entirely on Claude, must see neither, so its
+// request shape stays exactly what it was.
+func TestProviderStageDisablesThinkingVars(t *testing.T) {
+	g := providerRun(t, providerPinned(t), "enforce", "50",
+		[]anthropicfake.Reply{anthropicfake.MessageOK(deepseek, pricing.Usage{Input: 100, Output: 50})}, "acme/app")
+	var status int
+	var body string
+	rec, err := g.run(t, callDeepseek(&status, &body, implement("feature")), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if len(g.agent.calls) != 2 {
+		t.Fatalf("stages = %d, want 2: %+v", len(g.agent.calls), g.agent.calls)
+	}
+	coder, reviewer := g.agent.calls[0], g.agent.calls[1]
+	for _, k := range []string{"CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS", "MAX_THINKING_TOKENS"} {
+		if got := envValue(coder.Env, k); got == "" {
+			t.Errorf("coder stage (provider): %s is unset, want it set", k)
+		}
+		if got := envValue(reviewer.Env, k); got != "" {
+			t.Errorf("reviewer stage (Claude): %s = %q, want unset", k, got)
+		}
+	}
+}
+
 // Provider models are real dollars and observe never refuses a call, so a
 // provider model is refused at bootstrap in observe (and off) mode, naming the
 // rule and the command to change the mode; enforce runs, and a Claude-only run
