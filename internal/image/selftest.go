@@ -28,7 +28,7 @@ import (
 // SelftestSpec is what `fugaro image build --local` asks `fugaro image
 // selftest`, running inside the freshly built image, to check.
 type SelftestSpec struct {
-	Base      string          `json:"base"`       // the workflow's base; decides the toolchain check
+	Base      string          `json:"base"`       // the workflow's base (always config.BaseKind now)
 	RepoDir   string          `json:"repo_dir"`   // the baked checkout, /work/repo
 	Commit    string          `json:"commit"`     // the commit the checkout must be at
 	Origin    string          `json:"origin"`     // the origin URL the checkout must keep
@@ -104,16 +104,16 @@ var homeCredentialFiles = []string{
 // as a literal rather than as an environment reference such as ${NPM_TOKEN}.
 var literalTokenRE = regexp.MustCompile(`(?m)(_authToken\s*=|npmAuthToken\s*:)\s*["']?[^"'\s$]`)
 
-// expectedSetuidBinaries is the standard Ubuntu 24.04 setuid-root set,
-// observed directly on the fugaro-web-node base image (`find / -xdev -perm
+// expectedSetuidBinaries is the standard Debian 13 setuid-root set,
+// observed directly on the Fugaro base image (`find / -xdev -perm
 // -4000 -type f`): chfn, chsh, gpasswd, mount, newgrp, passwd and umount,
-// all shipped by Ubuntu's login/util-linux packages that
-// images/web-node/Dockerfile installs transitively. sudo and su are
+// all shipped by Debian's login/util-linux packages that
+// images/base/Dockerfile installs transitively. sudo and su are
 // deliberately absent from this set: the base image ships both setuid, but
 // every derived-image build strips their setuid bits (`chmod u-s` in
 // images/derived/Dockerfile.tmpl) once image.setup steps are done. For su
 // this closes the route a setup step's `passwd -d root` would open, since
-// Ubuntu's pam_unix allows an empty password (nullok). If sudo, su or
+// Debian's pam_unix allows an empty password (nullok). If sudo, su or
 // anything else shows up here, that is a real finding, not noise.
 //
 // A package installed by image.setup or image.apt that ships its own setuid
@@ -129,8 +129,8 @@ var expectedSetuidBinaries = map[string]bool{
 	"usr/bin/umount":  true,
 }
 
-// expectedSetgidBinaries is the standard Ubuntu 24.04 setgid set, observed
-// on the fugaro-web-node base image the same way (`find / -xdev -perm -2000
+// expectedSetgidBinaries is the standard Debian 13 setgid set, observed
+// on the Fugaro base image the same way (`find / -xdev -perm -2000
 // -type f`): chage and expiry (group shadow, from passwd) and the PAM
 // password helpers. It has the same semantics as expectedSetuidBinaries:
 // anything else is a finding, and a package that legitimately ships one

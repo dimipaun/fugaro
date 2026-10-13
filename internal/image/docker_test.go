@@ -72,10 +72,11 @@ func smokeCheck(res image.LocalResult, name string) image.Check {
 }
 
 func TestDerivedNPMSetupSudoAndSecrets(t *testing.T) {
-	base := testutil.BaseImage(t)
+	base := testutil.BaseImageOf(t, "base")
 	testutil.IsolateGit(t)
 	files := testutil.FixtureFiles(t)
 	maps.Copy(files, testutil.NPMFixtureFiles())
+	files["mise.toml"] = "[tools]\nnode = \"24\"\n"
 	files["fugaro.yaml"] = `version: 1
 project: aurora
 git: { provider: github }
@@ -132,7 +133,7 @@ workflows:
 // way a leftover setuid binary does. The setgid binary sits in a 0711
 // directory fugaro can't list, which only the root scan can see into.
 func TestSelftestFlagsSetgidAndFileCaps(t *testing.T) {
-	base := testutil.BaseImage(t)
+	base := testutil.BaseImageOf(t, "base")
 	testutil.IsolateGit(t)
 	files := testutil.FixtureFiles(t)
 	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "  app:\n", `  app:
@@ -163,7 +164,7 @@ func TestSelftestFlagsSetgidAndFileCaps(t *testing.T) {
 // longer has — Node now comes from `mise install` (design base-image.md
 // section 4), which manages its own download integrity outside this
 // repository's control. A `mise install` step also needs the Fugaro base
-// image (mise is baked there, not in images/web-node, which these tests
+// image (mise is baked there, not in the 0.7.0-removed images/web-node, which these tests
 // otherwise build FROM to get a throwaway Node for generating a yarn.lock/
 // package-lock.json fixture), so migrating either test would mean building
 // its lockfile fixture from one base image and its derived image from
@@ -177,14 +178,18 @@ func TestSelftestFlagsSetgidAndFileCaps(t *testing.T) {
 // dependency's postinstall script. The same package.json run through a plain
 // npm install shows both scripts do run otherwise.
 func TestDerivedSkipBuildScripts(t *testing.T) {
-	base := testutil.BaseImage(t)
+	base := testutil.BaseImageOf(t, "base")
 	testutil.IsolateGit(t)
 	pkg := `{"name":"fugaro-fixture","version":"0.0.0","private":true,"dependencies":{"dep":"file:dep"},"scripts":{"postinstall":"touch \"$HOME/root-postinstall-ran\""}}` + "\n"
 	dep := `{"name":"dep","version":"1.0.0","scripts":{"postinstall":"touch \"$HOME/dep-postinstall-ran\""}}` + "\n"
-	// Let npm write the lockfile, and check the scripts run without the setting.
+	// Let npm write the lockfile, and check the scripts run without the
+	// setting. The bare base has no node on PATH (design base-image.md
+	// section 4: runtimes come from mise), so this throwaway run installs it
+	// through mise first.
 	lock := testutil.Docker(t, "run", "--rm", "-e", "PKG="+pkg, "-e", "DEP="+dep, base, "sh", "-c",
-		`set -e; mkdir -p /tmp/p/dep && cd /tmp/p && printf '%s' "$PKG" > package.json && printf '%s' "$DEP" > dep/package.json && npm install --no-audit --no-fund >&2 && test -e ~/root-postinstall-ran && test -e ~/dep-postinstall-ran && cat package-lock.json`) + "\n"
+		`set -e; mise install node@24 >&2 && mkdir -p /tmp/p/dep && cd /tmp/p && printf '%s' "$PKG" > package.json && printf '%s' "$DEP" > dep/package.json && mise exec node@24 -- npm install --no-audit --no-fund >&2 && test -e ~/root-postinstall-ran && test -e ~/dep-postinstall-ran && cat package-lock.json`) + "\n"
 	files := testutil.FixtureFiles(t)
+	files["mise.toml"] = "[tools]\nnode = \"24\"\n"
 	files["package.json"], files["dep/package.json"], files["package-lock.json"] = pkg, dep, lock
 	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "  app:\n", "  app:\n    image: { skip_build_scripts: true }\n", 1)
 	dir := checkout(t, files)
@@ -202,7 +207,7 @@ func TestDerivedSkipBuildScripts(t *testing.T) {
 }
 
 func TestRepoDockerfileEscapeHatch(t *testing.T) {
-	base := testutil.BaseImage(t)
+	base := testutil.BaseImageOf(t, "base")
 	testutil.IsolateGit(t)
 	files := testutil.FixtureFiles(t)
 	dir := checkout(t, files)
@@ -254,13 +259,14 @@ func TestPlaywrightChromium(t *testing.T) {
 	if os.Getenv("FUGARO_TEST_PLAYWRIGHT") == "" {
 		t.Skip("set FUGARO_TEST_PLAYWRIGHT=1 to download Playwright and Chromium (several hundred MB)")
 	}
-	base := testutil.BaseImage(t)
+	base := testutil.BaseImageOf(t, "base")
 	testutil.IsolateGit(t)
 	archive := testutil.DockerOutput(t, "run", "--rm", base, "sh", "-c",
-		"set -e; mkdir /tmp/p && cd /tmp/p && npm init -y >/dev/null && "+
-			"npm install --package-lock-only --no-audit --no-fund @playwright/test@1.63.0 >&2 && tar -cf - package.json package-lock.json")
+		"set -e; mise install node@24 >&2 && mkdir /tmp/p && cd /tmp/p && mise exec node@24 -- npm init -y >/dev/null && "+
+			"mise exec node@24 -- npm install --package-lock-only --no-audit --no-fund @playwright/test@1.63.0 >&2 && tar -cf - package.json package-lock.json")
 	files := testutil.FixtureFiles(t)
 	maps.Copy(files, untar(t, archive))
+	files["mise.toml"] = "[tools]\nnode = \"24\"\n"
 	files["pw-smoke.js"] = playwrightSmoke
 	files["fugaro.yaml"] = `version: 1
 project: aurora

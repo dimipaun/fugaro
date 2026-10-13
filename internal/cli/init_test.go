@@ -329,7 +329,7 @@ func TestLegacyBaseKindRefusalsNameTheMigrationDoc(t *testing.T) {
 	for _, args := range [][]string{
 		{"init", "--yes", "--base", "go"},
 		{"init", "--yes", "--expect-digest", "go=sha256:" + strings.Repeat("a", 64)},
-		{"init", "--yes", "--base-image", "go=ghcr.io/me/fugaro-go:mine"},
+		{"init", "--yes", "--base-image", "go=ghcr.io/me/fugaro-go:mine"}, // "go": removed in 0.7.0
 	} {
 		_, _, err := executeStdin(t, "", args...)
 		if err == nil || !strings.Contains(err.Error(), config.MigrationDoc) {
@@ -1581,10 +1581,10 @@ func TestInitRepoSilentWithoutCeiling(t *testing.T) {
 // name or KIND=IMAGE, and a later run naming it again replaces it.
 //
 // TestInitBaseImagePerKind's "leaves the kinds it doesn't name alone" case
-// is deleted: it needed a second real kind (java-services) to show one
-// kind's --base-image left another's base_images entry untouched, which
-// config.Bases (one kind, "base") can no longer have; --base-image itself
-// now refuses any kind but "base" (ParseBaseImageFlag).
+// is deleted: it needed a second real kind the 0.7.0 cut removed (java-services) to
+// show one kind's --base-image left another's base_images entry untouched,
+// which config.Bases (one kind, "base") can no longer have; --base-image
+// itself now refuses any kind but "base" (ParseBaseImageFlag).
 func TestInitBaseImagePerKind(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()

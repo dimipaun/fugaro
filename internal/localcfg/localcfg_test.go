@@ -865,6 +865,18 @@ func TestLocalConfigRefusesLegacyBaseImageKeys(t *testing.T) {
 	}
 }
 
+// TestLocalConfigRefusesUnknownBaseImageKey: a base_images key that was
+// never a base at all (not one of config.LegacyBaseKinds) is refused as
+// "unknown base kind", not with the 0.7.0 removal message, which would
+// falsely claim the cut removed it.
+func TestLocalConfigRefusesUnknownBaseImageKey(t *testing.T) {
+	_, err := Parse([]byte(sample + "base_images:\n  rust: us-east5-docker.pkg.dev/p/fugaro-base/fugaro-rust:0.6.0\n"))
+	if err == nil || !strings.Contains(err.Error(), "base_images.rust") || !strings.Contains(err.Error(), `unknown base kind "rust"`) ||
+		strings.Contains(err.Error(), "removed in 0.7.0") || strings.Contains(err.Error(), config.MigrationDoc) {
+		t.Errorf("err = %v", err)
+	}
+}
+
 func TestParseBaseImageFlag(t *testing.T) {
 	for in, want := range map[string][2]string{
 		"us-east5-docker.pkg.dev/p/fugaro-base/fugaro-base:dev-abc":      {"base", "us-east5-docker.pkg.dev/p/fugaro-base/fugaro-base:dev-abc"},

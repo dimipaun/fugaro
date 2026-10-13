@@ -231,7 +231,7 @@ func TestRenderRefusesFlagLikeSetupStep(t *testing.T) {
 		"  --also-leading-whitespace",
 	}
 	for _, step := range cases {
-		if _, err := Render(RenderInput{Workflow: "web", Base: "web-node", Image: config.Image{Setup: []string{step}}}); err == nil {
+		if _, err := Render(RenderInput{Workflow: "web", Base: "base", Image: config.Image{Setup: []string{step}}}); err == nil {
 			t.Errorf("Render(%q) = nil error, want a refusal", step)
 		}
 	}
@@ -242,7 +242,7 @@ func TestRenderRefusesFlagLikeSetupStep(t *testing.T) {
 // so every secret mount in a rendered Dockerfile must be a file mount.
 func TestRenderSecretMountsAreFiles(t *testing.T) {
 	got, err := Render(RenderInput{
-		Workflow: "web", Base: "web-node",
+		Workflow: "web", Base: "base",
 		Image:   config.Image{Setup: []string{"true"}},
 		PM:      &config.NodePM{Lockfile: "package-lock.json", Install: "npm ci"},
 		Secrets: []string{"NPM_TOKEN", "OTHER_TOKEN"},
@@ -271,7 +271,7 @@ func TestRenderSecretPrefixExports(t *testing.T) {
 		t.Skip("no sh")
 	}
 	got, err := Render(RenderInput{
-		Workflow: "web", Base: "web-node",
+		Workflow: "web", Base: "base",
 		Image:   config.Image{Setup: []string{`printf '%s|%s|%s' "$A_TOKEN" "${B_TOKEN-unset}" "$C_TOKEN" && env | grep -c _TOKEN= >&2`}},
 		Secrets: []string{"A_TOKEN", "B_TOKEN", "C_TOKEN"},
 	})
@@ -504,7 +504,7 @@ func TestDockerfileUnknownWorkflow(t *testing.T) {
 // path the runner reads. The step is run here, against a scratch checkout,
 // with and without the build time Cloud Build passes.
 func TestTemplateWritesImageJSON(t *testing.T) {
-	rendered, err := Render(RenderInput{Workflow: "app", Base: "web-node", Version: "dev"})
+	rendered, err := Render(RenderInput{Workflow: "app", Base: "base", Version: "dev"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -569,7 +569,7 @@ func TestTemplateWritesImageJSON(t *testing.T) {
 // itself. With no FUGARO_COMMIT (a local build) it keeps the branch's
 // head. The step is run here against a scratch repository.
 func TestTemplatePinsTheCommit(t *testing.T) {
-	rendered, err := Render(RenderInput{Workflow: "app", Base: "web-node", Version: "dev"})
+	rendered, err := Render(RenderInput{Workflow: "app", Base: "base", Version: "dev"})
 	if err != nil {
 		t.Fatal(err)
 	}

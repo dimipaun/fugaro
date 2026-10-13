@@ -14,5 +14,5 @@ not_found_auto_install = false
 yes = true
 
 [settings.node]
-# pnpm and Yarn through package.json's packageManager, as on web-node today.
+# pnpm and Yarn through package.json's packageManager.
 corepack = true
