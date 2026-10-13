@@ -48,7 +48,7 @@ Project rules (carried over from this repository's existing plans):
 
 | Path | Responsibility | Task |
 |---|---|---|
-| `internal/config/project_secrets.go` (new), `project_secrets_test.go` (new) | `ProjectSecret`, `ValidateProjectSecrets`, `AllowedProjectSecrets`-style helper reusing `ProviderBySecret`/`ClaudeAccountBySecret` for collision checks | 1 |
+| `internal/config/project_secrets.go` (new), `project_secrets_test.go` (new) | `ProjectSecret`, `ValidateProjectSecrets` (reserved-name membership only, no collision check — S1), `AllowedForProjectSecret` | 1 |
 | `internal/localcfg/localcfg.go`, `localcfg_test.go`, `internal/localcfg/shared.go`, `shared_test.go` | `Config.ProjectSecrets` field, `Shared()` strips it, `Validate` wiring | 1 |
 | `internal/config/providers.go`, `providers_test.go` | `ProviderKeyAvailable` (P7, owner ruling, design §3a) — never called from `CheckProviderPolicy` | 1 |
 | `internal/backend/gcp/names.go`, `names_test.go` | `ProjectSecretID` | 2 |
@@ -79,18 +79,18 @@ Parallelizable: **Task 2 needs Task 1** (its `SecretMounts` collision refusal re
 - Edit: `internal/localcfg/localcfg.go`, `internal/localcfg/localcfg_test.go`, `internal/localcfg/shared.go`, `internal/localcfg/shared_test.go`
 - Edit: `internal/config/providers.go`, `internal/config/providers_test.go` (P7, the owner's 2026-10-13 follow-up ruling, design §3a — independent of `ProjectSecret` above; both are local-config-layer additions this task delivers together)
 
-**Interfaces:**
+**Interfaces (signature corrected per S1: `providers`/`accounts` parameters removed — a provider's `.Secret` and a named account's derived secret can never collide with a `config.ReservedSecrets` key in the first place, by construction, so a collision check needs no access to either object; see below):**
 ```go
 // package config
 type ProjectSecret struct{ AllowDataTo []string }
 func (p ProjectSecret) AllowsData(repo string) bool
 func AllowedForProjectSecret(secrets map[string]ProjectSecret, name, repo string) bool
-func ValidateProjectSecrets(secrets map[string]ProjectSecret, providers map[string]ModelProvider, accounts map[string]ClaudeAccount) []Problem
+func ValidateProjectSecrets(secrets map[string]ProjectSecret) []Problem
 
 // providers.go, next to AllowsData — never called by CheckProviderPolicy (P7)
 func (p ModelProvider) ProviderKeyAvailable(repo string) bool
 ```
-`ValidateProjectSecrets` refuses (P1): a key not in `config.ReservedSecrets`; a key equal to any `providers[*].Secret` or `ClaudeAccountSecret(name)` for a configured account (message names the object to edit instead); a malformed `allow_data_to` entry (reusing `repoSlugRE`/`hasDotSegment`, exactly as `ValidateClaudeAccounts` does, `claude_accounts.go:136-140`).
+`ValidateProjectSecrets` refuses (P1): a key not in `config.ReservedSecrets`; a malformed `allow_data_to` entry (reusing `repoSlugRE`/`hasDotSegment`, exactly as `ValidateClaudeAccounts` does, `claude_accounts.go:136-140`). **No collision check against `providers`/`claude_accounts` is needed or added (S1):** `ValidateModelProviders` already refuses a provider's `.Secret` from ever being a `config.ReservedSecrets` key (`providers.go:127-129`, unconditional), and no named claude account's derived secret (`claude-oauth-token-<name>`) is shaped like any of the 4 reserved keys either — so once `project_secrets`'s own keyspace is `ReservedSecrets`-only, neither kind of collision can structurally occur. An earlier draft of this interface built such a check with `ClaudeAccountBySecret`, which would have incorrectly refused `project_secrets.claude-oauth-token` itself (the bare, intended default-account case, design §3's own example) — `ClaudeAccountBySecret(accounts, "claude-oauth-token")` always returns `(DefaultClaudeAccount, true)`, configured or not (`claude_accounts.go:91-93`) — caught in review and removed rather than special-cased, since the check itself was unnecessary.
 
 `ProviderKeyAvailable(repo)` is `len(p.AllowDataTo) == 0 || p.AllowsData(repo)` (design §3a): true for any repo when the list is empty or nil (the two are not distinguished — design §3a's own reasoning), otherwise identical to `AllowsData`. It is a pure addition: `AllowsData` itself, and every existing caller of it (`CheckProviderPolicy` at `providers.go:334` chief among them), is untouched, byte for byte.
 
@@ -121,31 +121,27 @@ func TestProjectSecretAllowedRepos(t *testing.T) {
 }
 
 func TestValidateProjectSecretsRefusesNonReservedName(t *testing.T) {
-	ps := ValidateProjectSecrets(map[string]ProjectSecret{"db-password": {AllowDataTo: []string{"acme/app"}}}, nil, nil)
+	ps := ValidateProjectSecrets(map[string]ProjectSecret{"db-password": {AllowDataTo: []string{"acme/app"}}})
 	if len(ps) != 1 {
 		t.Fatalf("ValidateProjectSecrets = %+v, want one problem", ps)
 	}
 }
 
-func TestValidateProjectSecretsRefusesProviderCollision(t *testing.T) {
-	providers := map[string]ModelProvider{"openrouter": {Secret: "openrouter-api-key", AllowDataTo: []string{"acme/app"}}}
-	ps := ValidateProjectSecrets(map[string]ProjectSecret{"openrouter-api-key": {AllowDataTo: []string{"acme/app"}}}, providers, nil)
-	if len(ps) != 1 {
-		t.Fatalf("a provider-secret collision was not refused: %+v", ps)
-	}
-}
-
-func TestValidateProjectSecretsRefusesClaudeAccountCollision(t *testing.T) {
-	accounts := map[string]ClaudeAccount{"acme-personal": {AllowDataTo: []string{"acme/app"}}}
-	ps := ValidateProjectSecrets(map[string]ProjectSecret{"claude-oauth-token-acme-personal": {AllowDataTo: []string{"acme/app"}}}, nil, accounts)
-	if len(ps) != 1 {
-		t.Fatalf("a claude-account collision was not refused: %+v", ps)
-	}
-}
-
 func TestValidateProjectSecretsAcceptsReservedName(t *testing.T) {
-	if ps := ValidateProjectSecrets(map[string]ProjectSecret{"anthropic-api-key": {AllowDataTo: []string{"acme/app"}}}, nil, nil); len(ps) != 0 {
+	if ps := ValidateProjectSecrets(map[string]ProjectSecret{"anthropic-api-key": {AllowDataTo: []string{"acme/app"}}}); len(ps) != 0 {
 		t.Fatalf("a valid block was refused: %+v", ps)
+	}
+}
+
+func TestValidateProjectSecretsAcceptsBareClaudeOAuthToken(t *testing.T) {
+	// S1, the regression guard: this is the exact case a naive
+	// ClaudeAccountBySecret-based collision check would have wrongly
+	// refused (ClaudeAccountBySecret(accounts, "claude-oauth-token")
+	// always matches the implicit default account, configured or not).
+	// project_secrets.claude-oauth-token is design §3's own documented,
+	// intended configuration and must never be refused.
+	if ps := ValidateProjectSecrets(map[string]ProjectSecret{"claude-oauth-token": {AllowDataTo: []string{"acme/app"}}}); len(ps) != 0 {
+		t.Fatalf("the bare default claude-oauth-token name was refused: %+v", ps)
 	}
 }
 ```
@@ -157,7 +153,7 @@ Expected: FAIL, build failed: `undefined: ProjectSecret`.
 
 - [ ] **Step 3: Write the implementation**
 
-`internal/config/project_secrets.go`, mirroring `claude_accounts.go`'s shape exactly (`AllowsData` case-folded via `strings.EqualFold`, `sortedKeys`, `pluginwire.Printable` on every echoed value). `ValidateProjectSecrets` iterates `sortedKeys(secrets)`; for each name checks `_, reserved := ReservedSecrets[name]` first, then `ProviderBySecret(providers, name)` and `ClaudeAccountBySecret(accounts, name)` for collisions.
+`internal/config/project_secrets.go`, mirroring `claude_accounts.go`'s shape exactly (`AllowsData` case-folded via `strings.EqualFold`, `sortedKeys`, `pluginwire.Printable` on every echoed value). `ValidateProjectSecrets` iterates `sortedKeys(secrets)`; for each name checks `_, reserved := ReservedSecrets[name]` — nothing else (S1: no `ProviderBySecret`/`ClaudeAccountBySecret` call, since neither parameter exists on this function any more).
 
 Edit `internal/localcfg/localcfg.go`: add, next to `ClaudeAccounts`:
 ```go
@@ -169,7 +165,7 @@ Edit `internal/localcfg/localcfg.go`: add, next to `ClaudeAccounts`:
 	// (ValidateProjectSecrets refuses a name that collides with one).
 	ProjectSecrets map[string]config.ProjectSecret `yaml:"project_secrets,omitempty"`
 ```
-Wire `config.ValidateProjectSecrets(c.ProjectSecrets, c.Providers, c.ClaudeAccounts)` next to the existing `ValidateModelProviders`/`ValidateClaudeAccounts` calls.
+Wire `config.ValidateProjectSecrets(c.ProjectSecrets)` next to the existing `ValidateModelProviders`/`ValidateClaudeAccounts` calls.
 
 Edit `internal/localcfg/shared.go`: add `s.ProjectSecrets = nil` next to `s.Providers = nil`/`s.ClaudeAccounts = nil` (`shared.go:37-38`).
 
@@ -254,15 +250,15 @@ git commit -m "project secrets task 1: config.ProjectSecret, its validation, the
 
 ---
 
-### Task 2: `gcp.ProjectSecretID`; `rs.Secrets` stays unconditional (golden); `SecretMounts` refuses a name collision and mounts a no-list provider's key everywhere (P7)
+### Task 2: `gcp.ProjectSecretID` (domain-separated, nit); `rs.Secrets` stays unconditional (golden); `SecretMounts` mounts a no-list provider's key everywhere (P7)
 
 **Files:**
 - Edit: `internal/backend/gcp/names.go`, `names_test.go`
 - Edit: `internal/infra/spec.go`, `spec_test.go`
 
 **Interfaces:**
-- Produces: `func ProjectSecretID(fugaroProject, logical string) string` — same `derive()` call as `SecretID` (`names.go:143-145`), same length/hash budget (`maxSecretID`, `secretHashHex`).
-- Changes: `SecretMounts` (`internal/infra/spec.go:526-546`) gains a collision check alongside its existing `ProviderBySecret` one (`spec.go:539-543`): a workflow's own `w.Secrets` entry whose `Name` is a key of `lc.ProjectSecrets` is refused with a userErr naming the workflow, the secret and the local-config block to use instead ("secret %s is a project-wide secret name, which only the owner's local config may use" — the identical shape and wording pattern as the existing provider-collision message, not a new message style). This is design §3's "`SecretMounts` ... gains an identical refusal for a `project_secrets` name" requirement, and needs only `lc.ProjectSecrets` (Task 1), no other new type.
+- Produces: `func ProjectSecretID(fugaroProject, logical string) string` — same `derive()` call as `SecretID` (`names.go:143-145`), same length/hash budget (`maxSecretID`, `secretHashHex`), domain-separated from it (a nit from review: hash `"project\x00"+fugaroProject+"\x00"+logical`, not `fugaroProject+"\x00"+logical`, so a Fugaro project name that happened to equal some repository's own slug could never make `ProjectSecretID`/`SecretID` collide on the same byte string).
+- **No `SecretMounts` collision check for `project_secrets` is added (S1 — an earlier draft of this task proposed one; it was dead code, already covered unconditionally by `config.Validate`, see design §3).**
 - **Changes (P7, owner ruling, design §3a): `SecretMounts`'s existing per-provider mount condition (`spec.go:534`, `if p := lc.Providers[pn]; p.AllowsData(repo) {`) becomes `if p := lc.Providers[pn]; p.ProviderKeyAvailable(repo) {`.** This is pre-existing, already-shipped code (predates this entire feature) being modified, not new code — flag it as such in the commit message. No other line of `SecretMounts` changes for this: the loop still appends exactly one `SecretMount{p.Secret, p.SecretEnv()}` per eligible provider, only *which* providers are eligible widens for a no-list provider.
 
 - [ ] **Step 1: Write the failing test**
@@ -296,9 +292,12 @@ Expected: FAIL, `undefined: ProjectSecretID`.
 // ProjectSecretID is the Secret Manager secret holding a project-wide
 // logical secret (design docs/design/project-secrets.md §4), built like
 // SecretID but keyed by the Fugaro project name instead of a repository
-// slug, so the two ID spaces can never collide.
+// slug. The hash input is domain-separated with a literal "project\x00"
+// prefix (a nit from review) so a Fugaro project name that happened to
+// equal some repository's own slug could never make this collide with
+// SecretID's hash of the identical (name, logical) pair.
 func ProjectSecretID(fugaroProject, logical string) string {
-	return derive(sanitize("fugaro-project-"+fugaroProject+"-"+logical), fugaroProject, logical, maxSecretID, secretHashHex)
+	return derive(sanitize("fugaro-project-"+fugaroProject+"-"+logical), "project\x00"+fugaroProject, logical, maxSecretID, secretHashHex)
 }
 ```
 
@@ -319,29 +318,13 @@ func TestBuildRepoSpecNeverPrunesRepoSecrets(t *testing.T) {
 }
 ```
 
-- [ ] **Step 5: Write the failing test for the `SecretMounts` collision refusal**
+- [ ] **Step 5: Write the `SecretMounts` implementation (the P7 condition change only — no collision check, S1)**
+
+- [ ] **Step 6: Write the failing tests for the P7 mount-condition change**
 
 ```go
-// internal/infra/spec_test.go
-func TestSecretMountsRefusesProjectSecretNameCollision(t *testing.T) {
-	// A workflow's own w.Secrets names "anthropic-api-key" (or any key of
-	// lc.ProjectSecrets), which is also a reserved, project-shareable name.
-	// Assert SecretMounts returns an error naming the workflow and the
-	// secret, the same way the existing provider-collision case
-	// (spec.go:540-542) already does — do not assert exact wording beyond
-	// that, mirroring how the provider case is itself tested.
-}
-```
-
-Run: `go test -count=1 -run TestSecretMountsRefusesProjectSecretNameCollision ./internal/infra/`
-Expected: FAIL, no refusal (the workflow secret mounts as if it were an ordinary one).
-
-- [ ] **Step 6: Write the `SecretMounts` implementation (both the collision refusal and the P7 condition change)**
-
-- [ ] **Step 7: Write the failing tests for the P7 mount-condition change**
-
-```go
-// internal/infra/spec_test.go
+// internal/infra/secretmounts_test.go (the existing file SecretMounts's
+// own tests already live in — S6, not spec_test.go)
 func TestSecretMountsNoListProviderAvailableToAnyRepo(t *testing.T) {
 	// cfg.Agent.Auth = "api-key"; lc.Providers has one provider with no
 	// AllowDataTo at all. Call SecretMounts for a repo this provider has
@@ -375,8 +358,8 @@ Expected: `ok`.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add internal/backend/gcp/names.go internal/backend/gcp/names_test.go internal/infra/spec.go internal/infra/spec_test.go
-git commit -m "project secrets task 2: gcp.ProjectSecretID; pin that rs.Secrets stays unconditional; SecretMounts refuses a project-secret name collision and mounts a no-list provider's key to every repo (owner ruling, design §3a)"
+git add internal/backend/gcp/names.go internal/backend/gcp/names_test.go internal/infra/spec.go internal/infra/spec_test.go internal/infra/secretmounts_test.go
+git commit -m "project secrets task 2: gcp.ProjectSecretID (domain-separated); pin that rs.Secrets stays unconditional; SecretMounts mounts a no-list provider's key to every repo (owner ruling, design §3a)"
 ```
 
 ---
