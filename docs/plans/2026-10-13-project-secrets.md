@@ -38,7 +38,7 @@ Project rules (carried over from this repository's existing plans):
 1. **A repository outside an allow-list gets a project secret's variable anyway**, or `secrets set --project-wide` accepts a name with an empty allow-list. Pinned by `TestProjectSecretAllowedRepos` (Task 1), `TestReadinessOmitsProjectSecretForUnlistedRepo` (Task 3), `TestSecretsSetProjectWideRefusesEmptyAllowList` (Task 4).
 2. **A repo-level override stops winning even though it still has a version**, or a project copy is chosen while the repo copy is live — the precise bug an earlier draft of Task 3 had (B2 in review: "populated unconditionally wherever eligible" plus a Terraform-side `merge()` that lets the second map win would always resolve to the project copy, inverting "repo > project" for every eligible name, not just the unversioned ones). Pinned by `TestReadinessRepoVersionMeansNoProjectSecretsEntry` and `TestReadinessFallsBackOnceRepoVersionGone` (Task 3) — both assert `out.ProjectSecrets` has no entry (or gains one only once the repo version is gone), not merely that the job deploys or that some other field looks right.
 3. **A scope change plans a delete of an existing repo-owned secret.** Pinned by `TestBuildRepoSpecNeverPrunesRepoSecrets` (Task 2, a golden diff of `rs.Secrets`'s key set before/after a name becomes project-shared) and `TestInstallationRootPlanHasNoRepoSecretDeletes` if a Terraform-plan-level test harness exists for the installation root (Task 6; otherwise a Go-level assertion suffices and the task says so).
-4. **The build account's grant drifts from the job account's resolved secret** (P4): `TestBuildAndJobGrantSameResolvedSecret` (Task 5) asserts both `var.secrets`-consuming paths resolve the identical ID for the identical logical name, for every fixture.
+4. **The build account's grant (or the check job's secret reference, B4) drifts from the job account's resolved secret** (P4): the `repo.tftest.hcl` `run "build_and_check_use_the_resolved_secret"` block (Task 5) asserts all **three** `local.secrets`-consuming paths (job, build, check) resolve the identical ID for the identical logical name, for every fixture — through the real Terraform test framework, not a Go unit test, since only it can observe what a Terraform `local` actually resolves to.
 5. **A value leaks through `ls --project-wide`, `doctor`, or a plan/state print.** Pinned by `TestSecretsLsProjectWideNeverPrintsValue`, `TestDoctorProjectSecretChecksReadNoValue` (Task 4/7), both asserting the fake Secret Manager's `Access` is never called.
 6. **The P7 widening (a no-list provider's key becomes mountable everywhere) leaks into `CheckProviderPolicy`, or `ProviderKeyAvailable`'s empty-list branch silently vanishes.** Pinned by `TestProviderKeyAvailableNeverChangesAllowsData` (Task 1, asserts `AllowsData` on an empty list stays `false` — the thing `CheckProviderPolicy` calls — even though `ProviderKeyAvailable` now returns `true`) and the paired `TestSecretMountsNoListProviderAvailableToAnyRepo`/`TestSecretMountsListedProviderStillRefusesUnlistedRepo` (Task 2) and `TestReadinessProviderNoListEligibleForEveryRepo`/`TestReadinessProviderListedExcludesUnlistedRepo` (Task 3), each pair covering both the empty-list and non-empty-list branches so a mutation that collapses `ProviderKeyAvailable` to either `AllowsData` or `true` always fails at least one test in its pair.
 
@@ -54,7 +54,7 @@ Project rules (carried over from this repository's existing plans):
 | `internal/infra/readiness.go`, `readiness_test.go` | the live precedence check; rewrites a workflow's resolved `SecretIDs[name]`; a provider's own name resolves eligibility via `ProviderKeyAvailable`, not `AllowsData` (P7) | 3 |
 | `internal/cli/secrets.go`, `secrets_test.go` | `--project-wide` flag, validation branch, `ls` SCOPE column, `ls --project-wide` | 4 |
 | `deploy/terraform/gcp/modules/installation/secrets.tf` (new), `variables.tf`, roots/installation | `google_secret_manager_secret.project`, operator grants, `var.project_secrets` input | 4 |
-| `deploy/terraform/gcp/modules/repo/build.tf`, `workflows.tf`, `variables.tf` | **P4, opus review:** `local.secrets`, `build.tf`'s grant rewired through it | 5 |
+| `deploy/terraform/gcp/modules/repo/build.tf`, `workflows.tf`, `check.tf`, `variables.tf`, `internal/infra/tfvars.go`/`spec.go`, `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl` | **P4, opus review:** `local.secrets`; `build.tf` AND `check.tf` (B4) rewired through it; the Go-to-tfvars wire for `RepoSpec.ProjectSecrets` | 5 |
 | `internal/infra/installation_terraform_test.go`, `deploy/terraform/gcp/roots/installation/tests/`, `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl`, `internal/infra/spec_test.go` golden fixtures | real `terraform test` plan-level fixtures: no secret-resource deletes, but the expected IAM-member replacements, `tf.Guard` refusing/accepting them (B3) | 6 |
 | `internal/cli/doctor.go`, `doctor_test.go` | two new checks (design §5) | 7 |
 | `docs/design/v1.md`, `docs/multi-model.md`, `docs/gcp-live-checklist.md`, `docs/release.md`, `internal/cli/docs_*_test.go` | cross-references, Check 40, the release checklist bullet | 8 |
@@ -547,49 +547,57 @@ git commit -m "project secrets task 4: fugaro secrets set/ls --project-wide; the
 
 ---
 
-### Task 5: `build.tf`'s grant rewired through the resolved map (P4 — flagged for opus review)
+### Task 5: `local.secrets`, the tfvars wire, and `build.tf`/`check.tf`'s grants rewired through it (P4 — flagged for opus review; B1/B4)
 
-**This task is security- and Terraform-sensitive: a build service account's `secretAccessor` grant is being re-pointed from a resource this module creates to a value that may come from a different Terraform root entirely. Route this task's review through opus, not the default reviewer, before merge.**
+**This task is security- and Terraform-sensitive: a build service account's `secretAccessor` grant (and the daily check job's own secret reference) is being re-pointed from a resource this module creates to a value that may come from a different Terraform root entirely. Route this task's review through opus, not the default reviewer, before merge.**
 
 **Files:**
-- Edit: `deploy/terraform/gcp/modules/repo/build.tf`, `workflows.tf`, `variables.tf`
+- Edit: `deploy/terraform/gcp/modules/repo/build.tf`, `workflows.tf`, `check.tf`, `variables.tf`
+- Edit: `internal/infra/tfvars.go` (or wherever `RepoSpec`'s JSON tags live, `internal/infra/spec.go`) — the Go side of the tfvars wire
+- Edit: `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl`, `deploy/terraform/gcp/roots/repo/tests/testdata/*.tfvars.json` (a new golden fixture with a resolved `project_secrets` entry — regenerate with `internal/infra/spec_test.go`'s `-update` flag)
 
 **Interfaces:**
-- `workflows.tf` currently computes, inline, `secrets = { for k, s in google_secret_manager_secret.this : k => s.secret_id }` (`workflows.tf:14`) and passes it to each `module "workflow"` call. Hoist this into a `locals` block in the repo module (e.g. `locals { secrets = merge({ for k, s in google_secret_manager_secret.this : k => s.secret_id }, var.repo.project_secrets) }`), where `var.repo.project_secrets` is a new `repo` object field (`map(string)`, logical name → an **already-existing** project secret ID, Go-computed from `Readiness`'s resolution in Task 3 — never a name this module creates a resource for).
+- `RepoSpec.ProjectSecrets map[string]string` (`json:"project_secrets"`, Task 3's output field) is the **only** new tfvars key this task wires through — it is Go-computed entirely by `Readiness`, never by this module.
+- `workflows.tf` currently computes, inline, `secrets = { for k, s in google_secret_manager_secret.this : k => s.secret_id }` (`workflows.tf:14`) and passes it to each `module "workflow"` call. Hoist this into a `locals` block in the repo module: `locals { secrets = merge({ for k, s in google_secret_manager_secret.this : k => s.secret_id }, var.repo.project_secrets) }`, where `var.repo.project_secrets map(string)` is a new `repo` object field (logical name → an **already-existing** project secret ID, fed straight from `RepoSpec.ProjectSecrets` — never a name this module creates a resource for).
 - `build.tf:17` changes from `google_secret_manager_secret.this[each.value].secret_id` to `local.secrets[each.value]`.
+- **`check.tf:71` changes identically**, from `google_secret_manager_secret.this[env.value].secret_id` to `local.secrets[env.value]` (B4 — missed in the design's first draft; the check job is a third site, not covered by "build.tf is the one place" as that draft claimed).
 - `variables.tf`'s existing precondition (`variables.tf:150-155`, "every secret that build_secrets... name must be one of repo.secrets") is widened to accept a name that is a key of either `repo.secrets` or `repo.project_secrets` — not narrowed: every name P2 already guarantees stays a key of `repo.secrets` too (P2: `rs.Secrets` never prunes), so in practice this precondition's existing form already holds; the widening is defensive, for a future change that might relax P2.
 
-**Tests:**
-```go
-// internal/infra/ or a Terraform-plan-level test, whichever harness this
-// repository's existing *_terraform_test.go files use (the implementer
-// greps for TestBuildRepoSpec*Terraform* / terraform plan fixtures first)
-func TestBuildAndJobGrantSameResolvedSecret(t *testing.T) {
-	// For every fixture where a logical name resolves to the project ID
-	// (Task 3's precedence), assert both the job's secret_env mount
-	// (sa.tf/job.tf path) and the build account's grant (build.tf path)
-	// reference the identical secret ID string. A divergence here means
-	// one of the two paths is still reading a stale, repo-only map.
+**Tests (corrected per S6/B1: pure Go cannot observe a Terraform `local`'s resolved value, so this cannot be an `internal/infra` unit test — it must run through the real Terraform-test framework, the same one Task 6 drives):**
+```hcl
+# deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl, a new run block added
+# to the existing file (reusing its mock_provider and testdata pattern)
+run "build_and_check_use_the_resolved_secret" {
+  # Using a golden tfvars fixture whose repo.project_secrets has one entry
+  # (a logical name both a workflow's secret_env, build_secrets and the
+  # check job's secret_env all name — the git credential is the natural
+  # choice, since it is in all three sets already). Assert, from the plan's
+  # own resource attributes (not Go): the workflow module's job mount, the
+  # build account's grant, and the check job's secret_key_ref all resolve
+  # to the IDENTICAL secret ID string (the project one, matching
+  # repo.project_secrets, not google_secret_manager_secret.this's repo ID).
+  # A divergence here means one of the three paths is still reading a
+  # stale, repo-only value.
 }
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing test** (add the `run` block above to `repo.tftest.hcl`; it needs the new golden fixture with a resolved `project_secrets` entry first — write that as part of this step, via `spec_test.go`'s `-update` flag, reviewing the diff)
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `go test -count=1 -run TestBuildAndJobGrantSameResolvedSecret ./internal/infra/...`
-Expected: FAIL (or a build failure if the fixture needs `repo.project_secrets` wired first — the implementer adds that plumbing as part of this task, not Task 3, since Task 3 only touches `internal/infra`'s pure Go resolution, not the tfvars shape).
+Run: `terraform -chdir=deploy/terraform/gcp/roots/repo init -backend=false -lockfile=readonly -input=false && terraform -chdir=deploy/terraform/gcp/roots/repo test -no-color`
+Expected: FAIL — today, `build.tf`/`check.tf` read `google_secret_manager_secret.this` directly, so they'd resolve the repo ID, not the project one the new fixture's `secret_env` expects; `workflows.tf` has no `var.repo.project_secrets` input to even accept yet, so the init step itself may fail first, confirming the field doesn't exist.
 
-- [ ] **Step 3: Write the Terraform and the tfvars-shape Go change** (the `RepoSpec`/`tfvars.go` field that carries `rs.ProjectSecrets` into the JSON `repo.project_secrets` key)
+- [ ] **Step 3: Write the Terraform and the Go tfvars-shape change** (the `RepoSpec.ProjectSecrets` JSON tag, Task 3's output field, threaded into the tfvars this test's golden fixture encodes)
 - [ ] **Step 4: Run the test to verify it passes, then the full Terraform validate**
 
-Run: `go vet ./internal/infra/... && go test -count=1 ./internal/infra/... && terraform -chdir=deploy/terraform/gcp/modules/repo fmt -check && terraform -chdir=deploy/terraform/gcp/modules/repo validate`
+Run: `terraform -chdir=deploy/terraform/gcp/roots/repo test -no-color && go vet ./internal/infra/... && go test -count=1 ./internal/infra/... && terraform -chdir=deploy/terraform/gcp/modules/repo fmt -check && terraform -chdir=deploy/terraform/gcp/modules/repo validate`
 Expected: `ok` / no diff / valid.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add deploy/terraform/gcp/modules/repo/build.tf deploy/terraform/gcp/modules/repo/workflows.tf deploy/terraform/gcp/modules/repo/variables.tf internal/infra/
-git commit -m "project secrets task 5: build.tf's grant follows the same resolved secret map as the job's (opus-reviewed)"
+git add deploy/terraform/gcp/modules/repo/build.tf deploy/terraform/gcp/modules/repo/workflows.tf deploy/terraform/gcp/modules/repo/check.tf deploy/terraform/gcp/modules/repo/variables.tf internal/infra/tfvars.go internal/infra/spec.go deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl deploy/terraform/gcp/roots/repo/tests/testdata/
+git commit -m "project secrets task 5: local.secrets; build.tf AND check.tf (B4) both rewired through it (opus-reviewed)"
 ```
 
 ---
