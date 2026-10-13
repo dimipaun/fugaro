@@ -186,7 +186,15 @@ out of order: Check 32 is reserved for the bucket-IAM plan's runs-bucket
 launcher-grants check (`docs/plans/2026-10-08-bucket-iam.md` Task 9), and the
 generic-tool plan's clone-workflow check (its Task 18) takes the next free
 number, Check 38, after the named-account checks 34 to 37 (Check 33 is the
-vendor endpoint).
+vendor endpoint). Check 39 (39a-39c) is reserved by the retire-image-mirror
+design's rollout-order live check. **Check 40 is reserved by the
+project-secrets design** (`docs/design/project-secrets.md` §8,
+`docs/plans/2026-10-13-project-secrets.md` Task 10): project-wide secret
+storage reaching an opted-in repository's job, a repository outside the
+allow-list refused, a repo-level override's precedence (and its fallback once
+removed), the data-policy gate still enforced for a project-shared provider
+key, and no value anywhere in a log, `diagnose`, `secrets ls` or a Terraform
+plan/state print.
 
 | # | Check | Command | Expected |
 |---|---|---|---|
@@ -227,6 +235,7 @@ vendor endpoint).
 | 35 | Named Claude accounts, U2: `claude setup-token` and multi-account switching | See "Check 35" below; **you** run it, on your own machine, no GCP project needed. | No cost. **NOT RUN.** |
 | 36 | Named Claude accounts, U3: per-project Cloud Run job count comfort at the installation's intended (workflow × account) scale | See "Check 36" below; **you** read the sandbox project's quota. | No cost. **NOT RUN.** |
 | 37 | Named Claude accounts, U4: the real Claude Code error text for an expired or revoked oauth token, and `fugaro diagnose`'s rendering of it | See "Check 37" below; **you** run it, on the sandbox repository only. | One minimal sandbox run (about the cost of check 13). **USER-RUN, NOT RUN.** |
+| 40 | Project-level secrets (design `project-secrets.md` §8): a project-wide secret reaching an opted-in repository's job, a repository outside the allow-list refused, a repo-level override's precedence and its fallback once removed, the data-policy gate still enforced, no value anywhere in a log or a Terraform plan/state print | See "Check 40" below; **you** run it, on installation `fugaro` or the sandbox only, never `belong`. | A handful of small sandbox-sized plan/apply cycles. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -1028,6 +1037,20 @@ The runner's stage-failure path is unchanged by named accounts (design §6f), bu
 5. **Restore** the sandbox's working token immediately (the version noted in step 1), and confirm a rerun succeeds.
 
 **Paste back:** both exact `FACT` texts (never a token value, before or after revocation), and confirmation the restore succeeded. Once answered, `docs/design/named-oauth-tokens.md` §6f and any user-facing doc that currently calls this unverified can quote the real text.
+
+## Check 40: project-level secrets (installation `fugaro` or sandbox only, never `belong`; run by you; NOT RUN)
+
+Confirms `docs/design/project-secrets.md`'s §5 precedence and §3 allow-list hold against the real APIs, not only the hermetic fakes: a project-wide secret still ends up in exactly one job's environment, a repository outside the allow-list gets none of it, a repository's own stored value still wins, and no value is ever printed.
+
+1. **Cleanup first.** Note which secrets and Terraform resources exist before this check (the sandbox repository's current secrets, the installation root's current plan), and register restoring that state as your own cleanup step.
+2. **40a.** Add a `project_secrets` entry (or reuse an existing provider's/claude account's `allow_data_to`) listing the sandbox repository; apply the installation root (expect a plan of creates only); `fugaro secrets set NAME --project-wide` a throwaway value; apply `fugaro init --repo` for the sandbox. **FACT:** `gcloud run jobs describe`'s `secret_key_ref` names the project's secret ID (read the ID, never the value).
+3. **40b.** Attempt `fugaro secrets set NAME --project-wide` naming a repository the allow-list does not include (or simply confirm, by its omission, that a non-listed repository's job never gained the env var in step 2's apply). **FACT:** the exact refusal text, and that the non-listed repository's deployed job has no such variable.
+4. **40c.** With the sandbox repository's own `NAME` secret stored (or store one), confirm its job still mounts its own value (precedence). Disable that secret's last enabled version, re-run `fugaro init --repo`, confirm the job now mounts the project value instead. **FACT:** both `jobs.describe` outputs, before and after.
+5. **40d.** With a provider's key stored `--project-wide`, confirm a repository outside that provider's own `allow_data_to` is still refused by `fugaro validate`/a run attempt naming that provider's model, unchanged from before this check.
+6. **40e.** Grep every log, `fugaro diagnose`, `secrets ls --project-wide` output and `terraform plan`/`state show` of both roots touched by this check for the throwaway value from step 2. **FACT:** found nowhere.
+7. **Restore** the pre-check state noted in step 1.
+
+**Paste back:** every `FACT` line above, never a secret value.
 
 ## Not covered by these tests (manual)
 
