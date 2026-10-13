@@ -87,6 +87,29 @@ func ReviewPrompt(review, promptFile, base string) string {
 	}
 }
 
+// PickPrompt is the review stage prompt for a pick run (design generic-tool
+// §3.6, G12): nums[i]'s checkout is dirs[i], one directory per attempt, so
+// the reviewer reads every one and names which to keep; see ReviewPrompt
+// for review, promptFile and the scope line review-only's single-PR case
+// uses instead of this.
+func PickPrompt(review, promptFile string, nums []int, dirs []string) string {
+	var b strings.Builder
+	switch {
+	case strings.HasPrefix(review, "/"):
+		b.WriteString(review)
+	case promptFile != "":
+		b.WriteString(promptFile)
+	default:
+		b.WriteString(defaultReview)
+	}
+	b.WriteString("\n\nSeveral attempts at the same task are checked out, each in its own directory, as separate pull requests. Do not modify any files.\n")
+	for i, n := range nums {
+		fmt.Fprintf(&b, "- PR #%d: %s\n", n, dirs[i])
+	}
+	b.WriteString("\nCompare them and decide which to keep.\n\nWhen you are done, give your verdict: \"ship\" if the one you keep needs no more changes, otherwise \"changes\" with one finding per issue it still has; either way, name the pull request you keep by its number.")
+	return b.String()
+}
+
 // GatePrompt is the implement prompt with the check gate's failures (gate.go)
 // added as untrusted output: one block per failure, each wrapped against
 // prompt injection (gateBlock). task is the prompt the gate ran ahead of

@@ -43,6 +43,19 @@ func TestPinVars(t *testing.T) {
 	}
 }
 
+func TestProviderRouteVars(t *testing.T) {
+	want := map[string]string{"CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1", "MAX_THINKING_TOKENS": "0"}
+	got := ProviderRouteVars()
+	if len(got) != len(want) {
+		t.Fatalf("ProviderRouteVars = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q", k, got[k], v)
+		}
+	}
+}
+
 func TestWriteManagedSettingsAtomic(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "managed-settings.json")

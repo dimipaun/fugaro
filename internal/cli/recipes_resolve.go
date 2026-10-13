@@ -56,15 +56,17 @@ func parseRecipeAt(data []byte, name, where string) (*recipe.Recipe, error) {
 	return rcp, nil
 }
 
-// refuseIfNotYetRunnable is parseRecipeAt's or resolveRecipe's result,
-// refused when rcp uses a construct no runner executes yet (recipe.
-// NotYetRunnable): fugaro recipes show and ls still display such a recipe
-// (inspection, not a launch), but every launch decision calls this first, so
-// a run never silently falls back to today's loop for a recipe that was
-// supposed to gate on a check or skip implement under mode: review.
-func refuseIfNotYetRunnable(rcp *recipe.Recipe, name string) error {
-	if gap := recipe.NotYetRunnable(rcp); gap != "" {
-		return userErr("recipe %s cannot be launched yet: %s", name, gap)
+// refuseFollowUpReviewMode refuses rcp for a follow-up (fugaro run --pr N
+// continuing PR N, the only kind newFollowUpSpec and carryChosenRecipe
+// build): mode: review only ever reviews an existing pull request and
+// never pushes or opens one (design generic-tool.md §3.6, G12), so it
+// cannot continue one either. The runner refuses the same mismatch again,
+// at bootstrap, for a recipe this never sees (a bare agent.recipe name, or
+// a repository recipe whose text isn't read until the run itself); this is
+// the CLI's own chance to say so before any cloud work starts.
+func refuseFollowUpReviewMode(rcp *recipe.Recipe, name string) error {
+	if rcp.Mode == recipe.ModeReview {
+		return userErr("recipe %s is mode: review, which only reviews an existing pull request and cannot continue one; launch it with --recipe %s --pr N instead (no other --pr)", name, name)
 	}
 	return nil
 }

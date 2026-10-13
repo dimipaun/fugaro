@@ -85,17 +85,21 @@ func TestRunUnknownRecipeFailsBeforeCloudWork(t *testing.T) {
 	}
 }
 
-// TestRunRefusesNotYetRunnableRecipe: no runner executes mode: review's
-// implement skip yet. fugaro run must refuse these catalog recipes before
-// any cloud work, not launch a job that silently falls back to running
-// implement despite review-only's and pick's own "No coding" (docs/recipes.md
-// §2). A check step is no longer such a gap: Task 11's runner executes it
+// TestRunRefusesReviewModeWithoutPR: mode: review only reviews existing
+// pull requests (Task 12 of the generic-tool plan), so fugaro run must
+// refuse these catalog recipes without --pr, before any cloud work, not
+// launch a job that silently falls back to running implement despite
+// review-only's and pick's own "No coding" (docs/recipes.md §2). A check
+// step is no gap at all: Task 11's runner executes it
 // (TestRunAllowsCheckStepRecipe).
-func TestRunRefusesNotYetRunnableRecipe(t *testing.T) {
+//
+// Mutation (drop the Mode == ModeReview check from chooseRecipe): this
+// test fails, launching a job instead of refusing.
+func TestRunRefusesReviewModeWithoutPR(t *testing.T) {
 	f := newCloudFixture(t)
 	writeBuildRecord(t, f, appSlug, "web", release070)
 	for _, name := range []string{"review-only", "pick"} {
-		wantRefused(t, f, "recipe "+name+" cannot be launched yet", "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", name, "x")
+		wantRefused(t, f, "recipe "+name+" is mode: review", "run", "--repo", "acme/app", "--run-id", "20261007-100000-abcd", "--recipe", name, "x")
 	}
 }
 
@@ -233,20 +237,20 @@ func TestRunPRKeepsEmbeddedRecipeAfterProjectDelete(t *testing.T) {
 	}
 }
 
-// TestRunPRRefusesNotYetRunnableRecipe covers the three follow-up paths that
-// resolve or re-check a recipe (newPRSpec's --recipe flag, its inherited-YAML
-// re-parse, and carryChosenRecipe): none may let a not-yet-runnable recipe
-// through just because the launch is a follow-up rather than a first run.
-func TestRunPRRefusesNotYetRunnableRecipe(t *testing.T) {
-	t.Run("--recipe flag", func(t *testing.T) {
-		f := newCloudFixture(t)
-		writeBuildRecord(t, f, appSlug, "web", release070)
-		seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
-		_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--recipe", "review-only")
-		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "recipe review-only cannot be launched yet") {
-			t.Fatalf("err = %v", err)
-		}
-	})
+// TestRunPRRefusesInheritedReviewMode covers the two follow-up paths that
+// inherit a recipe from the PR's own history rather than naming one
+// explicitly (the inherited-YAML re-parse and carryChosenRecipe): neither
+// may let mode: review through just because the launch is a follow-up
+// rather than a first run — a follow-up continues an existing Fugaro pull
+// request, which mode: review never does (it only reviews one, and never
+// pushes). An explicit --recipe naming a mode: review recipe alongside
+// --pr is a different launch entirely now (review mode itself, TestRunPRReviewMode
+// in run_review_test.go): it bypasses this follow-up machinery rather than
+// being refused by it.
+//
+// Mutation (drop the Mode == ModeReview check from refuseFollowUpReviewMode):
+// both subtests fail, launching a job instead of refusing.
+func TestRunPRRefusesInheritedReviewMode(t *testing.T) {
 	t.Run("inherited recipe", func(t *testing.T) {
 		f := newCloudFixture(t)
 		writeBuildRecord(t, f, appSlug, "web", release070)
@@ -258,7 +262,7 @@ func TestRunPRRefusesNotYetRunnableRecipe(t *testing.T) {
 		rec.StartedAt = time.Now().Add(-72 * time.Hour)
 		writeRecord(t, f, rootID, rec)
 		_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "also rename x")
-		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "recipe review-only cannot be launched yet") {
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "recipe review-only is mode: review") {
 			t.Fatalf("err = %v", err)
 		}
 	})
@@ -267,7 +271,7 @@ func TestRunPRRefusesNotYetRunnableRecipe(t *testing.T) {
 		seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "review-only", Source: "catalog", SHA256: strings.Repeat("a", 64)})
 		_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "x")
 		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "ran (review-only) cannot be used") ||
-			!strings.Contains(err.Error(), "recipe review-only cannot be launched yet") {
+			!strings.Contains(err.Error(), "recipe review-only is mode: review") {
 			t.Fatalf("err = %v", err)
 		}
 	})

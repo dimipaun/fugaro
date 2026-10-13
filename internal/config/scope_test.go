@@ -29,14 +29,13 @@ func TestScopeOf(t *testing.T) {
 	}
 }
 
-// TestReviewAllowForksIsRepoScopeOnly (generic-tool Task 9, G12):
-// review.allow_forks is read from the base branch, like followup.trusted,
-// so a project layer or a profile may not set it, and a task flag can't
-// override it.
-func TestReviewAllowForksIsRepoScopeOnly(t *testing.T) {
-	row, ok := ScopeOf("review.allow_forks")
-	if !ok || row.In != InRepo {
-		t.Fatalf("ScopeOf(review.allow_forks) = %+v, %v, want repo scope only", row, ok)
+// TestReviewAllowForksScopeRemoved (owner ruling 2026-10-12): the key no
+// longer exists at all (review mode is trusted-author-only; there is no
+// opt-in for untrusted ones to remove a scope row for), so it must not be
+// in Scopes under any layer.
+func TestReviewAllowForksScopeRemoved(t *testing.T) {
+	if _, ok := ScopeOf("review.allow_forks"); ok {
+		t.Fatal("review.allow_forks is still a known scope; it should not exist at all")
 	}
 }
 
@@ -118,8 +117,6 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 
 		"followup.trusted":      InRepo,
 		"followup.allow_public": InRepo,
-
-		"review.allow_forks": InRepo,
 	}
 
 	seen := make(map[string]bool, len(Scopes))

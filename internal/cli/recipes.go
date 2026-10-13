@@ -62,17 +62,10 @@ type recipeRow struct {
 	UseWhen     string     `json:"use_when,omitempty"`
 	Steps       []stepView `json:"steps,omitempty"`
 	// Launchable is false when Problem is set (an invalid or misnamed
-	// recipe) or NotLaunchableReason is (recipe.NotYetRunnable): a routing
-	// skill must not pick a recipe this is false for.
-	Launchable bool `json:"launchable"`
-	// NotLaunchableReason is recipe.NotYetRunnable's reason a valid recipe
-	// still can't be launched (a check step or mode: review no runner
-	// executes yet), "" when there is none. Remove this field, and the
-	// guard it reflects, once that runner work lands (Tasks 11 and 12 of
-	// the generic-tool plan).
-	NotLaunchableReason string `json:"not_launchable_reason,omitempty"`
-	ShadowedBy          string `json:"shadowed_by,omitempty"`
-	Problem             string `json:"problem,omitempty"`
+	// recipe): a routing skill must not pick a recipe this is false for.
+	Launchable bool   `json:"launchable"`
+	ShadowedBy string `json:"shadowed_by,omitempty"`
+	Problem    string `json:"problem,omitempty"`
 }
 
 // stepView is one of a recipe's steps, for recipes ls --verbose and --json.
@@ -157,12 +150,11 @@ func listRecipes(ctx context.Context, env *cloudEnv, root string, now time.Time)
 			r.Description = rcp.Description
 			r.UseWhen = rcp.UseWhen
 			r.Steps = stepViews(rcp.Steps)
-			r.NotLaunchableReason = recipe.NotYetRunnable(rcp)
 			if r.UseWhen == "" && src != recipe.SourceCatalog {
 				notes = append(notes, fmt.Sprintf("%s recipe %s has no use_when; the routing skill matches on use_when, add one", src, name))
 			}
 		}
-		r.Launchable = r.Problem == "" && r.NotLaunchableReason == ""
+		r.Launchable = r.Problem == ""
 		return r
 	}
 	var repo []recipeRow
@@ -399,9 +391,6 @@ func recipeFileProblems(path string, data []byte) []recipe.Problem {
 	base := filepath.Base(path)
 	if base != rcp.Name+".yaml" {
 		return []recipe.Problem{{Path: "name", Message: fmt.Sprintf("the file is %s but the recipe names itself %q; the file name must be %s.yaml, the file name and the name must agree (the runner looks a recipe up by its file name)", base, rcp.Name, rcp.Name)}}
-	}
-	if gap := recipe.NotYetRunnable(rcp); gap != "" {
-		return []recipe.Problem{{Message: "cannot be launched yet: " + gap}}
 	}
 	return nil
 }

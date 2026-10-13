@@ -27,8 +27,12 @@ const (
 	StatusRunning Status = "running"
 	// StatusSucceeded is a ready PR, or (outcome none, Record.Gate "clean")
 	// a check gate that found nothing to fix, so no PR was ever needed.
-	StatusSucceeded  Status = "succeeded"
-	StatusFailed     Status = "failed" // a draft PR exists
+	StatusSucceeded Status = "succeeded"
+	// StatusFailed is a draft PR exists, or (outcome none) review mode
+	// refusing a pull request before checkout (no PR of its own ever
+	// exists): a policy decision the runner made correctly, not an
+	// infrastructure fault.
+	StatusFailed     Status = "failed"
 	StatusInfraError Status = "infra_error"
 	StatusCancelled  Status = "cancelled"
 	StatusHalted     Status = "halted" // a budget or token limit stopped the run
@@ -63,6 +67,11 @@ const (
 	OutcomeReady Outcome = "ready"
 	OutcomeDraft Outcome = "draft"
 	OutcomeNone  Outcome = "none"
+	// OutcomeReviewed is a mode: review run (design generic-tool §3.6,
+	// G12): it reviewed one or more existing pull requests and commented
+	// on each; it never pushes and never opens or edits a pull request of
+	// its own.
+	OutcomeReviewed Outcome = "reviewed"
 )
 
 // PRRef identifies the run's pull request.
@@ -184,6 +193,19 @@ type Record struct {
 	// Budget is the run's part in the project's shared budget, set only
 	// when the run used the budget backend (M9b).
 	Budget *BudgetRecord `json:"budget,omitempty"`
+	// Reviewed is set for a mode: review run (outcome reviewed): one entry
+	// per pull request it reviewed, in the task's review_prs order.
+	Reviewed []ReviewedPR `json:"reviewed,omitempty"`
+}
+
+// ReviewedPR is one pull request a mode: review run reviewed (design
+// generic-tool §3.6, G12): the commit it reviewed and the stage's verdict,
+// ship or changes, shared by every pull request a pick run reviewed
+// together.
+type ReviewedPR struct {
+	Number  int    `json:"number"`
+	SHA     string `json:"sha"`
+	Verdict string `json:"verdict"`
 }
 
 // BudgetRecord says how the run used the shared budget: the UTC day number
