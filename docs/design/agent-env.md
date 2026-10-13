@@ -679,12 +679,31 @@ key (or one relies on a `DefaultProviderAgentEnv` key the other's own
 `agent_env` overrides differently), there is no principled way to pick a
 winner — recommendation: **refuse the run before any call** when a single
 stage's role model and background model resolve to two different
-providers at all, named in the refusal (`config.CheckProviderPolicy`-style
-`Problem`, `providers.go:324-364`'s shape), regardless of whether their
-`agent_env` actually conflicts — a repository mixing providers within one
-Claude Code process is already an edge case `docs/multi-model.md` never
-anticipated, and refusing it outright is simpler and safer than resolving
-a conflict that would otherwise depend on map iteration order. (Today,
+providers at all, regardless of whether their `agent_env` actually
+conflicts — a repository mixing providers within one Claude Code process
+is already an edge case `docs/multi-model.md` never anticipated, and
+refusing it outright is simpler and safer than resolving a conflict that
+would otherwise depend on map iteration order.
+
+**Where the check lives: one `config`-package function, called from both
+places this repository already calls its sibling provider-policy checks
+from — not two separate implementations.** `CheckProviderPolicy`,
+`CheckProviderAuth` and `CheckProviderGateway` (`providers.go:324-364`'s
+neighborhood) are each a single pure function in `internal/config`, called
+from **both** `fugaro validate`'s offline check (`internal/cli/validate.go:180-196`)
+**and** the runner's own bootstrap authority (`checkProviderModels`,
+`internal/runner/gateway.go:389-423`, which calls exactly those same three
+functions) — the config-side function is the one thing, not two
+things duplicated. The two-provider conflict check should be a new
+function of the same shape (`config.Problem`'s, named in both the stage's
+role and background model and which provider each resolves to), called
+from the same two places: `internal/cli/validate.go` so `fugaro validate`
+catches it before any job runs, and `checkProviderModels` as the runtime
+authority a live run actually enforces — an earlier draft of this design
+named only the runtime call site, and an earlier draft of the plan put it
+only in `checkProviderModels` directly rather than as a shared, offline-
+checkable function; both omissions are fixed by following the pattern its
+sibling checks already use. (Today,
 with exactly one provider kind and `config.EffectiveBackground` only ever
 defaulting the background to the *coder's own* provider when it is a
 provider's model, this case cannot yet arise in practice — it becomes
