@@ -16,7 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
-// selftestEnv puts fake claude, node and sudo (exiting sudoExit) and the
+// selftestEnv puts fake claude, mise and sudo (exiting sudoExit) and the
 // real fugaro first on PATH, and points HOME at an empty directory.
 func selftestEnv(t *testing.T, sudoExit int) {
 	t.Helper()
@@ -26,7 +26,7 @@ func selftestEnv(t *testing.T, sudoExit int) {
 	bin := t.TempDir()
 	testutil.WriteFiles(t, bin, map[string]string{
 		"claude": "#!/bin/sh\necho '2.1.283 (Claude Code)'\n",
-		"node":   "#!/bin/sh\necho v24.19.0\n",
+		"mise":   "#!/bin/sh\nprintf '{}\\n'\n",
 		"sudo":   fmt.Sprintf("#!/bin/sh\nexit %d\n", sudoExit),
 	})
 	fugaro := testutil.BuildFugaro(t)
@@ -44,7 +44,7 @@ func selftestFixture(t *testing.T) SelftestSpec {
 	repo := filepath.Join(parent, "repo")
 	testutil.Git(t, parent, "clone", "--quiet", remote, repo)
 	return SelftestSpec{
-		Base: "web-node", RepoDir: repo, Commit: testutil.Git(t, repo, "rev-parse", "HEAD"), Origin: remote, Node: "24",
+		RepoDir: repo, Commit: testutil.Git(t, repo, "rev-parse", "HEAD"), Origin: remote, Mise: true,
 		Verify: verify.Settings{RepoDir: repo, Build: "sh build.sh", Test: "true"},
 	}
 }
@@ -66,7 +66,7 @@ func TestSelftestPasses(t *testing.T) {
 	if !r.Passed {
 		t.Fatalf("report %+v\nlog:\n%s", r, log.String())
 	}
-	for _, name := range []string{"user", "no-sudo", "claude", "node", "checkout", "origin", "git-credentials", "home-credentials", "verify-build"} {
+	for _, name := range []string{"user", "no-sudo", "claude", "checkout", "origin", "git-credentials", "home-credentials", "verify-build"} {
 		if _, ok := checkNamed(r, name); !ok {
 			t.Errorf("no %s check in %+v", name, r)
 		}
@@ -106,8 +106,6 @@ func TestSelftestFailures(t *testing.T) {
 		mutate      func(t *testing.T, spec *SelftestSpec)
 	}{
 		{"wrong commit", "checkout", 1, func(t *testing.T, s *SelftestSpec) { s.Commit = strings.Repeat("0", 40) }},
-		{"node major mismatch", "node", 1, func(t *testing.T, s *SelftestSpec) { s.Node = "22" }},
-		{"node exact mismatch", "node", 1, func(t *testing.T, s *SelftestSpec) { s.Node = "24.1.0" }},
 		{"passwordless sudo", "no-sudo", 0, nil},
 		{"credential file in HOME", "home-credentials", 1, func(t *testing.T, s *SelftestSpec) {
 			testutil.WriteFiles(t, os.Getenv("HOME"), map[string]string{".git-credentials": "https://u:s3cr3t@example.invalid\n"})
@@ -507,7 +505,7 @@ func TestSpecForCloud(t *testing.T) {
 project: aurora
 git: { provider: github }
 workflows:
-  web: { base: web-node, image: { node: "24" }, commands: { build: sh build.sh, test: sh test.sh } }
+  web: { commands: { build: sh build.sh, test: sh test.sh } }
 `
 	cfg, problems := config.Parse([]byte(yaml))
 	if len(problems) > 0 {
@@ -517,8 +515,8 @@ workflows:
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := SelftestSpec{Base: "web-node", RepoDir: "/work/repo", Commit: "abc123", Origin: "https://github.com/acme/webapp.git", Node: "24",
-		CheckInit: true, CheckHardening: true, SkipVerify: true}
+	want := SelftestSpec{Base: config.BaseKind, RepoDir: "/work/repo", Commit: "abc123", Origin: "https://github.com/acme/webapp.git",
+		CheckInit: true, CheckHardening: true, SkipVerify: true, Tools: "critical", Mise: true}
 	if !reflect.DeepEqual(spec, want) {
 		t.Fatalf("SpecForCloud = %+v\nwant %+v", spec, want)
 	}
@@ -753,16 +751,12 @@ func TestSelftestRefusesHarnessCredentialFiles(t *testing.T) {
 }
 
 func TestSpecForCloudOnTheBase(t *testing.T) {
-	cfg, problems := config.Parse([]byte("version: 1\nproject: acme\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: make, test: make test } }\n  web: { base: web-node, image: { node: \"24\" }, commands: { build: make, test: make test } }\n"))
+	cfg, problems := config.Parse([]byte("version: 1\nproject: acme\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: make, test: make test } }\n"))
 	if len(problems) > 0 {
 		t.Fatal(problems)
 	}
 	base, _ := SpecForCloud(cfg, "app", "c0ffee", "https://github.com/acme/app.git")
 	if base.Tools != "critical" || !base.Mise || base.Base != config.BaseKind {
 		t.Errorf("base: %+v", base)
-	}
-	web, _ := SpecForCloud(cfg, "web", "c0ffee", "https://github.com/acme/app.git")
-	if web.Tools != "" || web.Mise || web.Node != "24" {
-		t.Errorf("web-node: %+v", web)
 	}
 }

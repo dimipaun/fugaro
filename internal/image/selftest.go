@@ -28,13 +28,12 @@ import (
 // SelftestSpec is what `fugaro image build --local` asks `fugaro image
 // selftest`, running inside the freshly built image, to check.
 type SelftestSpec struct {
-	Base      string          `json:"base"`           // the workflow's base; decides the toolchain check
-	RepoDir   string          `json:"repo_dir"`       // the baked checkout, /work/repo
-	Commit    string          `json:"commit"`         // the commit the checkout must be at
-	Origin    string          `json:"origin"`         // the origin URL the checkout must keep
-	Node      string          `json:"node,omitempty"` // the Node.js version image.node pinned, if any
-	CheckInit bool            `json:"check_init"`     // require tini as PID 1
-	Verify    verify.Settings `json:"verify"`         // the workflow's settings for `fugaro verify build`
+	Base      string          `json:"base"`       // the workflow's base; decides the toolchain check
+	RepoDir   string          `json:"repo_dir"`   // the baked checkout, /work/repo
+	Commit    string          `json:"commit"`     // the commit the checkout must be at
+	Origin    string          `json:"origin"`     // the origin URL the checkout must keep
+	CheckInit bool            `json:"check_init"` // require tini as PID 1
+	Verify    verify.Settings `json:"verify"`     // the workflow's settings for `fugaro verify build`
 	// CheckHardening requires /etc/sudoers.d to hold only its README and
 	// /etc/sudoers to grant the fugaro user nothing. It inspects real
 	// absolute paths, so it is only meaningful inside the real container,
@@ -71,19 +70,11 @@ type SelftestSpec struct {
 // runs repository code: it gets no secrets and no network, and nothing in
 // it may need them.
 func SpecForCloud(cfg *config.Config, workflow, commit, origin string) (SelftestSpec, error) {
-	w, ok := cfg.Workflows[workflow]
-	if !ok {
+	if _, ok := cfg.Workflows[workflow]; !ok {
 		return SelftestSpec{}, fmt.Errorf("fugaro.yaml has no workflow %q", workflow)
 	}
-	spec := SelftestSpec{Base: w.BaseKind(), RepoDir: "/work/repo", Commit: commit, Origin: origin,
-		CheckInit: true, CheckHardening: true, SkipVerify: true}
-	if w.BaseKind() == "web-node" {
-		spec.Node = w.Image.Node
-	}
-	if w.BaseKind() == config.BaseKind {
-		spec.Base, spec.Tools, spec.Mise = config.BaseKind, "critical", true
-	}
-	return spec, nil
+	return SelftestSpec{Base: config.BaseKind, RepoDir: "/work/repo", Commit: commit, Origin: origin,
+		CheckInit: true, CheckHardening: true, SkipVerify: true, Tools: "critical", Mise: true}, nil
 }
 
 // Check is one smoke-test result.
@@ -211,14 +202,6 @@ func Selftest(ctx context.Context, spec SelftestSpec, log io.Writer) Report {
 	}
 	if spec.Tools != "" {
 		checkTools(ctx, spec.Tools, add)
-	}
-	if spec.Base == "web-node" {
-		if out, err := output(ctx, "node", "-v"); err != nil {
-			add("node", false, "node -v: %v: %s", err, out)
-		} else {
-			ok := spec.Node == "" || out == "v"+spec.Node || strings.HasPrefix(out, "v"+spec.Node+".")
-			add("node", ok, "%s (image.node %q)", out, spec.Node)
-		}
 	}
 	checkoutOK := checkCheckout(ctx, spec, add)
 	if spec.Mise && checkoutOK {

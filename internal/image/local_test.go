@@ -20,16 +20,15 @@ project: aurora
 git: { provider: github, base_branch: develop }
 workflows:
   web:
-    base: web-node
-    image: { node: "24.19.0" }
+    image: { tools: { node: "24.19.0" } }
     commands: { build: sh build.sh, test: sh test.sh, reports: ["junit.xml"] }
     secrets:
       - { name: npm-token, env: NPM_TOKEN }
       - { name: other-token, env: OTHER_TOKEN }
 `
 
-// localFixture is a clone, on branch main, of a web-node repository whose
-// fugaro.yaml bakes base_branch develop.
+// localFixture is a clone, on branch main, of a repository on the Fugaro
+// base whose fugaro.yaml bakes base_branch develop.
 func localFixture(t *testing.T) (string, *config.Config) {
 	t.Helper()
 	testutil.IsolateGit(t)
@@ -120,7 +119,7 @@ func (f *fakeDocker) run(ctx context.Context, c Cmd) error {
 
 func localOptions(root string, cfg *config.Config, f *fakeDocker, log *bytes.Buffer) LocalOptions {
 	return LocalOptions{
-		Root: root, Config: cfg, Workflow: "web", Base: "fugaro-web-node:test", Tag: "app:local",
+		Root: root, Config: cfg, Workflow: "web", Base: "fugaro-base:test", Tag: "app:local",
 		Platform: "linux/amd64", Version: "dev", Smoke: true,
 		Env: []string{"NPM_TOKEN=npm-canary-1234"}, Log: log, Run: f.run,
 	}
@@ -142,7 +141,7 @@ func TestBuildLocal(t *testing.T) {
 	}
 
 	build := f.builds[0]
-	for _, want := range []string{"app:local", "linux/amd64", "FUGARO_BASE=fugaro-web-node:test", "REPO_URL=/src/repo.bundle",
+	for _, want := range []string{"app:local", "linux/amd64", "FUGARO_BASE=fugaro-base:test", "REPO_URL=/src/repo.bundle",
 		"BASE_BRANCH=develop", "REPO_ORIGIN=https://github.com/acme/app.git", "id=NPM_TOKEN,env=NPM_TOKEN"} {
 		if !slices.Contains(build, want) {
 			t.Errorf("docker build args lack %q: %q", want, build)
@@ -163,11 +162,15 @@ func TestBuildLocal(t *testing.T) {
 	if f.heads != head+" refs/heads/develop" {
 		t.Errorf("bundle heads = %q, want HEAD published as develop", f.heads)
 	}
-	for _, want := range []string{"RUN /usr/local/lib/fugaro/install-node 24.19.0",
+	for _, want := range []string{`printf '%s\n' '[tools]' '"node" = "24.19.0"' > /home/fugaro/.config/mise/config.toml`,
+		"RUN --mount=type=cache,id=fugaro-mise,target=/home/fugaro/.cache/mise,uid=1000,gid=1000",
 		`--mount=type=secret,id=NPM_TOKEN,uid=1000,mode=0400,required=false --mount=type=secret,id=OTHER_TOKEN,uid=1000,mode=0400,required=false if test -e /run/secrets/NPM_TOKEN; then NPM_TOKEN="$(cat /run/secrets/NPM_TOKEN)" || exit 1; export NPM_TOKEN; fi; if test -e /run/secrets/OTHER_TOKEN; then OTHER_TOKEN="$(cat /run/secrets/OTHER_TOKEN)" || exit 1; export OTHER_TOKEN; fi; npm ci`} {
 		if !strings.Contains(f.dockerfile, want) {
 			t.Errorf("Dockerfile lacks %q", want)
 		}
+	}
+	if strings.Contains(f.dockerfile, "install-node") {
+		t.Error("Dockerfile still installs Node through install-node")
 	}
 	if got := testutil.Git(t, root, "for-each-ref"); got != refsBefore {
 		t.Errorf("the checkout's refs changed:\n%s\nwant\n%s", got, refsBefore)
@@ -187,7 +190,7 @@ func TestBuildLocal(t *testing.T) {
 		t.Errorf("docker run env = %q, want it to carry NPM_TOKEN", f.runEnv[0])
 	}
 	s := f.spec
-	if s.Base != "web-node" || s.Commit != head || s.Origin != "https://github.com/acme/app.git" || s.Node != "24.19.0" || !s.CheckInit ||
+	if s.Base != config.BaseKind || s.Commit != head || s.Origin != "https://github.com/acme/app.git" || s.Tools != "critical" || !s.Mise || !s.CheckInit ||
 		s.RepoDir != "/work/repo" || s.Verify.RepoDir != "/work/repo" || s.Verify.Build != "sh build.sh" || !slices.Equal(s.Verify.Reports, []string{"junit.xml"}) {
 		t.Errorf("selftest spec = %+v", s)
 	}
@@ -367,17 +370,13 @@ func TestBuildLocalPassesThePlatformToSelftest(t *testing.T) {
 
 // TestBuildLocalSpecOnTheBase pins localSelftestSpec, the helper BuildLocal
 // calls to build the smoke step's SelftestSpec, as a direct unit test of
-// that helper. The full round trip (a workflow with no base: through
-// BuildLocal's smoke step) needs a Docker daemon and is pinned by
-// TestSampleProjectNodePythonOnTheBase in docker_test.go.
+// that helper. The full round trip (through BuildLocal's smoke step) needs a
+// Docker daemon and is pinned by TestSampleProjectNodePythonOnTheBase in
+// docker_test.go.
 func TestBuildLocalSpecOnTheBase(t *testing.T) {
 	res := &LocalResult{Commit: "c0ffee", Origin: "https://github.com/acme/app.git"}
-	base := localSelftestSpec(config.Workflow{}, res)
-	if base.Tools != "critical" || !base.Mise || base.Node != "" || base.Base != config.BaseKind {
-		t.Errorf("base: spec = %+v", base)
-	}
-	web := localSelftestSpec(config.Workflow{Base: "web-node", Image: config.Image{Node: "24"}}, res)
-	if web.Tools != "" || web.Mise || web.Node != "24" {
-		t.Errorf("web-node: spec = %+v", web)
+	spec := localSelftestSpec(config.Workflow{}, res)
+	if spec.Tools != "critical" || !spec.Mise || spec.Base != config.BaseKind {
+		t.Errorf("spec = %+v", spec)
 	}
 }

@@ -437,17 +437,14 @@ workflows:
     timeouts: { total: 5m, stage: 2m, verify: 1m, finalize_reserve: 30s }
 `
 
-// A workflow with no base: (the implicit Fugaro base) gets the same default
-// npm cache config.DefaultCache("web-node", ...) would also give, not no
-// cache at all: restoreCaches resolves the default-cache kind through
-// w.BaseKind(), not the raw (empty) w.Base field, and config.DefaultCache
-// only recognizes "web-node" and config.BaseKind ("base").
+// A workflow with no cache: entries gets the default npm cache
+// config.DefaultCache detects from the checkout, not no cache at all: every
+// workflow builds on the one Fugaro base (config.DefaultCache no longer
+// takes a base argument to gate on).
 //
-// Mutation (run, restore): change restoreCaches' call from
-// config.DefaultCache(r.wf.BaseKind(), r.d.WorkDir) back to
-// config.DefaultCache(r.wf.Base, r.d.WorkDir), and this test fails:
-// DefaultCache("", ...) returns no entries (nil, nil) for any kind but
-// "web-node"/"base", so no cache archive is ever written.
+// Mutation (run, restore): in restoreCaches, change `if len(entries) == 0`
+// to `if false`, so a workflow with no cache: entries never falls back to
+// config.DefaultCache, and this test fails: no cache archive is written.
 func TestDefaultCacheOnTheImplicitBaseKind(t *testing.T) {
 	h := newHarnessFiles(t, implicitBaseCacheYAML, nil, map[string]string{"package.json": "{}", "package-lock.json": "{}"})
 	b := withBucket(h)
