@@ -871,11 +871,9 @@ func TestLocalConfigRefusesLegacyBaseImageKeys(t *testing.T) {
 // falsely claim the cut removed it.
 func TestLocalConfigRefusesUnknownBaseImageKey(t *testing.T) {
 	_, err := Parse([]byte(sample + "base_images:\n  rust: us-east5-docker.pkg.dev/p/fugaro-base/fugaro-rust:0.6.0\n"))
-	if err == nil || !strings.Contains(err.Error(), "base_images.rust") || !strings.Contains(err.Error(), `unknown base kind "rust"`) {
+	if err == nil || !strings.Contains(err.Error(), "base_images.rust") || !strings.Contains(err.Error(), `unknown base kind "rust"`) ||
+		strings.Contains(err.Error(), "removed in 0.7.0") || strings.Contains(err.Error(), config.MigrationDoc) {
 		t.Errorf("err = %v", err)
-	}
-	if strings.Contains(err.Error(), "removed in 0.7.0") || strings.Contains(err.Error(), config.MigrationDoc) {
-		t.Errorf("an unknown kind must not get the legacy removal message: err = %v", err)
 	}
 }
 
