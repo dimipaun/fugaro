@@ -363,11 +363,6 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	return emitDoctor(cmd, o, asJSON)
 }
 
-// doctorGitHubApps is the GitHub App pre-check (githubapp.go), only behind
-// --check-github-app, for the GitHub
-// repositories the local config records with an App: the checkout's own when
-// doctor runs in one, else each of them. A check that could not be made is a
-// warning that does not claim the App is fine.
 // doctorBaseImage warns when the installation has no Fugaro base recorded
 // (design base-image.md section 10): every image build starts from it.
 func doctorBaseImage(lc *localcfg.Config) doctorCheck {
@@ -379,6 +374,11 @@ func doctorBaseImage(lc *localcfg.Config) doctorCheck {
 		Fix:     "fugaro image refresh   # in the repository's checkout"}
 }
 
+// doctorGitHubApps is the GitHub App pre-check (githubapp.go), only behind
+// --check-github-app, for the GitHub
+// repositories the local config records with an App: the checkout's own when
+// doctor runs in one, else each of them. A check that could not be made is a
+// warning that does not claim the App is fine.
 func doctorGitHubApps(ctx context.Context, lc *localcfg.Config, notice io.Writer) []doctorCheck {
 	var repos []string
 	for name, r := range lc.Repos {
