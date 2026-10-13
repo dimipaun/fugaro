@@ -485,6 +485,48 @@ func TestGraphifyLockIsHashPinnedAndMatchesTheArg(t *testing.T) {
 	}
 }
 
+// graphifyWrapperScript extracts the exact bytes the Dockerfile's printf
+// line writes to /usr/local/bin/graphify: it undoes the Dockerfile shell
+// line's '"'"' idiom (close-quote, a literal quote inside double quotes,
+// reopen-quote -- how a single-quoted printf format string embeds an
+// apostrophe) and expands the literal \n escapes printf itself expands into
+// real newlines, so the test asserts against what actually lands in the
+// image, not a hand-copied approximation of it that could drift.
+func graphifyWrapperScript(t *testing.T, df string) string {
+	t.Helper()
+	m := regexp.MustCompile(`(?s)printf '(#!/bin/sh\\n# graphify.*?)' \\\n\s*> /usr/local/bin/graphify;`).FindStringSubmatch(df)
+	if m == nil {
+		t.Fatal(`no printf ... > /usr/local/bin/graphify line in the Dockerfile`)
+	}
+	s := strings.ReplaceAll(m[1], `'"'"'`, "'")
+	return strings.ReplaceAll(s, `\n`, "\n")
+}
+
+// TestGraphifyWrapperIsolatesPythonEnv: a project's (or mise's) PYTHONPATH,
+// PYTHONHOME, PYTHONSTARTUP or PYTHONUSERBASE would otherwise reach
+// graphify's private venv and could shadow its own numpy/tree-sitter with a
+// project copy -- confirmed directly: with the real venv from this
+// lockfile, `PYTHONPATH=<dir with a numpy.py> python3 -c "import numpy"`
+// loads the shadow instead of the venv's own package. Mutation: delete the
+// "unset PYTHONPATH ..." line from the Dockerfile's wrapper printf -> this
+// test must fail, restored after.
+func TestGraphifyWrapperIsolatesPythonEnv(t *testing.T) {
+	script := graphifyWrapperScript(t, baseDockerfile(t))
+	for _, want := range []string{
+		"unset PYTHONPATH PYTHONHOME PYTHONSTARTUP PYTHONUSERBASE",
+		"export PYTHONNOUSERSITE=1",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("the graphify wrapper lacks %q: a caller's Python env variables could shadow the private venv's own packages", want)
+		}
+	}
+	unsetIdx := strings.Index(script, "unset PYTHONPATH")
+	execIdx := strings.Index(script, "exec /opt/fugaro/graphify/venv/bin/graphify")
+	if unsetIdx < 0 || execIdx < 0 || unsetIdx > execIdx {
+		t.Error("the wrapper's PYTHONPATH/PYTHONHOME unset must run before the exec, not after")
+	}
+}
+
 // TestGraphifyToolsRow: the presence check (design section 6) runs
 // "graphify --version", tier harness, on both architectures -- real wheels
 // exist for graphifyy and every one of its dependencies on linux/arm64
