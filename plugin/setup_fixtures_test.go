@@ -316,9 +316,18 @@ func parseMiseTOMLSection(t *testing.T, text, section string, valid func(k, v st
 		case strings.HasPrefix(line, "["):
 			in = line == "["+section+"]"
 		case in:
-			k, v, ok := strings.Cut(line, " = ")
-			k, v = strings.Trim(k, `"`), strings.Trim(v, `"`)
-			if !ok || !valid(k, v) {
+			eq := strings.IndexByte(line, '=')
+			if eq < 0 {
+				t.Errorf("mise.toml [%s] line %q is not name = \"value\"", section, line)
+				continue
+			}
+			// TOML allows any amount of whitespace around "=" (node="x",
+			// node  =  "x" are both legal); trim it from both sides rather
+			// than requiring the skill's own canonical "name = \"value\""
+			// spacing exactly.
+			k := strings.Trim(strings.TrimSpace(line[:eq]), `"`)
+			v := strings.Trim(strings.TrimSpace(line[eq+1:]), `"`)
+			if !valid(k, v) {
 				t.Errorf("mise.toml [%s] line %q is not name = \"value\"", section, line)
 				continue
 			}
