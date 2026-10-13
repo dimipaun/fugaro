@@ -812,7 +812,7 @@ func TestInitRepoPassesRTDBEnv(t *testing.T) {
 		if err := os.WriteFile(path, append(data, block...), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: api-key }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n")
+		root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: api-key }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n")
 		testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
 		t.Chdir(t.TempDir())
 		out, _, err := execute(t, "init", "--repo", "--print-vars", "--project", "aurora", "--github-app-id", "42", root)

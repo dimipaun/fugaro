@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	checkBase    = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc"
+	checkBase    = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc"
 	checkRepoURL = "https://bitbucket.org/acme/app.git"
 	checkBucket  = "fugaro-runs-proj-1234"
 	checkToken   = "bb-token-value"
@@ -93,13 +93,13 @@ func (f *checkFixture) hookCheck(t *testing.T) {
 	checkRegistry = func() *imagecheck.Registry {
 		return &imagecheck.Registry{HTTP: &http.Client{}, Google: &http.Client{}, Endpoint: func(string) string { return f.reg.URL }}
 	}
-	f.reg.SetManifest("proj-1234/fugaro-base/fugaro-web-node", "dev-abc", checkBaseDigest)
+	f.reg.SetManifest("proj-1234/fugaro-base/fugaro-base", "dev-abc", checkBaseDigest)
 }
 
 // checkLC is the local config the check job's spec is made from.
 func checkLC() *localcfg.Config {
 	return &localcfg.Config{
-		Version: 1, Name: "aurora", GCPProject: "proj-1234", Region: "us-east5", RunsBucket: checkBucket, BaseImages: map[string]string{"web-node": checkBase},
+		Version: 1, Name: "aurora", GCPProject: "proj-1234", Region: "us-east5", RunsBucket: checkBucket, BaseImages: map[string]string{"base": checkBase},
 		Build: localcfg.Build{MachineType: "E2_HIGHCPU_8"},
 		Repos: map[string]localcfg.Repo{"acme/app": {Provider: "bitbucket", BaseBranch: "main", Workflows: []string{"app"}}},
 	}
@@ -288,7 +288,7 @@ project: aurora
 gcp_project: proj-1234
 git: { provider: bitbucket }
 workflows:
-  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh }, secrets: [{ name: npm-token, env: NPM_TOKEN }] }
+  app: { commands: { build: sh build.sh, test: sh test.sh }, secrets: [{ name: npm-token, env: NPM_TOKEN }] }
 `
 
 // layeredCheckYAML is acme/app's actual fugaro.yaml for the layer test:
@@ -305,14 +305,13 @@ workflows:
 `
 
 // layeredCheckLayer is the project layer layeredCheckYAML's workflow
-// names: profile svc supplies the base (web-node, matching checkLC's own
-// base_images) and image.apt/setup/skip_build_scripts.
+// names: profile svc supplies image.apt/setup/skip_build_scripts (the base
+// is always the one Fugaro base now, matching checkLC's own base_images).
 const layeredCheckLayer = `version: 1
 project: aurora
 gcp_project: proj-1234
 profiles:
   svc:
-    base: web-node
     image: { apt: [graphviz], setup: ["./scripts/warm.sh"], skip_build_scripts: true }
 default_profile: svc
 `
@@ -381,7 +380,7 @@ func TestCheckJobResolvesAndSubmitsWithTheLayer(t *testing.T) {
 	if len(ps) > 0 {
 		t.Fatal(ps)
 	}
-	if wantCfg.Workflows["app"].Base != "web-node" || len(wantCfg.Workflows["app"].Image.Apt) == 0 || !wantCfg.Workflows["app"].Image.SkipBuildScripts {
+	if len(wantCfg.Workflows["app"].Image.Apt) == 0 || !wantCfg.Workflows["app"].Image.SkipBuildScripts {
 		t.Fatalf("test fixture itself does not resolve the layer: %+v", wantCfg.Workflows["app"])
 	}
 	testutil.Git(t, f.work, "pull", "--quiet", "--ff-only")
@@ -504,7 +503,7 @@ func TestCheckJobNeedsItsSpec(t *testing.T) {
 func TestCheckNotInstalledWorkflow(t *testing.T) {
 	// Head has a second daily workflow the installed job doesn't know.
 	files := checkFiles()
-	files["fugaro.yaml"] = bitbucketYAML + "  api: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	files["fugaro.yaml"] = bitbucketYAML + "  api: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 	f := newCheckJob(t, files, bitbucketYAML)
 	f.seedRecord(t)
 	lines, err := runCheckJob(t)
@@ -527,7 +526,7 @@ func TestCheckNotInstalledWorkflow(t *testing.T) {
 
 	// Head turns app's check off: the installed schedule no longer
 	// matches, so nothing is built until init --repo runs.
-	yaml := strings.Replace(files["fugaro.yaml"], "base: web-node, secrets:", "base: web-node, rebuild: { check: off }, secrets:", 1)
+	yaml := strings.Replace(files["fugaro.yaml"], "secrets:", "rebuild: { check: off }, secrets:", 1)
 	testutil.WriteFiles(t, f.work, map[string]string{"fugaro.yaml": yaml, "package-lock.json": `{"changed":true}`})
 	testutil.Git(t, f.work, "commit", "--quiet", "-am", "check off")
 	testutil.Git(t, f.work, "push", "--quiet", "origin", "HEAD:main")
@@ -570,7 +569,7 @@ func localCheck(t *testing.T) *checkFixture {
 	if err := os.WriteFile(path, []byte(strings.Replace(string(data), "provider: github", "provider: bitbucket", 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cf.appendConfig(t, "base_images: {web-node: "+checkBase+"}\n")
+	cf.appendConfig(t, "base_images: {base: "+checkBase+"}\n")
 	f.bucket = cf.bucket
 	cfg, _ := config.Parse([]byte(bitbucketYAML))
 	lc := checkLC()
@@ -639,7 +638,7 @@ func TestLocalCheckUsesTheSelectedProjectsLayer(t *testing.T) {
 	f := newCloudFixture(t)
 	publishedLayer(t, f, testProjectLayer)
 	cfgPath := os.Getenv("FUGARO_CONFIG")
-	f.appendConfig(t, "base_images: {web-node: "+checkBase+"}\n")
+	f.appendConfig(t, "base_images: {base: "+checkBase+"}\n")
 	layerCheckout(t, f, minimalAnchored)
 	// A clean slate: isolateProjects clears $FUGARO_PROJECT/$FUGARO_CONFIG
 	// and points XDG at an empty directory, and isolateCache gives the
@@ -983,58 +982,19 @@ func TestLocalCheckResolvesSpec(t *testing.T) {
 	}
 }
 
-// A workflow of a base kind head's fugaro.yaml gained after the job was
-// installed has no base image in the job's spec; the spec still resolves, so
-// the job reports that workflow as not installed instead of failing them all.
-func TestCheckJobResolvesSpecWithAKindAddedSinceInstall(t *testing.T) {
-	newCheckJob(t, checkFiles(), bitbucketYAML)
-	e, err := readJobEnv()
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg, problems := config.Parse([]byte(bitbucketYAML + "  server: { base: java-services, commands: { build: make, test: make test } }\n"))
-	if len(problems) > 0 {
-		t.Fatal(problems)
-	}
-	rs, _, err := e.repoSpec(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rs.Check == nil || rs.Check.Image == "" {
-		t.Fatalf("check = %+v", rs.Check)
-	}
-	// The installed kind is still what the job was installed with.
-	if want := e.spec.BaseImages["web-node"]; want != checkBase || e.spec.BaseImages["java-services"] != "" {
-		t.Errorf("spec base images = %v", e.spec.BaseImages)
-	}
-}
-
-// A workflow with no base: (the implicit Fugaro base) added to fugaro.yaml
-// after the job was installed is back-filled under the "base" key, like
-// TestCheckJobResolvesSpecWithAKindAddedSinceInstall pins for an explicit
-// kind, not under the empty-string key.
-//
-// Mutation (run, restore): change repoSpec's `kind := w.BaseKind()` back to
-// `kind := w.Base`, and this test fails: the local config's base_images has
-// no "base" entry (the back-fill wrote to base_images[""] instead).
-func TestCheckJobBackfillsTheImplicitBaseKind(t *testing.T) {
-	newCheckJob(t, checkFiles(), bitbucketYAML)
-	e, err := readJobEnv()
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg, problems := config.Parse([]byte(bitbucketYAML + "  server: { commands: { build: make, test: make test } }\n"))
-	if len(problems) > 0 {
-		t.Fatal(problems)
-	}
-	_, lc, err := e.repoSpec(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if lc.BaseImages["base"] == "" {
-		t.Fatalf("base_images = %v, want a stand-in under base", lc.BaseImages)
-	}
-}
+// TestCheckJobResolvesSpecWithAKindAddedSinceInstall and
+// TestCheckJobBackfillsTheImplicitBaseKind are deleted: they pinned
+// repoSpec's backfill of a base kind a workflow added after install needed
+// but the installed spec lacked (one real base image standing in for
+// another kind's, until the next fugaro image refresh records its own).
+// After the 0.7.0 cut config.Bases has exactly one kind, so every workflow,
+// installed or added later, resolves to the same "base" key: a valid
+// installed spec always already has it (readJobEnv refuses an empty
+// base_images), so repoSpec's `if bases[kind] == ""` backfill branch can
+// never fire for a real fugaro.yaml again. Both tests had gone vacuous: the
+// assertion `lc.BaseImages["base"] != ""` was true whether or not the
+// backfill ran, since base_images.base was already non-empty from the
+// fixture's one installed workflow.
 
 // executeJob runs a command as the Cloud Run check job does: its environment
 // names the job.

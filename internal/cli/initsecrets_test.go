@@ -135,7 +135,7 @@ var realWriterIsTerminal = writerIsTerminal
 // checkoutYAML is a fugaro.yaml of project aurora for provider, with agent.auth auth
 // (and extra lines of the workflow, such as secrets).
 func checkoutYAML(provider, auth, project string, workflowExtra string) string {
-	return "version: 1\nproject: " + project + "\ngit: { provider: " + provider + " }\nagent: { auth: " + auth + " }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh }" + workflowExtra + " }\n"
+	return "version: 1\nproject: " + project + "\ngit: { provider: " + provider + " }\nagent: { auth: " + auth + " }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh }" + workflowExtra + " }\n"
 }
 
 // writeConfig (re)writes the checkout's fugaro.yaml.
@@ -598,7 +598,7 @@ func TestInitNeverPromptsForWorkflowDeclaredClaudeOAuthName(t *testing.T) {
 		"other-team": {AllowDataTo: []string{"acme/other"}}, // not this repository
 	}
 	r.writeConfig(t, "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n"+
-		"  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh }, secrets: [{ name: claude-oauth-token-other-team, env: FOO_TOKEN }] }\n")
+		"  app: { commands: { build: sh build.sh, test: sh test.sh }, secrets: [{ name: claude-oauth-token-other-team, env: FOO_TOKEN }] }\n")
 	res, err := r.run(t)
 	if err != nil || len(res.Left) != 1 {
 		t.Fatalf("%v, left %v", err, res.Left)

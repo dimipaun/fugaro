@@ -97,7 +97,7 @@ func repoPlan(t *testing.T, stdin string, changes func(spec infra.RepoSpec) []pl
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, problems := config.Parse([]byte("version: 1\nproject: aurora\ngit: { provider: bitbucket, base_branch: master }\nworkflows:\n  web: { base: web-node, commands: { build: sh b.sh, test: sh t.sh } }\n"))
+	cfg, problems := config.Parse([]byte("version: 1\nproject: aurora\ngit: { provider: bitbucket, base_branch: master }\nworkflows:\n  web: { commands: { build: sh b.sh, test: sh t.sh } }\n"))
 	if len(problems) != 0 {
 		t.Fatal(problems)
 	}

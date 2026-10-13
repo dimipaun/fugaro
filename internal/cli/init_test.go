@@ -1280,7 +1280,7 @@ func TestInitRepoRefusesVertexEnforce(t *testing.T) {
 	path := writeProject(t, "aurora", "proj-1234")
 	cfgFile := func(auth string) *config.Config {
 		t.Helper()
-		c, err := config.Parse([]byte("version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: " + auth + " }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"))
+		c, err := config.Parse([]byte("version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: " + auth + " }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1312,7 +1312,7 @@ func TestInitRepoRefusesVertexEnforce(t *testing.T) {
 	// under an observe one (the stricter wins).
 	committed := func(mode string) *config.Config {
 		t.Helper()
-		c, err := config.Parse([]byte("version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: vertex }\nbudget: { mode: " + mode + ", per_run_usd: 5 }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"))
+		c, err := config.Parse([]byte("version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: vertex }\nbudget: { mode: " + mode + ", per_run_usd: 5 }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1350,7 +1350,7 @@ func TestInitRepoRefusesVertexEnforce(t *testing.T) {
 	if err := os.WriteFile(path, append(data, "budget: { mode: enforce, per_run_usd: 5 }\n"...), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: vertex }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n")
+	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: vertex }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n")
 	testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
 	t.Chdir(t.TempDir())
 	_, _, err = execute(t, "init", "--repo", "--yes", "--onboard-repo", "acme/webapp", "--project", "aurora", root)
@@ -1453,7 +1453,7 @@ func TestInitRepoRefusesAnInstallationOfAnotherProject(t *testing.T) {
 	r.script["show"] = map[string]any{"stdout": `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"x"}]}}}`}
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"project_name": "borealis"})}
 	r.save(t)
-	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n")
+	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n")
 	testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
 	t.Chdir(t.TempDir())
 	_, _, err = executeStdin(t, "", "init", "--repo", "--yes", "--onboard-repo", "acme/webapp", "--project", "aurora", "--github-app-id", "12345", root)
@@ -1476,7 +1476,7 @@ func TestInitRepoPassesPolicyEnv(t *testing.T) {
 	if err := os.WriteFile(path, append(data, "budget: { max_run_tokens: 123456, allowed_models: [claude-sonnet-5-5] }\nbase_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc}\n"...), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: api-key }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n")
+	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: api-key }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n")
 	testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
 	t.Chdir(t.TempDir())
 	out, _, err := execute(t, "init", "--repo", "--print-vars", "--project", "aurora", "--github-app-id", "42", root)
@@ -1504,7 +1504,7 @@ func TestInitRepoShowsCeilingAndClamps(t *testing.T) {
 	}
 	yaml := func(block string) string {
 		return "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: api-key }\n" + block +
-			"workflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+			"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 	}
 	run := func(block string) (string, string) {
 		t.Helper()
@@ -1548,7 +1548,7 @@ func TestInitRepoSilentWithoutCeiling(t *testing.T) {
 		t.Fatal(err)
 	}
 	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: api-key }\n" +
-		"workflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), yaml)
 	testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
 	t.Chdir(t.TempDir())

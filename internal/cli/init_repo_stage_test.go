@@ -400,7 +400,7 @@ func TestRepoEngineRefusesTheBuildWhenTheLayerBucketIsUnreadable(t *testing.T) {
 	// Anchored (gcp_project), on bitbucket (no GitHub App to pre-check), with
 	// one workflow that needs no build record to be offered a first build.
 	yaml := "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: bitbucket }\nagent: { auth: oauth }\nworkflows:\n" +
-		"  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+		"  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", yaml)
 	t.Chdir(dir)
 	// Both of app's secrets (its git credential and, agent.auth: oauth,
@@ -495,7 +495,7 @@ func TestRepoEngineWritesTheProjectLayerCopyForItsFirstBuild(t *testing.T) {
 	// testProjectLayer's own anchor is project aurora, gcp_project proj-1234,
 	// matching this checkout and r.script["output"]'s project_name.
 	yaml := "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: bitbucket }\nworkflows:\n" +
-		"  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+		"  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", yaml)
 	t.Chdir(dir)
 	// testProjectLayer's defaults.agent.auth is api-key, so the workflow

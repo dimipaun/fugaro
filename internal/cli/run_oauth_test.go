@@ -20,7 +20,7 @@ import (
 
 // release065 is a build record's base_ref at exactly namedTokensSince: a
 // runner built from it knows task.Spec.OAuthToken.
-const release065 = "ghcr.io/dimipaun/fugaro-web-node:0.6.5"
+const release065 = "ghcr.io/dimipaun/fugaro-base:0.6.5"
 
 // otherSlug is acme/other's storage slug, the repository oauthCheckout anchors.
 var otherSlug = mustSlug("github", "acme/other")
@@ -38,7 +38,7 @@ func oauthCheckout(t *testing.T, f *cloudFixture, agentLines string) {
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
 	yaml := "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nagent:\n  auth: oauth\n" + agentLines +
-		"workflows:\n  svc: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+		"workflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml})
 	t.Chdir(dir)
 }
@@ -544,7 +544,7 @@ func TestRunTokenImageGateWarnsOnNonReleaseBase(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, claudeAccountsConfig)
 	oauthCheckout(t, f, "")
-	writeBuildRecord(t, f, otherSlug, "svc", "ghcr.io/dimipaun/fugaro-web-node:dev")
+	writeBuildRecord(t, f, otherSlug, "svc", "ghcr.io/dimipaun/fugaro-base:dev")
 	variant := gcp.WorkflowVariant("svc", "acme-personal")
 	f.run.AddJob(gcp.JobName(otherSlug, variant), "2", "4Gi")
 	_, errOut, err := execute(t, "run", "--run-id", "20261012-100000-a1a4", "--token", "acme-personal", "A task")

@@ -16,7 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
-const yamlRest = "git: { provider: github }\nagent: { auth: oauth }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+const yamlRest = "git: { provider: github }\nagent: { auth: oauth }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 
 func TestSetGCPProjectLine(t *testing.T) {
 	const id = "fugaro-belong"

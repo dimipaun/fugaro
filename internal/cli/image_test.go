@@ -29,7 +29,7 @@ func checkoutWith(t *testing.T, files map[string]string) string {
 	return dir
 }
 
-// npmFiles is a web-node checkout with an npm lockfile and no dependencies.
+// npmFiles is a Node checkout with an npm lockfile and no dependencies.
 func npmFiles() map[string]string {
 	return map[string]string{
 		"fugaro.yaml":       cliMinimalYAML,
@@ -54,7 +54,7 @@ func TestImageRenderGenerated(t *testing.T) {
 func TestImageRenderRepositoryDockerfile(t *testing.T) {
 	const df = "ARG FUGARO_BASE\nFROM ${FUGARO_BASE}\nRUN git clone \"$REPO_URL\" /work/repo\n"
 	files := npmFiles()
-	files["fugaro.yaml"] = strings.Replace(cliMinimalYAML, "base: web-node,", "base: web-node, dockerfile: .fugaro/app.Dockerfile,", 1)
+	files["fugaro.yaml"] = strings.Replace(cliMinimalYAML, "{ commands:", "{ dockerfile: .fugaro/app.Dockerfile, commands:", 1)
 	files[".fugaro/app.Dockerfile"] = df
 	checkoutWith(t, files)
 	out, stderr, err := execute(t, "image", "render")
@@ -114,7 +114,7 @@ func TestImageSelftestCommand(t *testing.T) {
 	if _, _, err := executeStdin(t, "{not json", "image", "selftest"); err == nil || !strings.Contains(err.Error(), "reading the selftest spec") {
 		t.Fatalf("err = %v", err)
 	}
-	spec := `{"base":"web-node","repo_dir":"` + filepath.Join(t.TempDir(), "missing") + `","commit":"abc"}`
+	spec := `{"base":"base","repo_dir":"` + filepath.Join(t.TempDir(), "missing") + `","commit":"abc"}`
 	out, _, err := executeStdin(t, spec, "image", "selftest")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
@@ -150,7 +150,7 @@ func TestImageBuildReportsConfigProblems(t *testing.T) {
 	files := npmFiles()
 	files["fugaro.yaml"] = strings.Replace(cliMinimalYAML, "github", "gitlab", 1)
 	checkoutWith(t, files)
-	_, _, err := execute(t, "image", "build", "--local", "--base", "fugaro-web-node:dev")
+	_, _, err := execute(t, "image", "build", "--local", "--base", "fugaro-base:dev")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro.yaml has 1 problem(s)") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -158,7 +158,7 @@ func TestImageBuildReportsConfigProblems(t *testing.T) {
 
 // bitbucketYAML is cliMinimalYAML on Bitbucket, with one workflow secret.
 var bitbucketYAML = strings.Replace(strings.Replace(cliMinimalYAML, "provider: github", "provider: bitbucket", 1),
-	"base: web-node,", "base: web-node, secrets: [{ name: npm-token, env: NPM_TOKEN }],", 1)
+	"{ commands:", "{ secrets: [{ name: npm-token, env: NPM_TOKEN }], commands:", 1)
 
 // cloudBuildCheckout is a Bitbucket checkout of acme/app whose origin is
 // https, with a local config pointing at a Cloud Build fake. The local
@@ -188,7 +188,7 @@ func cloudBuildCheckout(t *testing.T, bare bool) (*gcpfake.Build, *cloudFixture)
 
 func TestImageBuildCloud(t *testing.T) {
 	fb, _ := cloudBuildCheckout(t, false)
-	const base = "us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro-web-node:dev-abc"
+	const base = "us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro-base:dev-abc"
 	out, _, err := executeBuild(t, "image", "build", "--base", base)
 	if err != nil {
 		t.Fatal(err)

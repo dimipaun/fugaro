@@ -80,7 +80,7 @@ func TestValidateOfflineWarnsForAFullFile(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
-	layerCheckout(t, f, minimalAnchored+"git: { provider: github }\nworkflows:\n  svc: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n")
+	layerCheckout(t, f, minimalAnchored+"git: { provider: github }\nworkflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n")
 	out, errOut, err := execute(t, "validate", "--offline")
 	if err != nil || !strings.Contains(out, "is valid") || !strings.Contains(errOut, "project layer") || !strings.Contains(errOut, "was not checked") {
 		t.Fatalf("out %q, stderr %q, err %v", out, errOut, err)
@@ -355,7 +355,7 @@ func TestRunMemoizesTheLayerReadThroughTheRealCommand(t *testing.T) {
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
 	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngcp_project: proj-1234\n" +
 		"git: { provider: github, base_branch: develop }\nagent:\n  auth: api-key\n" +
-		"workflows:\n  svc: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"})
+		"workflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n"})
 	t.Chdir(dir)
 
 	reads := 0
