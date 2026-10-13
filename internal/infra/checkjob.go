@@ -17,6 +17,7 @@ import (
 	run "google.golang.org/api/run/v2"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 // The daily image check job's base, set directly (design image-refresh.md,
@@ -66,6 +67,23 @@ func RewriteCheckSpec(raw, image string, bases map[string]string) (spec, newImag
 	var s CheckJobSpec
 	if err := json.Unmarshal([]byte(raw), &s); err != nil {
 		return "", "", fmt.Errorf("%w: its %s is not a check spec (%v); run fugaro init --repo in the checkout", ErrCheckJobShape, CheckSpecEnv, err)
+	}
+	legacy := false
+	for k := range s.BaseImages {
+		if !slices.Contains(config.Bases, k) {
+			legacy = true
+		}
+	}
+	if legacy && bases[config.BaseKind] != "" {
+		// The 0.7.0 cut: a spec of the removed kinds becomes the one base,
+		// with the job's image, in this one update (design base-image.md
+		// section 10).
+		s.BaseImages = map[string]string{config.BaseKind: bases[config.BaseKind]}
+		out, err := json.Marshal(s)
+		if err != nil {
+			return "", "", err
+		}
+		return string(out), bases[config.BaseKind], nil
 	}
 	kind := ""
 	for _, k := range slices.Sorted(maps.Keys(s.BaseImages)) {
