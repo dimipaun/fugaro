@@ -55,7 +55,7 @@ Project rules (carried over from this repository's existing plans):
 | `internal/cli/secrets.go`, `secrets_test.go` | `--project-wide` flag, validation branch, `ls` SCOPE column, `ls --project-wide` | 4 |
 | `deploy/terraform/gcp/modules/installation/secrets.tf` (new), `variables.tf`, roots/installation | `google_secret_manager_secret.project`, operator grants, `var.project_secrets` input | 4 |
 | `deploy/terraform/gcp/modules/repo/build.tf`, `workflows.tf`, `variables.tf` | **P4, opus review:** `local.secrets`, `build.tf`'s grant rewired through it | 5 |
-| `internal/infra/installation_terraform_test.go` or equivalent, `deploy/terraform/gcp/roots/installation/tests/` | plan-level fixtures for the new resources, 0 destroys on an unrelated-change plan | 6 |
+| `internal/infra/installation_terraform_test.go`, `deploy/terraform/gcp/roots/installation/tests/`, `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl`, `internal/infra/spec_test.go` golden fixtures | real `terraform test` plan-level fixtures: no secret-resource deletes, but the expected IAM-member replacements, `tf.Guard` refusing/accepting them (B3) | 6 |
 | `internal/cli/doctor.go`, `doctor_test.go` | two new checks (design §5) | 7 |
 | `docs/design/v1.md`, `docs/multi-model.md`, `docs/gcp-live-checklist.md`, `docs/release.md`, `internal/cli/docs_*_test.go` | cross-references, Check 40, the release checklist bullet | 8 |
 | none | full suite | 9 |
@@ -594,37 +594,62 @@ git commit -m "project secrets task 5: build.tf's grant follows the same resolve
 
 ---
 
-### Task 6: plan-level fixtures (0 destroys on an unrelated-change plan)
+### Task 6: plan-level fixtures (no secret deletes, but real IAM-member replacements, on a scope-move plan — B3)
 
 **Files:**
-- Edit: whichever existing `*_terraform_test.go`/`deploy/terraform/gcp/roots/*/tests/` harness this repository already runs offline Terraform plans through (the implementer greps for the harness `named-oauth-tokens.md`-style plans would have used, or, if none exists at the Go level, a Go-level fixture asserting the tfvars JSON shape is the acceptable substitute — state which was used in the commit message).
+- Edit: `deploy/terraform/gcp/roots/installation/tests/` (the harness's own `*.tftest.hcl` file, following the existing pattern there) and `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl` (this repository's real Terraform-test framework for the repo root — not a Go-level fixture: Go cannot observe a Terraform plan's resource actions, only `terraform plan -json` through this framework can, which is exactly why B3's scope-move claim needed a live plan to catch, not a unit test).
 
-**Tests:**
-```go
-func TestInstallationPlanProjectSecretsIsCreateOnly(t *testing.T) {
-	// A fresh var.project_secrets entry plans exactly 1 create (the secret)
-	// plus its operator grants, 0 updates to any unrelated installation
-	// resource, 0 destroys.
+**Tests (named for what is actually true, not "zero destroys" — corrected per B3):**
+```hcl
+# deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl
+run "project_secrets_is_create_only" {
+  # A fresh var.project_secrets entry plans exactly 1 create (the secret)
+  # plus its operator grants, 0 updates to any unrelated installation
+  # resource, 0 destroys, 0 replacements — the installation root's own
+  # first apply touches nothing that already exists.
 }
-func TestRepoPlanScopeChangeIsZeroDestroys(t *testing.T) {
-	// The scenario in design §6 step 4: a name moves from repo-only to
-	// project-shared (repo has no version); the repo root's plan has 0
-	// deletes of google_secret_manager_secret.this[name], at most 1 update
-	// to the workflow's job (secret_env's secret_key_ref value changes).
+```
+```hcl
+# deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl
+run "scope_move_replaces_iam_members_never_deletes_secrets" {
+  # The scenario in design §6 step 4: a name moves from repo-only to
+  # project-shared (repo has no version, project does). Assert:
+  #   - 0 "delete" actions on any google_secret_manager_secret.this[*]
+  #     address (the secret container itself is never destroyed);
+  #   - EXACTLY the expected google_secret_manager_secret_iam_member.job[*]
+  #     (one per workflow/account variant that mounts the name) and, if the
+  #     name is a BuildSecret, google_secret_manager_secret_iam_member.build[*]
+  #     addresses show a "replace" action (["delete","create"]) — asserting
+  #     this is present, not merely permitted, is the point: a plan that
+  #     silently keeps the OLD secret_id (a bug) would show no replacement
+  #     at all and must also fail this test;
+  #   - the plan, run through tf.Guard with no --allow-delete, is refused
+  #     (asserts the guard really does fire on these addresses, not just
+  #     that the design document says it should);
+  #   - the plan, run through tf.Guard WITH every expected address listed
+  #     in --allow-delete, succeeds;
+  #   - the workflow's (and, if applicable, the check job's) Cloud Run job
+  #     resource itself shows an "update" action, never "replace" or
+  #     "delete" (new revision, same resource).
 }
 ```
 
 - [ ] **Step 1: Write the failing tests**
 - [ ] **Step 2: Run the tests to verify they fail**
-- [ ] **Step 3: Make them pass** (this task should need no new production code if Tasks 2-5 are correct; it exists to prove the golden claim end to end, across both roots, not just within `internal/infra`)
-- [ ] **Step 4: Run**
 
-Run: `go test -count=1 ./internal/infra/... ./deploy/... 2>/dev/null || true` (the implementer uses whichever exact package path the harness lives in)
+Run (the installation root already has a Go-side driver that writes a fresh `tests/vars.tftest.hcl` and shells out to the real `terraform` binary, `internal/infra/installation_terraform_test.go:59-69`'s pattern — reuse it, do not invent a second one): `go test -count=1 -run TestInstallationVarsPlan ./internal/infra/`. The repo root's `repo.tftest.hcl` is a checked-in file (not Go-generated) reading golden tfvars from `deploy/terraform/gcp/roots/repo/tests/testdata/` (the same fixtures `internal/infra/spec_test.go`'s `-update` flag maintains, `spec_test.go:24,28`); run it directly against the real `terraform` binary with no credentials: `terraform -chdir=deploy/terraform/gcp/roots/repo init -backend=false -lockfile=readonly -input=false && terraform -chdir=deploy/terraform/gcp/roots/repo test -no-color` (the exact flags `installation_terraform_test.go` already uses for its own `terraform init`/`terraform test` calls).
+Expected: both FAIL (no `replace`/`delete` assertions exist yet on the fixtures, which today have no project-shared name at all).
+
+- [ ] **Step 3: Make them pass** (this task should need no new production code if Tasks 2-5 are correct; it exists to prove the golden claim end to end, across both roots, not just within `internal/infra`). If `repo.tftest.hcl`'s fixtures need a new golden tfvars case with a `project_secrets` entry resolved, regenerate it with `internal/infra/spec_test.go`'s own `-update` flag rather than hand-editing the JSON: `go test -run TestBuildRepoSpec -update ./internal/infra/` (the exact invocation the file's own flag comment documents), then review the diff before committing it.
+- [ ] **Step 4: Run both again to verify they pass**
+
+Run the same two commands as Step 2.
+Expected: `ok` (installation) / Terraform's own `Success!` summary (repo root), with the replace actions and the `tf.Guard` refusal/success asserted, not merely "0 destroys."
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git commit -m "project secrets task 6: plan-level fixtures proving zero destroys across both roots"
+git commit -m "project secrets task 6: plan-level fixtures proving no secret deletes, but real IAM-member replacements that tf.Guard catches and --allow-delete clears (B3)"
 ```
 
 ---
