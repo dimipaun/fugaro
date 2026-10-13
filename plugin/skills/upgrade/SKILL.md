@@ -57,7 +57,7 @@ Before they run it, say what it does. It prints the whole plan first, then copie
 
 If `cloud:` names a custom base image (a development or hand-pushed image), the fix it printed comes first; give it to the user as printed. If `cloud:` is `skipped` because no local project config selects the checkout, this machine is not the operator's: the cloud step belongs to whoever set the project up, and there is nothing to hand over. `--check` cannot see a build that failed after the base moved, because build records live in the cloud: when the user reports one, the same command is the fix.
 
-After a real cloud step, a `note:` line may say the deployed job's copy of the project's multi-model config (`providers`, `model_prices`) no longer matches the local config: a version upgrade never refreshes it. The note names the one command that does; give it to the user as printed, for their own terminal, and never run it yourself or treat `--yes` as covering it (its own apply confirmations stay theirs). Under `--check` the same note instead says it cannot tell, because `--check` makes no cloud call.
+After a real cloud step, a `note:` line may say the deployed job's whole copy of the local project config (multi-model `providers` and `model_prices`, budget settings, the region's custom compute price, the GitHub App ID) no longer matches the local config: a version upgrade never refreshes it. The note names the one command that does; give it to the user as printed, for their own terminal, and never run it yourself or treat `--yes` as covering it (its own apply confirmations stay theirs). Under `--check` the same note instead says it cannot tell, because `--check` makes no cloud call.
 
 ## 5. Report
 

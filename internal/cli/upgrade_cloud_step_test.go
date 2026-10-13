@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -76,6 +78,30 @@ func jobConfigCopyJobName(t *testing.T) string {
 	return gcp.JobName(slug, "api")
 }
 
+// jobConfigCopyBaseline is the deployed job's env when it was last deployed
+// from exactly today's local config and fugaro.yaml: only the GitHub App ID
+// (upgradeRigWithGitHubAppID's rig sets no budget, providers or model_prices
+// by default). The GitHub App ID is compared like every other local-config
+// field now (review follow-up, PR #324), so every job-config-copy test below
+// starts here and adds only the one field it means to test, rather than
+// risk an incidental "added FUGARO_GITHUB_APP_ID" diff it never meant to
+// exercise.
+func jobConfigCopyBaseline() map[string]string {
+	return map[string]string{"FUGARO_GITHUB_APP_ID": "12345"}
+}
+
+// setJobConfigCopyEnv creates (or replaces) the fake job jobConfigCopyNote
+// reads, with jobConfigCopyBaseline merged with extra (extra wins on a
+// shared key).
+func setJobConfigCopyEnv(t *testing.T, r *anchorModeRig, extra map[string]string) {
+	t.Helper()
+	job := jobConfigCopyJobName(t)
+	r.run.SetJob(job, nil, "img")
+	env := jobConfigCopyBaseline()
+	maps.Copy(env, extra)
+	r.run.SetJobEnv(job, env)
+}
+
 // TestUpgradeCloudReportsStaleJobConfigCopy: the deployed job carries no
 // providers or model_prices (an older fugaro init --repo, or none at all),
 // while the local config now has both; the real cloud step's note names
@@ -88,7 +114,7 @@ func TestUpgradeCloudReportsStaleJobConfigCopy(t *testing.T) {
 	r := upgradeRigWithGitHubAppID(t)
 	r.appendConfig(t, providersConfig)
 	stubCurrentRefresh(t, r)
-	r.run.SetJob(jobConfigCopyJobName(t), nil, "img")
+	setJobConfigCopyEnv(t, r, nil)
 	fakeSteps(t, "", nil)
 	out, _, err := executeStdin(t, "", "upgrade", "--yes")
 	if err != nil {
@@ -116,7 +142,7 @@ func TestUpgradeCloudReportsStaleJobConfigCopy(t *testing.T) {
 func TestUpgradeCloudNoNoteWhenJobConfigCopyMatches(t *testing.T) {
 	r := upgradeRigWithGitHubAppID(t)
 	stubCurrentRefresh(t, r)
-	r.run.SetJob(jobConfigCopyJobName(t), nil, "img")
+	setJobConfigCopyEnv(t, r, nil)
 	fakeSteps(t, "", nil)
 	out, _, err := executeStdin(t, "", "upgrade", "--yes")
 	if err != nil {
@@ -138,7 +164,7 @@ func TestUpgradeCloudStaleJobConfigNoteNeverLeaksAValue(t *testing.T) {
 	r := upgradeRigWithGitHubAppID(t)
 	r.appendConfig(t, providersConfig)
 	stubCurrentRefresh(t, r)
-	r.run.SetJob(jobConfigCopyJobName(t), nil, "img")
+	setJobConfigCopyEnv(t, r, nil)
 	fakeSteps(t, "", nil)
 	out, _, err := executeStdin(t, "", "upgrade", "--yes")
 	if err != nil {
@@ -178,7 +204,7 @@ func TestUpgradeCloudCopyNoteNeverReadsTheCloudUnderCheckOrAgent(t *testing.T) {
 		r := upgradeRigWithGitHubAppID(t)
 		r.appendConfig(t, providersConfig)
 		stubCurrentRefresh(t, r)
-		r.run.SetJob(jobConfigCopyJobName(t), nil, "img")
+		setJobConfigCopyEnv(t, r, nil)
 		out, _, err := executeStdin(t, "", "upgrade", "--check")
 		if ExitCode(err) != ExitUserError {
 			t.Fatalf("exit %d\n%s", ExitCode(err), out)
@@ -194,7 +220,7 @@ func TestUpgradeCloudCopyNoteNeverReadsTheCloudUnderCheckOrAgent(t *testing.T) {
 		r := upgradeRigWithGitHubAppID(t)
 		r.appendConfig(t, providersConfig)
 		stubCurrentRefresh(t, r)
-		r.run.SetJob(jobConfigCopyJobName(t), nil, "img")
+		setJobConfigCopyEnv(t, r, nil)
 		t.Setenv("CLAUDECODE", "1")
 		out, _, err := executeStdin(t, "", "upgrade")
 		if err != nil {
@@ -207,6 +233,96 @@ func TestUpgradeCloudCopyNoteNeverReadsTheCloudUnderCheckOrAgent(t *testing.T) {
 			t.Fatalf("the agent session read the cloud: %+v", r.run.Requests())
 		}
 	})
+}
+
+// TestUpgradeCloudReportsStaleBudgetConfigCopy is the review's own bug
+// reproduction (PR #324 review, finding 1): providers and model_prices
+// match (so the old, narrower comparison would have found nothing to say),
+// but the local config now also sets a budget the deployed job's copy
+// lacks; the note must still name it, by field.
+//
+// Mutation (verified, run and restored): in scalarConfigEnv, also delete
+// infra.BudgetModeEnv and infra.MaxRunUSDEnv (narrowing the comparison back
+// to roughly its old, pre-fix scope): this test fails, finding no note.
+func TestUpgradeCloudReportsStaleBudgetConfigCopy(t *testing.T) {
+	r := upgradeRigWithGitHubAppID(t)
+	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5 }\n")
+	stubCurrentRefresh(t, r)
+	setJobConfigCopyEnv(t, r, nil) // no budget on the job's copy
+	fakeSteps(t, "", nil)
+	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"note: the deployed job's copy of the local project config is STALE",
+		"FUGARO_BUDGET_MODE", "FUGARO_MAX_RUN_USD",
+		"fugaro init --repo .",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output lacks %q:\n%s", want, out)
+		}
+	}
+	// Never a value: the cap itself (5, or its formatted "5") is not a
+	// secret, but the note names fields, never values, of anything.
+	if strings.Contains(out, "providers:") || strings.Contains(out, "model_prices:") {
+		t.Fatalf("falsely named providers/model_prices (nothing configures them here):\n%s", out)
+	}
+}
+
+// TestUpgradeCloudCheckCaveatFiresEvenWithAnEmptyLocalConfig: the caveat
+// used to key off whether the local config currently sets providers or
+// model_prices, so an owner who had just removed every provider locally
+// (the job may still carry the old ones) saw nothing under --check; it now
+// fires whenever a real cloud step would run, whatever the local config
+// currently holds.
+//
+// Mutation (verified, run and restored): put back
+// `&& (len(lc.Providers) > 0 || len(lc.ModelPrices) > 0)` on the printed
+// branch in cloudStep: this test fails, finding no caveat.
+func TestUpgradeCloudCheckCaveatFiresEvenWithAnEmptyLocalConfig(t *testing.T) {
+	r, _ := upgradeRig(t) // refreshYAML's local config sets no providers, model_prices or budget at all
+	fakeSteps(t, "", nil)
+	out, _, err := executeStdin(t, "", "upgrade", "--check")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d\n%s", ExitCode(err), out)
+	}
+	if !strings.Contains(out, "note: "+checkJobCopyCaveat) {
+		t.Fatalf("missing the --check caveat with an empty local config:\n%s", out)
+	}
+	if len(r.run.Requests()) != 0 {
+		t.Fatalf("--check read the cloud: %+v", r.run.Requests())
+	}
+}
+
+// TestUpgradeCloudCouldNotCheckJobConfigCopyOnAJobReadError: a real error
+// reading the deployed job (here, the fake answering 500 to jobs.get) must
+// not look like "the copies match": it is reported, and the report never
+// repeats the underlying error (which could carry a URL or, from a real
+// client library, a token).
+//
+// Mutation (verified, run and restored): in jobConfigCopyNote, change
+// `if err != nil { return couldNotCheckJobConfigCopy(...) }` after JobFullEnv
+// to `if err != nil && false`: this test fails, finding no note (silence
+// that looks like a match).
+func TestUpgradeCloudCouldNotCheckJobConfigCopyOnAJobReadError(t *testing.T) {
+	r := upgradeRigWithGitHubAppID(t)
+	stubCurrentRefresh(t, r)
+	setJobConfigCopyEnv(t, r, nil)
+	r.run.SetJobFaults(gcpfake.JobFaults{GetStatus: 500})
+	fakeSteps(t, "", nil)
+	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "note: could not check the job's config copy (reading the deployed job failed)") {
+		t.Fatalf("missing the could-not-check note:\n%s", out)
+	}
+	for _, leak := range []string{"500", "googleapi", "http://", "https://"} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("the note leaked the underlying error %q:\n%s", leak, out)
+		}
+	}
 }
 
 // upgradeRig is an onboarded checkout of acme/app (two workflows, kinds go

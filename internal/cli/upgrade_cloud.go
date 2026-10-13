@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 // cloudState is the cloud step's state as read from local files only.
@@ -140,25 +141,42 @@ func cloudCheck(ctx context.Context, root string, co cloudOptions, rerun string)
 	return cloudVerdict{state: cloudCurrent, repo: repo, reason: "the local config records this release's base image for every workflow's kind (--check reads no build record: a build that failed after the base moved shows only when fugaro upgrade runs the cloud step)"}
 }
 
-// checkJobCopyCaveat is --check's note on the job's config copy (jobConfigCopyNote):
-// --check makes no cloud call, so, unlike a real cloud step, it can never
-// tell whether the deployed job's copy is stale (docs/multi-model.md "Then
-// run fugaro init --repo").
-const checkJobCopyCaveat = "fugaro upgrade --check makes no cloud call, so it cannot tell whether the deployed job still carries this local project config's providers and model_prices, or an older copy; run fugaro upgrade without --check to find out, or just run fugaro init --repo . in your own terminal to refresh it (never run automatically)"
+// checkJobCopyCaveat is --check's note on the job's config copy
+// (jobConfigCopyNote): --check makes no cloud call, so, unlike a real cloud
+// step, it can never tell whether the deployed job's copy of the local
+// project config is stale in either direction (docs/multi-model.md "Then run
+// fugaro init --repo"). It is printed whenever a real cloud step would run
+// (cloudStep), whatever the local config currently holds: an owner who just
+// removed every provider locally still needs to know the job might still
+// carry the old ones, which --check cannot see either.
+const checkJobCopyCaveat = "fugaro upgrade --check makes no cloud call, so it cannot tell whether the deployed job's copy of this local project config (providers, model_prices, budget settings, the region's compute price override and the GitHub App ID) still matches, or is stale, in either direction; run fugaro upgrade without --check to find out, or just run fugaro init --repo . in your own terminal to refresh it (never run automatically)"
 
 // jobConfigCopyNote is the cloud step's extra report, after a real refresh:
-// whether the deployed workflow job's copy of the local project config's
-// providers and model_prices (FUGARO_MODEL_PROVIDERS, FUGARO_MODEL_PRICES;
-// docs/multi-model.md, "Then run fugaro init --repo") still matches what
-// this local config would write now. A version upgrade never refreshes that
-// copy; only fugaro init --repo does, and fugaro upgrade never runs it
-// itself (its Terraform confirmations stay the operator's).
+// whether the deployed workflow job's copy of the local project config
+// still matches what this local config would write now. A version upgrade
+// never refreshes that copy; only fugaro init --repo does, and fugaro
+// upgrade never runs it itself (its Terraform confirmations stay the
+// operator's). It compares every env var infra.Workflow sets from the local
+// config (spec.Env, minus infra.PlatformEnv's installation-identity keys,
+// which legitimately vary by deploy and are not what fugaro init --repo
+// refreshes from an edited local config): providers and model_prices
+// (compared by field, since they carry JSON, decoded and reflect.DeepEqual'd
+// so key order or "0.14" vs "0.140" is never a false difference) and every
+// other key by exact match (the budget mode, cap, token limit and allow-
+// list, the RTDB URL, the Firebase API key, budget grace, the region's
+// compute price override and the GitHub App ID) — so a newly added
+// local-config-derived env var is covered automatically, never missed the
+// way this once was.
 //
 // "" is nothing to say: the copies agree, or the job can't be read here (no
 // workflow, no job deployed yet, or anything resolveCloudRepo already
 // treats as a skip: no fugaro.yaml, a teammate checkout, a development
 // build, a repository not onboarded), in which case the note is silent,
-// exactly as the cloud step itself is in those cases.
+// exactly as the cloud step itself is in those cases. A real error past that
+// point (the checkout's origin, the repository's spec, the cloud connection
+// or the job read itself) is not silent: it says it could not check, never
+// with the error's own text (it could carry a URL or, from an underlying
+// client, a token).
 func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string {
 	cfg, lc, _, repo, _, v := resolveCloudRepo(ctx, root, co)
 	if v != nil {
@@ -170,43 +188,100 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 	}
 	repoURL, err := checkoutURL(ctx, root)
 	if err != nil {
-		return ""
+		return couldNotCheckJobConfigCopy("cannot read the checkout's origin")
 	}
 	spec, err := infra.Workflow(infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, RepoURL: repoURL}, names[0])
 	if err != nil {
-		return ""
+		return couldNotCheckJobConfigCopy("cannot compute the repository's spec from the local config")
 	}
 	env, err := openCloudFor(ctx, lc)
 	if err != nil {
-		return ""
+		return couldNotCheckJobConfigCopy("cannot connect to the cloud")
 	}
 	defer env.Close()
 	be, ok := env.be.(interface {
-		JobEnv(ctx context.Context, job, name string) (string, bool, error)
+		JobFullEnv(ctx context.Context, job string) (map[string]string, bool, error)
 	})
 	if !ok {
 		return ""
 	}
-	jobProviders, exists, err := be.JobEnv(ctx, spec.Job, infra.ModelProvidersEnv)
-	if err != nil || !exists {
+	jobEnv, exists, err := be.JobFullEnv(ctx, spec.Job)
+	if err != nil {
+		return couldNotCheckJobConfigCopy("reading the deployed job failed")
+	}
+	if !exists {
 		return "" // no job deployed yet here
 	}
-	jobPrices, _, err := be.JobEnv(ctx, spec.Job, infra.ModelPricesEnv)
-	if err != nil {
-		return ""
-	}
-	var diffs []string
-	if d := providersDiff(jobProviders, spec.Env[infra.ModelProvidersEnv]); d != "" {
-		diffs = append(diffs, "providers: "+d)
-	}
-	if d := pricesDiff(jobPrices, spec.Env[infra.ModelPricesEnv]); d != "" {
-		diffs = append(diffs, "model_prices: "+d)
-	}
+	diffs := jobConfigDiffs(jobEnv, spec.Env)
 	if len(diffs) == 0 {
 		return ""
 	}
 	return fmt.Sprintf("the deployed job's copy of the local project config is STALE (%s): a version upgrade never refreshes it; runs on %s use the old copy until you run fugaro init --repo . in your own terminal (never run automatically)",
-		strings.Join(diffs, "; "), repo)
+		strings.Join(diffs, "; "), pluginwire.Printable(repo))
+}
+
+// couldNotCheckJobConfigCopy is jobConfigCopyNote's note when a real error
+// (not "no job yet") stops it from comparing the copies: a fixed, per-step
+// reason, never the error's own text, so nothing it might carry (a bucket or
+// API URL, a client's wrapped token) can reach the terminal through it.
+func couldNotCheckJobConfigCopy(reason string) string {
+	return "could not check the job's config copy (" + reason + "); its providers, model_prices, budget and other owner-only settings may be stale without this saying so"
+}
+
+// jobConfigDiffs names every way job (the deployed workflow job's whole env)
+// differs from now (spec.Env, the same workflow's env computed from the
+// local config and the checkout's fugaro.yaml right now) in the fields the
+// local config, not the platform, controls: providers and model_prices by
+// field (providersDiff, pricesDiff), and every other local-config-derived
+// key (scalarConfigDiff) by exact match. Never a value.
+func jobConfigDiffs(job, now map[string]string) []string {
+	var diffs []string
+	if d := providersDiff(job[infra.ModelProvidersEnv], now[infra.ModelProvidersEnv]); d != "" {
+		diffs = append(diffs, "providers: "+d)
+	}
+	if d := pricesDiff(job[infra.ModelPricesEnv], now[infra.ModelPricesEnv]); d != "" {
+		diffs = append(diffs, "model_prices: "+d)
+	}
+	if d := scalarConfigDiff(job, now); d != "" {
+		diffs = append(diffs, d)
+	}
+	return diffs
+}
+
+// scalarConfigDiff is mapDiff over every env key infra.Workflow can set from
+// the local config, except providers and model_prices (compared by field
+// above, since they carry JSON), infra.PlatformEnv's installation-identity
+// keys and runner.SecretEnvsVar (excluded: see scalarConfigEnv). Every
+// remaining key (the budget mode, cap, token limit and allow-list, the RTDB
+// URL, the Firebase API key, budget grace, the region's compute price
+// override, the GitHub App ID, and any local-config-derived key
+// infra.Workflow adds later) is compared as plain text: none of them
+// carries JSON, so a textual difference is a real one.
+func scalarConfigDiff(job, now map[string]string) string {
+	return mapDiff(scalarConfigEnv(job), scalarConfigEnv(now), func(a, b string) bool { return a == b })
+}
+
+// scalarConfigEnv drops infra.PlatformEnv's keys, the two JSON-valued keys
+// (providers, model_prices) and runner.SecretEnvsVar from a job's or a
+// spec's env. SecretEnvsVar is a derived list of mounted variable NAMES, not
+// a local-config value in its own right: it also reflects the repository's
+// own fugaro.yaml (its workflow's committed secrets, its agent.auth), which
+// fugaro init --repo refreshes from the checkout, not from an edited local
+// project config, so comparing it here would flag drift this note is not
+// about. A changed local-config provider already shows up directly, through
+// providersDiff, with or without this key.
+func scalarConfigEnv(env map[string]string) map[string]string {
+	out := make(map[string]string, len(env))
+	for k, v := range env {
+		out[k] = v
+	}
+	for _, k := range infra.PlatformEnv {
+		delete(out, k)
+	}
+	delete(out, infra.ModelProvidersEnv)
+	delete(out, infra.ModelPricesEnv)
+	delete(out, runner.SecretEnvsVar)
+	return out
 }
 
 // providersDiff and pricesDiff name the entries that differ between the
@@ -312,9 +387,7 @@ func cloudStep(ctx context.Context, u *upgradeCtx) stepResult {
 			return *failed
 		}
 		if v.state != cloudNotHere {
-			if _, lc, _, _, _, rv := resolveCloudRepo(ctx, u.loc.Root, u.o.refresh.cloud); rv == nil && (len(lc.Providers) > 0 || len(lc.ModelPrices) > 0) {
-				fmt.Fprintf(u.w, "note: %s\n", checkJobCopyCaveat)
-			}
+			fmt.Fprintf(u.w, "note: %s\n", checkJobCopyCaveat)
 		}
 		switch v.state {
 		case cloudCurrent:
