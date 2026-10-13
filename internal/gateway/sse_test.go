@@ -158,6 +158,19 @@ func TestUsageTeeProviderMax(t *testing.T) {
 	}
 }
 
+// A negative count reported directly by message_start (not only one that
+// arrives later via message_delta, which already had its own check) must
+// set tee.broken by itself: this is the one line the HIGH-undercharge fix
+// added, exercised here with nothing else in the stream to cover for it.
+func TestUsageTeeNegativeMessageStartSetsBroken(t *testing.T) {
+	tee := newUsageTee(true)
+	tee.provider = true
+	tee.feed([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":-1,\"output_tokens\":1}}}\n\n"))
+	if !tee.acc.negative() || !tee.broken {
+		t.Error("a negative count in message_start itself was not caught")
+	}
+}
+
 func TestUsageAccNullCostNotReported(t *testing.T) {
 	var a usageAcc
 	var u wireUsage
