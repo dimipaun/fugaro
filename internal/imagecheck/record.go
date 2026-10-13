@@ -112,7 +112,7 @@ func KeyFiles(cfg *config.Config, workflow string, tree Tree) (map[string]string
 	entries := w.Cache
 	if len(entries) == 0 {
 		var err error
-		if entries, err = defaultCache(w.BaseKind(), tree); err != nil {
+		if entries, err = defaultCache(tree); err != nil {
 			return nil, fmt.Errorf("workflows.%s: %w", workflow, err)
 		}
 	}
@@ -149,10 +149,7 @@ var (
 // manager's detection reads are copied into a scratch directory (the
 // lockfiles as empty files, since only their presence matters), so the
 // check and the build detect exactly as the runner does.
-func defaultCache(base string, tree Tree) ([]config.CacheEntry, error) {
-	if base != "web-node" && base != config.BaseKind {
-		return config.DefaultCache(base, "")
-	}
+func defaultCache(tree Tree) ([]config.CacheEntry, error) {
 	dir, err := os.MkdirTemp("", "fugaro-keyfiles-")
 	if err != nil {
 		return nil, err
@@ -181,10 +178,7 @@ func defaultCache(base string, tree Tree) ([]config.CacheEntry, error) {
 			return nil, err
 		}
 	}
-	// config.DefaultCache only special-cases "web-node" by name; the base
-	// kind gets the identical Node package manager detection under that
-	// name, since dir already holds exactly what web-node's detection reads.
-	return config.DefaultCache("web-node", dir)
+	return config.DefaultCache(dir)
 }
 
 // imageConfig is the canonical form ImageConfigHash hashes: everything
@@ -199,8 +193,6 @@ type imageConfig struct {
 }
 
 type imageSettings struct {
-	Node             string   `json:"node"`
-	JDK              string   `json:"jdk"`
 	Apt              []string `json:"apt"`
 	Setup            []string `json:"setup"`
 	SkipBuildScripts bool     `json:"skip_build_scripts"`
@@ -215,8 +207,8 @@ func ImageConfigHash(cfg *config.Config, workflow string, tree Tree) (string, er
 		return "", fmt.Errorf("fugaro.yaml has no workflow %q", workflow)
 	}
 	c := imageConfig{Base: w.BaseKind(), Dockerfile: w.Dockerfile, Image: imageSettings{
-		Node: w.Image.Node, JDK: w.Image.JDK, SkipBuildScripts: w.Image.SkipBuildScripts,
-		Apt: slices.Concat([]string{}, w.Image.Apt), Setup: slices.Concat([]string{}, w.Image.Setup),
+		SkipBuildScripts: w.Image.SkipBuildScripts,
+		Apt:              slices.Concat([]string{}, w.Image.Apt), Setup: slices.Concat([]string{}, w.Image.Setup),
 	}, Tools: w.Image.Tools}
 	if w.Dockerfile != "" {
 		id, err := tree.BlobID(w.Dockerfile)
@@ -225,14 +217,12 @@ func ImageConfigHash(cfg *config.Config, workflow string, tree Tree) (string, er
 		}
 		c.DockerfileBlob = id
 	}
-	if w.BaseKind() == config.BaseKind {
-		files, err := miseFiles(tree)
-		if err != nil {
-			return "", fmt.Errorf("workflows.%s: %w", workflow, err)
-		}
-		if len(files) > 0 {
-			c.MiseFiles = files
-		}
+	files, err := miseFiles(tree)
+	if err != nil {
+		return "", fmt.Errorf("workflows.%s: %w", workflow, err)
+	}
+	if len(files) > 0 {
+		c.MiseFiles = files
 	}
 	data, err := json.Marshal(c)
 	if err != nil {

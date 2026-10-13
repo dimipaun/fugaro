@@ -204,7 +204,7 @@ func (r *run) restoreCaches(ctx context.Context) {
 	entries := r.wf.Cache
 	if len(entries) == 0 {
 		var err error
-		if entries, err = config.DefaultCache(r.wf.BaseKind(), r.d.WorkDir); err != nil {
+		if entries, err = config.DefaultCache(r.d.WorkDir); err != nil {
 			r.d.Log.Warn("no default cache", "err", r.redact(err.Error()))
 			return
 		}
