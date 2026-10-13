@@ -160,10 +160,25 @@ RUN --mount=type=bind,source=images/base/fetch.sh,target=/tmp/fetch.sh \
     rm -rf /root/.local /root/.cache /root/.config
 
 # 3. The agent harnesses (design section 6). Only Claude Code is driven by the
-# runner; the others are present for later. The Node ones run on a private
-# Node in /opt/fugaro/node, never on PATH, through wrappers that exec it
-# without touching PATH, so neither side sees the other's Node. They come
-# from the committed lockfile, without install scripts, into root-owned /opt.
+# runner; the others are present for later. The Node ones (Gemini, Pi, Qwen)
+# run on a private Node in /opt/fugaro/node, never on PATH, through wrappers
+# that exec it without touching PATH, so neither side sees the other's Node.
+# They come from the committed lockfile, without install scripts, into
+# root-owned /opt.
+#
+# DeepSeek Harness (dsh, @deepseek-ai/dsh, MIT) is NOT wired into the loop
+# below yet, on purpose (design base-image.md section 6, updated 2026-10-12):
+# no npm was available to pin an exact version in harnesses/package.json and
+# regenerate harnesses/package-lock.json's integrity hashes for a package
+# with this many transitive dependencies. A prior version of this comment
+# added dsh to the loop without that lockfile entry; npm ci then installed
+# nothing for it and the loop's own "entry point is missing" guard failed
+# every build (confirmed on PR #302's fugaro-base (amd64/arm64) and
+# docker-tests checks). Add dsh:@deepseek-ai/dsh/lib/bin.js to the `for h in
+# ...` line below, and a tools.tsv row, only in the same change that pins a
+# real version and regenerates the lockfile with
+# `npm install --package-lock-only` (images/base_test.go's
+# TestDeepSeekHarnessNotHalfWired pins that the three move together).
 COPY --chmod=0755 images/base/install-node.sh /usr/local/lib/fugaro/install-node
 COPY images/base/harnesses/package.json images/base/harnesses/package-lock.json /opt/fugaro/harnesses/
 RUN set -eu; \

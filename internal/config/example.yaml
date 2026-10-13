@@ -53,9 +53,8 @@ agent:
 
 workflows:
   web:                        # workflow name, chosen with `fugaro run --workflow`
-    base: web-node            # go | java-services | web-node
     image:                    # optional; rendered into the derived image (see `fugaro image render`)
-      node: "24"              # Node.js major (24) or exact version (24.19.0); defaults to the base's LTS
+      # tools: { node: "24" }   # or a mise.toml at the root (docs/base-image.md)
       apt: [fonts-liberation] # extra system packages
       # setup:                # extra RUN steps, run as fugaro in /work/repo after the dependency install
       #   - npx playwright install --with-deps chromium   # sudo works in setup steps, during the build only
@@ -68,6 +67,9 @@ workflows:
       # fix: npm run lint -- --fix   # the check step's autofix command; needs lint, since the gate runs fix, then lint
       reports: ["**/junit*.xml"]   # JUnit XML, such as jest-junit or Vitest's junit reporter
     secrets:                  # logical names; infrastructure maps them to Secret Manager
+      # bitbucket-token, github-app-key, claude-oauth-token, anthropic-api-key, and anything
+      # starting claude-oauth-token- (a named Claude account's own secret, set in the local
+      # config's claude_accounts, never here) are reserved and refused as a workflow's own name
       - { name: npm-token, env: NPM_TOKEN }
     resources: { cpu: 4, memory: 8Gi }
     timeouts: { total: 90m, stage: 40m, verify: 30m, finalize_reserve: 5m }
@@ -79,8 +81,7 @@ workflows:
     #   paths: []             # globs; a change under one on the base branch forces a rebuild
 
   server:
-    base: java-services
-    # image: { apt: [python3], setup: ["./gradlew.sh --no-daemon testClasses resolveTestDependencies"] }   # ships JDK 25, Postgres, Redis and the Firebase emulators
+    # image: { apt: [postgresql-17, redis-server], setup: ["./gradlew --no-daemon testClasses"] }   # runtimes in mise.toml; services: docs/base-image.md
     commands:
       build: ./gradlew assemble
       test: ./gradlew test    # with services: fugaro-services start && TEST_SERVICES=local ./gradlew.sh integrationTest ...

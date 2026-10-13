@@ -58,7 +58,7 @@ Tests:
   - Gemini CLI 0.63.0, Pi 0.73.1, Qwen Code 0.25.0 (npm).
 - The mise setting names (`trusted_config_paths`, `idiomatic_version_file_enable_tools`, `auto_install`, `not_found_auto_install`, `yes`, `node.corepack`, `offline`) and `mise ls --missing --json` were read from mise's `settings.toml` and `src/cli/ls.rs` at v2026.10.4.
 - The Debian 13 package names were checked on packages.debian.org, including `postgresql-17-postgis-3`, `postgresql-17-pgvector`, `redis-server` (8.0.2), `eza`, `fd-find`, `bat`, `bind9-dnsutils` and `vim-tiny`.
-- DeepSeek publishes no coding-agent CLI. npm's `deepseek-cli` belongs to a third party and has not been touched since 2025-01.
+- DeepSeek publishes no coding-agent CLI. npm's `deepseek-cli` belongs to a third party and has not been touched since 2025-01. **Superseded 2026-10-12:** DeepSeek now publishes DeepSeek Harness (`dsh`, `@deepseek-ai/dsh`, MIT); see docs/design/base-image.md §6's dated update and B12 below. Its exact npm version is left for the owner to pin (no `npm` was available to regenerate the lockfile safely).
 - The mirror already reads an amd64+arm64 index, compares `--expect-digest` with the index digest, and copies only the amd64 child: `TestMirrorCopiesTheAmd64ImageDigestVerified` publishes exactly such an index.
 - `docs/design/layered-config.md` was not on `origin` when this was written.
 
@@ -105,7 +105,8 @@ Decisions this plan makes:
 - **B12. The harnesses:**
   - critical: Claude Code;
   - bundled but unsupported by the runner: Codex CLI, Gemini CLI, Pi, Qwen Code, OpenCode, Goose, Crush;
-  - excluded: DeepSeek (no official CLI), GitHub Copilot CLI and Amp (proprietary licences need reading before redistribution), Cursor CLI (only a `curl | bash` installer), Aider and Kimi (need a Python runtime).
+  - excluded: GitHub Copilot CLI and Amp (proprietary licences need reading before redistribution), Cursor CLI (only a `curl | bash` installer), Aider and Kimi (need a Python runtime).
+  - **2026-10-12 addendum, not yet bundled:** DeepSeek Harness (`dsh`, `@deepseek-ai/dsh`, MIT). This decision originally excluded DeepSeek for having no official CLI; DeepSeek now publishes one, so it is no longer a deliberate exclusion, but it is also not yet wired into `images/base/tools.tsv` or the Dockerfile's harness loop (docs/design/base-image.md §6 has the full account, including the PR #302 CI failure a first, half-wired attempt caused). It is blocked only on an exact npm version pin and a regenerated `images/base/harnesses/package-lock.json` (`npm install --package-lock-only`), which need `npm` and a careful read of the resulting lockfile (install scripts, licence, arm64 availability) that the environment which first looked at this did not have.
 
   Crush's FSL-1.1-MIT licence is flagged.
 - **B13. The Node harnesses** run on a private Node 24.21.0 in `/opt/fugaro/node`, not on `PATH`, through wrappers. They are installed by `npm ci --ignore-scripts` from a committed lockfile into root-owned `/opt/fugaro/harnesses`.
@@ -4319,9 +4320,11 @@ Expected: build failure (`LintDockerfile` takes two arguments). Once that compil
 
 ```go
 		if w.Base != "" {
-			add(p+".base", "base: was removed in 0.7.0: every workflow builds on the one Fugaro base image. Delete this line and declare the workflow's runtimes in mise.toml (%s)", MigrationDoc)
+			add(p+".base", "was removed in 0.7.0: every workflow builds on the one Fugaro base image. Delete this line and declare the workflow's runtimes in mise.toml (%s)", MigrationDoc)
 		}
 ```
+
+(The code as actually landed does not repeat "base:" at the front of the message: `add` writes it at a path already ending in ".base", and `Problem.String()` would otherwise print "workflows.web.base: base: was removed...", the word doubled. Review round 3 caught this; the message text above reflects the fix, not this plan's original, doubled-prefix draft.)
 
 In `Check`, the `web-node` case goes, and `checkDockerfile` calls `LintDockerfile(data)`.
 
@@ -4393,6 +4396,8 @@ git commit -m "base cut task 17: the config refuses base:, image.node and image.
 ---
 
 ### Task 18: Render, selftest and the hash on the base alone
+
+**Fixture call sites left by Task 17 (owned by this task).** Task 17's fixture migration removed `base: web-node` from the shared `testdata/fixture-repo/fugaro.yaml`, which silently turned `strings.Replace(..., "    base: web-node\n", ...)` inserts into no-ops. The inserts of still-valid keys (`image.setup`, `dockerfile:`, `image.skip_build_scripts`) were re-anchored on the `  app:` line in `internal/image/docker_test.go` and `internal/e2e/docker_test.go`. The two that insert `image: { node: ... }` (`internal/image/docker_test.go`, the node 24.19.0 and 18.17.0 cases) now build a config Task 17 refuses (`image.node` was removed); this task rewrites them to the mise path (`image.tools` / `mise.toml`) or deletes them with a stated reason. Until then they are part of the docker-tagged red set.
 
 **Files:**
 - Modify: `images/derived/Dockerfile.tmpl`, `internal/image/render.go`, `render_test.go`, `selftest.go`, `selftest_test.go`, `local.go`, `local_test.go`, `internal/config/nodepm.go`, `internal/imagecheck/record.go`, `record_test.go`, `internal/runner/lockcache.go`, `internal/runner/*_test.go`
@@ -4476,6 +4481,8 @@ git commit -m "base cut task 18: render, selftest and the hash know only the Fug
 **Files:**
 - Modify: `internal/localcfg/localcfg.go`, `localcfg_test.go`, `testdata/shared.golden.yaml`; `internal/cli/sharedcfg.go`, `sharedcfg_validate_test.go`; `internal/infra/checkjob.go`, `checkjob_test.go`, `spec_test.go`, `tf/testdata/golden/*.json`; `internal/cli/init.go`, `init_images.go`, `image.go`, `image_refresh_rules.go`, `doctor.go`, `sharedcfg.go`; every `internal/cli/*_test.go`, `internal/e2e/*_test.go` and `internal/backend/gcp/*_test.go` that names a legacy kind; `deploy/sandbox/fugaro.yaml`, `testdata/fixture-repo/fugaro.yaml`, `deploy/terraform/gcp/roots/repo/tests/testdata/*.tfvars.json`
 - Regenerate: `internal/infra/tf/testdata/golden/repo*.plan.json` with `scripts/gen-golden-plans.sh`
+
+**Named-account tests, forward-merged after this plan was written.** `main`'s named-Claude-accounts work (forward-merged into `next`, then into this branch, after Task 17 landed) added `internal/infra` tests that also build their fixtures on a legacy base kind: `TestBuildRepoSpecUnchangedWithNoClaudeAccounts`, `TestNeedsBuildDedupesNamedAccountVariants`, `TestRepoSpecHasNoVariantForDisallowedName`, `TestRepoSpecHasNoVariantForNonOAuthRepositories`, `TestRepoSpecSecretMountsOnlyTheVariantsOwnToken`, `TestWorkflowEnvOAuthGetsTokenCap` and `TestApplyCheckJobDropsExecutionTokens`. These are real, independently-added coverage of the named-account feature, not base-image scaffolding: Task 19 must **repair** them (move their fixtures off the legacy base kind, the same as every other `internal/infra` test this task's fixture migration touches), not delete them or weaken what they pin. The same holds for the `internal/cli` named-account tests, about thirty of which are red for the same reason (`TestDoctorClaudeAccountsStored*`, `TestDoctorOAuthToken*`, `TestDoctorFlagsOAuthToken*`, `TestDoctorNamedAccountCheckReadsNoValue`, `TestRunToken*`, `TestFollowUpToken*`): their shared fixture `cliMinimalYAML` (`internal/cli/validate_test.go`) still names a legacy base kind. **Every named-account test in `internal/cli` and `internal/infra` must be repaired, not dropped or weakened.**
 
 **Interfaces:**
 - Produces:

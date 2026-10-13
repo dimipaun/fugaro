@@ -34,6 +34,7 @@ const (
 	whyFollowup  = "it decides whose comments steer a run with the repository's credentials"
 	whyRepoShape = "it is the repository's own"
 	whyForks     = "review mode would run a fork's code next to the job's secrets; only the repository opts in"
+	whyRemoved   = "it was removed in 0.7.0 (" + MigrationDoc + ")"
 )
 
 // Scopes is every fugaro.yaml key and the layers it may be set in. A key
@@ -65,15 +66,16 @@ var Scopes = []ScopeRow{
 	{Key: "agent.first_line_review", In: InProject | InRepo},
 	{Key: "agent.first_line_rounds", In: InProject | InRepo},
 	{Key: "agent.recipe", In: InProject | InRepo | InOverride},
+	{Key: "agent.oauth_token", In: InRepo | InOverride, Why: "it names a credential identity that only the repository's own, PR-reviewed fugaro.yaml may choose among names the local config (never the project layer) allow-lists"},
 	{Key: "budget.mode", In: InRepo, Why: whyPolicy},
 	{Key: "budget.per_run_usd", In: InRepo, Why: whyPolicy},
 	{Key: "budget.allowed_models", In: InRepo, Why: whyPolicy},
 	{Key: "budget.per_day_usd", In: InRepo, Why: whyPolicy},
 	{Key: "workflows.*.profile", In: InRepo, Why: "it chooses a profile"},
-	{Key: "workflows.*.base", In: InProfile | InRepo},
+	{Key: "workflows.*.base", In: InProfile | InRepo, Why: whyRemoved},
 	{Key: "workflows.*.checkout", In: InProfile | InRepo},
-	{Key: "workflows.*.image.node", In: InProfile | InRepo},
-	{Key: "workflows.*.image.jdk", In: InRepo, Why: "it is refused on every base"},
+	{Key: "workflows.*.image.node", In: InProfile | InRepo, Why: whyRemoved},
+	{Key: "workflows.*.image.jdk", In: InRepo, Why: whyRemoved},
 	{Key: "workflows.*.image.apt", In: InProfile | InRepo},
 	{Key: "workflows.*.image.setup", In: InProfile | InRepo},
 	{Key: "workflows.*.image.skip_build_scripts", In: InProfile | InRepo},
@@ -137,8 +139,8 @@ var ExecutableKeys = []string{
 // slips past config publish's --executable-changes gate (PR #244) is a
 // compile-time-visible test failure, not a silent gap.
 var NonExecutableImageKeys = map[string]string{
-	"workflows.*.image.node": "a pinned Node major or exact version (nodeVersionRE); never a command",
-	"workflows.*.image.jdk":  "refused on every base (validateImage); never reaches a Dockerfile",
+	"workflows.*.image.node": "removed in 0.7.0, refused unconditionally by validateImage (" + MigrationDoc + "); never a command",
+	"workflows.*.image.jdk":  "removed in 0.7.0, refused unconditionally by validateImage (" + MigrationDoc + "); never reaches a Dockerfile",
 }
 
 // ScopeOf is the row of path, a fugaro.yaml path with a real workflow name

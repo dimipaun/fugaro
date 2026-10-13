@@ -55,7 +55,7 @@ fugaro CLI ---- run ------------->    one execution per task, then gone
                                     Firebase (optional): the shared budget
 ```
 
-1. **Start** from the image of the repository's workflow (a named build-and-test setup in its `fugaro.yaml`): a base (`web-node`, `go` or `java-services`) plus its checkout and dependencies, rebuilt by Cloud Build when a daily check finds it stale.
+1. **Start** from the image of the repository's workflow (a named build-and-test setup in its `fugaro.yaml`): the one Fugaro base plus its checkout, its runtimes (from `mise.toml`) and its dependencies, rebuilt by Cloud Build when a daily check finds it stale.
 2. **Sync** to the exact target commit and restore the dependency caches.
 3. **Loop:** Claude Code implements, writes tests, runs the build and tests through a recording wrapper, reviews and fixes, for as many review rounds as configured.
 4. **Push and open the pull request**: each commit is pushed within about a minute while the agent works, a draft opens at the first push (marked not verified), and it is marked ready only when the run passes. Reviewers are requested only then. Set `git.pr.checkpoints` only once everyone is on 0.5.1, and refresh older job images with `fugaro image refresh`; on a host without draft PRs set `git.pr.early_draft: false` ([details](docs/git-providers.md#checkpoint-pushes-gitprcheckpoints)).
@@ -105,7 +105,7 @@ agent:
   max_budget_usd: 25          # per stage
 workflows:
   web:
-    base: web-node            # go | java-services | web-node
+    # the repository's mise.toml (or image.tools) declares its runtimes
     commands:
       build: npm run build
       test: npm test
@@ -118,6 +118,8 @@ workflows:
 `agent.models` pins a model per role (coder, reviewer, background), and an optional `budget:` block can only tighten the owner's caps ([docs/gcp-setup.md](docs/gcp-setup.md#turning-the-model-budget-on)). **Other models (experimental):** the coder can be a non-Anthropic model through OpenRouter, while Claude Code stays the harness and Claude the reviewer; the project owner opts each repository in. See [docs/multi-model.md](docs/multi-model.md).
 
 **Recipes:** pick the review loop per run (`fugaro run --recipe solo`) or per repository (`agent.recipe`); see [docs/recipes.md](docs/recipes.md).
+
+**Project layer:** a project can publish shared defaults and named workflow profiles that every anchored repository's minimal `fugaro.yaml` inherits; see [docs/project-layer.md](docs/project-layer.md).
 
 **Project layer:** a project can publish shared defaults and named workflow profiles that every anchored repository's minimal `fugaro.yaml` inherits; see [docs/project-layer.md](docs/project-layer.md).
 
@@ -138,7 +140,7 @@ A new cloud is a backend behind the interface in `internal/backend` plus its pro
 
 ## Roadmap
 
-- [x] Runner, git providers (GitHub, Bitbucket Cloud), base images (`web-node`, `go`, `java-services`), the Cloud Run backend and CLI
+- [x] Runner, git providers (GitHub, Bitbucket Cloud), the base image (one, multi-architecture, with mise), the Cloud Run backend and CLI
 - [x] `fugaro init` and `/fugaro:setup`, the five plugin skills, teammates with no setup
 - [x] Follow-up runs, early draft PRs, the shared budget, `fugaro watch` and `fugaro report`, other models through OpenRouter (experimental)
 - [x] Releases with GoReleaser, the Homebrew tap and cosign-signed checksums

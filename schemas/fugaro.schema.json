@@ -78,6 +78,13 @@
         "first_line_review": { "enum": ["auto", "on", "off"], "description": "A review by the coder's own model, with a fix between, before the senior review. auto: on only when a provider serves the coder and not the reviewer." },
         "first_line_rounds": { "type": "integer", "minimum": 1, "maximum": 3, "description": "First-line review/fix cycles, counted apart from review_rounds." },
         "recipe": { "type": "string", "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?)?$", "description": "The recipe (task loop) runs use unless fugaro run --recipe names one: .fugaro/recipes/<name>.yaml, the project's fugaro/recipes/<name>.yaml, or the catalog (default, solo, standard, premium, review-only, pick, test-and-fix, lint-fix). Fugaro before 0.5.0 refuses this key." },
+        "oauth_token": {
+          "type": "string",
+          "pattern": "^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$",
+          "maxLength": 31,
+          "not": { "const": "default" },
+          "description": "The named Claude account (claude_accounts in the local config) this workflow's agent.auth: oauth uses; absent means the repository's default account, the existing claude-oauth-token secret (docs/design/named-oauth-tokens.md). fugaro run --token NAME overrides it per run. The local config's claude_accounts.<name>.allow_data_to must list this repository, checked at launch, not by this schema. Fugaro before 0.6.5 refuses this key."
+        },
         "max_budget_usd": { "type": "number", "minimum": 0 },
         "instructions": { "type": "string" },
         "review": { "type": "string" }
@@ -160,14 +167,6 @@
       "not": { "required": ["image", "dockerfile"] },
       "allOf": [
         {
-          "if": { "properties": { "base": { "enum": ["base", "go", "java-services"] } } },
-          "then": {
-            "properties": {
-              "image": { "not": { "required": ["node"] }, "properties": { "skip_build_scripts": { "const": false } } }
-            }
-          }
-        },
-        {
           "if": { "not": { "required": ["profile"] } },
           "then": { "required": ["commands"], "properties": { "commands": { "required": ["build", "test"] } } }
         },
@@ -186,21 +185,18 @@
               }
             }
           }
-        },
-        {
-          "if": { "required": ["base"], "properties": { "base": { "enum": ["go", "java-services", "web-node"] } } },
-          "then": { "properties": { "image": { "not": { "required": ["tools"] } } } }
         }
       ],
       "properties": {
         "profile": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "The project layer's profile this workflow starts from; its own keys override the profile's field by field. Needs fugaro 0.6.0." },
-        "base": { "enum": ["base", "go", "java-services", "web-node"] },
+        "base": { "not": {}, "$comment": "not: {} forbids this key outright (matches nothing), including an explicit null: the removed-key tombstone idiom (6x across fugaro.schema.json and project-layer.schema.json: base, image.node and image.jdk), not dead code. It keeps the key documented in an editor's tooltip (see description) while still refusing any value. Do not delete when touching this key.", "description": "Removed in 0.7.0: delete it and declare runtimes in mise.toml (docs/base-image-migration.md)" },
         "checkout": { "enum": ["baked", "clone"], "description": "baked (default): a derived image is built per repository. clone: image.apt, image.setup, image.tools, image.skip_build_scripts and dockerfile are refused, since they would need a build. Validates only: the runner and the build do not act on checkout: clone yet (generic-tool plan Tasks 16/17, not merged); every workflow still builds and runs the baked image regardless of this value. Needs fugaro 0.7.0." },
         "image": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "node": { "type": ["string", "integer"], "pattern": "^[0-9]+(\\.[0-9]+\\.[0-9]+)?$" },
+            "node": { "not": {}, "$comment": "not: {} forbids this key outright (matches nothing), including an explicit null: the removed-key tombstone idiom (6x across fugaro.schema.json and project-layer.schema.json: base, image.node and image.jdk), not dead code. It keeps the key documented in an editor's tooltip (see description) while still refusing any value. Do not delete when touching this key.", "description": "Removed in 0.7.0: declare node in mise.toml ([tools] node = \"24\") or in image.tools (docs/base-image-migration.md)" },
+            "jdk": { "not": {}, "$comment": "not: {} forbids this key outright (matches nothing), including an explicit null: the removed-key tombstone idiom (6x across fugaro.schema.json and project-layer.schema.json: base, image.node and image.jdk), not dead code. It keeps the key documented in an editor's tooltip (see description) while still refusing any value. Do not delete when touching this key.", "description": "Removed in 0.7.0: declare Java in mise.toml ([tools] java = \"temurin-25\") (docs/base-image-migration.md)" },
             "skip_build_scripts": { "type": "boolean" },
             "apt": {
               "type": "array",
@@ -269,7 +265,12 @@
               "name": {
                 "type": "string",
                 "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
-                "not": { "enum": ["bitbucket-token", "github-app-key", "claude-oauth-token", "anthropic-api-key"] }
+                "not": {
+                  "anyOf": [
+                    { "enum": ["bitbucket-token", "github-app-key", "claude-oauth-token", "anthropic-api-key"] },
+                    { "pattern": "^claude-oauth-token-" }
+                  ]
+                }
               },
               "env": {
                 "type": "string",

@@ -104,7 +104,7 @@ jobs:
             ref="refs/tags/$TAG"
           fi
           kinds=,
-          for k in web-node go java-services history; do
+          for k in web-node go java-services history base; do
             if git cat-file -e "$ref:images/$k/Dockerfile" 2>/dev/null; then
               kinds="$kinds$k,"
             fi
@@ -145,7 +145,7 @@ jobs:
       - name: Save the image for the publish job
         if: contains(needs.version.outputs.kinds, format(',{0},', matrix.base)) && needs.version.outputs.publish == 'true'
         run: docker save "fugaro-${{ matrix.base }}:ci" | gzip > "fugaro-${{ matrix.base }}.tar.gz"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: contains(needs.version.outputs.kinds, format(',{0},', matrix.base)) && needs.version.outputs.publish == 'true'
         with:
           name: fugaro-${{ matrix.base }}-image
@@ -184,14 +184,130 @@ jobs:
       - name: Save the image for the publish job
         if: contains(needs.version.outputs.kinds, ',history,') && needs.version.outputs.publish == 'true'
         run: docker save "fugaro-history:ci" | gzip > "fugaro-history.tar.gz"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: contains(needs.version.outputs.kinds, ',history,') && needs.version.outputs.publish == 'true'
         with:
           name: fugaro-history-image
           path: fugaro-history.tar.gz
           retention-days: 1
-  # Only this job ever needs packages:write, and it never runs on
-  # pull_request: `version.outputs.publish` is forced false there.
+  # The one base (design base-image.md): built natively per architecture,
+  # smoke-tested (every pin and every tools.tsv row), held to its size
+  # budget and scanned for secrets on every run, scanned for
+  # vulnerabilities off pull requests, and saved for publish-base.
+  fugaro-base:
+    needs: version
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: contains(needs.version.outputs.kinds, ',base,')
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Checkout the resolved tag
+        if: contains(needs.version.outputs.kinds, ',base,') && needs.version.outputs.tag != ''
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: git checkout --quiet "refs/tags/$TAG"
+      # The runner's disk is about 14 GB free; the base and its saved
+      # archive need room.
+      - name: Free disk space
+        if: contains(needs.version.outputs.kinds, ',base,')
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
+      - name: Build
+        if: contains(needs.version.outputs.kinds, ',base,')
+        env:
+          FUGARO_VERSION: ${{ needs.version.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: PLATFORM="linux/$ARCH" images/build-base.sh base fugaro-base:ci
+      - name: Smoke test
+        if: contains(needs.version.outputs.kinds, ',base,')
+        run: images/smoke.sh fugaro-base:ci base
+      - name: Size budget
+        if: contains(needs.version.outputs.kinds, ',base,')
+        run: images/size-budget.sh fugaro-base:ci
+      - name: Secret scan
+        if: contains(needs.version.outputs.kinds, ',base,')
+        run: images/scan.sh --secrets fugaro-base:ci
+      - name: Vulnerability scan
+        if: contains(needs.version.outputs.kinds, ',base,') && github.event_name != 'pull_request'
+        run: images/scan.sh fugaro-base:ci
+      - name: Save the image for publish-base
+        if: contains(needs.version.outputs.kinds, ',base,') && needs.version.outputs.publish == 'true'
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: docker save fugaro-base:ci | gzip > "fugaro-base-$ARCH.tar.gz"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: contains(needs.version.outputs.kinds, ',base,') && needs.version.outputs.publish == 'true'
+        with:
+          name: fugaro-base-${{ matrix.arch }}-image
+          path: fugaro-base-${{ matrix.arch }}.tar.gz
+          retention-days: 1
+  # Pushes each architecture under <version>-<arch>, then the
+  # multi-platform index <version> (and <major> when it moves) from the two
+  # pushed digests. This job and publish are the only ones with
+  # packages: write.
+  publish-base:
+    needs: [version, fugaro-base]
+    if: needs.version.outputs.publish == 'true' && contains(needs.version.outputs.kinds, ',base,')
+    concurrency:
+      group: images-publish-base
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: fugaro-base-*-image
+          merge-multiple: true
+      - name: Push per architecture and publish the index
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+          VERSION: ${{ needs.version.outputs.version }}
+          MAJOR: ${{ needs.version.outputs.major }}
+          MOVE_MAJOR: ${{ needs.version.outputs.move_major }}
+        run: |
+          set -eu
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+          repo=ghcr.io/dimipaun/fugaro-base
+          digests=""
+          for arch in amd64 arm64; do
+            gunzip -c "fugaro-base-$arch.tar.gz" | docker load
+            docker tag fugaro-base:ci "$repo:$VERSION-$arch"
+            docker push "$repo:$VERSION-$arch"
+            digests="$digests $(docker image inspect --format '{{index .RepoDigests 0}}' "$repo:$VERSION-$arch")"
+            docker image rm fugaro-base:ci "$repo:$VERSION-$arch" >/dev/null
+          done
+          tags="--tag $repo:$VERSION"
+          if [ "$MOVE_MAJOR" = true ]; then
+            tags="$tags --tag $repo:$MAJOR"
+          fi
+          # shellcheck disable=SC2086
+          docker buildx imagetools create $tags $digests
+          {
+            echo '### fugaro-base'
+            for arch in amd64 arm64; do
+              mb=$(docker buildx imagetools inspect "$repo:$VERSION-$arch" --raw | jq '[.layers[].size] | add / 1000000 | floor')
+              echo "- $arch: $mb MB compressed"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+  # This job and publish-base are the only ones that need packages: write,
+  # and neither ever runs on pull_request: `version.outputs.publish` is
+  # forced false there.
   publish:
     needs: [version, base, history]
     if: needs.version.outputs.publish == 'true'
@@ -214,7 +330,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: contains(needs.version.outputs.kinds, format(',{0},', matrix.base))
         with:
           name: fugaro-${{ matrix.base }}-image
@@ -242,10 +358,26 @@ jobs:
   # hand (docs/release.md). This job has no packages permission and never logs
   # in, so it sees what an anonymous user (the mirror, a plain docker pull)
   # sees, and it fails the release when a published image is not pullable or
-  # has no linux/amd64 build. Digests go to the run summary.
+  # has no linux/amd64 build (and, for fugaro-base, linux/arm64). Digests go
+  # to the run summary.
   verify-public:
-    needs: [version, publish]
-    if: needs.version.outputs.publish == 'true'
+    needs: [version, publish, publish-base]
+    # publish-base is legitimately skipped when kinds has no base (an older
+    # tag's tree, e.g. a backport): GitHub's default auto-skip ("a job is
+    # skipped if any of its needs did not succeed") would then skip this job
+    # too, leaving the legacy images published with no anonymous-pull check.
+    # always() overrides that default, so the explicit checks below carry the
+    # whole gate: publish must have succeeded, and when the kinds include base
+    # publish-base must have SUCCEEDED too (a failed, cancelled or skipped
+    # publish-base, say after the secret scan failed, must not let this job
+    # report a green for yesterday's image that was never refreshed). Only
+    # when there is no base kind is a skipped publish-base fine.
+    if: >-
+      always() &&
+      needs.version.outputs.publish == 'true' &&
+      needs.publish.result == 'success' &&
+      (needs['publish-base'].result == 'success' ||
+      !contains(needs.version.outputs.kinds, ',base,'))
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -271,12 +403,22 @@ jobs:
               refs="$refs ghcr.io/dimipaun/fugaro-$img:$MAJOR"
             fi
           done
-          if [ -z "$refs" ]; then
+          if [ -n "$refs" ]; then
+            # shellcheck disable=SC2086
+            images/verify-public.sh $refs | tee verify.log
+          else
+            : > verify.log
+          fi
+          if case "$KINDS" in *",base,"*) true ;; *) false ;; esac; then
+            base="ghcr.io/dimipaun/fugaro-base:$VERSION"
+            if [ "$MOVE_MAJOR" = true ]; then base="$base ghcr.io/dimipaun/fugaro-base:$MAJOR"; fi
+            # shellcheck disable=SC2086
+            images/verify-public.sh --arm64 $base | tee -a verify.log
+          fi
+          if [ ! -s verify.log ]; then
             echo "no image was published from this tree: nothing to verify"
             exit 0
           fi
-          # shellcheck disable=SC2086
-          images/verify-public.sh $refs | tee verify.log
           { echo '### Published images'; echo; sed 's/^verify-public: /- /' verify.log; } >> "$GITHUB_STEP_SUMMARY"
   docker-tests:
     if: github.event_name != 'push'

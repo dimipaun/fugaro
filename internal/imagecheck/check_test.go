@@ -104,7 +104,7 @@ func TestDecideTriggers(t *testing.T) {
 		{"force", func(_ *testing.T, in *Inputs) { in.Force = true }, Rebuild, []string{ReasonForce}},
 		{"no record", func(_ *testing.T, in *Inputs) { in.Record = nil }, Rebuild, []string{ReasonNoRecord}},
 		{"image config", func(t *testing.T, in *Inputs) {
-			in.Config = parse(t, strings.Replace(webYAML, "base: web-node,", "base: web-node, image: { apt: [jq] },", 1))
+			in.Config = parse(t, strings.Replace(webYAML, "commands:", "image: { apt: [jq] }, commands:", 1))
 		}, Rebuild, []string{ReasonImageConfig}},
 		{"template salt", func(_ *testing.T, in *Inputs) { in.TemplateSalt = "new-salt" }, Rebuild, []string{ReasonImageConfig}},
 		{"lockfiles", func(_ *testing.T, in *Inputs) {

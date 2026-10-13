@@ -131,7 +131,7 @@ func checkFixture(t *testing.T, name string) {
 			t.Errorf("workflow %s: %v", wf, err)
 			continue
 		}
-		if msgs := config.LintDockerfile(df, w.Base); len(msgs) > 0 {
+		if msgs := config.LintDockerfile(df); len(msgs) > 0 {
 			t.Errorf("workflow %s: Dockerfile breaks the contract: %v", wf, msgs)
 		}
 		if (repoFile != "") != slices.Contains(facts.dockerfiles, wf) {
@@ -296,7 +296,7 @@ func TestRenderedDockerfilePassesContract(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if msgs := config.LintDockerfile(df, base); len(msgs) > 0 {
+			if msgs := config.LintDockerfile(df); len(msgs) > 0 {
 				t.Errorf("base %s, image %+v: %v", base, img, msgs)
 			}
 		}

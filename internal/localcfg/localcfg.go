@@ -78,8 +78,18 @@ type Config struct {
 	// Providers are the non-Anthropic backends models may be routed to
 	// (design m10-multi-model.md §3), by name. Only the owner sets them.
 	Providers map[string]config.ModelProvider `yaml:"providers,omitempty"`
+	// ClaudeAccounts are named Claude OAuth credentials a repository may
+	// choose among by name (design docs/design/named-oauth-tokens.md).
+	// Only the owner sets them, here, never in fugaro.yaml.
+	ClaudeAccounts map[string]config.ClaudeAccount `yaml:"claude_accounts,omitempty"`
 	// Watch tunes fugaro watch.
-	Watch       *Watch          `yaml:"watch,omitempty"`
+	Watch *Watch `yaml:"watch,omitempty"`
+	// UpdateCheck turns off the daily check for a newer fugaro release and
+	// its one-line stderr nag (FUGARO_NO_UPDATE_CHECK=1 does the same;
+	// `fugaro doctor`'s own cli-version check ignores both); nil or true
+	// leaves it on. Operator-only, like claude_accounts: never published to
+	// the runs bucket (Shared).
+	UpdateCheck *bool           `yaml:"update_check,omitempty"`
 	User        string          `yaml:"user,omitempty"`
 	MaxParallel int             `yaml:"max_parallel"`
 	Endpoints   Endpoints       `yaml:"endpoints,omitempty"`
@@ -163,6 +173,12 @@ type LongContext struct {
 	AboveInputTokens int64    `yaml:"above_input_tokens"`
 	InputPerM        *float64 `yaml:"input_per_m"`
 	OutputPerM       *float64 `yaml:"output_per_m"`
+}
+
+// UpdateCheckEnabled reports whether the daily update check and its stderr
+// nag run for this config: true unless update_check: false.
+func (c *Config) UpdateCheckEnabled() bool {
+	return c.UpdateCheck == nil || *c.UpdateCheck
 }
 
 // BudgetMode is the budget's mode: "off" when there is no budget block or
@@ -682,13 +698,16 @@ func (c *Config) validate() error {
 	for _, kind := range slices.Sorted(maps.Keys(c.BaseImages)) {
 		switch ref := c.BaseImages[kind]; {
 		case !slices.Contains(config.Bases, kind):
-			bad("base_images: %q is not a base kind (%s)", kind, strings.Join(config.Bases, ", "))
+			bad("base_images: %q is not a base kind (%s): go, java-services and web-node were removed in 0.7.0 (%s)", kind, strings.Join(config.Bases, ", "), config.MigrationDoc)
 		case ref == "" || strings.ContainsAny(ref, " \t\r\n"):
 			bad("base_images.%s: %q is not an image reference", kind, ref)
 		}
 	}
 	c.validateBudget(bad)
 	for _, p := range config.ValidateModelProviders(c.Providers) {
+		bad("%s: %s", p.Path, p.Message)
+	}
+	for _, p := range config.ValidateClaudeAccounts(c.ClaudeAccounts) {
 		bad("%s: %s", p.Path, p.Message)
 	}
 	if w := c.Watch; w != nil && w.BurnAlertUSDPerHour != nil {

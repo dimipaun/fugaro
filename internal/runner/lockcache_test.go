@@ -33,7 +33,6 @@ git: { provider: github, base_branch: main }
 agent: { auth: api-key, review_rounds: 1 }
 workflows:
   app:
-    base: web-node
     commands:
       build: sh build.sh
       test: sh test.sh
@@ -439,8 +438,8 @@ workflows:
 `
 
 // A workflow with no base: (the implicit Fugaro base) gets the same default
-// npm cache a base: web-node workflow would (TestCachesRestoredAndWrittenBack),
-// not no cache at all: restoreCaches resolves the default-cache kind through
+// npm cache config.DefaultCache("web-node", ...) would also give, not no
+// cache at all: restoreCaches resolves the default-cache kind through
 // w.BaseKind(), not the raw (empty) w.Base field, and config.DefaultCache
 // only recognizes "web-node" and config.BaseKind ("base").
 //

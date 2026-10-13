@@ -3,6 +3,5 @@ project: aurora
 gcp_project: proj-1234
 profiles:
   p:
-    base: web-node
-    image: { tools: { node: "24" } }
+    image: { node: "24" }
     commands: { build: npm run build, test: npm test }

@@ -3,7 +3,6 @@ project: aurora
 git: { provider: github }
 workflows:
   web:
-    base: web-node
     image:
       # A leading vertical tab (\v) before the flag-like prefix: Go's
       # strings.TrimSpace (unicode.IsSpace) treats \v as whitespace, so the

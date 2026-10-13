@@ -67,7 +67,7 @@ func init() {
 		"runs[].terminal", "runs[].settled", "runs[].base_branch", "runs[].stale_draft", "runs[].draft_fallback", "runs[].pr_status_at")
 	add("diagnose", Diagnosis{}, "row", "row.pr_url", "row.reason", "row.cost.route_by", "row.cost.reported_usd",
 		"row.project_layer", "row.project_layer.sha256", "row.project_layer.generation", "row.project_layer.applied", "row.config_sha256",
-		"halt", "verify", "failed", "flaky", "findings", "agent_message",
+		"row.oauth_account", "halt", "verify", "failed", "flaky", "findings", "agent_message",
 		"log_tail", "draft_note", "report_path", "follow_up", "comments_path", "route_by", "reported_usd")
 	add("logs", logLine{}, "time", "severity", "stage", "stream", "event", "message")
 	add("cancel", cancelResult{}, "project", "run", "status", "hard", "pr")
@@ -150,7 +150,9 @@ func TestLintJSONFieldsExist(t *testing.T) {
 // names: values, files and keys of other documents.
 var notFields = []string{
 	"fugaro.yaml", "yarn.lock", "commands.test", "git.base_branch", "gcp_project", // files and fugaro.yaml keys
-	"tool_error", // a value of a log entry's event
+	"tool_error",        // a value of a log entry's event
+	"claude_accounts",   // a local-config key (never in --json output: it is operator-only and never published)
+	"agent.oauth_token", // a fugaro.yaml key, not a JSON output field
 }
 
 var fieldTokenRE = regexp.MustCompile("`([a-z][a-z0-9]*(?:(?:_[a-z0-9]+)+|(?:\\.[a-z][a-z0-9_]*(?:\\[\\])?)+)(?:\\.[a-z][a-z0-9_]*)*)`")

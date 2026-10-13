@@ -75,6 +75,11 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		"agent.first_line_review":          InProject | InRepo,
 		"agent.first_line_rounds":          InProject | InRepo,
 		"agent.recipe":                     InProject | InRepo | InOverride,
+		// Named oauth tokens plan Task 6 (docs/design/named-oauth-tokens.md §3
+		// T2): added after agent.recipe, in config.Scopes already; the design
+		// doc's own §5 table (which this golden map otherwise mirrors) gains
+		// its row in Task 9, once the shipped shape is documented.
+		"agent.oauth_token": InRepo | InOverride,
 
 		"budget.mode":           InRepo,
 		"budget.per_run_usd":    InRepo,
