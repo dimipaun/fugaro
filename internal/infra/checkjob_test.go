@@ -72,11 +72,12 @@ func TestRewriteCheckSpecRefusals(t *testing.T) {
 	delete(m, "future_key")
 	reformatted, _ := json.MarshalIndent(m, "", "  ")
 	for name, tc := range map[string]struct{ raw, image, why string }{
-		"not json":            {"{", oldBase, "not a check spec"},
-		"image names no kind": {`{"base_images":{"base":"` + oldBase + `"}}`, "elsewhere/img:1", "none of its spec's base images"},
-		"unknown key":         {string(unknown), oldBase, "keys this fugaro does not know"},
-		"unknown, indented":   {string(indented), oldBase, "keys this fugaro does not know"},
-		"reformatted":         {string(reformatted), oldBase, "not in the form fugaro init --repo writes"},
+		"not json":                         {"{", oldBase, "not a check spec"},
+		"image names no kind":              {`{"base_images":{"base":"` + oldBase + `"}}`, "elsewhere/img:1", "none of its spec's base images"},
+		"legacy spec, image names no kind": {`{"base_images":{"go":"` + oldBase + `"}}`, "elsewhere/img:1", "none of its spec's base images"},
+		"unknown key":                      {string(unknown), oldBase, "keys this fugaro does not know"},
+		"unknown, indented":                {string(indented), oldBase, "keys this fugaro does not know"},
+		"reformatted":                      {string(reformatted), oldBase, "not in the form fugaro init --repo writes"},
 	} {
 		_, _, err := RewriteCheckSpec(tc.raw, tc.image, map[string]string{"base": newBase})
 		if !errors.Is(err, ErrCheckJobShape) || !strings.Contains(err.Error(), tc.why) || !strings.Contains(err.Error(), "fugaro init --repo") {

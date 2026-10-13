@@ -68,23 +68,6 @@ func RewriteCheckSpec(raw, image string, bases map[string]string) (spec, newImag
 	if err := json.Unmarshal([]byte(raw), &s); err != nil {
 		return "", "", fmt.Errorf("%w: its %s is not a check spec (%v); run fugaro init --repo in the checkout", ErrCheckJobShape, CheckSpecEnv, err)
 	}
-	legacy := false
-	for k := range s.BaseImages {
-		if !slices.Contains(config.Bases, k) {
-			legacy = true
-		}
-	}
-	if legacy && bases[config.BaseKind] != "" {
-		// The 0.7.0 cut: a spec of the removed kinds becomes the one base,
-		// with the job's image, in this one update (design base-image.md
-		// section 10).
-		s.BaseImages = map[string]string{config.BaseKind: bases[config.BaseKind]}
-		out, err := json.Marshal(s)
-		if err != nil {
-			return "", "", err
-		}
-		return string(out), bases[config.BaseKind], nil
-	}
 	kind := ""
 	for _, k := range slices.Sorted(maps.Keys(s.BaseImages)) {
 		if s.BaseImages[k] == image {
@@ -94,6 +77,26 @@ func RewriteCheckSpec(raw, image string, bases map[string]string) (spec, newImag
 	}
 	if kind == "" {
 		return "", "", fmt.Errorf("%w: its image %s is none of its spec's base images (%s); run fugaro init --repo in the checkout", ErrCheckJobShape, image, strings.Join(slices.Sorted(maps.Values(s.BaseImages)), ", "))
+	}
+	legacy := false
+	for k := range s.BaseImages {
+		if !slices.Contains(config.Bases, k) {
+			legacy = true
+		}
+	}
+	if legacy && bases[config.BaseKind] != "" {
+		// The 0.7.0 cut: a spec of the removed kinds becomes the one base,
+		// with the job's image, in this one update (design base-image.md
+		// section 10). image was already checked above to be one of the
+		// spec's own base images, the same guard the non-legacy path below
+		// gets: a job whose image is not in its spec is refused, never
+		// silently rewritten to point at some other base.
+		s.BaseImages = map[string]string{config.BaseKind: bases[config.BaseKind]}
+		out, err := json.Marshal(s)
+		if err != nil {
+			return "", "", err
+		}
+		return string(out), bases[config.BaseKind], nil
 	}
 	moved := maps.Clone(s.BaseImages)
 	for k := range moved {
