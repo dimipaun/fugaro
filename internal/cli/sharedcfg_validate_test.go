@@ -17,7 +17,7 @@ region: us-east5
 runs_bucket: fugaro-runs-fugaro-belong
 registry_host: us-east5-docker.pkg.dev/fugaro-belong
 base_images:
-    web-node: us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-web-node:0.3.1
+    base: us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-base:0.3.1
 build:
     machine_type: E2_HIGHCPU_8
 log_view: projects/fugaro-belong/locations/us-east5/buckets/fugaro-runs/views/fugaro-runs
@@ -62,7 +62,7 @@ func TestParseSharedRefusals(t *testing.T) {
 			return strings.Replace(s, "registry_host: us-east5-docker.pkg.dev/fugaro-belong\n", "", 1)
 		}, "registry_host"},
 		{"foreign base image", func(s string) string {
-			return strings.Replace(s, "us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-web-node:0.3.1", "evil.example/x:1", 1)
+			return strings.Replace(s, "us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-base:0.3.1", "evil.example/x:1", 1)
 		}, "base_images"},
 		{"base image in a look-alike project", func(s string) string {
 			return strings.Replace(s, "us-east5-docker.pkg.dev/fugaro-belong/fugaro-base", "us-east5-docker.pkg.dev/fugaro-belong-evil/fugaro-base", 1)
@@ -132,32 +132,32 @@ func TestParseSharedRefusals(t *testing.T) {
 			return strings.Replace(s, "machine_type: E2_HIGHCPU_8", "machine_type: \"x?alt=json#\"", 1)
 		}, "build.machine_type"},
 		{"base image outside fugaro-base", func(s string) string {
-			return strings.Replace(s, "fugaro-belong/fugaro-base/fugaro-web-node", "fugaro-belong/other-repo/fugaro-web-node", 1)
-		}, "base_images.web-node"},
+			return strings.Replace(s, "fugaro-belong/fugaro-base/fugaro-base", "fugaro-belong/other-repo/fugaro-base", 1)
+		}, "base_images.base"},
 		{"base image with a .. segment", func(s string) string {
-			return strings.Replace(s, "fugaro-base/fugaro-web-node", "fugaro-base/../evil/fugaro-web-node", 1)
-		}, "base_images.web-node"},
+			return strings.Replace(s, "fugaro-base/fugaro-base", "fugaro-base/../evil/fugaro-base", 1)
+		}, "base_images.base"},
 		{"base image with a stray @", func(s string) string {
-			return strings.Replace(s, "fugaro-web-node:0.3.1", "fugaro-web-node@evil.example:0.3.1", 1)
-		}, "base_images.web-node"},
+			return strings.Replace(s, "fugaro-base:0.3.1", "fugaro-base@evil.example:0.3.1", 1)
+		}, "base_images.base"},
 		{"base image with a bad digest", func(s string) string {
-			return strings.Replace(s, "fugaro-web-node:0.3.1", "fugaro-web-node@sha256:abc", 1)
-		}, "base_images.web-node"},
+			return strings.Replace(s, "fugaro-base:0.3.1", "fugaro-base@sha256:abc", 1)
+		}, "base_images.base"},
 		{"base image with an overlong tag", func(s string) string {
-			return strings.Replace(s, "fugaro-web-node:0.3.1", "fugaro-web-node:"+strings.Repeat("t", 129), 1)
-		}, "base_images.web-node"},
+			return strings.Replace(s, "fugaro-base:0.3.1", "fugaro-base:"+strings.Repeat("t", 129), 1)
+		}, "base_images.base"},
 		{"base image with a dot-dot tag", func(s string) string {
-			return strings.Replace(s, "fugaro-web-node:0.3.1", "fugaro-web-node:..", 1)
-		}, "base_images.web-node"},
+			return strings.Replace(s, "fugaro-base:0.3.1", "fugaro-base:..", 1)
+		}, "base_images.base"},
 		{"base image with a leading dash tag", func(s string) string {
-			return strings.Replace(s, "fugaro-web-node:0.3.1", "fugaro-web-node:-x", 1)
-		}, "base_images.web-node"},
+			return strings.Replace(s, "fugaro-base:0.3.1", "fugaro-base:-x", 1)
+		}, "base_images.base"},
 		{"base image with a leading dot tag", func(s string) string {
-			return strings.Replace(s, "fugaro-web-node:0.3.1", "fugaro-web-node:.x", 1)
-		}, "base_images.web-node"},
+			return strings.Replace(s, "fugaro-base:0.3.1", "fugaro-base:.x", 1)
+		}, "base_images.base"},
 		{"base image registry itself", func(s string) string {
-			return strings.Replace(s, "us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-web-node:0.3.1", "us-east5-docker.pkg.dev/fugaro-belong/fugaro-base", 1)
-		}, "base_images.web-node"},
+			return strings.Replace(s, "us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-base:0.3.1", "us-east5-docker.pkg.dev/fugaro-belong/fugaro-base", 1)
+		}, "base_images.base"},
 		{"unknown key", func(s string) string { return s + "bogus: 1\n" }, "bogus"},
 		{"oversize", func(s string) string { return s + "#" + strings.Repeat("x", localcfg.SharedMaxBytes) + "\n" }, "64 KiB"},
 		// What the table of the design does not name, but a hostile
@@ -200,6 +200,24 @@ func TestParseSharedRefusals(t *testing.T) {
 				t.Errorf("the refusal is not one clean line: %q", err.Error())
 			}
 		})
+	}
+}
+
+// A published shared config written before the cut still lists the removed
+// kinds: they are dropped with a warning, never a refusal that would lock
+// every teammate out until an operator republishes.
+func TestSharedConfigDropsLegacyBaseImageKeys(t *testing.T) {
+	data := strings.Replace(validShared(), "base_images:\n", "base_images:\n    go: us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-go:0.6.0\n", 1)
+	c, err := ParseShared([]byte(data), sharedAnchor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.BaseImages["go"]; ok {
+		t.Errorf("base_images = %v", c.BaseImages)
+	}
+	ws := strings.Join(c.Warnings(), "\n")
+	if !strings.Contains(ws, "base_images.go") || !strings.Contains(ws, "republishes") {
+		t.Errorf("warnings = %q", ws)
 	}
 }
 
@@ -280,12 +298,12 @@ func TestParseSharedQuotesHostileText(t *testing.T) {
 func TestParseSharedAcceptsDigestPinnedBaseImages(t *testing.T) {
 	digest := "@sha256:" + strings.Repeat("ab", 32)
 	for _, ref := range []string{
-		"us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-web-node" + digest,
-		"us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-web-node:0.3.1" + digest,
-		"us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-web-node",
-		"us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/team/fugaro-web-node:dev-abc_1.2",
+		"us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-base" + digest,
+		"us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-base:0.3.1" + digest,
+		"us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-base",
+		"us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/team/fugaro-base:dev-abc_1.2",
 	} {
-		data := strings.Replace(validShared(), "us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-web-node:0.3.1", ref, 1)
+		data := strings.Replace(validShared(), "us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-base:0.3.1", ref, 1)
 		if _, err := ParseShared([]byte(data), sharedAnchor); err != nil {
 			t.Errorf("%s refused: %v", ref, err)
 		}

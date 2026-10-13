@@ -148,7 +148,7 @@ func newImagesRigFor(t *testing.T, version, fp string) *imagesRig {
 	t.Helper()
 	r := &imagesRig{fbRig: newFBRigFor(t, fp), src: newImagesRegistry(t), dst: newImagesRegistry(t)}
 	t.Chdir(t.TempDir()) // outside any checkout: no fugaro.yaml names a base
-	for _, n := range []string{"fugaro-history", "fugaro-base", "fugaro-go", "fugaro-web-node"} {
+	for _, n := range []string{"fugaro-history", "fugaro-base"} {
 		r.src.publish("dimipaun/"+n, "1.2.3")
 	}
 	r.dst.onTag = func(repo, tag string) {

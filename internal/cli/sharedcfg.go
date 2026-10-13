@@ -197,11 +197,18 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 			return bad(f.key, "%q is not %s", got, f.want)
 		}
 	}
+	data, dropped, err := dropLegacyBaseImages(data)
+	if err != nil {
+		return refuse("is not valid YAML: %v", err)
+	}
 	c, err := localcfg.Parse(data) // strict: an unknown key is refused here
 	if err != nil {
 		// Parse and yaml.v3 echo keys and values as written: quoted, so
 		// the writer's text can't carry terminal escapes or newlines.
 		return refuse("is not valid: %s", strconv.Quote(strings.ReplaceAll(err.Error(), "local config: ", "")))
+	}
+	for _, k := range dropped {
+		c.AddWarning(fmt.Sprintf("the project's shared config still lists base_images.%s, a base removed in 0.7.0; ignored (the next fugaro init or fugaro image refresh republishes the shared config)", k))
 	}
 	// Again on the decoded values, which are what the commands use.
 	switch {
@@ -246,6 +253,43 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 		}
 	}
 	return c, nil
+}
+
+// dropLegacyBaseImages removes the base_images entries of kinds removed in
+// 0.7.0 from a published shared config, whose writer may be an older
+// fugaro: one stale publish must not lock every teammate out (design
+// base-image.md section 10). It returns the data unchanged when nothing
+// was dropped.
+func dropLegacyBaseImages(data []byte) ([]byte, []string, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, nil, err
+	}
+	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return data, nil, nil
+	}
+	top := doc.Content[0]
+	var dropped []string
+	for i := 0; i+1 < len(top.Content); i += 2 {
+		if top.Content[i].Value != "base_images" || top.Content[i+1].Kind != yaml.MappingNode {
+			continue
+		}
+		m := top.Content[i+1]
+		var kept []*yaml.Node
+		for j := 0; j+1 < len(m.Content); j += 2 {
+			if slices.Contains(config.Bases, m.Content[j].Value) {
+				kept = append(kept, m.Content[j], m.Content[j+1])
+			} else {
+				dropped = append(dropped, m.Content[j].Value)
+			}
+		}
+		m.Content = kept
+	}
+	if len(dropped) == 0 {
+		return data, nil, nil
+	}
+	out, err := yaml.Marshal(&doc)
+	return out, dropped, err
 }
 
 // baseImageRE matches an image of the installation's base registry under

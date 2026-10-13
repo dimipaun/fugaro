@@ -213,7 +213,7 @@ func TestDoctorImageConfigSkipsDockerfileWorkflows(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
-	dir := layerCheckout(t, f, minimalAnchored+"git: { provider: github }\nworkflows:\n  app: { base: web-node, dockerfile: .fugaro/app.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n")
+	dir := layerCheckout(t, f, minimalAnchored+"git: { provider: github }\nworkflows:\n  app: { dockerfile: .fugaro/app.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n")
 	testutil.WriteFiles(t, dir, map[string]string{".fugaro/app.Dockerfile": "ARG FUGARO_BASE\nFROM ${FUGARO_BASE}\nRUN git clone \"$REPO_URL\" /work/repo\n"})
 	slug := mustSlug("github", "acme/other")
 	data, _ := json.Marshal(imagecheck.Record{Version: 1, Repo: "acme/other", Workflow: "app", ImageConfigHash: strings.Repeat("0", 64)})
@@ -281,7 +281,7 @@ func TestDoctorLayerUnknownWhenBucketUnreachable(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
-	selfSufficient := "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: github }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	selfSufficient := "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 	dir := layerCheckout(t, f, selfSufficient)
 	lc := fileEnv(t, f).lc
 	ctx := context.Background()

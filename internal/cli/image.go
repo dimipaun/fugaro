@@ -119,7 +119,7 @@ func runImageBuild(cmd *cobra.Command, o imageBuildOptions) error {
 	}
 	base := o.base
 	if base == "" {
-		if base, err = image.BaseRef(cfg.Workflows[name].BaseKind(), Version); err != nil {
+		if base, err = image.BaseRef(Version); err != nil {
 			return &ExitError{Code: ExitUserError, Err: err}
 		}
 	}
@@ -203,7 +203,7 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 		base = lc.BaseImage(cfg.Workflows[name].BaseKind())
 	}
 	if base == "" {
-		if base, err = image.BaseRef(cfg.Workflows[name].BaseKind(), Version); err != nil {
+		if base, err = image.BaseRef(Version); err != nil {
 			return userErr("%v", err)
 		}
 	}
