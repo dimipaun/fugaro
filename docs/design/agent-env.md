@@ -156,11 +156,31 @@ mechanism this design is the first attempt to build.
 `fugaro.yaml` is repository-chosen and PR-reviewed by people (`SECURITY.md`
 §"The assumption"); the agent runs with its permission prompts bypassed; the
 budget, the real model key, and git credentials are what Fugaro's design
-protects (`SECURITY.md` §"What limits the blast radius today"). An **open**
-`agent.env:` map — any name, any value — would let a repository's own
-reviewed file do what today only a compromised agent reading `/proc` can do
-(`SECURITY.md`'s "Known limits" list already enumerates that residual; this
-design must not add a *reviewed, first-class* path to the same place):
+protects (`SECURITY.md` §"What limits the blast radius today").
+
+**An honest accounting of what is already possible today, before weighing
+what an open `agent.env:` map would add.** A committed `.claude/settings.json`
+can *already* set an `env` block with any name `checkSettingsRouting`
+doesn't flag — and it flags only routing names (`routingEnvKeys`/
+`CLAUDE_CODE_USE_*`, §0), not `LD_PRELOAD`, a shell prefix, or any
+telemetry/OTEL knob. That file is committed, repository-chosen, PR-reviewed
+code, the same trust level as `fugaro.yaml` — no compromise needed. An
+earlier draft of this design claimed an open `agent.env:` map "would let a
+repository's own reviewed file do what today only a compromised agent
+reading `/proc` can do"; that overstates the new exposure for every
+non-routing name, which a reviewed `.claude/settings.json` can already set.
+**What an open `agent.env:` map would newly add, specifically, is reach:**
+it would be the first *generic* mechanism that writes into `r.env`, which
+is not only the agent's own environment but also what the runner's own
+`commands.lint`/`commands.fix` gate step runs with directly
+(`internal/runner/gate.go:151,235,361`, each `Env: r.env`) — a surface a
+`.claude/settings.json`'s `env` block cannot reach at all, since that file
+only configures the `claude` binary's own settings, never the runner's
+separate shell-outs for a repository's own lint/fix commands. **And for the
+*routing* names specifically** (the table below), an open map would add a
+reviewed path to something `checkSettingsRouting` does actively refuse
+today, which is the one place this design must not weaken (this design
+must not add a *reviewed, first-class* path around that specific guard):
 
 | Must be impossible | Enforcement |
 |---|---|
@@ -171,6 +191,82 @@ design must not add a *reviewed, first-class* path to the same place):
 | Rewrite git's behavior (`GIT_*`) | `GIT_` is a reserved prefix already; `gitops.ModelCredentialVars` is stripped from every git call regardless (`internal/runner/agentenv.go:15-24`, `modelCredentialVars`/`strip`); not on the new allow-list. |
 | Change `HOME`/`PATH`/the shell (`SHELL`, `IFS`, `BASH_ENV`, …) | Already `ReservedEnvNames`; `baseEnv` passes `HOME`/`PATH` through from the runner only, never settable by `fugaro.yaml`. |
 | Impersonate Fugaro's own variables (`FUGARO_*`) | `FUGARO_` is a reserved prefix already; the new allow-list never contains one, and `spec.Set` (Fugaro's own `FUGARO_STATE_DIR` etc., `runner.go:1055-1058`) is applied **after** `agent.env`'s values in `BuildEnv`, so a collision resolves to Fugaro's own value, not the repository's. |
+
+**`NeverAgentEnv`: a tripwire, separate from the allow-list, tested for
+disjointness.** `TestAgentEnvAllowListNeverRoutes` (§2) only checks the
+allow-list against `routingEnvKeys`/`CLAUDE_CODE_USE_*` — a narrow,
+*routing*-specific list. Since `AgentEnvAllowed` is closed and every entry
+is proposed individually (§2), nothing stops a future addition from being
+some *other* Claude Code variable nobody thought to check against the
+routing list because it isn't a routing concern at all (a credential
+helper's TTL, a client certificate, a telemetry toggle). Recommendation: a
+second list, `NeverAgentEnv` (exact names) and `NeverAgentEnvPrefixes`
+(exact prefixes), matched case-sensitively — unlike `ReservedEnv`, which is
+case-blind because *proxies* are read in either case (§0); nothing here is
+a proxy, so `max_thinking_tokens` or `https_proxy` (lower-case) are simply
+not on `AgentEnvAllowed` to begin with and need no case-folding to refuse —
+and a test, `TestAgentEnvAllowListNeverHitsNeverList`, asserting
+`AgentEnvAllowed` is disjoint from it. This is a second, independent
+tripwire on every *future* addition, not a rule this design's own v1 list
+needs to lean on (every v1 entry is already checked individually, §2).
+**Honesty about what is confirmed vs. not**: Claude Code is closed-source
+(§0 of `docs/design/base-image.md`: "a closed, proprietary binary"), so
+this repository cannot verify Claude Code 2.1.283's (the pinned version,
+`images/base/Dockerfile:42`, `ARG CLAUDE_CODE_VERSION=2.1.283`) full
+environment-variable surface the way it can verify its own code. Split by
+how each name is known:
+
+*Confirmed — already read, set, or checked somewhere in this repository's
+own code, so definitely real for the pinned version or Claude Code
+generally:*
+
+```go
+var NeverAgentEnv = []string{
+    // routingEnvKeys and apiKeyHelper's env equivalents (settings.go) —
+    // the routing names already excluded above, repeated here so
+    // NeverAgentEnv alone is a complete tripwire without cross-referencing
+    // routingEnvKeys's exact contents.
+    "ANTHROPIC_BASE_URL", "ANTHROPIC_VERTEX_BASE_URL", "ANTHROPIC_BEDROCK_BASE_URL",
+    "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_SKIP_VERTEX_AUTH",
+    // Read directly from the runner's own environment by checkSettingsRouting
+    // (agentenv.go:133, parent["CLAUDE_CONFIG_DIR"]): an agent.env entry of
+    // this name would not do what a repository might expect (it already
+    // isn't inherited into the agent's environment via baseEnv either) and
+    // could confuse the routing check about which files it polices.
+    "CLAUDE_CONFIG_DIR",
+    // Claude Code's own per-call pins, which agent.PinVars already sets
+    // per stage/role (env.go) — an agent.env entry would race the pins and
+    // produce a confusing, order-dependent result.
+    "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL",
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+    // The oauth credential variable BuildEnv sets from a declared secret
+    // (env.go) — never a plain value a repository names.
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    // Vertex's own routing/identity variables (vertexEnv, env.go) and its
+    // per-model region overrides.
+    "CLOUD_ML_REGION", "ANTHROPIC_VERTEX_PROJECT_ID", "GOOGLE_CLOUD_PROJECT",
+}
+var NeverAgentEnvPrefixes = []string{
+    "CLAUDE_CODE_USE_", // routingEnvKeys's own prefix check
+    "VERTEX_REGION_",   // vertexRegionPrefix, env.go
+}
+```
+
+*Named by this review, not found anywhere in this repository's code —
+**UNVERIFIED**, included because a real Claude Code variable in any of
+these families would be exactly as dangerous as the confirmed ones above,
+but their existence (names, exact spelling) for Claude Code 2.1.283 was
+not checked and should be before `AgentEnvAllowed` ships, not assumed from
+this list:* `CLAUDE_ENV_FILE`, `CLAUDE_CODE_SHELL_PREFIX`,
+`CLAUDE_CODE_SHELL`, `CLAUDE_CODE_ENABLE_TELEMETRY`, `ANTHROPIC_MODEL`,
+`ANTHROPIC_SMALL_FAST_MODEL`, `CLAUDE_CODE_API_KEY_HELPER_TTL_MS`,
+`CLAUDE_CODE_EXTRA_BODY`, `DISABLE_PROMPT_CACHING`, and the prefixes
+`OTEL_`, `ANTHROPIC_CUSTOM_HEADERS` (a single name, not a prefix, if real),
+`ANTHROPIC_BETAS`, `CLAUDE_CODE_CLIENT_CERT`, `CLAUDE_CODE_CLIENT_KEY`,
+`CLAUDE_CODE_SKIP_`, `AWS_`. **Task 1 of the plan requires checking which
+of these are real for 2.1.283 before shipping `NeverAgentEnv`**, not
+shipping the unverified half as fact.
 
 **The rule that makes all of this enforceable, not just documented:** the
 allow-list is **Fugaro's own Go code** (§2), never a `fugaro.yaml` field —
