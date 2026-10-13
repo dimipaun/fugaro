@@ -69,8 +69,18 @@ func TestPublishBaseSignsByOCIDigestOnPushOnly(t *testing.T) {
 		if strings.HasPrefix(s.Uses, cosignPin) {
 			installed = true
 		}
-		if strings.Contains(s.Run, "$VERSION-pinned") {
-			taggedPinned = true
+		// The tag-creation step (identified by "imagetools create", the
+		// call it's added to) and the sign step (identified by "cosign
+		// sign ") BOTH mention "$VERSION-pinned" in their own run script
+		// (the former creates it, the latter inspects it to resolve a
+		// digest) — checking "Contains $VERSION-pinned" alone, across
+		// every step, would let the sign step's own run (gated by a
+		// separate, YAML-level if:, not this in-script check) overwrite
+		// pinnedGuarded with a false negative on a later loop iteration,
+		// exactly the kind of step-conflation bug an earlier draft of
+		// this test had. Keyed on the distinguishing marker instead.
+		if strings.Contains(s.Run, "imagetools create") {
+			taggedPinned = strings.Contains(s.Run, "$VERSION-pinned")
 			pinnedGuarded = strings.Contains(s.Run, `"$GITHUB_EVENT_NAME" = push`)
 		}
 		if strings.Contains(s.Run, "cosign sign ") {
