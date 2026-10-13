@@ -45,3 +45,4 @@ Each checkout starts with a line `== ` and its directory, then one line per step
 - `not onboarded` or `no fugaro.yaml` (`skipped`): the repository has no job image yet; setting it up is a separate task (the `setup` skill).
 - `on this release's base image` (`done`) or `no base image to copy and no image to rebuild` (`current`): only when the user ran it in their own terminal.
 - `stopped at step N` (`failed`): the refresh stopped; its reason names the steps that finished and the rerun line.
+- a `note:` on the deployed job's copy of the multi-model project config (`providers`, `model_prices`), only when the local config sets either: printed after a real cloud step, alongside any of the states above, when the copy no longer matches the local config; names the fields and the one command that refreshes it, for the user to run themselves (SKILL.md step 4). Under `--check` it instead says `--check` cannot tell, because `--check` makes no cloud call.

@@ -97,7 +97,14 @@ steps, stopping that checkout at the first step that fails:
           asks at each step, or with --yes confirms every step itself, each
           billable build included, with no cap. Skipped where there is
           nothing to refresh from here: no fugaro.yaml, no local project
-          config (a teammate), a repository not onboarded.
+          config (a teammate), a repository not onboarded. After a real
+          refresh it also compares the deployed job's copy of the local
+          project config's providers and model_prices (multi-model.md) with
+          what the local config would write now: a version upgrade never
+          refreshes that copy, so a mismatch prints a note naming the
+          fields and the one command that does, fugaro init --repo . (never
+          run here: its Terraform confirmations stay yours). --check makes
+          no cloud call, so it cannot tell and says so instead.
 
 It never upgrades fugaro itself: brew upgrade dimipaun/tap/fugaro && fugaro
 upgrade is the whole sequence.
