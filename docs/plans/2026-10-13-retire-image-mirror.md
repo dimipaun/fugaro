@@ -13,12 +13,14 @@ Source: [docs/design/retire-image-mirror.md](../design/retire-image-mirror.md). 
 
 ## Task 1: The release's signed image-digest manifest (CI)
 
-**Flag for opus review:** this task is the root of the new trust chain (design §2) — a mistake in *which* identity the signature is checked against, or in forgetting to remove the file from `docs/pending-workflows/README.md`'s exact-content pin, silently reintroduces "whoever can write the ghcr.io tag" as the trust anchor while the design doc claims otherwise.
+**Flag for opus review:** this task is the root of the new trust chain (design §2) — a mistake in *which* identity the signature is checked against, or in forgetting to remove the staged file once it is copied in, silently reintroduces "whoever can write the ghcr.io tag" as the trust anchor while the design doc claims otherwise.
+
+**Starting state, checked 2026-10-13 (see the design doc's note on current repository state):** `.github/workflows/images.yml` already carries the real, merged `fugaro-base`/`publish-base` jobs (commit `356f7b1`, already an ancestor of this branch); `docs/pending-workflows/` holds only `README.md`, and that file's own `## images.yml` section still describes the now-merged base-image diff rather than "nothing pending" — it is itself stale and gets replaced wholesale by this task, not amended. **This task's first step is therefore not "modify the pending file" (there isn't one) but "stage a fresh one": create `docs/pending-workflows/images.yml` as the current real `.github/workflows/images.yml`'s content plus this task's own addition**, exactly as `docs/pending-workflows/README.md`'s own instructions describe for any workflow change Fugaro needs to make (Fugaro cannot push a commit touching `.github/workflows/**`, so the new step can only ever reach the real file by a human copying this staged one in, the same `cp`/`git rm` sequence the README already documents).
 
 **Files:**
-- Modify: `docs/pending-workflows/images.yml` (adds a `sign-digests` step to the `publish-base` job, after the index is pushed)
+- Add: `docs/pending-workflows/images.yml` (a fresh staged copy: today's real `.github/workflows/images.yml`, plus a `sign-digests` step added to the `publish-base` job after the index is pushed — not a diff against an existing pending file, since none exists)
 - Add: `images/sign-digests.sh` (the shell logic, kept out of the YAML so it is testable and reviewable on its own)
-- Modify: `images/base_workflow_test.go` (new pinning tests), `docs/pending-workflows/README.md` (documents the new step, the new file's exact-content pin)
+- Modify: `images/base_workflow_test.go` (new pinning tests — these already read whichever of the pending or real file exists via `readImagesWorkflow`, so they exercise the newly staged file immediately, with no change to that fallback mechanism), `docs/pending-workflows/README.md` (its `## images.yml` section is rewritten to describe *this* task's diff — the one new step — against the real file, replacing the stale description of the already-merged base-image diff; the general "Copying a file in" instructions above it are unaffected)
 
 **Interfaces:**
 - `image-digests.txt`: one line per published reference, `<name> sha256:<hex>\n`, where `<name>` is `fugaro-base-amd64`, `fugaro-base-arm64`, `fugaro-base` (the index) and `fugaro-history`. No other content (no comments, no blank lines): the Go side (Task 2) parses it byte-exactly.
@@ -105,7 +107,7 @@ manifest="$1"
 cosign sign-blob --yes --bundle "$manifest.sigstore.json" "$manifest"
 ```
 
-`docs/pending-workflows/images.yml`'s `publish-base` job gains, after the `docker buildx imagetools create` step:
+Create `docs/pending-workflows/images.yml` by copying today's real `.github/workflows/images.yml` verbatim, then adding to its `publish-base` job, after the `docker buildx imagetools create` step:
 
 ```yaml
       - name: Write the digest manifest
@@ -125,7 +127,7 @@ cosign sign-blob --yes --bundle "$manifest.sigstore.json" "$manifest"
 
 (`id-token: write` is already a job permission needed for keyless cosign; `TestOnlyPublishJobsHoldPackagesWrite`-style review confirms no *new* job gains `packages: write` — this step runs inside the existing `publish-base` job, which already has it for the image pushes above it.)
 
-`docs/pending-workflows/README.md` gains a bullet under `images.yml`'s diff summary describing the new step and widens its exact-content pin accordingly (the existing `TestReadWorkflowFallsBackOnlyWhilePending`-style tests are unaffected, since they test the fallback mechanism, not this file's content).
+`docs/pending-workflows/README.md`'s `## images.yml` section is replaced (not appended to): it now describes *this* diff — one new `sign-digests`/upload sequence in `publish-base`, against the real, already-merged `.github/workflows/images.yml` — instead of the base-image consolidation diff that commit `356f7b1` already copied in. The "Copying a file in" instructions and the `TestReadWorkflowFallsBackOnlyWhilePending`-style tests above that section are unaffected, since they test the fallback mechanism itself, not any one pending file's content.
 
 Run: `go test ./images/ -count=1`
 Expected: PASS.
