@@ -59,7 +59,7 @@ Project rules (carried over from this repository's existing plans):
 | `internal/infra/tfvars.go`, `imports.go`, `discover.go` | `InstallationSpec.ProjectSecrets`, `importProjectSecret`, `DiscoverInstallation`'s adoption step (S2) | 4 |
 | `deploy/terraform/gcp/modules/repo/build.tf`, `workflows.tf`, `check.tf`, `variables.tf`, `internal/infra/tfvars.go`/`spec.go`, `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl` | **P4, opus review:** `local.secrets`; `build.tf` AND `check.tf` (B4) rewired through it; the Go-to-tfvars wire for `RepoSpec.ProjectSecrets` | 5 |
 | `internal/infra/installation_terraform_test.go`, `deploy/terraform/gcp/roots/installation/tests/`, `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl`, `internal/infra/spec_test.go` golden fixtures | real `terraform test` plan-level fixtures: no secret-resource deletes, but the expected IAM-member replacements, `tf.Guard` refusing/accepting them (B3) | 6 |
-| `internal/cli/doctor.go`, `doctor_test.go` | two new checks (design §5) | 7 |
+| `internal/cli/doctor.go`, `doctor_test.go` | two per-repository checks plus a project-wide revocation-lag one (design §5, S3) | 7 |
 | `docs/design/v1.md`, `docs/multi-model.md`, `docs/gcp-live-checklist.md`, `docs/release.md`, `internal/cli/docs_*_test.go` | cross-references, Check 40, the release checklist bullet | 8 |
 | none | full suite | 9 |
 | `docs/gcp-live-checklist.md` (results pasted in) | the owner's own run, Check 40a-g | 10 |
@@ -679,7 +679,7 @@ git commit -m "project secrets task 6: plan-level fixtures proving no secret del
 
 ---
 
-### Task 7: `fugaro doctor`'s two new checks
+### Task 7: `fugaro doctor`'s two per-repository checks, plus a project-wide revocation-lag check (S3)
 
 **Files:**
 - Edit: `internal/cli/doctor.go`, `internal/cli/doctor_test.go`
@@ -687,18 +687,28 @@ git commit -m "project secrets task 6: plan-level fixtures proving no secret del
 **Interfaces:**
 - `project-secret-stored`: for every name `config.ReservedSecrets`/a provider's/an account's own list allow-lists this repository for, if neither the repo's own secret nor the project's has an enabled version, red, naming both candidate fix commands.
 - `project-secret-scope-stale`: the repository's **last deployed** job's `secret_env` (read the same way `doctor`'s existing image-config checks already read a deployed job's spec) resolves a different scope than `Readiness` would compute right now — a warning (fails only `--strict`), mirroring `doctor`'s existing project-layer shape, "flags a run that launched without it or on an older generation" (`internal/cli/doctor.go:148-149`).
+- **`project-secret-extra-accessors` (S3, new, project-wide — not per-repository like the two above):** for each project secret, read its live IAM policy (`GetIamPolicy`, metadata-level, never `Access`); for each `secretAccessor` member, resolve the repository slug it belongs to (the job SA's own naming convention, `gcp.ServiceAccountID`'s inverse — a lookup, not a live call) against `localcfg.Config.Repos` (already enumerates every onboarded repository); flag any accessor whose repository is **not currently** allowed by the name's own eligibility rule (`AllowedForProjectSecret`/`AllowsData`/`ProviderKeyAvailable`, whichever applies) — a warning, since this is revocation *lag* (expected until the affected repository's own `fugaro init --repo` catches up), not a failure. Mirrors `noteExtraAccessors` (`internal/infra/discover.go:813`), which only ever compares one repository's own spec against its own secrets' live bindings — this check is the project-wide version nothing today does, since removing a repository from a list or deleting a provider/account leaves its job SA's grant live until that **one** repository's own apply runs again, and no single repository's `init --repo` has reason to look at another repository's bindings.
 
 **Tests:**
 ```go
-func TestDoctorProjectSecretChecksReadNoValue(t *testing.T) { /* fake Secret Manager's Access never called */ }
+func TestDoctorProjectSecretChecksReadNoValue(t *testing.T) { /* fake Secret Manager's Access never called, for all three checks */ }
 func TestDoctorFlagsUnstoredProjectSecret(t *testing.T) { /* ... */ }
 func TestDoctorFlagsStaleScope(t *testing.T) { /* deployed job still mounts the repo ID; Readiness would now resolve the project ID (repo version was deleted since the last apply): warning, not red */ }
+func TestDoctorFlagsExtraProjectSecretAccessor(t *testing.T) {
+	// S3: a project secret's live IAM policy carries a secretAccessor
+	// member for a repository that project_secrets'/the provider's/the
+	// account's current allow_data_to no longer lists. Assert a warning
+	// names the repository and the secret -- not the value, not the
+	// service account's raw email beyond what GetIamPolicy already
+	// returns.
+}
+func TestDoctorProjectSecretExtraAccessorsReadsNoValue(t *testing.T) { /* GetIamPolicy only, never Access -- the project-wide check's own mutation-proof case, since it is new code this round */ }
 ```
 
 - [ ] **Step 1: Write the failing tests**
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `go test -count=1 -run 'TestDoctorProjectSecret|TestDoctorFlagsUnstoredProjectSecret|TestDoctorFlagsStaleScope' ./internal/cli/`
+Run: `go test -count=1 -run 'TestDoctorProjectSecret|TestDoctorFlagsUnstoredProjectSecret|TestDoctorFlagsStaleScope|TestDoctorFlagsExtraProjectSecretAccessor' ./internal/cli/`
 Expected: FAIL.
 
 - [ ] **Step 3: Write the implementation**
@@ -711,7 +721,7 @@ Expected: `ok` (the full `TestDoctor*` set, to catch any regression from the edi
 
 ```bash
 git add internal/cli/doctor.go internal/cli/doctor_test.go
-git commit -m "project secrets task 7: fugaro doctor's two checks for project-wide secrets"
+git commit -m "project secrets task 7: fugaro doctor's two per-repository checks, plus a project-wide revocation-lag check (S3)"
 ```
 
 ---
