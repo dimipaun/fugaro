@@ -1862,11 +1862,17 @@ Plus a case where there is no mise config: no `mise` call and no `provision` tim
 
 - [ ] **Step 5: Commit** `git commit -m "generic tool task 17: a clone workflow clones blobless at start and installs its mise tools"`
 
-### Task 18: Check 32 and the setup skill's offer
+### Task 18: Check 38 and the setup skill's offer
+
+**Numbering ruling (owner's assistant, 2026-10-13):** this task used to reserve
+Check 32, but the bucket-IAM plan's Task 9 keeps that number (it was reserved
+for it first). This task's check moves to **Check 38**, the next free number
+after the named-account checks 34 to 37 (`docs/gcp-live-checklist.md`'s
+numbering-ruling note). No existing check is renumbered.
 
 **Depends on:** Tasks 16 and 17, and base-image Task 16 (the setup skill's 0.7.0 rewrite).
 
-**Files:** `docs/gcp-live-checklist.md` (Check 32), `plugin/skills/setup/reference/decisions.md`, `plugin/skills/setup/SKILL.md` (one line), `plugin/setup_skill_test.go`.
+**Files:** `docs/gcp-live-checklist.md` (Check 38), `plugin/skills/setup/reference/decisions.md`, `plugin/skills/setup/SKILL.md` (one line), `plugin/setup_skill_test.go`.
 
 - [ ] **Step 1: Write the failing test.** `TestSetupSkillOffersClone`:
   - `decisions.md` has a "Checkout" topic that names `checkout: clone` and `checkout: baked`;
@@ -1877,7 +1883,7 @@ Plus a case where there is no mise config: no `mise` call and no `provision` tim
 
 - [ ] **Step 3: Write**
 
-Check 32, "clone workflows (sandbox only, run by you; USER-RUN, NOT RUN)", in the format of Checks 29 and 30:
+Check 38, "clone workflows (sandbox only, run by you; USER-RUN, NOT RUN)", in the format of Checks 29 and 30:
 - **the setup:** a sandbox workflow switched to `checkout: clone` on a branch, merged in the sandbox repository, `fugaro init --repo` in your terminal;
 - **step 1:** one run, which records the execution start, the `provision` stage's duration and the first stage's start;
 - **step 2:** the job's image as `gcloud run jobs describe` shows it;
@@ -1890,7 +1896,7 @@ The skill topic: what clone gives (no image build, no daily check, start-up pays
 
 - [ ] **Step 4: Run the tests**: `go test -count=1 ./plugin/`. Expected: `ok`.
 
-- [ ] **Step 5: Full suite for Group D (Task 22), commit** `git commit -m "generic tool task 18: live check 32 and the setup skill offers checkout: clone"`
+- [ ] **Step 5: Full suite for Group D (Task 22), commit** `git commit -m "generic tool task 18: live check 38 and the setup skill offers checkout: clone"`
 
 ---
 ## Group E: skills and docs (branch `gt-docs`; Task 21 may go first, as Group S)

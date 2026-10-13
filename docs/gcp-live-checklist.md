@@ -179,6 +179,14 @@ In the commands below, `T` is short for
 `FUGARO_LIVE_REPO` for every check, and `FUGARO_BITBUCKET_TOKEN` and
 `FUGARO_LIVE_JOB_SA` as above wherever a check needs them.
 
+**Numbering ruling (owner's assistant, 2026-10-13).** A check number, once a
+plan reserves it, is never reused or renumbered, even when its section lands
+out of order: Check 32 is reserved for the bucket-IAM plan's runs-bucket
+launcher-grants check (`docs/plans/2026-10-08-bucket-iam.md` Task 9), and the
+generic-tool plan's clone-workflow check (its Task 18) takes the next free
+number, Check 38, after the named-account checks 34 to 37 (Check 33 is the
+vendor endpoint).
+
 | # | Check | Command | Expected |
 |---|---|---|---|
 | 1 | Execution names from `executions.list` (project ID or number) | `T -run TestLiveListAndLogs ./internal/backend/gcp/`, rerun after check 13 on a fresh project | It skips while the region has no execution. A `FACT` gives the raw form (project ID or project NUMBER). `ParseExecution` accepts every raw name. Every name `List` returns starts with `projects/<project>/locations/<region>/jobs/`. |
@@ -212,6 +220,7 @@ In the commands below, `T` is short for
 | 29 | Adopting an existing Firebase root: `terraform state rm` of the four singletons in the SANDBOX's Firebase root, `init --firebase` imports them (`Plan: 4 to import`), a rerun shows `No changes`; then the squat (an extra permission on the minter role) and a foreign minter on the signer are refused | See "Check 29" below; **you** run it at your own terminal, on the **sandbox's Firebase project only**, never a real installation's. | No cost beyond the sandbox's own backend. **USER-RUN, NOT RUN.** |
 | 30 | `fugaro image refresh`'s direct check-job update against the real Cloud Run Admin API: the read-back output-only fields round-trip through `jobs.patch`, the job's etag is enforced against a concurrent change, the patch starts no execution, and a later `init --repo` plans no change (design/image-refresh.md, "The check job and Terraform") | See "Check 30" below; **you** run it at your own terminal, on the **sandbox's check job only**, never EdgeWeb or EdgeServer. | No cost beyond the sandbox's own Cloud Run job and, if needed, a second base image copy. **USER-RUN, NOT RUN.** |
 | 31 | `fugaro upgrade` with the real `claude` CLI: the marketplace add or update, the install or update at the right scope, the settings file untouched by `claude`, a rerun that changes nothing, and the cloud step skipped in a Claude Code session | See "Check 31" below; **you** run it, on the sandbox checkout only. | USER-RUN, NOT RUN |
+| 32 | The runs bucket's launcher grants on real GCS: an unconditioned `objectViewer` plus a conditional `objectUser` under `runs/` (design `bucket-iam.md` §11, V1 to V5, V8) | See "Check 32" below; **you** run it at your own terminal, on installation `fugaro` (never `belong`), sandbox repository only, after the owner's go-ahead for the apply. | **USER-RUN, NOT RUN.** |
 | 33 | A vendor's own Anthropic-compatible endpoint, the same question check 25 settles for OpenRouter (optional) | See "Check 33" below; **you** run it at your own terminal, on the sandbox repository only. | One small sandbox run. **USER-RUN, NOT RUN.** |
 | 34 | Named Claude accounts, U1: Cloud Run Jobs execution overrides cannot carry a secret reference (design `named-oauth-tokens.md` §4, option D) | See "Check 34" below; reads published API docs only, no project needed. | No cost. **NOT RUN.** |
 | 35 | Named Claude accounts, U2: `claude setup-token` and multi-account switching | See "Check 35" below; **you** run it, on your own machine, no GCP project needed. | No cost. **NOT RUN.** |
@@ -936,6 +945,34 @@ Expect the four addresses under `module.firebase.`.
 **Paste back:** each step's result, and the exact text of every unexpected message (no token, no key).
 
 **Restore.** Nothing to restore beyond `git checkout -- .claude/settings.json` if you do not want the pin.
+
+## Check 32: the runs bucket's launcher grants (installation fugaro, sandbox repository only, run by you; USER-RUN, NOT RUN)
+
+**No step below has been run; nothing here is a claim that it works.** The 0.7.0 bucket hardening ([design/bucket-iam.md](design/bucket-iam.md)) gives launchers who are not operators `roles/storage.objectViewer` on the runs bucket and `roles/storage.objectUser` under `resource.name.startsWith("projects/_/buckets/<bucket>/objects/runs/")`. Items V1 to V5 and V8 of the design are unverified against real GCS.
+
+**Run it on the `fugaro` installation (GCP project `fugaro-dev`), where the sandbox repository `edgeappinc/fugarosandbox` now lives and where you are the only launcher and operator, NEVER on `belong` (EdgeWeb's and EdgeServer's installation, whose launchers the apply would change).** The apply in step 2 changes the runs bucket's policy for everyone in that installation: in `fugaro` that is only you and the test identity. Touch only the sandbox repository's `runs/` objects and `fugaro-live-*` objects. Never EdgeWeb's or EdgeServer's. In this check `<p>` is `fugaro-dev` (the runs bucket is `gs://fugaro-runs-fugaro-dev`).
+
+1. Record `fugaro version`, the date, and `gcloud storage buckets get-iam-policy gs://fugaro-runs-<p> --format=json` (the count of bindings with a `condition`: V3).
+2. **⚠ CONFIRM** in your own terminal, add a second identity you control (a test Google account, or a service account you can impersonate) as a launcher only: `fugaro init --launcher <you> --launcher <test identity> --operator <you>`. Read the plan and the `bucket access (0.7.0)` banner, then type the name. Record the apply's output, and step 1's command again (V3: one new conditional binding, whatever the number of launchers).
+3. As the test identity (`gcloud auth application-default login` with it, or `--impersonate-service-account`):
+   - `gcloud storage cp` a file to `gs://fugaro-runs-<p>/runs/<sandbox slug>/fugaro-live-iam/x`, overwrite it, then remove it. All succeed (V1).
+   - The same to `fugaro/fugaro-live-iam`, `builds/<sandbox slug>/fugaro-live-iam`, `cache/<sandbox slug>/fugaro-live-iam` and `locks/<sandbox slug>/fugaro-live-iam`. Each gets 403 (V1).
+   - `gcloud storage ls gs://fugaro-runs-<p>/runs/` and `gcloud storage cat gs://fugaro-runs-<p>/fugaro/project.json` succeed (V1, list and get).
+   - `fugaro run` a trivial task on the sandbox, then `fugaro cancel` it. Both work (V2: the claim's create-if-absent, its generation-matched release, the cancel marker, the token object).
+   - `fugaro recipes publish` of a throwaway recipe named `fugaro-live-iam` is refused with "needs the operator role" and exit 1 (V8). Nothing is written.
+   - `fugaro doctor`: `runs-bucket-iam` is ok ("writes only runs/") (V4).
+4. As yourself (operator): `fugaro doctor` shows `runs-bucket-iam` ok. `gcloud storage buckets get-iam-policy` shows the launcher binding exactly as `gcp.LauncherBucketCondition` spells it.
+5. **Propagation (V5).** Before step 2, as the test identity with the old grant, start a loop writing `fugaro/fugaro-live-iam` every 10 s. Record how long writes keep succeeding after the apply.
+
+**FACT lines to record:**
+- the version;
+- the conditional-binding count before and after;
+- each 403's exact text;
+- the propagation time;
+- the refusal text of step 3;
+- doctor's lines.
+
+**Restore.** Remove the test identity: `fugaro init --launcher <you> --operator <you>`, and read the plan (it deletes that member's two grants; pass `--allow-delete` for each, as the refusal prints). Then `gcloud storage rm` every `fugaro-live-iam` object.
 
 ## Check 33: a vendor's own endpoint (sandbox only, run by you; optional; USER-RUN, NOT RUN)
 
