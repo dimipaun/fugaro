@@ -25,7 +25,7 @@ Several of these at one root is one workflow with several `mise.toml` tools. Sev
 
 ## Versions
 
-The base has the kit listed in `docs/base-image.md`; `image.apt` adds Debian 13 packages it lacks.
+The base has the kit listed in [docs/base-image.md](https://github.com/dimipaun/fugaro/blob/main/docs/base-image.md); `image.apt` adds Debian 13 packages it lacks.
 
 ## Commands
 

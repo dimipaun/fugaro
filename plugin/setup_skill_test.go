@@ -320,10 +320,12 @@ func TestSetupSkillContent(t *testing.T) {
 			"fugaro validate --json", "fugaro init --repo --plan-only", ".fugaro/<workflow>.Dockerfile", "blank Dockerfile",
 			".github/workflows", "Docker daemon", "`fugaro_yaml`", "WSL2", "agent.instructions",
 			"whole content", "_.source", "[hooks]",
+			"https://github.com/dimipaun/fugaro/blob/main/docs/base-image-migration.md",
 		},
 		"skills/setup/reference/services-and-images.md": {
-			"fugaro-services start", "mise.toml", "mise install", "image.tools", "apt-get install", "image.setup", "save the output as `.fugaro/<workflow>.Dockerfile`", "Pin every download by version and checksum", "Never start from a blank Dockerfile", "does **not** enforce", "illustrative", "Docker daemon", "docs/base-image-migration.md", "--platform linux/arm64", "FUGARO_SERVICES",
+			"fugaro-services start", "mise.toml", "mise install", "image.tools", "apt-get install", "image.setup", "save the output as `.fugaro/<workflow>.Dockerfile`", "Pin every download by version and checksum", "Never start from a blank Dockerfile", "does **not** enforce", "illustrative", "Docker daemon", "--platform linux/arm64", "FUGARO_SERVICES",
 			"**Never** `apt-get install <language>` or a `curl | sh` installer for a runtime",
+			"https://github.com/dimipaun/fugaro/blob/main/docs/base-image-migration.md",
 		},
 		"skills/setup/reference/decisions.md": {
 			"followup.allow_public", "agent.max_run_tokens", "agent.max_budget_usd", "fugaro budget prices", "never set `allow_public` without their explicit decision",
@@ -334,6 +336,7 @@ func TestSetupSkillContent(t *testing.T) {
 		},
 		"skills/setup/reference/discovery.md": {
 			"16 GB on a public one", "GOTOOLCHAIN", "go.mod", "must be a plain version",
+			"https://github.com/dimipaun/fugaro/blob/main/docs/base-image.md",
 		},
 	} {
 		text, ok := files[file]

@@ -3,7 +3,7 @@
 
 # Services, the base and the image
 
-An image is the one Fugaro base plus the repository's checkout at `base_branch`, its installed runtimes and dependencies, and whatever `image:` adds (or a repository Dockerfile built `FROM` that base). A repository with `base:`, `image.node` or `image.jdk` is a 0.6 configuration: follow `docs/base-image-migration.md` to move it to `mise.toml`.
+An image is the one Fugaro base plus the repository's checkout at `base_branch`, its installed runtimes and dependencies, and whatever `image:` adds (or a repository Dockerfile built `FROM` that base). A repository with `base:`, `image.node` or `image.jdk` is a 0.6 configuration: follow [docs/base-image-migration.md](https://github.com/dimipaun/fugaro/blob/main/docs/base-image-migration.md) to move it to `mise.toml`.
 
 ## The base and `mise.toml`
 
