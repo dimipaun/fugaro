@@ -29,8 +29,8 @@ func TestExecInDerivedImage(t *testing.T) {
 	testutil.IsolateGit(t)
 	files := testutil.FixtureFiles(t)
 	maps.Copy(files, testutil.NPMFixtureFiles())
-	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "    base: web-node\n",
-		"    base: web-node\n    image:\n      setup: [\"mkdir -p build && echo warm > build/warm-marker\"]\n", 1)
+	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "  app:\n",
+		"  app:\n    image:\n      setup: [\"mkdir -p build && echo warm > build/warm-marker\"]\n", 1)
 	remote := testutil.NewRemote(t, files)
 
 	// Build the derived image from a developer-style clone.

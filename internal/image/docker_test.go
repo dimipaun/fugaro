@@ -136,7 +136,7 @@ func TestSelftestFlagsSetgidAndFileCaps(t *testing.T) {
 	base := testutil.BaseImage(t)
 	testutil.IsolateGit(t)
 	files := testutil.FixtureFiles(t)
-	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "    base: web-node\n", `    base: web-node
+	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "  app:\n", `  app:
     image:
       setup:
         - sudo -n install -d -m 0711 /opt/hidden && sudo -n install -m 2755 /usr/bin/true /opt/hidden/sgid-true
@@ -192,7 +192,7 @@ func TestDerivedSkipBuildScripts(t *testing.T) {
 		`set -e; mkdir -p /tmp/p/dep && cd /tmp/p && printf '%s' "$PKG" > package.json && printf '%s' "$DEP" > dep/package.json && npm install --no-audit --no-fund >&2 && test -e ~/root-postinstall-ran && test -e ~/dep-postinstall-ran && cat package-lock.json`) + "\n"
 	files := testutil.FixtureFiles(t)
 	files["package.json"], files["dep/package.json"], files["package-lock.json"] = pkg, dep, lock
-	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "    base: web-node\n", "    base: web-node\n    image: { skip_build_scripts: true }\n", 1)
+	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "  app:\n", "  app:\n    image: { skip_build_scripts: true }\n", 1)
 	dir := checkout(t, files)
 	render := exec.Command(testutil.BuildFugaro(t), "image", "render")
 	render.Dir = dir
@@ -239,7 +239,7 @@ func TestRepoDockerfileEscapeHatch(t *testing.T) {
 	custom := string(generated) + "RUN mkdir -p /work/repo/build && echo custom > /work/repo/build/custom-marker\n"
 	testutil.WriteFiles(t, dir, map[string]string{
 		".fugaro/app.Dockerfile": custom,
-		"fugaro.yaml":            strings.Replace(files["fugaro.yaml"], "    base: web-node\n", "    base: web-node\n    dockerfile: .fugaro/app.Dockerfile\n", 1),
+		"fugaro.yaml":            strings.Replace(files["fugaro.yaml"], "  app:\n", "  app:\n    dockerfile: .fugaro/app.Dockerfile\n", 1),
 	})
 	testutil.Git(t, dir, "add", "-A")
 	testutil.Git(t, dir, "commit", "--quiet", "-m", "Add a repository Dockerfile")
