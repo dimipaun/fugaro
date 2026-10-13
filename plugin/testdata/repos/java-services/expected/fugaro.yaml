@@ -3,8 +3,8 @@ project: acme
 git: { provider: bitbucket, base_branch: main }
 workflows:
   server:
-    base: java-services
     image:
+      apt: [postgresql-17]
       setup: ["./gradlew --no-daemon testClasses"]
     commands:
       build: ./gradlew --no-daemon testClasses

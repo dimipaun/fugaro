@@ -54,6 +54,13 @@ RUN --mount=type=bind,target=/src \
     fi \
  && git remote set-url origin -- "$REPO_ORIGIN"
 
+# The runtimes: the repository's root mise config and image.tools, installed
+# as fugaro into ~/.local/share/mise (design base-image.md section 4). The
+# download cache survives local rebuilds; nothing may be left missing.
+RUN --mount=type=cache,id=fugaro-mise,target=/home/fugaro/.cache/mise,uid=1000,gid=1000 mise install \
+ && missing="$(mise ls --current --missing)" \
+ && if [ -n "$missing" ]; then printf 'mise left these tools missing:\n%s\n' "$missing" >&2; exit 1; fi
+
 USER root
 RUN rm -f /etc/sudoers.d/fugaro-build \
  && { [ ! -e /usr/bin/sudo ] || chmod u-s /usr/bin/sudo; } \
