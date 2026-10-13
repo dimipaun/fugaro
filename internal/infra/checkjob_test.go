@@ -71,6 +71,22 @@ func TestRewriteCheckSpecRefusals(t *testing.T) {
 	indented, _ := json.MarshalIndent(m, "", "  ")
 	delete(m, "future_key")
 	reformatted, _ := json.MarshalIndent(m, "", "  ")
+	// The same three malformed shapes, but of a legacy-kind spec: the
+	// legacy-rewrite branch must refuse them exactly as the per-key move
+	// above does, never silently dropping the unknown key or rewriting a
+	// hand-edited form.
+	legacyRaw, err := json.Marshal(CheckJobSpec{Repo: "acme/app", Registry: "h/p/r", BaseImages: map[string]string{"go": oldBase}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lm map[string]any
+	if err := json.Unmarshal(legacyRaw, &lm); err != nil {
+		t.Fatal(err)
+	}
+	lm["future_key"] = "kept by a newer fugaro"
+	legacyUnknown, _ := json.Marshal(lm)
+	delete(lm, "future_key")
+	legacyReformatted, _ := json.MarshalIndent(lm, "", "  ")
 	for name, tc := range map[string]struct{ raw, image, why string }{
 		"not json":                         {"{", oldBase, "not a check spec"},
 		"image names no kind":              {`{"base_images":{"base":"` + oldBase + `"}}`, "elsewhere/img:1", "none of its spec's base images"},
@@ -78,6 +94,8 @@ func TestRewriteCheckSpecRefusals(t *testing.T) {
 		"unknown key":                      {string(unknown), oldBase, "keys this fugaro does not know"},
 		"unknown, indented":                {string(indented), oldBase, "keys this fugaro does not know"},
 		"reformatted":                      {string(reformatted), oldBase, "not in the form fugaro init --repo writes"},
+		"legacy spec, unknown key":         {string(legacyUnknown), oldBase, "keys this fugaro does not know"},
+		"legacy spec, reformatted":         {string(legacyReformatted), oldBase, "not in the form fugaro init --repo writes"},
 	} {
 		_, _, err := RewriteCheckSpec(tc.raw, tc.image, map[string]string{"base": newBase})
 		if !errors.Is(err, ErrCheckJobShape) || !strings.Contains(err.Error(), tc.why) || !strings.Contains(err.Error(), "fugaro init --repo") {

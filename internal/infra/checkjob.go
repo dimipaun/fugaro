@@ -90,7 +90,13 @@ func RewriteCheckSpec(raw, image string, bases map[string]string) (spec, newImag
 		// section 10). image was already checked above to be one of the
 		// spec's own base images, the same guard the non-legacy path below
 		// gets: a job whose image is not in its spec is refused, never
-		// silently rewritten to point at some other base.
+		// silently rewritten to point at some other base. checkStrictAndCanonical
+		// gives it the same refusal, before anything is rewritten, as the
+		// non-legacy path: an unknown key or a hand-edited spec is refused,
+		// never silently dropped.
+		if err := checkStrictAndCanonical(raw, s); err != nil {
+			return "", "", err
+		}
 		s.BaseImages = map[string]string{config.BaseKind: bases[config.BaseKind]}
 		out, err := json.Marshal(s)
 		if err != nil {
@@ -107,13 +113,8 @@ func RewriteCheckSpec(raw, image string, bases map[string]string) (spec, newImag
 	if maps.Equal(moved, s.BaseImages) {
 		return raw, image, nil
 	}
-	strict := json.NewDecoder(strings.NewReader(raw))
-	strict.DisallowUnknownFields()
-	if err := strict.Decode(&CheckJobSpec{}); err != nil {
-		return "", "", fmt.Errorf("%w: its %s has keys this fugaro does not know (%v), so rewriting it would drop them; run fugaro init --repo in the checkout with this fugaro first", ErrCheckJobShape, CheckSpecEnv, err)
-	}
-	if canon, err := json.Marshal(s); err != nil || string(canon) != raw {
-		return "", "", fmt.Errorf("%w: its %s is not in the form fugaro init --repo writes, so it cannot be rewritten as Terraform would render it; run fugaro init --repo in the checkout first", ErrCheckJobShape, CheckSpecEnv)
+	if err := checkStrictAndCanonical(raw, s); err != nil {
+		return "", "", err
 	}
 	s.BaseImages = moved
 	out, err := json.Marshal(s)
@@ -121,6 +122,26 @@ func RewriteCheckSpec(raw, image string, bases map[string]string) (spec, newImag
 		return "", "", err
 	}
 	return string(out), moved[kind], nil
+}
+
+// checkStrictAndCanonical refuses raw when it has a key CheckJobSpec does
+// not know, or when s (already decoded from raw) does not re-marshal to
+// exactly raw: either way, rewriting raw through CheckJobSpec would lose
+// information this fugaro does not model (an unknown key, or hand-edited
+// formatting Repo never renders), so both of RewriteCheckSpec's rewrite
+// paths -- the legacy-kind one and the per-key move -- refuse through
+// this before changing anything, per the function's own documented
+// contract.
+func checkStrictAndCanonical(raw string, s CheckJobSpec) error {
+	strict := json.NewDecoder(strings.NewReader(raw))
+	strict.DisallowUnknownFields()
+	if err := strict.Decode(&CheckJobSpec{}); err != nil {
+		return fmt.Errorf("%w: its %s has keys this fugaro does not know (%v), so rewriting it would drop them; run fugaro init --repo in the checkout with this fugaro first", ErrCheckJobShape, CheckSpecEnv, err)
+	}
+	if canon, err := json.Marshal(s); err != nil || string(canon) != raw {
+		return fmt.Errorf("%w: its %s is not in the form fugaro init --repo writes, so it cannot be rewritten as Terraform would render it; run fugaro init --repo in the checkout first", ErrCheckJobShape, CheckSpecEnv)
+	}
+	return nil
 }
 
 // CheckJobOwner is the repository whose check job a plan may touch: the
