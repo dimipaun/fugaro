@@ -188,6 +188,13 @@ var jobConfigCopyTimeout = 30 * time.Second
 // any of them differs is reported, deduplicated; a workflow with no job yet
 // is skipped, like the single-workflow case always was.
 //
+// Only each workflow's default-account job: infra.Workflow always builds
+// the config.DefaultClaudeAccount variant (a repository may also deploy a
+// named-account job per docs/design/named-oauth-tokens.md, a separate job
+// this does not read). The same fugaro init --repo that refreshes the
+// default one also refreshes every named-account job, so running it fixes
+// both; this note just never checks the named ones itself.
+//
 // "" is nothing to say: every existing job's copy agrees, no workflow has a
 // job yet, or the job can't be read here at all (no workflow, or anything
 // resolveCloudRepo already treats as a skip: no fugaro.yaml, a teammate

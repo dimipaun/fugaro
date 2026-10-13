@@ -106,7 +106,8 @@ steps, stopping that checkout at the first step that fails:
           note naming the fields and the one command that does, fugaro init
           --repo . (never run here: its Terraform confirmations stay
           yours). --check makes no cloud call, so it cannot tell and says
-          so instead.
+          so instead. It checks each workflow's default-account job;
+          named-account jobs are updated by the same fugaro init --repo .
 
 It never upgrades fugaro itself: brew upgrade dimipaun/tap/fugaro && fugaro
 upgrade is the whole sequence.
