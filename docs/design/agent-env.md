@@ -209,16 +209,26 @@ and a test, `TestAgentEnvAllowListNeverHitsNeverList`, asserting
 `AgentEnvAllowed` is disjoint from it. This is a second, independent
 tripwire on every *future* addition, not a rule this design's own v1 list
 needs to lean on (every v1 entry is already checked individually, §2).
-**Honesty about what is confirmed vs. not**: Claude Code is closed-source
-(§0 of `docs/design/base-image.md`: "a closed, proprietary binary"), so
-this repository cannot verify Claude Code 2.1.283's (the pinned version,
-`images/base/Dockerfile:42`, `ARG CLAUDE_CODE_VERSION=2.1.283`) full
-environment-variable surface the way it can verify its own code. Split by
-how each name is known:
-
-*Confirmed — already read, set, or checked somewhere in this repository's
-own code, so definitely real for the pinned version or Claude Code
-generally:*
+**A deny-list is the opposite shape from the allow-list, and "unverified"
+cuts the other way.** An earlier draft of this section withheld an
+unconfirmed name from `NeverAgentEnv` until it could be checked against
+Claude Code 2.1.283's real surface — the right caution for
+`AgentEnvAllowed` (an unverified name let *in* could be actively dangerous)
+but backwards for a *deny* list: a name added to `NeverAgentEnv` that turns
+out not to be real costs nothing (it is simply inert — `TestAgentEnvAllowListNeverHitsNeverList`
+already proves `AgentEnvAllowed` is disjoint from it, so an extra deny-list
+entry can never accidentally refuse something the allow-list needs), while
+a plausible, dangerous-if-real name left *out* is a gap a future
+`AgentEnvAllowed` addition could fall into unnoticed. So: **"verify before
+shipping" applies only to `AgentEnvAllowed`** (§2); `NeverAgentEnv` and
+`NeverAgentEnvPrefixes` take every plausible name or family this review
+and this repository's own code between them have named, confirmed or not,
+because the cost of a wrong guess here is zero and the cost of a missing
+one is not. Claude Code remains closed-source (`docs/design/base-image.md`
+§0: "a closed, proprietary binary"), so "confirmed" below still means
+"found in this repository's own code," not "confirmed against Anthropic's
+own reference" — that distinction still matters for provenance, just not
+for whether a name ships on this list:
 
 ```go
 var NeverAgentEnv = []string{
@@ -246,27 +256,40 @@ var NeverAgentEnv = []string{
     // Vertex's own routing/identity variables (vertexEnv, env.go) and its
     // per-model region overrides.
     "CLOUD_ML_REGION", "ANTHROPIC_VERTEX_PROJECT_ID", "GOOGLE_CLOUD_PROJECT",
+    // Plausible, not found in this repository's code — a deny-list costs
+    // nothing to over-include (above). A credential-helper TTL, mid-session
+    // config files and a shell-wrapping knob, none of which any workflow
+    // should ever be tuning through agent.env even if real.
+    "CLAUDE_ENV_FILE", "CLAUDE_CODE_SHELL_PREFIX", "CLAUDE_CODE_SHELL",
+    "CLAUDE_CODE_ENABLE_TELEMETRY", "CLAUDE_CODE_API_KEY_HELPER_TTL_MS",
+    "CLAUDE_CODE_EXTRA_BODY", "DISABLE_PROMPT_CACHING",
+    "CLAUDE_CODE_CLIENT_CERT", "CLAUDE_CODE_CLIENT_KEY",
 }
 var NeverAgentEnvPrefixes = []string{
     "CLAUDE_CODE_USE_", // routingEnvKeys's own prefix check
     "VERTEX_REGION_",   // vertexRegionPrefix, env.go
+    // No AgentEnvAllowed entry starts with any of these (asserted in
+    // TestAgentEnvAllowListNeverHitsNeverList, Task 1): the whole Anthropic
+    // API/Claude Code configuration surface, OpenTelemetry's own variables
+    // (a repository could otherwise point Claude Code's telemetry at an
+    // arbitrary collector), AWS's SDK-wide variables (credentials, region,
+    // profile — relevant the day a Bedrock-style route exists, costs
+    // nothing to deny today), and every CLAUDE_CODE_SKIP_* auth bypass
+    // (only CLAUDE_CODE_SKIP_VERTEX_AUTH is confirmed above; the prefix
+    // denies a sibling this repository hasn't had reason to read yet).
+    "ANTHROPIC_", "OTEL_", "AWS_", "CLAUDE_CODE_SKIP_",
 }
 ```
 
-*Named by this review, not found anywhere in this repository's code —
-**UNVERIFIED**, included because a real Claude Code variable in any of
-these families would be exactly as dangerous as the confirmed ones above,
-but their existence (names, exact spelling) for Claude Code 2.1.283 was
-not checked and should be before `AgentEnvAllowed` ships, not assumed from
-this list:* `CLAUDE_ENV_FILE`, `CLAUDE_CODE_SHELL_PREFIX`,
-`CLAUDE_CODE_SHELL`, `CLAUDE_CODE_ENABLE_TELEMETRY`, `ANTHROPIC_MODEL`,
-`ANTHROPIC_SMALL_FAST_MODEL`, `CLAUDE_CODE_API_KEY_HELPER_TTL_MS`,
-`CLAUDE_CODE_EXTRA_BODY`, `DISABLE_PROMPT_CACHING`, and the prefixes
-`OTEL_`, `ANTHROPIC_CUSTOM_HEADERS` (a single name, not a prefix, if real),
-`ANTHROPIC_BETAS`, `CLAUDE_CODE_CLIENT_CERT`, `CLAUDE_CODE_CLIENT_KEY`,
-`CLAUDE_CODE_SKIP_`, `AWS_`. **Task 1 of the plan requires checking which
-of these are real for 2.1.283 before shipping `NeverAgentEnv`**, not
-shipping the unverified half as fact.
+A name that would have needed its own "unverified, named by this review"
+entry in an earlier draft — `ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`,
+`ANTHROPIC_BETAS`, `ANTHROPIC_CUSTOM_HEADERS` — is now covered by the
+`ANTHROPIC_` prefix outright and needs no separate listing (an earlier
+draft of this section listed `ANTHROPIC_CUSTOM_HEADERS` oddly, "under
+prefixes… a single name, not a prefix, if real"; the prefix above makes
+that distinction moot). Nothing concrete remains to add for "plugin-dir
+knobs," the one family this review named without a proposed spelling —
+there is no name to list until one is.
 
 **The rule that makes all of this enforceable, not just documented:** the
 allow-list is **Fugaro's own Go code** (§2), never a `fugaro.yaml` field —
