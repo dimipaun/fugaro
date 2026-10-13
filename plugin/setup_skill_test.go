@@ -106,10 +106,17 @@ func TestSetupSkillNeverAppliesInit(t *testing.T) {
 }
 
 // TestSetupSkillExamplesValidate: every fugaro.yaml example in the skill
-// parses and validates with the repository's own loader, every workflow
-// builds on the one Fugaro base, and the examples cover both ways of naming
-// runtimes (image.tools and a repository mise.toml) and both ways of
-// building an image (image: and dockerfile:).
+// parses and validates with the repository's own loader, and the examples
+// cover both ways of naming runtimes (image.tools and a repository
+// mise.toml) and both ways of building an image (image: and dockerfile:).
+// "Every workflow builds on the one Fugaro base" has no separate check here:
+// config.Parse (above) already refuses any workflow with a non-empty base:
+// (legacyBaseMessage, internal/config/validate.go), returning a nil *Config
+// and only problems, which the n == 0 / "does not validate" paths already
+// fail on — a loop-local check of Workflow.BaseKind(), which is hardcoded to
+// always return config.BaseKind regardless of Base (internal/config/config.go),
+// ran on a Config that can only ever reach this point with Base == "" for
+// every workflow, can never fail either way and was dead weight.
 func TestSetupSkillExamplesValidate(t *testing.T) {
 	var tools, plain, dockerfile bool
 	n := 0
@@ -124,9 +131,6 @@ func TestSetupSkillExamplesValidate(t *testing.T) {
 			mise := precedingMiseToml(text, ex.line)
 			checkExample(t, fmt.Sprintf("%s:%d", name, ex.line), c, mise)
 			for wfName, w := range c.Workflows {
-				if w.BaseKind() != config.BaseKind {
-					t.Errorf("%s:%d: workflow builds on %q, a 0.6 base; every example builds on the one Fugaro base", name, ex.line, w.BaseKind())
-				}
 				switch {
 				case len(w.Image.Tools) > 0:
 					tools = true
