@@ -352,7 +352,9 @@ An operator's own coding agent with the operator's ADC can also write `fugaro/` 
 | V7 | (only with the H3 veto) the `storage.googleapis.com/objectListPrefix` attribute grants a prefix-limited list | narrowed reads are impossible |
 | V8 | The 403 on a write reaches the CLI as a `*googleapi.Error` under gocloud's writer (`errors.As`), so `blobx.ErrForbidden` classifies it. The unit tests prove it against `gcpfake` only | the refusal falls back to the generic remote error |
 
-The check runs against the installation **`belong`**, exercising only the **sandbox** repository. The apply, though, changes `belong`'s bucket policy for everyone, EdgeWeb's launchers included. **The owner must agree to that apply.** If every `belong` launcher is an operator, the plan is "no changes" (H4), and V1/V2 then need a second test identity added as a launcher only. Using a throwaway installation instead is the safer veto alternative (H14).
+**Update 2026-10-13 (owner's assistant):** the sandbox repository now lives in the `fugaro` installation (GCP project `fugaro-dev`), where the owner is the only launcher and operator, so the check runs there and NEVER on `belong` (EdgeWeb's and EdgeServer's installation). The apply changes the `fugaro` runs bucket's policy for everyone in that installation: only the owner and the test identity. Because every `fugaro` launcher is also an operator, the plan is "no changes" (H4) until a second test identity is added as a launcher only (V1/V2 need it). This is the throwaway-installation alternative (H14) in effect; the earlier text below that named `belong` is superseded.
+
+~~The check runs against the installation `belong`, exercising only the sandbox repository. The apply, though, changes `belong`'s bucket policy for everyone, EdgeWeb's launchers included.~~
 
 ## 12. Decisions (veto any before execution starts)
 
@@ -371,7 +373,7 @@ The check runs against the installation **`belong`**, exercising only the **sand
 | H11 | Rollout | in 0.7.0; one operator's `fugaro init` as the last step of the 0.7.0 notes | a separate 0.7.1 |
 | H12 | Project-level writers | documented and reported by doctor, not changed | remove the `projectEditor:` convenience binding |
 | H13 | Audit trail | documented optional `DATA_WRITE` audit logs | Terraform-managed audit config |
-| H14 | Live check | user-run Check 32 on `belong`, sandbox repository only, with the owner's go-ahead for the `belong` apply | a throwaway installation |
+| H14 | Live check | user-run Check 32 on the `fugaro` installation (the sandbox repository lives there since 2026-10-13), the owner's go-ahead for that apply; never `belong` | a throwaway installation |
 
 ## 13. Non-goals
 
