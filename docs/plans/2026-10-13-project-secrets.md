@@ -46,14 +46,14 @@ Project rules (carried over from this repository's existing plans):
 | `internal/config/project_secrets.go` (new), `project_secrets_test.go` (new) | `ProjectSecret`, `ValidateProjectSecrets`, `AllowedProjectSecrets`-style helper reusing `ProviderBySecret`/`ClaudeAccountBySecret` for collision checks | 1 |
 | `internal/localcfg/localcfg.go`, `localcfg_test.go`, `internal/localcfg/shared.go`, `shared_test.go` | `Config.ProjectSecrets` field, `Shared()` strips it, `Validate` wiring | 1 |
 | `internal/backend/gcp/names.go`, `names_test.go` | `ProjectSecretID` | 2 |
-| `internal/infra/spec.go`, `spec_test.go` | `rs.Secrets` unchanged (golden), no change needed to add project IDs yet (Task 3 does the resolution) | 2 |
+| `internal/infra/spec.go`, `spec_test.go` | `rs.Secrets` unchanged (golden); `SecretMounts` refuses a workflow secret whose name collides with a `project_secrets` entry (design §3) | 2 |
 | `internal/infra/readiness.go`, `readiness_test.go` | the live precedence check; rewrites a workflow's resolved `SecretIDs[name]` | 3 |
 | `internal/cli/secrets.go`, `secrets_test.go` | `--project-wide` flag, validation branch, `ls` SCOPE column, `ls --project-wide` | 4 |
 | `deploy/terraform/gcp/modules/installation/secrets.tf` (new), `variables.tf`, roots/installation | `google_secret_manager_secret.project`, operator grants, `var.project_secrets` input | 4 |
 | `deploy/terraform/gcp/modules/repo/build.tf`, `workflows.tf`, `variables.tf` | **P4, opus review:** `local.secrets`, `build.tf`'s grant rewired through it | 5 |
 | `internal/infra/installation_terraform_test.go` or equivalent, `deploy/terraform/gcp/roots/installation/tests/` | plan-level fixtures for the new resources, 0 destroys on an unrelated-change plan | 6 |
 | `internal/cli/doctor.go`, `doctor_test.go` | two new checks (design §5) | 7 |
-| `docs/design/v1.md`, `docs/gcp-live-checklist.md`, `internal/cli/docs_*_test.go` | cross-references, Check 40 | 8 |
+| `docs/design/v1.md`, `docs/multi-model.md`, `docs/gcp-live-checklist.md`, `docs/release.md`, `internal/cli/docs_*_test.go` | cross-references, Check 40, the release checklist bullet | 8 |
 | none | full suite | 9 |
 | `docs/gcp-live-checklist.md` (results pasted in) | the owner's own run, Check 40a-e | 10 |
 
@@ -61,7 +61,7 @@ Project rules (carried over from this repository's existing plans):
 
 One PR, branch `project-secrets`, Tasks 1 to 9 in order for the merge; Task 10 is the owner's own run, not blocking (the same relationship `named-oauth-tokens.md`'s Task 11 has to its own PR).
 
-Parallelizable: **Tasks 1 and 2 are independent and may be implemented together.** Task 3 needs 1 and 2. Task 4 needs 1, 2 and the installation Terraform half of itself (its Go and Terraform halves can split further if useful). Task 5 needs 2 (and is reviewed separately from the rest, per P4). Task 6 needs 4 and 5. Task 7 needs 3. Task 8 needs 1 through 7 settled. Task 9 is last.
+Parallelizable: **Task 2 needs Task 1** (its `SecretMounts` collision refusal, below, reads `config.ProjectSecret`/`lc.ProjectSecrets`), so they are no longer independent — Task 1 goes first, Task 2 follows directly after. Task 3 needs 1 and 2. Task 4 needs 1, 2 and the installation Terraform half of itself (its Go and Terraform halves can split further if useful). Task 5 needs 2 (and is reviewed separately from the rest, per P4). Task 6 needs 4 and 5. Task 7 needs 3. Task 8 needs 1 through 7 settled. Task 9 is last.
 
 ---
 
@@ -177,14 +177,15 @@ git commit -m "project secrets task 1: config.ProjectSecret, its validation and 
 
 ---
 
-### Task 2: `gcp.ProjectSecretID`; `rs.Secrets` stays unconditional (golden)
+### Task 2: `gcp.ProjectSecretID`; `rs.Secrets` stays unconditional (golden); `SecretMounts` refuses a name collision
 
 **Files:**
 - Edit: `internal/backend/gcp/names.go`, `names_test.go`
-- Edit: `internal/infra/spec_test.go` (golden test only; no production-code change expected in `spec.go` for this task — see note)
+- Edit: `internal/infra/spec.go`, `spec_test.go`
 
 **Interfaces:**
 - Produces: `func ProjectSecretID(fugaroProject, logical string) string` — same `derive()` call as `SecretID` (`names.go:143-145`), same length/hash budget (`maxSecretID`, `secretHashHex`).
+- Changes: `SecretMounts` (`internal/infra/spec.go:526-546`) gains a collision check alongside its existing `ProviderBySecret` one (`spec.go:539-543`): a workflow's own `w.Secrets` entry whose `Name` is a key of `lc.ProjectSecrets` is refused with a userErr naming the workflow, the secret and the local-config block to use instead ("secret %s is a project-wide secret name, which only the owner's local config may use" — the identical shape and wording pattern as the existing provider-collision message, not a new message style). This is design §3's "`SecretMounts` ... gains an identical refusal for a `project_secrets` name" requirement, and needs only `lc.ProjectSecrets` (Task 1), no other new type.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -240,16 +241,35 @@ func TestBuildRepoSpecNeverPrunesRepoSecrets(t *testing.T) {
 }
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [ ] **Step 5: Write the failing test for the `SecretMounts` collision refusal**
+
+```go
+// internal/infra/spec_test.go
+func TestSecretMountsRefusesProjectSecretNameCollision(t *testing.T) {
+	// A workflow's own w.Secrets names "anthropic-api-key" (or any key of
+	// lc.ProjectSecrets), which is also a reserved, project-shareable name.
+	// Assert SecretMounts returns an error naming the workflow and the
+	// secret, the same way the existing provider-collision case
+	// (spec.go:540-542) already does — do not assert exact wording beyond
+	// that, mirroring how the provider case is itself tested.
+}
+```
+
+Run: `go test -count=1 -run TestSecretMountsRefusesProjectSecretNameCollision ./internal/infra/`
+Expected: FAIL, no refusal (the workflow secret mounts as if it were an ordinary one).
+
+- [ ] **Step 6: Write the `SecretMounts` implementation**
+
+- [ ] **Step 7: Run the tests to verify they pass**
 
 Run: `go vet ./internal/backend/gcp/... ./internal/infra/... && go test -count=1 ./internal/backend/gcp/... ./internal/infra/...`
 Expected: `ok`.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add internal/backend/gcp/names.go internal/backend/gcp/names_test.go internal/infra/spec_test.go
-git commit -m "project secrets task 2: gcp.ProjectSecretID; pin that rs.Secrets stays unconditional"
+git add internal/backend/gcp/names.go internal/backend/gcp/names_test.go internal/infra/spec.go internal/infra/spec_test.go
+git commit -m "project secrets task 2: gcp.ProjectSecretID; pin that rs.Secrets stays unconditional; SecretMounts refuses a project-secret name collision"
 ```
 
 ---
@@ -463,7 +483,7 @@ git commit -m "project secrets task 6: plan-level fixtures proving zero destroys
 
 **Interfaces:**
 - `project-secret-stored`: for every name `config.ReservedSecrets`/a provider's/an account's own list allow-lists this repository for, if neither the repo's own secret nor the project's has an enabled version, red, naming both candidate fix commands.
-- `project-secret-scope-stale`: the repository's **last deployed** job's `secret_env` (read the same way `doctor`'s existing image-config checks already read a deployed job's spec) resolves a different scope than `Readiness` would compute right now — a warning (fails only `--strict`), mirroring `layered-config.md`'s "last run launched on an older generation" shape (`layered-config.md:179`).
+- `project-secret-scope-stale`: the repository's **last deployed** job's `secret_env` (read the same way `doctor`'s existing image-config checks already read a deployed job's spec) resolves a different scope than `Readiness` would compute right now — a warning (fails only `--strict`), mirroring `doctor`'s existing project-layer shape, "flags a run that launched without it or on an older generation" (`internal/cli/doctor.go:148-149`).
 
 **Tests:**
 ```go
@@ -493,12 +513,13 @@ git commit -m "project secrets task 7: fugaro doctor's two checks for project-wi
 
 ---
 
-### Task 8: Docs, cross-references, Check 40
+### Task 8: Docs, cross-references, Check 40, the release checklist bullet
 
 **Files:**
 - Edit: `docs/design/v1.md` (one cross-reference sentence, §5.4 local config area, no rewrite)
 - Edit: `docs/multi-model.md` (a one-paragraph note that a provider's key may now also be stored `--project-wide`, with a link — no change to §1-§6's own content)
-- Edit: `docs/gcp-live-checklist.md`: add Check 40 (40a-40e, design §8) as a new row and a `## Check 40: ...` section, in the file's existing style; update the "Numbering ruling" paragraph (`gcp-live-checklist.md:183-189`) to name 40 as taken by this design
+- Edit: `docs/gcp-live-checklist.md`: add Check 40 (40a-40e, design §8) as a new row and a `## Check 40: ...` section, in the file's existing style; update the "Numbering ruling" paragraph (`gcp-live-checklist.md:183-199`) to name 40 as taken by this design
+- Edit: `docs/release.md` — a new bullet in the release checklist, in the same family and immediately alongside the existing `gcpProjectFieldSince`/`recipesSince`/`layeredSince`/`namedTokensSince` bullets (`docs/release.md:55-58`, design §7): confirm the release note for the shipping version names the owner's migration sequence (design §6), and that an installation applying the `installation` root for the first time after this feature ships sees the new `secrets.tf` resources as **creates only** — never an update to an unrelated resource (a regression elsewhere in the module would show as an unexpected diff there). Unlike the other bullets in that list, this one names no `*Since` Go constant (design §7, P6: this feature adds none) — it is a plan-shape check, not a constant-equality one, and its wording should say so rather than mimic the others' "verify `X` equals Y" phrasing where it would be inaccurate.
 - New/extended test in whichever file already asserts the checklist's numbering/doc shape (the implementer greps for a test covering the "Numbering ruling" claims, if one exists; otherwise this task adds none beyond the existing docs-lint suite)
 
 - [ ] **Step 1: Write the docs edits**
@@ -510,8 +531,8 @@ Expected: `ok`.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add docs/design/v1.md docs/multi-model.md docs/gcp-live-checklist.md
-git commit -m "project secrets task 8: docs cross-references and Check 40"
+git add docs/design/v1.md docs/multi-model.md docs/gcp-live-checklist.md docs/release.md
+git commit -m "project secrets task 8: docs cross-references, Check 40, the release checklist bullet"
 ```
 
 ---

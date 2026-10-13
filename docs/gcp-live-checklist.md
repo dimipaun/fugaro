@@ -186,8 +186,10 @@ out of order: Check 32 is reserved for the bucket-IAM plan's runs-bucket
 launcher-grants check (`docs/plans/2026-10-08-bucket-iam.md` Task 9), and the
 generic-tool plan's clone-workflow check (its Task 18) takes the next free
 number, Check 38, after the named-account checks 34 to 37 (Check 33 is the
-vendor endpoint). Check 39 (39a-39c) is reserved by the retire-image-mirror
-design's rollout-order live check. **Check 40 is reserved by the
+vendor endpoint). Check 39 (39a-39f, six checks; 39d is explicitly out of
+scope and not planned) is reserved by the retire-image-mirror plan's Task 7
+live checks (`docs/plans/2026-10-13-retire-image-mirror.md` Task 7). **Check
+40 is reserved by the
 project-secrets design** (`docs/design/project-secrets.md` §8,
 `docs/plans/2026-10-13-project-secrets.md` Task 10): project-wide secret
 storage reaching an opted-in repository's job, a repository outside the
