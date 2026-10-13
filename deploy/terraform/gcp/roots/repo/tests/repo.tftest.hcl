@@ -827,7 +827,7 @@ run "scheduler_region_and_paused" {
   }
   assert {
     condition = (google_cloud_run_v2_job.check[0].location == "us-east5" &&
-      google_cloud_run_v2_job.check[0].template[0].template[0].containers[0].image == "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-0123abc" &&
+      google_cloud_run_v2_job.check[0].template[0].template[0].containers[0].image == "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc" &&
       google_cloud_run_v2_job.check[0].template[0].template[0].containers[0].command == tolist(["fugaro"]) &&
     google_cloud_run_v2_job.check[0].template[0].template[0].containers[0].args == tolist(["image", "check", "--job"]))
     error_message = "the check job must run fugaro image check --job from the base image, in the region"

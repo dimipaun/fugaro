@@ -56,14 +56,14 @@ func ExecRunner(ctx context.Context, c Cmd) error {
 
 var releaseRE = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 
-// BaseRef is the published base image for base that matches fugaro version.
-// A development build has none, so the caller must name one.
-func BaseRef(base, version string) (string, error) {
+// BaseRef is the published Fugaro base image matching fugaro version. A
+// development build has none, so the caller must name one.
+func BaseRef(version string) (string, error) {
 	v := strings.TrimPrefix(version, "v")
 	if !releaseRE.MatchString(v) {
-		return "", fmt.Errorf("fugaro %s is a development build with no published base image; pass --base (build one with images/build-base.sh %s)", version, base)
+		return "", fmt.Errorf("fugaro %s is a development build with no published base image; pass --base (build one with images/build-base.sh base)", version)
 	}
-	return "ghcr.io/dimipaun/fugaro-" + base + ":" + v, nil
+	return "ghcr.io/dimipaun/fugaro-base:" + v, nil
 }
 
 var tagUnsafeRE = regexp.MustCompile(`[^a-z0-9._-]+`)

@@ -109,9 +109,9 @@ func TestTypedOnlyImageBuildMatrix(t *testing.T) {
 			fb := gcpfake.NewBuild(t)
 			r, spy, _ := c.run(t, initProjectName+"\n")
 			lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5",
-				BaseImages: map[string]string{"web-node": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:1.2.3"},
+				BaseImages: map[string]string{"base": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"},
 				Endpoints:  localcfg.Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}
-			cfg := &config.Config{Workflows: map[string]config.Workflow{"app": {Base: "web-node"}}}
+			cfg := &config.Config{Workflows: map[string]config.Workflow{"app": {}}}
 			spec := infra.RepoSpec{Name: initProjectName, BuildServiceAccountEmail: "b@x.iam", RegistryPath: "r"}
 			built, err := r.buildImages(t.Context(), lc, cfg, spec, []string{"app"})
 			can := c.terminal && c.agent == "" && !c.opts.yes && !c.opts.nonInteractive && !c.opts.asJSON

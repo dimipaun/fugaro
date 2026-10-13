@@ -329,12 +329,12 @@ func TestBuildLocalSmokeWithoutReport(t *testing.T) {
 
 func TestBaseRef(t *testing.T) {
 	for _, v := range []string{"1.2.3", "v1.2.3"} {
-		if got, err := BaseRef("web-node", v); err != nil || got != "ghcr.io/dimipaun/fugaro-web-node:1.2.3" {
+		if got, err := BaseRef(v); err != nil || got != "ghcr.io/dimipaun/fugaro-base:1.2.3" {
 			t.Errorf("BaseRef(%q) = %q, %v", v, got, err)
 		}
 	}
 	for _, v := range []string{"dev", "1.2.3-rc1", "1.2"} {
-		if _, err := BaseRef("web-node", v); err == nil || !strings.Contains(err.Error(), "--base") {
+		if _, err := BaseRef(v); err == nil || !strings.Contains(err.Error(), "--base") {
 			t.Errorf("BaseRef(%q) err = %v", v, err)
 		}
 	}

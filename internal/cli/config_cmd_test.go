@@ -97,7 +97,7 @@ func TestConfigShowNamesAnOmittedZeroValuesSource(t *testing.T) {
 	// one when the workflow names one), the same gap as the top-level
 	// profile: of a file with workflows: (always unset, since the two are
 	// mutually exclusive, decision L10).
-	layerCheckout(t, f, minimalAnchored+"workflows:\n  web:\n    base: go\n    commands: { build: make, test: make test }\n")
+	layerCheckout(t, f, minimalAnchored+"workflows:\n  web:\n    commands: { build: make, test: make test }\n")
 	out, _, err := execute(t, "config", "show", "--json")
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +127,7 @@ func TestConfigShowNamesAnOmittedZeroValuesSource(t *testing.T) {
 //
 // Mutation: same as TestConfigShowNamesAnOmittedZeroValuesSource.
 func TestConfigShowNamesSourceOfAnUnsetGCPProject(t *testing.T) {
-	bareLayerCheckout(t, "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  web: { base: go, commands: { build: make, test: make test } }\n")
+	bareLayerCheckout(t, "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  web: { commands: { build: make, test: make test } }\n")
 	out, _, err := execute(t, "config", "show", "--json")
 	if err != nil {
 		t.Fatal(err)
@@ -207,7 +207,7 @@ func TestConfigShowJSONTellsLayerUnknownFromNone(t *testing.T) {
 	// strict command refusing to launch without checking are (needs_layer
 	// problems), not this.
 	selfSufficient := "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: github }\n" +
-		"workflows:\n  web: { base: go, commands: { build: make, test: make test } }\n"
+		"workflows:\n  web: { commands: { build: make, test: make test } }\n"
 	bareLayerCheckout(t, selfSufficient)
 	out, _, err := execute(t, "config", "show", "--offline", "--json")
 	if err != nil {
@@ -230,7 +230,7 @@ func TestConfigShowJSONTellsLayerUnknownFromNone(t *testing.T) {
 	// no layer could ever apply (no gcp_project: at all) also prints
 	// project_layer: null, but LayerUnknown must stay false.
 	bareLayerCheckout(t, "version: 1\nproject: aurora\ngit: { provider: github }\n"+
-		"workflows:\n  web: { base: go, commands: { build: make, test: make test } }\n")
+		"workflows:\n  web: { commands: { build: make, test: make test } }\n")
 	out2, _, err := execute(t, "config", "show", "--json")
 	if err != nil {
 		t.Fatal(err)
@@ -328,8 +328,8 @@ func TestConfigShowWorkflowFilter(t *testing.T) {
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
 	layerCheckout(t, f, minimalAnchored+
-		"workflows:\n  web: { base: go, commands: { build: make, test: make test } }\n"+
-		"  api: { base: go, commands: { build: make, test: make test } }\n")
+		"workflows:\n  web: { commands: { build: make, test: make test } }\n"+
+		"  api: { commands: { build: make, test: make test } }\n")
 	out, _, err := execute(t, "config", "show", "--workflow", "web", "--json")
 	if err != nil {
 		t.Fatal(err)
@@ -375,7 +375,7 @@ func TestConfigShowEscapesHostileValues(t *testing.T) {
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
 	layerCheckout(t, f, minimalAnchored+
-		"workflows:\n  web: { base: go, commands: { build: \"evil\\u202eutc.sh\", test: make test } }\n")
+		"workflows:\n  web: { commands: { build: \"evil\\u202eutc.sh\", test: make test } }\n")
 	out, _, err := execute(t, "config", "show")
 	if err != nil {
 		t.Fatal(err)
@@ -696,7 +696,7 @@ func TestConfigInitRefusesADifferentFileWithoutTheNetwork(t *testing.T) {
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
 	layerCheckout(t, f, minimalAnchored+
-		"workflows:\n  web: { base: go, commands: { build: make, test: make test } }\n")
+		"workflows:\n  web: { commands: { build: make, test: make test } }\n")
 	noLayerBucketReads(t)
 	_, _, err := execute(t, "config", "init", "--project", "aurora", "--yes")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "never overwrites") {
