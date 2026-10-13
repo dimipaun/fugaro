@@ -220,8 +220,10 @@ var secretLikeRE = regexp.MustCompile(`(?i)(ghp_|github_pat_|sk-ant-|-----BEGIN|
 // runtimeAptPackageRE matches Debian package names that install a language
 // runtime directly (services-and-images.md: "Never apt-get install
 // <language>"; mise is the one way to install a runtime on the base). Not
-// exhaustive, but covers the common per-distro names and version suffixes.
-var runtimeAptPackageRE = regexp.MustCompile(`^(nodejs|npm|golang(-go)?|python3?(\.\d+)?(-pip|-venv|-dev)?|ruby(\d+(\.\d+)?)?|r?openjdk-?\d*(-jdk|-jre)?|default-jdk|default-jre|php\d*(\.\d+)?(-cli|-fpm)?|rustc|cargo|dotnet-sdk(-\d+(\.\d+)?)?|mono-complete)$`)
+// exhaustive, but covers the common per-distro names and version suffixes,
+// including the -headless JDK/JRE variant (openjdk-17-jdk-headless) that a
+// plain (-jdk|-jre) suffix alone misses.
+var runtimeAptPackageRE = regexp.MustCompile(`^(nodejs|npm|golang(-go)?|python3?(\.\d+)?(-pip|-venv|-dev)?|ruby(\d+(\.\d+)?)?|r?openjdk-?\d*(-jdk|-jre)?(-headless)?|(default-jdk|default-jre)(-headless)?|php\d*(\.\d+)?(-cli|-fpm)?|rustc|cargo|dotnet-sdk(-\d+(\.\d+)?)?|mono-complete)$`)
 
 // checkNoRuntimeApt fails t if any image.apt entry of w installs a language
 // runtime instead of declaring it in mise.toml or image.tools.
@@ -237,13 +239,38 @@ func checkNoRuntimeApt(t *testing.T, at, wf string, w config.Workflow) {
 // aptGetInstallRE finds an apt(-get) install invocation in a Dockerfile line.
 var aptGetInstallRE = regexp.MustCompile(`\bapt(-get)?\s+install\b`)
 
+// joinShellContinuations collapses lines ending in a trailing `\` into their
+// logical line: the project's own idiomatic multi-line
+// `apt-get install -y --no-install-recommends \` style (images/base/Dockerfile
+// lists its packages across several continuation lines), which scanning one
+// physical line at a time would never see past the first.
+func joinShellContinuations(text string) []string {
+	var out []string
+	var cur string
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimRight(line, " \t")
+		if strings.HasSuffix(trimmed, `\`) {
+			cur += strings.TrimSuffix(trimmed, `\`) + " "
+			continue
+		}
+		cur += line
+		out = append(out, cur)
+		cur = ""
+	}
+	if cur != "" {
+		out = append(out, cur)
+	}
+	return out
+}
+
 // addedLinesInstallARuntime reports a package name a block of added
 // Dockerfile lines apt-get installs that is a language runtime (see
 // runtimeAptPackageRE): the one place a hand-edited Dockerfile could smuggle
 // a `base:`-style runtime install past checkDerivedFromRender's USER
-// root/sha256sum-only check.
+// root/sha256sum-only check. Lines are joined across `\` continuations
+// first, so a package named on a continuation line is seen too.
 func addedLinesInstallARuntime(text string) (pkg string, found bool) {
-	for _, line := range strings.Split(text, "\n") {
+	for _, line := range joinShellContinuations(text) {
 		if !aptGetInstallRE.MatchString(line) {
 			continue
 		}
