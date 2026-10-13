@@ -822,13 +822,16 @@ func TestReviewModeMissingSecretFailsBootstrap(t *testing.T) {
 // Mutation (drop the `if !gitops.ValidCommitSHA(h.SHA)` check from
 // checkReviewPRs): this test fails, finding the option-injection and
 // abbreviated-hash cases reach checkout instead of being refused at
-// bootstrap.
+// bootstrap — and, since the marker lives under t.TempDir() rather than a
+// fixed path like /tmp/x, that mutation's injected `touch` is also caught
+// actually running, not merely inferred from the status code.
 func TestReviewModeRefusesInvalidHeadCommit(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "injected")
 	cases := []struct {
 		name string
 		sha  string
 	}{
-		{"option-injection", "--upload-pack=touch /tmp/x;git-upload-pack"},
+		{"option-injection", "--upload-pack=touch " + marker + ";git-upload-pack"},
 		{"abbreviated", "abc1234"},
 	}
 	for _, c := range cases {
@@ -845,6 +848,9 @@ func TestReviewModeRefusesInvalidHeadCommit(t *testing.T) {
 			}
 			if len(h.agent.calls) != 0 {
 				t.Fatalf("%d agent calls, want none (bootstrap must refuse before checkout)", len(h.agent.calls))
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatal("the injected command ran: the marker file exists")
 			}
 		})
 	}

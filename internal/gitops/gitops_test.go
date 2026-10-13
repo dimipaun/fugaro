@@ -162,6 +162,9 @@ func TestWorktreeAddsDetachedCopy(t *testing.T) {
 // TestWorktreeRefusesAnythingButAFullHash: the same rev-validation
 // TestCheckoutDetachedRefusesAnythingButAFullHash proves for the
 // single-pull-request case, for pick's per-pull-request worktree instead.
+// The injected command's marker lives under t.TempDir(), not a fixed path
+// like /tmp/x: under the mutation below, the injected `touch` would
+// otherwise run against the real host's /tmp, not a path this test owns.
 //
 // Mutation (drop the `if !ValidCommitSHA(rev)` check from Worktree): this
 // test fails, finding no error for either an option-injection rev or an
@@ -172,8 +175,13 @@ func TestWorktreeRefusesAnythingButAFullHash(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.Worktree(ctx, "--upload-pack=touch /tmp/x;git-upload-pack", dir); err == nil {
+	marker := filepath.Join(t.TempDir(), "injected")
+	injection := "--upload-pack=touch " + marker + ";git-upload-pack"
+	if err := repo.Worktree(ctx, injection, dir); err == nil {
 		t.Fatal("want an error for an option-injection rev, got none")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("the injected command ran: the marker file exists")
 	}
 	if err := repo.Worktree(ctx, "abc1234", dir); err == nil {
 		t.Fatal("want an error for an abbreviated hash, got none")
