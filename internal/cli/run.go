@@ -298,10 +298,6 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		}
 	}
 	if attemptsSet {
-		// prSet, reviewRecipe and o.retry are all excluded above, so a
-		// batch always takes newSpec's path; a review-mode recipe (--recipe
-		// or a project's agent.recipe) is refused there already, by
-		// chooseRecipe (run.go:641), exactly as a bare `fugaro run` is.
 		return runAttempts(cmd, env, o, text, total)
 	}
 
@@ -324,7 +320,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	if err != nil {
 		return err
 	}
-	res, err := finishLaunch(ctx, env, o, slug, spec, reused, cmd.ErrOrStderr())
+	res, err := finishLaunch(ctx, env, o, slug, spec, reused, cmd.ErrOrStderr(), false)
 	if err != nil {
 		return err
 	}
@@ -334,9 +330,14 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 // finishLaunch is everything a launch does once its spec is built, however
 // it was built (a new task, a follow-up, a review or a retry): embedding the
 // project layer, the image and budget gates, storing the task and starting
-// the execution. A best-of-N batch (runAttempts) calls this once per
-// attempt, each with its own fresh spec from newSpec.
-func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, reused bool, warn io.Writer) (launchResult, error) {
+// the execution. A best-of-N batch (runAttempts, through the launchAttempt
+// seam) calls this once per attempt, each with its own fresh spec from
+// buildUniqueAttemptSpec, and skipBudget true: the batch already leased its
+// whole budget headroom once, before any attempt (design generic-tool
+// review, 2026-10-13), so a per-attempt re-check here would both re-judge
+// already-leased state and print its notes once per attempt instead of once
+// per batch.
+func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, reused bool, warn io.Writer, skipBudget bool) (launchResult, error) {
 	var layerData []byte
 	var err error
 	if o.retry == "" && !reused {
@@ -396,8 +397,10 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		if err := checkMaxParallel(ctx, env); err != nil {
 			return launchResult{}, err
 		}
-		if err := env.budgetPrecheck(ctx, slug, spec, warn); err != nil {
-			return launchResult{}, err
+		if !skipBudget {
+			if err := env.budgetPrecheck(ctx, slug, spec, warn); err != nil {
+				return launchResult{}, err
+			}
 		}
 	}
 	if o.retry == "" {
@@ -462,34 +465,50 @@ func taskText(cmd *cobra.Command, file string, args []string, optional bool) (st
 	return text, nil
 }
 
-// newSpec builds a new run's spec, and its repository's slug, from the
-// flags, the local config and the checkout in the working directory.
-func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, total time.Duration, warn io.Writer) (string, *task.Spec, error) {
+// attemptPlan is everything a new run's attempts share, resolved once: the
+// repository, workflow, ref, account and recipe. newSpec (a single launch)
+// and runAttempts (every attempt of a best-of-N batch) both build one, then
+// stamp a fresh run id onto it per spec (buildAttemptSpec): a project recipe
+// published mid-batch must not give a batch's later attempts a different
+// recipe from its first (design generic-tool review, 2026-10-13).
+type attemptPlan struct {
+	repo, slug, workflow, ref, me, account, totalOverride string
+	recipe                                                *task.Recipe
+}
+
+// resolveAttemptPlan resolves everything a new run's spec needs except its
+// run id, from the flags, the local config and the checkout in the working
+// directory. forAttempts is true only for runAttempts: chooseRecipe then
+// gives a batch-appropriate refusal for a mode: review recipe, since
+// --attempts cannot take the --pr a plain launch's refusal suggests.
+func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total time.Duration, warn io.Writer, forAttempts bool) (*attemptPlan, error) {
 	repo := o.repo
 	if repo == "" {
 		var err error
 		if repo, err = originRepo(ctx); err != nil {
-			return "", nil, err
+			return nil, err
 		}
 	}
 	if _, err := task.CanonicalRepo(repo); err != nil {
-		return "", nil, userErr("--repo: %v", err)
+		return nil, userErr("--repo: %v", err)
 	}
 	checkout := checkoutOf(ctx, repo)
 	slug, err := env.repoSlug(repo, checkout)
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
 	workflow, err := resolveWorkflow(env, repo, o.workflow, checkout)
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
+	var totalOverride string
 	if total > 0 {
 		if c := checkout(); c != nil {
 			if w, ok := c.Workflows[workflow]; ok && total <= w.Timeouts.FinalizeReserve.Duration {
-				return "", nil, userErr("--total-timeout %s must be longer than workflow %s's timeouts.finalize_reserve %s", total, workflow, w.Timeouts.FinalizeReserve.Duration)
+				return nil, userErr("--total-timeout %s must be longer than workflow %s's timeouts.finalize_reserve %s", total, workflow, w.Timeouts.FinalizeReserve.Duration)
 			}
 		}
+		totalOverride = total.String()
 	}
 	ref := o.ref
 	if ref == "" {
@@ -498,18 +517,12 @@ func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tot
 		} else if c := checkout(); c != nil && c.Git.BaseBranch != "" {
 			ref = c.Git.BaseBranch
 		} else {
-			return "", nil, userErr("cannot tell the base branch of %s; pass --ref", repo)
+			return nil, userErr("cannot tell the base branch of %s; pass --ref", repo)
 		}
 	}
 	me, err := env.lc.Me(ctx)
 	if err != nil {
-		return "", nil, userErr("%v", err)
-	}
-	runID := o.runID
-	if runID == "" {
-		if runID, err = task.NewRunID(time.Now(), crand.Reader); err != nil {
-			return "", nil, err
-		}
+		return nil, userErr("%v", err)
 	}
 	// Resolved before chooseRecipe (review finding E): chooseRecipe's
 	// resolveRecipe can read a project or catalog recipe from the bucket, a
@@ -518,65 +531,139 @@ func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tot
 	// local config and the checkout already in hand, no network of its own.
 	account, err := claudeAccountFor(env, repo, o.token, checkout())
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
-	rcp, err := chooseRecipe(ctx, env, o.recipe, checkout, checkoutRoot(ctx, repo), warn)
+	rcp, err := chooseRecipe(ctx, env, o.recipe, checkout, checkoutRoot(ctx, repo), warn, forAttempts)
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
-	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, Workflow: workflow, Task: text, RequestedBy: me, Batch: o.batch, Recipe: rcp}
-	if total > 0 {
-		spec.Overrides.TotalTimeout = total.String()
+	return &attemptPlan{repo: repo, slug: slug, workflow: workflow, ref: ref, me: me, account: account, totalOverride: totalOverride, recipe: rcp}, nil
+}
+
+// buildAttemptSpec stamps a fresh run id (or o.runID, when given) onto plan,
+// building one spec; runAttempts calls it once per attempt of a batch, each
+// getting its own id over the same plan.
+func buildAttemptSpec(plan *attemptPlan, o *runOptions, text string) (string, *task.Spec, error) {
+	runID := o.runID
+	if runID == "" {
+		var err error
+		if runID, err = runIDGenerator(); err != nil {
+			return "", nil, err
+		}
 	}
-	if account != config.DefaultClaudeAccount {
-		spec.OAuthToken = account
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: plan.repo, Ref: plan.ref, Workflow: plan.workflow, Task: text, RequestedBy: plan.me, Batch: o.batch, Recipe: plan.recipe}
+	if plan.totalOverride != "" {
+		spec.Overrides.TotalTimeout = plan.totalOverride
+	}
+	if plan.account != config.DefaultClaudeAccount {
+		spec.OAuthToken = plan.account
 	}
 	if err := spec.Validate(); err != nil {
 		return "", nil, userErr("%v", err)
 	}
-	return slug, spec, nil
+	return plan.slug, spec, nil
 }
 
-// batchResult is fugaro run --attempts's --json output: the batch label and
-// each attempt's ordinary launchResult, in launch order.
-type batchResult struct {
-	Batch string         `json:"batch"`
-	Runs  []launchResult `json:"runs"`
+// runIDGenerator is task.NewRunID's call in production; a test swaps it to
+// force a run id collision inside a best-of-N batch (buildUniqueAttemptSpec
+// retries on one).
+var runIDGenerator = func() (string, error) { return task.NewRunID(time.Now(), crand.Reader) }
+
+// newSpec builds a new run's spec, and its repository's slug, from the
+// flags, the local config and the checkout in the working directory.
+func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, total time.Duration, warn io.Writer) (string, *task.Spec, error) {
+	plan, err := resolveAttemptPlan(ctx, env, o, total, warn, false)
+	if err != nil {
+		return "", nil, err
+	}
+	return buildAttemptSpec(plan, o, text)
 }
+
+// batchResult is fugaro run --attempts's --json output: the batch label,
+// how many attempts it was meant to launch, and each one's ordinary
+// launchResult, in launch order. Incomplete is set only on a partial batch
+// (a failure stopped the loop before Attempts were launched), so a reader
+// never mistakes len(Runs) < Attempts for success.
+type batchResult struct {
+	Batch      string         `json:"batch"`
+	Attempts   int            `json:"attempts"`
+	Incomplete bool           `json:"incomplete,omitempty"`
+	Runs       []launchResult `json:"runs"`
+}
+
+// launchAttempt is finishLaunch's call in production; a test swaps it to
+// fail a chosen attempt of a batch, to exercise runAttempts's partial-
+// failure reporting without a live fault in the backend fake.
+var launchAttempt = finishLaunch
+
+// resolveBatchPlan is runAttempts's one call to resolveAttemptPlan in
+// production; a test swaps it to count calls and so prove it runs once per
+// batch, not once per attempt (design generic-tool review, 2026-10-13: a
+// recipe published mid-batch must not give a batch's later attempts a
+// different recipe from its first).
+var resolveBatchPlan = resolveAttemptPlan
 
 // runAttempts launches o.attempts (2 to 4) independent runs of the same
 // task, workflow, ref and recipe, as a best-of-N batch (design generic-tool
-// G13): each is an ordinary newSpec launch through finishLaunch, under one
-// batch label. It never partially launches a batch the max_parallel cap
-// cannot hold, and it never cancels a run it already started: a failure
-// after k launches reports those k and returns the error.
+// G13): the plan (repository, workflow, ref, account and recipe) is
+// resolved once and shared by every attempt, each stamped with its own run
+// id over it (buildUniqueAttemptSpec), through the ordinary finishLaunch.
+// It never partially launches a batch the max_parallel cap or the budget
+// cannot hold, and it never counts a run it did not itself start: a failure
+// after k launches (including finishLaunch reporting "already-launched",
+// which here can only mean a run id collision slipped past the retry)
+// reports those k and returns the error.
 func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, total time.Duration) error {
 	ctx := cmd.Context()
 	warn := cmd.ErrOrStderr()
 	n := o.attempts
+	// Resolved, including the recipe, before checkMaxParallelFor's backend
+	// listing call and the budget pre-check's database read (design
+	// generic-tool review, 2026-10-13): a batch a review-mode recipe (or an
+	// unresolvable one) refuses outright must not first pay for either.
+	plan, err := resolveBatchPlan(ctx, env, o, total, warn, true)
+	if err != nil {
+		return err
+	}
 	if err := checkMaxParallelFor(ctx, env, n); err != nil {
 		return err
 	}
+	if err := env.batchBudgetPrecheck(ctx, plan.slug, plan.repo, n, warn); err != nil {
+		return err
+	}
+	seen := make(map[string]bool, n)
 	results := make([]launchResult, 0, n)
 	for i := 0; i < n; i++ {
-		slug, spec, err := newSpec(ctx, env, o, text, total, warn)
+		slug, spec, err := buildUniqueAttemptSpec(plan, o, text, seen)
 		if err != nil {
-			return reportBatchFailure(cmd, o.batch, o.asJSON, results, err)
+			return reportBatchFailure(cmd, o.batch, n, o.asJSON, results, i, err)
 		}
 		if i == 0 && o.batch == "" {
-			// With no --batch, the first attempt's own run ID names the
-			// batch (design generic-tool §3.6): set once newSpec has
-			// generated it, then kept in o.batch so every later attempt's
-			// newSpec carries the same label.
+			// With no --batch, the first attempt's own run id names the
+			// batch (design generic-tool §3.6): set once buildUniqueAttemptSpec
+			// has generated it, then kept in o.batch so every later
+			// attempt's spec carries the same label.
 			spec.Batch = "bestof-" + spec.RunID
 			if err := spec.Validate(); err != nil {
-				return reportBatchFailure(cmd, o.batch, o.asJSON, results, userErr("%v", err))
+				return reportBatchFailure(cmd, o.batch, n, o.asJSON, results, i, userErr("%v", err))
 			}
 			o.batch = spec.Batch
 		}
-		res, err := finishLaunch(ctx, env, o, slug, spec, false, warn)
+		seen[spec.RunID] = true
+		// skipBudget: the batch's own budget pre-check above already leased
+		// n * MinLaunchHeadroom once; a per-attempt re-check here would both
+		// re-evaluate state it already judged and print its notes n times.
+		res, err := launchAttempt(ctx, env, o, slug, spec, false, warn, true)
 		if err != nil {
-			return reportBatchFailure(cmd, o.batch, o.asJSON, results, err)
+			return reportBatchFailure(cmd, o.batch, n, o.asJSON, results, i, err)
+		}
+		if res.Status == "already-launched" {
+			// Not a fresh launch: buildUniqueAttemptSpec's retry already
+			// guards against a run id this loop generated twice, so this can
+			// only be some other process's run reusing the id — too
+			// improbable to recover from; the batch must not silently count
+			// a run it did not itself start.
+			return reportBatchFailure(cmd, o.batch, n, o.asJSON, results, i, fmt.Errorf("run %s was already launched, not by this batch", oneLine(res.Run)))
 		}
 		if !o.asJSON {
 			if err := printLaunch(cmd.OutOrStdout(), res, false); err != nil {
@@ -586,7 +673,7 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 		results = append(results, res)
 	}
 	if o.asJSON {
-		if err := printBatch(cmd.OutOrStdout(), o.batch, results); err != nil {
+		if err := printBatch(cmd.OutOrStdout(), o.batch, n, false, results); err != nil {
 			return err
 		}
 	}
@@ -599,24 +686,49 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 	return nil
 }
 
-// reportBatchFailure prints the runs a batch already launched (never more:
-// launched runs are never cancelled behind the user's back) before returning
-// the error that stopped it. Text mode already printed each as it launched;
-// JSON mode holds everything for one document, so it prints the partial one
-// here instead.
-func reportBatchFailure(cmd *cobra.Command, batch string, asJSON bool, results []launchResult, err error) error {
-	if asJSON && len(results) > 0 {
-		_ = printBatch(cmd.OutOrStdout(), batch, results)
+// buildUniqueAttemptSpec is buildAttemptSpec, retried while its fresh run id
+// collides with one already seen in this batch (task.NewRunID's own
+// resolution, a timestamp plus two random bytes, makes two attempts in the
+// same second collide about 1 time in 65536: rare, but a silent duplicate
+// would make the batch report N results for N-1 real runs). o.runID is
+// always "" here (--attempts refuses --run-id), so each retry calls
+// runIDGenerator again.
+func buildUniqueAttemptSpec(plan *attemptPlan, o *runOptions, text string, seen map[string]bool) (string, *task.Spec, error) {
+	const maxRetries = 8
+	for try := 0; ; try++ {
+		slug, spec, err := buildAttemptSpec(plan, o, text)
+		if err != nil || !seen[spec.RunID] {
+			return slug, spec, err
+		}
+		if try >= maxRetries {
+			return "", nil, userErr("could not generate a run id that was not already in this batch after %d tries", maxRetries+1)
+		}
 	}
-	return err
+}
+
+// reportBatchFailure prints the runs a batch already launched (never more:
+// launched runs are never cancelled behind the user's back) before
+// returning the error that stopped it, wrapped with which attempt failed,
+// out of how many, and the run ids that did launch. Text mode already
+// printed each as it launched; JSON mode holds everything for one document,
+// so it prints the partial one here instead, marked Incomplete.
+func reportBatchFailure(cmd *cobra.Command, batch string, n int, asJSON bool, results []launchResult, i int, err error) error {
+	if asJSON {
+		_ = printBatch(cmd.OutOrStdout(), batch, n, true, results)
+	}
+	ids := make([]string, len(results))
+	for j, r := range results {
+		ids[j] = r.RunID
+	}
+	return fmt.Errorf("attempt %d of %d: %w; launched %d (batch %s): %s", i+1, n, err, len(results), batch, strings.Join(ids, ", "))
 }
 
 // printBatch is fugaro run --attempts's --json output: one document for the
 // whole batch, not one per run.
-func printBatch(w io.Writer, batch string, results []launchResult) error {
+func printBatch(w io.Writer, batch string, attempts int, incomplete bool, results []launchResult) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	return enc.Encode(batchResult{Batch: batch, Runs: results})
+	return enc.Encode(batchResult{Batch: batch, Attempts: attempts, Incomplete: incomplete, Runs: results})
 }
 
 // reviewSpec is the task of a review-mode launch: fugaro run --recipe NAME
@@ -747,7 +859,10 @@ func claudeAccountAllowed(env *cloudEnv, repo, name string, co *config.Config) e
 // the project and the catalog. With no flag and no checkout it resolves
 // default (a project default included), and a catalog default leaves the
 // choice to the runner, which reads agent.recipe at the task's ref.
-func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func() *config.Config, root string, warn io.Writer) (*task.Recipe, error) {
+// forAttempts gives a mode: review refusal that fits runAttempts's caller
+// (--attempts refuses --pr, so the plain launch's "add --pr" advice would be
+// wrong there).
+func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func() *config.Config, root string, warn io.Writer, forAttempts bool) (*task.Recipe, error) {
 	name, explicit := flag, flag != ""
 	var cfg *config.Config
 	if c := checkout(); c != nil {
@@ -764,6 +879,9 @@ func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func
 		return nil, err
 	}
 	if rr.Recipe.Mode == recipe.ModeReview {
+		if forAttempts {
+			return nil, userErr("recipe %s is mode: review, which only reviews pull requests; --attempts launches a fresh batch and cannot use it (review one with fugaro run --recipe %s --pr N instead)", rr.Name, rr.Name)
+		}
 		return nil, userErr("recipe %s is mode: review, which only reviews pull requests; launch it with --recipe %s --pr N (1 to 4 times)", rr.Name, rr.Name)
 	}
 	printRecipeNote(warn, rr, explicit)
