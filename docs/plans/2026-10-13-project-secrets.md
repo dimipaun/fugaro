@@ -36,7 +36,7 @@ Project rules (carried over from this repository's existing plans):
 ## Review Focus (mutation-proof notes)
 
 1. **A repository outside an allow-list gets a project secret's variable anyway**, or `secrets set --project-wide` accepts a name with an empty allow-list. Pinned by `TestProjectSecretAllowedRepos` (Task 1), `TestReadinessOmitsProjectSecretForUnlistedRepo` (Task 3), `TestSecretsSetProjectWideRefusesEmptyAllowList` (Task 4).
-2. **A repo-level override stops winning even though it still has a version**, or a project copy is chosen while the repo copy is live. Pinned by `TestReadinessPrefersRepoOverrideWhenPresent` and `TestReadinessFallsBackOnceRepoVersionGone` (Task 3) — both assert the *resolved secret ID*, not merely that the job deploys.
+2. **A repo-level override stops winning even though it still has a version**, or a project copy is chosen while the repo copy is live — the precise bug an earlier draft of Task 3 had (B2 in review: "populated unconditionally wherever eligible" plus a Terraform-side `merge()` that lets the second map win would always resolve to the project copy, inverting "repo > project" for every eligible name, not just the unversioned ones). Pinned by `TestReadinessRepoVersionMeansNoProjectSecretsEntry` and `TestReadinessFallsBackOnceRepoVersionGone` (Task 3) — both assert `out.ProjectSecrets` has no entry (or gains one only once the repo version is gone), not merely that the job deploys or that some other field looks right.
 3. **A scope change plans a delete of an existing repo-owned secret.** Pinned by `TestBuildRepoSpecNeverPrunesRepoSecrets` (Task 2, a golden diff of `rs.Secrets`'s key set before/after a name becomes project-shared) and `TestInstallationRootPlanHasNoRepoSecretDeletes` if a Terraform-plan-level test harness exists for the installation root (Task 6; otherwise a Go-level assertion suffices and the task says so).
 4. **The build account's grant drifts from the job account's resolved secret** (P4): `TestBuildAndJobGrantSameResolvedSecret` (Task 5) asserts both `var.secrets`-consuming paths resolve the identical ID for the identical logical name, for every fixture.
 5. **A value leaks through `ls --project-wide`, `doctor`, or a plan/state print.** Pinned by `TestSecretsLsProjectWideNeverPrintsValue`, `TestDoctorProjectSecretChecksReadNoValue` (Task 4/7), both asserting the fake Secret Manager's `Access` is never called.
@@ -384,62 +384,88 @@ git commit -m "project secrets task 2: gcp.ProjectSecretID; pin that rs.Secrets 
 **Files:**
 - Edit: `internal/infra/readiness.go`, `readiness_test.go`
 
-**Interfaces:**
-- `Readiness` gains a parameter (or `RepoSpec` gains a field `ProjectSecrets map[string]string`, logical name → `gcp.ProjectSecretID(...)`, computed by the caller from local config before calling `Readiness` — the implementer picks whichever keeps `Readiness`'s existing signature style; `RepoSpec` gaining the field, populated unconditionally wherever a name is eligible for this repository, reads more consistently with how `rs.Secrets` is already populated in `infra.Repo()`). The eligibility test, per source of the logical name, is **not uniform** (P7): `project_secrets`/`claude_accounts`-derived names use `AllowedForProjectSecret`/`ClaudeAccountBySecret`+`AllowsData` (unchanged); **a provider's own `.Secret` name uses `ProviderKeyAvailable`, not `AllowsData`** — the same switch Task 2 makes in `SecretMounts`, kept consistent here so a logical name is eligible for project-ID substitution in `Readiness` exactly when `SecretMounts` chose to mount it for that repository in the first place.
-- `Readiness`'s per-workflow loop (`readiness.go:89-137`): for each `logical` in `uniqueSecrets(ws)` that also has a `spec.ProjectSecrets[logical]` entry, check `hasVersion(logical)` against the **repo** ID (today's `spec.Secrets[logical]`) first; if false, check `hasEnabledVersion` against `spec.ProjectSecrets[logical]` instead, and if that is true, set `ws.SecretIDs[logical] = spec.ProjectSecrets[logical]` (note: `SecretEnv` — env var name → logical name — is unchanged; only the ID a logical name resolves to moves). If neither has a version, the existing `Missing{Kind: MissingSecret}` reason names `fugaro secrets set NAME --project-wide` instead of `--repo NAME` when `spec.ProjectSecrets[logical]` exists (design §5).
+**Interfaces (corrected after review B1/B2: the original draft's `ws.SecretIDs` rewrite never reached Terraform at all — `WorkflowSpec.SecretIDs` is `json:"-"`, internal/infra/spec.go:148 — and its "populated unconditionally wherever eligible" wording would, once wired to Terraform, have made the project copy win even when a repo override exists, inverting "repo > project." Both are fixed together below with two separate fields — one input, one output — not one field doing both jobs):**
+- **Input, computed in `infra.Repo()`/`workflow()` (where the local config is in scope), not by `Readiness`:** `RepoSpec.ProjectSecretCandidates map[string]string` (`json:"-"`, never reaches tfvars) — one entry per logical name this repository is *eligible* to use project-wide, value `gcp.ProjectSecretID(fugaroProject, name)`. Eligibility is **not uniform** across name sources (P7): `project_secrets`/`claude_accounts`-derived names use `AllowedForProjectSecret`/`ClaudeAccountBySecret`+`AllowsData` (unchanged); **a provider's own `.Secret` name uses `ProviderKeyAvailable`, not `AllowsData`** — the same switch Task 2 makes in `SecretMounts`, kept consistent here. Being a candidate says nothing about resolution yet.
+- **Output, computed by `Readiness` (`Readiness` has no `*localcfg.Config` parameter — `func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (RepoSpec, []Missing, error)` — so it can only consult the candidates map above, never recompute eligibility itself):** `RepoSpec.ProjectSecrets map[string]string` (`json:"project_secrets"` — **this is the field that reaches tfvars as `repo.project_secrets`**, a new Terraform variable, Task 5). `Readiness`'s per-workflow loop (`readiness.go:89-137`) *and* its check-job branch (`readiness.go:139-151`, B4 — the check job mounts a subset of the same logical names and needs the identical treatment, since it was missed in the design's first draft): for each `logical` in `uniqueSecrets(ws)` (or `slices.Compact(slices.Sorted(maps.Values(out.Check.SecretEnv)))` for the check branch) that also has a `spec.ProjectSecretCandidates[logical]` entry, check `hasVersion(logical)` against the **repo** ID (today's `spec.Secrets[logical]`) first.
+  - **Repo has a version → add nothing to `out.ProjectSecrets` for this `logical`.** This is the entire "repo overrides project" rule: the absence of an entry, not a flag or a comparison Terraform has to make. A dedicated test (`TestReadinessRepoVersionMeansNoProjectSecretsEntry`, below) asserts `out.ProjectSecrets` has **no key** for `logical` in this case — not merely that `ws.SecretIDs` or any other field looks like the repo won, since the earlier draft's bug was exactly this kind of indirect assertion passing while the real (then-nonexistent) wiring would have inverted precedence.
+  - **Repo has no version → `out.ProjectSecrets[logical] = spec.ProjectSecretCandidates[logical]`.** If the project copy *also* has no version, `Missing{Kind: MissingSecret}` names `fugaro secrets set NAME --project-wide` instead of today's `--repo NAME`, and `logical` still gets no `ProjectSecrets` entry.
+- **Only names present in `spec.ProjectSecretCandidates` for this repository are ever considered** — an unlisted repository's `ProjectSecretCandidates` simply has no entry for that provider's/name's logical name, so `ProjectSecrets` can never gain one either, regardless of what Terraform later does with the map.
 
-**Tests:**
+**Tests (every assertion is now on `out.ProjectSecrets`, the tfvars-reaching output map — never on `ws.SecretIDs`, which the corrected design no longer touches at all):**
 ```go
-func TestReadinessPrefersRepoOverrideWhenPresent(t *testing.T) {
-	// Both the repo and project secret have an enabled version (fake
-	// Secret Manager). Assert the resolved ws.SecretIDs[logical] equals
-	// the REPO's ID, unchanged from today, and that no Missing is reported.
+func TestReadinessRepoVersionMeansNoProjectSecretsEntry(t *testing.T) {
+	// B2, the precedence-inversion finding: both the repo and the project
+	// secret have an enabled version (fake Secret Manager), and the name is
+	// an eligible ProjectSecretCandidates entry. Assert out.ProjectSecrets
+	// has NO key for this logical name at all (not that some other field
+	// "looks like" the repo won) and that no Missing is reported. This is
+	// the test the earlier, inverted draft of this task would have failed:
+	// a Terraform-side merge(repoMap, projectMap) always prefers the second
+	// map's value when a key is present in both, so if ProjectSecrets were
+	// (wrongly) populated for every eligible name regardless of the repo's
+	// own version, this test would catch the project copy winning anyway.
 }
 
 func TestReadinessFallsBackToProjectWhenRepoHasNoVersion(t *testing.T) {
 	// Repo secret has 0 versions, project secret has 1. Assert
-	// ws.SecretIDs[logical] equals the PROJECT ID and no Missing is
-	// reported for that logical name.
+	// out.ProjectSecrets[logical] equals spec.ProjectSecretCandidates[logical]
+	// (the project ID) and no Missing is reported.
 }
 
 func TestReadinessOmitsProjectSecretForUnlistedRepo(t *testing.T) {
-	// spec.ProjectSecrets has no entry for this logical name (the repo
-	// isn't allow-listed): behavior is byte-for-byte today's (repo ID only,
-	// Missing names --repo, never --project-wide).
+	// spec.ProjectSecretCandidates has no entry for this logical name (the
+	// repo isn't allow-listed): out.ProjectSecrets gets no entry either,
+	// and Missing (if any) still names --repo, never --project-wide.
 }
 
 func TestReadinessMissingNamesProjectWideFix(t *testing.T) {
-	// Neither has a version, and the repo IS allow-listed: the Missing
-	// reason names `fugaro secrets set NAME --project-wide`, not --repo.
+	// Neither has a version, and the repo IS allow-listed (a candidate
+	// exists): the Missing reason names `fugaro secrets set NAME
+	// --project-wide`, not --repo, and out.ProjectSecrets still gets no
+	// entry (there is nothing to resolve to).
 }
 
 func TestReadinessFallsBackOnceRepoVersionGone(t *testing.T) {
 	// Simulates P3/design §5's "falls back on the next apply" rule: a
-	// first Readiness call with the repo version present resolves to the
-	// repo ID; a second call (simulating a later init --repo) with that
-	// version now disabled resolves to the project ID. Two calls, not one,
-	// since Readiness never re-runs within a single apply.
+	// first Readiness call with the repo version present produces no
+	// out.ProjectSecrets entry; a second call (simulating a later init
+	// --repo) with that version now disabled produces one, pointing at the
+	// project ID. Two calls, not one, since Readiness never re-runs within
+	// a single apply.
 }
 
 func TestReadinessProviderNoListEligibleForEveryRepo(t *testing.T) {
 	// P7: a provider with no AllowDataTo, a project-wide secret stored with
 	// an enabled version, and the repo's OWN copy has no version. Assert
-	// ws.SecretIDs[logical] resolves to the PROJECT ID for a repository
+	// out.ProjectSecrets[logical] equals the PROJECT ID for a repository
 	// that provider's config names nowhere at all — the no-list-means-any-
 	// repo case, distinct from TestReadinessFallsBackToProjectWhenRepoHasNoVersion
 	// above (which uses a project_secrets/claude_accounts-style name whose
-	// eligibility is unaffected by P7).
+	// eligibility is unaffected by P7). This requires the repository to
+	// have been given a ProjectSecretCandidates entry via ProviderKeyAvailable
+	// in infra.Repo() first (Task 2's fixture plumbing).
 }
 
 func TestReadinessProviderListedExcludesUnlistedRepo(t *testing.T) {
 	// P7, the non-empty-list case: a provider WITH an explicit AllowDataTo
-	// that does not name this repo. Assert spec.ProjectSecrets has no entry
-	// for that provider's logical name for this repo at all (not merely
-	// that resolution skips it) — mirrors TestReadinessOmitsProjectSecretForUnlistedRepo
-	// but specifically exercises the ProviderKeyAvailable path, not the
-	// AllowedForProjectSecret one, so a mutation that swaps one eligibility
-	// function for the other anywhere in Readiness's provider branch is
-	// caught by one of these two provider-specific tests.
+	// that does not name this repo. Assert spec.ProjectSecretCandidates has
+	// no entry for that provider's logical name for this repo at all (not
+	// merely that resolution skips it) — mirrors
+	// TestReadinessOmitsProjectSecretForUnlistedRepo but specifically
+	// exercises the ProviderKeyAvailable path, not the AllowedForProjectSecret
+	// one, so a mutation that swaps one eligibility function for the other
+	// anywhere in infra.Repo()'s provider branch is caught by one of these
+	// two provider-specific tests.
+}
+
+func TestReadinessCheckJobResolvesProjectSecretsToo(t *testing.T) {
+	// B4: the daily check job's secret_env (bitbucket-token/github-app-key,
+	// typically) must go through the identical repo-wins-else-project
+	// resolution as a workflow's, writing into the SAME out.ProjectSecrets
+	// map (check.tf and sa.tf/job.tf all read the one merged Terraform
+	// local, Task 5). Repo has no version, project does: assert
+	// out.ProjectSecrets gains the entry from the check branch
+	// (readiness.go's spec.Check != nil block), not only from a workflow's.
 }
 ```
 
