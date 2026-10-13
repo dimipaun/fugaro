@@ -79,15 +79,16 @@ against this file (`readImagesWorkflow` reads this pending copy first).
 Fugaro cannot push a change under `.github/workflows/` from an agent run
 (GitHub rejects it), so this diff — like task 6/18's before it — is staged
 here for a human to copy in by hand. Until that copy happens, the real
-`.github/workflows/images.yml` still has the `base` job and still builds,
-smoke-tests and publishes `fugaro-web-node`, `fugaro-go` and
-`fugaro-java-services` on every tag: this repository's own `docs/release.md`
-and `docs/gcp-live-checklist.md` describe that still-current behavior
-deliberately, not as a bug. Copying this file in is what actually removes
-those legs from CI; update `docs/release.md`'s "today builds, smoke tests,
-scans and publishes ghcr.io/dimipaun/fugaro-web-node, fugaro-go,
-fugaro-java-services and fugaro-history" line (and the `docker pull` list
-under "Verifying a release") at the same time as the copy, not before.
+`.github/workflows/images.yml` still has the `base` job, but the 0.7.0 hard
+cut already deleted `images/go/`, `images/web-node/` and
+`images/java-services/` from the tree, so that job's three matrix legs find
+nothing to build and skip on every tag (the version job's directory probe
+reports none of those kinds present); they do not build, smoke-test or
+publish anything any more. Copying this file in removes the now-dead job
+itself from CI, not those legs' behavior (already stopped). `docs/release.md`
+already describes the three legs as skipping; once this file is copied in,
+only that line's closing parenthetical — "they are not yet removed from the
+workflow file itself" — stops being true and should be dropped.
 
 ### Not verified
 
