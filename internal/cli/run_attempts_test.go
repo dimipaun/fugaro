@@ -71,17 +71,59 @@ func TestRunAttemptsLaunchesNWithOneBatch(t *testing.T) {
 	if n := len(f.run.Executions()); n != 3 {
 		t.Fatalf("executions = %d, want 3", n)
 	}
-	for _, bad := range [][]string{
-		{"--attempts", "1"},
-		{"--attempts", "5"},
-		{"--attempts", "2", "--pr", "4"},
-		{"--attempts", "2", "--recipe", "review-only"},
+	// Each bad case asserts the message it is actually meant to pin, not
+	// only ExitUserError: a review of this test (design generic-tool
+	// review, 2026-10-13, item 3) found that checking only the exit code
+	// let several of these go green for the wrong reason — see
+	// TestRunAttemptsRangeIsTwoToFour and TestRunAttemptsRunIDIsRefused for
+	// the two cases this loop can't safely assert a message for (the
+	// fixture's capacity is already spent by the batch above, so --attempts
+	// 5 here is refused by max_parallel, not necessarily by the range
+	// check; a fresh fixture is needed to tell them apart).
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--attempts", "2", "--pr", "4"}, "takes no --pr"},
+		{[]string{"--attempts", "2", "--recipe", "review-only"}, "mode: review"},
 	} {
-		args := append([]string{"run", "--repo", "acme/app"}, bad...)
+		args := append([]string{"run", "--repo", "acme/app"}, tc.args...)
 		args = append(args, "x")
-		if _, _, err := execute(t, args...); ExitCode(err) != ExitUserError {
-			t.Errorf("%v: %v", bad, err)
+		if _, _, err := execute(t, args...); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%v: err = %v, want it to contain %q", tc.args, err, tc.want)
 		}
+	}
+}
+
+// TestRunAttemptsRangeIsTwoToFour pins --attempts's own range check in
+// isolation (design generic-tool review, 2026-10-13, item 3): a fresh
+// fixture with plenty of max_parallel headroom, so a boundary value is
+// always refused by the range check's own message, never by an unrelated
+// cap the same fixture happens to also be short on.
+func TestRunAttemptsRangeIsTwoToFour(t *testing.T) {
+	newCloudFixture(t)
+	bumpMaxParallel(t, 10)
+	for _, n := range []string{"-1", "0", "1", "5"} {
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", n, "x")
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "use 2 to 4") {
+			t.Errorf("--attempts %s: err = %v", n, err)
+		}
+	}
+}
+
+// TestRunAttemptsRunIDIsRefused pins --run-id's exclusion on its own: a
+// review of this test (design generic-tool review, 2026-10-13, item 3)
+// found no case had ever named --run-id, so removing it from the
+// exclusion list (internal/cli/run.go) stayed green — without the
+// refusal, every attempt would reuse the one given id and, once
+// buildAttemptSpec stopped generating a fresh one per attempt, collide and
+// dedupe silently (item 1).
+func TestRunAttemptsRunIDIsRefused(t *testing.T) {
+	newCloudFixture(t)
+	bumpMaxParallel(t, 10)
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "--run-id", "20260927-100000-aaaa", "x")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "takes no --run-id") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -107,8 +149,15 @@ func TestRunAttemptsNeedsRoomForAll(t *testing.T) {
 func TestRunAttemptsRetry(t *testing.T) {
 	newCloudFixture(t)
 	bumpMaxParallel(t, 5)
+	// A review of this test (design generic-tool review, 2026-10-13, item
+	// 3) found that checking only the exit code did not actually pin
+	// --attempts's own exclusion of --retry: if --retry were removed from
+	// that exclusion list, the run id below (never stored) would still be
+	// refused, with ExitUserError, once retrySpec looked it up — a
+	// different refusal the old assertion could not tell apart from the
+	// right one. Asserting the message does.
 	_, _, err := execute(t, "run", "--attempts", "2", "--retry", "20260927-100000-abcd")
-	if ExitCode(err) != ExitUserError {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "takes no --retry") {
 		t.Fatalf("err = %v", err)
 	}
 }
