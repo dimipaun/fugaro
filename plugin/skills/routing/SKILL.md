@@ -57,4 +57,8 @@ For a hard, well-specified task where the approach itself is uncertain, suggest 
 
 A recipe that only reviews (`mode: review`, always launched with `--pr`) answers a different kind of request: offer it when the user wants a second opinion on, or wants to compare, pull requests that already exist, not for new work.
 
+Pick only a recipe `fugaro recipes ls --json` lists with `launchable: true`; never invent a recipe name, and read a catalog recipe's own `use_when` for what it actually requires.
+
+A launch can still be refused by the job-image gate (a recipe needs a 0.5.0 job image, 0.7.0 for a 0.7.0 construct — `reference/launch.md` has the detail). When it is, report the refusal and the fix command it names to the user — never edit `fugaro.yaml`, a secret or any other config to get around it, and never silently fall back to a different recipe: for one task, offer the alternative and wait for the user; for a batch, report the refused item and continue the rest.
+
 Having decided on the cloud, launch with the `working` skill, and only task text the user has approved.
