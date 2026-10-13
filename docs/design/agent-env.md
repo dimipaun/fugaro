@@ -703,15 +703,28 @@ background to the other.)
    model a provider serves.
 4. That provider's own `agent_env`, for the same stages — overrides a
    built-in default's key.
-5. The gateway's own routing variables (managed settings only) and the
-   rest of the per-stage pins (highest) — computed in `stagePins`/
-   `writeManagedSettings` alongside levels 3-4, never overridable by any of
-   the above.
+5. The gateway's own routing variables and the rest of the per-stage pins
+   (highest) — never overridable by any of the above, **in both
+   channels**: not "managed settings only," as an earlier draft of this
+   list said. The gateway's routing variables (`ANTHROPIC_BASE_URL`,
+   `ANTHROPIC_API_KEY`, etc., `agent.GatewayVars`) reach the process
+   environment through `BuildEnv` (§0, `env.go:133-140`, "last, so nothing
+   declared or inherited can override it" — baked into `r.env` once at
+   bootstrap, before any stage's `pins` are layered on) and reach the
+   managed settings file through `writeManagedSettings`'s own, separate
+   call to the same `GatewayVars` function, recomputed per stage. Levels
+   3-4 (`stagePins`'s own contribution, `pins`) carry no key either channel's
+   gateway vars already set, so there is no real collision today — but the
+   ordering holds regardless: `pins` is merged into `vars` *after*
+   `GatewayVars` in `writeManagedSettings`, and into `r.env` (which already
+   has the gateway vars) via `gitops.WithVars` for the process channel.
 
-Levels 3-5 are computed once, in `stagePins`, and layered over level 2 (`r.env`,
-itself layered over level 1) in **both** the managed settings file
-(`writeManagedSettings`) and the process environment (`gitops.WithVars(r.env, pins)`,
-`runner.go:1574`) — not levels 3-5 in one channel and level 2 in the
+Levels 3-4 are computed once, in `stagePins`, and layered over level 2 (`r.env`,
+itself layered over level 1, and already carrying level 5's process-env
+half from `BuildEnv`) in **both** the managed settings file
+(`writeManagedSettings`, which separately layers level 5's own half on
+top there) and the process environment (`gitops.WithVars(r.env, pins)`,
+`runner.go:1574`) — not levels 3-4 in one channel and level 2 in the
 other. The plan's Task 5 adds a test
 (`TestStagePinsProviderAgentEnvBothChannels`) asserting this precedence
 holds in both channels at once, which an earlier draft of this design
