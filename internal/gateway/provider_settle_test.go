@@ -301,10 +301,11 @@ func TestRouteRecordedPerCall(t *testing.T) {
 }
 
 // Later usage events on a provider route never lower the charge: each
-// count is the largest any event reported. Input staying at zero while
-// the response plainly produced output is zero input, not unreadable
-// usage (a provider's usage can legitimately never name an input count,
-// most commonly under heavy caching, see TestZeroInputHeavyCacheSettles).
+// count is the largest any event reported, and a call whose input (and
+// cache) stay zero throughout is not readable usage, whatever output it
+// produced: a real request always sends some input, so a provider whose
+// usage never names one simply left it out (see TestZeroInputHeavyCacheSettles
+// for the heavy-caching case, where a cache read does name it).
 func TestProviderUsageNeverLowersCharge(t *testing.T) {
 	full := pricing.Usage{Input: 1000, Output: 2000}
 	events := func(ev ...anthropicfake.Event) anthropicfake.Reply {
@@ -318,40 +319,40 @@ func TestProviderUsageNeverLowersCharge(t *testing.T) {
 	for _, c := range []struct {
 		name  string
 		reply anthropicfake.Reply
-		want  pricing.Usage
+		want  pricing.Usage // zero: settles at the reservation
 	}{
 		{"delta reports no input", events(start(dsModel, pricing.Usage{Input: 1000}), delta(pricing.Usage{Output: 2000})), full},
 		{"duplicate start with lower numbers", events(start(dsModel, pricing.Usage{Input: 1000}), start(dsModel, pricing.Usage{Input: 500}), delta(full)), full},
 		{"lower output in a later delta", events(start(dsModel, pricing.Usage{Input: 1000}), delta(full), delta(pricing.Usage{Input: 1000, Output: 100})), full},
-		{"input stays zero, output is real", events(start(dsModel, pricing.Usage{}), delta(pricing.Usage{Output: 2000})), pricing.Usage{Output: 2000}},
+		{"input only ever zero", events(start(dsModel, pricing.Usage{}), delta(pricing.Usage{Output: 2000})), pricing.Usage{}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			call, rep := settleCase(t, 10, msg(dsModel, 4000, `"stream":true`), c.reply)
-			want := pricing.WithFee(cost(t, dsModel, c.want), 10)
-			if got := pricing.Micros(num(call["charged_micros"])); got != want || call["settled"] != settledUsage || rep.Used != want {
-				t.Errorf("charged %d, want %d; settled %v, used %d", got, want, call["settled"], rep.Used)
+			got := pricing.Micros(num(call["charged_micros"]))
+			if c.want == (pricing.Usage{}) {
+				res := pricing.Micros(num(call["reserved_micros"]))
+				if got != res || res == 0 || call["settled"] != settledReserved || rep.Used != res {
+					t.Errorf("charged %d of %d reserved, settled %v, used %d", got, res, call["settled"], rep.Used)
+				}
+				return
 			}
-			if rep.UsageUnparsed != 0 {
-				t.Errorf("usage_unparsed %d, want 0", rep.UsageUnparsed)
+			want := pricing.WithFee(cost(t, dsModel, c.want), 10)
+			if got != want || call["settled"] != settledUsage || rep.Used != want {
+				t.Errorf("charged %d, want %d; settled %v, used %d", got, want, call["settled"], rep.Used)
 			}
 		})
 	}
 }
 
-// A non-streaming provider reply with a zero input count but a real
-// output count is zero input, not unreadable usage: requirement (d) and
-// (the non-streaming analogue of) the fix for OpenRouter/DeepInfra's
-// shape, both apply to the whole-body path the same as the streamed one.
-func TestProviderMessageZeroInputSettles(t *testing.T) {
-	u := pricing.Usage{Output: 2000}
-	reply := anthropicfake.Compat{}.MessageOK(dsModel, u)
-	call, rep := settleCase(t, 10, msg(dsModel, 4000), reply)
-	want := pricing.WithFee(cost(t, dsModel, u), 10)
-	if got := pricing.Micros(num(call["charged_micros"])); got != want || call["settled"] != settledUsage {
-		t.Errorf("charged %d, want %d, settled %v", got, want, call["settled"])
-	}
-	if rep.UsageUnparsed != 0 {
-		t.Errorf("usage_unparsed %d, want 0", rep.UsageUnparsed)
+// A non-streaming provider reply with a zero input count is missing
+// usage: a real request always sends some input, so the provider must
+// simply have left the field out of its reply, whatever output it
+// produced.
+func TestProviderMessageZeroInputChargesReservation(t *testing.T) {
+	reply := anthropicfake.Compat{}.MessageOK(dsModel, pricing.Usage{Output: 2000})
+	call, _ := settleCase(t, 10, msg(dsModel, 4000), reply)
+	if got, res := pricing.Micros(num(call["charged_micros"])), pricing.Micros(num(call["reserved_micros"])); got != res || res == 0 || call["settled"] != settledReserved {
+		t.Errorf("charged %d of %d reserved, settled %v", got, res, call["settled"])
 	}
 }
 

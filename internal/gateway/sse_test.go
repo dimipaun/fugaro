@@ -204,8 +204,13 @@ func TestUsageTeeRealOpenRouterDeepInfraStream(t *testing.T) {
 // time the stream ends, not from message_start alone: message_start
 // reporting input_tokens 0 (OpenRouter/DeepInfra's shape, or simply
 // nothing to say yet) must not block a message_delta that reports the
-// real, cumulative counts, and zero input alongside a real cache read or
-// a real output count is a reply that did say something.
+// real, cumulative counts, and zero input alongside a real cache read is
+// a reply that did say something (heavy caching). Zero input AND zero
+// cache, with only a real output count, is not: a real request always
+// sends some input, so that shape is a provider that left the field out,
+// not a free call, and the gateway must still fall back to the
+// reservation (the HIGH finding this guards: an output-only total would
+// otherwise settle such a call for its output alone).
 func TestUsageTeeProviderSettlesFromFinalUsage(t *testing.T) {
 	build := func(startUsage, deltaUsage string) string {
 		return "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"m\",\"usage\":" + startUsage + "}}\n\n" +
@@ -227,11 +232,6 @@ func TestUsageTeeProviderSettlesFromFinalUsage(t *testing.T) {
 			stream: build(`{"input_tokens":0,"cache_read_input_tokens":900,"output_tokens":1}`, `{"input_tokens":0,"cache_read_input_tokens":900,"output_tokens":50}`),
 			wantIn: 0, wantCR: 900, wantOut: 50,
 		},
-		{
-			name:   "zero input and cache, real output",
-			stream: build(`{"input_tokens":0,"output_tokens":1}`, `{"input_tokens":0,"output_tokens":2000}`),
-			wantIn: 0, wantCR: 0, wantOut: 2000,
-		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			tee := newUsageTee(true)
@@ -245,6 +245,17 @@ func TestUsageTeeProviderSettlesFromFinalUsage(t *testing.T) {
 			}
 		})
 	}
+	t.Run("zero input and cache, real output", func(t *testing.T) {
+		tee := newUsageTee(true)
+		tee.provider = true
+		tee.feed([]byte(build(`{"input_tokens":0,"output_tokens":1}`, `{"input_tokens":0,"output_tokens":2000}`)))
+		if tee.complete {
+			t.Fatalf("complete %v, want unparsed (the reservation): zero input and zero cache is not real usage, whatever the output", tee.complete)
+		}
+		if reason := tee.unparsedReason(); reason != "input_zero_no_cache" {
+			t.Errorf("reason %q, want input_zero_no_cache", reason)
+		}
+	})
 }
 
 // unparsedReason is a closed, bounded set: never the provider's own text.

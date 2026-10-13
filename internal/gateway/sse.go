@@ -193,38 +193,17 @@ func (a *usageAcc) merge(u *wireUsage) {
 // hasInput reports whether the usage names enough to settle on. On the
 // Claude route any reported input count does, even zero. On a provider
 // route input alone may legitimately be zero under heavy caching, so a
-// cache read or write counts too; only an input count with nothing else
-// at all reads as a reply that didn't say.
+// cache read or write counts too; but a usage that names none of input,
+// cache read or cache write at all is not real usage: a real request
+// always sends some input (a system prompt, at least one message), so a
+// provider that never names an input count simply left it out, and the
+// call settles like any other missing field, at the reservation, however
+// real the output it produced.
 func (a *usageAcc) hasInput() bool {
 	if !a.provider {
 		return a.in.set
 	}
 	return a.in.set && (a.in.v > 0 || a.cr.v > 0 || a.cc.v > 0 || a.w5.v > 0 || a.w1.v > 0)
-}
-
-// total is the merged usage's input, cache read, cache creation (however
-// it was reported, flat or split by TTL) and output tokens, floored at
-// zero each. A 2xx whose usage sums to zero here reported nothing to
-// charge, whatever text the response held: the fail-safe is this total,
-// not any one field, since a provider's input may legitimately be zero
-// (heavy caching) while its output is not.
-func (a *usageAcc) total() int64 {
-	pos := func(f field) int64 { return max(f.v, 0) }
-	cc := max(pos(a.cc), pos(a.w5)+pos(a.w1))
-	return pos(a.in) + pos(a.cr) + cc + pos(a.out)
-}
-
-// settleableFinal reports, once a stream or body is done, whether its
-// merged usage is read as a complete call's usage rather than the
-// reservation. On the Claude route any reported input count does, even
-// zero. On a provider route zero input alone may be legitimate (heavy
-// caching, or real output with nothing to report for input): only a
-// usage that sums to zero everywhere (total) is the fail-safe.
-func (a *usageAcc) settleableFinal() bool {
-	if !a.provider {
-		return a.hasInput()
-	}
-	return a.total() > 0
 }
 
 // negative reports whether any reported count is below zero.
@@ -438,13 +417,13 @@ func (t *usageTee) onEvent(name string, data []byte) {
 		}
 		// A provider may put the real counts only in a delta (message_start
 		// reporting zero input is not by itself "nothing to charge"), so
-		// completeness is decided from the merged totals here, not from
-		// message_start's hasInput: real output with zero input is a
-		// genuine reply, not silence, but a usage that sums to zero across
-		// every field is still unparsed (the fail-safe for a 2xx whose
-		// usage never said anything, whatever text the response held).
+		// completeness is decided from the merged total here, not from
+		// message_start alone. hasInput still requires a real input, cache
+		// read or cache write count somewhere: a real request always sends
+		// some input, so a usage that never names one, however real its
+		// output, is a provider that left the field out, not a free call.
 		switch {
-		case t.deltas && !t.broken && t.acc.settleableFinal():
+		case t.deltas && !t.broken && t.acc.hasInput():
 			t.complete = true
 		case t.sawUsage:
 			t.broken = true
@@ -492,8 +471,8 @@ func (t *usageTee) parseJSON() {
 	t.acc.provider = t.provider
 	t.acc.merge(body.Usage)
 	t.sawUsage = true
-	if !t.acc.out.set || t.acc.negative() || !t.acc.settleableFinal() {
-		return // no output count, negative, or summing to zero: settled at the reservation
+	if !t.acc.out.set || t.acc.negative() || !t.acc.hasInput() {
+		return // no output count, negative, or no input/cache count: settled at the reservation
 	}
 	t.started, t.complete = true, true
 }
