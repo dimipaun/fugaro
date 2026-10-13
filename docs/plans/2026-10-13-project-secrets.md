@@ -377,10 +377,10 @@ git commit -m "project secrets task 2: gcp.ProjectSecretID (domain-separated); p
 
 ---
 
-### Task 3: `Readiness` resolves precedence (the live check), using `ProviderKeyAvailable` for a provider's own logical name (P7)
+### Task 3: `Readiness` resolves precedence (the live check), using `ProviderKeyAvailable` for a provider's own logical name (P7); `Existing.ExtraSecrets` so narrowing eligibility never bricks a repo (N4)
 
 **Files:**
-- Edit: `internal/infra/readiness.go`, `discover_test.go` (S6: `Readiness`'s own tests already live in `internal/infra/discover_test.go`, not a `readiness_test.go`, which this package does not have)
+- Edit: `internal/infra/readiness.go`, `discover.go`, `discover_test.go` (S6: `Readiness`'s own tests already live in `internal/infra/discover_test.go`, not a `readiness_test.go`, which this package does not have; `discover.go` is new scope for this task, N4 — the `DiscoverRepo` step that finds `ExtraSecrets`)
 
 **Interfaces (corrected after review B1/B2: the original draft's `ws.SecretIDs` rewrite never reached Terraform at all — `WorkflowSpec.SecretIDs` is `json:"-"`, internal/infra/spec.go:148 — and its "populated unconditionally wherever eligible" wording would, once wired to Terraform, have made the project copy win even when a repo override exists, inverting "repo > project." Both are fixed together below with two separate fields — one input, one output — not one field doing both jobs):**
 - **Input, computed in `infra.Repo()`/`workflow()` (where the local config is in scope), not by `Readiness`:** `RepoSpec.ProjectSecretCandidates map[string]string` (`json:"-"`, never reaches tfvars) — one entry per logical name this repository is *eligible* to use project-wide, value `gcp.ProjectSecretID(fugaroProject, name)`. Eligibility is **not uniform** across name sources (P7): `project_secrets`/`claude_accounts`-derived names use `AllowedForProjectSecret`/`ClaudeAccountBySecret`+`AllowsData` (unchanged); **a provider's own `.Secret` name uses `ProviderKeyAvailable`, not `AllowsData`** — the same switch Task 2 makes in `SecretMounts`, kept consistent here. Being a candidate says nothing about resolution yet.
@@ -388,6 +388,7 @@ git commit -m "project secrets task 2: gcp.ProjectSecretID (domain-separated); p
   - **Repo has a version → add nothing to `out.ProjectSecrets` for this `logical`.** This is the entire "repo overrides project" rule: the absence of an entry, not a flag or a comparison Terraform has to make. A dedicated test (`TestReadinessRepoVersionMeansNoProjectSecretsEntry`, below) asserts `out.ProjectSecrets` has **no key** for `logical` in this case — not merely that `ws.SecretIDs` or any other field looks like the repo won, since the earlier draft's bug was exactly this kind of indirect assertion passing while the real (then-nonexistent) wiring would have inverted precedence.
   - **Repo has no version → `out.ProjectSecrets[logical] = spec.ProjectSecretCandidates[logical]`.** If the project copy *also* has no version, `Missing{Kind: MissingSecret}` names `fugaro secrets set NAME --project-wide` instead of today's `--repo NAME`, and `logical` still gets no `ProjectSecrets` entry.
 - **Only names present in `spec.ProjectSecretCandidates` for this repository are ever considered** — an unlisted repository's `ProjectSecretCandidates` simply has no entry for that provider's/name's logical name, so `ProjectSecrets` can never gain one either, regardless of what Terraform later does with the map.
+- **N4 BLOCKER, the repo-module twin of N3: `Existing` (`internal/infra/discover.go:511`) gains `ExtraSecrets map[string]string`**, populated by a new `DiscoverRepo` step (`internal/infra/discover.go`, same file Task 3 already lists): a `List` call under `{LabelRepo: spec.Label}` finds every correctly-labelled repo secret, and any logical name **not** already a key of `spec.Secrets` (one `SecretMounts`'s current, narrower config no longer computes — e.g. a provider that was eligible everywhere under §3a's no-list rule, now excluded by a newly-added list) goes into `ExtraSecrets`. `Readiness` unions `ex.ExtraSecrets` into `out.Secrets` before returning — the **container** stays (P2, extended), while `SecretMounts`'s own output still governs the **mount**, so a name `ExtraSecrets` restores to `out.Secrets` but that no workflow currently mounts plans **no** IAM-member grant for it at all (nothing in `values(var.workflow.secret_env)` names it) — only the now-unwanted grant for a name that *was* mounted and no longer is plans a `delete`, caught by `tf.Guard` exactly like every other replace/delete this design introduces.
 - **P7a: an existing job never gains an unresolvable secret_env entry.** When `logical` has no version anywhere (repo nor project) *and* `exists` is true for the workflow it belongs to (`readiness.go:118-120`'s existing `current, exists := ex.Jobs[name]`), `Readiness` removes `logical`'s entry from `ws.SecretEnv` (and, if it was the only env var naming it, `ws.SecretIDs`) for this apply — it does **not** set `ws.DeployJob = false` (that field's only job is "does this job resource exist at all," `job.tf`'s `count = var.workflow.deploy_job ? 1 : 0`; flipping it for an existing job would delete the job outright). The `Missing` diagnostic is still reported, unconditionally, so `fugaro init --repo`'s own output tells the owner exactly what is missing and why nothing was mounted. A brand-new job (`exists` false) is unaffected: it already refuses to deploy at all until every mount resolves (`ws.DeployJob = len(reasons) == 0`, unchanged).
 
 **Tests (every assertion is now on `out.ProjectSecrets`, the tfvars-reaching output map — never on `ws.SecretIDs`, which the corrected design no longer touches at all):**
@@ -486,12 +487,34 @@ func TestReadinessNewJobStillRefusesOnUnresolvableMount(t *testing.T) {
 	// false while any mount (this one included) is unresolved — P7a does
 	// not weaken the brand-new-job gate, only the existing-job one.
 }
+
+func TestReadinessUnionsExtraSecretsNeverShrinksRsSecrets(t *testing.T) {
+	// N4 BLOCKER: spec.Secrets (as infra.Repo() computed it, from today's
+	// narrower, current config) is missing a logical name that
+	// ex.ExtraSecrets reports as a correctly-labelled, already-existing
+	// repo secret (simulating a provider that used to be mounted
+	// everywhere under §3a's no-list rule, now excluded by a newly added
+	// list). Assert out.Secrets (the tfvars-reaching map) gains that
+	// entry from ex.ExtraSecrets, with its existing ID unchanged -- the
+	// container is never dropped from Terraform's for_each.
+}
+
+func TestReadinessDropsMountButKeepsContainerOnNarrowedEligibility(t *testing.T) {
+	// The companion assertion: for the SAME scenario above, assert the
+	// workflow's own ws.SecretEnv/SecretIDs do NOT include the no-longer-
+	// eligible logical name (SecretMounts's current output governs the
+	// mount, unaffected by the ExtraSecrets union) -- out.Secrets has the
+	// container, the workflow spec does not have the mount. This is the
+	// test that would catch a wrong fix that keeps BOTH (silently
+	// re-granting access the owner just revoked) or drops BOTH (bricking
+	// the repo's own apply, N4's original bug).
+}
 ```
 
 - [ ] **Step 1: Write the failing tests**
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `go test -count=1 -run 'TestReadinessPrefersRepoOverride|TestReadinessFallsBack|TestReadinessOmitsProjectSecret|TestReadinessMissingNamesProjectWideFix|TestReadinessProvider' ./internal/infra/`
+Run: `go test -count=1 -run 'TestReadiness' ./internal/infra/` (SF, corrected: the previous regex named `TestReadinessPrefersRepoOverride`, which no longer exists after the B1/B2 fix, and omitted the check-job, P7a and N4 tests entirely — a plain `TestReadiness` prefix covers every test this task adds, present or renamed)
 Expected: FAIL.
 
 - [ ] **Step 3: Write the implementation**
@@ -503,8 +526,8 @@ Expected: `ok` (the full package, to catch any regression in the existing `Readi
 - [ ] **Step 5: Commit**
 
 ```bash
-git add internal/infra/readiness.go internal/infra/discover_test.go
-git commit -m "project secrets task 3: Readiness resolves repo-vs-project precedence at apply time, ProviderKeyAvailable for a provider's own name (owner ruling, design §3a)"
+git add internal/infra/readiness.go internal/infra/discover.go internal/infra/discover_test.go
+git commit -m "project secrets task 3: Readiness resolves repo-vs-project precedence at apply time, ProviderKeyAvailable for a provider's own name (owner ruling, design §3a), Existing.ExtraSecrets so narrowed eligibility never bricks a repo (N4)"
 ```
 
 ---
@@ -935,7 +958,7 @@ This task is never run by an implementer or by CI. Paste the `FACT:` lines into 
 - [ ] **40d.** Confirm the data-policy gate still refuses a provider model for a repository whose `allow_data_to` lists other repositories but not this one, with the provider's key stored `--project-wide` (the non-empty-list case; the empty/absent-list case is 40f's own check, Option A, design §3a — the gate does not open on an absent list in this plan).
 - [ ] **40e.** Confirm no value appears in any log, `fugaro diagnose`, `secrets ls`/`ls --project-wide` output, or a `terraform plan`/`state show` of either root.
 - [ ] **40f (owner ruling, design §3a).** Configure a provider with **no** `allow_data_to` at all; confirm `fugaro secrets set <provider-secret> --project-wide` succeeds (not refused); confirm, via `jobs.describe`, that an `agent.auth: api-key` repository never named by this provider anywhere still mounts the key; confirm that `fugaro validate` still refuses every repository's pin to it (the data-policy gate stays closed, Option A).
-- [ ] **40g.** Configure a provider **with** an explicit, non-empty `allow_data_to`; confirm an unlisted repository's job does **not** mount the key at all (the non-empty-list case is unaffected by 40f).
+- [ ] **40g (fixed, N4).** Starting from 40f's no-list provider, add a list excluding the sandbox repo, re-run `fugaro init --repo` with no `--allow-delete` (confirm refused, naming the dropped IAM-member address), then with it (confirm applies, job no longer mounts the key, container still present in state — N4).
 - [ ] **40h (N1).** With `bitbucket-token` project-shared and the repo copy's version disabled: confirm `fugaro image build`/`image refresh`, the daily check's own rebuild, and `fugaro doctor` all still succeed (Task 8's resolve helper and `CheckJobSpec.GitSecretID`).
 - [ ] **40i (N2).** With a project-shared name's repo copy never stored, confirm `fugaro init --repo`'s secrets stage does not prompt for it (terminal) and does not block on `NeedsYou` for it (`--yes`); confirm a name missing everywhere still does both, unchanged.
 - [ ] **40j (N3).** Empty an eligible name's list (or remove its provider/account entirely), run plain `fugaro init`: confirm the plan is not a hard `prevent_destroy` Terraform error and the container's key is still present (discover-then-union, Task 4).
