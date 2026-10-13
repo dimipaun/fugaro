@@ -427,3 +427,42 @@ func TestSnapshotCannotMutateProvider(t *testing.T) {
 		t.Fatalf("provider changed through a snapshot:\n got %s\nwant %s", gotJSON, wantJSON)
 	}
 }
+
+// TestFetchPRHead covers review mode's three cases: the provider's own
+// repository (not a fork), a fork (Source set to another repository) and a
+// merged pull request (not open).
+//
+// Mutation (invert the Fork comparison to ==): the "own repository" case
+// fails, wanting Fork=false but getting true.
+//
+// PRState #2's AuthorID is left unset on purpose: that's PRState's own
+// documented "Fugaro opened it" default, which is also exactly what, pre-fix,
+// made this fork PR read Self=true alongside Fork=true — PRHead's own
+// documented invariant (gitprov.go) forbids Self being true whenever Fork
+// is true, regardless of today's only consumer re-checking Fork itself.
+//
+// Mutation (drop the `&& !fork` from FetchPRHead's `self := ...` line):
+// the fork case fails, finding Self=true alongside Fork=true.
+func TestFetchPRHead(t *testing.T) {
+	testutil.IsolateGit(t) // a CI runner has no global git identity to seed the remote with
+	remote := testutil.NewRemote(t, map[string]string{"f": "x"})
+	p := &Provider{Repo: "acme/app", Remote: remote}
+	ctx := context.Background()
+	n := testutil.Git(t, remote, "rev-parse", "refs/heads/main")
+	own := PRState{PR: gitprov.PR{Number: 1}, Spec: gitprov.PRSpec{Branch: "main"}}
+	fork := PRState{PR: gitprov.PR{Number: 2}, Spec: gitprov.PRSpec{Branch: "main"}, Source: "outsider/app"}
+	merged := PRState{PR: gitprov.PR{Number: 3}, Spec: gitprov.PRSpec{Branch: "main"}, State: gitprov.PRMerged}
+	p.State.PRs = []PRState{own, fork, merged}
+
+	got, err := p.FetchPRHead(ctx, 1)
+	want := gitprov.PRHead{SHA: n, Fork: false, Open: true, SourceRepo: "acme/app", AuthorLogin: "fugaro", Self: true}
+	if err != nil || got != want {
+		t.Fatalf("own repo: got %+v, %v, want %+v", got, err, want)
+	}
+	if got, err := p.FetchPRHead(ctx, 2); err != nil || !got.Fork || got.Self {
+		t.Fatalf("fork: got %+v, %v, want Fork=true, Self=false", got, err)
+	}
+	if got, err := p.FetchPRHead(ctx, 3); err != nil || got.Open {
+		t.Fatalf("merged: got %+v, %v, want Open=false", got, err)
+	}
+}

@@ -1,7 +1,7 @@
 version: 1
 name: pick
 description: No coding. The senior model compares several pull requests for the same task and says which to keep.
-use_when: Comparing several pull requests for the same task to decide which to keep, once every attempt has one. Needs a best-of-N launch flow this release's fugaro run does not yet have (a single --pr, not several).
+use_when: Comparing several pull requests for the same task to decide which to keep, once every attempt has settled. Launch with --pr A --pr B [--pr C] (2 to 4 pull requests).
 mode: review
 steps:
   - review:

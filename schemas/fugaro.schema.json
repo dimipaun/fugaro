@@ -131,14 +131,6 @@
         "allow_public": { "type": "boolean", "description": "Allow follow-ups on a public repository, where anyone can comment." }
       }
     },
-    "review": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Review mode: an agent reviewing a pull request instead of implementing one (design generic-tool §1).",
-      "properties": {
-        "allow_forks": { "type": "boolean", "description": "Let review mode run a fork pull request's code next to the job's secrets (default false). Read from the base branch, like followup.trusted." }
-      }
-    },
     "workflows": {
       "type": "object",
       "minProperties": 1,

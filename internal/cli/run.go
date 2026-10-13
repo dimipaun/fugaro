@@ -106,10 +106,13 @@ type runOptions struct {
 	repo, ref, workflow, runID, batch, tf string
 	retry                                 string
 	totalTimeout                          string
-	pr                                    int
-	asJSON                                bool
-	noBudgetCheck                         bool
-	recipe                                string
+	// pr is --pr, repeated: a single entry continues Fugaro's own pull
+	// request N (the only meaning before Task 12 of the generic-tool
+	// plan); 2 to 4 need a mode: review recipe such as pick (G13).
+	pr            []int
+	asJSON        bool
+	noBudgetCheck bool
+	recipe        string
 	// token is the named Claude account (docs/design/named-oauth-tokens.md)
 	// this run uses: fugaro run --token. A follow-up (--pr) inherits its
 	// previous run's account when this is empty; an explicit value overrides
@@ -130,7 +133,11 @@ func newRunCmd() *cobra.Command {
 			"--pr N continues Fugaro's pull request N: the run acts on the PR's review comments\n" +
 			"by the authors fugaro.yaml's followup.trusted lists, on the PR's own branch, with\n" +
 			"the base branch and workflow of the runs before it. TEXT, or --task-file, is\n" +
-			"optional then, and adds instructions.",
+			"optional then, and adds instructions.\n\n" +
+			"--recipe NAME --pr N, NAME naming a mode: review recipe such as review-only or pick,\n" +
+			"reviews any open pull request of the repository instead (not only Fugaro's own) and\n" +
+			"never pushes or opens one; repeat --pr (2 to 4 times) for pick, which compares them.\n" +
+			"TEXT, or --task-file, is optional then too, and adds instructions to the review.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runRun(cmd, &o, args) },
 	}
@@ -143,7 +150,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.tf, "task-file", "", "read the task from this file, or - for stdin")
 	f.StringVar(&o.retry, "retry", "", "launch the stored task of RUN (<repo-slug>/<run-id> or a run ID) that never started")
 	f.StringVar(&o.totalTimeout, "total-timeout", "", "override the workflow's timeouts.total for this run, such as 45m")
-	f.IntVar(&o.pr, "pr", 0, "continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions)")
+	f.IntSliceVar(&o.pr, "pr", nil, "continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR)")
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
 	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's)")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
@@ -162,12 +169,15 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	ctx := cmd.Context()
 	prSet := cmd.Flags().Changed("pr") && o.retry == ""
 	if prSet {
-		if o.pr <= 0 {
-			return userErr("--pr %d: use a pull request number", o.pr)
+		if len(o.pr) == 0 {
+			return userErr("--pr: use a pull request number")
 		}
-		for _, name := range prFlags {
-			if cmd.Flags().Changed(name) {
-				return userErr("--pr continues the PR's base branch and workflow; it takes no --%s", name)
+		if len(o.pr) > 4 {
+			return userErr("--pr: at most 4 may be given")
+		}
+		for _, n := range o.pr {
+			if n <= 0 {
+				return userErr("--pr %d: use a pull request number", n)
 			}
 		}
 	}
@@ -200,6 +210,72 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	defer env.Close()
 	env.noBudgetCheck = o.noBudgetCheck
 
+	// --pr's second meaning (design generic-tool §3.6, G12): with an
+	// explicit --recipe naming a mode: review recipe, --pr targets any
+	// open pull request of the repository, not only Fugaro's own, and may
+	// repeat (pick compares them). Detected only from an explicit --recipe,
+	// never a bare agent.recipe default: the ordinary follow-up path below
+	// (prSpec) already resolves that case from the PR's own history.
+	var reviewRecipe *resolvedRecipe
+	if prSet {
+		switch {
+		case o.recipe == "":
+			if len(o.pr) > 1 {
+				return userErr("several --pr need a review-mode recipe such as pick")
+			}
+		default:
+			repo := o.repo
+			if repo == "" {
+				if repo, err = originRepo(ctx); err != nil {
+					return err
+				}
+			}
+			o.repo = repo
+			// Checked before resolveRecipe (review finding E, the same
+			// ordering newSpec/prSpec already enforce internally):
+			// resolveRecipe can read a project or catalog recipe from the
+			// bucket, a network call a disallowed --token should never
+			// trigger. reviewSpec repeats this same check once a review
+			// recipe is confirmed below (it is pure and local, so doing it
+			// twice costs nothing); this call is what stops the read
+			// itself from ever running for a refused account.
+			if _, err := claudeAccountFor(env, repo, o.token, checkoutOf(ctx, repo)()); err != nil {
+				return err
+			}
+			rr, rerr := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), o.recipe, time.Now(), false)
+			switch {
+			case rerr == nil && rr.Recipe.Mode == recipe.ModeReview:
+				if lo, hi, ok := recipe.ReviewPRRange(rr.Name); ok {
+					if n := len(o.pr); n < lo || n > hi {
+						if lo == hi {
+							return userErr("--recipe %s needs exactly %d --pr, got %d", rr.Name, lo, n)
+						}
+						return userErr("--recipe %s needs %d to %d --pr, got %d", rr.Name, lo, hi, n)
+					}
+				}
+				reviewRecipe = rr
+			case len(o.pr) > 1:
+				return userErr("several --pr need a review-mode recipe such as pick")
+			case rerr != nil:
+				// A single --pr with a --recipe that does not resolve (or
+				// resolves but is not mode: review) is an ordinary
+				// follow-up candidate: prSpec below re-resolves --recipe
+				// itself, but only after its own account check (review
+				// finding E, named-oauth-tokens task 9b) — returning rerr
+				// here instead, unconditionally, would run this read
+				// before that check ever has a chance to refuse a
+				// disallowed --token or inherited account.
+			}
+		}
+	}
+	if prSet && reviewRecipe == nil {
+		for _, name := range prFlags {
+			if cmd.Flags().Changed(name) {
+				return userErr("--pr continues the PR's base branch and workflow; it takes no --%s", name)
+			}
+		}
+	}
+
 	var (
 		spec   *task.Spec
 		slug   string
@@ -209,6 +285,8 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	case o.retry != "":
 		slug, spec, err = retrySpec(ctx, env, o.retry)
 		reused = err == nil && spec.IsFollowUp()
+	case reviewRecipe != nil:
+		slug, spec, err = reviewSpec(ctx, env, o, reviewRecipe, text, total, cmd.ErrOrStderr())
 	case prSet:
 		slug, spec, reused, err = prSpec(ctx, env, o, text, total, cmd.ErrOrStderr())
 	default:
@@ -416,6 +494,81 @@ func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tot
 	return slug, spec, nil
 }
 
+// reviewSpec is the task of a review-mode launch: fugaro run --recipe NAME
+// --pr A [--pr B ...], NAME naming a mode: review recipe (rr, already
+// resolved and confirmed by the caller). It reviews any open pull request
+// of the repository, not only Fugaro's own (design generic-tool §3.6,
+// G12): there is no branch, no previous run and no follow-up chain, unlike
+// prSpec's. --token is honoured the same way a first run's is (newSpec):
+// there is no previous run's account to inherit, so a review-mode launch
+// is always resolved from the flag, else agent.oauth_token, else default,
+// never silently ignored.
+func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedRecipe, text string, total time.Duration, warn io.Writer) (string, *task.Spec, error) {
+	repo := o.repo
+	if repo == "" {
+		var err error
+		if repo, err = originRepo(ctx); err != nil {
+			return "", nil, err
+		}
+	}
+	if _, err := task.CanonicalRepo(repo); err != nil {
+		return "", nil, userErr("--repo: %v", err)
+	}
+	checkout := checkoutOf(ctx, repo)
+	slug, err := env.repoSlug(repo, checkout)
+	if err != nil {
+		return "", nil, err
+	}
+	workflow, err := resolveWorkflow(env, repo, o.workflow, checkout)
+	if err != nil {
+		return "", nil, err
+	}
+	if total > 0 {
+		if c := checkout(); c != nil {
+			if w, ok := c.Workflows[workflow]; ok && total <= w.Timeouts.FinalizeReserve.Duration {
+				return "", nil, userErr("--total-timeout %s must be longer than workflow %s's timeouts.finalize_reserve %s", total, workflow, w.Timeouts.FinalizeReserve.Duration)
+			}
+		}
+	}
+	ref := o.ref
+	if ref == "" {
+		if r, ok := env.localRepo(repo); ok && r.BaseBranch != "" {
+			ref = r.BaseBranch
+		} else if c := checkout(); c != nil && c.Git.BaseBranch != "" {
+			ref = c.Git.BaseBranch
+		} else {
+			return "", nil, userErr("cannot tell the base branch of %s; pass --ref", repo)
+		}
+	}
+	me, err := env.lc.Me(ctx)
+	if err != nil {
+		return "", nil, userErr("%v", err)
+	}
+	runID := o.runID
+	if runID == "" {
+		if runID, err = task.NewRunID(time.Now(), crand.Reader); err != nil {
+			return "", nil, err
+		}
+	}
+	account, err := claudeAccountFor(env, repo, o.token, checkout())
+	if err != nil {
+		return "", nil, err
+	}
+	printRecipeNote(warn, rr, true)
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, Workflow: workflow, Task: text,
+		RequestedBy: me, Batch: o.batch, Recipe: rr.taskRecipe(), ReviewPRs: append([]int(nil), o.pr...)}
+	if total > 0 {
+		spec.Overrides.TotalTimeout = total.String()
+	}
+	if account != config.DefaultClaudeAccount {
+		spec.OAuthToken = account
+	}
+	if err := spec.Validate(); err != nil {
+		return "", nil, userErr("%v", err)
+	}
+	return slug, spec, nil
+}
+
 // claudeAccountFor is the named Claude account a first run uses: flag
 // (fugaro run --token), else the checkout's fugaro.yaml agent.oauth_token,
 // else the repository's default (config.DefaultClaudeAccount). A non-default
@@ -485,8 +638,8 @@ func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func
 	if err != nil {
 		return nil, err
 	}
-	if err := refuseIfNotYetRunnable(rr.Recipe, rr.Name); err != nil {
-		return nil, err
+	if rr.Recipe.Mode == recipe.ModeReview {
+		return nil, userErr("recipe %s is mode: review, which only reviews pull requests; launch it with --recipe %s --pr N (1 to 4 times)", rr.Name, rr.Name)
 	}
 	printRecipeNote(warn, rr, explicit)
 	// An explicit --recipe default overrides agent.recipe, which applies when

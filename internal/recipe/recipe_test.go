@@ -479,3 +479,21 @@ func TestSumAndPaths(t *testing.T) {
 		t.Fatal(RepoPath("x"), ObjectKey("x"))
 	}
 }
+
+// TestReviewPRRange: review-only needs exactly one pull request, pick needs
+// 2 to 4, and any other name (a custom mode: review recipe) is
+// unconstrained.
+//
+// Mutation (swap the "pick" entry's {2, 4} for {1, 4}): this test fails,
+// finding ok but lo == 1 for "pick".
+func TestReviewPRRange(t *testing.T) {
+	if lo, hi, ok := ReviewPRRange("review-only"); !ok || lo != 1 || hi != 1 {
+		t.Fatalf("review-only: lo=%d hi=%d ok=%v, want 1,1,true", lo, hi, ok)
+	}
+	if lo, hi, ok := ReviewPRRange("pick"); !ok || lo != 2 || hi != 4 {
+		t.Fatalf("pick: lo=%d hi=%d ok=%v, want 2,4,true", lo, hi, ok)
+	}
+	if _, _, ok := ReviewPRRange("my-custom-review"); ok {
+		t.Fatal("my-custom-review: ok = true, want false (unconstrained)")
+	}
+}

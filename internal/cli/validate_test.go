@@ -98,6 +98,21 @@ func TestValidateWarnsNoLanguageRuntime(t *testing.T) {
 	}
 }
 
+// TestValidateRefusesLeftoverAllowForks (owner ruling 2026-10-12):
+// review.allow_forks is removed outright, not merely undocumented — a
+// fugaro.yaml still setting it is invalid, refused by the strict parser
+// the same as any other unknown key, not a warning.
+//
+// Mutation (restore the Config.Review field): this test fails, finding
+// the leftover key accepted instead of refused.
+func TestValidateRefusesLeftoverAllowForks(t *testing.T) {
+	path := writeConfig(t, cliMinimalYAML+"review:\n  allow_forks: true\n")
+	_, _, err := execute(t, "validate", path)
+	if err == nil {
+		t.Fatal("want an error for the removed review.allow_forks key, got none")
+	}
+}
+
 // TestValidateSkipsNoLanguageRuntimeWarning covers CheckWarnings' three skip
 // conditions through the CLI: image.tools set, dockerfile: set, and a
 // legacy base all silence the warning that a plain Fugaro-base workflow

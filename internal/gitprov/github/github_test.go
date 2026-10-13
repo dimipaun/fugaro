@@ -280,6 +280,119 @@ func TestGitHubPullRequestFork(t *testing.T) {
 	}
 }
 
+// TestGitHubFetchPRHeadOpenSameRepo covers review mode's own-repository
+// case: not a fork, open, the head commit named, and the author is
+// Fugaro's own App identity (fugaro-app[bot], author_association NONE —
+// the association an App's own pull requests always carry, which is why
+// Self, not Collaborator, is what trusted-author review of Fugaro's own
+// pull requests relies on).
+//
+// Mutation (invert the Fork comparison in FetchPRHead to ==): this test
+// fails, wanting Fork=false but getting true.
+func TestGitHubFetchPRHeadOpenSameRepo(t *testing.T) {
+	got, err := open(t, "pull_open_head.json").FetchPRHead(ctx, 12)
+	want := gitprov.PRHead{SHA: headSHA, Fork: false, Open: true, AuthorID: "900001", AuthorLogin: "fugaro-app[bot]",
+		Association: "NONE", Self: true, SourceRepo: "acme/web"}
+	if err != nil || got != want {
+		t.Fatalf("got %+v, %v, want %+v", got, err, want)
+	}
+}
+
+// TestGitHubFetchPRHeadMerged covers a pull request already merged: not
+// open, review mode must refuse it.
+//
+// Mutation (drop the Open field, always true): this test fails.
+func TestGitHubFetchPRHeadMerged(t *testing.T) {
+	got, err := open(t, "pull_merged_head.json").FetchPRHead(ctx, 12)
+	if err != nil || got.Open {
+		t.Fatalf("got %+v, %v, want Open=false", got, err)
+	}
+}
+
+// TestGitHubFetchPRHeadFork covers a head repository that really is a
+// fork (full_name differs from the Provider's own), by an author who is
+// neither Fugaro's own identity nor a collaborator (author_association
+// CONTRIBUTOR): Fork must be true and Collaborator/Self false, so review
+// mode's trusted-author gate refuses it (reviewmode.go) unless the author
+// is separately listed in followup.trusted.
+//
+// Mutation (compare info.SourceRepo against "" instead of the owner/repo):
+// this test fails, wanting Fork=true but getting false.
+func TestGitHubFetchPRHeadFork(t *testing.T) {
+	got, err := open(t, "pull_real_fork_head.json").FetchPRHead(ctx, 12)
+	want := gitprov.PRHead{SHA: headSHA, Fork: true, Open: true, AuthorID: "900002", AuthorLogin: "outsider",
+		Association: "CONTRIBUTOR", SourceRepo: "outsider/web"}
+	if err != nil || got != want {
+		t.Fatalf("got %+v, %v, want %+v", got, err, want)
+	}
+}
+
+// TestGitHubFetchPRHeadDeletedForkFailsClosed covers a head repository
+// GitHub reports as null (a deleted fork, TestGitHubPullRequestFork):
+// SourceRepo is "", which can never equal the Provider's own repository, so
+// Fork must still be true: an unknown head repository is never silently
+// treated as the Provider's own.
+//
+// Mutation (guard the comparison with `info.SourceRepo != "" && ...`): this
+// test fails, wanting Fork=true but getting false.
+//
+// This fixture's author login ("fugaro-app[bot]") is also exactly what
+// the App's own identity would produce, which is deliberate: it doubles
+// as the case for PRHead's own documented invariant (gitprov.go) — Self
+// is only ever true when Fork is false. Before `self` was guarded with
+// `&& !fork`, this exact fixture gave Fork:true AND Self:true together
+// (reproduced independently before the fix, a throwaway test, not kept):
+// a landmine for any future consumer that trusts the invariant without
+// re-deriving it itself, even though today's only consumer
+// (reviewmode.go's `!h.Fork && h.Self`) happens to re-guard against it.
+//
+// Mutation (drop the `&& !fork` from FetchPRHead's `self := ...` line):
+// this test fails, finding Self=true alongside Fork=true.
+func TestGitHubFetchPRHeadDeletedForkFailsClosed(t *testing.T) {
+	got, err := open(t, "pull_fork_head.json").FetchPRHead(ctx, 12)
+	if err != nil || !got.Fork {
+		t.Fatalf("got %+v, %v, want Fork=true", got, err)
+	}
+	if got.Fork && got.Self {
+		t.Fatalf("got %+v, want Self=false whenever Fork=true (PRHead's own invariant)", got)
+	}
+}
+
+// TestGitHubFetchPRHeadCollaborator covers a same-repository pull request
+// by a real collaborator (author_association COLLABORATOR, not Fugaro's
+// own identity): Collaborator must be true, the signal review mode's
+// trusted-author gate relies on for an outside pull request it did not
+// open itself.
+//
+// Mutation (drop the Collaborator field in FetchPRHead): this test fails,
+// wanting Collaborator=true but getting false.
+func TestGitHubFetchPRHeadCollaborator(t *testing.T) {
+	got, err := open(t, "pull_collaborator_head.json").FetchPRHead(ctx, 12)
+	if err != nil || !got.Collaborator || got.Self {
+		t.Fatalf("got %+v, %v, want Collaborator=true, Self=false", got, err)
+	}
+}
+
+// TestGitHubFetchPRHeadSelfFalseWhenAppIdentityUnknown: Self must fail
+// closed, not open, when GET /app itself fails — appSlug returns
+// known=false, and FetchPRHead must still answer Self=false even though
+// this fixture's author login ("fugaro-app[bot]") is exactly what the
+// App's own slug would produce, since there is no live slug to compare it
+// against at all. Fixed to Bitbucket's own failure mode too (no
+// author_association there means review mode already fails closed to
+// "no trust signal"): a GitHub App identity lookup failing must reach the
+// same conclusion, not quietly trust every "...[bot]" author instead.
+//
+// Mutation (change FetchPRHead's `self := known && ...` to
+// `self := !known || ...`): this test fails, finding Self=true even
+// though the App's own identity was never confirmed.
+func TestGitHubFetchPRHeadSelfFalseWhenAppIdentityUnknown(t *testing.T) {
+	got, err := open(t, "pull_open_head_app_fails.json").FetchPRHead(ctx, 12)
+	if err != nil || got.Self {
+		t.Fatalf("got %+v, %v, want Self=false (the App's own identity could not be confirmed)", got, err)
+	}
+}
+
 func at(s string) time.Time {
 	t, err := time.Parse(time.RFC3339, s)
 	if err != nil {
