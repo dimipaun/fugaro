@@ -257,31 +257,41 @@ Continuing the design doc's H1 and H2:
   real-key exposure as an accepted risk; rejected because the
   gateway-required rule is strictly safer and costs nothing a v1, api-key,
   opt-in feature needs to give up.
-- **P10. A sidecar crash or liveness-check failure goes through the
-  ordinary stage-failure path — no special status, no new `HaltReason`,
-  and not even a fixed `StatusInfraError` outcome.** Two earlier drafts of
-  this decision each got one piece wrong. The first invented
+- **P10. A sidecar `Dead()` signal during a stage goes through the ordinary
+  stage-failure path, always ending `failed`/`draft`; only a `startCompression`
+  failure at bootstrap, before any stage runs, ends `infra_error`.** Three
+  drafts of this decision, each correcting the last. The first invented
   `HaltCompressionDied` (`runstore.go:34`'s own comment on `StatusHalted` —
   `"halted" // a budget or token limit stopped the run` — rules this out: a
-  sidecar dying is neither). The second replaced it with an unconditional
-  `StatusInfraError`, which is also wrong: `infra_error`+`OutcomeNone` is
-  what the run ends with only when `r.rec.Status == runstore.StatusRunning`
-  at the very end — i.e., the run never got far enough to decide anything
-  else (`runner.go:306-315`). Once a PR already exists (the ordinary case
-  for anything but a bootstrap-time crash), the same final switch instead
-  produces `StatusFailed`+`OutcomeDraft` for an ordinary stage error
-  (`runner.go:1877-1886`'s `default:` case) — keeping the PR and whatever
-  work was already committed, which an unconditional `infra_error` would
-  have discarded as `OutcomeNone`. **The fix: a sidecar `Dead()` signal is
-  reported through `r.fail(reason)` (or whatever the stage already calls on
-  an ordinary `agent.Claude.Run` error) and nothing more** — no bespoke
-  status assignment at all. The existing, generic status logic then does the
-  right thing on its own: `infra_error` if nothing has happened yet,
-  `failed`+`draft` if a PR exists, exactly as any other stage failure
-  already resolves. *Veto alternative:* a dedicated `Halt`/`HaltReason`
-  value; rejected as a type error, not a style choice — `Halt` and its
-  reasons are specifically about budget and token limits throughout the
-  schema (`schemas/result.schema.json`'s closed `halt.reason` enum has no
+  sidecar dying is neither). The second replaced it with a split between
+  "nothing happened yet" (`infra_error`) and "a PR already exists"
+  (`failed`/`draft`), reasoning from `runner.go:306-315`'s `if
+  r.rec.Status == runstore.StatusRunning` fallback. That split is also
+  wrong, for a reason neither earlier draft noticed: `Dead()` can only ever
+  fire *after* `startCompression` has already returned successfully — the
+  sidecar is already running — which is only possible once the stage loop
+  has already started. So a `Dead()`-reported failure is *never* a bootstrap
+  failure; it is always a stage failure, and `Run`'s own doc comment says
+  plainly that its returned error is non-nil "for an infra_error... or when
+  writing the final record itself fails" and nothing else
+  (`runner.go:265-271`) — a stage failure reported via `r.fail` instead
+  reaches `finalize`, which commits an empty commit when the agent made none
+  (`runner.go:1732-1736`) and always produces a PR, confirmed by
+  `TestStageTimeoutOpensDraft` (`runner_test.go:362-377`): an implement-stage
+  failure ends `StatusFailed`+`OutcomeDraft` with `Run` itself returning
+  **`nil`**. **The fix: a sidecar `Dead()` signal, at any stage, is reported
+  through `r.fail(reason)` (or whatever the stage already calls on an
+  ordinary `agent.Claude.Run` error) and nothing more** — no bespoke status
+  assignment, and no "which stage" branching: every `Dead()`-reported
+  failure ends `StatusFailed`+`OutcomeDraft`, full stop. `StatusInfraError`
+  is reserved for the one, different case: `startCompression` itself
+  returning an error before the stage loop ever starts (the gateway check
+  failing, or `headroomproc.Start` erroring) — genuinely "the run itself
+  returns an error," the doc comment's own test. *Veto alternative:* a
+  dedicated `Halt`/`HaltReason` value; rejected as a type error, not a style
+  choice — `Halt` and its reasons are specifically about budget and token
+  limits throughout the schema (`schemas/result.schema.json`'s closed
+  `halt.reason` enum has no
   room for this, and would need an edit that doesn't belong next to budget
   semantics).
 - **P11. `agent.compression` ships reserved-and-refused through Tasks 1-9,
@@ -421,23 +431,28 @@ would fail if the fix were subtly wrong:
    repository settings file setting `ANTHROPIC_BASE_URL` is refused
    identically whether `agent.compression` is on or off, proving P9's
    "already covered" claim rather than assuming it.
-5. **A sidecar crash or hang is swallowed, or discards work a crash
-   shouldn't discard.** Pinned by `TestRunnerFailsStageOnSidecarDeath` and
-   `TestRunnerFailsStageOnSidecarHang` (Task 4): both assert the run does
-   not retry against the real API and does not continue uncompressed, and —
-   since P10 deliberately assigns no special status — a third test,
-   `TestSidecarDeathAfterPRKeepsItAsDraft`, asserts that a death discovered
-   after a PR already exists ends `StatusFailed`+`OutcomeDraft` with the PR
-   intact, not `StatusInfraError`+`OutcomeNone` (which would silently
-   discard already-committed work, the bug an earlier draft's unconditional
-   `infra_error` choice would have reintroduced).
+5. **A sidecar crash or hang during a stage is swallowed, retried, or wrongly
+   discards work instead of ending `failed`/`draft`.** Pinned by
+   `TestRunnerFailsStageOnSidecarDeath` and `TestRunnerFailsStageOnSidecarHang`
+   (Task 4): both assert `Run` returns a nil error (the same shape
+   `TestStageTimeoutOpensDraft` already pins for an ordinary stage failure)
+   and the record is `StatusFailed`+`OutcomeDraft`, never a retry against the
+   real API and never `StatusInfraError`+`OutcomeNone` — which would
+   silently discard already-committed work, the mistake an earlier draft of
+   this plan made by asserting `infra_error` for a mid-stage death (on the
+   wrong premise that no PR existed yet; `Dead()` can only fire once the
+   sidecar has already started, which is only possible once the stage loop
+   is already running, so this case is never a bootstrap failure).
+   Separately, `TestStartCompressionRefusesWithoutGateway` pins the one
+   case that *does* end `StatusInfraError`: `startCompression` itself
+   failing before any stage starts.
 6. **The bypass list is asserted as settled when it isn't, or its go/no-go
    check never runs.** No task in this plan implements a bypass mechanism in
    Fugaro's own code (design §3: Claude Code talks to Headroom directly;
    Fugaro builds no request body in that path), so there is no
    `TestForwardNeverCompressesBypassedPaths`-shaped test here — testing it
    would test something Fugaro's code does not do. What *is* pinned: Task
-   10's lift is gated on Task 11's Check H2 (the bypass-capability reading of
+   10's lift is gated on Task 11's Check L2 (the bypass-capability reading of
    Headroom's real configuration surface) having been recorded with a
    positive answer, not merely scheduled — an earlier draft of this plan had
    no check that actually gated anything here, despite §3/§4/§8 of the
@@ -484,14 +499,14 @@ up — the sidecar runs, the managed settings carry its URL, the runner's
 bootstrap check is real — but `agent.compression` **stays refused** the
 whole time; nothing in PR 2 lifts it. **PR 3 (Task 10 alone)** is the lift:
 three small file edits (`validate.go`'s message, the schema's enum, one
-fixture's directory), gated on Task 11's Check H2 (the bypass-list
+fixture's directory), gated on Task 11's Check L2 (the bypass-list
 capability reading) having a recorded, positive answer, and on Task 7's CI
 no-egress test already being green (it runs as part of PR 2's own CI, so by
 the time PR 2 has merged this gate is already satisfied or not — PR 3 simply
 checks it was). **An earlier draft of this plan lifted the refusal inside
 PR 2**, which is circular: it would make the feature usable by a real run
 before any of these checks had run at all, since the measurement in
-particular (Task 11's Check H4) needs the lift to have already happened to
+particular (Task 11's Check L4) needs the lift to have already happened to
 run against. The three-PR split removes the circularity: PR 3 is gated on
 things that can be true *before* it merges (a CI result, a documentation
 reading), never on something that needs it to have merged first.
@@ -503,9 +518,9 @@ useful once 4 actually populates them. Task 6 needs 1, 3 and 4. Task 7 needs
 2 (to know what artifact is being pinned) but can start in parallel with
 3-6 once the pin target is chosen. Task 8 needs 1-7 settled (it documents
 the shipped shape, noting plainly that it isn't usable yet). Task 9 is last
-in PR 2. Task 10 (PR 3) needs PR 2 merged and Task 11's Check H2 answered.
+in PR 2. Task 10 (PR 3) needs PR 2 merged and Task 11's Check L2 answered.
 Task 11's checks are the owner's own, run whenever the owner chooses, except
-Check H2 (must precede Task 10) and Checks H3/H4 (must follow it).
+Check L2 (must precede Task 10) and Checks L3/L4 (must follow it).
 
 **Review flag.** Tasks 2, 3, 4, 6, 7 and 10 touch, respectively: a new
 process given its own narrow credential surface and memory/network bounds,
@@ -541,7 +556,10 @@ the merge and the trust boundary").
 - New: `testdata/config/invalid/agent-compression-headroom.yaml` (refused by
   both the schema and `Validate` while reserved; Task 10 moves this exact
   file to `valid/`)
-- Test: `internal/config/validate_test.go`, `internal/config/scope_test.go`
+- Test: `internal/config/config_test.go` (there is no `validate_test.go` in
+  this package; `TestAgentOAuthToken`, the existing test for the identical
+  shape of question, lives in `config_test.go`, confirmed by reading it),
+  `internal/config/scope_test.go`
   (or wherever `TestScopeTableMatchesDocs` lives — the implementer greps for
   it)
 
@@ -572,26 +590,29 @@ Compression string `yaml:"compression,omitempty"`
 - [ ] **Step 1: Write the failing tests**
 
 ```go
-// internal/config/validate_test.go
+// internal/config/config_test.go, next to TestAgentOAuthToken (the existing
+// test for the identical shape of question): built on the real
+// config.Parse(data) ([]byte) (*Config, []Problem), not a cfg.Validate()
+// method call -- Validate is a plain function, Validate(c *Config)
+// []Problem (internal/config/validate.go:94), and no validConfigFixture
+// helper exists in this package; TestAgentOAuthToken's own
+// fmt.Sprintf(base, ...)-over-Parse idiom is the real, already-used pattern
+// this task's own tests should follow instead.
 
 func TestValidateCompressionReservedAndRefused(t *testing.T) {
+	base := "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: api-key\n%s" +
+		"workflows:\n  app: { base: go, commands: { build: go build ./..., test: go test ./... } }\n"
 	for _, val := range []string{"headroom", "anything"} {
-		cfg := validConfigFixture()
-		cfg.Agent.Compression = val
-		ps := cfg.Validate()
+		_, ps := Parse([]byte(fmt.Sprintf(base, "  compression: "+val+"\n")))
 		if len(ps) == 0 {
-			t.Fatalf("Compression=%q was accepted before it is implemented", val)
+			t.Fatalf("compression=%q was accepted before it is implemented", val)
 		}
 		if !slices.ContainsFunc(ps, func(p Problem) bool { return strings.Contains(p.Message, "not yet implemented") }) {
-			t.Errorf("Compression=%q: refusal message doesn't say why: %+v", val, ps)
+			t.Errorf("compression=%q: refusal message doesn't say why: %+v", val, ps)
 		}
 	}
-}
-
-func TestValidateCompressionEmptyIsAlwaysFine(t *testing.T) {
-	cfg := validConfigFixture() // Agent.Compression left at its zero value
-	if ps := cfg.Validate(); len(ps) != 0 {
-		t.Fatalf("an unset Compression was refused: %+v", ps)
+	if cfg, ps := Parse([]byte(fmt.Sprintf(base, ""))); len(ps) > 0 || cfg.Agent.Compression != "" {
+		t.Fatalf("unset compression was refused: %+v, %v", cfg, ps)
 	}
 }
 
@@ -625,9 +646,9 @@ func TestOldConfigParserRefusesCompressionKey(t *testing.T) {
 }
 
 func TestValidateRefusesCompressionWithOAuth(t *testing.T) {
-	cfg := validConfigFixture()
-	cfg.Agent.Auth, cfg.Agent.Compression = "oauth", "headroom"
-	if ps := cfg.Validate(); len(ps) == 0 {
+	base := "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: oauth\n  compression: headroom\n" +
+		"workflows:\n  app: { base: go, commands: { build: go build ./..., test: go test ./... } }\n"
+	if _, ps := Parse([]byte(base)); len(ps) == 0 {
 		t.Fatal("compression + oauth was accepted")
 	}
 	// (This case is also refused as "not yet implemented" until Task 10;
@@ -636,9 +657,9 @@ func TestValidateRefusesCompressionWithOAuth(t *testing.T) {
 }
 
 func TestValidateRefusesCompressionWithVertex(t *testing.T) {
-	cfg := validConfigFixture()
-	cfg.Agent.Auth, cfg.Agent.Compression = "vertex", "headroom"
-	if ps := cfg.Validate(); len(ps) == 0 {
+	base := "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: vertex\n  compression: headroom\n" +
+		"workflows:\n  app: { base: go, commands: { build: go build ./..., test: go test ./... } }\n"
+	if _, ps := Parse([]byte(base)); len(ps) == 0 {
 		t.Fatal("compression + vertex was accepted")
 	}
 }
@@ -680,7 +701,7 @@ Expected: `ok`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add internal/config/config.go internal/config/validate.go internal/config/scope.go internal/config/validate_test.go internal/config/scope_test.go schemas/fugaro.schema.json docs/project-layer.md testdata/config/invalid/agent-compression-headroom.yaml
+git add internal/config/config.go internal/config/validate.go internal/config/scope.go internal/config/config_test.go internal/config/scope_test.go schemas/fugaro.schema.json docs/project-layer.md testdata/config/invalid/agent-compression-headroom.yaml
 git commit -m "headroom compression task 1: agent.compression, reserved and refused, and the agent.auth rule"
 ```
 
@@ -949,7 +970,7 @@ type CompressionProxy struct{ BaseURL string }
   block (`env.go:134-141`) gains a step **after** the existing
   `GatewayVars` call, not before — **a correction to an earlier draft of
   this plan, which had the ordering backwards and would have been
-  overwritten by it**: `maps.Copy(out, vars)` (`env.go:138`) is itself the
+  overwritten by it**: `maps.Copy(out, vars)` (`internal/agent/env.go:140`) is itself the
   last write before this task's change, so a compression step placed
   *before* it would have its own `ANTHROPIC_BASE_URL` immediately
   clobbered by the gateway's. The new step runs *after* that `maps.Copy`:
@@ -1124,11 +1145,27 @@ but still refused by `config.Validate`.
   `r.fail("stage %s: the Headroom sidecar died or stopped responding")` (or
   whatever the stage's own error-return already does for an
   `agent.Claude.Run` error) — assigning no special status at all (P10).**
-  The existing, generic end-of-run logic then decides `StatusInfraError`
-  (nothing happened yet, `runner.go:306-315`) or `StatusFailed`+`OutcomeDraft`
-  (a PR already exists, `runner.go:1877-1886`'s `default:` case) on its own,
-  exactly as it already does for any other stage error — no new branch is
-  added for this case specifically.
+  **A correction to an earlier draft of this task, which split this into a
+  "no PR yet" `infra_error` case and a "PR already exists" `failed`+`draft`
+  case:** `Dead()` can only ever fire *after* `startCompression` has already
+  returned successfully (the sidecar started), which only happens once the
+  stage loop is already running — so a `Dead()`-reported failure is always
+  a stage failure, never a bootstrap one, and the question "did a PR exist
+  yet" never arises the way the earlier draft assumed: `Run`'s own doc
+  comment is explicit that its returned error is non-nil "for an
+  infra_error... or when writing the final record itself fails" and nothing
+  else (`internal/runner/runner.go:265-271`) — a stage failure reported via
+  `r.fail` instead reaches `finalize`, which commits an empty commit when
+  the agent made none (`runner.go:1732-1736`) and always produces a PR
+  (confirmed by `TestStageTimeoutOpensDraft`, `runner_test.go:362-377`: an
+  implement-stage failure ends `StatusFailed` with **`err == nil`** from
+  `Run` itself). So every `Dead()`-reported failure, at any stage, ends
+  `StatusFailed`+`OutcomeDraft` with `Run` returning `nil` — the *only*
+  compression-related path that can produce `StatusInfraError` is
+  `startCompression` itself returning an error at bootstrap, before the
+  stage loop starts (the gateway check failing, or `headroomproc.Start`
+  erroring) — genuinely "the run itself returns an error," matching the
+  doc comment's own test for `infra_error`.
 - `r.endRun`/wherever the sidecar's `Stop` is guaranteed even on a panicking
   stage — the implementer follows whatever defer/cleanup pattern
   `r.gw.Close()`'s own call site already uses, so a leaked sidecar process
@@ -1146,36 +1183,44 @@ func TestRunnerStartsNoSidecarByDefault(t *testing.T) {
 	}
 }
 
+// TestStartCompressionRefusesWithoutGateway uses the plain, gateway-less
+// harness (newHarness, runner_test.go:66 -- the same constructor
+// TestStageTimeoutOpensDraft uses) rather than newGW, since the point is
+// that the budget is off: no ceiling, no default-branch budget, nothing
+// turns the gateway on. This is a bootstrap-time failure -- startCompression
+// returns before the stage loop ever starts -- so, per Run's own doc
+// comment (runner.go:265-271), Run itself returns a non-nil error and the
+// record is StatusInfraError, unlike every Dead()-reported failure below.
 func TestStartCompressionRefusesWithoutGateway(t *testing.T) {
-	// agent.compression: headroom, budget.mode left off (the ceiling and the
-	// default branch's file both leave it off too): assert startCompression
-	// returns an error naming "the budget gateway" and headroomproc.Start is
-	// never called.
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"],
+		"  review_rounds: 2\n", "  review_rounds: 2\n  compression: headroom\n", 1)
+	h := newHarness(t, cfg, nil)
+	rec, err := h.run(t, implement("feature"))
+	if err == nil {
+		t.Fatal("agent.compression without the gateway did not fail the run")
+	}
+	if rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "budget gateway") {
+		t.Fatalf("record = %+v, want infra_error naming the budget gateway", rec)
+	}
+	if h.compressionStarts != 0 {
+		t.Fatal("headroomproc.Start was called despite the gateway being off")
+	}
 }
 
-// compressionConfig extends gwConfig with agent.compression: headroom
-// (bypassing Task 1/10's Validate refusal directly on the fixture's Config,
+// compressionConfig extends gwConfig with agent.compression: headroom,
+// bypassing Task 1/10's Validate refusal directly on the fixture's Config,
 // the same way existing gateway tests bypass unrelated refusals to isolate
-// this behavior) and, deliberately, git.pr.checkpoints: false. **The
-// checkpoint-off choice is load-bearing, not incidental**: the early draft
-// PR can open mid-stage, not only after a stage ends — a running stage's
-// branch tip is polled every checkpointPoll (10s) and pushed, opening the
-// draft, once a commit has been quiet for checkpointQuiet (5s)
-// (`internal/runner/checkpoint_schedule.go:8-25`, `docs/design/
-// checkpoint-pushes.md`). An earlier draft of this plan killed the sidecar
-// "during implement" and asserted no PR existed yet, which is not
-// guaranteed with checkpoints on — the outcome would depend on an unstated
-// race between the kill and the checkpoint goroutine. Disabling checkpoints
-// for these tests removes the race outright, rather than trying to win it
-// deterministically in a fake harness.
+// this behavior. The extra line is two-space indented, a sibling of
+// agent's other keys (review_rounds, model, ...) at the level gwConfig
+// itself inserts at (internal/runner/gateway_test.go:42-53) -- an earlier
+// draft of this helper used four spaces, which would nest compression
+// under the preceding scalar-valued line instead of beside it, invalid
+// YAML. No git.pr.checkpoints override is needed here (see the note on
+// TestRunnerFailsStageOnSidecarDeath below for why an earlier draft added,
+// and this one removes, one).
 func compressionConfig(t *testing.T) string {
 	t.Helper()
-	cfg := gwConfig(t, "    compression: headroom\n")
-	out := strings.Replace(cfg, "git:\n  provider: github\n", "git:\n  provider: github\n  pr: { checkpoints: false }\n", 1)
-	if out == cfg {
-		t.Fatal("fixture has no git:/provider: github line to attach pr.checkpoints to")
-	}
-	return out
+	return gwConfig(t, "  compression: headroom\n")
 }
 
 func TestRunnerBuildsANarrowSidecarEnv(t *testing.T) {
@@ -1190,42 +1235,45 @@ func TestRunnerBuildsANarrowSidecarEnv(t *testing.T) {
 	}
 }
 
-// TestRunnerFailsStageOnSidecarDeath relies on compressionConfig's
-// checkpoints: false to guarantee no PR exists yet when implement is
-// killed -- without it, this test's own pass/fail would depend on whether
-// the checkpoint-push goroutine won an unstated race against the kill.
+// TestRunnerFailsStageOnSidecarDeath needs no git.pr.checkpoints control,
+// a correction to an earlier draft of this plan, which disabled checkpoints
+// to try to guarantee "no PR exists yet" when implement is killed, on the
+// mistaken premise that this changes the outcome. It doesn't: Dead() can
+// only fire once the sidecar has already started, which is only possible
+// once the stage loop is already running, so this is always a stage
+// failure (reported via r.fail), never a bootstrap one -- and a stage
+// failure always reaches finalize, which commits an empty commit and opens
+// a PR when the agent made none (runner.go:1732-1736). The assertion below
+// is deliberately the same shape as TestStageTimeoutOpensDraft's: Run
+// returns a nil error, and the record is StatusFailed+OutcomeDraft,
+// regardless of which stage the kill happens during.
 func TestRunnerFailsStageOnSidecarDeath(t *testing.T) {
 	h := newGW(t, compressionConfig(t), "observe", "").harness
 	h.killSidecarDuring("implement") // closes the fake Dead() channel mid-stage
 	rec, err := h.run(t, implement("feature"))
-	if err == nil {
-		t.Fatal("a sidecar death did not fail the run")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if rec.Status != runstore.StatusInfraError {
-		t.Errorf("a bootstrap-time sidecar death (no PR yet, checkpoints off) ended %s, want infra_error", rec.Status)
-	}
-}
-
-// TestSidecarDeathAfterPRKeepsItAsDraft needs no checkpoint control: it
-// kills the sidecar during fix, after implement has already run to
-// completion, by which point a PR exists regardless of
-// git.pr.checkpoints (the ordinary post-implement PR creation, not only
-// the checkpoint path) -- so compressionConfig's checkpoints: false here
-// only removes a second, unrelated source of mid-implement nondeterminism,
-// not the thing this test's own assertion depends on.
-func TestSidecarDeathAfterPRKeepsItAsDraft(t *testing.T) {
-	h := newGW(t, compressionConfig(t), "observe", "").harness
-	h.killSidecarDuring("fix") // after implement has already completed and opened its PR
-	rec, _ := h.run(t, implement("feature"), review("revise", 1))
-	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft || rec.PR == nil {
-		t.Fatalf("a sidecar death after a PR existed = %s/%s, pr=%v; want failed/draft with the PR kept", rec.Status, rec.Outcome, rec.PR)
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("a sidecar death mid-stage = %s/%s, want failed/draft (TestStageTimeoutOpensDraft's own shape)", rec.Status, rec.Outcome)
 	}
 }
 
+// TestRunnerFailsStageOnSidecarHang mirrors TestRunnerFailsStageOnSidecarDeath
+// exactly, but the fake Dead() channel closes because of a simulated
+// liveness failure rather than a process exit -- proving the runner treats
+// both the same way (P8, P10): there is no second code path to test
+// separately, only a second way of causing Dead() to close.
 func TestRunnerFailsStageOnSidecarHang(t *testing.T) {
-	// Same shape as TestRunnerFailsStageOnSidecarDeath, but the fake Dead()
-	// channel closes because of a simulated liveness failure rather than a
-	// process exit -- proving the runner treats both the same way (P8, P10).
+	h := newGW(t, compressionConfig(t), "observe", "").harness
+	h.hangSidecarDuring("implement") // the fake's liveness probe starts failing; Dead() closes after LivenessMisses
+	rec, err := h.run(t, implement("feature"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("a sidecar hang mid-stage = %s/%s, want failed/draft", rec.Status, rec.Outcome)
+	}
 }
 
 func TestRunnerStopsSidecarOnRunEnd(t *testing.T) {
@@ -1242,7 +1290,7 @@ func TestRunnerStopsSidecarOnRunEnd(t *testing.T) {
 - [ ] **Step 1: Write the failing tests**
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `go test -count=1 -run 'TestRunnerStartsNoSidecar|TestStartCompressionRefusesWithoutGateway|TestRunnerBuildsANarrowSidecarEnv|TestRunnerFailsStageOnSidecarDeath|TestSidecarDeathAfterPRKeepsItAsDraft|TestRunnerFailsStageOnSidecarHang|TestRunnerStopsSidecarOnRunEnd' ./internal/runner/`
+Run: `go test -count=1 -run 'TestRunnerStartsNoSidecar|TestStartCompressionRefusesWithoutGateway|TestRunnerBuildsANarrowSidecarEnv|TestRunnerFailsStageOnSidecarDeath|TestRunnerFailsStageOnSidecarHang|TestRunnerStopsSidecarOnRunEnd' ./internal/runner/`
 Expected: FAIL.
 
 - [ ] **Step 3: Write the implementation**
@@ -1658,13 +1706,22 @@ git commit -m "headroom compression task 9: docs/release.md's compressionSince l
 one change that turns the feature on for real runs; everything before it
 was inert by construction (P11).
 
-**Gated on, before this task starts:** Task 11's Check H2 (the bypass-list
-capability reading of Headroom's real configuration surface) recorded with
-a positive answer — or, if it comes back negative for the `review`/
-`review_first` stages specifically, this task's own implementation narrows
-to exclude compression from those stages rather than lifting it
-unconditionally (design §5/§6). Task 7's no-egress CI result is already
-known by this point, since it ran as part of PR 2's own CI.
+**Gated on, before this task starts:** Task 11's Check L2 (the bypass-list
+capability reading of Headroom's real configuration surface), answered one
+of two ways, with no third option — **there is no per-stage exclusion
+mechanism in this plan to fall back on** (P4 starts one sidecar for the
+whole run; nothing here builds a way to exclude specific stages from it,
+even though `writeManagedSettings`'s own per-stage rewrite could in
+principle support one in a future revision). If Check L2 finds Headroom's
+configuration can honor the bypass list (pin the diff under review, verify
+output, the system/task prompt), this task lifts the refusal
+unconditionally, for every recipe. **If Check L2 comes back negative, this
+task does not lift the refusal at all for any recipe that has a `review` or
+`review_first` step** — which, reading `docs/design/generic-tool.md`'s
+catalog (§3.5 there), is effectively every catalog recipe, so a negative
+Check L2 is a strong signal against shipping compression at all in v1, not
+a narrow scoping note. Task 7's no-egress CI result is already known by
+this point, since it ran as part of PR 2's own CI.
 
 **Files:**
 - Edit: `internal/config/validate.go` (the message for `agent.compression:
@@ -1683,16 +1740,19 @@ known by this point, since it ran as part of PR 2's own CI.
   shape), naming `compressionSince`, the `api-key`-with-gateway-on
   restriction, the `oauth`/`vertex` refusals, the opt-in default, and Check
   H2's recorded answer — not as a claim that compression is recommended,
-  since §6's thresholds (Check H4) are a separate, owner-run judgment call
+  since §6's thresholds (Check L4) are a separate, owner-run judgment call
   this task does not itself clear, and have not run yet at this point.
 
 **Tests:**
 ```go
+// internal/config/config_test.go, built on config.Parse like Task 1's own
+// tests (there is no validConfigFixture helper or Validate method; see
+// Task 1's note on TestAgentOAuthToken's real idiom).
 func TestValidateAcceptsCompressionAfterLift(t *testing.T) {
-	cfg := validConfigFixture()
-	cfg.Agent.Auth, cfg.Agent.Compression = "api-key", "headroom"
-	if ps := cfg.Validate(); len(ps) != 0 {
-		t.Fatalf("compression + api-key was refused after the lift: %+v", ps)
+	base := "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: api-key\n  compression: headroom\n" +
+		"workflows:\n  app: { base: go, commands: { build: go build ./..., test: go test ./... } }\n"
+	if cfg, ps := Parse([]byte(base)); len(ps) != 0 || cfg.Agent.Compression != "headroom" {
+		t.Fatalf("compression + api-key was refused after the lift: %+v, %v", cfg, ps)
 	}
 }
 ```
@@ -1718,8 +1778,8 @@ moved fixture in `valid/`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add internal/config/validate.go schemas/fugaro.schema.json testdata/config/invalid/agent-compression-headroom.yaml testdata/config/valid/agent-compression-headroom.yaml docs/compression.md docs/releases/
-git commit -m "headroom compression task 10: lift the refusal (PR 3, gated on Check H2)"
+git add internal/config/validate.go internal/config/config_test.go schemas/fugaro.schema.json testdata/config/invalid/agent-compression-headroom.yaml testdata/config/valid/agent-compression-headroom.yaml docs/compression.md docs/releases/
+git commit -m "headroom compression task 10: lift the refusal (PR 3, gated on Check L2)"
 ```
 
 ---
@@ -1732,13 +1792,17 @@ Never run by an implementer or by CI. Matches this repository's existing
 effect, `FACT:` lines). Add these as new, numbered checks continuing
 `docs/gcp-live-checklist.md`'s existing sequence (the implementer reads the
 file's current last check number when this task starts and numbers from
-there; this plan uses placeholder numbers **Check H1-H4** below rather than
-guess a number that will have drifted by the time this task runs).
-**Dependency order, corrected from two earlier drafts' mistakes:** Check H1
-can run any time, independent of everything else. **Check H2 must run
-*before* Task 10** — it gates the lift, is purely a documentation reading
-(no cloud, no sandbox, no PR 2 needed), and can start as early as the owner
-likes, ideally before implementation even begins. **Checks H3 and H4 can
+there; this plan uses placeholder labels **Check L1-L4** below (`L` for
+"live check," chosen to avoid colliding with the design doc's own decision
+labels H1/H2, which this plan's own P1-P12 continue — an earlier draft
+numbered both schemes "H," which named two different things the same way)
+rather than guess a number that will have drifted by the time this task
+runs). **Dependency order, corrected from two earlier drafts' mistakes:**
+Check L1 can run any time, independent of everything else. **Check L2 must
+run *before* Task 10** — it gates the lift, is purely a documentation
+reading (no cloud, no sandbox, no PR 2 needed), and can start as early as
+the owner likes, ideally before implementation even begins. **Checks L3 and
+L4 can
 only run *after* Task 10 has merged** — an earlier draft had the §6
 measurement listed as able to run "before any code merges," and a separate
 earlier draft of this task's own H2 asked for a GCP network-isolation test
@@ -1750,7 +1814,7 @@ test, which already proves this, locally, with a tool that *can* restrict
 network access). That old check is dropped and replaced below with
 something actually runnable: a functional smoke test, not a network claim.
 
-- [ ] **Check H1. `ANTHROPIC_BASE_URL` with `CLAUDE_CODE_OAUTH_TOKEN`.**
+- [ ] **Check L1. `ANTHROPIC_BASE_URL` with `CLAUDE_CODE_OAUTH_TOKEN`.**
   (Can run any time; does not depend on this plan's code.) On a machine
   with a real `claude setup-token` value, run `claude -p` with both
   `ANTHROPIC_BASE_URL` pointed at a local, logging reverse proxy (a small
@@ -1760,22 +1824,23 @@ something actually runnable: a functional smoke test, not a network claim.
   §1.1's open question and is a precondition for ever reconsidering the
   `oauth` refusal (Task 1) — it does not, by itself, lift it; lifting it is
   a future design's decision, not this check's.
-- [ ] **Check H2. Can Headroom's own configuration honor the bypass list?**
+- [ ] **Check L2. Can Headroom's own configuration honor the bypass list?**
   (Can run any time; no cloud, no sandbox — a documentation and
   configuration reading, the one piece of evidence this design has no other
-  way to get. **Gates Task 10.**) Read Headroom's real configuration
-  surface (whatever Task 7 found when it resolved the pinned artifact) and
-  determine: can it be told to never compress a specific kind of content
-  (a preceding `git diff` call's output, `fugaro verify`'s output, the
-  system/task prompt), or at least never compress content from the
-  `review`/`review_first` stages' sessions specifically? **FACT:** quote the
-  exact configuration mechanism found, if any, or record plainly that none
-  exists. **If no mechanism exists at all**, Task 10 does not lift the
-  refusal for `review`/`review_first`-bearing recipes (the design's "else
-  exclude the review stages" fallback, §5/§6) — a design decision this
-  check's answer feeds directly, not a judgment call Task 10 makes on its
-  own.
-- [ ] **Check H3. A real, lifted compression pass works end to end in the
+  way to get. **Gates Task 10, with exactly two outcomes, not three — see
+  Task 10's own gating note: there is no per-stage exclusion mechanism in
+  this plan to fall back on.**) Read Headroom's real configuration surface
+  (whatever Task 7 found when it resolved the pinned artifact) and
+  determine: can it be told to never compress a specific kind of content —
+  a preceding `git diff` call's output, `fugaro verify`'s output, the
+  system/task prompt — across an entire session? **FACT:** quote the exact
+  configuration mechanism found, if any, or record plainly that none
+  exists. **A positive answer lifts the refusal unconditionally (Task 10);
+  a negative answer withholds the lift entirely for any recipe with a
+  `review`/`review_first` step** — in practice every catalog recipe
+  (`docs/design/generic-tool.md` §3.5) — since this plan builds no
+  per-stage exclusion to fall back on instead.
+- [ ] **Check L3. A real, lifted compression pass works end to end in the
   sandbox.** (Depends on Task 10 having merged, and a sandbox image built
   from it.) Launch one ordinary sandbox task with `agent.compression:
   headroom` on an `agent.auth: api-key`, `budget.mode: observe` repository
@@ -1785,7 +1850,7 @@ something actually runnable: a functional smoke test, not a network claim.
   failure here is a bug to fix, not a "do not ship" signal by itself (that
   signal was Task 7's CI test, which already ran); this check is functional,
   not a security property.
-- [ ] **Check H4. The §6 measurement protocol.** (Depends on Check H3
+- [ ] **Check L4. The §6 measurement protocol.** (Depends on Check L3
   passing.) The paired A/B run over the owner's chosen task corpus, in the
   sandbox, on an `agent.auth: api-key` repository with `budget.mode:
   observe`, with each pair's arm order randomized or spaced beyond the

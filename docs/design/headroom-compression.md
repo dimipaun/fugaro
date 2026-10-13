@@ -8,8 +8,12 @@ license and URL exactly as given in the owner's request; none of it was
 independently confirmed to exist or resolve, since fetching Headroom's own
 site was deliberately out of scope for this design, see below), a
 third-party, open-source context-compression layer, into the agent loop to
-cut token cost and usage-limit stalls. Target release: **0.8.0** (§5), opt-in
-and gated behind the measurement plan of §6, which has not run.
+cut token cost and usage-limit stalls. Target release: **0.8.0** (§5),
+opt-in, with the feature itself gated on the live checks of §3 (can
+Headroom's configuration honor the bypass list) and §5 (no outbound
+network) before it is ever usable at all — the §6 measurement plan runs
+only after that, against an already-shipped, already-opt-in feature, and
+gates nothing but a future default-on proposal.
 
 **v1 does not serve the usage-limit half of the stated motivation.** §1.1
 refuses `agent.auth: oauth` until a live check settles whether a proxy can
@@ -401,14 +405,19 @@ shape but launching a real subprocess — and it must start **after**
 `startGateway` succeeds, not before, which an earlier draft of this section
 had backwards. §1.1's recommendation is to chain the sidecar in front of the
 gateway, which means Headroom's own upstream configuration must be the
-gateway's loopback URL and per-run token — and those don't exist until
-`gateway.Start` (`internal/gateway/gateway.go:192-230`) returns them. There
+gateway's loopback URL — and that URL doesn't exist until
+`gateway.Start` (`internal/gateway/gateway.go:192-230`) returns it. There
 is no way to tell Headroom where to forward before the gateway it forwards
 to has a listening address. Concretely: call `startGateway` first, read
-`r.gwAgent`'s `BaseURL`/`Token` (already set by it,
-`internal/runner/gateway.go:105-120`), pass them into the sidecar's own
-configuration (its `Env`, or whatever file it reads — Task 7's live check
-settles which), then start the sidecar and wait on its readiness probe (a
+`r.gwAgent.BaseURL` (already set by it,
+`internal/runner/gateway.go:105-120` — **not** `.Token` too, which an
+earlier draft of this paragraph also passed in: Claude Code's own
+`ANTHROPIC_API_KEY` already carries the gateway's token on every request, so
+an ordinary reverse-proxying Headroom forwards it without needing a separate
+copy, §2), pass it into the sidecar's own
+configuration (its `Env`, or whatever file it reads — Task 7's own
+artifact-resolution step, not a live check, settles which), then start the
+sidecar and wait on its readiness probe (a
 local health endpoint, since nothing here should depend on network access —
 see §2) before the first stage runs. Kill its process group on run end
 exactly as `procgroup` does for `claude` (SIGTERM, then SIGKILL after a
@@ -738,9 +747,11 @@ a requirement this design places on *Headroom's own configuration surface*,
 not something Fugaro implements or can verify by reading its own code** —
 whether Headroom exposes any way to pin or exclude specific content from
 compression is itself **UNVERIFIED**, and if it does not, this entire
-section is a reason not to ship compression into the review loop at all (or
-to exclude the `review`/`review_first` stages from it specifically),
-not a problem Fugaro can work around with its own logic downstream.
+section is a reason to withhold the lift (§4) entirely for any recipe that
+has a `review`/`review_first` step — in practice every catalog recipe
+(`docs/design/generic-tool.md` §3.5) — since there is no per-stage
+exclusion mechanism elsewhere in this design to fall back on; it is not a
+problem Fugaro can work around with its own logic downstream.
 
 **What must never be compressed, if Headroom's own configuration can express
 it (a go/no-go live check, not a built feature):**
@@ -1090,7 +1101,9 @@ the existing CI size budget (`images/size-budget.sh`, 4.0 GB hard limit,
 
 **arm64 support, one recommendation stated once.** The base image already
 builds and publishes both architectures (`base-image.md` §12). **If and
-only if** Task 7's live check (§7) finds no arm64 Headroom artifact, the
+only if** Task 7's own artifact-resolution step (§7 — reading Headroom's
+real release page, not one of Task 11's owner-run live checks) finds no
+arm64 Headroom artifact, the
 recommendation is to refuse `agent.compression: headroom` on an arm64 job
 (a launch-time check) rather than apply base-image.md's ordinary fallback
 for an optional convenience harness (an `amd64`-only row that silently skips
@@ -1169,12 +1182,14 @@ are, concretely: Task 7's no-outbound-network CI test (a repeatable build-time
 check, no live cloud needed) and a new check confirming whether Headroom's
 own configuration surface can honor the bypass list of §3 — pin the diff
 under review, verify output and the system/task prompt, or else the lift is
-narrower and excludes the `review`/`review_first` stages from compression
-(§6/§7 name this explicitly as Check H2, and it gates the lift, not merely
-informs it, closing the contradiction an earlier draft of §3 and §8 left
-open: those sections said the bypass list was "Fugaro's own" and
-"a single, Fugaro-chosen... policy," which cannot both be true alongside §3's
-own admission that Fugaro has no enforcement point for it). **What §6's
+withheld entirely for any recipe with a `review`/`review_first` step (in
+practice every catalog recipe, since this design builds no per-stage
+exclusion mechanism to fall back on instead — the plan's Check L2 names
+this explicitly, and it gates the lift, not merely informs it, closing the
+contradiction an earlier draft of §3 and §8 left open: those sections said
+the bypass list was "Fugaro's own" and "a single, Fugaro-chosen... policy,"
+which cannot both be true alongside §3's own admission that Fugaro has no
+enforcement point for it). **What §6's
 full measurement gates is different again**: not the lift, but whether this
 feature is ever proposed as a *default* (§6's own closing paragraph) — and
 it necessarily runs *after* the lift has merged, since it needs a real run
@@ -1184,10 +1199,16 @@ this design's to satisfy — they are live, owner-run checks (§6, §7).
 
 ## 6. Measurement plan
 
-**This is the gate for ever defaulting `agent.compression` on — not merely
-for shipping it as opt-in.** Even a clean pass keeps it opt-in in v1 (§4);
-this plan exists to decide whether Headroom is worth shipping *at all*, set
-against the vendor's own claims.
+**This is the gate for ever defaulting `agent.compression` on — nothing
+more, and an earlier draft of this paragraph overstated it.** Whether
+Headroom is worth shipping *at all*, even as opt-in, is decided earlier and
+separately: by Check L2 (§3/§5/§7 — can Headroom's configuration honor the
+bypass list) and Task 7's no-outbound-network result, both of which gate
+the lift (§4/§5) and both of which this measurement runs *after*, against
+an already-lifted, already-opt-in feature (§5's "what gates merging vs. the
+lift"). Even a clean pass here keeps it opt-in (§4); this plan exists only
+to decide whether Headroom's own, already-shipped compression is ever worth
+proposing as a *default*, set against the vendor's own claims.
 
 **Protocol: a sandbox-only A/B over identical tasks, on `api-key` with the
 gateway on.** Sandbox installation only (the global rule: never EdgeWeb,
@@ -1259,13 +1280,18 @@ proposed addition this plan is actually blocked on:
 - **Wall time** — `Record.StartedAt`/`FinishedAt`, and per-stage from
   `Stages []StageTiming`.
 - **Failure modes** — `Record.Status`/`Reason`, read together: a sidecar
-  crash or hang (§1.5) goes through the same generic failure path any other
-  stage error does, so it can surface as `StatusFailed`+`OutcomeDraft` (a PR
-  already existed) or, only if it happens before the run ever got that far,
-  the bootstrap-only `StatusInfraError`+`OutcomeNone` — never `StatusHalted`,
+  crash or hang *during a stage* goes through the same generic
+  stage-failure path any other stage error does, and ends
+  `StatusFailed`+`OutcomeDraft` every time (finalize always produces a PR,
+  committing an empty commit if the agent made none) — never `StatusHalted`,
   which `runstore.go:34` reserves for "a budget or token limit stopped the
-  run," a different thing. Read `Reason` for a sidecar-shaped message in
-  either status rather than assuming one predictable value.
+  run," a different thing. The separate, bootstrap-only `StatusInfraError`+
+  `OutcomeNone` applies only when starting the sidecar itself fails, before
+  any stage runs (the gateway-off refusal, or the sidecar process failing
+  to launch) — a death *after* that point, however early in the first
+  stage, is a stage failure, not a bootstrap one. Read `Reason` for a
+  sidecar-shaped message in either status rather than assuming one
+  predictable value.
 - **A class automatic metrics cannot catch:** whether a `ship` verdict or a
   passing-looking fix is *wrong* because the reviewer or the coder acted on
   a compressed summary that silently dropped something load-bearing (§3's
@@ -1355,8 +1381,10 @@ in this repository's existing plan format (see
 `docs/plans/2026-10-09-named-oauth-tokens.md` for the precedent this one
 follows). Nothing in that plan has been written or run; like the named
 OAuth tokens plan before its Task 1, this is a design-to-code plan, gated on
-the owner approving this design and, separately, on the checks of §3, §5
-and §6 before the feature's refusal is ever lifted or the feature is
+the owner approving this design and, separately, on the live checks named
+in §1.1 (the oauth/`ANTHROPIC_BASE_URL` question), §3 (the bypass-list
+capability reading), §5 (the no-outbound-network CI result) and §6 (the
+measurement) before the feature's refusal is ever lifted or the feature is
 proposed as a default.
 
 ## 8. Non-goals
@@ -1364,7 +1392,7 @@ proposed as a default.
 - A per-repository or per-recipe compression *strategy* (aggressiveness
   knobs, custom bypass lists) — v1 is a single on/off switch; the bypass
   categories of §3 are a requirement on Headroom's own configuration,
-  confirmed once by Check H2 (§6/§7), never a per-repository choice.
+  confirmed once by Check L2 (§6/§7), never a per-repository choice.
 - `agent.auth: vertex` and `agent.auth: oauth` under compression (§1.1,
   §4) — v1 is `api-key` with the gateway on, only; extending to either is a
   separate, future question, each needing its own live check.
