@@ -20,7 +20,7 @@ type RenderInput struct {
 	Workflow string         // workflow name, for the header
 	Base     string         // the workflow's base
 	Image    config.Image   // the workflow's image: settings
-	PM       *config.NodePM // web-node's package manager; nil skips the warm-up
+	PM       *config.NodePM // the checkout's Node package manager; nil skips the warm-up
 	Mise     bool           // install the checkout's mise config and image.tools
 	Secrets  []string       // workflow secret variables, mounted into the warm-up and setup steps
 	Version  string         // fugaro version, for the header
@@ -32,8 +32,8 @@ var derived = template.Must(template.New("Dockerfile").
 
 // Render renders images/derived/Dockerfile.tmpl for one workflow.
 func Render(in RenderInput) ([]byte, error) {
-	if err := checkBase(in.Base); err != nil {
-		return nil, err
+	if in.Image.Node != "" {
+		return nil, fmt.Errorf("image.node was removed in 0.7.0 (%s)", config.MigrationDoc)
 	}
 	for i, step := range in.Image.Setup {
 		if t := strings.TrimSpace(step); strings.HasPrefix(t, "-") || strings.HasPrefix(t, "[") {
@@ -85,26 +85,6 @@ func secretMounts(vars []string) (mounts, prefix string) {
 	return mounts, prefix
 }
 
-// checkBase accepts any base kind this package's template can render: every
-// config.Bases entry, and "" — config.Workflow.Base's documented way to
-// select the Fugaro base (Workflow.BaseKind() resolves it the same way).
-// Dockerfile already calls w.BaseKind() before reaching here, so this
-// normalization is for Render's other callers, which pass a workflow's raw
-// Base field directly (plugin/setup_skill_test.go,
-// plugin/setup_fixtures_test.go): without it, an omitted base: produced a
-// confusing refusal ("base  has no published image yet", with a double
-// space) instead of the Fugaro base those callers' BaseKind()-normalized
-// Dockerfile() calls already accept.
-func checkBase(base string) error {
-	if base == "" {
-		base = config.BaseKind
-	}
-	if slices.Contains(config.Bases, base) {
-		return nil
-	}
-	return fmt.Errorf("base %s has no published image yet (have %s)", base, strings.Join(config.Bases, ", "))
-}
-
 // Dockerfile returns the Dockerfile that builds workflow name's derived image
 // from the checkout at root: the repository's own when the workflow sets
 // dockerfile:, whose path is then returned as repoFile, or else the rendered
@@ -114,9 +94,6 @@ func Dockerfile(root string, cfg *config.Config, name, version string) (data []b
 	if !ok {
 		return nil, "", fmt.Errorf("fugaro.yaml has no workflow %q", name)
 	}
-	if err := checkBase(w.BaseKind()); err != nil {
-		return nil, "", err
-	}
 	if w.Dockerfile != "" {
 		data, err := config.ReadRegular(filepath.Join(root, w.Dockerfile), config.MaxCheckoutFile)
 		if err != nil {
@@ -124,23 +101,18 @@ func Dockerfile(root string, cfg *config.Config, name, version string) (data []b
 		}
 		return data, w.Dockerfile, nil
 	}
-	kind := w.BaseKind()
-	in := RenderInput{Workflow: name, Base: kind, Image: w.Image, Version: version}
+	in := RenderInput{Workflow: name, Base: w.BaseKind(), Image: w.Image, Version: version}
 	for _, s := range w.Secrets {
 		in.Secrets = append(in.Secrets, s.Env)
 	}
-	if kind == "web-node" || kind == config.BaseKind {
-		if in.PM, err = config.DetectNodePM(root); err != nil {
-			return nil, "", fmt.Errorf("workflows.%s: %w", name, err)
-		}
+	if in.PM, err = config.DetectNodePM(root); err != nil {
+		return nil, "", fmt.Errorf("workflows.%s: %w", name, err)
 	}
-	if kind == config.BaseKind {
-		files, err := config.MiseConfigFiles(root)
-		if err != nil {
-			return nil, "", fmt.Errorf("workflows.%s: reading the mise config: %w", name, err)
-		}
-		in.Mise = len(files) > 0 || len(w.Image.Tools) > 0
+	files, err := config.MiseConfigFiles(root)
+	if err != nil {
+		return nil, "", fmt.Errorf("workflows.%s: reading the mise config: %w", name, err)
 	}
+	in.Mise = len(files) > 0 || len(w.Image.Tools) > 0
 	data, err = Render(in)
 	return data, "", err
 }

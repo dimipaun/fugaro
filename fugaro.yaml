@@ -29,7 +29,7 @@ budget:
 
 workflows:
   go:
-    base: go
+    base: go # 0.7.0: deliberately not yet migrated (docs/dogfooding.md, Task 22 flips this)
     image:
       # Bake the module cache and a warm build cache into the derived image.
       setup: ["go mod download && go build ./..."]

@@ -218,14 +218,14 @@ func TestGitHubAppPreCheck(t *testing.T) {
 func TestFirstBuildWaitsForTheGitHubApp(t *testing.T) {
 	spec := infra.RepoSpec{Name: "acme/app", Provider: "github", GitHubAppID: "12345", Secrets: map[string]string{"github-app-key": "app-key-secret"},
 		BuildServiceAccountEmail: "b@x.iam", RegistryPath: "r"}
-	cfg := &config.Config{Workflows: map[string]config.Workflow{"app": {Base: "web-node"}}}
+	cfg := &config.Config{Workflows: map[string]config.Workflow{"app": {}}}
 	run := func(t *testing.T, g *githubRig) (*initRun, string, int) {
 		t.Helper()
 		fb := gcpfake.NewBuild(t)
 		r, _, out := conditions()[6].run(t, "") // no terminal: an offered build is left, never typed
 		r.o.checkApp = true
 		lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5",
-			BaseImages: map[string]string{"web-node": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:1.2.3"},
+			BaseImages: map[string]string{"base": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"},
 			Endpoints:  localcfg.Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}
 		built, err := r.offerBuilds(t.Context(), lc, cfg, spec, []string{"app"})
 		if err != nil || built != 0 {
@@ -285,7 +285,7 @@ func TestFirstBuildWaitsForTheGitHubApp(t *testing.T) {
 		r, _, _ := conditions()[6].run(t, "")
 		r.o.checkApp = true
 		lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5",
-			BaseImages: map[string]string{"web-node": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:1.2.3"},
+			BaseImages: map[string]string{"base": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"},
 			Endpoints:  localcfg.Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}
 		if _, err := r.offerBuilds(t.Context(), lc, cfg, spec, []string{"app"}); err != nil || len(g.auth) != 0 || r.buildHold != "" {
 			t.Errorf("err %v, GitHub asked %d times, hold %q", err, len(g.auth), r.buildHold)
@@ -329,10 +329,10 @@ func TestInitPreCheckWithoutFlagReadsNothing(t *testing.T) {
 	g := newGitHubRig(t)
 	spec := infra.RepoSpec{Name: "acme/app", Provider: "github", GitHubAppID: "12345", Secrets: map[string]string{"github-app-key": "app-key-secret"},
 		BuildServiceAccountEmail: "b@x.iam", RegistryPath: "r"}
-	cfg := &config.Config{Workflows: map[string]config.Workflow{"app": {Base: "web-node"}}}
+	cfg := &config.Config{Workflows: map[string]config.Workflow{"app": {}}}
 	fb := gcpfake.NewBuild(t)
 	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5",
-		BaseImages: map[string]string{"web-node": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:1.2.3"},
+		BaseImages: map[string]string{"base": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"},
 		Endpoints:  localcfg.Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}
 	r, _, out := conditions()[6].run(t, "")
 	if _, err := r.offerBuilds(t.Context(), lc, cfg, spec, []string{"app"}); err != nil {

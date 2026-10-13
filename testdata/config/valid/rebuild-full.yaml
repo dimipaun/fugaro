@@ -3,7 +3,6 @@ project: aurora
 git: { provider: github }
 workflows:
   web:
-    base: web-node
     commands: { build: npm run build, test: npm test }
     rebuild:
       check: daily
@@ -12,6 +11,5 @@ workflows:
       base: false
       paths: ["scripts/**", "*.gradle"]
   server:
-    base: java-services
     commands: { build: ./gradlew assemble, test: ./gradlew test }
     rebuild: { check: off, max_age: 0 }

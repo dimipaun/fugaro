@@ -32,14 +32,15 @@ const webYAML = `version: 1
 project: aurora
 git: { provider: github }
 workflows:
-  web: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }
+  web: { commands: { build: sh build.sh, test: sh test.sh } }
 `
 
-// TestKeyFilesDefaultsWebNode: a web-node workflow without cache: gets the
-// per-base default, keyed by the lockfile package.json's packageManager
-// picks (yarn here, although an npm lockfile is also present), and the
+// TestKeyFilesDefaultsNodeLockfiles: a base-kind workflow without cache:
+// gets the Node default, keyed by the lockfile package.json's
+// packageManager picks (yarn here, although an npm lockfile is also
+// present), and every lockfile the default knows is found on its own; the
 // key files carry git's blob IDs.
-func TestKeyFilesDefaultsWebNode(t *testing.T) {
+func TestKeyFilesDefaultsNodeLockfiles(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{
 		"package.json":      `{"name":"web","packageManager":"yarn@1.22.22"}`,
@@ -122,8 +123,7 @@ project: aurora
 git: { provider: github }
 workflows:
   web:
-    base: web-node
-    image: { node: "20", apt: [curl], setup: [echo hi] }
+    image: { tools: { node: "20" }, apt: [curl], setup: [echo hi] }
     commands: { build: sh build.sh, test: sh test.sh }
 `
 	const withDockerfile = `version: 1
@@ -131,7 +131,6 @@ project: aurora
 git: { provider: github }
 workflows:
   web:
-    base: web-node
     dockerfile: .fugaro/web.Dockerfile
     commands: { build: sh build.sh, test: sh test.sh }
 `
@@ -161,13 +160,13 @@ workflows:
 		{"same dockerfile", withDockerfile, withDockerfile, "FROM x\n", false},
 		{"image.apt", withImage, strings.Replace(withImage, "apt: [curl]", "apt: [curl, jq]", 1), "FROM x\n", true},
 		{"image.setup", withImage, strings.Replace(withImage, "echo hi", "echo bye", 1), "FROM x\n", true},
-		{"image.node", withImage, strings.Replace(withImage, `node: "20"`, `node: "22"`, 1), "FROM x\n", true},
+		{"image.tools", withImage, strings.Replace(withImage, `node: "20"`, `node: "22"`, 1), "FROM x\n", true},
 		{"dockerfile content", withDockerfile, withDockerfile, "FROM y\n", true},
 		{"dockerfile path", withDockerfile, strings.Replace(withDockerfile, "web.Dockerfile", "other.Dockerfile", 1), "FROM x\n", true},
 		{"dockerfile instead of image", withImage, withDockerfile, "FROM x\n", true},
 		{"commands", withImage, strings.Replace(withImage, "sh build.sh", "make", 1), "FROM x\n", false},
-		{"secrets", withImage, strings.Replace(withImage, "    base: web-node\n", "    base: web-node\n    secrets: [{ name: npm-token, env: NPM_TOKEN }]\n", 1), "FROM x\n", false},
-		{"rebuild", withImage, strings.Replace(withImage, "    base: web-node\n", "    base: web-node\n    rebuild: { max_age: 3d }\n", 1), "FROM x\n", false},
+		{"secrets", withImage, strings.Replace(withImage, "    commands:", "    secrets: [{ name: npm-token, env: NPM_TOKEN }]\n    commands:", 1), "FROM x\n", false},
+		{"rebuild", withImage, strings.Replace(withImage, "    commands:", "    rebuild: { max_age: 3d }\n    commands:", 1), "FROM x\n", false},
 		{"agent", withImage, strings.Replace(withImage, "git: { provider: github }\n", "git: { provider: github }\nagent: { model: other }\n", 1), "FROM x\n", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -177,10 +176,10 @@ workflows:
 			}
 		})
 	}
-	// base: only web-node is known today, so a different base is compared
-	// on the canonical form directly.
-	a, _ := json.Marshal(imageConfig{Base: "web-node"})
-	b, _ := json.Marshal(imageConfig{Base: "java-services"})
+	// base: only config.BaseKind is known today, so a different base is
+	// compared on the canonical form directly.
+	a, _ := json.Marshal(imageConfig{Base: config.BaseKind})
+	b, _ := json.Marshal(imageConfig{Base: ""})
 	if hashOf(a) == hashOf(b) {
 		t.Error("base does not change the hash")
 	}
@@ -262,43 +261,27 @@ func TestImageConfigHashCoversMiseFiles(t *testing.T) {
 	}
 }
 
-// TestImageConfigHashLegacyUnchanged pins a real legacy workflow's hash
-// (webYAML: base web-node, no image:, no dockerfile:, no mise files) to the
-// exact value Task 11 found before it touched record.go: if this ever
-// changes, every existing image record for a go/web-node/java-services
-// workflow reads as stale and rebuilds for no reason.
-func TestImageConfigHashLegacyUnchanged(t *testing.T) {
-	// The canonical form of a legacy workflow is what it was: no new keys.
-	c := imageConfig{Base: "web-node"}
+// TestImageConfigHashLegacyCanonicalForm pins the canonical JSON shape of an
+// already-archived legacy record of a kind the 0.7.0 cut removed (go, web-node, java-services):
+// no new keys such as tools or mise_files, so an old record read back for
+// comparison still decodes the same way. It no longer
+// pins a golden hash for a *recomputed* legacy workflow: base: is refused by
+// Validate in 0.7.0 (TestLegacyBaseRefusedWithTheMigrationDoc), and
+// Workflow.BaseKind() always returns BaseKind now, so there is no longer a
+// code path that recomputes an image config hash with Base other than
+// BaseKind. A repository's one rebuild on migrating off a legacy base (Task
+// 22's fugaro image refresh) is the intended effect of the cut, not a bug.
+func TestImageConfigHashLegacyCanonicalForm(t *testing.T) {
+	c := imageConfig{Base: "web-node"} // a 0.7.0-removed kind, archived before the cut
 	data, _ := json.Marshal(c)
 	if strings.Contains(string(data), "tools") || strings.Contains(string(data), "mise_files") {
 		t.Errorf("legacy canonical form gained keys: %s", data)
 	}
-	const wantGolden = "5f17e4672909c77d013e32cf6c26117b3ff77d336b3c995c402e83a996d9f679"
-	got, err := ImageConfigHash(parse(t, webYAML), "web", Dir{Root: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != wantGolden {
-		t.Errorf("ImageConfigHash(webYAML) = %s, want the pinned golden %s (a legacy hash must never move)", got, wantGolden)
-	}
-	// Every legacy (non-empty) base: value must hash as itself: BaseKind()
-	// is only meant to turn "" into BaseKind, never to change what an
-	// existing go/web-node/java-services workflow's hash's Base field reads.
-	for _, base := range config.Bases {
-		if base == config.BaseKind {
-			continue
-		}
-		w := config.Workflow{Base: base}
-		if got := w.BaseKind(); got != base {
-			t.Errorf("Workflow{Base: %q}.BaseKind() = %q, want %q unchanged", base, got, base)
-		}
-	}
 }
 
 // TestKeyFilesDefaultsBaseKind: the base kind's default cache is the Node
-// package manager's, same as web-node (KeyFiles gives the base kind the
-// Node default cache), keyed by whatever lockfile is present.
+// package manager's (KeyFiles gives the base kind the Node default cache),
+// keyed by whatever lockfile is present.
 func TestKeyFilesDefaultsBaseKind(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{

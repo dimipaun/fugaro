@@ -1,8 +1,7 @@
 version: 1
 project: aurora
-git: { provider: github }
-workflows:
-  web:
+gcp_project: proj-1234
+profiles:
+  p:
     base: web-node
-    image: { node: lts }
     commands: { build: npm run build, test: npm test }

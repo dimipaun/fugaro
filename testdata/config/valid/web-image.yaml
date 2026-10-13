@@ -3,13 +3,11 @@ project: aurora
 git: { provider: github }
 workflows:
   web:
-    base: web-node
     image:
-      node: "24.19.0"
+      tools: { node: "24.19.0" }
       apt: [libvips-dev, fonts-liberation=1:2.1.5-3]
       setup: ["npx playwright install --with-deps chromium"]
     commands: { build: npm run build, test: npm test }
   server:
-    base: java-services
     image: { apt: [python3] }
     commands: { build: ./gradlew assemble, test: ./gradlew test }

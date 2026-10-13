@@ -159,14 +159,6 @@
       "not": { "required": ["image", "dockerfile"] },
       "allOf": [
         {
-          "if": { "properties": { "base": { "enum": ["base", "go", "java-services"] } } },
-          "then": {
-            "properties": {
-              "image": { "not": { "required": ["node"] }, "properties": { "skip_build_scripts": { "const": false } } }
-            }
-          }
-        },
-        {
           "if": { "not": { "required": ["profile"] } },
           "then": { "required": ["commands"], "properties": { "commands": { "required": ["build", "test"] } } }
         },
@@ -185,21 +177,18 @@
               }
             }
           }
-        },
-        {
-          "if": { "required": ["base"], "properties": { "base": { "enum": ["go", "java-services", "web-node"] } } },
-          "then": { "properties": { "image": { "not": { "required": ["tools"] } } } }
         }
       ],
       "properties": {
         "profile": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "The project layer's profile this workflow starts from; its own keys override the profile's field by field. Needs fugaro 0.6.0." },
-        "base": { "enum": ["base", "go", "java-services", "web-node"] },
+        "base": { "not": {}, "$comment": "not: {} forbids this key outright (matches nothing), including an explicit null: the removed-key tombstone idiom (6x across fugaro.schema.json and project-layer.schema.json: base, image.node and image.jdk), not dead code. It keeps the key documented in an editor's tooltip (see description) while still refusing any value. Do not delete when touching this key.", "description": "Removed in 0.7.0: delete it and declare runtimes in mise.toml (docs/base-image-migration.md)" },
         "checkout": { "enum": ["baked", "clone"], "description": "baked (default): a derived image is built per repository. clone: image.apt, image.setup, image.tools, image.skip_build_scripts and dockerfile are refused, since they would need a build. Validates only: the runner and the build do not act on checkout: clone yet (generic-tool plan Tasks 16/17, not merged); every workflow still builds and runs the baked image regardless of this value. Needs fugaro 0.7.0." },
         "image": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "node": { "type": ["string", "integer"], "pattern": "^[0-9]+(\\.[0-9]+\\.[0-9]+)?$" },
+            "node": { "not": {}, "$comment": "not: {} forbids this key outright (matches nothing), including an explicit null: the removed-key tombstone idiom (6x across fugaro.schema.json and project-layer.schema.json: base, image.node and image.jdk), not dead code. It keeps the key documented in an editor's tooltip (see description) while still refusing any value. Do not delete when touching this key.", "description": "Removed in 0.7.0: declare node in mise.toml ([tools] node = \"24\") or in image.tools (docs/base-image-migration.md)" },
+            "jdk": { "not": {}, "$comment": "not: {} forbids this key outright (matches nothing), including an explicit null: the removed-key tombstone idiom (6x across fugaro.schema.json and project-layer.schema.json: base, image.node and image.jdk), not dead code. It keeps the key documented in an editor's tooltip (see description) while still refusing any value. Do not delete when touching this key.", "description": "Removed in 0.7.0: declare Java in mise.toml ([tools] java = \"temurin-25\") (docs/base-image-migration.md)" },
             "skip_build_scripts": { "type": "boolean" },
             "apt": {
               "type": "array",

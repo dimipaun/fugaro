@@ -14,7 +14,6 @@ agent:
   review: /review
 workflows:
   server:
-    base: java-services
     commands:
       build: ./gradlew assemble
       test: ./gradlew test

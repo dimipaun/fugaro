@@ -205,7 +205,7 @@ The agent's environment is an allowlist (`internal/agent/env.go`); none of these
 
 **What the strict parsers say.** The refusals name the doc, `docs/base-image-migration.md`, and the exact fix:
 
-- `fugaro.yaml` with `base:` → `workflows.web.base: base: was removed in 0.7.0: every workflow builds on the one Fugaro base image. Delete this line and declare the workflow's runtimes in mise.toml (docs/base-image-migration.md)`.
+- `fugaro.yaml` with `base:` → `workflows.web.base: was removed in 0.7.0: every workflow builds on the one Fugaro base image. Delete this line and declare the workflow's runtimes in mise.toml (docs/base-image-migration.md)`.
 - `image.node` → `workflows.web.image.node: was removed in 0.7.0: declare node in mise.toml ([tools] node = "24.19.0") or in image.tools (docs/base-image-migration.md)`. `image.jdk` gets the Java form.
 - A local config `base_images` key other than `base` → `local config: base_images.go: the go, web-node and java-services bases were removed in 0.7.0; delete the line and run fugaro image refresh in each repository, which copies fugaro-base and records base_images.base (docs/base-image-migration.md)`.
 - A `.fugaro/*.Dockerfile` `FROM ghcr.io/dimipaun/fugaro-web-node` → `builds FROM fugaro-web-node, a base removed in 0.7.0: build FROM ${FUGARO_BASE} (docs/base-image-migration.md)`.

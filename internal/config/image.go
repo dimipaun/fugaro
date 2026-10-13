@@ -7,11 +7,12 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
 var (
-	nodeVersionRE = regexp.MustCompile(`^[0-9]+(\.[0-9]+\.[0-9]+)?$`)
-	aptPackageRE  = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]+(=[A-Za-z0-9.+~:-]+)?$`)
+	aptPackageRE = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]+(=[A-Za-z0-9.+~:-]+)?$`)
 	// miseToolRE allows a mise tool name such as node, python, npm:firebase-tools
 	// or aqua:owner/repo. It also allows a key such as "a.b" or
 	// "a/../../etc": a mise tool name may contain "." and "/" legitimately
@@ -98,18 +99,10 @@ func validateImage(p string, w Workflow) []Problem {
 		add(p+".dockerfile", "image and dockerfile are mutually exclusive; move the image settings into the Dockerfile")
 	}
 	if img.Node != "" {
-		switch {
-		case w.Base != "web-node":
-			add(p+".image.node", "only applies to base web-node")
-		case !nodeVersionRE.MatchString(img.Node):
-			add(p+".image.node", "must be a major version such as 24 or an exact version such as 24.19.0")
-		}
+		add(p+".image.node", "was removed in 0.7.0: declare node in mise.toml ([tools] node = %q) or in image.tools (%s)", pluginwire.Printable(img.Node), MigrationDoc)
 	}
 	if img.JDK != "" {
-		add(p+".image.jdk", "is not supported: the java-services base ships a pinned JDK (25), and no base installs another")
-	}
-	if len(img.Tools) > 0 && w.BaseKind() != BaseKind {
-		add(p+".image.tools", "applies to the Fugaro base only: remove base: %s (%s)", w.Base, MigrationDoc)
+		add(p+".image.jdk", "was removed in 0.7.0: declare Java in mise.toml ([tools] java = %q) (%s)", "temurin-"+pluginwire.Printable(img.JDK), MigrationDoc)
 	}
 	for _, name := range sortedKeys(img.Tools) {
 		tp := p + ".image.tools." + name
@@ -119,9 +112,6 @@ func validateImage(p string, w Workflow) []Problem {
 		case !validMiseToolVersion(v):
 			add(tp, "must be a version such as 24.19.0, 3.12 or temurin-25")
 		}
-	}
-	if img.SkipBuildScripts && w.BaseKind() != "web-node" && w.BaseKind() != BaseKind {
-		add(p+".image.skip_build_scripts", "only applies to base web-node or the Fugaro base")
 	}
 	for i, pkg := range img.Apt {
 		if !aptPackageRE.MatchString(pkg) {

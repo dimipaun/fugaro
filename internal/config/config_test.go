@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +20,6 @@ git:
   provider: github
 workflows:
   server:
-    base: java-services
     commands:
       build: ./gradlew assemble
       test: ./gradlew test
@@ -37,10 +37,10 @@ func TestParseAppliesDefaults(t *testing.T) {
 		t.Errorf("agent defaults = %+v", cfg.Agent)
 	}
 	w := cfg.Workflows["server"]
-	if w.Resources.CPU != 4 || w.Resources.Memory != "16Gi" {
-		t.Errorf("resources = %+v, want 4 / 16Gi", w.Resources)
+	if w.Resources.CPU != 4 || w.Resources.Memory != "8Gi" {
+		t.Errorf("resources = %+v, want 4 / 8Gi", w.Resources)
 	}
-	if got := w.Commands.Reports; len(got) != 1 || got[0] != "**/build/test-results/**/*.xml" {
+	if got := w.Commands.Reports; !slices.Equal(got, []string{"**/junit*.xml", "**/build/test-results/**/*.xml"}) {
 		t.Errorf("reports = %v", got)
 	}
 	to := w.Timeouts
@@ -67,7 +67,7 @@ func TestParseProblems(t *testing.T) {
 		line                  int
 	}{
 		{"empty", "", "", "file is empty", 0},
-		{"unknown field", minimalYAML + "    color: blue\n", "", "field color not found", 12},
+		{"unknown field", minimalYAML + "    color: blue\n", "", "field color not found", 11},
 		// claude_accounts is a local-config-only key (design
 		// docs/design/named-oauth-tokens.md §3, decision T1): a fugaro.yaml
 		// may never define or widen the named-account allow-list, so the
@@ -75,7 +75,7 @@ func TestParseProblems(t *testing.T) {
 		// decoder as the "unknown field" case above) must refuse it exactly
 		// like any other field the Config struct does not have.
 		{"claude_accounts is not a fugaro.yaml key", minimalYAML + "claude_accounts:\n  x: {}\n", "", "field claude_accounts not found", 0},
-		{"bad duration", minimalYAML + "    timeouts: { total: soon }\n", "", "invalid duration", 12},
+		{"bad duration", minimalYAML + "    timeouts: { total: soon }\n", "", "invalid duration", 11},
 		{"version", strings.Replace(minimalYAML, "version: 1", "version: 2", 1), "version", "must be 1", 0},
 		{"provider", strings.Replace(minimalYAML, "github", "gitlab", 1), "git.provider", "must be one of github, bitbucket", 0},
 		{"missing test", strings.Replace(minimalYAML, "      test: ./gradlew test\n", "", 1), "workflows.server.commands.test", "is required", 0},
@@ -217,7 +217,7 @@ func TestSelectWorkflow(t *testing.T) {
 	if _, _, err := cfg.SelectWorkflow("web"); err == nil || !strings.Contains(err.Error(), `no workflow "web"`) {
 		t.Fatalf("SelectWorkflow(web) err = %v", err)
 	}
-	two := minimalYAML + "  web:\n    base: web-node\n    commands: { build: pnpm build, test: pnpm test }\n"
+	two := minimalYAML + "  web:\n    commands: { build: pnpm build, test: pnpm test }\n"
 	cfg2, problems := Parse([]byte(two))
 	if len(problems) > 0 {
 		t.Fatal(problems)
@@ -603,7 +603,7 @@ func TestPRCheckpointsDefaultsTrue(t *testing.T) {
 
 func TestAgentRecipe(t *testing.T) {
 	base := "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: api-key\n%s" +
-		"workflows:\n  app: { base: go, commands: { build: go build ./..., test: go test ./... } }\n"
+		"workflows:\n  app: { commands: { build: go build ./..., test: go test ./... } }\n"
 	cfg, ps := Parse([]byte(fmt.Sprintf(base, "  recipe: claude-solo\n")))
 	if len(ps) > 0 || cfg.Agent.Recipe != "claude-solo" {
 		t.Fatalf("cfg = %+v, problems %v", cfg, ps)
@@ -648,7 +648,7 @@ func TestAgentRecipe(t *testing.T) {
 // sees the local config.
 func TestAgentOAuthToken(t *testing.T) {
 	base := "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: oauth\n%s" +
-		"workflows:\n  app: { base: go, commands: { build: go build ./..., test: go test ./... } }\n"
+		"workflows:\n  app: { commands: { build: go build ./..., test: go test ./... } }\n"
 	cfg, ps := Parse([]byte(fmt.Sprintf(base, "  oauth_token: acme-personal\n")))
 	if len(ps) > 0 || cfg.Agent.OAuthToken != "acme-personal" {
 		t.Fatalf("cfg = %+v, problems %v", cfg, ps)
@@ -671,7 +671,7 @@ func TestAgentOAuthToken(t *testing.T) {
 	}
 }
 
-const profileBase = "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  web: { base: go, commands: { build: make, test: make test } }\n"
+const profileBase = "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  web: { commands: { build: make, test: make test } }\n"
 
 func TestProfileKeysDecode(t *testing.T) {
 	var c Config

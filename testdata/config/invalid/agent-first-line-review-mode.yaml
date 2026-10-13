@@ -4,4 +4,4 @@ git: { provider: github }
 agent:
   first_line_review: sometimes
 workflows:
-  server: { base: java-services, commands: { build: make, test: make test } }
+  server: { commands: { build: make, test: make test } }

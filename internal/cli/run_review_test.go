@@ -173,7 +173,7 @@ func TestRunReviewModeRefusesLeftoverAllowForks(t *testing.T) {
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
 	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nagent:\n  auth: api-key\n" +
 		"review:\n  allow_forks: true\n" +
-		"workflows:\n  svc: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"})
+		"workflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n"})
 	t.Chdir(dir)
 	other := mustSlug("github", "acme/other")
 	writeBuildRecord(t, f, other, "svc", release070)

@@ -81,21 +81,18 @@
               }
             }
           }
-        },
-        {
-          "if": { "required": ["base"], "properties": { "base": { "enum": ["go", "java-services", "web-node"] } } },
-          "then": { "properties": { "image": { "not": { "required": ["tools"] } } } }
         }
       ],
       "properties": {
         "description": { "type": "string", "maxLength": 200, "pattern": "^[^\\r\\n]*$" },
-        "base": { "enum": ["base", "go", "java-services", "web-node"] },
+        "base": { "not": {}, "$comment": "not: {} forbids this key outright (matches nothing), including an explicit null: the removed-key tombstone idiom (6x across fugaro.schema.json and project-layer.schema.json: base, image.node and image.jdk), not dead code. It keeps the key documented in an editor's tooltip (see description) while still refusing any value. Do not delete when touching this key.", "description": "Removed in 0.7.0: delete it and declare runtimes in mise.toml (docs/base-image-migration.md)" },
         "checkout": { "enum": ["baked", "clone"] },
         "image": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "node": { "type": ["string", "integer"], "pattern": "^[0-9]+(\\.[0-9]+\\.[0-9]+)?$" },
+            "node": { "not": {}, "$comment": "not: {} forbids this key outright (matches nothing), including an explicit null: the removed-key tombstone idiom (6x across fugaro.schema.json and project-layer.schema.json: base, image.node and image.jdk), not dead code. It keeps the key documented in an editor's tooltip (see description) while still refusing any value. Do not delete when touching this key.", "description": "Removed in 0.7.0: declare node in mise.toml ([tools] node = \"24\") or in image.tools (docs/base-image-migration.md)" },
+            "jdk": { "not": {}, "$comment": "not: {} forbids this key outright (matches nothing), including an explicit null: the removed-key tombstone idiom (6x across fugaro.schema.json and project-layer.schema.json: base, image.node and image.jdk), not dead code. It keeps the key documented in an editor's tooltip (see description) while still refusing any value. Do not delete when touching this key.", "description": "Removed in 0.7.0: declare Java in mise.toml ([tools] java = \"temurin-25\") (docs/base-image-migration.md)" },
             "skip_build_scripts": { "type": "boolean" },
             "apt": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9+.-]+(=[A-Za-z0-9.+~:-]+)?$" } },
             "setup": { "type": "array", "items": { "type": "string", "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$", "not": { "pattern": "<<|\\\\\\s*$|^[\\s\\v]*[-\\[]" } } },

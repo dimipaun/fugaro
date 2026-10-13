@@ -11,9 +11,9 @@
 
 `fugaro image build --local --json`, with `--workflow <name>` when there are several workflows. Docker's build log goes to stderr. The JSON on stdout has `image`, `dockerfile`, `commit`, `origin` and `error`, plus `smoke.checks[]`, each with a `name`, `ok` and `detail`. Before reading failures:
 - **This build runs the repository's code** (install scripts, `image.setup`, the build command) on the user's Docker, with network access, which is why the lines are shown and approved first (step 6 of the skill). Declared secrets are read from the environment of the process that runs the build and passed to the build container.
-- A development build of `fugaro` has no published base image, and says so. Run it again with `--base <image>` and an image the user built (`images/build-base.sh web-node` in the Fugaro repository).
+- A development build of `fugaro` has no published base image, and says so. Run it again with `--base <image>` and an image the user built (`images/build-base.sh base` in the Fugaro repository).
 - The image bakes the committed `HEAD`. Your uncommitted `fugaro.yaml` is read from the working tree, but uncommitted changes to `package.json` or lockfiles are not in the image.
-- The first build on Apple Silicon runs under emulation, because Cloud Run is `linux/amd64`, and can take a long time. Tell the user rather than giving up.
+- The first build on Apple Silicon runs under emulation, because Cloud Run is `linux/amd64`, and can take a long time; `--platform linux/arm64` builds natively instead, for iterating, with the cloud build as the amd64 test. Tell the user rather than giving up.
 - Without Docker locally, finish with validate and say the first cloud build is the test; the user runs `fugaro image build` in their own terminal window, not through the agent (it is billable and asks them to type the project's name) and reads a failure with `fugaro diagnose`.
 - `Dockerfile`, `package.json` and `.yarnrc.yml` must be regular files, not symlinks, of at most 1 MiB: a symlinked one fails `validate` and the image render.
 
@@ -21,13 +21,14 @@ When it fails, read the `error` and the end of the build log, then fix `fugaro.y
 
 | Failure | Likely fix |
 |---|---|
-| apt: "Unable to locate package" | Fix the name in `image.apt`. The base is Ubuntu 24.04. |
+| apt: "Unable to locate package" | Fix the name in `image.apt`. The base is Debian 13 (trixie). |
 | The dependency install fails with 401 or 403 | A registry token is missing. Declare it in `secrets`. Don't have the token put into your own environment: the build would read it from yours. Either the user runs the build themselves in their own terminal, with the variable exported there (`fugaro image build --local --json --workflow <name>`), and tells you only whether it passed and the failing check names (the JSON has no secret values); or the user decides, knowing that exporting the token makes it visible to the repository's code in the build and to every command your agent runs in that shell, to export it for your session; or skip the local build for this workflow and let the first cloud build test it. |
 | The install hangs, runs out of memory or ends in an internal error while many packages build at once | Set `image.skip_build_scripts: true` and have `commands.build` build the packages. |
 | `--immutable` or `--frozen-lockfile` refuses a lockfile change | The lockfile is out of date in the repository. Tell the user. |
 | A `setup` step fails | Fix the step. To debug, run it by hand in the image: `docker run --rm -it <image> bash`. |
 | The origin is missing or not https | The clone needs an `origin` remote on the provider host. Tell the user. |
-| Smoke `node` fails | `image.node` doesn't match what was installed. |
+| Smoke `mise-tools` fails | A declared tool did not install: check its name and version in `mise.toml` (`mise ls-remote <tool>` lists versions), and that nothing removed the `mise install` step. |
+| Smoke `tool:<name>` fails | The image lost a base tool or harness: restore the Dockerfile's contract. |
 | Smoke `verify-build` fails | `commands.build` is wrong for the image, or needs a tool, variable or secret. |
 | Smoke `origin`, `git-credentials` or `home-credentials` fails | Something wrote credentials into the image or changed the origin. Remove that step. |
 | Smoke `user`, `init` or `no-sudo` fails | The Dockerfile changed `USER`, `ENTRYPOINT` or the sudo rules. Restore the contract. |

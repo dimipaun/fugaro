@@ -21,10 +21,10 @@ import (
 	"google.golang.org/api/option"
 )
 
-// refreshYAML is acme/app with two workflows of two kinds.
+// refreshYAML is acme/app with two workflows, both on the one base kind.
 const refreshYAML = "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n" +
-	"  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n" +
-	"  api: { base: go, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	"  app: { commands: { build: sh build.sh, test: sh test.sh } }\n" +
+	"  api: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 
 func useVersion(t *testing.T, v string) {
 	t.Helper()
@@ -54,21 +54,21 @@ func TestRefreshPreflightPlans(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
 	r := newAnchorModeRig(t, refreshYAML, true)
-	r.appendConfig(t, "base_images: {web-node: "+managedRef("web-node", "0.4.0")+"}\n")
-	putWorkflowRecordFrom("app", "0.4.0", managedRef("web-node", "0.4.0"))
+	r.appendConfig(t, "base_images: {base: "+managedRef("base", "0.4.0")+"}\n")
+	putWorkflowRecordFrom("app", "0.4.0", managedRef("base", "0.4.0"))
 	p, err := refreshPreflight(t.Context(), refreshOptions{repo: "acme/app"}, &initOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(p.workflows, ",") != "api,app" || strings.Join(p.kinds, ",") != "go,web-node" ||
-		p.want["web-node"] != managedRef("web-node", "0.5.1") || p.want["go"] != managedRef("go", "0.5.1") ||
+	if strings.Join(p.workflows, ",") != "api,app" || strings.Join(p.kinds, ",") != "base" ||
+		p.want["base"] != managedRef("base", "0.5.1") ||
 		strings.Join(p.builds, ",") != "api,app" {
 		t.Fatalf("plan %+v", p)
 	}
 	var out bytes.Buffer
 	p.print(&out)
-	for _, want := range []string{"fugaro image refresh of acme/app (project aurora, GCP project proj-1234)", "2. base go: " + managedRef("go", "0.5.1"),
-		"3. the daily image check job", "4. builds: 2 of 2 workflow(s)", "app: built from " + managedRef("web-node", "0.4.0"), "5. then"} {
+	for _, want := range []string{"fugaro image refresh of acme/app (project aurora, GCP project proj-1234)", "2. base base: " + managedRef("base", "0.5.1"),
+		"3. the daily image check job", "4. builds: 2 of 2 workflow(s)", "app: built from " + managedRef("base", "0.4.0"), "5. then"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("plan lacks %q:\n%s", want, out.String())
 		}
@@ -77,9 +77,9 @@ func TestRefreshPreflightPlans(t *testing.T) {
 		t.Errorf("preflight ran terraform or touched the registry: %q", calls)
 	}
 	// One workflow, already current.
-	putWorkflowRecordFrom("app", "0.5.1", managedRef("web-node", "0.5.1"))
+	putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.5.1"))
 	p, err = refreshPreflight(t.Context(), refreshOptions{workflows: []string{"app"}}, &initOptions{})
-	if err != nil || strings.Join(p.kinds, ",") != "web-node" || len(p.builds) != 0 || !strings.HasPrefix(p.why["app"], "current") {
+	if err != nil || strings.Join(p.kinds, ",") != "base" || len(p.builds) != 0 || !strings.HasPrefix(p.why["app"], "current") {
 		t.Fatalf("current: %v %+v", err, p)
 	}
 }
@@ -88,11 +88,11 @@ func TestRefreshRefusesCustomBase(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
 	r := newAnchorModeRig(t, refreshYAML, true)
-	r.appendConfig(t, "base_images: {go: "+refreshHost+"/fugaro-base/fugaro-go:dev-abc, web-node: "+refreshHost+"/fugaro-base/fugaro-web-node:dev-xyz}\n")
+	r.appendConfig(t, "base_images: {base: "+refreshHost+"/fugaro-base/fugaro-base:dev-abc}\n")
 	noRecordReads(t)
 	_, err := refreshPreflight(t.Context(), refreshOptions{workflows: []string{"api"}}, &initOptions{})
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "base_images.go is "+refreshHost+"/fugaro-base/fugaro-go:dev-abc") ||
-		strings.Contains(err.Error(), "base_images.web-node") || !strings.Contains(err.Error(), "then rerun fugaro image refresh --workflow api") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "base_images.base is "+refreshHost+"/fugaro-base/fugaro-base:dev-abc") ||
+		!strings.Contains(err.Error(), "then rerun fugaro image refresh --workflow api") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 	r.check(t, refreshYAML)
@@ -105,10 +105,10 @@ func TestRefreshYesStillRefusesCustomBase(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
 	r := newAnchorModeRig(t, refreshYAML, true)
-	r.appendConfig(t, "base_images: {go: "+refreshHost+"/fugaro-base/fugaro-go:dev-abc}\n")
+	r.appendConfig(t, "base_images: {base: "+refreshHost+"/fugaro-base/fugaro-base:dev-abc}\n")
 	noRecordReads(t)
 	out, _, err := executeStdin(t, "", "image", "refresh", "--workflow", "api", "--yes")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "base_images.go is "+refreshHost+"/fugaro-base/fugaro-go:dev-abc") ||
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "base_images.base is "+refreshHost+"/fugaro-base/fugaro-base:dev-abc") ||
 		!strings.Contains(err.Error(), "then rerun fugaro image refresh --workflow api --yes") {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
@@ -149,10 +149,10 @@ func TestRefreshAgainKeepsEveryFlag(t *testing.T) {
 	o := refreshOptions{
 		cloud: cloudOptions{config: "/x/my p.yaml", project: "aurora", gcpProject: "proj-1234", region: "us-east5"},
 		repo:  "acme/app", workflows: []string{"app", "api"}, imageSource: "ghcr.io/acme",
-		expectDigests: []string{"go=sha256:" + strings.Repeat("a", 64), "web-node=sha256:" + strings.Repeat("b", 64)},
+		expectDigests: []string{"base=sha256:" + strings.Repeat("a", 64), "history=sha256:" + strings.Repeat("b", 64)},
 	}
 	want := "fugaro image refresh --repo acme/app --workflow app --workflow api --config '/x/my p.yaml' --project aurora --gcp-project proj-1234 --region us-east5 --image-source ghcr.io/acme" +
-		" --expect-digest go=sha256:" + strings.Repeat("a", 64) + " --expect-digest web-node=sha256:" + strings.Repeat("b", 64)
+		" --expect-digest base=sha256:" + strings.Repeat("a", 64) + " --expect-digest history=sha256:" + strings.Repeat("b", 64)
 	if got := o.again(); got != want {
 		t.Errorf("again:\n%s\nwant:\n%s", got, want)
 	}
@@ -174,11 +174,11 @@ func TestRefreshRefusalRerunKeepsConfig(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
 	r := newAnchorModeRig(t, refreshYAML, true)
-	r.appendConfig(t, "base_images: {go: "+refreshHost+"/fugaro-base/fugaro-go:dev-abc}\n")
+	r.appendConfig(t, "base_images: {base: "+refreshHost+"/fugaro-base/fugaro-base:dev-abc}\n")
 	noRecordReads(t)
-	o := refreshOptions{workflows: []string{"api"}, expectDigests: []string{"go=sha256:" + strings.Repeat("c", 64)}}
+	o := refreshOptions{workflows: []string{"api"}, expectDigests: []string{"base=sha256:" + strings.Repeat("c", 64)}}
 	_, err := refreshPreflight(t.Context(), o, &initOptions{})
-	if err == nil || !strings.Contains(err.Error(), "then rerun fugaro image refresh --workflow api --expect-digest go=sha256:"+strings.Repeat("c", 64)) {
+	if err == nil || !strings.Contains(err.Error(), "then rerun fugaro image refresh --workflow api --expect-digest base=sha256:"+strings.Repeat("c", 64)) {
 		t.Fatalf("%v", err)
 	}
 }
@@ -290,7 +290,7 @@ func TestRefreshDuplicateWorkflowsAreOne(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
 	newAnchorModeRig(t, refreshYAML, true)
-	putWorkflowRecordFrom("app", "0.4.0", managedRef("web-node", "0.4.0"))
+	putWorkflowRecordFrom("app", "0.4.0", managedRef("base", "0.4.0"))
 	p, err := refreshPreflight(t.Context(), refreshOptions{workflows: []string{"app", "app"}}, &initOptions{})
 	if err != nil || strings.Join(p.workflows, ",") != "app" || len(p.builds) != 1 {
 		t.Fatalf("%v %+v", err, p)
@@ -301,8 +301,8 @@ func TestRefreshPlanSaysKeptForANewerCopy(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
 	r := newAnchorModeRig(t, refreshYAML, true)
-	r.appendConfig(t, "base_images: {web-node: "+managedRef("web-node", "0.6.0")+"}\n")
-	putWorkflowRecordFrom("app", "0.6.0", managedRef("web-node", "0.6.0"))
+	r.appendConfig(t, "base_images: {base: "+managedRef("base", "0.6.0")+"}\n")
+	putWorkflowRecordFrom("app", "0.6.0", managedRef("base", "0.6.0"))
 	p, err := refreshPreflight(t.Context(), refreshOptions{}, &initOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -310,8 +310,7 @@ func TestRefreshPlanSaysKeptForANewerCopy(t *testing.T) {
 	var out bytes.Buffer
 	p.print(&out)
 	got := out.String()
-	if !strings.Contains(got, "base web-node: "+managedRef("web-node", "0.6.0")+" (a newer copy than this release's, kept") ||
-		!strings.Contains(got, "base go: "+managedRef("go", "0.5.1")+" (copied into your registry if it lacks it") {
+	if !strings.Contains(got, "base base: "+managedRef("base", "0.6.0")+" (a newer copy than this release's, kept") {
 		t.Errorf("plan:\n%s", got)
 	}
 }
@@ -322,7 +321,7 @@ func TestRefreshPlanBuildConfirmationWording(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
 	r := newAnchorModeRig(t, refreshYAML, true)
-	r.appendConfig(t, "base_images: {web-node: "+managedRef("web-node", "0.6.0")+"}\n")
+	r.appendConfig(t, "base_images: {base: "+managedRef("base", "0.6.0")+"}\n")
 	for _, yes := range []bool{false, true} {
 		p, err := refreshPreflight(t.Context(), refreshOptions{yes: yes}, &initOptions{})
 		if err != nil {
@@ -469,9 +468,8 @@ func TestRefreshBaseAndReloadShareTheLocalConfigPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	wantGo := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-go:1.2.3"
-	wantWeb := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:1.2.3"
-	if reloaded == nil || reloaded.lc.BaseImages["go"] != wantGo || reloaded.lc.BaseImages["web-node"] != wantWeb {
+	want := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"
+	if reloaded == nil || reloaded.lc.BaseImages["base"] != want {
 		t.Fatalf("refreshReload did not see the base step's write through the same local-config path: %+v", reloaded)
 	}
 	if calls := r.calls(t); len(calls) != 0 {
@@ -592,7 +590,7 @@ func TestRefreshPreflightStopTexts(t *testing.T) {
 	t.Run("custom base", func(t *testing.T) {
 		useVersion(t, "0.5.1")
 		r := newAnchorModeRig(t, refreshYAML, true)
-		r.appendConfig(t, "base_images: {go: "+refreshHost+"/fugaro-base/fugaro-go:dev-abc}\n")
+		r.appendConfig(t, "base_images: {base: "+refreshHost+"/fugaro-base/fugaro-base:dev-abc}\n")
 		_, _, err := executeStdin(t, "", "image", "refresh", "--workflow", "api")
 		_, direct := refreshPreflight(t.Context(), refreshOptions{workflows: []string{"api"}}, &initOptions{})
 		if ExitCode(err) != ExitUserError || direct == nil || err.Error() != direct.Error() {
@@ -641,8 +639,8 @@ func TestRefreshConfirmationsNeedTheTypedName(t *testing.T) {
 			r := newAnchorModeRig(t, refreshYAML, true)
 			fakeTerminal(t)
 			slug, label := checkJobOwner(t, "github", "acme/app")
-			oldRef, newRef := managedRef("web-node", "0.4.0"), managedRef("web-node", "0.5.1")
-			spec, _ := json.Marshal(infra.CheckJobSpec{Repo: "acme/app", BaseImages: map[string]string{"web-node": oldRef}})
+			oldRef, newRef := managedRef("base", "0.4.0"), managedRef("base", "0.5.1")
+			spec, _ := json.Marshal(infra.CheckJobSpec{Repo: "acme/app", BaseImages: map[string]string{"base": oldRef}})
 			r.run.SetJob(gcp.CheckJobName(slug), map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRole: gcp.RoleCheck, gcp.LabelRepo: label}, oldRef)
 			r.run.SetJobEnv(gcp.CheckJobName(slug), map[string]string{infra.CheckSpecEnv: string(spec)})
 			var seen *initOptions
@@ -653,8 +651,8 @@ func TestRefreshConfirmationsNeedTheTypedName(t *testing.T) {
 					base: func(context.Context) error { return nil },
 					reload: func(context.Context) (*refreshTarget, error) {
 						lc := *p.lc
-						lc.BaseImages = map[string]string{"web-node": newRef}
-						return &refreshTarget{lc: &lc, cfg: p.cfg, kinds: []string{"web-node"},
+						lc.BaseImages = map[string]string{"base": newRef}
+						return &refreshTarget{lc: &lc, cfg: p.cfg, kinds: []string{"base"},
 							spec: infra.RepoSpec{Name: "acme/app", Slug: slug, Label: label}}, nil
 					},
 					checkJob: func(ctx context.Context, tg *refreshTarget) error { return rr.refreshCheckJob(ctx, tg) },
@@ -708,8 +706,8 @@ func TestRefreshConfirmationsNeedTheTypedName(t *testing.T) {
 		if r.dst.puts != 0 || strings.Contains(out, "confirmed by --yes") {
 			t.Fatalf("the base was copied without the typed name (%d writes):\n%s", r.dst.puts, out)
 		}
-		if got := r.localConfig(t).BaseImages["go"]; got != "" {
-			t.Errorf("base_images.go was recorded: %s", got)
+		if got := r.localConfig(t).BaseImages["base"]; got != "" {
+			t.Errorf("base_images.base was recorded: %s", got)
 		}
 	})
 }

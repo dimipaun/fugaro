@@ -150,7 +150,8 @@ func TestLintJSONFieldsExist(t *testing.T) {
 // notFields are backticked tokens on a line about JSON that are not field
 // names: values, files and keys of other documents.
 var notFields = []string{
-	"fugaro.yaml", "yarn.lock", "commands.test", "git.base_branch", "gcp_project", // files and fugaro.yaml keys
+	"fugaro.yaml", "yarn.lock", "commands.test", "git.base_branch", "gcp_project", "mise.toml", // files and fugaro.yaml keys
+	"engines.node",      // a package.json key, not a fugaro field
 	"tool_error",        // a value of a log entry's event
 	"claude_accounts",   // a local-config key (never in --json output: it is operator-only and never published)
 	"agent.oauth_token", // a fugaro.yaml key, not a JSON output field

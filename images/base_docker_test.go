@@ -15,18 +15,18 @@ import (
 // TestBaseImageSmoke runs images/smoke.sh, the check CI runs, against the
 // base image built from this checkout. It also sets the pinned versions
 // read from the Dockerfile's own ARGs, so smoke.sh checks the image's
-// Claude Code, gh and Node against them, not just against the smoke
-// output's shape.
+// Claude Code and gh against them, not just against the smoke output's
+// shape; smoke.sh's own base case checks every other pin (mise, gcloud,
+// the harness Node and so on) and the tools.tsv presence table.
 func TestBaseImageSmoke(t *testing.T) {
-	image := testutil.BaseImage(t)
-	claudeCodeVersion := dockerfileARG(t, "CLAUDE_CODE_VERSION")
-	ghVersion := dockerfileARG(t, "GH_VERSION")
-	nodeVersion := dockerfileARG(t, "NODE_VERSION")
-	cmd := exec.Command("sh", "smoke.sh", image, "web-node")
+	image := testutil.BaseImageOf(t, "base")
+	df := baseDockerfile(t)
+	claudeCodeVersion := argIn(t, df, "CLAUDE_CODE_VERSION")
+	ghVersion := argIn(t, df, "GH_VERSION")
+	cmd := exec.Command("sh", "smoke.sh", image, "base")
 	cmd.Env = append(os.Environ(),
 		"CLAUDE_CODE_VERSION="+claudeCodeVersion,
 		"GH_VERSION="+ghVersion,
-		"NODE_VERSION="+nodeVersion,
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -36,7 +36,6 @@ func TestBaseImageSmoke(t *testing.T) {
 		"fugaro dev",
 		fmt.Sprintf("claude %s (Claude Code)", claudeCodeVersion),
 		"gh version " + ghVersion,
-		"node v" + nodeVersion + ".",
 		"smoke: " + image + " ok",
 	} {
 		if !strings.Contains(string(out), want) {
@@ -58,16 +57,24 @@ const retiredKeyNode = "18.17.0"
 // signed by a retired key. Without that keyring, install-node must refuse
 // rather than skip verification.
 func TestInstallNodeUsesTheBakedKeyring(t *testing.T) {
-	image := testutil.BaseImage(t)
+	image := testutil.BaseImageOf(t, "base")
 	blocked := []string{"run", "--rm", "--user", "root"}
 	for _, host := range []string{"keys.openpgp.org", "keyserver.ubuntu.com", "raw.githubusercontent.com", "github.com"} {
 		blocked = append(blocked, "--add-host", host+":127.0.0.1")
 	}
 	blocked = append(blocked, image, "sh", "-c")
+	// install-node's PATH change is local to its own process (sh does not
+	// export it back to its parent), and the base deliberately keeps a
+	// plain install-node install off the image's PATH (design
+	// docs/design/base-image.md section 6: node comes from mise in this
+	// world now; install-node is the standalone helper that bakes the
+	// private harness Node at build time, the same way). So the installed
+	// node is called by its install path (the default NODE_PREFIX,
+	// /opt/node), not bare "node".
 	out := testutil.Docker(t, append(blocked,
-		"test -s /usr/local/lib/fugaro/nodejs.gpg && /usr/local/lib/fugaro/install-node "+retiredKeyNode+" >&2 && node -v")...)
+		"test -s /usr/local/lib/fugaro/nodejs.gpg && /usr/local/lib/fugaro/install-node "+retiredKeyNode+" >&2 && /opt/node/bin/node -v")...)
 	if !strings.HasSuffix(out, "v"+retiredKeyNode) {
-		t.Fatalf("node -v after install-node %s = %q", retiredKeyNode, out)
+		t.Fatalf("/opt/node/bin/node -v after install-node %s = %q", retiredKeyNode, out)
 	}
 	cmd := exec.Command("docker", append(blocked,
 		"rm /usr/local/lib/fugaro/nodejs.gpg && /usr/local/lib/fugaro/install-node "+retiredKeyNode)...)
@@ -124,7 +131,7 @@ func TestBaseImageTools(t *testing.T) {
 // runner writes Claude Code's managed settings, is an empty directory owned
 // by the agent's user (uid 1000), and that the runner's user can write there.
 func TestBaseImageManagedSettingsDir(t *testing.T) {
-	image := testutil.BaseImage(t)
+	image := testutil.BaseImageOf(t, "base")
 	out, err := exec.Command("docker", "run", "--rm", "--entrypoint", "sh", image, "-c",
 		`stat -c '%u:%g %a %F' /etc/claude-code && ls -A /etc/claude-code | wc -l && id -u &&
 		 touch /etc/claude-code/probe && rm /etc/claude-code/probe && echo writable`).CombinedOutput()

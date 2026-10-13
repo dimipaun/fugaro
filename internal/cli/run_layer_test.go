@@ -21,7 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
-const release060 = "ghcr.io/dimipaun/fugaro-web-node:0.6.0"
+const release060 = "ghcr.io/dimipaun/fugaro-base:0.6.0"
 
 // registerOtherLocally registers acme/other's provider and (implicit)
 // workflow in the fixture's local config.
@@ -289,7 +289,7 @@ func TestEmbedProjectLayerUsesTheCheckoutsOwnProject(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer) // aurora/proj-1234's; must not be the one embedded
-	otherLayer := "version: 1\nproject: otherproj\ngcp_project: proj-9999\nprofiles:\n  x:\n    base: web-node\n    commands: { build: sh build.sh, test: sh test.sh }\ndefault_profile: x\n"
+	otherLayer := "version: 1\nproject: otherproj\ngcp_project: proj-9999\nprofiles:\n  x:\n    commands: { build: sh build.sh, test: sh test.sh }\ndefault_profile: x\n"
 	otherBucket := blobx.Wrap(memblob.OpenBucket(nil))
 	if _, err := otherBucket.Create(context.Background(), config.LayerKey, []byte(otherLayer), "application/yaml"); err != nil {
 		t.Fatal(err)

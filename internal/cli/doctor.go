@@ -312,6 +312,8 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		o.Checks = append(o.Checks, doctorGitHubApps(ctx, lc, cmd.ErrOrStderr())...)
 	}
 
+	o.Checks = append(o.Checks, doctorBaseImage(lc))
+
 	o.Project = &doctorProject{Name: lc.Name, GCPProject: lc.GCPProject, Region: lc.Region, RegistryHost: lc.RegistryHost, BaseImages: lc.BaseImages}
 
 	if co, _ := checkoutProject(ctx, ""); co != nil {
@@ -359,6 +361,17 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 
 	o.OK = !checksFail(o.Checks, strict)
 	return emitDoctor(cmd, o, asJSON)
+}
+
+// doctorBaseImage warns when the installation has no Fugaro base recorded
+// (design base-image.md section 10): every image build starts from it.
+func doctorBaseImage(lc *localcfg.Config) doctorCheck {
+	if lc.BaseImage(config.BaseKind) != "" {
+		return doctorCheck{ID: "base-image", OK: true}
+	}
+	return doctorCheck{ID: "base-image", OK: false, Severity: "warning",
+		Problem: "the local config has no base_images.base (" + config.MigrationDoc + ")",
+		Fix:     "fugaro image refresh   # in the repository's checkout"}
 }
 
 // doctorGitHubApps is the GitHub App pre-check (githubapp.go), only behind
