@@ -1,20 +1,43 @@
 # A generic, safe way to set the agent's environment
 
-Status: design for review (2026-10-13), docs only — nothing in this design has
-been built. Source: the owner's request, after the first live
-provider-model run (`docs/multi-model.md`, Check 25) failed because Claude
-Code sends `context_management` when thinking is on and the gateway refuses
-it (`internal/gateway/forward.go:222-248`, `docs/multi-model.md` §5). The
-fix that unblocked that run was runner code setting
-`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` and `MAX_THINKING_TOKENS=0` for
-stages whose model is served by a provider route — bespoke, not something a
-repository or the owner could express, because `fugaro.yaml` has no way to
-set an agent environment variable at all (`workflows.<n>.secrets[].env`
-only *names* a workflow secret's variable, and the set of names it may use
-is a deny-list of everything dangerous, `internal/config/validate.go:60-80`,
-not an allow-list of anything Claude Code reads). The owner asked whether to
-add a generic mechanism and approved queuing this design. Everything below
-is read from the code at this branch's base and cited by file; nothing was
+Status: design for review (2026-10-13, revised 2026-10-13 after `next`
+caught up to `main`'s 0.6.6), docs only — nothing in this design has been
+built. Source: the owner's request, after the first live provider-model run
+(`docs/multi-model.md`, Check 25) failed because Claude Code sends
+`context_management` when thinking is on and the gateway refuses it on a
+provider route: the field is not in `routedKeys`, the allow-list of
+top-level fields a provider-routed request may carry
+(`internal/gateway/forward.go:39-49`, checked at `forward.go:102-106` and
+enforced only for provider routes at `forward.go:460-461`; the narrower,
+Anthropic-direct `context_management`-edit filter, `contextManagement`,
+`forward.go:224-253`, is a related but separate check — see §0). The
+docs record of this failure and its fix is `docs/multi-model.md` §7
+("Known limits"), not §5 as an earlier draft of this design said.
+
+**This fix has since shipped, and this revision is rebased on it.** PR #305
+("provider models: Claude Code gets thinking and experimental betas
+disabled on provider-route stages") added `agent.ProviderRouteVars()`
+(`internal/agent/env.go:219-237`) and wired it into `stagePins`
+(`internal/runner/agentenv.go:48-66`) via `stageOnProviderRoute`
+(`agentenv.go:68-78`); `main` released it as 0.6.6 and `next` has it as of
+`a029193` ("forward-merge main 0.6.6 into next..."), merged into this
+branch below. **Nothing about this design's goal changes**: `fugaro.yaml`
+still has no way to set an agent environment variable at all
+(`workflows.<n>.secrets[].env` only *names* a workflow secret's variable,
+from a deny-list of dangerous names, `internal/config/validate.go:60-80`,
+not an allow-list of anything Claude Code reads), and `providers.<name>`
+still has no way for the owner to override or extend what the runner sets
+for a provider route — `ProviderRouteVars()`'s two variables are hard-coded
+in Go, not configurable. **What changes is the shape of §3**: it no longer
+proposes a new, parallel `DefaultProviderAgentEnv` mechanism; it proposes
+*generalizing the mechanism that already shipped* — `agent.ProviderRouteVars()`
+becomes the seed of an owner-overridable default, computed in the same
+place (`stagePins`) that already computes it today, so one result keeps
+reaching both channels `stagePins`'s caller already sends it to (§0). The
+owner asked whether to add a generic mechanism and approved queuing this
+design; this revision answers with the real shipped code in view instead of
+inventing a parallel one. Everything below is read from the code at this
+branch's base (after merging `origin/next`) and cited by file; nothing was
 run.
 
 **A second, independent precedent for the same gap.** `docs/gcp-setup.md:257`
@@ -38,19 +61,41 @@ mechanism this design is the first attempt to build.
   (`env.go:134-141`, the comment says so explicitly) — the gateway's
   routing variables when the gateway is on. This ordering is the one
   invariant every design below must not weaken.
-- **Per-stage variables (model pins) do not go through `BuildEnv` at all.**
-  They go into `agent.WriteManagedSettings`
-  (`internal/agent/settings.go:40-91`), rewritten before every stage
-  (`internal/runner/agentenv.go:60-84`, `writeManagedSettings`), because a
-  stage's pinned model can differ by role and `BuildEnv`'s result
-  (`r.env`, `internal/runner/runner.go:992-998`) is built once at bootstrap
-  and reused for every stage of the run. The managed settings file is
-  Claude Code's highest-precedence settings source
-  (`internal/agent/settings.go:11-14`: "neither a repository's nor a
+- **Per-stage variables (model pins, and now the provider-route fix) go
+  into both the process environment and the managed settings file — not
+  `BuildEnv`.** `stagePins` (`internal/runner/agentenv.go:48-66`) computes
+  one `map[string]string` per stage: `agent.PinVars` (the role's model,
+  background model, output limit) plus, when `stageOnProviderRoute(model,
+  bg)` (`agentenv.go:68-78`) is true, `agent.ProviderRouteVars()`
+  (`internal/agent/env.go:219-237`:
+  `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`, `MAX_THINKING_TOKENS=0`).
+  **That one result, `pins`, reaches two places**, both in
+  `internal/runner/runner.go`'s per-stage code: `r.writeManagedSettings(pins)`
+  merges it into the managed settings file's `env`
+  (`agentenv.go:85-104`, the `for k, v := range pins { vars[k] = v }` loop),
+  and `req.Env = gitops.WithVars(r.env, pins)` (`runner.go:1574`) merges the
+  *same* `pins` into the Claude Code process's own environment for that
+  stage — `r.env` (`BuildEnv`'s bootstrap-time result, built once,
+  `runner.go:1084-1091`) is the base both times, `pins` is layered on top in
+  both channels. `stageOnProviderRoute` checks **both** the stage's own
+  role model and the run's effective background model
+  (`config.EffectiveBackground`, `internal/config/providers.go:377-385`),
+  because with no `agent.models.background` set, the background model
+  defaults to the coder's own provider model for every stage, including a
+  Claude reviewer's — documented as the **OWNER RULING** in
+  `docs/multi-model.md` §7: "a stage counts as 'provider' if any model its
+  Claude Code process can call does, not only its own role model." A
+  design that forgets this (keys only the role model) silently drops the
+  fix on every reviewer stage whose background defaults to the provider.
+  The managed settings file is Claude Code's highest-precedence settings
+  source (`internal/agent/settings.go:11-14`: "neither a repository's nor a
   user's settings file can override them") and exists **only when the
-  gateway is on** (`internal/runner/agentenv.go:66-69`, `writeManagedSettings`
-  returns nil with no gateway).
-- **`checkSettingsRouting`** (`internal/runner/agentenv.go:103-159`) refuses
+  gateway is on** (`writeManagedSettings` returns nil with no gateway,
+  `agentenv.go:85-89`) — but `stagePins` itself already returns `nil` with
+  no gateway too (`agentenv.go:54-57`), so the process-env channel is
+  equally empty in that case; there is no asymmetry between the two
+  channels to design around.
+- **`checkSettingsRouting`** (`internal/runner/agentenv.go:123-179`) refuses
   any *committed* settings file (`.claude/settings.json`, the user's,
   `$CLAUDE_CONFIG_DIR`'s) that sets a routing-capable key: `apiKeyHelper`,
   or an `env` block naming one of `routingEnvKeys` (`ANTHROPIC_BASE_URL`,
@@ -87,7 +132,7 @@ mechanism this design is the first attempt to build.
   (§3) would reuse.
 - **Check commands run as the agent's own children, not the runner's.**
   `fugaro verify` writes settings the `fugaro verify build`/`test`
-  subcommands read (`internal/runner/runner.go:951-957`), and those
+  subcommands read (`internal/runner/runner.go:1004-1010`), and those
   subcommands are what Claude Code's Bash tool invokes — so
   `commands.build`/`commands.test` inherit **exactly** `r.env`, the same
   allow-listed environment the agent process itself got from `BuildEnv`
@@ -123,16 +168,16 @@ design must not add a *reviewed, first-class* path to the same place):
 | Proxy the agent's traffic (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, lower-case forms) | Same closed allow-list; these are also in `routingEnvKeys` and in `ReservedEnvPrefixes`/`ReservedEnvNames` already. Not on the allow-list, structurally. |
 | Add a CA or certificate override (`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`) | Already `baseEnv` pass-through only (`env.go:21-22`), never agent-settable; not on the new allow-list either. |
 | Preload or inject code (`LD_PRELOAD`, `LD_LIBRARY_PATH`, `DYLD_INSERT_LIBRARIES`, `NODE_OPTIONS`, `PYTHONSTARTUP`, `BASH_ENV`, `ENV`, `PERL5OPT`, `RUBYOPT`, …) | All already in `ReservedEnvPrefixes`/`ReservedEnvNames` (`validate.go:61-79`); not on the new allow-list. |
-| Rewrite git's behavior (`GIT_*`) | `GIT_` is a reserved prefix already; `gitops.ModelCredentialVars` is stripped from every git call regardless (`internal/runner/runner.go:14-23`); not on the new allow-list. |
+| Rewrite git's behavior (`GIT_*`) | `GIT_` is a reserved prefix already; `gitops.ModelCredentialVars` is stripped from every git call regardless (`internal/runner/agentenv.go:15-24`, `modelCredentialVars`/`strip`); not on the new allow-list. |
 | Change `HOME`/`PATH`/the shell (`SHELL`, `IFS`, `BASH_ENV`, …) | Already `ReservedEnvNames`; `baseEnv` passes `HOME`/`PATH` through from the runner only, never settable by `fugaro.yaml`. |
-| Impersonate Fugaro's own variables (`FUGARO_*`) | `FUGARO_` is a reserved prefix already; the new allow-list never contains one, and `spec.Set` (Fugaro's own `FUGARO_STATE_DIR` etc., `runner.go:966-973`) is applied **after** `agent.env`'s values in `BuildEnv`, so a collision resolves to Fugaro's own value, not the repository's. |
+| Impersonate Fugaro's own variables (`FUGARO_*`) | `FUGARO_` is a reserved prefix already; the new allow-list never contains one, and `spec.Set` (Fugaro's own `FUGARO_STATE_DIR` etc., `runner.go:1055-1058`) is applied **after** `agent.env`'s values in `BuildEnv`, so a collision resolves to Fugaro's own value, not the repository's. |
 
 **The rule that makes all of this enforceable, not just documented:** the
 allow-list is **Fugaro's own Go code** (§2), never a `fugaro.yaml` field —
 a repository names *which allow-listed variable* it wants set and to what
 value, never a new name. Widening the allow-list needs a Fugaro release, the
 same way widening the gateway's `routedKeys` field allow-list needs a live
-check first (`docs/multi-model.md` §5, Check 25). This is the structural
+check first (`docs/multi-model.md` §7, Check 25). This is the structural
 difference from a secret's variable (a deny-list: anything not reserved is
 fine) and is deliberate: an allow-list that only grows on a maintainer's own
 review is the generic mechanism's actual safety property, not the per-field
@@ -213,7 +258,12 @@ risk of a name slipping through a prefix match nobody re-audited). Proposed
 
 ```go
 var AgentEnvAllowed = []string{
-    // The Check 25 fix itself (docs/multi-model.md §5, this design's origin).
+    // Useful on any stage (an all-Claude repository tuning its own thinking
+    // depth, say); also the two names agent.ProviderRouteVars() already
+    // hard-codes for a provider-route stage (§3) — a repository's own
+    // agent.env entry for either name is always beaten by the provider
+    // mechanism's result on a provider-route stage (§3's precedence rule),
+    // so setting it here only has an effect on an all-Claude stage.
     "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS",
     "MAX_THINKING_TOKENS",
     // Already told to users with no mechanism to apply it (docs/gcp-setup.md:257).
@@ -300,75 +350,94 @@ since `fugaro.yaml` is already PR-reviewed in full.
 
 ## 3. Provider-scoped variant: `providers.<name>.agent_env`
 
-The origin bug is not really a repository's concern — `MAX_THINKING_TOKENS`
-and `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` exist because **OpenRouter's
-Anthropic-compatible endpoint**, not the repository's code, cannot be sent
-`context_management` or extended thinking. That knowledge belongs with
-whoever adds the provider — the **owner**, in the local config
-(`docs/multi-model.md` §2) — not with every repository that happens to pin
-a model the provider serves.
+**This section generalizes code that already ships, rather than adding a
+parallel one.** `agent.ProviderRouteVars()` (`internal/agent/env.go:219-237`)
+already sets `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` and
+`MAX_THINKING_TOKENS=0` for any stage `stageOnProviderRoute` flags
+(`internal/runner/agentenv.go:54-78`), hard-coded, with no owner or
+repository override. The origin bug is not really a repository's concern —
+these two variables exist because **OpenRouter's Anthropic-compatible
+endpoint**, not the repository's code, cannot be sent `context_management`
+or extended thinking — so the knowledge belongs with whoever adds the
+provider, the **owner**, in the local config (`docs/multi-model.md` §2),
+exactly where the hard-coded fix already assumes it belongs (it applies to
+*every* provider today, correctly, since M10 has exactly one provider
+kind). What is missing is only the owner's ability to override or extend
+it — a second OpenRouter-like endpoint with different quirks, or a
+narrower fix once a future Claude Code release no longer needs
+`MAX_THINKING_TOKENS=0` for some models — without a Fugaro code change
+each time.
 
-**The field.** `ModelProvider.AgentEnv map[string]string` (`\`yaml:"agent_env,omitempty\` \`json:"agent_env,omitempty"\``, `internal/config/providers.go:29-47`),
-owner-only, never in `fugaro.yaml` — the same posture `providers:` itself
-already has. Checked by `ValidateModelProviders`
-(`providers.go:103-165`) with the **same** allow-list and shape rules as
-§2's `agent.env` (one function, `validateAgentEnvMap`, shared by both
-call sites) — a provider cannot set anything a repository couldn't set
-either; it only gets to set it *for stages that use it*, automatically,
-instead of every repository re-declaring it.
+**The field.** `ModelProvider.AgentEnv map[string]string`
+(`` `yaml:"agent_env,omitempty"` `json:"agent_env,omitempty"` ``,
+`internal/config/providers.go:29-47`), owner-only, never in `fugaro.yaml` —
+the same posture `providers:` itself already has. Checked by
+`ValidateModelProviders` (`providers.go:103-165`) with the **same**
+allow-list and shape rules as §2's `agent.env` (one function,
+`validateAgentEnvMap`, shared by both call sites) — a provider cannot set
+anything a repository couldn't set either; it only gets to set it *for
+stages that use it*, automatically, instead of every repository
+re-declaring it.
 
 **How it reaches the job.** The existing channel, unchanged in shape:
 `ProvidersEnv`/`ProvidersFromEnv` (`internal/runner/providers.go:14-78`)
 already round-trip the whole `ModelProvider` through `FUGARO_MODEL_PROVIDERS`
 JSON with `DisallowUnknownFields` and a re-`ValidateModelProviders` call; a
-new field on the struct is carried for free. No new environment variable,
-no new secret.
+new field on the struct is carried through it with no new environment
+variable and no new secret — **but not "for free"**: see §5's compatibility
+gap, which this reuse creates and which needs its own gate.
 
-**How it applies: through the managed settings file, per stage — not
-through `BuildEnv`.** This is the one place this design departs from §2's
-mechanism, and for a concrete, code-grounded reason: a provider's
-`agent_env` must apply **only to the stages whose role model that provider
-serves** (the coder's stage when the coder is the provider's model, not the
-Claude reviewer's), and `BuildEnv`'s result (`r.env`) is built once at
-bootstrap and reused for every stage (§0) — it has no concept of "this
-stage's model." The pins already solve exactly this problem for the model
-name itself: `stagePins` (`internal/runner/agentenv.go:51-58`) and
-`beginGatewayStage` (`internal/runner/gateway.go:142-146`) compute per-stage, per-role
-values and `writeManagedSettings(pins)`
-(`internal/runner/agentenv.go:65-84`) rewrites the managed-settings file
-before every stage with them. A provider's `agent_env` is the same shape of
-fact (stage-scoped, role-scoped) and should go into the same file, merged
-into `vars` beside the gateway's own routing variables and the pins,
-whenever `config.ProviderFor(providers, stageRoleModel)` resolves to a
-provider with a non-empty `AgentEnv`. Two consequences fall out of reusing
-this exact mechanism rather than inventing a second one:
+**How it applies: `DefaultProviderAgentEnv` replaces `agent.ProviderRouteVars()`
+as the single source, computed inside `stagePins` — not in
+`writeManagedSettings`, and not as a second mechanism alongside the
+first.** `stagePins` (`agentenv.go:48-66`) already is the one place that
+computes a stage's pins once and whose result (`pins`) is merged into
+*both* the managed settings file and the process environment
+(§0) — exactly the per-stage, per-role, dual-channel computation a
+provider's `agent_env` needs, because it already exists for this reason.
+Concretely, `stagePins` changes from:
+
+```go
+if r.stageOnProviderRoute(model, bg) {
+    maps.Copy(pins, agent.ProviderRouteVars())
+}
+```
+
+to resolving the provider(s) that serve `model` and `bg`
+(`config.ProviderFor`, checking **both**, exactly as `stageOnProviderRoute`
+already does — this is not new logic, only where the provider's `AgentEnv`
+value is layered in) and merging, in order, `DefaultProviderAgentEnv` (the
+renamed, now-overridable former `agent.ProviderRouteVars()` literal), then
+that provider's own `AgentEnv`. `agent.ProviderRouteVars()` itself is
+removed, not kept as a second code path beside the new one — one function
+computing one result is the entire point of putting this inside
+`stagePins` rather than `writeManagedSettings` (E3 in the plan, revised).
+Two consequences fall out of keeping this inside `stagePins`, reusing the
+mechanism that already ships:
 
 - **It is only ever available when the gateway is on**, which a provider
   model already requires unconditionally (`CheckProviderGateway`,
-  `providers.go:285-312`: a provider model without `budget.mode: enforce`
-  is refused before any call) — so there is no new "what if the gateway is
-  off" case to design for.
-- **It wins over everything a repository's own `agent.env` or a committed
-  settings file could set**, for the same reason the gateway's own routing
-  variables already do: the managed settings file is Claude Code's
-  highest-precedence source (§0). This is the concrete mechanism behind
-  the precedence rule below, not a separate guarantee to build.
+  `providers.go:285-312`, function at `providers.go:293`: a provider model
+  without `budget.mode: enforce` is refused before any call) — `stagePins`
+  itself returns `nil` with no gateway (`agentenv.go:54-57`), so there is no
+  new "what if the gateway is off" case to design for, in either channel.
+- **It wins over a repository's `agent.env` in both channels it already
+  reaches**, because `pins` is layered on top of `r.env` in both
+  `writeManagedSettings` and `req.Env = gitops.WithVars(r.env, pins)`
+  (§0) — not merely in the managed settings file. This is the concrete
+  mechanism behind the precedence rule below, not a separate guarantee to
+  build, and it closes the gap an earlier draft of this design left open
+  (computing the provider's override in `writeManagedSettings` alone would
+  have left the process-environment channel unprotected — see §5's new
+  precedence test).
 
-**Built-in runner defaults for known provider quirks, so the owner needs
-nothing for the common case.** The fix this design's origin describes
-(`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`, `MAX_THINKING_TOKENS=0` "for
-stages whose model is served by a provider route") reads as a *property of
-routing through any non-Anthropic provider*, not of one specific vendor —
-every `anthropic-compat` endpoint (`config.ModelProviderKind`,
-`providers.go:23`) is, by construction, not the real Anthropic API, so none
-of them can be assumed to support extended thinking or beta headers until a
-live check says otherwise (`docs/multi-model.md` §5's own "Claude Code
-features that a compatible endpoint may not support… surface as the
-upstream's error and fail the stage; which of them break is assumed until
-Check 25 records it"). Recommendation: a small, hard-coded Go map,
-`DefaultProviderAgentEnv` next to `ModelProviderKind`, applied to **every**
-`anthropic-compat` provider's stages unless its own `agent_env` overrides a
-key:
+**The default itself, unchanged in content, renamed and made
+overridable.** `DefaultProviderAgentEnv` (`internal/config/providers.go`,
+beside `ModelProviderKind`) replaces `agent.ProviderRouteVars()`'s literal,
+applied to every provider of kind `anthropic-compat`
+(`config.ModelProviderKind`, `providers.go:23`) unless its own `agent_env`
+overrides a key — the same two values, now owner-overridable instead of
+hard-coded:
 
 ```go
 var DefaultProviderAgentEnv = map[string]string{
@@ -377,39 +446,63 @@ var DefaultProviderAgentEnv = map[string]string{
 }
 ```
 
-This is the one piece of this design that is not "a generic mechanism, no
-policy" — it is a specific, cited fix, defaulted on for every provider
-route because the alternative (every owner rediscovering Check 25's
-failure independently) is worse. A provider's own `agent_env` can turn a
-default back off by repeating the key with a different allowed value (there
-is no "off" sentinel needed: `MAX_THINKING_TOKENS` absent from a provider's
-map simply keeps the default); nothing in `fugaro.yaml` can touch these two
-keys for a provider-routed stage, by design — a provider route's thinking
-behavior is a provider fact, not a per-repository one.
+This remains the one piece of this design that is not "a generic
+mechanism, no policy" — it is the already-shipped, measured fix
+(`docs/multi-model.md` §7: "Claude Code features that a compatible
+endpoint may not support… surface as the upstream's error and fail the
+stage; which of them break is assumed until Check 25 records it," and the
+fix's own measured-effect table in the same section), kept on by default
+for every provider route because the alternative (every owner rediscovering
+Check 25's failure independently, or a second provider needing to carry a
+second hard-coded Fugaro release) is worse. A provider's own `agent_env`
+can turn a default back off by repeating the key with a different allowed
+value (there is no "off" sentinel needed: a key absent from a provider's
+map simply keeps the default).
+
+**The two-provider conflict case.** `stageOnProviderRoute`'s existing
+check (role model **or** background model) means a single stage can, in
+principle, touch two different providers at once: an explicit
+`agent.models.background` naming a different provider's model than the
+coder's. If both providers set conflicting `agent_env` values for the same
+key (or one relies on a `DefaultProviderAgentEnv` key the other's own
+`agent_env` overrides differently), there is no principled way to pick a
+winner — recommendation: **refuse the run before any call** when a single
+stage's role model and background model resolve to two different
+providers at all, named in the refusal (`config.CheckProviderPolicy`-style
+`Problem`, `providers.go:324-364`'s shape), regardless of whether their
+`agent_env` actually conflicts — a repository mixing providers within one
+Claude Code process is already an edge case `docs/multi-model.md` never
+anticipated, and refusing it outright is simpler and safer than resolving
+a conflict that would otherwise depend on map iteration order. (Today,
+with exactly one provider kind and `config.EffectiveBackground` only ever
+defaulting the background to the *coder's own* provider when it is a
+provider's model, this case cannot yet arise in practice — it becomes
+reachable only once an owner's local config has two providers and a
+repository's `fugaro.yaml` explicitly pins its coder to one and its
+background to the other.)
 
 **Precedence, full stack, narrowest (and most specific) wins, matching
-`BuildEnv`'s existing "last always wins" comment literally:**
+`BuildEnv`'s existing "last always wins" comment literally, and holding in
+*both* channels `pins` reaches:**
 
 1. Claude Code's own built-in defaults (lowest).
 2. The repository's `agent.env` (§2) — process environment, set once at
-   `BuildEnv` time, applies to every stage of the workflow.
-3. `DefaultProviderAgentEnv`, for any stage whose model a provider serves.
+   `BuildEnv` time (`r.env`), applies to every stage of the workflow.
+3. `DefaultProviderAgentEnv`, for any stage whose role model or background
+   model a provider serves.
 4. That provider's own `agent_env`, for the same stages — overrides a
    built-in default's key.
-5. The gateway's own routing variables and the per-stage model pins
-   (highest) — written last into the same managed-settings file, never
-   overridable by any of the above (existing behavior, unchanged).
+5. The gateway's own routing variables (managed settings only) and the
+   rest of the per-stage pins (highest) — computed in `stagePins`/
+   `writeManagedSettings` alongside levels 3-4, never overridable by any of
+   the above.
 
-Levels 3 to 5 live in the managed-settings file; levels 1 to 2 are the
-process environment `BuildEnv` already builds. Because the managed-settings
-file is Claude Code's highest-precedence source, this ordering holds
-regardless of which physical channel (env var vs. settings-file `env` key)
-Claude Code itself prefers when both are present — the open question
-`docs/design/headroom-compression.md`-style designs have had to reason
-about elsewhere; here it is moot, because levels 2 and 3-5 are already in
-different channels today for an unrelated reason (bootstrap-time vs.
-per-stage), and this design only adds a key to the channel that already
-exists at each level.
+Levels 3-5 are computed once, in `stagePins`, and layered over level 2 (`r.env`,
+itself layered over level 1) in **both** the managed settings file
+(`writeManagedSettings`) and the process environment (`gitops.WithVars(r.env, pins)`,
+`runner.go:1574`) — not levels 3-5 in one channel and level 2 in the
+other. §5 adds a test asserting this precedence holds in both channels at
+once, which an earlier draft of this design lacked.
 
 ## 4. Where each applies
 
@@ -498,12 +591,15 @@ in the plan (docs/plans/2026-10-13-agent-env.md), none run here:
    `checkSettingsRouting` still refuses the stage — proof the two
    mechanisms (§1's closing claim) really are independent and neither
    weakens the other.
-4. **The provider-scoped variant actually fixes Check 25.** Re-run
-   `docs/multi-model.md`'s Check 25 end to end, this time with
-   `DefaultProviderAgentEnv` doing the work instead of the bespoke runner
-   fix the origin story describes, and confirm the run no longer needs any
-   repository- or owner-side workaround — the measurement that actually
-   closes the loop this design opened with.
+4. **The generalized default behaves identically to the fix it replaces,
+   and an owner override actually takes effect.** Re-run
+   `docs/multi-model.md`'s Check 25's provider-route task once with no
+   provider `agent_env` set (confirm the run behaves exactly as the
+   already-shipped `agent.ProviderRouteVars()` did: same variables, same
+   values, in both the managed settings file and the process environment),
+   then once more with the owner setting a provider's own `agent_env` that
+   overrides one of the two default keys, confirming the override — not the
+   default — reaches both channels.
 
 ## 7. Open decisions for the owner to rule on
 
@@ -530,13 +626,20 @@ not assumed:
   `CLAUDE_CODE_SKIP_VERTEX_AUTH` carved out — rejected because it requires
   the carve-out list to track every future Anthropic addition, which an
   explicit allow-list does not.
-- **D4. `DefaultProviderAgentEnv` as a hard-coded default vs. requiring
-  every owner to set it themselves.** *Recommended:* hard-coded default,
-  overridable per provider (§3). *Veto alternative:* no built-in default,
-  document the two keys in `docs/multi-model.md` and require every
-  `providers:` entry to set them — rejected because it reproduces exactly
-  the discovery cost (one failed live run per owner) this design exists to
-  remove.
+- **D4. `DefaultProviderAgentEnv` as the built-in default every
+  `anthropic-compat` provider gets unless it overrides a key, replacing
+  `agent.ProviderRouteVars()`'s hard-coded literal, vs. dropping the
+  built-in default now that an owner override exists and requiring every
+  `providers:` entry to set the two keys itself.** *Recommended:* keep the
+  default (§3), since it is the already-shipped, already-measured
+  behavior, and removing it would be a regression for every existing
+  provider entry the day this ships, not a simplification. *Veto
+  alternative:* drop the default, document the two keys in
+  `docs/multi-model.md` and require every `providers:` entry to set them —
+  rejected because it reproduces exactly the discovery cost (one failed
+  live run per owner) `agent.ProviderRouteVars()` already exists to
+  remove, for no safety benefit (the override mechanism makes the default
+  changeable, not mandatory to keep).
 - **D5. Release placement.** See §8.
 
 ## 8. Release placement
@@ -563,15 +666,23 @@ by, the two large 0.7.0 efforts already touching `internal/config` heavily
   concurrent config-touching design in this repository already extends
   (`docs/design/headroom-compression.md`'s plan does the same for `P3`'s
   `internal/agent/env.go` churn).
+- **Also touches `internal/agent/env.go` and `internal/runner/agentenv.go`**
+  (§3: removing `agent.ProviderRouteVars()`, extending `stagePins`), on top
+  of the `internal/config` files §2 already named — still never
+  `internal/infra`, so the sequencing argument above is unaffected, but an
+  implementer should check these two files for independent churn before
+  starting, same as `scope.go`/`validate.go`.
 - **Gated on nothing live before it ships as opt-in.** Unlike
   `agent.compression` (gated on two live checks before it is "ever usable
   at all"), `agent.env`'s v1 scope (§2) sets process environment variables
   Claude Code already documents reading — there is no unverified
   third-party behavior to confirm first. The provider-scoped variant (§3)
-  is different: `DefaultProviderAgentEnv`'s two keys are already confirmed
-  by the origin story's own live run (Check 25's actual failure and fix,
-  even though that fix itself predates and is not yet reflected in this
-  codebase) — §6's check 4 re-confirms it end to end, but does not block
-  shipping §3, since the provider surface is owner-only and off by default
-  for every provider that doesn't set `agent_env` or isn't
-  `anthropic-compat`.
+  is different in degree, not in kind: `DefaultProviderAgentEnv`'s two
+  keys are not merely "confirmed by a live run" — they are the exact
+  values an already-shipped, already-tested runner change
+  (`agent.ProviderRouteVars()`, PR #305, 0.6.6) sets today; §3 only makes
+  that value owner-overridable. §6's check 4 re-confirms the generalized
+  version behaves identically by default and that an override actually
+  takes effect; it does not block shipping §3, since the provider surface
+  is owner-only and off by default for every provider that doesn't set
+  `agent_env` or isn't `anthropic-compat`.
