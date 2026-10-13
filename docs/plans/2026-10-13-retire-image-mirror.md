@@ -17,61 +17,127 @@ Source: [docs/design/retire-image-mirror.md](../design/retire-image-mirror.md). 
 
 **Starting state, checked 2026-10-13 (see the design doc's note on current repository state):** `.github/workflows/images.yml` already carries the real, merged `fugaro-base`/`publish-base` jobs (commit `356f7b1`, already an ancestor of this branch); `docs/pending-workflows/` holds only `README.md`, and that file's own `## images.yml` section still describes the now-merged base-image diff rather than "nothing pending" — it is itself stale and gets replaced wholesale by this task, not amended. **This task's first step is therefore not "modify the pending file" (there isn't one) but "stage a fresh one": create `docs/pending-workflows/images.yml` as the current real `.github/workflows/images.yml`'s content plus this task's own addition**, exactly as `docs/pending-workflows/README.md`'s own instructions describe for any workflow change Fugaro needs to make (Fugaro cannot push a commit touching `.github/workflows/**`, so the new step can only ever reach the real file by a human copying this staged one in, the same `cp`/`git rm` sequence the README already documents).
 
+**The real data flow, checked against the real `.github/workflows/images.yml` (not the earlier draft's sketch, which invented files — `amd64-digest.txt`, `arm64-digest.txt`, `history-digest.txt` — that nothing writes today):**
+
+- `publish-base` resolves each architecture's digest into a **local shell variable** (`digests="$digests $(docker image inspect …)"`), used only to build the `docker buildx imagetools create` command line, and never written anywhere; it holds **only** `contents: read` and `packages: write` (`.github/workflows/images.yml` ~L266-268) — the job that needs `packages: write` to push images.
+- `fugaro-history` is published separately, by the **`publish`** job's `history` leg of its `[web-node, go, java-services, history]` matrix (~L324, also `packages: write`), which tags and pushes by version tag alone and resolves no digest at all today.
+- Neither job may gain `id-token: write` (keyless cosign's requirement) **in addition to** `packages: write`: a job that can both push images and sign would be a strictly more powerful credential than either capability needs alone, and the design's own "do not widen the job that holds `packages: write`" constraint rules it out.
+
+**The fix: a new, separate job, `sign-base-digests`, downstream of both, holding neither `packages: write`.** `publish-base` and `publish`'s `history` leg each gain one extra step that writes their own already-computed (or newly resolved) digest to a file and uploads it as a small artifact; `sign-base-digests` downloads both artifacts, builds `image-digests.txt` from their contents, installs cosign, signs, and uploads to the release. Its own permissions are **exactly** `id-token: write` (keyless signing) and `contents: write` (`gh release upload`, the same pair `docs/release.md` already documents for `release.yml`'s own cosign step) — no `packages: write` at all, since it never touches the registry.
+
 **Files:**
-- Add: `docs/pending-workflows/images.yml` (a fresh staged copy: today's real `.github/workflows/images.yml`, plus a `sign-digests` step added to the `publish-base` job after the index is pushed — not a diff against an existing pending file, since none exists)
+- Add: `docs/pending-workflows/images.yml` (a fresh staged copy: today's real `.github/workflows/images.yml`, plus the digest-writing steps in `publish-base` and `publish`'s `history` leg and the new `sign-base-digests` job described below — not a diff against an existing pending file, since none exists)
 - Add: `images/sign-digests.sh` (the shell logic, kept out of the YAML so it is testable and reviewable on its own)
-- Modify: `images/base_workflow_test.go` (new pinning tests — these already read whichever of the pending or real file exists via `readImagesWorkflow`, so they exercise the newly staged file immediately, with no change to that fallback mechanism), `docs/pending-workflows/README.md` (its `## images.yml` section is rewritten to describe *this* task's diff — the one new step — against the real file, replacing the stale description of the already-merged base-image diff; the general "Copying a file in" instructions above it are unaffected)
+- Modify: `images/base_workflow_test.go` (new pinning tests — these already read whichever of the pending or real file exists via `readImagesWorkflow`, so they exercise the newly staged file immediately, with no change to that fallback mechanism), `docs/pending-workflows/README.md` (its `## images.yml` section is rewritten to describe *this* task's diff against the real file, replacing the stale description of the already-merged base-image diff; the general "Copying a file in" instructions above it are unaffected)
 
 **Interfaces:**
-- `image-digests.txt`: one line per published reference, `<name> sha256:<hex>\n`, where `<name>` is `fugaro-base-amd64`, `fugaro-base-arm64`, `fugaro-base` (the index) and `fugaro-history`. No other content (no comments, no blank lines): the Go side (Task 2) parses it byte-exactly.
-- `images/sign-digests.sh <manifest-path>`: writes `<manifest-path>.sigstore.json` next to it with `cosign sign-blob --yes --bundle "<manifest-path>.sigstore.json" "<manifest-path>"` (keyless, the same invocation shape `release.yml` already uses for `checksums.txt`, `docs/release.md` "Verifying a release"). Exits non-zero on any cosign failure; never swallows one.
-- Both files are uploaded as release assets by the `publish-base` job: `gh release upload "vX.Y.Z" image-digests.txt image-digests.txt.sigstore.json`.
+- `image-digests.txt`: one line per published reference, `<name> sha256:<hex>\n`, where `<name>` is `fugaro-base-amd64`, `fugaro-base-arm64`, `fugaro-base` (the index) and `fugaro-history`. No other content (no comments, no blank lines): the Go side (Task 2) parses it byte-exactly. A tree that published no `history` (an older kind list) omits that line, the same optional-presence handling `images/verify-public.sh`'s own `case "$KINDS" in *",$img,"*` already uses — the implementer follows that existing pattern rather than assuming `history` is always present.
+- `images/sign-digests.sh <manifest-path>`: writes `<manifest-path>.sigstore.json` next to it with `cosign sign-blob --yes --bundle "<manifest-path>.sigstore.json" "<manifest-path>"` (keyless; `cosign` itself must already be on `PATH`, installed by the calling job — the script does not install it). Exits non-zero on any cosign failure; never swallows one.
+- Both files are uploaded as release assets by the new `sign-base-digests` job: `gh release upload "vX.Y.Z" image-digests.txt image-digests.txt.sigstore.json --clobber` (`--clobber` so a re-run of the job after a transient failure doesn't fail on an asset it already half-uploaded).
+- **The release-existence race.** `release.yml` and `images.yml` are two independent workflows triggered by the same tag push (`.github/workflows/release.yml`'s own header comment already says so); nothing orders them, and `gh release upload` fails outright if the GitHub Release doesn't exist yet. `sign-base-digests` **waits and retries** `gh release view "vX.Y.Z"` (the same check `release.yml` itself already uses at ~L128 to decide whether a tag's release exists) before ever attempting the upload, bounded (for example 30 tries, 20s apart, under the job's own `timeout-minutes`) rather than assuming an order; it does **not** create the release itself, since `release.yml` alone owns that (the correct Highlights-based body, the changelog) and a second creator would risk a conflicting or empty-bodied release.
 
 - [ ] **Step 1: Write the failing tests**
 
 `images/base_workflow_test.go`:
 
 ```go
-// TestPublishBaseSignsTheDigestManifest pins that publish-base writes and
-// signs image-digests.txt after pushing the index, and uploads both the
-// manifest and its sigstore bundle to the release (F1 for the base image,
-// design retire-image-mirror.md §2): a build that pushes images but never
-// signs a digest list would leave fugaro upgrade with nothing to verify.
-func TestPublishBaseSignsTheDigestManifest(t *testing.T) {
+// TestSignBaseDigestsJobIsSeparateFromPackagesWrite pins the permission
+// split this task depends on (design retire-image-mirror.md §2, the "do not
+// widen packages: write" constraint): publish-base and publish keep their
+// today-only permissions (no id-token: write added to either), and the new
+// sign-base-digests job holds id-token: write and contents: write and
+// NEVER packages: write. A job that could both push images and sign would
+// be strictly more powerful than either capability needs alone.
+func TestSignBaseDigestsJobIsSeparateFromPackagesWrite(t *testing.T) {
 	data := readImagesWorkflow(t)
 	var wf struct {
 		Jobs map[string]struct {
-			Steps []struct {
-				Name string `yaml:"name"`
-				Run  string `yaml:"run"`
-			} `yaml:"steps"`
+			Permissions map[string]string `yaml:"permissions"`
+			Needs       []string          `yaml:"needs"`
 		} `yaml:"jobs"`
 	}
 	if err := yaml.Unmarshal(data, &wf); err != nil {
 		t.Fatal(err)
 	}
-	job, ok := wf.Jobs["publish-base"]
+	for _, name := range []string{"publish-base", "publish"} {
+		job, ok := wf.Jobs[name]
+		if !ok {
+			t.Fatalf("no %s job", name)
+		}
+		if job.Permissions["id-token"] == "write" {
+			t.Errorf("%s must not gain id-token: write (it already holds packages: write)", name)
+		}
+	}
+	sign, ok := wf.Jobs["sign-base-digests"]
 	if !ok {
-		t.Fatal("no publish-base job")
+		t.Fatal("no sign-base-digests job")
 	}
-	var sign, upload bool
-	for _, s := range job.Steps {
-		if strings.Contains(s.Run, "images/sign-digests.sh") {
-			sign = true
-		}
-		if strings.Contains(s.Run, "gh release upload") && strings.Contains(s.Run, "image-digests.txt") {
-			upload = true
-		}
+	if sign.Permissions["id-token"] != "write" || sign.Permissions["contents"] != "write" {
+		t.Errorf("sign-base-digests permissions = %+v, want id-token: write, contents: write", sign.Permissions)
 	}
-	if !sign || !upload {
-		t.Errorf("publish-base: sign-digests.sh run = %v, gh release upload of image-digests.txt = %v", sign, upload)
+	if _, ok := sign.Permissions["packages"]; ok {
+		t.Error("sign-base-digests must not hold packages permission at all")
+	}
+	if !slices.Contains(sign.Needs, "publish-base") || !slices.Contains(sign.Needs, "publish") {
+		t.Errorf("sign-base-digests.needs = %v, want publish-base and publish (it downloads their digest artifacts)", sign.Needs)
 	}
 }
 
-// TestSignDigestsScriptNeverIgnoresFailure: images/sign-digests.sh must not
-// have an `|| true` or a bare `-` error suppression around the cosign call,
-// or a signing failure would silently publish an unsigned (and therefore
-// unverifiable) manifest.
+// TestOnlyPublishJobsHoldPackagesWrite (existing test, extended): the new
+// sign-base-digests job must not appear in the packages:write allowlist.
+func TestOnlyPublishJobsHoldPackagesWrite(t *testing.T) {
+	data := readImagesWorkflow(t)
+	var wf struct {
+		Jobs map[string]struct {
+			Permissions map[string]string `yaml:"permissions"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &wf); err != nil {
+		t.Fatal(err)
+	}
+	for name, job := range wf.Jobs {
+		write := job.Permissions["packages"] == "write"
+		wantWrite := name == "publish" || name == "publish-base"
+		if write != wantWrite {
+			t.Errorf("job %q packages permission = %q, want write only for publish/publish-base", name, job.Permissions["packages"])
+		}
+	}
+}
+
+// TestSignBaseDigestsWaitsForTheRelease pins that the upload step polls for
+// the release rather than assuming release.yml already created it (the two
+// workflows are independent, triggered by the same tag push).
+func TestSignBaseDigestsWaitsForTheRelease(t *testing.T) {
+	data := readImagesWorkflow(t)
+	var wf struct {
+		Jobs map[string]struct {
+			Steps []struct{ Run string `yaml:"run"` } `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &wf); err != nil {
+		t.Fatal(err)
+	}
+	job, ok := wf.Jobs["sign-base-digests"]
+	if !ok {
+		t.Fatal("no sign-base-digests job")
+	}
+	var waits, uploads bool
+	for _, s := range job.Steps {
+		if strings.Contains(s.Run, "gh release view") {
+			waits = true
+		}
+		if strings.Contains(s.Run, "gh release upload") && strings.Contains(s.Run, "image-digests.txt") {
+			uploads = true
+		}
+	}
+	if !waits || !uploads {
+		t.Errorf("sign-base-digests: waits for the release = %v, uploads image-digests.txt = %v", waits, uploads)
+	}
+}
+
+// TestSignDigestsScriptNeverIgnoresFailure: images/sign-digests.sh must
+// never suppress a cosign failure (a swallowed error would silently publish
+// an unsigned, and so unverifiable, manifest).
 func TestSignDigestsScriptNeverIgnoresFailure(t *testing.T) {
 	data, err := os.ReadFile("sign-digests.sh")
 	if err != nil {
@@ -81,16 +147,18 @@ func TestSignDigestsScriptNeverIgnoresFailure(t *testing.T) {
 	if !strings.Contains(s, "set -eu") {
 		t.Error("sign-digests.sh does not set -eu")
 	}
-	if strings.Contains(s, "cosign sign-blob") && (strings.Contains(s, "cosign sign-blob") && strings.Contains(s, "|| true")) {
-		t.Error("sign-digests.sh ignores a cosign failure")
+	for _, bad := range []string{"|| true", "|| :", "2>/dev/null"} {
+		if strings.Contains(s, bad) {
+			t.Errorf("sign-digests.sh ignores a failure (contains %q)", bad)
+		}
 	}
 }
 ```
 
 - [ ] **Step 2: Run them to see them fail**
 
-Run: `go test ./images/ -run 'TestPublishBaseSignsTheDigestManifest|TestSignDigestsScriptNeverIgnoresFailure' -count=1`
-Expected: FAIL (no `publish-base` signing step, no `images/sign-digests.sh`).
+Run: `go test ./images/ -run 'TestSignBaseDigestsJobIsSeparateFromPackagesWrite|TestOnlyPublishJobsHoldPackagesWrite|TestSignBaseDigestsWaitsForTheRelease|TestSignDigestsScriptNeverIgnoresFailure' -count=1`
+Expected: FAIL (no `sign-base-digests` job, no `images/sign-digests.sh`).
 
 - [ ] **Step 3: Implement**
 
@@ -100,34 +168,103 @@ Expected: FAIL (no `publish-base` signing step, no `images/sign-digests.sh`).
 #!/bin/sh
 # Signs image-digests.txt keyless, the same mechanism release.yml already
 # uses for checksums.txt (docs/release.md "Verifying a release"). Run from
-# publish-base, after the index is pushed, with GitHub OIDC
-# (id-token: write) already granted to the job.
+# sign-base-digests, which already installed cosign and holds GitHub OIDC
+# (id-token: write); this script does not install cosign itself.
 set -eu
 manifest="$1"
 cosign sign-blob --yes --bundle "$manifest.sigstore.json" "$manifest"
 ```
 
-Create `docs/pending-workflows/images.yml` by copying today's real `.github/workflows/images.yml` verbatim, then adding to its `publish-base` job, after the `docker buildx imagetools create` step:
+Create `docs/pending-workflows/images.yml` by copying today's real `.github/workflows/images.yml` verbatim, then making these additions (no job's existing permissions change):
+
+In `publish-base`'s "Push per architecture and publish the index" step (the one that already builds `$digests` in its per-architecture loop), write each architecture's digest to a file as it's computed, and the index's digest once `docker buildx imagetools create` has run, then upload them as an artifact:
 
 ```yaml
-      - name: Write the digest manifest
-        run: |
-          : > image-digests.txt
-          printf 'fugaro-base-amd64 %s\n' "$(cat amd64-digest.txt)" >> image-digests.txt
-          printf 'fugaro-base-arm64 %s\n' "$(cat arm64-digest.txt)" >> image-digests.txt
-          printf 'fugaro-base %s\n' "$(docker buildx imagetools inspect "ghcr.io/dimipaun/fugaro-base:${{ needs.version.outputs.version }}" --format '{{.Manifest.Digest}}')" >> image-digests.txt
-          printf 'fugaro-history %s\n' "$(cat history-digest.txt)" >> image-digests.txt
-      - name: Sign the digest manifest
-        run: sh images/sign-digests.sh image-digests.txt
-        env: { COSIGN_EXPERIMENTAL: "1" }
-      - name: Upload the digest manifest to the release
-        run: gh release upload "v${{ needs.version.outputs.version }}" image-digests.txt image-digests.txt.sigstore.json
-        env: { GH_TOKEN: "${{ github.token }}" }
+            digests="$digests $(docker image inspect --format '{{index .RepoDigests 0}}' "$repo:$VERSION-$arch")"
+            docker image inspect --format '{{index .RepoDigests 0}}' "$repo:$VERSION-$arch" | sed 's/.*@//' > "digest-$arch.txt"
+            docker image rm fugaro-base:ci "$repo:$VERSION-$arch" >/dev/null
+          done
+          # … (existing tags/imagetools create block, unchanged) …
+          docker buildx imagetools inspect "$repo:$VERSION" --format '{{.Manifest.Digest}}' > digest-index.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fugaro-base-digests
+          path: digest-*.txt
+          retention-days: 1
 ```
 
-(`id-token: write` is already a job permission needed for keyless cosign; `TestOnlyPublishJobsHoldPackagesWrite`-style review confirms no *new* job gains `packages: write` — this step runs inside the existing `publish-base` job, which already has it for the image pushes above it.)
+In `publish`'s "Load and publish" step, only for the `history` leg (`if: matrix.base == 'history' && contains(needs.version.outputs.kinds, ',history,')`), resolve and upload its digest the same way:
 
-`docs/pending-workflows/README.md`'s `## images.yml` section is replaced (not appended to): it now describes *this* diff — one new `sign-digests`/upload sequence in `publish-base`, against the real, already-merged `.github/workflows/images.yml` — instead of the base-image consolidation diff that commit `356f7b1` already copied in. The "Copying a file in" instructions and the `TestReadWorkflowFallsBackOnlyWhilePending`-style tests above that section are unaffected, since they test the fallback mechanism itself, not any one pending file's content.
+```yaml
+      - name: Resolve the history digest
+        if: matrix.base == 'history' && contains(needs.version.outputs.kinds, ',history,')
+        run: docker buildx imagetools inspect "ghcr.io/dimipaun/fugaro-history:${{ needs.version.outputs.version }}" --format '{{.Manifest.Digest}}' > digest-history.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: matrix.base == 'history' && contains(needs.version.outputs.kinds, ',history,')
+        with:
+          name: fugaro-history-digest
+          path: digest-history.txt
+          retention-days: 1
+```
+
+New job, after `publish-base`:
+
+```yaml
+  # Signs the base image's digests for fugaro upgrade/init/image refresh to
+  # verify (design retire-image-mirror.md §2, F1 for the base image). Holds
+  # id-token: write (keyless cosign) and contents: write (gh release
+  # upload), and deliberately NEVER packages: write — it never touches the
+  # registry, so it must not be folded into publish-base or publish, which
+  # already hold packages: write for the image pushes above.
+  sign-base-digests:
+    needs: [version, publish-base, publish]
+    if: needs.version.outputs.publish == 'true' && contains(needs.version.outputs.kinds, ',base,')
+    permissions:
+      id-token: write
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: fugaro-base-digests }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: contains(needs.version.outputs.kinds, ',history,')
+        with: { name: fugaro-history-digest }
+      - name: Build the digest manifest
+        run: |
+          set -eu
+          : > image-digests.txt
+          printf 'fugaro-base-amd64 sha256:%s\n' "$(cat digest-amd64.txt)" >> image-digests.txt
+          printf 'fugaro-base-arm64 sha256:%s\n' "$(cat digest-arm64.txt)" >> image-digests.txt
+          printf 'fugaro-base sha256:%s\n' "$(cat digest-index.txt)" >> image-digests.txt
+          if [ -f digest-history.txt ]; then
+            printf 'fugaro-history sha256:%s\n' "$(cat digest-history.txt)" >> image-digests.txt
+          fi
+      # PIN: resolve sigstore/cosign-installer's current release SHA before
+      # copying this file in (docs/pending-workflows/README.md "Before you
+      # copy: check the action pins") — not fabricated here.
+      - uses: sigstore/cosign-installer@<PIN>
+      - name: Sign the digest manifest
+        run: sh images/sign-digests.sh image-digests.txt
+      - name: Wait for the release, then upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ needs.version.outputs.version }}
+        run: |
+          set -eu
+          tries=0
+          until gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; do
+            tries=$((tries + 1))
+            if [ "$tries" -ge 30 ]; then
+              echo "release $TAG did not appear after $tries tries (release.yml and images.yml are independent workflows on the same tag push)" >&2
+              exit 1
+            fi
+            sleep 20
+          done
+          gh release upload "$TAG" image-digests.txt image-digests.txt.sigstore.json --repo "$GITHUB_REPOSITORY" --clobber
+```
+
+`docs/pending-workflows/README.md`'s `## images.yml` section is replaced (not appended to): it now describes *this* diff — the digest-writing additions to `publish-base` and `publish`, and the new `sign-base-digests` job — against the real, already-merged `.github/workflows/images.yml`, instead of the base-image consolidation diff that commit `356f7b1` already copied in. The "Copying a file in" instructions and the `TestReadWorkflowFallsBackOnlyWhilePending`-style tests above that section are unaffected, since they test the fallback mechanism itself, not any one pending file's content.
 
 Run: `go test ./images/ -count=1`
 Expected: PASS.
@@ -324,18 +461,22 @@ Expected: PASS.
 **Flag for opus review:** this is where "copied" becomes "verified"; a code path that falls back to an unverified value (for example, reusing the old `image.BaseRef` tag-only fallback when `basepin.Resolve` errors, instead of refusing) would silently reintroduce the weaker trust model the design is replacing it with.
 
 **Files:**
-- Modify: `internal/cli/init_images.go` (delete the base-kind branch of `items()`, `managedVersion`/`isManaged`/`record()`'s base-kind path), `internal/cli/image_refresh_rules.go` (`refreshBase` resolves+verifies instead of building a `mirror.Dest`), `internal/cli/image_refresh_steps.go` (`refreshBase` step's confirmation text), `internal/image/local.go` (`BaseRef` either gains a verified form or is replaced by a thin call into `basepin` — the plan's implementer picks one, see note below)
+- Modify: `internal/cli/init_images.go` (delete `items()`'s base-kind branch, `confirmReplace`'s base-kind path and `record()`'s base-kind write; `managedVersion`/`isManaged` and `curVersion` — defined here, used by `image_refresh_rules.go` too — stay, with the signature change below, not deleted), `internal/cli/image_refresh_rules.go` (`refreshBase` resolves+verifies instead of building a `mirror.Dest`), `internal/cli/image_refresh_steps.go` (`refreshBase` step's confirmation text), `internal/image/local.go` (`BaseRef` either gains a verified form or is replaced by a thin call into `basepin` — the plan's implementer picks one, see note below)
 - Modify tests: `internal/cli/init_images_test.go`, `internal/cli/image_refresh_rules_test.go`, `internal/cli/image_refresh_test.go`
 
 **Interfaces:**
-- `managedVersion(ref, source, kind string) (version string, ok bool)`: `source` replaces today's `host` parameter — a managed ref is now recognized by the **configured image source prefix** (`ghcr.io/dimipaun` or `--image-source`), not the installation's own registry host. `isManaged` follows the same signature change.
-- `refreshBase(ctx context.Context, lc *localcfg.Config, kind, ver string, resolve basepinResolver) (string, error)`, where `basepinResolver` is a small func type (`func(ctx context.Context, name, version string) (string, error)`) the production code points at `basepin.Resolve` (with the real `Source`/`Verifier`) and tests point at a fake — keeping `internal/cli` free of a direct `sigstore-go` import, which stays inside `internal/basepin` alone.
+- `managedVersion(ref, host, source, kind string) (version string, ok bool)`: gains a **second** prefix parameter, `source`; it does not replace `host`. Both are needed simultaneously, because a managed ref can legitimately be in **either** shape across the migration (§5 of the design doc): `host` (today's parameter, the installation's own registry — real accessor `infra.RegistryHost(lc)`, already in the codebase) recognizes a pre-migration, Artifact-Registry-copied entry; `source` (new — the configured `--image-source` or `mirror.DefaultSources[0]`) recognizes the new ghcr.io-pinned shape. (An earlier draft of this document wrongly had `source` *replace* `host` in the signature, which cannot recognize an old entry at all — contradicting its own Step 3 prose, which already described checking both prefixes.) `isManaged` takes the same four parameters.
+- `imageSource(flag string) string` (**new**; nothing with this name exists in the codebase today): mirrors the existing `(*imagesStage).allow()` method's logic (`internal/cli/init_images.go`, deleted along with the rest of that base-kind branch) as a small free function, independent of `imagesStage` — `if flag != "" { return flag }; return mirror.DefaultSources[0]`. Callers pass `r.o.imageSource`/`o.imageSource` (the existing `refreshOptions`/`initOptions` field), unchanged.
+- `refreshBase(ctx context.Context, lc *localcfg.Config, host, source, kind, ver string, resolve func(ctx context.Context, name, version string) (string, error)) (string, error)` — the production code points `resolve` at `basepin.Resolve` (with the real `Source`/`Verifier`) and tests point it at a fake — keeping `internal/cli` free of a direct `sigstore-go` import, which stays inside `internal/basepin` alone.
 
 - [ ] **Step 1: Write the failing tests**
 
 `internal/cli/image_refresh_rules_test.go` (replacing the existing `TestRefreshBase`, which built `mirror.Dest` paths that no longer exist for `base`):
 
 ```go
+const testHost = "us-east5-docker.pkg.dev/proj-1234" // infra.RegistryHost(lc), fixed for these tests
+const testSource = "ghcr.io/dimipaun"                 // imageSource(""), mirror.DefaultSources[0]
+
 func TestRefreshBaseResolvesAndVerifies(t *testing.T) {
 	lc := &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", Region: "us-east5"}
 	resolved := "ghcr.io/dimipaun/fugaro-base:0.7.1@sha256:" + strings.Repeat("c", 64)
@@ -345,7 +486,7 @@ func TestRefreshBaseResolvesAndVerifies(t *testing.T) {
 		}
 		return resolved, nil
 	}
-	got, err := refreshBase(context.Background(), lc, "base", "0.7.1", resolve)
+	got, err := refreshBase(context.Background(), lc, testHost, testSource, "base", "0.7.1", resolve)
 	if err != nil || got != resolved {
 		t.Errorf("got %q, %v; want %q", got, err, resolved)
 	}
@@ -355,34 +496,54 @@ func TestRefreshBaseKeepsANewerManagedCopy(t *testing.T) {
 	newer := "ghcr.io/dimipaun/fugaro-base:0.8.0@sha256:" + strings.Repeat("d", 64)
 	lc := &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", Region: "us-east5", BaseImages: map[string]string{"base": newer}}
 	resolve := func(context.Context, string, string) (string, error) { t.Fatal("must not resolve: the existing copy is newer"); return "", nil }
-	got, err := refreshBase(context.Background(), lc, "base", "0.7.1", resolve)
+	got, err := refreshBase(context.Background(), lc, testHost, testSource, "base", "0.7.1", resolve)
 	if err != nil || got != newer {
 		t.Errorf("got %q, %v; want the kept newer copy %q", got, err, newer)
+	}
+}
+
+func TestRefreshBaseKeepsANewerPreMigrationManagedCopy(t *testing.T) {
+	// An old, Artifact-Registry-hosted copy, newer than this release: still
+	// recognized and kept (host, not source, is what matches it).
+	oldNewer := testHost + "/fugaro-base/fugaro-base:0.8.0"
+	lc := &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", Region: "us-east5", BaseImages: map[string]string{"base": oldNewer}}
+	resolve := func(context.Context, string, string) (string, error) { t.Fatal("must not resolve: the existing copy is newer"); return "", nil }
+	got, err := refreshBase(context.Background(), lc, testHost, testSource, "base", "0.7.1", resolve)
+	if err != nil || got != oldNewer {
+		t.Errorf("got %q, %v; want the kept newer copy %q", got, err, oldNewer)
 	}
 }
 
 func TestRefreshBaseRefusesAnUnverifiedResolution(t *testing.T) {
 	lc := &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", Region: "us-east5"}
 	resolve := func(context.Context, string, string) (string, error) { return "", errors.New("certificate identity mismatch") }
-	if _, err := refreshBase(context.Background(), lc, "base", "0.7.1", resolve); err == nil {
+	if _, err := refreshBase(context.Background(), lc, testHost, testSource, "base", "0.7.1", resolve); err == nil {
 		t.Error("want an error: resolve failed, nothing is recorded unverified")
 	}
 }
 
-func TestIsManagedChecksTheImageSourceNotTheInstallationRegistry(t *testing.T) {
-	ref := "ghcr.io/dimipaun/fugaro-base:0.7.1@sha256:" + strings.Repeat("c", 64)
-	if v, ok := managedVersion(ref, "ghcr.io/dimipaun", "base"); !ok || v != "0.7.1" {
-		t.Errorf("managedVersion(%q) = %q, %v", ref, v, ok)
+// TestManagedVersionRecognizesBothShapes: a managed ref can be in EITHER
+// shape across the migration (design retire-image-mirror.md §5), so
+// managedVersion/isManaged need host AND source, not source alone.
+func TestManagedVersionRecognizesBothShapes(t *testing.T) {
+	pinned := "ghcr.io/dimipaun/fugaro-base:0.7.1@sha256:" + strings.Repeat("c", 64)
+	if v, ok := managedVersion(pinned, testHost, testSource, "base"); !ok || v != "0.7.1" {
+		t.Errorf("managedVersion(%q) = %q, %v", pinned, v, ok)
 	}
-	if _, ok := managedVersion(ref, "ghcr.io/someone-else", "base"); ok {
+	if _, ok := managedVersion(pinned, testHost, "ghcr.io/someone-else", "base"); ok {
 		t.Error("a ref under another owner must not be managed")
 	}
 	// The pre-migration, installation-registry-hosted shape stays
 	// recognized too, so an old base_images.base entry is not treated as a
-	// custom base (design retire-image-mirror.md §5).
-	old := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.7.0"
-	if v, ok := managedVersion(old, "ghcr.io/dimipaun", "base"); !ok || v != "0.7.0" {
+	// custom base.
+	old := testHost + "/fugaro-base/fugaro-base:0.7.0"
+	if v, ok := managedVersion(old, testHost, testSource, "base"); !ok || v != "0.7.0" {
 		t.Errorf("an old copied ref must still be recognized: managedVersion(%q) = %q, %v", old, v, ok)
+	}
+	// An old-shaped ref under ANOTHER project's registry host is not
+	// managed by this installation's config either.
+	if _, ok := managedVersion(old, "us-east5-docker.pkg.dev/other-project", testSource, "base"); ok {
+		t.Error("an old ref under another project's registry must not be managed")
 	}
 }
 ```
@@ -391,7 +552,7 @@ func TestIsManagedChecksTheImageSourceNotTheInstallationRegistry(t *testing.T) {
 
 - [ ] **Step 2: Run them to see them fail**
 
-Run: `go test ./internal/cli/ -run 'TestRefreshBase|TestIsManaged' -count=1`
+Run: `go test ./internal/cli/ -run 'TestRefreshBase|TestManagedVersion' -count=1`
 Expected: FAIL (old signatures, old `mirror.Dest`-based implementation).
 
 - [ ] **Step 3: Implement**
@@ -401,25 +562,38 @@ Expected: FAIL (old signatures, old `mirror.Dest`-based implementation).
 ```go
 // refreshBase is the base image kind's ref once the base step has run:
 // this release's verified pin, or a newer managed copy an earlier CLI
-// already recorded (never downgraded). resolve is basepin.Resolve, wired
-// by the caller with the real Source and Verifier; tests supply a fake.
-func refreshBase(ctx context.Context, lc *localcfg.Config, kind, ver string, resolve func(ctx context.Context, name, version string) (string, error)) (string, error) {
+// already recorded (never downgraded, in either shape — host recognizes a
+// pre-migration copy, source the new pinned form). resolve is
+// basepin.Resolve, wired by the caller with the real Source and Verifier;
+// tests supply a fake. Callers pass host from infra.RegistryHost(lc)
+// (unchanged, existing) and source from imageSource(o.imageSource) (new).
+func refreshBase(ctx context.Context, lc *localcfg.Config, host, source, kind, ver string, resolve func(ctx context.Context, name, version string) (string, error)) (string, error) {
 	if !releaseRE.MatchString(ver) {
 		return "", userErr("fugaro image refresh needs a release build of fugaro: %q is not a release version", ver)
 	}
-	source := imageSourcePrefix() // mirror.DefaultSources[0] or --image-source, unchanged
 	cur := lc.BaseImage(kind)
-	if cur != "" && !isManaged(cur, source, kind) {
+	if cur != "" && !isManaged(cur, host, source, kind) {
 		return "", userErr("base_images.%s is %s: not a release image fugaro verified, and fugaro image refresh never replaces one", kind, pluginwire.Printable(cur))
 	}
-	if cur != "" && newer(curVersion(cur, source, kind), ver) {
+	if cur != "" && newer(curVersion(cur, host, source, kind), ver) {
 		return cur, nil // a newer managed copy is kept; nothing is re-resolved
 	}
 	return resolve(ctx, "fugaro-"+kind, ver)
 }
+
+// imageSource is the configured release source prefix: --image-source when
+// set, else the default (mirror.DefaultSources[0], "ghcr.io/dimipaun").
+// New: replaces (*imagesStage).allow()'s now-deleted base-kind use of this
+// same logic, as a free function so refreshBase needs no imagesStage.
+func imageSource(flag string) string {
+	if flag != "" {
+		return flag
+	}
+	return mirror.DefaultSources[0]
+}
 ```
 
-`managedVersion`/`isManaged` change their second parameter from the installation's registry host to the configured source prefix, and their shared-prefix check (`strings.CutPrefix(ref, host+"/"+mirror.BaseRepository+"/fugaro-"+kind+":")`) becomes two alternatives tried in order: the new `source+"/fugaro-"+kind+":"` prefix (ghcr.io-shaped, digest-and-tag), and the old `<install registry>/`+`mirror.BaseRepository`+`/fugaro-`+kind+`:` prefix kept **only** for recognizing a pre-migration entry as still-managed (never newly written again) — exactly the backward-compatible case `TestIsManagedChecksTheImageSourceNotTheInstallationRegistry`'s last assertion pins.
+`managedVersion`/`isManaged` gain a `source` parameter alongside the existing `host`, and their shared-prefix check (today, `strings.CutPrefix(ref, host+"/"+mirror.BaseRepository+"/fugaro-"+kind+":")`) becomes two alternatives tried in order: the new `source+"/fugaro-"+kind+":"` prefix (ghcr.io-shaped, digest-and-tag), and the existing `host+"/"+mirror.BaseRepository+"/fugaro-"+kind+":"` prefix, unchanged, kept for recognizing a pre-migration entry as still-managed (never newly written again) — exactly the backward-compatible case `TestManagedVersionRecognizesBothShapes` pins.
 
 `internal/image/local.go`'s `BaseRef(base, version string) (string, error)` — used today as an **offline, no-network** fallback wherever `base_images` has no entry yet (`refreshReload`, `image.go`, `init.go`, `image_layer.go`) — keeps that exact offline contract and its callers unchanged; it is not where verification happens (verification happens once, at `image refresh`/`init --base`/`upgrade` time, and is **recorded** into `base_images.base`). Those callers already read `base_images.base` first and fall back to `BaseRef` only when it is unset, so after one successful `image refresh` the verified, digest-pinned value is what every caller actually uses; `BaseRef`'s bare-tag fallback is reached only for a repository that has never run `image refresh` at all, in which case it already refuses to submit a build in some callers and prints "no published base image yet" in others — unchanged by this task, since fixing that corner is exactly what running `image refresh` once does.
 
@@ -431,56 +605,64 @@ Expected: PASS.
 **Flag for opus review:** `cover.go` is the one piece of code that decides what "nothing is applied unseen" silently covers; a loose match here (anything under `ghcr.io/dimipaun`, or anything with an `@sha256:`) would let a hand-edited `base_images.base` naming an attacker's own image sail through the single confirmation instead of asking its own.
 
 **Files:**
-- Modify: `internal/infra/tf/cover.go` (`checkSpecs`'s `inRegistry` gains a second check), `internal/infra/tf/cover_test.go`
+- Modify: `internal/infra/tf/cover.go` (`checkSpecs`'s `inRegistry` gains a second check; new import `internal/config`, for `config.Bases` — checked for an import cycle: `internal/config` does not import `internal/infra/tf` or anything under `internal/infra`, so none exists), `internal/infra/tf/cover_test.go` (also `internal/cli/init_review.go`, which constructs the real `tf.Cover{}` value — see below)
 
 **Interfaces:**
-- `Cover` gains a field, `ImageSource string` (the configured `mirror.DefaultSources[0]`/`--image-source`, passed in by the caller exactly as `Registry`/`Projects` already are), used only to build the second allowed prefix.
-- `inRegistry`'s replacement, `coveredBaseImage(ref string) bool`, used **only** for `s.BaseImages` entries (never for `s.Registry` or a build service account, which keep today's `inRegistry` exactly): `inRegistry(ref) || isPinnedSource(ref)`, where `isPinnedSource` requires an **exact** `<c.ImageSource>/fugaro-<kind>:<X.Y.Z>@sha256:<64 hex>` match (reusing the `baseRefReleaseRE`-shaped parse, kind one of `config.Bases`) — never a prefix match alone, never a bare tag, never missing the digest.
+- `Cover` gains a field, `ImageSource string` (the configured `mirror.DefaultSources[0]`/`--image-source`, passed in by the caller exactly as `Registry`/`Projects` already are), used only to build the second allowed prefix. Production wiring: `internal/cli/init_review.go`'s `(*initEngine).cover()` — the one place that actually constructs a `tf.Cover{}` today (`c := tf.Cover{Projects: …, Region: …, Buckets: …}`, then sets `c.Registry` a few lines down) — gains `c.ImageSource = imageSource(e.r.o.imageSource)` (Task 3's new `imageSource` function) alongside its existing `c.Registry` assignment.
+- `inRegistry`'s replacement, `coveredBaseImage(ref string) bool`, used **only** for `s.BaseImages` entries (never for `s.Registry` or a build service account, which keep today's `inRegistry` exactly): `inRegistry(ref) || isPinnedSource(ref)`, where `isPinnedSource` requires an **exact, fully-anchored** `<c.ImageSource>/fugaro-<kind>:<X.Y.Z>@sha256:<64 hex>` match (one of `config.Bases`) — never a prefix match alone, never a bare tag, never missing the digest, and never anything the existing `refChars`/`".."` checks would themselves refuse.
 
 - [ ] **Step 1: Write the failing tests**
 
-`internal/infra/tf/cover_test.go` (added alongside the existing table in `TestCheckSpecs`-style tests, using the same `spec(...)`/`jobWithSpec(...)` helpers already in the file):
+`internal/infra/tf/cover_test.go`: add these cases to `TestCoverCheckSpec`'s existing map literal (not a new test — `jobWithSpec`/`spec(registry, bases...)` are that test's own existing fixtures, and `reg` there is `"us-east5-docker.pkg.dev/proj-1/"`, trailing slash included), and add `ImageSource: "ghcr.io/dimipaun"` to the file's shared `testCover` fixture (`cover_test.go:21`) so every case in the table — old and new — runs against it:
 
 ```go
-"pinned external base is covered": {
-	jobWithSpec(spec(reg+"r", "ghcr.io/dimipaun/fugaro-base:0.7.1@sha256:"+strings.Repeat("c", 64)), false), true,
-},
-"external base with no digest is NOT covered": {
-	jobWithSpec(spec(reg+"r", "ghcr.io/dimipaun/fugaro-base:0.7.1"), false), false,
-},
-"external base under another owner is NOT covered": {
-	jobWithSpec(spec(reg+"r", "ghcr.io/someone-else/fugaro-base:0.7.1@sha256:"+strings.Repeat("c", 64)), false), false,
-},
-"external base naming another kind is NOT covered": {
-	jobWithSpec(spec(reg+"r", "ghcr.io/dimipaun/fugaro-other:0.7.1@sha256:"+strings.Repeat("c", 64)), false), false,
-},
+"pinned external base is covered":                                 {jobWithSpec(spec(reg+"r", "ghcr.io/dimipaun/fugaro-base:0.7.1@sha256:"+strings.Repeat("c", 64)), false), true},
+"external base with no digest is NOT covered":                     {jobWithSpec(spec(reg+"r", "ghcr.io/dimipaun/fugaro-base:0.7.1"), false), false},
+"external base under another owner is NOT covered":                {jobWithSpec(spec(reg+"r", "ghcr.io/someone-else/fugaro-base:0.7.1@sha256:"+strings.Repeat("c", 64)), false), false},
+"external base naming another kind is NOT covered":                {jobWithSpec(spec(reg+"r", "ghcr.io/dimipaun/fugaro-other:0.7.1@sha256:"+strings.Repeat("c", 64)), false), false},
+// Regression case for the un-anchored match this task's own first draft
+// shipped: "ghcr.io/dimipaun/fugaro-base" is a literal string prefix of
+// "ghcr.io/dimipaun/fugaro-base-evil/x:...", so a HasPrefix-plus-unanchored-
+// regex check would wrongly cover this. The fix anchors the match to
+// start exactly where the prefix ends.
+"external base with an evil suffix on the prefix is NOT covered":  {jobWithSpec(spec(reg+"r", "ghcr.io/dimipaun/fugaro-base-evil/x:0.7.1@sha256:"+strings.Repeat("c", 64)), false), false},
 ```
-
-(`reg` and `spec`/`jobWithSpec` are the file's existing fixtures; the `Cover` value the table's test constructs gains `ImageSource: "ghcr.io/dimipaun"`.)
 
 - [ ] **Step 2: Run them to see them fail**
 
-Run: `go test ./internal/infra/tf/ -run TestCheckSpecs -count=1`
+Run: `go test ./internal/infra/tf/ -run TestCoverCheckSpec -count=1`
 Expected: FAIL (`inRegistry` alone refuses every one of the new "covered" cases, and `Cover` has no `ImageSource` field yet).
 
 - [ ] **Step 3: Implement**
 
 ```go
-// pinnedSourceRE is an exact pinned external base: the configured source,
-// /fugaro-<kind>, :X.Y.Z, @sha256:<hex>, nothing else (design
-// retire-image-mirror.md §2's cover.go allowance: digest mandatory, no
-// prefix-only match).
-var pinnedSourceRE = regexp.MustCompile(`:([0-9]+\.[0-9]+\.[0-9]+)@sha256:[0-9a-f]{64}$`)
+// pinnedSourceRE matches the remainder immediately after an allowed
+// source+kind prefix has been trimmed off: it must START there (the ^
+// anchor against the trimmed remainder, not the whole ref) with exactly
+// ":X.Y.Z@sha256:<64 hex>" and nothing else. Without the ^ anchor here,
+// strings.HasPrefix(ref, prefix) plus an unanchored regexp.MatchString
+// would wrongly accept "ghcr.io/dimipaun/fugaro-base-evil/x:0.7.1@sha256:…"
+// (HasPrefix only checks that "ghcr.io/dimipaun/fugaro-base" is a leading
+// SUBSTRING, not that a path boundary follows it, and MatchString finds a
+// match anywhere in the remainder, not only at its start) — pinned here by
+// "external base with an evil suffix on the prefix is NOT covered".
+var pinnedSourceRE = regexp.MustCompile(`^:([0-9]+\.[0-9]+\.[0-9]+)@sha256:[0-9a-f]{64}$`)
 
 func (c Cover) coveredBaseImage(ref string, inRegistry func(string) bool) bool {
 	if inRegistry(ref) {
 		return true
 	}
-	if c.ImageSource == "" {
+	// The same sanity checks inRegistry itself applies to every ref it
+	// reads (refChars's character allowlist, and no ".." path segment):
+	// a fully-anchored pinnedSourceRE already constrains everything after
+	// the literal prefix, but the prefix itself (c.ImageSource, kind) is
+	// reused here with no fresh validation, so this stays, defense in depth.
+	if c.ImageSource == "" || !refChars.MatchString(ref) || slices.Contains(strings.Split(ref, "/"), "..") {
 		return false
 	}
 	for _, kind := range config.Bases {
-		if prefix := c.ImageSource + "/fugaro-" + kind; strings.HasPrefix(ref, prefix) && pinnedSourceRE.MatchString(strings.TrimPrefix(ref, prefix)) {
+		prefix := c.ImageSource + "/fugaro-" + kind
+		if rest, ok := strings.CutPrefix(ref, prefix); ok && pinnedSourceRE.MatchString(rest) {
 			return true
 		}
 	}
@@ -488,48 +670,79 @@ func (c Cover) coveredBaseImage(ref string, inRegistry func(string) bool) bool {
 }
 ```
 
+(`strings.CutPrefix` replaces the earlier `HasPrefix` + `TrimPrefix` pair with one call that also makes the "did it actually have this prefix" check explicit, rather than two calls that could drift out of sync.)
+
 `checkSpecs`'s `s.BaseImages` loop calls `c.coveredBaseImage(ref, inRegistry)` instead of `inRegistry(ref)` directly; `s.Registry` and the build-service-account check are untouched.
 
 Run: `go test ./internal/infra/tf/... -count=1`
 Expected: PASS.
 
-## Task 5: Terraform — remove the build account's `fugaro-base` reader grant
+## Task 5: Terraform — remove the build account's `fugaro-base` reader grant, safely ordered
+
+**Flag for opus review:** the ordering hazard below (a repository's build account losing read access to `fugaro-base` before the installation's `base_images.base` is actually pinned) is a real availability regression, not just friction, if the precondition is missed or implemented loosely enough to be bypassed.
+
+**The address, corrected.** `deploy/terraform/gcp/roots/repo/main.tf` invokes `module "repo" { … }` once per apply, with no `for_each`/`count` on the module block, and `build.tf`'s `google_artifact_registry_repository_iam_member.build_base` resource itself has no `for_each`/`count` either — so its Terraform address is the plain `module.repo.google_artifact_registry_repository_iam_member.build_base`, **not** indexed by the repository's name (an earlier draft of this document wrote `["<repo>"]`, which assumed a `for_each` that does not exist).
+
+**The ordering hazard (design §4) and its fix.** `base_images.base` is one value shared by the whole installation, while the grant this task removes is applied per repository, by that repository's own `fugaro init --repo`. If an operator runs `fugaro init --repo` for one repository before *any* repository of that installation has ever run `fugaro image refresh`/`fugaro upgrade` (the step that moves `base_images.base` to the new pin, Task 3), that repository's builds and its own daily check job (which submits Cloud Build as, and runs as, the same build account) would try to pull the still-old, Artifact-Registry-hosted base using a grant Terraform just removed, and fail. This is closed with a **Go-side precondition**, not a Terraform `count` (a `count`-conditioned version of an already-unindexed resource would need a `moved` block to avoid Terraform treating the indexing change itself as a replace, and this repository has no existing `moved`-block precedent to build on — enforcing the order in Go, once, before Terraform is ever invoked, is simpler and needs no Terraform-state surgery).
 
 **Files:**
+- Modify: `internal/cli/init_repo_stage.go` (`(*repositoryStage).Plan`, confirmed to exist at `init_repo_stage.go:134` — the implementer confirms the exact point to add the check when this task starts, since it is new code with no existing analogue to cite a line number for yet): gains a precondition, checked before any Terraform plan is generated, that refuses with a clear message naming `fugaro image refresh`/`fugaro upgrade` when the local config's `base_images.base` is not yet recognized as pinned (`isManaged` against the configured host/source, Task 3) — mirroring the shape of the existing `customBaseRefusal`/`gcpProjectProblems` preflight checks elsewhere in this package, not a new pattern.
 - Modify: `deploy/terraform/gcp/modules/repo/build.tf` (delete `google_artifact_registry_repository_iam_member.build_base`)
 - Regenerate: `internal/infra/tf/testdata/golden/repo*.plan.json` (`scripts/gen-golden-plans.sh`, per the base-image plan's own Task 19 precedent)
-- Modify: `docs/base-image-migration.md` (a new, short section: the one-time `--allow-delete` an operator sees on the first `fugaro init --repo` after upgrading)
+- Modify: `docs/base-image-migration.md` (a new, short section: the required order — pin first, `init --repo` second — and the one-time `--allow-delete` an operator sees)
 
-**Interfaces:** none new; this is a resource deletion plus the golden-plan regeneration its removal requires, and a doc paragraph.
+**Interfaces:** no new exported type; one new unexported precondition function in `init_repo_stage.go`, shaped like `func (s *repositoryStage) baseIsPinned(lc *localcfg.Config) error` (name is illustrative — the implementer may name it to fit the file's existing conventions), returning a `userErr` naming the fix when `base_images.base` is set but not `isManaged`.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing tests**
 
-A golden-plan test already exists (`internal/infra/tf/testdata/golden/repo*.plan.json`-driven tests in this package); add one assertion that the regenerated golden plan's resource list no longer contains `google_artifact_registry_repository_iam_member.build_base`, so a future accidental re-add is caught:
+The ordering precondition, `internal/cli/init_repo_stage_test.go` (shape only — the implementer wires it to this file's actual fixtures, which this plan has not inspected in enough depth to sketch byte-exactly):
 
 ```go
-func TestRepoPlanNoLongerGrantsBuildBaseRead(t *testing.T) {
-	for _, addr := range goldenRepoPlanAddresses(t) { // existing test helper reading the golden file(s)
-		if strings.Contains(addr, "build_base") {
-			t.Errorf("golden plan still has %s: the build account no longer reads fugaro-base (base images are pulled directly, design retire-image-mirror.md §4)", addr)
+func TestRepoStageRefusesBeforeTheBaseIsPinned(t *testing.T) {
+	lc := &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", Region: "us-east5",
+		BaseImages: map[string]string{"base": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.6.0"}} // old, unpinned shape
+	// ... build the stage fixture this test file's existing helpers use ...
+	if _, err := stage.Plan(context.Background(), initflow.Env{}); err == nil || !strings.Contains(err.Error(), "fugaro image refresh") {
+		t.Errorf("Plan() = %v, want a refusal naming fugaro image refresh", err)
+	}
+}
+
+func TestRepoStagePlansOnceTheBaseIsPinned(t *testing.T) {
+	lc := &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", Region: "us-east5",
+		BaseImages: map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.7.1@sha256:" + strings.Repeat("c", 64)}}
+	// ... same fixture, now expected to proceed to its normal Plan() path ...
+}
+```
+
+The golden-plan regression test, `internal/infra/tf/cover_test.go` (reusing the real `goldenPlan(t, name)` helper already in this package, `cover_golden_test.go:21` — there is no `goldenRepoPlanAddresses` helper, invented in an earlier draft of this document; none is needed):
+
+```go
+// TestGoldenRepoPlanNoLongerGrantsBuildBaseRead pins that regenerating the
+// repo golden plan (after this task's Terraform change) no longer lists the
+// build_base grant, so a future accidental re-add is caught.
+func TestGoldenRepoPlanNoLongerGrantsBuildBaseRead(t *testing.T) {
+	for _, rc := range goldenPlan(t, "repo").ResourceChanges {
+		if strings.Contains(rc.Address, "build_base") {
+			t.Errorf("golden repo plan still has %s: the build account no longer reads fugaro-base (base images are pulled directly, design retire-image-mirror.md §4)", rc.Address)
 		}
 	}
 }
 ```
 
-- [ ] **Step 2: Run it to see it fail**
+- [ ] **Step 2: Run them to see them fail**
 
-Run: `go test ./internal/infra/tf/ -run TestRepoPlanNoLongerGrantsBuildBaseRead -count=1`
-Expected: FAIL (the current golden plan still has the grant).
+Run: `go test ./internal/cli/ -run TestRepoStage -count=1` and `go test ./internal/infra/tf/ -run TestGoldenRepoPlanNoLongerGrantsBuildBaseRead -count=1`
+Expected: FAIL (no precondition yet; the current golden plan still has the grant).
 
 - [ ] **Step 3: Implement**
 
-Delete the `google_artifact_registry_repository_iam_member.build_base` resource block from `deploy/terraform/gcp/modules/repo/build.tf`; run `scripts/gen-golden-plans.sh` to regenerate the golden JSON fixtures against a fake provider (no live Terraform apply — the existing script already works this way for every other golden-plan change in this repository).
+Add the precondition to `(*repositoryStage).Plan`, before it builds or shows any Terraform plan. Delete the `google_artifact_registry_repository_iam_member.build_base` resource block from `deploy/terraform/gcp/modules/repo/build.tf`; run `scripts/gen-golden-plans.sh` to regenerate the golden JSON fixtures against a fake provider (no live Terraform apply — the existing script already works this way for every other golden-plan change in this repository).
 
 `docs/base-image-migration.md` gains, under "Everywhere":
 
-> The first `fugaro init --repo` (or whole-installation `fugaro init`) you run after upgrading past this change shows a `delete` of `google_artifact_registry_repository_iam_member.build_base["<repo>"]` (the build account's now-unneeded read grant on `fugaro-base`) and refuses until you pass the exact flag it prints: `--allow-delete 'google_artifact_registry_repository_iam_member.build_base["<repo>"]'`. This is `tf.Guard` doing its job — confirm it once per repository, the same way any other intentional Terraform removal needs `--allow-delete`.
+> **Order matters for this step.** Run `fugaro image refresh` (or `fugaro upgrade`) once, against any one onboarded repository of your installation, **before** running `fugaro init --repo` (or whole-installation `fugaro init`) anywhere in it: `base_images.base` is shared by the whole installation, but each repository's build account's read grant on `fugaro-base` is removed per repository, by that repository's own `init --repo`, and a repository whose grant is removed before the base is pinned would fail its next build and its daily check until it is. `fugaro init --repo` refuses outright, naming this fix, if it isn't pinned yet — it does not depend on you remembering the order. Once it is, that run's Terraform plan shows a `delete` of `module.repo.google_artifact_registry_repository_iam_member.build_base` (the build account's now-unneeded read grant); `tf.Guard` already prints the exact address to pass with `--allow-delete` in its refusal, so there is nothing to construct by hand.
 
-Run: `go test ./internal/infra/tf/... -count=1`
+Run: `go test ./internal/cli/... ./internal/infra/tf/... -count=1`
 Expected: PASS.
 
 ## Task 6: CLI surface cleanup — flags, help text, dead confirmations
@@ -552,8 +765,11 @@ func TestBaseFlagNoLongerCopiesAnything(t *testing.T) {
 	// --base base must either be refused or be a documented no-op naming
 	// fugaro image refresh; it must never attempt a copy (no mirror.Mirror
 	// is constructed, so a test fake that fails on any mirror call proves
-	// this even without a network).
-	out, err := executeInitPlanOnly(t, "--base", "base") // existing test helper
+	// this even without a network). executeStdin is the file's own existing
+	// helper (internal/cli/init_test.go already calls it this way, e.g.
+	// `executeStdin(t, "", "init", "--plan-only")`); there is no
+	// executeInitPlanOnly in this codebase.
+	out, _, err := executeStdin(t, "", "init", "--base", "base", "--plan-only")
 	if err != nil || strings.Contains(out, "copies") {
 		t.Errorf("out=%q err=%v; --base base must not describe a copy", out, err)
 	}
