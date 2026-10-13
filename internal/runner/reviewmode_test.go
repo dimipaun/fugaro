@@ -753,6 +753,27 @@ func TestReviewOnlyRefusesSeveralPRAtBootstrap(t *testing.T) {
 	}
 }
 
+// TestPickRefusesTooFewPRAtBootstrap: the lo != hi half of
+// TestReviewOnlyRefusesSeveralPRAtBootstrap's own ReviewPRRange check —
+// "review-only" has lo == hi (1, 1), whose message ("needs exactly N")
+// that test already covers; "pick" has lo != hi (2, 4), whose different
+// message ("needs %d to %d") is only reachable by giving it too few (here,
+// 1) or too many pull requests, neither of which any existing test does.
+//
+// Mutation (force the `if lo == hi { ... }` branch in runner.go's
+// bootstrap to always run): this test fails, finding "needs exactly 2
+// pull request(s)" instead of "needs 2 to 4 pull requests".
+func TestPickRefusesTooFewPRAtBootstrap(t *testing.T) {
+	h := newHarness(t, "", reviewTaskSpec("pick", pickYAML, 7))
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "pick needs 2 to 4 pull requests to review, got 1") {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if len(h.agent.calls) != 0 {
+		t.Fatalf("%d agent calls, want none", len(h.agent.calls))
+	}
+}
+
 // TestReviewModeCommentCarriesReportMarker: every other comment Fugaro
 // posts (followup.go, report.go, refused.go, runner.go) ends with
 // gitprov.ReportMarker(runID), so a later run can tell its own comment
@@ -1731,6 +1752,78 @@ func TestPickCommentsOnEveryPR(t *testing.T) {
 	}
 }
 
+// cancelAfterNthCommentProvider cancels an external context after its Nth
+// Comment call returns, simulating a halt/cancel landing mid-loop over
+// postReviewComments' several pull requests — the run's own ctx (passed to
+// runner.Run, not to this fake's Comment, which the real provider.Comment
+// would otherwise see) is cancelled between two of its Comment calls.
+type cancelAfterNthCommentProvider struct {
+	*fake.Provider
+	calls  int
+	n      int
+	cancel context.CancelFunc
+}
+
+func (p *cancelAfterNthCommentProvider) Comment(ctx context.Context, pr gitprov.PR, body string) error {
+	// A real provider's HTTP call would see a cancelled context and fail
+	// with it; fake.Provider ignores ctx entirely, so this check stands in
+	// for that — it is what actually exercises whether postReviewComments
+	// passed the run's own (now-cancelled) ctx through, or a fresh
+	// WithoutCancel one.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	err := p.Provider.Comment(ctx, pr, body)
+	p.calls++
+	if p.calls == p.n {
+		p.cancel()
+	}
+	return err
+}
+
+// TestPickPostsEveryCommentDespiteCancellation: postReviewComments loops
+// over every reviewed pull request after the run itself has already
+// succeeded (OutcomeReviewed is set regardless) — a halt or cancel landing
+// mid-loop must not abort the remaining pull requests' comments with a
+// context error, the same reasoning every other must-land provider write in
+// this package already follows (refuseReview, prflow.go, refused.go,
+// runner.go: WithoutCancel+timeout, not the run's own ctx).
+//
+// Mutation (pass ctx directly to r.provider.Comment in postReviewComments
+// instead of a WithoutCancel+timeout cctx): this test fails, finding PR #9's
+// comment missing (or recorded as failed) because its Comment call saw the
+// already-cancelled run context.
+func TestPickPostsEveryCommentDespiteCancellation(t *testing.T) {
+	h := newHarness(t, "", reviewTaskSpec("pick", pickYAML, 7, 9))
+	pushReviewBranch(t, h, "a", func(dir string) { testutil.WriteFiles(t, dir, map[string]string{"a.txt": "x\n"}) })
+	pushReviewBranch(t, h, "b", func(dir string) { testutil.WriteFiles(t, dir, map[string]string{"b.txt": "x\n"}) })
+	addPR(h, 7, "a", "")
+	addPR(h, 9, "b", "")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cp := &cancelAfterNthCommentProvider{Provider: h.provider, n: 1, cancel: cancel}
+	h.deps.OpenProvider = gitprov.Static(cp)
+	h.agent.steps = []step{pickVerdict(9)}
+	rec, err := runner.Run(ctx, h.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Outcome != runstore.OutcomeReviewed {
+		t.Fatalf("rec = %+v", rec)
+	}
+	for _, n := range []int{7, 9} {
+		var c []string
+		for i := range h.provider.State.PRs {
+			if h.provider.State.PRs[i].Number == n {
+				c = h.provider.State.PRs[i].Comments
+			}
+		}
+		if len(c) != 1 || !strings.Contains(c[0], "keep #9") {
+			t.Fatalf("PR %d comments = %q, want one comment posted despite cancellation between PR #7 and PR #9's Comment calls", n, c)
+		}
+	}
+}
+
 // TestPickStripsClaudeConfigFromEveryWorktree: a pick run checks out each
 // pull request into its own worktree (reviewDir), not r.d.WorkDir, so
 // stripClaudeConfig must run per worktree too, not only for the
@@ -1789,6 +1882,32 @@ func TestPickInvalidKeepFailsWithoutPosting(t *testing.T) {
 				t.Fatalf("PR %d got a comment: %q", n, h.provider.State.PRs[i].Comments)
 			}
 		}
+	}
+}
+
+// TestPickRefusesWhenOnlyOneOfSeveralPRIsTrusted: checkReviewPRs loops over
+// every named pull request and calls checkReviewAuthor on each (reviewmode.go)
+// — a pick run naming several PRs together must refuse the whole set the
+// moment any one of them fails the trust gate, not review the trusted one
+// and silently skip the other. Here PR #7 is the harness's own default
+// (same repository, so trusted without any author fields set) and PR #9 is
+// an untrusted fork, named together in one pick task.
+//
+// Mutation (continue the loop instead of returning checkReviewAuthor's
+// error in checkReviewPRs): this test fails, finding the run proceeds to
+// the review stage instead of refusing at bootstrap.
+func TestPickRefusesWhenOnlyOneOfSeveralPRIsTrusted(t *testing.T) {
+	h := newHarness(t, "", reviewTaskSpec("pick", pickYAML, 7, 9))
+	pushReviewBranch(t, h, "a", func(dir string) { testutil.WriteFiles(t, dir, map[string]string{"a.txt": "x\n"}) })
+	pushReviewBranch(t, h, "b", func(dir string) { testutil.WriteFiles(t, dir, map[string]string{"b.txt": "x\n"}) })
+	addPR(h, 7, "a", "")
+	addPR(h, 9, "b", "outsider/repo")
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "not a trusted author") {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if len(h.agent.calls) != 0 {
+		t.Fatalf("%d agent calls, want none (bootstrap must refuse before the review stage)", len(h.agent.calls))
 	}
 }
 

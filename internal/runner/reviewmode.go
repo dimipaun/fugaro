@@ -494,7 +494,13 @@ func (r *run) keepIsOneOfReviewed(keep int) bool {
 // — and for a pick run (len > 1) which one to keep. A posting failure is
 // logged and recorded in the report (never the structured Reviewed entry,
 // whose Verdict is set regardless) and never retried in a loop: every
-// other pull request still gets its comment.
+// other pull request still gets its comment. Each Comment call gets its
+// own WithoutCancel+timeout context, the same best-effort pattern every
+// other must-land provider write in this package uses (refuseReview just
+// above, prflow.go, refused.go, runner.go): a halt or cancel landing
+// mid-loop over several pull requests must not abort the comment for the
+// remaining ones just because the run's own context was cancelled —
+// the run already succeeded by the time this is called.
 func (r *run) postReviewComments(ctx context.Context, v Verdict) {
 	nums := make([]int, len(r.reviewHeads))
 	for i, h := range r.reviewHeads {
@@ -506,7 +512,10 @@ func (r *run) postReviewComments(ctx context.Context, v Verdict) {
 	reviewed := make([]runstore.ReviewedPR, 0, len(r.reviewHeads))
 	for _, h := range r.reviewHeads {
 		reviewed = append(reviewed, runstore.ReviewedPR{Number: h.Number, SHA: h.SHA, Verdict: v.Verdict})
-		if err := r.provider.Comment(ctx, gitprov.PR{Number: h.Number}, body); err != nil {
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), giveUpCommentTimeout)
+		err := r.provider.Comment(cctx, gitprov.PR{Number: h.Number}, body)
+		cancel()
+		if err != nil {
 			r.d.Log.Warn("posting the review comment failed", "pr", h.Number, "err", r.redact(err.Error()))
 			r.commentsFailed = append(r.commentsFailed, h.Number)
 		}

@@ -147,6 +147,28 @@ func TestRecipeModeReviewMismatchFailsBeforeImplement(t *testing.T) {
 	}
 }
 
+// TestRecipeNonReviewModeMismatchFailsBeforeImplement: the mirror of
+// TestRecipeModeReviewMismatchFailsBeforeImplement's own mismatch check —
+// a task naming pull requests to review (r.review, decided from
+// spec.ReviewPRs alone) but an ordinary, non-"mode: review" recipe, must
+// be refused before implement, the same as the opposite mismatch is.
+//
+// Mutation (drop the `r.review && rcp.Mode != recipe.ModeReview` case from
+// runner.go's bootstrap switch): this test fails, finding implement runs
+// against the named pull request's branch instead of refusing up front.
+func TestRecipeNonReviewModeMismatchFailsBeforeImplement(t *testing.T) {
+	spec := recipeSpec(embeddedTask("two-rounds", twoRounds))
+	spec.ReviewPRs = []int{7}
+	h := newHarness(t, firstLineCfg(t, 2, ""), spec)
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "is not mode: review, but the task names pull requests to review") {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if len(h.agent.calls) != 0 {
+		t.Fatalf("%d agent calls, want none (implement must not run)", len(h.agent.calls))
+	}
+}
+
 // TestRecipeCheckStepReachesTheGate: an embedded recipe with a check step —
 // the same resolution path recipe.NotYetRunnable used to refuse before
 // Task 11's runner gated the run on it — now runs the gate instead: a clean
