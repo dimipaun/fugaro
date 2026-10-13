@@ -457,6 +457,19 @@ func TestReviewModeCommentNeutralizesBareWWW(t *testing.T) {
 	}
 }
 
+// decodeFindingEntities undoes neutralizeFinding's own '&'/'<'/'>' escapes
+// (only those three — not a general HTML entity decoder), the same way
+// GitHub's renderer would before a reader ever sees the comment: it is
+// what the "rendered text" assertions below compare against, since the
+// raw escaped form (what neutralizeFinding returns) is never what a
+// reader actually reads.
+func decodeFindingEntities(s string) string {
+	s = strings.ReplaceAll(s, "&amp;", "&")
+	s = strings.ReplaceAll(s, "&lt;", "<")
+	s = strings.ReplaceAll(s, "&gt;", ">")
+	return s
+}
+
 // TestReviewModeCommentNeutralizesHTMLEntities: GitHub's renderer decodes
 // an HTML entity reference to its literal character before any later
 // mention/autolink pass sees the text, so "&#x40;name", "&commat;name",
@@ -467,28 +480,62 @@ func TestReviewModeCommentNeutralizesBareWWW(t *testing.T) {
 // recognised as one: the renderer sees the literal text "&#x40;", not a
 // re-decoded '@'.
 //
-// Mutation (drop the `strings.ReplaceAll(s, "&", "&amp;")` line): this
-// test fails, finding each entity reference un-escaped (and, by the
-// comment thread's own established risk, effectively equivalent to the
-// character it decodes to once GitHub renders it).
+// This also checks the entities neutralizeFinding creates ITSELF render
+// back to exactly the plain text a finding's own author wrote — not a
+// corrupted "&amp;" (findingExtraPunctRE once included ';' in its
+// backslash-escape class, which escaped the ';' these entities end in,
+// breaking GitHub's own entity recognition: a reader saw the literal text
+// "&amp;", not "&"). Checking only "the entity marker survived" would not
+// have caught that: "&amp\;" still contains "&amp;" is false, so a
+// substring check happens to fail for the wrong reason, but a check that
+// merely looked for "&amp" would have missed it entirely.
+//
+// Mutation (drop the `strings.ReplaceAll(s, "&", "&amp;")` line): the
+// first group of sub-tests fails, finding each entity reference
+// un-escaped. Mutation (re-add ';' to findingExtraPunctRE's character
+// class): the second group fails, finding the rendered text still
+// contains a literal "&amp;" or "&lt;" instead of "&"/"<".
 func TestReviewModeCommentNeutralizesHTMLEntities(t *testing.T) {
-	cases := []struct {
-		name  string
-		input string
-	}{
-		{"at-hex", "&#x40;name"},
-		{"at-named", "&commat;name"},
-		{"hash-named", "&num;12"},
-		{"hash-hex-crossrepo", "org/repo&#x23;3"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			body := reviewFindingBody(t, "", nil, c.input)
-			if strings.Contains(body, c.input) {
-				t.Fatalf("the raw entity survived un-escaped: %q", body)
-			}
-		})
-	}
+	t.Run("attacker-entity-references", func(t *testing.T) {
+		cases := []struct {
+			name  string
+			input string
+		}{
+			{"at-hex", "&#x40;name"},
+			{"at-named", "&commat;name"},
+			{"hash-named", "&num;12"},
+			{"hash-hex-crossrepo", "org/repo&#x23;3"},
+		}
+		for _, c := range cases {
+			t.Run(c.name, func(t *testing.T) {
+				body := reviewFindingBody(t, "", nil, c.input)
+				if strings.Contains(body, c.input) {
+					t.Fatalf("the raw entity survived un-escaped: %q", body)
+				}
+			})
+		}
+	})
+	t.Run("rendered-text", func(t *testing.T) {
+		cases := []struct {
+			name  string
+			input string
+		}{
+			{"double-amp-and-lt", "a && b < c"},
+			{"generic-type", "List<T>"},
+		}
+		for _, c := range cases {
+			t.Run(c.name, func(t *testing.T) {
+				body := reviewFindingBody(t, "", nil, c.input)
+				rendered := decodeFindingEntities(body)
+				if !strings.Contains(rendered, c.input) {
+					t.Fatalf("rendered text = %q, want it to contain %q (raw body: %q)", rendered, c.input, body)
+				}
+				if strings.Contains(body, "&amp\\;") || strings.Contains(body, "&lt\\;") || strings.Contains(body, "&gt\\;") {
+					t.Fatalf("an HTML entity was itself corrupted by a later escape: %q", body)
+				}
+			})
+		}
+	})
 }
 
 // TestReviewModeCommentNeutralizesLineBreaks: a finding field with its own

@@ -589,7 +589,12 @@ func ReviewComment(recipeName string, v Verdict, prs []int, secrets []string) st
 // every other ASCII punctuation character CommonMark lets a backslash
 // escape at all (everything except \, &, <, >, [ and ], which the
 // substitutions above already turn into something else entirely, so
-// escaping them again here would corrupt, not strengthen, those escapes).
+// escaping them again here would corrupt, not strengthen, those escapes;
+// and except ';', which has no Markdown meaning of its own to escape and
+// which this function's own '&amp;'/'&lt;'/'&gt;' substitutions above
+// rely on staying exactly that — escaping the ';' those produce breaks
+// the entity itself, so a reader sees the literal text "&amp;" instead of
+// "&").
 var (
 	findingLineBreakRE  = regexp.MustCompile("\r\n|[\r\n\u2028\u2029]")
 	findingHashRE       = regexp.MustCompile(`#(\d+)`)
@@ -597,7 +602,7 @@ var (
 	findingMailtoRE     = regexp.MustCompile(`(?i)\bmailto:`)
 	findingWWWRE        = regexp.MustCompile(`(?i)www\.`)
 	findingFenceRE      = regexp.MustCompile("(`{3,}|~{3,})")
-	findingExtraPunctRE = regexp.MustCompile("[!\"#$%'()*+,\\-./:;=?@^_`{|}~]")
+	findingExtraPunctRE = regexp.MustCompile("[!\"#$%'()*+,\\-./:=?@^_`{|}~]")
 )
 
 // neutralizeFinding makes one finding field safe to paste as-is into a
