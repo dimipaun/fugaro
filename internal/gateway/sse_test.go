@@ -285,7 +285,7 @@ func TestUsageTeeUnparsedReason(t *testing.T) {
 			stream: "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}}\n\n" +
 				"event: message_delta\ndata: {\"usage\":5}\n\n" +
 				"event: message_stop\ndata: {}\n\n",
-			want: "malformed_delta",
+			want: "malformed_usage",
 		},
 		{
 			name:   "no usage event at all",

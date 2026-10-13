@@ -904,6 +904,33 @@ func TestClaudeNegativeDeltaAfterStopChargesReservation(t *testing.T) {
 	}
 }
 
+// On the Claude route the provider-route fix for an unreadable
+// message_start (above) is a no-op: message_delta is already gated on
+// started, which an unreadable message_start never sets, so the call
+// settles at the reservation either way, same as main.
+func TestClaudeMalformedMessageStartChargesReservation(t *testing.T) {
+	ev := []anthropicfake.Event{
+		{Name: "message_start", Data: `{"type":"message_start","message":{"model":"claude-sonnet-5-5","usage":{"input_tokens":"5000","output_tokens":1}}}`},
+	}
+	ev = append(ev, anthropicfake.TextEvents("ok")...)
+	ev = append(ev,
+		anthropicfake.Event{Name: "message_delta", Data: `{"type":"message_delta","usage":{"input_tokens":100,"output_tokens":500}}`},
+		anthropicfake.Stop)
+	h := newHarness(t, anthropicfake.Reply{Status: http.StatusOK, Events: ev})
+	body := msg(sonnet, 1000, `"stream":true`)
+	if resp, b := h.post(body); resp.StatusCode != 200 {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	w := worst(t, sonnet, body, 1000, "")
+	rep := h.gw.EndStage()
+	if rep.Used != w || rep.UsageUnparsed != 1 {
+		t.Errorf("report %+v, want the reservation %d, one unparsed", rep, w)
+	}
+	if call := h.logs.lastCall(t); call["settled"] != "reserved" {
+		t.Errorf("settled %v, want reserved", call["settled"])
+	}
+}
+
 // TestLongContextTierPricedFromUsage: a call whose reported input passes
 // a long-context tier (a beta such as context-1m can make one) is charged
 // at the tier's rates, and any excess over its reservation is overrun,

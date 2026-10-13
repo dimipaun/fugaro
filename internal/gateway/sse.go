@@ -280,7 +280,7 @@ type usageTee struct {
 	// Diagnostics for a call that settles unparsed: why, from a closed set,
 	// never the provider's own text.
 	sawUsage       bool     // some event's usage object was read, even all zero
-	malformedEvent bool     // a usage-bearing event (message_delta, or the body) didn't parse
+	malformedEvent bool     // a usage-bearing event (message_start or message_delta, or the body) didn't parse
 	stopped        bool     // the stream reached its end: message_stop, or the body decoded clean
 	events         []string // event type names seen, bounded; never a body
 
@@ -348,7 +348,10 @@ func (t *usageTee) unparsedReason() string {
 	case t.acc.negative():
 		return "negative_count"
 	case t.malformedEvent:
-		return "malformed_delta"
+		// A message_start or message_delta's own usage object didn't
+		// parse (on the provider route, where either can hold the real
+		// counts): the name covers both, not just the delta.
+		return "malformed_usage"
 	case !t.sawUsage:
 		return "no_usage_event"
 	case !t.stopped:
@@ -414,8 +417,22 @@ func (t *usageTee) onEvent(name string, data []byte) {
 				Usage *wireUsage `json:"usage"`
 			} `json:"message"`
 		}
-		if json.Unmarshal(data, &ev) != nil || ev.Message.Usage == nil {
+		if json.Unmarshal(data, &ev) != nil {
+			// On the provider route a later delta can still set started
+			// (it is not gated on message_start the way the Claude route
+			// is), so an unreadable message_start must not be silently
+			// ignored: it may be hiding the real input count behind a
+			// shape the gateway doesn't expect, same as an unreadable
+			// delta. On the Claude route message_delta is already gated
+			// on started, which an unreadable message_start never sets,
+			// so main's behavior (the reservation) holds either way.
+			if t.provider {
+				t.broken, t.malformedEvent = true, true
+			}
 			return
+		}
+		if ev.Message.Usage == nil {
+			return // no usage object: the documented "didn't say" case
 		}
 		t.model = ev.Message.Model
 		t.acc.merge(ev.Message.Usage)

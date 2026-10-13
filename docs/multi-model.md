@@ -95,7 +95,7 @@ Provider models are real dollars: the charge is the table price of the reported 
 | `no_usage_event` | no event (or body) ever carried a usage object |
 | `input_zero_no_cache` | usage was read, but input and every cache field were zero or missing: a real request always sends some input, so the provider left it out |
 | `negative_count` | a reported count was below zero |
-| `malformed_delta` | a `message_delta` carried a usage object the gateway could not parse |
+| `malformed_usage` | a `message_start` or a `message_delta` carried a usage object the gateway could not parse |
 | `stream_incomplete` | the stream never reached `message_stop` (and never said enough to partially settle either) |
 | `no_output_count` | input (or cache) was real, but no `message_delta` ever named an output count |
 | `not_readable` | the response body's encoding isn't one the gateway decodes |

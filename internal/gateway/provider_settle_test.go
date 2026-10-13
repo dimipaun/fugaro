@@ -697,8 +697,41 @@ func TestMalformedDeltaUnparsedWithReason(t *testing.T) {
 	if call["settled"] != settledReserved || rep.UsageUnparsed != 1 {
 		t.Errorf("settled %v, usage_unparsed %d, want reserved and 1", call["settled"], rep.UsageUnparsed)
 	}
-	if reason := lastUnparsedReason(t, logs); reason != "malformed_delta" {
-		t.Errorf("reason %q, want malformed_delta", reason)
+	if reason := lastUnparsedReason(t, logs); reason != "malformed_usage" {
+		t.Errorf("reason %q, want malformed_usage", reason)
+	}
+}
+
+// Code review (BLOCKER): a message_start whose usage object fails to
+// unmarshal was silently ignored (no broken, no malformedEvent), so a
+// later message_delta — not gated on started the way the Claude route's
+// delta handling is — could still merge fine and settle the call from
+// usage, with the type-mismatched count never charged at all. Review's
+// own measurements (reservation 8213, unfixed head): case A 2001,
+// B/C/D 2100. All four must settle at the reservation instead.
+func TestMalformedMessageStartUnparsed(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		startUsage string
+		deltaUsage string
+	}{
+		{"A input_tokens string, delta has cache_read only", `{"input_tokens":"5000","output_tokens":1}`, `{"cache_read_input_tokens":10,"output_tokens":500}`},
+		{"B input_tokens float, delta has real input", `{"input_tokens":5000.0,"output_tokens":1}`, `{"input_tokens":100,"output_tokens":500}`},
+		{"C input_tokens overflow float, delta has real input", `{"input_tokens":1e30,"output_tokens":1}`, `{"input_tokens":100,"output_tokens":500}`},
+		{"D input_tokens string, delta has real input", `{"input_tokens":"5000","output_tokens":1}`, `{"input_tokens":100,"output_tokens":500}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			call, rep, logs := settleStream(t, c.startUsage, c.deltaUsage)
+			if got, res := pricing.Micros(num(call["charged_micros"])), pricing.Micros(num(call["reserved_micros"])); got != res || res == 0 || call["settled"] != settledReserved {
+				t.Errorf("charged %d of %d reserved, settled %v, want the reservation", got, res, call["settled"])
+			}
+			if rep.UsageUnparsed != 1 {
+				t.Errorf("usage_unparsed %d, want 1", rep.UsageUnparsed)
+			}
+			if reason := lastUnparsedReason(t, logs); reason != "malformed_usage" {
+				t.Errorf("reason %q, want malformed_usage", reason)
+			}
+		})
 	}
 }
 
