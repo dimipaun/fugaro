@@ -94,6 +94,38 @@ func TestCheckoutDetachedKeepsIgnored(t *testing.T) {
 	}
 }
 
+// TestCheckoutDetachedRefusesAnythingButAFullHash: review mode's SHA comes
+// straight from a provider's own PRHead.FetchPRHead (gitprov), reaching
+// this function's rev argument unvalidated (checkReviewPRs' own check is
+// the first line of defense, not the only one). git itself accepts an
+// option in the position a positional revision goes, so a rev of
+// "--upload-pack=touch /tmp/x;git-upload-pack" is executed as a shell
+// command by `git fetch` — reproduced independently before this fix (a
+// throwaway test, not kept): the injected command's marker file existed
+// afterward. An abbreviated hash (Bitbucket's own pull-request API gives a
+// 12-hex one) is refused too, with a clear error, rather than reaching
+// `git fetch` to fail there with "couldn't find remote ref".
+//
+// Mutation (drop the `if !ValidCommitSHA(rev)` check from CheckoutDetached):
+// this test fails for both cases: the option-injection case, by actually
+// running the injected command (the marker file would exist); the
+// abbreviated-hash case, by reaching git's own, less clear failure instead
+// of refusing up front.
+func TestCheckoutDetachedRefusesAnythingButAFullHash(t *testing.T) {
+	repo, _ := setup(t)
+	marker := filepath.Join(t.TempDir(), "injected")
+	injection := "--upload-pack=touch " + marker + ";git-upload-pack"
+	if err := repo.CheckoutDetached(ctx, injection); err == nil {
+		t.Fatal("want an error for an option-injection rev, got none")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("the injected command ran: the marker file exists")
+	}
+	if err := repo.CheckoutDetached(ctx, "abc1234"); err == nil {
+		t.Fatal("want an error for an abbreviated hash, got none")
+	}
+}
+
 // TestWorktreeAddsDetachedCopy: review mode's pick case, one directory per
 // pull request it compares (design generic-tool §3.6, G12). The main
 // checkout is left exactly where it was: only the new worktree moves.
@@ -124,6 +156,27 @@ func TestWorktreeAddsDetachedCopy(t *testing.T) {
 	}
 	if got := testutil.Git(t, repo.Dir, "rev-parse", "HEAD"); got != before {
 		t.Fatalf("main checkout moved to %s, want %s", got, before)
+	}
+}
+
+// TestWorktreeRefusesAnythingButAFullHash: the same rev-validation
+// TestCheckoutDetachedRefusesAnythingButAFullHash proves for the
+// single-pull-request case, for pick's per-pull-request worktree instead.
+//
+// Mutation (drop the `if !ValidCommitSHA(rev)` check from Worktree): this
+// test fails, finding no error for either an option-injection rev or an
+// abbreviated hash.
+func TestWorktreeRefusesAnythingButAFullHash(t *testing.T) {
+	repo, _ := setup(t)
+	dir := filepath.Join(t.TempDir(), "review", "9")
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Worktree(ctx, "--upload-pack=touch /tmp/x;git-upload-pack", dir); err == nil {
+		t.Fatal("want an error for an option-injection rev, got none")
+	}
+	if err := repo.Worktree(ctx, "abc1234", dir); err == nil {
+		t.Fatal("want an error for an abbreviated hash, got none")
 	}
 }
 

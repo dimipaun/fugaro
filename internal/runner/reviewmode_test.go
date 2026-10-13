@@ -746,6 +746,45 @@ func TestReviewModeMissingSecretFailsBootstrap(t *testing.T) {
 	}
 }
 
+// TestReviewModeRefusesInvalidHeadCommit: checkReviewPRs validates
+// PRHead.SHA's shape before anything checks it out — git's `fetch
+// origin <rev>` takes rev as a bare positional argument, and git itself
+// accepts an option (such as --upload-pack=...) in that position, which a
+// provider-supplied value must never be allowed to smuggle in (gitops.go's
+// own ValidCommitSHA check, right before the git calls, is the second
+// line of defense, not the only one — reviewed in internal/gitops).
+//
+// Mutation (drop the `if !gitops.ValidCommitSHA(h.SHA)` check from
+// checkReviewPRs): this test fails, finding the option-injection and
+// abbreviated-hash cases reach checkout instead of being refused at
+// bootstrap.
+func TestReviewModeRefusesInvalidHeadCommit(t *testing.T) {
+	cases := []struct {
+		name string
+		sha  string
+	}{
+		{"option-injection", "--upload-pack=touch /tmp/x;git-upload-pack"},
+		{"abbreviated", "abc1234"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+			pushReviewBranch(t, h, "feature", func(dir string) {
+				testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+			})
+			addPR(h, 7, "feature", "")
+			h.provider.State.PRs[0].Head = c.sha
+			rec, err := h.run(t)
+			if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "not a full commit hash") {
+				t.Fatalf("rec = %+v, err = %v", rec, err)
+			}
+			if len(h.agent.calls) != 0 {
+				t.Fatalf("%d agent calls, want none (bootstrap must refuse before checkout)", len(h.agent.calls))
+			}
+		})
+	}
+}
+
 // TestReviewModeRedactsWorkflowSecretEvenThoughAgentNeverGetsIt: a
 // workflow secret never reaches the review agent's own environment
 // (TestReviewModeAgentHasNoWorkflowSecrets), but the runner process itself

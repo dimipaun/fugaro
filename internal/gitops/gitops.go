@@ -11,13 +11,34 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
+
+// commitSHARE matches a full git object ID in hex: 40 characters (SHA-1)
+// or 64 (SHA-256, git's newer, not yet default, object format) — never an
+// abbreviation (git has no short-hash wire protocol: `git fetch origin
+// <12-hex>` fails outright, "couldn't find remote ref") and never
+// anything else: a rev accepted here reaches `git fetch origin <rev>` as
+// a bare positional argument, and git itself accepts an option
+// (--upload-pack=...) in that position, which a provider-supplied value
+// (review mode's PRHead.SHA) must never be allowed to smuggle in.
+var commitSHARE = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+
+// ValidCommitSHA reports whether sha is a full, lower-hex git object ID —
+// checked again here, right before the only two git calls (CheckoutDetached,
+// Worktree) that ever take a caller-supplied rev, even though review mode
+// (reviewmode.go, checkReviewPRs) already checks this once itself: this is
+// the point nothing can reach `git fetch`/`git worktree add` without
+// passing through, so a future caller that forgets review mode's own check
+// is still covered.
+func ValidCommitSHA(sha string) bool { return commitSHARE.MatchString(sha) }
 
 // gitWaitDelay bounds how long a git invocation's Wait spends draining
 // output after the git process itself has exited, or after ctx ends. A
@@ -177,15 +198,18 @@ func withLFSFiltersOff(args ...string) []string {
 	return append(append([]string{}, lfsFiltersOff...), args...)
 }
 
-// CheckoutDetached fetches rev (a commit, full or abbreviated) from origin
-// and checks it out with a detached HEAD, review mode's single-pull-request
-// case (design generic-tool §3.6, G12): the commit is never a branch of its
-// own, and gitprov.Provider.FetchPRHead already named the exact one to
-// read, so this never resolves a ref of its own. Untracked files are
-// removed but ignored ones (warm build caches) are kept, the same as
-// CheckoutNewBranch. Filters (lfsFiltersOff) are off for the fetch and the
-// checkout, the two steps that could run one.
+// CheckoutDetached fetches rev (a commit, full, never abbreviated — see
+// ValidCommitSHA) from origin and checks it out with a detached HEAD,
+// review mode's single-pull-request case (design generic-tool §3.6, G12):
+// the commit is never a branch of its own, and gitprov.Provider.FetchPRHead
+// already named the exact one to read, so this never resolves a ref of its
+// own. Untracked files are removed but ignored ones (warm build caches)
+// are kept, the same as CheckoutNewBranch. Filters (lfsFiltersOff) are off
+// for the fetch and the checkout, the two steps that could run one.
 func (r *Repo) CheckoutDetached(ctx context.Context, rev string) error {
+	if !ValidCommitSHA(rev) {
+		return fmt.Errorf("checking out %s: not a full commit hash", safetext.OneLine(rev))
+	}
 	if _, err := r.git(ctx, withLFSFiltersOff("fetch", "--quiet", "origin", rev)...); err != nil {
 		return err
 	}
@@ -213,6 +237,9 @@ func (r *Repo) CheckoutDetached(ctx context.Context, rev string) error {
 // here since a worktree's target directory, unlike a checked-out branch,
 // cannot simply be overwritten in place.
 func (r *Repo) Worktree(ctx context.Context, rev, dir string) error {
+	if !ValidCommitSHA(rev) {
+		return fmt.Errorf("adding a worktree at %s: not a full commit hash", safetext.OneLine(rev))
+	}
 	if _, err := r.git(ctx, withLFSFiltersOff("fetch", "--quiet", "origin", rev)...); err != nil {
 		return err
 	}

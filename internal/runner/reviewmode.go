@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -61,8 +62,19 @@ func (r *run) checkReviewPRs(ctx context.Context) error {
 		if !h.Open {
 			return fmt.Errorf("PR #%d is not open", n)
 		}
-		if strings.TrimSpace(h.SHA) == "" {
-			return fmt.Errorf("PR #%d has no head commit", n)
+		if !gitops.ValidCommitSHA(h.SHA) {
+			// Checked here, at the earliest point, and again inside
+			// gitops (CheckoutDetached, Worktree) right before the only
+			// two git calls that ever take a provider-supplied rev: this
+			// value reaches `git fetch origin <rev>` as a bare positional
+			// argument, and git itself accepts an option
+			// (--upload-pack=...) in that position — reproduced
+			// independently (a throwaway test, not kept): an injected
+			// shell command actually ran. An abbreviated hash (Bitbucket's
+			// own pull-request API gives a 12-hex one) is refused here
+			// too, with a clear message, rather than reaching `git fetch`
+			// to fail there with "couldn't find remote ref".
+			return fmt.Errorf("PR #%d's head commit %s is not a full commit hash", n, safetext.OneLine(h.SHA))
 		}
 		if err := r.checkReviewAuthor(ctx, n, h, trustedIDs); err != nil {
 			return err
