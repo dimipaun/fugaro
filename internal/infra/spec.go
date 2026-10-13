@@ -63,6 +63,28 @@ const (
 	BudgetGraceEnv    = runner.BudgetGraceEnv
 )
 
+// The installation-identity env vars platformEnv and the vertex branch of
+// workflow set: the installation's own bucket, backend kind, GCP project,
+// Fugaro project name and region, and, for agent.auth: vertex, the same GCP
+// project and region again under Vertex's own names. They come from the
+// local config too, but changing them means moving the installation
+// itself, not editing a provider, a price or a budget cap.
+const (
+	BucketEnv        = "FUGARO_BUCKET"
+	BackendEnv       = "FUGARO_BACKEND"
+	GCPProjectEnv    = "FUGARO_GCP_PROJECT"
+	ProjectEnv       = "FUGARO_PROJECT"
+	RegionEnv        = "FUGARO_REGION"
+	VertexRegionEnv  = "CLOUD_ML_REGION"
+	VertexProjectEnv = "ANTHROPIC_VERTEX_PROJECT_ID"
+)
+
+// PlatformEnv is every key above, together: fugaro upgrade's job-config-copy
+// check (internal/cli/upgrade_cloud.go) excludes exactly this set, named
+// here from the same constants platformEnv and the vertex branch use, so it
+// never has to guess it or drift from them.
+var PlatformEnv = []string{BucketEnv, BackendEnv, GCPProjectEnv, ProjectEnv, RegionEnv, VertexRegionEnv, VertexProjectEnv}
+
 // githubGitUser is the HTTPS username of a GitHub App installation token.
 const githubGitUser = "x-access-token"
 
@@ -462,11 +484,11 @@ func serviceAccountEmail(id, project string) string {
 // platformEnv is the M4 env every job and the check job get.
 func (c *repoCtx) platformEnv() map[string]string {
 	return map[string]string{
-		"FUGARO_BUCKET":      "gs://" + c.bucket,
-		"FUGARO_BACKEND":     backend.CloudRun,
-		"FUGARO_GCP_PROJECT": c.lc.GCPProject,
-		"FUGARO_PROJECT":     c.inst.ProjectName,
-		"FUGARO_REGION":      c.lc.Region,
+		BucketEnv:     "gs://" + c.bucket,
+		BackendEnv:    backend.CloudRun,
+		GCPProjectEnv: c.lc.GCPProject,
+		ProjectEnv:    c.inst.ProjectName,
+		RegionEnv:     c.lc.Region,
 	}
 }
 
@@ -593,8 +615,8 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 		ws.LegacyImage = gcp.ImageName(lc.Registry, slug, name)
 	}
 	if ws.Vertex {
-		ws.Env["CLOUD_ML_REGION"] = lc.Region
-		ws.Env["ANTHROPIC_VERTEX_PROJECT_ID"] = lc.GCPProject
+		ws.Env[VertexRegionEnv] = lc.Region
+		ws.Env[VertexProjectEnv] = lc.GCPProject
 	}
 	if c.appID != "" {
 		ws.Env[providers.EnvGitHubAppID] = c.appID

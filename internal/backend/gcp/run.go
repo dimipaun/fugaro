@@ -291,27 +291,49 @@ func (b *Backend) TaskTimeout(ctx context.Context, slug, workflow string) (time.
 // value of its container's env variable name, and whether the job exists.
 // A job without the variable gives "", true.
 func (b *Backend) JobEnv(ctx context.Context, job, name string) (string, bool, error) {
+	env, exists, err := b.JobFullEnv(ctx, job)
+	if err != nil || !exists {
+		return "", exists, err
+	}
+	return env[name], true, nil
+}
+
+// JobFullEnv reads job's whole container env in one Jobs.Get call, and
+// whether the job exists. A job with no container env gives an empty, non-nil
+// map, true.
+//
+// Only plain-value entries (ValueSource == nil) are included. deploy/terraform/gcp/modules/workflow/job.tf
+// deploys every secret_env entry (CLAUDE_CODE_OAUTH_TOKEN,
+// FUGARO_GITHUB_APP_PRIVATE_KEY, ANTHROPIC_API_KEY, a provider's key, ...)
+// as an env var whose value comes from value_source.secret_key_ref, never a
+// literal value: the API answers those with Value == "" and ValueSource set.
+// A caller comparing this map against a config-derived one (never a secret)
+// must not see those as present-but-empty, or every one of them reads as
+// "removed" forever.
+func (b *Backend) JobFullEnv(ctx context.Context, job string) (map[string]string, bool, error) {
 	if !nameRE.MatchString(job) {
-		return "", false, fmt.Errorf("bad job name %q", job)
+		return nil, false, fmt.Errorf("bad job name %q", job)
 	}
 	j, err := b.run.Projects.Locations.Jobs.Get(b.location() + "/jobs/" + job).Context(ctx).Do()
 	if err != nil {
 		err = apiError("reading job "+job, err)
 		if errors.Is(err, backend.ErrNotFound) {
-			return "", false, nil
+			return nil, false, nil
 		}
-		return "", false, err
+		return nil, false, err
 	}
+	env := map[string]string{}
 	if j.Template != nil && j.Template.Template != nil {
 		for _, c := range j.Template.Template.Containers {
 			for _, e := range c.Env {
-				if e.Name == name {
-					return e.Value, true, nil
+				if e.ValueSource != nil {
+					continue
 				}
+				env[e.Name] = e.Value
 			}
 		}
 	}
-	return "", true, nil
+	return env, true, nil
 }
 
 // Cancel asks Cloud Run to stop the execution. It does not wait.

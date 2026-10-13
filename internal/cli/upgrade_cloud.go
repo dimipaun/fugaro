@@ -2,20 +2,25 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 // cloudState is the cloud step's state as read from local files only.
@@ -35,61 +40,76 @@ type cloudVerdict struct {
 	reason string // one line, safe to print
 }
 
-// cloudCheck is the cloud step's state from fugaro.yaml and the local
-// project config alone: never a bucket, the registry or a job, and no
-// credentials (fugaro upgrade --check, and the skips of the cloud step). It
-// cannot see a build that failed after the base moved: build records live in
-// the bucket. It prints nothing; rerun is the command line a blocked reason
-// tells the user to run again ("" is the bare fugaro upgrade).
+// resolveCloudRepo is the local-only prefix cloudCheck and jobConfigCopyNote
+// share: root's fugaro.yaml and the local project config, resolved without a
+// bucket, the registry or a job, and no credentials. v is non-nil when
+// resolution itself is the answer (cloudFailed, or one of U9's cloudNotHere
+// skips: a development build, no fugaro.yaml, a teammate checkout, a
+// repository not onboarded); the other return values are only valid when v
+// is nil.
 //
 // loadCheckoutResolved also resolves the checkout's project layer
 // (layered-config.md): Offline: true keeps that resolution to the local
 // cache (decision L13), never the bucket itself, so an anchored checkout
 // with no cached layer leaves it unknown rather than reading one for real;
 // the project layer's own values, when cached, still apply normally.
+func resolveCloudRepo(ctx context.Context, root string, co cloudOptions) (cfg *config.Config, lc *localcfg.Config, lcPath, repo, host string, v *cloudVerdict) {
+	co.stderr = func() io.Writer { return io.Discard } // the caller prints the per-checkout line
+	failed := func(repo string, err error) *cloudVerdict {
+		return &cloudVerdict{state: cloudFailed, repo: repo, reason: oneLine(err.Error())}
+	}
+	if releaseVersion() == "" {
+		return nil, nil, "", "", "", &cloudVerdict{state: cloudNotHere, reason: "a development build has no release base image to move to"}
+	}
+	if _, err := os.Stat(filepath.Join(root, "fugaro.yaml")); errors.Is(err, os.ErrNotExist) {
+		return nil, nil, "", "", "", &cloudVerdict{state: cloudNotHere, reason: "no fugaro.yaml yet, so no job image to refresh"}
+	}
+	_, rf, err := loadCheckoutResolved(ctx, root, nil, layerOptions{Lenient: true, Offline: true})
+	if err != nil {
+		return nil, nil, "", "", "", failed("", err)
+	}
+	cfg = rf.Cfg
+	repo, err = checkoutRepo(ctx, root)
+	if err != nil {
+		return nil, nil, "", "", "", failed("", err)
+	}
+	lc, lcPath, _, err = loadRepoConfig(ctx, &initOptions{cloud: co}, root)
+	if err != nil {
+		var se *localcfg.SelectError
+		if checkoutNamesProject(ctx, root) && (errors.As(err, &se) || errors.Is(err, localcfg.ErrMissing)) {
+			return nil, nil, "", repo, "", &cloudVerdict{state: cloudNotHere, repo: repo, reason: "no local project config selects this checkout (" + oneLine(err.Error()) + "): the cloud step is for the operator who set the project up"}
+		}
+		return nil, nil, "", "", "", failed(repo, err)
+	}
+	oi, ok := readOrigin(ctx, root)
+	if !ok {
+		return nil, nil, "", "", "", failed(repo, errors.New("cannot read the checkout's origin"))
+	}
+	if !repoKnown(lc, oi) {
+		return nil, nil, "", repo, "", &cloudVerdict{state: cloudNotHere, repo: repo, reason: fmt.Sprintf("%s is not onboarded to project %s, so it has no job image yet", pluginwire.Printable(repo), lc.Name)}
+	}
+	host, err = infra.RegistryHost(lc)
+	if err != nil {
+		return nil, nil, "", "", "", failed(repo, err)
+	}
+	return cfg, lc, lcPath, repo, host, nil
+}
+
+// cloudCheck is the cloud step's state from fugaro.yaml and the local
+// project config alone: never a bucket, the registry or a job, and no
+// credentials (fugaro upgrade --check, and the skips of the cloud step). It
+// cannot see a build that failed after the base moved: build records live in
+// the bucket. It prints nothing; rerun is the command line a blocked reason
+// tells the user to run again ("" is the bare fugaro upgrade).
 func cloudCheck(ctx context.Context, root string, co cloudOptions, rerun string) cloudVerdict {
 	if rerun == "" {
 		rerun = selfCommand() + " upgrade"
 	}
-	co.stderr = func() io.Writer { return io.Discard } // the caller prints the per-checkout line
-	failed := func(repo string, err error) cloudVerdict {
-		return cloudVerdict{state: cloudFailed, repo: repo, reason: oneLine(err.Error())}
+	cfg, lc, lcPath, repo, host, v := resolveCloudRepo(ctx, root, co)
+	if v != nil {
+		return *v
 	}
 	ver := releaseVersion()
-	if ver == "" {
-		return cloudVerdict{state: cloudNotHere, reason: "a development build has no release base image to move to"}
-	}
-	if _, err := os.Stat(filepath.Join(root, "fugaro.yaml")); errors.Is(err, os.ErrNotExist) {
-		return cloudVerdict{state: cloudNotHere, reason: "no fugaro.yaml yet, so no job image to refresh"}
-	}
-	_, rf, err := loadCheckoutResolved(ctx, root, nil, layerOptions{Lenient: true, Offline: true})
-	if err != nil {
-		return failed("", err)
-	}
-	cfg := rf.Cfg
-	repo, err := checkoutRepo(ctx, root)
-	if err != nil {
-		return failed("", err)
-	}
-	lc, lcPath, _, err := loadRepoConfig(ctx, &initOptions{cloud: co}, root)
-	if err != nil {
-		var se *localcfg.SelectError
-		if checkoutNamesProject(ctx, root) && (errors.As(err, &se) || errors.Is(err, localcfg.ErrMissing)) {
-			return cloudVerdict{state: cloudNotHere, repo: repo, reason: "no local project config selects this checkout (" + oneLine(err.Error()) + "): the cloud step is for the operator who set the project up"}
-		}
-		return failed(repo, err)
-	}
-	oi, ok := readOrigin(ctx, root)
-	if !ok {
-		return failed(repo, errors.New("cannot read the checkout's origin"))
-	}
-	if !repoKnown(lc, oi) {
-		return cloudVerdict{state: cloudNotHere, repo: repo, reason: fmt.Sprintf("%s is not onboarded to project %s, so it has no job image yet", pluginwire.Printable(repo), lc.Name)}
-	}
-	host, err := infra.RegistryHost(lc)
-	if err != nil {
-		return failed(repo, err)
-	}
 	set := map[string]bool{}
 	for _, w := range cfg.Workflows {
 		set[w.Base] = true
@@ -103,7 +123,7 @@ func cloudCheck(ctx context.Context, root string, co cloudOptions, rerun string)
 		}
 		want, err := refreshBase(lc, k, ver)
 		if err != nil {
-			return failed(repo, err)
+			return cloudVerdict{state: cloudFailed, repo: repo, reason: oneLine(err.Error())}
 		}
 		if cur != want {
 			was := "none recorded"
@@ -120,6 +140,279 @@ func cloudCheck(ctx context.Context, root string, co cloudOptions, rerun string)
 		return cloudVerdict{state: cloudStale, repo: repo, reason: "base images to move: " + strings.Join(stale, "; ")}
 	}
 	return cloudVerdict{state: cloudCurrent, repo: repo, reason: "the local config records this release's base image for every workflow's kind (--check reads no build record: a build that failed after the base moved shows only when fugaro upgrade runs the cloud step)"}
+}
+
+// checkJobCopyCaveat is --check's note on the job's config copy
+// (jobConfigCopyNote): --check makes no cloud call, so, unlike a real cloud
+// step, it can never tell whether the deployed job's copy of the local
+// project config is stale in either direction (docs/multi-model.md "Then run
+// fugaro init --repo"). It is printed whenever a real cloud step would run
+// (cloudStep), whatever the local config currently holds: an owner who just
+// removed every provider locally still needs to know the job might still
+// carry the old ones, which --check cannot see either.
+const checkJobCopyCaveat = "fugaro upgrade --check makes no cloud call, so it cannot tell whether the deployed job's copy of this local project config (providers, model_prices, budget settings, the region's compute price override and the GitHub App ID) still matches, or is stale, in either direction; run fugaro upgrade without --check to find out, or just run fugaro init --repo . in your own terminal to refresh it (never run automatically)"
+
+// jobConfigCopyTimeout bounds the cloud work jobConfigCopyNote does (opening
+// the runs bucket to check the project's name, then reading each existing
+// workflow's job): the same risk layerBucketTimeout (layer_resolve.go)
+// guards against for the project layer's own bucket read. A package var so
+// a test can shorten it.
+var jobConfigCopyTimeout = 30 * time.Second
+
+// jobConfigCopyNote is the cloud step's extra report, after a real refresh:
+// whether any of the repository's deployed workflow jobs carries a copy of
+// the local project config that no longer matches what this local config
+// would write now. A version upgrade never refreshes that copy; only
+// fugaro init --repo does, and fugaro upgrade never runs it itself (its
+// Terraform confirmations stay the operator's). It compares every env var
+// infra.Workflow sets from the local config (spec.Env, minus
+// infra.PlatformEnv's installation-identity keys, which legitimately vary by
+// deploy and are not what fugaro init --repo refreshes from an edited local
+// config): providers and model_prices (compared by field, since they carry
+// JSON, decoded and reflect.DeepEqual'd so key order or "0.14" vs "0.140" is
+// never a false difference) and every other key by exact match (the budget
+// mode, cap, token limit and allow-list, the RTDB URL, the Firebase API key,
+// budget grace, the region's compute price override and the GitHub App ID)
+// — so a newly added local-config-derived env var is covered automatically,
+// never missed the way this once was.
+//
+// This local-config-derived half of spec.Env is the same for every workflow
+// of one repository (it depends on the local config and the repository, not
+// on a workflow's own fugaro.yaml entry), but which workflows have a
+// deployed job at all, and what each one's job happened to be deployed
+// with, can differ: a workflow just added to fugaro.yaml has no job yet,
+// while an older sibling's job may already be stale. Checking only one
+// workflow (review follow-up, PR #324: the alphabetically-first one) missed
+// a stale sibling whenever that one workflow's job did not exist yet. Every
+// workflow with a job is checked, in sorted order, and every distinct way
+// any of them differs is reported, deduplicated; a workflow with no job yet
+// is skipped, like the single-workflow case always was.
+//
+// Only each workflow's default-account job: infra.Workflow always builds
+// the config.DefaultClaudeAccount variant (a repository may also deploy a
+// named-account job per docs/design/named-oauth-tokens.md, a separate job
+// this does not read). The same fugaro init --repo that refreshes the
+// default one also refreshes every named-account job, so running it fixes
+// both; this note just never checks the named ones itself.
+//
+// "" is nothing to say: every existing job's copy agrees, no workflow has a
+// job yet, or resolveCloudRepo finds nothing to check here at all (no
+// fugaro.yaml, a teammate checkout, a development build, a repository not
+// onboarded: U9's cloudNotHere skips), in which case the note is silent,
+// exactly as the cloud step itself is in those cases. Everything else is
+// not silent, resolveCloudRepo's own cloudFailed included (a bad fugaro.yaml
+// or origin, an unreadable local config): it says it could not check, with
+// resolveCloudRepo's own reason (already one line and safe to print, the
+// same text the cloud step's "cloud: failed:" line would show) for
+// cloudFailed, and a fixed, never-the-error's-own-text reason for a real
+// error past that point (the checkout's origin, a workflow's spec, the
+// cloud connection or a job read itself — any of which could carry a URL
+// or, from an underlying client, a token).
+func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string {
+	cfg, lc, _, repo, _, v := resolveCloudRepo(ctx, root, co)
+	if v != nil {
+		if v.state == cloudFailed {
+			return couldNotCheckJobConfigCopy(v.reason)
+		}
+		return "" // a U9 skip (cloudNotHere): nothing to check here
+	}
+	names := slices.Sorted(maps.Keys(cfg.Workflows))
+	if len(names) == 0 {
+		return ""
+	}
+	repoURL, err := checkoutURL(ctx, root)
+	if err != nil {
+		return couldNotCheckJobConfigCopy("cannot read the checkout's origin")
+	}
+	// jobConfigCopyNote is an advisory extra on an otherwise-successful
+	// fugaro upgrade, not the thing the operator ran for (the same risk
+	// layerBucketTimeout guards against for the project layer's own bucket
+	// read): a flaky or offline network must not hang the whole command in
+	// a client retry loop just to report on something optional.
+	cctx, cancel := context.WithTimeout(ctx, jobConfigCopyTimeout)
+	defer cancel()
+	env, err := openCloudFor(cctx, lc)
+	if err != nil {
+		return couldNotCheckJobConfigCopy("cannot connect to the cloud")
+	}
+	defer env.Close()
+	be, ok := env.be.(interface {
+		JobFullEnv(ctx context.Context, job string) (map[string]string, bool, error)
+	})
+	if !ok {
+		return ""
+	}
+	var now map[string]string
+	var diffs []string
+	seen := map[string]bool{}
+	anyJob := false
+	for _, name := range names {
+		spec, err := infra.Workflow(infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, RepoURL: repoURL}, name)
+		if err != nil {
+			return couldNotCheckJobConfigCopy("cannot compute the repository's spec from the local config")
+		}
+		now = spec.Env // the same local-config-derived half for every workflow
+		jobEnv, exists, err := be.JobFullEnv(cctx, spec.Job)
+		if err != nil {
+			return couldNotCheckJobConfigCopy("reading the deployed job failed")
+		}
+		if !exists {
+			continue
+		}
+		anyJob = true
+		for _, d := range jobConfigDiffs(jobEnv, now) {
+			if !seen[d] {
+				seen[d] = true
+				diffs = append(diffs, d)
+			}
+		}
+	}
+	if !anyJob {
+		return "" // no workflow has a deployed job here yet
+	}
+	if len(diffs) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("the deployed job's copy of the local project config is STALE (%s): a version upgrade never refreshes it; runs on %s use the old copy until you run fugaro init --repo . in your own terminal (never run automatically)",
+		strings.Join(diffs, "; "), pluginwire.Printable(repo))
+}
+
+// couldNotCheckJobConfigCopy is jobConfigCopyNote's note when a real error
+// (not "no job yet") stops it from comparing the copies: a fixed, per-step
+// reason, never the error's own text, so nothing it might carry (a bucket or
+// API URL, a client's wrapped token) can reach the terminal through it.
+func couldNotCheckJobConfigCopy(reason string) string {
+	return "could not check the job's config copy (" + reason + "); its providers, model_prices, budget and other owner-only settings may be stale without this saying so"
+}
+
+// jobConfigDiffs names every way job (the deployed workflow job's whole env)
+// differs from now (spec.Env, the same workflow's env computed from the
+// local config and the checkout's fugaro.yaml right now) in the fields the
+// local config, not the platform, controls: providers and model_prices by
+// field (providersDiff, pricesDiff), and every other local-config-derived
+// key (scalarConfigDiff) by exact match. Never a value.
+func jobConfigDiffs(job, now map[string]string) []string {
+	var diffs []string
+	if d := providersDiff(job[infra.ModelProvidersEnv], now[infra.ModelProvidersEnv]); d != "" {
+		diffs = append(diffs, "providers: "+d)
+	}
+	if d := pricesDiff(job[infra.ModelPricesEnv], now[infra.ModelPricesEnv]); d != "" {
+		diffs = append(diffs, "model_prices: "+d)
+	}
+	if d := scalarConfigDiff(job, now); d != "" {
+		diffs = append(diffs, d)
+	}
+	return diffs
+}
+
+// scalarConfigDiff is mapDiff over every env key infra.Workflow can set from
+// the local config, except providers and model_prices (compared by field
+// above, since they carry JSON), infra.PlatformEnv's installation-identity
+// keys and runner.SecretEnvsVar (excluded: see scalarConfigEnv). Every
+// remaining key (the budget mode, cap, token limit and allow-list, the RTDB
+// URL, the Firebase API key, budget grace, the region's compute price
+// override, the GitHub App ID, and any local-config-derived key
+// infra.Workflow adds later) is compared as plain text: none of them
+// carries JSON, so a textual difference is a real one.
+func scalarConfigDiff(job, now map[string]string) string {
+	return mapDiff(scalarConfigEnv(job), scalarConfigEnv(now), func(a, b string) bool { return a == b })
+}
+
+// scalarConfigEnv drops infra.PlatformEnv's keys, the two JSON-valued keys
+// (providers, model_prices) and runner.SecretEnvsVar from a job's or a
+// spec's env. SecretEnvsVar is a derived list of mounted variable NAMES, not
+// a local-config value in its own right: it also reflects the repository's
+// own fugaro.yaml (its workflow's committed secrets, its agent.auth), which
+// fugaro init --repo refreshes from the checkout, not from an edited local
+// project config, so comparing it here would flag drift this note is not
+// about. A changed local-config provider already shows up directly, through
+// providersDiff, with or without this key.
+func scalarConfigEnv(env map[string]string) map[string]string {
+	out := make(map[string]string, len(env))
+	for k, v := range env {
+		out[k] = v
+	}
+	for _, k := range infra.PlatformEnv {
+		delete(out, k)
+	}
+	delete(out, infra.ModelProvidersEnv)
+	delete(out, infra.ModelPricesEnv)
+	delete(out, runner.SecretEnvsVar)
+	return out
+}
+
+// providersDiff and pricesDiff name the entries that differ between the
+// job's copy of FUGARO_MODEL_PROVIDERS/FUGARO_MODEL_PRICES (job) and what
+// this local config would write now (now): added, changed or removed, by
+// provider name or model ID alone. Never a value: a provider entry names no
+// secret (only the secret's name), but neither function prints any field at
+// all, so nothing it carries (prices included) can leak by accident. A side
+// that fails to parse (an old or hand-edited copy) is "unreadable" unless
+// the two raw strings are byte-identical, since a real difference could not
+// be named by field then either.
+func providersDiff(job, now string) string {
+	jm, jerr := decodeProviders(job)
+	nm, nerr := decodeProviders(now)
+	if jerr != nil || nerr != nil {
+		if job == now {
+			return ""
+		}
+		return "unreadable copy"
+	}
+	return mapDiff(jm, nm, func(a, b config.ModelProvider) bool { return reflect.DeepEqual(a, b) })
+}
+
+func decodeProviders(s string) (map[string]config.ModelProvider, error) {
+	m := map[string]config.ModelProvider{}
+	if s == "" {
+		return m, nil
+	}
+	if err := json.Unmarshal([]byte(s), &m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func pricesDiff(job, now string) string {
+	jo, jerr := pricing.ParseOverrides(job)
+	no, nerr := pricing.ParseOverrides(now)
+	if jerr != nil || nerr != nil {
+		if job == now {
+			return ""
+		}
+		return "unreadable copy"
+	}
+	return mapDiff(jo, no, func(a, b pricing.Rates) bool { return reflect.DeepEqual(a, b) })
+}
+
+// mapDiff lists the keys of now that job lacks or disagrees with (added,
+// changed) and the keys of job that now lacks (removed), by key alone.
+func mapDiff[V any](job, now map[string]V, eq func(a, b V) bool) string {
+	var added, changed, removed []string
+	for _, k := range slices.Sorted(maps.Keys(now)) {
+		v, ok := job[k]
+		switch {
+		case !ok:
+			added = append(added, k)
+		case !eq(v, now[k]):
+			changed = append(changed, k)
+		}
+	}
+	for _, k := range slices.Sorted(maps.Keys(job)) {
+		if _, ok := now[k]; !ok {
+			removed = append(removed, k)
+		}
+	}
+	var parts []string
+	for _, g := range []struct {
+		label string
+		names []string
+	}{{"added", added}, {"changed", changed}, {"removed", removed}} {
+		if len(g.names) > 0 {
+			parts = append(parts, g.label+" "+strings.Join(g.names, ", "))
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 // checkoutNamesProject: root's fugaro.yaml gives a valid project name, so a
@@ -149,6 +442,9 @@ func cloudStep(ctx context.Context, u *upgradeCtx) stepResult {
 		v, failed := verdict()
 		if failed != nil {
 			return *failed
+		}
+		if v.state != cloudNotHere {
+			fmt.Fprintf(u.w, "note: %s\n", checkJobCopyCaveat)
 		}
 		switch v.state {
 		case cloudCurrent:
@@ -182,6 +478,9 @@ func cloudStep(ctx context.Context, u *upgradeCtx) stepResult {
 	ro.onPlan = func(p *refreshPlan) { plan = p }
 	if err := runImageRefresh(u.cmd, ro); err != nil {
 		return stepResult{state: stepFailed, code: ExitCode(err), reason: oneLine(err.Error())}
+	}
+	if note := jobConfigCopyNote(ctx, u.loc.Root, u.o.refresh.cloud); note != "" {
+		fmt.Fprintf(u.w, "note: %s\n", note)
 	}
 	if plan != nil && plan.current() {
 		return stepResult{state: stepCurrent, reason: "no base image to copy and no image to rebuild"}

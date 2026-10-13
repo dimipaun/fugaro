@@ -2,15 +2,594 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
+
+// providersConfig is a providers and model_prices block the job-config-copy
+// tests append to the rig's local config (the shape docs/multi-model.md
+// §2 shows): one provider, openrouter, allowed to see acme/app's code, and
+// one price override.
+const providersConfig = "providers:\n  openrouter: { kind: anthropic-compat, base_url: https://openrouter.ai/api, auth: bearer, secret: openrouter-api-key, models: [\"deepseek/*\"], allow_data_to: [acme/app] }\n" +
+	"model_prices:\n  deepseek/deepseek-v4-flash: { input_per_m: 0.14, output_per_m: 0.28 }\n"
+
+// stubCurrentRefresh appends base_images and build records that make
+// acme/app's refresh plan current (TestUpgradeRerunWhenCurrentIsNothingToDo's
+// setup), so a real --yes run reaches jobConfigCopyNote without asking for
+// any confirmation.
+func stubCurrentRefresh(t *testing.T, r *anchorModeRig) {
+	t.Helper()
+	r.appendConfig(t, "base_images: {web-node: "+managedRef("web-node", "0.5.1")+", go: "+managedRef("go", "0.5.1")+"}\n")
+	putWorkflowRecordFrom("app", "0.5.1", managedRef("web-node", "0.5.1"))
+	putWorkflowRecordFrom("api", "0.5.1", managedRef("go", "0.5.1"))
+}
+
+// upgradeRigWithGitHubAppID is upgradeRig with acme/app's github_app_id set
+// and the runs bucket switched to a file:// directory of the test's own,
+// carrying the installation's project marker. Every other upgrade test
+// stubs the refresh's own reload step (fakeSteps), which never actually
+// computes a repository spec or opens the runs bucket, so it never needs
+// either; jobConfigCopyNote calls infra.Workflow and openCloudFor directly,
+// unstubbed, so it does (the rig's runs_bucket name has no real gs:// bucket
+// behind it).
+func upgradeRigWithGitHubAppID(t *testing.T) *anchorModeRig {
+	t.Helper()
+	fakeTerraform(t)
+	upgradeEnv(t, "0.5.1")
+	r := newAnchorModeRig(t, refreshYAML, false)
+	r.appendConfig(t, "  acme/app: { provider: github, workflows: [app], github_app_id: \"12345\" }\n")
+	runs := t.TempDir()
+	r.appendConfig(t, "bucket_url: file://"+runs+"\n")
+	marker, err := json.Marshal(infra.ProjectMarker{Version: 1, Name: "aurora", GCPProject: "proj-1234"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(runs, "fugaro"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runs, "fugaro", "project.json"), marker, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// jobConfigCopyJobName is the job jobConfigCopyNote reads for acme/app's
+// workflow (refreshYAML has two, "api" and "app", which sort in that order),
+// at the default Claude account (gcp.JobName's variant collapses to the bare
+// workflow name for it).
+func jobConfigCopyJobName(t *testing.T, workflow string) string {
+	t.Helper()
+	slug, err := task.Slug("github", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return gcp.JobName(slug, workflow)
+}
+
+// jobConfigCopyBaseline is a deployed job's env when it was last deployed
+// from exactly today's local config and fugaro.yaml: only the GitHub App ID
+// (upgradeRigWithGitHubAppID's rig sets no budget, providers or model_prices
+// by default). The GitHub App ID is compared like every other local-config
+// field now (review follow-up, PR #324), so every job-config-copy test below
+// starts here and adds only the one field it means to test, rather than
+// risk an incidental "added FUGARO_GITHUB_APP_ID" diff it never meant to
+// exercise.
+func jobConfigCopyBaseline() map[string]string {
+	return map[string]string{"FUGARO_GITHUB_APP_ID": "12345"}
+}
+
+// setJobConfigCopyEnv creates (or replaces) the fake job jobConfigCopyNote
+// reads for workflow, with jobConfigCopyBaseline merged with extra (extra
+// wins on a shared key).
+func setJobConfigCopyEnv(t *testing.T, r *anchorModeRig, workflow string, extra map[string]string) {
+	t.Helper()
+	job := jobConfigCopyJobName(t, workflow)
+	r.run.SetJob(job, nil, "img")
+	env := jobConfigCopyBaseline()
+	maps.Copy(env, extra)
+	r.run.SetJobEnv(job, env)
+}
+
+// TestUpgradeCloudReportsStaleJobConfigCopy: the deployed job carries no
+// providers or model_prices (an older fugaro init --repo, or none at all),
+// while the local config now has both; the real cloud step's note names
+// both fields, by name, and the one command that fixes it.
+//
+// Mutation (verified, run and restored): add `return ""` as
+// jobConfigCopyNote's first line: this test fails, expecting the STALE note
+// and finding none.
+func TestUpgradeCloudReportsStaleJobConfigCopy(t *testing.T) {
+	r := upgradeRigWithGitHubAppID(t)
+	r.appendConfig(t, providersConfig)
+	stubCurrentRefresh(t, r)
+	setJobConfigCopyEnv(t, r, "api", nil)
+	fakeSteps(t, "", nil)
+	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"note: the deployed job's copy of the local project config is STALE",
+		"providers: added openrouter",
+		"model_prices: added deepseek/deepseek-v4-flash",
+		"fugaro init --repo .",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestUpgradeCloudNoNoteWhenJobConfigCopyMatches: the deployed job's copy
+// (here, no providers and no model_prices, which is also what this local
+// config produces) matches, so there is nothing to report.
+//
+// Mutation (verified, run and restored): remove jobConfigCopyNote's
+// `if len(diffs) == 0 { return "" }` guard: this test fails, finding an
+// unexpected note.
+func TestUpgradeCloudNoNoteWhenJobConfigCopyMatches(t *testing.T) {
+	r := upgradeRigWithGitHubAppID(t)
+	stubCurrentRefresh(t, r)
+	setJobConfigCopyEnv(t, r, "api", nil)
+	fakeSteps(t, "", nil)
+	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if strings.Contains(out, "job's copy") {
+		t.Fatalf("an unexpected note:\n%s", out)
+	}
+}
+
+// TestUpgradeCloudStaleJobConfigNoteNeverLeaksAValue: the note names fields
+// (provider and model IDs), never a value the config carries alongside them
+// -- the secret's name, the base URL or a price.
+//
+// Mutation (verified, run and restored): in mapDiff's "added" case, append
+// `fmt.Sprintf("%s=%+v", k, now[k])` instead of just `k`: this test fails,
+// the note carrying the provider's base URL and secret name.
+func TestUpgradeCloudStaleJobConfigNoteNeverLeaksAValue(t *testing.T) {
+	r := upgradeRigWithGitHubAppID(t)
+	r.appendConfig(t, providersConfig)
+	stubCurrentRefresh(t, r)
+	setJobConfigCopyEnv(t, r, "api", nil)
+	fakeSteps(t, "", nil)
+	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "STALE") {
+		t.Fatalf("expected the stale note:\n%s", out)
+	}
+	for _, leak := range []string{"openrouter-api-key", "openrouter.ai", "0.14", "0.28", "bearer"} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("the note leaked %q:\n%s", leak, out)
+		}
+	}
+}
+
+// TestUpgradeCloudCopyNoteNeverReadsTheCloudUnderCheckOrAgent: --check makes
+// no cloud call (U6) and a coding agent's session never reaches the cloud
+// step at all (U7); the job-config-copy note must not change that, even when
+// providers and model_prices are configured, by reading the fake Cloud Run
+// server directly.
+//
+// Mutation (run, restore): in cloudStep's --check branch, call
+// jobConfigCopyNote(ctx, ...) directly instead of only printing
+// checkJobCopyCaveat: this test fails, finding a request on r.run.
+// Both rigs below use upgradeRigWithGitHubAppID, not the plain upgradeRig:
+// its working file:// bucket and github_app_id let jobConfigCopyNote run to
+// completion (reaching r.run) if it were wrongly called here, so
+// r.run.Requests() actually catches a violation instead of the call merely
+// failing earlier at an unrelated, un-faked gs:// bucket.
+//
+// Mutation (verified, run and restored): in cloudStep's --check branch, also
+// call `jobConfigCopyNote(ctx, u.loc.Root, u.o.refresh.cloud)` and print it:
+// the "check" subtest fails, finding two GET requests on r.run (the job's
+// FUGARO_MODEL_PROVIDERS and FUGARO_MODEL_PRICES).
+func TestUpgradeCloudCopyNoteNeverReadsTheCloudUnderCheckOrAgent(t *testing.T) {
+	t.Run("check", func(t *testing.T) {
+		r := upgradeRigWithGitHubAppID(t)
+		r.appendConfig(t, providersConfig)
+		stubCurrentRefresh(t, r)
+		setJobConfigCopyEnv(t, r, "api", nil)
+		out, _, err := executeStdin(t, "", "upgrade", "--check")
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("exit %d\n%s", ExitCode(err), out)
+		}
+		if !strings.Contains(out, "note: "+checkJobCopyCaveat) {
+			t.Fatalf("missing the --check caveat:\n%s", out)
+		}
+		if len(r.run.Requests()) != 0 {
+			t.Fatalf("--check read the cloud: %+v", r.run.Requests())
+		}
+	})
+	t.Run("agent", func(t *testing.T) {
+		r := upgradeRigWithGitHubAppID(t)
+		r.appendConfig(t, providersConfig)
+		stubCurrentRefresh(t, r)
+		setJobConfigCopyEnv(t, r, "api", nil)
+		t.Setenv("CLAUDECODE", "1")
+		out, _, err := executeStdin(t, "", "upgrade")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if strings.Contains(out, "job's copy") {
+			t.Fatalf("the agent-session skip reported on the job's copy:\n%s", out)
+		}
+		if len(r.run.Requests()) != 0 {
+			t.Fatalf("the agent session read the cloud: %+v", r.run.Requests())
+		}
+	})
+}
+
+// TestUpgradeCloudReportsStaleBudgetConfigCopy is the review's own bug
+// reproduction (PR #324 review, finding 1): providers and model_prices
+// match (so the old, narrower comparison would have found nothing to say),
+// but the local config now also sets a budget the deployed job's copy
+// lacks; the note must still name it, by field.
+//
+// Mutation (verified, run and restored): in scalarConfigEnv, also delete
+// infra.BudgetModeEnv and infra.MaxRunUSDEnv (narrowing the comparison back
+// to roughly its old, pre-fix scope): this test fails, finding no note.
+func TestUpgradeCloudReportsStaleBudgetConfigCopy(t *testing.T) {
+	r := upgradeRigWithGitHubAppID(t)
+	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5 }\n")
+	stubCurrentRefresh(t, r)
+	setJobConfigCopyEnv(t, r, "api", nil) // no budget on the job's copy
+	fakeSteps(t, "", nil)
+	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"note: the deployed job's copy of the local project config is STALE",
+		"FUGARO_BUDGET_MODE", "FUGARO_MAX_RUN_USD",
+		"fugaro init --repo .",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output lacks %q:\n%s", want, out)
+		}
+	}
+	// Never a value: the cap itself (5, or its formatted "5") is not a
+	// secret, but the note names fields, never values, of anything.
+	if strings.Contains(out, "providers:") || strings.Contains(out, "model_prices:") {
+		t.Fatalf("falsely named providers/model_prices (nothing configures them here):\n%s", out)
+	}
+}
+
+// TestUpgradeCloudCheckCaveatFiresEvenWithAnEmptyLocalConfig: the caveat
+// used to key off whether the local config currently sets providers or
+// model_prices, so an owner who had just removed every provider locally
+// (the job may still carry the old ones) saw nothing under --check; it now
+// fires whenever a real cloud step would run, whatever the local config
+// currently holds.
+//
+// Mutation (verified, run and restored): put back
+// `&& (len(lc.Providers) > 0 || len(lc.ModelPrices) > 0)` on the printed
+// branch in cloudStep: this test fails, finding no caveat.
+func TestUpgradeCloudCheckCaveatFiresEvenWithAnEmptyLocalConfig(t *testing.T) {
+	r, _ := upgradeRig(t) // refreshYAML's local config sets no providers, model_prices or budget at all
+	fakeSteps(t, "", nil)
+	out, _, err := executeStdin(t, "", "upgrade", "--check")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d\n%s", ExitCode(err), out)
+	}
+	if !strings.Contains(out, "note: "+checkJobCopyCaveat) {
+		t.Fatalf("missing the --check caveat with an empty local config:\n%s", out)
+	}
+	if len(r.run.Requests()) != 0 {
+		t.Fatalf("--check read the cloud: %+v", r.run.Requests())
+	}
+}
+
+// TestUpgradeCloudCouldNotCheckJobConfigCopyOnAJobReadError: a real error
+// reading the deployed job (here, the fake answering 500 to jobs.get) must
+// not look like "the copies match": it is reported, and the report never
+// repeats the underlying error (which could carry a URL or, from a real
+// client library, a token).
+//
+// Mutation (verified, run and restored): in jobConfigCopyNote, change
+// `if err != nil { return couldNotCheckJobConfigCopy(...) }` after JobFullEnv
+// to `if err != nil && false`: this test fails, finding no note (silence
+// that looks like a match).
+func TestUpgradeCloudCouldNotCheckJobConfigCopyOnAJobReadError(t *testing.T) {
+	r := upgradeRigWithGitHubAppID(t)
+	stubCurrentRefresh(t, r)
+	setJobConfigCopyEnv(t, r, "api", nil)
+	r.run.SetJobFaults(gcpfake.JobFaults{GetStatus: 500})
+	fakeSteps(t, "", nil)
+	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "note: could not check the job's config copy (reading the deployed job failed)") {
+		t.Fatalf("missing the could-not-check note:\n%s", out)
+	}
+	for _, leak := range []string{"500", "googleapi", "http://", "https://"} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("the note leaked the underlying error %q:\n%s", leak, out)
+		}
+	}
+}
+
+// TestJobConfigCopyNoteReportsCloudFailedInsteadOfGoingSilent: review
+// follow-up (PR #324, NIT): jobConfigCopyNote returned "" for any non-nil
+// verdict from resolveCloudRepo, treating a real cloudFailed error (a bad
+// fugaro.yaml or origin, an unreadable local config) the same as a U9 skip
+// (no fugaro.yaml, a teammate checkout): silence that looks like "the
+// copies match". Calls jobConfigCopyNote directly (not through the full
+// upgrade command, whose own earlier cloudCheck call would normally catch
+// the same cloudFailed condition first and stop the checkout before
+// jobConfigCopyNote ever runs): this isolates the one path where
+// resolveCloudRepo's own verdict reaches jobConfigCopyNote's v != nil
+// branch, whatever lets it get there in a real run (a file changing between
+// the cloud step's own check and this one, for instance).
+//
+// Mutation (verified, run and restored): change `if v.state == cloudFailed`
+// to `if false`: this test fails, finding "".
+func TestJobConfigCopyNoteReportsCloudFailedInsteadOfGoingSilent(t *testing.T) {
+	upgradeRigWithGitHubAppID(t)
+	loc, ok := pluginwire.Locate(".")
+	if !ok {
+		t.Fatal("not a checkout")
+	}
+	testutil.Git(t, loc.Root, "remote", "remove", "origin")
+	note := jobConfigCopyNote(t.Context(), loc.Root, cloudOptions{})
+	if !strings.Contains(note, "could not check the job's config copy (") {
+		t.Fatalf("jobConfigCopyNote = %q, want a could-not-check note for resolveCloudRepo's cloudFailed", note)
+	}
+}
+
+// TestJobConfigCopyTimeoutBoundsASlowCloudCall: discovered running the full
+// suite for a previous round of this review (not one of its findings):
+// jobConfigCopyNote used the caller's own, often-undeadlined context, so a
+// real upgrade whose Cloud Run read hit a slow or unreachable backend (an
+// offline network, a black-holed connection) hung in the client's own
+// retry/backoff loop for as long as the process let it — minutes, in one
+// full-suite run — instead of giving up and reporting "could not check".
+// jobConfigCopyTimeout now bounds that work (the same risk
+// layerBucketTimeout, layer_resolve.go, already guards against for the
+// project layer's bucket read).
+//
+// Review follow-up (PR #324, MINOR): an earlier version of this test drove
+// openCloudFor and JobFullEnv directly with its own cctx, so it could not
+// catch jobConfigCopyNote itself forgetting to use the bounded one, and it
+// needed a real unresponsive httptest server plus a 200ms wall-clock wait.
+// This version instead runs the real fugaro upgrade command, through
+// jobConfigCopyNote, against upgradeRigWithGitHubAppID's ordinary, healthy
+// fake Cloud Run and file:// bucket, with jobConfigCopyTimeout set to a
+// negative duration: context.WithTimeout's deadline is then already in the
+// past the instant jobConfigCopyNote creates the context, so its first
+// cloud call fails immediately — no waiting, no unresponsive server, fully
+// deterministic. If jobConfigCopyNote instead used its caller's own (live,
+// undeadlined) context for those calls, they would succeed against this
+// test's healthy fakes, and the note below would never print.
+//
+// Mutation (verified, run and restored): in jobConfigCopyNote, pass ctx
+// instead of cctx to both openCloudFor and JobFullEnv: this test fails,
+// finding no "could not check" note (the calls succeed instead, against the
+// live fakes, and the upgrade reports the job current).
+func TestJobConfigCopyTimeoutBoundsASlowCloudCall(t *testing.T) {
+	r := upgradeRigWithGitHubAppID(t)
+	stubCurrentRefresh(t, r)
+	setJobConfigCopyEnv(t, r, "api", nil)
+
+	// A negative duration makes context.WithTimeout's deadline a moment
+	// already in the past, so the context it returns is Done() the instant
+	// jobConfigCopyNote creates it: no real waiting, no unresponsive server
+	// needed, and the failure is deterministic. If jobConfigCopyNote used
+	// its caller's own (live, undeadlined) context for its cloud calls
+	// instead of this bounded one, those calls would succeed against this
+	// test's perfectly healthy fake Cloud Run and file:// bucket, and the
+	// note below would never print.
+	old := jobConfigCopyTimeout
+	jobConfigCopyTimeout = -1 * time.Second
+	t.Cleanup(func() { jobConfigCopyTimeout = old })
+
+	fakeSteps(t, "", nil)
+	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "note: could not check the job's config copy (") {
+		t.Fatalf("missing the could-not-check note for an already-expired deadline:\n%s", out)
+	}
+}
+
+// TestUpgradeCloudChecksEveryWorkflowsJobNotJustTheFirst: review follow-up
+// (PR #324): refreshYAML has two workflows, api (sorted first) and app.
+// api's job does not exist at all yet (as if it were just added to
+// fugaro.yaml and never deployed), while app's job does exist and is
+// genuinely stale. Checking only the alphabetically-first workflow's job
+// (api, which does not exist) used to make the whole note go silent,
+// hiding app's real staleness; every workflow with a job must be checked.
+//
+// Mutation (verified, run and restored): in jobConfigCopyNote, replace the
+// loop over names with a single check of names[0] (api) alone: this test
+// fails, finding no note (api's job does not exist, and the old code never
+// looked at app's).
+func TestUpgradeCloudChecksEveryWorkflowsJobNotJustTheFirst(t *testing.T) {
+	r := upgradeRigWithGitHubAppID(t)
+	r.appendConfig(t, providersConfig)
+	stubCurrentRefresh(t, r)
+	// api: no job at all (never deployed). app: a job deployed, stale (the
+	// baseline only: no providers, no model_prices).
+	setJobConfigCopyEnv(t, r, "app", nil)
+	fakeSteps(t, "", nil)
+	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"note: the deployed job's copy of the local project config is STALE",
+		"providers: added openrouter",
+		"model_prices: added deepseek/deepseek-v4-flash",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestUpgradeCloudUnionsDiffsAcrossWorkflowsDeduplicated: both api and app
+// have a deployed job; api's lacks the configured providers and app's
+// matches (deployed more recently), or vice versa — either way, a field
+// that is stale on at least one job is named once, not once per workflow.
+//
+// Mutation (verified, run and restored): in jobConfigCopyNote, change
+// `if !seen[d]` to `if true` (still setting seen[d], but never checking it):
+// this test fails, finding the diff text twice.
+func TestUpgradeCloudUnionsDiffsAcrossWorkflowsDeduplicated(t *testing.T) {
+	r := upgradeRigWithGitHubAppID(t)
+	r.appendConfig(t, providersConfig)
+	stubCurrentRefresh(t, r)
+	setJobConfigCopyEnv(t, r, "api", nil) // stale: no providers/model_prices
+	setJobConfigCopyEnv(t, r, "app", nil) // also stale, the same way
+	fakeSteps(t, "", nil)
+	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if n := strings.Count(out, "providers: added openrouter"); n != 1 {
+		t.Fatalf("the diff appeared %d times, want exactly 1 (deduplicated):\n%s", n, out)
+	}
+}
+
+// jobConfigCopySecretNames are the env vars deploy/terraform/gcp/modules/workflow/job.tf's
+// secret_env dynamic block mounts for refreshYAML's fixture (git: github,
+// agent.auth: oauth): the git credential and the Claude account token. A
+// real deployed job never carries a value for these, only a valueSource;
+// jobBodyWithSecretValueSources models exactly that.
+var jobConfigCopySecretNames = []string{"FUGARO_GITHUB_APP_PRIVATE_KEY", "CLAUDE_CODE_OAUTH_TOKEN"}
+
+// jobBodyWithSecretValueSources is a Cloud Run job's raw jobs.get body (for
+// gcpfake.Run.SetJobJSON): env's entries as plain values, plus
+// jobConfigCopySecretNames mounted the way job.tf deploys every secret_env
+// entry, a valueSource and no value at all. Modeling this in the fake is the
+// point of the test that uses it: JobFullEnv must not read a secret's
+// valueSource entry as config that was "removed".
+func jobBodyWithSecretValueSources(t *testing.T, job string, env map[string]string) string {
+	t.Helper()
+	var entries []map[string]any
+	for _, k := range slices.Sorted(maps.Keys(env)) {
+		entries = append(entries, map[string]any{"name": k, "value": env[k]})
+	}
+	for _, s := range jobConfigCopySecretNames {
+		entries = append(entries, map[string]any{"name": s, "valueSource": map[string]any{
+			"secretKeyRef": map[string]any{"secret": "projects/proj-1234/secrets/x", "version": "latest"},
+		}})
+	}
+	body := map[string]any{
+		"name": "projects/proj-1234/locations/us-east5/jobs/" + job,
+		"template": map[string]any{"taskCount": 1, "template": map[string]any{
+			"maxRetries": 0,
+			"containers": []any{map[string]any{
+				"image":     "img",
+				"resources": map[string]any{"limits": map[string]any{"cpu": "1", "memory": "512Mi"}},
+				"env":       entries,
+			}},
+		}},
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// jobConfigCopyRealSpec is acme/app's workflow spec, computed exactly as
+// jobConfigCopyNote computes it (resolveCloudRepo, checkoutURL,
+// infra.Workflow): the review's own reproduction needs "a job built from
+// exactly today's infra.Workflow spec", so this builds that spec the same
+// way the production code does, not a hand-picked guess at its keys. It
+// must run after a rig has chdir'd into the checkout (upgradeRigWithGitHubAppID).
+func jobConfigCopyRealSpec(t *testing.T, workflow string) infra.WorkflowSpec {
+	t.Helper()
+	loc, ok := pluginwire.Locate(".")
+	if !ok {
+		t.Fatal("not a checkout")
+	}
+	cfg, lc, _, repo, _, v := resolveCloudRepo(t.Context(), loc.Root, cloudOptions{})
+	if v != nil {
+		t.Fatalf("resolveCloudRepo: %+v", v)
+	}
+	repoURL, err := checkoutURL(t.Context(), loc.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := infra.Workflow(infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, RepoURL: repoURL}, workflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return spec
+}
+
+// TestUpgradeCloudSecretValueSourceEntriesAreNeverConfigCopy: review
+// follow-up (PR #324, BLOCKER): a real deployed job mounts its secrets
+// (CLAUDE_CODE_OAUTH_TOKEN, FUGARO_GITHUB_APP_PRIVATE_KEY, a provider's key,
+// ...) as a valueSource, with no value at all (job.tf's secret_env dynamic
+// block); spec.Env never has those keys, so comparing the job's whole env
+// against spec.Env reported every one of them "removed", on every correctly
+// deployed job, on every upgrade, forever. JobFullEnv now drops any entry
+// whose ValueSource is set.
+//
+// Mutation (verified, run and restored): in JobFullEnv (internal/backend/gcp/run.go),
+// drop the `if e.ValueSource != nil { continue }` check: "matches" finds a
+// false STALE note naming the two secret variables.
+func TestUpgradeCloudSecretValueSourceEntriesAreNeverConfigCopy(t *testing.T) {
+	t.Run("matches", func(t *testing.T) {
+		r := upgradeRigWithGitHubAppID(t)
+		r.appendConfig(t, providersConfig)
+		stubCurrentRefresh(t, r)
+		spec := jobConfigCopyRealSpec(t, "api")
+		r.run.SetJobJSON(spec.Job, jobBodyWithSecretValueSources(t, spec.Job, spec.Env))
+		fakeSteps(t, "", nil)
+		out, _, err := executeStdin(t, "", "upgrade", "--yes")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if strings.Contains(out, "job's copy") {
+			t.Fatalf("a false STALE note on a correctly deployed job:\n%s", out)
+		}
+	})
+	t.Run("one field really differs", func(t *testing.T) {
+		r := upgradeRigWithGitHubAppID(t)
+		r.appendConfig(t, providersConfig)
+		stubCurrentRefresh(t, r)
+		spec := jobConfigCopyRealSpec(t, "api")
+		stale := maps.Clone(spec.Env)
+		stale["FUGARO_GITHUB_APP_ID"] = "99999" // the local config's is "12345"
+		r.run.SetJobJSON(spec.Job, jobBodyWithSecretValueSources(t, spec.Job, stale))
+		fakeSteps(t, "", nil)
+		out, _, err := executeStdin(t, "", "upgrade", "--yes")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if !strings.Contains(out, "FUGARO_GITHUB_APP_ID") {
+			t.Fatalf("missing the changed field:\n%s", out)
+		}
+		for _, secret := range jobConfigCopySecretNames {
+			if strings.Contains(out, secret) {
+				t.Fatalf("the note named a secret variable %q:\n%s", secret, out)
+			}
+		}
+	})
+}
 
 // upgradeRig is an onboarded checkout of acme/app (two workflows, kinds go
 // and web-node) whose local config records no base image yet, at version
