@@ -86,16 +86,32 @@ At run time the gateway also refuses a request whose model is not pinned for the
 
 ## 6. Reading the cost
 
-Provider models are real dollars: the charge is the table price of the reported usage plus the route fee. When a response carries no usage at all, the call is charged its full reservation; when it carries no cache fields, all input is charged at the full input rate. Both err high. Whether OpenRouter's responses carry usage and cache fields is assumed until Check 25.
+Provider models are real dollars: the charge is the table price of the reported usage plus the route fee. **What is measured:** on a streamed call the gateway merges the usage every `message_start` and `message_delta` event reports (the largest each field ever claimed; cumulative counts never lower a call's charge) and decides whether the call settles from that usage only once the stream ends (`message_stop`, or a clean end of a non-streaming body) — not from `message_start` alone. A provider may report an all-zero usage at `message_start` and put the real, cumulative counts only in `message_delta` (OpenRouter routing to `deepseek/deepseek-v4.1-flash`, served by DeepInfra, did exactly this in a captured run: `message_start`'s `usage.input_tokens` was `0` with every cache field `null`, and `message_delta` carried `input_tokens:32`, `cache_read_input_tokens:0`, `output_tokens:47`); the gateway reads that as 32 input and 47 output tokens, not as a reply that said nothing. Zero input alongside a real cache read (heavy caching) or a real output count (the provider simply never names an input count) is the same: priced from whatever was reported, never read as silence.
+
+**What is estimated, and the fail-safe:** when the merged usage sums to zero across input, cache read, cache creation and output — a 2xx that truly said nothing, whatever text the response held — the call is charged its full reservation instead (`usage_unparsed` in the run's report, a WARN log line per call). So is any call whose usage the gateway could not read at all: a response with no usage event, one with a negative count (never trusted, whatever a later event claims), a `message_delta` whose usage didn't parse, or a stream that broke before it finished (partial settlement then charges the reported input and cache plus the reserved output — see `TestPartialSettlementCarriesFee`, `TestCutProviderStreamChargesPartial`). The WARN line (`budget: usage unparsed`) names one `reason`, from a closed set, and the event type names seen, never the provider's own text:
+
+| reason | meaning |
+|---|---|
+| `no_usage_event` | no event (or body) ever carried a usage object |
+| `input_zero_no_cache` | usage was read, but it summed to zero everywhere: the fail-safe |
+| `negative_count` | a reported count was below zero |
+| `malformed_delta` | a `message_delta` carried a usage object the gateway could not parse |
+| `stream_incomplete` | the stream never reached `message_stop` (and never said enough to partially settle either) |
+| `not_readable` | the response body's encoding isn't one the gateway decodes |
+
+When a response carries no cache fields at all, all input is charged at the full input rate (never split into a cheaper cache rate it didn't report). Both this and the fail-safe above err high, never low. Whether OpenRouter's responses carry usage and cache fields in the general case (beyond the one captured run above) is assumed until Check 25.
 
 `fugaro diagnose <run>` shows:
 
 - `Cost:` the run's total, as for any run;
 - `Route:` the spend by route (`openrouter`; `unattributed` may include late Claude spend);
 - `Reported:` what the provider said the calls cost, beside what was charged (that the response carries a cost at all is assumed until Check 25). The table price settles; a large, lasting gap means a wrong `model_prices` entry, or a fallback you did not pin: fix the price, or the account's provider settings;
-- `Warning:` the unverified-price warning, until you set the real price.
+- `Warning:` the unverified-price warning, until you set the real price;
+- a `usage_unparsed` count above zero: some calls settled at their reservation instead of their usage; the run's log carries the reason and event types for each.
 
-`result.json` has `cost.model_by`, `cost.route_by` and `cost.reported_usd`; the runner's `model call` log lines carry `route`, `serving_model`, `priced_as`, `settled` and `reported_micros`. `serving_model` different from the pin means OpenRouter served something else (that the response names the serving model is assumed until Check 25).
+`result.json` has `cost.model_by`, `cost.route_by`, `cost.reported_usd` and `cost.usage_unparsed`; the runner's `model call` log lines carry `route`, `serving_model`, `priced_as`, `settled` and `reported_micros`. `serving_model` different from the pin means OpenRouter served something else (that the response names the serving model is assumed until Check 25).
+
+**On the next DeepSeek run, check:** `fugaro diagnose <run>` — Route `openrouter`'s cost should sit near the figure OpenRouter's own Activity page shows for the same calls, and `usage_unparsed` should read `0`. The real SSE shape above was captured from one live run, not exhaustively; if `usage_unparsed` is still above zero, the log's `reason` and `events` on the WARN line say why (a shape the parser doesn't yet tolerate, not necessarily the same one fixed here).
 
 ## 7. Known limits
 
