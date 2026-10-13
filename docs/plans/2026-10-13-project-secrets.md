@@ -696,62 +696,64 @@ git commit -m "project secrets task 5: local.secrets; build.tf AND check.tf (B4)
 
 ### Task 6: plan-level fixtures (no secret deletes, but real IAM-member replacements, on a scope-move plan — B3)
 
+**Rewritten, SF3 — the original draft could not be built: `repo.tftest.hcl` (and `installation_terraform_test.go`'s generated `vars.tftest.hcl`) use `mock_provider`/`command = plan` runs whose `assert`/`condition` blocks evaluate planned *values*, never a resource's plan *action* (none of this repo's three existing `.tftest.hcl` files assert `create`/`update`/`replace`/`delete` today — grep confirms the only `action` fields anywhere in them are an artifact-registry cleanup policy's `KEEP`/`DELETE` tag enum, an unrelated homonym). Terraform's native test framework has no HCL-level way to read `resource_changes[].change.actions`, and `tf.Guard` is a Go function (`internal/infra/tf/guard.go`) a `.tftest.hcl` run block cannot call at all. This needs the same machinery `internal/infra/tf` already uses for the three existing root goldens (`cover_golden_test.go`'s `goldenPlan`, real `terraform show -json` output, parsed into `*tf.Plan`), extended with one new, genuinely two-step golden for the scope-move scenario specifically, since every existing golden is a fresh-create plan (`TestGoldenPlansAreCovered` already asserts `actions == ["create"]` for every one of their resource changes) and a replace/delete diff can only come from a plan with a PRIOR state to diff against.**
+
 **Files:**
-- Edit: `deploy/terraform/gcp/roots/installation/tests/` (the harness's own `*.tftest.hcl` file, following the existing pattern there) and `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl` (this repository's real Terraform-test framework for the repo root — not a Go-level fixture: Go cannot observe a Terraform plan's resource actions, only `terraform plan -json` through this framework can, which is exactly why B3's scope-move claim needed a live plan to catch, not a unit test).
+- Edit: `scripts/gen-golden-plans.sh` — one new golden, `repo-scope-move.plan.json`, produced in two real (not jq-synthesized) steps, offline throughout:
+  1. Build a synthetic prior `terraform.tfstate` for the repo root from `repo.plan.json`'s own `planned_values` (the already-committed fresh-create golden, repo-only config: the name has a repo secret, no project one) — a `jq` transform (a sibling of `adopt_variant`, call it `state_from_plan`) that wraps each resource's planned `values` into a minimal v4 state file's `resources[].instances[].attributes`, the same shape a real `terraform apply` of that plan would have written. This is legitimate the same way `adopt_variant` is: it encodes "this already exists," not "what the next diff looks like" — the diff itself is computed for real.
+  2. Run a genuine second `terraform plan -refresh=false -state=<that state> -out=plan2.bin` against Task 5's hand-built `project_secrets`-bearing tfvars (the scope-move config: the same name's repo version now disabled/absent, the project copy resolved) — `-refresh=false` means no provider read, so this stays within the script's existing no-network guarantee without new flags. `terraform show -json plan2.bin`, cut to `resource_changes` exactly like every other golden, becomes `repo-scope-move.plan.json`.
+- New: `internal/infra/tf/scope_move_golden_test.go` (a sibling of `cover_golden_test.go`, same `goldenPlan` helper, reused not reinvented)
 
-**Tests (named for what is actually true, not "zero destroys" — corrected per B3):**
-```hcl
-# deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl
-run "project_secrets_is_create_only" {
-  # A fresh var.project_secrets entry plans exactly 1 create (the secret)
-  # plus its operator grants, 0 updates to any unrelated installation
-  # resource, 0 destroys, 0 replacements — the installation root's own
-  # first apply touches nothing that already exists.
+**Tests (named for what is actually true, not "zero destroys" — corrected per B3; written in Go against the real golden plan, not HCL):**
+```go
+func TestScopeMoveReplacesIAMMembersNeverDeletesSecrets(t *testing.T) {
+	p := goldenPlan(t, "repo-scope-move")
+	// The scenario in design §6 step 4: a name moves from repo-only to
+	// project-shared (repo has no version, project does). Assert, reading
+	// p.ResourceChanges directly (rc.Address, rc.Change.Actions):
+	//   - 0 "delete"-only actions on any google_secret_manager_secret.this[*]
+	//     address, and 0 "replace" ([delete,create] or [create,delete])
+	//     on one either — the secret container itself is never destroyed
+	//     or recreated (P2/P2-extended);
+	//   - EXACTLY the expected google_secret_manager_secret_iam_member.job[*]
+	//     (one per workflow/account variant that mounted the name under the
+	//     OLD, repo-only config) and, if the name is a BuildSecret,
+	//     google_secret_manager_secret_iam_member.build[*] addresses show a
+	//     "replace" action — asserting this is PRESENT, not merely
+	//     permitted, is the point: a plan that silently kept the OLD
+	//     secret_id (a bug) would show no replacement at all and must also
+	//     fail this test;
+	//   - the workflow's (and, if applicable, the check job's) Cloud Run
+	//     job resource itself shows an "update" action, never "replace" or
+	//     "delete" (new revision, same resource).
+	// Then, the same loaded plan through the real Guard, proving the two
+	// facts together rather than asserting Guard's generic behavior again
+	// (guard_test.go already covers that against hand-built fixtures):
+	//   - tf.Guard(p, nil) is refused, naming every expected address;
+	//   - tf.Guard(p, <those addresses>) succeeds.
 }
 ```
-```hcl
-# deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl
-run "scope_move_replaces_iam_members_never_deletes_secrets" {
-  # The scenario in design §6 step 4: a name moves from repo-only to
-  # project-shared (repo has no version, project does). Assert:
-  #   - 0 "delete" actions on any google_secret_manager_secret.this[*]
-  #     address (the secret container itself is never destroyed);
-  #   - EXACTLY the expected google_secret_manager_secret_iam_member.job[*]
-  #     (one per workflow/account variant that mounts the name) and, if the
-  #     name is a BuildSecret, google_secret_manager_secret_iam_member.build[*]
-  #     addresses show a "replace" action (["delete","create"]) — asserting
-  #     this is present, not merely permitted, is the point: a plan that
-  #     silently keeps the OLD secret_id (a bug) would show no replacement
-  #     at all and must also fail this test;
-  #   - the plan, run through tf.Guard with no --allow-delete, is refused
-  #     (asserts the guard really does fire on these addresses, not just
-  #     that the design document says it should);
-  #   - the plan, run through tf.Guard WITH every expected address listed
-  #     in --allow-delete, succeeds;
-  #   - the workflow's (and, if applicable, the check job's) Cloud Run job
-  #     resource itself shows an "update" action, never "replace" or
-  #     "delete" (new revision, same resource).
-}
-```
 
-- [ ] **Step 1: Write the failing tests**
-- [ ] **Step 2: Run the tests to verify they fail**
+- [ ] **Step 1: Write the failing test** (and, first, the new golden: extend `gen-golden-plans.sh` per "Files" above, run it where a provider plugin cache exists, and commit the resulting `testdata/golden/repo-scope-move.plan.json`)
+- [ ] **Step 2: Run the test to verify it fails**
 
-Run (the installation root already has a Go-side driver that writes a fresh `tests/vars.tftest.hcl` and shells out to the real `terraform` binary, `internal/infra/installation_terraform_test.go:59-69`'s pattern — reuse it, do not invent a second one): `go test -count=1 -run TestInstallationVarsPlan ./internal/infra/`. The repo root's `repo.tftest.hcl` is a checked-in file (not Go-generated) reading golden tfvars from `deploy/terraform/gcp/roots/repo/tests/testdata/` (the same fixtures `internal/infra/spec_test.go`'s `-update` flag maintains, `spec_test.go:24,28`); run it directly against the real `terraform` binary with no credentials: `terraform -chdir=deploy/terraform/gcp/roots/repo init -backend=false -lockfile=readonly -input=false && terraform -chdir=deploy/terraform/gcp/roots/repo test -no-color` (the exact flags `installation_terraform_test.go` already uses for its own `terraform init`/`terraform test` calls).
-Expected: both FAIL (no `replace`/`delete` assertions exist yet on the fixtures, which today have no project-shared name at all).
+Run: `go test -count=1 ./internal/infra/tf/ -run TestScopeMoveReplacesIAMMembersNeverDeletesSecrets`
+Expected: FAIL at `goldenPlan`, with no `testdata/golden/repo-scope-move.plan.json` to read — confirming the fixture does not exist yet, not a false pass from stale data.
 
-- [ ] **Step 3: Make them pass** (this task should need no new production code if Tasks 2-5 are correct; it exists to prove the golden claim end to end, across both roots, not just within `internal/infra`). If `repo.tftest.hcl`'s fixtures need a new golden tfvars case with a `project_secrets` entry resolved, regenerate it with `internal/infra/spec_test.go`'s own `-update` flag rather than hand-editing the JSON: `go test -run TestBuildRepoSpec -update ./internal/infra/` (the exact invocation the file's own flag comment documents), then review the diff before committing it.
-- [ ] **Step 4: Run both again to verify they pass**
+- [ ] **Step 3: Make it pass** (this task should need no new production code if Tasks 2-5 are correct; it exists to prove the golden claim end to end against a real plan, not a unit-level stand-in)
+- [ ] **Step 4: Run it again to verify it passes**
 
-Run the same two commands as Step 2.
-Expected: `ok` (installation) / Terraform's own `Success!` summary (repo root), with the replace actions and the `tf.Guard` refusal/success asserted, not merely "0 destroys."
+Run the same command as Step 2.
+Expected: `ok`, with the replace actions and the `tf.Guard` refusal/success asserted directly, not merely "0 destroys."
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add deploy/terraform/gcp/roots/installation/tests/ deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl deploy/terraform/gcp/roots/repo/tests/testdata/
-git commit -m "project secrets task 6: plan-level fixtures proving no secret deletes, but real IAM-member replacements that tf.Guard catches and --allow-delete clears (B3)"
+git add scripts/gen-golden-plans.sh internal/infra/tf/scope_move_golden_test.go internal/infra/tf/testdata/golden/repo-scope-move.plan.json
+git commit -m "project secrets task 6: a real two-step golden plan proving no secret deletes, but real IAM-member replacements that tf.Guard catches and --allow-delete clears (B3)"
 ```
+
+**If no provider plugin cache is available when this task is implemented** (the recurring constraint noted elsewhere for this script, e.g. `docs/plans/2026-10-08-bucket-iam.md:85`): skip regenerating the golden, note "golden plans not regenerated: no provider cache" in the PR body, and leave this task's test uncommitted rather than hand-written — a hand-built `*tf.Plan` fixture would only prove `tf.Guard`'s already-tested generic behavior again, not that the real module wiring produces this scenario's actions, which is the entire point of this task.
 
 ---
 
