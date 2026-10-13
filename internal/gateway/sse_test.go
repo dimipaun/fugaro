@@ -171,13 +171,17 @@ func TestUsageAccNullCostNotReported(t *testing.T) {
 	}
 }
 
-// TestUsageTeeRealOpenRouterDeepInfraStream parses the verbatim SSE
+// TestUsageTeeRealOpenRouterDeepInfraStream parses the abridged SSE
 // response a live run captured from OpenRouter routing to
 // deepseek/deepseek-v4.1-flash served by DeepInfra (the fixture backing
 // the gap between the gateway's charge and OpenRouter's own Activity
 // figure): message_start carries an all-zero usage (null cache fields)
 // and the real, cumulative counts, plus the provider's own cost, arrive
-// only in message_delta.
+// only in message_delta. Abridged, not verbatim: the thinking block's one
+// "The" delta and the text block's own lack of any deltas do not by
+// themselves add up to the usage object's 47 output tokens; only the
+// usage fields, which this test and TestFixtureEndToEnd* check, were
+// captured faithfully.
 func TestUsageTeeRealOpenRouterDeepInfraStream(t *testing.T) {
 	raw, err := os.ReadFile("testdata/openrouter_deepinfra_stream.sse")
 	if err != nil {

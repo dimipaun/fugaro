@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -66,6 +67,23 @@ func settleCutStream(t *testing.T, startUsage, deltaUsage string) (map[string]an
 		t.Fatalf("%d %s", resp.StatusCode, b)
 	}
 	return r.logs.lastCall(t), r.gw.EndStage()
+}
+
+// fixtureEvents parses a saved SSE response (testdata/*.sse) into the
+// discrete events anthropicfake.Reply can replay, using the same
+// sseParser the gateway itself reads a response with.
+func fixtureEvents(t *testing.T, path string) []anthropicfake.Event {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ev []anthropicfake.Event
+	p := &sseParser{onEvent: func(name string, data []byte) {
+		ev = append(ev, anthropicfake.Event{Name: name, Data: string(data)})
+	}}
+	p.feed(raw)
+	return ev
 }
 
 // lastUnparsedReason is the reason the last "budget: usage unparsed"
@@ -448,6 +466,59 @@ func TestZeroInputAtStartSettlesFromDelta(t *testing.T) {
 	}
 	if got := num(call["reported_micros"]); got != 100 {
 		t.Errorf("reported_micros %v, want 100 (the provider's $0.0001)", call["reported_micros"])
+	}
+}
+
+// TestFixtureEndToEndTableMaximum sends the abridged OpenRouter/DeepInfra
+// fixture (testdata/openrouter_deepinfra_stream.sse) through the full
+// gateway (not just the tee) with a 5.5% route fee, pinned to the model
+// the embedded table knows (deepseek/deepseek-v4-flash). The fixture's
+// message_delta names 32 input, 0 cache read, 47 output tokens for a
+// served model (deepseek/deepseek-v4.1-flash) the table has no row for,
+// so it prices at the table's maximum rates: claude-fable-5-1's $10 input
+// / $50 output per M. 32*10 + 47*50 = 320 + 2350 = 2670; +5.5% fee
+// ceil(2670*0.055) = ceil(146.85) = 147; total 2817.
+func TestFixtureEndToEndTableMaximum(t *testing.T) {
+	ev := fixtureEvents(t, "testdata/openrouter_deepinfra_stream.sse")
+	r := feeRouted(t, 5.5, nil, routedStage, dsRoute, anthropicfake.Reply{Status: http.StatusOK, Events: ev})
+	if resp, b := r.post(msg(dsModel, 1000, `"stream":true`)); resp.StatusCode != http.StatusOK {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	call := r.logs.lastCall(t)
+	if got := num(call["charged_micros"]); got != 2817 {
+		t.Errorf("charged %d, want 2817 (32*10 + 47*50 = 2670, +5.5%% fee ceil(146.85)=147)", got)
+	}
+	if call["priced_as"] != pricedMax {
+		t.Errorf("priced_as %v, want %q: the served model isn't in the table", call["priced_as"], pricedMax)
+	}
+}
+
+// TestFixtureEndToEndOwnerRates is the same fixture and fee, but the
+// owner has configured model_prices for the served model itself
+// (deepseek/deepseek-v4.1-flash), pinned directly so there is no
+// pin/serving mismatch to take the dearer of two rates (MaxOf):
+// input $0.31, output $1.25 per M, cache_read a 0.02 multiplier of
+// input_per_m (unused: the fixture's cache_read_input_tokens is 0), the
+// model_prices shape documented in docs/multi-model.md §2.
+// 32*0.31 + 47*1.25 = 9.92 + 58.75 = 68.67, rounded to the nearest
+// micro-dollar: 69; +5.5% fee ceil(69*0.055) = ceil(3.795) = 4; total 73.
+func TestFixtureEndToEndOwnerRates(t *testing.T) {
+	const v41 = "deepseek/deepseek-v4.1-flash"
+	prices := func(tbl *pricing.Table) {
+		tbl.Models[v41] = pricing.Model{ID: v41, Rates: pricing.Rates{InputPerM: 0.31, OutputPerM: 1.25, CacheRead: 0.02}}
+	}
+	stage := Stage{Name: "implement", Model: v41, Background: sonnet}
+	ev := fixtureEvents(t, "testdata/openrouter_deepinfra_stream.sse")
+	r := feeRouted(t, 5.5, prices, stage, dsRoute, anthropicfake.Reply{Status: http.StatusOK, Events: ev})
+	if resp, b := r.post(msg(v41, 1000, `"stream":true`)); resp.StatusCode != http.StatusOK {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	call := r.logs.lastCall(t)
+	if got := num(call["charged_micros"]); got != 73 {
+		t.Errorf("charged %d, want 73 (32*0.31 + 47*1.25 = 68.67, rounded 69, +5.5%% fee ceil(3.795)=4)", got)
+	}
+	if call["priced_as"] != pricedTable {
+		t.Errorf("priced_as %v, want %q: the pin is the served model, no MaxOf", call["priced_as"], pricedTable)
 	}
 }
 
