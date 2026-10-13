@@ -1024,10 +1024,11 @@ Project — no; Profile — no; Repo — yes; Override — `--no-compression` on
 (never a force-on flag).** The reasoning for Project/Profile/Repo is the one
 `agent.oauth_token` already established for the identical shape of question
 (T2, `docs/design/named-oauth-tokens.md` §3): the project layer and a
-profile are both keys of the same launcher-writable
-`fugaro/project-layer.yaml` bucket object (`layered-config.md` §11's threat
-model: any launcher holding `roles/storage.objectAdmin`, not only an
-operator, can write it). Unlike `agent.oauth_token`, turning compression on
+profile are both keys of the same
+`fugaro/project-layer.yaml` bucket object, writable with no PR review
+(`layered-config.md` §11's threat model: operators can write it, and,
+before the 0.7.0 bucket hardening, any launcher too —
+[bucket-iam.md](bucket-iam.md)). Unlike `agent.oauth_token`, turning compression on
 does not select among owner-defined credential identities — but it **does**
 change what the model sees on every call, silently, for every repository a
 profile templates, with no PR review. That is the "classic failure mode"

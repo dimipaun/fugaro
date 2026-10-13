@@ -22,7 +22,7 @@ A separate object, `fugaro/config.yaml`, in the runs bucket, written by `fugaro 
 
 Rejected: extending the marker `fugaro/project.json` (Terraform-written, three fields, 4 KiB read cap, and the budget values come from a different Terraform root, so one file would couple two roots); keeping it in the Firebase database (not every launcher can read it, and its mark logic is delicate).
 
-Trust level: launchers and operators already hold `roles/storage.objectAdmin` on the runs bucket (`modules/installation/iam.tf`), so they can read the file with no new grant, and any of them can already overwrite the marker. The shared file is exactly as trustworthy as the marker, which is read the way `checkCloudName` reads it. The validation in §5 is defence in depth, not a new boundary.
+Trust level: operators (and, before 0.7.0, launchers) hold `roles/storage.objectAdmin` on the runs bucket (`modules/installation/iam.tf`); since 0.7.0, once an operator applies it, a launcher's grant is `objectViewer` plus `objectUser` on `runs/` only ([bucket-iam.md](bucket-iam.md)), so launchers can still read the file with no new grant, but only an operator can overwrite the marker or the shared file. The shared file is exactly as trustworthy as the marker, which is read the way `checkCloudName` reads it. The validation in §5 is defence in depth, not a new boundary.
 
 ## 4. The published file
 
@@ -111,7 +111,7 @@ Found in review and not fixed, on purpose:
 - **Zero values cannot clear a published scalar.** The merge takes the local value only when it is non-zero, so removing a scalar locally leaves the published one. Edit or delete the object by hand.
 - **Offboarding is not published.** A repository removed from the local config stays in the published `repos` until the object is edited, or republished by hand.
 - **Version skew.** A legitimate object written by a newer or older fugaro (a key this binary does not know, or one it now refuses) fails `ParseShared`, so the publisher replaces it, dropping other machines' repositories and prices, and teammates on that binary are refused with "ask an operator to run fugaro init again".
-- **A writer can relax policy for people who use the shared file.** Anyone holding `objectAdmin` on the runs bucket can set `budget.mode: off`, `per_run_usd` or `allowed_models`. A launcher can already launch with `--no-budget-check`, so this adds no capability, but teammates without a local config inherit it.
+- **A writer can relax policy for people who use the shared file.** Anyone holding `objectAdmin` on the runs bucket — operators (and, before 0.7.0, launchers) — can set `budget.mode: off`, `per_run_usd` or `allowed_models`. A launcher can already launch with `--no-budget-check`, so before 0.7.0 this added no capability for them; since 0.7.0, once an operator applies it, only an operator can write the shared file, but teammates without a local config still inherit whatever the writer sets.
 - **A foreign `firebase_api_key`** can only cause denial of service.
 - **Repository keys such as `../..`** are accepted; no sink that builds a path from one is known.
 - **A fixed object can outlive its fix in a cache** for up to 24 hours, by design (§6).
