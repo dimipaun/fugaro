@@ -564,6 +564,9 @@ func ParseBaseImageFlag(v string) (kind, ref string, err error) {
 	if k, r, ok := strings.Cut(v, "="); ok {
 		kind, ref = k, r
 		if !slices.Contains(config.Bases, kind) {
+			if slices.Contains(config.LegacyBaseKinds, kind) {
+				return "", "", fmt.Errorf("--base-image %q: %q is not a base kind (%s): %s was removed in 0.7.0 (%s)", v, kind, strings.Join(config.Bases, ", "), kind, config.MigrationDoc)
+			}
 			return "", "", fmt.Errorf("--base-image %q: %q is not a base kind (%s)", v, kind, strings.Join(config.Bases, ", "))
 		}
 	} else if m := baseImageNameRE.FindStringSubmatch(v); m != nil && slices.Contains(config.Bases, m[1]) {

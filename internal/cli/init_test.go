@@ -319,6 +319,25 @@ func TestInitRefusesWithoutConfirmation(t *testing.T) {
 	}
 }
 
+// TestLegacyBaseKindRefusalsNameTheMigrationDoc: --base, --expect-digest
+// and --base-image each refuse a kind the 0.7.0 cut removed (go,
+// web-node, java-services) naming config.MigrationDoc, not just "is not
+// a base kind": the one pointer to the fix, wherever the legacy kind was
+// typed.
+func TestLegacyBaseKindRefusalsNameTheMigrationDoc(t *testing.T) {
+	newInitRig(t)
+	for _, args := range [][]string{
+		{"init", "--yes", "--base", "go"},
+		{"init", "--yes", "--expect-digest", "go=sha256:" + strings.Repeat("a", 64)},
+		{"init", "--yes", "--base-image", "go=ghcr.io/me/fugaro-go:mine"},
+	} {
+		_, _, err := executeStdin(t, "", args...)
+		if err == nil || !strings.Contains(err.Error(), config.MigrationDoc) {
+			t.Errorf("%v: err = %v, want it to name %s", args, err, config.MigrationDoc)
+		}
+	}
+}
+
 // The apply takes the plan file that was shown and guarded, and nothing
 // else; the fake's plan exits 2, which means changes, not failure.
 func TestInitAppliesSavedPlan(t *testing.T) {
