@@ -89,10 +89,16 @@ jobs:
             echo "move_major=$move_major"
           } >> "$GITHUB_OUTPUT"
       # The nightly and manual runs build the latest release tag's tree, and an
-      # older tag does not hold every image (v0.1.0 has no images/go or
-      # images/java-services): an image whose Dockerfile is not in the tree being
-      # built has nothing to build, publish or verify, and its legs are skipped
-      # instead of failing every night.
+      # older tag does not hold every image (a tag before the 0.7.0 cut has no
+      # images/base): an image whose Dockerfile is not in the tree being built
+      # has nothing to build, publish or verify, and its legs are skipped
+      # instead of failing every night. web-node, go and java-services are
+      # gone from this list: this same diff deletes the per-kind "base" job
+      # that was their only reader, so no job checks for those kinds any more
+      # — keeping them here would be dead code, not backport support (a
+      # backport run still uses this workflow file as committed on the
+      # default branch, which has no job left to gate on them, whichever tag
+      # it checks out mid-job).
       - name: Which images this tree builds
         id: kinds
         env:
@@ -104,55 +110,14 @@ jobs:
             ref="refs/tags/$TAG"
           fi
           kinds=,
-          for k in web-node go java-services history base; do
+          for k in history base; do
             if git cat-file -e "$ref:images/$k/Dockerfile" 2>/dev/null; then
               kinds="$kinds$k,"
             fi
           done
           echo "kinds=$kinds" >> "$GITHUB_OUTPUT"
-  base:
-    needs: version
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        base: [web-node, go, java-services]
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: contains(needs.version.outputs.kinds, format(',{0},', matrix.base))
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - name: Checkout the resolved tag
-        if: contains(needs.version.outputs.kinds, format(',{0},', matrix.base)) && needs.version.outputs.tag != ''
-        env:
-          TAG: ${{ needs.version.outputs.tag }}
-        run: git checkout --quiet "refs/tags/$TAG"
-      - name: Build
-        if: contains(needs.version.outputs.kinds, format(',{0},', matrix.base))
-        env:
-          FUGARO_VERSION: ${{ needs.version.outputs.version }}
-        run: images/build-base.sh ${{ matrix.base }} fugaro-${{ matrix.base }}:ci
-      - name: Smoke test
-        if: contains(needs.version.outputs.kinds, format(',{0},', matrix.base))
-        run: images/smoke.sh fugaro-${{ matrix.base }}:ci ${{ matrix.base }}
-      - name: Scan
-        if: contains(needs.version.outputs.kinds, format(',{0},', matrix.base)) && github.event_name != 'pull_request'
-        run: images/scan.sh fugaro-${{ matrix.base }}:ci
-      - name: Save the image for the publish job
-        if: contains(needs.version.outputs.kinds, format(',{0},', matrix.base)) && needs.version.outputs.publish == 'true'
-        run: docker save "fugaro-${{ matrix.base }}:ci" | gzip > "fugaro-${{ matrix.base }}.tar.gz"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: contains(needs.version.outputs.kinds, format(',{0},', matrix.base)) && needs.version.outputs.publish == 'true'
-        with:
-          name: fugaro-${{ matrix.base }}-image
-          path: fugaro-${{ matrix.base }}.tar.gz
-          retention-days: 1
   # The history job's image (design D11): built and checked on every run and
-  # published with the bases on a release tag (the publish job below).
+  # published with the base on a release tag (the publish job below).
   history:
     needs: version
     permissions:
@@ -307,9 +272,11 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
   # This job and publish-base are the only ones that need packages: write,
   # and neither ever runs on pull_request: `version.outputs.publish` is
-  # forced false there.
+  # forced false there. After the 0.7.0 cut the only image left in this
+  # job's own matrix is history; the base publishes through publish-base
+  # above instead.
   publish:
-    needs: [version, base, history]
+    needs: [version, history]
     if: needs.version.outputs.publish == 'true'
     # Publishes of one image queue rather than race: move_major is decided
     # from the tags present when the version job ran, so two close tag pushes
@@ -326,7 +293,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        base: [web-node, go, java-services, history]
+        base: [history]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -365,7 +332,7 @@ jobs:
     # publish-base is legitimately skipped when kinds has no base (an older
     # tag's tree, e.g. a backport): GitHub's default auto-skip ("a job is
     # skipped if any of its needs did not succeed") would then skip this job
-    # too, leaving the legacy images published with no anonymous-pull check.
+    # too, leaving the published history image with no anonymous-pull check.
     # always() overrides that default, so the explicit checks below carry the
     # whole gate: publish must have succeeded, and when the kinds include base
     # publish-base must have SUCCEEDED too (a failed, cancelled or skipped
@@ -395,7 +362,7 @@ jobs:
         run: |
           set -eu
           refs=""
-          for img in web-node go java-services history; do
+          for img in history; do
             # An older tag's tree does not hold every image: only what was published.
             case "$KINDS" in *",$img,"*) ;; *) continue ;; esac
             refs="$refs ghcr.io/dimipaun/fugaro-$img:$VERSION"

@@ -2,7 +2,7 @@
 
 Every workflow's image is built on one base, `ghcr.io/dimipaun/fugaro-base` (for `linux/amd64` and `linux/arm64`), plus the repository's checkout, its runtimes and its dependencies. The base carries what Fugaro and the agents need, and a generous tool kit; **your project declares its language runtimes in `mise.toml`**, and the image installs them. The design is [design/base-image.md](design/base-image.md).
 
-**Not yet published.** `ghcr.io/dimipaun/fugaro-base` has not been published by any release yet: the workflow change that builds and publishes it is written and tested, but staged at `docs/pending-workflows/images.yml` until a maintainer copies it into `.github/workflows/images.yml` and a release runs with it (`docs/pending-workflows/README.md` says why Fugaro can't do that copy itself). Until then, `fugaro init --base base` and `fugaro image refresh` find no image to copy and refuse with a clear error; [Bring your own](#bring-your-own) below (your own build of `images/base/`) still works today.
+**Published from 0.7.0.** `ghcr.io/dimipaun/fugaro-base` is built and published by the `images` workflow (`fugaro-base (amd64|arm64)` and `publish-base`) from the first release tag that carries it, 0.7.0; a development build or an earlier release has no image to copy, so `fugaro init --base base` and `fugaro image refresh` refuse with a clear error there; [Bring your own](#bring-your-own) below (your own build of `images/base/`) works with any build.
 
 ## What is in it
 
