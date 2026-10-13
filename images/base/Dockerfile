@@ -219,20 +219,21 @@ RUN --mount=type=bind,source=images/base/fetch.sh,target=/tmp/fetch.sh \
       "$(pick "$CRUSH_SHA256_AMD64" "$CRUSH_SHA256_ARM64")"
 # graphify (design base-image.md section 6 update, 2026-10-13): a Python CLI
 # (PyPI graphifyy, github.com/Graphify-Labs/graphify) that builds a
-# knowledge graph of a folder. The base has no system Python and no
-# project-visible pip (design section 4: a runtime-bound package manager is
-# never a system package; a project that wants one uses mise), so graphify
-# gets the same private-runtime treatment as the Node harnesses above: uv
-# itself is one pinned, checksummed single binary (like gh, yq, docker and
-# gcloud, 1b above), kept out of /usr/local/bin; it installs its own managed
-# CPython and graphify's dependencies -- verified against this committed,
+# knowledge graph of a folder. The base has no system Python beyond Debian's
+# own (no pip; design section 4: a runtime-bound package manager is never a
+# system package, and a project that wants one uses mise), so graphify gets
+# the same private-runtime treatment as the Node harnesses above: uv itself
+# is one pinned, checksummed single binary (like gh, yq, docker and gcloud,
+# 1b above), kept out of /usr/local/bin; it installs its own managed CPython
+# and graphify's dependencies -- verified against this committed,
 # hash-pinned lockfile (`uv pip compile --generate-hashes`; see
 # images/base/graphify/requirements.in for how to regenerate it), so a PyPI
 # change can't alter the image -- into a private venv at
 # /opt/fugaro/graphify/venv, never on PATH. A two-line wrapper execs it. uv's
-# own Python download (python-build-standalone) is verified by uv's own
-# checksum metadata, not a hand-pinned sha256 here: the same weaker trust
-# model design section 9 already accepts for mise's own downloads.
+# own Python download (python-build-standalone) is believed pinned by uv's
+# own embedded checksums, not a hand-pinned sha256 here; that embedded
+# pinning itself is not verified in this change (uv's source was not read
+# for it), unlike every other download in this file.
 COPY images/base/graphify/requirements.lock.txt /opt/fugaro/graphify/requirements.lock.txt
 RUN --mount=type=bind,source=images/base/fetch.sh,target=/tmp/fetch.sh \
     set -eu; arch=$(dpkg --print-architecture); \
