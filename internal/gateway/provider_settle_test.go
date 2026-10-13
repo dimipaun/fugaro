@@ -24,6 +24,47 @@ func settleCase(t *testing.T, fee float64, body string, reply anthropicfake.Repl
 	return call, r.gw.EndStage()
 }
 
+// streamEvent is a one-off SSE event, for a stream built by hand: the
+// events helpers (StartEvent, DeltaEvent) always include every usage
+// field, which a test naming only some of them cannot use.
+func streamEvent(name, data string) anthropicfake.Event {
+	return anthropicfake.Event{Name: name, Data: data}
+}
+
+// settleStream runs a hand-built provider stream (message_start's and
+// message_delta's data, a text block and message_stop in between) and
+// returns its log line, the stage report and the logs (for a warning's
+// reason).
+func settleStream(t *testing.T, startUsage, deltaUsage string) (map[string]any, StageReport, *logBuf) {
+	t.Helper()
+	ev := []anthropicfake.Event{streamEvent("message_start", `{"type":"message_start","message":{"id":"m","model":"`+dsModel+`","content":[],"usage":`+startUsage+`}}`)}
+	ev = append(ev, anthropicfake.TextEvents("ok")...)
+	ev = append(ev, streamEvent("message_delta", `{"type":"message_delta","usage":`+deltaUsage+`}`), anthropicfake.Stop)
+	r := feeRouted(t, 0, nil, routedStage, dsRoute, anthropicfake.Reply{Status: http.StatusOK, Events: ev})
+	if resp, b := r.post(msg(dsModel, 1000, `"stream":true`)); resp.StatusCode != http.StatusOK {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	return r.logs.lastCall(t), r.gw.EndStage(), r.logs
+}
+
+// lastUnparsedReason is the reason the last "budget: usage unparsed"
+// warning named.
+func lastUnparsedReason(t *testing.T, l *logBuf) string {
+	t.Helper()
+	var reason string
+	found := false
+	for _, m := range l.lines(t) {
+		if m["msg"] == "budget: usage unparsed" {
+			reason, _ = m["reason"].(string)
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no usage_unparsed warning logged; log:\n%s", l.String())
+	}
+	return reason
+}
+
 func TestMissingUsageChargesReservation(t *testing.T) {
 	u := pricing.Usage{Input: 100, Output: 200}
 	for _, c := range []struct {
@@ -311,5 +352,92 @@ func TestProviderMessageZeroInputSettles(t *testing.T) {
 	}
 	if rep.UsageUnparsed != 0 {
 		t.Errorf("usage_unparsed %d, want 0", rep.UsageUnparsed)
+	}
+}
+
+// The exact shape a live run captured from OpenRouter routing to
+// deepseek/deepseek-v4.1-flash served by DeepInfra (fixture:
+// testdata/openrouter_deepinfra_stream.sse): message_start names an
+// all-zero usage and the real, cumulative counts, plus the provider's own
+// cost, arrive only in message_delta. This is the regression the gap
+// between the gateway's charge and OpenRouter's own Activity figure
+// traced to: every such call used to settle at its reservation.
+func TestZeroInputAtStartSettlesFromDelta(t *testing.T) {
+	u := pricing.Usage{Input: 32, CacheRead: 5, Output: 47}
+	call, rep, _ := settleStream(t,
+		`{"input_tokens":0,"output_tokens":1}`,
+		`{"input_tokens":32,"cache_read_input_tokens":5,"output_tokens":47,"cost":0.0001}`)
+	want := cost(t, dsModel, u)
+	if got := pricing.Micros(num(call["charged_micros"])); got != want || call["settled"] != settledUsage {
+		t.Errorf("charged %d, want %d, settled %v", got, want, call["settled"])
+	}
+	if rep.UsageUnparsed != 0 {
+		t.Errorf("usage_unparsed %d, want 0", rep.UsageUnparsed)
+	}
+	if got := num(call["reported_micros"]); got != 100 {
+		t.Errorf("reported_micros %v, want 100 (the provider's $0.0001)", call["reported_micros"])
+	}
+}
+
+// Input 0 with cache_read_input_tokens > 0 and no other input is heavy
+// caching, not a reply that didn't say: it is priced, not unparsed.
+func TestZeroInputHeavyCacheSettles(t *testing.T) {
+	u := pricing.Usage{CacheRead: 900, Output: 50}
+	call, rep, _ := settleStream(t,
+		`{"input_tokens":0,"cache_read_input_tokens":900,"output_tokens":1}`,
+		`{"input_tokens":0,"cache_read_input_tokens":900,"output_tokens":50}`)
+	want := cost(t, dsModel, u)
+	if got := pricing.Micros(num(call["charged_micros"])); got != want || call["settled"] != settledUsage {
+		t.Errorf("charged %d, want %d, settled %v", got, want, call["settled"])
+	}
+	if rep.UsageUnparsed != 0 {
+		t.Errorf("usage_unparsed %d, want 0", rep.UsageUnparsed)
+	}
+}
+
+// An all-zero usage (input, cache and output, every field) on a 2xx is
+// still unparsed: the fail-safe for a provider whose usage reporting
+// never says anything, whatever text the response held.
+func TestAllZeroUsageUnparsed(t *testing.T) {
+	call, rep, logs := settleStream(t,
+		`{"input_tokens":0,"output_tokens":0}`,
+		`{"input_tokens":0,"output_tokens":0}`)
+	if got, res := pricing.Micros(num(call["charged_micros"])), pricing.Micros(num(call["reserved_micros"])); got != res || res == 0 || call["settled"] != settledReserved {
+		t.Errorf("charged %d of %d reserved, settled %v", got, res, call["settled"])
+	}
+	if rep.UsageUnparsed != 1 {
+		t.Errorf("usage_unparsed %d, want 1", rep.UsageUnparsed)
+	}
+	if reason := lastUnparsedReason(t, logs); reason != "input_zero_no_cache" {
+		t.Errorf("reason %q, want input_zero_no_cache", reason)
+	}
+}
+
+// A negative count still breaks a provider call: never settled as usage,
+// whatever a later event claims, with a reason naming it.
+func TestNegativeCountUnparsedWithReason(t *testing.T) {
+	call, rep, logs := settleStream(t,
+		`{"input_tokens":5,"output_tokens":1}`,
+		`{"input_tokens":-1,"output_tokens":1}`)
+	if call["settled"] != settledReserved || rep.UsageUnparsed != 1 {
+		t.Errorf("settled %v, usage_unparsed %d, want reserved and 1", call["settled"], rep.UsageUnparsed)
+	}
+	if reason := lastUnparsedReason(t, logs); reason != "negative_count" {
+		t.Errorf("reason %q, want negative_count", reason)
+	}
+}
+
+// A message_delta the gateway can't read as usage breaks the call: the
+// reservation, with a reason naming it, since it may hold the real output
+// count behind a shape the gateway doesn't expect.
+func TestMalformedDeltaUnparsedWithReason(t *testing.T) {
+	call, rep, logs := settleStream(t,
+		`{"input_tokens":5,"output_tokens":1}`,
+		`{"input_tokens":"not-a-number","output_tokens":1}`)
+	if call["settled"] != settledReserved || rep.UsageUnparsed != 1 {
+		t.Errorf("settled %v, usage_unparsed %d, want reserved and 1", call["settled"], rep.UsageUnparsed)
+	}
+	if reason := lastUnparsedReason(t, logs); reason != "malformed_delta" {
+		t.Errorf("reason %q, want malformed_delta", reason)
 	}
 }

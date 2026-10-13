@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -166,5 +167,128 @@ func TestUsageAccNullCostNotReported(t *testing.T) {
 		if a.hasReported != want {
 			t.Errorf("cost %s: hasReported %v, want %v", raw, a.hasReported, want)
 		}
+	}
+}
+
+// TestUsageTeeRealOpenRouterDeepInfraStream parses the verbatim SSE
+// response a live run captured from OpenRouter routing to
+// deepseek/deepseek-v4.1-flash served by DeepInfra (the fixture backing
+// the gap between the gateway's charge and OpenRouter's own Activity
+// figure): message_start carries an all-zero usage (null cache fields)
+// and the real, cumulative counts, plus the provider's own cost, arrive
+// only in message_delta.
+func TestUsageTeeRealOpenRouterDeepInfraStream(t *testing.T) {
+	raw, err := os.ReadFile("testdata/openrouter_deepinfra_stream.sse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tee := newUsageTee(true)
+	tee.provider = true
+	tee.feed(raw)
+	if !tee.complete || tee.broken {
+		t.Fatalf("complete %v broken %v, want a parsed call", tee.complete, tee.broken)
+	}
+	if tee.model != "deepseek/deepseek-v4.1-flash" {
+		t.Errorf("model %q", tee.model)
+	}
+	if tee.acc.in.v != 32 || tee.acc.cr.v != 0 || tee.acc.out.v != 47 {
+		t.Errorf("in %d cr %d out %d, want 32 0 47", tee.acc.in.v, tee.acc.cr.v, tee.acc.out.v)
+	}
+	// The real stream's usage.cost is $0.00002422, in micros.
+	if !tee.acc.hasReported || tee.acc.reported != 24 {
+		t.Errorf("reported %d hasReported %v, want 24 true", tee.acc.reported, tee.acc.hasReported)
+	}
+}
+
+// On a provider route the gateway settles from the usage merged by the
+// time the stream ends, not from message_start alone: message_start
+// reporting input_tokens 0 (OpenRouter/DeepInfra's shape, or simply
+// nothing to say yet) must not block a message_delta that reports the
+// real, cumulative counts, and zero input alongside a real cache read or
+// a real output count is a reply that did say something.
+func TestUsageTeeProviderSettlesFromFinalUsage(t *testing.T) {
+	build := func(startUsage, deltaUsage string) string {
+		return "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"m\",\"usage\":" + startUsage + "}}\n\n" +
+			"event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":" + deltaUsage + "}\n\n" +
+			"event: message_stop\ndata: {}\n\n"
+	}
+	for _, c := range []struct {
+		name                    string
+		stream                  string
+		wantIn, wantCR, wantOut int64
+	}{
+		{
+			name:   "zero input at start, real counts in the delta",
+			stream: build(`{"input_tokens":0,"output_tokens":1}`, `{"input_tokens":32,"cache_read_input_tokens":5,"output_tokens":47,"cost":0.0001}`),
+			wantIn: 32, wantCR: 5, wantOut: 47,
+		},
+		{
+			name:   "zero input throughout, heavy caching",
+			stream: build(`{"input_tokens":0,"cache_read_input_tokens":900,"output_tokens":1}`, `{"input_tokens":0,"cache_read_input_tokens":900,"output_tokens":50}`),
+			wantIn: 0, wantCR: 900, wantOut: 50,
+		},
+		{
+			name:   "zero input and cache, real output",
+			stream: build(`{"input_tokens":0,"output_tokens":1}`, `{"input_tokens":0,"output_tokens":2000}`),
+			wantIn: 0, wantCR: 0, wantOut: 2000,
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			tee := newUsageTee(true)
+			tee.provider = true
+			tee.feed([]byte(c.stream))
+			if !tee.complete || tee.broken {
+				t.Fatalf("complete %v broken %v, want a parsed call", tee.complete, tee.broken)
+			}
+			if tee.acc.in.v != c.wantIn || tee.acc.cr.v != c.wantCR || tee.acc.out.v != c.wantOut {
+				t.Errorf("in %d cr %d out %d, want %d %d %d", tee.acc.in.v, tee.acc.cr.v, tee.acc.out.v, c.wantIn, c.wantCR, c.wantOut)
+			}
+		})
+	}
+}
+
+// unparsedReason is a closed, bounded set: never the provider's own text.
+func TestUsageTeeUnparsedReason(t *testing.T) {
+	for _, c := range []struct{ name, stream, want string }{
+		{
+			name: "all zero usage",
+			stream: "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0,\"output_tokens\":0}}}\n\n" +
+				"event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"input_tokens\":0,\"output_tokens\":0}}\n\n" +
+				"event: message_stop\ndata: {}\n\n",
+			want: "input_zero_no_cache",
+		},
+		{
+			name: "negative count",
+			stream: "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}}\n\n" +
+				"event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"input_tokens\":-1,\"output_tokens\":1}}\n\n" +
+				"event: message_stop\ndata: {}\n\n",
+			want: "negative_count",
+		},
+		{
+			name: "malformed delta",
+			stream: "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}}\n\n" +
+				"event: message_delta\ndata: {\"usage\":5}\n\n" +
+				"event: message_stop\ndata: {}\n\n",
+			want: "malformed_delta",
+		},
+		{
+			name:   "no usage event at all",
+			stream: "event: ping\ndata: {\"type\":\"ping\"}\n\nevent: message_stop\ndata: {}\n\n",
+			want:   "no_usage_event",
+		},
+		{
+			name:   "stream never reaches message_stop",
+			stream: "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0,\"output_tokens\":0}}}\n\n",
+			want:   "stream_incomplete",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			tee := newUsageTee(true)
+			tee.provider = true
+			tee.feed([]byte(c.stream))
+			if got := tee.unparsedReason(); got != c.want {
+				t.Errorf("reason %q, want %q", got, c.want)
+			}
+		})
 	}
 }
