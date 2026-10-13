@@ -529,6 +529,44 @@ triggered whenever the resolved `fugaro.yaml` sets a non-empty `agent.env`.
 `agentEnvSince` equals the release that ships it, mirroring its existing
 `recipesSince`/`namedTokensSince` entries.
 
+**The provider-scoped variant has a separate, more severe compatibility
+gap `agentEnvSince` alone does not close — a repository's `fugaro.yaml`
+plays no part in triggering it.** `providers.<name>.agent_env` travels in
+`FUGARO_MODEL_PROVIDERS`, the compact JSON `fugaro init --repo` writes into
+a repository's job environment (`internal/infra/spec.go:610-615`,
+`ws.Env[ModelProvidersEnv] = pv`) **once, for every subsequent run of that
+repository**, whenever any provider in the owner's local config lists the
+repository in `allow_data_to` — regardless of whether that particular run's
+own `fugaro.yaml` uses a provider model at all. The job's own `fugaro exec`
+decodes it unconditionally, on every run (`internal/cli/exec.go:92`,
+`runner.ProvidersFromEnv(os.LookupEnv)`), with `DisallowUnknownFields()`
+(`internal/runner/providers.go:65`). So: an owner upgrades their CLI,
+adds `agent_env` to a provider's local-config entry, runs `fugaro init
+--repo` (which updates the job's `FUGARO_MODEL_PROVIDERS` to include the
+new field) — and if that repository's **job image** still runs an older
+runner binary that doesn't know the `AgentEnv` field, `ProvidersFromEnv`'s
+decode fails at bootstrap, for **every** run of that repository from then
+on, including a plain all-Claude one that never mentions a provider model.
+This is not a hypothetical: `fugaro init --repo` does not always rebuild
+the job image (it can leave an existing one in place), so "the owner's CLI
+knows `agent_env`" does not imply "the repository's job image does."
+**Fix:** gate the write, not only the read — before `fugaro init --repo`
+calls `runner.ProvidersEnv` (or inside it), check the repository's current
+job-image build record's `base_ref` against a `agentEnvSince` constant
+(the same release `agent.env`'s own gate uses, §2) whenever any provider
+the repository may use has a non-empty `AgentEnv`; refuse with the same
+"run `fugaro image refresh`" message `checkImageSince` already gives
+(`recipes_skew.go:97-137`'s `refuse` closure), adapted to `init --repo`'s
+own flow rather than a `task.Spec`-based launch (`init --repo` has no
+`task.Spec`; the plan names the adaptation). **A second, narrower
+protection already exists for a different half of this risk**: an *older
+CLI* running `fugaro init --repo` against a local config that already sets
+`agent_env` is refused by `localcfg.go`'s own strict YAML decoding
+(`internal/localcfg/localcfg.go:604`, `dec.KnownFields(true)`) before it
+ever gets as far as writing anything — that case was never a gap. The gap
+this fix closes is the other direction: a *new* CLI writing a *new* field
+into an *old* image's job environment.
+
 **`task.Spec`: no change.** `agent.env` is repo scope only (§2), read by
 the runner from the checkout's `fugaro.yaml` at bootstrap exactly like
 `agent.instructions` and `agent.review` are — never carried on the launch
