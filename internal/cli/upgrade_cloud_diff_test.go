@@ -86,6 +86,49 @@ func TestProvidersDiffUnreadableCopy(t *testing.T) {
 	}
 }
 
+// TestPricesDiffNamesAChangedEntry: review follow-up (PR #324, MINOR): every
+// pricesDiff test so far used prices that matched or were byte-garbage, so a
+// mutation making mapDiff's eq always true (reported alongside
+// TestProvidersDiffNamesAChangedEntry) passed every pricesDiff test too. The
+// same model, a real price change (0.14 to 0.15), is named "changed".
+//
+// Mutation (verified, run and restored): in mapDiff, change `!eq(v, now[k])`
+// to `!eq(v, v)` (eq effectively always true): this test fails, finding no
+// diff.
+func TestPricesDiffNamesAChangedEntry(t *testing.T) {
+	job := `{"deepseek/deepseek-v4-flash":{"input_per_m":0.14,"output_per_m":0.28}}`
+	now := `{"deepseek/deepseek-v4-flash":{"input_per_m":0.15,"output_per_m":0.28}}`
+	d := pricesDiff(job, now)
+	if !strings.Contains(d, "changed") || !strings.Contains(d, "deepseek/deepseek-v4-flash") {
+		t.Fatalf("pricesDiff = %q, want it to name deepseek/deepseek-v4-flash changed", d)
+	}
+}
+
+// TestPricesDiffNamesAnAddedEntry: the local config prices a model the job's
+// copy never had; it is "added", not silently accepted.
+func TestPricesDiffNamesAnAddedEntry(t *testing.T) {
+	job := `{}`
+	now := `{"deepseek/deepseek-v4-flash":{"input_per_m":0.14,"output_per_m":0.28}}`
+	d := pricesDiff(job, now)
+	if !strings.Contains(d, "added") || !strings.Contains(d, "deepseek/deepseek-v4-flash") {
+		t.Fatalf("pricesDiff = %q, want it to name deepseek/deepseek-v4-flash added", d)
+	}
+}
+
+// TestPricesDiffNamesARemovedEntry: the job's copy prices a model the local
+// config no longer does; it is "removed", not silently dropped.
+//
+// Mutation (verified, run and restored): in mapDiff, delete the second loop
+// (the one building `removed`): this test fails, finding no diff.
+func TestPricesDiffNamesARemovedEntry(t *testing.T) {
+	job := `{"deepseek/deepseek-v4-flash":{"input_per_m":0.14,"output_per_m":0.28}}`
+	now := `{}`
+	d := pricesDiff(job, now)
+	if !strings.Contains(d, "removed") || !strings.Contains(d, "deepseek/deepseek-v4-flash") {
+		t.Fatalf("pricesDiff = %q, want it to name deepseek/deepseek-v4-flash removed", d)
+	}
+}
+
 // TestPricesDiffUnreadableCopy mirrors TestProvidersDiffUnreadableCopy for
 // FUGARO_MODEL_PRICES.
 //
