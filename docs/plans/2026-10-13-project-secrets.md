@@ -379,7 +379,7 @@ git commit -m "project secrets task 2: gcp.ProjectSecretID (domain-separated); p
 
 ---
 
-### Task 3: `Readiness` resolves precedence (the live check), using `ProviderKeyAvailable` for a provider's own logical name (P7); `Existing.ExtraSecrets` so narrowing eligibility never bricks a repo (N4)
+### Task 3: `Readiness` resolves precedence (the live check), using `ProviderKeyAvailable` for a provider's own logical name (P7); `Existing.ExtraSecrets` so narrowing eligibility never bricks a repo (N4); `Existing.ProjectSecretsOK` refuses a squatted project secret (SF7)
 
 **Files:**
 - Edit: `internal/infra/readiness.go`, `discover.go`, `discover_test.go` (S6: `Readiness`'s own tests already live in `internal/infra/discover_test.go`, not a `readiness_test.go`, which this package does not have; `discover.go` is new scope for this task, N4 — the `DiscoverRepo` step that finds `ExtraSecrets`)
@@ -391,6 +391,7 @@ git commit -m "project secrets task 2: gcp.ProjectSecretID (domain-separated); p
   - **Repo has no version → `out.ProjectSecrets[logical] = spec.ProjectSecretCandidates[logical]`.** If the project copy *also* has no version, `Missing{Kind: MissingSecret}` names `fugaro secrets set NAME --project-wide` instead of today's `--repo NAME`, and `logical` still gets no `ProjectSecrets` entry.
 - **Only names present in `spec.ProjectSecretCandidates` for this repository are ever considered** — an unlisted repository's `ProjectSecretCandidates` simply has no entry for that provider's/name's logical name, so `ProjectSecrets` can never gain one either, regardless of what Terraform later does with the map.
 - **N4 BLOCKER, the repo-module twin of N3: `Existing` (`internal/infra/discover.go:511`) gains `ExtraSecrets map[string]string`**, populated by a new `DiscoverRepo` step (`internal/infra/discover.go`, same file Task 3 already lists): a `List` call under `{LabelRepo: spec.Label}` finds every correctly-labelled repo secret, and any logical name **not** already a key of `spec.Secrets` (one `SecretMounts`'s current, narrower config no longer computes — e.g. a provider that was eligible everywhere under §3a's no-list rule, now excluded by a newly-added list) goes into `ExtraSecrets`. `Readiness` unions `ex.ExtraSecrets` into `out.Secrets` before returning — the **container** stays (P2, extended), while `SecretMounts`'s own output still governs the **mount**, so a name `ExtraSecrets` restores to `out.Secrets` but that no workflow currently mounts plans **no** IAM-member grant for it at all (nothing in `values(var.workflow.secret_env)` names it) — only the now-unwanted grant for a name that *was* mounted and no longer is plans a `delete`, caught by `tf.Guard` exactly like every other replace/delete this design introduces.
+- **SF7 BLOCKER-adjacent (a security gap, not caught by any other test here): `Existing` also gains `ProjectSecretsOK map[string]bool`, from the same new `DiscoverRepo` step.** For each `logical` in `spec.ProjectSecretCandidates`, `Get` the secret at that ID; if it exists, check it carries `{LabelManaged, LabelProject: spec.Installation.ProjectName, LabelSecret: logical}` (`hasMarks`, the identical helper the repo-secret loop just above already uses) and call `d.foreign(...)` — a hard refusal, same as any other foreign resource this function finds — if it does not; if it does, set `ex.ProjectSecretsOK[logical] = true`. Nothing is added if the secret does not exist at all (not yet created, same as today). **`Readiness` only resolves `spec.ProjectSecretCandidates[logical]` into `out.ProjectSecrets[logical]` when `ex.ProjectSecretsOK[logical]` is true** — without this, `gcp.ProjectSecretID(fugaroProject, logical)` being deterministic and guessable means any principal who can create a Secret Manager secret in the project could pre-create one at that address and have it silently mounted into every eligible repository's job.
 - **P7a: an existing job never carries an unresolvable secret_env entry — "any unresolvable entry," not only one that is new.** When `logical` has no version anywhere (repo nor project) *and* `exists` is true for the workflow it belongs to (`readiness.go:118-120`'s existing `current, exists := ex.Jobs[name]`), `Readiness` removes `logical`'s entry from `ws.SecretEnv` (and, if it was the only env var naming it, `ws.SecretIDs`) for this apply — it does **not** set `ws.DeployJob = false` (that field's only job is "does this job resource exist at all," `job.tf`'s `count = var.workflow.deploy_job ? 1 : 0`; flipping it for an existing job would delete the job outright). The `Missing` diagnostic is still reported, unconditionally, so `fugaro init --repo`'s own output tells the owner exactly what is missing and why nothing was mounted. A brand-new job (`exists` false) is unaffected: it already refuses to deploy at all until every mount resolves (`ws.DeployJob = len(reasons) == 0`, unchanged). **After every such omission, `ws.Env[runner.SecretEnvsVar]` (`FUGARO_SECRET_ENVS`, `spec.go:638`) is recomputed from the post-omission `ws.SecretEnv`**, not left holding the name `SecretMounts` originally wrote — otherwise the runner's own redaction list names a variable the job's environment no longer has.
 
 **Tests (every assertion is now on `out.ProjectSecrets`, the tfvars-reaching output map — never on `ws.SecretIDs`, which the corrected design no longer touches at all):**
@@ -515,6 +516,32 @@ func TestReadinessDropsMountButKeepsContainerOnNarrowedEligibility(t *testing.T)
 	// re-granting access the owner just revoked) or drops BOTH (bricking
 	// the repo's own apply, N4's original bug).
 }
+
+func TestReadinessRefusesSquattedProjectSecret(t *testing.T) {
+	// SF7: a secret already exists at gcp.ProjectSecretID(fugaroProject,
+	// logical) in the fake Secret Manager, WITHOUT the
+	// {LabelManaged, LabelProject, LabelSecret} marks DiscoverRepo's new
+	// step checks for (e.g. created by some other principal/process, not
+	// fugaro secrets set --project-wide). Assert DiscoverRepo returns a
+	// *ForeignError (the same path an unmarked repo secret already takes)
+	// and that Readiness, given ex.ProjectSecretsOK with no entry for
+	// logical, does NOT populate out.ProjectSecrets[logical] even though
+	// the repo copy has no version and the name is an eligible candidate
+	// -- the two facts that alone would otherwise resolve to the project
+	// ID. This is the test an implementation that skips the label check
+	// (resolving on hasEnabledVersion alone) would fail: it would happily
+	// mount the squatted secret's value into every eligible repository.
+}
+
+func TestReadinessResolvesCorrectlyLabelledProjectSecret(t *testing.T) {
+	// The companion positive case: the identical scenario, but the
+	// project secret carries the expected labels (as fugaro secrets set
+	// --project-wide always sets them). Assert DiscoverRepo returns no
+	// error and ex.ProjectSecretsOK[logical] is true, and Readiness
+	// resolves out.ProjectSecrets[logical] normally -- proving the label
+	// check is additive (it does not also have to be disabled for the
+	// legitimate case to keep working).
+}
 ```
 
 - [ ] **Step 1: Write the failing tests**
@@ -533,7 +560,7 @@ Expected: `ok` (the full package, to catch any regression in the existing `Readi
 
 ```bash
 git add internal/infra/readiness.go internal/infra/discover.go internal/infra/discover_test.go
-git commit -m "project secrets task 3: Readiness resolves repo-vs-project precedence at apply time, ProviderKeyAvailable for a provider's own name (owner ruling, design §3a), Existing.ExtraSecrets so narrowed eligibility never bricks a repo (N4)"
+git commit -m "project secrets task 3: Readiness resolves repo-vs-project precedence at apply time, ProviderKeyAvailable for a provider's own name (owner ruling, design §3a), Existing.ExtraSecrets so narrowed eligibility never bricks a repo (N4), Existing.ProjectSecretsOK refuses a squatted project secret (SF7)"
 ```
 
 ---
