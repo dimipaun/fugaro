@@ -807,7 +807,7 @@ func TestParseOldBaseImageKey(t *testing.T) {
 	if err == nil {
 		t.Fatal("a leftover base_image was accepted")
 	}
-	for _, want := range []string{"`base_image: " + ref + "` is now `base_images: {web-node: " + ref + "}`", "one base image per base kind"} {
+	for _, want := range []string{"`base_image: " + ref + "` is now `base_images: {base: " + ref + "}`", "one base image per base kind"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q lacks %q", err, want)
 		}
@@ -817,23 +817,23 @@ func TestParseOldBaseImageKey(t *testing.T) {
 	if err := os.WriteFile(path, []byte(sample+"base_image: "+ref+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "base_images: {web-node: "+ref+"}") {
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "base_images: {base: "+ref+"}") {
 		t.Errorf("Load error = %v", err)
 	}
 }
 
 func TestBaseImages(t *testing.T) {
-	c, err := Parse([]byte(sample + "base_images: { web-node: reg/fugaro-web-node:1, java-services: reg/fugaro-java-services:1 }\n"))
+	c, err := Parse([]byte(sample + "base_images: { base: reg/fugaro-base:1 }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.BaseImage("web-node") != "reg/fugaro-web-node:1" || c.BaseImage("java-services") != "reg/fugaro-java-services:1" || c.BaseImage("go") != "" {
+	if c.BaseImage("base") != "reg/fugaro-base:1" || c.BaseImage("history") != "" {
 		t.Errorf("BaseImage = %v", c.BaseImages)
 	}
 	for name, yaml := range map[string]string{
 		"unknown kind": "base_images: { rust: reg/x:1 }\n",
-		"empty ref":    "base_images: { go: \"\" }\n",
-		"spaces":       "base_images: { go: \"reg/x:1 reg/y:2\" }\n",
+		"empty ref":    "base_images: { base: \"\" }\n",
+		"spaces":       "base_images: { base: \"reg/x:1 reg/y:2\" }\n",
 	} {
 		if _, err := Parse([]byte(sample + yaml)); err == nil || !strings.Contains(err.Error(), "base_images") {
 			t.Errorf("%s: err = %v", name, err)
@@ -852,20 +852,31 @@ func TestBaseImagesLegacyKindNamesTheMigrationDoc(t *testing.T) {
 	}
 }
 
+// TestLocalConfigRefusesLegacyBaseImageKeys: the refusal of a base_images
+// key of a removed kind names the exact key (base_images.<kind>), the fix
+// (fugaro image refresh) and config.MigrationDoc.
+func TestLocalConfigRefusesLegacyBaseImageKeys(t *testing.T) {
+	for _, kind := range []string{"go", "web-node", "java-services"} {
+		_, err := Parse([]byte(sample + "base_images:\n  " + kind + ": us-east5-docker.pkg.dev/p/fugaro-base/fugaro-" + kind + ":0.6.0\n"))
+		if err == nil || !strings.Contains(err.Error(), "base_images."+kind) || !strings.Contains(err.Error(), "fugaro image refresh") ||
+			!strings.Contains(err.Error(), config.MigrationDoc) {
+			t.Errorf("%s: err = %v", kind, err)
+		}
+	}
+}
+
 func TestParseBaseImageFlag(t *testing.T) {
 	for in, want := range map[string][2]string{
-		"us-east5-docker.pkg.dev/p/fugaro-base/fugaro-web-node:dev-abc": {"web-node", "us-east5-docker.pkg.dev/p/fugaro-base/fugaro-web-node:dev-abc"},
-		"ghcr.io/dimipaun/fugaro-java-services:1":                       {"java-services", "ghcr.io/dimipaun/fugaro-java-services:1"},
-		"ghcr.io/dimipaun/fugaro-go@sha256:" + strings.Repeat("a", 64):  {"go", "ghcr.io/dimipaun/fugaro-go@sha256:" + strings.Repeat("a", 64)},
-		"go=reg/my-own-image:3":                                         {"go", "reg/my-own-image:3"},
-		"java-services=reg/fugaro-web-node:1":                           {"java-services", "reg/fugaro-web-node:1"}, // an explicit kind beats the name
+		"us-east5-docker.pkg.dev/p/fugaro-base/fugaro-base:dev-abc":    {"base", "us-east5-docker.pkg.dev/p/fugaro-base/fugaro-base:dev-abc"},
+		"ghcr.io/dimipaun/fugaro-base@sha256:" + strings.Repeat("a", 64): {"base", "ghcr.io/dimipaun/fugaro-base@sha256:" + strings.Repeat("a", 64)},
+		"base=reg/my-own-image:3":                                      {"base", "reg/my-own-image:3"}, // an explicit kind beats the name
 	} {
 		kind, ref, err := ParseBaseImageFlag(in)
 		if err != nil || kind != want[0] || ref != want[1] {
 			t.Errorf("%q = %q, %q, %v; want %v", in, kind, ref, err, want)
 		}
 	}
-	for _, bad := range []string{"reg/some-image:1", "rust=reg/x:1", "go=", "reg/fugaro-rust:1"} {
+	for _, bad := range []string{"reg/some-image:1", "rust=reg/x:1", "base=", "reg/fugaro-rust:1", "go=reg/x:1"} {
 		if _, _, err := ParseBaseImageFlag(bad); err == nil {
 			t.Errorf("%q was accepted", bad)
 		}
@@ -874,8 +885,8 @@ func TestParseBaseImageFlag(t *testing.T) {
 
 func TestBaseImageNameKind(t *testing.T) {
 	for ref, want := range map[string]string{
-		"ghcr.io/dimipaun/fugaro-go:1": "go", "reg/fugaro-base/fugaro-java-services:dev-a": "java-services",
-		"reg/my-image:1": "", "reg/fugaro-rust:1": "",
+		"ghcr.io/dimipaun/fugaro-base:1": "base", "reg/fugaro-base/fugaro-base:dev-a": "base",
+		"reg/my-image:1": "", "reg/fugaro-rust:1": "", "ghcr.io/dimipaun/fugaro-go:1": "",
 	} {
 		if got := BaseImageNameKind(ref); got != want {
 			t.Errorf("%s: kind %q, want %q", ref, got, want)
