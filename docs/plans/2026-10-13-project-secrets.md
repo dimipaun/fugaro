@@ -39,7 +39,7 @@ Project rules (carried over from this repository's existing plans):
 
 1. **A repository outside an allow-list gets a project secret's variable anyway**, or `secrets set --project-wide` accepts a name with an empty allow-list. Pinned by `TestProjectSecretAllowedRepos` (Task 1), `TestReadinessOmitsProjectSecretForUnlistedRepo` (Task 3), `TestSecretsSetProjectWideRefusesEmptyAllowList` (Task 4).
 2. **A repo-level override stops winning even though it still has a version**, or a project copy is chosen while the repo copy is live — the precise bug an earlier draft of Task 3 had (B2 in review: "populated unconditionally wherever eligible" plus a Terraform-side `merge()` that lets the second map win would always resolve to the project copy, inverting "repo > project" for every eligible name, not just the unversioned ones). Pinned by `TestReadinessRepoVersionMeansNoProjectSecretsEntry` and `TestReadinessFallsBackOnceRepoVersionGone` (Task 3) — both assert `out.ProjectSecrets` has no entry (or gains one only once the repo version is gone), not merely that the job deploys or that some other field looks right.
-3. **A scope change plans a delete of an existing repo-owned secret.** Pinned by `TestBuildRepoSpecNeverPrunesRepoSecrets` (Task 2, a golden diff of `rs.Secrets`'s key set before/after a name becomes project-shared) and `TestInstallationRootPlanHasNoRepoSecretDeletes` if a Terraform-plan-level test harness exists for the installation root (Task 6; otherwise a Go-level assertion suffices and the task says so).
+3. **A scope change plans a delete of an existing repo-owned secret.** Pinned by `TestBuildRepoSpecNeverPrunesRepoSecretsButGainsCandidates` (Task 2, a golden diff of `rs.Secrets`'s key set before/after a name becomes project-shared, made to fail first per S6 via its second assertion) and the `repo.tftest.hcl`/`installation.tftest.hcl` `run` blocks (Task 6, B3) that observe the real Terraform plan's resource actions — the only way to see a secret-resource delete (or lack of one) that pure Go cannot.
 4. **The build account's grant (or the check job's secret reference, B4) drifts from the job account's resolved secret** (P4): the `repo.tftest.hcl` `run "build_and_check_use_the_resolved_secret"` block (Task 5) asserts all **three** `local.secrets`-consuming paths (job, build, check) resolve the identical ID for the identical logical name, for every fixture — through the real Terraform test framework, not a Go unit test, since only it can observe what a Terraform `local` actually resolves to.
 5. **A value leaks through `ls --project-wide`, `doctor`, or a plan/state print.** Pinned by `TestSecretsLsProjectWideNeverPrintsValue`, `TestDoctorProjectSecretChecksReadNoValue` (Task 4/7), both asserting the fake Secret Manager's `Access` is never called.
 6. **The P7 widening (a no-list provider's key becomes mountable everywhere) leaks into `CheckProviderPolicy`, or `ProviderKeyAvailable`'s empty-list branch silently vanishes.** Pinned by `TestProviderKeyAvailableNeverChangesAllowsData` (Task 1, asserts `AllowsData` on an empty list stays `false` — the thing `CheckProviderPolicy` calls — even though `ProviderKeyAvailable` now returns `true`) and the paired `TestSecretMountsNoListProviderAvailableToAnyRepo`/`TestSecretMountsListedProviderStillRefusesUnlistedRepo` (Task 2) and `TestReadinessProviderNoListEligibleForEveryRepo`/`TestReadinessProviderListedExcludesUnlistedRepo` (Task 3), each pair covering both the empty-list and non-empty-list branches so a mutation that collapses `ProviderKeyAvailable` to either `AllowsData` or `true` always fails at least one test in its pair.
@@ -53,14 +53,14 @@ Project rules (carried over from this repository's existing plans):
 | `internal/config/providers.go`, `providers_test.go` | `ProviderKeyAvailable` (P7, owner ruling, design §3a) — never called from `CheckProviderPolicy` | 1 |
 | `internal/backend/gcp/names.go`, `names_test.go` | `ProjectSecretID` | 2 |
 | `internal/infra/spec.go`, `spec_test.go` | `rs.Secrets` unchanged (golden); `SecretMounts` refuses a workflow secret whose name collides with a `project_secrets` entry (design §3); `SecretMounts`'s per-provider mount condition switches to `ProviderKeyAvailable` (P7) | 2 |
-| `internal/infra/readiness.go`, `readiness_test.go` | the live precedence check; rewrites a workflow's resolved `SecretIDs[name]`; a provider's own name resolves eligibility via `ProviderKeyAvailable`, not `AllowsData` (P7) | 3 |
+| `internal/infra/readiness.go`, `discover_test.go` (S6: `Readiness`'s own tests live here, not a `readiness_test.go` that doesn't exist) | the live precedence check; populates `RepoSpec.ProjectSecrets` (the tfvars-reaching output, never `ws.SecretIDs`); the existing-job gating fix (P7a); a provider's own name resolves eligibility via `ProviderKeyAvailable`, not `AllowsData` (P7) | 3 |
 | `internal/cli/secrets.go`, `secrets_test.go` | `--project-wide` flag, validation branch (3 call sites, S1 order fix), `ls` SCOPE column, `ls --project-wide` | 4 |
 | `deploy/terraform/gcp/modules/installation/secrets.tf` (new), `variables.tf`, roots/installation | `google_secret_manager_secret.project`, operator grants, `var.project_secrets` input | 4 |
 | `internal/infra/tfvars.go`, `imports.go`, `discover.go` | `InstallationSpec.ProjectSecrets`, `importProjectSecret`, `DiscoverInstallation`'s adoption step (S2) | 4 |
 | `deploy/terraform/gcp/modules/repo/build.tf`, `workflows.tf`, `check.tf`, `variables.tf`, `internal/infra/tfvars.go`/`spec.go`, `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl` | **P4, opus review:** `local.secrets`; `build.tf` AND `check.tf` (B4) rewired through it; the Go-to-tfvars wire for `RepoSpec.ProjectSecrets` | 5 |
 | `internal/infra/installation_terraform_test.go`, `deploy/terraform/gcp/roots/installation/tests/`, `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl`, `internal/infra/spec_test.go` golden fixtures | real `terraform test` plan-level fixtures: no secret-resource deletes, but the expected IAM-member replacements, `tf.Guard` refusing/accepting them (B3) | 6 |
 | `internal/cli/doctor.go`, `doctor_test.go` | two per-repository checks plus a project-wide revocation-lag one (design §5, S3) | 7 |
-| `docs/design/v1.md`, `docs/multi-model.md`, `docs/gcp-live-checklist.md`, `docs/release.md`, `internal/cli/docs_*_test.go` | cross-references, Check 40, the release checklist bullet | 8 |
+| `docs/design/v1.md`, `docs/multi-model.md`, `docs/gcp-live-checklist.md`, `docs/release.md`, `docs/gcp-setup.md`, `internal/cli/docs_*_test.go` | cross-references, Check 40, the release checklist bullet, the shared-config list (S6) | 8 |
 | none | full suite | 9 |
 | `docs/gcp-live-checklist.md` (results pasted in) | the owner's own run, Check 40a-g | 10 |
 
@@ -259,6 +259,7 @@ git commit -m "project secrets task 1: config.ProjectSecret, its validation, the
 
 **Interfaces:**
 - Produces: `func ProjectSecretID(fugaroProject, logical string) string` — same `derive()` call as `SecretID` (`names.go:143-145`), same length/hash budget (`maxSecretID`, `secretHashHex`), domain-separated from it (a nit from review: hash `"project\x00"+fugaroProject+"\x00"+logical`, not `fugaroProject+"\x00"+logical`, so a Fugaro project name that happened to equal some repository's own slug could never make `ProjectSecretID`/`SecretID` collide on the same byte string).
+- **Produces: `RepoSpec.ProjectSecretCandidates map[string]string` (`json:"-"`) and the code in `infra.Repo()`/`workflow()` that populates it** — this task's home for it, since `Readiness` (Task 3) only ever *consumes* this field and has no local-config access to compute it itself (design §5's mechanism). For each workflow's resolved logical secrets (`uniqueSecrets(ws)`, already computed here) and the check job's, add a `ProjectSecretCandidates[logical] = gcp.ProjectSecretID(lc.Name, logical)` entry whenever `config.AllowedForProjectSecret(lc.ProjectSecrets, logical, repo)`, or `config.ClaudeAccountBySecret(lc.ClaudeAccounts, logical)` resolves to an account whose own `AllowsData(repo)` is true, or (provider names) `config.ProviderBySecret(lc.Providers, logical)` resolves to a provider whose `ProviderKeyAvailable(repo)` is true.
 - **No `SecretMounts` collision check for `project_secrets` is added (S1 — an earlier draft of this task proposed one; it was dead code, already covered unconditionally by `config.Validate`, see design §3).**
 - **Changes (P7, owner ruling, design §3a): `SecretMounts`'s existing per-provider mount condition (`spec.go:534`, `if p := lc.Providers[pn]; p.AllowsData(repo) {`) becomes `if p := lc.Providers[pn]; p.ProviderKeyAvailable(repo) {`.** This is pre-existing, already-shipped code (predates this entire feature) being modified, not new code — flag it as such in the commit message. No other line of `SecretMounts` changes for this: the loop still appends exactly one `SecretMount{p.Secret, p.SecretEnv()}` per eligible provider, only *which* providers are eligible widens for a no-list provider.
 
@@ -302,20 +303,29 @@ func ProjectSecretID(fugaroProject, logical string) string {
 }
 ```
 
-- [ ] **Step 4: The golden test (P2)**
+- [ ] **Step 4: The golden test (P2) — rewritten per S6 so it genuinely fails before this task's implementation, not just "passes trivially"**
 
 ```go
 // internal/infra/spec_test.go
-func TestBuildRepoSpecNeverPrunesRepoSecrets(t *testing.T) {
+func TestBuildRepoSpecNeverPrunesRepoSecretsButGainsCandidates(t *testing.T) {
 	// Build a RepoSpec twice from the identical fugaro.yaml/local-config
 	// fixture: once with lc.ProjectSecrets empty, once with an entry that
 	// allow-lists this repository for one of the workflow's mounted names.
-	// Assert rs.Secrets's key SET is identical both times (same keys, same
-	// IDs) — this task adds no code that would change it yet (Task 3 adds
-	// the resolution), so this test is the regression guard for every
-	// later task: if a later change ever starts pruning rs.Secrets, this
-	// is the test that catches it, written and passing before that change
-	// exists.
+	// Assert TWO things, not one:
+	//   (a) rs.Secrets's key SET is identical both times (same keys, same
+	//       IDs) -- the "never prunes" golden property, P2;
+	//   (b) rs.ProjectSecretCandidates gains EXACTLY the expected new entry
+	//       in the second build (gcp.ProjectSecretID(lc.Name, logical)),
+	//       and has none in the first. Assertion (b) is what makes this
+	//       test fail before this task's implementation exists --
+	//       ProjectSecretCandidates has no code populating it yet, so it
+	//       would be empty (or the field undefined) in both builds,
+	//       failing the "gains exactly the expected entry" half.
+	// Assertion (a) alone, as an earlier draft of this test had it, passes
+	// trivially before any of this task's code exists (nothing has ever
+	// pruned rs.Secrets, so there is nothing yet to regress) -- S6 flagged
+	// that a test which cannot fail before the code it pins exists proves
+	// nothing about that code; (b) is the fix.
 }
 ```
 
@@ -368,7 +378,7 @@ git commit -m "project secrets task 2: gcp.ProjectSecretID (domain-separated); p
 ### Task 3: `Readiness` resolves precedence (the live check), using `ProviderKeyAvailable` for a provider's own logical name (P7)
 
 **Files:**
-- Edit: `internal/infra/readiness.go`, `readiness_test.go`
+- Edit: `internal/infra/readiness.go`, `discover_test.go` (S6: `Readiness`'s own tests already live in `internal/infra/discover_test.go`, not a `readiness_test.go`, which this package does not have)
 
 **Interfaces (corrected after review B1/B2: the original draft's `ws.SecretIDs` rewrite never reached Terraform at all — `WorkflowSpec.SecretIDs` is `json:"-"`, internal/infra/spec.go:148 — and its "populated unconditionally wherever eligible" wording would, once wired to Terraform, have made the project copy win even when a repo override exists, inverting "repo > project." Both are fixed together below with two separate fields — one input, one output — not one field doing both jobs):**
 - **Input, computed in `infra.Repo()`/`workflow()` (where the local config is in scope), not by `Readiness`:** `RepoSpec.ProjectSecretCandidates map[string]string` (`json:"-"`, never reaches tfvars) — one entry per logical name this repository is *eligible* to use project-wide, value `gcp.ProjectSecretID(fugaroProject, name)`. Eligibility is **not uniform** across name sources (P7): `project_secrets`/`claude_accounts`-derived names use `AllowedForProjectSecret`/`ClaudeAccountBySecret`+`AllowsData` (unchanged); **a provider's own `.Secret` name uses `ProviderKeyAvailable`, not `AllowsData`** — the same switch Task 2 makes in `SecretMounts`, kept consistent here. Being a candidate says nothing about resolution yet.
@@ -491,7 +501,7 @@ Expected: `ok` (the full package, to catch any regression in the existing `Readi
 - [ ] **Step 5: Commit**
 
 ```bash
-git add internal/infra/readiness.go internal/infra/readiness_test.go
+git add internal/infra/readiness.go internal/infra/discover_test.go
 git commit -m "project secrets task 3: Readiness resolves repo-vs-project precedence at apply time, ProviderKeyAvailable for a provider's own name (owner ruling, design §3a)"
 ```
 
@@ -692,7 +702,16 @@ git commit -m "project secrets task 6: plan-level fixtures proving no secret del
 **Tests:**
 ```go
 func TestDoctorProjectSecretChecksReadNoValue(t *testing.T) { /* fake Secret Manager's Access never called, for all three checks */ }
-func TestDoctorFlagsUnstoredProjectSecret(t *testing.T) { /* ... */ }
+func TestDoctorFlagsUnstoredProjectSecret(t *testing.T) {
+	// S6, fleshed out from a placeholder: a name config.AllowedForProjectSecret
+	// (or the owning provider's/account's own AllowsData) lists this
+	// repository for, with NEITHER the repo's own secret NOR the project's
+	// holding an enabled version (both report 0 versions from the fake
+	// Secret Manager's List). Assert the check is red (fails doctor
+	// outright, not only --strict) and its message names BOTH candidate
+	// fix commands (`fugaro secrets set NAME --repo X` and `... --project-wide`),
+	// not just one.
+}
 func TestDoctorFlagsStaleScope(t *testing.T) { /* deployed job still mounts the repo ID; Readiness would now resolve the project ID (repo version was deleted since the last apply): warning, not red */ }
 func TestDoctorFlagsExtraProjectSecretAccessor(t *testing.T) {
 	// S3: a project secret's live IAM policy carries a secretAccessor
@@ -733,6 +752,7 @@ git commit -m "project secrets task 7: fugaro doctor's two per-repository checks
 - Edit: `docs/multi-model.md` (a one-paragraph note that a provider's key may now also be stored `--project-wide`, with a link — no change to §1-§6's own content)
 - Edit: `docs/gcp-live-checklist.md`: add Check 40 (40a-40g, design §8 — 40f and 40g are the owner's follow-up ruling on provider keys, design §3a) as a new row and a `## Check 40: ...` section, in the file's existing style; update the "Numbering ruling" paragraph (`gcp-live-checklist.md:183-199`) to name 40 as taken by this design
 - Edit: `docs/release.md` — a new bullet in the release checklist, in the same family and immediately alongside the existing `gcpProjectFieldSince`/`recipesSince`/`layeredSince`/`namedTokensSince` bullets (`docs/release.md:55-58`, design §7): confirm the release note for the shipping version names the owner's migration sequence (design §6), and that an installation applying the `installation` root for the first time after this feature ships sees the new `secrets.tf` resources as **creates only** — never an update to an unrelated resource (a regression elsewhere in the module would show as an unexpected diff there). Unlike the other bullets in that list, this one names no `*Since` Go constant (design §7, P6: this feature adds none) — it is a plan-shape check, not a constant-equality one, and its wording should say so rather than mimic the others' "verify `X` equals Y" phrasing where it would be inaccurate.
+- **Edit: `docs/gcp-setup.md:515`'s shared-config sentence (S6, a gap in an earlier draft's Task 8 file list) — add `project_secrets` to the list of things `fugaro/config.yaml` never holds, alongside the existing `providers:` it already names** ("It never holds the `terraform:` section, `user:`, `endpoints:`, `providers:`, a repository's `base_branch`... or any secret"): this design's own §7 already states `project_secrets` is local-config-only, never published — this doc should say so in the one place it already makes the identical claim for `providers:`.
 - New/extended test in whichever file already asserts the checklist's numbering/doc shape (the implementer greps for a test covering the "Numbering ruling" claims, if one exists; otherwise this task adds none beyond the existing docs-lint suite)
 
 - [ ] **Step 1: Write the docs edits**
@@ -744,8 +764,8 @@ Expected: `ok`.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add docs/design/v1.md docs/multi-model.md docs/gcp-live-checklist.md docs/release.md
-git commit -m "project secrets task 8: docs cross-references, Check 40, the release checklist bullet"
+git add docs/design/v1.md docs/multi-model.md docs/gcp-live-checklist.md docs/release.md docs/gcp-setup.md
+git commit -m "project secrets task 8: docs cross-references, Check 40, the release checklist bullet, gcp-setup.md's shared-config list (S6)"
 ```
 
 ---
