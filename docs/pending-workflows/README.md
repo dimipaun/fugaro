@@ -53,12 +53,15 @@ committed file:
   `publish-base` instead, unchanged by this diff.
 - **`verify-public`**'s pull-check loop shrinks from `for img in web-node go
   java-services history; do` to `for img in history; do`.
-- The `version` job's "Which images this tree builds" step is **unchanged**:
-  it still lists `web-node go java-services history base` so a backport
-  build off an old (pre-cut) release tag still detects those directories in
-  that old tree and still skips their legs there, rather than failing. No
-  current tree holds them any more, so on `main` those kinds are always
-  absent from `kinds` going forward; this is deliberate, not a leftover.
+- The `version` job's "Which images this tree builds" step's `for k in
+  web-node go java-services history base; do` shrinks to `for k in history
+  base; do`: deleting the `base` job above removes the only job that ever
+  read those three kinds' presence, so probing for their directories is
+  dead code once it's gone, not backport support (a backport run still
+  executes this workflow file as committed on the default branch, which no
+  longer has a job to gate on them, whichever old tag it checks out
+  mid-job). A review at 10156f24 caught an earlier version of this diff
+  reasoning the other way and leaving them in.
 - Every action pin (`actions/checkout`, `actions/upload-artifact`,
   `actions/download-artifact`, `actions/setup-go`) is carried over unchanged
   from the committed file — see "Before you copy" below regardless, since

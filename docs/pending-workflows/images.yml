@@ -89,14 +89,16 @@ jobs:
             echo "move_major=$move_major"
           } >> "$GITHUB_OUTPUT"
       # The nightly and manual runs build the latest release tag's tree, and an
-      # older tag does not hold every image (v0.1.0 has no images/go or
-      # images/java-services, and any tag before the 0.7.0 cut has no
+      # older tag does not hold every image (a tag before the 0.7.0 cut has no
       # images/base): an image whose Dockerfile is not in the tree being built
       # has nothing to build, publish or verify, and its legs are skipped
-      # instead of failing every night. web-node, go and java-services stay in
-      # this list so a backport build off an old release line still detects
-      # them; after the cut no current tree holds those directories, so their
-      # kinds are always absent going forward.
+      # instead of failing every night. web-node, go and java-services are
+      # gone from this list: this same diff deletes the per-kind "base" job
+      # that was their only reader, so no job checks for those kinds any more
+      # — keeping them here would be dead code, not backport support (a
+      # backport run still uses this workflow file as committed on the
+      # default branch, which has no job left to gate on them, whichever tag
+      # it checks out mid-job).
       - name: Which images this tree builds
         id: kinds
         env:
@@ -108,7 +110,7 @@ jobs:
             ref="refs/tags/$TAG"
           fi
           kinds=,
-          for k in web-node go java-services history base; do
+          for k in history base; do
             if git cat-file -e "$ref:images/$k/Dockerfile" 2>/dev/null; then
               kinds="$kinds$k,"
             fi
