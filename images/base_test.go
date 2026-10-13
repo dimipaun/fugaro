@@ -444,7 +444,7 @@ func TestGraphifyLockIsHashPinnedAndMatchesTheArg(t *testing.T) {
 		t.Errorf("the lockfile pins graphifyy==%s, the Dockerfile's ARG GRAPHIFY_VERSION says %s", m[1], version)
 	}
 
-	reqLineRE := regexp.MustCompile(`^([A-Za-z0-9_.-]+)==\S+ \\$`)
+	reqLineRE := regexp.MustCompile(`^([A-Za-z0-9_.-]+)==\S+( \\)?$`)
 	hashLineRE := regexp.MustCompile(`^    --hash=sha256:([0-9a-f]+)\s*\\?$`)
 	hashCount := map[string]int{}
 	var order []string
