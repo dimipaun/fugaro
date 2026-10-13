@@ -43,9 +43,12 @@ func TestStagePinsProviderRouteVars(t *testing.T) {
 		}
 	}
 
-	// Mixed: the coder is a provider model, the reviewer stays Claude, and an
-	// explicit Claude background keeps EffectiveBackground from defaulting
-	// the reviewer's background to the provider coder's model too.
+	// Mixed, OWNER RULING mirror case (docs/multi-model.md §7): the coder is
+	// a provider model, the reviewer stays Claude, and an explicit Claude
+	// background keeps config.EffectiveBackground from defaulting the
+	// reviewer's background to the provider coder's model too. With the
+	// reviewer's own role model and its background both Claude, its stage
+	// gets neither variable.
 	r = stagePinsRun(t, "vendor/model-a", "claude-opus-5", "claude-haiku-4-5")
 	pins := r.stagePins("implement")
 	if pins[providerVar1] != "1" || pins[providerVar2] != "0" {
@@ -53,10 +56,25 @@ func TestStagePinsProviderRouteVars(t *testing.T) {
 	}
 	pins = r.stagePins("review")
 	if _, ok := pins[providerVar1]; ok {
-		t.Errorf("reviewer (Claude) stage: %s is set, want unset", providerVar1)
+		t.Errorf("reviewer (Claude, explicit Claude background) stage: %s is set, want unset", providerVar1)
 	}
 	if _, ok := pins[providerVar2]; ok {
-		t.Errorf("reviewer (Claude) stage: %s is set, want unset", providerVar2)
+		t.Errorf("reviewer (Claude, explicit Claude background) stage: %s is set, want unset", providerVar2)
+	}
+
+	// Mixed, OWNER RULING (docs/multi-model.md §7): the same coder/reviewer
+	// split, but agent.models.background is left empty. config.
+	// EffectiveBackground then defaults the background to the provider
+	// coder's model (TestBackgroundDefaultsToCoder), so the Claude reviewer
+	// stage's own Claude Code process still makes background calls on the
+	// provider route and would be refused the same way without the
+	// variables. The decision is "any model this stage's Claude Code process
+	// uses", not "the stage's own role model": kept as is, on purpose, not a
+	// bug to fix.
+	r = stagePinsRun(t, "vendor/model-a", "claude-opus-5", "")
+	pins = r.stagePins("review")
+	if pins[providerVar1] != "1" || pins[providerVar2] != "0" {
+		t.Errorf("reviewer stage with no explicit background (defaults to the provider coder) pins = %+v, want both set", pins)
 	}
 
 	// The background model alone being a provider's is enough: the review
