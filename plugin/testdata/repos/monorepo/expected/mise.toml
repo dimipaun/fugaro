@@ -1,0 +1,6 @@
+[tools]
+go = "1.25"
+node = "24"
+
+[env]
+GOTOOLCHAIN = "local"

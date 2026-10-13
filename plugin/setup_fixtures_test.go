@@ -11,6 +11,7 @@ package plugin_test
 
 import (
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -27,14 +28,21 @@ const fixtureVersion = "0.0.0"
 // fixtureFacts is what the skill's tables derive from one repository.
 type fixtureFacts struct {
 	name string
-	// bases maps each expected workflow to its base kind (discovery.md,
-	// "The base kind and workflows").
-	bases map[string]string
+	// workflows: the expected workflow names (discovery.md, "Workflows and
+	// runtimes"). Every workflow builds on the one Fugaro base.
+	workflows []string
 	// dockerfiles lists the workflows built from a Dockerfile in expected/.
 	dockerfiles []string
-	// versionFile and node: the file that pins Node (discovery.md,
-	// "Versions") and the image.node it gives.
-	versionFile, node string
+	// tools: the expected mise.toml [tools] table, tool name to version
+	// (discovery.md, "Workflows and runtimes").
+	tools map[string]string
+	// toolEvidence maps a tool to the repository file that pins it; a tool
+	// with no entry here is a decision taken with the user, with no
+	// evidence in the repository.
+	toolEvidence map[string]string
+	// env: the expected mise.toml [env] table (discovery.md's go row:
+	// `[env] GOTOOLCHAIN = "local"`); nil for a fixture with no go workflow.
+	env map[string]string
 	// apt: the CI line whose packages become image.apt, and the packages.
 	aptEvidence string
 	apt         []string
@@ -44,19 +52,24 @@ type fixtureFacts struct {
 }
 
 var fixtures = []fixtureFacts{
-	{name: "web-node", bases: map[string]string{"web": "web-node"}, versionFile: ".nvmrc", node: "24.19.0",
+	{name: "node", workflows: []string{"web"}, tools: map[string]string{"node": "24.19.0"}, toolEvidence: map[string]string{"node": ".nvmrc"},
 		aptEvidence: ".github/workflows/ci.yml", apt: []string{"libvips-dev"}},
-	{name: "go", bases: map[string]string{"go": "go"}},
-	{name: "java-services", bases: map[string]string{"server": "java-services"},
-		servicesFile: "bitbucket-pipelines.yml", servicesText: "postgres", testPrefix: "fugaro-services start"},
-	{name: "monorepo", bases: map[string]string{"api": "go", "web": "web-node"}, dockerfiles: []string{"api"}},
-	{name: "existing-fugaro-yaml", bases: map[string]string{"go": "go"}},
-	{name: "hostile", bases: map[string]string{"web": "web-node"}, versionFile: ".nvmrc", node: "22"},
+	{name: "go", workflows: []string{"go"}, tools: map[string]string{"go": "1.25"}, toolEvidence: map[string]string{"go": "go.mod"},
+		env: map[string]string{"GOTOOLCHAIN": "local"}},
+	{name: "server", workflows: []string{"server"}, tools: map[string]string{"java": "temurin-25"},
+		apt:          []string{"postgresql-17"},
+		servicesFile: "bitbucket-pipelines.yml", servicesText: "postgres", testPrefix: "FUGARO_SERVICES=postgres fugaro-services start"},
+	{name: "monorepo", workflows: []string{"api", "web"}, dockerfiles: []string{"api"},
+		tools: map[string]string{"go": "1.25", "node": "24"}, toolEvidence: map[string]string{"go": "services/api/go.mod"},
+		env: map[string]string{"GOTOOLCHAIN": "local"}},
+	{name: "existing-fugaro-yaml", workflows: []string{"go"}, tools: map[string]string{"go": "1.25"}, toolEvidence: map[string]string{"go": "go.mod"},
+		env: map[string]string{"GOTOOLCHAIN": "local"}},
+	{name: "hostile", workflows: []string{"web"}, tools: map[string]string{"node": "22"}, toolEvidence: map[string]string{"node": ".nvmrc"}},
 }
 
-func TestSetupFixtureWebNode(t *testing.T)      { checkFixture(t, "web-node") }
+func TestSetupFixtureWebNode(t *testing.T)      { checkFixture(t, "node") }
 func TestSetupFixtureGo(t *testing.T)           { checkFixture(t, "go") }
-func TestSetupFixtureJava(t *testing.T)         { checkFixture(t, "java-services") }
+func TestSetupFixtureJava(t *testing.T)         { checkFixture(t, "server") }
 func TestSetupFixtureMonorepo(t *testing.T)     { checkFixture(t, "monorepo") }
 func TestSetupFixtureExistingYAML(t *testing.T) { checkFixture(t, "existing-fugaro-yaml") }
 func TestSetupFixtureHostile(t *testing.T)      { checkFixture(t, "hostile") }
@@ -125,7 +138,7 @@ func checkFixture(t *testing.T, name string) {
 	}
 
 	// (b) the Dockerfile each workflow builds from passes the contract.
-	for wf, w := range c.Workflows {
+	for wf := range c.Workflows {
 		df, repoFile, err := image.Dockerfile(checkout, c, wf, fixtureVersion)
 		if err != nil {
 			t.Errorf("workflow %s: %v", wf, err)
@@ -138,30 +151,41 @@ func checkFixture(t *testing.T, name string) {
 			t.Errorf("workflow %s: dockerfile %q, want a Dockerfile only for %v", wf, repoFile, facts.dockerfiles)
 		}
 		if repoFile != "" {
-			checkDerivedFromRender(t, wf, w.Base, string(df))
+			checkDerivedFromRender(t, wf, string(df), checkout)
 		}
 	}
 
 	// (c) the discovery facts.
-	got := map[string]string{}
-	for wf, w := range c.Workflows {
-		got[wf] = w.Base
+	got := slices.Sorted(maps.Keys(c.Workflows))
+	if !slices.Equal(got, sortedStrings(facts.workflows)) {
+		t.Errorf("workflows %v, want %v", got, facts.workflows)
 	}
-	if !equalMaps(got, facts.bases) {
-		t.Errorf("workflows and bases %v, want %v", got, facts.bases)
+	if derived := detectRuntimes(t, filepath.Join(dir, "repo")); !slices.Equal(derived, sortedStrings(slices.Collect(maps.Keys(facts.tools)))) {
+		t.Errorf("the discovery table's mise tools for the repository are %v, want %v", derived, sortedStrings(slices.Collect(maps.Keys(facts.tools))))
 	}
-	if derived := detectBases(t, filepath.Join(dir, "repo")); !slices.Equal(derived, sortedBases(facts.bases)) {
-		t.Errorf("the discovery table's base kinds for the repository are %v, want %v", derived, sortedBases(facts.bases))
+	miseText := fixtureFile(t, name, "expected/mise.toml")
+	mise := parseMiseTools(t, miseText)
+	if !equalMaps(mise, facts.tools) {
+		t.Errorf("mise.toml tools %v, want %v", mise, facts.tools)
 	}
-	for _, w := range c.Workflows {
-		if facts.versionFile != "" {
-			pinned := strings.TrimSpace(fixtureFile(t, name, "repo/"+facts.versionFile))
-			if w.Image.Node != pinned || pinned != facts.node {
-				t.Errorf("image.node %q, %s pins %q, want %q", w.Image.Node, facts.versionFile, pinned, facts.node)
-			}
-		} else if w.Image.Node != "" {
-			t.Errorf("image.node %q without version evidence", w.Image.Node)
+	if env := parseMiseEnv(t, miseText); !equalMaps(env, facts.env) {
+		t.Errorf("mise.toml [env] %v, want %v", env, facts.env)
+	}
+	for tool, file := range facts.toolEvidence {
+		version, ok := mise[tool]
+		if !ok {
+			t.Errorf("toolEvidence names %s, which is not in tools (fixtureFacts typo?)", tool)
+			continue
 		}
+		if ev := fixtureFile(t, name, "repo/"+file); !strings.Contains(ev, version) {
+			t.Errorf("mise.toml %s = %q, but %s does not say it", tool, version, file)
+		}
+	}
+	for wf, w := range c.Workflows {
+		if w.Base != "" || w.Image.Node != "" || len(w.Image.Tools) > 0 {
+			t.Errorf("workflow %s: base %q, image.node %q, image.tools %v: the skill writes mise.toml instead", wf, w.Base, w.Image.Node, w.Image.Tools)
+		}
+		checkNoRuntimeApt(t, "fixture "+name, wf, w)
 		if !slices.Equal(w.Image.Apt, facts.apt) {
 			t.Errorf("image.apt %v, want %v", w.Image.Apt, facts.apt)
 		}
@@ -184,7 +208,7 @@ func checkFixture(t *testing.T, name string) {
 	}
 
 	// The tests must hold of a fixture with no secrets in it.
-	for _, rel := range []string{"expected/fugaro.yaml"} {
+	for _, rel := range []string{"expected/fugaro.yaml", "expected/mise.toml"} {
 		if secretLikeRE.MatchString(fixtureFile(t, name, rel)) {
 			t.Errorf("%s looks like it holds a credential", rel)
 		}
@@ -192,6 +216,73 @@ func checkFixture(t *testing.T, name string) {
 }
 
 var secretLikeRE = regexp.MustCompile(`(?i)(ghp_|github_pat_|sk-ant-|-----BEGIN|xox[bp]-|AKIA[0-9A-Z]{12})`)
+
+// runtimeAptPackageRE matches Debian package names that install a language
+// runtime directly (services-and-images.md: "Never apt-get install
+// <language>"; mise is the one way to install a runtime on the base). Not
+// exhaustive, but covers the common per-distro names and version suffixes,
+// including the -headless JDK/JRE variant (openjdk-17-jdk-headless) that a
+// plain (-jdk|-jre) suffix alone misses.
+var runtimeAptPackageRE = regexp.MustCompile(`^(nodejs|npm|golang(-go)?|python3?(\.\d+)?(-pip|-venv|-dev)?|ruby(\d+(\.\d+)?)?|r?openjdk-?\d*(-jdk|-jre)?(-headless)?|(default-jdk|default-jre)(-headless)?|php\d*(\.\d+)?(-cli|-fpm)?|rustc|cargo|dotnet-sdk(-\d+(\.\d+)?)?|mono-complete)$`)
+
+// checkNoRuntimeApt fails t if any image.apt entry of w installs a language
+// runtime instead of declaring it in mise.toml or image.tools.
+func checkNoRuntimeApt(t *testing.T, at, wf string, w config.Workflow) {
+	t.Helper()
+	for _, p := range w.Image.Apt {
+		if runtimeAptPackageRE.MatchString(p) {
+			t.Errorf("%s: workflow %s: image.apt installs %q, a language runtime; mise.toml or image.tools is the only way to install one", at, wf, p)
+		}
+	}
+}
+
+// aptGetInstallRE finds an apt(-get) install invocation in a Dockerfile line.
+var aptGetInstallRE = regexp.MustCompile(`\bapt(-get)?\s+install\b`)
+
+// joinShellContinuations collapses lines ending in a trailing `\` into their
+// logical line: the project's own idiomatic multi-line
+// `apt-get install -y --no-install-recommends \` style (images/base/Dockerfile
+// lists its packages across several continuation lines), which scanning one
+// physical line at a time would never see past the first.
+func joinShellContinuations(text string) []string {
+	var out []string
+	var cur string
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimRight(line, " \t")
+		if strings.HasSuffix(trimmed, `\`) {
+			cur += strings.TrimSuffix(trimmed, `\`) + " "
+			continue
+		}
+		cur += line
+		out = append(out, cur)
+		cur = ""
+	}
+	if cur != "" {
+		out = append(out, cur)
+	}
+	return out
+}
+
+// addedLinesInstallARuntime reports a package name a block of added
+// Dockerfile lines apt-get installs that is a language runtime (see
+// runtimeAptPackageRE): the one place a hand-edited Dockerfile could smuggle
+// a `base:`-style runtime install past checkDerivedFromRender's USER
+// root/sha256sum-only check. Lines are joined across `\` continuations
+// first, so a package named on a continuation line is seen too.
+func addedLinesInstallARuntime(text string) (pkg string, found bool) {
+	for _, line := range joinShellContinuations(text) {
+		if !aptGetInstallRE.MatchString(line) {
+			continue
+		}
+		for _, f := range strings.Fields(line) {
+			f = strings.Trim(f, "\"'`\\")
+			if runtimeAptPackageRE.MatchString(f) {
+				return f, true
+			}
+		}
+	}
+	return "", false
+}
 
 func equalMaps(a, b map[string]string) bool {
 	if len(a) != len(b) {
@@ -205,19 +296,72 @@ func equalMaps(a, b map[string]string) bool {
 	return true
 }
 
-func sortedBases(m map[string]string) []string {
-	var out []string
-	for _, b := range m {
-		out = append(out, b)
-	}
+func sortedStrings(s []string) []string {
+	out := slices.Clone(s)
 	slices.Sort(out)
 	return out
 }
 
-// detectBases applies the discovery table's evidence rows to a repository
+// parseMiseTOMLSection reads one top-level table of a mise.toml, one
+// `key = "value"` per line, validating each with valid; section is "tools"
+// or "env" without brackets.
+func parseMiseTOMLSection(t *testing.T, text, section string, valid func(k, v string) bool) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	in := false
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case line == "" || strings.HasPrefix(line, "#"):
+		case strings.HasPrefix(line, "["):
+			in = line == "["+section+"]"
+		case in:
+			eq := strings.IndexByte(line, '=')
+			if eq < 0 {
+				t.Errorf("mise.toml [%s] line %q is not name = \"value\"", section, line)
+				continue
+			}
+			// TOML allows any amount of whitespace around "=" (node="x",
+			// node  =  "x" are both legal); trim it from both sides rather
+			// than requiring the skill's own canonical "name = \"value\""
+			// spacing exactly.
+			k := strings.Trim(strings.TrimSpace(line[:eq]), `"`)
+			v := strings.Trim(strings.TrimSpace(line[eq+1:]), `"`)
+			if !valid(k, v) {
+				t.Errorf("mise.toml [%s] line %q is not name = \"value\"", section, line)
+				continue
+			}
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// parseMiseTools reads the [tools] table of a mise.toml as the skill writes
+// it: one `name = "version"` per line, each a tool and version config allows.
+func parseMiseTools(t *testing.T, text string) map[string]string {
+	t.Helper()
+	return parseMiseTOMLSection(t, text, "tools", config.ValidMiseTool)
+}
+
+// miseEnvKeyRE allows a shell environment variable name, as mise's [env]
+// table keys (GOTOOLCHAIN, not a lowercase mise tool name).
+var miseEnvKeyRE = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+
+// parseMiseEnv reads the [env] table of a mise.toml, as the skill writes
+// GOTOOLCHAIN = "local" for a go workflow (discovery.md).
+func parseMiseEnv(t *testing.T, text string) map[string]string {
+	t.Helper()
+	return parseMiseTOMLSection(t, text, "env", func(k, v string) bool {
+		return miseEnvKeyRE.MatchString(k) && v != ""
+	})
+}
+
+// detectRuntimes applies the discovery table's evidence rows to a repository
 // (the root and its directories two levels down, as separate roots) and
-// returns the base kind of each root found, sorted.
-func detectBases(t *testing.T, repo string) []string {
+// returns the sorted, de-duplicated mise tools the discovery table derives
+// from the evidence at each root.
+func detectRuntimes(t *testing.T, repo string) []string {
 	t.Helper()
 	var out []string
 	exists := func(dir string, names ...string) bool {
@@ -237,27 +381,73 @@ func detectBases(t *testing.T, repo string) []string {
 			}
 		}
 	}
+	existsGlob := func(dir, pattern string) bool {
+		m, _ := filepath.Glob(filepath.Join(dir, pattern))
+		return len(m) > 0
+	}
 	for _, r := range roots {
 		if exists(r, "package.json") && exists(r, "yarn.lock", "pnpm-lock.yaml", "package-lock.json", "npm-shrinkwrap.json") {
-			out = append(out, "web-node")
+			out = append(out, "node")
 		}
-		if exists(r, "gradlew", "gradlew.sh", "settings.gradle", "settings.gradle.kts") {
-			out = append(out, "java-services")
+		if exists(r, "gradlew", "gradlew.sh", "settings.gradle", "settings.gradle.kts", "pom.xml") {
+			out = append(out, "java")
 		}
 		if exists(r, "go.mod") {
 			out = append(out, "go")
 		}
+		if exists(r, "pyproject.toml", ".python-version") || existsGlob(r, "requirements*.txt") {
+			out = append(out, "python")
+		}
+		if exists(r, "Gemfile", ".ruby-version") {
+			out = append(out, "ruby")
+		}
+		if exists(r, "rust-toolchain.toml", "Cargo.toml") {
+			out = append(out, "rust")
+		}
 	}
 	slices.Sort(out)
-	return out
+	return slices.Compact(out)
+}
+
+// TestDetectRuntimesCoversEveryDiscoveryRow: detectRuntimes recognizes the
+// evidence discovery.md's table names for every language row, not only the
+// three (node, go, java) the current fixtures happen to exercise.
+func TestDetectRuntimesCoversEveryDiscoveryRow(t *testing.T) {
+	for _, tc := range []struct {
+		runtime string
+		files   map[string]string
+	}{
+		{"node", map[string]string{"package.json": "{}", "package-lock.json": "{}"}},
+		{"go", map[string]string{"go.mod": "module x\n\ngo 1.25\n"}},
+		{"java", map[string]string{"pom.xml": "<project/>"}},
+		{"python", map[string]string{"pyproject.toml": "[project]\n"}},
+		{"ruby", map[string]string{"Gemfile": "source \"https://rubygems.org\"\n"}},
+		{"rust", map[string]string{"Cargo.toml": "[package]\n"}},
+	} {
+		t.Run(tc.runtime, func(t *testing.T) {
+			dir := t.TempDir()
+			for name, data := range tc.files {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := detectRuntimes(t, dir); !slices.Contains(got, tc.runtime) {
+				t.Errorf("detectRuntimes(%v) = %v, want it to contain %q", tc.files, got, tc.runtime)
+			}
+		})
+	}
 }
 
 // checkDerivedFromRender: a Dockerfile the skill saved from `fugaro image
 // render` keeps every line of the rendered one, in order, and adds only a
 // root block that downloads by checksum and pipes nothing into a shell.
-func checkDerivedFromRender(t *testing.T, wf, base, df string) {
+func checkDerivedFromRender(t *testing.T, wf, df, checkout string) {
 	t.Helper()
-	rendered, err := image.Render(image.RenderInput{Workflow: wf, Base: base, Version: fixtureVersion})
+	files, err := config.MiseConfigFiles(checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := image.Render(image.RenderInput{Workflow: wf, Base: config.BaseKind, Mise: len(files) > 0, Version: fixtureVersion})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,6 +474,9 @@ func checkDerivedFromRender(t *testing.T, wf, base, df string) {
 	if regexp.MustCompile(`\|\s*(sudo\s+)?(ba|z)?sh\b`).MatchString(text) {
 		t.Errorf("workflow %s: the added lines pipe into a shell:\n%s", wf, text)
 	}
+	if pkg, found := addedLinesInstallARuntime(text); found {
+		t.Errorf("workflow %s: the added lines apt-get install %s, a language runtime; mise.toml or image.tools is the only way to install one:\n%s", wf, pkg, text)
+	}
 }
 
 // TestRenderedDockerfilePassesContract: the Dockerfile `fugaro image render`
@@ -304,62 +497,73 @@ func TestRenderedDockerfilePassesContract(t *testing.T) {
 }
 
 // TestSetupFixtureTablesMatchTheSkill: the evidence the fixtures rely on is
-// what the skill's discovery table says, and the base images carry what its
-// apt row says they carry.
+// what the skill's discovery table says, and the base image carries
+// `fugaro-services` (images/common, shared by every workflow now the base is
+// one image, design base-image.md B11).
 func TestSetupFixtureTablesMatchTheSkill(t *testing.T) {
 	files := setupFiles(t)
 	discovery := files["skills/setup/reference/discovery.md"]
 	services := files["skills/setup/reference/services-and-images.md"]
-	for _, want := range []string{"`package.json` with a lockfile", "`gradlew`", "`go.mod`", "`.nvmrc`", "`image.node`", "`image.apt`", "`cd <dir> &&`"} {
+	for _, want := range []string{"`package.json` with a lockfile", "`gradlew`", "`go.mod`", "`.nvmrc`", "`mise.toml`", "`image.apt`", "`cd <dir> &&`"} {
 		if !strings.Contains(discovery, want) {
 			t.Errorf("discovery.md lost %s, which the fixtures rely on", want)
 		}
 	}
-	for _, want := range []string{"fugaro-services start", "Postgres, Redis, Firebase emulators", ".fugaro/<workflow>.Dockerfile"} {
+	for _, want := range []string{"fugaro-services start", "Postgres (PostGIS, pgvector), Redis, Firebase emulators", ".fugaro/<workflow>.Dockerfile"} {
 		if !strings.Contains(services, want) {
 			t.Errorf("services-and-images.md lost %q, which the fixtures rely on", want)
 		}
 	}
 	if _, err := os.Stat(filepath.Join("..", "images", "common", "fugaro-services")); err != nil {
-		t.Errorf("the java-services base has no fugaro-services: %v", err)
+		t.Errorf("the base has no fugaro-services: %v", err)
 	}
-	// The packages discovery.md says each base has are in the base's Dockerfile.
-	row := regexp.MustCompile("`web-node` and `java-services` have `([^`]+)`; `go` has `([^`]+)`").FindStringSubmatch(discovery)
-	if row == nil {
-		t.Fatal("discovery.md has no row of the packages each base carries")
-	}
-	for base, pkgs := range map[string]string{"web-node": row[1], "java-services": row[1], "go": row[2]} {
-		df, err := os.ReadFile(filepath.Join("..", "images", base, "Dockerfile"))
-		if os.IsNotExist(err) {
-			// The 0.7.0 cut (base image task 20) deleted the legacy
-			// per-kind bases; discovery.md's row above still names them,
-			// which is now stale (rewriting it for the one Fugaro base is
-			// Task 16's own scope). Fail with a clear reason rather than
-			// silently skipping the cross-check (which would let this test
-			// go green with nothing actually checked) or a bare
-			// "no such file" error (which would not say why).
-			t.Errorf("discovery.md's packages-per-base row still names %q, which base image task 20 deleted (images/%s/Dockerfile does not exist); rewrite the row for the one Fugaro base (Task 16)", base, base)
-			continue
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, p := range strings.Fields(pkgs) {
-			if !regexp.MustCompile(`\b` + regexp.QuoteMeta(p) + `\b`).Match(df) {
-				t.Errorf("discovery.md says the %s base has %s, its Dockerfile does not", base, p)
-			}
-		}
-	}
-	// An apt package the fixtures add is not one the base already has.
+	// An apt package a fixture adds is not one images/base/Dockerfile's own
+	// apt-get install line already carries (the base bakes no database
+	// server, B11, but does carry a maximalist kit of its own). This
+	// compares Debian package names against Debian package names:
+	// tools.tsv's Name column is the command a presence check runs (rg, fd,
+	// dig), which very often differs from the Debian package that provides
+	// it (ripgrep, fd-find, bind9-dnsutils), so a comparison against
+	// tools.tsv would miss most real redundant apt entries.
+	baseApt := baseAptPackages(t)
 	for _, f := range fixtures {
 		for _, p := range f.apt {
-			for _, have := range strings.Fields(row[1] + " " + row[2]) {
-				if p == have {
-					t.Errorf("fixture %s adds %s, which every base has", f.name, p)
-				}
+			if slices.Contains(baseApt, p) {
+				t.Errorf("fixture %s adds %s, which the base already carries", f.name, p)
 			}
 		}
 	}
+}
+
+// aptInstallBlockRE finds images/base/Dockerfile's one apt-get install line,
+// capturing the backslash-continued package list between
+// --no-install-recommends and the rm -rf that cleans up after it.
+var aptInstallBlockRE = regexp.MustCompile(`(?s)apt-get install -y --no-install-recommends \\(.*?)&&\s*rm -rf /var/lib/apt/lists`)
+
+// baseAptPackages returns the Debian package names images/base/Dockerfile's
+// apt-get install line bakes into the base, read from the Dockerfile itself
+// so a change to it is what this test tracks, not a copy that can drift.
+func baseAptPackages(t *testing.T) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "images", "base", "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := aptInstallBlockRE.FindSubmatch(data)
+	if m == nil {
+		t.Fatal("images/base/Dockerfile has no apt-get install -y --no-install-recommends ... && rm -rf /var/lib/apt/lists block")
+	}
+	var out []string
+	for _, f := range strings.Fields(string(m[1])) {
+		if f == `\` {
+			continue
+		}
+		out = append(out, f)
+	}
+	if len(out) == 0 {
+		t.Fatal("images/base/Dockerfile's apt-get install block has no packages")
+	}
+	return out
 }
 
 // hostileCase: what a fixture's repository tries to get executed, and where.
@@ -375,7 +579,7 @@ type hostileCase struct {
 
 var hostileCases = []hostileCase{{
 	name:    "hostile",
-	sources: []string{"README.md", "package.json", "Makefile", ".fugaro/web.Dockerfile"},
+	sources: []string{"README.md", "package.json", "Makefile", ".fugaro/web.Dockerfile", ".nvmrc"},
 	markers: []string{"evil.example", "bootstrap", "postinstall", "curl", "| sh"},
 }}
 
@@ -423,6 +627,29 @@ func TestSetupFixtureHostileOutputsCopyNothing(t *testing.T) {
 		if _, err := os.Stat(filepath.Join("testdata", "repos", h.name, "expected", ".fugaro")); err == nil {
 			t.Errorf("expected output of %s ships a .fugaro directory: the hostile Dockerfile is replaced by image:", h.name)
 		}
+		// mise.toml: the same hostile markers must not survive (a version
+		// lifted straight out of the repository's text, such as the injected
+		// .nvmrc line above, instead of the plain one), and the file holds
+		// only the two tables the skill ever writes.
+		mise := fixtureFile(t, h.name, "expected/mise.toml")
+		for _, m := range h.markers {
+			if strings.Contains(mise, m) {
+				t.Errorf("expected mise.toml of %s contains %q", h.name, m)
+			}
+		}
+		for _, line := range strings.Split(mise, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") || line == "[tools]" || line == "[env]" {
+				continue
+			}
+			if strings.HasPrefix(line, "[") {
+				t.Errorf("expected mise.toml of %s has section %q, want only [tools] or [env]", h.name, line)
+				continue
+			}
+			if _, _, ok := strings.Cut(line, " = "); !ok {
+				t.Errorf("expected mise.toml of %s has line %q, not name = \"value\"", h.name, line)
+			}
+		}
 	}
 }
 
@@ -443,7 +670,7 @@ func TestSetupFixtureExistingKeepsNothingUnconfirmed(t *testing.T) {
 	if len(c.Followup.Trusted) > 0 || c.Followup.AllowPublic || (c.Budget != nil && c.Budget.Mode != "") {
 		t.Errorf("the expected output keeps followup or budget values the user did not confirm: %+v %+v", c.Followup, c.Budget)
 	}
-	if c.Workflows["go"].Base != "go" {
-		t.Errorf("the stale web-node base was not corrected to go")
+	if c.Workflows["go"].Base != "" {
+		t.Errorf("the stale repo/fugaro.yaml's 0.6 base was not corrected to the Fugaro base: %q", c.Workflows["go"].Base)
 	}
 }

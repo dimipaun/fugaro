@@ -108,17 +108,15 @@ func TestNoLegacyBaseOutsideHistory(t *testing.T) {
 		"internal/mirror/",
 		// An arbitrary sample base-image string in a cache-key warning test.
 		"internal/runner/lockcache_test.go",
-		// The setup skill (task 16) still documents and exercises per-kind
-		// discovery (web-node/go/java-services); updating it for the
-		// one-base world is that task's scope, not this one's. Narrowed to
-		// exactly the fixture directories and the two tests that build on
-		// them (a review found the blanket "plugin/" allow too broad):
-		// TODO(Task 16): rewrite each of these for the one-base/mise world
-		// and drop it from this list; the plugin tests this leaves red are
-		// named in the PR body.
-		"plugin/testdata/repos/", "plugin/setup_fixtures_test.go", "plugin/setup_skill_test.go",
-		"plugin/skills/setup/SKILL.md", "plugin/skills/setup/reference/discovery.md",
-		"plugin/skills/setup/reference/services-and-images.md", "plugin/skills/setup/reference/validation.md",
+		// The two per-language fixture directories that used to be named
+		// web-node/java-services are now node/server (a fix-round review
+		// pointed out the rename was cheap, and it drops setup_fixtures_test.go
+		// and the rest of testdata/repos/ off this list entirely). The one
+		// fixture that still legitimately names a removed base is
+		// existing-fugaro-yaml's repo/fugaro.yaml: a hand-written 0.6 file
+		// (`base: web-node`) the skill's expected/ output corrects, kept as
+		// repository data to fix, not usage to normalize away.
+		"plugin/testdata/repos/existing-fugaro-yaml/repo/fugaro.yaml",
 		// TestCIWorkflowSkipsImagesTheTagTreeDoesNotHold simulates OLD,
 		// pre-cut release trees to prove the version job's "kinds" step
 		// still detects their legacy directories (that step is deliberately
