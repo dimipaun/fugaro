@@ -39,7 +39,7 @@ Project rules (carried over from this repository's existing plans):
 
 1. **A repository outside an allow-list gets a project secret's variable anyway**, or `secrets set --project-wide` accepts a name with an empty allow-list. Pinned by `TestProjectSecretAllowedRepos` (Task 1), `TestReadinessOmitsProjectSecretForUnlistedRepo` (Task 3), `TestSecretsSetProjectWideRefusesEmptyAllowList` (Task 4).
 2. **A repo-level override stops winning even though it still has a version**, or a project copy is chosen while the repo copy is live — the precise bug an earlier draft of Task 3 had (B2 in review: "populated unconditionally wherever eligible" plus a Terraform-side `merge()` that lets the second map win would always resolve to the project copy, inverting "repo > project" for every eligible name, not just the unversioned ones). Pinned by `TestReadinessRepoVersionMeansNoProjectSecretsEntry` and `TestReadinessFallsBackOnceRepoVersionGone` (Task 3) — both assert `out.ProjectSecrets` has no entry (or gains one only once the repo version is gone), not merely that the job deploys or that some other field looks right.
-3. **A scope change plans a delete of an existing repo-owned secret.** Pinned by `TestBuildRepoSpecNeverPrunesRepoSecretsButGainsCandidates` (Task 2, a golden diff of `rs.Secrets`'s key set before/after a name becomes project-shared, made to fail first per S6 via its second assertion) and the `repo.tftest.hcl`/`installation.tftest.hcl` `run` blocks (Task 6, B3) that observe the real Terraform plan's resource actions — the only way to see a secret-resource delete (or lack of one) that pure Go cannot.
+3. **A scope change plans a delete of an existing repo-owned secret.** Pinned by `TestRepoNeverPrunesSecretsButGainsCandidates` (Task 2, a golden diff of `rs.Secrets`'s key set before/after a name becomes project-shared, made to fail first per S6 via its second assertion — named for `infra.Repo`, the function's actual current name; an earlier draft of this item called it `TestBuildRepoSpecNeverPrunes...`, `BuildRepoSpec` being that function's name before a rename this plan's authoring predates having noticed) and the real two-step golden plan (Task 6, B3) that observes the real Terraform plan's resource actions — the only way to see a secret-resource delete (or lack of one) that pure Go cannot.
 4. **The build account's grant (or the check job's secret reference, B4) drifts from the job account's resolved secret** (P4): the `repo.tftest.hcl` `run "build_and_check_use_the_resolved_secret"` block (Task 5) asserts all **three** `local.secrets`-consuming paths (job, build, check) resolve the identical ID for the identical logical name, for every fixture — through the real Terraform test framework, not a Go unit test, since only it can observe what a Terraform `local` actually resolves to.
 5. **A value leaks through `ls --project-wide`, `doctor`, or a plan/state print.** Pinned by `TestSecretsLsProjectWideNeverPrintsValue`, `TestDoctorProjectSecretChecksReadNoValue` (Task 4/7), both asserting the fake Secret Manager's `Access` is never called.
 6. **The P7 widening (a no-list provider's key becomes mountable everywhere) leaks into `CheckProviderPolicy`, or `ProviderKeyAvailable`'s empty-list branch silently vanishes.** Pinned by `TestProviderKeyAvailableNeverChangesAllowsData` (Task 1, asserts `AllowsData` on an empty list stays `false` — the thing `CheckProviderPolicy` calls — even though `ProviderKeyAvailable` now returns `true`) and the paired `TestSecretMountsNoListProviderAvailableToAnyRepo`/`TestSecretMountsListedProviderStillRefusesUnlistedRepo` (Task 2) and `TestReadinessProviderNoListEligibleForEveryRepo`/`TestReadinessProviderListedExcludesUnlistedRepo` (Task 3), each pair covering both the empty-list and non-empty-list branches so a mutation that collapses `ProviderKeyAvailable` to either `AllowsData` or `true` always fails at least one test in its pair.
@@ -164,8 +164,10 @@ Edit `internal/localcfg/localcfg.go`: add, next to `ClaudeAccounts`:
 	// the owner has opted into project-wide storage for, by allow-listed
 	// repository (design docs/design/project-secrets.md §3). Only the
 	// owner sets them, here, never in fugaro.yaml. A provider's or a named
-	// Claude account's own allow_data_to governs its own secret instead
-	// (ValidateProjectSecrets refuses a name that collides with one).
+	// Claude account's own allow_data_to governs its own secret instead;
+	// neither can collide with a ReservedSecrets key in the first place
+	// (S1), so ValidateProjectSecrets checks membership in ReservedSecrets
+	// only, nothing more.
 	ProjectSecrets map[string]config.ProjectSecret `yaml:"project_secrets,omitempty"`
 ```
 Wire `config.ValidateProjectSecrets(c.ProjectSecrets)` next to the existing `ValidateModelProviders`/`ValidateClaudeAccounts` calls.
@@ -311,59 +313,87 @@ func ProjectSecretID(fugaroProject, logical string) string {
 
 ```go
 // internal/infra/spec_test.go
-func TestBuildRepoSpecNeverPrunesRepoSecretsButGainsCandidates(t *testing.T) {
-	// Build a RepoSpec twice from the identical fugaro.yaml/local-config
-	// fixture: once with lc.ProjectSecrets empty, once with an entry that
-	// allow-lists this repository for one of the workflow's mounted names.
-	// Assert TWO things, not one:
-	//   (a) rs.Secrets's key SET is identical both times (same keys, same
-	//       IDs) -- the "never prunes" golden property, P2;
-	//   (b) rs.ProjectSecretCandidates gains EXACTLY the expected new entry
-	//       in the second build (gcp.ProjectSecretID(lc.Name, logical)),
-	//       and has none in the first. Assertion (b) is what makes this
-	//       test fail before this task's implementation exists --
-	//       ProjectSecretCandidates has no code populating it yet, so it
-	//       would be empty (or the field undefined) in both builds,
-	//       failing the "gains exactly the expected entry" half.
-	// Assertion (a) alone, as an earlier draft of this test had it, passes
-	// trivially before any of this task's code exists (nothing has ever
-	// pruned rs.Secrets, so there is nothing yet to regress) -- S6 flagged
-	// that a test which cannot fail before the code it pins exists proves
-	// nothing about that code; (b) is the fix.
+func TestRepoNeverPrunesSecretsButGainsCandidates(t *testing.T) {
+	before, err := Repo(sandboxInputs(t, m5Additions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before.ProjectSecretCandidates) != 0 {
+		t.Fatalf("ProjectSecretCandidates = %+v, want none with no project_secrets configured", before.ProjectSecretCandidates)
+	}
+	// bitbucket-token is the sandbox's git credential, mounted by every
+	// workflow (SecretMounts's unconditional first entry) -- allow-listing
+	// it project-wide here is the design's own worked example (§6).
+	after, err := Repo(sandboxInputs(t, m5Additions+"project_secrets:\n  bitbucket-token:\n    allow_data_to: [\"acme/sandbox\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// (a) P2's golden property: the key SET (and every ID) is identical,
+	// unaffected by project_secrets existing at all.
+	if !maps.Equal(before.Secrets, after.Secrets) {
+		t.Fatalf("rs.Secrets changed:\nbefore: %+v\nafter:  %+v", before.Secrets, after.Secrets)
+	}
+	// (b) ProjectSecretCandidates gains EXACTLY the expected new entry --
+	// this is the assertion that makes the test fail before this task's
+	// code exists (S6): nothing populates ProjectSecretCandidates yet, so
+	// it would be empty in "after" too, failing this half even though (a)
+	// alone would pass trivially (nothing has ever pruned rs.Secrets, so
+	// there is nothing yet to regress).
+	want := map[string]string{"bitbucket-token": gcp.ProjectSecretID("aurora", "bitbucket-token")}
+	if !maps.Equal(after.ProjectSecretCandidates, want) {
+		t.Fatalf("ProjectSecretCandidates = %+v, want %+v", after.ProjectSecretCandidates, want)
+	}
 }
 ```
 
-- [ ] **Step 5: Write the `SecretMounts` implementation (the P7 condition change only — no collision check, S1)**
-
-- [ ] **Step 6: Write the failing tests for the P7 mount-condition change**
+- [ ] **Step 5: Write the failing tests for the P7 mount-condition change (corrected order, SF8c: an earlier draft had this task's implementation step before its own failing tests, backwards TDD)**
 
 ```go
 // internal/infra/secretmounts_test.go (the existing file SecretMounts's
 // own tests already live in — S6, not spec_test.go)
 func TestSecretMountsNoListProviderAvailableToAnyRepo(t *testing.T) {
-	// cfg.Agent.Auth = "api-key"; lc.Providers has one provider with no
-	// AllowDataTo at all. Call SecretMounts for a repo this provider has
-	// never named. Assert the returned mounts include a SecretMount for
-	// that provider's Secret — the opposite of today's behavior, and the
-	// direct effect of design §3a's ruling.
+	lc := &localcfg.Config{Providers: map[string]config.ModelProvider{
+		"openrouter": {Secret: "openrouter-api-key"}, // no AllowDataTo at all
+	}}
+	w := config.Workflow{}
+	ms, err := SecretMounts("bitbucket-token", &config.Config{Agent: config.Agent{Auth: "api-key"}}, "app", config.DefaultClaudeAccount, w, lc, "acme/never-named")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, m := range ms {
+		if m.Logical == "openrouter-api-key" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("mounts = %+v, want openrouter-api-key present for a repo the no-list provider never named (design §3a)", ms)
+	}
 }
 
 func TestSecretMountsListedProviderStillRefusesUnlistedRepo(t *testing.T) {
-	// Same as above, but the provider HAS an explicit, non-empty
-	// AllowDataTo that does not name this repo. Assert SecretMounts's
-	// result does NOT include a mount for this provider — confirms the
-	// non-empty-list case is byte-for-byte unchanged by P7 (mutation-proof:
-	// a mutation that deletes the "len == 0" branch of ProviderKeyAvailable
-	// entirely, collapsing it to AllowsData, must fail
-	// TestSecretMountsNoListProviderAvailableToAnyRepo above, not this one;
-	// a mutation that makes ProviderKeyAvailable always true must fail
-	// this test instead — the two together pin both halves of the
-	// function, not just one).
+	lc := &localcfg.Config{Providers: map[string]config.ModelProvider{
+		"openrouter": {Secret: "openrouter-api-key", AllowDataTo: []string{"acme/app"}}, // explicit, non-empty, excludes the repo below
+	}}
+	w := config.Workflow{}
+	ms, err := SecretMounts("bitbucket-token", &config.Config{Agent: config.Agent{Auth: "api-key"}}, "app", config.DefaultClaudeAccount, w, lc, "acme/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range ms {
+		if m.Logical == "openrouter-api-key" {
+			t.Fatalf("mounts = %+v, want no openrouter-api-key for a repo an explicit, non-empty list excludes (P7 must not weaken this case)", ms)
+		}
+	}
 }
 ```
 
+- [ ] **Step 6: Run the tests to verify they fail**
+
 Run: `go test -count=1 -run 'TestSecretMountsNoListProviderAvailableToAnyRepo|TestSecretMountsListedProviderStillRefusesUnlistedRepo' ./internal/infra/`
-Expected: FAIL (the first: no such mount present today; the second should already pass before this task's P7 edit, confirming it is a true regression guard — run it once before Step 6's P7 change lands to check that, then again after).
+Expected: the first FAILs (no such mount present today, `AllowsData` refuses an empty list for everyone); the second already PASSes before this task's P7 edit lands (confirming it is a true regression guard, not a new behavior) — run it once now to check that, then again after Step 7.
+
+- [ ] **Step 7: Write the `SecretMounts` implementation (the P7 condition change only — no collision check, S1)**
 
 - [ ] **Step 8: Run the tests to verify they pass**
 
