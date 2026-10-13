@@ -121,7 +121,7 @@ resource "google_secret_manager_secret" "project" {
 # deploy/terraform/gcp/modules/repo/secrets.tf's operator_secrets local.
 ```
 
-`gcp.ProjectSecretID(fugaroProject, logical string) string`, the same `derive()` helper as `gcp.SecretID` (`names.go:101-112`, `sha256(fugaroProject + "\x00" + logical)`), so a project name and repo slug can never collide into the same ID.
+`gcp.ProjectSecretID(fugaroProject, logical string) string`, the same `derive()` helper as `gcp.SecretID` (`names.go:101-112`), hashing `"project\x00" + fugaroProject + "\x00" + logical` — domain-separated (a nit fixed in review) so a Fugaro project name that happened to equal some repository's own slug could never make `ProjectSecretID` collide with `SecretID`'s hash of the identical (name, logical) pair.
 
 **Who writes a version.** `fugaro secrets set NAME --project-wide` (a new flag on the existing command, `internal/cli/secrets.go`), keeping every one of today's guarantees unmodified: stdin-only, hidden prompt on a terminal, never echoed, never an argument or flag value (§9.1's CLI contract). **Checked in this exact order, since `NAME` can match more than one branch's shape (S1: `claude-oauth-token`, the bare reserved name, is also what `ClaudeAccountBySecret` always matches to the implicit default account — the order below is what keeps that case unambiguous, not left to chance):**
 1. `NAME` is a key of `config.ReservedSecrets` (checked first, so `claude-oauth-token` and the other three reserved names are always handled here, never falling through to point 2 below): refused unless `project_secrets[NAME]` exists with a non-empty `allow_data_to`.
