@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -151,6 +152,13 @@ func cloudCheck(ctx context.Context, root string, co cloudOptions, rerun string)
 // carry the old ones, which --check cannot see either.
 const checkJobCopyCaveat = "fugaro upgrade --check makes no cloud call, so it cannot tell whether the deployed job's copy of this local project config (providers, model_prices, budget settings, the region's compute price override and the GitHub App ID) still matches, or is stale, in either direction; run fugaro upgrade without --check to find out, or just run fugaro init --repo . in your own terminal to refresh it (never run automatically)"
 
+// jobConfigCopyTimeout bounds the cloud work jobConfigCopyNote does (opening
+// the runs bucket to check the project's name, then reading each existing
+// workflow's job): the same risk layerBucketTimeout (layer_resolve.go)
+// guards against for the project layer's own bucket read. A package var so
+// a test can shorten it.
+var jobConfigCopyTimeout = 30 * time.Second
+
 // jobConfigCopyNote is the cloud step's extra report, after a real refresh:
 // whether any of the repository's deployed workflow jobs carries a copy of
 // the local project config that no longer matches what this local config
@@ -202,7 +210,14 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 	if err != nil {
 		return couldNotCheckJobConfigCopy("cannot read the checkout's origin")
 	}
-	env, err := openCloudFor(ctx, lc)
+	// jobConfigCopyNote is an advisory extra on an otherwise-successful
+	// fugaro upgrade, not the thing the operator ran for (the same risk
+	// layerBucketTimeout guards against for the project layer's own bucket
+	// read): a flaky or offline network must not hang the whole command in
+	// a client retry loop just to report on something optional.
+	cctx, cancel := context.WithTimeout(ctx, jobConfigCopyTimeout)
+	defer cancel()
+	env, err := openCloudFor(cctx, lc)
 	if err != nil {
 		return couldNotCheckJobConfigCopy("cannot connect to the cloud")
 	}
@@ -223,7 +238,7 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 			return couldNotCheckJobConfigCopy("cannot compute the repository's spec from the local config")
 		}
 		now = spec.Env // the same local-config-derived half for every workflow
-		jobEnv, exists, err := be.JobFullEnv(ctx, spec.Job)
+		jobEnv, exists, err := be.JobFullEnv(cctx, spec.Job)
 		if err != nil {
 			return couldNotCheckJobConfigCopy("reading the deployed job failed")
 		}

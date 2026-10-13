@@ -5,14 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -322,6 +326,93 @@ func TestUpgradeCloudCouldNotCheckJobConfigCopyOnAJobReadError(t *testing.T) {
 		if strings.Contains(out, leak) {
 			t.Fatalf("the note leaked the underlying error %q:\n%s", leak, out)
 		}
+	}
+}
+
+// TestJobConfigCopyTimeoutBoundsASlowCloudCall: discovered running the full
+// suite for this review's fix (not one of its findings): jobConfigCopyNote
+// used the caller's own, often-undeadlined context, so a real upgrade whose
+// Cloud Run read hit a slow or unreachable backend (an offline network, a
+// black-holed connection) hung in the client's own retry/backoff loop for as
+// long as the process let it — minutes, in one full-suite run — instead of
+// giving up and reporting "could not check". jobConfigCopyTimeout now bounds
+// that work (the same risk layerBucketTimeout, layer_resolve.go, already
+// guards against for the project layer's bucket read).
+//
+// This drives openCloudFor and JobFullEnv directly, the same two calls
+// jobConfigCopyNote makes under its own context.WithTimeout(ctx,
+// jobConfigCopyTimeout), rather than through the full upgrade command,
+// which cannot otherwise make its Cloud Run endpoint hang: the fake server
+// answers instantly or not at all (gcpfake.JobFaults has no delay), so only
+// a real, unresponsive HTTP server reproduces the risk. (That jobConfigCopyNote
+// itself passes this bounded context, not the caller's own often-undeadlined
+// one, to both calls is a one-line read of the function, cctx used
+// throughout; the real-world proof that wiring matters is the bug this
+// fixes: a full `go test ./internal/cli/...` run hung for 900s inside
+// jobConfigCopyNote -> openCloudFor -> checkCloudName's GCS retry loop
+// before this fix, confirmed by its goroutine dump, and finished in ~240s
+// after it, same run, same machine.)
+//
+// Mutation (verified, run and restored): in this test, pass
+// context.Background() instead of cctx to both openCloudFor and JobFullEnv
+// (simulating the undeadlined-context bug directly): the test hangs past
+// its own short timeout instead of returning in well under a second.
+func TestJobConfigCopyTimeoutBoundsASlowCloudCall(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	block := make(chan struct{})
+	var srv *httptest.Server
+	// srv.Close waits for every in-flight handler to return, so the channel
+	// must close before it does: defer runs LIFO, so the one registered
+	// second (close(block)) runs first.
+	defer func() { srv.Close() }()
+	defer close(block)
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-block // never answers: an unreachable or stuck Cloud Run endpoint
+	}))
+
+	runs := t.TempDir()
+	marker, err := json.Marshal(infra.ProjectMarker{Version: 1, Name: "aurora", GCPProject: "proj-1234"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(runs, "fugaro"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runs, "fugaro", "project.json"), marker, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	lc := &localcfg.Config{
+		Name: "aurora", GCPProject: "proj-1234", Region: "us-east5",
+		Bucket:    "file://" + runs, // fast: isolates the slow part to Cloud Run
+		Endpoints: localcfg.Endpoints{Run: srv.URL + "/", NoAuth: true},
+	}
+
+	old := jobConfigCopyTimeout
+	jobConfigCopyTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { jobConfigCopyTimeout = old })
+
+	cctx, cancel := context.WithTimeout(context.Background(), jobConfigCopyTimeout)
+	defer cancel()
+	env, err := openCloudFor(cctx, lc)
+	if err != nil {
+		t.Fatalf("openCloudFor (the file:// bucket, no hang expected here): %v", err)
+	}
+	defer env.Close()
+	be, ok := env.be.(interface {
+		JobFullEnv(ctx context.Context, job string) (map[string]string, bool, error)
+	})
+	if !ok {
+		t.Fatal("env.be has no JobFullEnv")
+	}
+	start := time.Now()
+	_, _, err = be.JobFullEnv(cctx, "fugaro-does-not-matter")
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("JobFullEnv against an unresponsive server returned no error")
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("JobFullEnv took %s against a 200ms-bounded context; the hang this guards against is back", elapsed)
 	}
 }
 
