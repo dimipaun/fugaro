@@ -517,9 +517,23 @@ func ReviewComment(recipeName string, v Verdict, prs []int, secrets []string) st
 	if len(v.Findings) > 0 {
 		b.WriteString("\nFindings:\n")
 		for _, f := range v.Findings {
-			b.WriteString("- ")
+			// "- Finding: " (fixed, Fugaro's own text) always opens the
+			// item: a finding's own text, even fully neutralised, must
+			// never be the first thing on the line, since CommonMark
+			// block structure (a heading, a list item, a blockquote, a
+			// thematic break, an indented code block) is recognised by
+			// POSITION, not merely by an unescaped character —
+			// backslash-escaping (neutralizeFinding) cannot stop 4+
+			// leading spaces from opening an indented code block, for
+			// instance, since space is not a character CommonMark lets an
+			// escape apply to.
+			b.WriteString("- Finding: ")
 			if f.Severity != "" {
-				fmt.Fprintf(&b, "[%s] ", neutralizeFinding(agent.Redact(f.Severity, secrets)))
+				// Not "[%s]": Fugaro's own, unescaped brackets around a
+				// model-chosen value could themselves spell "[x]" or
+				// "[ ]", GitHub's task-list checkbox syntax. Bold text has
+				// no such special two-character form to land on.
+				fmt.Fprintf(&b, "**%s.** ", neutralizeFinding(agent.Redact(f.Severity, secrets)))
 			}
 			if f.File != "" {
 				fmt.Fprintf(&b, "%s: ", neutralizeFinding(agent.Redact(f.File, secrets)))
@@ -531,24 +545,32 @@ func ReviewComment(recipeName string, v Verdict, prs []int, secrets []string) st
 	return b.String()
 }
 
-// findingLineBreakRE, findingHashRE, findingSchemeRE, findingWWWRE and
-// findingFenceRE are neutralizeFinding's patterns: any line break (bare CR
-// or LF, CRLF, or the Unicode line/paragraph separators, which Markdown
-// renderers and GitHub's own display both treat as breaking a line the
-// same as LF), a bare issue/pull-request autolink (#N, also inside
-// org/repo#N, since it is the bare "#" immediately before digits that
-// triggers it either way), a URL scheme or a bare "www." host that would
-// otherwise auto-link a bare or markdown-linked URL, and a run of 3 or
-// more backticks or tildes, which opens a Markdown fenced code block that
-// would otherwise run to the next matching fence or the end of the
-// comment, swallowing (visually, in the rendered comment) whatever
-// followed it, including the real marker.
+// findingLineBreakRE, findingHashRE, findingSchemeRE, findingMailtoRE,
+// findingWWWRE, findingFenceRE and findingExtraPunctRE are
+// neutralizeFinding's patterns: any line break (bare CR or LF, CRLF, or
+// the Unicode line/paragraph separators, which Markdown renderers and
+// GitHub's own display both treat as breaking a line the same as LF), a
+// bare issue/pull-request autolink (#N, also inside org/repo#N, since it
+// is the bare "#" immediately before digits that triggers it either way),
+// any URI scheme (not only http/https: GFM's autolink extension does not
+// itself limit which scheme it recognises in a bare "scheme://" form) or
+// "mailto:", or a bare "www." host, that would otherwise auto-link a bare
+// or markdown-linked URL, a run of 3 or more backticks or tildes, which
+// opens a Markdown fenced code block that would otherwise run to the next
+// matching fence or the end of the comment, swallowing (visually, in the
+// rendered comment) whatever followed it, including the real marker, and
+// every other ASCII punctuation character CommonMark lets a backslash
+// escape at all (everything except \, &, <, >, [ and ], which the
+// substitutions above already turn into something else entirely, so
+// escaping them again here would corrupt, not strengthen, those escapes).
 var (
-	findingLineBreakRE = regexp.MustCompile("\r\n|[\r\n\u2028\u2029]")
-	findingHashRE      = regexp.MustCompile(`#(\d+)`)
-	findingSchemeRE    = regexp.MustCompile(`(?i)(https?)://`)
-	findingWWWRE       = regexp.MustCompile(`(?i)www\.`)
-	findingFenceRE     = regexp.MustCompile("(`{3,}|~{3,})")
+	findingLineBreakRE  = regexp.MustCompile("\r\n|[\r\n\u2028\u2029]")
+	findingHashRE       = regexp.MustCompile(`#(\d+)`)
+	findingSchemeRE     = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.\-]*)://`)
+	findingMailtoRE     = regexp.MustCompile(`(?i)\bmailto:`)
+	findingWWWRE        = regexp.MustCompile(`(?i)www\.`)
+	findingFenceRE      = regexp.MustCompile("(`{3,}|~{3,})")
+	findingExtraPunctRE = regexp.MustCompile("[!\"#$%'()*+,\\-./:;=?@^_`{|}~]")
 )
 
 // neutralizeFinding makes one finding field safe to paste as-is into a
@@ -574,13 +596,28 @@ var (
 // another one (same zero-width-space trick, right after the '#'); render
 // or load HTML (an <img> tag, or forge Fugaro's own
 // "<!-- fugaro:report -->" marker, both broken by escaping every '<' and
-// '>'); turn a bare or disguised ("[text](url)") link, or a bare "www."
-// host, clickable (breaking the URL scheme or the "www." prefix, and
-// Markdown-escaping the bracket syntax); or open a fenced code block with
-// no matching close (breaking any run of 3+ backticks or tildes, at any
+// '>'); turn a bare or disguised ("[text](url)") link, a bare "www." host,
+// or ANY URI scheme ("ftp://", "mailto:", not only http/https — GFM's own
+// autolink extension is not limited to those two) clickable (breaking the
+// scheme, the "mailto:" prefix, or the "www." prefix, and
+// Markdown-escaping the bracket syntax); open a fenced code block with no
+// matching close (breaking any run of 3+ backticks or tildes, at any
 // length — a zero-width space between every character of the run, not
 // only after the first, since an opener needs only 3 consecutive fence
-// characters anywhere in a longer run to still work).
+// characters anywhere in a longer run to still work); or forge ANY other
+// Markdown structure a still-literal ASCII punctuation character could
+// still open at this point — emphasis, strikethrough, an inline code
+// span, a blockquote, a thematic break, a list marker — by
+// backslash-escaping every one of them CommonMark allows an escape for
+// (every character above already turned into something else — \, &, <,
+// >, [, ] — is excluded, since re-escaping an already-escaped form would
+// corrupt it, not strengthen it). None of this stops a finding's own text
+// from opening a block construct (a heading, an indented code block) by
+// virtue of being the first thing on its line rather than by an
+// unescaped character — escaping cannot apply to a leading run of plain
+// spaces, for instance — which is why ReviewComment never lets a
+// finding's own text be the first thing on the line at all (a fixed "-
+// Finding: " always opens it).
 func neutralizeFinding(s string) string {
 	s = findingLineBreakRE.ReplaceAllString(s, " ")
 	s = strings.ReplaceAll(s, "\\", "\\\\")
@@ -592,11 +629,17 @@ func neutralizeFinding(s string) string {
 	s = strings.ReplaceAll(s, "[", "\\[")
 	s = strings.ReplaceAll(s, "]", "\\]")
 	s = findingSchemeRE.ReplaceAllString(s, "$1\u200b://")
+	s = findingMailtoRE.ReplaceAllStringFunc(s, func(m string) string {
+		return m[:len(m)-1] + "\u200b:"
+	})
 	s = findingWWWRE.ReplaceAllStringFunc(s, func(m string) string {
 		return m[:3] + "\u200b" + m[3:]
 	})
 	s = findingFenceRE.ReplaceAllStringFunc(s, func(m string) string {
 		return strings.Join(strings.Split(m, ""), "\u200b")
+	})
+	s = findingExtraPunctRE.ReplaceAllStringFunc(s, func(m string) string {
+		return "\\" + m
 	})
 	return s
 }

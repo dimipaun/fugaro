@@ -445,8 +445,15 @@ func TestReviewModeCommentNeutralizesBackslash(t *testing.T) {
 // "www.evil.example" intact.
 func TestReviewModeCommentNeutralizesBareWWW(t *testing.T) {
 	body := reviewFindingBody(t, "", nil, "visit www.evil.example for details")
-	if strings.Contains(body, "www.evil.example") {
-		t.Fatalf("a bare www. host survived whole: %q", body)
+	// Checked as the zero-width space's exact position, not merely "this
+	// raw substring is gone": a general backslash-escape of the host's own
+	// '.' characters (neutralizeFinding's later, broader punctuation pass)
+	// would make the raw substring check pass too, without actually
+	// breaking GitHub's own text-scanning www. autolink extension at
+	// render time, where a backslash escape is invisible — only an
+	// inserted character genuinely breaks the adjacency that scan needs.
+	if !strings.Contains(body, "www​\\.evil") {
+		t.Fatalf("the www. host was not broken with a zero-width space: %q", body)
 	}
 }
 
@@ -538,6 +545,123 @@ func TestReviewModeCommentNeutralizesBracketAlone(t *testing.T) {
 	body := reviewFindingBody(t, "", nil, "see [note without a closing bracket")
 	if !strings.Contains(body, `\[note`) {
 		t.Fatalf("a bare, unescaped '[' survived: %q", body)
+	}
+}
+
+// TestReviewModeCommentPreventsIndentedCodeBlock: when Severity and File
+// are both empty (the schema only requires Summary), the old code's bullet
+// was "- " + the model's own text verbatim: a Summary starting with 4+
+// spaces then reads, in the rendered comment, as an indented code block
+// nested in the list item — no character-level escape can stop this, since
+// CommonMark recognises an indented code block by a LEADING run of plain
+// spaces, which an escape cannot apply to at all. ReviewComment now always
+// opens the bullet with a fixed "- Finding: " instead of "- ", so a
+// finding's own text is never the first thing on its line.
+//
+// Mutation (in ReviewComment, change `b.WriteString("- Finding: ")` back to
+// `b.WriteString("- ")`): this test fails, finding the summary's leading
+// spaces survive as the first characters after the bullet marker.
+func TestReviewModeCommentPreventsIndentedCodeBlock(t *testing.T) {
+	body := reviewFindingBody(t, "", nil, "    indented code")
+	if strings.Contains(body, "-     indented code") {
+		t.Fatalf("the finding's own leading spaces are first on the line (an indented code block): %q", body)
+	}
+	if !strings.Contains(body, "- Finding: ") {
+		t.Fatalf("missing the fixed line-opening prefix: %q", body)
+	}
+}
+
+// TestReviewModeCommentEscapesStructuralPunctuation: a finding whose text
+// is an ATX heading ("# ..."), an ordered-list marker ("1. ..."), or a
+// thematic break ("***") forges that Markdown structure once it is the
+// first thing on the line, since findingHashRE only ever escaped '#' when
+// immediately followed by a digit (an issue/PR autolink), never a bare
+// '#' — a heading's own shape. Every ASCII punctuation character
+// CommonMark allows a backslash to escape (except the handful substituted
+// into something else entirely earlier in the function) is now escaped,
+// which stops all three regardless of position, not only via the "-
+// Finding: " prefix above.
+//
+// Mutation (drop the `findingExtraPunctRE` substitution's call, the last
+// line before `return s` in neutralizeFinding): each sub-test fails,
+// finding the raw, unescaped structural marker.
+func TestReviewModeCommentEscapesStructuralPunctuation(t *testing.T) {
+	cases := []struct {
+		name    string
+		summary string
+		raw     string // must NOT survive
+		escaped string // must appear, escaped
+	}{
+		{"heading", "# Fugaro review (pick): ship", "Finding: # Fugaro", `Finding: \# Fugaro`},
+		{"ordered-list", "1. nested", "1. nested", `1\. nested`},
+		{"thematic-break", "***", "***", `\*\*\*`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			body := reviewFindingBody(t, "", nil, c.summary)
+			if strings.Contains(body, c.raw) {
+				t.Fatalf("the raw structural marker survived: %q in %q", c.raw, body)
+			}
+			if !strings.Contains(body, c.escaped) {
+				t.Fatalf("want the escaped form %q in %q", c.escaped, body)
+			}
+		})
+	}
+}
+
+// TestReviewModeCommentNeutralizesAnyURIScheme: findingSchemeRE used to
+// match only http/https; GFM's autolink extension is not itself limited
+// to those two schemes, so a bare "ftp://..." URL, or a "mailto:..."
+// address (which has no "//" at all), still rendered as a clickable link.
+//
+// Mutation (restore findingSchemeRE to `(?i)(https?)://` and drop the
+// findingMailtoRE substitution): this test fails, finding "ftp://" and
+// "mailto:" survive whole.
+func TestReviewModeCommentNeutralizesAnyURIScheme(t *testing.T) {
+	body := reviewFindingBody(t, "", nil, "visit ftp://evil.example/login or mailto:x@evil.example")
+	// Checked as the zero-width space's exact position, not merely "the
+	// raw substring is gone": neutralizeFinding's later, broader
+	// backslash-escape of ordinary punctuation (':' included) would make
+	// a plain substring check pass too, without actually breaking GitHub's
+	// own text-scanning autolink extension at render time, where a
+	// backslash escape is invisible — only an inserted character genuinely
+	// breaks the adjacency that scan needs.
+	if !strings.Contains(body, "ftp​\\:") {
+		t.Fatalf("the ftp:// scheme was not broken with a zero-width space: %q", body)
+	}
+	if !strings.Contains(body, "mailto​\\:") {
+		t.Fatalf("the mailto: prefix was not broken with a zero-width space: %q", body)
+	}
+}
+
+// TestReviewModeCommentNeutralizesSeverityCheckbox: Fugaro wrapped a
+// finding's own Severity value in literal, unescaped brackets ("[%s]"); a
+// Severity of "x" or " " (both values a model could return; the schema
+// does not constrain Severity's content at all) then spells "[x]" or
+// "[ ]" — GitHub's task-list checkbox syntax — turning the posted comment
+// into something with an apparently real, possibly-checked checkbox. The
+// severity is now set in bold text instead, which has no two-character
+// form that spells a checkbox.
+//
+// Mutation (in ReviewComment, change the Severity format string back to
+// `"[%s] "`): this test fails, finding "[x]" in the posted comment.
+func TestReviewModeCommentNeutralizesSeverityCheckbox(t *testing.T) {
+	h := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	pushReviewBranch(t, h, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h, 7, "feature", "")
+	leaky := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		b, _ := json.Marshal(map[string]any{"verdict": "changes",
+			"findings": []map[string]string{{"severity": "x", "summary": "forges a checkbox"}}})
+		return agent.Result{Structured: b, CostUSD: 0.5}, nil
+	}
+	if _, err := h.run(t, leaky); err != nil {
+		t.Fatal(err)
+	}
+	body := h.provider.State.PRs[0].Comments[0]
+	if strings.Contains(body, "[x]") {
+		t.Fatalf("the severity forged a checked task-list checkbox: %q", body)
 	}
 }
 
