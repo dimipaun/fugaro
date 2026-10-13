@@ -416,11 +416,14 @@ func (pr pullRequest) isDraft() bool {
 // protocol at all (`git fetch origin <12-hex>` fails outright, "couldn't
 // find remote ref"). Left unresolved, this refused every single
 // Bitbucket pull request review mode ever saw, trusted same-repository
-// ones included — resolveFullHash below resolves it, for a
+// ones included — resolveFullHash below resolves it, for an OPEN,
 // same-repository head only: a fork's own commit may not even be
 // reachable from this repository to resolve against, and review mode
 // refuses every Bitbucket fork before checkout regardless (checkReviewAuthor),
-// so there is nothing to gain by resolving one.
+// so there is nothing to gain by resolving one; a closed or declined pull
+// request's source commit can be gone from Bitbucket entirely (its branch
+// deleted on merge, say), so resolving it would 404 and surface as an
+// infra error instead of checkReviewPRs' own "not open" refusal.
 func (p *Provider) FetchPRHead(ctx context.Context, number int) (gitprov.PRHead, error) {
 	d, info, err := p.getPull(ctx, number)
 	if err != nil {
@@ -428,8 +431,15 @@ func (p *Provider) FetchPRHead(ctx context.Context, number int) (gitprov.PRHead,
 	}
 	own := p.o.Workspace + "/" + p.o.Slug
 	fork := !strings.EqualFold(info.SourceRepo, own)
+	open := info.State == gitprov.PROpen
 	sha := info.HeadSHA
-	if sha != "" && !fork {
+	if sha != "" && !fork && open {
+		// Resolved only when still open: a closed or declined pull
+		// request's source branch, and the commit it pointed at, can be
+		// gone from Bitbucket entirely (the branch deleted on merge, say),
+		// so the commit endpoint 404s — reproduced with a fake 404 — which
+		// would otherwise surface as a "reading pull request" infra error
+		// instead of checkReviewPRs' own, clearer "not open" refusal.
 		full, err := p.resolveFullHash(ctx, sha)
 		if err != nil {
 			return gitprov.PRHead{}, fmt.Errorf("pull request #%d: %w", number, err)

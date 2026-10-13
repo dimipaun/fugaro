@@ -42,10 +42,14 @@ type reviewHead struct {
 }
 
 // checkReviewPRs resolves and validates every pull request r.spec.ReviewPRs
-// names (design generic-tool §3.6, G12; owner ruling 2026-10-13): FetchPRHead,
-// then its open state and checkReviewAuthor's trusted-author gate. Any
-// failure ends bootstrap with the reason, before anything is checked out;
-// the runner never silently skips a pull request the task named.
+// names (design generic-tool §3.6, G12; owner ruling 2026-10-13):
+// FetchPRHead, then its open state, checkReviewAuthor's trusted-author
+// gate, and last the head commit's own hash shape (see the comment on
+// that check: a Bitbucket fork's hash is never resolved, so checking this
+// before the author gate would misreport a fork refusal as an infra
+// error). Any failure ends bootstrap with the reason, before anything is
+// checked out; the runner never silently skips a pull request the task
+// named.
 func (r *run) checkReviewPRs(ctx context.Context) error {
 	heads := make([]reviewHead, 0, len(r.spec.ReviewPRs))
 	for _, n := range r.spec.ReviewPRs {
@@ -56,22 +60,29 @@ func (r *run) checkReviewPRs(ctx context.Context) error {
 		if !h.Open {
 			return fmt.Errorf("PR #%d is not open", n)
 		}
-		if !gitops.ValidCommitSHA(h.SHA) {
-			// Checked here, at the earliest point, and again inside
-			// gitops (CheckoutDetached, Worktree) right before the only
-			// two git calls that ever take a provider-supplied rev: this
-			// value reaches `git fetch origin <rev>` as a bare positional
-			// argument, and git itself accepts an option
-			// (--upload-pack=...) in that position — reproduced
-			// independently (a throwaway test, not kept): an injected
-			// shell command actually ran. An abbreviated hash (Bitbucket's
-			// own pull-request API gives a 12-hex one) is refused here
-			// too, with a clear message, rather than reaching `git fetch`
-			// to fail there with "couldn't find remote ref".
-			return fmt.Errorf("PR #%d's head commit %s is not a full commit hash", n, safetext.OneLine(h.SHA))
-		}
 		if err := r.checkReviewAuthor(ctx, n, h); err != nil {
 			return err
+		}
+		if !gitops.ValidCommitSHA(h.SHA) {
+			// Checked here — after checkReviewAuthor, not before: a
+			// Bitbucket fork keeps its abbreviated (12-hex) hash forever
+			// (the Bitbucket provider only resolves the full one for a
+			// same-repository head, since a fork's commit may not even be
+			// reachable to resolve against, and review mode refuses every
+			// Bitbucket fork before checkout regardless). Checking the
+			// hash's shape first would have failed every such fork right
+			// here, as an infra_error with no note ever posted, before
+			// checkReviewAuthor's own fork refusal — the one that
+			// actually explains why, and posts a note on the pull request
+			// saying so — ever got to run. This is also checked again
+			// inside gitops (CheckoutDetached, Worktree) right before the
+			// only two git calls that ever take a provider-supplied rev:
+			// that value reaches `git fetch origin <rev>` as a bare
+			// positional argument, and git itself accepts an option
+			// (--upload-pack=...) in that position — reproduced
+			// independently (a throwaway test, not kept): an injected
+			// shell command actually ran.
+			return fmt.Errorf("PR #%d's head commit %s is not a full commit hash", n, safetext.OneLine(h.SHA))
 		}
 		heads = append(heads, reviewHead{Number: n, SHA: h.SHA})
 	}

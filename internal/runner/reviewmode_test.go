@@ -1199,13 +1199,14 @@ func bitbucketCfg(t *testing.T) string {
 // author_association at all, so review mode fails closed there instead of
 // consulting trust: a same-repository pull request needs no author check
 // (pushing a branch there already needs write access) and is reviewed
-// unconditionally; every fork is refused, even one followup.trusted would
-// otherwise have trusted.
+// unconditionally; every fork is refused.
 //
 // Mutation (drop the `if r.providerKind == gitprov.KindBitbucket { ... }`
 // branch in checkReviewAuthor): the fork sub-case fails, finding it
-// reviewed instead of refused (it would pass the general trust check,
-// since its author is listed in followup.trusted).
+// reviewed instead of refused (its author's Collaborator is false — the
+// fake's own zero value — so it would otherwise fail the general trust
+// check too; this mutation specifically removes the Bitbucket-only path,
+// not the general one).
 func TestReviewModeBitbucketForkRefusedSameRepoAccepted(t *testing.T) {
 	h := newHarness(t, bitbucketCfg(t), reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
 	pushReviewBranch(t, h, "feature", func(dir string) {
@@ -1220,17 +1221,50 @@ func TestReviewModeBitbucketForkRefusedSameRepoAccepted(t *testing.T) {
 		t.Fatalf("Bitbucket same-repository PR was refused: rec = %+v", rec)
 	}
 
-	const bitbucketAliceID = "557058:00000000-0000-0000-0000-000000000001"
-	h2 := newHarness(t, bitbucketCfg(t)+"followup:\n  trusted: [\""+bitbucketAliceID+"\"]\n", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	h2 := newHarness(t, bitbucketCfg(t), reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
 	pushReviewBranch(t, h2, "feature", func(dir string) {
 		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
 	})
 	addPR(h2, 7, "feature", "alice/repo")
-	h2.provider.State.PRs[0].AuthorID = bitbucketAliceID
+	h2.provider.State.PRs[0].AuthorID = "557058:00000000-0000-0000-0000-000000000001"
 	h2.provider.State.PRs[0].AuthorLogin = "alice"
 	rec2, err := h2.run(t)
 	if err == nil || rec2.Status != runstore.StatusFailed || !strings.Contains(rec2.Reason, "only reviews same-repository pull requests on Bitbucket") {
-		t.Fatalf("Bitbucket fork (even a followup.trusted author's own) was not refused: rec = %+v, err = %v", rec2, err)
+		t.Fatalf("Bitbucket fork was not refused: rec = %+v, err = %v", rec2, err)
+	}
+}
+
+// TestReviewModeBitbucketForkWithAbbreviatedHashStillRefusedWithNote:
+// owner ruling 2026-10-13's own reproduction case for item 2 — the fake
+// provider above always gives a full 40-hex SHA (from `git rev-parse`),
+// which can never reproduce Bitbucket's real shape: its FetchPRHead only
+// resolves the full commit hash for a same-repository head (bitbucket.go),
+// so a fork keeps its abbreviated (12-hex) one forever. Before this fix,
+// checkReviewPRs checked the hash's shape BEFORE checkReviewAuthor, so
+// every such fork failed as an infra_error ("not a full commit hash"),
+// with no note ever posted, before the Bitbucket-fork refusal (the one
+// that actually explains why, and posts a note saying so) ever got to
+// run. PRState.Head, overridden directly here to an abbreviated hash,
+// stands in for that real shape.
+//
+// Mutation (swap the order of the `!h.Open`/checkReviewAuthor/
+// ValidCommitSHA checks in checkReviewPRs back to SHA-before-author): this
+// test fails, finding StatusInfraError and no posted note instead of the
+// fork refusal.
+func TestReviewModeBitbucketForkWithAbbreviatedHashStillRefusedWithNote(t *testing.T) {
+	h := newHarness(t, bitbucketCfg(t), reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	pushReviewBranch(t, h, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h, 7, "feature", "outsider/repo")
+	h.provider.State.PRs[0].Head = "abc1234def56" // Bitbucket's own abbreviated shape, unresolved for a fork
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "only reviews same-repository pull requests on Bitbucket") {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	c := h.provider.State.PRs[0].Comments
+	if len(c) != 1 || !strings.Contains(c[0], "only reviews same-repository pull requests on Bitbucket") {
+		t.Fatalf("no refusal note was posted on the pull request: comments = %q", c)
 	}
 }
 

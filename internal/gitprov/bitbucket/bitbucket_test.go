@@ -482,11 +482,35 @@ func TestBitbucketFetchPRHeadResolvesAbbreviatedHash(t *testing.T) {
 }
 
 // TestBitbucketFetchPRHeadMerged covers a pull request already merged: not
-// open, review mode must refuse it.
+// open, review mode must refuse it. Uses the plain pull_merged.json, not a
+// "_head" variant: a merged PR's hash is never resolved at all now (only
+// an OPEN, same-repository head's is — see TestBitbucketFetchPRHeadClosedNoCommit404,
+// the case that fix is actually for), so no extra commit-endpoint exchange
+// is needed here any more.
 func TestBitbucketFetchPRHeadMerged(t *testing.T) {
-	got, err := open(t, "pull_merged_head.json").FetchPRHead(ctx, 12)
+	got, err := open(t, "pull_merged.json").FetchPRHead(ctx, 12)
 	if err != nil || got.Open {
 		t.Fatalf("got %+v, %v, want Open=false", got, err)
+	}
+}
+
+// TestBitbucketFetchPRHeadClosedNoCommit404: a closed/declined pull
+// request's source branch, and the commit it pointed at, can be gone from
+// Bitbucket entirely (its branch deleted once the pull request closed);
+// resolving its hash would 404 against the commit endpoint, surfacing as
+// a "reading pull request" infra error instead of checkReviewPRs' own,
+// clearer "not open" refusal. This fixture has no commit-endpoint
+// exchange configured at all: if FetchPRHead still tried to resolve the
+// hash, the fake server would answer "unexpected request" instead (the
+// mutation below reproduces exactly that).
+//
+// Mutation (drop `&& open` from FetchPRHead's `if sha != "" && !fork && open`
+// condition): this test fails, finding an "unexpected request" error from
+// the fake server instead of a clean Open=false result.
+func TestBitbucketFetchPRHeadClosedNoCommit404(t *testing.T) {
+	got, err := open(t, "pull_declined_commit404.json").FetchPRHead(ctx, 12)
+	if err != nil || got.Open {
+		t.Fatalf("got %+v, %v, want Open=false, no error", got, err)
 	}
 }
 
