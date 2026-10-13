@@ -353,25 +353,65 @@ Expected: PASS.
 - [ ] **Step 1: Write the failing tests**
 
 ```go
+// imagesRegistry.publish's cfg/layer content depends only on repo, not tag
+// (init_images_test.go:53-64), so simply re-publishing the same repo+tag
+// (an earlier draft of this test's mistake) produces identical bytes and
+// never actually moves the plain tag's digest — the "nightly" would be a
+// no-op, and the bug this test exists to catch (sourcing the copy from
+// the plain tag) would pass undetected either way. This helper gives the
+// nightly's rebuild genuinely different bytes under the same repo+tag.
+func publishMarked(r *imagesRegistry, repo, tag, marker string) (indexDigest, childDigest string) {
+	cfg := []byte(`{"os":"linux","architecture":"amd64","marker":"` + marker + `"}`)
+	layer := []byte("layer of " + repo + " " + marker)
+	r.blobs[cdg(cfg)], r.blobs[cdg(layer)] = cfg, layer
+	im, _ := json.Marshal(map[string]any{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
+		"config": map[string]any{"digest": cdg(cfg), "size": len(cfg)}, "layers": []any{map[string]any{"digest": cdg(layer), "size": len(layer)}}})
+	r.mans[cdg(im)], r.types[cdg(im)] = im, "application/vnd.oci.image.manifest.v1+json"
+	ix, _ := json.Marshal(map[string]any{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json",
+		"manifests": []any{map[string]any{"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": cdg(im), "size": len(im), "platform": map[string]string{"os": "linux", "architecture": "amd64"}}}})
+	r.mans[cdg(ix)], r.types[cdg(ix)] = ix, "application/vnd.oci.image.index.v1+json"
+	r.tags[repo+":"+tag] = cdg(ix)
+	return cdg(ix), cdg(im)
+}
+
 // A nightly rebuild between releases has already moved the plain "1.2.3"
-// tag to a new, unsigned digest by the time the copy runs. The verified
-// copy must still succeed, reading the nightly-immune "-pinned" tag (the
-// one basepin verified) as its source — not the plain tag mirror.Plan
-// would otherwise resolve. This pins the fix for a bug an earlier draft
-// of this task had: feeding the -pinned digest as mirror.Plan's expect
-// while leaving the copy's source on the plain tag would return
-// ErrDigestMismatch here, from the ver tag's now-different digest.
+// tag to a genuinely different, unsigned image by the time the copy
+// runs. The verified copy must still succeed, reading the nightly-immune
+// "-pinned" tag (the one basepin verified) as its source — not the plain
+// tag mirror.Plan would otherwise resolve. This pins the fix for a bug an
+// earlier draft of this task had: feeding the -pinned digest as
+// mirror.Plan's expect while leaving the copy's source on the plain tag
+// would return ErrDigestMismatch here, from the ver tag's now-different
+// digest.
+//
+// What the destination tag actually ends up holding is the signed
+// index's linux/amd64 CHILD manifest digest, not the index digest itself
+// (mirror.go:166-181: Plan resolves src.Tag to topDigest — the index,
+// what expect is compared against — then, for an index, dereferences to
+// the amd64 entry and overwrites p.Manifest/p.Digest with THAT before
+// Copy's putManifest pushes it, mirror.go:286). An earlier draft of this
+// test asserted the destination held the index digest it fed to
+// resolvePinnedBase, which is never what gets written and would fail
+// even against correct code.
 func TestImagesStageCopiesFromThePinnedTagNotThePlainOne(t *testing.T) {
 	r := newImagesRig(t, "1.2.3")
-	pinnedDigest := r.src.tags["dimipaun/fugaro-base:1.2.3"] // the release's own, signed digest
-	r.src.tags["dimipaun/fugaro-base:1.2.3-pinned"] = pinnedDigest
-	r.src.publish("dimipaun/fugaro-base", "1.2.3") // the nightly: moves the plain tag to a new digest
+	releasedIndex := r.src.tags["dimipaun/fugaro-base:1.2.3"] // the release's own, signed index digest
+	var ix struct {
+		Manifests []struct {
+			Digest string `json:"digest"`
+		} `json:"manifests"`
+	}
+	json.Unmarshal(r.src.mans[releasedIndex], &ix)
+	releasedChild := ix.Manifests[0].Digest // what Copy actually writes to the destination tag
+	r.src.tags["dimipaun/fugaro-base:1.2.3-pinned"] = releasedIndex
+
+	publishMarked(r.src, "dimipaun/fugaro-base", "1.2.3", "nightly") // the nightly: a genuinely different image under the plain tag
 
 	resolveCalls := 0
 	old := resolvePinnedBase
 	resolvePinnedBase = func(ctx context.Context, source, kind, version string) (string, error) {
 		resolveCalls++
-		return pinnedDigest, nil // a fake, already-verified resolution
+		return releasedIndex, nil // basepin.Resolve verifies and returns the INDEX digest (mirror.ResolveDigest/getManifest never dereferences an index, mirror.go:688-712) — the same value mirror.Plan's expect compares topDigest against (mirror.go:167-168), which is also an index digest
 	}
 	t.Cleanup(func() { resolvePinnedBase = old })
 
@@ -382,8 +422,8 @@ func TestImagesStageCopiesFromThePinnedTagNotThePlainOne(t *testing.T) {
 	if resolveCalls == 0 {
 		t.Error("basepin resolution was never called")
 	}
-	if got := r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"]; got != pinnedDigest {
-		t.Errorf("copied digest = %s, want the -pinned tag's signed digest %s (not the nightly-moved plain tag)", got, pinnedDigest)
+	if got := r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"]; got != releasedChild {
+		t.Errorf("copied digest = %s, want the released image's amd64 manifest %s (not the nightly's)", got, releasedChild)
 	}
 }
 
@@ -491,7 +531,7 @@ Add to `docs/gcp-live-checklist.md`, in the existing numbered-table format, scop
 | # | Check | Command | Expected |
 |---|---|---|---|
 | 39a | `fugaro init --base`/`image refresh` resolving and verifying a real, signed `fugaro-base:<v>-pinned` image on the operator's own machine, against a real release that has run Task 1's signing steps (design retire-image-mirror.md §7, item a) | `fugaro init --base base` (or `image refresh`) in the sandbox repository's checkout, after the implementation lands and a real tag push has produced a signed image | The resolution succeeds and reports the verified digest; the copy lands in the installation's own Artifact Registry. |
-| 39b | The copy is sourced from the `-pinned` tag, not the plain tag the nightly moves: a copy run after the nightly has moved the plain tag still succeeds and copies the release's originally-signed digest (design §7, item b) | Dispatch `images.yml` nightly once (moving the plain tag), then run `fugaro init --base base`/`image refresh` in the sandbox | The copy succeeds (no `ErrDigestMismatch`); the registry's `fugaro-base:<v>` now holds the `-pinned` tag's digest, not the nightly-moved plain tag's. |
+| 39b | The copy is sourced from the `-pinned` tag, not the plain tag the nightly moves: a copy run after the nightly has moved the plain tag still succeeds and copies the release's originally-signed image (design §7, item b) | Dispatch `images.yml` nightly once (moving the plain tag), then run `fugaro init --base base`/`image refresh` in the sandbox | The copy succeeds (no `ErrDigestMismatch`); the registry's `fugaro-base:<v>` now holds the signed index's linux/amd64 manifest digest (what `mirror.Copy` actually writes, not the index digest itself), matching the release's originally-signed image, not the nightly-moved plain tag's. |
 | 39c | OCI-signature verification of a real signed base image, on the operator's own machine; a deliberately mismatched expected identity is refused (tamper-test) | A copy attempt against a real release that has run Task 1's signing steps, then once by hand against a forged/mismatched identity | The real signature verifies; the forged/mismatched one is refused with a clear reason. |
 | 39d | Egress/rate-limit behavior under load | — | **Out of scope for this design (§3); not planned.** |
 | 39e | The nightly's own run genuinely never touches the `-pinned` tag — a GitHub Actions/ghcr.io check, unrelated to any GCP project | Manually dispatch `images.yml` by `workflow_dispatch` once (never a real tag push), and compare `fugaro-base:<v>-pinned`'s digest before and after | Unchanged; the plain tag's digest changes (today's existing nightly behavior), the `-pinned` tag's does not. A *re-run* of the tag-push workflow itself does move and re-sign `-pinned` again — harmless, not what this check tests. |
