@@ -75,9 +75,15 @@ mechanism this design is the first attempt to build.
   (`agentenv.go:85-104`, the `for k, v := range pins { vars[k] = v }` loop),
   and `req.Env = gitops.WithVars(r.env, pins)` (`runner.go:1574`) merges the
   *same* `pins` into the Claude Code process's own environment for that
-  stage — `r.env` (`BuildEnv`'s bootstrap-time result, built once,
-  `runner.go:1084-1091`) is the base both times, `pins` is layered on top in
-  both channels. `stageOnProviderRoute` checks **both** the stage's own
+  stage — `pins` is the final write in both channels, but each starts from
+  a *different* base: the process channel's base is `r.env` (`BuildEnv`'s
+  bootstrap-time result, built once, `runner.go:1084-1091`), while the
+  managed-settings channel's base is `writeManagedSettings`'s own, freshly
+  computed `agent.GatewayVars(...)` result (from `r.parentEnv()`, the
+  runner's raw environment — never `r.env`), recomputed every stage. §3's
+  precedence discussion covers exactly why this difference doesn't let
+  anything leak between the two. `stageOnProviderRoute` checks **both** the
+  stage's own
   role model and the run's effective background model
   (`config.EffectiveBackground`, `internal/config/providers.go:377-385`),
   because with no `agent.models.background` set, the background model
@@ -332,9 +338,8 @@ flag.** Recommendation, with each alternative's rejection reason:
   with no PR review gate at all today — exactly the gap `project-layer.md`
   already carves `secrets:` and `instructions` out for. Recommendation:
   refuse it in the project layer the same way, and say why in the scope
-  table's `Why` column (`whyFiles`-style: "it changes the agent process's
-  environment, and only the repository's own, PR-reviewed `fugaro.yaml`
-  may do that").
+  table's `Why` column — the exact text is in the final recommendation
+  below, repeated nowhere else in this document.
 - **Not an override (`fugaro run --env …`).** `InOverride` keys today
   (`agent.model`, `agent.review_rounds`, `agent.max_budget_usd`,
   `agent.recipe`, `agent.oauth_token`, `workflows.*.timeouts.total`) are
@@ -476,6 +481,38 @@ undocumented precedence between the two (§0's `EnvSpec.Secrets` vs.
 allowed, but a silent winner is worse than refusing the collision outright
 at the one layer that can see both: `Validate` has the whole resolved
 `Config`, including every workflow's `secrets:` block, in view).
+
+**This collision check does not cover the provider side, and that is a
+real, separate gap — §3's mechanism can silently override a declared
+secret of the same name, with no validator today positioned to catch it.**
+A provider's own `agent_env` (owner-only, local config) or the always-on
+`DefaultProviderAgentEnv` can set any `AgentEnvAllowed` name on a
+provider-route stage; most of those names are not reserved for secrets
+either (only the `CLAUDE_CODE_*`-prefixed ones are, via the pre-existing
+`ReservedEnvPrefixes` check — `MAX_THINKING_TOKENS` is not, so a workflow
+secret named `env: MAX_THINKING_TOKENS` is legal today, with or without
+this design). Since `pins` is confirmed to be the structurally final write
+in both channels (above), such a secret's real value would be silently
+replaced by the provider's value on any provider-route stage — and neither
+existing validator can see the collision: `ValidateModelProviders` (the
+owner's local config) has no visibility into any repository's `fugaro.yaml`
+secrets at all, and `Validate` (one repository's `fugaro.yaml`) has no
+visibility into the owner's `providers:` block. **Fix: a new check that
+runs where both are already resolved together** — `internal/cli/validate.go`'s
+provider-policy block already combines `cfg` (the repo's file, including
+every workflow's `secrets:`) with `lc.Providers` (the owner's local config)
+in one place (`validate.go:180-196`'s neighborhood), the same place §3's
+two-provider conflict check lands; and the runner's own bootstrap
+(`checkProviderModels`) resolves both for the same reason. A new
+`config`-package function, `CheckProviderAgentEnvSecretCollision(cfg
+*Config, providers map[string]ModelProvider) []Problem` (name adjustable),
+checks whether any workflow's `secrets[].env` name coincides with any name
+the run's actual coder/reviewer/background providers could set (that
+provider's `DefaultProviderAgentEnv` merged with its own `agent_env`), and
+refuses, naming the colliding variable and the workflow — called from both
+`internal/cli/validate.go` and `checkProviderModels`, the same
+one-function-two-call-sites pattern §3 already settled on for the
+two-provider case.
 
 **The three edits, plus a fourth and fifth** (`docs/design/headroom-compression.md`
 §4 restates this pattern most recently; this design follows the same
@@ -687,10 +724,11 @@ would otherwise depend on map iteration order.
 
 **Where the check lives: one `config`-package function, called from both
 places this repository already calls its sibling provider-policy checks
-from — not two separate implementations.** `CheckProviderPolicy`,
-`CheckProviderAuth` and `CheckProviderGateway` (`providers.go:324-364`'s
-neighborhood) are each a single pure function in `internal/config`, called
-from **both** `fugaro validate`'s offline check (`internal/cli/validate.go:180-196`)
+from — not two separate implementations.** `CheckProviderAuth`
+(`providers.go:257-283`), `CheckProviderGateway` (`providers.go:285-312`)
+and `CheckProviderPolicy` (`providers.go:314-364`) are each a single pure
+function in `internal/config`, called from **both** `fugaro validate`'s
+offline check (`internal/cli/validate.go:180-196`)
 **and** the runner's own bootstrap authority (`checkProviderModels`,
 `internal/runner/gateway.go:389-423`, which calls exactly those same three
 functions) — the config-side function is the one thing, not two
@@ -711,42 +749,84 @@ reachable only once an owner's local config has two providers and a
 repository's `fugaro.yaml` explicitly pins its coder to one and its
 background to the other.)
 
-**Precedence, full stack, narrowest (and most specific) wins, matching
-`BuildEnv`'s existing "last always wins" comment literally, and holding in
-*both* channels `pins` reaches:**
+**The secrets-collision gap (§2) is a sibling of this same case, and
+shares its fix.** `CheckProviderAgentEnvSecretCollision` (§2) needs exactly
+the same two things the two-provider check needs — the repository's
+resolved `Config` and the owner's resolved providers, together — so it
+belongs beside it, in the same two call sites (`internal/cli/validate.go`,
+`checkProviderModels`), not as a third, differently-located check.
+
+**Precedence, corrected: this is not a five-level override ladder where
+each level is structurally protected from the one below it.** An earlier
+draft of this section claimed the gateway's own routing variables are
+"highest" and "never overridable by any of the above, in both channels,"
+then conceded in the very next sentence that `pins` is merged in *after*
+them in both channels — which, read correctly, means **`pins` (levels 3-4
+below) is the structurally last write in both channels, not the gateway's
+routing variables.** Confirmed directly: `writeManagedSettings`
+(`agentenv.go:85-104`) computes `vars` from `agent.GatewayVars` first, then
+runs `for k, v := range pins { vars[k] = v }` — `pins` overwrites `vars` on
+any shared key, not the reverse. For the process channel,
+`gitops.WithVars(r.env, pins)` (`internal/gitops/credentials.go:63-75`)
+drops any `r.env` entry whose key is also in `pins`, then appends all of
+`pins` — again, `pins` always wins over whatever `r.env` already holds
+(the gateway vars `BuildEnv` baked in, and the repository's own
+`agent.env`, levels 1-2 below, alike). There is no merge-order mechanism
+anywhere in this design that makes the gateway's routing variables
+unoverridable; if `pins` ever contained a routing-variable key, it would
+silently win, in both channels, every time.
+
+**What actually keeps the gateway's routing variables safe is a closed
+allow-list, not a precedence rule.** `pins` is `agent.PinVars`'s own fixed
+output (hard-coded model/output-limit variable *names*, never a routing
+name) plus, from this design, `DefaultProviderAgentEnv`'s fixed literal and
+a provider's own `agent_env` — and a provider's `agent_env` can only ever
+contain a key from `AgentEnvAllowed` (`validateAgentEnvMap`, shared with
+`agent.env`'s own check, §2), which `TestAgentEnvAllowListNeverRoutes`
+keeps disjoint from every routing name (§1). So `pins`'s possible key set
+is closed and verified, by construction, to never include
+`ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, or any other name
+`routingEnvKeys`/`CLAUDE_CODE_USE_*` names — not because the merge
+mechanism would refuse to let it win, but because nothing that reaches
+`pins` is ever allowed to be one of those names in the first place. The
+safety property is "pins can never collide with routing," proven by a
+test against the allow-list, not "routing wins the merge."
+
+With that corrected, the four levels that *are* genuinely a precedence
+ladder, narrowest wins:
 
 1. Claude Code's own built-in defaults (lowest).
-2. The repository's `agent.env` (§2) — process environment, set once at
-   `BuildEnv` time (`r.env`), applies to every stage of the workflow.
+2. The repository's `agent.env` (§2) — process environment only, set once
+   at `BuildEnv` time into `r.env`, applies to every stage of the
+   workflow. Absent from the managed-settings channel entirely: see below.
 3. `DefaultProviderAgentEnv`, for any stage whose role model or background
-   model a provider serves.
+   model a provider serves — part of `pins`, computed once per stage by
+   `stagePins`.
 4. That provider's own `agent_env`, for the same stages — overrides a
-   built-in default's key.
-5. The gateway's own routing variables and the rest of the per-stage pins
-   (highest) — never overridable by any of the above, **in both
-   channels**: not "managed settings only," as an earlier draft of this
-   list said. The gateway's routing variables (`ANTHROPIC_BASE_URL`,
-   `ANTHROPIC_API_KEY`, etc., `agent.GatewayVars`) reach the process
-   environment through `BuildEnv` (§0, `env.go:133-140`, "last, so nothing
-   declared or inherited can override it" — baked into `r.env` once at
-   bootstrap, before any stage's `pins` are layered on) and reach the
-   managed settings file through `writeManagedSettings`'s own, separate
-   call to the same `GatewayVars` function, recomputed per stage. Levels
-   3-4 (`stagePins`'s own contribution, `pins`) carry no key either channel's
-   gateway vars already set, so there is no real collision today — but the
-   ordering holds regardless: `pins` is merged into `vars` *after*
-   `GatewayVars` in `writeManagedSettings`, and into `r.env` (which already
-   has the gateway vars) via `gitops.WithVars` for the process channel.
+   built-in default's key within `pins` itself, before `pins` is ever
+   merged into either channel.
 
-Levels 3-4 are computed once, in `stagePins`, and layered over level 2 (`r.env`,
-itself layered over level 1, and already carrying level 5's process-env
-half from `BuildEnv`) in **both** the managed settings file
-(`writeManagedSettings`, which separately layers level 5's own half on
-top there) and the process environment (`gitops.WithVars(r.env, pins)`,
-`runner.go:1574`) — not levels 3-4 in one channel and level 2 in the
-other. The plan's Task 5 adds a test
-(`TestStagePinsProviderAgentEnvBothChannels`) asserting this precedence
-holds in both channels at once, which an earlier draft of this design
+The gateway's own routing variables (and the rest of `agent.PinVars`'s
+model-pin output) sit outside this ladder entirely: never overridden in
+practice, but by exclusion from `pins`'s possible content, not by
+precedence.
+
+**The two channels, concretely.** `pins` (levels 3-4) is computed once, in
+`stagePins`, and is the structurally final write in **both**: the process
+channel starts from `r.env` (level 1 and 2, plus the gateway's routing
+variables `BuildEnv` already baked in there) and applies
+`gitops.WithVars(r.env, pins)` (`runner.go:1574`); the managed-settings
+channel starts from `writeManagedSettings`'s own, freshly computed
+`GatewayVars` result (the gateway's routing variables again, recomputed
+per stage) and applies `for k, v := range pins { vars[k] = v }`. The two
+channels' bases differ in one respect: the managed-settings channel's base
+never includes level 2 at all, since `writeManagedSettings` never reads
+`r.env` — a repository's `agent.env` entry reaches only the process
+environment via `BuildEnv`, never the managed-settings file directly;
+Claude Code still reads it there for any key the managed-settings file
+doesn't separately name. The plan's Task 5 adds a test
+(`TestStagePinsProviderAgentEnvBothChannels`) asserting levels 3-4 win over
+level 2 in both channels at once, which an earlier draft of this design
 lacked.
 
 ## 4. Where each applies
@@ -799,12 +879,25 @@ knows `agent_env`" does not imply "the repository's job image does."
 calls `runner.ProvidersEnv` (or inside it), check the repository's current
 job-image build record's `base_ref` against a `agentEnvSince` constant
 (the same release `agent.env`'s own launch-time gate uses, above in this
-section) whenever any provider
-the repository may use has a non-empty `AgentEnv`; refuse with the same
-"run `fugaro image refresh`" message `checkImageSince` already gives
-(`recipes_skew.go:97-137`'s `refuse` closure), adapted to `init --repo`'s
-own flow rather than a `task.Spec`-based launch (`init --repo` has no
-`task.Spec`; the plan names the adaptation). **A second, narrower
+section) whenever any provider the repository may use has a non-empty
+`AgentEnv`; refuse with the same "run `fugaro image refresh`" message
+`checkImageSince` already gives (`recipes_skew.go:97-137`'s `refuse`
+closure), for an *existing* record whose `base_ref` predates
+`agentEnvSince` — **but, unlike `checkImageSince` itself, a repository
+with no build record at all must proceed, not refuse.** This is the actual
+adaptation to `init --repo`'s own flow, not merely "no `task.Spec`": a
+repository's *first* `fugaro init --repo` ever has no build record yet,
+since `init --repo` is what builds the job image in the first place, and
+reusing `checkImageSince`'s own "no record is unsafe" rule verbatim would
+make that first `init --repo` impossible to complete the moment any
+provider it may use already has a non-empty `AgentEnv` — a chicken-and-egg
+refusal `checkImageSince`'s own launch-time use never has to resolve,
+because a *launch* only ever runs after some image already exists. The
+image a first `init --repo` produces is built from the running CLI's own
+release, which — if that CLI's `ProvidersEnv`/`WorkflowSpec` code already
+knows about `AgentEnv` at all — necessarily knows how to decode it too, so
+proceeding with no record is safe in exactly the cases this gate needs to
+allow. **A second, narrower
 protection already exists for a different half of this risk**: an *older
 CLI* running `fugaro init --repo` against a local config that already sets
 `agent_env` is refused by `localcfg.go`'s own strict YAML decoding
@@ -924,7 +1017,21 @@ not assumed:
   live run per owner) `agent.ProviderRouteVars()` already exists to
   remove, for no safety benefit (the override mechanism makes the default
   changeable, not mandatory to keep).
-- **D5. Release placement.** See §8.
+- **D5. `CheckProviderAgentEnvSecretCollision` (§2), a new cross-config
+  check for a workflow secret and a provider's effective `agent_env`
+  sharing a name — refuse, or accept the residual.** *Recommended:* add
+  the check (§2, §3): the alternative is a secret's real value getting
+  silently replaced by a provider's configured value on any provider-route
+  stage, with no warning anywhere, for a name as ordinary as
+  `MAX_THINKING_TOKENS` or `CI`. *Veto alternative:* accept the residual
+  and document it instead of adding a fifth cross-config check function —
+  defensible given how narrow the collision space is in practice (a
+  repository would have to name a secret exactly one of
+  `AgentEnvAllowed`'s own entries), but this design recommends against it
+  because the failure mode (a secret silently stops being the value the
+  workflow's own code expects) is exactly the kind of surprise `Validate`
+  exists to catch before a job runs, not discover live.
+- **D6. Release placement.** See §8.
 
 ## 8. Release placement
 
