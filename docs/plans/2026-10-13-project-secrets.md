@@ -629,7 +629,8 @@ git commit -m "project secrets task 4: fugaro secrets set/ls --project-wide; the
 **Files:**
 - Edit: `deploy/terraform/gcp/modules/repo/build.tf`, `workflows.tf`, `check.tf`, `variables.tf`
 - Edit: `internal/infra/tfvars.go` (or wherever `RepoSpec`'s JSON tags live, `internal/infra/spec.go`) — the Go side of the tfvars wire
-- Edit: `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl`, `deploy/terraform/gcp/roots/repo/tests/testdata/*.tfvars.json` (a new golden fixture with a resolved `project_secrets` entry — regenerate with `internal/infra/spec_test.go`'s `-update` flag)
+- Edit: `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl`, `deploy/terraform/gcp/roots/repo/tests/testdata/*.tfvars.json` (a new golden fixture with a resolved `project_secrets` entry — **not** producible via `spec_test.go`'s `-update` flag, see below)
+- Edit: `internal/infra/discover_test.go` gains one more test (`TestReadinessVarsIncludeProjectSecrets`, listed below, using the file's existing `newCloud(t)` harness) — a `RepoVars`-level check that a `Readiness`-produced `RepoSpec` actually serializes `project_secrets`
 
 **Interfaces:**
 - `RepoSpec.ProjectSecrets map[string]string` (`json:"project_secrets"`, Task 3's output field) is the **only** new tfvars key this task wires through — it is Go-computed entirely by `Readiness`, never by this module.
@@ -638,7 +639,21 @@ git commit -m "project secrets task 4: fugaro secrets set/ls --project-wide; the
 - **`check.tf:71` changes identically**, from `google_secret_manager_secret.this[env.value].secret_id` to `local.secrets[env.value]` (B4 — missed in the design's first draft; the check job is a third site, not covered by "build.tf is the one place" as that draft claimed).
 - `variables.tf`'s existing precondition (`variables.tf:150-155`, "every secret that build_secrets... name must be one of repo.secrets") is widened to accept a name that is a key of either `repo.secrets` or `repo.project_secrets` — not narrowed: every name P2 already guarantees stays a key of `repo.secrets` too (P2: `rs.Secrets` never prunes), so in practice this precondition's existing form already holds; the widening is defensive, for a future change that might relax P2.
 
-**Tests (corrected per S6/B1: pure Go cannot observe a Terraform `local`'s resolved value, so this cannot be an `internal/infra` unit test — it must run through the real Terraform-test framework, the same one Task 6 drives):**
+**Tests (corrected per S6/B1: pure Go cannot observe a Terraform `local`'s resolved value, so asserting the three readers *agree* cannot be an `internal/infra` unit test — it must run through the real Terraform-test framework, the same one Task 6 drives. A narrower claim — that `Readiness`'s output actually reaches the tfvars JSON at all, the thing SF2 found missing from this task's fixture plan — IS a plain Go assertion on `RepoVars`'s own output, no Terraform involved, and belongs here too):**
+```go
+func TestReadinessVarsIncludeProjectSecrets(t *testing.T) {
+	// Uses the same newCloud(t)/fake Secret Manager harness as
+	// TestReadinessKeepsExistingJob (discover_test.go): seed a project
+	// secret with an enabled version and leave the repo copy without one,
+	// run DiscoverRepo then Readiness, and call RepoVars on the result.
+	// Assert the JSON contains "project_secrets" with the expected
+	// logical-name key — not merely that got.ProjectSecrets (the Go
+	// struct field, already covered by Task 3's tests) is populated. This
+	// is the test that would have caught the original gap: a RepoSpec
+	// field with a correct json tag that nothing ever exercises through
+	// RepoVars end to end.
+}
+```
 ```hcl
 # deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl, a new run block added
 # to the existing file (reusing its mock_provider and testdata pattern)
@@ -656,13 +671,15 @@ run "build_and_check_use_the_resolved_secret" {
 }
 ```
 
-- [ ] **Step 1: Write the failing test** (add the `run` block above to `repo.tftest.hcl`; it needs the new golden fixture with a resolved `project_secrets` entry first — write that as part of this step, via `spec_test.go`'s `-update` flag, reviewing the diff)
+- [ ] **Step 1: Write the failing test** (add the `run` block above to `repo.tftest.hcl`, the new `TestReadinessVarsIncludeProjectSecrets` Go test below, and the new golden fixture; see "building the fixture," below, for how — reviewing the diff either way)
+
+**Building the fixture (corrected, SF2 — the original draft's instruction to regenerate it via `spec_test.go`'s `-update` flag cannot work: `TestGoldenTfvars` calls `Repo(in)` only, never `Readiness`, and `ProjectSecrets` is populated exclusively by `Readiness` (Task 3); a fixture `Repo()` alone produces can never have a `project_secrets` entry, resolved or otherwise):** take the committed `bitbucket-oauth.tfvars.json` golden (already produced by `TestGoldenTfvars`) and hand-add one `"project_secrets"` entry for `bitbucket-token` (the name already present in that fixture's `secret_env`/`build_secrets`/check sets, per Task 5's own `run` block above), pointing at a plausible `gcp.ProjectSecretID` value — noted with a comment-adjacent `README` line in `testdata/` (JSON has no comments) that this one key is hand-maintained, not `-update`-regenerated, and must be re-added by hand if the fixture is ever regenerated for an unrelated reason. This is sufficient for the Terraform-side `run` block, which only needs some resolved value present in the tfvars to assert all three readers agree on it.
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `terraform -chdir=deploy/terraform/gcp/roots/repo init -backend=false -lockfile=readonly -input=false && terraform -chdir=deploy/terraform/gcp/roots/repo test -no-color`
-Expected: FAIL — today, `build.tf`/`check.tf` read `google_secret_manager_secret.this` directly, so they'd resolve the repo ID, not the project one the new fixture's `secret_env` expects; `workflows.tf` has no `var.repo.project_secrets` input to even accept yet, so the init step itself may fail first, confirming the field doesn't exist.
+Run: `terraform -chdir=deploy/terraform/gcp/roots/repo init -backend=false -lockfile=readonly -input=false && terraform -chdir=deploy/terraform/gcp/roots/repo test -no-color && go test -count=1 ./internal/infra/... -run TestReadinessVarsIncludeProjectSecrets`
+Expected: both FAIL — today, `build.tf`/`check.tf` read `google_secret_manager_secret.this` directly, so they'd resolve the repo ID, not the project one the new fixture's `secret_env` expects; `workflows.tf` has no `var.repo.project_secrets` input to even accept yet, so the init step itself may fail first, confirming the field doesn't exist; the Go test fails because `RepoVars`'s output has no `project_secrets` key yet (the field exists from Task 3 but nothing threads it into this fixture's expectations).
 
-- [ ] **Step 3: Write the Terraform and the Go tfvars-shape change** (the `RepoSpec.ProjectSecrets` JSON tag, Task 3's output field, threaded into the tfvars this test's golden fixture encodes)
+- [ ] **Step 3: Write the Terraform and the Go tfvars-shape change** (the `RepoSpec.ProjectSecrets` JSON tag, Task 3's output field, threaded into the tfvars this test's golden fixture encodes; this is also where the hand-built `project_secrets` entry described above gets added to the fixture)
 - [ ] **Step 4: Run the test to verify it passes, then the full Terraform validate**
 
 Run: `terraform -chdir=deploy/terraform/gcp/roots/repo test -no-color && go vet ./internal/infra/... && go test -count=1 ./internal/infra/... && terraform -chdir=deploy/terraform/gcp/modules/repo fmt -check && terraform -chdir=deploy/terraform/gcp/modules/repo validate`
@@ -671,7 +688,7 @@ Expected: `ok` / no diff / valid.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add deploy/terraform/gcp/modules/repo/build.tf deploy/terraform/gcp/modules/repo/workflows.tf deploy/terraform/gcp/modules/repo/check.tf deploy/terraform/gcp/modules/repo/variables.tf internal/infra/tfvars.go internal/infra/spec.go deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl deploy/terraform/gcp/roots/repo/tests/testdata/
+git add deploy/terraform/gcp/modules/repo/build.tf deploy/terraform/gcp/modules/repo/workflows.tf deploy/terraform/gcp/modules/repo/check.tf deploy/terraform/gcp/modules/repo/variables.tf internal/infra/tfvars.go internal/infra/spec.go internal/infra/discover_test.go deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl deploy/terraform/gcp/roots/repo/tests/testdata/
 git commit -m "project secrets task 5: local.secrets; build.tf AND check.tf (B4) both rewired through it (opus-reviewed)"
 ```
 
