@@ -53,11 +53,11 @@ type fixtureFacts struct {
 }
 
 var fixtures = []fixtureFacts{
-	{name: "web-node", workflows: []string{"web"}, tools: map[string]string{"node": "24.19.0"}, toolEvidence: map[string]string{"node": ".nvmrc"},
+	{name: "node", workflows: []string{"web"}, tools: map[string]string{"node": "24.19.0"}, toolEvidence: map[string]string{"node": ".nvmrc"},
 		aptEvidence: ".github/workflows/ci.yml", apt: []string{"libvips-dev"}},
 	{name: "go", workflows: []string{"go"}, tools: map[string]string{"go": "1.25"}, toolEvidence: map[string]string{"go": "go.mod"},
 		env: map[string]string{"GOTOOLCHAIN": "local"}},
-	{name: "java-services", workflows: []string{"server"}, tools: map[string]string{"java": "temurin-25"},
+	{name: "server", workflows: []string{"server"}, tools: map[string]string{"java": "temurin-25"},
 		apt:          []string{"postgresql-17"},
 		servicesFile: "bitbucket-pipelines.yml", servicesText: "postgres", testPrefix: "FUGARO_SERVICES=postgres fugaro-services start"},
 	{name: "monorepo", workflows: []string{"api", "web"}, dockerfiles: []string{"api"},
@@ -68,9 +68,9 @@ var fixtures = []fixtureFacts{
 	{name: "hostile", workflows: []string{"web"}, tools: map[string]string{"node": "22"}, toolEvidence: map[string]string{"node": ".nvmrc"}},
 }
 
-func TestSetupFixtureWebNode(t *testing.T)      { checkFixture(t, "web-node") }
+func TestSetupFixtureWebNode(t *testing.T)      { checkFixture(t, "node") }
 func TestSetupFixtureGo(t *testing.T)           { checkFixture(t, "go") }
-func TestSetupFixtureJava(t *testing.T)         { checkFixture(t, "java-services") }
+func TestSetupFixtureJava(t *testing.T)         { checkFixture(t, "server") }
 func TestSetupFixtureMonorepo(t *testing.T)     { checkFixture(t, "monorepo") }
 func TestSetupFixtureExistingYAML(t *testing.T) { checkFixture(t, "existing-fugaro-yaml") }
 func TestSetupFixtureHostile(t *testing.T)      { checkFixture(t, "hostile") }
@@ -602,6 +602,6 @@ func TestSetupFixtureExistingKeepsNothingUnconfirmed(t *testing.T) {
 		t.Errorf("the expected output keeps followup or budget values the user did not confirm: %+v %+v", c.Followup, c.Budget)
 	}
 	if c.Workflows["go"].Base != "" {
-		t.Errorf("the stale web-node base was not corrected to the Fugaro base: %q", c.Workflows["go"].Base)
+		t.Errorf("the stale repo/fugaro.yaml's 0.6 base was not corrected to the Fugaro base: %q", c.Workflows["go"].Base)
 	}
 }
