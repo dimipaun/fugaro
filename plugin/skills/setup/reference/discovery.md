@@ -21,6 +21,8 @@ The evidence below gives the workflow name, usually, and the `mise.toml` entry t
 
 Several of these at one root is one workflow with several `mise.toml` tools. Several separate roots (`services/api/go.mod`, `web/package.json`) are one workflow each, and their commands run from the repository root, so `cd <dir> &&` in the command; several roots of the same kind are several workflows, but one root lockfile with workspaces is one. A toolchain with no row above (.NET, for example): tell the user plainly that it needs a Dockerfile built `FROM` the base (or a mise plugin, if one exists for it).
 
+**A version copied from repository text must be a plain version**: digits and dots (`24.19.0`), or a mise-style tag of letters, digits and hyphens (`temurin-25`). Nothing else — whitespace, `$(...)`, a pipe, a URL, a quote — is a version; if the evidence doesn't give you one of those, it's not evidence, so ask the user rather than writing what you found into `mise.toml` or `image.tools` verbatim.
+
 ## Versions
 
 The base has the kit listed in `docs/base-image.md`; `image.apt` adds Debian 13 packages it lacks.

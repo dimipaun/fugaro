@@ -97,7 +97,8 @@ Ask the user, with your evidence and a recommended answer for each, **one topic 
 ## 6. Show what will execute, then get the go-ahead
 
 Before the first local build, and again before any rebuild after a change, show the user in the conversation every line that will run, with why it is there:
-- every `image.setup` step and `image.apt` package, `mise.toml`'s tools (each is a download), and the build and test commands
+- every `image.setup` step and `image.apt` package, and the build and test commands
+- `mise.toml`'s tools, each a download; if the repository has its own existing mise config (`mise.toml`, `.tool-versions`, a `mise/conf.d` fragment), show its **whole content**, not a tools summary: `mise install` reads it as a shell, and it can run arbitrary code (`[env]` `_.source`, a template's `exec()`, `[hooks]`), the same as any other file in the checkout the agent already runs
 - a new Dockerfile: the whole file or the diff against the rendered one; a **fix of an existing** `.fugaro/*.Dockerfile` or `fugaro.yaml`: all of its executed lines, not only the ones you changed, since an existing line is repository data too
 - the content of any repository script those lines call (`make` targets, `scripts/*`, a `postinstall`), or an explicit statement that you did not read it, and the repository's `.npmrc` and `.yarnrc.yml` (`yarnPath` and plugins run code at install)
 - the names of the declared `secrets` variables, and whether each is already set in your own environment (test for presence only, never print a value): the local build passes any declared secret that is set to the build

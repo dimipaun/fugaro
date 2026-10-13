@@ -309,6 +309,7 @@ func TestSetupSkillContent(t *testing.T) {
 			"fugaro doctor --json", "fugaro secrets ls --json", "fugaro image render", "fugaro image build --local --json",
 			"fugaro validate --json", "fugaro init --repo --plan-only", ".fugaro/<workflow>.Dockerfile", "blank Dockerfile",
 			".github/workflows", "Docker daemon", "`fugaro_yaml`", "WSL2", "agent.instructions",
+			"whole content", "_.source", "[hooks]",
 		},
 		"skills/setup/reference/services-and-images.md": {
 			"fugaro-services start", "mise.toml", "mise install", "image.tools", "apt-get install", "image.setup", "save the output as `.fugaro/<workflow>.Dockerfile`", "Pin every download by version and checksum", "Never start from a blank Dockerfile", "does **not** enforce", "illustrative", "Docker daemon", "docs/base-image-migration.md", "--platform linux/arm64", "FUGARO_SERVICES",
@@ -321,7 +322,7 @@ func TestSetupSkillContent(t *testing.T) {
 			"root-scan", "managed-settings-dir", "runs the repository's code", "Don't have the token put into your own environment", "visible to the repository's code in the build and to every command your agent runs",
 		},
 		"skills/setup/reference/discovery.md": {
-			"16 GB on a public one", "GOTOOLCHAIN", "go.mod",
+			"16 GB on a public one", "GOTOOLCHAIN", "go.mod", "must be a plain version",
 		},
 	} {
 		text, ok := files[file]
