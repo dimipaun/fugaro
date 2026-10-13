@@ -41,6 +41,9 @@ type fixtureFacts struct {
 	// with no entry here is a decision taken with the user, with no
 	// evidence in the repository.
 	toolEvidence map[string]string
+	// env: the expected mise.toml [env] table (discovery.md's go row:
+	// `[env] GOTOOLCHAIN = "local"`); nil for a fixture with no go workflow.
+	env map[string]string
 	// apt: the CI line whose packages become image.apt, and the packages.
 	aptEvidence string
 	apt         []string
@@ -52,13 +55,16 @@ type fixtureFacts struct {
 var fixtures = []fixtureFacts{
 	{name: "web-node", workflows: []string{"web"}, tools: map[string]string{"node": "24.19.0"}, toolEvidence: map[string]string{"node": ".nvmrc"},
 		aptEvidence: ".github/workflows/ci.yml", apt: []string{"libvips-dev"}},
-	{name: "go", workflows: []string{"go"}, tools: map[string]string{"go": "1.25"}, toolEvidence: map[string]string{"go": "go.mod"}},
+	{name: "go", workflows: []string{"go"}, tools: map[string]string{"go": "1.25"}, toolEvidence: map[string]string{"go": "go.mod"},
+		env: map[string]string{"GOTOOLCHAIN": "local"}},
 	{name: "java-services", workflows: []string{"server"}, tools: map[string]string{"java": "temurin-25"},
 		apt:          []string{"postgresql-17"},
 		servicesFile: "bitbucket-pipelines.yml", servicesText: "postgres", testPrefix: "FUGARO_SERVICES=postgres fugaro-services start"},
 	{name: "monorepo", workflows: []string{"api", "web"}, dockerfiles: []string{"api"},
-		tools: map[string]string{"go": "1.25", "node": "24"}, toolEvidence: map[string]string{"go": "services/api/go.mod"}},
-	{name: "existing-fugaro-yaml", workflows: []string{"go"}, tools: map[string]string{"go": "1.25"}, toolEvidence: map[string]string{"go": "go.mod"}},
+		tools: map[string]string{"go": "1.25", "node": "24"}, toolEvidence: map[string]string{"go": "services/api/go.mod"},
+		env: map[string]string{"GOTOOLCHAIN": "local"}},
+	{name: "existing-fugaro-yaml", workflows: []string{"go"}, tools: map[string]string{"go": "1.25"}, toolEvidence: map[string]string{"go": "go.mod"},
+		env: map[string]string{"GOTOOLCHAIN": "local"}},
 	{name: "hostile", workflows: []string{"web"}, tools: map[string]string{"node": "22"}, toolEvidence: map[string]string{"node": ".nvmrc"}},
 }
 
@@ -158,9 +164,13 @@ func checkFixture(t *testing.T, name string) {
 	if derived := detectRuntimes(t, filepath.Join(dir, "repo")); !slices.Equal(derived, sortedStrings(slices.Collect(maps.Keys(facts.tools)))) {
 		t.Errorf("the discovery table's mise tools for the repository are %v, want %v", derived, sortedStrings(slices.Collect(maps.Keys(facts.tools))))
 	}
-	mise := parseMiseTools(t, fixtureFile(t, name, "expected/mise.toml"))
+	miseText := fixtureFile(t, name, "expected/mise.toml")
+	mise := parseMiseTools(t, miseText)
 	if !equalMaps(mise, facts.tools) {
 		t.Errorf("mise.toml tools %v, want %v", mise, facts.tools)
+	}
+	if env := parseMiseEnv(t, miseText); !equalMaps(env, facts.env) {
+		t.Errorf("mise.toml [env] %v, want %v", env, facts.env)
 	}
 	for tool, file := range facts.toolEvidence {
 		version, ok := mise[tool]
@@ -225,9 +235,10 @@ func sortedStrings(s []string) []string {
 	return out
 }
 
-// parseMiseTools reads the [tools] table of a mise.toml as the skill writes
-// it: one `name = "version"` per line, each a tool and version config allows.
-func parseMiseTools(t *testing.T, text string) map[string]string {
+// parseMiseTOMLSection reads one top-level table of a mise.toml, one
+// `key = "value"` per line, validating each with valid; section is "tools"
+// or "env" without brackets.
+func parseMiseTOMLSection(t *testing.T, text, section string, valid func(k, v string) bool) map[string]string {
 	t.Helper()
 	out := map[string]string{}
 	in := false
@@ -236,18 +247,38 @@ func parseMiseTools(t *testing.T, text string) map[string]string {
 		switch {
 		case line == "" || strings.HasPrefix(line, "#"):
 		case strings.HasPrefix(line, "["):
-			in = line == "[tools]"
+			in = line == "["+section+"]"
 		case in:
 			k, v, ok := strings.Cut(line, " = ")
 			k, v = strings.Trim(k, `"`), strings.Trim(v, `"`)
-			if !ok || !config.ValidMiseTool(k, v) {
-				t.Errorf("mise.toml line %q is not name = \"version\"", line)
+			if !ok || !valid(k, v) {
+				t.Errorf("mise.toml [%s] line %q is not name = \"value\"", section, line)
 				continue
 			}
 			out[k] = v
 		}
 	}
 	return out
+}
+
+// parseMiseTools reads the [tools] table of a mise.toml as the skill writes
+// it: one `name = "version"` per line, each a tool and version config allows.
+func parseMiseTools(t *testing.T, text string) map[string]string {
+	t.Helper()
+	return parseMiseTOMLSection(t, text, "tools", config.ValidMiseTool)
+}
+
+// miseEnvKeyRE allows a shell environment variable name, as mise's [env]
+// table keys (GOTOOLCHAIN, not a lowercase mise tool name).
+var miseEnvKeyRE = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+
+// parseMiseEnv reads the [env] table of a mise.toml, as the skill writes
+// GOTOOLCHAIN = "local" for a go workflow (discovery.md).
+func parseMiseEnv(t *testing.T, text string) map[string]string {
+	t.Helper()
+	return parseMiseTOMLSection(t, text, "env", func(k, v string) bool {
+		return miseEnvKeyRE.MatchString(k) && v != ""
+	})
 }
 
 // detectRuntimes applies the discovery table's evidence rows to a repository

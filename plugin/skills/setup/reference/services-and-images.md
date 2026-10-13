@@ -69,6 +69,7 @@ A Go workflow (`go` and `GOTOOLCHAIN` in `mise.toml`) whose verify command leave
 ```toml mise.toml
 [tools]
 go = "1.25"
+
 [env]
 GOTOOLCHAIN = "local"
 ```
