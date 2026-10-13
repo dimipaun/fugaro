@@ -944,9 +944,11 @@ named directly or in substance by `SECURITY.md`'s scope.
   `gwAgent *agent.Gateway` field — not in Task 4, which an earlier draft of
   this plan assumed and which made the two tasks circular: Task 4 was
   listed as needing Task 3, but Task 3's own test set a field on `run` that
-  the earlier draft said Task 4 added. This task declares the field and
-  sets it directly in its own tests, with no real sidecar behind it; Task 4
-  is the only task that *populates* it for a real run, via `startCompression`)
+  the earlier draft said Task 4 added. This task declares the field, and
+  also adds the one test-only `Deps` field this task's own tests need to
+  set it directly, with no real sidecar behind it — see **`Deps.CompressionOverride`**
+  below. Task 4 is the only task that *populates* `r.compression` for a
+  real run, via `startCompression`)
 
 **Interfaces:**
 ```go
@@ -980,10 +982,32 @@ type CompressionProxy struct{ BaseURL string }
   Review Focus as a test that would have failed against the earlier,
   wrongly-ordered sketch — it isn't a decorative addition, it's the test
   that catches exactly this mistake.
+- **`Deps` gains `CompressionOverride *agent.CompressionProxy`, test-only.**
+  `Run` applies it unconditionally, right after constructing `r` and before
+  anything else runs (`internal/runner/runner.go:283-290`): `if
+  d.CompressionOverride != nil { r.compression = d.CompressionOverride }`.
+  This is the mechanism the two tests below actually need: Task 3 is
+  implemented and tested *before* Task 4 exists, so there is no
+  `startCompression` yet to populate `r.compression` through the real
+  config-and-gateway path, and `agent.compression` itself stays refused by
+  `Validate` throughout Tasks 1-9 regardless (P11) — a test can only reach
+  a populated `r.compression` by setting it directly. `Deps` is the one
+  bridge test code in `internal/runner`'s black-box test package
+  (`runner_test`, confirmed by `agentenv_test.go`/`gateway_test.go`/
+  `runner_test.go`'s own package clauses) has for injecting test-only
+  behavior, following the same `h.deps.XXX = value` pattern `gwConfig`/
+  `newGWFiles` already establish for other fields. It is safe against real
+  `fugaro.yaml` content for the same reason every other `Deps` field is:
+  `Deps` is built entirely by Fugaro's own trusted bootstrap code
+  (`cmd/fugaro`, `internal/cli`), never from repository content, so nothing
+  committed to a run's branch can reach it. (This field is distinct from
+  Task 4's `Deps.CompressionForTest`, which instead lets the *real*
+  `startCompression` run against a resolved config — see Task 4.)
 - `internal/runner/agentenv.go`'s `writeManagedSettings` (P5) reads
   `r.compression` (the `*agent.CompressionProxy` field this task declares on
-  `run`, above — set directly by this task's own tests, populated for a
-  real run only once Task 4 exists) and, when non-nil, overwrites the
+  `run`, above — set directly by this task's own tests via
+  `Deps.CompressionOverride`, populated for a real run only once Task 4
+  exists) and, when non-nil, overwrites the
   `ANTHROPIC_BASE_URL` entry in the `vars` map `GatewayVars` returned,
   before the call to `agent.WriteManagedSettings` — the same single write,
   not a second one, and the same "after, not before" ordering as `BuildEnv`
@@ -1044,7 +1068,7 @@ func TestBuildEnvRoutesThroughCompressionNotGateway(t *testing.T) {
 
 func TestWriteManagedSettingsCarriesCompressionURL(t *testing.T) {
 	h := newGW(t, gwConfig(t, ""), "observe", "", anthropicfake.MessageOK(sonnet, pricing.Usage{Output: 1})).harness
-	h.compression = &agent.CompressionProxy{BaseURL: "http://127.0.0.1:9100"} // the run field this task itself declares (above); Task 4 is what populates it for a real sidecar
+	h.deps.CompressionOverride = &agent.CompressionProxy{BaseURL: "http://127.0.0.1:9100"} // this task's own test-only Deps field; Task 4 is what populates r.compression for a real sidecar
 	if _, err := h.run(t, implement("feature"), review("ship", 0)); err != nil {
 		t.Fatal(err)
 	}
@@ -1057,7 +1081,7 @@ func TestWriteManagedSettingsCarriesCompressionURL(t *testing.T) {
 func TestCheckSettingsRoutingAppliesWithCompression(t *testing.T) {
 	files := map[string]string{".claude/settings.json": `{"env": {"ANTHROPIC_BASE_URL": "https://evil.example"}}`}
 	h := newGWFiles(t, gwConfig(t, ""), "observe", "", files).harness
-	h.compression = &agent.CompressionProxy{BaseURL: "http://127.0.0.1:9100"}
+	h.deps.CompressionOverride = &agent.CompressionProxy{BaseURL: "http://127.0.0.1:9100"}
 	if _, err := h.run(t, implement("feature")); err == nil {
 		t.Fatal("a committed settings.json routing key was not refused with compression on")
 	}
@@ -1108,6 +1132,37 @@ but still refused by `config.Validate`.
   readable), `internal/runner/runner.go`, their tests
 
 **Interfaces:**
+- **`Deps` gains two more test-only fields, both needed because
+  `internal/runner`'s own tests are a black-box package (`runner_test`) that
+  can only drive behavior through `fugaro.yaml` text and `Deps`, and because
+  `agent.compression` stays refused by `Validate` throughout Tasks 1-9
+  (P11) regardless of what this task wires up:**
+  - **`CompressionForTest string`.** Applied once, immediately after
+    `resolveConfig` succeeds and before `r.cfg` is assigned
+    (`internal/runner/runner.go:831-867`): `if r.d.CompressionForTest != ""
+    { cfg.Agent.Compression = r.d.CompressionForTest }`. The YAML committed
+    to a test's fake remote never contains a `compression:` key at all —
+    tests use the plain fixture (`gwConfig(t, "")`) — so `Validate` runs
+    normally and has nothing to refuse; the override happens only in Go
+    memory, strictly after `Validate` has already accepted the real config.
+    This is the one, narrow exception to P11's refusal, reachable only
+    through `Deps`, which Fugaro's own trusted bootstrap code builds
+    (`cmd/fugaro`, `internal/cli`) — never from repository content, so
+    nothing committed to a run's branch can set it.
+  - **`StartHeadroom func(ctx context.Context, o headroomproc.Options)
+    (sidecarProcess, error)`**, where `sidecarProcess` is a small interface
+    this task adds in `internal/runner` — `URL() string`, `Dead() <-chan
+    struct{}`, `Stop(context.Context) error` — the three methods
+    `startCompression` actually calls. `*headroomproc.Process` (Task 2)
+    already has this exact method set, so it satisfies `sidecarProcess`
+    with no change to `internal/headroomproc` itself. `startCompression`
+    calls `r.d.StartHeadroom` when non-nil, the real `headroomproc.Start`
+    otherwise. This is the seam the test harness's fake sidecar is built on
+    (`h.compressionStarts`, `h.lastCompressionEnv`, `h.compressionStops`,
+    `h.killSidecarDuring`, `h.hangSidecarDuring` below), so no test in this
+    task ever spawns a real sidecar process — the same reasoning
+    `TestMain`'s re-exec fake serves in `internal/headroomproc` itself
+    (Task 2), one layer up.
 - A new `(r *run) startCompression(ctx context.Context) error`, called once
   per run (P4), **after `startGateway` has returned successfully and before
   the first stage**. It is **the one place the `agent.auth`-plus-gateway
@@ -1187,14 +1242,17 @@ func TestRunnerStartsNoSidecarByDefault(t *testing.T) {
 // harness (newHarness, runner_test.go:66 -- the same constructor
 // TestStageTimeoutOpensDraft uses) rather than newGW, since the point is
 // that the budget is off: no ceiling, no default-branch budget, nothing
-// turns the gateway on. This is a bootstrap-time failure -- startCompression
-// returns before the stage loop ever starts -- so, per Run's own doc
-// comment (runner.go:265-271), Run itself returns a non-nil error and the
-// record is StatusInfraError, unlike every Dead()-reported failure below.
+// turns the gateway on. The fixture's fugaro.yaml is committed unmodified
+// (no compression: key, so Validate has nothing to refuse); only
+// Deps.CompressionForTest carries "headroom" into the resolved config, in
+// memory, after Validate has already run. This is a bootstrap-time failure
+// -- startCompression returns before the stage loop ever starts -- so, per
+// Run's own doc comment (runner.go:265-271), Run itself returns a non-nil
+// error and the record is StatusInfraError, unlike every Dead()-reported
+// failure below.
 func TestStartCompressionRefusesWithoutGateway(t *testing.T) {
-	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"],
-		"  review_rounds: 2\n", "  review_rounds: 2\n  compression: headroom\n", 1)
-	h := newHarness(t, cfg, nil)
+	h := newHarness(t, "", nil)
+	h.deps.CompressionForTest = "headroom"
 	rec, err := h.run(t, implement("feature"))
 	if err == nil {
 		t.Fatal("agent.compression without the gateway did not fail the run")
@@ -1207,24 +1265,25 @@ func TestStartCompressionRefusesWithoutGateway(t *testing.T) {
 	}
 }
 
-// compressionConfig extends gwConfig with agent.compression: headroom,
-// bypassing Task 1/10's Validate refusal directly on the fixture's Config,
-// the same way existing gateway tests bypass unrelated refusals to isolate
-// this behavior. The extra line is two-space indented, a sibling of
-// agent's other keys (review_rounds, model, ...) at the level gwConfig
-// itself inserts at (internal/runner/gateway_test.go:42-53) -- an earlier
-// draft of this helper used four spaces, which would nest compression
-// under the preceding scalar-valued line instead of beside it, invalid
-// YAML. No git.pr.checkpoints override is needed here (see the note on
-// TestRunnerFailsStageOnSidecarDeath below for why an earlier draft added,
-// and this one removes, one).
-func compressionConfig(t *testing.T) string {
+// compressionHarness builds a gateway-on harness with agent.compression
+// accepted via Deps.CompressionForTest -- the fixture's own fugaro.yaml
+// never contains a compression: key, so Validate's reserved-and-refused
+// rule (P11) runs normally and has nothing to refuse; this is a correction
+// to an earlier draft of this helper, which tried to commit
+// "compression: headroom" directly into fugaro.yaml and have Validate
+// accept it, which P11 forbids throughout Tasks 1-9. Deps.StartHeadroom is
+// left at the harness's default fake (set once, in newHarnessFiles, for
+// every test -- see the Interfaces note above), so no real sidecar process
+// is ever spawned.
+func compressionHarness(t *testing.T) *harness {
 	t.Helper()
-	return gwConfig(t, "  compression: headroom\n")
+	h := newGW(t, gwConfig(t, ""), "observe", "").harness
+	h.deps.CompressionForTest = "headroom"
+	return h
 }
 
 func TestRunnerBuildsANarrowSidecarEnv(t *testing.T) {
-	h := newGW(t, compressionConfig(t), "observe", "").harness
+	h := compressionHarness(t)
 	if _, err := h.run(t, implement("feature"), review("ship", 0)); err != nil {
 		t.Fatal(err)
 	}
@@ -1248,7 +1307,7 @@ func TestRunnerBuildsANarrowSidecarEnv(t *testing.T) {
 // returns a nil error, and the record is StatusFailed+OutcomeDraft,
 // regardless of which stage the kill happens during.
 func TestRunnerFailsStageOnSidecarDeath(t *testing.T) {
-	h := newGW(t, compressionConfig(t), "observe", "").harness
+	h := compressionHarness(t)
 	h.killSidecarDuring("implement") // closes the fake Dead() channel mid-stage
 	rec, err := h.run(t, implement("feature"))
 	if err != nil {
@@ -1265,7 +1324,7 @@ func TestRunnerFailsStageOnSidecarDeath(t *testing.T) {
 // both the same way (P8, P10): there is no second code path to test
 // separately, only a second way of causing Dead() to close.
 func TestRunnerFailsStageOnSidecarHang(t *testing.T) {
-	h := newGW(t, compressionConfig(t), "observe", "").harness
+	h := compressionHarness(t)
 	h.hangSidecarDuring("implement") // the fake's liveness probe starts failing; Dead() closes after LivenessMisses
 	rec, err := h.run(t, implement("feature"))
 	if err != nil {
@@ -1277,7 +1336,7 @@ func TestRunnerFailsStageOnSidecarHang(t *testing.T) {
 }
 
 func TestRunnerStopsSidecarOnRunEnd(t *testing.T) {
-	h := newGW(t, compressionConfig(t), "observe", "").harness
+	h := compressionHarness(t)
 	if _, err := h.run(t, implement("feature"), review("ship", 0)); err != nil {
 		t.Fatal(err)
 	}
