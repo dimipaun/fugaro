@@ -63,10 +63,18 @@ func TestInstallNodeUsesTheBakedKeyring(t *testing.T) {
 		blocked = append(blocked, "--add-host", host+":127.0.0.1")
 	}
 	blocked = append(blocked, image, "sh", "-c")
+	// install-node's PATH change is local to its own process (sh does not
+	// export it back to its parent), and the base deliberately keeps a
+	// plain install-node install off the image's PATH (design
+	// docs/design/base-image.md section 6: node comes from mise in this
+	// world now; install-node is the standalone helper that bakes the
+	// private harness Node at build time, the same way). So the installed
+	// node is called by its install path (the default NODE_PREFIX,
+	// /opt/node), not bare "node".
 	out := testutil.Docker(t, append(blocked,
-		"test -s /usr/local/lib/fugaro/nodejs.gpg && /usr/local/lib/fugaro/install-node "+retiredKeyNode+" >&2 && node -v")...)
+		"test -s /usr/local/lib/fugaro/nodejs.gpg && /usr/local/lib/fugaro/install-node "+retiredKeyNode+" >&2 && /opt/node/bin/node -v")...)
 	if !strings.HasSuffix(out, "v"+retiredKeyNode) {
-		t.Fatalf("node -v after install-node %s = %q", retiredKeyNode, out)
+		t.Fatalf("/opt/node/bin/node -v after install-node %s = %q", retiredKeyNode, out)
 	}
 	cmd := exec.Command("docker", append(blocked,
 		"rm /usr/local/lib/fugaro/nodejs.gpg && /usr/local/lib/fugaro/install-node "+retiredKeyNode)...)
