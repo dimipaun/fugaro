@@ -322,6 +322,12 @@ func (t *usageTee) unparsedReason() string {
 		return "no_usage_event"
 	case !t.stopped:
 		return "stream_incomplete"
+	case t.sse && t.acc.hasInput() && !t.deltas:
+		// A real input (or cache) count reached message_stop, so it is not
+		// the all-zero fail-safe: it is that no message_delta ever named
+		// an output count at all (message_start's own output is only ever
+		// a placeholder, never trusted alone).
+		return "no_output_count"
 	default:
 		return "input_zero_no_cache"
 	}

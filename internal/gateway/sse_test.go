@@ -297,6 +297,16 @@ func TestUsageTeeUnparsedReason(t *testing.T) {
 			stream: "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0,\"output_tokens\":0}}}\n\n",
 			want:   "stream_incomplete",
 		},
+		{
+			// A real input count reached message_stop, but no message_delta
+			// ever named an output count: not the all-zero fail-safe (input
+			// isn't zero), and not "never said anything" (something was
+			// said) — the gap is specifically the output count.
+			name: "message_stop with input but no output count",
+			stream: "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":500,\"output_tokens\":1}}}\n\n" +
+				"event: message_stop\ndata: {}\n\n",
+			want: "no_output_count",
+		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			tee := newUsageTee(true)
