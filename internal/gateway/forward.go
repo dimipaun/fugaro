@@ -698,17 +698,32 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		return o
 	case !readable:
 		reserved.unparsed = true
+		s.logUsageUnparsed(p.model, rt.provider, "not_readable", nil)
 		return reserved
-	case tee.sse && tee.started && tee.complete:
+	case tee.sse && tee.complete && !tee.broken && !tee.acc.negative():
 		return s.fromUsage(tee, p, rt.provider, false)
-	case tee.sse && tee.started && !tee.broken:
+	case tee.sse && tee.started && !tee.broken && !tee.acc.negative():
 		return s.fromUsage(tee, p, rt.provider, true)
 	case !tee.sse && eof && tee.complete:
 		return s.fromUsage(tee, p, rt.provider, false)
 	}
 	reserved.unparsed = true
 	reserved.errorType = tee.errorType
+	s.logUsageUnparsed(p.model, rt.provider, tee.unparsedReason(), tee.events)
 	return reserved
+}
+
+// logUsageUnparsed warns once a 2xx call settles at its reservation
+// instead of its usage: a closed-set reason and the event type names the
+// gateway saw (never a body, never the provider's text), so the next
+// failure explains itself in `fugaro diagnose`.
+func (s *Server) logUsageUnparsed(model string, pr *Route, reason string, events []string) {
+	route := ""
+	if pr != nil {
+		route = pr.Name
+	}
+	s.log.Warn("budget: usage unparsed", "stage", s.stageName(), "model", logValue(model),
+		"route", route, "reason", reason, "events", strings.Join(events, ","))
 }
 
 // fromUsage prices a call from the usage the response reported: at the

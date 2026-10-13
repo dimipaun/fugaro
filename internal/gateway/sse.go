@@ -190,10 +190,26 @@ func (a *usageAcc) merge(u *wireUsage) {
 	}
 }
 
-// hasInput reports whether the usage names an input count worth settling
-// on: on a provider route a zero input is a reply that didn't say.
+// hasInput reports whether the usage names enough to settle on. On the
+// Claude route any reported input count does, even zero. On a provider
+// route input alone may legitimately be zero under heavy caching, so a
+// cache read or write counts too — but only once input_tokens has been
+// reported at all (set), even as an explicit 0: a provider whose usage
+// never includes the input_tokens key, in any event, has left input out
+// entirely, not merely reported it as zero, and OWNER RULING treats that
+// the same as a response with no usage at all (the reservation), never
+// mind a real cache read elsewhere in the same usage. A usage that names
+// none of input, cache read or cache write is not real usage either way:
+// a real request always sends some input (a system prompt, at least one
+// message), so a provider that never names an input count — with or
+// without the key present at zero — simply left it out, and the call
+// settles like any other missing field, at the reservation, however real
+// the output it produced.
 func (a *usageAcc) hasInput() bool {
-	return a.in.set && !(a.provider && a.in.v == 0)
+	if !a.provider {
+		return a.in.set
+	}
+	return a.in.set && (a.in.v > 0 || a.cr.v > 0 || a.cc.v > 0 || a.w5.v > 0 || a.w1.v > 0)
 }
 
 // negative reports whether any reported count is below zero.
@@ -261,13 +277,100 @@ type usageTee struct {
 	buf      []byte
 	overflow bool
 
-	started   bool // message_start (or a whole body) with usage was read
-	deltas    bool // a message_delta reporting output_tokens was read after it
-	complete  bool // message_stop after both, or a whole body with input and output counts
-	broken    bool // usage after the start didn't parse, was negative, or the stream stopped without an output count
+	started  bool // message_start (or a whole body) with usage was read
+	deltas   bool // a message_delta reporting output_tokens was read after it
+	complete bool // message_stop after both, or a whole body with input and output counts
+	broken   bool // usage after the start didn't parse, was negative, or the stream stopped without an output count
+
+	// Diagnostics for a call that settles unparsed: why, from a closed set,
+	// never the provider's own text.
+	sawUsage       bool     // some event's usage object was read, even all zero
+	malformedEvent bool     // a usage-bearing event (message_start or message_delta, or the body) didn't parse
+	stopped        bool     // the stream reached its end: message_stop, or the body decoded clean
+	events         []string // event type names seen, bounded; never a body
+
 	model     string
 	acc       usageAcc
 	errorType string
+}
+
+// maxEventsLogged bounds the distinct event type names a tee remembers for
+// its usage_unparsed diagnostic.
+const maxEventsLogged = 16
+
+// knownEventTypes are the only SSE event names, or whole-body "type"
+// values, the gateway ever dispatches on: the Messages API's own stream
+// events, and "message"/"error" for a non-streaming body. A closed list,
+// not a pattern (unlike errorTypeValue's error.type, an open-ish set an
+// upstream or a provider names): nothing the provider sends can add to it.
+var knownEventTypes = map[string]bool{
+	"message_start": true, "content_block_start": true, "content_block_delta": true,
+	"content_block_stop": true, "message_delta": true, "message_stop": true,
+	"ping": true, "message": true, "error": true,
+}
+
+// eventTypeValue keeps typ only when it is one of knownEventTypes.
+func eventTypeValue(typ string) string {
+	if knownEventTypes[typ] {
+		return typ
+	}
+	return "unrecognized"
+}
+
+// noteEvent records typ for the usage_unparsed diagnostic. typ is the
+// provider's own SSE "event:" name or JSON "type" field, read before
+// redactWriter ever sees the response: sanitized through the closed list
+// above, so a hostile name (an embedded secret, control characters, an
+// unbounded length) reaches the log only as "unrecognized", never as
+// itself.
+func (t *usageTee) noteEvent(typ string) {
+	if typ == "" || len(t.events) >= maxEventsLogged {
+		return
+	}
+	typ = eventTypeValue(typ)
+	if slices.Contains(t.events, typ) {
+		return
+	}
+	t.events = append(t.events, typ)
+}
+
+// hasOutputCount reports whether an output count that counts as final
+// ever arrived: on a stream, one a message_delta reported (message_start's
+// own is only ever a placeholder, never trusted alone); on a whole body,
+// the single usage object's own output_tokens.
+func (t *usageTee) hasOutputCount() bool {
+	if t.sse {
+		return t.deltas
+	}
+	return t.acc.out.set
+}
+
+// unparsedReason names, from a closed set, why a 2xx call settled at its
+// reservation instead of its usage. Bounded and sanitized: never the
+// provider's text, so a failure explains itself in `fugaro diagnose`.
+func (t *usageTee) unparsedReason() string {
+	switch {
+	case t.acc.negative():
+		return "negative_count"
+	case t.malformedEvent:
+		// A message_start or message_delta's own usage object didn't
+		// parse (on the provider route, where either can hold the real
+		// counts): the name covers both, not just the delta.
+		return "malformed_usage"
+	case !t.sawUsage:
+		return "no_usage_event"
+	case !t.stopped:
+		return "stream_incomplete"
+	case t.acc.hasInput() && !t.hasOutputCount():
+		// A real input (or cache) count reached the end, so it is not the
+		// all-zero fail-safe: it is that no output count ever arrived. On
+		// a stream that is specifically no message_delta (message_start's
+		// own output is only ever a placeholder, never trusted alone); on
+		// a whole body, output_tokens itself.
+		return "no_output_count"
+	default:
+		return "input_zero_no_cache"
+	}
 }
 
 // newUsageTee reads a Claude response; a provider's sets tee.provider
@@ -309,6 +412,8 @@ func (t *usageTee) onEvent(name string, data []byte) {
 		_ = json.Unmarshal(data, &head)
 		typ = head.Type
 	}
+	t.noteEvent(typ)
+	t.acc.provider = t.provider // set regardless of whether this event carries usage
 	switch typ {
 	case "message_start":
 		var ev struct {
@@ -317,17 +422,41 @@ func (t *usageTee) onEvent(name string, data []byte) {
 				Usage *wireUsage `json:"usage"`
 			} `json:"message"`
 		}
-		if json.Unmarshal(data, &ev) != nil || ev.Message.Usage == nil {
+		if json.Unmarshal(data, &ev) != nil {
+			// On the provider route a later delta can still set started
+			// (it is not gated on message_start the way the Claude route
+			// is), so an unreadable message_start must not be silently
+			// ignored: it may be hiding the real input count behind a
+			// shape the gateway doesn't expect, same as an unreadable
+			// delta. On the Claude route message_delta is already gated
+			// on started, which an unreadable message_start never sets,
+			// so main's behavior (the reservation) holds either way.
+			if t.provider {
+				t.broken, t.malformedEvent = true, true
+			}
 			return
 		}
+		if ev.Message.Usage == nil {
+			return // no usage object: the documented "didn't say" case
+		}
 		t.model = ev.Message.Model
-		t.acc.provider = t.provider
 		t.acc.merge(ev.Message.Usage)
+		t.sawUsage = true
+		if t.acc.negative() {
+			// A duplicate or late message_start can merge a negative count
+			// into a call that already read as complete (message_stop
+			// already fired, or will): usage() floors a negative field to
+			// zero, so without this the call would settle on whatever is
+			// left, not at its reservation. started and complete only ever
+			// check broken, never negative() directly, so this is the one
+			// place that must set it.
+			t.broken = true
+		}
 		// Partial settlement charges the reported input: it must be there.
 		t.started = t.acc.hasInput() && !t.acc.negative()
 	case "message_delta":
-		if !t.started {
-			return // unparsed either way: the call settles at its reservation
+		if !t.provider && !t.started {
+			return // Claude route: unparsed either way, unchanged
 		}
 		var ev struct {
 			Usage *wireUsage `json:"usage"`
@@ -335,23 +464,48 @@ func (t *usageTee) onEvent(name string, data []byte) {
 		if json.Unmarshal(data, &ev) != nil || ev.Usage == nil {
 			// A usage the gateway can't read may hold the output count:
 			// the call must not settle as complete from what came before.
-			t.broken = true
+			t.broken, t.malformedEvent = true, true
 			return
 		}
 		t.acc.merge(ev.Usage)
+		t.sawUsage = true
 		if t.acc.negative() {
 			t.broken = true
 		}
 		if ev.Usage.OutputTokens != nil {
 			t.deltas = true
 		}
+		if t.provider {
+			// A provider may report input_tokens 0 at message_start (heavy
+			// caching, or simply nothing to say yet) and put the real,
+			// cumulative counts only here: settle from what the stream
+			// says once it is done, not from message_start alone.
+			t.started = t.started || (t.acc.hasInput() && !t.acc.negative())
+		}
 	case "message_stop":
+		t.stopped = true
+		if !t.provider {
+			switch {
+			case t.started && t.deltas && !t.broken:
+				t.complete = true
+			case t.started:
+				// Stopped without an output count: the gateway can't tell
+				// what the call produced, so it settles at its reservation.
+				t.broken = true
+			}
+			return
+		}
+		// A provider may put the real counts only in a delta (message_start
+		// reporting zero input is not by itself "nothing to charge"), so
+		// completeness is decided from the merged total here, not from
+		// message_start alone. hasInput still requires a real input, cache
+		// read or cache write count somewhere: a real request always sends
+		// some input, so a usage that never names one, however real its
+		// output, is a provider that left the field out, not a free call.
 		switch {
-		case t.started && t.deltas && !t.broken:
+		case t.deltas && !t.broken && t.acc.hasInput():
 			t.complete = true
-		case t.started:
-			// Stopped without an output count: the gateway can't tell
-			// what the call produced, so it settles at its reservation.
+		case t.sawUsage:
 			t.broken = true
 		}
 	case "error":
@@ -382,20 +536,23 @@ func (t *usageTee) parseJSON() {
 	if dec.Decode(&body) != nil {
 		return
 	}
+	t.noteEvent(body.Type)
 	if body.Error != nil {
 		t.errorType = body.Error.Type
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return
 	}
+	t.stopped = true
 	if body.Type == "error" || body.Usage == nil {
 		return
 	}
 	t.model = body.Model
 	t.acc.provider = t.provider
 	t.acc.merge(body.Usage)
-	if !t.acc.hasInput() || !t.acc.out.set || t.acc.negative() {
-		return // counts missing or negative: settled at the reservation
+	t.sawUsage = true
+	if !t.acc.out.set || t.acc.negative() || !t.acc.hasInput() {
+		return // no output count, negative, or no input/cache count: settled at the reservation
 	}
 	t.started, t.complete = true, true
 }
