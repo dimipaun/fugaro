@@ -551,6 +551,22 @@ anything a repository couldn't set either; it only gets to set it *for
 stages that use it*, automatically, instead of every repository
 re-declaring it.
 
+**It never reaches the shared, published config, with no new code
+required.** `(*localcfg.Config).Shared()` (`internal/localcfg/shared.go:13-39`)
+is the installation-wide config every launcher can read from the runs
+bucket, and it already drops the whole `providers:` map outright
+(`shared.go:37`, `s.Providers = nil`) — `providers:` is called out by name
+in `Shared`'s own doc comment as local-only, "whose base_url is where a
+key and a repository's code are sent." Since `AgentEnv` is a field *nested
+inside* `ModelProvider`, dropping the whole map drops it too; there is no
+separate case to handle and no risk of a provider's `agent_env` leaking
+into the shared config through some field-by-field copy that `Providers =
+nil` doesn't cover. `TestMergeSharedNeverCarriesProviders`
+(`internal/localcfg/shared_test.go:208-230`) already proves this for the
+provider block as a whole; the plan adds an `agent_env` sub-key to that
+test's existing fixture so the assertion is exercised for the new field
+specifically, not only inferred from the map being nil.
+
 **How it reaches the job.** The existing channel, unchanged in shape:
 `ProvidersEnv`/`ProvidersFromEnv` (`internal/runner/providers.go:14-78`)
 already round-trip the whole `ModelProvider` through `FUGARO_MODEL_PROVIDERS`
@@ -681,7 +697,7 @@ once, which an earlier draft of this design lacked.
 | Surface | In scope? | Why |
 |---|---|---|
 | **The Claude Code process** | Yes — this is the entire point. | `BuildEnv` (§2) and the managed settings file (§3). |
-| **The repository's check commands** (`commands.build`/`test`/`lint`/`fix`, run through `fugaro verify`) | Yes, automatically, with no separate design. | They are the agent's own Bash-tool children (§0), so they inherit exactly the environment `BuildEnv` built — any allow-listed `agent.env` entry a repository sets is visible to its own build and test commands too, for free. This is a feature a repository might actually want (`CI=true` steering a test runner's own branching) and costs nothing extra to support. |
+| **The repository's check commands** (`commands.build`/`test`/`lint`/`fix`) | Yes, automatically, with no separate design. | Two paths, both already landing on `r.env`: `commands.build`/`test`, run through `fugaro verify`, are the agent's own Bash-tool children (§0), inheriting exactly the environment `BuildEnv` built; `commands.lint`/`fix`, the runner's own gate step (`internal/runner/gate.go:151,235,361`, each `Env: r.env`), run directly by the runner, never through Claude Code at all. Either way, any allow-listed `agent.env` entry a repository sets is visible, for free — a feature a repository might actually want (`CI=true` steering a test runner's own branching) and costs nothing extra to support. |
 | **The image build** (Cloud Build) | **No. Out of scope.** | Cloud Build's own job environment (`IMAGE`, `SECRET_ENVS`, `WORKFLOW`, `REPO_URL`, `BASE_BRANCH`, already reserved names, `validate.go:78`) is a different process, a different trust boundary (it runs before any agent, with the build's own secrets, never the gateway), and already has its own mechanism for a repository's needs: `workflows.*.image.setup`/`image.apt`/`image.tools`, all gated as `ExecutableKeys` (`scope.go:107-132`) because they run as shell. Folding env into that surface would either weaken an executable-key gate that already exists for a good reason, or create a second, non-executable-looking way to influence a step that is, in fact, arbitrary shell — rejected either way. |
 | **Secrets** | **No. Out of scope**, unchanged. | `agent.env` values are never secret by construction (§2); a repository that needs a credential keeps using `workflows.*.secrets`. |
 
