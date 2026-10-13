@@ -527,6 +527,30 @@ func TestGraphifyWrapperIsolatesPythonEnv(t *testing.T) {
 	}
 }
 
+// TestGraphifyWrapperBodyIsExact: the substring checks above (no bare
+// "python" exec, the isolation lines present) all still pass if the wrapper
+// also does something unexpected elsewhere, such as widening PATH before
+// the exec -- M3a: adding "export PATH=/opt/fugaro/graphify/venv/bin:$PATH"
+// right before the exec line still contains every substring those tests
+// look for. Pin the wrapper's entire body line by line instead: the
+// shebang, the two comment lines, the two isolation lines and exactly one
+// exec line with no other statement (a PATH assignment included) anywhere
+// in it. Mutation: add that PATH-exporting line to the Dockerfile's printf
+// -> this test must fail, restored after.
+func TestGraphifyWrapperBodyIsExact(t *testing.T) {
+	want := `#!/bin/sh
+# graphify on its own private Python venv, which is not on PATH (design base-image.md section 6).
+# A caller's PYTHONPATH/PYTHONHOME/PYTHONSTARTUP/PYTHONUSERBASE could reach into this private venv and shadow its own numpy/tree-sitter.
+unset PYTHONPATH PYTHONHOME PYTHONSTARTUP PYTHONUSERBASE
+export PYTHONNOUSERSITE=1
+exec /opt/fugaro/graphify/venv/bin/graphify "$@"
+`
+	got := graphifyWrapperScript(t, baseDockerfile(t))
+	if got != want {
+		t.Errorf("the graphify wrapper's body is:\n%s\nwant exactly:\n%s", got, want)
+	}
+}
+
 // TestGraphifyToolsRow: the presence check (design section 6) runs
 // "graphify --version", tier harness, on both architectures -- real wheels
 // exist for graphifyy and every one of its dependencies on linux/arm64
