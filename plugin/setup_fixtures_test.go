@@ -332,11 +332,13 @@ func TestSetupFixtureTablesMatchTheSkill(t *testing.T) {
 		df, err := os.ReadFile(filepath.Join("..", "images", base, "Dockerfile"))
 		if os.IsNotExist(err) {
 			// The 0.7.0 cut (base image task 20) deleted the legacy
-			// per-kind bases; discovery.md's row above still describes
-			// them (updating it for the one base is Task 16's own scope),
-			// so there is nothing on disk to cross-check against here
-			// until it does. Skip rather than fail on a removed base's
-			// Dockerfile not existing.
+			// per-kind bases; discovery.md's row above still names them,
+			// which is now stale (rewriting it for the one Fugaro base is
+			// Task 16's own scope). Fail with a clear reason rather than
+			// silently skipping the cross-check (which would let this test
+			// go green with nothing actually checked) or a bare
+			// "no such file" error (which would not say why).
+			t.Errorf("discovery.md's packages-per-base row still names %q, which base image task 20 deleted (images/%s/Dockerfile does not exist); rewrite the row for the one Fugaro base (Task 16)", base, base)
 			continue
 		}
 		if err != nil {
