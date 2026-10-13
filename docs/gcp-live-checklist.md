@@ -237,7 +237,7 @@ plan/state print.
 | 35 | Named Claude accounts, U2: `claude setup-token` and multi-account switching | See "Check 35" below; **you** run it, on your own machine, no GCP project needed. | No cost. **NOT RUN.** |
 | 36 | Named Claude accounts, U3: per-project Cloud Run job count comfort at the installation's intended (workflow × account) scale | See "Check 36" below; **you** read the sandbox project's quota. | No cost. **NOT RUN.** |
 | 37 | Named Claude accounts, U4: the real Claude Code error text for an expired or revoked oauth token, and `fugaro diagnose`'s rendering of it | See "Check 37" below; **you** run it, on the sandbox repository only. | One minimal sandbox run (about the cost of check 13). **USER-RUN, NOT RUN.** |
-| 40 | Project-level secrets (design `project-secrets.md` §8, §3a): a project-wide secret reaching an opted-in repository's job, a repository outside the allow-list refused, a repo-level override's precedence and its fallback once removed, the data-policy gate still enforced, no value anywhere in a log or a Terraform plan/state print, and (§3a, the owner's ruling) a provider with no `allow_data_to` becoming available to every repository for mounting while the data-policy gate stays closed | See "Check 40" below; **you** run it, on installation `fugaro` or the sandbox only, never `belong`. | A handful of small sandbox-sized plan/apply cycles. **USER-RUN, NOT RUN.** |
+| 40 | Project-level secrets (design `project-secrets.md` §8, §3a): a project-wide secret reaching an opted-in repository's job, a repository outside the allow-list refused, a repo-level override's precedence and its fallback once removed, the data-policy gate still enforced, no value anywhere in a log or a Terraform plan/state print, and (§3a, the owner's ruling) a provider with no `allow_data_to` becoming available to every repository for mounting while the data-policy gate stays closed | See "Check 40" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only. | A handful of small sandbox-sized plan/apply cycles. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -1040,7 +1040,7 @@ The runner's stage-failure path is unchanged by named accounts (design §6f), bu
 
 **Paste back:** both exact `FACT` texts (never a token value, before or after revocation), and confirmation the restore succeeded. Once answered, `docs/design/named-oauth-tokens.md` §6f and any user-facing doc that currently calls this unverified can quote the real text.
 
-## Check 40: project-level secrets (installation `fugaro` or sandbox only, never `belong`; run by you; NOT RUN)
+## Check 40: project-level secrets (installation fugaro (never `belong`), sandbox repository only; run by you; NOT RUN)
 
 Confirms `docs/design/project-secrets.md`'s §5 precedence and §3 allow-list hold against the real APIs, not only the hermetic fakes: a project-wide secret still ends up in exactly one job's environment, a repository outside the allow-list gets none of it, a repository's own stored value still wins, and no value is ever printed. 40f and 40g additionally confirm §3a, the owner's follow-up ruling that an absent `allow_data_to` on a **provider** means "available to any repository" for the key's mount, while `CheckProviderPolicy`'s data-policy gate (whether a model may actually be routed/pinned there) stays unchanged — this is the one behavior unique to a provider's own secret, not shared by the four reserved names or named Claude accounts, which keep "absent means nobody."
 
