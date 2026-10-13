@@ -460,44 +460,73 @@ Add the `resolvePinnedBase`-then-`mirror.Plan` sequencing and the `mk` source-ta
 Run: `go test ./internal/cli/... -count=1`
 Expected: PASS.
 
-## Task 4: CLI confirmation text — add "verified", don't remove "copies"
+## Task 4: CLI confirmation text — the base kind is now verified, not just "what the registry says"
 
-**Scope, narrowed:** an earlier draft of this task (then numbered 6) removed `--base`, rewrote `--expect-digest`'s meaning, and replaced "copies" wording with "verifies" wording throughout. None of that applies anymore: the copy mechanism is unchanged (design §6), so `--base`, `--expect-digest`, `--replace-image` all stay exactly as they are today, and the existing "copies N image(s), M MB … into your registry" confirmation text stays accurate — it still copies. The **only** change is adding one clause naming the new verification step that now runs first.
+**Scope, narrowed:** an earlier draft of this task (then numbered 6) removed `--base`, rewrote `--expect-digest`'s meaning, and replaced "copies" wording with "verifies" wording throughout. None of that applies anymore: the copy mechanism is unchanged (design §6), so `--base`, `--expect-digest`, `--replace-image` all stay exactly as they are today, and "copies N image(s), M MB … into your registry" stays accurate — it still copies. **A narrower draft of this task (round 6 of review) then proposed only adding one clause, which a seventh review found insufficient: two existing sentences become actively false for the base kind once Task 3 lands, and simply adding a clause alongside them leaves the false ones in place.**
+
+- `internal/cli/init_images.go:410`'s confirmation says *"The digests above are what the release tags resolve to now, which is what the registry says, not a signature."* — false for the base kind once Task 3 lands: its digest **is** a signature-verified one, not just whatever the tag currently names.
+- The same confirmation's trailing `unpinnedText(unpinned)` (and `sourceLine`'s parallel use, `init_images.go:577`) lists `base` as *"NOT pinned with --expect-digest"* whenever `--expect-digest base=...` wasn't passed explicitly — also false once Task 3 lands: the base kind is pinned, by the verified digest `basepin.Resolve` produces, independently of whether `--expect-digest` was ever given for it. Both places build their "unpinned" list from `parseExpectDigests(r.o.expectDigests)` alone (`init_images.go` `Apply()`'s own local `expect`/`unpinned`, and `sourceLine`'s identical pattern), with no way to know Task 3's verification succeeded — they need to stop treating `--expect-digest` as the only way a kind can be pinned.
 
 **Files:**
-- Modify: `internal/cli/init_images.go` (the confirmation strings Task 3's new pre-step precedes)
+- Modify: `internal/cli/init_images.go` (`Apply()`'s confirmation-building block and `unpinned` loop, `sourceLine()`'s parallel `unpinned` loop)
 
-**Interfaces:** the existing confirmation text (e.g. *"copies N image(s), M MB … into your registry"*) gains a leading clause: *"verifies this release's signed digest, then copies N image(s), M MB … into your registry"*.
+**Interfaces:**
+
+1. **The base kind is excluded from both "unpinned" lists unconditionally, not only when `--expect-digest base=...` is given.** This needs no network read and no new state to plumb through `read()`: by construction (Task 3), any base-kind item that reaches either of these code paths (post-`Plan()` in `Apply()`'s confirmation, or the no-network `sourceLine()` preview) was necessarily resolved and verified by `resolvePinnedBase` — a copy that failed verification never gets this far (Task 3, item 4). So both loops gain a one-line exception: `if p.item.key() == "base" { continue }` (or the `sourceLine()` equivalent over `items`, not `pl`), ahead of the existing `expect[...] == ""` check.
+2. **The confirmation text in `Apply()` (`init_images.go:410`) splits into two sentences, conditioned on whether a base-kind item is among `pl`:**
+   - If present: *"The base image's digest was verified against its signed release."*
+   - For every item that remains unpinned after rule 1 (in practice, only `history`, which this design never verifies, §1/§6): the existing sentence, unchanged — *"The other digests above are what the release tags resolve to now, which is what the registry says, not a signature. NOT pinned with --expect-digest: %s"* (dropping "other" when no base-kind item is in this run at all, unchanged from today's wording).
+   - If nothing remains unpinned (no history in this run, or it too has `--expect-digest`): the sentence is omitted, same as today's existing behavior when `unpinned` is empty.
+3. **`sourceLine()`'s equivalent text gets the same base-kind exclusion** (no new sentence needed there — it is a terse, one-line review-screen preview, not the typed confirmation).
 
 - [ ] **Step 1: Write the failing test**
 
 ```go
-func TestImagesStageConfirmationNamesVerification(t *testing.T) {
+// Two items in one run — a base-kind copy (always verified once Task 3
+// lands) and a history copy (never verified, §1/§6) — so the
+// confirmation text's two different provenance statements can both be
+// asserted in the same run. The rig must publish fugaro-base:1.2.3-pinned
+// itself (an earlier draft of this test only faked resolvePinnedBase,
+// which bypasses verification but not the copy's own real network read
+// of the -pinned tag Task 3 sources from — mirror.Plan would 404 against
+// the rig's default fixture, which never publishes that tag, and the
+// test would fail after Task 3 lands for a reason that has nothing to do
+// with what it's testing). The assertions are specific to the NEW
+// wording: "verified by digest" and generic "verif"/"copies" substrings
+// are already in today's unrelated text (init_images.go:436, :240, :537)
+// and would make this test pass before Task 3/4 exist at all, the same
+// mistake an earlier draft of this test had.
+func TestImagesStageConfirmationNamesVerificationForBaseOnly(t *testing.T) {
 	r := newImagesRig(t, "1.2.3")
+	releasedIndex := r.src.tags["dimipaun/fugaro-base:1.2.3"]
+	r.src.tags["dimipaun/fugaro-base:1.2.3-pinned"] = releasedIndex
 	old := resolvePinnedBase
 	resolvePinnedBase = func(ctx context.Context, source, kind, version string) (string, error) {
-		return r.src.tags["dimipaun/fugaro-base:1.2.3"], nil
+		return releasedIndex, nil
 	}
 	t.Cleanup(func() { resolvePinnedBase = old })
 
-	out, _, err := executeStdin(t, "", "init", "--yes", "--base", "base")
+	out, _, err := executeStdin(t, "us-east5\n", "init", "--yes", "--base", "base", "--firebase", fpID)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(out, "verif") || !strings.Contains(out, "copies") {
-		t.Errorf("confirmation text has neither verification nor copying named, or one replaced the other:\n%s", out)
+	if !strings.Contains(out, "base image's digest was verified against its signed release") {
+		t.Errorf("no verified-base-image sentence:\n%s", out)
+	}
+	if !strings.Contains(out, "NOT pinned with --expect-digest: history") {
+		t.Errorf("history should still be listed as unpinned (it is never verified), and base must not be in that list (it is verified unconditionally):\n%s", out)
 	}
 }
 ```
 
 - [ ] **Step 2: Run it to see it fail**
 
-Run: `go test ./internal/cli/ -run TestImagesStageConfirmationNamesVerification -count=1`
-Expected: FAIL.
+Run: `go test ./internal/cli/ -run TestImagesStageConfirmationNamesVerificationForBaseOnly -count=1`
+Expected: FAIL (the rig, `resolvePinnedBase`, and the new sentence do not exist yet).
 
 - [ ] **Step 3: Implement**
 
-Add the clause.
+Add the base-kind exclusion to both `unpinned` loops, and the conditional two-sentence confirmation text.
 
 Run: `go test ./internal/cli/... -count=1`
 Expected: PASS.
