@@ -1,17 +1,17 @@
-# Implementation plan: retire the image mirror for a digest-pinned FROM
+# Implementation plan: verify the base image at copy time
 
 Source: [docs/design/retire-image-mirror.md](../design/retire-image-mirror.md). Depends on the base-image hard cut (`docs/plans/2026-10-08-base-image.md` Tasks 17–21, release 0.7.0) having already landed: `config.Bases == ["base"]`, one `base_images` key. **This plan is not executed in this change** (docs only); it is handed to the owner to rule on and, once approved, implemented task by task.
 
-**A note on this revision (fourth review round — a course correction, substantially shrinking this plan).** A fourth review found that the daily image check job is itself a Cloud Run Job running directly FROM the base image (`check.tf`, `internal/infra/spec.go`'s `check()`), and Cloud Run Jobs cannot deploy a bare `ghcr.io` reference (not verified live, assumed conservatively) — so `base_images.base` must keep its existing, Artifact-Registry-hosted shape, used exactly as today by the check job and `FUGARO_CHECK_SPEC`. This retires **only** Cloud Build's own dependency on that value for its `FUGARO_BASE` substitution, which is now resolved fresh at every submission instead. As a direct consequence, the design doc's earlier Tasks 4 (`cover.go`) and 5 (the Terraform grant) are **dropped entirely** — their whole premise (nothing reads `fugaro-base` for the base kind once builds stop needing it) turned out to be false — and Task 3 is substantially narrower than earlier drafts: a verification pre-step ahead of the *existing*, unchanged copy mechanism, plus the three Cloud Build callers resolving fresh instead of reading a config value.
+**A note on this revision (fifth review round — a narrowing, scoped down from the fourth round's own course correction).** A fourth review found that the daily image check job is itself a Cloud Run Job running directly FROM the base image (`check.tf`, `internal/infra/spec.go`'s `check()`), and Cloud Run Jobs cannot deploy a bare `ghcr.io` reference (not verified live, assumed conservatively) — so `base_images.base` must keep its existing, Artifact-Registry-hosted shape, used exactly as today by the check job and `FUGARO_CHECK_SPEC`. That round's own fix, though, still had **Cloud Build** resolve a verified `ghcr.io` digest fresh at every build submission while the check job kept reading the Artifact Registry copy — leaving two independently-maintained "what base was this built from" references. A fifth review found this breaks rebuild detection: `submitRebuild` (`internal/cli/imagecheck.go:690-692`), `refreshVerdict` (`internal/cli/image_refresh_rules.go:51-66`), and `triggers()` (`internal/imagecheck/triggers.go:34`) all compare `base_ref`/`base_images.base`-derived strings by exact equality, with no concept that a ghcr.io-shaped value and an Artifact-Registry-shaped value could name the same digest. **This revision narrows the scope to "verify-then-copy": Cloud Build and the check job both keep reading `base_images.base`, unchanged, exactly as today.** The design doc's earlier Tasks 4 (`cover.go`) and 5 (the Terraform grant) stay dropped — their premise was already false before this round, for the same reason — and what was Task 3's "Part A" (the three Cloud Build callers resolving fresh) is removed entirely: no build-submission call site changes at all. Task 3 is now exactly what Part B was: a verification pre-step ahead of the *existing*, unchanged copy mechanism, with its source fixed to the nightly-immune `-pinned` tag instead of the plain tag the nightly moves (a bug this round's review caught in the previous draft of Task 3, below).
 
 ## Global constraints
 
-- **No live cloud or network in any automated test.** Every fake (`TagResolver`, `OCIVerifier`) is in-process; the real cosign signature and the real Cloud Build pull paths are the owner's live checks (Task 7), each marked NOT RUN until the owner runs it.
+- **No live cloud or network in any automated test.** Every fake (`TagResolver`, `OCIVerifier`) is in-process; the real cosign signature and the real copy-time resolution against ghcr.io are the owner's live checks (Task 7), each marked NOT RUN until the owner runs it.
 - **Never touch `belong`** (EdgeWeb's and EdgeServer's installation) in any live step. Every live check in Task 7 is scoped to `fugaro`/`fugaro-dev`, sandbox repository only, exactly as the existing entries of `docs/gcp-live-checklist.md` already are.
 - **Nothing here weakens an existing guard.** `tf.Guard`, `internal/infra/tf/cover.go`, `managedVersion`/`isManaged`, the Terraform `build_base` grant — **none of these are touched by this plan at all** (design §4, §6).
 - **Each task is independently reviewable**: a task's tests fail before its implementation and pass after.
 - **Security-sensitive tasks are flagged for opus review** inline.
-- **A real, owner-applied rollout precondition (design §5, §8).** `docs/pending-workflows/images.yml` (Task 1) can only reach the real `.github/workflows/images.yml` by a human manually copying it in. Task 3 makes every Cloud Build submission depend on a signed `-pinned` image existing. **The workflow file copy must land on `main`, and at least one real tag push must have run with it (producing a signed image, live-checked, Task 7 Check 39c), before or in the same release that ships Task 3's code.** This can be the same release as Task 1, as long as the copy lands before that release's own tag is cut. The release process cannot enforce this automatically; the owner applies it by hand.
+- **A real, owner-applied rollout precondition (design §5, §8).** `docs/pending-workflows/images.yml` (Task 1) can only reach the real `.github/workflows/images.yml` by a human manually copying it in. Once Task 3's code lands, **every** `fugaro init --base`/`image refresh` copy attempt depends on finding a signed `-pinned` image — not a Cloud Build submission (none is touched by this plan). **The workflow file copy must land on `main`, and at least one real tag push must have run with it (producing a signed image, live-checked, Task 7 Check 39c), before or in the same release that ships Task 3's code.** This can be the same release as Task 1, as long as the copy lands before that release's own tag is cut. The release process cannot enforce this automatically; the owner applies it by hand.
 - **Docs match code.** `go test ./internal/cli -run 'Docs|Lint'` and `gofmt -l .` are run after every task.
 
 ## Task 1: CI — sign the pushed base image by OCI digest
@@ -27,7 +27,7 @@ Source: [docs/design/retire-image-mirror.md](../design/retire-image-mirror.md). 
 - Modify: `images/base_workflow_test.go` (new pinning tests below), `docs/pending-workflows/README.md` (its `## images.yml` section rewritten wholesale to describe this diff)
 
 **Interfaces:**
-- `publish-base`'s `permissions` gains `id-token: write` (alongside its existing `contents: read`/`packages: write`) — needed for both the OCI signing and the `-pinned` tag push, which are the same job, since OCI signing needs the same registry-write credential the push already has (there is no meaningful way to decouple signer from pusher for this mechanism, unlike an earlier, GitHub-Release-asset draft).
+- `publish-base`'s `permissions` gains `id-token: write` (alongside its existing `contents: read`/`packages: write`) — needed **only** for the OCI signing step's keyless (OIDC) Fulcio certificate request. The `-pinned` tag push itself is an ordinary registry write, the same as `:$VERSION`/`:$MAJOR`, and needs only the already-granted `packages: write`; an earlier draft of this task said `id-token: write` was needed for "both," which overstates it.
 - A second, nightly-immune tag, `fugaro-base:<v>-pinned`, added to the **same** `docker buildx imagetools create` call that already creates `:<v>`/`:<major>`, conditioned on `github.event_name == 'push'` (the nightly/`workflow_dispatch` runs of the same script never create or move it, since the version-picking step treats them identically — always "the latest release tag," never a dispatched ref).
 - `cosign sign --yes "ghcr.io/dimipaun/fugaro-base@$digest"`, signing the digest `docker buildx imagetools inspect` resolves from the just-created `-pinned` tag (immediately, same job, same concurrency-serialized run — safe for reasons distinct from, and narrower than, the severe nightly-vs-fresh-resolution race the `-pinned` tag itself exists to close, design §2).
 - `sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2` — the exact, real pin `release.yml:95` already uses, not a placeholder.
@@ -69,17 +69,20 @@ func TestPublishBaseSignsByOCIDigestOnPushOnly(t *testing.T) {
 		if strings.HasPrefix(s.Uses, cosignPin) {
 			installed = true
 		}
-		// The tag-creation step (identified by "imagetools create", the
-		// call it's added to) and the sign step (identified by "cosign
-		// sign ") BOTH mention "$VERSION-pinned" in their own run script
-		// (the former creates it, the latter inspects it to resolve a
-		// digest) — checking "Contains $VERSION-pinned" alone, across
-		// every step, would let the sign step's own run (gated by a
-		// separate, YAML-level if:, not this in-script check) overwrite
-		// pinnedGuarded with a false negative on a later loop iteration,
-		// exactly the kind of step-conflation bug an earlier draft of
-		// this test had. Keyed on the distinguishing marker instead.
-		if strings.Contains(s.Run, "imagetools create") {
+		// The tag-creation step's own run script literally invokes
+		// "docker buildx imagetools create $tags" (the real command, with
+		// its real argument list); the sign step's run script only ever
+		// *mentions* imagetools create in a comment ("docker buildx
+		// imagetools create does not print...") and in a different
+		// subcommand, "imagetools inspect" — both of which also contain
+		// the bare substring "imagetools create" and "$VERSION-pinned".
+		// Matching on "imagetools create" alone (an earlier draft of this
+		// test's mistake) lets the sign step's own iteration overwrite
+		// pinnedGuarded with a false negative, since the sign step's
+		// guard is YAML-level (If), not this in-script check. Matching on
+		// the exact invocation instead is unambiguous between the two
+		// steps.
+		if strings.Contains(s.Run, "docker buildx imagetools create $tags") {
 			taggedPinned = strings.Contains(s.Run, "$VERSION-pinned")
 			pinnedGuarded = strings.Contains(s.Run, `"$GITHUB_EVENT_NAME" = push`)
 		}
@@ -174,9 +177,10 @@ Expected: PASS.
 // Package basepin resolves what a release's fugaro-base -pinned tag
 // currently names in the registry and verifies that specific digest's
 // OCI-attached cosign signature, from images.yml's own tag-push identity
-// (design retire-image-mirror.md §2). It is called fresh, at every Cloud
-// Build submission (internal/cli, Task 3) — nothing records its result
-// anywhere.
+// (design retire-image-mirror.md §2). It is called at copy time only
+// (fugaro init --base / image refresh, internal/cli/init_images.go, Task
+// 3) — never at a Cloud Build submission — and nothing records its
+// result anywhere beyond the copy it feeds.
 package basepin
 
 // TagResolver resolves what source+"/fugaro-"+kind+":"+version+"-pinned"
@@ -330,78 +334,88 @@ The real `TagResolver` (wired in Task 3) parses `source` (e.g. `"ghcr.io/dimipau
 Run: `go test ./internal/basepin/... ./internal/mirror/... -count=1`
 Expected: PASS.
 
-## Task 3: Build submissions resolve fresh; the existing copy gains a verification pre-step
+## Task 3: the existing copy gains a verification pre-step, sourced from the `-pinned` tag
 
-**Flag for opus review:** this is where a build submission stops trusting a static config value and starts trusting a live, verified resolution; a code path that falls back to an unverified value on any error (instead of refusing) would silently reintroduce the weaker trust model the design is replacing it with.
+**Flag for opus review:** a code path that falls back to an unverified value, or to the plain tag, on any error (instead of refusing) would silently reintroduce the weaker trust model the design is replacing it with.
 
-**Scope, narrowed from three earlier drafts' worth of churn: `base_images.base` does not change shape, `managedVersion`/`isManaged` do not change signature, `internal/image/local.go`'s `BaseRef` does not change at all** (an earlier draft made `BaseRef` always refuse, which would have broken `fugaro image build --local` — `internal/cli/image.go:122`, a fourth, local-Docker-build caller distinct from the three Cloud Build submission callers, which the `fugaro:setup` skill loops on repeatedly during iterative development; `BaseRef`'s existing bare-tag fallback is exactly right for that caller and stays).
-
-### Part A: the three Cloud Build callers resolve fresh
+**Scope, narrowed by this round's ruling: no build-submission call site changes at all.** `internal/cli/image.go`, `init.go`'s `buildImages`, `internal/cli/image_refresh_steps.go`'s `refreshBuilds` keep reading `base_images.base` (falling back to `internal/image/local.go`'s `BaseRef` for a development build) exactly as today — an earlier draft of this task ("Part A") had these three resolve a verified `ghcr.io` digest fresh at every build submission; dropped entirely, because it created a second, ghcr.io-shaped representation of "what base was this built from" that `submitRebuild`, `refreshVerdict`, and `triggers()` could never match against the Artifact-Registry-shaped one they compare by exact string equality (design §1 note, §2). `fugaro image build --local` (`internal/cli/image.go:122`, the `fugaro:setup` skill's local-Docker-build loop) was never in scope for either draft and needs no change.
 
 **Files:**
-- Modify: `internal/cli/image.go` (the build-submission path, not the `--local` path), `internal/cli/init.go` (`buildImages`), `internal/cli/image_refresh_steps.go` (`refreshBuilds`)
-- Modify tests: whichever of this plan's cited line ranges' existing test files cover these three functions today
+- Modify: `internal/cli/init_images.go` only (the images stage's existing base-kind branch — `items()`, `read()` — unchanged in structure, gains one new call before `mirror.Plan`, and one new parameter threaded through `mk`). **This is the single shared copy path, and there is only one.** An earlier draft of this document also listed `internal/cli/image_refresh_rules.go`'s `refreshBase(lc, kind, ver) (string, error)` here, confusing it with a same-named but unrelated function: that one (`image_refresh_rules.go:26`) never calls `mirror.Plan` at all — it only computes a *destination string* for planning purposes (`refreshVerdict`/`p.want`, read-only), so a verification call inserted there would be a dead-end addition that affects nothing actually copied. `image refresh`'s own second entry point into the real copy path is `image_refresh_steps.go`'s differently-shaped `(r *initRun) refreshBase(ctx, e, kinds) error` — a thin wrapper that only calls `newImagesStage(e).Check()`/`.Apply()`, so it already routes through `init_images.go`'s `imagesStage` and needs no separate change of its own.
 
-**Interfaces:** each caller, instead of `base := lc.BaseImage(kind); if base == "" { base, err = image.BaseRef(kind, Version) }`, becomes: resolve `base` via `basepin.Resolve(ctx, tr, v, owner, repoOnGitHub, source, kind, releaseVersion())`, refusing cleanly (naming the real reason: no signed image for this release, a development build, or a verification failure) rather than falling back to anything. `source`/`owner`/`repoOnGitHub` come from the existing `--image-source` flag (or its default) and the fixed upstream repository, exactly as `internal/mirror`'s own `allow()` logic already resolves `--image-source` today.
+**Interfaces:**
 
-- [ ] **Step 1: Write the failing tests**
-
-(Illustrative shape — the implementer wires this to each of the three files' own existing test fixtures and mocking conventions, which this plan has not inspected in enough depth to sketch byte-exactly for all three call sites at once.)
-
-```go
-func TestImageBuildResolvesBaseFreshNotFromConfig(t *testing.T) {
-	// A fake basepin.Resolve (injected the same way the file's existing
-	// tests inject fakes for other dependencies) is called with the
-	// release version, and its result — not any base_images.base value —
-	// is what reaches the Cloud Build request's FUGARO_BASE substitution.
-}
-
-func TestImageBuildRefusesWhenResolveFails(t *testing.T) {
-	// A failing fake basepin.Resolve means no Cloud Build is submitted at
-	// all, with a clear, user-facing reason.
-}
-```
-
-- [ ] **Step 2: Run them to see them fail**
-
-Run: `go test ./internal/cli/ -run 'TestImageBuildResolvesBaseFreshNotFromConfig|TestImageBuildRefusesWhenResolveFails' -count=1`
-Expected: FAIL.
-
-- [ ] **Step 3: Implement**
-
-Replace each caller's `base_images.base`-then-`BaseRef`-fallback logic with a direct `basepin.Resolve` call, refusing on any error.
-
-Run: `go test ./internal/cli/... -count=1`
-Expected: PASS.
-
-### Part B: a verification pre-step ahead of the existing copy
-
-**Files:**
-- Modify: `internal/cli/init_images.go` only (the images stage's existing base-kind branch — `items()`, `record()`, `confirmReplace` — unchanged in structure, gains one new call before `mirror.Plan`). **This is the single shared copy path, and there is only one.** An earlier draft of this document also listed `internal/cli/image_refresh_rules.go`'s `refreshBase(lc, kind, ver) (string, error)` here, confusing it with a same-named but unrelated function: that one (`image_refresh_rules.go:26`) never calls `mirror.Plan` at all — it only computes a *destination string* for planning purposes (`refreshVerdict`/`p.want`, read-only, used to decide whether a rebuild is needed and what the confirmation screen should say), so a verification call inserted there would be a dead-end addition that affects nothing actually copied. `image refresh`'s own second entry point into the real copy path is `image_refresh_steps.go`'s differently-shaped `(r *initRun) refreshBase(ctx, e, kinds) error` (note: `.go` file and receiver both differ from the one above, despite the identical function name) — it is a thin wrapper that only calls `newImagesStage(e).Check()`/`.Apply()`, so it already routes through `init_images.go`'s `imagesStage` and needs no separate change of its own.
-
-**Interfaces:** before calling `mirror.Plan(ctx, src, dst, expect)` (the existing call, where `expect` was previously empty or `--expect-digest`'s value), call `basepin.Resolve` first; if it succeeds, its resolved digest becomes `expect` (overriding an absent `--expect-digest`, never a conflicting one — if `--expect-digest` was also given and disagrees, that is the existing mismatch refusal `mirror.Plan` already makes, unchanged). If `basepin.Resolve` fails, the stage refuses before attempting any copy, naming the real reason (no signed image yet, or a verification failure) rather than falling back to an unverified copy.
+1. **A new, overridable package-level hook, the same pattern `newMirror` already uses in this file:** `var resolvePinnedBase = basepin.Resolve` (or a thin adapter matching its signature), called only for the base kind (never history, §1/Task 1 scope).
+2. **`mk`'s signature gains a source-tag parameter distinct from the destination tag:** `mk(label, kind, name, srcTag, dstName, dstTag string) error`, building `src` from `allow[0]+"/"+name+":"+srcTag` instead of always reusing `ver`. History's call (`mk("history", "", "fugaro-history", ver, infra.HistoryImagePackage, "latest")`) passes `ver` as `srcTag`, unchanged behavior. The base-kind call (today: `mk("base "+k, k, "fugaro-"+k, "fugaro-"+k, ver)`) is reached only after resolving; its `srcTag` is never the plain `ver` (below).
+3. **Before calling `mirror.Plan(ctx, src, dst, expect)`** for a base-kind item, call `resolvePinnedBase(ctx, source, kind, ver)` (`source` from `s.allow()`, already wired to `--image-source` — `fugaro init`, `image refresh`, and `upgrade` all carry that flag, so there is no caller here lacking it, unlike the deleted Part A's `fugaro image build` concern). On success, its resolved digest becomes `expect` (overriding an absent `--expect-digest`, never a conflicting one — if `--expect-digest` was also given and disagrees, that is the existing mismatch refusal `mirror.Plan` already makes, unchanged), **and** the base-kind item's source tag becomes `ver+"-pinned"`, not `ver`. This is the fix for a bug an earlier draft of this task had: feeding the resolved digest as `expect` while leaving `src` built from the plain `ver` tag — after the first nightly rebuild moved that tag to a new, unsigned digest, `mirror.Plan` (`mirror.go:169`, `expect != "" && topDigest != expect`) would return `ErrDigestMismatch` on every subsequent copy attempt, defeating the entire purpose of the `-pinned` tag. Sourcing from `-pinned` directly means `src.Tag` and `expect` always agree, by construction, since both come from the same resolution.
+4. If `resolvePinnedBase` fails, the stage refuses before attempting any copy for that item, naming the real reason (no signed image yet, or a verification failure) rather than falling back to an unverified copy or the plain tag.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```go
-func TestImagesStageVerifiesBeforeCopying(t *testing.T) {
-	// A fake basepin.Resolve's result is asserted to be what mirror.Plan's
-	// expect parameter receives, when --expect-digest was not given.
+// A nightly rebuild between releases has already moved the plain "1.2.3"
+// tag to a new, unsigned digest by the time the copy runs. The verified
+// copy must still succeed, reading the nightly-immune "-pinned" tag (the
+// one basepin verified) as its source — not the plain tag mirror.Plan
+// would otherwise resolve. This pins the fix for a bug an earlier draft
+// of this task had: feeding the -pinned digest as mirror.Plan's expect
+// while leaving the copy's source on the plain tag would return
+// ErrDigestMismatch here, from the ver tag's now-different digest.
+func TestImagesStageCopiesFromThePinnedTagNotThePlainOne(t *testing.T) {
+	r := newImagesRig(t, "1.2.3")
+	pinnedDigest := r.src.tags["dimipaun/fugaro-base:1.2.3"] // the release's own, signed digest
+	r.src.tags["dimipaun/fugaro-base:1.2.3-pinned"] = pinnedDigest
+	r.src.publish("dimipaun/fugaro-base", "1.2.3") // the nightly: moves the plain tag to a new digest
+
+	resolveCalls := 0
+	old := resolvePinnedBase
+	resolvePinnedBase = func(ctx context.Context, source, kind, version string) (string, error) {
+		resolveCalls++
+		return pinnedDigest, nil // a fake, already-verified resolution
+	}
+	t.Cleanup(func() { resolvePinnedBase = old })
+
+	out, _, err := executeStdin(t, "", "init", "--yes", "--base", "base")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if resolveCalls == 0 {
+		t.Error("basepin resolution was never called")
+	}
+	if got := r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"]; got != pinnedDigest {
+		t.Errorf("copied digest = %s, want the -pinned tag's signed digest %s (not the nightly-moved plain tag)", got, pinnedDigest)
+	}
 }
 
+// A failed resolution or verification refuses before any copy, and writes
+// nothing — the same shape TestInitRefusesWhenFugaroBaseIsNotPublished
+// already asserts for the "not published at all" case.
 func TestImagesStageRefusesOnAFailedVerification(t *testing.T) {
-	// A failing fake basepin.Resolve means no copy is even planned.
+	r := newImagesRig(t, "1.2.3")
+	old := resolvePinnedBase
+	resolvePinnedBase = func(ctx context.Context, source, kind, version string) (string, error) {
+		return "", errors.New("no signature found for this digest")
+	}
+	t.Cleanup(func() { resolvePinnedBase = old })
+
+	out, _, err := executeStdin(t, "", "init", "--yes", "--base", "base")
+	if ExitCode(err) != ExitRemoteError || err == nil || !strings.Contains(err.Error(), "no signature found") {
+		t.Fatalf("exit %d, err %v, want the verification failure named\n%s", ExitCode(err), err, out)
+	}
+	if r.dst.puts != 0 {
+		t.Errorf("the registry was written to despite a failed verification: %d writes", r.dst.puts)
+	}
 }
 ```
 
 - [ ] **Step 2: Run them to see them fail**
 
-Run: `go test ./internal/cli/ -run 'TestImagesStageVerifiesBeforeCopying|TestImagesStageRefusesOnAFailedVerification' -count=1`
-Expected: FAIL.
+Run: `go test ./internal/cli/ -run 'TestImagesStageCopiesFromThePinnedTagNotThePlainOne|TestImagesStageRefusesOnAFailedVerification' -count=1`
+Expected: FAIL (package `basepin` and `resolvePinnedBase` do not exist yet).
 
 - [ ] **Step 3: Implement**
 
-Add the `basepin.Resolve`-then-`mirror.Plan` sequencing described above.
+Add the `resolvePinnedBase`-then-`mirror.Plan` sequencing and the `mk` source-tag parameter described above.
 
 Run: `go test ./internal/cli/... -count=1`
 Expected: PASS.
@@ -411,7 +425,7 @@ Expected: PASS.
 **Scope, narrowed:** an earlier draft of this task (then numbered 6) removed `--base`, rewrote `--expect-digest`'s meaning, and replaced "copies" wording with "verifies" wording throughout. None of that applies anymore: the copy mechanism is unchanged (design §6), so `--base`, `--expect-digest`, `--replace-image` all stay exactly as they are today, and the existing "copies N image(s), M MB … into your registry" confirmation text stays accurate — it still copies. The **only** change is adding one clause naming the new verification step that now runs first.
 
 **Files:**
-- Modify: `internal/cli/init_images.go`, `internal/cli/image_refresh_steps.go` (the confirmation strings Task 3 Part B's new pre-step precedes)
+- Modify: `internal/cli/init_images.go` (the confirmation strings Task 3's new pre-step precedes)
 
 **Interfaces:** the existing confirmation text (e.g. *"copies N image(s), M MB … into your registry"*) gains a leading clause: *"verifies this release's signed digest, then copies N image(s), M MB … into your registry"*.
 
@@ -419,8 +433,20 @@ Expected: PASS.
 
 ```go
 func TestImagesStageConfirmationNamesVerification(t *testing.T) {
-	// The confirmation text for a base-kind copy contains both "verif" and
-	// "copies" — neither replaces the other.
+	r := newImagesRig(t, "1.2.3")
+	old := resolvePinnedBase
+	resolvePinnedBase = func(ctx context.Context, source, kind, version string) (string, error) {
+		return r.src.tags["dimipaun/fugaro-base:1.2.3"], nil
+	}
+	t.Cleanup(func() { resolvePinnedBase = old })
+
+	out, _, err := executeStdin(t, "", "init", "--yes", "--base", "base")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "verif") || !strings.Contains(out, "copies") {
+		t.Errorf("confirmation text has neither verification nor copying named, or one replaced the other:\n%s", out)
+	}
 }
 ```
 
@@ -441,7 +467,7 @@ Expected: PASS.
 **Scope, narrowed:** most of `docs/gcp-setup.md`, `docs/base-image.md` and `docs/base-image-migration.md`'s existing description of the copy mechanism stays accurate (it is unchanged). What needs updating is narrower than earlier drafts assumed.
 
 **Files:**
-- Modify: `docs/gcp-setup.md` §"The base image, in `fugaro-base`" (add one paragraph: Cloud Build's own `FUGARO_BASE` is now resolved and verified fresh at every build, not read from `base_images.base`; the copy itself, used for the daily check job, now verifies the signed digest first)
+- Modify: `docs/gcp-setup.md` §"The base image, in `fugaro-base`" (add one paragraph: `fugaro init --base`/`image refresh`'s existing copy now verifies the release's signed digest before copying, sourced from the nightly-immune `-pinned` tag; Cloud Build's `FUGARO_BASE` substitution and the check job's container image both keep reading `base_images.base` exactly as today — nothing about either reader changes)
 - Modify: `docs/release.md` (the `images.yml` section documents the new `publish-base` signing step and the `-pinned` tag; F1 marked done for the base image specifically)
 - No change expected: `SECURITY.md`, `docs/base-image.md`'s "Bring your own" section (`--base-image` is untouched by this design)
 
@@ -464,11 +490,11 @@ Add to `docs/gcp-live-checklist.md`, in the existing numbered-table format, scop
 
 | # | Check | Command | Expected |
 |---|---|---|---|
-| 39a | The repository's own build service account (not the default compute SA) resolving and pulling the signed digest, both as a `docker pull` inside a step and as a step's own `name:` image (design retire-image-mirror.md §7, item a) | A one-off Cloud Build submitted as the sandbox repository's build account | Both steps succeed; record the elapsed time and the resolved digest as a `FACT`. |
-| 39b | A full derived-image build with a freshly-resolved, digest-pinned `FROM`, end to end | `fugaro image build`/`init --repo` in the sandbox repository's checkout, after the implementation lands | `credential`, `render`, `build`, `smoke`, `gate`, `promote`, `record` all succeed; the build record's `base_ref` is the ghcr.io-pinned form. |
-| 39c | OCI-signature verification of a real signed base image, on the operator's own machine | A build submission against a real release that has run Task 1's signing steps | The resolution succeeds and reports the verified digest; a deliberately mismatched expected identity is refused (tamper-test, done by hand once). |
+| 39a | `fugaro init --base`/`image refresh` resolving and verifying a real, signed `fugaro-base:<v>-pinned` image on the operator's own machine, against a real release that has run Task 1's signing steps (design retire-image-mirror.md §7, item a) | `fugaro init --base base` (or `image refresh`) in the sandbox repository's checkout, after the implementation lands and a real tag push has produced a signed image | The resolution succeeds and reports the verified digest; the copy lands in the installation's own Artifact Registry. |
+| 39b | The copy is sourced from the `-pinned` tag, not the plain tag the nightly moves: a copy run after the nightly has moved the plain tag still succeeds and copies the release's originally-signed digest (design §7, item b) | Dispatch `images.yml` nightly once (moving the plain tag), then run `fugaro init --base base`/`image refresh` in the sandbox | The copy succeeds (no `ErrDigestMismatch`); the registry's `fugaro-base:<v>` now holds the `-pinned` tag's digest, not the nightly-moved plain tag's. |
+| 39c | OCI-signature verification of a real signed base image, on the operator's own machine; a deliberately mismatched expected identity is refused (tamper-test) | A copy attempt against a real release that has run Task 1's signing steps, then once by hand against a forged/mismatched identity | The real signature verifies; the forged/mismatched one is refused with a clear reason. |
 | 39d | Egress/rate-limit behavior under load | — | **Out of scope for this design (§3); not planned.** |
 | 39e | The nightly's own run genuinely never touches the `-pinned` tag — a GitHub Actions/ghcr.io check, unrelated to any GCP project | Manually dispatch `images.yml` by `workflow_dispatch` once (never a real tag push), and compare `fugaro-base:<v>-pinned`'s digest before and after | Unchanged; the plain tag's digest changes (today's existing nightly behavior), the `-pinned` tag's does not. A *re-run* of the tag-push workflow itself does move and re-sign `-pinned` again — harmless, not what this check tests. |
-| 39f | The check job's own copy, with the new verification pre-step ahead of it, still deploys and runs correctly | A full `fugaro init --repo`/`image refresh` in the sandbox | The check job's container image (the Artifact-Registry copy, now verified-before-copy) deploys and runs unchanged from today. |
+| 39f | A full `fugaro init --repo`/`image refresh` in the sandbox, end to end, with the verification pre-step in place: the check job's container image and a real Cloud Build submission both still deploy/run correctly from the now-verified copy | A full `fugaro init --repo`/`image refresh` in the sandbox | The check job's container image (the Artifact-Registry copy, now verified-before-copy) deploys and runs unchanged from today; a real build submission still succeeds, reading `base_images.base` exactly as today. |
 
 **Numbering, corrected:** `docs/gcp-live-checklist.md`'s own "Numbering ruling (owner's assistant, 2026-10-13)" already reserves Check 38 for the generic-tool plan's Task 18 clone-workflow check — a decided fact in the committed checklist today, not a future possibility an earlier draft of this document wrongly hedged against ("the owner renumbers... if another plan has since claimed 38," as if 38 were still unclaimed). The true next free integer is **39**, used directly above, with letter suffixes `39a`–`39f` for this plan's own six checks.
