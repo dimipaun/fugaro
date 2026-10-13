@@ -809,3 +809,23 @@ func TestBitbucketEnsureByNumberDeclined(t *testing.T) {
 		}
 	}
 }
+
+// TestBitbucketResolveFullHashRejectsMismatch: resolveFullHash's response
+// is trusted all the way to `git fetch`/`git worktree add` as the
+// revision to check out, so accepting whatever hash the commit endpoint
+// returns — not necessarily a full hash OF THE SAME COMMIT asked for —
+// would let a compromised or misbehaving Bitbucket endpoint substitute an
+// unrelated commit (still a validly-shaped 40-hex string, so
+// gitops.ValidCommitSHA alone would not have caught it). This fixture's
+// response hash shares no prefix with the requested "0123456789ab" at
+// all.
+//
+// Mutation (drop the `!strings.HasPrefix(c.Hash, rev)` half of the
+// condition, keeping only ValidCommitSHA): this test fails, finding the
+// mismatched hash accepted instead of refused.
+func TestBitbucketResolveFullHashRejectsMismatch(t *testing.T) {
+	got, err := open(t, "pull_open_head_mismatched.json").FetchPRHead(ctx, 12)
+	if err == nil || !strings.Contains(err.Error(), "not a full hash of the same commit") {
+		t.Fatalf("got %+v, %v, want an error rejecting the mismatched hash", got, err)
+	}
+}

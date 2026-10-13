@@ -598,7 +598,7 @@ func ReviewComment(recipeName string, v Verdict, prs []int, secrets []string) st
 var (
 	findingLineBreakRE  = regexp.MustCompile("\r\n|[\r\n\u2028\u2029]")
 	findingHashRE       = regexp.MustCompile(`#(\d+)`)
-	findingSchemeRE     = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.\-]*)://`)
+	findingSchemeRE     = regexp.MustCompile(`(?i)([a-z][a-z0-9+.\-]*)://`)
 	findingMailtoRE     = regexp.MustCompile(`(?i)\bmailto:`)
 	findingWWWRE        = regexp.MustCompile(`(?i)www\.`)
 	findingFenceRE      = regexp.MustCompile("(`{3,}|~{3,})")

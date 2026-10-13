@@ -681,6 +681,24 @@ func TestReviewModeCommentNeutralizesAnyURIScheme(t *testing.T) {
 	}
 }
 
+// TestReviewModeCommentNeutralizesSchemeAfterUnderscore: findingSchemeRE
+// used a `\b` word-boundary assertion before the scheme, which requires a
+// transition between a word and a non-word character — but '_' is itself
+// a word character, so "_https://evil.example/x_" (an emphasised link, in
+// Markdown's own *_text_* sense, or just a scheme glued to a preceding
+// identifier) has no such boundary between '_' and 'h' at all, and the
+// scheme was never broken.
+//
+// Mutation (restore the `\b` before findingSchemeRE's character class):
+// this test fails, finding the scheme survives without a zero-width
+// space.
+func TestReviewModeCommentNeutralizesSchemeAfterUnderscore(t *testing.T) {
+	body := reviewFindingBody(t, "", nil, "see _https://evil.example/x_ for details")
+	if !strings.Contains(body, "https​\\:") {
+		t.Fatalf("the https:// scheme right after '_' was not broken with a zero-width space: %q", body)
+	}
+}
+
 // TestReviewModeCommentNeutralizesSeverityCheckbox: Fugaro wrapped a
 // finding's own Severity value in literal, unescaped brackets ("[%s]"); a
 // Severity of "x" or " " (both values a model could return; the schema

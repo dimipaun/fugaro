@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
 )
@@ -473,6 +474,16 @@ func (p *Provider) resolveFullHash(ctx context.Context, rev string) (string, err
 	}
 	if c.Hash == "" {
 		return "", fmt.Errorf("resolving commit %s to its full hash: no hash in the response", rev)
+	}
+	// Both checked, not only ValidCommitSHA's shape: the response is a
+	// full hash for the exact commit asked for, not merely something
+	// gitops.ValidCommitSHA would accept — the API answering with an
+	// unrelated (if validly-shaped) commit, or even a crafted value like
+	// "--upload-pack=..." that happens to pass the shape check alone,
+	// must not reach `git fetch`/`git worktree add` as the revision to
+	// check out.
+	if !strings.HasPrefix(c.Hash, rev) || !gitops.ValidCommitSHA(c.Hash) {
+		return "", fmt.Errorf("resolving commit %s to its full hash: got %s, not a full hash of the same commit", rev, c.Hash)
 	}
 	return c.Hash, nil
 }
