@@ -14,7 +14,7 @@ Fugaro's own `fugaro.yaml` (project `fugaro`, workflow `go`) still reads `base: 
 
 1. Every operator upgrades the CLI to 0.7.0 (`fugaro upgrade --local`, then Homebrew for the binary).
 2. Per repository, one pull request: the `mise.toml` and the `fugaro.yaml` change below (the `/fugaro:setup` skill writes both). Before opening it, `fugaro validate` must pass and `fugaro image build --local` must pass the smoke test.
-3. Merge it, then **at once**, in that checkout: `fugaro image refresh`. It copies `fugaro-base` into your registry, records `base_images.base`, moves the daily check job onto it, and rebuilds every workflow's image. **This step needs `fugaro-base` to be published on ghcr.io first** (not yet true as of this writing — `docs/pending-workflows/README.md`); until then `fugaro image refresh` finds no release image and refuses with a clear error.
+3. Merge it, then **at once**, in that checkout: `fugaro image refresh`. It copies `fugaro-base` into your registry, records `base_images.base`, moves the daily check job onto it, and rebuilds every workflow's image. **This step needs `fugaro-base` to be published on ghcr.io first**, which the 0.7.0 release tag does; before it (a development build, or an earlier release) `fugaro image refresh` finds no release image and refuses with a clear error.
 4. **Between the merge and the refresh finishing, don't launch runs**: the old image's 0.6 runner refuses the new `fugaro.yaml`. It takes minutes.
 5. `fugaro doctor` in the checkout reports nothing about bases.
 
@@ -90,7 +90,7 @@ workflows:
 
 ## What happens to the already-published `fugaro-go`/`fugaro-web-node`/`fugaro-java-services` tags
 
-They stay on `ghcr.io` forever: a published tag is immutable history, never deleted. Once a maintainer copies `docs/pending-workflows/images.yml` into `.github/workflows/images.yml` (not yet done as of this writing — that file's own README says how and why), the nightly workflow stops refreshing them: there is no `base` build job left to run, so no release after that point republishes a `:X` moving tag for any of the three, and no `fugaro` command accepts `go`, `web-node` or `java-services` as a kind any more (not even `--expect-digest`, which only takes `base` and `history`) to pin one by hand.
+They stay on `ghcr.io` forever: a published tag is immutable history, never deleted. With 0.7.0 the nightly workflow stops refreshing them: there is no `base` build job left to run, so no release after that point republishes a `:X` moving tag for any of the three, and no `fugaro` command accepts `go`, `web-node` or `java-services` as a kind any more (not even `--expect-digest`, which only takes `base` and `history`) to pin one by hand.
 
 ## Checklist for a repository with services (Belong-style)
 

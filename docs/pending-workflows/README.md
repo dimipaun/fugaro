@@ -1,5 +1,7 @@
 # Pending workflow changes
 
+**Nothing is pending (0.7.0).** `images.yml` was copied into `.github/workflows/` and its pending file removed, as the procedure below describes. This directory stays as the place where a Fugaro run writes a workflow change it cannot push.
+
 Fugaro refuses to push a commit that touches `.github/workflows/**`
 (GitHub rejects the push). When a Fugaro run needs to change a workflow
 file, it writes the file's full intended new content here instead, under

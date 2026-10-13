@@ -690,16 +690,14 @@ func TestCIWorkflowSkipsImagesTheTagTreeDoesNotHold(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	put("web-node")
 	put("history")
 	testutil.Git(t, repo, "add", ".")
 	testutil.Git(t, repo, "commit", "--quiet", "-m", "v0.1.0 tree")
 	testutil.Git(t, repo, "tag", "v0.1.0")
-	put("go")
-	put("java-services")
+	put("base")
 	testutil.Git(t, repo, "add", ".")
 	testutil.Git(t, repo, "commit", "--quiet", "-m", "later")
-	for tag, want := range map[string]string{"v0.1.0": ",web-node,history,", "": ",web-node,go,java-services,history,"} {
+	for tag, want := range map[string]string{"v0.1.0": ",history,", "": ",history,base,"} {
 		out := filepath.Join(t.TempDir(), "output")
 		cmd := exec.Command("sh", "-c", script)
 		cmd.Dir = repo
@@ -714,7 +712,7 @@ func TestCIWorkflowSkipsImagesTheTagTreeDoesNotHold(t *testing.T) {
 	}
 	// Every step of the legs that build, publish or verify one image is
 	// gated on the list, so a missing image fails nothing.
-	for _, job := range []string{"base", "history", "publish"} {
+	for _, job := range []string{"history", "publish"} {
 		for _, s := range wf.Jobs[job].Steps {
 			if !strings.Contains(s.If, "needs.version.outputs.kinds") {
 				t.Errorf("job %s step %q is not gated on the images the tree builds (if: %q)", job, s.Name, s.If)
