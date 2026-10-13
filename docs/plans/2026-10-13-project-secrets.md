@@ -989,7 +989,7 @@ git commit -m "project secrets task 9: init --repo's secrets stage consults the 
 **Files:**
 - Edit: `docs/design/v1.md` (one cross-reference sentence, §5.4 local config area, no rewrite)
 - Edit: `docs/multi-model.md` (a one-paragraph note that a provider's key may now also be stored `--project-wide`, with a link — no change to §1-§6's own content)
-- Edit: `docs/gcp-live-checklist.md`: add Check 40 (40a-40g, design §8 — 40f and 40g are the owner's follow-up ruling on provider keys, design §3a) as a new row and a `## Check 40: ...` section, in the file's existing style; update the "Numbering ruling" paragraph (`gcp-live-checklist.md:183-199`) to name 40 as taken by this design
+- Edit: `docs/gcp-live-checklist.md`: add Check 40 (40a-40j, design §8 — 40f and 40g are the owner's follow-up ruling on provider keys, design §3a; 40h/40i/40j are the N1/N2/N3 fixes added in review) as a new row and a `## Check 40: ...` section, in the file's existing style; update the "Numbering ruling" paragraph (`gcp-live-checklist.md:183-199`) to name 40 as taken by this design
 - Edit: `docs/release.md` — a new bullet in the release checklist, in the same family and immediately alongside the existing `gcpProjectFieldSince`/`recipesSince`/`layeredSince`/`namedTokensSince` bullets (`docs/release.md:55-58`, design §7): confirm the release note for the shipping version names the owner's migration sequence (design §6), and that an installation applying the `installation` root for the first time after this feature ships sees the new `secrets.tf` resources as **creates only** — never an update to an unrelated resource (a regression elsewhere in the module would show as an unexpected diff there). Unlike the other bullets in that list, this one names no `*Since` Go constant (design §7, P6: this feature adds none) — it is a plan-shape check, not a constant-equality one, and its wording should say so rather than mimic the others' "verify `X` equals Y" phrasing where it would be inaccurate.
 - **Edit: `docs/gcp-setup.md:515`'s shared-config sentence (S6, a gap in an earlier draft's Task 8 file list) — add `project_secrets` to the list of things `fugaro/config.yaml` never holds, alongside the existing `providers:` it already names** ("It never holds the `terraform:` section, `user:`, `endpoints:`, `providers:`, a repository's `base_branch`... or any secret"): this design's own §7 already states `project_secrets` is local-config-only, never published — this doc should say so in the one place it already makes the identical claim for `providers:`.
 - New/extended test in whichever file already asserts the checklist's numbering/doc shape (the implementer greps for a test covering the "Numbering ruling" claims, if one exists; otherwise this task adds none beyond the existing docs-lint suite)
@@ -1004,7 +1004,7 @@ Expected: `ok`.
 
 ```bash
 git add docs/design/v1.md docs/multi-model.md docs/gcp-live-checklist.md docs/release.md docs/gcp-setup.md
-git commit -m "project secrets task 8: docs cross-references, Check 40, the release checklist bullet, gcp-setup.md's shared-config list (S6)"
+git commit -m "project secrets task 10: docs cross-references, Check 40, the release checklist bullet, gcp-setup.md's shared-config list (S6)"
 ```
 
 ---
