@@ -434,6 +434,15 @@ func TestSnapshotCannotMutateProvider(t *testing.T) {
 //
 // Mutation (invert the Fork comparison to ==): the "own repository" case
 // fails, wanting Fork=false but getting true.
+//
+// PRState #2's AuthorID is left unset on purpose: that's PRState's own
+// documented "Fugaro opened it" default, which is also exactly what, pre-fix,
+// made this fork PR read Self=true alongside Fork=true — PRHead's own
+// documented invariant (gitprov.go) forbids Self being true whenever Fork
+// is true, regardless of today's only consumer re-checking Fork itself.
+//
+// Mutation (drop the `&& !fork` from FetchPRHead's `self := ...` line):
+// the fork case fails, finding Self=true alongside Fork=true.
 func TestFetchPRHead(t *testing.T) {
 	testutil.IsolateGit(t) // a CI runner has no global git identity to seed the remote with
 	remote := testutil.NewRemote(t, map[string]string{"f": "x"})
@@ -450,8 +459,8 @@ func TestFetchPRHead(t *testing.T) {
 	if err != nil || got != want {
 		t.Fatalf("own repo: got %+v, %v, want %+v", got, err, want)
 	}
-	if got, err := p.FetchPRHead(ctx, 2); err != nil || !got.Fork {
-		t.Fatalf("fork: got %+v, %v, want Fork=true", got, err)
+	if got, err := p.FetchPRHead(ctx, 2); err != nil || !got.Fork || got.Self {
+		t.Fatalf("fork: got %+v, %v, want Fork=true, Self=false", got, err)
 	}
 	if got, err := p.FetchPRHead(ctx, 3); err != nil || got.Open {
 		t.Fatalf("merged: got %+v, %v, want Open=false", got, err)

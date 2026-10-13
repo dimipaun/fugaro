@@ -454,7 +454,12 @@ func (p *Provider) PullRequest(ctx context.Context, number int) (gitprov.PRInfo,
 // (collaborator, comments.go); Self reuses the same App-identity lookup
 // (appSlug) Comments' own Self already does, so review mode's
 // trusted-author gate (reviewmode.go) and a follow-up's comment trust
-// agree on both signals.
+// agree on both signals. Self is always false when Fork is true
+// (PRHead's own documented invariant, gitprov.go): a deleted fork (no
+// head repository at all, so SourceRepo is "" and Fork fails closed to
+// true) could otherwise still carry a "<slug>[bot]"-shaped login and
+// read as Self, which the invariant forbids outright, regardless of
+// whether today's only consumer happens to re-check Fork itself.
 func (p *Provider) FetchPRHead(ctx context.Context, number int) (gitprov.PRHead, error) {
 	d, info, err := p.getPull(ctx, number)
 	if err != nil {
@@ -462,7 +467,7 @@ func (p *Provider) FetchPRHead(ctx context.Context, number int) (gitprov.PRHead,
 	}
 	fork := !strings.EqualFold(info.SourceRepo, p.owner+"/"+p.repo)
 	slug, known := p.appSlug(ctx)
-	self := known && d.User.login() == slug+"[bot]"
+	self := known && d.User.login() == slug+"[bot]" && !fork
 	return gitprov.PRHead{
 		SHA: info.HeadSHA, Fork: fork, Open: info.State == gitprov.PROpen,
 		AuthorID: d.User.id(), AuthorLogin: d.User.login(),

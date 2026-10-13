@@ -471,7 +471,10 @@ func (p *Provider) Comments(_ context.Context, number int) ([]gitprov.Comment, e
 // PullRequest/pullRequest already give AuthorID when a test leaves it
 // unset (cmp.Or(st.AuthorID, p.SelfID)), so an existing test that never
 // mentions trust at all keeps reviewing its own (self) PR exactly as
-// before.
+// before. Self is forced false whenever Fork is true (PRHead's own
+// documented invariant, gitprov.go): Fugaro never opens a pull request
+// from a fork, so a fork PR is never self regardless of what its author
+// fields happen to be set to.
 func (p *Provider) FetchPRHead(ctx context.Context, number int) (gitprov.PRHead, error) {
 	info, err := p.PullRequest(ctx, number)
 	if err != nil {
@@ -488,7 +491,7 @@ func (p *Provider) FetchPRHead(ctx context.Context, number int) (gitprov.PRHead,
 	// opened it"), regardless of whether the harness bothered to set a
 	// non-empty SelfID at all (most don't): that must count as self on
 	// its own, not just when it happens to equal a configured SelfID.
-	self := st.AuthorID == "" || (p.SelfID != "" && st.AuthorID == p.SelfID)
+	self := (st.AuthorID == "" || (p.SelfID != "" && st.AuthorID == p.SelfID)) && !fork
 	login := st.AuthorLogin
 	if login == "" && self {
 		login = "fugaro"

@@ -335,10 +335,26 @@ func TestGitHubFetchPRHeadFork(t *testing.T) {
 //
 // Mutation (guard the comparison with `info.SourceRepo != "" && ...`): this
 // test fails, wanting Fork=true but getting false.
+//
+// This fixture's author login ("fugaro-app[bot]") is also exactly what
+// the App's own identity would produce, which is deliberate: it doubles
+// as the case for PRHead's own documented invariant (gitprov.go) — Self
+// is only ever true when Fork is false. Before `self` was guarded with
+// `&& !fork`, this exact fixture gave Fork:true AND Self:true together
+// (reproduced independently before the fix, a throwaway test, not kept):
+// a landmine for any future consumer that trusts the invariant without
+// re-deriving it itself, even though today's only consumer
+// (reviewmode.go's `!h.Fork && h.Self`) happens to re-guard against it.
+//
+// Mutation (drop the `&& !fork` from FetchPRHead's `self := ...` line):
+// this test fails, finding Self=true alongside Fork=true.
 func TestGitHubFetchPRHeadDeletedForkFailsClosed(t *testing.T) {
 	got, err := open(t, "pull_fork_head.json").FetchPRHead(ctx, 12)
 	if err != nil || !got.Fork {
 		t.Fatalf("got %+v, %v, want Fork=true", got, err)
+	}
+	if got.Fork && got.Self {
+		t.Fatalf("got %+v, want Self=false whenever Fork=true (PRHead's own invariant)", got)
 	}
 }
 
