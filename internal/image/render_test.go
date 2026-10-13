@@ -44,7 +44,6 @@ USER root
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libvips-dev fonts-liberation \
  && rm -rf /var/lib/apt/lists/*
-RUN /usr/local/lib/fugaro/install-node 24.19.0
 USER fugaro
 
 WORKDIR /work/repo
@@ -68,6 +67,13 @@ RUN --mount=type=bind,target=/src \
       || { echo "commit $FUGARO_COMMIT is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }; \
     fi \
  && git remote set-url origin -- "$REPO_ORIGIN"
+
+# The runtimes: the repository's root mise config and image.tools, installed
+# as fugaro into ~/.local/share/mise (design base-image.md section 4). The
+# download cache survives local rebuilds; nothing may be left missing.
+RUN --mount=type=cache,id=fugaro-mise,target=/home/fugaro/.cache/mise,uid=1000,gid=1000 --mount=type=secret,id=NPM_TOKEN,uid=1000,mode=0400,required=false if test -e /run/secrets/NPM_TOKEN; then NPM_TOKEN="$(cat /run/secrets/NPM_TOKEN)" || exit 1; export NPM_TOKEN; fi; mise install \
+ && missing="$(mise ls --current --missing)" \
+ && if [ -n "$missing" ]; then printf 'mise left these tools missing:\n%s\n' "$missing" >&2; exit 1; fi
 
 # Dependency warm-up for yarn.lock.
 RUN --mount=type=secret,id=NPM_TOKEN,uid=1000,mode=0400,required=false if test -e /run/secrets/NPM_TOKEN; then NPM_TOKEN="$(cat /run/secrets/NPM_TOKEN)" || exit 1; export NPM_TOKEN; fi; yarn install --immutable
@@ -177,9 +183,8 @@ USER fugaro
 
 func TestRenderFull(t *testing.T) {
 	got, err := Render(RenderInput{
-		Workflow: "web", Base: "web-node", Version: "1.2.3",
+		Workflow: "web", Base: config.BaseKind, Version: "1.2.3", Mise: true,
 		Image: config.Image{
-			Node:  "24.19.0",
 			Apt:   []string{"libvips-dev", "fonts-liberation"},
 			Setup: []string{"npx playwright install --with-deps chromium", "mkdir -p build"},
 		},
@@ -192,7 +197,7 @@ func TestRenderFull(t *testing.T) {
 	if string(got) != wantFull {
 		t.Errorf("Render =\n%s\nwant\n%s", got, wantFull)
 	}
-	if msgs := config.LintDockerfile(got, "web-node"); len(msgs) > 0 {
+	if msgs := config.LintDockerfile(got); len(msgs) > 0 {
 		t.Errorf("the rendered Dockerfile breaks the repository-Dockerfile contract: %v", msgs)
 	}
 	// Once image.setup steps run as fugaro with
@@ -226,7 +231,7 @@ func TestRenderRefusesFlagLikeSetupStep(t *testing.T) {
 		"  --also-leading-whitespace",
 	}
 	for _, step := range cases {
-		if _, err := Render(RenderInput{Workflow: "web", Base: "web-node", Image: config.Image{Setup: []string{step}}}); err == nil {
+		if _, err := Render(RenderInput{Workflow: "web", Base: "base", Image: config.Image{Setup: []string{step}}}); err == nil {
 			t.Errorf("Render(%q) = nil error, want a refusal", step)
 		}
 	}
@@ -237,7 +242,7 @@ func TestRenderRefusesFlagLikeSetupStep(t *testing.T) {
 // so every secret mount in a rendered Dockerfile must be a file mount.
 func TestRenderSecretMountsAreFiles(t *testing.T) {
 	got, err := Render(RenderInput{
-		Workflow: "web", Base: "web-node",
+		Workflow: "web", Base: "base",
 		Image:   config.Image{Setup: []string{"true"}},
 		PM:      &config.NodePM{Lockfile: "package-lock.json", Install: "npm ci"},
 		Secrets: []string{"NPM_TOKEN", "OTHER_TOKEN"},
@@ -266,7 +271,7 @@ func TestRenderSecretPrefixExports(t *testing.T) {
 		t.Skip("no sh")
 	}
 	got, err := Render(RenderInput{
-		Workflow: "web", Base: "web-node",
+		Workflow: "web", Base: "base",
 		Image:   config.Image{Setup: []string{`printf '%s|%s|%s' "$A_TOKEN" "${B_TOKEN-unset}" "$C_TOKEN" && env | grep -c _TOKEN= >&2`}},
 		Secrets: []string{"A_TOKEN", "B_TOKEN", "C_TOKEN"},
 	})
@@ -305,15 +310,27 @@ func TestRenderSecretPrefixExports(t *testing.T) {
 }
 
 func TestRenderMinimal(t *testing.T) {
-	got, err := Render(RenderInput{Workflow: "app", Base: "web-node", Version: "dev"})
+	got, err := Render(RenderInput{Workflow: "app", Base: config.BaseKind, Version: "dev"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(got) != wantMinimal {
 		t.Errorf("Render =\n%s\nwant\n%s", got, wantMinimal)
 	}
-	if msgs := config.LintDockerfile(got, "web-node"); len(msgs) > 0 {
+	if msgs := config.LintDockerfile(got); len(msgs) > 0 {
 		t.Errorf("the rendered Dockerfile breaks the repository-Dockerfile contract: %v", msgs)
+	}
+}
+
+// TestRenderHasNoInstallNode: the template's install-node block is gone;
+// the base image's mise step is the only way a derived image gets Node.
+func TestRenderHasNoInstallNode(t *testing.T) {
+	got, err := Render(RenderInput{Workflow: "app", Base: config.BaseKind, Mise: true, Version: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "install-node") {
+		t.Error("the template still installs Node by itself")
 	}
 }
 
@@ -345,9 +362,8 @@ var renderPMs = []struct {
 // fullInput is TestRenderFull's input with pm as the package manager.
 func fullInput(pm config.NodePM, skip bool) RenderInput {
 	return RenderInput{
-		Workflow: "web", Base: "web-node", Version: "1.2.3",
+		Workflow: "web", Base: config.BaseKind, Version: "1.2.3", Mise: true,
 		Image: config.Image{
-			Node:             "24.19.0",
 			Apt:              []string{"libvips-dev", "fonts-liberation"},
 			Setup:            []string{"npx playwright install --with-deps chromium", "mkdir -p build"},
 			SkipBuildScripts: skip,
@@ -375,7 +391,7 @@ func TestRenderSkipBuildScripts(t *testing.T) {
 			if string(got) != want {
 				t.Errorf("Render =\n%s\nwant\n%s", got, want)
 			}
-			if msgs := config.LintDockerfile(got, "web-node"); len(msgs) > 0 {
+			if msgs := config.LintDockerfile(got); len(msgs) > 0 {
 				t.Errorf("the rendered Dockerfile breaks the repository-Dockerfile contract: %v", msgs)
 			}
 		})
@@ -402,19 +418,13 @@ func TestRenderDefaultWarmUpUnchanged(t *testing.T) {
 func TestDockerfileSkipBuildScripts(t *testing.T) {
 	root := t.TempDir()
 	testutil.WriteFiles(t, root, map[string]string{"package.json": `{"packageManager":"yarn@4.16.0"}`, "yarn.lock": ""})
-	cfg := parseConfig(t, strings.Replace(renderYAML, "    base: web-node\n", "    base: web-node\n    image: { skip_build_scripts: true }\n", 1))
+	cfg := parseConfig(t, strings.Replace(renderYAML, "  web:\n", "  web:\n    image: { skip_build_scripts: true }\n", 1))
 	data, _, err := Dockerfile(root, cfg, "web", "dev")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := warmUpBlock(skipComment, "yarn.lock", "yarn install --immutable --mode=skip-build"); !strings.Contains(string(data), want) {
 		t.Fatalf("Dockerfile lacks %q:\n%s", want, data)
-	}
-}
-
-func TestRenderRefusesUnpublishedBase(t *testing.T) {
-	if _, err := Render(RenderInput{Workflow: "server", Base: "rust"}); err == nil || !strings.Contains(err.Error(), "rust has no published image yet") {
-		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -456,7 +466,6 @@ project: aurora
 git: { provider: github }
 workflows:
   web:
-    base: web-node
     commands: { build: npm run build, test: npm test }
     secrets:
       - { name: npm-token, env: NPM_TOKEN }
@@ -478,7 +487,7 @@ func TestDockerfileUsesRepositoryFile(t *testing.T) {
 	root := t.TempDir()
 	const df = "ARG FUGARO_BASE\nFROM ${FUGARO_BASE}\nRUN git clone \"$REPO_URL\" /work/repo\n"
 	testutil.WriteFiles(t, root, map[string]string{".fugaro/web.Dockerfile": df})
-	cfg := parseConfig(t, strings.Replace(renderYAML, "    base: web-node\n", "    base: web-node\n    dockerfile: .fugaro/web.Dockerfile\n", 1))
+	cfg := parseConfig(t, strings.Replace(renderYAML, "  web:\n", "  web:\n    dockerfile: .fugaro/web.Dockerfile\n", 1))
 	data, repoFile, err := Dockerfile(root, cfg, "web", "dev")
 	if err != nil || repoFile != ".fugaro/web.Dockerfile" || string(data) != df {
 		t.Fatalf("data %q, repoFile %q, err %v", data, repoFile, err)
@@ -495,7 +504,7 @@ func TestDockerfileUnknownWorkflow(t *testing.T) {
 // path the runner reads. The step is run here, against a scratch checkout,
 // with and without the build time Cloud Build passes.
 func TestTemplateWritesImageJSON(t *testing.T) {
-	rendered, err := Render(RenderInput{Workflow: "app", Base: "web-node", Version: "dev"})
+	rendered, err := Render(RenderInput{Workflow: "app", Base: "base", Version: "dev"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -560,7 +569,7 @@ func TestTemplateWritesImageJSON(t *testing.T) {
 // itself. With no FUGARO_COMMIT (a local build) it keeps the branch's
 // head. The step is run here against a scratch repository.
 func TestTemplatePinsTheCommit(t *testing.T) {
-	rendered, err := Render(RenderInput{Workflow: "app", Base: "web-node", Version: "dev"})
+	rendered, err := Render(RenderInput{Workflow: "app", Base: "base", Version: "dev"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -636,23 +645,14 @@ func TestTemplatePinsTheCommit(t *testing.T) {
 	}
 }
 
-func TestRenderGoBase(t *testing.T) {
-	out, err := Render(RenderInput{Workflow: "go", Base: "go", Image: config.Image{Setup: []string{"go mod download"}}, Version: "dev"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s := string(out); !strings.Contains(s, "go mod download") || strings.Contains(s, "install-node") {
-		t.Errorf("rendered Dockerfile:\n%s", s)
-	}
-}
-
-func TestRenderJavaServicesBase(t *testing.T) {
-	out, err := Render(RenderInput{Workflow: "server", Base: "java-services", Image: config.Image{Apt: []string{"python3"}, Setup: []string{"./gradlew.sh testClasses"}}, Version: "dev"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s := string(out); !strings.Contains(s, "python3") || !strings.Contains(s, "./gradlew.sh testClasses") || strings.Contains(s, "install-node") || strings.Contains(s, "install-jdk") {
-		t.Errorf("rendered Dockerfile:\n%s", s)
+// TestRenderRefusesImageNode: image.node is a tombstone field (config.Image
+// keeps it so Validate can refuse it with the migration message); Render
+// refuses it too, as a safety net for callers that build a RenderInput
+// directly rather than through a validated fugaro.yaml.
+func TestRenderRefusesImageNode(t *testing.T) {
+	_, err := Render(RenderInput{Workflow: "app", Base: config.BaseKind, Image: config.Image{Node: "24.19.0"}, Version: "dev"})
+	if err == nil || !strings.Contains(err.Error(), "image.node was removed in 0.7.0") || !strings.Contains(err.Error(), config.MigrationDoc) {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -670,7 +670,7 @@ func TestRenderMiseInstallWhenTheCheckoutHasAConfig(t *testing.T) {
 	if i < 0 || clone < 0 || warm < 0 || !(clone < i && i < warm) {
 		t.Fatalf("the mise step is missing or out of order (clone %d, mise %d, warm-up %d):\n%s", clone, i, warm, s)
 	}
-	if msgs := config.LintDockerfile(got, config.BaseKind); len(msgs) > 0 {
+	if msgs := config.LintDockerfile(got); len(msgs) > 0 {
 		t.Errorf("the rendered Dockerfile breaks the contract: %v", msgs)
 	}
 }

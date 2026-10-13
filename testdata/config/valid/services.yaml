@@ -1,0 +1,12 @@
+version: 1
+project: aurora
+git:
+  provider: github
+workflows:
+  server:
+    image:
+      apt: [postgresql-17, postgresql-17-postgis-3, postgresql-17-pgvector, redis-server]
+      setup: ["firebase setup:emulators:database && firebase setup:emulators:storage && firebase setup:emulators:ui"]
+    commands:
+      build: ./gradlew assemble
+      test: fugaro-services start && ./gradlew test

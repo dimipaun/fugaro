@@ -3,7 +3,6 @@ project: aurora
 git: { provider: github }
 workflows:
   web:
-    base: web-node
     image:
       setup: ["--mount=type=secret,id=git-credentials,target=/tmp/c cp /tmp/c /work/repo/.leak"]
     commands: { build: npm run build, test: npm test }

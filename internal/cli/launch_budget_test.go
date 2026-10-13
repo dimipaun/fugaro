@@ -257,6 +257,66 @@ func TestPrecheckLowHeadroomRefuses(t *testing.T) {
 	}
 }
 
+// TestRunAttemptsBudgetPrecheckCountsAllAtOnce pins the ruling item 4 of the
+// design generic-tool review (2026-10-13): a best-of-N batch leases N *
+// budget.MinLaunchHeadroom once, before any attempt, instead of one
+// MinLaunchHeadroom lease per attempt (which would let a batch with
+// headroom for only its first attempt start, then halt attempts 2..N one
+// at a time). $0.25 is TestPrecheckLowHeadroomRefuses's own boundary for a
+// single run; two attempts need $0.50.
+func TestRunAttemptsBudgetPrecheckCountsAllAtOnce(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	bumpMaxParallel(t, 5)
+	f.db.Set(budget.PathSpendRepo(today(), appSlug), map[string]any{"counted": 49_750_000}) // $0.25 left
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "task")
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "repo_daily_cap") || !strings.Contains(err.Error(), "needs headroom for all 2") {
+		t.Fatalf("err = %v", err)
+	}
+	if launchedAny(f) {
+		t.Fatal("a batch refused by the budget must not launch any of it")
+	}
+	f.db.Set(budget.PathSpendRepo(today(), appSlug), map[string]any{"counted": 49_500_000}) // $0.50 left
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "task"); err != nil {
+		t.Fatalf("$0.50 of headroom is enough for 2 attempts: %v", err)
+	}
+}
+
+// TestRunAttemptsBudgetNotesPrintOncePerBatch pins the rest of item 4: the
+// budget pre-check's notes (and, in TestRunAttemptsBudgetNoBudgetCheckWarnsOnce,
+// the --no-budget-check warning) print once for the whole batch, not once
+// per attempt — observe mode's advisory note is the simplest way to force
+// Precheck to return a Note on a launch it still allows.
+func TestRunAttemptsBudgetNotesPrintOncePerBatch(t *testing.T) {
+	f := newLaunchBudget(t, "observe")
+	bumpMaxParallel(t, 5)
+	f.db.Set("config/mode", "observe")
+	f.db.Set(budget.PathSpendRepo(today(), appSlug), map[string]any{"counted": 49_900_000})
+	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--attempts", "3", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(errOut, "budget: "); n != 1 {
+		t.Fatalf("budget notes printed %d times for a 3-attempt batch, want 1: %q", n, errOut)
+	}
+	if !launchedAny(f) {
+		t.Fatal("observe must still launch")
+	}
+}
+
+// TestRunAttemptsBudgetNoBudgetCheckWarnsOnce is
+// TestRunAttemptsBudgetNotesPrintOncePerBatch's --no-budget-check half.
+func TestRunAttemptsBudgetNoBudgetCheckWarnsOnce(t *testing.T) {
+	newLaunchBudget(t, "enforce")
+	bumpMaxParallel(t, 5)
+	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--attempts", "3", "--no-budget-check", "task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(errOut, "--no-budget-check"); n != 1 {
+		t.Fatalf("the --no-budget-check warning printed %d times for a 3-attempt batch, want 1: %q", n, errOut)
+	}
+}
+
 func TestPrecheckGlobalHeadroom(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
 	f.db.Set(budget.PathSpendGlobal(today()), map[string]any{"counted": 99_900_000})
@@ -465,5 +525,32 @@ func TestRunFXFollowsTargetJobTimeout(t *testing.T) {
 				t.Fatalf("fx - launch = %v, want about %v", got, lo)
 			}
 		})
+	}
+}
+
+// TestRunFXFollowsNamedAccountJobTimeout is review finding #1's audit of
+// every other place that derives a job from a workflow without the token:
+// mintBudgetToken used to read the DEFAULT account's job timeout
+// (e.be.TaskTimeout(ctx, slug, spec.Workflow)) even for a named run, which
+// actually starts gcp.WorkflowVariant(spec.Workflow, spec.OAuthToken) — a
+// distinct job that can have its own, different timeout. Fixed: the mint
+// now reads the variant job's timeout.
+func TestRunFXFollowsNamedAccountJobTimeout(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	f.appendConfig(t, "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/app]\n")
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", release065)
+	variant := gcp.WorkflowVariant("web", "acme-personal")
+	f.run.AddJob(gcp.JobName(appSlug, variant), "4", "8Gi")
+	f.run.SetJobTimeout(gcp.JobName(appSlug, variant), 30*time.Minute)
+	f.run.SetJobTimeout(gcp.JobName(appSlug, "web"), 6*time.Hour) // the default account's job: must not be read
+
+	start := time.Now()
+	if _, _, err := runBudget(t, "--token", "acme-personal"); err != nil {
+		t.Fatal(err)
+	}
+	got := fxOf(t, f).Sub(start)
+	want := 30*time.Minute + time.Hour + 5*time.Minute
+	if got < want || got > want+2*time.Minute {
+		t.Fatalf("fx - launch = %v, want about %v (the named job's timeout, not the default job's 6h)", got, want)
 	}
 }

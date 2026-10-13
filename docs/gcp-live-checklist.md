@@ -68,8 +68,9 @@ PR description and into this checklist's results, at the end.
   - The probe build has a 900s timeout and pushes nothing.
 
   `jobs.run` can't override CPU or memory, so the sandbox's own
-  `resources: {cpu: 1, memory: 2Gi}` sets the limit. The web-node base needs
-  more than 512Mi to run `npm test`.
+  `resources: {cpu: 1, memory: 2Gi}` sets the limit. The sandbox's `web`
+  workflow (Node, from its `mise.toml`) needs more than 512Mi to run
+  `npm test`.
 
 ## Preconditions
 
@@ -179,6 +180,14 @@ In the commands below, `T` is short for
 `FUGARO_LIVE_REPO` for every check, and `FUGARO_BITBUCKET_TOKEN` and
 `FUGARO_LIVE_JOB_SA` as above wherever a check needs them.
 
+**Numbering ruling (owner's assistant, 2026-10-13).** A check number, once a
+plan reserves it, is never reused or renumbered, even when its section lands
+out of order: Check 32 is reserved for the bucket-IAM plan's runs-bucket
+launcher-grants check (`docs/plans/2026-10-08-bucket-iam.md` Task 9), and the
+generic-tool plan's clone-workflow check (its Task 18) takes the next free
+number, Check 38, after the named-account checks 34 to 37 (Check 33 is the
+vendor endpoint).
+
 | # | Check | Command | Expected |
 |---|---|---|---|
 | 1 | Execution names from `executions.list` (project ID or number) | `T -run TestLiveListAndLogs ./internal/backend/gcp/`, rerun after check 13 on a fresh project | It skips while the region has no execution. A `FACT` gives the raw form (project ID or project NUMBER). `ParseExecution` accepts every raw name. Every name `List` returns starts with `projects/<project>/locations/<region>/jobs/`. |
@@ -212,6 +221,12 @@ In the commands below, `T` is short for
 | 29 | Adopting an existing Firebase root: `terraform state rm` of the four singletons in the SANDBOX's Firebase root, `init --firebase` imports them (`Plan: 4 to import`), a rerun shows `No changes`; then the squat (an extra permission on the minter role) and a foreign minter on the signer are refused | See "Check 29" below; **you** run it at your own terminal, on the **sandbox's Firebase project only**, never a real installation's. | No cost beyond the sandbox's own backend. **USER-RUN, NOT RUN.** |
 | 30 | `fugaro image refresh`'s direct check-job update against the real Cloud Run Admin API: the read-back output-only fields round-trip through `jobs.patch`, the job's etag is enforced against a concurrent change, the patch starts no execution, and a later `init --repo` plans no change (design/image-refresh.md, "The check job and Terraform") | See "Check 30" below; **you** run it at your own terminal, on the **sandbox's check job only**, never EdgeWeb or EdgeServer. | No cost beyond the sandbox's own Cloud Run job and, if needed, a second base image copy. **USER-RUN, NOT RUN.** |
 | 31 | `fugaro upgrade` with the real `claude` CLI: the marketplace add or update, the install or update at the right scope, the settings file untouched by `claude`, a rerun that changes nothing, and the cloud step skipped in a Claude Code session | See "Check 31" below; **you** run it, on the sandbox checkout only. | USER-RUN, NOT RUN |
+| 32 | The runs bucket's launcher grants on real GCS: an unconditioned `objectViewer` plus a conditional `objectUser` under `runs/` (design `bucket-iam.md` §11, V1 to V5, V8) | See "Check 32" below; **you** run it at your own terminal, on installation `fugaro` (never `belong`), sandbox repository only, after the owner's go-ahead for the apply. | **USER-RUN, NOT RUN.** |
+| 33 | A vendor's own Anthropic-compatible endpoint, the same question check 25 settles for OpenRouter (optional) | See "Check 33" below; **you** run it at your own terminal, on the sandbox repository only. | One small sandbox run. **USER-RUN, NOT RUN.** |
+| 34 | Named Claude accounts, U1: Cloud Run Jobs execution overrides cannot carry a secret reference (design `named-oauth-tokens.md` §4, option D) | See "Check 34" below; reads published API docs only, no project needed. | No cost. **NOT RUN.** |
+| 35 | Named Claude accounts, U2: `claude setup-token` and multi-account switching | See "Check 35" below; **you** run it, on your own machine, no GCP project needed. | No cost. **NOT RUN.** |
+| 36 | Named Claude accounts, U3: per-project Cloud Run job count comfort at the installation's intended (workflow × account) scale | See "Check 36" below; **you** read the sandbox project's quota. | No cost. **NOT RUN.** |
+| 37 | Named Claude accounts, U4: the real Claude Code error text for an expired or revoked oauth token, and `fugaro diagnose`'s rendering of it | See "Check 37" below; **you** run it, on the sandbox repository only. | One minimal sandbox run (about the cost of check 13). **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -356,7 +371,7 @@ back.
 
 **Before it (free):**
 
-1. Docker is running, and you have built the base image from the branch under test: `sh images/build-base.sh web-node fugaro-web-node:m9a-live`. Set `FUGARO_LIVE_BASE_IMAGE` to that tag. (The test uses the image's own `fugaro` and Claude Code, so the base must be from this branch.)
+1. Docker is running, and you have built the base image from the branch under test: `sh images/build-base.sh base fugaro-base:m9a-live`. Set `FUGARO_LIVE_BASE_IMAGE` to that tag. (The test uses the image's own `fugaro` and Claude Code, so the base must be from this branch.)
 2. Decide the key's spending limit on the Anthropic console, if you want a second brake.
 
 **It asserts, and logs each answer as a `FACT:` line to paste into the results below:**
@@ -480,7 +495,7 @@ M9d merged with **no live apply**. Everything below is the live bring-up of the 
 
 **Procedure**
 
-1. **⚠ CONFIRM: rebuild and push the images from `main`.** The history job runs a new subcommand, so the old `history:latest` cannot run `--rollover`. From a checkout of `main` at the merged commit: `gcloud auth configure-docker <REGION>-docker.pkg.dev`; `sh images/build-base.sh history <REGION>-docker.pkg.dev/<GCP>/fugaro-base/history:latest` and `docker push` it; then the base image as in gcp-setup.md step 3 (`fugaro-web-node:dev-<sha>`, push, `fugaro init --base-image <tag>`). Pushes are billable storage. FACT: the two digests.
+1. **⚠ CONFIRM: rebuild and push the images from `main`.** The history job runs a new subcommand, so the old `history:latest` cannot run `--rollover`. From a checkout of `main` at the merged commit: `gcloud auth configure-docker <REGION>-docker.pkg.dev`; `sh images/build-base.sh history <REGION>-docker.pkg.dev/<GCP>/fugaro-base/history:latest` and `docker push` it; then the base image as in gcp-setup.md step 3 (`fugaro-base:dev-<sha>`, push, `fugaro init --base-image <tag>`). Pushes are billable storage. FACT: the two digests.
 1b. **⚠ CONFIRM: take the state snapshot now, before step 2** (read-only): `GET <rtdb>/config.json`, `config/kill.json`, `config/caps.json`, `spend/<today>.json`, `spend/<yesterday>.json`, `agents.json` (all with your token), `fugaro budget show --json`, and the Scheduler job list. Keep them; step 9 compares against them.
 2. **⚠ CONFIRM: `fugaro init --firebase <FP> --plan-only`, then the real run, at your own terminal** (a `!` shell is not a TTY).
    - Plan-only: the Firestore step is listed (database, deny-all rules, mark; "location is permanent"), nothing is applied. Read the Terraform plan: it must **create only** the `firestore` and `firebaserules` APIs, `datastore.viewer` for the people, `datastore.user` and `serviceusage.serviceUsageConsumer` for the history account and the viewers, `storage.objectViewer` on the runs bucket, the job's two new environment variables (an in-place update of the job) and the Scheduler job `fugaro-history-rollover` (created **paused**: `paused = true`). Anything destroyed or replaced: stop.
@@ -665,6 +680,8 @@ M10 sends a run's coder to a non-Anthropic model (design `docs/design/m10-multi-
    Then the same with `"stream":false`, and once against `https://openrouter.ai/api/v1/messages/count_tokens` (body without `stream` and `max_tokens`). `FACT:` for each: the HTTP status; whether the **path `/api/v1/messages`** answers in the Anthropic stream format (`message_start`, `content_block_*`, `message_delta`, `message_stop`); whether **`Authorization: Bearer`** is accepted (try `x-api-key` too if it is not, and then set `auth: x-api-key`); the **`usage` fields** on `message_start` and `message_delta` (input, output, `cache_creation_input_tokens`, `cache_read_input_tokens`, whether a **cost** field is present and its name and unit); the **`model`** the response names (is it the pinned one); and what `count_tokens` answers (a count, a 404, another error).
 3. **⚠ CONFIRM, a passing run.** `fugaro run --repo edgeappinc/fugarosandbox "<your small task>"`. Expected: the run ends in a PR; `fugaro diagnose <run>` shows `Route:` with `openrouter`, a `Reported:` line if the provider reports a cost, and the unverified-price `Warning:`; `result.json` has `cost.model_by` with the DeepSeek ID and `cost.route_by`; the review list has `tier: first` entries followed by a senior one (`first_line_review: auto`). `FACT:` the cost of the run, the console's charge for the same calls at OpenRouter (Activity page), the `reported` against the charge, and whether any `model call` line has `serving_model` other than the pin or `priced_as: max`.
 4. **⚠ CONFIRM, Claude Code against the endpoint.** Read the run's stage logs and transcripts (`fugaro logs`, `fugaro diagnose`, the bucket's `transcripts/`) for what broke: an `anthropic-beta` header or thinking parameter the endpoint rejected, a tool call that came back malformed, a stage that failed with an upstream error (and its `error_type`), the background model requests, any 404 on token counting. Also look for a request the gateway **refused on the route's field allowlist** (`field ... is not allowed on a provider route`, in the stage log) and record which field: `context_management` (the `clear_thinking` / `clear_tool_uses` edits), a top-level `cache_control`, or another top-level field (`output_format`, `speed`, `service_tier`, `inference_geo`, `container`, `mcp_servers`). Widening the allowlist (`routedKeys` in `internal/gateway/forward.go`) needs this live evidence; `context_management` is the likeliest safe widening. `FACT:` each, with the stage and the upstream's message. Run once more with a task that makes the agent use several tools (edit, build through `fugaro verify`) to see tool-call quality.
+
+   **This refusal already happened once, before this check could reach any of the rest of its steps** (sandbox run `edgeappinc-fugarosandbox-27be4c45d773e3b9/20261013-013356-9966`, $0 cost, nothing sent upstream): the first model call on a provider-model stage was refused with `field "context_management" is not allowed on a provider route (it isn't priced by the budget)`. Measured locally (Claude Code **2.1.296**, a recording localhost server, a dummy key, no cloud) and written up in `docs/multi-model.md` §7: `context_management` and a first-request `safeguards` key ride along whenever Claude Code's adaptive thinking is on, which it is by default. The runner now sets `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` and `MAX_THINKING_TOKENS=0` in the environment of any stage whose role or background model is a provider's (`agent.ProviderRouteVars`, `internal/runner/agentenv.go`), which drops both fields; an all-Claude stage never gets either variable, so its request is unchanged. This was verified only against the gateway's own checks (`internal/gateway/route_test.go`, `TestRoutedAcceptsNoThinkingClaudeCodeShape` and the `TestRoutedForbiddenTopLevelFields` cases for `context_management` and `thinking`+`context_management`) and against a fake upstream — **no live OpenRouter call has used this body shape yet.** This step 4 is the first chance to: (a) confirm the first call now reaches OpenRouter at all; (b) check whether the base image's pinned Claude Code (**2.1.283**, `images/base/Dockerfile`, older than the 2.1.296 measured) sends the same shape; and (c) settle whether OpenRouter's endpoint accepts the `"role":"system"` message item Claude Code's `messages` array can carry with this fix in place (a mid-conversation system message, a Claude Code beta behind the `mid-conversation-system-2026-04-07` `anthropic-beta` token) — the gateway itself does not validate a message's `role` and forwards it unchanged, so this is entirely between Claude Code and OpenRouter. `FACT:` whether the call succeeded, and the endpoint's answer (if any) to a `role: "system"` message.
 5. **⚠ CONFIRM, cache accounting.** In the `model call` lines of a run with a long conversation, note whether `cache_read` and `cache_write_5m` are ever non-zero. `FACT:` yes or no; if no, whether the Activity page shows cached tokens (then Fugaro over-charges, which is the safe side).
 6. **⚠ CONFIRM, the credit limit and a halt (optional).** Set `budget.per_run_usd` low enough that the run halts: it must end `halted (run_cap)` with a draft PR, and the OpenRouter Activity page must show no call after the halt. Restore the cap.
 7. **Set real prices.** Put the real prices and your account's fee into the local config (`model_prices` for the model, `route_fee_pct` on the provider), `fugaro init --repo .` again from the sandbox's checkout, and run `fugaro budget prices`: the row now says `VERIFIED` `yes` (an override replaces the placeholder) and the warning is gone. Run the task once more and compare the charge with the Activity page to the cent.
@@ -684,6 +701,7 @@ M10 sends a run's coder to a non-Anthropic model (design `docs/design/m10-multi-
 | Claude Code features that broke (beta headers, thinking, tool calls, background model) | |
 | Cache fields ever non-zero | |
 | Fields refused on the route allowlist: `context_management` (clear_thinking / clear_tool_uses), top-level `cache_control`, `output_format`, `speed`, `service_tier`, `inference_geo`, `container`, `mcp_servers` | |
+| First call reaches OpenRouter at all, now that the runner disables thinking/context_management for a provider-model stage; whether the pinned 2.1.283 image sends the same shape as the 2.1.296 measured; OpenRouter's answer to the mid-conversation `"role":"system"` message item (unverified, gateway does not validate `role`) | |
 | Run id, PR id, cost, `Route:`, `Reported:` against the Activity page | |
 | `first_line_review: auto` ran (`tier: first` then senior) | |
 | Refusals (not listed, `oauth`) messages | |
@@ -738,7 +756,7 @@ Everything about M11's `init`, `doctor`, `update-skills`, the mirror and the plu
 7. `fugaro init --create-project --gcp-project <p> --name <name> --region us-east5 --firebase <p> --budget-mode observe --plan-only`: the stage list prints, nothing is created, exit 0. Preflight reads of a project that does not exist yet may report it: record what it prints. Count every flag you had to remember and every prompt, for the friction log's measure.
 8. The same without `--plan-only`, adding `--link-billing <ACCOUNT_ID>` (and `--parent organizations/<n>` if you have an organization, `--display-name`). Expect: separate typed confirmations that show the project ID (and parent), and the billing account; `fugaro init --yes ...` alone creates nothing and links nothing (try it first on a different unused ID, expect exit 1 and no project: `gcloud projects describe <other-id>` is not found). Record: `projects.create` and `addFirebase` timing and any 403, organization-policy or quota text (it must be surfaced verbatim), whether Firebase and billing propagated without a rerun, and the exact error for an ID that is taken. Without `--link-billing` the run prints the one `gcloud billing projects link` line and stops: do that variant once on a second throwaway ID if you want it.
 9. The converge continues: installation, Firebase backend (type each name), `images` (below), `installation-2` (the history job), then `secrets` (below). Record each stage's state and the total number of manual rounds. Then `fugaro init` again: every stage `done` and `No changes`, exit 0.
-10. **The mirror, against the real registries.** The `images` stage copies `ghcr.io/dimipaun/fugaro-history:<version>` and, with `--base go` or a checkout whose `fugaro.yaml` names it, `fugaro-go`. Expect the size and cost lines, its own confirmation, no Docker needed. Compare: `docker buildx imagetools inspect ghcr.io/dimipaun/fugaro-go:<version>` (the source is an index) against `gcloud artifacts docker images list us-east5-docker.pkg.dev/<p>/fugaro-base --include-tags` (the destination tag names the source's `linux/amd64` manifest, so its digest is that manifest's, not the index's: record both and what init printed). Record: whether the anonymous ghcr token and blob redirect worked, whether Artifact Registry accepted the Bearer upload (POST, PATCH, PUT) and its `Location`, the first-upload 403 text if you lack the writer role, and the time. Then: a rerun says `No changes` and sends nothing; `--expect-digest go=sha256:0000000000000000000000000000000000000000000000000000000000000000` is refused; `docker logout ghcr.io` then `docker manifest inspect ghcr.io/dimipaun/fugaro-go:<version>` works (the packages are public: if not, the one-time step in [release.md](release.md) is outstanding); a hand-pushed different `history:latest` is refused without `--replace-image`. A derived-image build (`fugaro image build` in the sandbox) and the history job (`gcloud run jobs execute fugarohist --region us-east5 --project <p> --wait`) both pull from `fugaro-base` and succeed.
+10. **The mirror, against the real registries.** The `images` stage copies `ghcr.io/dimipaun/fugaro-history:<version>` and, with `--base base` or a checkout whose `fugaro.yaml` implies it, `fugaro-base`. Expect the size and cost lines, its own confirmation, no Docker needed. Compare: `docker buildx imagetools inspect ghcr.io/dimipaun/fugaro-base:<version>` (the source is a multi-platform index) against `gcloud artifacts docker images list us-east5-docker.pkg.dev/<p>/fugaro-base --include-tags` (the destination tag names the source's `linux/amd64` manifest, so its digest is that manifest's, not the index's: record both and what init printed). Record: whether the anonymous ghcr token and blob redirect worked, whether Artifact Registry accepted the Bearer upload (POST, PATCH, PUT) and its `Location`, the first-upload 403 text if you lack the writer role, and the time. Then: a rerun says `No changes` and sends nothing; `--expect-digest base=sha256:0000000000000000000000000000000000000000000000000000000000000000` is refused; `docker logout ghcr.io` then `docker manifest inspect ghcr.io/dimipaun/fugaro-base:<version>` works (the packages are public: if not, the one-time step in [release.md](release.md) is outstanding); a hand-pushed different `history:latest` is refused without `--replace-image`. A derived-image build (`fugaro image build` in the sandbox) and the history job (`gcloud run jobs execute fugarohist --region us-east5 --project <p> --wait`) both pull from `fugaro-base` and succeed.
 11. **Default accounts.** `gcloud services enable compute.googleapis.com --project <p>`, then `fugaro doctor`: the `default-service-accounts` check names any default account holding a primitive role and prints the one-line fix. Record whether the default Compute account exists on the new project and whether it holds `roles/editor` (design §14 item 6). Run the printed fix yourself and `fugaro doctor` again: it passes.
 
 **C. Secrets, on a real terminal.**
@@ -929,6 +947,34 @@ Expect the four addresses under `module.firebase.`.
 
 **Restore.** Nothing to restore beyond `git checkout -- .claude/settings.json` if you do not want the pin.
 
+## Check 32: the runs bucket's launcher grants (installation fugaro, sandbox repository only, run by you; USER-RUN, NOT RUN)
+
+**No step below has been run; nothing here is a claim that it works.** The 0.7.0 bucket hardening ([design/bucket-iam.md](design/bucket-iam.md)) gives launchers who are not operators `roles/storage.objectViewer` on the runs bucket and `roles/storage.objectUser` under `resource.name.startsWith("projects/_/buckets/<bucket>/objects/runs/")`. Items V1 to V5 and V8 of the design are unverified against real GCS.
+
+**Run it on the `fugaro` installation (GCP project `fugaro-dev`), where the sandbox repository `edgeappinc/fugarosandbox` now lives and where you are the only launcher and operator, NEVER on `belong` (EdgeWeb's and EdgeServer's installation, whose launchers the apply would change).** The apply in step 2 changes the runs bucket's policy for everyone in that installation: in `fugaro` that is only you and the test identity. Touch only the sandbox repository's `runs/` objects and `fugaro-live-*` objects. Never EdgeWeb's or EdgeServer's. In this check `<p>` is `fugaro-dev` (the runs bucket is `gs://fugaro-runs-fugaro-dev`).
+
+1. Record `fugaro version`, the date, and `gcloud storage buckets get-iam-policy gs://fugaro-runs-<p> --format=json` (the count of bindings with a `condition`: V3).
+2. **⚠ CONFIRM** in your own terminal, add a second identity you control (a test Google account, or a service account you can impersonate) as a launcher only: `fugaro init --launcher <you> --launcher <test identity> --operator <you>`. Read the plan and the `bucket access (0.7.0)` banner, then type the name. Record the apply's output, and step 1's command again (V3: one new conditional binding, whatever the number of launchers).
+3. As the test identity (`gcloud auth application-default login` with it, or `--impersonate-service-account`):
+   - `gcloud storage cp` a file to `gs://fugaro-runs-<p>/runs/<sandbox slug>/fugaro-live-iam/x`, overwrite it, then remove it. All succeed (V1).
+   - The same to `fugaro/fugaro-live-iam`, `builds/<sandbox slug>/fugaro-live-iam`, `cache/<sandbox slug>/fugaro-live-iam` and `locks/<sandbox slug>/fugaro-live-iam`. Each gets 403 (V1).
+   - `gcloud storage ls gs://fugaro-runs-<p>/runs/` and `gcloud storage cat gs://fugaro-runs-<p>/fugaro/project.json` succeed (V1, list and get).
+   - `fugaro run` a trivial task on the sandbox, then `fugaro cancel` it. Both work (V2: the claim's create-if-absent, its generation-matched release, the cancel marker, the token object).
+   - `fugaro recipes publish` of a throwaway recipe named `fugaro-live-iam` is refused with "needs the operator role" and exit 1 (V8). Nothing is written.
+   - `fugaro doctor`: `runs-bucket-iam` is ok ("writes only runs/") (V4).
+4. As yourself (operator): `fugaro doctor` shows `runs-bucket-iam` ok. `gcloud storage buckets get-iam-policy` shows the launcher binding exactly as `gcp.LauncherBucketCondition` spells it.
+5. **Propagation (V5).** Before step 2, as the test identity with the old grant, start a loop writing `fugaro/fugaro-live-iam` every 10 s. Record how long writes keep succeeding after the apply.
+
+**FACT lines to record:**
+- the version;
+- the conditional-binding count before and after;
+- each 403's exact text;
+- the propagation time;
+- the refusal text of step 3;
+- doctor's lines.
+
+**Restore.** Remove the test identity: `fugaro init --launcher <you> --operator <you>`, and read the plan (it deletes that member's two grants; pass `--allow-delete` for each, as the refusal prints). Then `gcloud storage rm` every `fugaro-live-iam` object.
+
 ## Check 33: a vendor's own endpoint (sandbox only, run by you; optional; USER-RUN, NOT RUN)
 
 **No step below has been run; nothing here is a claim that it works.** Check 25 settles OpenRouter; this is the same question for a vendor's own Anthropic-compatible endpoint (`docs/multi-model.md`, "Direct to the vendor", design `generic-tool.md` §6, G18): whether it accepts the gateway's forwarded request bodies byte for byte and reports usage the way the gateway reads it. **Optional**: skip it if you only route through OpenRouter.
@@ -940,6 +986,48 @@ Expect the four addresses under `module.firebase.`.
 3. **Clean up.** Decline the sandbox PR this check opened and delete its branch (Check 24's "Clean up").
 
 **Restore.** Revoke the vendor key if one was created for this check alone, and remove the `providers.<name>` entry (or its `allow_data_to` line) from the local project config if you do not want to keep it.
+
+## Check 34: Cloud Run Jobs execution overrides cannot carry a secret reference (no project needed; run by you; NOT RUN)
+
+Named Claude accounts (`docs/design/named-oauth-tokens.md` §4) are built on one job variant per allowed account (option B), rejecting option D — a single job whose per-execution override names which secret to mount — because nothing in this repository's code or its vendored `run/v2` client shows that Cloud Run execution overrides can carry a secret reference. That is evidence about the generated bindings, not about the live `run.googleapis.com` API surface, so the design calls it unverified (§7, U1).
+
+1. Read the current `run.googleapis.com` v2 REST reference for `jobs.run`'s request body (`Overrides`, `ContainerOverride`) directly from Google's own published API documentation, not this repository's vendored client.
+2. Separately, run `gcloud run jobs execute --help` with any real `gcloud` installation (no project needed) and read its own description of the override flags.
+3. **FACT:** whether either source documents a secret-reference field on an execution override, quoting the exact field name if one exists.
+4. If one exists, also check Google's IAM documentation (not a live call) for whether a job's service account needs `secretAccessor` granted on that secret beforehand, or whether Cloud Run grants it implicitly for the one execution.
+
+**Paste back:** the exact quoted text (or confirmed absence) from both sources, and the IAM finding if a field exists. No GCP project, billing or sandbox resource is touched by this check.
+
+## Check 35: `claude setup-token` and multi-account switching (your own machine; run by you; NOT RUN)
+
+The setup skill (`plugin/skills/setup/SKILL.md`, "Named Claude accounts") and `reference/decisions.md` currently say the exact sequence for minting a *second* Claude account's `claude setup-token` value is not yet verified (design §7, U2). This check settles it, so the skill text can quote the real steps instead of a placeholder.
+
+1. On a machine already signed in to one Claude account through the `claude` CLI (`claude setup-token` already run once for it), run `claude setup-token` again and record exactly what happens: does it silently reuse the signed-in account, prompt to choose one, or refuse until you sign out?
+2. If it needs a sign-out step first, record the exact command(s) or UI steps (for example `claude logout`, a flag, or an OS keychain/credential action), and whether minting the *first* account's token again afterward needs signing back in.
+3. If step 1 shows no in-place way to choose an account, repeat it with a separate `HOME`/config profile for the `claude` CLI, to confirm that is a working fallback, and record the exact environment variable or flag used.
+
+**Paste back:** the exact transcript of both `claude setup-token` runs (never a token value), the Claude Code version and the OS. Once answered, replace the "not yet verified" sentence in `plugin/skills/setup/SKILL.md`'s "Named Claude accounts" paragraph and `reference/decisions.md`'s topic 2 with the real sequence this check found — never invent one ahead of this check.
+
+## Check 36: per-project Cloud Run job count comfort (sandbox project; run by you; NOT RUN)
+
+No code in this repository reads or enforces a Cloud Run jobs-per-project/region ceiling (design §4, "why a variant per name, not per name-and-workflow combinatorially out of control"). Named accounts multiply the (workflow × allowed account) job count, so this confirms there is comfortable headroom at the installation's intended scale (design §7, U3).
+
+1. In `$FUGARO_LIVE_GCP_PROJECT`, read Google's current published Cloud Run jobs-per-project/region quota (the Quotas page in the console, or `gcloud alpha services quota list --service=run.googleapis.com --consumer=projects/$FUGARO_LIVE_GCP_PROJECT` where available) and record the limit.
+2. Compare it against the installation's intended total job count (workflows × accounts, plus one daily-check job per workflow), with margin for repositories the installation expects to add.
+
+**Paste back:** the quota figure, the command or page used to read it, and the installation's intended job count. No job is created, changed or deleted by this check.
+
+## Check 37: the real error text for an expired or revoked oauth token (sandbox only; run by you; NOT RUN)
+
+The runner's stage-failure path is unchanged by named accounts (design §6f), but the exact text Claude Code prints for an expired or revoked `CLAUDE_CODE_OAUTH_TOKEN`, and how `fugaro diagnose` renders it, has never been recorded (design §7, U4).
+
+1. **Cleanup first.** Before storing anything, note the sandbox repository's current `claude-oauth-token` secret's version so it can be restored, and register restoring it as your own cleanup step (ahead of any side effect, as every other check in this file does).
+2. Store a syntactically valid but revoked or expired token as the sandbox's `claude-oauth-token` secret: mint one with `claude setup-token`, revoke it from the Claude account's own settings (or let it expire), then `fugaro secrets set claude-oauth-token --repo $FUGARO_LIVE_REPO`. Never use a fabricated string: this check is about Claude Code's response to a real but dead credential, not Fugaro's own shape checks.
+3. Launch a minimal sandbox run (as small as check 13's, `--total-timeout` kept short) and let it fail.
+4. **FACT:** the exact stage-failure text the run's log shows, and the exact text `fugaro diagnose` prints for the same run.
+5. **Restore** the sandbox's working token immediately (the version noted in step 1), and confirm a rerun succeeds.
+
+**Paste back:** both exact `FACT` texts (never a token value, before or after revocation), and confirmation the restore succeeded. Once answered, `docs/design/named-oauth-tokens.md` §6f and any user-facing doc that currently calls this unverified can quote the real text.
 
 ## Not covered by these tests (manual)
 

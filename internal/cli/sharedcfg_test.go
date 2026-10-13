@@ -404,8 +404,8 @@ func TestPublishSharedSelfCheck(t *testing.T) {
 		want   string
 	}{
 		"base image outside the registry": {func(lc *localcfg.Config) {
-			lc.BaseImages = map[string]string{"web-node": "ghcr.io/dimipaun/fugaro-web-node:1"}
-		}, "base_images.web-node"},
+			lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:1"}
+		}, "base_images.base"},
 		"separate Firebase project": {func(lc *localcfg.Config) {
 			lc.Budget = &localcfg.Budget{Mode: "observe", RTDBURL: "https://my-fp1-default-rtdb.firebaseio.com", FirebaseProject: "my-fp1", TokenSigner: "fugaro-token-signer@my-fp1.iam.gserviceaccount.com"}
 		}, "separate Firebase project"},

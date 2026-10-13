@@ -7,8 +7,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 )
 
-// VerdictSchema is passed to claude --json-schema for review stages.
-const VerdictSchema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["ship","changes"]},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string"},"file":{"type":"string"},"summary":{"type":"string"}},"required":["summary"]}}},"required":["verdict","findings"]}`
+// VerdictSchema is passed to claude --json-schema for review stages. keep is
+// read only for a pick run (reviewmode.go): the pull request number to
+// keep, among the ones the prompt listed.
+const VerdictSchema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["ship","changes"]},"findings":{"type":"array","items":{"type":"object","properties":{"severity":{"type":"string"},"file":{"type":"string"},"summary":{"type":"string"}},"required":["summary"]}},"keep":{"type":"integer"}},"required":["verdict","findings"]}`
 
 // Finding is one issue a review asks to fix.
 type Finding struct {
@@ -21,6 +23,9 @@ type Finding struct {
 type Verdict struct {
 	Verdict  string    `json:"verdict"`
 	Findings []Finding `json:"findings"`
+	// Keep is a pick run's chosen pull request number (reviewmode.go); 0
+	// for any other review stage.
+	Keep int `json:"keep,omitempty"`
 }
 
 var fencedJSONRE = regexp.MustCompile("(?s)```json\\s*\\n(.*?)\\n```")

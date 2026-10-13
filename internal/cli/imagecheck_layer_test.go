@@ -129,7 +129,7 @@ func TestCheckJobResolvesOverItsCopy(t *testing.T) {
 // which resolves fine with no project layer at all (ruling, PR #258 item
 // 1b): a repository whose project simply never published one.
 const selfSufficientAnchored = "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: github }\nagent: { auth: api-key }\nworkflows:\n" +
-	"  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	"  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 
 // Review fix (PR #258, item 1): an anchored, self-sufficient file (its
 // own workflows:) with no copy is a legitimate state (decision L6: a
@@ -161,7 +161,7 @@ func TestCheckJobWarnsWhenASelfSufficientFileHasNoCopy(t *testing.T) {
 // unanchoredLegacy has no gcp_project: at all: no project layer applies to
 // it (decision L9), old-style, full workflows: of its own.
 const unanchoredLegacy = "version: 1\nproject: legacy\ngit: { provider: github }\nagent: { auth: api-key }\nworkflows:\n" +
-	"  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	"  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 
 // Review fix (PR #258, item 2): jobLayerOptions must run only for an
 // anchored repository. An unanchored repository's copy path (which does

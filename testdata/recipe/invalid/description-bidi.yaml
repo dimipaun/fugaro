@@ -1,0 +1,5 @@
+version: 1
+name: description-bidi
+description: "evil ‮ txt"
+steps:
+  - review: {}

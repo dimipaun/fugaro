@@ -23,7 +23,7 @@ func TestRefreshPreflightUsesDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.repo != "acme/app" || p.root != r.root || strings.Join(p.kinds, ",") != "go,web-node" {
+	if p.repo != "acme/app" || p.root != r.root || strings.Join(p.kinds, ",") != "base" {
 		t.Fatalf("plan %+v", p)
 	}
 }
@@ -54,8 +54,8 @@ func TestRefreshRerunLineAndOnPlan(t *testing.T) {
 }
 
 func TestRefreshPlanCurrent(t *testing.T) {
-	cur := managedRef("go", "0.5.1")
-	p := &refreshPlan{kinds: []string{"go"}, want: map[string]string{"go": cur}, lc: &localcfg.Config{BaseImages: map[string]string{"go": cur}}}
+	cur := managedRef("base", "0.5.1")
+	p := &refreshPlan{kinds: []string{"base"}, want: map[string]string{"base": cur}, lc: &localcfg.Config{BaseImages: map[string]string{"base": cur}}}
 	if !p.current() {
 		t.Fatal("a recorded base and no build is not current")
 	}
@@ -64,7 +64,7 @@ func TestRefreshPlanCurrent(t *testing.T) {
 		t.Fatal("a build to run is current")
 	}
 	p.builds = nil
-	p.lc.BaseImages["go"] = managedRef("go", "0.5.0")
+	p.lc.BaseImages["base"] = managedRef("base", "0.5.0")
 	if p.current() {
 		t.Fatal("a base to copy is current")
 	}
@@ -137,7 +137,7 @@ func TestRefreshCustomBaseRefusalRerunLine(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
 	r := newAnchorModeRig(t, refreshYAML, true)
-	r.appendConfig(t, "base_images: {go: "+refreshHost+"/fugaro-base/fugaro-go:dev-abc}\n")
+	r.appendConfig(t, "base_images: {base: "+refreshHost+"/fugaro-base/fugaro-base:dev-abc}\n")
 	rerun := "fugaro upgrade --yes " + quoteWord("/work/my checkout")
 	_, err := refreshPreflight(t.Context(), refreshOptions{workflows: []string{"api"}, rerun: rerun}, &initOptions{})
 	if err == nil || !strings.Contains(err.Error(), "then rerun "+rerun+". To keep your own base image, rebuild from it with fugaro image build instead") {
@@ -177,17 +177,17 @@ func TestRefreshOnPlanGetsACopy(t *testing.T) {
 		wantKinds, wantBuilds, wantLC = strings.Join(p.kinds, ","), strings.Join(p.builds, ","), fmt.Sprint(p.lc.BaseImages)
 		p.kinds[0] = "mutated"
 		p.builds = append(p.builds, "mutated")
-		p.want["go"] = "mutated"
-		p.lc.BaseImages = map[string]string{"go": "mutated"}
+		p.want["base"] = "mutated"
+		p.lc.BaseImages = map[string]string{"base": "mutated"}
 		p.lc.Name = "mutated"
 	}})
 	if err == nil || real == nil {
 		t.Fatalf("err %v, plan %v", err, real)
 	}
-	if got := strings.Join(real.kinds, ","); got != wantKinds || got != "go,web-node" {
+	if got := strings.Join(real.kinds, ","); got != wantKinds || got != "base" {
 		t.Errorf("kinds %q, want %q", got, wantKinds)
 	}
-	if got := strings.Join(real.builds, ","); got != wantBuilds || real.want["go"] == "mutated" ||
+	if got := strings.Join(real.builds, ","); got != wantBuilds || real.want["base"] == "mutated" ||
 		fmt.Sprint(real.lc.BaseImages) != wantLC || real.lc.Name == "mutated" {
 		t.Errorf("the run's plan changed: builds %q, want %v, lc %v %q", got, real.want, real.lc.BaseImages, real.lc.Name)
 	}

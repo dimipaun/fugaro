@@ -88,7 +88,7 @@ func refreshReload(ctx context.Context, p *refreshPlan) (*refreshTarget, error) 
 	for _, w := range cfg.Workflows {
 		kind := w.BaseKind()
 		if specLC.BaseImages[kind] == "" {
-			if specLC.BaseImages[kind], err = image.BaseRef(kind, Version); err != nil {
+			if specLC.BaseImages[kind], err = image.BaseRef(Version); err != nil {
 				return nil, userErr("%v", err)
 			}
 		}
@@ -247,7 +247,22 @@ func (r *initRun) refreshCloneJobs(ctx context.Context, p *refreshPlan, t *refre
 		return err
 	}
 	owner := infra.CheckJobOwner{Repo: t.spec.Name, Label: t.spec.Label}
+	// Every job of a clone workflow is moved, not only the default
+	// account's: with named Claude accounts (gcp.WorkflowVariant, design
+	// docs/design/named-oauth-tokens.md §4) one fugaro.yaml workflow has a
+	// job per account, each labelled with its own variant key and each
+	// pinned to base_images.base itself (unlike a baked workflow's jobs,
+	// which share the derived image's :latest tag and so move together on
+	// one rebuild).
+	var jobs []string
 	for _, wf := range clones {
+		for _, key := range slices.Sorted(maps.Keys(t.spec.Workflows)) {
+			if key == wf || t.spec.Workflows[key].Name == wf {
+				jobs = append(jobs, key)
+			}
+		}
+	}
+	for _, wf := range jobs {
 		ws := t.spec.Workflows[wf]
 		u, err := infra.PlanWorkflowJob(ctx, c, t.lc.GCPProject, t.lc.Region, ws.Job, wf, newImage, owner)
 		switch {

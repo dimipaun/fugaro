@@ -12,7 +12,7 @@ import (
 )
 
 const validateYAML = "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: api-key\n%s" +
-	"workflows:\n  app: { base: go, commands: { build: go build ./..., test: go test ./... } }\n"
+	"workflows:\n  app: { commands: { build: go build ./..., test: go test ./... } }\n"
 
 func validateDir(t *testing.T, agentLines string, files map[string]string) (validateOutput, error) {
 	t.Helper()
@@ -48,6 +48,29 @@ func TestRecipeDirNameMismatch(t *testing.T) {
 func TestRecipeDirInvalidRecipe(t *testing.T) {
 	doc, err := validateDir(t, "", map[string]string{".fugaro/recipes/loop.yaml": "version: 1\nname: loop\nsteps:\n  - first_line: {}\n"})
 	if ExitCode(err) != ExitUserError || !has(doc.Problems, ".fugaro/recipes/loop.yaml", "must end with a review step") {
+		t.Fatalf("doc = %+v, err = %v", doc, err)
+	}
+}
+
+// TestValidateAutofixNeedsFixCommand: the recipe the file selects (here, the
+// default) has a check step with autofix: true, but the workflow has no
+// commands.fix: `fugaro validate` reports it, the same refusal bootstrap's
+// checkGateCommands makes at launch.
+func TestValidateAutofixNeedsFixCommand(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	dir := t.TempDir()
+	const yaml = "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: api-key\n" +
+		"workflows:\n  app: { commands: { build: go build ./..., test: go test ./..., lint: golangci-lint run } }\n"
+	testutil.WriteFiles(t, dir, map[string]string{
+		"fugaro.yaml":                  yaml,
+		".fugaro/recipes/default.yaml": "version: 1\nname: default\nsteps:\n  - check: { command: lint, autofix: true }\n  - review: {}\n",
+	})
+	out, _, err := execute(t, "validate", "--json", filepath.Join(dir, "fugaro.yaml"))
+	var doc validateOutput
+	if jerr := json.Unmarshal([]byte(out), &doc); jerr != nil {
+		t.Fatalf("output %q: %v", out, jerr)
+	}
+	if ExitCode(err) != ExitUserError || !has(doc.Problems, "workflows.app.commands", "autofix: true but no commands.fix") {
 		t.Fatalf("doc = %+v, err = %v", doc, err)
 	}
 }
@@ -89,8 +112,8 @@ func TestValidateAliasesReviewerForRecipe(t *testing.T) {
 	if ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.models.reviewer") {
 		t.Fatalf("no recipe: exit %d: %s", ExitCode(err), out)
 	}
-	// With claude-solo (reviewer: coder) the reviewer is the coder.
-	path = budgetProject(t, ceiling, agent+"\n  recipe: claude-solo")
+	// With solo (reviewer: coder) the reviewer is the coder.
+	path = budgetProject(t, ceiling, agent+"\n  recipe: solo")
 	if out, err = validateProblems(t, path); err != nil || strings.Contains(out, "agent.models.reviewer") {
 		t.Fatalf("catalog recipe: %v: %s", err, out)
 	}
@@ -228,12 +251,27 @@ func TestValidateProjectRecipeAnnotatesCoderProblems(t *testing.T) {
 }
 
 func TestValidateWarnsCatalogRecipeMayBeShadowed(t *testing.T) {
-	doc, _ := validateDir(t, "  recipe: claude-solo\n", map[string]string{})
+	doc, _ := validateDir(t, "  recipe: solo\n", map[string]string{})
 	if !has(doc.Warnings, "agent.recipe", "a project recipe of this name takes precedence") {
 		t.Fatalf("warnings = %+v", doc.Warnings)
 	}
-	doc, _ = validateDir(t, "  recipe: claude-solo\n", map[string]string{".fugaro/recipes/claude-solo.yaml": "version: 1\nname: claude-solo\nsteps:\n  - review: {}\n"})
+	doc, _ = validateDir(t, "  recipe: solo\n", map[string]string{".fugaro/recipes/solo.yaml": "version: 1\nname: solo\nsteps:\n  - review: {}\n"})
 	if has(doc.Warnings, "agent.recipe", "takes precedence") {
 		t.Fatalf("a repository recipe wins over any project one: %+v", doc.Warnings)
+	}
+}
+
+// TestValidateWarnsRenamedAgentRecipe: agent.recipe naming a 0.6 catalog
+// recipe 0.7.0 retired (recipe.Renamed) warns with its replacement, the same
+// message fugaro run's image gate refuses with (TestRenamedRecipeNamesTheReplacement).
+// A repository recipe of that exact name still wins, with no such warning.
+func TestValidateWarnsRenamedAgentRecipe(t *testing.T) {
+	doc, _ := validateDir(t, "  recipe: cheap-loop-senior\n", map[string]string{})
+	if !has(doc.Warnings, "agent.recipe", "cheap-loop-senior was renamed in 0.7.0: use standard") {
+		t.Fatalf("warnings = %+v", doc.Warnings)
+	}
+	doc, _ = validateDir(t, "  recipe: cheap-loop-senior\n", map[string]string{".fugaro/recipes/cheap-loop-senior.yaml": "version: 1\nname: cheap-loop-senior\nsteps:\n  - review: {}\n"})
+	if has(doc.Warnings, "agent.recipe", "was renamed") {
+		t.Fatalf("a repository recipe of the renamed name wins over the rename: %+v", doc.Warnings)
 	}
 }

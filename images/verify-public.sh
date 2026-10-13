@@ -1,12 +1,19 @@
 #!/bin/sh
-# verify-public.sh REF... proves every published image reference can be pulled
-# by someone with no registry login and has a linux/amd64 build, which is what
-# `fugaro init` (the mirror) and a plain `docker pull` need. It runs docker with
-# an empty config directory so no credentials can leak in, prints each image's
-# digest, and exits 1 naming every reference that fails. A new ghcr.io package
-# is private until the owner makes it public once on GitHub (docs/release.md).
+# verify-public.sh [--arm64] REF... proves every published image reference can
+# be pulled by someone with no registry login and has a linux/amd64 build,
+# which is what `fugaro init` (the mirror) and a plain `docker pull` need.
+# --arm64 also requires a linux/arm64 entry in a multi-platform index, for
+# `fugaro-base`. It runs docker with an empty config directory so no
+# credentials can leak in, prints each image's digest, and exits 1 naming
+# every reference that fails. A new ghcr.io package is private until the
+# owner makes it public once on GitHub (docs/release.md).
 set -eu
-[ "$#" -gt 0 ] || { echo "usage: verify-public.sh REF..." >&2; exit 2; }
+arm64=false
+if [ "${1:-}" = --arm64 ]; then
+  arm64=true
+  shift
+fi
+[ "$#" -gt 0 ] || { echo "usage: verify-public.sh [--arm64] REF..." >&2; exit 2; }
 anon=$(mktemp -d)
 trap 'rm -rf "$anon"' EXIT
 export DOCKER_CONFIG=$anon
@@ -25,8 +32,18 @@ for ref in "$@"; do
         bad=1
         continue
       fi
+      if [ "$arm64" = true ] && ! printf '%s' "$manifest" | tr -d ' \n\t' | grep -q '"architecture":"arm64","os":"linux"\|"os":"linux","architecture":"arm64"'; then
+        echo "verify-public: $ref has no linux/arm64 entry" >&2
+        bad=1
+        continue
+      fi
       ;;
     *)
+      if [ "$arm64" = true ]; then
+        echo "verify-public: $ref is not a multi-platform index (--arm64 needs linux/amd64 and linux/arm64)" >&2
+        bad=1
+        continue
+      fi
       # A single-image manifest names no platform: pulling it for amd64 is the proof.
       if ! out=$(docker pull --quiet --platform linux/amd64 "$ref" 2>&1); then
         echo "verify-public: $ref is not pullable for linux/amd64: $out" >&2

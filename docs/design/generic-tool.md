@@ -111,7 +111,7 @@ It is read-only and needs no new IAM: launchers can already read the bucket and 
 
 **Scope.** It is a workflow key, `workflows.<n>.checkout`, with scopes `project` (through a profile) and `repo` in layered config's scope table. It is not overridable per task: a task cannot choose its job's image.
 
-**Unverified.** That a Cloud Run job's service agent can pull the installation's `fugaro-base` registry image for a workflow job. Today only check jobs and builds read that registry. The plan's live check (Check 32, user-run, sandbox) confirms it before release. Also unverified: the start-up cost of `mise install` (Node is about 30 MB, Temurin about 200 MB) on every run, which Check 32 also measures.
+**Unverified.** That a Cloud Run job's service agent can pull the installation's `fugaro-base` registry image for a workflow job. Today only check jobs and builds read that registry. The plan's live check (Check 38, user-run, sandbox) confirms it before release. Also unverified: the start-up cost of `mise install` (Node is about 30 MB, Temurin about 200 MB) on every run, which Check 38 also measures.
 
 **Later (spec):** choosing dynamically by repository size or setup time. Not designed.
 
@@ -197,7 +197,7 @@ Already shipped, in the order repository, then project, then catalog, which is t
   - It then posts one comment through `gitprov.Provider.Comment` (it exists today): the verdict and findings, redacted, capped at 60 KiB.
   - It never pushes and never edits the PR. The agent's environment has no git token, exactly as a follow-up's has none (`runner.go:953`).
   - The outcome is a new value, `reviewed`.
-  - **A PR whose head is in a fork is refused** unless the base branch's `fugaro.yaml` sets `review.allow_forks: true`. Reviewing means the agent can run that code next to the job's secrets (SECURITY.md).
+  - **Review mode is trusted-author-only** (owner ruling 2026-10-12): a pull request is reviewed only when its author is the repository's owner, a member, a collaborator, listed in `followup.trusted`, or Fugaro's own identity on a PR it opened itself — fork or not. A trusted author's own fork is reviewed only when the fork's owner is that same author. Bitbucket, which has no `author_association`, accepts only same-repository branches and refuses every fork. Reviewing means the agent can run that code next to the job's secrets (SECURITY.md).
 - **best-of-N (G13).** Launch-level.
   - `fugaro run --attempts N` (2 to 4) launches N independent runs of the same task and recipe, with one batch label `bestof-<first run id>`.
   - Each attempt is an ordinary run with its own branch and draft-or-ready PR.
@@ -315,7 +315,8 @@ The defaults are flags, not config keys. Veto alternative: local-config keys `wa
 - **Layered config Phase 1 (0.6.0) merges first.** Its scope table (`internal/config/scope.go`) and project layer (`layer.go`) must list the new keys `workflows.<n>.checkout`, `commands.lint`, `commands.fix` and `review.allow_forks`. Its Task 17 edits `ls.go`, so it must land before the rename.
 - **Base image Group 2** (`base-kind`, Tasks 9 to 14) edits `internal/config/config.go`, `validate.go`, `schemas/fugaro.schema.json` and `testdata/config`. The tasks here that add `fugaro.yaml` keys (the commands, `checkout`, `review.allow_forks`) start after that group merges, to avoid three-way conflicts in the schema and the corpus. `checkout: clone` also needs the `base` kind (Task 13).
 - **The release freeze** starts at base-image Group 2's merge. These groups merge inside it. No release is cut between them.
-- **`bucket-iam.md`** owns every IAM change. Nothing here grants a role. `checkout: clone`'s image pull may need one (unverified, Check 32): if it does, that grant is handed to the IAM plan, not added here.
+- **`review.allow_forks`, named in the two merge-ordering notes above, was removed outright (owner ruling 2026-10-12)**: review mode is trusted-author-only instead, with no opt-in flag for an untrusted author's pull request (section 3.6, G12; SECURITY.md).
+- **`bucket-iam.md`** owns every IAM change. Nothing here grants a role. `checkout: clone`'s image pull may need one (unverified, Check 38): if it does, that grant is handed to the IAM plan, not added here.
 - **Release notes:** the plan's last task adds sections to `docs/releases/v0.7.0.md`, which base-image Task 22 creates. It also adds the operator steps: rerun `fugaro init` for the new RTDB keys, `fugaro ls` is gone, and the old recipe names are gone.
 
 **Sizing.** 21 implementation tasks in 0.7.0, plus one full-suite task per group and the release-notes task (plan Tasks 1 to 23):
@@ -335,9 +336,9 @@ Plus six tasks for 0.8.0 (plan Tasks 24 to 29): the cost preview (Group F, moved
 **Unverified, each with the check that settles it:**
 - Docker in gen-2, rootless (Check 31A).
 - gen-2 and VM cold starts (Check 31B and 31C).
-- A workflow job pulling `fugaro-base` directly, and the cost of `mise install` at start (Check 32).
+- A workflow job pulling `fugaro-base` directly, and the cost of `mise install` at start (Check 38).
 - Vendor Anthropic-compatible endpoints (Check 33).
-- GitHub's `refs/pull/N/head` fetch with an installation token for a fork PR. The docs say it works; it is verified by the review-only task's fake only, so the owner verifies it in the sandbox before using `review-only` on a fork with `allow_forks`.
+- GitHub's `refs/pull/N/head` fetch with an installation token for a fork PR. The docs say it works; it is verified by the review-only task's fake only, so the owner verifies it in the sandbox before relying on `review-only` for a trusted author's own fork.
 
 ## 14. Decisions
 
@@ -354,7 +355,7 @@ Plus six tasks for 0.8.0 (plan Tasks 24 to 29): the cost preview (Group F, moved
 | G9 | premium | `roles: {coder: reviewer}` | Not in the catalog |
 | G10 | test-and-fix, lint-fix | `check` gate step naming `commands.build\|test\|lint`; `autofix` runs `commands.fix`; new keys `commands.lint`, `commands.fix` | Commands in the recipe (refused: bucket text would run code) |
 | G11 | Gate passes | Run ends `succeeded`, outcome `none`, `gate: clean`, no PR | Open an empty PR saying so |
-| G12 | review-only | `mode: review`, `--pr N` any PR, comment by the runner, no git token, forks refused unless `review.allow_forks` | Allow fork PRs by default |
+| G12 | review-only | `mode: review`, `--pr N` any PR, comment by the runner, no git token, trusted-author-only (owner ruling 2026-10-12, superseding `review.allow_forks`) | Allow fork PRs by default |
 | G13 | best-of-N | `run --attempts N` (2–4) plus `pick` recipe over several PRs; no synthesis in 0.7.0 | In-run parallel sessions |
 | G14 | Self-description | New `use_when` (300 bytes), required in the catalog | Reuse `description`, raised to 300 bytes |
 | G15 | Catalog names | Spec names plus `pick`; `default` unchanged as the implicit choice; `cheap-loop-senior` and `claude-solo` removed with a "renamed" message | Keep them as entries |

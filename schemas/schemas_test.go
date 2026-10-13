@@ -89,9 +89,72 @@ func TestFugaroSchemaCorpus(t *testing.T) {
 	}
 }
 
+// schemaDescriptionAt walks file's raw JSON (not through the jsonschema
+// compiler, which drops "description") down path and returns the
+// "description" string at the end of it.
+func schemaDescriptionAt(t *testing.T, file string, path ...string) string {
+	t.Helper()
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var node any = doc
+	for _, key := range path {
+		m, ok := node.(map[string]any)
+		if !ok {
+			t.Fatalf("%s: %v: not an object at %q", file, path, key)
+		}
+		node, ok = m[key]
+		if !ok {
+			t.Fatalf("%s: %v: missing %q", file, path, key)
+		}
+	}
+	m, ok := node.(map[string]any)
+	if !ok {
+		t.Fatalf("%s: %v: not an object", file, path)
+	}
+	desc, _ := m["description"].(string)
+	return desc
+}
+
+// TestSchemaDescriptionsNameMigrationDoc pins that every removed-key
+// description in both schemas (base, image.node and image.jdk, in
+// fugaro.schema.json and in project-layer.schema.json) names
+// config.MigrationDoc, the same doc every Go-side refusal message names
+// (internal/config/validate.go, image.go, layer.go, dockerfile.go): a later
+// change to the constant, or an edit to only one of the two schema files,
+// is caught here instead of quietly drifting into a stale doc link. It also
+// pins that the doc itself exists, so the constant can never name a dead
+// file again.
+func TestSchemaDescriptionsNameMigrationDoc(t *testing.T) {
+	if _, err := os.Stat("../" + config.MigrationDoc); err != nil {
+		t.Fatalf("config.MigrationDoc names %s, which does not exist: %v", config.MigrationDoc, err)
+	}
+	for _, tc := range []struct {
+		file string
+		path []string
+	}{
+		{"fugaro.schema.json", []string{"$defs", "workflow", "properties", "base"}},
+		{"fugaro.schema.json", []string{"$defs", "workflow", "properties", "image", "properties", "node"}},
+		{"fugaro.schema.json", []string{"$defs", "workflow", "properties", "image", "properties", "jdk"}},
+		{"project-layer.schema.json", []string{"$defs", "profile", "properties", "base"}},
+		{"project-layer.schema.json", []string{"$defs", "profile", "properties", "image", "properties", "node"}},
+		{"project-layer.schema.json", []string{"$defs", "profile", "properties", "image", "properties", "jdk"}},
+	} {
+		desc := schemaDescriptionAt(t, tc.file, tc.path...)
+		if !strings.Contains(desc, config.MigrationDoc) {
+			t.Errorf("%s %v: description %q does not name config.MigrationDoc (%s)", tc.file, tc.path, desc, config.MigrationDoc)
+		}
+	}
+}
+
 func TestSchemaBudgetBlock(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
-	base := "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  s: { base: java-services, commands: { build: make, test: make } }\n"
+	base := "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  s: { commands: { build: make, test: make } }\n"
 	for _, c := range []struct {
 		budget string
 		ok     bool
@@ -196,6 +259,56 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	}
 }
 
+// TestResultSchemaOAuthAccount: a record naming a Claude OAuth account
+// (docs/design/named-oauth-tokens.md) validates; a non-string value (what a
+// hand-edited or corrupt result.json could carry) does not. config.
+// ClaudeAccount's name regex (plan Task 1) has not landed on this branch, so
+// the schema only bounds the length, not the charset; this test (and the
+// property itself) is the thing to tighten once Task 1's
+// ClaudeAccountNameRE exists.
+func TestResultSchemaOAuthAccount(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC)
+	rec := runstore.Record{Version: 1, RunID: "20261009-100000-abcd", Repo: "acme/app",
+		Status: runstore.StatusRunning, Stage: "implement", StartedAt: at, OAuthAccount: "acme-personal"}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a record with a named oauth_account: %v\n%s", err, data)
+	}
+	bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, []byte(`"oauth_account":"acme-personal"`), []byte(`"oauth_account":5`), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte(`"oauth_account":"acme-personal"`)) {
+		t.Fatalf("fixture lacks the literal this test replaces: %s", data)
+	}
+	if err := sch.Validate(bad); err == nil {
+		t.Fatal("schema accepts a non-string oauth_account")
+	}
+	// The bound: a record's account name is data the runner wrote and the
+	// display sanitises it, so the schema is lenient (a string) but bounded:
+	// 64 runes are accepted, 65 are refused.
+	for _, tc := range []struct {
+		n    int
+		want bool
+	}{{64, true}, {65, false}} {
+		long, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, []byte(`"oauth_account":"acme-personal"`), []byte(`"oauth_account":"`+strings.Repeat("a", tc.n)+`"`), 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := sch.Validate(long) == nil; got != tc.want {
+			t.Errorf("oauth_account of %d runes: schema accepts = %v, want %v", tc.n, got, tc.want)
+		}
+	}
+}
+
 func TestResultSchemaImageBlock(t *testing.T) {
 	sch := compile(t, "result.schema.json")
 	base := `{"version":1,"run_id":"20260927-100000-abcd","status":"running","stage":"bootstrap","outcome":"none","cost_usd":0,"started_at":"2026-09-27T10:00:00Z"`
@@ -242,7 +355,7 @@ func TestResultSchemaImageBlock(t *testing.T) {
 func TestFugaroSchemaReservesTheSameEnv(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	doc := func(env string) []byte {
-		return []byte("version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  server:\n    base: java-services\n" +
+		return []byte("version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  server:\n" +
 			"    commands: { build: make, test: make test }\n    secrets: [{ name: tok, env: " + env + " }]\n")
 	}
 	if err := sch.Validate(yamlInstance(t, doc("NPM_TOKEN"))); err != nil {
@@ -294,9 +407,38 @@ func TestFugaroSchemaReservesTheSameSecretNames(t *testing.T) {
 		return out
 	}
 	wf := at(doc, "$defs", "workflow")
-	names := strs(at(wf, "properties", "secrets", "items", "properties", "name", "not", "enum"))
+	// secrets[].name's "not" clause now reserves two shapes: the platform's
+	// fixed names (an enum, unchanged) and the whole claude-oauth-token-
+	// prefix, config.ClaudeOAuthTokenPrefix's namespace (a pattern, added
+	// alongside config.Validate's own refusal of it as a workflow secret —
+	// a schema/parser pair, kept aligned the same way the enum already is).
+	notClause, ok := at(wf, "properties", "secrets", "items", "properties", "name", "not").(map[string]any)
+	if !ok {
+		t.Fatalf("schema's secrets[].name.not is not an object: %v", at(wf, "properties", "secrets", "items", "properties", "name", "not"))
+	}
+	anyOf, ok := notClause["anyOf"].([]any)
+	if !ok {
+		t.Fatalf("schema's secrets[].name.not has no anyOf: %v", notClause)
+	}
+	var names []string
+	var prefix string
+	for _, c := range anyOf {
+		m, ok := c.(map[string]any)
+		if !ok {
+			t.Fatalf("anyOf entry is not an object: %v", c)
+		}
+		if e, ok := m["enum"]; ok {
+			names = strs(e)
+		}
+		if p, ok := m["pattern"].(string); ok {
+			prefix = p
+		}
+	}
 	if want := slices.Sorted(maps.Keys(config.ReservedSecrets)); !slices.Equal(names, want) {
 		t.Errorf("schema reserves secret names %v, config.ReservedSecrets has %v", names, want)
+	}
+	if want := "^" + config.ClaudeOAuthTokenPrefix; prefix != want {
+		t.Errorf("schema reserves the claude-oauth-token- prefix as %q, want %q (config.ClaudeOAuthTokenPrefix)", prefix, want)
 	}
 	providers := strs(at(doc, "properties", "git", "properties", "provider", "enum"))
 	if want := slices.Sorted(slices.Values(config.Providers)); !slices.Equal(providers, want) {
@@ -311,7 +453,7 @@ func TestFugaroSchemaReservesTheSameSecretNames(t *testing.T) {
 // are fugaro's to check.
 func TestFugaroSchemaMaxAgeAgreesWithGo(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
-	const base = "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  web:\n    base: web-node\n    commands: { build: npm run build, test: npm test }\n    rebuild: { max_age: "
+	const base = "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  web:\n    commands: { build: npm run build, test: npm test }\n    rebuild: { max_age: "
 	for _, v := range []string{`0`, `"0"`, `0d`, `0s`, `0m`, `0h`, `0h0m`, `"00"`, `1h`, `14d`, `1d12h`, `90d`,
 		`soon`, `""`, `-1h`, `2d-5h`, `"0x"`, `1`, `0d-0h`} {
 		doc := []byte(base + v + " }\n")
@@ -384,7 +526,7 @@ func TestResultSchemaFollowUp(t *testing.T) {
 func TestFugaroSchemaTrustedAgreesWithGo(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	doc := func(provider, trusted string) []byte {
-		return []byte("version: 1\nproject: aurora\ngit: { provider: " + provider + " }\nworkflows:\n  web:\n    base: web-node\n    commands: { build: npm run build, test: npm test }\nfollowup:\n  trusted: " + trusted + "\n")
+		return []byte("version: 1\nproject: aurora\ngit: { provider: " + provider + " }\nworkflows:\n  web:\n    commands: { build: npm run build, test: npm test }\nfollowup:\n  trusted: " + trusted + "\n")
 	}
 	looser := map[string]bool{
 		"github " + `[01234567]`:           true,
@@ -610,26 +752,25 @@ func TestSchemaAcceptsReviewFirstStage(t *testing.T) {
 	}
 }
 
-// The repository's own fugaro.yaml (Fugaro dogfooding itself) must pass the
-// schema, the Go validator and the checkout checks, so a base or command rename
-// can't leave it broken until a run reads it.
+// The repository's own fugaro.yaml (Fugaro dogfooding itself) still reads
+// base: go, a kind the 0.7.0 cut removed: deleting it is Task 22's own
+// release-gated step (plan docs/plans/2026-10-08-base-image.md, Task 22
+// Step 4), run by the owner only after fugaro-base is published and
+// `fugaro image refresh` has moved this checkout onto it. Until then, the
+// schema and the Go parser must agree that base: go is 0.7.0-refused, for
+// the same reason, so a schema or parser change that quietly re-admits it
+// is caught here.
 func TestRepositoryFugaroYAML(t *testing.T) {
 	data, err := os.ReadFile("../fugaro.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := compile(t, "fugaro.schema.json").Validate(yamlInstance(t, data)); err != nil {
-		t.Errorf("schema rejects fugaro.yaml: %v", err)
+	if err := compile(t, "fugaro.schema.json").Validate(yamlInstance(t, data)); err == nil {
+		t.Error("schema accepts fugaro.yaml's base: go, removed in 0.7.0")
 	}
-	cfg, problems := config.Parse(data)
-	if len(problems) > 0 {
-		t.Fatalf("fugaro.yaml: %v", problems)
-	}
-	if problems := config.Check(cfg, ".."); len(problems) > 0 {
-		t.Errorf("fugaro.yaml against the checkout: %v", problems)
-	}
-	if w := cfg.Workflows["go"]; cfg.Project != "fugaro" || w.Base != "go" {
-		t.Errorf("project %q, workflow go = %+v", cfg.Project, w)
+	_, problems := config.Parse(data)
+	if len(problems) != 1 || problems[0].Path != "workflows.go.base" || !strings.Contains(problems[0].Message, "removed in 0.7.0") {
+		t.Errorf("fugaro.yaml: problems = %v, want exactly one at workflows.go.base naming the 0.7.0 removal", problems)
 	}
 }
 
@@ -757,7 +898,7 @@ func TestProjectLayerSchemaCorpus(t *testing.T) {
 // worst, never a false negative, so it doesn't need Go to agree.
 func TestProjectLayerSchemaCommandsLintFix(t *testing.T) {
 	sch := compile(t, "project-layer.schema.json")
-	const base = "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  p:\n    base: java-services\n    commands: "
+	const base = "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  p:\n    commands: "
 	for _, c := range []struct {
 		commands string
 		ok       bool
@@ -781,6 +922,94 @@ func TestFugaroSchemaLayeredCorpus(t *testing.T) {
 		data, _ := os.ReadFile(f)
 		if err := sch.Validate(yamlInstance(t, data)); err != nil {
 			t.Errorf("%s: schema rejects a valid layered config: %v", f, err)
+		}
+	}
+}
+
+// TestTaskSchemaOAuthTokenMatchesTheGoRules ties the task schema's
+// `oauth_token` property to the Go rules it mirrors (config.ClaudeAccountNameRE
+// and config.MaxClaudeAccountNameLen): the schema pattern and maxLength are
+// separate copies, so without this a change to the Go rule would drift from the
+// schema with only the corpus fixtures noticing. The pattern alone admits 61
+// characters (it counts repetition units of one or two), which is why the
+// bound is a separate maxLength.
+func TestTaskSchemaOAuthTokenMatchesTheGoRules(t *testing.T) {
+	data, err := os.ReadFile("task.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]struct {
+			Pattern   string `json:"pattern"`
+			MaxLength int    `json:"maxLength"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	p, ok := doc.Properties["oauth_token"]
+	if !ok {
+		t.Fatal("task.schema.json has no oauth_token property")
+	}
+	if p.Pattern != config.ClaudeAccountNameRE.String() {
+		t.Errorf("schema pattern %q != config.ClaudeAccountNameRE %q", p.Pattern, config.ClaudeAccountNameRE.String())
+	}
+	if p.MaxLength != config.MaxClaudeAccountNameLen {
+		t.Errorf("schema maxLength %d != config.MaxClaudeAccountNameLen %d", p.MaxLength, config.MaxClaudeAccountNameLen)
+	}
+}
+
+// TestFugaroSchemaOAuthTokenMatchesTheGoRules is TestTaskSchemaOAuthToken
+// MatchesTheGoRules's sibling for fugaro.schema.json's agent.oauth_token
+// (named oauth tokens plan Task 6): the two schema copies, and the Go rules
+// both mirror, must never drift apart.
+func TestFugaroSchemaOAuthTokenMatchesTheGoRules(t *testing.T) {
+	data, err := os.ReadFile("fugaro.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties struct {
+			Agent struct {
+				Properties map[string]struct {
+					Pattern   string `json:"pattern"`
+					MaxLength int    `json:"maxLength"`
+				} `json:"properties"`
+			} `json:"agent"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	p, ok := doc.Properties.Agent.Properties["oauth_token"]
+	if !ok {
+		t.Fatal("fugaro.schema.json's agent has no oauth_token property")
+	}
+	if p.Pattern != config.ClaudeAccountNameRE.String() {
+		t.Errorf("schema pattern %q != config.ClaudeAccountNameRE %q", p.Pattern, config.ClaudeAccountNameRE.String())
+	}
+	if p.MaxLength != config.MaxClaudeAccountNameLen {
+		t.Errorf("schema maxLength %d != config.MaxClaudeAccountNameLen %d", p.MaxLength, config.MaxClaudeAccountNameLen)
+	}
+}
+
+// TestFugaroSchemaAgentOAuthToken is TestFugaroSchemaProfileKeys's shape for
+// agent.oauth_token: "default" is reserved (the empty value already means
+// it), and the schema's maxLength must refuse what the pattern alone would
+// still accept (schemas_test.go's own TestTaskSchemaOAuthTokenMatchesTheGoRules
+// doc comment explains why the pattern alone is not enough).
+func TestFugaroSchemaAgentOAuthToken(t *testing.T) {
+	sch := compile(t, "fugaro.schema.json")
+	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	dashHeavy := "a" + strings.Repeat("-a", 30) // 61 chars, matches the pattern alone
+	for text, valid := range map[string]bool{
+		head + "agent: { oauth_token: acme-personal }\n":     true,
+		head + "agent: { oauth_token: default }\n":           false,
+		head + "agent: { oauth_token: Acme }\n":              false,
+		head + "agent: { oauth_token: " + dashHeavy + " }\n": false,
+	} {
+		if err := sch.Validate(yamlInstance(t, []byte(text))); (err == nil) != valid {
+			t.Errorf("%q: valid = %v, want %v (%v)", text, err == nil, valid, err)
 		}
 	}
 }

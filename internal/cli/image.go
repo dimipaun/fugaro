@@ -95,7 +95,7 @@ func newImageBuildCmd() *cobra.Command {
 	f.BoolVar(&o.local, "local", false, "build with the local Docker daemon from the checkout you are in")
 	f.StringVar(&o.repo, "repo", "", "owner/name of the repository to build with Cloud Build (default: the checkout's origin, which it must match)")
 	f.StringVar(&o.workflow, "workflow", "", "workflow to build; optional when fugaro.yaml defines one")
-	f.StringVar(&o.base, "base", "", "base image (default: for a Cloud Build build the local config's base_images entry for the workflow's base, else the published base matching this fugaro version)")
+	f.StringVar(&o.base, "base", "", "base image (default: for a Cloud Build build the local config's base_images entry for the workflow's base, else the published fugaro-base matching this fugaro version)")
 	f.StringVar(&o.tag, "tag", "", "tag for the built image (default fugaro-<dir>-<workflow>:local)")
 	f.StringVar(&o.platform, "platform", "linux/amd64", "image platform; Cloud Run runs linux/amd64")
 	f.BoolVar(&o.noSmoke, "no-smoke", false, "skip the smoke test of the built image (on Cloud Build, latest is then promoted unsmoked)")
@@ -122,7 +122,7 @@ func runImageBuild(cmd *cobra.Command, o imageBuildOptions) error {
 	}
 	base := o.base
 	if base == "" {
-		if base, err = image.BaseRef(cfg.Workflows[name].BaseKind(), Version); err != nil {
+		if base, err = image.BaseRef(Version); err != nil {
 			return &ExitError{Code: ExitUserError, Err: err}
 		}
 	}
@@ -209,7 +209,7 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 		base = lc.BaseImage(cfg.Workflows[name].BaseKind())
 	}
 	if base == "" {
-		if base, err = image.BaseRef(cfg.Workflows[name].BaseKind(), Version); err != nil {
+		if base, err = image.BaseRef(Version); err != nil {
 			return userErr("%v", err)
 		}
 	}

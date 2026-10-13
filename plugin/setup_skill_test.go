@@ -107,10 +107,18 @@ func TestSetupSkillNeverAppliesInit(t *testing.T) {
 
 // TestSetupSkillExamplesValidate: every fugaro.yaml example in the skill
 // parses and validates with the repository's own loader, and the examples
-// cover each base kind and both ways of building an image.
+// cover both ways of naming runtimes (image.tools and a repository
+// mise.toml) and both ways of building an image (image: and dockerfile:).
+// "Every workflow builds on the one Fugaro base" has no separate check here:
+// config.Parse (above) already refuses any workflow with a non-empty base:
+// (legacyBaseMessage, internal/config/validate.go), returning a nil *Config
+// and only problems, which the n == 0 / "does not validate" paths already
+// fail on — a loop-local check of Workflow.BaseKind(), which is hardcoded to
+// always return config.BaseKind regardless of Base (internal/config/config.go),
+// ran on a Config that can only ever reach this point with Base == "" for
+// every workflow, can never fail either way and was dead weight.
 func TestSetupSkillExamplesValidate(t *testing.T) {
-	bases := map[string]bool{}
-	var image, dockerfile bool
+	var tools, plain, dockerfile bool
 	n := 0
 	for name, text := range setupFiles(t) {
 		for _, ex := range yamlExamples(text) {
@@ -120,10 +128,24 @@ func TestSetupSkillExamplesValidate(t *testing.T) {
 				t.Errorf("%s:%d: example does not validate: %v", name, ex.line, problems)
 				continue
 			}
-			checkExample(t, fmt.Sprintf("%s:%d", name, ex.line), c)
-			for _, w := range c.Workflows {
-				bases[w.BaseKind()] = true
-				image = image || !w.Image.IsZero()
+			mise := precedingMiseToml(text, ex.line)
+			checkExample(t, fmt.Sprintf("%s:%d", name, ex.line), c, mise)
+			for wfName, w := range c.Workflows {
+				switch {
+				case len(w.Image.Tools) > 0:
+					tools = true
+				case w.Dockerfile == "":
+					// An example with neither image.tools nor dockerfile:
+					// relies on a repository mise.toml, so it must actually
+					// have one: a missing fence here is a silent "it just
+					// works" example with nothing pinning its runtime, not
+					// one of the two ways of naming them.
+					if mise == "" {
+						t.Errorf("%s:%d: workflow %s has no image.tools and no preceding ```toml mise.toml``` block: nothing pins its runtime", name, ex.line, wfName)
+					} else {
+						plain = true
+					}
+				}
 				dockerfile = dockerfile || w.Dockerfile != ""
 			}
 		}
@@ -131,13 +153,14 @@ func TestSetupSkillExamplesValidate(t *testing.T) {
 	if n == 0 {
 		t.Fatal("the setup skill has no fugaro.yaml example")
 	}
-	for _, b := range config.Bases {
-		if !bases[b] {
-			t.Errorf("no fugaro.yaml example for base kind %s", b)
-		}
+	if !tools {
+		t.Error("no fugaro.yaml example sets image.tools")
 	}
-	if !image || !dockerfile {
-		t.Errorf("examples must show both image: (%v) and dockerfile: (%v)", image, dockerfile)
+	if !plain {
+		t.Error("no fugaro.yaml example relies on a repository mise.toml instead of image.tools")
+	}
+	if !dockerfile {
+		t.Error("no fugaro.yaml example sets dockerfile:")
 	}
 }
 
@@ -145,11 +168,14 @@ var dockerfilePathRE = regexp.MustCompile(`^\.fugaro/[a-z0-9][a-z0-9-]*\.Dockerf
 
 // checkExample runs the validator's repository checks (config.Check) on an
 // example against a scratch checkout holding what the example refers to: the
-// ./scripts its commands run, a lockfile for web-node, and a Dockerfile
-// rendered from the template for a dockerfile: workflow. The path rule of the
-// skill (.fugaro/<workflow>.Dockerfile) is not the validator's, so it is
-// checked here.
-func checkExample(t *testing.T, at string, c *config.Config) {
+// ./scripts its commands run, a package.json and lockfile when the example
+// sets image.skip_build_scripts (config.Check's checkBaseWorkflow refuses it
+// without a Node package manager to detect), the example's mise.toml (the
+// fenced ```toml mise.toml``` block immediately before this yaml example, if
+// any), and a Dockerfile rendered from the template for a dockerfile:
+// workflow. The path rule of the skill (.fugaro/<workflow>.Dockerfile) is not
+// the validator's, so it is checked here.
+func checkExample(t *testing.T, at string, c *config.Config, mise string) {
 	t.Helper()
 	root := t.TempDir()
 	write := func(rel, data string) {
@@ -161,13 +187,17 @@ func checkExample(t *testing.T, at string, c *config.Config) {
 			t.Fatal(err)
 		}
 	}
+	if mise != "" {
+		write("mise.toml", mise)
+	}
 	for name, w := range c.Workflows {
+		checkNoRuntimeApt(t, at, name, w)
 		for _, cmd := range []string{w.Commands.Build, w.Commands.Test} {
 			if f := strings.Fields(cmd); len(f) > 0 && strings.HasPrefix(f[0], "./") {
 				write(f[0], "#!/bin/sh\n")
 			}
 		}
-		if w.Base == "web-node" {
+		if w.Image.SkipBuildScripts {
 			write("package.json", "{}")
 			write("package-lock.json", "{}")
 		}
@@ -175,7 +205,7 @@ func checkExample(t *testing.T, at string, c *config.Config) {
 			if !dockerfilePathRE.MatchString(w.Dockerfile) {
 				t.Errorf("%s: workflow %s: dockerfile %q is not .fugaro/<workflow>.Dockerfile", at, name, w.Dockerfile)
 			}
-			df, err := image.Render(image.RenderInput{Workflow: name, Base: w.Base, Version: "1.0.0"})
+			df, err := image.Render(image.RenderInput{Workflow: name, Base: config.BaseKind, Version: "1.0.0"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -185,6 +215,29 @@ func checkExample(t *testing.T, at string, c *config.Config) {
 	if problems := config.Check(c, root); len(problems) > 0 {
 		t.Errorf("%s: config.Check: %v", at, problems)
 	}
+}
+
+// precedingMiseToml returns the ```toml mise.toml``` fenced block immediately
+// before line (1-indexed, a yamlExample.line), allowing only blank lines
+// between the two fences, or "" if there isn't one.
+func precedingMiseToml(text string, line int) string {
+	lines := strings.Split(text, "\n")
+	i := line - 2 // 0-indexed line just above the yaml example's opening fence
+	for i >= 0 && strings.TrimSpace(lines[i]) == "" {
+		i--
+	}
+	if i < 0 || strings.TrimSpace(lines[i]) != "```" {
+		return ""
+	}
+	end := i
+	open := end - 1
+	for open >= 0 && !strings.HasPrefix(strings.TrimSpace(lines[open]), "```") {
+		open--
+	}
+	if open < 0 || !slices.Contains(strings.Fields(strings.TrimSpace(lines[open])), "mise.toml") {
+		return ""
+	}
+	return strings.Join(lines[open+1:end], "\n") + "\n"
 }
 
 type yamlExample struct {
@@ -270,9 +323,13 @@ func TestSetupSkillContent(t *testing.T) {
 			"fugaro doctor --json", "fugaro secrets ls --json", "fugaro image render", "fugaro image build --local --json",
 			"fugaro validate --json", "fugaro init --repo --plan-only", ".fugaro/<workflow>.Dockerfile", "blank Dockerfile",
 			".github/workflows", "Docker daemon", "`fugaro_yaml`", "WSL2", "agent.instructions",
+			"whole content", "_.source", "[hooks]",
+			"https://github.com/dimipaun/fugaro/blob/main/docs/base-image-migration.md",
 		},
 		"skills/setup/reference/services-and-images.md": {
-			"fugaro-services start", "TEST_SERVICES=local", "image.setup", "save the output as `.fugaro/<workflow>.Dockerfile`", "Pin every download by version and checksum", "Never start from a blank Dockerfile", "does **not** enforce", "illustrative", "Docker daemon",
+			"fugaro-services start", "mise.toml", "mise install", "image.tools", "apt-get install", "image.setup", "save the output as `.fugaro/<workflow>.Dockerfile`", "Pin every download by version and checksum", "Never start from a blank Dockerfile", "does **not** enforce", "illustrative", "Docker daemon", "--platform linux/arm64", "FUGARO_SERVICES",
+			"**Never** `apt-get install <language>` or a `curl | sh` installer for a runtime",
+			"https://github.com/dimipaun/fugaro/blob/main/docs/base-image-migration.md",
 		},
 		"skills/setup/reference/decisions.md": {
 			"followup.allow_public", "agent.max_run_tokens", "agent.max_budget_usd", "fugaro budget prices", "never set `allow_public` without their explicit decision",
@@ -282,7 +339,9 @@ func TestSetupSkillContent(t *testing.T) {
 			"root-scan", "managed-settings-dir", "runs the repository's code", "Don't have the token put into your own environment", "visible to the repository's code in the build and to every command your agent runs",
 		},
 		"skills/setup/reference/discovery.md": {
-			"16 GB on a public one", "libc6-dev", "go.mod",
+			"16 GB on a public one", "GOTOOLCHAIN", "go.mod", "must be a plain version",
+			"https://github.com/dimipaun/fugaro/blob/main/docs/base-image.md",
+			"No pin anywhere", "pom.xml", "rust-toolchain.toml",
 		},
 	} {
 		text, ok := files[file]
@@ -388,7 +447,7 @@ func TestSetupSkillAsksRecipe(t *testing.T) {
 			}
 		}
 	}
-	for _, want := range []string{"`default`", "`cheap-loop-senior`", "`claude-solo`", "fugaro recipes ls", "leave `agent.recipe` out", "turns it on for a provider coder with a non-provider reviewer"} {
+	for _, want := range []string{"`default`", "`standard`", "`solo`", "fugaro recipes ls", "leave `agent.recipe` out", "turns it on for a provider coder with a non-provider reviewer"} {
 		if !strings.Contains(dec, want) {
 			t.Errorf("decisions.md never says %q", want)
 		}

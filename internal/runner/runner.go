@@ -129,6 +129,23 @@ type run struct {
 	// bootstrap (resolveRecipe) with its rounds decided (planOf); it always
 	// ends with a review step.
 	plan []planStep
+	// gateSteps are the recipe's leading check steps (gate.go), run before
+	// implement; nil for a recipe with none.
+	gateSteps []recipe.Step
+	// review is whether this run is mode: review (reviewmode.go, Task 12
+	// of the generic-tool plan): set from spec.ReviewPRs at bootstrap,
+	// before the recipe is resolved, the same way follow is set from
+	// spec.IsFollowUp(); cross-checked against the resolved recipe's own
+	// Mode once it is known, since the two must always agree.
+	review bool
+	// reviewHeads is what bootstrap's checkReviewPRs resolved for a review
+	// run: one entry per spec.ReviewPRs, in order, each already past the
+	// fork and open checks. Empty for any other run.
+	reviewHeads []reviewHead
+	// commentsFailed are the pull request numbers whose review comment
+	// (reviewmode.go, postReviewComments) failed to post; reported in
+	// review mode's report.md, never retried in a loop.
+	commentsFailed []int
 	// bounce counts how many times a senior rejection has sent the run back
 	// to the cheap loop (review: {bounce: first_line}); 0 until the first
 	// one. Stamped onto each first-line ReviewSummary (firstLine) so the
@@ -220,6 +237,10 @@ type run struct {
 	baseSHA, startSHA string
 	// ckpt is the checkpoint pushes' state (checkpoint.go).
 	ckpt checkpointState
+	// skipPR is set when the check gate already ended the run (clean, or an
+	// infra error of its own, gate.go): finalize, which still runs after,
+	// does nothing more.
+	skipPR bool
 }
 
 // Git credential lifetimes (design §6.2). A stage must not outlive its
@@ -366,7 +387,11 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		}
 		return nil, fmt.Errorf("bootstrap: %w", err)
 	}
-	r.runAgentLoop(runCtx)
+	if r.review {
+		r.runReviewMode(runCtx)
+	} else {
+		r.runAgentLoop(runCtx)
+	}
 	// From here nothing the backend says can stop a stage.
 	r.freezeHalts()
 	// Finalize makes no model calls: the gateway is closed first, and the
@@ -595,8 +620,10 @@ func (r *run) refreshGitAuth(ctx context.Context, minValid time.Duration) error 
 		r.repo.Env = gitops.WithVars(r.repo.Env, vars)
 	}
 	// A follow-up's agent gets no git credentials (design §6.1): the
-	// runner fetches and pushes for it.
-	if r.env != nil && r.follow == nil {
+	// runner fetches and pushes for it. Neither does a review run's
+	// (design generic-tool §3.6, G12): the runner fetches its checkout(s)
+	// itself, and never pushes or opens anything on its behalf.
+	if r.env != nil && r.follow == nil && !r.review {
 		r.env = gitops.WithVars(r.env, vars)
 	}
 	return nil
@@ -765,6 +792,9 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if spec.IsFollowUp() {
 		r.follow = &followState{}
 	}
+	if len(spec.ReviewPRs) > 0 {
+		r.review = true
+	}
 	if err := stateDirOutsideCheckout(r.d.WorkDir, r.d.StateDir); err != nil {
 		return err
 	}
@@ -799,7 +829,8 @@ func (r *run) bootstrap(ctx context.Context) error {
 	r.repo = strip(repo)
 	var cfg *config.Config
 	var startErr error // reading a first run's start commit (checkpoints)
-	if r.follow != nil {
+	switch {
+	case r.follow != nil:
 		// The pull request's branch, with the configuration of its base.
 		if err := r.checkoutFollowUp(ctx, repo); err != nil {
 			return err
@@ -808,7 +839,18 @@ func (r *run) bootstrap(ctx context.Context) error {
 		if cfg, err = r.readBaseConfig(ctx); err != nil {
 			return err
 		}
-	} else {
+	case r.review:
+		// mode: review skips CheckoutNewBranch entirely: there is no
+		// branch of this run's own, and r.rec.Branch is set only as the
+		// branch lock's key (acquireLock), never pushed or read back as a
+		// ref. The configuration comes from the base branch, exactly as a
+		// follow-up's does (readBaseConfig), since review mode never
+		// trusts a pull request's own fugaro.yaml.
+		r.rec.Branch = "fugaro/" + spec.RunID
+		if cfg, err = r.readBaseConfig(ctx); err != nil {
+			return err
+		}
+	default:
 		branch := "fugaro/" + spec.RunID
 		if err := repo.CheckoutNewBranch(ctx, spec.Ref, branch); err != nil {
 			return fmt.Errorf("checking out %s: %w", spec.Ref, err)
@@ -836,6 +878,20 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	switch {
+	case r.review && rcp.Mode != recipe.ModeReview:
+		return fmt.Errorf("recipe %s is not mode: review, but the task names pull requests to review", rrec.Name)
+	case !r.review && rcp.Mode == recipe.ModeReview:
+		return fmt.Errorf("recipe %s is mode: review, but the task names no pull request to review", rrec.Name)
+	}
+	if lo, hi, ok := recipe.ReviewPRRange(rrec.Name); ok {
+		if n := len(spec.ReviewPRs); n < lo || n > hi {
+			if lo == hi {
+				return fmt.Errorf("recipe %s needs exactly %d pull request(s) to review, got %d", rrec.Name, lo, n)
+			}
+			return fmt.Errorf("recipe %s needs %d to %d pull requests to review, got %d", rrec.Name, lo, hi, n)
+		}
+	}
 	r.rec.Recipe = &rrec
 	derived := rrec.Name == recipe.DefaultName && rrec.Source == string(recipe.SourceCatalog)
 	plan := planOf(rcp, derived, cfg.Agent, r.d.Providers, spec.Overrides.ReviewRounds)
@@ -843,6 +899,10 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("recipe %s: %w", rrec.Name, err)
 	}
 	r.plan = plan
+	r.gateSteps = checkGateSteps(rcp)
+	if err := checkGateCommands(r.gateSteps, wf.Commands, spec.Ref); err != nil {
+		return fmt.Errorf("recipe %s: %w", rrec.Name, err)
+	}
 	if rcp.ReviewerIsCoder && cfg.Agent.Models.Reviewer != "" {
 		r.d.Log.Info("agent.models.reviewer ignored: recipe maps reviewer to coder", "recipe", rrec.Name, "reviewer", cfg.Agent.Models.Reviewer)
 	}
@@ -854,9 +914,10 @@ func (r *run) bootstrap(ctx context.Context) error {
 	r.rec.FinalizeReserveS = wf.Timeouts.FinalizeReserve.Seconds()
 	dl := r.lockDeadline()
 	r.rec.Deadline = &dl
-	if r.follow == nil {
-		// A read, so it comes before the lock; a follow-up fetched its
-		// base, and read its configuration from it, above.
+	if r.follow == nil && !r.review {
+		// A read, so it comes before the lock; a follow-up or a review run
+		// fetched its base, and read its configuration from it, above
+		// (readBaseConfig); neither ever checkpoints.
 		if err := repo.FetchBase(ctx, cfg.Git.BaseBranch); err != nil {
 			return fmt.Errorf("fetching base %s: %w", cfg.Git.BaseBranch, err)
 		}
@@ -918,9 +979,15 @@ func (r *run) bootstrap(ctx context.Context) error {
 			return err
 		}
 	}
+	if r.review {
+		if err := r.checkReviewPRs(ctx); err != nil {
+			return err
+		}
+	}
 	r.restoreCaches(ctx)
-	if r.follow == nil {
-		// A follow-up fetched its base, and read these from it, above.
+	if r.follow == nil && !r.review {
+		// A follow-up or a review run fetched its base, and read these
+		// from it, above (readBaseConfig).
 		if r.instructions, err = r.readRepoFile(cfg.Agent.Instructions); err != nil {
 			return fmt.Errorf("agent.instructions: %w", err)
 		}
@@ -935,15 +1002,51 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("clearing state dir %s: %w", r.d.StateDir, err)
 	}
 	if err := verify.WriteSettings(r.d.StateDir, verify.Settings{
-		RepoDir: r.d.WorkDir, Build: wf.Commands.Build, Test: wf.Commands.Test,
+		RepoDir: r.d.WorkDir, Build: wf.Commands.Build, Test: wf.Commands.Test, Lint: wf.Commands.Lint,
 		RerunFailed: wf.Commands.RerunFailed, Reports: wf.Commands.Reports,
 		TimeoutS: int(wf.Timeouts.Verify.Seconds()),
 	}); err != nil {
 		return fmt.Errorf("writing verify settings: %w", err)
 	}
-	secretEnvs := make([]string, len(wf.Secrets))
-	for i, s := range wf.Secrets {
-		secretEnvs[i] = s.Env
+	// A review run's agent gets none of the workflow's secrets (design
+	// generic-tool §3.6, G12): it runs a reviewed pull request's own,
+	// untrusted checkout and prompt (a hook, an auto-loaded CLAUDE.md), so
+	// a workflow secret in its environment would be reachable by that
+	// code. The model credential it still needs (cfg.Agent.Auth, below)
+	// is the one exception, and stays reachable by a trusted author's own
+	// prompt injection: that is the residual risk the design accepts.
+	var secretEnvs []string
+	if !r.review {
+		secretEnvs = make([]string, len(wf.Secrets))
+		for i, s := range wf.Secrets {
+			secretEnvs[i] = s.Env
+		}
+	} else {
+		// Keeping secretEnvs empty stops agent.BuildEnv from putting these
+		// in the agent's own environment, but the runner process still
+		// holds their values in r.d.Env, readable by the agent through
+		// /proc of a sibling process in the same container (SECURITY.md).
+		// A review run's agent, unlike every other run's, reads an
+		// untrusted checkout and prompt, so it must never be able to
+		// exfiltrate one of these into the posted comment, the report or a
+		// transcript unredacted: register the values for redaction
+		// (r.secretList(), which every one of those goes through) even
+		// though they never reach its environment. Because secretEnvs is
+		// empty here, agent.BuildEnv never runs its own "secret %s is not
+		// set" check for these (that check walks spec.Secrets, which
+		// review mode leaves empty on purpose) — so this is the only place
+		// a declared-but-unmounted workflow secret would ever be caught in
+		// review mode; failing here, the same as BuildEnv would for every
+		// other run, is this registration's whole point: a secret that
+		// silently isn't here to redact is exactly the "last line of
+		// defense" the comment above describes failing open.
+		for _, s := range wf.Secrets {
+			v := envLookup(r.d.Env, s.Env)
+			if v == "" {
+				return fmt.Errorf("secret %s is not set in the runner environment", s.Env)
+			}
+			r.addSecret(v)
+		}
 	}
 	// Claude Code's Bash tool defaults to a 2-minute timeout (10 minutes at
 	// most), which would kill a long `fugaro verify` long before
@@ -957,10 +1060,13 @@ func (r *run) bootstrap(ctx context.Context) error {
 	for k, v := range gitops.Identity {
 		set[k] = v
 	}
-	if r.follow == nil {
+	if r.follow == nil && !r.review {
 		// A follow-up's agent gets no git credentials and no GH_TOKEN
 		// (design §6.1): the runner fetched the branch and pushes it, and
-		// the comments arrive in the prompt.
+		// the comments arrive in the prompt. A review run's agent gets
+		// none either (design generic-tool §3.6, G12): it only ever reads
+		// the checkout, and the runner never pushes or opens anything on
+		// its behalf.
 		agentAuthVars, err := r.authVars()
 		if err != nil {
 			return fmt.Errorf("building git credentials: %w", err)
@@ -1110,7 +1216,8 @@ func (r *run) readRepoFile(rel string) (string, error) {
 // from: the run's own state decides each conditional rule.
 func (r *run) systemPromptData() PromptData {
 	pd := PromptData{Branch: r.rec.Branch, Base: r.cfg.Git.BaseBranch, StateDir: r.d.StateDir,
-		NoWorkflows: r.providerKind == gitprov.KindGitHub, Checkpoints: r.checkpointsOn()}
+		NoWorkflows: r.providerKind == gitprov.KindGitHub, Checkpoints: r.checkpointsOn(),
+		LintConfigured: strings.TrimSpace(r.wf.Commands.Lint) != ""}
 	if r.follow != nil {
 		pd.FollowUp = followup.SystemPromptLines(r.promptData())
 	}
@@ -1130,26 +1237,95 @@ func (r *run) agentLoop(ctx context.Context) {
 			opts.Recoverable = func(err error) bool { return errors.Is(err, agent.ErrNoSession) }
 		}
 	}
-	res, ok, err := r.stage(ctx, "implement", req, opts)
-	r.noteSession(req, res)
-	r.countTokens(res)
-	// Only an error stage recovered from, and so recorded nothing about:
-	// one that came with a timeout or a cancel is a failed stage.
-	if rec := (recoveredError{}); !ok && errors.As(err, &rec) {
-		r.fellBackFresh(ctx)
-		req = agent.Request{Prompt: followup.ImplementPrompt(r.promptData(), r.follow.sel), SessionID: agent.NewSessionID(), AppendSystemPrompt: sys}
-		res, ok, _ = r.stage(ctx, "implement", req, stageOpts{})
+	skipImplement := false
+	if len(r.gateSteps) > 0 {
+		r.rec.Stage = "check"
+		r.save(ctx)
+		switch g, err := r.runGate(ctx, r.gateSteps); {
+		case err != nil:
+			// Halt takes priority over everything else here, the same
+			// convention the g.Clean case below follows: WatchCancel's
+			// context is cancelled with ErrCancelled unconditionally, even
+			// when markCancelled() loses the race to a concurrent haltNow
+			// (a budget cap, a kill switch, the token cap), so
+			// context.Cause(ctx) == ErrCancelled is not proof this was a
+			// plain cancel — a halt may have landed first and must not be
+			// lost as an infra_error.
+			if h := r.haltValue(); h != nil {
+				r.endHalted(ctx, h)
+				return
+			}
+			// A cancel landing mid-command (verify.Run / procgroup.Run)
+			// returns an ordinary context error, indistinguishable from any
+			// other process failure by err alone: context.Cause(ctx) still
+			// carries ErrCancelled, so it ends cancelled, not infra_error,
+			// exactly as a cancel during any other stage does.
+			if errors.Is(context.Cause(ctx), ErrCancelled) && r.markCancelled() {
+				r.endCancelled(ctx, "cancelled during the check gate")
+			} else {
+				r.failInfra(ctx, err)
+			}
+			return
+		case g.Clean:
+			r.rec.Gate = "clean"
+			// The gate's commands run outside r.stage(), so nothing re-checks
+			// a halt (a budget cap, a kill switch, the token cap) recorded
+			// while they ran; this path is the only one that would otherwise
+			// finalize as succeeded despite it (fixed and red both still
+			// reach a real r.stage() call before any outcome is decided,
+			// which checks haltValue() at its own top). A halt ends the run
+			// regardless of follow-up status.
+			if h := r.haltValue(); h != nil {
+				r.endHalted(ctx, h)
+				return
+			}
+			if r.follow == nil {
+				r.endWithoutPR(ctx, "every check passed: nothing to fix")
+				return
+			}
+			// A follow-up: the launcher asked for a specific action (reply
+			// to comments, apply instructions) that a clean gate must not
+			// silently swallow. req.Prompt is already the follow-up's own
+			// ImplementPrompt (set above); fall through to implement as
+			// usual, on top of whatever the gate found (nothing, here).
+		case g.Fixed:
+			r.rec.Gate = "fixed"
+			r.verifyOnce(ctx, verify.KindTest)
+			// A follow-up still runs implement with its own instructions,
+			// on top of the autofix commit the gate already made; only a
+			// first run (nothing else asked of it) skips straight to review.
+			if r.follow == nil {
+				skipImplement = true
+			}
+		default:
+			req.Prompt = GatePrompt(req.Prompt, g)
+		}
+	}
+	// "" until implement actually runs and starts one: a Fixed gate skips
+	// implement, so there is no session yet for fix (below) to resume.
+	var sessionID string
+	if !skipImplement {
+		res, ok, err := r.stage(ctx, "implement", req, opts)
 		r.noteSession(req, res)
 		r.countTokens(res)
+		// Only an error stage recovered from, and so recorded nothing about:
+		// one that came with a timeout or a cancel is a failed stage.
+		if rec := (recoveredError{}); !ok && errors.As(err, &rec) {
+			r.fellBackFresh(ctx)
+			req = agent.Request{Prompt: followup.ImplementPrompt(r.promptData(), r.follow.sel), SessionID: agent.NewSessionID(), AppendSystemPrompt: sys}
+			res, ok, _ = r.stage(ctx, "implement", req, stageOpts{})
+			r.noteSession(req, res)
+			r.countTokens(res)
+		}
+		if !ok || r.capReached() {
+			return
+		}
+		r.afterStage(ctx, "implement")
+		if r.pr.gone {
+			return // a person closed the PR: nothing more to spend on it
+		}
+		sessionID = req.SessionID
 	}
-	if !ok || r.capReached() {
-		return
-	}
-	r.afterStage(ctx, "implement")
-	if r.pr.gone {
-		return // a person closed the PR: nothing more to spend on it
-	}
-	sessionID := req.SessionID
 	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.cfg.Git.BaseBranch)
 	if f := r.follow; f != nil {
 		if add := followup.ReviewAddendum(f.sel, f.nonce); add != "" {
@@ -1217,15 +1393,26 @@ func (r *run) fix(ctx context.Context, v Verdict, sys, sessionID string) (string
 	if r.sessionID != "" {
 		sessionID = r.sessionID
 	}
-	req := agent.Request{Prompt: FixPrompt(v), SessionID: sessionID, Resume: true, AppendSystemPrompt: sys}
+	req := agent.Request{Prompt: FixPrompt(v), AppendSystemPrompt: sys}
+	if sessionID == "" {
+		// No session exists to resume: a Fixed check gate (gate.go) skipped
+		// implement entirely, so this fix is the run's first real agent
+		// stage. Start fresh, exactly as implement would have; resuming ""
+		// (or any session no stage ever started) would raise
+		// agent.ErrNoSession against the real binary, which this call,
+		// unlike implement's, has no Recoverable handling for.
+		req.SessionID = agent.NewSessionID()
+	} else {
+		req.SessionID, req.Resume = sessionID, true
+	}
 	res, ok, _ := r.stage(ctx, "fix", req, stageOpts{})
 	r.noteSession(req, res)
 	r.countTokens(res)
 	if !ok || r.capReached() {
-		return sessionID, false
+		return req.SessionID, false
 	}
 	r.afterStage(ctx, "fix")
-	return sessionID, !r.pr.gone
+	return req.SessionID, !r.pr.gone
 }
 
 // firstLine is the first-line review (design m10 §11a): up to rounds
@@ -1602,6 +1789,12 @@ func (r *run) logTail(ready bool, records []verify.Record) *LogTail {
 func (r *run) finalize(ctx context.Context) error {
 	r.rec.Stage = "finalize"
 	r.save(ctx)
+	if r.skipPR {
+		// The check gate already ended the run (gate.go: endWithoutPR or
+		// failInfra), status, outcome and the stored report all theirs:
+		// there is nothing left to commit, push or open a pull request for.
+		return nil
+	}
 	base := r.cfg.Git.BaseBranch
 	halt := r.haltValue()
 	if halt != nil && r.isCancelled() {

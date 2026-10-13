@@ -5,4 +5,4 @@ agent: { auth: api-key }
 budget:
   allowed_models: []
 workflows:
-  server: { base: java-services, commands: { build: make, test: make test } }
+  server: { commands: { build: make, test: make test } }

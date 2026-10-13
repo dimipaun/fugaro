@@ -39,8 +39,6 @@ type Config struct {
 	Budget    *Budget             `yaml:"budget,omitempty"`
 	Workflows map[string]Workflow `yaml:"workflows"`
 	Followup  Followup            `yaml:"followup"`
-	// Review configures review mode (design generic-tool §1, G12).
-	Review Review `yaml:"review"`
 
 	// Layer is the project layer Resolve resolved this config over, nil
 	// for none. It is never part of the file or of SHA256: a consumer that
@@ -82,15 +80,6 @@ type Followup struct {
 	// AllowPublic lets a follow-up run on a public repository, where
 	// anyone can comment.
 	AllowPublic bool `yaml:"allow_public"`
-}
-
-// Review configures review mode (design generic-tool §1, G12): an agent
-// reviewing a pull request instead of implementing one.
-type Review struct {
-	// AllowForks lets review mode run a fork pull request's code next to
-	// the job's secrets; false (the default) refuses a fork PR. Read from
-	// the base branch, like Followup.Trusted, so a PR can't opt itself in.
-	AllowForks bool `yaml:"allow_forks"`
 }
 
 // Git describes the repository's git provider and pull request settings.
@@ -156,6 +145,16 @@ type Agent struct {
 	// or the catalog's. "" is default. fugaro run --recipe wins over it.
 	// Binaries before 0.5.0 refuse the key.
 	Recipe string `yaml:"recipe"`
+	// OAuthToken names the Claude account (claude_accounts in the local
+	// config, ClaudeAccountNameRE) this workflow's agent.auth: oauth uses;
+	// "" is the repository's default account, the existing claude-oauth-token
+	// secret (docs/design/named-oauth-tokens.md). fugaro run --token wins
+	// over it. A name must still be allowed for this repository
+	// (AllowedClaudeAccounts), checked at launch, not here: Validate only
+	// checks the name's own shape. Repo and override scope only (Scopes):
+	// neither the project layer nor a profile may set it (design §3 T2).
+	// Binaries before 0.6.5 refuse this key (fugaro.yaml's strict decoder).
+	OAuthToken string `yaml:"oauth_token,omitempty" json:"OAuthToken,omitempty"`
 }
 
 // First-line review settings (Agent.FirstLineReview).
@@ -239,8 +238,9 @@ type Workflow struct {
 	// the workflow's own keys override it field by field. "" is none.
 	// Binaries before 0.6.0 refuse the key.
 	Profile string `yaml:"profile,omitempty"`
-	// Base is a legacy base kind (go, java-services, web-node); empty means
-	// the one Fugaro base. Read it through BaseKind.
+	// Base is removed in 0.7.0: kept so Validate can refuse it with the
+	// migration (MigrationDoc). Read the workflow's base kind through
+	// BaseKind, which always returns BaseKind now.
 	Base       string       `yaml:"base"`
 	Image      Image        `yaml:"image"`
 	Dockerfile string       `yaml:"dockerfile"`
@@ -269,11 +269,9 @@ const (
 	CheckoutClone = "clone"
 )
 
-// BaseKind is the base kind w builds on: its legacy base:, or BaseKind.
+// BaseKind is the base kind w builds on: always BaseKind, the one Fugaro
+// base. A non-empty w.Base is a removed legacy value, refused by Validate.
 func (w Workflow) BaseKind() string {
-	if w.Base != "" {
-		return w.Base
-	}
 	return BaseKind
 }
 
@@ -320,16 +318,18 @@ func (r Rebuild) Defaults() Rebuild {
 // Image customizes the workflow's generated derived image (design §7.2). The
 // zero value means the base image's defaults.
 type Image struct {
-	Node string `yaml:"node"` // web-node: Node.js version, N or N.N.N
-	// JDK is refused on every base: the java-services base ships one pinned
-	// JDK. The field stays so the image-check and cache hashes, which cover
-	// it, do not change for existing images.
+	// Node is removed in 0.7.0: kept so Validate can refuse it with the
+	// migration (MigrationDoc).
+	Node string `yaml:"node"`
+	// JDK is removed in 0.7.0: kept so Validate can refuse it with the
+	// migration (MigrationDoc).
 	JDK   string   `yaml:"jdk"`
 	Apt   []string `yaml:"apt"`   // extra system packages, installed as root
 	Setup []string `yaml:"setup"` // extra RUN steps, run as fugaro in /work/repo after the warm-up
-	// SkipBuildScripts makes web-node's dependency warm-up install without
-	// running package lifecycle or build scripts, leaving those builds to
-	// the workflow's build command (design §7.2).
+	// SkipBuildScripts makes a Node dependency warm-up (detected by content,
+	// not by base kind: design base-image.md §4, decision B8) install
+	// without running package lifecycle or build scripts, leaving those
+	// builds to the workflow's build command (design §7.2).
 	SkipBuildScripts bool `yaml:"skip_build_scripts"`
 	// Tools are mise tools, name to version, written to the image's global
 	// mise config for a repository without a mise config of its own (design

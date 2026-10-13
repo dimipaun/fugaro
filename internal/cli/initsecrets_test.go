@@ -16,6 +16,8 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -133,7 +135,7 @@ var realWriterIsTerminal = writerIsTerminal
 // checkoutYAML is a fugaro.yaml of project aurora for provider, with agent.auth auth
 // (and extra lines of the workflow, such as secrets).
 func checkoutYAML(provider, auth, project string, workflowExtra string) string {
-	return "version: 1\nproject: " + project + "\ngit: { provider: " + provider + " }\nagent: { auth: " + auth + " }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh }" + workflowExtra + " }\n"
+	return "version: 1\nproject: " + project + "\ngit: { provider: " + provider + " }\nagent: { auth: " + auth + " }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh }" + workflowExtra + " }\n"
 }
 
 // writeConfig (re)writes the checkout's fugaro.yaml.
@@ -471,6 +473,179 @@ func TestSecretsWithoutFugaroYAMLTakesOnlyTheGitCredential(t *testing.T) {
 	}
 	if !strings.Contains(detail, "no fugaro.yaml") {
 		t.Errorf("the assumption is not said: %q", detail)
+	}
+}
+
+// A repository the local config allows two named Claude accounts for is
+// asked for both, each as its own claude setup-token + secrets set pair, in
+// addition to the default; a name that already has a stored version is not
+// asked for again.
+func TestInitSecretsListsEveryAllowedName(t *testing.T) {
+	r := newSecretsRig(t, githubOrigin, strings.NewReader(""))
+	r.e.lc.ClaudeAccounts = map[string]config.ClaudeAccount{
+		"acme-personal": {AllowDataTo: []string{"acme/app"}},
+		"acme-overflow": {AllowDataTo: []string{"acme/app"}},
+		"other-team":    {AllowDataTo: []string{"acme/other"}}, // not this repository
+	}
+	r.store.seed(mustSlug("github", "acme/app"), "claude-oauth-token-acme-overflow", "stored-already-0001")
+	res, err := r.run(t)
+	if err != nil || len(res.Left) != 1 {
+		t.Fatalf("%v, left %v", err, res.Left)
+	}
+	cmds := strings.Join(res.Left[0].Commands, "\n")
+	for _, want := range []string{
+		"fugaro secrets set claude-oauth-token --repo acme/app",
+		"fugaro secrets set claude-oauth-token-acme-personal --repo acme/app",
+	} {
+		if !strings.Contains(cmds, want) {
+			t.Errorf("missing %q in %q", want, cmds)
+		}
+	}
+	if strings.Contains(cmds, "acme-overflow") {
+		t.Errorf("a stored name was asked for again: %q", cmds)
+	}
+	if strings.Contains(cmds, "other-team") {
+		t.Errorf("a name this repository is not allowed got asked for: %q", cmds)
+	}
+	if n := strings.Count(cmds, "claude setup-token"); n != 2 {
+		t.Errorf("claude setup-token count = %d, want 2 (default + acme-personal)", n)
+	}
+}
+
+// TestInitSecretsSkipsNamedAccountsForApiKeyAuth: the named-account prompts
+// are gated on agent.auth: oauth exactly like the bare default secret is —
+// api-key auth means no Claude OAuth secret is relevant at all, allowed
+// accounts configured or not. Review finding (LOW test gap): a mutation
+// that always runs the gate (auth checked or not) stayed green before this
+// test existed, since every other case here uses oauth.
+func TestInitSecretsSkipsNamedAccountsForApiKeyAuth(t *testing.T) {
+	r := newSecretsRig(t, githubOrigin, strings.NewReader(""))
+	r.e.lc.ClaudeAccounts = map[string]config.ClaudeAccount{
+		"acme-personal": {AllowDataTo: []string{"acme/app"}},
+	}
+	r.writeConfig(t, checkoutYAML("github", "api-key", "aurora", ""))
+	res, err := r.run(t)
+	if err != nil || len(res.Left) != 1 {
+		t.Fatalf("%v, left %v", err, res.Left)
+	}
+	cmds := strings.Join(res.Left[0].Commands, "\n")
+	if strings.Contains(cmds, "claude") {
+		t.Errorf("api-key auth prompted for a Claude credential: %q", cmds)
+	}
+}
+
+// TestInitFiltersProviderSecretNamedLikeClaudeOAuth is a true end-to-end
+// exercise of resolve()'s allowedClaudeOAuthMounts call (not just the
+// function in isolation, which TestAllowedClaudeOAuthMountsDropsDisallowedNames
+// already pins): a model provider's own secret name is free-form and
+// config.Validate does not police its shape, so it can still land on
+// claude-oauth-token-<x> by accident or typo, with cfg != nil (unlike the
+// workflow-secret probe below, which config.Validate now makes
+// unreachable, cfg == nil). Even though nothing stops the local config
+// from being misconfigured this way, init must never treat it as a
+// legitimate named Claude account's secret.
+func TestInitFiltersProviderSecretNamedLikeClaudeOAuth(t *testing.T) {
+	r := newSecretsRig(t, githubOrigin, strings.NewReader(""))
+	r.e.lc.Providers = map[string]config.ModelProvider{
+		"oops": {Kind: config.ModelProviderKind, BaseURL: "https://example.invalid", Auth: "bearer",
+			Secret: "claude-oauth-token-evil", Models: []string{"deepseek/*"}, AllowDataTo: []string{"acme/app"}},
+	}
+	r.writeConfig(t, checkoutYAML("github", "api-key", "aurora", ""))
+	res, err := r.run(t)
+	if err != nil || len(res.Left) != 1 {
+		t.Fatalf("%v, left %v", err, res.Left)
+	}
+	cmds := strings.Join(res.Left[0].Commands, "\n")
+	if strings.Contains(cmds, "claude-oauth-token-evil") {
+		t.Fatalf("a provider secret that merely looks like a named Claude account was prompted for: %q", cmds)
+	}
+}
+
+// TestTakeRefusesDisallowedClaudeOAuthName unit-tests take()'s own
+// independent backstop directly (not through Apply(), which resolve()'s
+// filter already keeps such a name out of tg.wanted for, so a disallowed
+// name never reaches take() on the normal path): even called for a name
+// resolve() should never have offered, take() refuses it itself before
+// reading or storing anything, so the backstop holds even if resolve()'s
+// filter were ever wrong or bypassed.
+func TestTakeRefusesDisallowedClaudeOAuthName(t *testing.T) {
+	r := newSecretsRig(t, githubOrigin, strings.NewReader(""))
+	r.stage.tg = &secretTarget{repo: "acme/app", slug: appSlug}
+	err := r.stage.take(context.Background(), r.store, nil, io.Discard, "claude-oauth-token-nobody")
+	if err == nil || !strings.Contains(err.Error(), "not a configured claude_accounts name") {
+		t.Fatalf("err = %v", err)
+	}
+	if r.store.setCalls() != 0 {
+		t.Fatal("a value was stored despite the refusal")
+	}
+}
+
+// TestInitNeverPromptsForWorkflowDeclaredClaudeOAuthName is the review's
+// exact probe: a workflow's own secrets: names
+// claude-oauth-token-other-team, where other-team is a real
+// claude_accounts entry this repository is not even allowed (allow_data_to
+// lists only acme/other). This must never get the "claude setup-token"
+// treatment a legitimate named account gets, and must never be asked for
+// or stored, whatever layer catches it. config.Validate
+// (internal/config/validate.go) now refuses to parse a fugaro.yaml that
+// declares a secret in this namespace at all, so this checkout's cfg comes
+// back nil and the stage falls back to asking only for the git credential
+// — proving the probe is defeated end-to-end, not merely that one
+// function's return value changed.
+func TestInitNeverPromptsForWorkflowDeclaredClaudeOAuthName(t *testing.T) {
+	r := newSecretsRig(t, githubOrigin, strings.NewReader(""))
+	r.e.lc.ClaudeAccounts = map[string]config.ClaudeAccount{
+		"other-team": {AllowDataTo: []string{"acme/other"}}, // not this repository
+	}
+	r.writeConfig(t, "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n"+
+		"  app: { commands: { build: sh build.sh, test: sh test.sh }, secrets: [{ name: claude-oauth-token-other-team, env: FOO_TOKEN }] }\n")
+	res, err := r.run(t)
+	if err != nil || len(res.Left) != 1 {
+		t.Fatalf("%v, left %v", err, res.Left)
+	}
+	cmds := strings.Join(res.Left[0].Commands, "\n")
+	if strings.Contains(cmds, "other-team") || strings.Contains(cmds, "FOO_TOKEN") {
+		t.Fatalf("the workflow-declared claude-oauth-token-<name> secret was prompted for: %q", cmds)
+	}
+	var detail string
+	for _, st := range res.Stages {
+		detail = st.Detail
+	}
+	if !strings.Contains(detail, "no fugaro.yaml") {
+		t.Errorf("the invalid fugaro.yaml was not treated as absent: %q", detail)
+	}
+}
+
+// TestAllowedClaudeOAuthMountsDropsDisallowedNames is a surgical,
+// bypass-the-YAML-pipeline unit test of resolve()'s defense-in-depth
+// filter: config.Validate is supposed to stop infra.SecretMounts from ever
+// carrying a claude-oauth-token-<name> entry a workflow declared itself
+// (TestInitNeverPromptsForWorkflowDeclaredClaudeOAuthName proves that end
+// to end), but this filter must not assume that upstream refusal ran —
+// constructing the mounts slice directly, as SecretMounts would return it
+// for an (otherwise impossible, post-Validate) workflow secret of that
+// shape, proves the filter itself drops it independently.
+func TestAllowedClaudeOAuthMountsDropsDisallowedNames(t *testing.T) {
+	accounts := map[string]config.ClaudeAccount{
+		"acme-personal": {AllowDataTo: []string{"acme/app"}},
+		"other-team":    {AllowDataTo: []string{"acme/other"}}, // not acme/app
+	}
+	mounts := []infra.SecretMount{
+		{Logical: "github-app-key", Env: "FUGARO_GITHUB_APP_PRIVATE_KEY"},
+		{Logical: "claude-oauth-token", Env: "CLAUDE_CODE_OAUTH_TOKEN"},
+		{Logical: "claude-oauth-token-acme-personal", Env: "SHOULD_NOT_APPEAR"}, // allowed
+		{Logical: "claude-oauth-token-other-team", Env: "FOO_TOKEN"},            // configured, not allowed here
+		{Logical: "claude-oauth-token-nobody", Env: "BAR_TOKEN"},                // not configured at all
+		{Logical: "npm-token", Env: "NPM_TOKEN"},                                // an ordinary workflow secret, untouched
+	}
+	got := allowedClaudeOAuthMounts(accounts, "acme/app", mounts)
+	var logicals []string
+	for _, m := range got {
+		logicals = append(logicals, m.Logical)
+	}
+	want := []string{"github-app-key", "claude-oauth-token", "claude-oauth-token-acme-personal", "npm-token"}
+	if strings.Join(logicals, ",") != strings.Join(want, ",") {
+		t.Fatalf("allowedClaudeOAuthMounts = %v, want %v", logicals, want)
 	}
 }
 

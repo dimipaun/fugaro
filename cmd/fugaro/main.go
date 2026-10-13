@@ -16,10 +16,25 @@ func main() {
 	// SIGTERM is how Cloud Run asks a task to stop; cancelling the context lets
 	// the runner abandon the current stage and still finalize.
 	ctx, stop := signalContext()
-	err := cli.NewRootCmd().ExecuteContext(ctx)
+	cmd, err := cli.NewRootCmd().ExecuteContextC(ctx)
 	stop()
+	// Before the process can exit: give the background daily update check
+	// (internal/cli/updatewarn.go) a short window to finish rather than
+	// killing it mid-flight the instant the command's own work is done.
+	// Bounded to ~200ms, not its own ~1s FetchTimeout: a command must
+	// never visibly wait out a blackholed network just to exit, so a check
+	// still running past the bound is abandoned instead (that day's check
+	// is lost, not "the command slowed down").
+	cli.WaitForUpdateCheck()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "fugaro:", cli.ErrorText(err))
+	}
+	// Not from a PersistentPostRun: cobra skips it when RunE errors, which
+	// most command failures do, so the nag is printed here instead,
+	// unconditionally, after the command's own output (including the error
+	// line just above, if any).
+	cli.WarnUpdateAvailable(cmd)
+	if err != nil {
 		os.Exit(cli.ExitCode(err))
 	}
 }

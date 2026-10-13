@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +20,6 @@ git:
   provider: github
 workflows:
   server:
-    base: java-services
     commands:
       build: ./gradlew assemble
       test: ./gradlew test
@@ -37,10 +37,10 @@ func TestParseAppliesDefaults(t *testing.T) {
 		t.Errorf("agent defaults = %+v", cfg.Agent)
 	}
 	w := cfg.Workflows["server"]
-	if w.Resources.CPU != 4 || w.Resources.Memory != "16Gi" {
-		t.Errorf("resources = %+v, want 4 / 16Gi", w.Resources)
+	if w.Resources.CPU != 4 || w.Resources.Memory != "8Gi" {
+		t.Errorf("resources = %+v, want 4 / 8Gi", w.Resources)
 	}
-	if got := w.Commands.Reports; len(got) != 1 || got[0] != "**/build/test-results/**/*.xml" {
+	if got := w.Commands.Reports; !slices.Equal(got, []string{"**/junit*.xml", "**/build/test-results/**/*.xml"}) {
 		t.Errorf("reports = %v", got)
 	}
 	to := w.Timeouts
@@ -67,8 +67,15 @@ func TestParseProblems(t *testing.T) {
 		line                  int
 	}{
 		{"empty", "", "", "file is empty", 0},
-		{"unknown field", minimalYAML + "    color: blue\n", "", "field color not found", 12},
-		{"bad duration", minimalYAML + "    timeouts: { total: soon }\n", "", "invalid duration", 12},
+		{"unknown field", minimalYAML + "    color: blue\n", "", "field color not found", 11},
+		// claude_accounts is a local-config-only key (design
+		// docs/design/named-oauth-tokens.md §3, decision T1): a fugaro.yaml
+		// may never define or widen the named-account allow-list, so the
+		// repository layer's strict decoder (the same KnownFields(true)
+		// decoder as the "unknown field" case above) must refuse it exactly
+		// like any other field the Config struct does not have.
+		{"claude_accounts is not a fugaro.yaml key", minimalYAML + "claude_accounts:\n  x: {}\n", "", "field claude_accounts not found", 0},
+		{"bad duration", minimalYAML + "    timeouts: { total: soon }\n", "", "invalid duration", 11},
 		{"version", strings.Replace(minimalYAML, "version: 1", "version: 2", 1), "version", "must be 1", 0},
 		{"provider", strings.Replace(minimalYAML, "github", "gitlab", 1), "git.provider", "must be one of github, bitbucket", 0},
 		{"missing test", strings.Replace(minimalYAML, "      test: ./gradlew test\n", "", 1), "workflows.server.commands.test", "is required", 0},
@@ -82,6 +89,16 @@ func TestParseProblems(t *testing.T) {
 		{"memory", minimalYAML + "    resources: { memory: 32GB }\n", "workflows.server.resources.memory", "must look like", 0},
 		{"cpu", minimalYAML + "    resources: { cpu: -1 }\n", "workflows.server.resources.cpu", "must be at least 1", 0},
 		{"reserved secret", minimalYAML + "    secrets:\n      - { name: claude-oauth-token, env: TOK }\n", "workflows.server.secrets[0].name", "reserved", 0},
+		// claude-oauth-token-<name> is the derived secret ID of a named
+		// Claude account (config.ClaudeAccountSecret, design
+		// docs/design/named-oauth-tokens.md §5): a workflow must never be
+		// able to declare a secret of that shape as its own, since a name
+		// that happens to collide with (or merely look like) a real or
+		// fictitious account name would let fugaro.yaml itself steer where
+		// the owner's pasted Claude token value goes, bypassing
+		// claude_accounts' allow_data_to allow-list entirely (the local
+		// config, never fugaro.yaml, controls that list — T1).
+		{"claude-oauth-token-prefixed workflow secret reserved", minimalYAML + "    secrets:\n      - { name: claude-oauth-token-acme-personal, env: TOK }\n", "workflows.server.secrets[0].name", "reserved for named Claude accounts", 0},
 		{"cache key", minimalYAML + "    cache:\n      - { key: [], paths: [~/.gradle] }\n", "workflows.server.cache[0].key", "at least one file", 0},
 		// A verbatim tag's own text stands in for !!str in yaml.v3's type
 		// error, so a fugaro.yaml can put anything a YAML tag allows,
@@ -128,15 +145,18 @@ func TestCommandsLintAndFix(t *testing.T) {
 	}
 }
 
-// TestReviewAllowForksParses (generic-tool Task 9, G12): review.allow_forks
-// is a plain top-level boolean.
-func TestReviewAllowForksParses(t *testing.T) {
-	cfg, problems := Parse([]byte(minimalYAML + "review:\n  allow_forks: true\n"))
-	if len(problems) > 0 {
-		t.Fatalf("unexpected problems: %v", problems)
-	}
-	if !cfg.Review.AllowForks {
-		t.Fatalf("Review.AllowForks = false, want true")
+// TestReviewAllowForksRemoved (owner ruling 2026-10-12, generic-tool Task
+// 12): review.allow_forks no longer exists — review mode is
+// trusted-author-only, with no opt-in for untrusted ones — so a leftover
+// review: key, from before the removal, is refused by the strict parser
+// (KnownFields) the same as any other unknown key.
+//
+// Mutation (restore the Review field on Config): this test fails, finding
+// no problem for a key that no longer exists.
+func TestReviewAllowForksRemoved(t *testing.T) {
+	_, problems := Parse([]byte(minimalYAML + "review:\n  allow_forks: true\n"))
+	if len(problems) == 0 {
+		t.Fatal("want a problem for the removed review.allow_forks key, got none")
 	}
 }
 
@@ -197,7 +217,7 @@ func TestSelectWorkflow(t *testing.T) {
 	if _, _, err := cfg.SelectWorkflow("web"); err == nil || !strings.Contains(err.Error(), `no workflow "web"`) {
 		t.Fatalf("SelectWorkflow(web) err = %v", err)
 	}
-	two := minimalYAML + "  web:\n    base: web-node\n    commands: { build: pnpm build, test: pnpm test }\n"
+	two := minimalYAML + "  web:\n    commands: { build: pnpm build, test: pnpm test }\n"
 	cfg2, problems := Parse([]byte(two))
 	if len(problems) > 0 {
 		t.Fatal(problems)
@@ -583,7 +603,7 @@ func TestPRCheckpointsDefaultsTrue(t *testing.T) {
 
 func TestAgentRecipe(t *testing.T) {
 	base := "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: api-key\n%s" +
-		"workflows:\n  app: { base: go, commands: { build: go build ./..., test: go test ./... } }\n"
+		"workflows:\n  app: { commands: { build: go build ./..., test: go test ./... } }\n"
 	cfg, ps := Parse([]byte(fmt.Sprintf(base, "  recipe: claude-solo\n")))
 	if len(ps) > 0 || cfg.Agent.Recipe != "claude-solo" {
 		t.Fatalf("cfg = %+v, problems %v", cfg, ps)
@@ -620,7 +640,38 @@ func TestAgentRecipe(t *testing.T) {
 	}
 }
 
-const profileBase = "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  web: { base: go, commands: { build: make, test: make test } }\n"
+// TestAgentOAuthToken is TestAgentRecipe's shape for agent.oauth_token
+// (named oauth tokens plan Task 6): the field decodes, and Validate applies
+// the same shape rules task.Spec.OAuthToken does (config.ClaudeAccountNameRE,
+// MaxClaudeAccountNameLen, never "default" literally) — a membership check
+// (config.AllowedClaudeAccounts) is not this function's job, since it never
+// sees the local config.
+func TestAgentOAuthToken(t *testing.T) {
+	base := "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: oauth\n%s" +
+		"workflows:\n  app: { commands: { build: go build ./..., test: go test ./... } }\n"
+	cfg, ps := Parse([]byte(fmt.Sprintf(base, "  oauth_token: acme-personal\n")))
+	if len(ps) > 0 || cfg.Agent.OAuthToken != "acme-personal" {
+		t.Fatalf("cfg = %+v, problems %v", cfg, ps)
+	}
+	cfg, ps = Parse([]byte(fmt.Sprintf(base, "")))
+	if len(ps) > 0 || cfg.Agent.OAuthToken != "" {
+		t.Fatalf("unset: %+v, %v", cfg, ps)
+	}
+	_, ps = Parse([]byte(fmt.Sprintf(base, "  oauth_token: default\n")))
+	if len(ps) != 1 || ps[0].Path != "agent.oauth_token" || !strings.Contains(ps[0].Message, `must not be "default"`) {
+		t.Fatalf("literal default: %v", ps)
+	}
+	_, ps = Parse([]byte(fmt.Sprintf(base, "  oauth_token: Acme\n")))
+	if len(ps) != 1 || ps[0].Path != "agent.oauth_token" || !strings.Contains(ps[0].Message, "must be a Claude account name") {
+		t.Fatalf("bad shape: %v", ps)
+	}
+	_, ps = Parse([]byte(fmt.Sprintf(base, "  oauth_token: "+strings.Repeat("a", MaxClaudeAccountNameLen+1)+"\n")))
+	if len(ps) != 1 || ps[0].Path != "agent.oauth_token" || !strings.Contains(ps[0].Message, "must be at most") {
+		t.Fatalf("too long: %v", ps)
+	}
+}
+
+const profileBase = "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  web: { commands: { build: make, test: make test } }\n"
 
 func TestProfileKeysDecode(t *testing.T) {
 	var c Config

@@ -1,0 +1,8 @@
+version: 1
+name: premium
+description: The reviewer's (strong) model does the whole loop; no cheap stage.
+use_when: High-stakes or subtle work (concurrency, security, data migrations) where a cheap model's attempt is likely to waste the review.
+roles:
+  coder: reviewer
+steps:
+  - review: {}

@@ -145,7 +145,14 @@ type SharedAnchor struct{ Name, GCPProject, Bucket string }
 
 // sharedForbidden are the top-level keys the publisher never writes
 // (localcfg.Config.Shared): owner-only, personal, derived or local-only.
-var sharedForbidden = []string{"terraform", "user", "endpoints", "bucket_url", "registry", "providers"}
+// claude_accounts is here for the same reason providers is: decision T1
+// (design docs/design/named-oauth-tokens.md §3) keeps the named-account
+// allow-list in the operator-only local config exclusively, so a launcher
+// with objectAdmin on the runs bucket (anyone who could write this file)
+// must never be able to inject or widen it by publishing one. update_check
+// is operator-only the same way: a machine's choice to silence the nag
+// must never be flippable by whoever can write the shared file.
+var sharedForbidden = []string{"terraform", "user", "endpoints", "bucket_url", "registry", "providers", "claude_accounts", "update_check"}
 
 // ParseShared validates a published shared config against its anchor and
 // returns it (docs/design/shared-config.md §5). Anyone holding objectAdmin
@@ -154,10 +161,11 @@ var sharedForbidden = []string{"terraform", "user", "endpoints", "bucket_url", "
 // anchor's GCP project: another name, GCP project or bucket, a registry,
 // base image or log view elsewhere, a budget block whose Firebase project
 // is not the anchor's GCP project or whose database or signer is not its
-// Firebase project's, a forbidden section (providers among them), an unknown
-// key, YAML anchors, aliases, merge keys, explicit tags, repeated keys or
-// documents, and anything over localcfg.SharedMaxBytes. Every refusal
-// names the field and says to have fugaro init run again.
+// Firebase project's, a forbidden section (providers and claude_accounts
+// among them), an unknown key, YAML anchors, aliases, merge keys, explicit
+// tags, repeated keys or documents, and anything over
+// localcfg.SharedMaxBytes. Every refusal names the field and says to have
+// fugaro init run again.
 func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 	refuse := func(format string, args ...any) (*localcfg.Config, error) {
 		return nil, fmt.Errorf("the shared config "+format+"; ask an operator to run fugaro init again", args...)
@@ -189,11 +197,18 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 			return bad(f.key, "%q is not %s", got, f.want)
 		}
 	}
+	data, dropped, err := dropLegacyBaseImages(data)
+	if err != nil {
+		return refuse("is not valid YAML: %v", err)
+	}
 	c, err := localcfg.Parse(data) // strict: an unknown key is refused here
 	if err != nil {
 		// Parse and yaml.v3 echo keys and values as written: quoted, so
 		// the writer's text can't carry terminal escapes or newlines.
 		return refuse("is not valid: %s", strconv.Quote(strings.ReplaceAll(err.Error(), "local config: ", "")))
+	}
+	for _, k := range dropped {
+		c.AddWarning(fmt.Sprintf("the project's shared config still lists base_images.%q, a base removed in 0.7.0; ignored (the next fugaro init or fugaro image refresh republishes the shared config)", k))
 	}
 	// Again on the decoded values, which are what the commands use.
 	switch {
@@ -203,7 +218,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 		return bad("gcp_project", "%q is not %s", c.GCPProject, a.GCPProject)
 	case c.RunsBucket != a.Bucket || c.RunsBucketName() != a.Bucket:
 		return bad("runs_bucket", "%q is not the bucket it was read from, %s", c.RunsBucket, a.Bucket)
-	case c.User != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil:
+	case c.User != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.ClaudeAccounts != nil || c.UpdateCheck != nil:
 		return refuse("carries a section that is never published (%s)", strings.Join(sharedForbidden, ", "))
 	case c.RegistryHost != c.Region+"-docker.pkg.dev/"+a.GCPProject:
 		return bad("registry_host", "%q is not this project's registry, %s-docker.pkg.dev/%s", c.RegistryHost, c.Region, a.GCPProject)
@@ -238,6 +253,49 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 		}
 	}
 	return c, nil
+}
+
+// dropLegacyBaseImages removes a base_images entry of exactly a kind
+// removed in 0.7.0 (config.LegacyBaseKinds; never any other unrecognized
+// key, which strict localcfg.Parse must still refuse) from a published
+// shared config, and only when its value is a scalar (never a mapping,
+// which could smuggle a key or anchor past the key-by-key check here and
+// decode differently once localcfg.Parse's own alias/merge-key rules run
+// on it). Its writer may be an older fugaro: one stale publish of a known
+// legacy key must not lock every teammate out (design base-image.md
+// section 10), but anything else is left in place for Parse to refuse. It
+// returns the data unchanged when nothing was dropped.
+func dropLegacyBaseImages(data []byte) ([]byte, []string, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, nil, err
+	}
+	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return data, nil, nil
+	}
+	top := doc.Content[0]
+	var dropped []string
+	for i := 0; i+1 < len(top.Content); i += 2 {
+		if top.Content[i].Value != "base_images" || top.Content[i+1].Kind != yaml.MappingNode {
+			continue
+		}
+		m := top.Content[i+1]
+		var kept []*yaml.Node
+		for j := 0; j+1 < len(m.Content); j += 2 {
+			k, v := m.Content[j], m.Content[j+1]
+			if v.Kind == yaml.ScalarNode && slices.Contains(config.LegacyBaseKinds, k.Value) {
+				dropped = append(dropped, k.Value)
+				continue
+			}
+			kept = append(kept, k, v)
+		}
+		m.Content = kept
+	}
+	if len(dropped) == 0 {
+		return data, nil, nil
+	}
+	out, err := yaml.Marshal(&doc)
+	return out, dropped, err
 }
 
 // baseImageRE matches an image of the installation's base registry under

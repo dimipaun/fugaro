@@ -46,7 +46,7 @@ const (
 	initRepoRegion        = "us-east5"
 	initRepoRunsBucket    = "fugaro-runs-proj-1234"
 	initRepoStateBucket   = "fugaro-tfstate-proj-1234"
-	initRepoBaseImage     = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-0123abc"
+	initRepoBaseImage     = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc"
 )
 
 var (
@@ -138,7 +138,7 @@ func newInitRepoRig(t *testing.T, repo, origin string, edit func(string) string)
 	r.cfgText = "version: 1\nname: " + initRepoProjectName + "\ngcp_project: " + initRepoProject + "\nregion: " + initRepoRegion + "\nruns_bucket: " + initRepoRunsBucket + "\n" +
 		"registry: " + initRepoRegion + "-docker.pkg.dev/" + initRepoProject + "/fugaro\n" +
 		"registry_host: " + initRepoRegion + "-docker.pkg.dev/" + initRepoProject + "\n" +
-		"base_images: {web-node: " + initRepoBaseImage + "}\n" +
+		"base_images: {base: " + initRepoBaseImage + "}\n" +
 		"scheduler_region: us-east4\n" +
 		"terraform: { state_bucket: " + initRepoStateBucket + " }\n" +
 		"user: test@example.com\n" +

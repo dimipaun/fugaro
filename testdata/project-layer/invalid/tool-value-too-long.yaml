@@ -3,7 +3,6 @@ project: aurora
 gcp_project: proj-1234
 profiles:
   app:
-    base: base
     image:
       tools: { node: "11111111111111111111111111111111111111111111111111111111111111111" }
     commands: { build: npm run build, test: npm test }

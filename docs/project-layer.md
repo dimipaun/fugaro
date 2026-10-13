@@ -87,6 +87,7 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `agent.first_line_review` | project, repo |  |
 | `agent.first_line_rounds` | project, repo |  |
 | `agent.recipe` | project, repo, override |  |
+| `agent.oauth_token` | repo, override | it names a credential identity that only the repository's own, PR-reviewed fugaro.yaml may choose among names the local config (never the project layer) allow-lists |
 | `budget.mode` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it |
 | `budget.per_run_usd` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it |
 | `budget.allowed_models` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it |
@@ -122,7 +123,6 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `workflows.*.rebuild.paths` | profile, repo |  |
 | `followup.trusted` | repo | it decides whose comments steer a run with the repository's credentials |
 | `followup.allow_public` | repo | it decides whose comments steer a run with the repository's credentials |
-| `review.allow_forks` | repo | review mode would run a fork's code next to the job's secrets; only the repository opts in |
 <!-- scope-table:end -->
 
 Outside this table: secrets' values live in Secret Manager and are never in any layer; per-person Claude tokens are a later project; the individual layer is flags and env only.
@@ -141,11 +141,11 @@ defaults:
   agent:
     auth: oauth
     review_rounds: 2
-    recipe: cheap-loop-senior
+    recipe: standard
 profiles:
   java-service:
     description: Gradle service with Postgres
-    base: java-services
+    image: { tools: { java: "temurin-17" } }
     commands:
       build: ./gradlew assemble
       test: ./gradlew test
@@ -155,8 +155,7 @@ profiles:
     resources: { cpu: 4, memory: 16Gi }
     timeouts: { total: 2h }
   node-web:
-    base: web-node
-    image: { node: "22" }
+    image: { tools: { node: "22" } }
     commands: { build: npm run build, test: npm test }
 default_profile: java-service
 ```
@@ -183,9 +182,9 @@ Its shape is checked strictly, with the shared config's trust rules: one documen
 
 ## 8. Publishing safely
 
-**`--executable-changes` is a CLI check, not an access control.** Until the 0.7.0 bucket IAM hardening ([design/bucket-iam.md](design/bucket-iam.md)) ships, every launcher holds `roles/storage.objectAdmin` on the runs bucket and can write the layer object, and the per-repository `builds/<slug>/` copy, directly (for example with `gcloud storage cp`), bypassing the guard below and the sha256 trail.
+**`--executable-changes` is a CLI check, not an access control.** It only gates `fugaro config publish`; whoever can write the bucket object directly (for example with `gcloud storage cp`) bypasses the guard below and the sha256 trail. Since the 0.7.0 bucket IAM hardening ([design/bucket-iam.md](design/bucket-iam.md)), that is operators only (and, for its own copy, a repository's own build account): a launcher's direct write is refused with a 403. An installation whose operator has not yet run `fugaro init` to apply the 0.7.0 grants still has every launcher holding `roles/storage.objectAdmin`, with the old, wider bypass, until they do.
 
-`fugaro config publish` refuses in a coding-agent session, before anything else. That is what "only from your own terminal" means here — not "only an operator's": any launcher's own terminal can publish today, the same as any launcher can already push code or launch a run.
+`fugaro config publish` refuses in a coding-agent session, before anything else. That is what "only from your own terminal" means here. Since 0.7.0 it is also operator-only in effect: a launcher's own terminal gets the operator-role refusal ([gcp-setup.md](gcp-setup.md)), the same as any other write to `fugaro/`.
 
 **`--executable-changes`.** A profile may set the keys of `config.ExecutableKeys`:
 
@@ -209,10 +208,10 @@ Its shape is checked strictly, with the shared config's trust rules: one documen
 
 **The threat model (design §11):**
 
-- **Who can write.** Anyone holding `roles/storage.objectAdmin` on the runs bucket — today that is every launcher and every operator, not operators alone (see the lead note above).
+- **Who can write.** Operators, since the 0.7.0 bucket IAM hardening. An installation whose operator has not yet run `fugaro init` to apply the 0.7.0 grants still has every launcher holding `roles/storage.objectAdmin` too (see the lead note above).
 - **What a hostile or careless layer could do.** Replace build or test commands for every repository that takes a profile: this already takes effect, through the embedded layer every launch carries, with no human reviewing the change first. Since Task 14 and Task 15 shipped, add `image.apt`, `image.setup` or `image.tools` (as dangerous as `image.setup`: it names tools installed into the image) or turn off `image.skip_build_scripts`, which then runs in Cloud Build, including on the nightly rebuild, with no human launching anything. `commands.lint` and `commands.fix` are executable keys too, like `commands.build` and `commands.test`. Also: raise `resources` or `timeouts`; change `agent.model`, `recipe` or `auth`; point `base` at another shipped kind; or hide any of this, since a plain bucket write leaves no review trail.
 - **What already bounds it.** The project layer cannot hold policy keys, `secrets`, `followup.*`, `base_branch`, `reviewers`, `dockerfile` or `instructions` (§5); the policy ceiling (dollars, tokens, allowed models) still comes from the owner and only tightens; base images stay `config.Bases`; and every run records the layer's sha256 and generation, which `fugaro runs ls`, `diagnose` and `doctor` show.
-- **The recommended fix.** [design/bucket-iam.md](design/bucket-iam.md) narrows the bucket grant so only operators (and, for its own copy, a repository's own build account) can write `fugaro/` and `builds/<slug>/`. It ships in release 0.7.0, with the base image consolidation; the bucket stays writable by every launcher until then.
+- **The fix, shipped in 0.7.0.** [design/bucket-iam.md](design/bucket-iam.md) narrows the bucket grant so only operators (and, for its own copy, a repository's own build account) can write `fugaro/` and `builds/<slug>/`. Each installation's operator applies it by running `fugaro init`; until they do, the bucket stays writable by every launcher (see the lead note above).
 
 ## 9. Rollout (0.6.0)
 

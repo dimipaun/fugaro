@@ -909,6 +909,43 @@ func TestReadinessCloneDeploysWithoutAnImageBuild(t *testing.T) {
 	}
 }
 
+// A named account's job variant (gcp.WorkflowVariant, design
+// docs/design/named-oauth-tokens.md §4) shares its logical workflow's one
+// image, built once: its own "image not built yet" hint must still tell the
+// owner to run fugaro image build --workflow <the fugaro.yaml name>, never
+// --workflow <the variant key>, which --workflow does not accept.
+func TestReadinessImageHintNamesTheLogicalWorkflow(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	in := sandboxInputs(t, m5Additions+claudeAccountsLC)
+	spec, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.gcs.AddBucket(spec.Installation.RunsBucket, testProjectNumber, managed)
+	_, ex, err := DiscoverRepo(ctx, f.c, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, missing, err := Readiness(ctx, f.c, spec, ex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, m := range missing {
+		if m.Workflow != "web_acme-personal" || m.Kind != MissingImage {
+			continue
+		}
+		found = true
+		if strings.Contains(m.Reason, "--workflow web_acme-personal") || !strings.Contains(m.Reason, "--workflow web") {
+			t.Errorf("the named variant's missing reason is %q; want it to say --workflow web, never the variant key", m.Reason)
+		}
+	}
+	if !found {
+		t.Fatal("no MissingImage entry for the named account's job variant")
+	}
+}
+
 // The check job mounts the provider credential at latest, which Cloud Run
 // checks when it creates the job, so like a workflow job it waits until
 // the credential has a version; the invoker grant and the Scheduler job
@@ -1133,6 +1170,12 @@ func TestReadinessCloneJobWithoutImageNamesTheConfig(t *testing.T) {
 	in := cloneInputs(t)
 	in.LC.BaseImages = maps.Clone(in.LC.BaseImages)
 	delete(in.LC.BaseImages, config.BaseKind)
+	// A clone-only repository: since the 0.7.0 cut the baked api would
+	// need base_images.base too (its daily check's base), so without it
+	// Repo itself refuses before Readiness is reached. Only a clone-only
+	// repository can still have no base_images.base at Readiness time.
+	in.Cfg.Workflows = maps.Clone(in.Cfg.Workflows)
+	delete(in.Cfg.Workflows, "api")
 	rs, err := Repo(in)
 	if err != nil {
 		t.Fatal(err)

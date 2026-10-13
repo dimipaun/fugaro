@@ -24,7 +24,7 @@ func TestResolveMinimalTakesTheDefaultProfile(t *testing.T) {
 	if !ok || len(c.Workflows) != 1 {
 		t.Fatalf("workflows = %v", c.Workflows)
 	}
-	if w.Base != "java-services" || w.Commands.Test != "./gradlew test" || w.Profile != "java-service" ||
+	if w.Commands.Test != "./gradlew test" || w.Profile != "java-service" ||
 		w.Timeouts.Total.Duration != 2*time.Hour || w.Timeouts.Stage.Duration != 40*time.Minute {
 		t.Fatalf("workflow = %+v", w)
 	}
@@ -100,14 +100,12 @@ func TestResolveTable(t *testing.T) {
 			name: "profile: picks another profile",
 			repo: minimalRepo + "profile: node-web\n",
 			get: map[string]func(*Config) string{
-				"workflows.default.base":       func(c *Config) string { return c.Workflows["default"].Base },
-				"workflows.default.image.node": func(c *Config) string { return c.Workflows["default"].Image.Node },
-				"workflows.default.profile":    func(c *Config) string { return c.Workflows["default"].Profile },
+				"workflows.default.image.tools.node": func(c *Config) string { return c.Workflows["default"].Image.Tools["node"] },
+				"workflows.default.profile":          func(c *Config) string { return c.Workflows["default"].Profile },
 			},
 			want: map[string]want{
-				"workflows.default.base":       {"web-node", SourceProfile("node-web")},
-				"workflows.default.image.node": {"20", SourceProfile("node-web")},
-				"workflows.default.profile":    {"node-web", SourceRepo},
+				"workflows.default.image.tools.node": {"20", SourceProfile("node-web")},
+				"workflows.default.profile":          {"node-web", SourceRepo},
 			},
 		},
 		{
@@ -128,7 +126,7 @@ func TestResolveTable(t *testing.T) {
 		},
 		{
 			name: "a workflow without profile: takes nothing from any profile",
-			repo: minimalRepo + "workflows:\n  web:\n    base: go\n    commands: { build: make, test: make test }\n",
+			repo: minimalRepo + "workflows:\n  web:\n    commands: { build: make, test: make test }\n",
 			get: map[string]func(*Config) string{
 				"workflows.web.resources.memory": func(c *Config) string { return c.Workflows["web"].Resources.Memory },
 				"workflows.web.timeouts.total":   func(c *Config) string { return c.Workflows["web"].Timeouts.Total.String() },
@@ -169,12 +167,12 @@ func TestResolveTable(t *testing.T) {
 }
 
 func TestResolveProblemsNameTheLayer(t *testing.T) {
-	l := mustLayer(t, strings.Replace(testLayer, "default_profile:", "  bare:\n    base: go\ndefault_profile:", 1))
+	l := mustLayer(t, strings.Replace(testLayer, "default_profile:", "  bare: {}\ndefault_profile:", 1))
 	for _, tc := range []struct{ name, repo, want string }{
 		{"an unknown profile", minimalRepo + "profile: nope\n", `profile: names profile "nope", which project acme's layer does not have (its profiles: bare, java-service, node-web)`},
-		{"profile: beside workflows:", minimalRepo + "profile: node-web\nworkflows:\n  web: { base: go, commands: { build: a, test: b } }\n", "applies only to a fugaro.yaml with no workflows:"},
+		{"profile: beside workflows:", minimalRepo + "profile: node-web\nworkflows:\n  web: { commands: { build: a, test: b } }\n", "applies only to a fugaro.yaml with no workflows:"},
 		{"a value the repository set says nothing more", minimalRepo + "workflows:\n  api:\n    profile: node-web\n    commands: { test: '' }\n", "workflows.api.commands.test: is required; "},
-		{"a value the profile set names the profile", minimalRepo + "workflows:\n  api:\n    profile: node-web\n    base: go\n", "workflows.api.image.node: only applies to base web-node (set by profile node-web)"},
+		{"a value the profile set names the profile", minimalRepo + "workflows:\n  api:\n    profile: java-service\n    checkout: clone\n", "workflows.api.image.apt: checkout: clone runs the base image with no build; use checkout: baked to build an image (set by profile java-service)"},
 		{"a value neither set names the profile", minimalRepo + "workflows:\n  api:\n    profile: bare\n", "workflows.api.commands.build: is required (set neither by the repository nor by profile bare)"},
 		{"a value the profile set names the profile for a bidi workflow name", minimalRepo + "workflows:\n  \"a\\u202eb\":\n    profile: bare\n", "commands.build: is required (set neither by the repository nor by profile bare)"},
 		{"another project's layer", "version: 1\nproject: other\ngcp_project: acme-fugaro\n", `the project layer given is project "acme"'s`},
@@ -217,7 +215,7 @@ func TestResolveWithoutLayerIsParse(t *testing.T) {
 		t.Fatalf("an anchored file with no workflows: %v", ps)
 	}
 	// Without a layer every key the file sets is the repository's.
-	_, res, ps := Resolve([]byte(minimalRepo+"git: { provider: github }\nworkflows:\n  api: { base: go, commands: { build: a, test: b } }\n"), nil)
+	_, res, ps := Resolve([]byte(minimalRepo+"git: { provider: github }\nworkflows:\n  api: { commands: { build: a, test: b } }\n"), nil)
 	if len(ps) > 0 {
 		t.Fatal(ps)
 	}
@@ -258,7 +256,7 @@ func TestResolveOverAnEmptyLayerIsParse(t *testing.T) {
 	cases := map[string][]byte{
 		"literals": []byte(literalsRepo),
 		"anchors and merge keys": []byte(minimalRepo + "git: { provider: github }\nworkflows:\n" +
-			"  api: &w\n    base: go\n    commands: &c { build: make, test: make test }\n    timeouts: { total: 1h }\n" +
+			"  api: &w\n    commands: &c { build: make, test: make test }\n    timeouts: { total: 1h }\n" +
 			"  web:\n    <<: *w\n    commands: { <<: *c, test: make check }\n" +
 			"  cli: *w\n"),
 	}
@@ -302,10 +300,8 @@ agent:
     2
 workflows:
   api:
-    base: go
     commands: { build: 1e3, test: 010 }
   lit1:
-    base: go
     commands:
       build: >
         folded  text
@@ -315,7 +311,6 @@ workflows:
          b
         c
   lit2:
-    base: go
     commands:
       build: >+
         a
@@ -324,7 +319,6 @@ workflows:
         a
 
   lit3:
-    base: go
     commands:
       build: |+
         a
@@ -344,7 +338,7 @@ func TestResolveKeepsLiterals(t *testing.T) {
 	}
 	l := mustLayer(t, strings.Replace(strings.Replace(strings.Replace(testLayer, "labels: [fugaro]", "labels: [1.10, 0x10]", 1),
 		"build: npm run build, test: npm test", "build: 1e3, test: 010", 1),
-		"default_profile:", "  lit:\n    base: go\n    commands:\n      build: >\n        folded  text\n          more\n"+
+		"default_profile:", "  lit:\n    commands:\n      build: >\n        folded  text\n          more\n"+
 			"      test: |+\n        a\n\ndefault_profile:", 1))
 	c, _, ps := Resolve([]byte(literalsRepo), l)
 	if len(ps) > 0 {
@@ -396,12 +390,12 @@ func TestResolveKeepsLiterals(t *testing.T) {
 // number, a bool or null would decode as another type and lose its
 // workflow, so it is refused, with or without a layer.
 func TestResolveRefusesKeysThatAreNotStrings(t *testing.T) {
-	wf := "    base: go\n    commands: { build: make, test: make test }\n"
+	wf := "    commands: { build: make, test: make test }\n"
 	for _, tc := range []struct{ name, repo, want string }{
 		{"int", minimalRepo + "workflows:\n  1:\n" + wf, `line 5: has, under workflows, the key "1", which YAML reads as int, not a string; quote it`},
 		{"bool", minimalRepo + "workflows:\n  true:\n" + wf, `line 5: has, under workflows, the key "true", which YAML reads as bool, not a string; quote it`},
 		{"null", minimalRepo + "workflows:\n  ~:\n" + wf, `line 5: has, under workflows, the key "~", which YAML reads as null, not a string; quote it`},
-		{"mixed", minimalRepo + "workflows:\n  api:\n" + wf + "  2:\n" + wf, `line 8: has, under workflows, the key "2", which YAML reads as int, not a string; quote it`},
+		{"mixed", minimalRepo + "workflows:\n  api:\n" + wf + "  2:\n" + wf, `line 7: has, under workflows, the key "2", which YAML reads as int, not a string; quote it`},
 	} {
 		for _, l := range []*ProjectLayer{nil, mustLayer(t, testLayer)} {
 			t.Run(tc.name, func(t *testing.T) {
@@ -425,10 +419,10 @@ func TestResolveEscapesNames(t *testing.T) {
 		{"no layer hint", "version: 1\nproject: \"ac\\e[31mme\\u202e\"\ngcp_project: acme-fugaro\n", nil},
 		{"profile with no layer", minimalRepo + "workflows:\n  \"a\\e[2Jb\\u202e\":\n    profile: x\n", nil},
 		{"unknown profile", minimalRepo + "workflows:\n  \"a\\e[2Jb\\u202e\":\n    profile: nope\n", l},
-		{"workflow name", minimalRepo + "git: { provider: github }\nworkflows:\n  \"a\\e[2Jb\\u202e\": { base: go, commands: { build: a, test: b } }\n", nil},
+		{"workflow name", minimalRepo + "git: { provider: github }\nworkflows:\n  \"a\\e[2Jb\\u202e\": { commands: { build: a, test: b } }\n", nil},
 		// yaml.v3 percent-decodes a verbatim tag, so a key's own tag (not
 		// just its value) can carry control or formatting characters.
-		{"a key's tag", minimalRepo + "workflows:\n  !<tag:x,2000:%1B%5B2J%E2%80%AE> api:\n    base: go\n    commands: { build: a, test: b }\n", nil},
+		{"a key's tag", minimalRepo + "workflows:\n  !<tag:x,2000:%1B%5B2J%E2%80%AE> api:\n    commands: { build: a, test: b }\n", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, ps := Resolve([]byte(tc.repo), tc.l)
@@ -546,7 +540,7 @@ func btoa(b bool) string {
 // unset and clobbered back to the baked default.
 func TestResolveProfileCheckoutSurvivesDefaulting(t *testing.T) {
 	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
-	l := mustLayer(t, head+"profiles:\n  p:\n    base: base\n    checkout: clone\n    commands: { build: make, test: make test }\n")
+	l := mustLayer(t, head+"profiles:\n  p:\n    checkout: clone\n    commands: { build: make, test: make test }\n")
 	c, res, ps := Resolve([]byte(minimalRepo+"git: { provider: github }\nprofile: p\n"), l)
 	if len(ps) > 0 {
 		t.Fatalf("problems: %v", ps)
@@ -567,7 +561,7 @@ func TestResolveProfileCheckoutSurvivesDefaulting(t *testing.T) {
 // conflicting key (annotate in resolve.go).
 func TestResolveCrossLayerCheckoutConflict(t *testing.T) {
 	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
-	l := mustLayer(t, head+"profiles:\n  p:\n    base: base\n    image: { apt: [jq] }\n    commands: { build: make, test: make test }\n")
+	l := mustLayer(t, head+"profiles:\n  p:\n    image: { apt: [jq] }\n    commands: { build: make, test: make test }\n")
 	_, _, ps := Resolve([]byte(minimalRepo+"git: { provider: github }\nworkflows:\n  web:\n    profile: p\n    checkout: clone\n"), l)
 	const path, msg = "workflows.web.image.apt", "checkout: clone runs the base image with no build; use checkout: baked to build an image"
 	if !hasProblem(ps, path, msg, 0) {

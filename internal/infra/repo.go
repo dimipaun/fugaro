@@ -163,22 +163,31 @@ func SecretVersions(ctx context.Context, c *Clients, spec RepoSpec) (map[string]
 // mounts has a version (versions, from SecretVersions). A checkout: clone
 // workflow never needs one: it runs the installation's base image directly,
 // and there is no per-repository image to build or push.
+//
+// spec.Workflows may hold several keys per fugaro.yaml workflow, one per
+// Claude account the repository may choose (gcp.WorkflowVariant, design
+// docs/design/named-oauth-tokens.md §4): they share one image, built once,
+// not once per account, so only the default account's entry (the one whose
+// key equals its own Name, the identity case of WorkflowVariant) is looked
+// at here; the names this returns are always fugaro.yaml workflow names,
+// never a variant key, which is what every caller (cfg.Workflows lookups,
+// fugaro image build --workflow) needs.
 func NeedsBuild(ctx context.Context, c *Clients, spec RepoSpec, versions map[string]bool) ([]string, error) {
 	var out []string
-	for _, name := range slices.Sorted(maps.Keys(spec.Workflows)) {
-		ws := spec.Workflows[name]
-		if ws.Checkout == config.CheckoutClone {
+	for _, key := range slices.Sorted(maps.Keys(spec.Workflows)) {
+		ws := spec.Workflows[key]
+		if key != ws.Name || ws.Checkout == config.CheckoutClone {
 			continue
 		}
 		if slices.ContainsFunc(uniqueSecrets(ws), func(l string) bool { return !versions[l] }) {
 			continue
 		}
-		ok, err := hasRecord(ctx, c, target{project: spec.GCPProject}, spec.Installation.RunsBucket, imagecheck.RecordKey(spec.Slug, name))
+		ok, err := hasRecord(ctx, c, target{project: spec.GCPProject}, spec.Installation.RunsBucket, imagecheck.RecordKey(spec.Slug, ws.Name))
 		if err != nil {
 			return nil, err
 		}
 		if !ok {
-			out = append(out, name)
+			out = append(out, ws.Name)
 		}
 	}
 	return out, nil

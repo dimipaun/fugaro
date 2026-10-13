@@ -216,6 +216,26 @@ func withLoopback(list string) string {
 	return strings.Join(have, ",")
 }
 
+// ProviderRouteVars disable the Claude Code additions a provider route
+// refuses: CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1 drops the `safeguards`
+// field Claude Code sends on a session's first request; MAX_THINKING_TOKENS=0
+// drops the `thinking` field, which is what makes Claude Code add
+// `context_management` to bound it. Together they drop both `safeguards` and
+// `context_management` from the body; the `anthropic-beta` header is
+// measured unchanged (still sent) either way, and is not what the gateway
+// checks. The gateway refuses `safeguards` and `context_management` as
+// fields a provider route doesn't take (routedKeys,
+// internal/gateway/forward.go), before any call reaches the provider.
+// Measured against Claude Code 2.1.296 (docs/multi-model.md §7); apply only
+// to a stage whose model or background model is a provider's, never to an
+// all-Claude stage, whose request shape must stay exactly what it is today.
+func ProviderRouteVars() map[string]string {
+	return map[string]string{
+		"CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
+		"MAX_THINKING_TOKENS":                    "0",
+	}
+}
+
 // PinVars are a stage's pins (design §2.1): the model for Claude Code's
 // opus, sonnet and subagent roles (when set), the background model for its
 // haiku role (when set), and the output limit per call (when > 0). Each is

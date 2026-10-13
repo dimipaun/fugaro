@@ -114,7 +114,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 			// job is ready as soon as the local config names one.
 			built = ws.Image != ""
 			if !built {
-				reasons = append(reasons, gate{MissingImage, fmt.Sprintf("the local config has no base_images.%s, which workflow %s's checkout: clone job runs: fugaro init --base %s", config.BaseKind, name, config.BaseKind)})
+				reasons = append(reasons, gate{MissingImage, fmt.Sprintf("the local config has no base_images.%s, which workflow %s's checkout: clone job runs: fugaro init --base %s", config.BaseKind, ws.Name, config.BaseKind)})
 			}
 		} else {
 			b, err := hasLatest(ctx, c, tg, spec, ws.Image)
@@ -123,7 +123,10 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 			}
 			built = b
 			if !built {
-				reasons = append(reasons, gate{MissingImage, fmt.Sprintf("image not built yet: fugaro image build --repo %s --workflow %s", spec.Name, name)})
+				// --workflow takes a fugaro.yaml workflow name, never a
+				// gcp.WorkflowVariant key (several of out.Workflows' keys can
+				// share one ws.Name and its one shared image).
+				reasons = append(reasons, gate{MissingImage, fmt.Sprintf("image not built yet: fugaro image build --repo %s --workflow %s", spec.Name, ws.Name)})
 			}
 		}
 		current, exists := ex.Jobs[name]
@@ -137,8 +140,10 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 					// clone workflow's ws.Image is empty in this case (there
 					// is no base_images.base to name), so the message names
 					// the missing config key instead of an empty image.
+					// --workflow takes a fugaro.yaml workflow name (ws.Name),
+					// never a gcp.WorkflowVariant key.
 					what := fmt.Sprintf("%s is not built yet", ws.Image)
-					fix := fmt.Sprintf("build it (fugaro image build --repo %s --workflow %s)", spec.Name, name)
+					fix := fmt.Sprintf("build it (fugaro image build --repo %s --workflow %s)", spec.Name, ws.Name)
 					if ws.Checkout == config.CheckoutClone {
 						what = fmt.Sprintf("the local config has no base_images.%s", config.BaseKind)
 						fix = fmt.Sprintf("set it (fugaro init --base %s)", config.BaseKind)

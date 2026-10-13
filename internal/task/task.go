@@ -60,6 +60,14 @@ type Spec struct {
 	// leaves the choice to the runner (agent.recipe at the ref, else default);
 	// nil on a follow-up is default.
 	Recipe *Recipe `json:"recipe,omitempty"`
+	// ReviewPRs is set only for a mode: review recipe (design generic-tool
+	// §3.6, G12): the pull requests to review, 1 to 4, in launch order.
+	// Mutually exclusive with Branch/PR/PreviousRun (review mode never
+	// continues a pull request of its own); the runner refuses a mismatch
+	// against the resolved recipe's mode either way (defense in depth: a
+	// CLI older than this one, or a hand-built task, could set either
+	// alone).
+	ReviewPRs []int `json:"review_prs,omitempty"`
 	// ProjectLayer is the project layer the launching CLI read
 	// (docs/design/layered-config.md §8): its exact text, which the runner
 	// resolves fugaro.yaml against. Nil: none. A runner before 0.6.0
@@ -69,6 +77,15 @@ type Spec struct {
 	// it after the fact. Nothing in this package enforces that; a launch
 	// this field reaches has already passed that gate.
 	ProjectLayer *ProjectLayer `json:"project_layer,omitempty"`
+	// OAuthToken is the named Claude account (config.ClaudeAccountNameRE,
+	// at most config.MaxClaudeAccountNameLen characters, never
+	// config.DefaultClaudeAccount itself — "" means that) this run's
+	// agent.auth: oauth workflow used (docs/design/named-oauth-tokens.md).
+	// A runner before namedTokensSince refuses the field, since it is new
+	// and this package's decoder disallows unknown fields; the launching
+	// CLI checks the job's build record first, the same way it already
+	// does for ProjectLayer.
+	OAuthToken string `json:"oauth_token,omitempty"`
 }
 
 // Recipe is the recipe the launching CLI resolved (docs/design/recipes.md §5).
@@ -216,7 +233,24 @@ func (s *Spec) Validate() error {
 	if anyFollowUp && !allFollowUp {
 		bad("task spec: branch, pr and previous_run must be set together")
 	}
-	if !anyFollowUp && strings.TrimSpace(s.Task) == "" {
+	anyReview := s.ReviewPRs != nil
+	switch {
+	case anyReview && anyFollowUp:
+		bad("task spec: review_prs and branch/pr/previous_run don't go together: review mode never continues a pull request")
+	case anyReview && (len(s.ReviewPRs) == 0 || len(s.ReviewPRs) > 4):
+		bad("task spec: review_prs must name 1 to 4 pull requests")
+	case anyReview:
+		seen := map[int]bool{}
+		for _, n := range s.ReviewPRs {
+			if n <= 0 {
+				bad("task spec: review_prs must be positive pull request numbers")
+			} else if seen[n] {
+				bad("task spec: review_prs repeats #%d", n)
+			}
+			seen[n] = true
+		}
+	}
+	if !anyFollowUp && !anyReview && strings.TrimSpace(s.Task) == "" {
 		bad("task spec: task is required")
 	}
 	if s.Branch != "" && !BranchRE.MatchString(s.Branch) {
@@ -227,6 +261,20 @@ func (s *Spec) Validate() error {
 	}
 	if s.Batch != "" && !BatchRE.MatchString(s.Batch) {
 		bad("task spec: batch %q must be 1-63 lower-case letters, digits, '.', '_' or '-'", s.Batch)
+	}
+	// config.ClaudeAccountNameRE and config.MaxClaudeAccountNameLen are the
+	// single source of truth for a named account's shape (internal/config/
+	// claude_accounts.go, Task 1): this package imports them rather than
+	// keeping its own copy, so the two can never silently drift apart the
+	// way an earlier version of this check did.
+	switch {
+	case s.OAuthToken == "":
+	case s.OAuthToken == config.DefaultClaudeAccount:
+		bad(`task spec: oauth_token must not be "default": the empty value already means the repository's default account`)
+	case len(s.OAuthToken) > config.MaxClaudeAccountNameLen:
+		bad("task spec: oauth_token %q must be at most %d characters", s.OAuthToken, config.MaxClaudeAccountNameLen)
+	case !config.ClaudeAccountNameRE.MatchString(s.OAuthToken):
+		bad("task spec: oauth_token %q is not a Claude account name", s.OAuthToken)
 	}
 	o := s.Overrides
 	if o.ReviewRounds != nil && (*o.ReviewRounds < 1 || *o.ReviewRounds > 10) {

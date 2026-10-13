@@ -30,7 +30,7 @@ func newRecipesCmd() *cobra.Command {
 		Short:   "List, show, validate and publish recipes, the task loop a run follows after implement",
 		Long: "A recipe is found by name in .fugaro/recipes/NAME.yaml in the repository, then in the\n" +
 			"project's fugaro/recipes/NAME.yaml in the runs bucket, then in the catalog\n" +
-			"(default, cheap-loop-senior, claude-solo). See docs/recipes.md.",
+			"(" + strings.Join(recipe.CatalogNames(), ", ") + "). See docs/recipes.md.",
 	}
 	cmd.AddCommand(newRecipesLsCmd(), newRecipesShowCmd(), newRecipesPublishCmd(), newRecipesValidateCmd())
 	return cmd
@@ -56,11 +56,62 @@ func localRoot(ctx context.Context) string {
 }
 
 type recipeRow struct {
-	Name        string `json:"name"`
-	Source      string `json:"source"`
-	Description string `json:"description,omitempty"`
-	ShadowedBy  string `json:"shadowed_by,omitempty"`
-	Problem     string `json:"problem,omitempty"`
+	Name        string     `json:"name"`
+	Source      string     `json:"source"`
+	Description string     `json:"description,omitempty"`
+	UseWhen     string     `json:"use_when,omitempty"`
+	Steps       []stepView `json:"steps,omitempty"`
+	// Launchable is false when Problem is set (an invalid or misnamed
+	// recipe): a routing skill must not pick a recipe this is false for.
+	Launchable bool   `json:"launchable"`
+	ShadowedBy string `json:"shadowed_by,omitempty"`
+	Problem    string `json:"problem,omitempty"`
+}
+
+// stepView is one of a recipe's steps, for recipes ls --verbose and --json.
+type stepView struct {
+	Kind      string `json:"kind"`
+	MaxRounds int    `json:"max_rounds,omitempty"`
+	Bounce    bool   `json:"bounce,omitempty"`
+	Command   string `json:"command,omitempty"`
+	Autofix   bool   `json:"autofix,omitempty"`
+}
+
+func stepViews(steps []recipe.Step) []stepView {
+	out := make([]stepView, len(steps))
+	for i, s := range steps {
+		out[i] = stepView{Kind: string(s.Kind), MaxRounds: s.MaxRounds, Bounce: s.Bounce, Command: string(s.Command), Autofix: s.Autofix}
+	}
+	return out
+}
+
+// stepsSummary is steps as one comma-joined line for recipes ls --verbose:
+// "first_line, review (bounce: first_line)", "check: test, first_line, review".
+func stepsSummary(steps []stepView) string {
+	parts := make([]string, len(steps))
+	for i, s := range steps {
+		switch recipe.StepKind(s.Kind) {
+		case recipe.StepCheck:
+			parts[i] = "check: " + s.Command
+			if s.Autofix {
+				parts[i] += ", autofix"
+			}
+		case recipe.StepReview:
+			parts[i] = "review"
+			if s.Bounce {
+				parts[i] += " (bounce: first_line)"
+			}
+			if s.MaxRounds > 0 {
+				parts[i] += fmt.Sprintf(" (max_rounds: %d)", s.MaxRounds)
+			}
+		default:
+			parts[i] = s.Kind
+			if s.MaxRounds > 0 {
+				parts[i] += fmt.Sprintf(" (max_rounds: %d)", s.MaxRounds)
+			}
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 // listRecipes lists every recipe of every layer, the winning layer first for
@@ -97,7 +148,13 @@ func listRecipes(ctx context.Context, env *cloudEnv, root string, now time.Time)
 			r.Problem = fmt.Sprintf("names itself %q; the file name and the name must agree", rcp.Name)
 		default:
 			r.Description = rcp.Description
+			r.UseWhen = rcp.UseWhen
+			r.Steps = stepViews(rcp.Steps)
+			if r.UseWhen == "" && src != recipe.SourceCatalog {
+				notes = append(notes, fmt.Sprintf("%s recipe %s has no use_when; the routing skill matches on use_when, add one", src, name))
+			}
 		}
+		r.Launchable = r.Problem == ""
 		return r
 	}
 	var repo []recipeRow
@@ -157,9 +214,45 @@ func listRecipes(ctx context.Context, env *cloudEnv, root string, now time.Time)
 	return rows, notes, nil
 }
 
+// writeRecipesTable writes rows as fugaro recipes ls's human-readable
+// table to w: NAME, SOURCE and DESCRIPTION columns, plus, when verbose, a
+// "use when:" and a "steps:" line per recipe, tab-aligned under the same
+// columns so a verbose block never breaks the table into one piece per row.
+//
+// Every field here is untrusted (a project recipe is anyone-with-
+// bucket-write's text in the runs bucket): recipe.Parse already refuses a
+// control, bidi or invisible character in name, description and use_when
+// (recipe.hasControlChar), but this is a second, independent layer that
+// must escape such a character on its own, not rely on the parser never
+// changing or never having parsed the text in the first place (a repo
+// recipe's steps summary, for instance, is built from already-parsed data
+// that never passes through this function's own escaping otherwise).
+func writeRecipesTable(w io.Writer, rows []recipeRow, verbose bool) error {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "NAME\tSOURCE\tDESCRIPTION")
+	for _, r := range rows {
+		name := pluginwire.Printable(r.Name)
+		src, desc := r.Source, r.Description
+		if r.ShadowedBy != "" {
+			src += " (shadowed by " + r.ShadowedBy + ")"
+		}
+		if r.Problem != "" {
+			desc = "INVALID: " + r.Problem
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", name, src, oneLine(pluginwire.Printable(desc)))
+		if verbose && r.Problem == "" {
+			if r.UseWhen != "" {
+				fmt.Fprintf(tw, "\t\tuse when: %s\n", oneLine(pluginwire.PrintableN(r.UseWhen, recipe.MaxUseWhen)))
+			}
+			fmt.Fprintf(tw, "\t\tsteps: %s\n", oneLine(pluginwire.Printable(stepsSummary(r.Steps))))
+		}
+	}
+	return tw.Flush()
+}
+
 func newRecipesLsCmd() *cobra.Command {
 	var o cloudOptions
-	var asJSON bool
+	var asJSON, verbose bool
 	cmd := &cobra.Command{
 		Use:   "ls",
 		Short: "List the recipes of this checkout, the project and the catalog, and which one wins for each name",
@@ -183,22 +276,11 @@ func newRecipesLsCmd() *cobra.Command {
 			for _, n := range notes {
 				fmt.Fprintf(cmd.ErrOrStderr(), "note: %s\n", pluginwire.Printable(n))
 			}
-			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "NAME\tSOURCE\tDESCRIPTION")
-			for _, r := range rows {
-				src, desc := r.Source, r.Description
-				if r.ShadowedBy != "" {
-					src += " (shadowed by " + r.ShadowedBy + ")"
-				}
-				if r.Problem != "" {
-					desc = "INVALID: " + r.Problem
-				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\n", r.Name, src, oneLine(pluginwire.Printable(desc)))
-			}
-			return tw.Flush()
+			return writeRecipesTable(cmd.OutOrStdout(), rows, verbose)
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
+	cmd.Flags().BoolVar(&verbose, "verbose", false, "also print each recipe's use_when and steps")
 	addCloudFlags(cmd, &o)
 	return cmd
 }

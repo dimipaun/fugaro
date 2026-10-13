@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"gopkg.in/yaml.v3"
@@ -111,6 +112,28 @@ type Recipe struct {
 // Renamed are catalog names removed in 0.7.0 and what replaced them.
 var Renamed = map[string]string{"cheap-loop-senior": "standard", "claude-solo": "solo"}
 
+// reviewPRCounts is how many --pr the catalog's two mode: review recipes
+// need: review-only reviews exactly one pull request and has no "keep"
+// verdict to give; pick compares 2 to 4 and always gives one. A custom
+// mode: review recipe (any other name) is unconstrained beyond the 1-to-4
+// range --pr itself already enforces.
+var reviewPRCounts = map[string][2]int{
+	"review-only": {1, 1},
+	"pick":        {2, 4},
+}
+
+// ReviewPRRange reports the number of --pr a named catalog mode: review
+// recipe requires, min and max inclusive. ok is false for any other name:
+// a custom mode: review recipe is unconstrained, and a project or agent
+// recipe that merely reuses "review-only" or "pick" as its own name (rare,
+// but resolveRecipe lets it shadow the catalog one) is refused by this
+// check exactly like the catalog recipe it is named after would be, which
+// is the conservative side to be wrong on.
+func ReviewPRRange(name string) (min, max int, ok bool) {
+	r, ok := reviewPRCounts[name]
+	return r[0], r[1], ok
+}
+
 // Problem is one reason a recipe is invalid.
 type Problem struct {
 	Path    string `json:"path,omitempty"`
@@ -152,6 +175,10 @@ func RepoPath(name string) string { return RepoDir + "/" + name + ".yaml" }
 func ObjectKey(name string) string { return ObjectPrefix + name + ".yaml" }
 
 const modelMsg = "a recipe never names a model; models come from agent.models in fugaro.yaml"
+
+// unsafeCharMsg is hasControlChar's refusal message, shared by every field
+// it guards.
+const unsafeCharMsg = "must not contain control characters, bidi overrides, invisible characters or line/paragraph separators"
 
 // reserved are the keys version 1 refuses with a message of their own.
 var reserved = map[string]string{
@@ -298,14 +325,20 @@ func (p *parser) top(m *yaml.Node) *Recipe {
 			}
 		case "name":
 			if s, ok := p.str("name", v); ok {
-				if !NameRE.MatchString(s) {
+				switch {
+				case hasControlChar(s):
+					p.add("name", v.Line, unsafeCharMsg)
+				case !NameRE.MatchString(s):
 					p.add("name", v.Line, "must be a recipe name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
 				}
 				r.Name = s
 			}
 		case "description":
 			if s, ok := p.str("description", v); ok {
-				if len(s) > MaxDescription {
+				switch {
+				case hasControlChar(s):
+					p.add("description", v.Line, unsafeCharMsg)
+				case len(s) > MaxDescription:
 					p.add("description", v.Line, "must be at most %d bytes", MaxDescription)
 				}
 				r.Description = s
@@ -314,7 +347,7 @@ func (p *parser) top(m *yaml.Node) *Recipe {
 			if s, ok := p.str("use_when", v); ok {
 				switch {
 				case hasControlChar(s):
-					p.add("use_when", v.Line, "must not contain control characters, tabs or newlines")
+					p.add("use_when", v.Line, unsafeCharMsg)
 				case len(s) > MaxUseWhen:
 					p.add("use_when", v.Line, "must be at most %d bytes", MaxUseWhen)
 				}
@@ -354,13 +387,29 @@ func (p *parser) top(m *yaml.Node) *Recipe {
 	return r
 }
 
-// hasControlChar reports whether s holds a C0 control character (tab,
-// newline and friends) or DEL. use_when is shown verbatim by `recipes ls`
-// and the routing skill, and project recipes come from the runs bucket, so
-// it is untrusted text that must never carry one.
+// hasControlChar reports whether s holds an unsafe display character: a C0
+// control (tab, newline and friends) or DEL, a C1 control (U+0080 to
+// U+009F), a Unicode format character (category Cf: bidi overrides such as
+// U+202E, zero-width characters and the like), or a line or paragraph
+// separator (U+2028, U+2029). name, description and use_when are shown
+// verbatim by `recipes ls`, its `--json` and the routing skill, and a
+// project recipe comes from the runs bucket, so every one of them is
+// untrusted text that must never carry one: a bidi override can make a
+// reader see different text than what is stored, and the rest can corrupt
+// a terminal or break a line-oriented renderer. gopkg.in/yaml.v3's JSON
+// encoder escapes U+2028/U+2029 but nothing else here, and this refusal
+// comes first (recipes ls --json's own escaping, pluginwire.Printable, is a
+// second, independent line of defense for text this never lets through).
 func hasControlChar(s string) bool {
 	for _, r := range s {
-		if r < 0x20 || r == 0x7f {
+		switch {
+		case r < 0x20 || r == 0x7f: // C0 and DEL
+			return true
+		case r >= 0x80 && r <= 0x9f: // C1
+			return true
+		case r == '\u2028' || r == '\u2029': // line/paragraph separator
+			return true
+		case unicode.Is(unicode.Cf, r): // bidi overrides, zero-width, etc.
 			return true
 		}
 	}

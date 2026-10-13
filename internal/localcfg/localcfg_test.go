@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -503,6 +504,38 @@ func TestBudgetDefaultsOff(t *testing.T) {
 	}
 }
 
+// TestUpdateCheckEnabled pins all three states: absent (on), explicit
+// true (on), explicit false (off). Only "false" being tested before left
+// a flipped condition (`*c.UpdateCheck` without the `||`, or an inverted
+// `!*c.UpdateCheck`) free to survive for the "explicit true" case.
+//
+// Mutation: changing UpdateCheckEnabled's body to `return c.UpdateCheck ==
+// nil` (dropping `|| *c.UpdateCheck`) makes "explicit true" wrongly report
+// disabled.
+func TestUpdateCheckEnabled(t *testing.T) {
+	c, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.UpdateCheckEnabled() {
+		t.Error("no update_check key: UpdateCheckEnabled() = false, want true")
+	}
+	c, err = Parse([]byte(sample + "update_check: true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.UpdateCheckEnabled() {
+		t.Error("update_check: true: UpdateCheckEnabled() = false, want true")
+	}
+	c, err = Parse([]byte(sample + "update_check: false\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.UpdateCheckEnabled() {
+		t.Error("update_check: false: UpdateCheckEnabled() = true, want false")
+	}
+}
+
 func TestBudgetValidation(t *testing.T) {
 	for name, tc := range map[string]struct{ yaml, msg string }{
 		"unknown mode":          {"budget: { mode: strict, per_run_usd: 5 }\n", "budget.mode"},
@@ -727,13 +760,54 @@ func TestProviderDecodeStrict(t *testing.T) {
 	}
 }
 
+func TestClaudeAccountsDecodeStrict(t *testing.T) {
+	base := "name: belong\ngcp_project: edge-devel-dimi\nregion: us-east5\nruns_bucket: belong-runs\nrepos: {}\n"
+	good := base + `claude_accounts:
+  acme-personal:
+    allow_data_to: [edgeappinc/fugarosandbox, dimipaun/fugaro]
+`
+	c, err := Parse([]byte(good))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := c.ClaudeAccounts["acme-personal"]; !a.AllowsData("dimipaun/fugaro") || a.AllowsData("someone/else") {
+		t.Errorf("decoded claude account = %+v", a)
+	}
+	if _, err := Parse([]byte(strings.Replace(good, "allow_data_to:", "secret: claude-oauth-token-acme-personal\n    allow_data_to:", 1))); err == nil {
+		t.Error("an unknown claude_accounts field (secret) was accepted")
+	}
+	// Validate's wiring: a reserved or malformed name is refused, not
+	// silently dropped (config.ValidateClaudeAccounts's own rules are
+	// tested in internal/config; this only proves the call is wired in).
+	bad := base + "claude_accounts:\n  default: {}\n"
+	if _, err := Parse([]byte(bad)); err == nil || !strings.Contains(err.Error(), "claude_accounts.default") {
+		t.Errorf("a reserved claude account name was accepted: %v", err)
+	}
+}
+
+// TestClaudeAccountsDuplicateKeyRefused: two claude_accounts entries with
+// the same name must not let the second silently win (a bucket writer or a
+// hand-edited file repeating a key to mean something different from what a
+// reviewer sees once). yaml.v3 already refuses a repeated mapping key by
+// default; this pins that behavior for claude_accounts specifically, the
+// same way ParseShared's own sharedTopLevel checks a repeated key.
+func TestClaudeAccountsDuplicateKeyRefused(t *testing.T) {
+	base := "name: belong\ngcp_project: edge-devel-dimi\nregion: us-east5\nruns_bucket: belong-runs\nrepos: {}\n"
+	dup := base + "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/one]\n  acme-personal:\n    allow_data_to: [acme/two]\n"
+	if _, err := Parse([]byte(dup)); err == nil {
+		t.Fatal("a repeated claude_accounts key was accepted")
+	} else if !strings.Contains(err.Error(), "acme-personal") {
+		t.Errorf("the refusal does not name the repeated key: %v", err)
+	}
+}
+
 func TestParseOldBaseImageKey(t *testing.T) {
 	ref := "us-east5-docker.pkg.dev/p/fugaro-base/fugaro-web-node:dev-1"
 	_, err := Parse([]byte(sample + "base_image: " + ref + "\n"))
 	if err == nil {
 		t.Fatal("a leftover base_image was accepted")
 	}
-	for _, want := range []string{"`base_image: " + ref + "` is now `base_images: {web-node: " + ref + "}`", "one base image per base kind"} {
+	for _, want := range []string{"`base_image: " + ref + "` is now `base_images: {base: " + ref + "}`", "one base image per base kind"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q lacks %q", err, want)
 		}
@@ -743,23 +817,23 @@ func TestParseOldBaseImageKey(t *testing.T) {
 	if err := os.WriteFile(path, []byte(sample+"base_image: "+ref+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "base_images: {web-node: "+ref+"}") {
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "base_images: {base: "+ref+"}") {
 		t.Errorf("Load error = %v", err)
 	}
 }
 
 func TestBaseImages(t *testing.T) {
-	c, err := Parse([]byte(sample + "base_images: { web-node: reg/fugaro-web-node:1, java-services: reg/fugaro-java-services:1 }\n"))
+	c, err := Parse([]byte(sample + "base_images: { base: reg/fugaro-base:1 }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.BaseImage("web-node") != "reg/fugaro-web-node:1" || c.BaseImage("java-services") != "reg/fugaro-java-services:1" || c.BaseImage("go") != "" {
+	if c.BaseImage("base") != "reg/fugaro-base:1" || c.BaseImage("history") != "" {
 		t.Errorf("BaseImage = %v", c.BaseImages)
 	}
 	for name, yaml := range map[string]string{
 		"unknown kind": "base_images: { rust: reg/x:1 }\n",
-		"empty ref":    "base_images: { go: \"\" }\n",
-		"spaces":       "base_images: { go: \"reg/x:1 reg/y:2\" }\n",
+		"empty ref":    "base_images: { base: \"\" }\n",
+		"spaces":       "base_images: { base: \"reg/x:1 reg/y:2\" }\n",
 	} {
 		if _, err := Parse([]byte(sample + yaml)); err == nil || !strings.Contains(err.Error(), "base_images") {
 			t.Errorf("%s: err = %v", name, err)
@@ -767,20 +841,54 @@ func TestBaseImages(t *testing.T) {
 	}
 }
 
+// TestBaseImagesLegacyKindNamesTheMigrationDoc: a base_images key that is
+// not a base kind (go, java-services, web-node included: each was removed
+// in 0.7.0, not just any unrecognized string) names config.MigrationDoc,
+// the same as the analogous base: refusals in config.Validate (validate.go,
+// layer.go).
+func TestBaseImagesLegacyKindNamesTheMigrationDoc(t *testing.T) {
+	if _, err := Parse([]byte(sample + "base_images: { web-node: reg/x:1 }\n")); err == nil || !strings.Contains(err.Error(), config.MigrationDoc) {
+		t.Errorf("err = %v, want it to name %s", err, config.MigrationDoc)
+	}
+}
+
+// TestLocalConfigRefusesLegacyBaseImageKeys: the refusal of a base_images
+// key of a removed kind names the exact key (base_images.<kind>), the fix
+// (fugaro image refresh) and config.MigrationDoc.
+func TestLocalConfigRefusesLegacyBaseImageKeys(t *testing.T) {
+	for _, kind := range []string{"go", "web-node", "java-services"} {
+		_, err := Parse([]byte(sample + "base_images:\n  " + kind + ": us-east5-docker.pkg.dev/p/fugaro-base/fugaro-" + kind + ":0.6.0\n"))
+		if err == nil || !strings.Contains(err.Error(), "base_images."+kind) || !strings.Contains(err.Error(), "fugaro image refresh") ||
+			!strings.Contains(err.Error(), config.MigrationDoc) {
+			t.Errorf("%s: err = %v", kind, err)
+		}
+	}
+}
+
+// TestLocalConfigRefusesUnknownBaseImageKey: a base_images key that was
+// never a base at all (not one of config.LegacyBaseKinds) is refused as
+// "unknown base kind", not with the 0.7.0 removal message, which would
+// falsely claim the cut removed it.
+func TestLocalConfigRefusesUnknownBaseImageKey(t *testing.T) {
+	_, err := Parse([]byte(sample + "base_images:\n  rust: us-east5-docker.pkg.dev/p/fugaro-base/fugaro-rust:0.6.0\n"))
+	if err == nil || !strings.Contains(err.Error(), "base_images.rust") || !strings.Contains(err.Error(), `unknown base kind "rust"`) ||
+		strings.Contains(err.Error(), "removed in 0.7.0") || strings.Contains(err.Error(), config.MigrationDoc) {
+		t.Errorf("err = %v", err)
+	}
+}
+
 func TestParseBaseImageFlag(t *testing.T) {
 	for in, want := range map[string][2]string{
-		"us-east5-docker.pkg.dev/p/fugaro-base/fugaro-web-node:dev-abc": {"web-node", "us-east5-docker.pkg.dev/p/fugaro-base/fugaro-web-node:dev-abc"},
-		"ghcr.io/dimipaun/fugaro-java-services:1":                       {"java-services", "ghcr.io/dimipaun/fugaro-java-services:1"},
-		"ghcr.io/dimipaun/fugaro-go@sha256:" + strings.Repeat("a", 64):  {"go", "ghcr.io/dimipaun/fugaro-go@sha256:" + strings.Repeat("a", 64)},
-		"go=reg/my-own-image:3":                                         {"go", "reg/my-own-image:3"},
-		"java-services=reg/fugaro-web-node:1":                           {"java-services", "reg/fugaro-web-node:1"}, // an explicit kind beats the name
+		"us-east5-docker.pkg.dev/p/fugaro-base/fugaro-base:dev-abc":      {"base", "us-east5-docker.pkg.dev/p/fugaro-base/fugaro-base:dev-abc"},
+		"ghcr.io/dimipaun/fugaro-base@sha256:" + strings.Repeat("a", 64): {"base", "ghcr.io/dimipaun/fugaro-base@sha256:" + strings.Repeat("a", 64)},
+		"base=reg/my-own-image:3":                                        {"base", "reg/my-own-image:3"}, // an explicit kind beats the name
 	} {
 		kind, ref, err := ParseBaseImageFlag(in)
 		if err != nil || kind != want[0] || ref != want[1] {
 			t.Errorf("%q = %q, %q, %v; want %v", in, kind, ref, err, want)
 		}
 	}
-	for _, bad := range []string{"reg/some-image:1", "rust=reg/x:1", "go=", "reg/fugaro-rust:1"} {
+	for _, bad := range []string{"reg/some-image:1", "rust=reg/x:1", "base=", "reg/fugaro-rust:1", "go=reg/x:1"} {
 		if _, _, err := ParseBaseImageFlag(bad); err == nil {
 			t.Errorf("%q was accepted", bad)
 		}
@@ -789,8 +897,8 @@ func TestParseBaseImageFlag(t *testing.T) {
 
 func TestBaseImageNameKind(t *testing.T) {
 	for ref, want := range map[string]string{
-		"ghcr.io/dimipaun/fugaro-go:1": "go", "reg/fugaro-base/fugaro-java-services:dev-a": "java-services",
-		"reg/my-image:1": "", "reg/fugaro-rust:1": "",
+		"ghcr.io/dimipaun/fugaro-base:1": "base", "reg/fugaro-base/fugaro-base:dev-a": "base",
+		"reg/my-image:1": "", "reg/fugaro-rust:1": "", "ghcr.io/dimipaun/fugaro-go:1": "",
 	} {
 		if got := BaseImageNameKind(ref); got != want {
 			t.Errorf("%s: kind %q, want %q", ref, got, want)

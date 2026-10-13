@@ -197,14 +197,23 @@ func (r *run) cacheKey(ctx context.Context, s cacheSlot) (string, bool, error) {
 
 // restoreCaches restores every cache entry it can; nothing here fails the
 // run. The entries it resolves are kept for writeback.
+//
+// Never for a review run (r.review): r.d.WorkDir (or a pick worktree) holds
+// a reviewed pull request's own checkout, untrusted even past the fork and
+// open checks (design generic-tool §3.6, G12) — restoring a cache into it
+// would hand that checkout whatever a trusted run last wrote under the
+// same key, and writeback (below) must not save one computed from it
+// either, so there is nothing here for writeback to find. The simplest and
+// safest rule is both at once: a review run neither reads nor writes the
+// cache.
 func (r *run) restoreCaches(ctx context.Context) {
-	if r.d.Bucket == nil {
+	if r.d.Bucket == nil || r.review {
 		return
 	}
 	entries := r.wf.Cache
 	if len(entries) == 0 {
 		var err error
-		if entries, err = config.DefaultCache(r.wf.BaseKind(), r.d.WorkDir); err != nil {
+		if entries, err = config.DefaultCache(r.d.WorkDir); err != nil {
 			r.d.Log.Warn("no default cache", "err", r.redact(err.Error()))
 			return
 		}
@@ -306,7 +315,11 @@ func (r *run) writeback(ctx context.Context) {
 	wctx, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
 	defer cancel()
 	r.saveSession(wctx)
-	if r.d.Bucket != nil && !r.isCancelled() {
+	// Never for a review run: restoreCaches never populated r.caches for
+	// one (the guard above), so this is normally a no-op for it anyway;
+	// kept explicit so the two can't silently drift apart (cache
+	// poisoning from a fork checkout, design generic-tool §3.6, G12).
+	if r.d.Bucket != nil && !r.isCancelled() && !r.review {
 		store, home := r.cacheStore(), envLookup(r.d.Env, "HOME")
 		for _, s := range r.caches {
 			// Checked again: the agent may have replaced a root, or a

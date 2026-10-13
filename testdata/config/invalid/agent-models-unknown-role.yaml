@@ -4,4 +4,4 @@ git: { provider: github }
 agent:
   models: { planner: claude-opus-5-5 }
 workflows:
-  server: { base: java-services, commands: { build: make, test: make test } }
+  server: { commands: { build: make, test: make test } }

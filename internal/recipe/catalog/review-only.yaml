@@ -1,0 +1,8 @@
+version: 1
+name: review-only
+description: No coding. The senior model reviews an existing pull request and comments on it.
+use_when: Reviewing a human-written or external pull request. Launch with --pr N.
+mode: review
+steps:
+  - review:
+      max_rounds: 1

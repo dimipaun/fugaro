@@ -37,9 +37,12 @@ const (
 
 // Settings is what the runner tells `fugaro verify` about the workflow.
 type Settings struct {
-	RepoDir     string              `json:"repo_dir"`
-	Build       string              `json:"build"`
-	Test        string              `json:"test"`
+	RepoDir string `json:"repo_dir"`
+	Build   string `json:"build"`
+	Test    string `json:"test"`
+	// Lint is the check step's gate command (design generic-tool.md §1,
+	// G10); "" means the recipe may not name a check step over lint.
+	Lint        string              `json:"lint,omitempty"`
 	RerunFailed *config.RerunFailed `json:"rerun_failed,omitempty"`
 	Reports     []string            `json:"reports"`
 	TimeoutS    int                 `json:"timeout_s"`
@@ -97,6 +100,10 @@ type Kind string
 const (
 	KindBuild Kind = "build"
 	KindTest  Kind = "test"
+	// KindLint runs Settings.Lint: the check gate's command (design
+	// generic-tool.md §1, G10), also callable directly as `fugaro verify
+	// lint`.
+	KindLint Kind = "lint"
 )
 
 // Record is the result of one `fugaro verify` invocation.
@@ -207,8 +214,22 @@ func Run(ctx context.Context, o Options) (Record, error) {
 				return Record{}, err
 			}
 		}
+	case KindLint:
+		if o.Rerun {
+			return Record{}, errors.New("--rerun-failed only applies to test")
+		}
+		if strings.TrimSpace(s.Lint) == "" {
+			// Unlike build and test, commands.lint is optional
+			// (config.Validate never requires it): most repositories have
+			// none configured. Running "" through sh -c would exit 0 and
+			// record a bogus pass instead of refusing outright, the same
+			// failure mode gate.go's runAutofix already fails closed
+			// against for an empty commands.fix.
+			return Record{}, errors.New("this repository does not configure commands.lint")
+		}
+		command = s.Lint
 	default:
-		return Record{}, fmt.Errorf("unknown verify kind %q (want build or test)", o.Kind)
+		return Record{}, fmt.Errorf("unknown verify kind %q (want build, test or lint)", o.Kind)
 	}
 
 	start := now()

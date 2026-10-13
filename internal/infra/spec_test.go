@@ -43,7 +43,7 @@ repos:
 
 // m5Additions are the local config fields an M5 installation adds.
 const m5Additions = `registry_host: us-east5-docker.pkg.dev/proj-1234
-base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-0123abc}
+base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
 `
 
 func parseLC(t *testing.T, yaml string) *localcfg.Config {
@@ -109,13 +109,11 @@ git: { provider: github, base_branch: main }
 agent: { auth: vertex }
 workflows:
   web:
-    base: web-node
     commands: { build: npm run build, test: npm test }
     secrets:
       - { name: npm-token, env: NPM_TOKEN }
     timeouts: { total: 60m }
   api:
-    base: java-services
     commands: { build: ./gradlew assemble, test: ./gradlew test }
     rebuild: { check: "off" }
 `
@@ -130,7 +128,7 @@ gcp_project: proj-1234
 region: us-east5
 runs_bucket: fugaro-runs-proj-1234
 registry_host: us-east5-docker.pkg.dev/proj-1234
-base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-0123abc}
+base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
 compute_prices: { us-east5: { vcpu_second_usd: 0.00002, gib_second_usd: 0.0000025 } }
 repos:
   acme/webapp: { provider: github, base_branch: main, workflows: [web, api], github_app_id: "123456" }
@@ -355,7 +353,7 @@ func TestRepoSpecBitbucket(t *testing.T) {
 		t.Fatal("no check")
 	}
 	if c.Job != gcp.CheckJobName(slug) || c.SchedulerJob != gcp.SchedulerJobName(slug) || c.SchedulerRegion != "us-east4" || !c.Paused ||
-		c.Image != in.LC.BaseImage("web-node") {
+		c.Image != in.LC.BaseImage("base") {
 		t.Errorf("check = %+v", c)
 	}
 	if !regexp.MustCompile(`^([0-9]|[1-5][0-9]) [56] \* \* \*$`).MatchString(c.Schedule) {
@@ -372,7 +370,7 @@ func TestRepoSpecBitbucket(t *testing.T) {
 		Repo: "acme/sandbox", Provider: "bitbucket", RepoURL: "https://bitbucket.org/acme/sandbox.git", BaseBranch: "master",
 		Workflows: []string{"web"}, Registry: "us-east5-docker.pkg.dev/proj-1234/" + gcp.RegistryRepoID(slug),
 		BuildServiceAccount: gcp.BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com",
-		MachineType:         "E2_HIGHCPU_8", BuildRegion: "us-east5", BaseImages: map[string]string{"web-node": in.LC.BaseImage("web-node")},
+		MachineType:         "E2_HIGHCPU_8", BuildRegion: "us-east5", BaseImages: map[string]string{"base": in.LC.BaseImage("base")},
 	}
 	if !equalJSON(t, spec, want) {
 		t.Errorf("check spec = %+v, want %+v", spec, want)
@@ -515,7 +513,6 @@ workflows:
     checkout: clone
     commands: { build: npm run build, test: npm test }
   api:
-    base: web-node
     commands: { build: ./gradlew assemble, test: ./gradlew test }
 `
 
@@ -529,7 +526,7 @@ gcp_project: proj-1234
 region: us-east5
 runs_bucket: fugaro-runs-proj-1234
 registry_host: us-east5-docker.pkg.dev/proj-1234
-base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-0123abc, base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
+base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
 repos:
   acme/webapp: { provider: github, base_branch: main, workflows: [web, api], github_app_id: "123456" }
 `)
@@ -546,12 +543,9 @@ repos:
 // config.CheckoutClone` branch so Image is always the derived
 // ":latest" tag — the image assertion below fails (it would equal
 // ".../acme-webapp-<hash>/web:latest", not the base_images.base ref). (2) in
-// Repo()'s checked loop, remove the `ws.Checkout != config.CheckoutClone &&`
-// clause — web (no base:, so kind "") then joins checked too, and Repo
-// itself fails with "the local config has no base_images entry for ,
-// which the daily image check ... needs" (checked's existing kind lookup
-// predates the base kind, base-image plan Task 13) before this test's own
-// assertions run; either way the test fails.
+// Repo()'s checked loop, remove the `Checkout != config.CheckoutClone &&`
+// clause — web then joins the check job's workflows and the "check covers
+// web" assertion fails.
 func TestSpecCloneWorkflowRunsTheBase(t *testing.T) {
 	in := cloneInputs(t)
 	rs, err := Repo(in)
@@ -576,6 +570,47 @@ func TestSpecCloneWorkflowRunsTheBase(t *testing.T) {
 	}
 	if !slices.Contains(rs.Check.Workflows, "api") {
 		t.Errorf("check does not cover api: %v", rs.Check.Workflows)
+	}
+}
+
+// TestSpecCloneVariantsRunTheBase: with a named Claude account allowed for
+// the repository, an oauth checkout: clone workflow gets one job per account
+// (gcp.WorkflowVariant), and every one of them runs base_images.base with
+// FUGARO_CHECKOUT=clone, never a derived :latest tag; the daily check still
+// never lists the clone workflow.
+func TestSpecCloneVariantsRunTheBase(t *testing.T) {
+	in := cloneInputs(t)
+	in.Cfg.Agent.Auth = "oauth"
+	in.LC = parseLC(t, `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry_host: us-east5-docker.pkg.dev/proj-1234
+base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
+claude_accounts:
+  acme-personal:
+    allow_data_to: ["acme/webapp"]
+repos:
+  acme/webapp: { provider: github, base_branch: main, workflows: [web, api], github_app_id: "123456" }
+`)
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	variant := gcp.WorkflowVariant("web", "acme-personal")
+	want := in.LC.BaseImage(config.BaseKind)
+	for _, key := range []string{"web", variant} {
+		ws, ok := rs.Workflows[key]
+		if !ok {
+			t.Fatalf("no job spec %q: %v", key, slices.Sorted(maps.Keys(rs.Workflows)))
+		}
+		if ws.Image != want || ws.Checkout != config.CheckoutClone || ws.Env[CheckoutEnv] != config.CheckoutClone {
+			t.Errorf("%s: image %q, checkout %q, %s=%q; want %q, clone, clone", key, ws.Image, ws.Checkout, CheckoutEnv, ws.Env[CheckoutEnv], want)
+		}
+	}
+	if rs.Check == nil || slices.Contains(rs.Check.Workflows, "web") || slices.Contains(rs.Check.Workflows, variant) {
+		t.Errorf("check job workflows = %v, want api only", rs.Check)
 	}
 }
 
@@ -866,26 +901,28 @@ func TestBaseImageWarnings(t *testing.T) {
 		t.Errorf("no base images: %v", ws)
 	}
 	for base, warn := range map[string]bool{
-		"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-0123abc":  false,
-		"us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro-web-node:dev-0123abc":       true,
-		"us-east5-docker.pkg.dev/proj-1234/fugaro-basex/fugaro-web-node:dev-0123abc": true,
-		"us-east5-docker.pkg.dev/other-proj/fugaro-base/fugaro-web-node:dev-0123abc": true,
+		"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc":  false,
+		"us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro-base:dev-0123abc":       true,
+		"us-east5-docker.pkg.dev/proj-1234/fugaro-basex/fugaro-base:dev-0123abc": true,
+		"us-east5-docker.pkg.dev/other-proj/fugaro-base/fugaro-base:dev-0123abc": true,
 	} {
-		got := BaseImageWarnings(map[string]string{"web-node": base}, outs)
+		got := BaseImageWarnings(map[string]string{"base": base}, outs)
 		if (len(got) != 0) != warn {
 			t.Errorf("%q: warnings %q, want one: %v", base, got, warn)
 		}
-		if warn && (len(got) != 1 || !strings.Contains(got[0], base) || !strings.Contains(got[0], "base_images.web-node") || !strings.Contains(got[0], outs.RegistryHost+"/"+BaseRegistry)) {
+		if warn && (len(got) != 1 || !strings.Contains(got[0], base) || !strings.Contains(got[0], "base_images.base") || !strings.Contains(got[0], outs.RegistryHost+"/"+BaseRegistry)) {
 			t.Errorf("%q: the warnings %q don't name the image, its kind and the base registry", base, got)
 		}
 	}
-	// One warning per offending kind, in kind order.
+	// One warning per offending kind, in kind order: BaseImageWarnings sorts
+	// by map key, whatever strings the caller passes it (only Parse itself
+	// restricts a real base_images key to config.Bases).
 	got := BaseImageWarnings(map[string]string{
-		"web-node":      "us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro-web-node:1",
-		"go":            "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-go:1",
-		"java-services": "ghcr.io/dimipaun/fugaro-java-services:1",
+		"base":   "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1",
+		"kind-a": "us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro-base:1",
+		"kind-z": "ghcr.io/dimipaun/fugaro-base:1",
 	}, outs)
-	if len(got) != 2 || !strings.Contains(got[0], "base_images.java-services") || !strings.Contains(got[1], "base_images.web-node") {
+	if len(got) != 2 || !strings.Contains(got[0], "base_images.kind-a") || !strings.Contains(got[1], "base_images.kind-z") {
 		t.Errorf("warnings = %q", got)
 	}
 }
@@ -1365,38 +1402,6 @@ func TestProvidersEnvInTheJobIsCutToTheRepo(t *testing.T) {
 	}
 }
 
-// The check job runs from the base image of its first workflow's kind and
-// hands the job the base of every checked kind.
-func TestCheckUsesTheBaseOfEachCheckedKind(t *testing.T) {
-	in := webappInputs(t)
-	api := in.Cfg.Workflows["api"]
-	api.Rebuild.Check = "auto"
-	in.Cfg.Workflows["api"] = api
-	var ue *UserError
-	if _, err := Repo(in); !errors.As(err, &ue) || !strings.Contains(err.Error(), "base_images entry for java-services") {
-		t.Fatalf("no java-services base image: err = %v", err)
-	}
-	java := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-java-services:dev-0123abc"
-	in.LC.BaseImages["java-services"] = java
-	rs, err := Repo(in)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rs.Check.Image != java {
-		t.Errorf("check image = %s, want the first checked workflow's (api) base %s", rs.Check.Image, java)
-	}
-	var spec CheckJobSpec
-	if err := json.Unmarshal([]byte(rs.Check.Env[CheckSpecEnv]), &spec); err != nil {
-		t.Fatal(err)
-	}
-	if want := (map[string]string{"web-node": in.LC.BaseImage("web-node"), "java-services": java}); !maps.Equal(spec.BaseImages, want) {
-		t.Errorf("job spec base images = %v, want %v", spec.BaseImages, want)
-	}
-	if !slices.Equal(spec.Workflows, []string{"api", "web"}) {
-		t.Errorf("job spec workflows = %v", spec.Workflows)
-	}
-}
-
 // A checked workflow without base: builds from base_images.base, and the
 // check job runs from it.
 func TestCheckJobOnTheBaseKind(t *testing.T) {
@@ -1476,5 +1481,135 @@ func TestRepoSpecBaseBranchFallsBackToTheCheckout(t *testing.T) {
 	rs, err = Repo(in)
 	if err != nil || rs.BaseBranch == "" {
 		t.Errorf("no base_branch anywhere: %q, %v (config base_branch %q)", rs.BaseBranch, err, cfg.Git.BaseBranch)
+	}
+}
+
+// claudeAccountsLC configures two named Claude accounts: "acme-personal",
+// allowed for acme/sandbox (sandboxInputs' repo, oauth by default), and
+// "acme-overflow", allowed for a different repository only.
+const claudeAccountsLC = `claude_accounts:
+  acme-personal:
+    allow_data_to: ["acme/sandbox"]
+  acme-overflow:
+    allow_data_to: ["acme/other"]
+`
+
+// An installation that configures no claude_accounts at all gets exactly
+// the workflow keys fugaro.yaml names, unchanged: gcp.WorkflowVariant is the
+// identity function for the repository's default account, so
+// BuildRepoSpec's loop produces exactly the one WorkflowSpec per workflow it
+// produced before this task (design docs/design/named-oauth-tokens.md §5).
+// TestGoldenTfvars is the byte-for-byte proof of this over the fixture
+// corpus; this test pins the one fact that proof depends on, directly.
+func TestBuildRepoSpecUnchangedWithNoClaudeAccounts(t *testing.T) {
+	// Both an oauth fixture (sandboxInputs) and a non-oauth one
+	// (webappInputs, vertex): named accounts only ever apply to oauth
+	// workflows, so both must independently prove the identity holds,
+	// whatever auth kind in.Cfg.Agent.Auth names.
+	for _, in := range []Inputs{sandboxInputs(t, m5Additions), webappInputs(t)} {
+		if in.LC.ClaudeAccounts != nil {
+			t.Fatal("the fixture already configures claude_accounts")
+		}
+		rs, err := Repo(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := slices.Sorted(maps.Keys(rs.Workflows)), slices.Sorted(maps.Keys(in.Cfg.Workflows)); !slices.Equal(got, want) {
+			t.Fatalf("%s: rs.Workflows keys = %v, want exactly the fugaro.yaml workflow names %v", in.Cfg.Agent.Auth, got, want)
+		}
+	}
+}
+
+// A repository not listed in a named account's allow_data_to gets no job
+// variant for that name: the hard backstop of the allow-list (design §6b.3,
+// "a job for a disallowed name simply does not exist").
+func TestRepoSpecHasNoVariantForDisallowedName(t *testing.T) {
+	in := sandboxInputs(t, m5Additions+claudeAccountsLC)
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := rs.Workflows[gcp.WorkflowVariant("web", "acme-overflow")]; ok {
+		t.Fatal("a job variant exists for a name this repository is not allowed to use")
+	}
+	if _, ok := rs.Workflows["web"]; !ok {
+		t.Fatal("the default variant is missing")
+	}
+	if _, ok := rs.Workflows[gcp.WorkflowVariant("web", "acme-personal")]; !ok {
+		t.Fatal("the allowed named account's variant is missing")
+	}
+	// The variant's Cloud Run job and dedicated service account must be
+	// distinct from the default's: their map keys already differ, but Job
+	// and ServiceAccount.AccountID are independently derived fields that a
+	// mutation could leave keyed on the logical workflow name alone.
+	def, named := rs.Workflows["web"], rs.Workflows[gcp.WorkflowVariant("web", "acme-personal")]
+	if def.Job == named.Job {
+		t.Errorf("the named variant's job %q collides with the default's", named.Job)
+	}
+	if def.ServiceAccount.AccountID == named.ServiceAccount.AccountID {
+		t.Errorf("the named variant's service account %q collides with the default's", named.ServiceAccount.AccountID)
+	}
+	if def.Labels[gcp.LabelWorkflow] == named.Labels[gcp.LabelWorkflow] {
+		t.Errorf("the named variant's fugaro_workflow label %q collides with the default's", named.Labels[gcp.LabelWorkflow])
+	}
+}
+
+// A named account's variants exist ONLY for oauth repositories: an api-key or
+// vertex repository that an account happens to list in allow_data_to still
+// gets exactly the one default job per workflow (the oauth gate at the loop in
+// Repo(): removing it stayed green until this test).
+func TestRepoSpecHasNoVariantForNonOAuthRepositories(t *testing.T) {
+	for _, auth := range []string{"api-key", "vertex"} {
+		in := sandboxInputs(t, m5Additions+claudeAccountsLC)
+		in.Cfg.Agent.Auth = auth
+		rs, err := Repo(in)
+		if err != nil {
+			t.Fatalf("auth %s: %v", auth, err)
+		}
+		if len(rs.Workflows) != len(in.Cfg.Workflows) {
+			t.Errorf("auth %s: %d jobs for %d workflows: a variant was built for a non-oauth repository (keys %v)", auth, len(rs.Workflows), len(in.Cfg.Workflows), slices.Sorted(maps.Keys(rs.Workflows)))
+		}
+		for key := range rs.Workflows {
+			if _, ok := in.Cfg.Workflows[key]; !ok {
+				t.Errorf("auth %s: job key %q is not a fugaro.yaml workflow name (a variant)", auth, key)
+			}
+		}
+	}
+}
+
+// Each named account's job variant mounts only its own token, under its own
+// secret ID: never another allowed name's, and never the bare default's
+// (the regression option A, §4 of the design, would mount every allowed
+// name into every variant).
+func TestRepoSpecSecretMountsOnlyTheVariantsOwnToken(t *testing.T) {
+	in := sandboxInputs(t, m5Additions+claudeAccountsLC)
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := config.ReservedSecrets["claude-oauth-token"]
+	cases := []struct {
+		variant, wantSecret string
+	}{
+		{"web", "claude-oauth-token"},
+		{gcp.WorkflowVariant("web", "acme-personal"), "claude-oauth-token-acme-personal"},
+	}
+	for _, c := range cases {
+		ws, ok := rs.Workflows[c.variant]
+		if !ok {
+			t.Fatalf("no workflow spec for variant %q", c.variant)
+		}
+		if got := ws.SecretEnv[env]; got != c.wantSecret {
+			t.Errorf("%s: SecretEnv[%s] = %q, want %q", c.variant, env, got, c.wantSecret)
+		}
+		var claudeSecrets []string
+		for logical := range ws.SecretIDs {
+			if logical == c.wantSecret || strings.HasPrefix(logical, "claude-oauth-token") {
+				claudeSecrets = append(claudeSecrets, logical)
+			}
+		}
+		if want := []string{c.wantSecret}; !slices.Equal(slices.Sorted(slices.Values(claudeSecrets)), want) {
+			t.Errorf("%s: claude secrets mounted = %v, want exactly %v", c.variant, claudeSecrets, want)
+		}
 	}
 }

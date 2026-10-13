@@ -24,7 +24,10 @@ func latestVerifiedTest(records []verify.Record, sha string) *verify.Record {
 const ReasonNoVerifiedTest = "no verified test run on the final commit"
 
 // Decide applies the PR outcome rule (design §4.2): ready only if the latest
-// test record on finalSHA with a clean tree passed and the last review shipped.
+// test record on finalSHA with a clean tree passed and the last review
+// shipped. A clean or fixed check gate (gate.go) never reaches Decide: a
+// clean gate ends the run as succeeded with outcome none before any PR
+// exists, and a fixed one goes on to review as usual.
 func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSummary) (bool, string) {
 	latest := latestVerifiedTest(records, finalSHA)
 	switch {

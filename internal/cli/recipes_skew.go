@@ -39,6 +39,23 @@ const layeredSince = "0.6.0"
 // verify it.
 const cloneSince = "0.7.0"
 
+// recipesV07Since is the first fugaro release whose runner knows the 0.7.0
+// recipe format: use_when, mode, roles.coder, a check step and
+// review.bounce; a parser before it refuses every one of those keys as
+// unknown (recipe.UsesV07). docs/release.md's checklist verifies it equals
+// the release that ships them.
+const recipesV07Since = "0.7.0"
+
+// namedTokensSince is the first fugaro release whose runner reads a task's
+// oauth_token field (docs/design/named-oauth-tokens.md); an older runner
+// refuses it, since task.Spec's decoder disallows unknown fields. It must
+// equal the release that ships task.Spec.OAuthToken: docs/release.md
+// ("Before you tag") has the release checklist verify it. internal/cli/run.go
+// gates a launch that would set OAuthToken to a non-default name against an
+// older build record, the same way checkImageSince already gates
+// recipesSince and layeredSince.
+const namedTokensSince = "0.6.5"
+
 // needsRecipeImage reports whether a launch needs a runner that knows
 // recipes: the task carries one, or the checkout's fugaro.yaml sets
 // agent.recipe (an unknown key to an older runner).
@@ -46,11 +63,30 @@ func needsRecipeImage(spec *task.Spec, checkoutRecipe string) bool {
 	return spec.Recipe != nil || checkoutRecipe != ""
 }
 
+// embeddedRecipeOf is the recipe spec.Recipe's exact YAML parses to, or nil
+// when there is none to parse: a repository-sourced recipe carries only its
+// name (the runner re-reads the file at the ref), and a bare agent.recipe
+// name is not resolved here either. Both still get the plain recipesSince
+// gate below; whether either uses a 0.7.0 construct is for the run itself to
+// find out, the same way an older runner already refuses an unknown key.
+func embeddedRecipeOf(spec *task.Spec) *recipe.Recipe {
+	if spec.Recipe == nil || spec.Recipe.YAML == "" {
+		return nil
+	}
+	r, ps := recipe.Parse([]byte(spec.Recipe.YAML))
+	if len(ps) > 0 {
+		return nil
+	}
+	return r
+}
+
 // checkRecipeImage refuses a launch whose job image runs a fugaro older than
-// recipesSince (decision D2). The judge is the build record's base_ref: the
-// image runs the binary of the base it was built FROM. A non-release base is
-// not judged (one warning); no record, or one without base_ref, is refused.
-// kind is the workflow's base kind, "" when unknown.
+// recipesSince (decision D2), or than recipesV07Since when the embedded
+// recipe uses a 0.7.0 construct (design generic-tool.md §3.1). The judge is
+// the build record's base_ref: the image runs the binary of the base it was
+// built FROM. A non-release base is not judged (one warning); no record, or
+// one without base_ref, is refused. kind is the workflow's base kind, ""
+// when unknown.
 func checkRecipeImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
 	subject, alt := "fugaro.yaml's agent.recipe", ""
 	if spec.Recipe != nil {
@@ -59,7 +95,11 @@ func checkRecipeImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 			alt = "; or launch with --recipe default to run today's loop"
 		}
 	}
-	return checkImageSince(ctx, env, slug, spec, kind, recipesSince, subject, "recipes", alt, warn)
+	since := recipesSince
+	if r := embeddedRecipeOf(spec); r != nil && recipe.UsesV07(r) {
+		since = recipesV07Since
+	}
+	return checkImageSince(ctx, env, slug, spec, kind, since, subject, "recipes", alt, warn)
 }
 
 // checkImageSince refuses a launch whose job image runs a fugaro older than
@@ -149,8 +189,9 @@ func checkCloneImageSince(lc *localcfg.Config, spec *task.Spec, since, subject, 
 	return nil
 }
 
-// checkCloneRecipeImage is checkRecipeImage for a checkout: clone workflow:
-// see checkCloneImageSince.
+// checkCloneRecipeImage is checkRecipeImage for a checkout: clone workflow
+// (recipesSince, or recipesV07Since for an embedded recipe that uses a 0.7.0
+// construct): see checkCloneImageSince.
 func checkCloneRecipeImage(lc *localcfg.Config, spec *task.Spec, warn io.Writer) error {
 	subject, alt := "fugaro.yaml's agent.recipe", ""
 	if spec.Recipe != nil {
@@ -159,5 +200,9 @@ func checkCloneRecipeImage(lc *localcfg.Config, spec *task.Spec, warn io.Writer)
 			alt = "; or launch with --recipe default to run today's loop"
 		}
 	}
-	return checkCloneImageSince(lc, spec, recipesSince, subject, "recipes", alt, warn)
+	since := recipesSince
+	if r := embeddedRecipeOf(spec); r != nil && recipe.UsesV07(r) {
+		since = recipesV07Since
+	}
+	return checkCloneImageSince(lc, spec, since, subject, "recipes", alt, warn)
 }

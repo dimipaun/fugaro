@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	crand "crypto/rand"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/recipe"
@@ -35,7 +37,15 @@ type prChain struct {
 	// Ref and Workflow are the previous run's: a follow-up keeps the base
 	// branch and workflow of the runs before it.
 	Ref, Workflow string
-	Recipe        *task.Recipe // the previous run's: a follow-up keeps it unless --recipe names one
+	// OAuthToken is the previous run's resolved named Claude account
+	// (task.Spec.OAuthToken; "" is the repository's default): a follow-up
+	// inherits it by default, never re-deriving it from fugaro.yaml or
+	// anything else a first run would read — but an explicit --token on the
+	// follow-up command overrides it (newFollowUpSpec, owner ruling
+	// 2026-10-12, task 9b review; design docs/design/named-oauth-tokens.md
+	// §3 T6 and §6b).
+	OAuthToken string
+	Recipe     *task.Recipe // the previous run's: a follow-up keeps it unless --recipe names one
 	// Chosen is the recipe the runner chose for the previous run (its record's),
 	// when that run's task named none; nil when unknown, absent or default.
 	Chosen *runstore.RecipeRecord
@@ -124,6 +134,7 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 	// The base the PR targets, which the previous run recorded; a record
 	// from before it was kept falls back to that run's ref.
 	c.Ref, c.Workflow = c.Previous.BaseBranch, prev.Workflow
+	c.OAuthToken = prev.OAuthToken
 	c.Recipe = prev.Recipe
 	if c.Recipe == nil {
 		// The runner chose this run's recipe (agent.recipe at the ref); a
@@ -356,7 +367,7 @@ func prSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tota
 			return slug, spec, spec != nil, err
 		}
 	}
-	c, err := resolvePR(ctx, env, repo, slug, o.pr, o.runID, warn)
+	c, err := resolvePR(ctx, env, repo, slug, o.pr[0], o.runID, warn)
 	if err != nil {
 		return "", nil, false, err
 	}
@@ -389,8 +400,17 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 	if have.Recipe != nil {
 		haveRecipe = have.Recipe.Name
 	}
-	if have.PR != o.pr || have.Task != text || have.Batch != o.batch || string(a) != string(b) || (o.recipe != "" && o.recipe != haveRecipe) {
+	if have.PR != o.pr[0] || have.Task != text || have.Batch != o.batch || string(a) != string(b) || (o.recipe != "" && o.recipe != haveRecipe) ||
+		(o.token != "" && o.token != cmp.Or(have.OAuthToken, config.DefaultClaudeAccount)) {
 		return nil, userErr("run ID %s already holds a different task", o.runID)
+	}
+	// have is stored bucket data nobody vouches for (review finding A): its
+	// OAuthToken's shape was checked when it was first written (task.Parse),
+	// but whether this repository may still use that account was never
+	// re-checked here, the one place a repeated --run-id reuses it as is,
+	// before any build-record read or the launch itself.
+	if err := claudeAccountAllowed(env, have.Repo, cmp.Or(have.OAuthToken, config.DefaultClaudeAccount), checkoutOf(ctx, have.Repo)()); err != nil {
+		return nil, err
 	}
 	return have, nil
 }
@@ -427,10 +447,54 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 			return nil, err
 		}
 	}
+	// Resolved before the recipe (review finding E, the same ordering bug
+	// newSpec had): resolveRecipe/carryChosenRecipe below can read a project
+	// or catalog recipe from the bucket, a network call a disallowed account
+	// (inherited or overridden) should never trigger.
+	//
+	// A follow-up inherits its previous run's account by default, but an
+	// EXPLICIT --token now overrides it (owner ruling, 2026-10-12, named
+	// oauth tokens task 9b review): switching accounts after a usage limit
+	// needs this, and it widens nothing a launcher could not already do with
+	// a fresh run — the override is resolved exactly like claudeAccountFor
+	// resolves a first run's (§6b), and goes through the identical
+	// claudeAccountAllowed gate immediately below: the allow-list, the
+	// agent.auth oauth rule, and (via spec.OAuthToken below, the same field
+	// a first run sets) the namedTokensSince version gate and the
+	// job-variant-must-exist rule at launch. --token default is not
+	// special-cased: like a first run's empty default, it simply makes
+	// account the reserved name, which claudeAccountAllowed always allows.
+	account := c.OAuthToken
+	if account == "" {
+		account = config.DefaultClaudeAccount
+	}
+	if o.token != "" {
+		account = o.token
+	}
+	// c.OAuthToken (the inherited case) came from the previous run's
+	// task.json, bucket data a launcher can write directly: its shape was
+	// already checked when readTask parsed it (task.Parse validates), but
+	// whether this repository may still use it
+	// (claude_accounts.<name>.allow_data_to) is not — a name that was
+	// allowed when the first run launched, or a forged record naming one
+	// that never was, must not let a follow-up launch under it. An explicit
+	// override (o.token, a launcher's own flag) gets the identical check,
+	// never a lesser one.
+	if err := claudeAccountAllowed(env, repo, account, checkout()); err != nil {
+		return nil, err
+	}
+	if o.token != "" && account != cmp.Or(c.OAuthToken, config.DefaultClaudeAccount) {
+		fmt.Fprintf(warn, "note: --token %s switches this follow-up from %s's Claude account %s to %s\n",
+			pluginwire.Printable(o.token), pluginwire.Printable(oneLineCLI(c.Previous.Run)),
+			pluginwire.Printable(cmp.Or(c.OAuthToken, config.DefaultClaudeAccount)), pluginwire.Printable(account))
+	}
 	rcp := c.Recipe
 	if o.recipe != "" {
 		rr, err := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), o.recipe, time.Now(), false)
 		if err != nil {
+			return nil, err
+		}
+		if err := refuseFollowUpReviewMode(rr.Recipe, rr.Name); err != nil {
 			return nil, err
 		}
 		printRecipeNote(warn, rr, true)
@@ -442,14 +506,21 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		}
 	} else if rcp != nil && rcp.YAML != "" {
 		// An inherited recipe is parsed again: a bad one fails here, not in the cloud.
-		if _, err := parseRecipeAt([]byte(rcp.YAML), rcp.Name, "the recipe of the previous run ("+rcp.Name+")"); err != nil {
+		inherited, err := parseRecipeAt([]byte(rcp.YAML), rcp.Name, "the recipe of the previous run ("+rcp.Name+")")
+		if err != nil {
+			return nil, err
+		}
+		if err := refuseFollowUpReviewMode(inherited, rcp.Name); err != nil {
 			return nil, err
 		}
 	}
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: c.Ref, Workflow: workflow, Task: text,
-		Branch: c.Branch, PR: o.pr, PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp}
+		Branch: c.Branch, PR: o.pr[0], PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
+	}
+	if account != config.DefaultClaudeAccount {
+		spec.OAuthToken = account
 	}
 	if err := spec.Validate(); err != nil {
 		return nil, userErr("%v", err)
@@ -487,16 +558,22 @@ func carryChosenRecipe(ctx context.Context, env *cloudEnv, repo string, c *prCha
 	if ch.Source == string(recipe.SourceRepo) {
 		rcp = &task.Recipe{Name: ch.Name, Source: ch.Source}
 	} else {
-		rr, err := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), ch.Name, time.Now(), false)
-		if err != nil {
-			msg := func(cause error) error {
-				return fmt.Errorf("the recipe run %s ran (%s) cannot be used: %w; pass --recipe NAME to choose another", pluginwire.Printable(oneLineCLI(c.Previous.Run)), ch.Name, cause)
-			}
+		msg := func(cause error) error {
+			return fmt.Errorf("the recipe run %s ran (%s) cannot be used: %w; pass --recipe NAME to choose another", pluginwire.Printable(oneLineCLI(c.Previous.Run)), ch.Name, cause)
+		}
+		wrap := func(err error) error {
 			var ee *ExitError
 			if errors.As(err, &ee) {
-				return nil, &ExitError{Code: ee.Code, Err: msg(ee.Err)}
+				return &ExitError{Code: ee.Code, Err: msg(ee.Err)}
 			}
-			return nil, msg(err)
+			return msg(err)
+		}
+		rr, err := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), ch.Name, time.Now(), false)
+		if err != nil {
+			return nil, wrap(err)
+		}
+		if err := refuseFollowUpReviewMode(rr.Recipe, rr.Name); err != nil {
+			return nil, wrap(err)
 		}
 		printRecipeNote(warn, rr, true)
 		rcp = rr.taskRecipe()

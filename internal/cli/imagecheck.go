@@ -465,10 +465,12 @@ func readJobEnv() (jobEnv, error) {
 func (e jobEnv) repoSpec(cfg *config.Config) (infra.RepoSpec, *localcfg.Config, error) {
 	s := e.spec
 	host, _, _ := strings.Cut(s.Registry, "/"+e.gcpProject+"/")
-	// The spec names the base of the kinds the job was installed for. A kind
-	// head's fugaro.yaml has since added has no base here, and its workflow
-	// is reported as not installed rather than checked, so the job's own
-	// image stands in for the spec's sake.
+	// The spec names the base of the kinds the job was installed for. A job
+	// whose own installed spec predates the 0.7.0 cut (fugaro image refresh
+	// or init --repo has not run there since) still names a kind config.Bases
+	// no longer has, so the one kind every HEAD workflow now resolves to
+	// (base) has no entry here yet; it stands in with whichever kind's
+	// image the old spec does have, rather than refusing the whole job.
 	bases := maps.Clone(s.BaseImages)
 	stand := bases[slices.Sorted(maps.Keys(bases))[0]]
 	for _, w := range cfg.Workflows {

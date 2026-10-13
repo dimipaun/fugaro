@@ -21,7 +21,7 @@ agent:
   review_rounds: 2            # review → fix rounds before the PR is opened
   # first_line_review: auto   # auto | on | off: the coder's model reviews (and fixes) before the senior review; auto is on only with a provider coder
   # first_line_rounds: 1      # 1 to 3, apart from review_rounds
-  # recipe: default           # the task loop: default | cheap-loop-senior | claude-solo | a .fugaro/recipes/ or project recipe (fugaro 0.5.0 or later)
+  # recipe: default           # the task loop: default | solo | standard | a .fugaro/recipes/ or project recipe (fugaro 0.5.0 or later; the catalog's other recipes need 0.7.0)
   max_budget_usd: 25          # per stage, passed to claude --max-budget-usd
   # models:                   # a model per stage role; a role left out uses agent.model
   #   coder: claude-opus-5-5          # implement and fix; a budget needs an explicit model ID with a price
@@ -44,18 +44,17 @@ agent:
 # followup:                   # optional; who can steer a follow-up run (fugaro run --pr N)
 #   # A follow-up agent holds the workflow's secrets, so only these accounts' PR comments reach it;
 #   # the list is read from the base branch, so a PR can't widen it.
+#   # review-only/pick (fugaro run --recipe NAME --pr N) reuse this same list: review mode is
+#   # trusted-author-only (the repository's owner, members and collaborators, or Fugaro's own
+#   # pull requests, are reviewed regardless; anyone else needs to be listed here too).
 #   trusted: []               # GitHub: numeric user IDs (gh api users/<login> --jq .id)
 #                             #   Bitbucket: account_id
 #   allow_public: false       # refuse follow-ups on a public repository unless true
 
-# review:                     # optional; read from the base branch, so a PR can't opt itself in
-#   allow_forks: false        # let a review-mode recipe run a fork pull request's code next to the job's secrets
-
 workflows:
   web:                        # workflow name, chosen with `fugaro run --workflow`
-    base: web-node            # go | java-services | web-node
     image:                    # optional; rendered into the derived image (see `fugaro image render`)
-      node: "24"              # Node.js major (24) or exact version (24.19.0); defaults to the base's LTS
+      # tools: { node: "24" }   # or a mise.toml at the root (docs/base-image.md)
       apt: [fonts-liberation] # extra system packages
       # setup:                # extra RUN steps, run as fugaro in /work/repo after the dependency install
       #   - npx playwright install --with-deps chromium   # sudo works in setup steps, during the build only
@@ -68,6 +67,9 @@ workflows:
       # fix: npm run lint -- --fix   # the check step's autofix command; needs lint, since the gate runs fix, then lint
       reports: ["**/junit*.xml"]   # JUnit XML, such as jest-junit or Vitest's junit reporter
     secrets:                  # logical names; infrastructure maps them to Secret Manager
+      # bitbucket-token, github-app-key, claude-oauth-token, anthropic-api-key, and anything
+      # starting claude-oauth-token- (a named Claude account's own secret, set in the local
+      # config's claude_accounts, never here) are reserved and refused as a workflow's own name
       - { name: npm-token, env: NPM_TOKEN }
     resources: { cpu: 4, memory: 8Gi }
     timeouts: { total: 90m, stage: 40m, verify: 30m, finalize_reserve: 5m }
@@ -79,8 +81,7 @@ workflows:
     #   paths: []             # globs; a change under one on the base branch forces a rebuild
 
   server:
-    base: java-services
-    # image: { apt: [python3], setup: ["./gradlew.sh --no-daemon testClasses resolveTestDependencies"] }   # ships JDK 25, Postgres, Redis and the Firebase emulators
+    # image: { apt: [postgresql-17, redis-server], setup: ["./gradlew --no-daemon testClasses"] }   # runtimes in mise.toml; services: docs/base-image.md
     commands:
       build: ./gradlew assemble
       test: ./gradlew test    # with services: fugaro-services start && TEST_SERVICES=local ./gradlew.sh integrationTest ...

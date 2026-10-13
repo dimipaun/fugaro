@@ -40,7 +40,7 @@ bucket_url: file:///somewhere/runs
 registry: us-central1-docker.pkg.dev/my-project/fugaro
 registry_host: us-central1-docker.pkg.dev/my-project
 base_images:
-  web-node: us-central1-docker.pkg.dev/my-project/fugaro-web-node/base:1
+  base: us-central1-docker.pkg.dev/my-project/fugaro-base/base:1
 build:
   machine_type: E2_HIGHCPU_8
   service_account: fugaro-build@my-project.iam.gserviceaccount.com
@@ -69,8 +69,12 @@ providers:
     secret: openrouter-api-key
     models: ["deepseek/*"]
     allow_data_to: [acme/web]
+claude_accounts:
+  acme-personal:
+    allow_data_to: [acme/web]
 max_parallel: 7
 endpoints: { run: "http://127.0.0.1:1/", no_auth: true }
+update_check: false
 repos:
   acme/web: { provider: github, base_branch: main, workflows: [web] }
 `
@@ -90,7 +94,7 @@ func TestSharedSubsetNeverLeaksOwnerOrPersonalFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{"terraform:", "launchers", "alert_email", "user:", "endpoints:", "bucket_url", "registry:", "providers:", "openrouter", "base_branch", "service_account"} {
+	for _, forbidden := range []string{"terraform:", "launchers", "alert_email", "user:", "endpoints:", "bucket_url", "registry:", "providers:", "openrouter", "base_branch", "service_account", "claude_accounts:", "acme-personal", "update_check"} {
 		if strings.Contains(string(out), forbidden) {
 			t.Errorf("published file contains %q:\n%s", forbidden, out)
 		}
@@ -100,7 +104,7 @@ func TestSharedSubsetNeverLeaksOwnerOrPersonalFields(t *testing.T) {
 		t.Errorf("published file does not parse: %v", err)
 	}
 	// The receiver is untouched.
-	if lc.Terraform.StateBucket == "" || lc.User == "" || lc.Bucket == "" || len(lc.Providers) != 1 || lc.Repos["acme/web"].BaseBranch != "main" || lc.Build.ServiceAccount == "" {
+	if lc.Terraform.StateBucket == "" || lc.User == "" || lc.Bucket == "" || len(lc.Providers) != 1 || len(lc.ClaudeAccounts) != 1 || lc.Repos["acme/web"].BaseBranch != "main" || lc.Build.ServiceAccount == "" || lc.UpdateCheck == nil {
 		t.Errorf("Shared modified its receiver: %+v", lc)
 	}
 }
@@ -148,8 +152,8 @@ func TestMergeSharedLocalRepoWinsAndNewIsAdded(t *testing.T) {
 }
 
 func TestMergeSharedScalars(t *testing.T) {
-	existing := sharedBase(t, "log_view: projects/my-project/locations/global/buckets/bkt/views/vw\nscheduler_region: us-east4\nmax_parallel: 5\nwatch: { burn_alert_usd_per_hour: 3 }\nbase_images: { web-node: ex.example/a:1, go: ex.example/g:1 }\n")
-	local := sharedBase(t, "scheduler_region: us-central1\nmax_parallel: 9\nbase_images: { web-node: ex.example/b:2 }\n")
+	existing := sharedBase(t, "log_view: projects/my-project/locations/global/buckets/bkt/views/vw\nscheduler_region: us-east4\nmax_parallel: 5\nwatch: { burn_alert_usd_per_hour: 3 }\nbase_images: { base: ex.example/a:1 }\ncompute_prices: { us-central1: { vcpu_second_usd: 0.0001, gib_second_usd: 0.00001 }, us-east1: { vcpu_second_usd: 0.0002, gib_second_usd: 0.00002 } }\n")
+	local := sharedBase(t, "scheduler_region: us-central1\nmax_parallel: 9\nbase_images: { base: ex.example/b:2 }\ncompute_prices: { us-central1: { vcpu_second_usd: 0.0003, gib_second_usd: 0.00003 } }\n")
 	got := MergeShared(existing, local)
 	if got.SchedulerRegion != "us-central1" || got.MaxParallel != 9 {
 		t.Errorf("local non-zero must win: %q %d", got.SchedulerRegion, got.MaxParallel)
@@ -157,8 +161,14 @@ func TestMergeSharedScalars(t *testing.T) {
 	if got.LogView == "" || got.Watch == nil {
 		t.Errorf("local zero must keep the existing: %q %v", got.LogView, got.Watch)
 	}
-	if got.BaseImages["web-node"] != "ex.example/b:2" || got.BaseImages["go"] != "ex.example/g:1" {
+	// unionMaps: the local key overrides the same key on the existing side
+	// (base_images.base, compute_prices.us-central1), and a key only the
+	// existing side has survives (compute_prices.us-east1).
+	if got.BaseImages["base"] != "ex.example/b:2" {
 		t.Errorf("base_images = %v", got.BaseImages)
+	}
+	if got.ComputePrices["us-central1"].VCPUSecondUSD != 0.0003 || got.ComputePrices["us-east1"].VCPUSecondUSD != 0.0002 {
+		t.Errorf("compute_prices = %v", got.ComputePrices)
 	}
 }
 
@@ -194,7 +204,7 @@ func TestMergeSharedDoesNotMutateInputsOrLeak(t *testing.T) {
 		t.Errorf("input repos changed: %v %v", local.Repos, existing.Repos)
 	}
 	out, _ := got.Marshal()
-	for _, f := range []string{"terraform:", "user:", "endpoints:", "bucket_url", "registry:", "providers:"} {
+	for _, f := range []string{"terraform:", "user:", "endpoints:", "bucket_url", "registry:", "providers:", "claude_accounts:"} {
 		if strings.Contains(string(out), f) {
 			t.Errorf("merged output contains %q", f)
 		}
@@ -222,6 +232,34 @@ func TestMergeSharedNeverCarriesProviders(t *testing.T) {
 	}
 	if len(local.Providers) != 1 {
 		t.Error("MergeShared cleared the local providers")
+	}
+}
+
+// TestMergeSharedNeverCarriesClaudeAccounts: claude_accounts is the
+// operator-only allow-list of decision T1 (design
+// docs/design/named-oauth-tokens.md §3) — never published, so neither the
+// local nor a published config's claude_accounts reaches the output. This
+// is the regression test for the leak a bucket writer could otherwise use
+// to inject or widen the allow-list (MergeShared(nil, lc).Marshal() used to
+// carry the operator's whole claude_accounts: block).
+func TestMergeSharedNeverCarriesClaudeAccounts(t *testing.T) {
+	block := "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/web]\n"
+	existing := sharedBase(t, block)
+	local := sharedBase(t, strings.ReplaceAll(block, "acme-personal", "other-account"))
+	if len(existing.ClaudeAccounts) != 1 || len(local.ClaudeAccounts) != 1 {
+		t.Fatalf("fixtures: %v %v", existing.ClaudeAccounts, local.ClaudeAccounts)
+	}
+	for name, got := range map[string]*Config{"merged": MergeShared(existing, local), "nil published": MergeShared(nil, local), "published only": MergeShared(existing, sharedBase(t, ""))} {
+		if got.ClaudeAccounts != nil {
+			t.Errorf("%s: claude_accounts = %v", name, got.ClaudeAccounts)
+		}
+		out, _ := got.Marshal()
+		if strings.Contains(string(out), "claude_accounts") {
+			t.Errorf("%s: output carries claude_accounts:\n%s", name, out)
+		}
+	}
+	if len(local.ClaudeAccounts) != 1 {
+		t.Error("MergeShared cleared the local claude_accounts")
 	}
 }
 

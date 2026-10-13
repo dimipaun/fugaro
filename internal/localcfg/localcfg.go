@@ -78,12 +78,25 @@ type Config struct {
 	// Providers are the non-Anthropic backends models may be routed to
 	// (design m10-multi-model.md §3), by name. Only the owner sets them.
 	Providers map[string]config.ModelProvider `yaml:"providers,omitempty"`
+	// ClaudeAccounts are named Claude OAuth credentials a repository may
+	// choose among by name (design docs/design/named-oauth-tokens.md).
+	// Only the owner sets them, here, never in fugaro.yaml.
+	ClaudeAccounts map[string]config.ClaudeAccount `yaml:"claude_accounts,omitempty"`
 	// Watch tunes fugaro watch.
-	Watch       *Watch          `yaml:"watch,omitempty"`
+	Watch *Watch `yaml:"watch,omitempty"`
+	// UpdateCheck turns off the daily check for a newer fugaro release and
+	// its one-line stderr nag (FUGARO_NO_UPDATE_CHECK=1 does the same;
+	// `fugaro doctor`'s own cli-version check ignores both); nil or true
+	// leaves it on. Operator-only, like claude_accounts: never published to
+	// the runs bucket (Shared).
+	UpdateCheck *bool           `yaml:"update_check,omitempty"`
 	User        string          `yaml:"user,omitempty"`
 	MaxParallel int             `yaml:"max_parallel"`
 	Endpoints   Endpoints       `yaml:"endpoints,omitempty"`
 	Repos       map[string]Repo `yaml:"repos"`
+	// notes are warnings added after parsing (AddWarning), such as a
+	// published shared config's dropped legacy base_images entries.
+	notes []string
 }
 
 // Watch is the watch block: how fugaro watch flags a fast burn.
@@ -163,6 +176,12 @@ type LongContext struct {
 	AboveInputTokens int64    `yaml:"above_input_tokens"`
 	InputPerM        *float64 `yaml:"input_per_m"`
 	OutputPerM       *float64 `yaml:"output_per_m"`
+}
+
+// UpdateCheckEnabled reports whether the daily update check and its stderr
+// nag run for this config: true unless update_check: false.
+func (c *Config) UpdateCheckEnabled() bool {
+	return c.UpdateCheck == nil || *c.UpdateCheck
 }
 
 // BudgetMode is the budget's mode: "off" when there is no budget block or
@@ -545,6 +564,9 @@ func ParseBaseImageFlag(v string) (kind, ref string, err error) {
 	if k, r, ok := strings.Cut(v, "="); ok {
 		kind, ref = k, r
 		if !slices.Contains(config.Bases, kind) {
+			if slices.Contains(config.LegacyBaseKinds, kind) {
+				return "", "", fmt.Errorf("--base-image %q: %q is not a base kind (%s): %s was removed in 0.7.0 (%s)", v, kind, strings.Join(config.Bases, ", "), kind, config.MigrationDoc)
+			}
 			return "", "", fmt.Errorf("--base-image %q: %q is not a base kind (%s)", v, kind, strings.Join(config.Bases, ", "))
 		}
 	} else if m := baseImageNameRE.FindStringSubmatch(v); m != nil && slices.Contains(config.Bases, m[1]) {
@@ -564,8 +586,19 @@ func oldBaseImageKey(ref string) string {
 	if ref == "" {
 		ref = "<image>"
 	}
-	return fmt.Sprintf("local config: `base_image: %[1]s` is now `base_images: {web-node: %[1]s}`: there is one base image per base kind (%s); edit that line (use go or java-services instead of web-node for a base image of those kinds)",
+	return fmt.Sprintf("local config: `base_image: %[1]s` is now `base_images: {base: %[1]s}`: there is one base image per base kind (%s); edit that line",
 		ref, strings.Join(config.Bases, ", "))
+}
+
+// legacyBaseImageKey refuses a base_images key: one of config.LegacyBaseKinds
+// (go, web-node, java-services) names the 0.7.0 removal and its fix; any
+// other unknown kind just says it is unknown, since it was never a real base
+// and never a thing the 0.7.0 cut removed.
+func legacyBaseImageKey(kind string) string {
+	if !slices.Contains(config.LegacyBaseKinds, kind) {
+		return fmt.Sprintf("base_images.%s: unknown base kind %q (%s)", kind, kind, strings.Join(config.Bases, ", "))
+	}
+	return fmt.Sprintf("base_images.%s: the go, web-node and java-services bases were removed in 0.7.0; delete the line and run fugaro image refresh in each repository's checkout, which copies fugaro-base and records base_images.base (%s)", kind, config.MigrationDoc)
 }
 
 // oldProjectKey is the refusal of a local config of before project
@@ -682,13 +715,16 @@ func (c *Config) validate() error {
 	for _, kind := range slices.Sorted(maps.Keys(c.BaseImages)) {
 		switch ref := c.BaseImages[kind]; {
 		case !slices.Contains(config.Bases, kind):
-			bad("base_images: %q is not a base kind (%s)", kind, strings.Join(config.Bases, ", "))
+			bad("%s", legacyBaseImageKey(kind))
 		case ref == "" || strings.ContainsAny(ref, " \t\r\n"):
 			bad("base_images.%s: %q is not an image reference", kind, ref)
 		}
 	}
 	c.validateBudget(bad)
 	for _, p := range config.ValidateModelProviders(c.Providers) {
+		bad("%s: %s", p.Path, p.Message)
+	}
+	for _, p := range config.ValidateClaudeAccounts(c.ClaudeAccounts) {
 		bad("%s: %s", p.Path, p.Message)
 	}
 	if w := c.Watch; w != nil && w.BurnAlertUSDPerHour != nil {
@@ -801,14 +837,20 @@ func (c *Config) PriceOverride(region string) (backend.Prices, bool) {
 	return backend.Prices{VCPUSecondUSD: p.VCPUSecondUSD, GiBSecondUSD: p.GiBSecondUSD, Source: PriceSource}, true
 }
 
-// Warnings are the config's deprecated settings, which still load.
+// Warnings are the config's deprecated settings, which still load, followed
+// by any notes AddWarning added.
 func (c *Config) Warnings() []string {
 	var w []string
 	if c.Build.ServiceAccount != "" {
 		w = append(w, "build.service_account is deprecated and will be ignored: each repository's builds run as its own build account; fugaro init drops it")
 	}
-	return w
+	return append(w, c.notes...)
 }
+
+// AddWarning appends a note to Warnings(), for something found after Parse
+// returned (a published shared config's dropped legacy base_images
+// entries): it is not itself a config field, so Parse cannot report it.
+func (c *Config) AddWarning(w string) { c.notes = append(c.notes, w) }
 
 // BucketURL is the runs bucket as a gocloud URL.
 func (c *Config) BucketURL() string {

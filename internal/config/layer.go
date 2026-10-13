@@ -572,8 +572,8 @@ func validateProfile(p string, pr Profile) []Problem {
 	if utf8.RuneCountInString(pr.Description) > maxProfileDescription || strings.ContainsFunc(pr.Description, badKeyRune) {
 		add(p+".description", "must be one line of at most %d characters, with no control or formatting characters", maxProfileDescription)
 	}
-	if pr.Base != "" && !slices.Contains(Bases, pr.Base) {
-		add(p+".base", "must be one of %s, or left out for the Fugaro base", strings.Join(Bases[1:], ", "))
+	if pr.Base != "" {
+		add(p+".base", legacyBaseMessage, MigrationDoc)
 	}
 	ps = append(ps, validateImage(p, Workflow{Base: pr.Base, Image: pr.Image})...)
 	if pr.Checkout != "" {

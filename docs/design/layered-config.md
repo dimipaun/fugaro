@@ -120,6 +120,7 @@ The table is `config.Scopes` in code; `docs/project-layer.md` prints it, and a d
 | `git.pr.reviewers` | | | yes | | reviewers are people of one repository |
 | `agent.auth`, `models.*`, `first_line_review`, `first_line_rounds` | yes | | yes | | |
 | `agent.model`, `review_rounds`, `max_budget_usd`, `recipe` | yes | | yes | yes | |
+| `agent.oauth_token` | | | yes | yes | it names a credential identity that only the repository's own, PR-reviewed `fugaro.yaml` may choose among names the local config (never the project layer) allow-lists ([named-oauth-tokens.md](named-oauth-tokens.md)) |
 | `agent.instructions`, `agent.review` | | | yes | | they name files in the repository (and are prompt text) |
 | `agent.max_run_tokens`, `agent.max_output_tokens.*`, `budget.*` | | | yes | | policy: the ceiling is the owner's, in the installation config; a repository only tightens it |
 | `workflows.*.profile` | | | yes | | it chooses a profile |
@@ -129,7 +130,6 @@ The table is `config.Scopes` in code; `docs/project-layer.md` prints it, and a d
 | `workflows.*.dockerfile` | | | yes | | it names a file in the repository |
 | `workflows.*.secrets` | | | yes | | secrets belong to one repository's Secret Manager entries |
 | `followup.trusted`, `followup.allow_public` | | | yes | | they decide whose comments steer a run with the repository's credentials |
-| `review.allow_forks` | | | yes | | review mode would run a fork's code next to the job's secrets; only the repository opts in |
 
 **Secrets and tokens.** No `fugaro.yaml` key holds a secret value: `workflows.*.secrets` maps names to variables. The project layer additionally refuses any value shaped like a credential (`sk-ant-…`, `ghp_…`, `github_pat_…`, a PEM private key, and the like), since nothing in it is secret (decision L18).
 
@@ -353,7 +353,7 @@ After the cut, `fugaro validate` refuses a legacy kind with a message naming the
 
 ## 11. Security and the threat model
 
-**Who can write the project layer.** Anyone holding `roles/storage.objectAdmin` on the runs bucket: launchers and operators (`modules/installation/iam.tf`). The job and build accounts cannot write `fugaro/`. They write only under their slug, and the build account's copy is discussed in §8. That grant (`objectUser` on `builds/<slug>/`, decision L6) also means a later, repository-controlled build step (the Dockerfile's own `RUN` steps, or anything else the build runs with the build account's credentials) could rewrite the same copy before the next daily check job (Task 15) reads it. This stays confined to the one repository and the build secrets it already has access to: it cannot reach another repository's copy, the canonical object in `fugaro/`, or anything `objectUser` on its own prefix does not already allow. **The residual risk, stated plainly:** neither the daily check job nor Cloud Build's render step can tell this rewritten copy from a legitimate one — the job verifies no sha256 at all (§8), and the render step's own check only proves its copy did not change between submission and render, never that it matches the canonical object. Closing this would need an expected sum recorded somewhere the build account cannot write — outside `builds/<slug>/`, most likely back in `fugaro/` itself, readable but not writable by the build account — which is not built in 0.6.0.
+**Who can write the project layer.** Operators, and project-level storage writers (§9 of [bucket-iam.md](bucket-iam.md)); launchers could too before 0.7.0 (`modules/installation/iam.tf`, [bucket-iam.md](bucket-iam.md)). The job and build accounts cannot write `fugaro/`. They write only under their slug, and the build account's copy is discussed in §8. That grant (`objectUser` on `builds/<slug>/`, decision L6) also means a later, repository-controlled build step (the Dockerfile's own `RUN` steps, or anything else the build runs with the build account's credentials) could rewrite the same copy before the next daily check job (Task 15) reads it. This stays confined to the one repository and the build secrets it already has access to: it cannot reach another repository's copy, the canonical object in `fugaro/`, or anything `objectUser` on its own prefix does not already allow. **The residual risk, stated plainly:** neither the daily check job nor Cloud Build's render step can tell this rewritten copy from a legitimate one — the job verifies no sha256 at all (§8), and the render step's own check only proves its copy did not change between submission and render, never that it matches the canonical object. Closing this would need an expected sum recorded somewhere the build account cannot write — outside `builds/<slug>/`, most likely back in `fugaro/` itself, readable but not writable by the build account — which is not built in 0.6.0.
 
 **What a malicious or careless writer could do:**
 
@@ -380,7 +380,7 @@ After the cut, `fugaro validate` refuses a legacy kind with a message naming the
 
 | Option | What it means | Cost |
 |---|---|---|
-| **A. Executable keys allowed, guarded (recommended)** | Profiles may set `commands.*`, `image.apt` and `image.setup`. `config publish` refuses a change to any of them without `--executable-changes`, printing each one before and after under a banner. `fugaro run` prints `commands: from profile <p> (project layer gen <n>)` before launching. The record keeps the sha. A follow-up hardening narrows the launchers' bucket grant so only operators can write `fugaro/` (an IAM change in the installation module, listed as future work) | The bucket stays writable by launchers until the hardening lands |
+| **A. Executable keys allowed, guarded (recommended)** | Profiles may set `commands.*`, `image.apt` and `image.setup`. `config publish` refuses a change to any of them without `--executable-changes`, printing each one before and after under a banner. `fugaro run` prints `commands: from profile <p> (project layer gen <n>)` before launching. The record keeps the sha. A follow-up hardening narrows the launchers' bucket grant so only operators can write `fugaro/` (an IAM change in the installation module, listed as future work) | Closed in 0.7.0 by the bucket hardening ([bucket-iam.md](bucket-iam.md)) |
 | B. No executable keys in the project layer | Profiles carry base, resources, timeouts, cache and rebuild; commands always live in the reviewed `fugaro.yaml` | The minimal file grows to about 7 lines: `workflows.default.commands.{build,test}` |
 | C. Allowed, unguarded | Like A without the flag or the banner | The weakest |
 
