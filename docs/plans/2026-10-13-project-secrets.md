@@ -60,15 +60,16 @@ Project rules (carried over from this repository's existing plans):
 | `deploy/terraform/gcp/modules/repo/build.tf`, `workflows.tf`, `check.tf`, `variables.tf`, `internal/infra/tfvars.go`/`spec.go`, `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl` | **P4, opus review:** `local.secrets`; `build.tf` AND `check.tf` (B4) rewired through it; the Go-to-tfvars wire for `RepoSpec.ProjectSecrets` | 5 |
 | `internal/infra/installation_terraform_test.go`, `deploy/terraform/gcp/roots/installation/tests/`, `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl`, `internal/infra/spec_test.go` golden fixtures | real `terraform test` plan-level fixtures: no secret-resource deletes, but the expected IAM-member replacements, `tf.Guard` refusing/accepting them (B3) | 6 |
 | `internal/cli/doctor.go`, `doctor_test.go` | two per-repository checks plus a project-wide revocation-lag one (design §5, S3) | 7 |
-| `docs/design/v1.md`, `docs/multi-model.md`, `docs/gcp-live-checklist.md`, `docs/release.md`, `docs/gcp-setup.md`, `internal/cli/docs_*_test.go` | cross-references, Check 40, the release checklist bullet, the shared-config list (S6) | 8 |
-| none | full suite | 9 |
-| `docs/gcp-live-checklist.md` (results pasted in) | the owner's own run, Check 40a-g | 10 |
+| `internal/cli/image.go`, `internal/backend/gcp/build.go`, `internal/cli/imagecheck.go`, `internal/cli/doctor.go`, `internal/infra/readiness.go`, `internal/infra/spec.go` | `ResolveSecretID` helper; `cloudBuildSpec` takes a resolved `gitSecretID` parameter; `CheckJobSpec.GitSecretID`; the GitHub App doctor check resolves too (N1) | 8 |
+| `docs/design/v1.md`, `docs/multi-model.md`, `docs/gcp-live-checklist.md`, `docs/release.md`, `docs/gcp-setup.md`, `internal/cli/docs_*_test.go` | cross-references, Check 40, the release checklist bullet, the shared-config list (S6) | 9 |
+| none | full suite | 10 |
+| `docs/gcp-live-checklist.md` (results pasted in) | the owner's own run, Check 40a-g | 11 |
 
 ## PR group
 
-One PR, branch `project-secrets`, Tasks 1 to 9 in order for the merge; Task 10 is the owner's own run, not blocking (the same relationship `named-oauth-tokens.md`'s Task 11 has to its own PR).
+One PR, branch `project-secrets`, Tasks 1 to 10 in order for the merge; Task 11 is the owner's own run, not blocking (the same relationship `named-oauth-tokens.md`'s Task 11 has to its own PR).
 
-Parallelizable: **Task 2 needs Task 1** (its `SecretMounts` collision refusal reads `config.ProjectSecret`/`lc.ProjectSecrets`, and its P7 mount-condition change reads `ProviderKeyAvailable`, both added in Task 1), so they are no longer independent — Task 1 goes first, Task 2 follows directly after. Task 3 needs 1 and 2 (its P7 resolution also reads `ProviderKeyAvailable`). Task 4 needs 1, 2 and the installation Terraform half of itself (its Go and Terraform halves can split further if useful). Task 5 needs 2 (and is reviewed separately from the rest, per P4). Task 6 needs 4 and 5. Task 7 needs 3. Task 8 needs 1 through 7 settled. Task 9 is last.
+Parallelizable: **Task 2 needs Task 1** (its P7 mount-condition change reads `ProviderKeyAvailable`; it has no collision check to read `lc.ProjectSecrets` for any more, S1), so they are no longer independent — Task 1 goes first, Task 2 follows directly after. Task 3 needs 1 and 2 (its P7 resolution also reads `ProviderKeyAvailable`). Task 4 needs 1, 2 and the installation Terraform half of itself (its Go and Terraform halves can split further if useful). Task 5 needs 2 (and is reviewed separately from the rest, per P4). Task 6 needs 4 and 5. Task 7 needs 3. **Task 8 needs 3 and 5 (N1, new: `Readiness`'s `CheckJobSpec.GitSecretID` and the reusable resolve helper it extracts, design §5).** Task 9 needs 1 through 8 settled. Task 10 is last.
 
 ---
 
@@ -746,7 +747,74 @@ git commit -m "project secrets task 7: fugaro doctor's two per-repository checks
 
 ---
 
-### Task 8: Docs, cross-references, Check 40, the release checklist bullet
+### Task 8: the CLI's own build/check/doctor paths resolve the real secret ID, not always the repo one (N1)
+
+**This task did not exist in the design's first two drafts: `fugaro image build`, `init`'s first build, the in-job daily check's own rebuild, and `doctor`'s GitHub App check all still name the repo-scoped secret ID unconditionally, with no idea `Readiness` may have resolved that logical name to the project copy instead. Left unfixed, the moment `bitbucket-token`/`github-app-key` moves to project scope (design §6 step 4a), every build and every daily check fails, silently, the next time either runs.**
+
+**Files:**
+- Edit: `internal/infra/readiness.go` (the reusable resolve helper, extracted from `Readiness`'s own per-logical-name precedence check; `CheckJobSpec.GitSecretID` population and the `FUGARO_CHECK_SPEC` re-marshal)
+- Edit: `internal/infra/spec.go` (`CheckJobSpec.GitSecretID` field)
+- Edit: `internal/cli/image.go` (`cloudBuildSpec` takes a `gitSecretID string` parameter instead of computing it from `rs.Secrets[ws.GitSecret]`; `submitAndWait` resolves it live before calling)
+- Edit: `internal/cli/imagecheck.go` (`submitRebuild` passes `s.GitSecretID`, read from the already-resolved `CheckJobSpec`, never recomputed)
+- Edit: `internal/cli/doctor.go` (the GitHub App check, `checkGitHubApp`, resolves live too, instead of hard-coding `gcp.SecretID(slug, "github-app-key")`)
+- Test: `internal/infra/readiness_resolve_test.go` (new — the extracted helper's own tests), `internal/cli/image_test.go`, `internal/cli/imagecheck_test.go`, `internal/cli/doctor_test.go`
+
+**Interfaces:**
+```go
+// internal/infra/readiness.go, next to Readiness
+// ResolveSecretID is the one place Readiness's own repo-wins-else-project
+// precedence lives, extracted so the CLI's own live call sites (image
+// builds, doctor) can resolve a single logical name without going through
+// a full Readiness pass. repoID is always checked first; projectID is
+// checked only if repoID has no enabled version, projectID == "" meaning
+// no candidate exists for this repo (not eligible at all) -- in which
+// case repoID is returned regardless of its own version state, the same
+// as today's unconditional repo-only behavior. Readiness's own loop (§5)
+// calls this once per logical name instead of duplicating the two
+// hasEnabledVersion calls inline.
+func ResolveSecretID(ctx context.Context, c *Clients, repoID, projectID string) (id string, hasVersion bool, err error)
+```
+- `cloudBuildSpec(rs infra.RepoSpec, cfg *config.Config, name, base, machineType, bucket, gitSecretID string) (gcp.BuildSpec, error)` — `gitSecretID` replaces the internal `rs.Secrets[ws.GitSecret]` read; `GitSecretID: gitSecretID` in the returned `gcp.BuildSpec`.
+- `submitAndWait` (operator's machine, `internal/cli/init.go`/`image.go`): before calling `cloudBuildSpec`, calls `infra.ResolveSecretID(ctx, c, rs.Secrets[ws.GitSecret], rs.ProjectSecretCandidates[ws.GitSecret])` (the candidate is `""` when the git credential isn't eligible for project-sharing at all, the common case — `ResolveSecretID` returns the repo ID unchanged in that case, so an installation with no project-shared git credential sees byte-for-byte no change).
+- `CheckJobSpec` (`internal/infra/spec.go:183`) gains `GitSecretID string `json:"git_secret_id"``, populated by `Readiness`'s check-job branch (§5) via the same `ResolveSecretID` call, which then **re-marshals** `out.Check.Env[CheckSpecEnv]` with the updated `CheckJobSpec` before returning — the one piece of `Readiness` logic that touches an env var's *value* rather than only which secret ID it mounts.
+- `submitRebuild` (`internal/cli/imagecheck.go:710`, in-job): calls `cloudBuildSpec(rs, cfg, name, base, s.MachineType, recordBucket, s.GitSecretID)` — `s.GitSecretID` from the `CheckJobSpec` it already decodes from `FUGARO_CHECK_SPEC`, never recomputed via `rs.Secrets[ws.GitSecret]`.
+- `checkGitHubApp`'s caller (`doctor.go:401`) resolves live the same way `submitAndWait` does, before constructing `appKeySource{SecretID: ...}`.
+
+**Tests:**
+```go
+func TestResolveSecretIDPrefersRepoWhenVersioned(t *testing.T) { /* repoID has a version: returned, hasVersion true, even when projectID also has one -- precedence, matching Readiness's own rule */ }
+func TestResolveSecretIDFallsBackToProject(t *testing.T) { /* repoID has none, projectID has one: projectID returned, hasVersion true */ }
+func TestResolveSecretIDNoCandidateStaysRepoOnly(t *testing.T) { /* projectID == "": repoID returned regardless of its own version state -- byte-for-byte today's behavior for a non-eligible name */ }
+func TestResolveSecretIDNeitherHasVersion(t *testing.T) { /* repoID returned (today's existing-error-path default), hasVersion false, so the caller can report a Missing-style error the same way it already does */ }
+func TestCloudBuildSpecUsesPassedGitSecretID(t *testing.T) { /* image.go: cloudBuildSpec's GitSecretID equals the parameter, never rs.Secrets[ws.GitSecret] directly -- catches a regression back to the old internal lookup */ }
+func TestSubmitAndWaitResolvesLiveBeforeBuild(t *testing.T) { /* fake Secret Manager: repo copy has no version, project copy does; assert the submitted Cloud Build request's AvailableSecrets reference the PROJECT id */ }
+func TestCheckJobSpecCarriesResolvedGitSecretID(t *testing.T) { /* Readiness's check branch, repo has no version, project does: assert the re-marshaled FUGARO_CHECK_SPEC's GitSecretID is the project ID, and that out.Check.Env[CheckSpecEnv] actually changed (not just a field nobody reads) */ }
+func TestSubmitRebuildUsesCheckJobSpecGitSecretIDNeverRecomputes(t *testing.T) { /* in-job path: s.GitSecretID set to a deliberately-distinct fake value; assert the submitted build request uses exactly that value, not rs.Secrets[ws.GitSecret] (which infra.Repo() alone would have produced) -- proves the in-job code no longer recomputes */ }
+func TestDoctorGitHubAppCheckResolvesLive(t *testing.T) { /* repo copy has no version, project copy does, correctly labelled: assert checkGitHubApp reads the PROJECT secret's value, never the repo one's absent version */ }
+```
+
+- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `go test -count=1 -run 'TestResolveSecretID|TestCloudBuildSpecUsesPassedGitSecretID|TestSubmitAndWaitResolvesLiveBeforeBuild|TestCheckJobSpecCarriesResolvedGitSecretID|TestSubmitRebuildUsesCheckJobSpecGitSecretIDNeverRecomputes|TestDoctorGitHubAppCheckResolvesLive' ./internal/infra/ ./internal/cli/`
+Expected: FAIL.
+
+- [ ] **Step 3: Write the implementation**
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `go vet ./internal/infra/... ./internal/cli/... && go test -count=1 ./internal/infra/... ./internal/cli/...`
+Expected: `ok` (the full packages, since this task changes a shared function signature, `cloudBuildSpec`, with several existing callers to re-check).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/infra/readiness.go internal/infra/spec.go internal/cli/image.go internal/cli/imagecheck.go internal/cli/doctor.go internal/infra/readiness_resolve_test.go internal/cli/image_test.go internal/cli/imagecheck_test.go internal/cli/doctor_test.go
+git commit -m "project secrets task 8: image builds, the daily check and doctor's GitHub App check resolve the real secret ID (N1)"
+```
+
+---
+
+### Task 9: Docs, cross-references, Check 40, the release checklist bullet
 
 **Files:**
 - Edit: `docs/design/v1.md` (one cross-reference sentence, §5.4 local config area, no rewrite)
@@ -771,7 +839,7 @@ git commit -m "project secrets task 8: docs cross-references, Check 40, the rele
 
 ---
 
-### Task 9: Full suite
+### Task 10: Full suite
 
 - [ ] **Step 1: Full focused suite**
 
@@ -791,14 +859,14 @@ Expected: `ok` everywhere, no `gofmt`/`terraform fmt` output, `Success!` from bo
 - [ ] **Step 2: Commit**
 
 ```bash
-git commit -m "project secrets task 9: full suite"
+git commit -m "project secrets task 10: full suite"
 ```
 
 ---
 
-### Task 10: Owner-run live check (not part of the PR; `fugaro`/sandbox installations only, never `belong`)
+### Task 11: Owner-run live check (not part of the PR; `fugaro`/sandbox installations only, never `belong`)
 
-This task is never run by an implementer or by CI. Paste the `FACT:` lines into the PR that eventually implements Tasks 1-9 and into `docs/gcp-live-checklist.md` itself, under Check 40.
+This task is never run by an implementer or by CI. Paste the `FACT:` lines into the PR that eventually implements Tasks 1-10 and into `docs/gcp-live-checklist.md` itself, under Check 40.
 
 - [ ] **40a.** Store a project secret with `--project-wide`, confirm (via `gcloud run jobs describe`/`jobs.get`, never by reading the value) that an opted-in repository's job's `secret_key_ref` names the project's secret ID.
 - [ ] **40b.** For a `project_secrets`/`claude_accounts`-backed name (reserved secrets, named accounts): confirm a repository outside the allow-list is refused at `--project-wide` with a message naming the missing entry, and that its deployed job carries no such env var at all.
@@ -807,3 +875,4 @@ This task is never run by an implementer or by CI. Paste the `FACT:` lines into 
 - [ ] **40e.** Confirm no value appears in any log, `fugaro diagnose`, `secrets ls`/`ls --project-wide` output, or a `terraform plan`/`state show` of either root.
 - [ ] **40f (owner ruling, design §3a).** Configure a provider with **no** `allow_data_to` at all; confirm `fugaro secrets set <provider-secret> --project-wide` succeeds (not refused); confirm, via `jobs.describe`, that an `agent.auth: api-key` repository never named by this provider anywhere still mounts the key; confirm that `fugaro validate` still refuses every repository's pin to it (the data-policy gate stays closed, Option A).
 - [ ] **40g.** Configure a provider **with** an explicit, non-empty `allow_data_to`; confirm an unlisted repository's job does **not** mount the key at all (the non-empty-list case is unaffected by 40f).
+- [ ] **40h (N1).** With `bitbucket-token` project-shared and the repo copy's version disabled: confirm `fugaro image build`/`image refresh`, the daily check's own rebuild, and `fugaro doctor` all still succeed (Task 8's resolve helper and `CheckJobSpec.GitSecretID`).
