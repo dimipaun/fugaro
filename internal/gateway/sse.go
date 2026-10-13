@@ -190,10 +190,16 @@ func (a *usageAcc) merge(u *wireUsage) {
 	}
 }
 
-// hasInput reports whether the usage names an input count worth settling
-// on: on a provider route a zero input is a reply that didn't say.
+// hasInput reports whether the usage names enough to settle on. On the
+// Claude route any reported input count does, even zero. On a provider
+// route input alone may legitimately be zero under heavy caching, so a
+// cache read or write counts too; only an input count with nothing else
+// at all reads as a reply that didn't say.
 func (a *usageAcc) hasInput() bool {
-	return a.in.set && !(a.provider && a.in.v == 0)
+	if !a.provider {
+		return a.in.set
+	}
+	return a.in.set && (a.in.v > 0 || a.cr.v > 0 || a.cc.v > 0 || a.w5.v > 0 || a.w1.v > 0)
 }
 
 // negative reports whether any reported count is below zero.
@@ -261,13 +267,50 @@ type usageTee struct {
 	buf      []byte
 	overflow bool
 
-	started   bool // message_start (or a whole body) with usage was read
-	deltas    bool // a message_delta reporting output_tokens was read after it
-	complete  bool // message_stop after both, or a whole body with input and output counts
-	broken    bool // usage after the start didn't parse, was negative, or the stream stopped without an output count
+	started  bool // message_start (or a whole body) with usage was read
+	deltas   bool // a message_delta reporting output_tokens was read after it
+	complete bool // message_stop after both, or a whole body with input and output counts
+	broken   bool // usage after the start didn't parse, was negative, or the stream stopped without an output count
+
+	// Diagnostics for a call that settles unparsed: why, from a closed set,
+	// never the provider's own text.
+	sawUsage       bool     // some event's usage object was read, even all zero
+	malformedEvent bool     // a usage-bearing event (message_delta, or the body) didn't parse
+	stopped        bool     // the stream reached its end: message_stop, or the body decoded clean
+	events         []string // event type names seen, bounded; never a body
+
 	model     string
 	acc       usageAcc
 	errorType string
+}
+
+// maxEventsLogged bounds the distinct event type names a tee remembers for
+// its usage_unparsed diagnostic.
+const maxEventsLogged = 16
+
+func (t *usageTee) noteEvent(typ string) {
+	if typ == "" || len(t.events) >= maxEventsLogged || slices.Contains(t.events, typ) {
+		return
+	}
+	t.events = append(t.events, typ)
+}
+
+// unparsedReason names, from a closed set, why a 2xx call settled at its
+// reservation instead of its usage. Bounded and sanitized: never the
+// provider's text, so a failure explains itself in `fugaro diagnose`.
+func (t *usageTee) unparsedReason() string {
+	switch {
+	case t.acc.negative():
+		return "negative_count"
+	case t.malformedEvent:
+		return "malformed_delta"
+	case !t.sawUsage:
+		return "no_usage_event"
+	case !t.stopped:
+		return "stream_incomplete"
+	default:
+		return "input_zero_no_cache"
+	}
 }
 
 // newUsageTee reads a Claude response; a provider's sets tee.provider
@@ -309,6 +352,8 @@ func (t *usageTee) onEvent(name string, data []byte) {
 		_ = json.Unmarshal(data, &head)
 		typ = head.Type
 	}
+	t.noteEvent(typ)
+	t.acc.provider = t.provider // set regardless of whether this event carries usage
 	switch typ {
 	case "message_start":
 		var ev struct {
@@ -321,13 +366,13 @@ func (t *usageTee) onEvent(name string, data []byte) {
 			return
 		}
 		t.model = ev.Message.Model
-		t.acc.provider = t.provider
 		t.acc.merge(ev.Message.Usage)
+		t.sawUsage = true
 		// Partial settlement charges the reported input: it must be there.
 		t.started = t.acc.hasInput() && !t.acc.negative()
 	case "message_delta":
-		if !t.started {
-			return // unparsed either way: the call settles at its reservation
+		if !t.provider && !t.started {
+			return // Claude route: unparsed either way, unchanged
 		}
 		var ev struct {
 			Usage *wireUsage `json:"usage"`
@@ -335,17 +380,26 @@ func (t *usageTee) onEvent(name string, data []byte) {
 		if json.Unmarshal(data, &ev) != nil || ev.Usage == nil {
 			// A usage the gateway can't read may hold the output count:
 			// the call must not settle as complete from what came before.
-			t.broken = true
+			t.broken, t.malformedEvent = true, true
 			return
 		}
 		t.acc.merge(ev.Usage)
+		t.sawUsage = true
 		if t.acc.negative() {
 			t.broken = true
 		}
 		if ev.Usage.OutputTokens != nil {
 			t.deltas = true
 		}
+		if t.provider {
+			// A provider may report input_tokens 0 at message_start (heavy
+			// caching, or simply nothing to say yet) and put the real,
+			// cumulative counts only here: settle from what the stream
+			// says once it is done, not from message_start alone.
+			t.started = t.started || (t.acc.hasInput() && !t.acc.negative())
+		}
 	case "message_stop":
+		t.stopped = true
 		switch {
 		case t.started && t.deltas && !t.broken:
 			t.complete = true
@@ -382,18 +436,21 @@ func (t *usageTee) parseJSON() {
 	if dec.Decode(&body) != nil {
 		return
 	}
+	t.noteEvent(body.Type)
 	if body.Error != nil {
 		t.errorType = body.Error.Type
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return
 	}
+	t.stopped = true
 	if body.Type == "error" || body.Usage == nil {
 		return
 	}
 	t.model = body.Model
 	t.acc.provider = t.provider
 	t.acc.merge(body.Usage)
+	t.sawUsage = true
 	if !t.acc.hasInput() || !t.acc.out.set || t.acc.negative() {
 		return // counts missing or negative: settled at the reservation
 	}

@@ -57,17 +57,23 @@ func TestMissingUsageChargesReservation(t *testing.T) {
 	}
 }
 
-// Usage that only the final message_delta carries (no usage on
-// message_start) is not readable as a whole call: the reservation.
-func TestUsageOnlyInFinalDeltaChargesReservation(t *testing.T) {
+// Usage that only the final message_delta carries (message_start has none
+// at all, as a provider may) still settles from that delta: the gateway
+// reads a provider's usage from what the stream says once it ends, not
+// from message_start alone.
+func TestUsageOnlyInFinalDeltaSettles(t *testing.T) {
+	u := pricing.Usage{Input: 100, Output: 200}
 	ev := []anthropicfake.Event{
 		{Name: "message_start", Data: `{"type":"message_start","message":{"id":"m","type":"message","role":"assistant","model":"` + dsModel + `","content":[]}}`},
 	}
 	ev = append(ev, anthropicfake.TextEvents("ok")...)
-	ev = append(ev, anthropicfake.DeltaEvent(pricing.Usage{Input: 100, Output: 200}), anthropicfake.Stop)
-	call, _ := settleCase(t, 0, msg(dsModel, 1000, `"stream":true`), anthropicfake.Reply{Status: http.StatusOK, Events: ev})
-	if got, res := pricing.Micros(num(call["charged_micros"])), pricing.Micros(num(call["reserved_micros"])); got != res || call["settled"] != settledReserved {
-		t.Errorf("charged %d of %d reserved, settled %v", got, res, call["settled"])
+	ev = append(ev, anthropicfake.DeltaEvent(u), anthropicfake.Stop)
+	call, rep := settleCase(t, 0, msg(dsModel, 1000, `"stream":true`), anthropicfake.Reply{Status: http.StatusOK, Events: ev})
+	if got, want := pricing.Micros(num(call["charged_micros"])), cost(t, dsModel, u); got != want || call["settled"] != settledUsage {
+		t.Errorf("charged %d, settled %v, want %d from usage", got, call["settled"], want)
+	}
+	if rep.UsageUnparsed != 0 {
+		t.Errorf("usage_unparsed %d, want 0", rep.UsageUnparsed)
 	}
 }
 
