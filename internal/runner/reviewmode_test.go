@@ -1198,6 +1198,49 @@ func TestReviewModeRefusesUntrustedFork(t *testing.T) {
 	}
 }
 
+// TestReviewModeRefusalsPostANote: refuseReview's whole point, alongside
+// StatusFailed/OutcomeNone, is a best-effort note posted on the pull
+// request itself — every other refusal test in this file checks the
+// stored Reason, but none of them check a note was actually posted, which
+// would leave refuseReview's own r.provider.Comment call free to be
+// silently dropped without any test noticing. Covers two refusal kinds
+// this round didn't already pin a posted note for (item 2's Bitbucket
+// fork and item 3's not-open case each already check their own): an
+// untrusted same-repository author, and a trusted author's fork whose
+// owner doesn't match.
+//
+// Mutation (drop the `r.provider.Comment` call from refuseReview): both
+// sub-tests fail, finding no comment posted on the pull request.
+func TestReviewModeRefusalsPostANote(t *testing.T) {
+	h := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	pushReviewBranch(t, h, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h, 7, "feature", "")
+	h.provider.State.PRs[0].AuthorID = "outsider-id"
+	if _, err := h.run(t); err == nil {
+		t.Fatal("want an error")
+	}
+	if c := h.provider.State.PRs[0].Comments; len(c) != 1 || !strings.Contains(c[0], "not a trusted author") {
+		t.Fatalf("no refusal note posted for the untrusted author: comments = %q", c)
+	}
+
+	h2 := newHarness(t, followUpYAML(t, ""), reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	pushReviewBranch(t, h2, "feature", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
+	})
+	addPR(h2, 7, "feature", "someoneelse/repo")
+	h2.provider.State.PRs[0].AuthorID = aliceID
+	h2.provider.State.PRs[0].AuthorLogin = "alice"
+	h2.provider.State.PRs[0].Collaborator = true
+	if _, err := h2.run(t); err == nil {
+		t.Fatal("want an error")
+	}
+	if c := h2.provider.State.PRs[0].Comments; len(c) != 1 || !strings.Contains(c[0], "not owned by its trusted author") {
+		t.Fatalf("no refusal note posted for the mismatched fork owner: comments = %q", c)
+	}
+}
+
 // TestReviewModeTrustedForkWithMatchingOwnerAccepted: the positive half of
 // TestReviewModeRefusesUntrustedFork's second sub-case — a trusted
 // author's own fork, where the fork repository's owner really is that

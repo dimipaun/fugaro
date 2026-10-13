@@ -357,6 +357,26 @@ func TestGitHubFetchPRHeadCollaborator(t *testing.T) {
 	}
 }
 
+// TestGitHubFetchPRHeadSelfFalseWhenAppIdentityUnknown: Self must fail
+// closed, not open, when GET /app itself fails — appSlug returns
+// known=false, and FetchPRHead must still answer Self=false even though
+// this fixture's author login ("fugaro-app[bot]") is exactly what the
+// App's own slug would produce, since there is no live slug to compare it
+// against at all. Fixed to Bitbucket's own failure mode too (no
+// author_association there means review mode already fails closed to
+// "no trust signal"): a GitHub App identity lookup failing must reach the
+// same conclusion, not quietly trust every "...[bot]" author instead.
+//
+// Mutation (change FetchPRHead's `self := known && ...` to
+// `self := !known || ...`): this test fails, finding Self=true even
+// though the App's own identity was never confirmed.
+func TestGitHubFetchPRHeadSelfFalseWhenAppIdentityUnknown(t *testing.T) {
+	got, err := open(t, "pull_open_head_app_fails.json").FetchPRHead(ctx, 12)
+	if err != nil || got.Self {
+		t.Fatalf("got %+v, %v, want Self=false (the App's own identity could not be confirmed)", got, err)
+	}
+}
+
 func at(s string) time.Time {
 	t, err := time.Parse(time.RFC3339, s)
 	if err != nil {
