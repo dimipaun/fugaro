@@ -684,6 +684,7 @@ Expected: `ok` (installation) / Terraform's own `Success!` summary (repo root), 
 - [ ] **Step 5: Commit**
 
 ```bash
+git add deploy/terraform/gcp/roots/installation/tests/ deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl deploy/terraform/gcp/roots/repo/tests/testdata/
 git commit -m "project secrets task 6: plan-level fixtures proving no secret deletes, but real IAM-member replacements that tf.Guard catches and --allow-delete clears (B3)"
 ```
 
@@ -782,8 +783,10 @@ go test -race -count=1 ./internal/config/... ./internal/localcfg/... ./internal/
 go test ./internal/cli -run 'Docs|Lint' -count=1 -timeout 9m
 terraform -chdir=deploy/terraform/gcp/modules/installation fmt -check
 terraform -chdir=deploy/terraform/gcp/modules/repo fmt -check
+terraform -chdir=deploy/terraform/gcp/roots/installation init -backend=false -lockfile=readonly -input=false && terraform -chdir=deploy/terraform/gcp/roots/installation test -no-color
+terraform -chdir=deploy/terraform/gcp/roots/repo init -backend=false -lockfile=readonly -input=false && terraform -chdir=deploy/terraform/gcp/roots/repo test -no-color
 ```
-Expected: `ok` everywhere, no `gofmt`/`terraform fmt` output.
+Expected: `ok` everywhere, no `gofmt`/`terraform fmt` output, `Success!` from both `terraform test` runs (Task 6's B3 fixtures, re-run here as the final cross-check).
 
 - [ ] **Step 2: Commit**
 
@@ -799,7 +802,7 @@ This task is never run by an implementer or by CI. Paste the `FACT:` lines into 
 
 - [ ] **40a.** Store a project secret with `--project-wide`, confirm (via `gcloud run jobs describe`/`jobs.get`, never by reading the value) that an opted-in repository's job's `secret_key_ref` names the project's secret ID.
 - [ ] **40b.** For a `project_secrets`/`claude_accounts`-backed name (reserved secrets, named accounts): confirm a repository outside the allow-list is refused at `--project-wide` with a message naming the missing entry, and that its deployed job carries no such env var at all.
-- [ ] **40c.** Confirm precedence: a repository with its own stored version keeps mounting it even though the project copy exists and lists it; disable the repo version's last enabled version, re-run `fugaro init --repo`, confirm the job now mounts the project copy.
+- [ ] **40c.** Confirm precedence: a repository with its own stored version keeps mounting it even though the project copy exists and lists it; disable the repo version's last enabled version, re-run `fugaro init --repo` with no `--allow-delete` (confirm it is refused, naming the replaced IAM-member address(es), B3), then with the named address(es) passed, confirm the job now mounts the project copy.
 - [ ] **40d.** Confirm the data-policy gate still refuses a provider model for a repository whose `allow_data_to` lists other repositories but not this one, with the provider's key stored `--project-wide` (the non-empty-list case; the empty/absent-list case is 40f's own check, Option A, design §3a — the gate does not open on an absent list in this plan).
 - [ ] **40e.** Confirm no value appears in any log, `fugaro diagnose`, `secrets ls`/`ls --project-wide` output, or a `terraform plan`/`state show` of either root.
 - [ ] **40f (owner ruling, design §3a).** Configure a provider with **no** `allow_data_to` at all; confirm `fugaro secrets set <provider-secret> --project-wide` succeeds (not refused); confirm, via `jobs.describe`, that an `agent.auth: api-key` repository never named by this provider anywhere still mounts the key; confirm that `fugaro validate` still refuses every repository's pin to it (the data-policy gate stays closed, Option A).
