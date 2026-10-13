@@ -152,31 +152,43 @@ func cloudCheck(ctx context.Context, root string, co cloudOptions, rerun string)
 const checkJobCopyCaveat = "fugaro upgrade --check makes no cloud call, so it cannot tell whether the deployed job's copy of this local project config (providers, model_prices, budget settings, the region's compute price override and the GitHub App ID) still matches, or is stale, in either direction; run fugaro upgrade without --check to find out, or just run fugaro init --repo . in your own terminal to refresh it (never run automatically)"
 
 // jobConfigCopyNote is the cloud step's extra report, after a real refresh:
-// whether the deployed workflow job's copy of the local project config
-// still matches what this local config would write now. A version upgrade
-// never refreshes that copy; only fugaro init --repo does, and fugaro
-// upgrade never runs it itself (its Terraform confirmations stay the
-// operator's). It compares every env var infra.Workflow sets from the local
-// config (spec.Env, minus infra.PlatformEnv's installation-identity keys,
-// which legitimately vary by deploy and are not what fugaro init --repo
-// refreshes from an edited local config): providers and model_prices
-// (compared by field, since they carry JSON, decoded and reflect.DeepEqual'd
-// so key order or "0.14" vs "0.140" is never a false difference) and every
-// other key by exact match (the budget mode, cap, token limit and allow-
-// list, the RTDB URL, the Firebase API key, budget grace, the region's
-// compute price override and the GitHub App ID) — so a newly added
-// local-config-derived env var is covered automatically, never missed the
-// way this once was.
+// whether any of the repository's deployed workflow jobs carries a copy of
+// the local project config that no longer matches what this local config
+// would write now. A version upgrade never refreshes that copy; only
+// fugaro init --repo does, and fugaro upgrade never runs it itself (its
+// Terraform confirmations stay the operator's). It compares every env var
+// infra.Workflow sets from the local config (spec.Env, minus
+// infra.PlatformEnv's installation-identity keys, which legitimately vary by
+// deploy and are not what fugaro init --repo refreshes from an edited local
+// config): providers and model_prices (compared by field, since they carry
+// JSON, decoded and reflect.DeepEqual'd so key order or "0.14" vs "0.140" is
+// never a false difference) and every other key by exact match (the budget
+// mode, cap, token limit and allow-list, the RTDB URL, the Firebase API key,
+// budget grace, the region's compute price override and the GitHub App ID)
+// — so a newly added local-config-derived env var is covered automatically,
+// never missed the way this once was.
 //
-// "" is nothing to say: the copies agree, or the job can't be read here (no
-// workflow, no job deployed yet, or anything resolveCloudRepo already
-// treats as a skip: no fugaro.yaml, a teammate checkout, a development
-// build, a repository not onboarded), in which case the note is silent,
-// exactly as the cloud step itself is in those cases. A real error past that
-// point (the checkout's origin, the repository's spec, the cloud connection
-// or the job read itself) is not silent: it says it could not check, never
-// with the error's own text (it could carry a URL or, from an underlying
-// client, a token).
+// This local-config-derived half of spec.Env is the same for every workflow
+// of one repository (it depends on the local config and the repository, not
+// on a workflow's own fugaro.yaml entry), but which workflows have a
+// deployed job at all, and what each one's job happened to be deployed
+// with, can differ: a workflow just added to fugaro.yaml has no job yet,
+// while an older sibling's job may already be stale. Checking only one
+// workflow (review follow-up, PR #324: the alphabetically-first one) missed
+// a stale sibling whenever that one workflow's job did not exist yet. Every
+// workflow with a job is checked, in sorted order, and every distinct way
+// any of them differs is reported, deduplicated; a workflow with no job yet
+// is skipped, like the single-workflow case always was.
+//
+// "" is nothing to say: every existing job's copy agrees, no workflow has a
+// job yet, or the job can't be read here at all (no workflow, or anything
+// resolveCloudRepo already treats as a skip: no fugaro.yaml, a teammate
+// checkout, a development build, a repository not onboarded), in which case
+// the note is silent, exactly as the cloud step itself is in those cases. A
+// real error past that point (the checkout's origin, a workflow's spec, the
+// cloud connection or a job read itself) is not silent: it says it could
+// not check, never with the error's own text (it could carry a URL or, from
+// an underlying client, a token).
 func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string {
 	cfg, lc, _, repo, _, v := resolveCloudRepo(ctx, root, co)
 	if v != nil {
@@ -190,10 +202,6 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 	if err != nil {
 		return couldNotCheckJobConfigCopy("cannot read the checkout's origin")
 	}
-	spec, err := infra.Workflow(infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, RepoURL: repoURL}, names[0])
-	if err != nil {
-		return couldNotCheckJobConfigCopy("cannot compute the repository's spec from the local config")
-	}
 	env, err := openCloudFor(ctx, lc)
 	if err != nil {
 		return couldNotCheckJobConfigCopy("cannot connect to the cloud")
@@ -205,14 +213,34 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 	if !ok {
 		return ""
 	}
-	jobEnv, exists, err := be.JobFullEnv(ctx, spec.Job)
-	if err != nil {
-		return couldNotCheckJobConfigCopy("reading the deployed job failed")
+	var now map[string]string
+	var diffs []string
+	seen := map[string]bool{}
+	anyJob := false
+	for _, name := range names {
+		spec, err := infra.Workflow(infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, RepoURL: repoURL}, name)
+		if err != nil {
+			return couldNotCheckJobConfigCopy("cannot compute the repository's spec from the local config")
+		}
+		now = spec.Env // the same local-config-derived half for every workflow
+		jobEnv, exists, err := be.JobFullEnv(ctx, spec.Job)
+		if err != nil {
+			return couldNotCheckJobConfigCopy("reading the deployed job failed")
+		}
+		if !exists {
+			continue
+		}
+		anyJob = true
+		for _, d := range jobConfigDiffs(jobEnv, now) {
+			if !seen[d] {
+				seen[d] = true
+				diffs = append(diffs, d)
+			}
+		}
 	}
-	if !exists {
-		return "" // no job deployed yet here
+	if !anyJob {
+		return "" // no workflow has a deployed job here yet
 	}
-	diffs := jobConfigDiffs(jobEnv, spec.Env)
 	if len(diffs) == 0 {
 		return ""
 	}

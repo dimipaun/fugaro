@@ -65,20 +65,20 @@ func upgradeRigWithGitHubAppID(t *testing.T) *anchorModeRig {
 	return r
 }
 
-// jobConfigCopyJobName is the job jobConfigCopyNote reads for acme/app: its
-// first workflow in sorted order (refreshYAML's "api" and "app" sort as
-// api, app), at the default Claude account (gcp.JobName's variant collapses
-// to the bare workflow name for it).
-func jobConfigCopyJobName(t *testing.T) string {
+// jobConfigCopyJobName is the job jobConfigCopyNote reads for acme/app's
+// workflow (refreshYAML has two, "api" and "app", which sort in that order),
+// at the default Claude account (gcp.JobName's variant collapses to the bare
+// workflow name for it).
+func jobConfigCopyJobName(t *testing.T, workflow string) string {
 	t.Helper()
 	slug, err := task.Slug("github", "acme/app")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return gcp.JobName(slug, "api")
+	return gcp.JobName(slug, workflow)
 }
 
-// jobConfigCopyBaseline is the deployed job's env when it was last deployed
+// jobConfigCopyBaseline is a deployed job's env when it was last deployed
 // from exactly today's local config and fugaro.yaml: only the GitHub App ID
 // (upgradeRigWithGitHubAppID's rig sets no budget, providers or model_prices
 // by default). The GitHub App ID is compared like every other local-config
@@ -91,11 +91,11 @@ func jobConfigCopyBaseline() map[string]string {
 }
 
 // setJobConfigCopyEnv creates (or replaces) the fake job jobConfigCopyNote
-// reads, with jobConfigCopyBaseline merged with extra (extra wins on a
-// shared key).
-func setJobConfigCopyEnv(t *testing.T, r *anchorModeRig, extra map[string]string) {
+// reads for workflow, with jobConfigCopyBaseline merged with extra (extra
+// wins on a shared key).
+func setJobConfigCopyEnv(t *testing.T, r *anchorModeRig, workflow string, extra map[string]string) {
 	t.Helper()
-	job := jobConfigCopyJobName(t)
+	job := jobConfigCopyJobName(t, workflow)
 	r.run.SetJob(job, nil, "img")
 	env := jobConfigCopyBaseline()
 	maps.Copy(env, extra)
@@ -114,7 +114,7 @@ func TestUpgradeCloudReportsStaleJobConfigCopy(t *testing.T) {
 	r := upgradeRigWithGitHubAppID(t)
 	r.appendConfig(t, providersConfig)
 	stubCurrentRefresh(t, r)
-	setJobConfigCopyEnv(t, r, nil)
+	setJobConfigCopyEnv(t, r, "api", nil)
 	fakeSteps(t, "", nil)
 	out, _, err := executeStdin(t, "", "upgrade", "--yes")
 	if err != nil {
@@ -142,7 +142,7 @@ func TestUpgradeCloudReportsStaleJobConfigCopy(t *testing.T) {
 func TestUpgradeCloudNoNoteWhenJobConfigCopyMatches(t *testing.T) {
 	r := upgradeRigWithGitHubAppID(t)
 	stubCurrentRefresh(t, r)
-	setJobConfigCopyEnv(t, r, nil)
+	setJobConfigCopyEnv(t, r, "api", nil)
 	fakeSteps(t, "", nil)
 	out, _, err := executeStdin(t, "", "upgrade", "--yes")
 	if err != nil {
@@ -164,7 +164,7 @@ func TestUpgradeCloudStaleJobConfigNoteNeverLeaksAValue(t *testing.T) {
 	r := upgradeRigWithGitHubAppID(t)
 	r.appendConfig(t, providersConfig)
 	stubCurrentRefresh(t, r)
-	setJobConfigCopyEnv(t, r, nil)
+	setJobConfigCopyEnv(t, r, "api", nil)
 	fakeSteps(t, "", nil)
 	out, _, err := executeStdin(t, "", "upgrade", "--yes")
 	if err != nil {
@@ -204,7 +204,7 @@ func TestUpgradeCloudCopyNoteNeverReadsTheCloudUnderCheckOrAgent(t *testing.T) {
 		r := upgradeRigWithGitHubAppID(t)
 		r.appendConfig(t, providersConfig)
 		stubCurrentRefresh(t, r)
-		setJobConfigCopyEnv(t, r, nil)
+		setJobConfigCopyEnv(t, r, "api", nil)
 		out, _, err := executeStdin(t, "", "upgrade", "--check")
 		if ExitCode(err) != ExitUserError {
 			t.Fatalf("exit %d\n%s", ExitCode(err), out)
@@ -220,7 +220,7 @@ func TestUpgradeCloudCopyNoteNeverReadsTheCloudUnderCheckOrAgent(t *testing.T) {
 		r := upgradeRigWithGitHubAppID(t)
 		r.appendConfig(t, providersConfig)
 		stubCurrentRefresh(t, r)
-		setJobConfigCopyEnv(t, r, nil)
+		setJobConfigCopyEnv(t, r, "api", nil)
 		t.Setenv("CLAUDECODE", "1")
 		out, _, err := executeStdin(t, "", "upgrade")
 		if err != nil {
@@ -248,7 +248,7 @@ func TestUpgradeCloudReportsStaleBudgetConfigCopy(t *testing.T) {
 	r := upgradeRigWithGitHubAppID(t)
 	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5 }\n")
 	stubCurrentRefresh(t, r)
-	setJobConfigCopyEnv(t, r, nil) // no budget on the job's copy
+	setJobConfigCopyEnv(t, r, "api", nil) // no budget on the job's copy
 	fakeSteps(t, "", nil)
 	out, _, err := executeStdin(t, "", "upgrade", "--yes")
 	if err != nil {
@@ -308,7 +308,7 @@ func TestUpgradeCloudCheckCaveatFiresEvenWithAnEmptyLocalConfig(t *testing.T) {
 func TestUpgradeCloudCouldNotCheckJobConfigCopyOnAJobReadError(t *testing.T) {
 	r := upgradeRigWithGitHubAppID(t)
 	stubCurrentRefresh(t, r)
-	setJobConfigCopyEnv(t, r, nil)
+	setJobConfigCopyEnv(t, r, "api", nil)
 	r.run.SetJobFaults(gcpfake.JobFaults{GetStatus: 500})
 	fakeSteps(t, "", nil)
 	out, _, err := executeStdin(t, "", "upgrade", "--yes")
@@ -322,6 +322,65 @@ func TestUpgradeCloudCouldNotCheckJobConfigCopyOnAJobReadError(t *testing.T) {
 		if strings.Contains(out, leak) {
 			t.Fatalf("the note leaked the underlying error %q:\n%s", leak, out)
 		}
+	}
+}
+
+// TestUpgradeCloudChecksEveryWorkflowsJobNotJustTheFirst: review follow-up
+// (PR #324): refreshYAML has two workflows, api (sorted first) and app.
+// api's job does not exist at all yet (as if it were just added to
+// fugaro.yaml and never deployed), while app's job does exist and is
+// genuinely stale. Checking only the alphabetically-first workflow's job
+// (api, which does not exist) used to make the whole note go silent,
+// hiding app's real staleness; every workflow with a job must be checked.
+//
+// Mutation (verified, run and restored): in jobConfigCopyNote, replace the
+// loop over names with a single check of names[0] (api) alone: this test
+// fails, finding no note (api's job does not exist, and the old code never
+// looked at app's).
+func TestUpgradeCloudChecksEveryWorkflowsJobNotJustTheFirst(t *testing.T) {
+	r := upgradeRigWithGitHubAppID(t)
+	r.appendConfig(t, providersConfig)
+	stubCurrentRefresh(t, r)
+	// api: no job at all (never deployed). app: a job deployed, stale (the
+	// baseline only: no providers, no model_prices).
+	setJobConfigCopyEnv(t, r, "app", nil)
+	fakeSteps(t, "", nil)
+	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"note: the deployed job's copy of the local project config is STALE",
+		"providers: added openrouter",
+		"model_prices: added deepseek/deepseek-v4-flash",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestUpgradeCloudUnionsDiffsAcrossWorkflowsDeduplicated: both api and app
+// have a deployed job; api's lacks the configured providers and app's
+// matches (deployed more recently), or vice versa — either way, a field
+// that is stale on at least one job is named once, not once per workflow.
+//
+// Mutation (verified, run and restored): in jobConfigCopyNote, change
+// `if !seen[d]` to `if true` (still setting seen[d], but never checking it):
+// this test fails, finding the diff text twice.
+func TestUpgradeCloudUnionsDiffsAcrossWorkflowsDeduplicated(t *testing.T) {
+	r := upgradeRigWithGitHubAppID(t)
+	r.appendConfig(t, providersConfig)
+	stubCurrentRefresh(t, r)
+	setJobConfigCopyEnv(t, r, "api", nil) // stale: no providers/model_prices
+	setJobConfigCopyEnv(t, r, "app", nil) // also stale, the same way
+	fakeSteps(t, "", nil)
+	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if n := strings.Count(out, "providers: added openrouter"); n != 1 {
+		t.Fatalf("the diff appeared %d times, want exactly 1 (deduplicated):\n%s", n, out)
 	}
 }
 
