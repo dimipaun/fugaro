@@ -983,18 +983,40 @@ func TestLocalCheckResolvesSpec(t *testing.T) {
 }
 
 // TestCheckJobResolvesSpecWithAKindAddedSinceInstall and
-// TestCheckJobBackfillsTheImplicitBaseKind are deleted: they pinned
-// repoSpec's backfill of a base kind a workflow added after install needed
-// but the installed spec lacked (one real base image standing in for
-// another kind's, until the next fugaro image refresh records its own).
-// After the 0.7.0 cut config.Bases has exactly one kind, so every workflow,
-// installed or added later, resolves to the same "base" key: a valid
-// installed spec always already has it (readJobEnv refuses an empty
-// base_images), so repoSpec's `if bases[kind] == ""` backfill branch can
-// never fire for a real fugaro.yaml again. Both tests had gone vacuous: the
-// assertion `lc.BaseImages["base"] != ""` was true whether or not the
-// backfill ran, since base_images.base was already non-empty from the
-// fixture's one installed workflow.
+// TestCheckJobBackfillsTheImplicitBaseKind were deleted in an earlier
+// commit on the reasoning that a valid installed spec always already has
+// a base_images.base entry, so repoSpec's backfill branch could never fire
+// for a real fugaro.yaml again. That reasoning missed the migration
+// window: a daily check job whose own installed FUGARO_CHECK_SPEC
+// predates the 0.7.0 cut (its fugaro image refresh or init --repo has not
+// run there since the cut) still names a removed kind, not "base", so the
+// backfill is exactly how that job keeps resolving instead of refusing
+// outright. TestCheckJobBackfillsFromAPreCutLegacySpec below restores a
+// one-kind test for it.
+func TestCheckJobBackfillsFromAPreCutLegacySpec(t *testing.T) {
+	newCheckJob(t, checkFiles(), bitbucketYAML)
+	e, err := readJobEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a daily check job whose own installed spec predates the
+	// 0.7.0 cut: it still names a removed kind, not "base".
+	e.spec.BaseImages = map[string]string{"web-node": checkBase}
+	cfg, problems := config.Parse([]byte(bitbucketYAML))
+	if len(problems) > 0 {
+		t.Fatal(problems)
+	}
+	rs, lc, err := e.repoSpec(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lc.BaseImages["base"] != checkBase {
+		t.Fatalf("base_images = %v, want base backfilled from the legacy spec's web-node: %s", lc.BaseImages, checkBase)
+	}
+	if rs.Check == nil || rs.Check.Image != checkBase {
+		t.Fatalf("check = %+v, want image %s", rs.Check, checkBase)
+	}
+}
 
 // executeJob runs a command as the Cloud Run check job does: its environment
 // names the job.
