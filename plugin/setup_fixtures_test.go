@@ -186,6 +186,7 @@ func checkFixture(t *testing.T, name string) {
 		if w.Base != "" || w.Image.Node != "" || len(w.Image.Tools) > 0 {
 			t.Errorf("workflow %s: base %q, image.node %q, image.tools %v: the skill writes mise.toml instead", wf, w.Base, w.Image.Node, w.Image.Tools)
 		}
+		checkNoRuntimeApt(t, "fixture "+name, wf, w)
 		if !slices.Equal(w.Image.Apt, facts.apt) {
 			t.Errorf("image.apt %v, want %v", w.Image.Apt, facts.apt)
 		}
@@ -216,6 +217,46 @@ func checkFixture(t *testing.T, name string) {
 }
 
 var secretLikeRE = regexp.MustCompile(`(?i)(ghp_|github_pat_|sk-ant-|-----BEGIN|xox[bp]-|AKIA[0-9A-Z]{12})`)
+
+// runtimeAptPackageRE matches Debian package names that install a language
+// runtime directly (services-and-images.md: "Never apt-get install
+// <language>"; mise is the one way to install a runtime on the base). Not
+// exhaustive, but covers the common per-distro names and version suffixes.
+var runtimeAptPackageRE = regexp.MustCompile(`^(nodejs|npm|golang(-go)?|python3?(\.\d+)?(-pip|-venv|-dev)?|ruby(\d+(\.\d+)?)?|r?openjdk-?\d*(-jdk|-jre)?|default-jdk|default-jre|php\d*(\.\d+)?(-cli|-fpm)?|rustc|cargo|dotnet-sdk(-\d+(\.\d+)?)?|mono-complete)$`)
+
+// checkNoRuntimeApt fails t if any image.apt entry of w installs a language
+// runtime instead of declaring it in mise.toml or image.tools.
+func checkNoRuntimeApt(t *testing.T, at, wf string, w config.Workflow) {
+	t.Helper()
+	for _, p := range w.Image.Apt {
+		if runtimeAptPackageRE.MatchString(p) {
+			t.Errorf("%s: workflow %s: image.apt installs %q, a language runtime; mise.toml or image.tools is the only way to install one", at, wf, p)
+		}
+	}
+}
+
+// aptGetInstallRE finds an apt(-get) install invocation in a Dockerfile line.
+var aptGetInstallRE = regexp.MustCompile(`\bapt(-get)?\s+install\b`)
+
+// addedLinesInstallARuntime reports a package name a block of added
+// Dockerfile lines apt-get installs that is a language runtime (see
+// runtimeAptPackageRE): the one place a hand-edited Dockerfile could smuggle
+// a `base:`-style runtime install past checkDerivedFromRender's USER
+// root/sha256sum-only check.
+func addedLinesInstallARuntime(text string) (pkg string, found bool) {
+	for _, line := range strings.Split(text, "\n") {
+		if !aptGetInstallRE.MatchString(line) {
+			continue
+		}
+		for _, f := range strings.Fields(line) {
+			f = strings.Trim(f, "\"'`\\")
+			if runtimeAptPackageRE.MatchString(f) {
+				return f, true
+			}
+		}
+	}
+	return "", false
+}
 
 func equalMaps(a, b map[string]string) bool {
 	if len(a) != len(b) {
@@ -355,6 +396,9 @@ func checkDerivedFromRender(t *testing.T, wf, df, checkout string) {
 	}
 	if regexp.MustCompile(`\|\s*(sudo\s+)?(ba|z)?sh\b`).MatchString(text) {
 		t.Errorf("workflow %s: the added lines pipe into a shell:\n%s", wf, text)
+	}
+	if pkg, found := addedLinesInstallARuntime(text); found {
+		t.Errorf("workflow %s: the added lines apt-get install %s, a language runtime; mise.toml or image.tools is the only way to install one:\n%s", wf, pkg, text)
 	}
 }
 

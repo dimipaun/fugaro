@@ -123,7 +123,7 @@ func TestSetupSkillExamplesValidate(t *testing.T) {
 			}
 			mise := precedingMiseToml(text, ex.line)
 			checkExample(t, fmt.Sprintf("%s:%d", name, ex.line), c, mise)
-			for _, w := range c.Workflows {
+			for wfName, w := range c.Workflows {
 				if w.BaseKind() != config.BaseKind {
 					t.Errorf("%s:%d: workflow builds on %q, a 0.6 base; every example builds on the one Fugaro base", name, ex.line, w.BaseKind())
 				}
@@ -131,7 +131,16 @@ func TestSetupSkillExamplesValidate(t *testing.T) {
 				case len(w.Image.Tools) > 0:
 					tools = true
 				case w.Dockerfile == "":
-					plain = true
+					// An example with neither image.tools nor dockerfile:
+					// relies on a repository mise.toml, so it must actually
+					// have one: a missing fence here is a silent "it just
+					// works" example with nothing pinning its runtime, not
+					// one of the two ways of naming them.
+					if mise == "" {
+						t.Errorf("%s:%d: workflow %s has no image.tools and no preceding ```toml mise.toml``` block: nothing pins its runtime", name, ex.line, wfName)
+					} else {
+						plain = true
+					}
 				}
 				dockerfile = dockerfile || w.Dockerfile != ""
 			}
@@ -178,6 +187,7 @@ func checkExample(t *testing.T, at string, c *config.Config, mise string) {
 		write("mise.toml", mise)
 	}
 	for name, w := range c.Workflows {
+		checkNoRuntimeApt(t, at, name, w)
 		for _, cmd := range []string{w.Commands.Build, w.Commands.Test} {
 			if f := strings.Fields(cmd); len(f) > 0 && strings.HasPrefix(f[0], "./") {
 				write(f[0], "#!/bin/sh\n")
@@ -313,6 +323,7 @@ func TestSetupSkillContent(t *testing.T) {
 		},
 		"skills/setup/reference/services-and-images.md": {
 			"fugaro-services start", "mise.toml", "mise install", "image.tools", "apt-get install", "image.setup", "save the output as `.fugaro/<workflow>.Dockerfile`", "Pin every download by version and checksum", "Never start from a blank Dockerfile", "does **not** enforce", "illustrative", "Docker daemon", "docs/base-image-migration.md", "--platform linux/arm64", "FUGARO_SERVICES",
+			"**Never** `apt-get install <language>` or a `curl | sh` installer for a runtime",
 		},
 		"skills/setup/reference/decisions.md": {
 			"followup.allow_public", "agent.max_run_tokens", "agent.max_budget_usd", "fugaro budget prices", "never set `allow_public` without their explicit decision",
