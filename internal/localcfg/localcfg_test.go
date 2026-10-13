@@ -867,9 +867,9 @@ func TestLocalConfigRefusesLegacyBaseImageKeys(t *testing.T) {
 
 func TestParseBaseImageFlag(t *testing.T) {
 	for in, want := range map[string][2]string{
-		"us-east5-docker.pkg.dev/p/fugaro-base/fugaro-base:dev-abc":    {"base", "us-east5-docker.pkg.dev/p/fugaro-base/fugaro-base:dev-abc"},
+		"us-east5-docker.pkg.dev/p/fugaro-base/fugaro-base:dev-abc":      {"base", "us-east5-docker.pkg.dev/p/fugaro-base/fugaro-base:dev-abc"},
 		"ghcr.io/dimipaun/fugaro-base@sha256:" + strings.Repeat("a", 64): {"base", "ghcr.io/dimipaun/fugaro-base@sha256:" + strings.Repeat("a", 64)},
-		"base=reg/my-own-image:3":                                      {"base", "reg/my-own-image:3"}, // an explicit kind beats the name
+		"base=reg/my-own-image:3":                                        {"base", "reg/my-own-image:3"}, // an explicit kind beats the name
 	} {
 		kind, ref, err := ParseBaseImageFlag(in)
 		if err != nil || kind != want[0] || ref != want[1] {
