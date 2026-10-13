@@ -39,7 +39,7 @@ func TestBaseDockerfileStripsKeysignAndPinsEverything(t *testing.T) {
 			t.Errorf("ARG %s=%s is not a sha256", name, v)
 		}
 	}
-	for _, p := range []string{"MISE", "CLAUDE_CODE", "GH", "YQ", "GCLOUD", "DOCKER_CLI", "CODEX", "OPENCODE", "GOOSE", "CRUSH"} {
+	for _, p := range []string{"MISE", "CLAUDE_CODE", "GH", "YQ", "GCLOUD", "DOCKER_CLI", "CODEX", "OPENCODE", "GOOSE", "CRUSH", "UV"} {
 		if args[p+"_VERSION"] == "" || args[p+"_SHA256_AMD64"] == "" || args[p+"_SHA256_ARM64"] == "" {
 			t.Errorf("%s lacks its version or a per-architecture sha256", p)
 		}
@@ -349,6 +349,133 @@ func TestDeepSeekHarnessBakesNoCredential(t *testing.T) {
 				t.Errorf("%s contains %q, which looks like a baked DeepSeek credential or endpoint", name, needle)
 			}
 		}
+	}
+}
+
+// graphifyArgs pulls GRAPHIFY_VERSION and GRAPHIFY_PYTHON_VERSION straight
+// out of the Dockerfile's own ARG lines, not a copy, so a drift between the
+// pin and this test's expectation would have to be a real Dockerfile edit.
+func graphifyArgs(t *testing.T, df string) (version, pythonVersion string) {
+	t.Helper()
+	for _, m := range regexp.MustCompile(`(?m)^ARG (GRAPHIFY_VERSION|GRAPHIFY_PYTHON_VERSION)=(\S+)$`).FindAllStringSubmatch(df, -1) {
+		if m[1] == "GRAPHIFY_VERSION" {
+			version = m[2]
+		} else {
+			pythonVersion = m[2]
+		}
+	}
+	if version == "" || pythonVersion == "" {
+		t.Fatal("the Dockerfile lacks ARG GRAPHIFY_VERSION or ARG GRAPHIFY_PYTHON_VERSION")
+	}
+	return version, pythonVersion
+}
+
+// TestGraphifyPinnedAndIsolated: graphify (design base-image.md section 6,
+// 2026-10-13 update) is pinned by an ARG like every other tool, and its
+// private Python venv never reaches the image's PATH or a project's build --
+// only a two-line wrapper in /usr/local/bin does, the same pattern as the
+// Node harnesses. Mutations this catches: dropping the ARG pin (fails on the
+// missing match); adding "/opt/fugaro/graphify" or "/opt/fugaro/uv" to the
+// ENV PATH line (fails the PATH check); changing the wrapper to exec a bare
+// "python" instead of the venv's own "graphify" entry point (fails the
+// wrapper check); dropping --require-hashes from the pip install (fails the
+// reproducibility check).
+func TestGraphifyPinnedAndIsolated(t *testing.T) {
+	df := baseDockerfile(t)
+	version, pythonVersion := graphifyArgs(t, df)
+	if !regexp.MustCompile(`^\d+\.\d+\.\d+$`).MatchString(version) {
+		t.Errorf("GRAPHIFY_VERSION=%q is not an exact version", version)
+	}
+	if !regexp.MustCompile(`^\d+\.\d+\.\d+$`).MatchString(pythonVersion) {
+		t.Errorf("GRAPHIFY_PYTHON_VERSION=%q is not an exact version", pythonVersion)
+	}
+	pathLine := regexp.MustCompile(`(?m)^\s*PATH=\S+`).FindString(df)
+	if pathLine == "" {
+		t.Fatal("no ENV PATH line in the Dockerfile")
+	}
+	for _, bad := range []string{"/opt/fugaro/graphify", "/opt/fugaro/uv"} {
+		if strings.Contains(pathLine, bad) {
+			t.Errorf("the image's PATH includes %s: graphify's private runtime must never be project-visible", bad)
+		}
+	}
+	if !strings.Contains(df, `exec /opt/fugaro/graphify/venv/bin/graphify "$@"`) {
+		t.Error("no wrapper execing the private venv's own graphify entry point")
+	}
+	if strings.Contains(df, `/usr/local/bin/graphify`) && strings.Contains(df, "exec /opt/fugaro/graphify/venv/bin/python ") {
+		t.Error("the graphify wrapper execs a bare python, not the venv's graphify entry point")
+	}
+	if !strings.Contains(df, "--require-hashes") {
+		t.Error("graphify's pip install does not require hashes: a PyPI change could alter the image")
+	}
+	if !strings.Contains(df, "images/base/graphify/requirements.lock.txt") {
+		t.Error("the Dockerfile never installs from the committed graphify lockfile")
+	}
+}
+
+// TestGraphifyLockIsHashPinnedAndMatchesTheArg: the committed lockfile
+// (uv pip compile --generate-hashes) pins the exact version the Dockerfile's
+// ARG names, and every package in it carries at least one sha256 hash.
+// Mutations this catches: bumping GRAPHIFY_VERSION without regenerating the
+// lockfile (version mismatch); a lockfile line with no --hash (hash
+// coverage).
+func TestGraphifyLockIsHashPinnedAndMatchesTheArg(t *testing.T) {
+	version, _ := graphifyArgs(t, baseDockerfile(t))
+	lock, err := os.ReadFile("base/graphify/requirements.lock.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(lock)
+	m := regexp.MustCompile(`(?m)^graphifyy==(\S+) \\$`).FindStringSubmatch(s)
+	if m == nil {
+		t.Fatal("the lockfile has no exact graphifyy== line")
+	}
+	if m[1] != version {
+		t.Errorf("the lockfile pins graphifyy==%s, the Dockerfile's ARG GRAPHIFY_VERSION says %s", m[1], version)
+	}
+	reqs := regexp.MustCompile(`(?m)^[A-Za-z0-9_.-]+==\S+ \\$`).FindAllString(s, -1)
+	if len(reqs) == 0 {
+		t.Fatal("the lockfile has no pinned requirement lines")
+	}
+	hashes := regexp.MustCompile(`--hash=sha256:[0-9a-f]{64}`).FindAllString(s, -1)
+	if len(hashes) < len(reqs) {
+		t.Errorf("%d pinned requirements but only %d sha256 hashes: every requirement needs at least one", len(reqs), len(hashes))
+	}
+	in, err := os.ReadFile("base/graphify/requirements.in")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`(?m)^graphifyy==` + regexp.QuoteMeta(version) + `$`).Match(in) {
+		t.Errorf("requirements.in does not pin graphifyy==%s", version)
+	}
+}
+
+// TestGraphifyToolsRow: the presence check (design section 6) runs
+// "graphify --version", tier harness, on both architectures -- real wheels
+// exist for graphifyy and every one of its dependencies on linux/arm64
+// (verified against PyPI's file listing when this was written), unlike a
+// tool the spec allows to skip an architecture.
+func TestGraphifyToolsRow(t *testing.T) {
+	tools, err := image.ParseTools(images.BaseTools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found *image.Tool
+	for i := range tools {
+		if tools[i].Name == "graphify" {
+			found = &tools[i]
+		}
+	}
+	if found == nil {
+		t.Fatal(`tools.tsv has no "graphify" row`)
+	}
+	if found.Tier != "harness" {
+		t.Errorf("graphify's tier is %q, want harness", found.Tier)
+	}
+	if found.Arches != nil {
+		t.Errorf("graphify is restricted to %v, want every architecture (all)", found.Arches)
+	}
+	if len(found.Argv) == 0 || found.Argv[0] != "graphify" {
+		t.Errorf("graphify's presence check argv is %v, want it to start with graphify", found.Argv)
 	}
 }
 

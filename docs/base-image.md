@@ -11,6 +11,7 @@ Every workflow's image is built on one base, `ghcr.io/dimipaun/fugaro-base` (for
 - **Cloud:** the gcloud CLI and the Docker CLI (client only: a Cloud Run job has no Docker daemon).
 - **[mise](https://mise.jdx.dev)**, the one way to install a language runtime.
 - **Agent harnesses:** `claude` (Claude Code), `codex` (Codex CLI), `gemini` (Gemini CLI), `pi` (Pi), `qwen` (Qwen Code), `opencode` (OpenCode), `goose` (Goose) and `crush` (Crush). **Today only Claude Code is driven by Fugaro**; the others are installed and answer `--version`, and choosing one per run is a later feature. DeepSeek now publishes a harness too (`dsh`, `@deepseek-ai/dsh`); it is not bundled yet because its exact npm version isn't pinned ([design/base-image.md](design/base-image.md) section 6 has the full account).
+- **`graphify`:** a Python CLI (PyPI `graphifyy`) that turns a folder into a queryable knowledge graph (HTML, GraphRAG JSON, `GRAPH_REPORT.md`); it runs on its own private Python in `/opt/fugaro/graphify`, never the base's system Python or a project-visible `pip`/`uv`. A Fugaro cloud run can use `graphify` directly for codebase questions; nothing in Fugaro installs or invokes it automatically.
 - **Fugaro's plumbing:** `fugaro`, `tini` (PID 1), `finalize-checkout`, `fugaro-services`, the `fugaro` user (uid 1000) and `/work/repo`.
 
 No credential is in the image. Every key and token reaches a run at run time, through the environment and the runner; never bake one into your image either. What each tool reads, for whoever wires a harness later (names marked *unverified* come from each tool's documentation, not from running it):
@@ -25,6 +26,7 @@ No credential is in the image. Every key and token reaches a run at run time, th
 | OpenCode | provider key variables, `OPENROUTER_API_KEY` | `~/.config/opencode/opencode.json`, `~/.local/share/opencode/auth.json` *unverified* |
 | Goose | `GOOSE_PROVIDER`, `GOOSE_MODEL`, provider keys | `~/.config/goose/config.yaml` |
 | Crush | provider key variables | `~/.config/crush/crush.json` *unverified* |
+| graphify | none needed for a code-only graph; `GEMINI_API_KEY` or `GOOGLE_API_KEY` for optional semantic extraction (also accepted: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `MOONSHOT_API_KEY`, `AZURE_OPENAI_API_KEY` with `AZURE_OPENAI_ENDPOINT`, `OLLAMA_API_KEY`/`OLLAMA_BASE_URL`) | none |
 | gh | `GH_TOKEN` (or `GITHUB_TOKEN`), `GH_HOST`, `GH_ENTERPRISE_TOKEN` | `~/.config/gh/hosts.yml` (the runner configures gh at run time) |
 | gcloud | the metadata server (the job's service account, nothing to set on Cloud Run), `CLOUDSDK_CORE_PROJECT`, `CLOUDSDK_CONFIG`, `CLOUDSDK_AUTH_ACCESS_TOKEN_FILE` | `~/.config/gcloud/` |
 | Docker CLI | `DOCKER_HOST`, `DOCKER_CONFIG` | `~/.docker/config.json` |

@@ -34,6 +34,11 @@ func TestToolsTableParses(t *testing.T) {
 			t.Errorf("%s is %q, want harness", name, tier[name])
 		}
 	}
+	// graphify (design section 6, 2026-10-13 update) is a tool, not a coding
+	// agent harness, but gets the same presence-only tier as the harnesses.
+	if tier["graphify"] != "harness" {
+		t.Errorf("graphify is %q, want harness", tier["graphify"])
+	}
 	for _, name := range []string{"gcloud", "docker", "rg", "fd", "bat", "yq", "jq", "fugaro-services"} {
 		if tier[name] != "kit" {
 			t.Errorf("%s is %q, want kit", name, tier[name])

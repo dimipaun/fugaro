@@ -9,7 +9,8 @@
 # set one in the environment to override it.
 # For BASE=base, the pins additionally include MISE_VERSION, GCLOUD_VERSION,
 # DOCKER_CLI_VERSION, YQ_VERSION, CODEX_VERSION, OPENCODE_VERSION,
-# GOOSE_VERSION, CRUSH_VERSION and HARNESS_NODE_VERSION, each matched exactly
+# GOOSE_VERSION, CRUSH_VERSION, HARNESS_NODE_VERSION, UV_VERSION and
+# GRAPHIFY_VERSION, each matched exactly
 # (not as a substring) against a version token parsed from the tool's own
 # output; every field of /etc/fugaro/base.json is checked against its own
 # pin too. The image's presence checks (images/base/tools.tsv) are run with
@@ -79,6 +80,8 @@ case "$base" in
     pinned GOOSE_VERSION 's/^ *//' goose --version
     pinned CRUSH_VERSION 's/.*version v//' crush --version
     pinned HARNESS_NODE_VERSION 's/^v//' /opt/fugaro/node/bin/node -v
+    pinned UV_VERSION 's/^uv \([0-9.]*\).*/\1/' /opt/fugaro/uv/bin/uv --version
+    pinned GRAPHIFY_VERSION 's/^graphify //' graphify --version
 
     # /etc/fugaro/base.json (design base-image.md section 3) records the
     # base's own pins; every one of its fields must match the Dockerfile's
@@ -102,6 +105,8 @@ case "$base" in
     check_json_field opencode "$(resolve_pin OPENCODE_VERSION)"
     check_json_field goose "$(resolve_pin GOOSE_VERSION)"
     check_json_field crush "$(resolve_pin CRUSH_VERSION)"
+    check_json_field uv "$(resolve_pin UV_VERSION)"
+    check_json_field graphify "$(resolve_pin GRAPHIFY_VERSION)"
     echo "base.json matches every pin"
 
     # Every row of images/base/tools.tsv, presence only: no network, and the

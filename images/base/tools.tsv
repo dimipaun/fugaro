@@ -56,6 +56,7 @@ gpgv	gpgv --version	all	kit
 python3	python3 --version	all	kit
 gcloud	gcloud --version	all	kit
 docker	docker --version	all	kit
+/opt/fugaro/uv/bin/uv	/opt/fugaro/uv/bin/uv --version	all	kit
 codex	codex --version	all	harness
 gemini	gemini --version	all	harness
 pi	pi --version	all	harness
@@ -63,6 +64,7 @@ qwen	qwen --version	all	harness
 opencode	opencode --version	all	harness
 goose	goose --version	all	harness
 crush	crush --version	all	harness
+graphify	graphify --version	all	harness
 # dsh (DeepSeek Harness, @deepseek-ai/dsh, MIT) is intentionally NOT a row
 # yet (design base-image.md section 6, updated 2026-10-12): the Dockerfile's
 # harness-install loop does not install it either (no npm was available to

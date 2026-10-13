@@ -78,6 +78,12 @@ case "$cmd" in
   "/opt/fugaro/node/bin/node -v")
     [ "$missing" = harness-node ] && fail_missing /opt/fugaro/node/bin/node
     echo "v$FAKE_HARNESS_NODE_VERSION" ;;
+  "/opt/fugaro/uv/bin/uv --version")
+    [ "$missing" = uv ] && fail_missing /opt/fugaro/uv/bin/uv
+    echo "uv $FAKE_UV_VERSION (x86_64-unknown-linux-gnu)" ;;
+  "graphify --version")
+    [ "$missing" = graphify ] && fail_missing graphify
+    echo "graphify $FAKE_GRAPHIFY_VERSION" ;;
   "cat /etc/fugaro/base.json")
     [ "$missing" = base-json ] && fail_missing cat
     # mise's base.json field defaults to FAKE_MISE_VERSION (the same value
@@ -88,13 +94,14 @@ case "$cmd" in
     debian=$FAKE_DEBIAN_DIGEST; mise=${FAKE_BASE_JSON_MISE:-$FAKE_MISE_VERSION}; claude_code=$FAKE_CLAUDE_VERSION; gh=$FAKE_GH_VERSION
     yq=$FAKE_YQ_VERSION; gcloud=$FAKE_GCLOUD_VERSION; docker_cli=$FAKE_DOCKER_CLI_VERSION; harness_node=$FAKE_HARNESS_NODE_VERSION
     codex=$FAKE_CODEX_VERSION; opencode=$FAKE_OPENCODE_VERSION; goose=$FAKE_GOOSE_VERSION; crush=$FAKE_CRUSH_VERSION
+    uv=$FAKE_UV_VERSION; graphify=$FAKE_GRAPHIFY_VERSION
     # FAKE_BASE_JSON_MISMATCH names one field to corrupt independently of its
     # command's own --version output, so a test can prove the base.json
     # check reads base.json itself rather than piggy-backing on another
     # check that happens to cover the same pin.
     if [ -n "${FAKE_BASE_JSON_MISMATCH:-}" ]; then eval "$FAKE_BASE_JSON_MISMATCH=wrong-value"; fi
-    printf '{"debian":"trixie-slim@%s","mise":"%s","claude_code":"%s","gh":"%s","yq":"%s","gcloud":"%s","docker_cli":"%s","harness_node":"%s","codex":"%s","opencode":"%s","goose":"%s","crush":"%s"}\n' \
-      "$debian" "$mise" "$claude_code" "$gh" "$yq" "$gcloud" "$docker_cli" "$harness_node" "$codex" "$opencode" "$goose" "$crush" ;;
+    printf '{"debian":"trixie-slim@%s","mise":"%s","claude_code":"%s","gh":"%s","yq":"%s","gcloud":"%s","docker_cli":"%s","harness_node":"%s","codex":"%s","opencode":"%s","goose":"%s","crush":"%s","uv":"%s","graphify":"%s"}\n' \
+      "$debian" "$mise" "$claude_code" "$gh" "$yq" "$gcloud" "$docker_cli" "$harness_node" "$codex" "$opencode" "$goose" "$crush" "$uv" "$graphify" ;;
   "fugaro image selftest")
     spec=$(cat)
     case "$all_args" in
