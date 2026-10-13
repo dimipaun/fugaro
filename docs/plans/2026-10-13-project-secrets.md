@@ -16,7 +16,8 @@
 - **P4. `build.tf`'s build-account grant is rewired to go through the same Go-computed map `sa.tf` already uses**, instead of indexing `google_secret_manager_secret.this` directly (design §5). This is the one genuine Terraform-shape change this feature needs; everything else is new Go computation over an unmodified module shape. **Flagged for opus review (security- and Terraform-sensitive): Task 5.**
 - **P5. No command deletes or migrates a now-redundant repo-owned secret.** Decommissioning is a manual, owner-paced `terraform state rm`/delete, outside this plan (design §6 step 5, §9 non-goals).
 - **P6. No `*Since` version-gate constant is added.** This feature changes which secret ID a job's existing env var is mounted from, never a new field the runner's `task.Parse` must know about (design §7). A repository needs `fugaro init --repo` re-applied before project-sharing takes effect for it, exactly like any other `infra` change — no new constant, no new skew test family.
-- **P7. A provider's empty/absent `allow_data_to` means "available to any repository" for *mounting* only (owner ruling, 2026-10-13; design §3a), via a new `ModelProvider.ProviderKeyAvailable(repo)` method that is never called from `CheckProviderPolicy`.** Two existing call sites change from `AllowsData` to `ProviderKeyAvailable`: `SecretMounts`'s per-provider mount condition (Task 2) and `Readiness`'s provider-secret precedence check (Task 3). `CheckProviderPolicy` (`providers.go:334`) is untouched by this plan — Option A of the design's open question, the default until the owner answers otherwise. `project_secrets`/`claude_accounts` resolution keeps using `AllowsData` unchanged; this ruling is scoped to `providers:` only. *Veto alternative:* also flip `CheckProviderPolicy` to `ProviderKeyAvailable` (Option B) — not implemented in this plan; if the owner picks it, it is a one-line change to `providers.go:334` plus a new test asserting the gate now accepts an unlisted repository when the list is empty, with no other file touched.
+- **P7. A provider's empty/absent `allow_data_to` means "available to any repository" for *mounting and storage* only (owner ruling, 2026-10-13; design §3a), via a new `ModelProvider.ProviderKeyAvailable(repo)` method that is never called from `CheckProviderPolicy` or `runner.ProvidersEnv`.** **Three** existing call sites change from `AllowsData` to `ProviderKeyAvailable` (corrected from "two" — B5(a) found a third): `SecretMounts`'s per-provider mount condition (Task 2), `Readiness`'s provider-secret precedence check (Task 3), and `secretsSet`'s repo-scope validation (`internal/cli/secrets.go:222`, Task 4) — without the third, an operator could never store a repo-level override for a no-list provider at all, since the repo-scope path would refuse every repository. `CheckProviderPolicy` (`providers.go:334`) and `runner.ProvidersEnv` (`internal/runner/providers.go:32`) are untouched by this plan — Option A of the design's open question, the default until the owner answers otherwise. `project_secrets`/`claude_accounts` resolution keeps using `AllowsData` unchanged; this ruling is scoped to `providers:` only. *Veto alternative:* also flip both `CheckProviderPolicy` and `ProvidersEnv` to `ProviderKeyAvailable` (Option B) — not implemented in this plan; if the owner picks it, it is a two-file change (not one — design §3a corrects an earlier claim that it was), each needing a test, and `ProvidersEnv`'s own doc comment ("only the providers that list the job's repository... are in it") needs updating too since it would no longer be literally true.
+- **P7a. An existing, already-deployed job must never gain a secret_env entry with no version anywhere (B5(a)).** `Readiness`'s existing-job branch (`readiness.go:121-122`, `case exists: ws.DeployJob = true`, unconditional) predates this feature and was never designed to protect a live job from an update that adds a brand-new, unresolvable secret reference — which configuring a provider with no list is now enough to trigger, for every existing `agent.auth: api-key` job, with no local `fugaro.yaml`/config edit for that specific repository. Fixed by having `Readiness` omit such an entry from the workflow's spec for that one apply (reporting `Missing`, not refusing the whole update) rather than ever setting `DeployJob` to `false` for an existing job (job.tf's `count = var.workflow.deploy_job ? 1 : 0` would destroy it outright — strictly worse). *Veto alternative:* refuse the whole `fugaro init --repo` apply outright whenever any workflow would gain an unresolvable mount; rejected as a worse ergonomic regression than simply not adding the one mount yet, and inconsistent with how a missing image is already handled for an existing job (`readiness.go:122-130`, it keeps the current image rather than refusing).
 
 ## Global Constraints
 
@@ -26,7 +27,8 @@ From the design:
 - No `fugaro.yaml` key, JSON Schema entry, or project-layer scope-table row is touched: this feature is local-config and Terraform/Go only.
 - `rs.Secrets`'s `for_each` never shrinks because of this feature (P2) — a golden test diffs it.
 - No live GCP call in any automated test; Check 40's items (design §8) are the owner's own task, run once, sandbox/`fugaro` installations only, never `belong`.
-- `CheckProviderPolicy` (`providers.go:334`) is never edited by this plan (P7, design §3a, Option A) — every task touching `ProviderKeyAvailable` keeps that one line, and `AllowsData` itself, byte for byte.
+- `CheckProviderPolicy` (`providers.go:334`) and `runner.ProvidersEnv` (`internal/runner/providers.go:32`) are never edited by this plan (P7, design §3a, Option A) — every task touching `ProviderKeyAvailable` keeps both lines, and `AllowsData` itself, byte for byte.
+- An existing, already-deployed job never gains a secret_env entry with no version anywhere (P7a) — pinned by a dedicated Task 3 test, not merely implied by the `MissingSecret` gate (which only ever protected a brand-new job before this feature).
 
 Project rules (carried over from this repository's existing plans):
 - Every task's own test run is in the foreground, `-count=1`, `-race` where the package's existing tests use it.
@@ -390,6 +392,7 @@ git commit -m "project secrets task 2: gcp.ProjectSecretID; pin that rs.Secrets 
   - **Repo has a version → add nothing to `out.ProjectSecrets` for this `logical`.** This is the entire "repo overrides project" rule: the absence of an entry, not a flag or a comparison Terraform has to make. A dedicated test (`TestReadinessRepoVersionMeansNoProjectSecretsEntry`, below) asserts `out.ProjectSecrets` has **no key** for `logical` in this case — not merely that `ws.SecretIDs` or any other field looks like the repo won, since the earlier draft's bug was exactly this kind of indirect assertion passing while the real (then-nonexistent) wiring would have inverted precedence.
   - **Repo has no version → `out.ProjectSecrets[logical] = spec.ProjectSecretCandidates[logical]`.** If the project copy *also* has no version, `Missing{Kind: MissingSecret}` names `fugaro secrets set NAME --project-wide` instead of today's `--repo NAME`, and `logical` still gets no `ProjectSecrets` entry.
 - **Only names present in `spec.ProjectSecretCandidates` for this repository are ever considered** — an unlisted repository's `ProjectSecretCandidates` simply has no entry for that provider's/name's logical name, so `ProjectSecrets` can never gain one either, regardless of what Terraform later does with the map.
+- **P7a: an existing job never gains an unresolvable secret_env entry.** When `logical` has no version anywhere (repo nor project) *and* `exists` is true for the workflow it belongs to (`readiness.go:118-120`'s existing `current, exists := ex.Jobs[name]`), `Readiness` removes `logical`'s entry from `ws.SecretEnv` (and, if it was the only env var naming it, `ws.SecretIDs`) for this apply — it does **not** set `ws.DeployJob = false` (that field's only job is "does this job resource exist at all," `job.tf`'s `count = var.workflow.deploy_job ? 1 : 0`; flipping it for an existing job would delete the job outright). The `Missing` diagnostic is still reported, unconditionally, so `fugaro init --repo`'s own output tells the owner exactly what is missing and why nothing was mounted. A brand-new job (`exists` false) is unaffected: it already refuses to deploy at all until every mount resolves (`ws.DeployJob = len(reasons) == 0`, unchanged).
 
 **Tests (every assertion is now on `out.ProjectSecrets`, the tfvars-reaching output map — never on `ws.SecretIDs`, which the corrected design no longer touches at all):**
 ```go
@@ -467,6 +470,26 @@ func TestReadinessCheckJobResolvesProjectSecretsToo(t *testing.T) {
 	// out.ProjectSecrets gains the entry from the check branch
 	// (readiness.go's spec.Check != nil block), not only from a workflow's.
 }
+
+func TestReadinessOmitsUnresolvableMountFromExistingJob(t *testing.T) {
+	// P7a/B5(a): ex.Jobs[name] reports the workflow's job as already
+	// existing; a newly-eligible logical name (a no-list provider's
+	// secret) has no version anywhere, repo or project. Assert: (1)
+	// ws.SecretEnv (and SecretIDs) for that workflow has NO entry for this
+	// logical name — the mount is omitted, not left dangling; (2)
+	// ws.DeployJob is still true (the job's other properties keep
+	// updating); (3) a MissingSecret Missing is still reported, Deployed:
+	// true. This is the test that would catch a regression back to "the
+	// job updates with a secret_key_ref pointing at a version-less
+	// secret," the exact failure mode B5(a) describes.
+}
+
+func TestReadinessNewJobStillRefusesOnUnresolvableMount(t *testing.T) {
+	// The companion case: ex.Jobs[name] reports no existing job at all.
+	// Assert the existing, unchanged behavior holds: ws.DeployJob is
+	// false while any mount (this one included) is unresolved — P7a does
+	// not weaken the brand-new-job gate, only the existing-job one.
+}
 ```
 
 - [ ] **Step 1: Write the failing tests**
@@ -500,6 +523,7 @@ git commit -m "project secrets task 3: Readiness resolves repo-vs-project preced
 **Interfaces (Go):**
 - `secretsOptions` gains `projectWide bool`; `--project-wide` on `secrets set` and `secrets ls`.
 - `secretsSet`: when `--project-wide`, skip `resolveSecretRepo` entirely (there is no `--repo` to resolve); validate `name` is one of: a `config.ReservedSecrets` key with a non-empty `project_secrets[name].AllowDataTo`; a claude-account's derived name whose own `allow_data_to` is non-empty; or **a provider's `.Secret` — accepted unconditionally, with no check on `allow_data_to` at all (P7, design §3a: an empty list is a valid, intentional "available to everyone" state for a provider, not a reason to refuse storage, unlike the other two kinds)**. The secret ID is `gcp.ProjectSecretID(env.lc.Name, name)`; labels are `{fugaro: managed, fugaro_project: env.lc.Name, fugaro_secret: name}` (`gcp.LabelProject`, already defined, `names.go:66`, reused here for the first time outside the runs bucket).
+- **Changes (P7, third call site, B5(a)): `secretsSet`'s existing REPO-scope branch (`internal/cli/secrets.go:222`: `if !env.lc.Providers[p].AllowsData(r.repo) {`) becomes `if !env.lc.Providers[p].ProviderKeyAvailable(r.repo) {`.** Without this, `fugaro secrets set NAME --repo X` (no `--project-wide`) stays refused for *every* repository whenever the provider's list is empty — including the repository an operator is specifically trying to give its own override to (§5, "repo overrides project") — since an empty list makes `AllowsData` false for everyone. This is pre-existing, already-shipped code being modified, like Task 2's `SecretMounts` switch — flag it as such in the commit message.
 - `secretsLs`: `--project-wide` lists by `{LabelProject: env.lc.Name}` instead of `{LabelRepo: r.label}`, and needs no `resolveSecretRepo` either. The existing (non-`--project-wide`) `ls` gains a `SCOPE` column: for each repo-owned entry, look up whether `config.AllowedForProjectSecret`-equivalent logic would also let this repo use a project copy of the same name, and print `project, repo override stored` when both exist; print a synthetic row (no version info beyond what a second `List` call under `{LabelProject}` returns) for a name the repo is allowed to use project-wide but has no repo-owned entry for at all, scope `project`.
 
 **Interfaces (Terraform, installation module):**
@@ -518,6 +542,7 @@ variable "project_secrets" {
 func TestSecretsSetProjectWideRefusesEmptyAllowList(t *testing.T) { /* a RESERVED name (project_secrets has no entry, or an entry with no repos) or a claude-account name with an empty allow_data_to: refused, no network call made for the value (assert the fake prompt/reader was never invoked). Must NOT cover a provider's secret — that is the opposite case, next. */ }
 func TestSecretsSetProjectWideAcceptsProviderSecret(t *testing.T) { /* openrouter-api-key, provider has a non-empty allow_data_to: stored under gcp.ProjectSecretID */ }
 func TestSecretsSetProjectWideAcceptsProviderSecretWithNoList(t *testing.T) { /* P7, design §3a: openrouter-api-key, provider has NO allow_data_to at all: accepted (not refused) — the one case that behaves oppositely to TestSecretsSetProjectWideRefusesEmptyAllowList above for a non-provider name, so both tests exist specifically to pin that the two kinds of name diverge here */ }
+func TestSecretsSetRepoScopeAcceptsProviderSecretWithNoList(t *testing.T) { /* B5(a), the third call site: fugaro secrets set openrouter-api-key --repo acme/app (NOT --project-wide), provider has no allow_data_to at all: accepted, not refused -- today's code (AllowsData) would refuse every repo here, which this test would have caught */ }
 func TestSecretsLsAddsScopeColumn(t *testing.T) { /* fixture with both a repo-owned and project-shared entry for one name: two distinct SCOPE values appear */ }
 func TestSecretsLsProjectWideNeverPrintsValue(t *testing.T) { /* fake Secret Manager's Access never called, same as every existing *NeverPrintsValue test */ }
 ```
