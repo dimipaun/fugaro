@@ -834,6 +834,76 @@ func TestClaudeLateMessageStartAfterStopChargesReservation(t *testing.T) {
 	}
 }
 
+// A message_delta the gateway can't read as usage, arriving AFTER
+// message_stop (the call already read as complete), must still break it
+// on the Claude route too. On main (before this fix round's forward.go
+// change), the SSE "complete" case was `tee.started && tee.complete`,
+// with no broken check at all, so this settled as usage from whatever
+// the stream said before the malformed delta (a measured 4000, below the
+// 18408 reservation this test's request reserves): the change to
+// `tee.complete && !tee.broken` (this round's item A, on top of a
+// previous round's own change) makes this stricter on the Claude route
+// as a side effect, not because the Claude route itself was broken.
+func TestClaudeMalformedDeltaAfterStopChargesReservation(t *testing.T) {
+	ev := []anthropicfake.Event{
+		{Name: "message_start", Data: `{"type":"message_start","message":{"model":"claude-sonnet-5-5","usage":{"input_tokens":500,"output_tokens":1}}}`},
+	}
+	ev = append(ev, anthropicfake.TextEvents("ok")...)
+	ev = append(ev,
+		anthropicfake.Event{Name: "message_delta", Data: `{"type":"message_delta","usage":{"output_tokens":300}}`},
+		anthropicfake.Stop,
+		// A malformed usage (output_tokens isn't an integer), after message_stop.
+		anthropicfake.Event{Name: "message_delta", Data: `{"usage":{"output_tokens":9.5}}`})
+	h := newHarness(t, anthropicfake.Reply{Status: http.StatusOK, Events: ev})
+	body := msg(sonnet, 1000, `"stream":true`)
+	if resp, b := h.post(body); resp.StatusCode != 200 {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	w := worst(t, sonnet, body, 1000, "")
+	rep := h.gw.EndStage()
+	if rep.Used != w || rep.UsageUnparsed != 1 {
+		t.Errorf("report %+v, want the reservation %d, one unparsed", rep, w)
+	}
+	if call := h.logs.lastCall(t); call["settled"] != "reserved" {
+		t.Errorf("settled %v, want reserved", call["settled"])
+	}
+}
+
+// A negative count in a message_delta AFTER message_stop must still break
+// the call on the Claude route too — message_delta already set broken on
+// negative() before this fix round, but forward.go's SSE "complete" case
+// didn't check it (only !tee.broken, and message_delta's own negative
+// handling did set that already); the fix is the same `tee.complete &&
+// !tee.broken` change as the malformed-delta case above. On main (no
+// broken check in the SSE "complete" case at all), this settled as usage
+// with the negative count floored to zero by usage() — a measured 3000
+// (output only) instead of the 18408 reservation: an existing
+// undercharge on the Claude route that this fix closes too, not a new
+// risk it introduces.
+func TestClaudeNegativeDeltaAfterStopChargesReservation(t *testing.T) {
+	ev := []anthropicfake.Event{
+		{Name: "message_start", Data: `{"type":"message_start","message":{"model":"claude-sonnet-5-5","usage":{"input_tokens":500,"output_tokens":1}}}`},
+	}
+	ev = append(ev, anthropicfake.TextEvents("ok")...)
+	ev = append(ev,
+		anthropicfake.Event{Name: "message_delta", Data: `{"type":"message_delta","usage":{"output_tokens":300}}`},
+		anthropicfake.Stop,
+		anthropicfake.Event{Name: "message_delta", Data: `{"type":"message_delta","usage":{"input_tokens":-1}}`})
+	h := newHarness(t, anthropicfake.Reply{Status: http.StatusOK, Events: ev})
+	body := msg(sonnet, 1000, `"stream":true`)
+	if resp, b := h.post(body); resp.StatusCode != 200 {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	w := worst(t, sonnet, body, 1000, "")
+	rep := h.gw.EndStage()
+	if rep.Used != w || rep.UsageUnparsed != 1 {
+		t.Errorf("report %+v, want the reservation %d, one unparsed", rep, w)
+	}
+	if call := h.logs.lastCall(t); call["settled"] != "reserved" {
+		t.Errorf("settled %v, want reserved", call["settled"])
+	}
+}
+
 // TestLongContextTierPricedFromUsage: a call whose reported input passes
 // a long-context tier (a beta such as context-1m can make one) is charged
 // at the tier's rates, and any excess over its reservation is overrun,
