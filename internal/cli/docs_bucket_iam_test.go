@@ -52,13 +52,38 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 			}
 		}
 	}
-	gs, err := os.ReadFile("../../docs/gcp-setup.md")
-	if err != nil {
-		t.Fatal(err)
+	// Claims the hardening actually makes, which a careless edit could
+	// silently widen back out (a mutation of each is proven red in the PR
+	// that added it): the end-state table's launcher row, the shared-config
+	// error-table row for a refused publish, recipes.md's operator-only
+	// sentence, release.md's 0.7.0 section and v1.md's launcher grant.
+	required := map[string][]string{
+		"../../docs/gcp-setup.md": {
+			"write only `runs/`", "runs-bucket-iam", "add-iam-policy-binding", "DATA_WRITE",
+			"| Launcher (not an operator) | read | read | read, write | read |",
+			"| needs the operator role | a launcher ran a publish",
+			"only operators can write it",
+		},
+		"../../docs/recipes.md": {
+			"It is an operator command: once an operator has applied the 0.7.0 bucket hardening",
+		},
+		"../../docs/release.md": {
+			"## Rolling out the 0.7.0 bucket hardening",
+			"`runs-bucket-iam` ok",
+		},
+		"../../docs/design/v1.md": {
+			"`roles/storage.objectUser` on its `runs/` only",
+		},
 	}
-	for _, want := range []string{"write only `runs/`", "runs-bucket-iam", "add-iam-policy-binding", "DATA_WRITE"} {
-		if !strings.Contains(string(gs), want) {
-			t.Errorf("docs/gcp-setup.md lacks %q", want)
+	for file, wants := range required {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range wants {
+			if !strings.Contains(string(data), want) {
+				t.Errorf("%s lacks %q", file, want)
+			}
 		}
 	}
 }
