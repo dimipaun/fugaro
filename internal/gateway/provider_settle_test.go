@@ -2,6 +2,8 @@ package gateway
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
@@ -440,5 +442,25 @@ func TestMalformedDeltaUnparsedWithReason(t *testing.T) {
 	}
 	if reason := lastUnparsedReason(t, logs); reason != "malformed_delta" {
 		t.Errorf("reason %q, want malformed_delta", reason)
+	}
+}
+
+// A hostile event type name (a key-looking string, embedded newlines, an
+// unbounded length) must never reach the usage_unparsed WARN line: the
+// comment on usageTee.events and logUsageUnparsed says "never the
+// provider's text", and this proves it end to end.
+func TestUnparsedEventNamesSanitizedInLog(t *testing.T) {
+	hostile := "sk-ant-api03-LEAKEDSECRETKEY\ninjected: true\n" + strings.Repeat("x", 10000)
+	ev := []anthropicfake.Event{{Data: `{"type":` + strconv.Quote(hostile) + `}`}}
+	r := feeRouted(t, 0, nil, routedStage, dsRoute, anthropicfake.Reply{Status: http.StatusOK, Events: ev})
+	if resp, b := r.post(msg(dsModel, 1000, `"stream":true`)); resp.StatusCode != http.StatusOK {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	logs := r.logs.String()
+	if strings.Contains(logs, "sk-ant-api03") || strings.Contains(logs, "injected:") {
+		t.Errorf("a hostile event name reached the log:\n%.500s", logs)
+	}
+	if !strings.Contains(logs, "unrecognized") {
+		t.Errorf("the sanitized placeholder is missing from the log:\n%.500s", logs)
 	}
 }

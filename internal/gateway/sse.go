@@ -292,8 +292,18 @@ type usageTee struct {
 // its usage_unparsed diagnostic.
 const maxEventsLogged = 16
 
+// noteEvent records typ for the usage_unparsed diagnostic. typ is the
+// provider's own SSE "event:" name or JSON "type" field, read before
+// redactWriter ever sees the response: sanitized through the same closed
+// check as an upstream error's type (errorTypeValue), so a hostile name
+// (an embedded secret, control characters, an unbounded length) reaches
+// the log only as "unrecognized", never as itself.
 func (t *usageTee) noteEvent(typ string) {
-	if typ == "" || len(t.events) >= maxEventsLogged || slices.Contains(t.events, typ) {
+	if typ == "" || len(t.events) >= maxEventsLogged {
+		return
+	}
+	typ = errorTypeValue(typ)
+	if slices.Contains(t.events, typ) {
 		return
 	}
 	t.events = append(t.events, typ)

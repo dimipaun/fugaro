@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -301,5 +302,28 @@ func TestUsageTeeUnparsedReason(t *testing.T) {
 				t.Errorf("reason %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+// noteEvent reads the provider's own SSE event name or JSON "type" field,
+// before redactWriter ever sees the response: a hostile one (a key-looking
+// string, embedded newlines, an unbounded length) must never reach the
+// usage_unparsed diagnostic as itself.
+func TestUsageTeeEventNamesSanitized(t *testing.T) {
+	hostile := "sk-ant-api03-LEAKEDSECRETKEY\ninjected: true\n" + strings.Repeat("x", 10000)
+	// A data-only frame (no "event:" line): onEvent reads typ from the
+	// JSON body's "type" field, which can carry a literal embedded
+	// newline an SSE "event:" line never could.
+	data := "data: {\"type\":" + strconv.Quote(hostile) + "}\n\n"
+	tee := newUsageTee(true)
+	tee.provider = true
+	tee.feed([]byte(data))
+	if len(tee.events) != 1 || tee.events[0] != "unrecognized" {
+		t.Fatalf("events %q, want exactly one %q", tee.events, "unrecognized")
+	}
+	for _, e := range tee.events {
+		if strings.Contains(e, "sk-ant-api03") || strings.ContainsAny(e, "\n") || len(e) > 64 {
+			t.Errorf("a hostile event name reached the tee's events: %q", e)
+		}
 	}
 }
