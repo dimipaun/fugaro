@@ -96,7 +96,7 @@ mechanism this design is the first attempt to build.
   runner's unfiltered one). This matters for §4: there is no separate
   "check-command environment" to design; it is the same environment as the
   agent's.
-- **`mise.toml`'s `[env]`** (this repository's own, `mise.toml:5-7`, and
+- **`mise.toml`'s `[env]`** (this repository's own, `mise.toml:9-10`, and
   `docs/design/base-image.md:65,164`) already lets a repository set
   environment for its own build tools, but only for processes `mise`
   activates (a shell hook, or `mise exec`) — **never** for the Claude Code
@@ -332,8 +332,8 @@ serves** (the coder's stage when the coder is the provider's model, not the
 Claude reviewer's), and `BuildEnv`'s result (`r.env`) is built once at
 bootstrap and reused for every stage (§0) — it has no concept of "this
 stage's model." The pins already solve exactly this problem for the model
-name itself: `stagePins`/`beginGatewayStage`
-(`internal/runner/gateway.go:51-58,142-146`) compute per-stage, per-role
+name itself: `stagePins` (`internal/runner/agentenv.go:51-58`) and
+`beginGatewayStage` (`internal/runner/gateway.go:142-146`) compute per-stage, per-role
 values and `writeManagedSettings(pins)`
 (`internal/runner/agentenv.go:65-84`) rewrites the managed-settings file
 before every stage with them. A provider's `agent_env` is the same shape of
