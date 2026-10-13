@@ -344,12 +344,17 @@ func TestValidateWarnsOnLooserThanCeiling(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatal(err)
 	}
-	if !got.Valid || len(got.Problems) != 0 || len(got.Warnings) != 3 {
+	// 4, not 3: workflows.app also warns that the image installs no
+	// language runtime (no mise.toml, .tool-versions or image.tools),
+	// unrelated to the ceiling checks this test is about.
+	if !got.Valid || len(got.Problems) != 0 || len(got.Warnings) != 4 {
 		t.Fatalf("json = %+v", got)
 	}
-	// A tighter file says nothing.
+	// A tighter file says nothing about the ceilings (the no-language-runtime
+	// warning above still fires: cliMinimalYAML's workflow has no mise
+	// config either way, so a generic "warning" check would always match).
 	path = fileWithBudget(t, "budget: { mode: observe, per_run_usd: 5 }\n", "budget: { mode: enforce, per_run_usd: 2 }\n", pinnedAgent)
-	if _, errOut, err = execute(t, "validate", path); err != nil || strings.Contains(errOut, "warning") {
+	if _, errOut, err = execute(t, "validate", path); err != nil || strings.Contains(errOut, "ceiling") || strings.Contains(errOut, "looser") {
 		t.Fatalf("tightening warned: %v %q", err, errOut)
 	}
 }
@@ -388,10 +393,12 @@ func TestValidateWithoutProjectConfigChecksShapeOnly(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	t.Chdir(t.TempDir())
 	// Nothing of the ceiling is known, so nothing is simulated: a clamp, a
-	// missing pin or an allow-list is not judged.
+	// missing pin or an allow-list is not judged. The one warning that does
+	// fire (cliMinimalYAML's workflow has no mise config) is unrelated to
+	// the ceiling.
 	body := strings.Replace(cliMinimalYAML, "workflows:", "agent: { auth: api-key, model: sonnet }\nbudget: { mode: enforce, per_run_usd: 20, allowed_models: [claude-haiku-4-5] }\nworkflows:", 1)
 	out, errOut, err := execute(t, "validate", writeConfig(t, body))
-	if err != nil || errOut != "" {
+	if err != nil || errOut != "warning: workflows.app: no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)\n" {
 		t.Fatalf("no project config, nothing to simulate: %v %q %q", err, out, errOut)
 	}
 	// The shape is still checked.
@@ -434,9 +441,10 @@ func TestValidateNotOnDefaultBranchSaysSo(t *testing.T) {
 		t.Fatalf("on the default branch: %v %q", err, errOut)
 	}
 	testutil.Git(t, root, "checkout", "-q", "-b", "feature")
-	// A file with no budget or token key has no policy to bound: no note.
+	// A file with no budget or token key has no policy to bound: no branch
+	// note. The one warning present (no mise config) is unrelated to it.
 	if out, errOut, err := execute(t, "validate", "--json", file); err != nil || strings.Contains(errOut, "default branch") ||
-		strings.Contains(out, "branch") || !strings.Contains(out, `"warnings": []`) {
+		strings.Contains(out, "branch") || !strings.Contains(out, `"message": "no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)"`) {
 		t.Fatalf("no policy keys: %v out %q stderr %q", err, out, errOut)
 	}
 	withBudget := strings.Replace(cliMinimalYAML, "workflows:", "budget: { per_run_usd: 1 }\nworkflows:", 1)
@@ -448,10 +456,11 @@ func TestValidateNotOnDefaultBranchSaysSo(t *testing.T) {
 		!strings.Contains(errOut, "branch feature, not the default branch (main)") || !strings.Contains(errOut, "can only tighten") {
 		t.Fatalf("%v out %q stderr %q", err, out, errOut)
 	}
-	// The JSON warning names where it is about.
+	// The JSON warning names where it is about (alongside the unrelated
+	// no-mise-config one every cliMinimalYAML-based fixture here gets).
 	out, _, err = execute(t, "validate", "--json", file)
 	var got validateOutput
-	if err != nil || json.Unmarshal([]byte(out), &got) != nil || len(got.Warnings) != 1 || got.Warnings[0].Path != "branch" {
+	if err != nil || json.Unmarshal([]byte(out), &got) != nil || len(got.Warnings) != 2 || got.Warnings[1].Path != "branch" {
 		t.Fatalf("%v %s", err, out)
 	}
 	// A detached HEAD (a CI checkout) is not a branch: no note.
