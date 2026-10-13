@@ -196,18 +196,25 @@ var jobConfigCopyTimeout = 30 * time.Second
 // both; this note just never checks the named ones itself.
 //
 // "" is nothing to say: every existing job's copy agrees, no workflow has a
-// job yet, or the job can't be read here at all (no workflow, or anything
-// resolveCloudRepo already treats as a skip: no fugaro.yaml, a teammate
-// checkout, a development build, a repository not onboarded), in which case
-// the note is silent, exactly as the cloud step itself is in those cases. A
-// real error past that point (the checkout's origin, a workflow's spec, the
-// cloud connection or a job read itself) is not silent: it says it could
-// not check, never with the error's own text (it could carry a URL or, from
-// an underlying client, a token).
+// job yet, or resolveCloudRepo finds nothing to check here at all (no
+// fugaro.yaml, a teammate checkout, a development build, a repository not
+// onboarded: U9's cloudNotHere skips), in which case the note is silent,
+// exactly as the cloud step itself is in those cases. Everything else is
+// not silent, resolveCloudRepo's own cloudFailed included (a bad fugaro.yaml
+// or origin, an unreadable local config): it says it could not check, with
+// resolveCloudRepo's own reason (already one line and safe to print, the
+// same text the cloud step's "cloud: failed:" line would show) for
+// cloudFailed, and a fixed, never-the-error's-own-text reason for a real
+// error past that point (the checkout's origin, a workflow's spec, the
+// cloud connection or a job read itself — any of which could carry a URL
+// or, from an underlying client, a token).
 func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string {
 	cfg, lc, _, repo, _, v := resolveCloudRepo(ctx, root, co)
 	if v != nil {
-		return ""
+		if v.state == cloudFailed {
+			return couldNotCheckJobConfigCopy(v.reason)
+		}
+		return "" // a U9 skip (cloudNotHere): nothing to check here
 	}
 	names := slices.Sorted(maps.Keys(cfg.Workflows))
 	if len(names) == 0 {

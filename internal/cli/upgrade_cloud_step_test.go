@@ -327,6 +327,34 @@ func TestUpgradeCloudCouldNotCheckJobConfigCopyOnAJobReadError(t *testing.T) {
 	}
 }
 
+// TestJobConfigCopyNoteReportsCloudFailedInsteadOfGoingSilent: review
+// follow-up (PR #324, NIT): jobConfigCopyNote returned "" for any non-nil
+// verdict from resolveCloudRepo, treating a real cloudFailed error (a bad
+// fugaro.yaml or origin, an unreadable local config) the same as a U9 skip
+// (no fugaro.yaml, a teammate checkout): silence that looks like "the
+// copies match". Calls jobConfigCopyNote directly (not through the full
+// upgrade command, whose own earlier cloudCheck call would normally catch
+// the same cloudFailed condition first and stop the checkout before
+// jobConfigCopyNote ever runs): this isolates the one path where
+// resolveCloudRepo's own verdict reaches jobConfigCopyNote's v != nil
+// branch, whatever lets it get there in a real run (a file changing between
+// the cloud step's own check and this one, for instance).
+//
+// Mutation (verified, run and restored): change `if v.state == cloudFailed`
+// to `if false`: this test fails, finding "".
+func TestJobConfigCopyNoteReportsCloudFailedInsteadOfGoingSilent(t *testing.T) {
+	upgradeRigWithGitHubAppID(t)
+	loc, ok := pluginwire.Locate(".")
+	if !ok {
+		t.Fatal("not a checkout")
+	}
+	testutil.Git(t, loc.Root, "remote", "remove", "origin")
+	note := jobConfigCopyNote(t.Context(), loc.Root, cloudOptions{})
+	if !strings.Contains(note, "could not check the job's config copy (") {
+		t.Fatalf("jobConfigCopyNote = %q, want a could-not-check note for resolveCloudRepo's cloudFailed", note)
+	}
+}
+
 // TestJobConfigCopyTimeoutBoundsASlowCloudCall: discovered running the full
 // suite for a previous round of this review (not one of its findings):
 // jobConfigCopyNote used the caller's own, often-undeadlined context, so a
