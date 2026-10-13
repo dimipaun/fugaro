@@ -570,6 +570,31 @@ func TestNegativeCountUnparsedWithReason(t *testing.T) {
 	}
 }
 
+// A negative count that arrives in a message_delta AFTER message_stop (a
+// malformed or buggy stream, but one the gateway already read as
+// complete) must still break the call: complete, once set, never implied
+// the usage that came after it stayed trustworthy.
+func TestNegativeCountAfterStopStillBreaks(t *testing.T) {
+	ev := []anthropicfake.Event{
+		streamEvent("message_start", `{"type":"message_start","message":{"id":"m","model":"`+dsModel+`","content":[],"usage":{"input_tokens":5000,"output_tokens":1}}}`),
+	}
+	ev = append(ev, anthropicfake.TextEvents("ok")...)
+	ev = append(ev, streamEvent("message_delta", `{"type":"message_delta","usage":{"input_tokens":5000,"output_tokens":50}}`), anthropicfake.Stop,
+		// Arrives after message_stop, once the call already read as complete.
+		streamEvent("message_delta", `{"type":"message_delta","usage":{"input_tokens":-1}}`))
+	r := feeRouted(t, 0, nil, routedStage, dsRoute, anthropicfake.Reply{Status: http.StatusOK, Events: ev})
+	if resp, b := r.post(msg(dsModel, 1000, `"stream":true`)); resp.StatusCode != http.StatusOK {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	call := r.logs.lastCall(t)
+	if got, res := pricing.Micros(num(call["charged_micros"])), pricing.Micros(num(call["reserved_micros"])); got != res || res == 0 || call["settled"] != settledReserved {
+		t.Errorf("charged %d of %d reserved, settled %v, want the reservation: a negative count after message_stop was hidden", got, res, call["settled"])
+	}
+	if reason := lastUnparsedReason(t, r.logs); reason != "negative_count" {
+		t.Errorf("reason %q, want negative_count", reason)
+	}
+}
+
 // A message_delta the gateway can't read as usage breaks the call: the
 // reservation, with a reason naming it, since it may hold the real output
 // count behind a shape the gateway doesn't expect.
