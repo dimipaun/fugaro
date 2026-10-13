@@ -52,6 +52,7 @@ var skillJSONFields = []jsonFieldClaim{
 	{"config layer", configLayerDoc{}, "generation"},
 	{"config layer", configLayerDoc{}, "sha256"},
 	{"config layer", configLayerDoc{}, "yaml"},
+	{"recipes ls", recipeRow{}, "use_when"},
 }
 
 func init() {
