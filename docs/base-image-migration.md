@@ -88,6 +88,10 @@ workflows:
 
 `image.jdk`, `base:` and `image.node` are all already refused in this tree (see the note at the top), not merely scheduled for 0.7.0: `image.jdk` was refused on every base even before the cut; `base:` and `image.node` are refused now too. Declare Java in `mise.toml` (`java = "temurin-21"`, `java = "zulu-17"`, …); the fixes above apply either way.
 
+## What happens to the already-published `fugaro-go`/`fugaro-web-node`/`fugaro-java-services` tags
+
+They stay on `ghcr.io` forever: a published tag is immutable history, never deleted. Once a maintainer copies `docs/pending-workflows/images.yml` into `.github/workflows/images.yml` (not yet done as of this writing — that file's own README says how and why), the nightly workflow stops refreshing them: there is no `base` build job left to run, so no release after that point republishes a `:X` moving tag for any of the three, and no `fugaro` command accepts `go`, `web-node` or `java-services` as a kind any more (not even `--expect-digest`, which only takes `base` and `history`) to pin one by hand.
+
 ## Checklist for a repository with services (Belong-style)
 
 Sandbox first, then the real repository:
