@@ -113,6 +113,12 @@ type runOptions struct {
 	asJSON        bool
 	noBudgetCheck bool
 	recipe        string
+	// attempts is --attempts: 2 to 4 launches a best-of-N batch of
+	// independent runs of the same task, workflow, ref and recipe (G13).
+	// It is refused together with --pr, --run-id, --retry or a
+	// review-mode recipe (the last already refused by chooseRecipe, since
+	// a batch never sets --pr).
+	attempts int
 	// token is the named Claude account (docs/design/named-oauth-tokens.md)
 	// this run uses: fugaro run --token. A follow-up (--pr) inherits its
 	// previous run's account when this is empty; an explicit value overrides
@@ -137,7 +143,11 @@ func newRunCmd() *cobra.Command {
 			"--recipe NAME --pr N, NAME naming a mode: review recipe such as review-only or pick,\n" +
 			"reviews any open pull request of the repository instead (not only Fugaro's own) and\n" +
 			"never pushes or opens one; repeat --pr (2 to 4 times) for pick, which compares them.\n" +
-			"TEXT, or --task-file, is optional then too, and adds instructions to the review.",
+			"TEXT, or --task-file, is optional then too, and adds instructions to the review.\n\n" +
+			"--attempts N (2 to 4) launches N independent runs of the same task as a best-of-N\n" +
+			"batch, under one batch label (bestof-<first run id> unless --batch is given); once\n" +
+			"they have all opened a pull request, compare them with fugaro run --recipe pick.\n" +
+			"It takes no --pr, --run-id or --retry.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runRun(cmd, &o, args) },
 	}
@@ -153,6 +163,7 @@ func newRunCmd() *cobra.Command {
 	f.IntSliceVar(&o.pr, "pr", nil, "continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR)")
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
 	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's)")
+	f.IntVar(&o.attempts, "attempts", 0, "launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	f.BoolVar(&o.noBudgetCheck, "no-budget-check", false, "skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts")
 	addCloudFlags(cmd, &o.cloud)
@@ -167,6 +178,17 @@ var prFlags = []string{"ref", "workflow"}
 
 func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	ctx := cmd.Context()
+	attemptsSet := cmd.Flags().Changed("attempts")
+	if attemptsSet {
+		if o.attempts < 2 || o.attempts > 4 {
+			return userErr("--attempts: use 2 to 4, got %d", o.attempts)
+		}
+		for _, name := range []string{"pr", "run-id", "retry"} {
+			if cmd.Flags().Changed(name) {
+				return userErr("--attempts launches a fresh batch; it takes no --%s", name)
+			}
+		}
+	}
 	prSet := cmd.Flags().Changed("pr") && o.retry == ""
 	if prSet {
 		if len(o.pr) == 0 {
@@ -275,6 +297,13 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			}
 		}
 	}
+	if attemptsSet {
+		// prSet, reviewRecipe and o.retry are all excluded above, so a
+		// batch always takes newSpec's path; a review-mode recipe (--recipe
+		// or a project's agent.recipe) is refused there already, by
+		// chooseRecipe (run.go:641), exactly as a bare `fugaro run` is.
+		return runAttempts(cmd, env, o, text, total)
+	}
 
 	var (
 		spec   *task.Spec
@@ -295,20 +324,34 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	if err != nil {
 		return err
 	}
+	res, err := finishLaunch(ctx, env, o, slug, spec, reused, cmd.ErrOrStderr())
+	if err != nil {
+		return err
+	}
+	return printLaunch(cmd.OutOrStdout(), res, o.asJSON)
+}
+
+// finishLaunch is everything a launch does once its spec is built, however
+// it was built (a new task, a follow-up, a review or a retry): embedding the
+// project layer, the image and budget gates, storing the task and starting
+// the execution. A best-of-N batch (runAttempts) calls this once per
+// attempt, each with its own fresh spec from newSpec.
+func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, reused bool, warn io.Writer) (launchResult, error) {
 	var layerData []byte
+	var err error
 	if o.retry == "" && !reused {
-		if layerData, err = embedProjectLayer(ctx, env, spec, cmd.ErrOrStderr()); err != nil {
-			return err
+		if layerData, err = embedProjectLayer(ctx, env, spec, warn); err != nil {
+			return launchResult{}, err
 		}
 	}
 	s := runstore.Open(env.bucket.Bucket, slug, spec.RunID)
 	prior, err := existingLaunch(ctx, env, s, spec)
 	if err != nil {
-		return err
+		return launchResult{}, err
 	}
 	if prior == nil && reused {
-		if err := recheckFollowUp(ctx, env, slug, spec, cmd.ErrOrStderr()); err != nil {
-			return err
+		if err := recheckFollowUp(ctx, env, slug, spec, warn); err != nil {
+			return launchResult{}, err
 		}
 	}
 	if o.retry == "" {
@@ -323,7 +366,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		// new launch's image gate running before any write, as it always
 		// has: createTask's own, later ReadTask only happens on ErrExists.
 		if err := adoptStoredProjectLayer(ctx, s, spec); err != nil {
-			return err
+			return launchResult{}, err
 		}
 	}
 	if prior == nil {
@@ -335,47 +378,47 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			}
 		}
 		if needsRecipeImage(spec, agentRecipe) {
-			if err := checkRecipeImage(ctx, env, slug, spec, kind, cmd.ErrOrStderr()); err != nil {
-				return err
+			if err := checkRecipeImage(ctx, env, slug, spec, kind, warn); err != nil {
+				return launchResult{}, err
 			}
 		}
 		if spec.ProjectLayer != nil {
-			if err := checkImageSince(ctx, env, slug, spec, kind, layeredSince, "the project layer", "the project layer", "", cmd.ErrOrStderr()); err != nil {
-				return err
+			if err := checkImageSince(ctx, env, slug, spec, kind, layeredSince, "the project layer", "the project layer", "", warn); err != nil {
+				return launchResult{}, err
 			}
 		}
 		if spec.OAuthToken != "" {
 			if err := checkImageSince(ctx, env, slug, spec, kind, namedTokensSince,
-				"Claude account "+pluginwire.Printable(spec.OAuthToken), "named Claude accounts", "", cmd.ErrOrStderr()); err != nil {
-				return err
+				"Claude account "+pluginwire.Printable(spec.OAuthToken), "named Claude accounts", "", warn); err != nil {
+				return launchResult{}, err
 			}
 		}
 		if err := checkMaxParallel(ctx, env); err != nil {
-			return err
+			return launchResult{}, err
 		}
-		if err := env.budgetPrecheck(ctx, slug, spec, cmd.ErrOrStderr()); err != nil {
-			return err
+		if err := env.budgetPrecheck(ctx, slug, spec, warn); err != nil {
+			return launchResult{}, err
 		}
 	}
 	if o.retry == "" {
 		if err := createTask(ctx, s, spec); err != nil {
-			return err
+			return launchResult{}, err
 		}
 		if !reused {
 			// After createTask, so a repeated --run-id announces whatever it
 			// adopted (the stored task's layer), not whatever this call
 			// happened to resolve first.
-			announceProjectLayer(cmd.ErrOrStderr(), spec, layerData)
+			announceProjectLayer(warn, spec, layerData)
 		}
 	}
 	chooses := runnerChooses(ctx, spec)
-	fmt.Fprintln(cmd.ErrOrStderr(), recipeLine(spec, chooses))
+	fmt.Fprintln(warn, recipeLine(spec, chooses))
 	res, err := launchRun(ctx, env, slug, spec, time.Now())
 	if err != nil {
-		return err
+		return launchResult{}, err
 	}
 	if o.retry != "" && res.Status == "already-launched" {
-		fmt.Fprintf(cmd.ErrOrStderr(), "%s launched already; --retry only starts a run that never launched. "+
+		fmt.Fprintf(warn, "%s launched already; --retry only starts a run that never launched. "+
 			"To see how it went, run fugaro diagnose %s; to redo it, start a new run.\n", res.Run, res.Run)
 	}
 	res.Project = env.lc.Name
@@ -383,7 +426,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	if spec.ProjectLayer != nil {
 		res.ProjectLayer = &launchProjectLayer{SHA256: spec.ProjectLayer.SHA256, Generation: spec.ProjectLayer.Generation}
 	}
-	return printLaunch(cmd.OutOrStdout(), res, o.asJSON)
+	return res, nil
 }
 
 // taskText is the task from exactly one of TEXT and --task-file. With
@@ -492,6 +535,93 @@ func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tot
 		return "", nil, userErr("%v", err)
 	}
 	return slug, spec, nil
+}
+
+// batchResult is fugaro run --attempts's --json output: the batch label and
+// each attempt's ordinary launchResult, in launch order.
+type batchResult struct {
+	Batch string         `json:"batch"`
+	Runs  []launchResult `json:"runs"`
+}
+
+// runAttempts launches o.attempts (2 to 4) independent runs of the same
+// task, workflow, ref and recipe, as a best-of-N batch (design generic-tool
+// G13): each is an ordinary newSpec launch through finishLaunch, under one
+// batch label. It never partially launches a batch the max_parallel cap
+// cannot hold, and it never cancels a run it already started: a failure
+// after k launches reports those k and returns the error.
+func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, total time.Duration) error {
+	ctx := cmd.Context()
+	warn := cmd.ErrOrStderr()
+	n := o.attempts
+	if err := checkMaxParallelFor(ctx, env, n); err != nil {
+		return err
+	}
+	userBatch := o.batch
+	results := make([]launchResult, 0, n)
+	for i := 0; i < n; i++ {
+		slug, spec, err := newSpec(ctx, env, o, text, total, warn)
+		if err != nil {
+			return reportBatchFailure(cmd, o.batch, o.asJSON, results, err)
+		}
+		if i == 0 && userBatch == "" {
+			// The first attempt's own run ID names the batch (design
+			// generic-tool §3.6): set once newSpec has generated it, then
+			// kept in o.batch so every later attempt's newSpec carries the
+			// same label.
+			spec.Batch = "bestof-" + spec.RunID
+			if err := spec.Validate(); err != nil {
+				return reportBatchFailure(cmd, o.batch, o.asJSON, results, userErr("%v", err))
+			}
+			o.batch = spec.Batch
+		}
+		res, err := finishLaunch(ctx, env, o, slug, spec, false, warn)
+		if err != nil {
+			return reportBatchFailure(cmd, o.batch, o.asJSON, results, err)
+		}
+		if !o.asJSON {
+			if err := printLaunch(cmd.OutOrStdout(), res, false); err != nil {
+				return err
+			}
+		}
+		results = append(results, res)
+	}
+	batch := o.batch
+	if userBatch != "" {
+		batch = userBatch
+	}
+	if o.asJSON {
+		if err := printBatch(cmd.OutOrStdout(), batch, results); err != nil {
+			return err
+		}
+	}
+	parts := make([]string, n)
+	for i := range parts {
+		parts[i] = fmt.Sprintf("--pr <%c>", 'A'+i)
+	}
+	fmt.Fprintf(warn, "pick: fugaro run --recipe pick %s once all have opened PRs (fugaro runs ls --batch %s)\n",
+		strings.Join(parts, " "), batch)
+	return nil
+}
+
+// reportBatchFailure prints the runs a batch already launched (never more:
+// launched runs are never cancelled behind the user's back) before returning
+// the error that stopped it. Text mode already printed each as it launched;
+// JSON mode holds everything for one document, so it prints the partial one
+// here instead.
+func reportBatchFailure(cmd *cobra.Command, batch string, asJSON bool, results []launchResult, err error) error {
+	if asJSON && len(results) > 0 {
+		_ = printBatch(cmd.OutOrStdout(), batch, results)
+	}
+	return err
+}
+
+// printBatch is fugaro run --attempts's --json output: one document for the
+// whole batch, not one per run.
+func printBatch(w io.Writer, batch string, results []launchResult) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(batchResult{Batch: batch, Runs: results})
 }
 
 // reviewSpec is the task of a review-mode launch: fugaro run --recipe NAME
@@ -811,6 +941,15 @@ const horizonMargin = time.Hour
 // the execution listing is newest first across every job, so it stops
 // paging at that horizon. One jobs.list finds the longest timeout.
 func checkMaxParallel(ctx context.Context, env *cloudEnv) error {
+	return checkMaxParallelFor(ctx, env, 1)
+}
+
+// checkMaxParallelFor is checkMaxParallel, generalized to a launch that
+// needs room for `need` runs at once: a best-of-N batch (runAttempts) checks
+// for all of N before its first launch, so it never starts part of a batch
+// it cannot finish (design generic-tool G13). need is always 1 outside that
+// one caller, which checkMaxParallel keeps as the common case.
+func checkMaxParallelFor(ctx context.Context, env *cloudEnv, need int) error {
 	longest, err := env.be.LongestTaskTimeout(ctx)
 	if err != nil {
 		return remote(err)
@@ -820,7 +959,10 @@ func checkMaxParallel(ctx context.Context, env *cloudEnv) error {
 	if err != nil {
 		return remote(err)
 	}
-	if len(active) >= env.lc.MaxParallel {
+	if len(active)+need > env.lc.MaxParallel {
+		if need > 1 {
+			return userErr("%d runs active; max_parallel is %d (--attempts %d needs %d)", len(active), env.lc.MaxParallel, need, need)
+		}
 		return userErr("%d runs active; max_parallel is %d", len(active), env.lc.MaxParallel)
 	}
 	return nil
