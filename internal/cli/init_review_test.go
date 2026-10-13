@@ -505,7 +505,7 @@ func TestFirebaseRunTakesOnePromptPlusTheLocation(t *testing.T) {
 			r.markedRuns(t, "", "")
 		}
 		fakeTerminal(t)
-		out, errOut, err := executeStdin(t, stdin, "init", "--firebase", fp, "--base", "go")
+		out, errOut, err := executeStdin(t, stdin, "init", "--firebase", fp, "--base", "base")
 		return out + errOut, err, r
 	}
 	// One project for everything (the Firebase project is the installation's).
@@ -526,7 +526,7 @@ func TestFirebaseRunTakesOnePromptPlusTheLocation(t *testing.T) {
 	if n := strings.Count(out, "covered by the run confirmation"); n < 5 {
 		t.Errorf("%d covered steps:\n%s", n, out)
 	}
-	if !strings.Contains(out, "images:         copy history latest, go 1.2.3") || !strings.Contains(out, "NOT pinned with --expect-digest: history, go") {
+	if !strings.Contains(out, "images:         copy history latest, base 1.2.3") || !strings.Contains(out, "NOT pinned with --expect-digest: history, base") {
 		t.Errorf("the review does not name the images and their pinning before the typed name:\n%s", out)
 	}
 	if i, j := strings.Index(out, "NOT pinned"), strings.Index(out, "Type aurora to apply all of the above"); i < 0 || j < i {
