@@ -8,6 +8,6 @@ workflows:
       setup: ["./gradlew --no-daemon testClasses"]
     commands:
       build: ./gradlew --no-daemon testClasses
-      test: fugaro-services start && ./gradlew --no-daemon integrationTest
+      test: FUGARO_SERVICES=postgres fugaro-services start && ./gradlew --no-daemon integrationTest
       reports: ["**/build/test-results/**/*.xml"]
     resources: { cpu: 4, memory: 16Gi }

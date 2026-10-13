@@ -13,7 +13,7 @@ There is one base. Its runtimes come from `mise.toml` at the repository root (`f
 
 | Need | How it is provided |
 |---|---|
-| Postgres (PostGIS, pgvector), Redis, Firebase emulators | `image.apt: [postgresql-17, postgresql-17-postgis-3, postgresql-17-pgvector, redis-server]` (only those used), firebase-tools as `"npm:firebase-tools"` in `mise.toml` with `java` and `node`, `firebase setup:emulators:<name>` in `image.setup`, and `fugaro-services start` first in `commands.test` |
+| Postgres (PostGIS, pgvector), Redis, Firebase emulators | `image.apt: [postgresql-17, postgresql-17-postgis-3, postgresql-17-pgvector, redis-server]` (only those used), firebase-tools as `"npm:firebase-tools"` in `mise.toml` with `java` and `node`, `firebase setup:emulators:<name>` in `image.setup`, and `fugaro-services start` first in `commands.test`. `fugaro-services start` tries `postgres redis firebase` by default and fails on whichever of those you did not install: when you install fewer than all three, set `FUGARO_SERVICES` to exactly the ones you did (space separated), for example `FUGARO_SERVICES=postgres fugaro-services start` |
 | Other servers (MySQL, Mongo, Kafka, Elasticsearch, a browser) | `image.apt` or `image.setup`; a Dockerfile when a vendor installer is needed; started in the test command; counted against the job's memory (Cloud Run's `/tmp` is memory) |
 | A Docker daemon, docker-compose, Testcontainers | **not available in a Cloud Run job.** Say so to the user and offer: the repository's own local-services mode (a switch that makes its tests start Postgres and Redis directly instead of through Docker; each repository names it differently), a test command that covers only the suites that don't need Docker (CI stays the gate for the rest), or the user running those tests elsewhere. Never work around it |
 
@@ -101,7 +101,7 @@ workflows:
       setup: ["./gradlew --no-daemon testClasses"]
     commands:
       build: ./gradlew --no-daemon testClasses
-      test: fugaro-services start && TEST_SERVICES=local ./gradlew --no-daemon integrationTest
+      test: FUGARO_SERVICES=postgres fugaro-services start && TEST_SERVICES=local ./gradlew --no-daemon integrationTest
       reports: ["**/build/test-results/**/*.xml"]
     resources: { cpu: 4, memory: 16Gi }
 ```

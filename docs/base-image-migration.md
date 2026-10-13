@@ -79,8 +79,8 @@ workflows:
     resources: { cpu: 4, memory: 16Gi }
 ```
 
-- List only the services and emulators your tests use.
-- `fugaro-services start` works as before. It now looks for what you installed and names the package when one is missing.
+- List only the services and emulators your tests use, and set `FUGARO_SERVICES` to match (space separated) if it is not all three: `fugaro-services start`'s default, `postgres redis firebase`, is unchanged, so installing fewer than all three without restricting `FUGARO_SERVICES` tries to start the ones you didn't install too.
+- `fugaro-services start` works as before: it tries every service `FUGARO_SERVICES` names (every one, by default) and fails, naming the apt package or mise tool to add, on whichever one you did not install.
 - `memory: 16Gi` was the base's default; write it explicitly.
 - Gradle still comes from your wrapper.
 

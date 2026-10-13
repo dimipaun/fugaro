@@ -55,7 +55,7 @@ var fixtures = []fixtureFacts{
 	{name: "go", workflows: []string{"go"}, tools: map[string]string{"go": "1.25"}, toolEvidence: map[string]string{"go": "go.mod"}},
 	{name: "java-services", workflows: []string{"server"}, tools: map[string]string{"java": "temurin-25"},
 		apt:          []string{"postgresql-17"},
-		servicesFile: "bitbucket-pipelines.yml", servicesText: "postgres", testPrefix: "fugaro-services start"},
+		servicesFile: "bitbucket-pipelines.yml", servicesText: "postgres", testPrefix: "FUGARO_SERVICES=postgres fugaro-services start"},
 	{name: "monorepo", workflows: []string{"api", "web"}, dockerfiles: []string{"api"},
 		tools: map[string]string{"go": "1.25", "node": "24"}, toolEvidence: map[string]string{"go": "services/api/go.mod"}},
 	{name: "existing-fugaro-yaml", workflows: []string{"go"}, tools: map[string]string{"go": "1.25"}, toolEvidence: map[string]string{"go": "go.mod"}},
