@@ -1054,7 +1054,8 @@ Confirms `docs/design/project-secrets.md`'s §5 precedence and §3 allow-list ho
 8. **40g.** With that same no-list provider from 40f, add an explicit, non-empty `allow_data_to` that does not name the sandbox repository, re-run `fugaro init --repo`. **FACT:** the sandbox's job no longer mounts the key (the non-empty-list case excludes an unlisted repository, same as 40d — confirms the empty-list widening in 40f does not leak into the non-empty case).
 9. **40h (N1).** With `bitbucket-token` (the sandbox's git provider) project-shared (design §6) and the repo copy's version disabled: run `fugaro image build` (or `image refresh`) and confirm it succeeds; trigger the daily check's own rebuild (force a check job execution) and confirm it also succeeds; run `fugaro doctor` and confirm no secret-related finding appears for the git credential. **FACT:** both build IDs/status, and the check job's own log line confirming which secret ID it resolved (never the value).
 10. **40i (N2).** With a different project-shared name stored `--project-wide` and the sandbox's own repo copy for it never stored at all, run `fugaro init --repo` at a real terminal: confirm the secrets stage does not prompt for that name. Run it again with `--yes`: confirm no `NeedsYou` block for that name either. **FACT:** the stage's own printed list of names it asked for (or skipped), confirming the project-covered name is absent from it.
-11. **Restore** the pre-check state noted in step 1.
+11. **40j (N3).** Empty that same name's `allow_data_to` (or remove the provider/claude-account entry entirely), then run plain `fugaro init` (no `--repo`). **FACT:** the plan output — confirm it is a normal plan (no `prevent_destroy`/hard Terraform error), and that `google_secret_manager_secret.project["NAME"]` is not in its destroy/replace list at all.
+12. **Restore** the pre-check state noted in step 1.
 
 **Paste back:** every `FACT` line above, never a secret value.
 
