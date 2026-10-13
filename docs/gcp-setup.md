@@ -232,10 +232,38 @@ The repository step copies the installation's setting (its `registry_cleanup_dry
 
 - **A budget:** `--budget 100 --budget-currency USD --billing-account <id>` creates one with 50%, 90% and 100% alerts. It needs billing-account permissions. **Pass the same three flags on every later `fugaro init`**: the budget isn't stored, and a plan without them would delete it (the guard refuses that and names the flags). A budget made by hand stays unmanaged.
 - **An alert:** `--alert-email <address>` emails a failed image check or rebuild (and stores the address in the local config). It is one notification channel, "Fugaro alerts", and two alert policies, since Cloud Monitoring allows a log-match condition only alone in its policy: "Fugaro image check failed" (the check logged a failed check or rebuild) and "Fugaro image check job failed" (a check job execution failed before it could log: an ERROR in the audit log's system events, such as a failure at container start on an unreadable secret, or in the Cloud Run system log). Without it, failures still show in `fugaro runs ls`, `fugaro image status` and the check job's `ERROR` log line.
-- **Launchers and operators:** `--launcher` and `--operator`, repeatable, stored in the local config (a new config starts with you in both, see precondition 8); rerun `fugaro init` and `fugaro init --repo` to change who has what. Passing either flag replaces that whole list, so repeat it for every current member, yourself included. The installation step grants project-level and bucket-level roles, and each repository step the per-repository ones.
+- **Launchers and operators:** `--launcher` and `--operator`, repeatable, stored in the local config (a new config starts with you in both, see precondition 8); rerun `fugaro init` and `fugaro init --repo` to change who has what. Passing either flag replaces that whole list, so repeat it for every current member, yourself included. The installation step grants project-level and bucket-level roles, and each repository step the per-repository ones. Since 0.7.0 launchers and operators no longer get the same bucket-level role (see "The runs bucket" below).
 - **The Scheduler region:** Cloud Scheduler isn't offered in every Cloud Run region, so the daily check's Scheduler job may run elsewhere (`us-east5` uses `us-east4`). `--scheduler-region` overrides it; the check job stays in `<region>`.
 - **Log isolation off:** `--no-log-isolation` leaves job logs in `_Default`.
 - **Running Terraform yourself:** use `deploy/terraform/gcp/roots/*` as examples, and `github.com/dimipaun/fugaro//deploy/terraform/gcp/modules/repo?ref=vX.Y.Z` as the module source, with the inputs from `fugaro init --print-vars` (for a repository these are ungated, see above: set `deploy_job` and the image yourself until the image exists, and the check's `deploy_job` until the provider credential has a version). Then `fugaro init --config-only` writes the local config from the installation's outputs.
+
+## The runs bucket: who reads and writes what (0.7.0)
+
+Since 0.7.0 ([design/bucket-iam.md](design/bucket-iam.md)) launchers and operators no longer hold the same bucket-level role on the runs bucket:
+
+| Principal | `fugaro/` | `builds/<slug>/` | `runs/` | `cache/`, `locks/` | How |
+|---|---|---|---|---|---|
+| Operator | read, write | read, write | read, write | read, write | `roles/storage.objectAdmin`, no condition |
+| Launcher (not an operator) | read | read | read, write | read | `roles/storage.objectViewer` (no condition) plus `roles/storage.objectUser` conditioned on `resource.name.startsWith("projects/_/buckets/<bucket>/objects/runs/")` (`gcp.LauncherBucketCondition`) |
+| Job account | none | none | its slug only | its slug only | unchanged, conditioned on its own slug |
+| Build account | none | its slug only | none | none | unchanged, conditioned on its own slug |
+| History account | read | read | read | read | `roles/storage.objectViewer`, unconditioned |
+
+So a launcher who is not an operator reads the whole bucket and can write only `runs/`: `fugaro run`, `ls`, `logs`, `diagnose`, `cancel` and `watch` keep working, but `fugaro recipes publish`, `fugaro config publish` (and its `builds/<slug>/project-layer.yaml` fan-out), `fugaro init --publish-config`, the shared-config publish every `init` stage runs, and `fugaro image check` without `--dry-run` are operator-only in effect: a launcher's attempt fails with "nothing was published: writing `<key>` in `gs://<bucket>` needs the operator role …", exit 1, and nothing is written. A member on both lists gets the operator grant only.
+
+**Project-level writers.** Project Owners and Editors (`roles/editor` carries `storage.objects.*`, plus the `legacyBucketOwner` convenience binding) and anyone holding `roles/storage.admin` or an object-level storage role on the *project* can write the bucket whatever its own policy says; the bucket hardening cannot stop them. Treat them as operators, and list them as such.
+
+**`fugaro doctor`'s `runs-bucket-iam` check** is read-only and never fails doctor outright (a warning needs `--strict` to fail the exit code). When it can read the bucket's policy it reports, as `runs-bucket-iam-N` lines under the `runs-bucket-iam` summary, any non-operator member holding an unconditioned write-capable role (fix: `fugaro init`, 0.7.0 or later, for a launcher; otherwise the `gcloud storage buckets remove-iam-policy-binding` command for that member and role), any conditional write grant to a person that isn't the launchers' `runs/` condition, and any launcher missing a grant. When it cannot read the policy (the common case for a launcher) it falls back to `testIamPermissions` and reports only what the caller's own credentials can do. Doctor also reports (from the project's IAM policy) any launcher holding a project-level role that bypasses the bucket's policy entirely (see "Project-level writers" above).
+
+**Rollback (H10).** There is no toggle; to restore one member's old access by hand, outside Terraform:
+
+```
+gcloud storage buckets add-iam-policy-binding gs://fugaro-runs-<gcp-project> --member=user:<member> --role=roles/storage.objectAdmin
+```
+
+The grant is non-authoritative, so later Terraform applies leave it, and `fugaro doctor` flags it.
+
+**Optional: `DATA_WRITE` audit logs.** To log every object write in the runs bucket (the volume and the cost of doing so can be significant): `gcloud projects get-iam-policy <gcp-project> --format=json > policy.json`, add an `auditConfigs` entry for `storage.googleapis.com` with a `DATA_WRITE` log type, then `gcloud projects set-iam-policy <gcp-project> policy.json`. This is not applied by Fugaro's Terraform.
 
 ## Turning the model budget on
 
@@ -477,7 +505,7 @@ M4's single build account, `fugaro-build`, could read every repository's secrets
 
 A launcher or operator in a checkout of an onboarded repository can run `fugaro run`, `ls`, `diagnose` and the other cloud commands on a fresh machine with no local config and no `fugaro init`. Design: [design/shared-config.md](design/shared-config.md).
 
-**The shared file.** `fugaro/config.yaml` in the runs bucket (`gs://fugaro-runs-<gcp-project>`) holds the project config except what is owner-only, personal or derived: the budget block (mode, caps, allowed models, database URL, Firebase project, API key, token signer), `backend`, prices, `watch`, `max_parallel`, the repositories and the rest. Launchers and operators already hold `objectAdmin` on that bucket, so reading it needs no new grant. It never holds the `terraform:` section, `user:`, `endpoints:`, `providers:`, a repository's `base_branch` (the checkout's `fugaro.yaml` names it) or any secret.
+**The shared file.** `fugaro/config.yaml` in the runs bucket (`gs://fugaro-runs-<gcp-project>`) holds the project config except what is owner-only, personal or derived: the budget block (mode, caps, allowed models, database URL, Firebase project, API key, token signer), `backend`, prices, `watch`, `max_parallel`, the repositories and the rest. Launchers and operators can read it (launchers read the whole runs bucket, and write only `runs/`); only operators can write it. It never holds the `terraform:` section, `user:`, `endpoints:`, `providers:`, a repository's `base_branch` (the checkout's `fugaro.yaml` names it) or any secret.
 
 **Who publishes it.** An operator: `fugaro init` publishes it after it writes the local config (so do `init --repo` and `init --base`), and `fugaro init --publish-config` publishes it and stops. It merges into what is published (one that fails validation, or is another installation's, is replaced with a warning), so a machine that lacks another's repositories does not erase them. To republish after changing the local config or adding a repository, run `fugaro init --publish-config`; to remove an entry (an offboarded repository, a price) or clear a value, edit `fugaro/config.yaml` by hand (`gcloud storage cp` it down, edit, copy it up). Only installations whose runs bucket is the default name `fugaro-runs-<gcp-project>` publish; others get a warning.
 
@@ -502,6 +530,7 @@ Plain `fugaro init`, run in the checkout, also writes the line as its last stage
 | no Fugaro installation at gs://... / the installation ... is project X, not Y | `gcp_project:` is wrong, or names another project's installation: fix the line |
 | has not published a shared config | an operator runs `fugaro init --publish-config` |
 | no access to gs://... | you hold neither the launcher nor the operator role: ask an operator |
+| needs the operator role | a launcher ran a publish (`fugaro init --publish-config`, `fugaro recipes publish`, `fugaro config publish`); an operator runs it, or adds you with `fugaro init --operator` |
 | the shared config has a bad `<field>` / carries `<section>:` / is not valid | the object was tampered with, edited wrongly or written by another fugaro version: ask an operator to run `fugaro init` again (it replaces a refused object, with a warning); update `fugaro` if versions differ |
 | `budget.firebase_project` is not `gcp_project` | a separate Firebase project: run `fugaro init` (adopt) for your own local config |
 | over the 64 KiB limit | an operator runs `fugaro init` again, or edits the object |

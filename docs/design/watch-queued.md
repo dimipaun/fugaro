@@ -56,8 +56,9 @@ listing (see §5).
 **Who can read them.** `fugaro watch` authenticates to RTDB as the caller
 (ADC) and documents that it "needs only the Viewer role on the Firebase
 project" (`gcp-setup.md`). The runs bucket is a different credential domain:
-`init` grants `roles/storage.objectAdmin` on it only to launchers and
-operators, and *removes* the project's convenience Viewer binding from it
+`init` grants read access to launchers and operators, and write access to
+operators (launchers write only `runs/` since 0.7.0, [bucket-iam.md](bucket-iam.md)),
+and *removes* the project's convenience Viewer binding from it
 on purpose, because the bucket holds run transcripts and caches
 (`gcp-setup.md` §6.1, "The state and runs buckets have no project-wide
 readers"). So a person who is only a Firebase Viewer — the audience `watch`

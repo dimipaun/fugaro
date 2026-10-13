@@ -115,6 +115,15 @@ The release that adds `gcp_project:` to `fugaro.yaml` needs an ordered rollout, 
 
 Until step 5 nothing changes for teammates: a checkout without the line gets the clear "add this line" error and can use `fugaro init` as today. Teammate-facing description: "Teammates: no setup" in [gcp-setup.md](gcp-setup.md).
 
+## Rolling out the 0.7.0 bucket hardening
+
+0.7.0 gives launchers who are not operators `roles/storage.objectViewer` on the runs bucket and `roles/storage.objectUser` on its `runs/` only, instead of `objectAdmin` on the whole bucket ([design/bucket-iam.md](design/bucket-iam.md)). This appends two steps to that release's rollout order (after the base-image cut, its own CLI upgrade and image rebuild):
+
+5. **One operator runs `fugaro init`** (the installation stage) in their own terminal, reads the plan and the `bucket access (0.7.0)` banner naming each launcher whose old grant is replaced, and types the project's name. On a one-person installation (the only user is both launcher and operator) the plan has no bucket change.
+6. **Every operator and launcher runs `fugaro doctor`,** which reports `runs-bucket-iam` ok.
+
+The bucket change does not depend on the base-image steps, and pre-0.7.0 CLIs keep launching after it: a 0.6.x launch writes only `runs/` already. Claude never applies this migration; the user reviews and applies the plan at their own terminal (no live cloud access in a Claude session).
+
 ## Verifying a release
 
 ```sh
