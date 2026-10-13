@@ -42,17 +42,11 @@ type reviewHead struct {
 }
 
 // checkReviewPRs resolves and validates every pull request r.spec.ReviewPRs
-// names (design generic-tool §3.6, G12; owner ruling 2026-10-12): FetchPRHead,
+// names (design generic-tool §3.6, G12; owner ruling 2026-10-13): FetchPRHead,
 // then its open state and checkReviewAuthor's trusted-author gate. Any
 // failure ends bootstrap with the reason, before anything is checked out;
 // the runner never silently skips a pull request the task named.
 func (r *run) checkReviewPRs(ctx context.Context) error {
-	trustedIDs := make(map[string]bool, len(r.cfg.Followup.Trusted))
-	for _, id := range r.cfg.Followup.Trusted {
-		if id != "" {
-			trustedIDs[id] = true
-		}
-	}
 	heads := make([]reviewHead, 0, len(r.spec.ReviewPRs))
 	for _, n := range r.spec.ReviewPRs {
 		h, err := r.provider.FetchPRHead(ctx, n)
@@ -76,7 +70,7 @@ func (r *run) checkReviewPRs(ctx context.Context) error {
 			// to fail there with "couldn't find remote ref".
 			return fmt.Errorf("PR #%d's head commit %s is not a full commit hash", n, safetext.OneLine(h.SHA))
 		}
-		if err := r.checkReviewAuthor(ctx, n, h, trustedIDs); err != nil {
+		if err := r.checkReviewAuthor(ctx, n, h); err != nil {
 			return err
 		}
 		heads = append(heads, reviewHead{Number: n, SHA: h.SHA})
@@ -86,29 +80,34 @@ func (r *run) checkReviewPRs(ctx context.Context) error {
 }
 
 // checkReviewAuthor refuses pull request n unless its author is trusted
-// (design generic-tool §3.6, G12; owner ruling 2026-10-12): review mode is
+// (design generic-tool §3.6, G12; owner ruling 2026-10-13): review mode is
 // trusted-author-only, fork or not — fork status alone no longer decides.
-// "Trusted" reuses the exact two signals a follow-up comment's own trust
-// already does (internal/followup/trust.go, Collaborator —
-// author_association OWNER/MEMBER/COLLABORATOR on GitHub), OR'd rather
-// than AND'd: h.Collaborator, listed in followup.trusted, or Fugaro's own
+// "Trusted" is the LIVE author_association GitHub reports right now
+// (h.Collaborator: OWNER, MEMBER or COLLABORATOR), or Fugaro's own
 // identity on a pull request it opened itself (h.Self, only meaningful
-// when the head is in this same repository). A trusted author's FORK is
-// reviewed only when the fork repository's owner is that same author:
-// otherwise a trusted person's shared/organizational fork could carry
-// someone else's commits under a name the trust check never sees.
+// when the head is in this same repository) — nothing else.
+// followup.trusted, the ID list a follow-up's own comment trust also
+// consults (internal/followup/trust.go), is deliberately NOT one of these
+// signals: it is an allow-list keyed by account ID, which goes stale the
+// moment a listed person's association changes (a removed collaborator
+// keeps their ID on the list until an operator notices and edits it, with
+// no automatic check against GitHub ever happening again); the live
+// association has no such lag, and re-checks on every single run. A
+// trusted author's FORK is reviewed only when the fork repository's owner
+// is that same author: otherwise a trusted person's shared/organizational
+// fork could carry someone else's commits under a name the trust check
+// never sees.
 //
 // Bitbucket has no author_association at all (gitprov.PRHead.Collaborator
 // and Self are always false there) and fails closed instead: a
 // same-repository pull request needs no author check (pushing a branch
-// here already needs write access), and every fork is refused outright,
-// regardless of followup.trusted.
+// here already needs write access), and every fork is refused outright.
 //
 // A refusal posts a short note on the pull request (best effort; a
 // posting failure is only logged) so the author or anyone watching the
 // pull request sees why review mode never ran, the same as a push
 // refused for touching .github/workflows/ already does (endRefused).
-func (r *run) checkReviewAuthor(ctx context.Context, n int, h gitprov.PRHead, trustedIDs map[string]bool) error {
+func (r *run) checkReviewAuthor(ctx context.Context, n int, h gitprov.PRHead) error {
 	if r.providerKind == gitprov.KindBitbucket {
 		if h.Fork {
 			return r.refuseReview(ctx, n, fmt.Sprintf(
@@ -116,7 +115,7 @@ func (r *run) checkReviewAuthor(ctx context.Context, n int, h gitprov.PRHead, tr
 		}
 		return nil
 	}
-	trusted := h.Collaborator || trustedIDs[h.AuthorID] || (!h.Fork && h.Self)
+	trusted := h.Collaborator || (!h.Fork && h.Self)
 	if !trusted {
 		assoc := h.Association
 		if assoc == "" {

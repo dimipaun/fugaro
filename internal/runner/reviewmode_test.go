@@ -1041,16 +1041,20 @@ func TestReviewModePanicDuringHaltEndsHalted(t *testing.T) {
 	}
 }
 
-// TestReviewModeRefusesUntrustedAuthor: owner ruling 2026-10-12 — review
-// mode is trusted-author-only, fork or not. An untrusted same-repository
-// PR is refused exactly like an untrusted fork is; listing the author in
-// followup.trusted (or the provider's own Collaborator signal, exercised
-// by the many other review-mode tests whose PR defaults to Fugaro's own
-// identity) is what review mode now treats as "trusted" (checkReviewAuthor).
+// TestReviewModeRefusesUntrustedAuthor: owner ruling 2026-10-13 — review
+// mode is trusted-author-only, fork or not, and trust is ONLY the live
+// author_association (h.Collaborator) or Fugaro's own identity (h.Self);
+// followup.trusted, the ID allow-list a follow-up's own comment trust also
+// consults, is deliberately not one of these signals — unlike that list,
+// which goes stale the moment a listed person's association changes, the
+// live association is re-checked on every run. An untrusted same-repository
+// PR is refused exactly like an untrusted fork is; a PR by an author
+// LISTED in followup.trusted, but whose live association is NONE (a
+// removed collaborator, say), must still be refused.
 //
-// Mutation (drop the `trusted := h.Collaborator || trustedIDs[...] || ...`
+// Mutation (drop the `trusted := h.Collaborator || (!h.Fork && h.Self)`
 // check in checkReviewAuthor): this test fails, finding the untrusted PR
-// reviewed instead of refused, and the trusted one still reviewed.
+// reviewed instead of refused.
 func TestReviewModeRefusesUntrustedAuthor(t *testing.T) {
 	h := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
 	pushReviewBranch(t, h, "feature", func(dir string) {
@@ -1062,20 +1066,31 @@ func TestReviewModeRefusesUntrustedAuthor(t *testing.T) {
 	if err == nil || rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "not a trusted author") || len(stageNames(rec)) != 0 {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
+}
 
-	h2 := newHarness(t, followUpYAML(t, ""), reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
-	h2.deps.Env = append(h2.deps.Env, "PLANTED_SECRET=x")
-	pushReviewBranch(t, h2, "feature", func(dir string) {
+// TestReviewModeRefusesListedAuthorWithNoAssociation: owner ruling
+// 2026-10-13's own reproduction case — an author listed in
+// followup.trusted, but whose live author_association is NONE (not an
+// owner, member or collaborator — e.g. a removed collaborator whose ID
+// stayed on the list), must be refused: followup.trusted plays no part in
+// review mode's own trust decision at all, only the live association does.
+//
+// Mutation (OR `trustedIDs[h.AuthorID]`, rebuilt from r.cfg.Followup.Trusted,
+// back into the `trusted := ...` line): this test fails, finding the
+// listed-but-unassociated author reviewed instead of refused.
+func TestReviewModeRefusesListedAuthorWithNoAssociation(t *testing.T) {
+	h := newHarness(t, followUpYAML(t, ""), reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	h.deps.Env = append(h.deps.Env, "PLANTED_SECRET=x")
+	pushReviewBranch(t, h, "feature", func(dir string) {
 		testutil.WriteFiles(t, dir, map[string]string{"other.txt": "x\n"})
 	})
-	addPR(h2, 7, "feature", "")
-	h2.provider.State.PRs[0].AuthorID = aliceID
-	rec2, err := h2.run(t, review("ship", 0))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rec2.Outcome != runstore.OutcomeReviewed {
-		t.Fatalf("followup.trusted did not allow it: rec = %+v", rec2)
+	addPR(h, 7, "feature", "")
+	h.provider.State.PRs[0].AuthorID = aliceID // listed in followup.trusted
+	// Collaborator left false (PRState's own default): the fake provider's
+	// stand-in for "GitHub says this author's association is NONE".
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "not a trusted author") {
+		t.Fatalf("a followup.trusted-listed but unassociated author was reviewed instead of refused: rec = %+v, err = %v", rec, err)
 	}
 }
 
@@ -1105,6 +1120,7 @@ func TestReviewModeRefusesUntrustedFork(t *testing.T) {
 	addPR(h2, 7, "feature", "someoneelse/repo")
 	h2.provider.State.PRs[0].AuthorID = aliceID
 	h2.provider.State.PRs[0].AuthorLogin = "alice"
+	h2.provider.State.PRs[0].Collaborator = true // trusted by live association, not by followup.trusted
 	rec2, err := h2.run(t)
 	if err == nil || rec2.Status != runstore.StatusFailed || !strings.Contains(rec2.Reason, "not owned by its trusted author") {
 		t.Fatalf("mismatched fork owner: rec = %+v, err = %v", rec2, err)
@@ -1134,6 +1150,7 @@ func TestReviewModeTrustedForkWithMatchingOwnerAccepted(t *testing.T) {
 	addPR(h, 7, "feature", "alice/repo")
 	h.provider.State.PRs[0].AuthorID = aliceID
 	h.provider.State.PRs[0].AuthorLogin = "alice"
+	h.provider.State.PRs[0].Collaborator = true // trusted by live association, not by followup.trusted
 	rec, err := h.run(t, review("ship", 0))
 	if err != nil {
 		t.Fatal(err)
