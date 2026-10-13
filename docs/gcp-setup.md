@@ -239,7 +239,7 @@ The repository step copies the installation's setting (its `registry_cleanup_dry
 
 ## The runs bucket: who reads and writes what (0.7.0)
 
-Since 0.7.0 ([design/bucket-iam.md](design/bucket-iam.md)) launchers and operators no longer hold the same bucket-level role on the runs bucket:
+Since 0.7.0 ([design/bucket-iam.md](design/bucket-iam.md)) launchers and operators no longer hold the same bucket-level role on the runs bucket. **This end state takes effect only once an operator applies it:** it is Terraform, not a toggle, so an installation stays on the pre-0.7.0 grants (every launcher holds `objectAdmin` on the whole bucket) until an operator runs 0.7.0's `fugaro init` and the plan's bucket change is applied (see "Rolling out the 0.7.0 bucket hardening" in [release.md](release.md)). None of this has been exercised against a real bucket in this project's own testing; the live check is [gcp-live-checklist.md](gcp-live-checklist.md) Check 32, reserved for the owner to run.
 
 | Principal | `fugaro/` | `builds/<slug>/` | `runs/` | `cache/`, `locks/` | How |
 |---|---|---|---|---|---|
