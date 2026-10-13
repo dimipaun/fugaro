@@ -84,6 +84,47 @@ func (e *cloudEnv) budgetPrecheck(ctx context.Context, slug string, spec *task.S
 	return nil
 }
 
+// batchBudgetPrecheck is budgetPrecheck generalized to a best-of-N batch
+// (fugaro run --attempts N, design generic-tool review 2026-10-13): it
+// leases n * budget.MinLaunchHeadroom once, before any of the batch's n
+// attempts, instead of n separate single-headroom leases that would let a
+// batch with headroom for only the first attempt start, then halt attempts
+// 2..n at their own pre-check. Its notes and the --no-budget-check warning
+// print once here, for the whole batch; each attempt's own finishLaunch
+// call then skips budgetPrecheck entirely (skipBudget).
+func (e *cloudEnv) batchBudgetPrecheck(ctx context.Context, slug, repo string, n int, stderr io.Writer) error {
+	on, err := budgetBackendOn(e.lc)
+	if err != nil || !on {
+		return err
+	}
+	if e.noBudgetCheck {
+		fmt.Fprintln(stderr, "budget pre-check skipped (--no-budget-check); the batch's runs are still held to the budget's limits when they start")
+		return nil
+	}
+	db, err := newBudgetClient(ctx, e.lc.Budget.RTDBURL, e.lc.Endpoints.NoAuth)
+	if err != nil {
+		return err
+	}
+	capped := true
+	if c := checkoutConfig(ctx, repo); c != nil && c.Agent.Auth == "oauth" {
+		capped = false
+	}
+	res, err := budget.Precheck(ctx, db, budget.PrecheckInput{
+		Project: e.lc.Name, Slug: slug, Capped: capped, Now: time.Now(), Amount: budget.MinLaunchHeadroom * budget.Micros(n),
+	})
+	if err != nil {
+		return remote(fmt.Errorf("the budget database could not be read, so the batch of %d on %s is refused (fail closed): %w; fugaro run --no-budget-check launches anyway, and each run then halts if the backend stays unreachable", n, slug, err))
+	}
+	for _, note := range res.Notes {
+		fmt.Fprintf(stderr, "budget: %s\n", oneLine(note))
+	}
+	if res.Refused {
+		return userErr("the budget refuses this batch of %d runs on %s: %s (%s, %s); --attempts needs headroom for all %d at once, not one at a time; fugaro run --no-budget-check skips this check, but each run is held to the same limits when it starts",
+			n, slug, oneLine(res.Detail), res.Reason, res.Scope, n)
+	}
+	return nil
+}
+
 // mintBudgetToken mints the run's custom token and leaves it in the runs
 // bucket. minted is false when the project has no budget backend. A token
 // object left by an earlier attempt is replaced (PutObject never overwrites,
