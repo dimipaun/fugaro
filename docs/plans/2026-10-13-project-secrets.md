@@ -54,8 +54,9 @@ Project rules (carried over from this repository's existing plans):
 | `internal/backend/gcp/names.go`, `names_test.go` | `ProjectSecretID` | 2 |
 | `internal/infra/spec.go`, `spec_test.go` | `rs.Secrets` unchanged (golden); `SecretMounts` refuses a workflow secret whose name collides with a `project_secrets` entry (design §3); `SecretMounts`'s per-provider mount condition switches to `ProviderKeyAvailable` (P7) | 2 |
 | `internal/infra/readiness.go`, `readiness_test.go` | the live precedence check; rewrites a workflow's resolved `SecretIDs[name]`; a provider's own name resolves eligibility via `ProviderKeyAvailable`, not `AllowsData` (P7) | 3 |
-| `internal/cli/secrets.go`, `secrets_test.go` | `--project-wide` flag, validation branch, `ls` SCOPE column, `ls --project-wide` | 4 |
+| `internal/cli/secrets.go`, `secrets_test.go` | `--project-wide` flag, validation branch (3 call sites, S1 order fix), `ls` SCOPE column, `ls --project-wide` | 4 |
 | `deploy/terraform/gcp/modules/installation/secrets.tf` (new), `variables.tf`, roots/installation | `google_secret_manager_secret.project`, operator grants, `var.project_secrets` input | 4 |
+| `internal/infra/tfvars.go`, `imports.go`, `discover.go` | `InstallationSpec.ProjectSecrets`, `importProjectSecret`, `DiscoverInstallation`'s adoption step (S2) | 4 |
 | `deploy/terraform/gcp/modules/repo/build.tf`, `workflows.tf`, `check.tf`, `variables.tf`, `internal/infra/tfvars.go`/`spec.go`, `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl` | **P4, opus review:** `local.secrets`; `build.tf` AND `check.tf` (B4) rewired through it; the Go-to-tfvars wire for `RepoSpec.ProjectSecrets` | 5 |
 | `internal/infra/installation_terraform_test.go`, `deploy/terraform/gcp/roots/installation/tests/`, `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl`, `internal/infra/spec_test.go` golden fixtures | real `terraform test` plan-level fixtures: no secret-resource deletes, but the expected IAM-member replacements, `tf.Guard` refusing/accepting them (B3) | 6 |
 | `internal/cli/doctor.go`, `doctor_test.go` | two new checks (design §5) | 7 |
@@ -502,12 +503,18 @@ git commit -m "project secrets task 3: Readiness resolves repo-vs-project preced
 - Edit: `internal/cli/secrets.go`, `internal/cli/secrets_test.go`
 - Create: `deploy/terraform/gcp/modules/installation/secrets.tf`
 - Edit: `deploy/terraform/gcp/modules/installation/variables.tf`, `deploy/terraform/gcp/roots/installation/{main,variables}.tf`
+- Edit: `internal/infra/tfvars.go` (`InstallationSpec.ProjectSecrets`, populated by `Installation(lc, o)`), `internal/infra/imports.go` (a new `importProjectSecret` kind), `internal/infra/discover.go` (`DiscoverInstallation` gains the symmetric import step `DiscoverRepo` already has, S2) — **this is new scope the design's first draft missed (S2): without it, `fugaro secrets set NAME --project-wide` run before the installation root's first apply makes that apply fail with a 409, not a graceful adoption.**
 
 **Interfaces (Go):**
 - `secretsOptions` gains `projectWide bool`; `--project-wide` on `secrets set` and `secrets ls`.
 - `secretsSet`: when `--project-wide`, skip `resolveSecretRepo` entirely (there is no `--repo` to resolve); validate `name` is one of: a `config.ReservedSecrets` key with a non-empty `project_secrets[name].AllowDataTo`; a claude-account's derived name whose own `allow_data_to` is non-empty; or **a provider's `.Secret` — accepted unconditionally, with no check on `allow_data_to` at all (P7, design §3a: an empty list is a valid, intentional "available to everyone" state for a provider, not a reason to refuse storage, unlike the other two kinds)**. The secret ID is `gcp.ProjectSecretID(env.lc.Name, name)`; labels are `{fugaro: managed, fugaro_project: env.lc.Name, fugaro_secret: name}` (`gcp.LabelProject`, already defined, `names.go:66`, reused here for the first time outside the runs bucket).
 - **Changes (P7, third call site, B5(a)): `secretsSet`'s existing REPO-scope branch (`internal/cli/secrets.go:222`: `if !env.lc.Providers[p].AllowsData(r.repo) {`) becomes `if !env.lc.Providers[p].ProviderKeyAvailable(r.repo) {`.** Without this, `fugaro secrets set NAME --repo X` (no `--project-wide`) stays refused for *every* repository whenever the provider's list is empty — including the repository an operator is specifically trying to give its own override to (§5, "repo overrides project") — since an empty list makes `AllowsData` false for everyone. This is pre-existing, already-shipped code being modified, like Task 2's `SecretMounts` switch — flag it as such in the commit message.
 - `secretsLs`: `--project-wide` lists by `{LabelProject: env.lc.Name}` instead of `{LabelRepo: r.label}`, and needs no `resolveSecretRepo` either. The existing (non-`--project-wide`) `ls` gains a `SCOPE` column: for each repo-owned entry, look up whether `config.AllowedForProjectSecret`-equivalent logic would also let this repo use a project copy of the same name, and print `project, repo override stored` when both exist; print a synthetic row (no version info beyond what a second `List` call under `{LabelProject}` returns) for a name the repo is allowed to use project-wide but has no repo-owned entry for at all, scope `project`.
+- **`InstallationSpec.ProjectSecrets map[string]string` (`json:"project_secrets"`), populated by `Installation(lc, o)` (`internal/infra/tfvars.go:150`), for exactly these names (S2's second ask — stating precisely which, not leaving it implicit):**
+  - every key of `lc.ProjectSecrets` whose own `AllowDataTo` is non-empty, value `gcp.ProjectSecretID(lc.Name, key)`;
+  - every `lc.Providers[name].Secret`, **unconditionally** — regardless of that provider's own `AllowDataTo` (§3a: a provider's secret is eligible for project storage whether or not a list exists; the container must exist in Terraform either way for `--project-wide` storage to have somewhere to adopt into);
+  - every `lc.ClaudeAccounts[name]` whose own `AllowDataTo` is non-empty, value `gcp.ProjectSecretID(lc.Name, config.ClaudeAccountSecret(name))`.
+- **A new import kind, `importProjectSecret` (`internal/infra/imports.go`, next to `importSecret` at `imports.go:87`), template `module.installation.google_secret_manager_secret.project[{key}]`.** `DiscoverInstallation` (`internal/infra/discover.go:401`) gains a step mirroring `DiscoverRepo`'s existing one (`discover.go:540-570`, `for _, logical := range slices.Sorted(maps.Keys(spec.Secrets))`): for each `logical` in `spec.ProjectSecrets`, read it from GCP (`c.Secrets.Projects.Secrets.Get`), skip if absent, check it carries `{LabelManaged, LabelProject: spec.FugaroProject, LabelSecret: logical}` (`d.foreign(...)` otherwise, the existing ownership-mismatch path), and `d.add(importProjectSecret, spec.Region, logical, id)` if it matches — so a value stored with `--project-wide` before the installation root's first apply is adopted, not conflicted with.
 
 **Interfaces (Terraform, installation module):**
 ```hcl
@@ -528,29 +535,31 @@ func TestSecretsSetProjectWideAcceptsProviderSecretWithNoList(t *testing.T) { /*
 func TestSecretsSetRepoScopeAcceptsProviderSecretWithNoList(t *testing.T) { /* B5(a), the third call site: fugaro secrets set openrouter-api-key --repo acme/app (NOT --project-wide), provider has no allow_data_to at all: accepted, not refused -- today's code (AllowsData) would refuse every repo here, which this test would have caught */ }
 func TestSecretsLsAddsScopeColumn(t *testing.T) { /* fixture with both a repo-owned and project-shared entry for one name: two distinct SCOPE values appear */ }
 func TestSecretsLsProjectWideNeverPrintsValue(t *testing.T) { /* fake Secret Manager's Access never called, same as every existing *NeverPrintsValue test */ }
+func TestDiscoverInstallationImportsPreExistingProjectSecret(t *testing.T) { /* S2: a project secret already exists in the fake GCP (created by a --project-wide set run before the installation root's first apply), correctly labelled; assert DiscoverInstallation's Imports includes an importProjectSecret entry for it, so the subsequent plan adopts rather than conflicts with it */ }
+func TestDiscoverInstallationRefusesForeignProjectSecret(t *testing.T) { /* S2, the mirror of DiscoverRepo's existing foreign-secret path: a secret exists at the computed ID but its labels don't match -- refused as foreign, never silently adopted or overwritten */ }
 ```
 
 - [ ] **Step 1: Write the failing tests**
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `go test -count=1 -run 'TestSecretsSetProjectWide|TestSecretsLsAddsScope|TestSecretsLsProjectWide' ./internal/cli/`
+Run: `go test -count=1 -run 'TestSecretsSetProjectWide|TestSecretsLsAddsScope|TestSecretsLsProjectWide' ./internal/cli/ && go test -count=1 -run 'TestDiscoverInstallationImportsPreExistingProjectSecret|TestDiscoverInstallationRefusesForeignProjectSecret' ./internal/infra/`
 Expected: FAIL.
 
-- [ ] **Step 3: Write the Go implementation**
+- [ ] **Step 3: Write the Go implementation** (`internal/cli/secrets.go`, `internal/infra/tfvars.go`'s `InstallationSpec.ProjectSecrets` population, `internal/infra/imports.go`'s new kind, `internal/infra/discover.go`'s new import step)
 - [ ] **Step 4: Write the Terraform (installation module)**, then validate it offline:
 
 Run: `terraform -chdir=deploy/terraform/gcp/modules/installation fmt -check && terraform -chdir=deploy/terraform/gcp/modules/installation validate` (against a local init with no backend/credentials — the existing pattern this repository's Terraform tests already use; the implementer checks `deploy/terraform/gcp/roots/installation/tests/` for the harness in place).
 
 - [ ] **Step 5: Run the Go tests to verify they pass**
 
-Run: `go vet ./internal/cli/... && go test -count=1 -run 'TestSecretsSetProjectWide|TestSecretsLsAddsScope|TestSecretsLsProjectWide' ./internal/cli/`
+Run: `go vet ./internal/cli/... ./internal/infra/... && go test -count=1 -run 'TestSecretsSetProjectWide|TestSecretsLsAddsScope|TestSecretsLsProjectWide' ./internal/cli/ && go test -count=1 -run 'TestDiscoverInstallation' ./internal/infra/`
 Expected: `ok`.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add internal/cli/secrets.go internal/cli/secrets_test.go deploy/terraform/gcp/modules/installation/secrets.tf deploy/terraform/gcp/modules/installation/variables.tf deploy/terraform/gcp/roots/installation/main.tf deploy/terraform/gcp/roots/installation/variables.tf
-git commit -m "project secrets task 4: fugaro secrets set/ls --project-wide; the installation root's container; a provider's empty allow_data_to is accepted, not refused (owner ruling, design §3a)"
+git add internal/cli/secrets.go internal/cli/secrets_test.go internal/infra/tfvars.go internal/infra/imports.go internal/infra/discover.go internal/infra/*_test.go deploy/terraform/gcp/modules/installation/secrets.tf deploy/terraform/gcp/modules/installation/variables.tf deploy/terraform/gcp/roots/installation/main.tf deploy/terraform/gcp/roots/installation/variables.tf
+git commit -m "project secrets task 4: fugaro secrets set/ls --project-wide; the installation root's container and its import/adoption step (S2); a provider's empty allow_data_to is accepted, not refused (owner ruling, design §3a)"
 ```
 
 ---
