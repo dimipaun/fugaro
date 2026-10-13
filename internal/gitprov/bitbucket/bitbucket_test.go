@@ -421,16 +421,24 @@ func TestBitbucketPullRequestOpen(t *testing.T) {
 }
 
 // TestBitbucketFetchPRHead covers review mode's three cases against the
-// same fixture TestBitbucketPullRequestOpen uses: PR #12 is open and not a
-// fork, #14's source repository is unknown (a deleted fork: fails closed,
-// Fork=true), and #15 really is a fork.
+// same fixture shape TestBitbucketPullRequestOpen uses, plus the one more
+// exchange #12's own fix now needs (pull_open_head.json, not the shared
+// pull_open.json: PullRequest-only tests must not see an extra, unconsumed
+// exchange): PR #12 is open and not a fork — resolveFullHash resolves its
+// abbreviated source.commit.hash to a full one, which gitops.ValidCommitSHA
+// requires and Bitbucket's pull-request response never gives on its own —
+// #14's source repository is unknown (a deleted fork: fails closed,
+// Fork=true, and no commit to resolve), and #15 really is a fork (also no
+// resolution: a fork's own commit may not be reachable from this
+// repository, and review mode refuses every Bitbucket fork before checkout
+// regardless).
 //
 // Mutation (invert the Fork comparison to ==): #12 fails, wanting
 // Fork=false but getting true.
 func TestBitbucketFetchPRHead(t *testing.T) {
-	p := open(t, "pull_open.json")
+	p := open(t, "pull_open_head.json")
 	got, err := p.FetchPRHead(ctx, 12)
-	want := gitprov.PRHead{SHA: "0123456789ab", Fork: false, Open: true,
+	want := gitprov.PRHead{SHA: "0123456789abcdef0123456789abcdef01234567", Fork: false, Open: true,
 		AuthorID: "712020:00000000-0000-4000-8000-00000000b07e", AuthorLogin: "fugaro-bot", SourceRepo: "acme/web"}
 	if err != nil || got != want {
 		t.Fatalf("FetchPRHead(12) = %+v, %v, want %+v", got, err, want)
@@ -449,10 +457,34 @@ func TestBitbucketFetchPRHead(t *testing.T) {
 	}
 }
 
+// TestBitbucketFetchPRHeadResolvesAbbreviatedHash: review mode runs every
+// PRHead.SHA through gitops.ValidCommitSHA before any checkout, which
+// requires a full 40- or 64-character hex object ID; Bitbucket's own
+// pull-request API gives only an abbreviated, 12-hex one
+// (pullDetail.Source.Commit.Hash), which always failed that check on its
+// own — refusing every single Bitbucket pull request review mode ever
+// saw, a trusted, same-repository one included, contradicting
+// docs/recipes.md §3's own claim that such a PR is reviewable. Pinned here
+// directly, rather than only implicitly by TestBitbucketFetchPRHead's own
+// `want`, since this is the property that actually matters.
+//
+// Mutation (in FetchPRHead, use info.HeadSHA directly instead of calling
+// resolveFullHash): this test fails, finding the 12-character abbreviated
+// hash instead of a full one.
+func TestBitbucketFetchPRHeadResolvesAbbreviatedHash(t *testing.T) {
+	got, err := open(t, "pull_open_head_only12.json").FetchPRHead(ctx, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.SHA) != 40 {
+		t.Fatalf("SHA = %q (%d chars), want a full, 40-character hash", got.SHA, len(got.SHA))
+	}
+}
+
 // TestBitbucketFetchPRHeadMerged covers a pull request already merged: not
 // open, review mode must refuse it.
 func TestBitbucketFetchPRHeadMerged(t *testing.T) {
-	got, err := open(t, "pull_merged.json").FetchPRHead(ctx, 12)
+	got, err := open(t, "pull_merged_head.json").FetchPRHead(ctx, 12)
 	if err != nil || got.Open {
 		t.Fatalf("got %+v, %v, want Open=false", got, err)
 	}

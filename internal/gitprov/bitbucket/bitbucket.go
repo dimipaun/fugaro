@@ -408,6 +408,19 @@ func (pr pullRequest) isDraft() bool {
 // them for this provider at all, and fails closed on every fork instead
 // (same-repository pull requests need no author check: pushing a branch
 // here already needs write access).
+//
+// Bitbucket's own pull-request response gives only an abbreviated, 12-hex
+// commit hash (pullDetail.Source.Commit.Hash); gitops.ValidCommitSHA (the
+// check review mode runs on every PRHead.SHA before any checkout) requires
+// a full, 40- or 64-character one, since git has no short-hash wire
+// protocol at all (`git fetch origin <12-hex>` fails outright, "couldn't
+// find remote ref"). Left unresolved, this refused every single
+// Bitbucket pull request review mode ever saw, trusted same-repository
+// ones included — resolveFullHash below resolves it, for a
+// same-repository head only: a fork's own commit may not even be
+// reachable from this repository to resolve against, and review mode
+// refuses every Bitbucket fork before checkout regardless (checkReviewAuthor),
+// so there is nothing to gain by resolving one.
 func (p *Provider) FetchPRHead(ctx context.Context, number int) (gitprov.PRHead, error) {
 	d, info, err := p.getPull(ctx, number)
 	if err != nil {
@@ -415,10 +428,43 @@ func (p *Provider) FetchPRHead(ctx context.Context, number int) (gitprov.PRHead,
 	}
 	own := p.o.Workspace + "/" + p.o.Slug
 	fork := !strings.EqualFold(info.SourceRepo, own)
+	sha := info.HeadSHA
+	if sha != "" && !fork {
+		full, err := p.resolveFullHash(ctx, sha)
+		if err != nil {
+			return gitprov.PRHead{}, fmt.Errorf("pull request #%d: %w", number, err)
+		}
+		sha = full
+	}
 	return gitprov.PRHead{
-		SHA: info.HeadSHA, Fork: fork, Open: info.State == gitprov.PROpen,
+		SHA: sha, Fork: fork, Open: info.State == gitprov.PROpen,
 		AuthorID: info.AuthorID, AuthorLogin: d.Author.displayName(), SourceRepo: info.SourceRepo,
 	}, nil
+}
+
+// resolveFullHash resolves rev (Bitbucket's pull request source.commit.hash,
+// always abbreviated to 12 hex) to the full commit hash review mode's
+// `git fetch`/`git worktree add` need (gitops.ValidCommitSHA refuses
+// anything shorter). UNVERIFIED against the real API (no live Bitbucket
+// access here): the shape — GET .../commit/{rev} returning the full hash
+// in the same "hash" field the pull request's own source.commit already
+// uses — follows Bitbucket's documented commit object
+// (https://developer.atlassian.com/cloud/bitbucket/rest/api-group-commits/#api-repositories-workspace-repo-slug-commit-revision-get),
+// not a recorded live response; the owner should verify it in the sandbox
+// before relying on `review-only`/`pick` against a real Bitbucket
+// repository, the same caveat the fork-checkout path above already needs.
+func (p *Provider) resolveFullHash(ctx context.Context, rev string) (string, error) {
+	path := "/repositories/" + url.PathEscape(p.o.Workspace) + "/" + url.PathEscape(p.o.Slug) + "/commit/" + url.PathEscape(rev)
+	var c struct {
+		Hash string `json:"hash"`
+	}
+	if err := p.api.Do(ctx, "GET", path, nil, &c); err != nil {
+		return "", fmt.Errorf("resolving commit %s to its full hash: %w", rev, err)
+	}
+	if c.Hash == "" {
+		return "", fmt.Errorf("resolving commit %s to its full hash: no hash in the response", rev)
+	}
+	return c.Hash, nil
 }
 
 // PullRequest implements gitprov.Provider.
