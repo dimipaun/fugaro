@@ -202,6 +202,31 @@ func (a *usageAcc) hasInput() bool {
 	return a.in.set && (a.in.v > 0 || a.cr.v > 0 || a.cc.v > 0 || a.w5.v > 0 || a.w1.v > 0)
 }
 
+// total is the merged usage's input, cache read, cache creation (however
+// it was reported, flat or split by TTL) and output tokens, floored at
+// zero each. A 2xx whose usage sums to zero here reported nothing to
+// charge, whatever text the response held: the fail-safe is this total,
+// not any one field, since a provider's input may legitimately be zero
+// (heavy caching) while its output is not.
+func (a *usageAcc) total() int64 {
+	pos := func(f field) int64 { return max(f.v, 0) }
+	cc := max(pos(a.cc), pos(a.w5)+pos(a.w1))
+	return pos(a.in) + pos(a.cr) + cc + pos(a.out)
+}
+
+// settleableFinal reports, once a stream or body is done, whether its
+// merged usage is read as a complete call's usage rather than the
+// reservation. On the Claude route any reported input count does, even
+// zero. On a provider route zero input alone may be legitimate (heavy
+// caching, or real output with nothing to report for input): only a
+// usage that sums to zero everywhere (total) is the fail-safe.
+func (a *usageAcc) settleableFinal() bool {
+	if !a.provider {
+		return a.hasInput()
+	}
+	return a.total() > 0
+}
+
 // negative reports whether any reported count is below zero.
 func (a *usageAcc) negative() bool {
 	for _, f := range []field{a.in, a.cc, a.cr, a.out, a.w5, a.w1, a.web} {
@@ -400,12 +425,28 @@ func (t *usageTee) onEvent(name string, data []byte) {
 		}
 	case "message_stop":
 		t.stopped = true
+		if !t.provider {
+			switch {
+			case t.started && t.deltas && !t.broken:
+				t.complete = true
+			case t.started:
+				// Stopped without an output count: the gateway can't tell
+				// what the call produced, so it settles at its reservation.
+				t.broken = true
+			}
+			return
+		}
+		// A provider may put the real counts only in a delta (message_start
+		// reporting zero input is not by itself "nothing to charge"), so
+		// completeness is decided from the merged totals here, not from
+		// message_start's hasInput: real output with zero input is a
+		// genuine reply, not silence, but a usage that sums to zero across
+		// every field is still unparsed (the fail-safe for a 2xx whose
+		// usage never said anything, whatever text the response held).
 		switch {
-		case t.started && t.deltas && !t.broken:
+		case t.deltas && !t.broken && t.acc.settleableFinal():
 			t.complete = true
-		case t.started:
-			// Stopped without an output count: the gateway can't tell
-			// what the call produced, so it settles at its reservation.
+		case t.sawUsage:
 			t.broken = true
 		}
 	case "error":
@@ -451,8 +492,8 @@ func (t *usageTee) parseJSON() {
 	t.acc.provider = t.provider
 	t.acc.merge(body.Usage)
 	t.sawUsage = true
-	if !t.acc.hasInput() || !t.acc.out.set || t.acc.negative() {
-		return // counts missing or negative: settled at the reservation
+	if !t.acc.out.set || t.acc.negative() || !t.acc.settleableFinal() {
+		return // no output count, negative, or summing to zero: settled at the reservation
 	}
 	t.started, t.complete = true, true
 }

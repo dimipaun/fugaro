@@ -700,7 +700,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		reserved.unparsed = true
 		s.logUsageUnparsed(p.model, rt.provider, "not_readable", nil)
 		return reserved
-	case tee.sse && tee.started && tee.complete:
+	case tee.sse && tee.complete:
 		return s.fromUsage(tee, p, rt.provider, false)
 	case tee.sse && tee.started && !tee.broken:
 		return s.fromUsage(tee, p, rt.provider, true)
