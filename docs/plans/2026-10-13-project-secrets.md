@@ -2,7 +2,7 @@
 
 **Goal:** let `anthropic-api-key`, `bitbucket-token`, `github-app-key`, `claude-oauth-token` (default), a model provider's key, or a named Claude account's token be stored **once per project** and mounted by every repository the owner allows, while a repository's own stored value still overrides it. No code in this plan has been written or run; this is a design-to-code plan, the same status as `docs/plans/2026-10-09-named-oauth-tokens.md` before its Task 1 started. **This PR (the one that adds this plan and its design doc) is docs-only: no file under this plan's "Files" lists is touched by it.** Tasks 1 onward are future work, gated on the owner approving the design.
 
-**Spec:** [docs/design/project-secrets.md](../design/project-secrets.md). Its decisions (§3 opt-in model, §4 storage, §5 mounting/resolution, §6 migration) are settled there; this plan's own decisions continue as P1 onward, each independently vetoable. **§3a carries an open question the owner still needs to answer** (whether `CheckProviderPolicy`'s data-policy gate also opens on an absent `allow_data_to`); this plan implements the design's default, Option A (gate stays closed), per P7.
+**Spec:** [docs/design/project-secrets.md](../design/project-secrets.md). Its decisions (§3 opt-in model, §4 storage, §5 mounting/resolution, §6 migration) are settled there; this plan's own decisions continue as P1 onward, each independently vetoable. **§3a carries an open question the owner still needs to answer** (whether `CheckProviderPolicy`'s data-policy gate also opens on an absent `allow_data_to`); this plan documents the design's default, Option A (gate stays closed), per P7 — **but Task 2, which actually widens the mount, is itself gated on the owner giving an explicit answer (either option), SF4: see Task 2's own note.** Leaving the question unanswered and starting Task 2 anyway is exactly the "worst combination" §3a's table warns about, live in a real installation.
 
 **Depends on:** release 0.7.x on `main` (the base-image hard cut already merged). No functional dependency on any other in-flight design.
 
@@ -254,6 +254,8 @@ git commit -m "project secrets task 1: config.ProjectSecret, its validation, the
 ---
 
 ### Task 2: `gcp.ProjectSecretID` (domain-separated, nit); `rs.Secrets` stays unconditional (golden); `SecretMounts` mounts a no-list provider's key everywhere (P7)
+
+**Gated, SF4: this task's `SecretMounts` change does not start until the owner has given an explicit answer to §3a's open question (Option A or B), not merely let it stand unanswered.** P7's mount-widening is itself already ruled on (owner, 2026-10-13) and happens identically under either option — but design §3a's own analysis is that Option A *left unanswered* (the plan's current default) combines with this task's mount-widening into "the worst combination of the two decisions" (§3a: new exposure, every repository, buying the owner nothing in return) for however long the gap lasts between this task landing and the owner actually picking one. Starting this task is the exact point that gap opens in a real installation. An explicit Option A answer (not merely the silent default) is just as sufficient to start as an explicit Option B — either settles the open question; what blocks this task is the question being *unanswered*, not which answer it gets.
 
 **Files:**
 - Edit: `internal/backend/gcp/names.go`, `names_test.go`
