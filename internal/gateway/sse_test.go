@@ -358,3 +358,24 @@ func TestUsageTeeEventNamesSanitized(t *testing.T) {
 		}
 	}
 }
+
+// noteEvent's sanitizer is a closed list of the Messages API's own event
+// (and whole-body "type") names, not merely a pattern: a name that would
+// pass errorTypeValue's `^[a-z][a-z0-9_]{0,63}$` check (plausible,
+// lowercase, short) but isn't one the gateway actually dispatches on must
+// still report as "unrecognized", not itself.
+func TestUsageTeeEventNamesClosedList(t *testing.T) {
+	tee := newUsageTee(true)
+	tee.provider = true
+	tee.feed([]byte("data: {\"type\":\"a_plausible_but_unknown_type\"}\n\n"))
+	if len(tee.events) != 1 || tee.events[0] != "unrecognized" {
+		t.Errorf("events %q, want exactly one %q: a pattern-only check would have kept the name", tee.events, "unrecognized")
+	}
+	// The known names themselves still come through, unsanitized.
+	tee2 := newUsageTee(true)
+	tee2.provider = true
+	tee2.feed([]byte("event: message_start\ndata: {}\n\nevent: ping\ndata: {}\n\n"))
+	if len(tee2.events) != 2 || tee2.events[0] != "message_start" || tee2.events[1] != "ping" {
+		t.Errorf("events %q, want [message_start ping]", tee2.events)
+	}
+}

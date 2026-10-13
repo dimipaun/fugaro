@@ -292,17 +292,36 @@ type usageTee struct {
 // its usage_unparsed diagnostic.
 const maxEventsLogged = 16
 
+// knownEventTypes are the only SSE event names, or whole-body "type"
+// values, the gateway ever dispatches on: the Messages API's own stream
+// events, and "message"/"error" for a non-streaming body. A closed list,
+// not a pattern (unlike errorTypeValue's error.type, an open-ish set an
+// upstream or a provider names): nothing the provider sends can add to it.
+var knownEventTypes = map[string]bool{
+	"message_start": true, "content_block_start": true, "content_block_delta": true,
+	"content_block_stop": true, "message_delta": true, "message_stop": true,
+	"ping": true, "message": true, "error": true,
+}
+
+// eventTypeValue keeps typ only when it is one of knownEventTypes.
+func eventTypeValue(typ string) string {
+	if knownEventTypes[typ] {
+		return typ
+	}
+	return "unrecognized"
+}
+
 // noteEvent records typ for the usage_unparsed diagnostic. typ is the
 // provider's own SSE "event:" name or JSON "type" field, read before
-// redactWriter ever sees the response: sanitized through the same closed
-// check as an upstream error's type (errorTypeValue), so a hostile name
-// (an embedded secret, control characters, an unbounded length) reaches
-// the log only as "unrecognized", never as itself.
+// redactWriter ever sees the response: sanitized through the closed list
+// above, so a hostile name (an embedded secret, control characters, an
+// unbounded length) reaches the log only as "unrecognized", never as
+// itself.
 func (t *usageTee) noteEvent(typ string) {
 	if typ == "" || len(t.events) >= maxEventsLogged {
 		return
 	}
-	typ = errorTypeValue(typ)
+	typ = eventTypeValue(typ)
 	if slices.Contains(t.events, typ) {
 		return
 	}
