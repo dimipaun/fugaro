@@ -510,8 +510,8 @@ shape):
    and both must agree.
 
 **Is `agent.env` an "executable" key?** No, by the same reasoning
-`NonExecutableImageKeys` already states for `image.node` (`scope.go:140-143`,
-"a pinned … version … never a command"): every value is a closed-set,
+`NonExecutableImageKeys` already states for `image.node` (`scope.go:138-141`,
+quote text on line 139, "a pinned … version … never a command"): every value is a closed-set,
 allow-listed literal `Validate` already shape-checks, consumed as an
 environment variable Claude Code reads, never interpreted as shell, a URL,
 or a tool name to fetch. This matters only if `agent.env` is ever proposed
@@ -708,7 +708,7 @@ once, which an earlier draft of this design lacked.
 the first release whose runner's strict `fugaro.yaml` decoder knows
 `agent.env` — an older binary refuses the key outright (the same "Binaries
 before 0.6.5 refuse this key" comment pattern already on `OAuthToken`,
-`config.go:167`). `fugaro run` must refuse a launch against an older job
+`config.go:156-157`). `fugaro run` must refuse a launch against an older job
 image the same way `checkImageSince` already refuses one that doesn't know
 `agent.recipe` or `OAuthToken`
 (`recipes_skew.go:91-137`): a new `checkAgentEnvImage` wired the same way,
