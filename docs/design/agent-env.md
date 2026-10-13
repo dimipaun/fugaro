@@ -454,7 +454,7 @@ allowed, but a silent winner is worse than refusing the collision outright
 at the one layer that can see both: `Validate` has the whole resolved
 `Config`, including every workflow's `secrets:` block, in view).
 
-**The three edits, plus the fourth** (`docs/design/headroom-compression.md`
+**The three edits, plus a fourth and fifth** (`docs/design/headroom-compression.md`
 §4 restates this pattern most recently; this design follows the same
 shape):
 
@@ -498,6 +498,16 @@ shape):
    skipping this edit leaves the project-layer resolver treating
    `agent.env` as unknown regardless of what `Validate` allows
    (`scope.go:39-41`: "A key not listed under a block is unknown").
+5. **A fifth edit this design's first draft missed**: `internal/config/scope_test.go`'s
+   `TestScopesMatchDesignDoc` (`scope_test.go:42-48` onward) — a *second*,
+   independent golden map, `want := map[string]Scope{...}`, pinning every
+   key's scope literally in Go, separate from the doc-table check Task 1's
+   fourth edit covers. It needs its own `"agent.env": InRepo` entry or the
+   test fails the moment `scope.go`'s `Scopes` table gains the row the
+   fourth edit adds — not because the two tests duplicate each other's
+   job (one pins the doc, this one pins the code against a design
+   rationale independent of either doc's wording), but because both exist
+   and both must agree.
 
 **Is `agent.env` an "executable" key?** No, by the same reasoning
 `NonExecutableImageKeys` already states for `image.node` (`scope.go:140-143`,
