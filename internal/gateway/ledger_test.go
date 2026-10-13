@@ -802,6 +802,38 @@ func TestIncompleteUsageChargesReservation(t *testing.T) {
 	}
 }
 
+// A message_start AFTER message_stop (the call already read as complete)
+// carrying a negative input_tokens must still break it, not settle as
+// usage with the negative floored to zero by usage(). Before this fix:
+// message_start never set broken on a negative count, and forward.go's
+// SSE "complete" case had dropped its own tee.started requirement (an
+// earlier round's fix) without adding a negative() check of its own, so a
+// late message_start's negative count went uncaught on the Claude route
+// too — a regression, not specific to the provider route.
+func TestClaudeLateMessageStartAfterStopChargesReservation(t *testing.T) {
+	ev := []anthropicfake.Event{
+		{Name: "message_start", Data: `{"type":"message_start","message":{"model":"claude-sonnet-5-5","usage":{"input_tokens":500,"output_tokens":1}}}`},
+	}
+	ev = append(ev, anthropicfake.TextEvents("ok")...)
+	ev = append(ev,
+		anthropicfake.Event{Name: "message_delta", Data: `{"type":"message_delta","usage":{"output_tokens":300}}`},
+		anthropicfake.Stop,
+		anthropicfake.Event{Name: "message_start", Data: `{"type":"message_start","message":{"usage":{"input_tokens":-1}}}`})
+	h := newHarness(t, anthropicfake.Reply{Status: http.StatusOK, Events: ev})
+	body := msg(sonnet, 1000, `"stream":true`)
+	if resp, b := h.post(body); resp.StatusCode != 200 {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	w := worst(t, sonnet, body, 1000, "")
+	rep := h.gw.EndStage()
+	if rep.Used != w || rep.UsageUnparsed != 1 {
+		t.Errorf("report %+v, want the reservation %d, one unparsed", rep, w)
+	}
+	if call := h.logs.lastCall(t); call["settled"] != "reserved" {
+		t.Errorf("settled %v, want reserved", call["settled"])
+	}
+}
+
 // TestLongContextTierPricedFromUsage: a call whose reported input passes
 // a long-context tier (a beta such as context-1m can make one) is charged
 // at the tier's rates, and any excess over its reservation is overrun,

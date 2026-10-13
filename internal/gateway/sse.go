@@ -400,6 +400,16 @@ func (t *usageTee) onEvent(name string, data []byte) {
 		t.model = ev.Message.Model
 		t.acc.merge(ev.Message.Usage)
 		t.sawUsage = true
+		if t.acc.negative() {
+			// A duplicate or late message_start can merge a negative count
+			// into a call that already read as complete (message_stop
+			// already fired, or will): usage() floors a negative field to
+			// zero, so without this the call would settle on whatever is
+			// left, not at its reservation. started and complete only ever
+			// check broken, never negative() directly, so this is the one
+			// place that must set it.
+			t.broken = true
+		}
 		// Partial settlement charges the reported input: it must be there.
 		t.started = t.acc.hasInput() && !t.acc.negative()
 	case "message_delta":

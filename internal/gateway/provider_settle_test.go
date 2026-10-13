@@ -595,6 +595,79 @@ func TestNegativeCountAfterStopStillBreaks(t *testing.T) {
 	}
 }
 
+// settleDuplicateStart runs a provider stream with a normal message_start
+// and message_delta, then a second message_start carrying secondUsage,
+// either before or after message_stop, and returns its log line and the
+// stage report. A duplicate or late message_start is not gated the way a
+// message_delta is: it always merges, so a negative count in it must
+// still be caught.
+func settleDuplicateStart(t *testing.T, secondUsage string, afterStop bool) (map[string]any, StageReport) {
+	t.Helper()
+	ev := []anthropicfake.Event{
+		streamEvent("message_start", `{"type":"message_start","message":{"id":"m","model":"`+dsModel+`","content":[],"usage":{"input_tokens":100,"output_tokens":1}}}`),
+	}
+	ev = append(ev, anthropicfake.TextEvents("ok")...)
+	ev = append(ev, streamEvent("message_delta", `{"type":"message_delta","usage":{"output_tokens":500}}`))
+	second := streamEvent("message_start", `{"type":"message_start","message":{"id":"m2","model":"`+dsModel+`","content":[],"usage":`+secondUsage+`}}`)
+	if afterStop {
+		ev = append(ev, anthropicfake.Stop, second)
+	} else {
+		ev = append(ev, second, anthropicfake.Stop)
+	}
+	r := feeRouted(t, 0, nil, routedStage, dsRoute, anthropicfake.Reply{Status: http.StatusOK, Events: ev})
+	if resp, b := r.post(msg(dsModel, 1000, `"stream":true`)); resp.StatusCode != http.StatusOK {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	return r.logs.lastCall(t), r.gw.EndStage()
+}
+
+// chargedReservation asserts call settled at its full, nonzero reservation.
+func chargedReservation(t *testing.T, call map[string]any) {
+	t.Helper()
+	got, res := pricing.Micros(num(call["charged_micros"])), pricing.Micros(num(call["reserved_micros"]))
+	if got != res || res == 0 || call["settled"] != settledReserved {
+		t.Errorf("charged %d of %d reserved, settled %v, want the reservation", got, res, call["settled"])
+	}
+}
+
+// A duplicate message_start carrying a negative output count, merged
+// before message_stop, must still break the call. Before this fix:
+// message_start never set broken on a negative count, so the provider's
+// message_stop branch (deltas && !broken && hasInput) still matched —
+// complete, with output floored to 0 by usage() — charging ~100 of the
+// 8213 reservation (input only, at the model's rate) instead of it.
+func TestNegativeDuplicateStartBeforeStopOutput(t *testing.T) {
+	call, _ := settleDuplicateStart(t, `{"input_tokens":100,"output_tokens":-1}`, false)
+	chargedReservation(t, call)
+}
+
+// The same negative output, but the duplicate message_start arrives AFTER
+// message_stop, once the call already read as complete. Before this fix:
+// same ~100-of-8213 undercharge as the before-stop case — complete, once
+// set, was never reconsidered.
+func TestNegativeDuplicateStartAfterStopOutput(t *testing.T) {
+	call, _ := settleDuplicateStart(t, `{"input_tokens":100,"output_tokens":-1}`, true)
+	chargedReservation(t, call)
+}
+
+// A negative cache_creation_input_tokens in a second message_start. Before
+// this fix: charged ~2100 of the 8213 reservation (input and the
+// placeholder output, cache creation floored to 0) instead of it.
+func TestNegativeCacheCreationDuplicateStart(t *testing.T) {
+	call, _ := settleDuplicateStart(t, `{"input_tokens":100,"output_tokens":1,"cache_creation_input_tokens":-1000}`, false)
+	chargedReservation(t, call)
+}
+
+// A negative input_tokens alongside a real cache_read_input_tokens in a
+// second message_start: hasInput() alone (cache_read > 0) would otherwise
+// still read this as settleable. Before this fix: charged ~2005 of the
+// 8213 reservation (the placeholder output and the cache read, input
+// floored to 0) instead of it.
+func TestNegativeInputWithCacheReadDuplicateStart(t *testing.T) {
+	call, _ := settleDuplicateStart(t, `{"input_tokens":-1,"cache_read_input_tokens":50,"output_tokens":1}`, false)
+	chargedReservation(t, call)
+}
+
 // A message_delta the gateway can't read as usage breaks the call: the
 // reservation, with a reason naming it, since it may hold the real output
 // count behind a shape the gateway doesn't expect.
