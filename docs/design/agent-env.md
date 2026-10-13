@@ -366,15 +366,42 @@ var AgentEnvAllowed = []string{
     "ENABLE_TOOL_SEARCH",
     // Telemetry/updater/non-essential-traffic knobs Claude Code documents.
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
-    "DISABLE_AUTOUPDATER",       // already a baseEnv pass-through (env.go:24); repo-settable too
     "DISABLE_TELEMETRY",
     "DISABLE_ERROR_REPORTING",
     "DISABLE_BUG_COMMAND",
     // A small set for the project's own tools (commands.build/test see the
     // same environment, §4): conventional, non-routing, non-secret toggles.
-    "CI", "FORCE_COLOR", "NO_COLOR",
+    "CI", "NO_COLOR",
 }
 ```
+
+**`DISABLE_AUTOUPDATER` is deliberately left off, not merely unlisted.**
+It is already a `baseEnv` pass-through (`env.go:24`) the base image sets
+(presumably to a truthy value, pinning Claude Code to
+`images/base/Dockerfile`'s `CLAUDE_CODE_VERSION`, self-tested on every
+build). Since `agent.env`'s values are applied *after* `baseEnv`'s copy in
+`BuildEnv` (decision E2 in the plan), a repository setting
+`agent.env: { DISABLE_AUTOUPDATER: "" }` or `"0"` would **override the base
+image's own setting**, re-enabling Claude Code's auto-updater mid-run and
+letting it replace the pinned, self-tested binary with whatever version it
+fetches — exactly the version-pinning guarantee the base image exists to
+hold. Every other entry on this list is a variable nothing else sets, so
+"override" and "set" are the same operation; `DISABLE_AUTOUPDATER` is the
+one exception, where "override" can mean "turn a safety property off," and
+it is refused for that reason alone.
+
+**`FORCE_COLOR` is dropped from v1** (an earlier draft of this list
+proposed it next to `CI`/`NO_COLOR`): forcing ANSI color codes into a
+subprocess's output is a real, if modest, risk specifically for
+`commands.build`/`test` (§4: they see the same environment) — color escape
+sequences in test-runner or linter output can corrupt a result parser that
+expects plain text (`verify.Run`'s pass/fail extraction, a JUnit XML
+reader fed malformed input, this repository's own transcript tooling) in
+a way that is easy to miss until a real build happens to hit it. `NO_COLOR`
+carries no equivalent risk (it can only remove escape codes, never inject
+them), so it stays; `FORCE_COLOR` can be proposed again later with its own
+review once there is a concrete need, rather than shipped speculatively in
+v1's starting list.
 
 Every name here is checked, in a test, against the routing names
 (`routingEnvKeys` and `CLAUDE_CODE_USE_*`, `TestAgentEnvAllowListNeverRoutes`,
@@ -391,18 +418,41 @@ list is intentionally short and is expected to grow a few entries at a
 time, each its own small, reviewable PR — exactly the safety property §1
 relies on. The owner rules on the starting list; nothing above is final.
 
-**Value shape.** A plain string, printable ASCII only, no control
-characters (`\n`, `\r`, `\0`, …) and no whitespace (every value above is a
-single token: a boolean-ish `"1"`/`"true"`/`"false"`, a number, a short
-word), at most 128 bytes — the same order of magnitude as `agent.model`'s
-100-character cap (`validateAgentModels`, `validate.go:444-454`) and far
-short of `maxSettingsFile`'s 1 MiB. Values are **never secret by
-construction** (the allow-list excludes anything that could be): a
-repository that needs a secret keeps using `workflows.*.secrets`
-(`whySecrets`, unchanged). `Validate` refuses: a key not on
-`AgentEnvAllowed`, naming the key (`agent.env.<NAME>`, "%s is not an agent
-environment variable Fugaro allows; see docs/design/agent-env.md" — or
-whatever doc section ships this), and a value failing the shape check.
+**Value shape.** A plain, **non-empty** string, printable ASCII only, no
+control characters (`\n`, `\r`, `\0`, …) and no whitespace (every value
+above is a single token: a boolean-ish `"1"`/`"true"`/`"false"`, a number,
+a short word), at most 128 bytes — the same order of magnitude as
+`agent.model`'s 100-character cap (`validateAgentModels`,
+`validate.go:444-454`) and far short of `maxSettingsFile`'s 1 MiB.
+**Empty (`""`) is refused, not accepted as "unset."** An earlier draft of
+this design accepted `""` with a muddled rationale about "clearing a
+default-ish entry," a concern that only ever applied to
+`DISABLE_AUTOUPDATER` — now dropped from the list entirely, specifically
+*because* an empty value could clear a safety-relevant default (above).
+With that one case gone, there is no remaining reason to accept `""`: a
+repository that does not want a variable set simply leaves its key out of
+the map, the same as every other optional `fugaro.yaml` field; an explicit
+empty value is far more likely to be a mistake (a templating bug, a
+copy-paste of an unset shell variable) than an intentional "clear this,"
+and refusing it catches that mistake at `fugaro validate` instead of
+silently shipping a blank value to Claude Code's environment. Values are
+**never secret by construction** (the allow-list excludes anything that
+could be): a repository that needs a secret keeps using
+`workflows.*.secrets` (`whySecrets`, unchanged). `Validate` refuses: a key
+not on `AgentEnvAllowed`, naming the key (`agent.env.<NAME>`, "%s is not an
+agent environment variable Fugaro allows; see docs/design/agent-env.md" —
+or whatever doc section ships this), a value failing the shape check
+(including empty), and — new in this revision — **a key that collides with
+the same workflow's own `secrets[].env`** (neither `CI` nor
+`MAX_THINKING_TOKENS`, to pick two `AgentEnvAllowed` entries, is in
+`ReservedEnv`, §0, so a workflow secret could legally declare either one
+today): refused in `Validate`, naming both the `agent.env` key and the
+workflow's `secrets[]` index, rather than left to `BuildEnv`'s own,
+undocumented precedence between the two (§0's `EnvSpec.Secrets` vs.
+`EnvSpec.AgentEnv` ordering settles *which one would win* if this were
+allowed, but a silent winner is worse than refusing the collision outright
+at the one layer that can see both: `Validate` has the whole resolved
+`Config`, including every workflow's `secrets:` block, in view).
 
 **The three edits, plus the fourth** (`docs/design/headroom-compression.md`
 §4 restates this pattern most recently; this design follows the same
@@ -417,9 +467,25 @@ shape):
    `additionalProperties: false` with one named property per
    `AgentEnvAllowed` entry (a `pattern`/`maxLength` matching the shape
    rule) — not a generic `patternProperties` for an arbitrary name, so an
-   unknown key is a schema error too, not just a `Validate` one. A
-   `testdata/config` corpus file exercises it
-   (`TestFugaroSchemaCorpus`, `schemas/schemas_test.go:73`); a new
+   unknown key is a schema error too, not just a `Validate` one. **Each
+   property's `type` must be `["string", "number", "boolean"]`, not
+   `"string"` alone, with the `pattern` applying only when the instance is
+   already a string.** Confirmed empirically (`gopkg.in/yaml.v3` unmarshals
+   an unquoted `MAX_THINKING_TOKENS: 0` into Go's `map[string]string` as
+   the string `"0"` with no error — the real parser is permissive about
+   scalar shape), but the schema test harness decodes YAML into `any` first
+   (`yamlInstance`, `schemas/schemas_test.go:47-54`, `yaml.Unmarshal(data,
+   &v)` then `json.Marshal(v)`), which preserves YAML's *implicit* typing:
+   an unquoted `0` becomes a JSON number, not a JSON string. A
+   `"type": "string"` property would reject exactly the config the real
+   Go-side `Validate` accepts — a schema stricter than the runtime parser,
+   the wrong direction for a linting aid to drift from the thing it lints
+   for. Accepting the wider type set matches what the real parser actually
+   allows, rather than mandating a quoting convention `fugaro.yaml` authors
+   would have no other reason to know about. A `testdata/config` corpus
+   file exercises both an unquoted numeric value and a quoted string value
+   for the same key (`TestFugaroSchemaCorpus`,
+   `schemas/schemas_test.go:73`); a new
    `TestFugaroSchemaReservesTheSameAgentEnvAllowList` keeps the schema's
    property names equal to `config.AgentEnvAllowed`, the same shape as the
    existing `TestFugaroSchemaReservesTheSameEnv`
