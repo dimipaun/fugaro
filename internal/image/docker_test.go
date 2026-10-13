@@ -164,7 +164,7 @@ func TestSelftestFlagsSetgidAndFileCaps(t *testing.T) {
 // longer has — Node now comes from `mise install` (design base-image.md
 // section 4), which manages its own download integrity outside this
 // repository's control. A `mise install` step also needs the Fugaro base
-// image (mise is baked there, not in images/web-node, which these tests
+// image (mise is baked there, not in the 0.7.0-removed images/web-node, which these tests
 // otherwise build FROM to get a throwaway Node for generating a yarn.lock/
 // package-lock.json fixture), so migrating either test would mean building
 // its lockfile fixture from one base image and its derived image from

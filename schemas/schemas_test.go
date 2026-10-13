@@ -753,12 +753,13 @@ func TestSchemaAcceptsReviewFirstStage(t *testing.T) {
 }
 
 // The repository's own fugaro.yaml (Fugaro dogfooding itself) still reads
-// base: go: deleting it is Task 22's own release-gated step (plan
-// docs/plans/2026-10-08-base-image.md, Task 22 Step 4), run by the owner
-// only after fugaro-base is published and `fugaro image refresh` has moved
-// this checkout onto it. Until then, the schema and the Go parser must
-// agree that base: go is refused, for the same reason, so a schema or
-// parser change that quietly re-admits it is caught here.
+// base: go, a kind the 0.7.0 cut removed: deleting it is Task 22's own
+// release-gated step (plan docs/plans/2026-10-08-base-image.md, Task 22
+// Step 4), run by the owner only after fugaro-base is published and
+// `fugaro image refresh` has moved this checkout onto it. Until then, the
+// schema and the Go parser must agree that base: go is 0.7.0-refused, for
+// the same reason, so a schema or parser change that quietly re-admits it
+// is caught here.
 func TestRepositoryFugaroYAML(t *testing.T) {
 	data, err := os.ReadFile("../fugaro.yaml")
 	if err != nil {
