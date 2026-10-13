@@ -49,6 +49,25 @@ func settleStream(t *testing.T, startUsage, deltaUsage string) (map[string]any, 
 	return r.logs.lastCall(t), r.gw.EndStage(), r.logs
 }
 
+// settleCutStream runs a hand-built provider stream that ends before
+// message_stop (a cut connection, or the upstream simply closing early):
+// message_start's data, and optionally one message_delta's data (deltaUsage
+// == "": no delta at all), then nothing more. Returns the log line and the
+// stage report.
+func settleCutStream(t *testing.T, startUsage, deltaUsage string) (map[string]any, StageReport) {
+	t.Helper()
+	ev := []anthropicfake.Event{streamEvent("message_start", `{"type":"message_start","message":{"id":"m","model":"`+dsModel+`","content":[],"usage":`+startUsage+`}}`)}
+	ev = append(ev, anthropicfake.TextEvents("ok")...)
+	if deltaUsage != "" {
+		ev = append(ev, streamEvent("message_delta", `{"type":"message_delta","usage":`+deltaUsage+`}`))
+	}
+	r := feeRouted(t, 0, nil, routedStage, dsRoute, anthropicfake.Reply{Status: http.StatusOK, Events: ev})
+	if resp, b := r.post(msg(dsModel, 1000, `"stream":true`)); resp.StatusCode != http.StatusOK {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	return r.logs.lastCall(t), r.gw.EndStage()
+}
+
 // lastUnparsedReason is the reason the last "budget: usage unparsed"
 // warning named.
 func lastUnparsedReason(t *testing.T, l *logBuf) string {
@@ -255,6 +274,56 @@ func TestCutProviderStreamChargesPartial(t *testing.T) {
 	}
 	if _, ok := call["reported_micros"]; ok {
 		t.Error("a cut stream's partial cost was recorded as the reported cost")
+	}
+}
+
+// A stream that breaks before message_stop still partially settles once a
+// later message_delta reports the real input (message_start's zero input
+// must not have been taken as the final word): charged input plus the
+// reserved output, same partial rule as TestCutProviderStreamChargesPartial.
+func TestCutStreamPartialFromLaterDeltaInput(t *testing.T) {
+	call, rep := settleCutStream(t,
+		`{"input_tokens":0,"output_tokens":1}`,
+		`{"input_tokens":32,"output_tokens":10}`)
+	want := cost(t, dsModel, pricing.Usage{Input: 32, Output: 1000})
+	if got := pricing.Micros(num(call["charged_micros"])); got != want || call["settled"] != settledPartial {
+		t.Errorf("charged %d, want %d, settled %v", got, want, call["settled"])
+	}
+	if rep.Used != want {
+		t.Errorf("stage used %d, want %d", rep.Used, want)
+	}
+}
+
+// Same, but the only count that ever named anything is a cache read at
+// message_start itself (no delta ever arrives): heavy caching with zero
+// input is still enough to partially settle, the cache read charged plus
+// the reserved output.
+func TestCutStreamPartialFromCacheReadOnly(t *testing.T) {
+	call, rep := settleCutStream(t,
+		`{"input_tokens":0,"cache_read_input_tokens":900,"output_tokens":1}`,
+		"")
+	want := cost(t, dsModel, pricing.Usage{CacheRead: 900, Output: 1000})
+	if got := pricing.Micros(num(call["charged_micros"])); got != want || call["settled"] != settledPartial {
+		t.Errorf("charged %d, want %d, settled %v", got, want, call["settled"])
+	}
+	if rep.Used != want {
+		t.Errorf("stage used %d, want %d", rep.Used, want)
+	}
+}
+
+// A stream that breaks before message_stop with input (and cache) still
+// zero in the last delta it managed to send has nothing to partially
+// settle on either: the full reservation, same as a stream with no events
+// at all.
+func TestCutStreamStillZeroChargesReservation(t *testing.T) {
+	call, rep := settleCutStream(t,
+		`{"input_tokens":0,"output_tokens":1}`,
+		`{"input_tokens":0,"output_tokens":10}`)
+	if got, res := pricing.Micros(num(call["charged_micros"])), pricing.Micros(num(call["reserved_micros"])); got != res || res == 0 || call["settled"] != settledReserved {
+		t.Errorf("charged %d of %d reserved, settled %v", got, res, call["settled"])
+	}
+	if rep.Used != pricing.Micros(num(call["charged_micros"])) {
+		t.Errorf("stage used %d, want the reservation", rep.Used)
 	}
 }
 
