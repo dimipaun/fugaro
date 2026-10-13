@@ -19,7 +19,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dimipaun/fugaro/images"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/image"
 )
@@ -482,19 +481,53 @@ func TestSetupFixtureTablesMatchTheSkill(t *testing.T) {
 	if _, err := os.Stat(filepath.Join("..", "images", "common", "fugaro-services")); err != nil {
 		t.Errorf("the base has no fugaro-services: %v", err)
 	}
-	// An apt package a fixture adds for a service is one tools.tsv does not
-	// already answer (the base bakes no database server, B11).
-	tools, err := image.ParseTools(images.BaseTools)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// An apt package a fixture adds is not one images/base/Dockerfile's own
+	// apt-get install line already carries (the base bakes no database
+	// server, B11, but does carry a maximalist kit of its own). This
+	// compares Debian package names against Debian package names:
+	// tools.tsv's Name column is the command a presence check runs (rg, fd,
+	// dig), which very often differs from the Debian package that provides
+	// it (ripgrep, fd-find, bind9-dnsutils), so a comparison against
+	// tools.tsv would miss most real redundant apt entries.
+	baseApt := baseAptPackages(t)
 	for _, f := range fixtures {
 		for _, p := range f.apt {
-			if slices.ContainsFunc(tools, func(tl image.Tool) bool { return tl.Name == p }) {
+			if slices.Contains(baseApt, p) {
 				t.Errorf("fixture %s adds %s, which the base already carries", f.name, p)
 			}
 		}
 	}
+}
+
+// aptInstallBlockRE finds images/base/Dockerfile's one apt-get install line,
+// capturing the backslash-continued package list between
+// --no-install-recommends and the rm -rf that cleans up after it.
+var aptInstallBlockRE = regexp.MustCompile(`(?s)apt-get install -y --no-install-recommends \\(.*?)&&\s*rm -rf /var/lib/apt/lists`)
+
+// baseAptPackages returns the Debian package names images/base/Dockerfile's
+// apt-get install line bakes into the base, read from the Dockerfile itself
+// so a change to it is what this test tracks, not a copy that can drift.
+func baseAptPackages(t *testing.T) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "images", "base", "Dockerfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := aptInstallBlockRE.FindSubmatch(data)
+	if m == nil {
+		t.Fatal("images/base/Dockerfile has no apt-get install -y --no-install-recommends ... && rm -rf /var/lib/apt/lists block")
+	}
+	var out []string
+	for _, f := range strings.Fields(string(m[1])) {
+		if f == `\` {
+			continue
+		}
+		out = append(out, f)
+	}
+	if len(out) == 0 {
+		t.Fatal("images/base/Dockerfile's apt-get install block has no packages")
+	}
+	return out
 }
 
 // hostileCase: what a fixture's repository tries to get executed, and where.
