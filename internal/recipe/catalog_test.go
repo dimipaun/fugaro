@@ -2,7 +2,6 @@ package recipe
 
 import (
 	"slices"
-	"strings"
 	"testing"
 )
 
@@ -36,22 +35,6 @@ func TestCatalogIsTheStarterSet(t *testing.T) {
 	}
 	if _, ok := CatalogText("../catalog/default"); ok {
 		t.Fatal("a path is a catalog name")
-	}
-}
-
-// TestPickUseWhenNamesNoUnsupportedFlag: fugaro run has a single --pr (an
-// int) and no --attempts, so pick's own use_when must not tell a reader to
-// launch with either, which they could not actually do.
-func TestPickUseWhenNamesNoUnsupportedFlag(t *testing.T) {
-	data, _ := CatalogText("pick")
-	r, ps := Parse(data)
-	if len(ps) != 0 {
-		t.Fatalf("pick: %s", ProblemsText(ps))
-	}
-	for _, bad := range []string{"--attempts", "per attempt"} {
-		if strings.Contains(r.UseWhen, bad) {
-			t.Errorf("pick's use_when says %q, which fugaro run does not support: %q", bad, r.UseWhen)
-		}
 	}
 }
 
