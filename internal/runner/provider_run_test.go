@@ -100,6 +100,64 @@ func TestProviderRunEndsInPR(t *testing.T) {
 	}
 }
 
+// readManagedDuring wraps a step to snapshot the managed settings file's
+// "env" (what Claude Code would actually merge in, taking precedence over
+// any repository settings.json's own "env") into *dst while that stage runs,
+// before the next stage's write replaces it.
+func readManagedDuring(h *harness, dst *map[string]string, inner step) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		env, _, _ := settingsEnv(t, h)
+		*dst = env
+		return inner(t, ctx, req)
+	}
+}
+
+// TestProviderStageDisablesThinkingVars: a provider route refuses
+// context_management and the extended-thinking additions Claude Code sends
+// once thinking is on (forward.go's routedKeys; Check 25 of
+// docs/gcp-live-checklist.md). providerPinned's coder is deepseek (a
+// provider model) and its reviewer is Claude: the coder stage must see
+// CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1 and MAX_THINKING_TOKENS=0 exactly,
+// both in the agent's process environment and in the managed settings file's
+// "env" (the anti-override mechanism: Claude Code merges a settings file's
+// own "env" over the process environment, and managed settings beat every
+// other settings file, so only being in the managed file stops a repository's
+// own .claude/settings.json from reinstating thinking). The review stage,
+// entirely on Claude, must see neither, in either place, so its request
+// shape stays exactly what it was.
+func TestProviderStageDisablesThinkingVars(t *testing.T) {
+	g := providerRun(t, providerPinned(t), "enforce", "50",
+		[]anthropicfake.Reply{anthropicfake.MessageOK(deepseek, pricing.Usage{Input: 100, Output: 50})}, "acme/app")
+	var status int
+	var body string
+	var coderManaged, reviewerManaged map[string]string
+	rec, err := g.run(t,
+		readManagedDuring(g.harness, &coderManaged, callDeepseek(&status, &body, implement("feature"))),
+		readManagedDuring(g.harness, &reviewerManaged, review("ship", 0)))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if len(g.agent.calls) != 2 {
+		t.Fatalf("stages = %d, want 2: %+v", len(g.agent.calls), g.agent.calls)
+	}
+	coder, reviewer := g.agent.calls[0], g.agent.calls[1]
+	want := map[string]string{"CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1", "MAX_THINKING_TOKENS": "0"}
+	for k, v := range want {
+		if got := envValue(coder.Env, k); got != v {
+			t.Errorf("coder stage (provider), process env: %s = %q, want %q", k, got, v)
+		}
+		if got, ok := coderManaged[k]; !ok || got != v {
+			t.Errorf("coder stage (provider), managed settings env: %s = %q (present %v), want %q", k, got, ok, v)
+		}
+		if got := envValue(reviewer.Env, k); got != "" {
+			t.Errorf("reviewer stage (Claude), process env: %s = %q, want unset", k, got)
+		}
+		if got, ok := reviewerManaged[k]; ok {
+			t.Errorf("reviewer stage (Claude), managed settings env: %s = %q, want absent", k, got)
+		}
+	}
+}
+
 // Provider models are real dollars and observe never refuses a call, so a
 // provider model is refused at bootstrap in observe (and off) mode, naming the
 // rule and the command to change the mode; enforce runs, and a Claude-only run
