@@ -2,6 +2,7 @@ package runner
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,14 +48,33 @@ func (r *run) parentEnv() map[string]string {
 // stagePins are the pins of a stage's role: its model, the background model
 // and its output limit per call. They exist for the gateway's pricing, so
 // without the gateway there are none and a run sets no variable the
-// budget-off runs never set.
+// budget-off runs never set. When the role's model or the background model is
+// served by a provider route, agent.ProviderRouteVars are added: a Claude
+// stage is never touched by them.
 func (r *run) stagePins(stage string) map[string]string {
 	if !r.gatewayOn() {
 		return nil
 	}
 	role := config.StageRole(stage)
 	a := r.cfg.Agent
-	return agent.PinVars(a.ModelFor(role), r.backgroundModel(), a.MaxOutputFor(role))
+	model, bg := a.ModelFor(role), r.backgroundModel()
+	pins := agent.PinVars(model, bg, a.MaxOutputFor(role))
+	if r.stageOnProviderRoute(model, bg) {
+		maps.Copy(pins, agent.ProviderRouteVars())
+	}
+	return pins
+}
+
+// stageOnProviderRoute reports whether model or background is claimed by a
+// configured provider (config.ProviderFor), so the gateway would route a call
+// on it there instead of to Anthropic.
+func (r *run) stageOnProviderRoute(model, background string) bool {
+	for _, m := range []string{model, background} {
+		if _, _, ok := config.ProviderFor(r.d.Providers, m); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // writeManagedSettings writes the managed settings for a stage: the
