@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -216,8 +218,61 @@ func TestSharedConfigDropsLegacyBaseImageKeys(t *testing.T) {
 		t.Errorf("base_images = %v", c.BaseImages)
 	}
 	ws := strings.Join(c.Warnings(), "\n")
-	if !strings.Contains(ws, "base_images.go") || !strings.Contains(ws, "republishes") {
+	if !strings.Contains(ws, `base_images."go"`) || !strings.Contains(ws, "republishes") {
 		t.Errorf("warnings = %q", ws)
+	}
+}
+
+// TestSharedConfigRefusesAnUnknownBaseImageKey: dropLegacyBaseImages drops
+// only the three kinds the 0.7.0 cut actually removed (config.LegacyBaseKinds),
+// never any other key a strict localcfg.Parse would refuse on its own: an
+// unrecognized base_images key such as "rust" is still a refusal, not a
+// silent drop.
+func TestSharedConfigRefusesAnUnknownBaseImageKey(t *testing.T) {
+	data := strings.Replace(validShared(), "base_images:\n", "base_images:\n    rust: us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-rust:0.6.0\n", 1)
+	_, err := ParseShared([]byte(data), sharedAnchor)
+	if err == nil || !strings.Contains(err.Error(), "base_images") {
+		t.Fatalf("err = %v, want a refusal naming base_images", err)
+	}
+}
+
+// TestSharedConfigNeverPrintsAHostileKeyRaw: a base_images key that is not
+// one of config.LegacyBaseKinds is refused (never dropped, never reaching
+// AddWarning's message), so a hostile key such as an ANSI escape or a
+// newline can never reach a terminal raw: the refusal, like every other
+// ParseShared refusal, echoes keys and values through yaml.v3's own
+// quoting.
+func TestSharedConfigNeverPrintsAHostileKeyRaw(t *testing.T) {
+	hostile := "x\x1b[2J\nfugaro: all good"
+	data := strings.Replace(validShared(), "base_images:\n", "base_images:\n    "+quoteYAMLKey(hostile)+": us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-x:0.6.0\n", 1)
+	_, err := ParseShared([]byte(data), sharedAnchor)
+	if err == nil {
+		t.Fatal("a hostile unknown key was accepted")
+	}
+	if strings.ContainsAny(err.Error(), "\x1b\n") {
+		t.Errorf("the refusal carries a raw escape or newline: %q", err.Error())
+	}
+}
+
+// quoteYAMLKey is key as a double-quoted YAML scalar, so a value with
+// control characters or a newline is one YAML token.
+func quoteYAMLKey(key string) string {
+	b, err := yaml.Marshal(key)
+	if err != nil {
+		panic(err)
+	}
+	return strings.TrimSuffix(string(b), "\n")
+}
+
+// TestSharedConfigRefusesALegacyKeyWithAMappingValue: dropLegacyBaseImages
+// only drops a legacy key whose value is a scalar; a mapping (which could
+// otherwise carry a nested key, anchor or alias past this pre-Parse check)
+// is left in place for localcfg.Parse's own strict decode to refuse.
+func TestSharedConfigRefusesALegacyKeyWithAMappingValue(t *testing.T) {
+	data := strings.Replace(validShared(), "base_images:\n", "base_images:\n    go: { sneaky: true }\n", 1)
+	_, err := ParseShared([]byte(data), sharedAnchor)
+	if err == nil {
+		t.Fatal("a legacy key with a mapping value was accepted")
 	}
 }
 

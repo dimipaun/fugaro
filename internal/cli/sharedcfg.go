@@ -208,7 +208,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 		return refuse("is not valid: %s", strconv.Quote(strings.ReplaceAll(err.Error(), "local config: ", "")))
 	}
 	for _, k := range dropped {
-		c.AddWarning(fmt.Sprintf("the project's shared config still lists base_images.%s, a base removed in 0.7.0; ignored (the next fugaro init or fugaro image refresh republishes the shared config)", k))
+		c.AddWarning(fmt.Sprintf("the project's shared config still lists base_images.%q, a base removed in 0.7.0; ignored (the next fugaro init or fugaro image refresh republishes the shared config)", k))
 	}
 	// Again on the decoded values, which are what the commands use.
 	switch {
@@ -255,11 +255,16 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 	return c, nil
 }
 
-// dropLegacyBaseImages removes the base_images entries of kinds removed in
-// 0.7.0 from a published shared config, whose writer may be an older
-// fugaro: one stale publish must not lock every teammate out (design
-// base-image.md section 10). It returns the data unchanged when nothing
-// was dropped.
+// dropLegacyBaseImages removes a base_images entry of exactly a kind
+// removed in 0.7.0 (config.LegacyBaseKinds; never any other unrecognized
+// key, which strict localcfg.Parse must still refuse) from a published
+// shared config, and only when its value is a scalar (never a mapping,
+// which could smuggle a key or anchor past the key-by-key check here and
+// decode differently once localcfg.Parse's own alias/merge-key rules run
+// on it). Its writer may be an older fugaro: one stale publish of a known
+// legacy key must not lock every teammate out (design base-image.md
+// section 10), but anything else is left in place for Parse to refuse. It
+// returns the data unchanged when nothing was dropped.
 func dropLegacyBaseImages(data []byte) ([]byte, []string, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
@@ -277,11 +282,12 @@ func dropLegacyBaseImages(data []byte) ([]byte, []string, error) {
 		m := top.Content[i+1]
 		var kept []*yaml.Node
 		for j := 0; j+1 < len(m.Content); j += 2 {
-			if slices.Contains(config.Bases, m.Content[j].Value) {
-				kept = append(kept, m.Content[j], m.Content[j+1])
-			} else {
-				dropped = append(dropped, m.Content[j].Value)
+			k, v := m.Content[j], m.Content[j+1]
+			if v.Kind == yaml.ScalarNode && slices.Contains(config.LegacyBaseKinds, k.Value) {
+				dropped = append(dropped, k.Value)
+				continue
 			}
+			kept = append(kept, k, v)
 		}
 		m.Content = kept
 	}
