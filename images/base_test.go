@@ -414,10 +414,15 @@ func TestGraphifyPinnedAndIsolated(t *testing.T) {
 
 // TestGraphifyLockIsHashPinnedAndMatchesTheArg: the committed lockfile
 // (uv pip compile --generate-hashes) pins the exact version the Dockerfile's
-// ARG names, and every package in it carries at least one sha256 hash.
-// Mutations this catches: bumping GRAPHIFY_VERSION without regenerating the
-// lockfile (version mismatch); a lockfile line with no --hash (hash
-// coverage).
+// ARG names, and every package in it carries at least one sha256 hash of
+// its own (not just an aggregate total: an earlier version of this test
+// summed every --hash across the whole file and compared it with the total
+// number of requirement lines, so stripping one small package's hashes
+// entirely -- networkx has exactly two -- still left the file-wide hash
+// count comfortably above the file-wide requirement count, thanks to
+// packages like numpy that carry dozens of per-platform wheel hashes each.
+// Mutation: delete networkx's two --hash lines from requirements.lock.txt
+// -> this test must fail naming networkx specifically, restored after.
 func TestGraphifyLockIsHashPinnedAndMatchesTheArg(t *testing.T) {
 	version, _ := graphifyArgs(t, baseDockerfile(t))
 	lock, err := os.ReadFile("base/graphify/requirements.lock.txt")
@@ -432,14 +437,45 @@ func TestGraphifyLockIsHashPinnedAndMatchesTheArg(t *testing.T) {
 	if m[1] != version {
 		t.Errorf("the lockfile pins graphifyy==%s, the Dockerfile's ARG GRAPHIFY_VERSION says %s", m[1], version)
 	}
-	reqs := regexp.MustCompile(`(?m)^[A-Za-z0-9_.-]+==\S+ \\$`).FindAllString(s, -1)
-	if len(reqs) == 0 {
+
+	reqLineRE := regexp.MustCompile(`^([A-Za-z0-9_.-]+)==\S+ \\$`)
+	hashLineRE := regexp.MustCompile(`^    --hash=sha256:([0-9a-f]+)\s*\\?$`)
+	hashCount := map[string]int{}
+	var order []string
+	current := ""
+	for _, line := range strings.Split(s, "\n") {
+		if rm := reqLineRE.FindStringSubmatch(line); rm != nil {
+			current = rm[1]
+			if _, dup := hashCount[current]; dup {
+				t.Fatalf("%s appears twice in the lockfile", current)
+			}
+			hashCount[current] = 0
+			order = append(order, current)
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, "--hash=sha256:") {
+			if current == "" {
+				t.Fatalf("a --hash line with no preceding package: %q", line)
+			}
+			hm := hashLineRE.FindStringSubmatch(line)
+			if hm == nil || len(hm[1]) != 64 {
+				t.Fatalf("%s has a malformed hash line (want 64 hex digits): %q", current, line)
+			}
+			hashCount[current]++
+			continue
+		}
+		current = "" // a blank line, a "# via ..." comment, or anything else ends this package's block
+	}
+	if len(order) == 0 {
 		t.Fatal("the lockfile has no pinned requirement lines")
 	}
-	hashes := regexp.MustCompile(`--hash=sha256:[0-9a-f]{64}`).FindAllString(s, -1)
-	if len(hashes) < len(reqs) {
-		t.Errorf("%d pinned requirements but only %d sha256 hashes: every requirement needs at least one", len(reqs), len(hashes))
+	for _, name := range order {
+		if hashCount[name] == 0 {
+			t.Errorf("%s has no --hash=sha256: entries of its own: a PyPI change to just that package would go unverified", name)
+		}
 	}
+
 	in, err := os.ReadFile("base/graphify/requirements.in")
 	if err != nil {
 		t.Fatal(err)
