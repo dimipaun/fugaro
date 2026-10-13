@@ -538,6 +538,25 @@ func TestZeroInputHeavyCacheSettles(t *testing.T) {
 	}
 }
 
+// Code review (low): hasInput()'s provider branch required a.in.set even
+// though a cache read or write alone is documented as enough. A usage
+// object that never includes an input_tokens key at all (as opposed to
+// sending input_tokens:0 explicitly, every other test's shape) must still
+// settle from its cache read, not fall back to the reservation.
+func TestCacheReadOnlyNoInputKeySettles(t *testing.T) {
+	u := pricing.Usage{CacheRead: 900, Output: 50}
+	call, rep, _ := settleStream(t,
+		`{"cache_read_input_tokens":900,"output_tokens":1}`,
+		`{"cache_read_input_tokens":900,"output_tokens":50}`)
+	want := cost(t, dsModel, u)
+	if got := pricing.Micros(num(call["charged_micros"])); got != want || call["settled"] != settledUsage {
+		t.Errorf("charged %d, want %d, settled %v", got, want, call["settled"])
+	}
+	if rep.UsageUnparsed != 0 {
+		t.Errorf("usage_unparsed %d, want 0", rep.UsageUnparsed)
+	}
+}
+
 // An all-zero usage (input, cache and output, every field) on a 2xx is
 // still unparsed: the fail-safe for a provider whose usage reporting
 // never says anything, whatever text the response held.
