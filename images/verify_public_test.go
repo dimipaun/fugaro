@@ -110,14 +110,13 @@ func TestVerifyPublicRequiresArm64ForTheBase(t *testing.T) {
 }
 
 // TestImagesWorkflowPublishesAndVerifiesEveryImage: the history image is
-// published beside the bases, and a job with no packages permission and no
-// login fails the release when any published image is not anonymously
-// pullable.
+// published, and a job with no packages permission and no login fails the
+// release when any published image is not anonymously pullable. The base
+// (fugaro-base) is published and verified by its own matrix-free
+// publish-base/verify-public --arm64 path (TestImagesWorkflowPublishesAMultiArchBase),
+// so publish's own matrix, after the 0.7.0 cut, holds only history.
 func TestImagesWorkflowPublishesAndVerifiesEveryImage(t *testing.T) {
-	data, err := os.ReadFile("../.github/workflows/images.yml")
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := readImagesWorkflow(t)
 	var wf struct {
 		Jobs map[string]struct {
 			Needs       any               `yaml:"needs"`
@@ -140,18 +139,8 @@ func TestImagesWorkflowPublishesAndVerifiesEveryImage(t *testing.T) {
 	if !ok {
 		t.Fatal("no publish job")
 	}
-	has := func(l []string, s string) bool {
-		for _, x := range l {
-			if x == s {
-				return true
-			}
-		}
-		return false
-	}
-	for _, img := range []string{"web-node", "go", "java-services", "history"} {
-		if !has(pub.Strategy.Matrix.Base, img) {
-			t.Errorf("publish matrix lacks %s: %v", img, pub.Strategy.Matrix.Base)
-		}
+	if got := pub.Strategy.Matrix.Base; len(got) != 1 || got[0] != "history" {
+		t.Errorf("publish matrix = %v, want only history", got)
 	}
 	if !strings.Contains(fmtNeeds(pub.Needs), "history") {
 		t.Errorf("publish does not wait for the history build: %v", pub.Needs)
@@ -182,9 +171,12 @@ func TestImagesWorkflowPublishesAndVerifiesEveryImage(t *testing.T) {
 	if strings.Contains(script, "docker login") {
 		t.Error("verify-public logs in; it must check as an anonymous user")
 	}
-	for _, img := range []string{"web-node", "go", "java-services", "history"} {
-		if !strings.Contains(script, img) {
-			t.Errorf("verify-public does not check %s", img)
+	if !strings.Contains(script, "history") {
+		t.Error("verify-public does not check history")
+	}
+	for _, img := range []string{"web-node", "go", "java-services"} { // removed in 0.7.0
+		if strings.Contains(script, img) {
+			t.Errorf("verify-public still checks the removed base %s", img)
 		}
 	}
 }

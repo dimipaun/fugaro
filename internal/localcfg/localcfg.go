@@ -590,9 +590,14 @@ func oldBaseImageKey(ref string) string {
 		ref, strings.Join(config.Bases, ", "))
 }
 
-// legacyBaseImageKey refuses a base_images key of a base removed in 0.7.0
-// (or any other unknown kind), with the one fix.
+// legacyBaseImageKey refuses a base_images key: one of config.LegacyBaseKinds
+// (go, web-node, java-services) names the 0.7.0 removal and its fix; any
+// other unknown kind just says it is unknown, since it was never a real base
+// and never a thing the 0.7.0 cut removed.
 func legacyBaseImageKey(kind string) string {
+	if !slices.Contains(config.LegacyBaseKinds, kind) {
+		return fmt.Sprintf("base_images.%s: unknown base kind %q (%s)", kind, kind, strings.Join(config.Bases, ", "))
+	}
 	return fmt.Sprintf("base_images.%s: the go, web-node and java-services bases were removed in 0.7.0; delete the line and run fugaro image refresh in each repository's checkout, which copies fugaro-base and records base_images.base (%s)", kind, config.MigrationDoc)
 }
 

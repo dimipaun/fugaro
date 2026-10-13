@@ -165,6 +165,27 @@ func TestImagesWorkflowPublishesAMultiArchBase(t *testing.T) {
 	}
 }
 
+// TestImagesWorkflowBuildsTheBaseAndHistory: after the 0.7.0 cut the images
+// workflow has one base-build leg (fugaro-base, matrix amd64/arm64) and the
+// history leg, no per-legacy-kind "base" job.
+func TestImagesWorkflowBuildsTheBaseAndHistory(t *testing.T) {
+	data := readImagesWorkflow(t)
+	var wf struct {
+		Jobs map[string]any `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &wf); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"history", "fugaro-base", "publish", "publish-base"} {
+		if _, ok := wf.Jobs[want]; !ok {
+			t.Errorf("no %s job", want)
+		}
+	}
+	if _, ok := wf.Jobs["base"]; ok {
+		t.Error("the legacy per-kind \"base\" build job still exists")
+	}
+}
+
 // TestOnlyPublishJobsHoldPackagesWrite: the build jobs (fugaro-base included)
 // must never hold packages: write, only the jobs that push to ghcr.io.
 func TestOnlyPublishJobsHoldPackagesWrite(t *testing.T) {

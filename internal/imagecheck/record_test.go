@@ -176,10 +176,10 @@ workflows:
 			}
 		})
 	}
-	// base: only web-node is known today, so a different base is compared
-	// on the canonical form directly.
-	a, _ := json.Marshal(imageConfig{Base: "web-node"})
-	b, _ := json.Marshal(imageConfig{Base: "java-services"})
+	// base: only config.BaseKind is known today, so a different base is
+	// compared on the canonical form directly.
+	a, _ := json.Marshal(imageConfig{Base: config.BaseKind})
+	b, _ := json.Marshal(imageConfig{Base: ""})
 	if hashOf(a) == hashOf(b) {
 		t.Error("base does not change the hash")
 	}
@@ -262,9 +262,9 @@ func TestImageConfigHashCoversMiseFiles(t *testing.T) {
 }
 
 // TestImageConfigHashLegacyCanonicalForm pins the canonical JSON shape of an
-// already-archived legacy record (base: go, web-node or java-services,
-// before the 0.7.0 cut): no new keys such as tools or mise_files, so an old
-// record read back for comparison still decodes the same way. It no longer
+// already-archived legacy record of a kind the 0.7.0 cut removed (go, web-node, java-services):
+// no new keys such as tools or mise_files, so an old record read back for
+// comparison still decodes the same way. It no longer
 // pins a golden hash for a *recomputed* legacy workflow: base: is refused by
 // Validate in 0.7.0 (TestLegacyBaseRefusedWithTheMigrationDoc), and
 // Workflow.BaseKind() always returns BaseKind now, so there is no longer a
@@ -272,7 +272,7 @@ func TestImageConfigHashCoversMiseFiles(t *testing.T) {
 // BaseKind. A repository's one rebuild on migrating off a legacy base (Task
 // 22's fugaro image refresh) is the intended effect of the cut, not a bug.
 func TestImageConfigHashLegacyCanonicalForm(t *testing.T) {
-	c := imageConfig{Base: "web-node"}
+	c := imageConfig{Base: "web-node"} // a 0.7.0-removed kind, archived before the cut
 	data, _ := json.Marshal(c)
 	if strings.Contains(string(data), "tools") || strings.Contains(string(data), "mise_files") {
 		t.Errorf("legacy canonical form gained keys: %s", data)
@@ -280,8 +280,8 @@ func TestImageConfigHashLegacyCanonicalForm(t *testing.T) {
 }
 
 // TestKeyFilesDefaultsBaseKind: the base kind's default cache is the Node
-// package manager's, same as web-node (KeyFiles gives the base kind the
-// Node default cache), keyed by whatever lockfile is present.
+// package manager's (KeyFiles gives the base kind the Node default cache),
+// keyed by whatever lockfile is present.
 func TestKeyFilesDefaultsBaseKind(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{
