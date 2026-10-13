@@ -48,7 +48,8 @@ func newSignerDoctorRig(t *testing.T) *signerRig {
 func (r *signerRig) withBudget(t *testing.T, fp, signer string) {
 	t.Helper()
 	cfg := strings.Replace(r.cfg, "endpoints: { ", "endpoints: { iam: "+r.iam.URL+"/, ", 1) +
-		"budget: { mode: observe, per_run_usd: 5, firebase_project: " + fp + ", token_signer: " + signer + " }\n"
+		"budget: { mode: observe, per_run_usd: 5, firebase_project: " + fp + ", token_signer: " + signer + " }\n" +
+		"base_images: { base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3 }\n"
 	if err := os.WriteFile(r.cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}

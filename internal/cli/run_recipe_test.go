@@ -19,12 +19,12 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-const release050 = "ghcr.io/dimipaun/fugaro-web-node:0.5.0"
+const release050 = "ghcr.io/dimipaun/fugaro-base:0.5.0"
 
 // release070 is a job image new enough for a catalog recipe that uses a
 // 0.7.0 construct: every catalog recipe but default carries use_when, so
 // launching one needs this, not release050 (recipesV07Since).
-const release070 = "ghcr.io/dimipaun/fugaro-web-node:0.7.0"
+const release070 = "ghcr.io/dimipaun/fugaro-base:0.7.0"
 
 func TestRunRecipeFlagEmbedsCatalog(t *testing.T) {
 	f := newCloudFixture(t)
@@ -73,7 +73,7 @@ func TestRunExplicitDefaultWithoutCheckoutEmbeds(t *testing.T) {
 
 func TestRunRecipeRefusedOnOldImage(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-web-node:0.4.1")
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.4.1")
 	wantRefused(t, f, "release 0.4.1", "run", "--repo", "acme/app", "--recipe", "solo", "x")
 }
 
@@ -149,7 +149,7 @@ func recipeCheckout(t *testing.T, f *cloudFixture, agentLines string, extra map[
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
 	files := map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nagent:\n  auth: api-key\n" + agentLines +
-		"workflows:\n  svc: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"}
+		"workflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n"}
 	for k, v := range extra {
 		files[k] = v
 	}
@@ -354,7 +354,7 @@ func TestRunExplicitDefaultOverridesAgentRecipe(t *testing.T) {
 func TestRunExplicitDefaultOverRefusedOnOldImage(t *testing.T) {
 	f := newCloudFixture(t)
 	recipeCheckout(t, f, "  recipe: solo\n", nil)
-	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-web-node:0.4.1")
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:0.4.1")
 	_, _, err := execute(t, "run", "--run-id", "20261007-100000-abcd", "--recipe", "default", "A task")
 	if err == nil || !strings.Contains(err.Error(), "release 0.4.1") || strings.Contains(err.Error(), "--recipe default") {
 		t.Fatalf("err = %v", err)
@@ -437,7 +437,7 @@ func TestRunNoteOnlyForExplicitNonDefault(t *testing.T) {
 func TestRunRepoRecipeRefusedOnOldImage(t *testing.T) {
 	f := newCloudFixture(t)
 	recipeCheckout(t, f, "", map[string]string{".fugaro/recipes/mine.yaml": "version: 1\nname: mine\nsteps:\n  - review: { max_rounds: 1 }\n"})
-	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-web-node:0.4.1")
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:0.4.1")
 	_, _, err := execute(t, "run", "--run-id", "20261007-100000-abcd", "--recipe", "mine", "A task")
 	if err == nil || !strings.Contains(err.Error(), "release 0.4.1") {
 		t.Fatalf("err = %v", err)
@@ -458,7 +458,7 @@ func seedRecipeRoot(t *testing.T, f *cloudFixture, rcp *task.Recipe, record stri
 func TestRunPRInheritedRecipeRefusedOnOldImage(t *testing.T) {
 	f := newCloudFixture(t)
 	team := "version: 1\nname: team\nsteps:\n  - review: {}\n"
-	seedRecipeRoot(t, f, &task.Recipe{Name: "team", Source: "project", SHA256: recipe.Sum([]byte(team)), YAML: team}, "ghcr.io/dimipaun/fugaro-web-node:0.4.1")
+	seedRecipeRoot(t, f, &task.Recipe{Name: "team", Source: "project", SHA256: recipe.Sum([]byte(team)), YAML: team}, "ghcr.io/dimipaun/fugaro-base:0.4.1")
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "x")
 	if err == nil || !strings.Contains(err.Error(), "recipe team needs a job image") {
 		t.Fatalf("err = %v", err)
@@ -562,7 +562,7 @@ func TestRunPRChosenRecipeNothingToKeep(t *testing.T) {
 func TestRunPRChosenRecipeRefusedOnOldImage(t *testing.T) {
 	f := newCloudFixture(t)
 	seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "standard", Source: "catalog", SHA256: strings.Repeat("a", 64)})
-	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-web-node:0.4.1")
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.4.1")
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "x")
 	if err == nil || !strings.Contains(err.Error(), "recipe standard needs a job image") {
 		t.Fatalf("err = %v", err)

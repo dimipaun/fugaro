@@ -1,8 +1,7 @@
 version: 1
 project: aurora
-git: { provider: github }
-workflows:
-  server:
-    base: java-services
+gcp_project: proj-1234
+profiles:
+  p:
     image: { jdk: "21" }
     commands: { build: ./gradlew assemble, test: ./gradlew test }

@@ -76,7 +76,6 @@ agent:
   review: .fugaro/review.md
 workflows:
   app:
-    base: web-node
     commands:
       build: sh build.sh
       test: sh test.sh

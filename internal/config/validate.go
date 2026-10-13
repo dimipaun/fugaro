@@ -166,8 +166,8 @@ func Validate(c *Config) []Problem {
 		if w.Profile != "" && !ProjectNameRE.MatchString(w.Profile) {
 			add(p+".profile", "must be a profile name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
 		}
-		if w.Base != "" && !slices.Contains(Bases, w.Base) {
-			add(p+".base", "must be one of %s, or left out for the Fugaro base", strings.Join(Bases[1:], ", "))
+		if w.Base != "" {
+			add(p+".base", legacyBaseMessage, MigrationDoc)
 		}
 		ps = append(ps, validateImage(p, w)...)
 		ps = append(ps, validateCheckout(p, w)...)
@@ -342,7 +342,7 @@ func checkDockerfile(p, root string, w Workflow) []Problem {
 		return []Problem{{Path: p + ".dockerfile", Message: w.Dockerfile + " cannot be read: it must be a regular file of at most 1 MiB, not a link"}}
 	}
 	var ps []Problem
-	for _, msg := range LintDockerfile(data, w.BaseKind()) {
+	for _, msg := range LintDockerfile(data) {
 		ps = append(ps, Problem{Path: p + ".dockerfile", Message: w.Dockerfile + " " + msg})
 	}
 	return ps
@@ -370,11 +370,6 @@ func Check(c *Config, root string) []Problem {
 		switch {
 		case w.Dockerfile != "":
 			ps = append(ps, checkDockerfile(p, root, w)...)
-		case w.BaseKind() == "web-node":
-			// The generated image's warm-up needs a package manager it can name.
-			if _, err := DetectNodePM(root); err != nil {
-				ps = append(ps, Problem{Path: p, Message: err.Error()})
-			}
 		case w.BaseKind() == BaseKind:
 			ps = append(ps, checkBaseWorkflow(p, root, w)...)
 		}
@@ -420,7 +415,7 @@ func CheckWarnings(c *Config, root string) []Problem {
 	var ps []Problem
 	for _, name := range sortedKeys(c.Workflows) {
 		w := c.Workflows[name]
-		if w.BaseKind() != BaseKind || w.Dockerfile != "" || len(w.Image.Tools) > 0 {
+		if w.Dockerfile != "" || len(w.Image.Tools) > 0 {
 			continue
 		}
 		if files, err := MiseConfigFiles(root); err == nil && len(files) == 0 {

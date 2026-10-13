@@ -163,6 +163,26 @@ func TestDoctorJSONShape(t *testing.T) {
 	}
 }
 
+// With no base_images.base, doctor names the one fix, as a warning: an
+// installation mid-migration still works for everything else.
+func TestDoctorSaysWhenTheBaseIsMissing(t *testing.T) {
+	newDoctorRig(t)
+	out, _, _ := execute(t, "doctor", "--json", "--dir", t.TempDir())
+	var o doctorOutput
+	if err := json.Unmarshal([]byte(out), &o); err != nil {
+		t.Fatalf("json: %v\n%s", err, out)
+	}
+	for _, c := range o.Checks {
+		if c.ID == "base-image" {
+			if c.OK || c.Severity != "warning" || !strings.Contains(c.Fix, "fugaro image refresh") {
+				t.Errorf("base-image = %+v", c)
+			}
+			return
+		}
+	}
+	t.Errorf("no base-image check in %+v", o.Checks)
+}
+
 // TestDoctorNamesTheFixLine: every failing check, whatever it is, names a
 // fix a person can run.
 func TestDoctorNamesTheFixLine(t *testing.T) {
@@ -841,7 +861,7 @@ project: aurora
 git: { provider: github }
 agent: { auth: oauth, oauth_token: acme-overflow }
 workflows:
-  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }
+  app: { commands: { build: sh build.sh, test: sh test.sh } }
 `
 
 // TestDoctorFlagsOAuthTokenNotAllowed is the plan's own named test (Task 8):

@@ -145,7 +145,7 @@ defaults:
 profiles:
   java-service:
     description: Gradle service with Postgres
-    base: java-services
+    image: { tools: { java: "temurin-17" } }
     commands:
       build: ./gradlew assemble
       test: ./gradlew test
@@ -155,8 +155,7 @@ profiles:
     resources: { cpu: 4, memory: 16Gi }
     timeouts: { total: 2h }
   node-web:
-    base: web-node
-    image: { node: "22" }
+    image: { tools: { node: "22" } }
     commands: { build: npm run build, test: npm test }
 default_profile: java-service
 ```

@@ -32,7 +32,7 @@ func buildSpec(t *testing.T) BuildSpec {
 	}
 	return BuildSpec{
 		Slug: slug, GitProvider: "bitbucket", RepoURL: "https://bitbucket.org/acme/app.git", BaseBranch: "main", Workflow: "web",
-		Base: "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc", Image: ImageName(repoRegistry(slug), slug, "web"),
+		Base: "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc", Image: ImageName(repoRegistry(slug), slug, "web"),
 		GitSecretID: SecretID(slug, "bitbucket-token"), GitUser: "x-token-auth",
 		ServiceAccount: BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com", MachineType: "E2_HIGHCPU_8",
 		WorkflowSecrets: []config.Secret{{Name: "npm-token", Env: "NPM_TOKEN"}},
@@ -159,7 +159,7 @@ func githubSpec(t *testing.T) BuildSpec {
 	}
 	return BuildSpec{
 		Slug: slug, GitProvider: "github", RepoURL: "https://github.com/acme/webapp.git", BaseBranch: "main", Workflow: "web",
-		Base: "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc", Image: ImageName(repoRegistry(slug), slug, "web"),
+		Base: "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc", Image: ImageName(repoRegistry(slug), slug, "web"),
 		GitSecretID: SecretID(slug, "github-app-key"), GitHubAppID: "12345",
 		ServiceAccount: BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com", MachineType: "E2_HIGHCPU_8", Bucket: "gs://fugaro-runs-proj-1234",
 	}

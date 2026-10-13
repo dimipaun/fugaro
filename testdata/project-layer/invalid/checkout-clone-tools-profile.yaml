@@ -3,7 +3,6 @@ project: aurora
 gcp_project: proj-1234
 profiles:
   p:
-    base: base
     checkout: clone
     image: { tools: { node: "24" } }
     commands: { build: npm run build, test: npm test }

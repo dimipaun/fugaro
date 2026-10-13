@@ -12,7 +12,7 @@ import (
 )
 
 const validateYAML = "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: api-key\n%s" +
-	"workflows:\n  app: { base: go, commands: { build: go build ./..., test: go test ./... } }\n"
+	"workflows:\n  app: { commands: { build: go build ./..., test: go test ./... } }\n"
 
 func validateDir(t *testing.T, agentLines string, files map[string]string) (validateOutput, error) {
 	t.Helper()
@@ -60,7 +60,7 @@ func TestValidateAutofixNeedsFixCommand(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	dir := t.TempDir()
 	const yaml = "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: api-key\n" +
-		"workflows:\n  app: { base: go, commands: { build: go build ./..., test: go test ./..., lint: golangci-lint run } }\n"
+		"workflows:\n  app: { commands: { build: go build ./..., test: go test ./..., lint: golangci-lint run } }\n"
 	testutil.WriteFiles(t, dir, map[string]string{
 		"fugaro.yaml":                  yaml,
 		".fugaro/recipes/default.yaml": "version: 1\nname: default\nsteps:\n  - check: { command: lint, autofix: true }\n  - review: {}\n",

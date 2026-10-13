@@ -25,7 +25,6 @@ defaults:
 profiles:
   java-service:
     description: Gradle service
-    base: java-services
     image:
       apt: [graphviz]
     commands:
@@ -34,8 +33,7 @@ profiles:
     resources: { cpu: 4, memory: 16Gi }
     timeouts: { total: 2h }
   node-web:
-    base: web-node
-    image: { node: "20" }
+    image: { tools: { node: "20" } }
     commands: { build: npm run build, test: npm test }
 default_profile: java-service
 `
@@ -53,7 +51,7 @@ func mustLayer(t *testing.T, text string) *ProjectLayer {
 
 func TestParseProjectLayer(t *testing.T) {
 	l := mustLayer(t, testLayer)
-	if l.SHA256 != LayerSum([]byte(testLayer)) || l.DefaultProfile != "java-service" || l.Profiles["node-web"].Image.Node != "20" {
+	if l.SHA256 != LayerSum([]byte(testLayer)) || l.DefaultProfile != "java-service" || l.Profiles["node-web"].Image.Tools["node"] != "20" {
 		t.Fatalf("layer = %+v", l)
 	}
 	if !l.Profiles["java-service"].HasExecutable() {
@@ -67,7 +65,7 @@ func TestParseProjectLayer(t *testing.T) {
 // field.
 func TestProfileCheckout(t *testing.T) {
 	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
-	l := mustLayer(t, head+"profiles:\n  p:\n    base: go\n    checkout: clone\n    commands: { build: make, test: make test }\n")
+	l := mustLayer(t, head+"profiles:\n  p:\n    checkout: clone\n    commands: { build: make, test: make test }\n")
 	if l.Profiles["p"].Checkout != CheckoutClone {
 		t.Fatalf("Profiles[p].Checkout = %q, want %q", l.Profiles["p"].Checkout, CheckoutClone)
 	}
@@ -77,9 +75,9 @@ func TestProfileCheckout(t *testing.T) {
 // testdata/project-layer/invalid fixture from disk and pins that it fails
 // for exactly the one reason it exists to exercise: a schema corpus gap
 // (project-layer.schema.json's checkout enum, its clone-refuses-setup,
-// clone-refuses-skip_build_scripts and clone-refuses-tools rules, and its
-// base-restricts-tools rule, each previously uncovered except apt) is only
-// closed if the fixture is this precise.
+// clone-refuses-skip_build_scripts and clone-refuses-tools rules, each
+// previously uncovered except apt) is only closed if the fixture is this
+// precise.
 func TestCheckoutProfileCorpusOneReason(t *testing.T) {
 	a := LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
 	const cloneMsg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
@@ -89,7 +87,6 @@ func TestCheckoutProfileCorpusOneReason(t *testing.T) {
 		"checkout-clone-setup-profile":      {"profiles.p.image.setup", cloneMsg},
 		"checkout-clone-skip-build-profile": {"profiles.p.image.skip_build_scripts", cloneMsg},
 		"checkout-clone-tools-profile":      {"profiles.p.image.tools", cloneMsg},
-		"image-tools-on-web-node-profile":   {"profiles.p.image.tools", "applies to the Fugaro base only"},
 	} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "project-layer", "invalid", file+".yaml"))
 		if err != nil {
@@ -141,10 +138,10 @@ func TestParseProjectLayerRefuses(t *testing.T) {
 		{"a merge key", head + "profiles:\n  p:\n    <<: {base: go}\n", "merge key"},
 		{"a repeated key", head + "profiles:\n  p: {base: go}\n  p: {base: go}\n", `repeats the key "p"`},
 		{"two documents", head + "---\nversion: 1\n", "more than one YAML document"},
-		{"a bad base", head + "profiles:\n  p: { base: java-17 }\n", "profiles.p.base: must be one of go, java-services, web-node, or left out for the Fugaro base"},
-		{"an unknown default profile", head + "profiles:\n  p: { base: go }\ndefault_profile: q\n", `default_profile: names "q"`},
-		{"a bad profile name", head + "profiles:\n  P_1: { base: go }\n", "a profile name must be"},
-		{"node off web-node", head + "profiles:\n  p: { base: go, image: { node: '20' } }\n", "only applies to base web-node"},
+		{"a bad base", head + "profiles:\n  p: { base: java-17 }\n", "profiles.p.base: was removed in 0.7.0"},
+		{"an unknown default profile", head + "profiles:\n  p: {}\ndefault_profile: q\n", `default_profile: names "q"`},
+		{"a bad profile name", head + "profiles:\n  P_1: {}\n", "a profile name must be"},
+		{"legacy image.node in a profile", head + "profiles:\n  p: { image: { node: '20' } }\n", "profiles.p.image.node: was removed in 0.7.0"},
 		{"a bad checkout", head + "profiles:\n  p: { checkout: sometimes }\n", "profiles.p.checkout: must be baked or clone"},
 		{"clone refuses apt in a profile", head + "profiles:\n  p: { checkout: clone, image: { apt: [jq] } }\n", "profiles.p.image.apt: checkout: clone runs the base image with no build; use checkout: baked to build an image"},
 		{"oversized", head + "# " + strings.Repeat("x", LayerMaxBytes) + "\n", "over the 64 KiB limit"},
@@ -156,6 +153,37 @@ func TestParseProjectLayerRefuses(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, ps := ParseProjectLayer([]byte(tc.text), testAnchor)
+			var msgs []string
+			for _, p := range ps {
+				msgs = append(msgs, p.String())
+			}
+			if got := strings.Join(msgs, "; "); !strings.Contains(got, tc.want) {
+				t.Fatalf("problems %q, want one containing %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestProjectLayerRefusesLegacyBaseEvenIfNoWorkflowUsesTheProfile pins that
+// a profile's own base: or image.node is refused by ParseProjectLayer
+// itself (the check a publish, fugaro config publish, runs before a
+// profile ever reaches the shared bucket), not only later, when some
+// repository's Resolve happens to select the profile through a workflow's
+// profile: key. TestParseProjectLayerRefuses's "a bad base" case only
+// proves an arbitrary bad value (java-17) is refused; this proves a value
+// that was a real, accepted base kind before the 0.7.0 cut (go) is refused
+// the same way, with no workflow anywhere naming the profile.
+func TestProjectLayerRefusesLegacyBaseEvenIfNoWorkflowUsesTheProfile(t *testing.T) {
+	a := LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
+	for _, tc := range []struct{ name, text, want string }{
+		{"base: go", "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  unused:\n    base: go\n    commands: { build: make, test: make test }\n", "profiles.unused.base: was removed in 0.7.0"},
+		{"image.node", "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  unused:\n    image: { node: \"24\" }\n    commands: { build: make, test: make test }\n", "profiles.unused.image.node: was removed in 0.7.0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l, ps := ParseProjectLayer([]byte(tc.text), a)
+			if l != nil {
+				t.Fatal("expected no layer when a profile is invalid")
+			}
 			var msgs []string
 			for _, p := range ps {
 				msgs = append(msgs, p.String())
@@ -208,7 +236,7 @@ func TestParseProjectLayerRefusesMore(t *testing.T) {
 		{"ESC in a label", layerHead + "defaults: {git: {pr: {labels: [\"a\\eb\"]}}}\n", "defaults.git.pr.labels[0] (line 4): holds a control or invisible formatting character"},
 		{"bidi in a model", agent("    model: \"a\\u202eb\"\n"), "defaults.agent.model (line 6): holds a control"},
 		{"a tab in a comment", layerHead + "profiles: {}\n# a\tb\n", "line 5: holds a control or invisible formatting character (in a comment or directive)"},
-		{"a tab in a comment after a block scalar", layerHead + "profiles:\n  p:\n    base: go\n    commands:\n      build: |\n        a\n      test: x\n# z\ty\n", "line 11: holds a control or invisible formatting character (in a comment or directive)"},
+		{"a tab in a comment after a block scalar", layerHead + "profiles:\n  p:\n    commands:\n      build: |\n        a\n      test: x\n# z\ty\n", "line 10: holds a control or invisible formatting character (in a comment or directive)"},
 		{"a tab in a %TAG directive", "%TAG !e!\ttag:x,2002:\n---\n" + layerHead + "profiles: {}\n", "line 1: holds a control or invisible formatting character (in a comment or directive)"},
 		// validateLayer
 		{"a version", "version: 2\nproject: acme\ngcp_project: acme-fugaro\n", "version: must be 1"},
@@ -259,7 +287,7 @@ func TestProjectLayerDescriptionCountsCharacters(t *testing.T) {
 // TestParseProjectLayerRefusesMore's "a tab in a comment"). A '#' inside the
 // body starts no comment either, the way it would outside one.
 func TestProjectLayerAllowsTabInABlockScalarValue(t *testing.T) {
-	l := mustLayer(t, layerHead+"profiles:\n  p:\n    base: go\n    commands:\n      build: |\n        a\tb\n        # c\td\n      test: x\n")
+	l := mustLayer(t, layerHead+"profiles:\n  p:\n    commands:\n      build: |\n        a\tb\n        # c\td\n      test: x\n")
 	if want := "a\tb\n# c\td\n"; l.Profiles["p"].Commands.Build != want {
 		t.Fatalf("commands.build = %q, want %q", l.Profiles["p"].Commands.Build, want)
 	}
@@ -274,7 +302,7 @@ func TestProjectLayerAllowsTabInABlockScalarValue(t *testing.T) {
 func TestProjectLayerAllowsTabInAFoldedBlockScalar(t *testing.T) {
 	for _, indicator := range []string{">", ">-"} {
 		t.Run(indicator, func(t *testing.T) {
-			l := mustLayer(t, layerHead+"profiles:\n  p:\n    base: go\n    commands:\n      build: "+indicator+"\n        a\tb\n        # c\td\n      test: x\n")
+			l := mustLayer(t, layerHead+"profiles:\n  p:\n    commands:\n      build: "+indicator+"\n        a\tb\n        # c\td\n      test: x\n")
 			if !strings.Contains(l.Profiles["p"].Commands.Build, "a\tb") || !strings.Contains(l.Profiles["p"].Commands.Build, "# c\td") {
 				t.Fatalf("commands.build = %q", l.Profiles["p"].Commands.Build)
 			}
@@ -291,7 +319,7 @@ func TestProjectLayerAllowsTabInAFoldedBlockScalar(t *testing.T) {
 func TestProjectLayerAllowsTabInABlockScalarRegardlessOfIndicatorOrder(t *testing.T) {
 	for _, indicator := range []string{"|-2", "|2-"} {
 		t.Run(indicator, func(t *testing.T) {
-			l := mustLayer(t, layerHead+"profiles:\n  p:\n    base: go\n    commands:\n      build: "+indicator+"\n        a\tb\n        # c\td\n      test: x\n")
+			l := mustLayer(t, layerHead+"profiles:\n  p:\n    commands:\n      build: "+indicator+"\n        a\tb\n        # c\td\n      test: x\n")
 			if !strings.Contains(l.Profiles["p"].Commands.Build, "a\tb") || !strings.Contains(l.Profiles["p"].Commands.Build, "# c\td") {
 				t.Fatalf("commands.build = %q", l.Profiles["p"].Commands.Build)
 			}
@@ -304,7 +332,7 @@ func TestProjectLayerAllowsTabInABlockScalarRegardlessOfIndicatorOrder(t *testin
 // a comment there either, and the tab beside it gets the value rule, not
 // the stricter key/comment rule.
 func TestProjectLayerAllowsTabInAQuotedHash(t *testing.T) {
-	l := mustLayer(t, layerHead+"profiles:\n  p:\n    base: go\n    commands: { build: \"a #b\tc\", test: x }\n")
+	l := mustLayer(t, layerHead+"profiles:\n  p:\n    commands: { build: \"a #b\tc\", test: x }\n")
 	if want := "a #b\tc"; l.Profiles["p"].Commands.Build != want {
 		t.Fatalf("commands.build = %q, want %q", l.Profiles["p"].Commands.Build, want)
 	}
@@ -318,7 +346,7 @@ func TestProjectLayerAllowsTabInAQuotedHash(t *testing.T) {
 // quoted, so the hash and the tab past the doubled quote never get the
 // stricter key/comment rule.
 func TestProjectLayerAllowsTabInASingleQuotedDoubledQuote(t *testing.T) {
-	l := mustLayer(t, layerHead+"profiles:\n  p:\n    base: go\n    commands: { build: 'it''s #x\ty', test: x }\n")
+	l := mustLayer(t, layerHead+"profiles:\n  p:\n    commands: { build: 'it''s #x\ty', test: x }\n")
 	if want := "it's #x\ty"; l.Profiles["p"].Commands.Build != want {
 		t.Fatalf("commands.build = %q, want %q", l.Profiles["p"].Commands.Build, want)
 	}
@@ -330,7 +358,7 @@ func TestProjectLayerAllowsTabInASingleQuotedDoubledQuote(t *testing.T) {
 // '#' and a tab past it, still inside the quotes, never get the stricter
 // key/comment rule either.
 func TestProjectLayerAllowsTabAfterAnEscapedDoubleQuote(t *testing.T) {
-	l := mustLayer(t, layerHead+"profiles:\n  p:\n    base: go\n    commands: { build: \"a\\\" #b\tc\", test: x }\n")
+	l := mustLayer(t, layerHead+"profiles:\n  p:\n    commands: { build: \"a\\\" #b\tc\", test: x }\n")
 	if want := "a\" #b\tc"; l.Profiles["p"].Commands.Build != want {
 		t.Fatalf("commands.build = %q, want %q", l.Profiles["p"].Commands.Build, want)
 	}
@@ -342,7 +370,7 @@ func TestProjectLayerAllowsTabAfterAnEscapedDoubleQuote(t *testing.T) {
 // (from the '#' on) still gets the stricter key rule, so a second tab in
 // the comment's own text is refused.
 func TestProjectLayerRefusesTabInACommentStartedAfterATab(t *testing.T) {
-	got := layerProblems(t, layerHead+"profiles:\n  p:\n    base: go\n    commands:\n      build: a\t# c\td\n      test: x\n")
+	got := layerProblems(t, layerHead+"profiles:\n  p:\n    commands:\n      build: a\t# c\td\n      test: x\n")
 	if !strings.Contains(got, "holds a control or invisible formatting character (in a comment or directive)") {
 		t.Fatalf("problems %q, want a refusal for the comment's tab", got)
 	}
@@ -358,7 +386,7 @@ func TestProjectLayerRefusesTabInACommentStartedAfterATab(t *testing.T) {
 // for the same boundary pinned with an explicit indentation digit
 // instead of a sniffed one, and with a tab rather than a credential.
 func TestProjectLayerRefusesACredentialInABetweenIndentComment(t *testing.T) {
-	got := layerProblems(t, layerHead+"profiles:\n  p:\n    base: go\n    commands:\n      build: |\n          a\n        # ghp_abcdefghijklmnopqrstuvwxyz0123\n      test: x\n")
+	got := layerProblems(t, layerHead+"profiles:\n  p:\n    commands:\n      build: |\n          a\n        # ghp_abcdefghijklmnopqrstuvwxyz0123\n      test: x\n")
 	if !strings.Contains(got, "holds a credential-shaped string (in a comment or directive)") {
 		t.Fatalf("problems %q, want a refusal for the credential", got)
 	}
@@ -373,11 +401,11 @@ func TestProjectLayerRefusesACredentialInABetweenIndentComment(t *testing.T) {
 // TestProjectLayerAllowsTabInABlockScalarValue but pinned exactly at the
 // boundary rawTextProblems computes (indentOf(line) < contentIndent).
 func TestProjectLayerBlockScalarBodyIndentBoundary(t *testing.T) {
-	l := mustLayer(t, layerHead+"profiles:\n  p:\n    base: go\n    commands:\n      build: |2\n        a\n        # c\td\n      test: x\n")
+	l := mustLayer(t, layerHead+"profiles:\n  p:\n    commands:\n      build: |2\n        a\n        # c\td\n      test: x\n")
 	if want := "a\n# c\td\n"; l.Profiles["p"].Commands.Build != want {
 		t.Fatalf("at the content indent: commands.build = %q, want %q", l.Profiles["p"].Commands.Build, want)
 	}
-	got := layerProblems(t, layerHead+"profiles:\n  p:\n    base: go\n    commands:\n      build: |2\n        a\n       # c\td\n      test: x\n")
+	got := layerProblems(t, layerHead+"profiles:\n  p:\n    commands:\n      build: |2\n        a\n       # c\td\n      test: x\n")
 	if !strings.Contains(got, "holds a control or invisible formatting character (in a comment or directive)") {
 		t.Fatalf("one column short of the content indent: problems %q, want a refusal", got)
 	}
@@ -388,7 +416,7 @@ func TestProjectLayerBlockScalarBodyIndentBoundary(t *testing.T) {
 // check runs before its indent check, which would otherwise read a blank
 // line's indent of 0 as a dedent out of the body).
 func TestProjectLayerBlockScalarBodyToleratesBlankLines(t *testing.T) {
-	l := mustLayer(t, layerHead+"profiles:\n  p:\n    base: go\n    commands:\n      build: |2\n        a\n\n        # c\td\n      test: x\n")
+	l := mustLayer(t, layerHead+"profiles:\n  p:\n    commands:\n      build: |2\n        a\n\n        # c\td\n      test: x\n")
 	if want := "a\n\n# c\td\n"; l.Profiles["p"].Commands.Build != want {
 		t.Fatalf("commands.build = %q, want %q", l.Profiles["p"].Commands.Build, want)
 	}
@@ -401,7 +429,7 @@ func TestProjectLayerBlockScalarBodyToleratesBlankLines(t *testing.T) {
 // its own merits, not as a leftover body: rawTextProblems must reset its
 // tracking state on the dedent, not just skip ahead past it.
 func TestProjectLayerBlockScalarStateDoesNotLeakPastItsBody(t *testing.T) {
-	got := layerProblems(t, layerHead+"profiles:\n  p:\n    base: go\n    commands:\n      build: |2\n        a\n      test: x\n# note\n        # c\td\n")
+	got := layerProblems(t, layerHead+"profiles:\n  p:\n    commands:\n      build: |2\n        a\n      test: x\n# note\n        # c\td\n")
 	if !strings.Contains(got, "holds a control or invisible formatting character (in a comment or directive)") {
 		t.Fatalf("problems %q, want a refusal for the later comment's tab", got)
 	}
@@ -441,7 +469,7 @@ func TestProfileHasExecutable(t *testing.T) {
 		"commands: { build: make }", "commands: { test: make test }",
 		"commands: { lint: make lint }", "commands: { fix: make fmt }",
 		"commands: { rerun_failed: { command: go test, each: ' -run {id}' } }",
-		"{ base: java-services, image: { apt: [graphviz] } }", "image: { setup: [make tools] }",
+		"image: { apt: [graphviz] }", "image: { setup: [make tools] }",
 		// A mise tool is as powerful as image.setup: every URL/host-form
 		// backend (cargo:, go:, npm:, asdf:/vfox:, ubi:/github:/aqua:)
 		// passes ValidMiseTool's charset, and the build installs it with
@@ -458,7 +486,7 @@ func TestProfileHasExecutable(t *testing.T) {
 			t.Errorf("%s: HasExecutable() = false", body)
 		}
 	}
-	l := mustLayer(t, layerHead+"profiles:\n  p: { base: go, description: x, resources: { cpu: 2 }, commands: { reports: [r.xml] } }\n")
+	l := mustLayer(t, layerHead+"profiles:\n  p: { description: x, resources: { cpu: 2 }, commands: { reports: [r.xml] } }\n")
 	if l.Profiles["p"].HasExecutable() {
 		t.Error("a profile with no shell has HasExecutable() = true")
 	}
@@ -467,7 +495,7 @@ func TestProfileHasExecutable(t *testing.T) {
 	// that true must not count as executable on its own. Only a change of
 	// the value is gated, through executableChanges' direct key comparison,
 	// never through HasExecutable.
-	safe := mustLayer(t, layerHead+"profiles:\n  p: { base: web-node, image: { skip_build_scripts: true } }\n")
+	safe := mustLayer(t, layerHead+"profiles:\n  p: { image: { skip_build_scripts: true } }\n")
 	if safe.Profiles["p"].HasExecutable() {
 		t.Error("a profile whose only setting is skip_build_scripts: true has HasExecutable() = true, want false (true is the safe direction)")
 	}

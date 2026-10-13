@@ -19,8 +19,8 @@ import (
 )
 
 const (
-	oldBase = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-0123abc"
-	newBase = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:0.5.1"
+	oldBase = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc"
+	newBase = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.5.1"
 )
 
 // The rewrite is byte for byte what Repo renders for the new base: the next
@@ -31,7 +31,7 @@ func TestRewriteCheckSpecEqualsTerraformRendering(t *testing.T) {
 		t.Fatal(err)
 	}
 	in := sandboxInputs(t, m5Additions)
-	in.LC.BaseImages = map[string]string{"web-node": newBase} // the fixture's local config already sets base_images
+	in.LC.BaseImages = map[string]string{"base": newBase} // the fixture's local config already sets base_images
 	after, err := Repo(in)
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +39,7 @@ func TestRewriteCheckSpecEqualsTerraformRendering(t *testing.T) {
 	if before.Check.Image != oldBase || after.Check.Image != newBase {
 		t.Fatalf("fixture: %s, %s", before.Check.Image, after.Check.Image)
 	}
-	spec, image, err := RewriteCheckSpec(before.Check.Env[CheckSpecEnv], before.Check.Image, map[string]string{"web-node": newBase, "go": "ignored: the spec names no go"})
+	spec, image, err := RewriteCheckSpec(before.Check.Env[CheckSpecEnv], before.Check.Image, map[string]string{"base": newBase, "other-kind": "ignored: the spec names no such kind"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,23 +71,65 @@ func TestRewriteCheckSpecRefusals(t *testing.T) {
 	indented, _ := json.MarshalIndent(m, "", "  ")
 	delete(m, "future_key")
 	reformatted, _ := json.MarshalIndent(m, "", "  ")
+	// The same three malformed shapes, but of a legacy-kind spec: the
+	// legacy-rewrite branch must refuse them exactly as the per-key move
+	// above does, never silently dropping the unknown key or rewriting a
+	// hand-edited form.
+	legacyRaw, err := json.Marshal(CheckJobSpec{Repo: "acme/app", Registry: "h/p/r", BaseImages: map[string]string{"go": oldBase}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lm map[string]any
+	if err := json.Unmarshal(legacyRaw, &lm); err != nil {
+		t.Fatal(err)
+	}
+	lm["future_key"] = "kept by a newer fugaro"
+	legacyUnknown, _ := json.Marshal(lm)
+	delete(lm, "future_key")
+	legacyReformatted, _ := json.MarshalIndent(lm, "", "  ")
 	for name, tc := range map[string]struct{ raw, image, why string }{
-		"not json":            {"{", oldBase, "not a check spec"},
-		"image names no kind": {`{"base_images":{"web-node":"` + oldBase + `"}}`, "elsewhere/img:1", "none of its spec's base images"},
-		"unknown key":         {string(unknown), oldBase, "keys this fugaro does not know"},
-		"unknown, indented":   {string(indented), oldBase, "keys this fugaro does not know"},
-		"reformatted":         {string(reformatted), oldBase, "not in the form fugaro init --repo writes"},
+		"not json":                         {"{", oldBase, "not a check spec"},
+		"image names no kind":              {`{"base_images":{"base":"` + oldBase + `"}}`, "elsewhere/img:1", "none of its spec's base images"},
+		"legacy spec, image names no kind": {`{"base_images":{"go":"` + oldBase + `"}}`, "elsewhere/img:1", "none of its spec's base images"},
+		"unknown key":                      {string(unknown), oldBase, "keys this fugaro does not know"},
+		"unknown, indented":                {string(indented), oldBase, "keys this fugaro does not know"},
+		"reformatted":                      {string(reformatted), oldBase, "not in the form fugaro init --repo writes"},
+		"legacy spec, unknown key":         {string(legacyUnknown), oldBase, "keys this fugaro does not know"},
+		"legacy spec, reformatted":         {string(legacyReformatted), oldBase, "not in the form fugaro init --repo writes"},
 	} {
-		_, _, err := RewriteCheckSpec(tc.raw, tc.image, map[string]string{"web-node": newBase})
+		_, _, err := RewriteCheckSpec(tc.raw, tc.image, map[string]string{"base": newBase})
 		if !errors.Is(err, ErrCheckJobShape) || !strings.Contains(err.Error(), tc.why) || !strings.Contains(err.Error(), "fugaro init --repo") {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
 	// Nothing to move: the spec is kept as it is, unknown keys and form too.
 	for _, raw := range []string{string(unknown), string(reformatted)} {
-		if spec, image, err := RewriteCheckSpec(raw, oldBase, map[string]string{"web-node": oldBase}); err != nil || spec != raw || image != oldBase {
+		if spec, image, err := RewriteCheckSpec(raw, oldBase, map[string]string{"base": oldBase}); err != nil || spec != raw || image != oldBase {
 			t.Errorf("no move: %v %s %s", err, spec, image)
 		}
+	}
+}
+
+// A spec whose base_images still names a kind removed in 0.7.0 is rewritten
+// wholesale to the one base kind, with the job's new image: the per-key
+// move above only touches a kind still in config.Bases, which after the
+// cut can never match "go" or "web-node" again.
+func TestRewriteCheckSpecReplacesLegacyKinds(t *testing.T) {
+	old := CheckJobSpec{Repo: "acme/app", Registry: "h/p/r", BaseImages: map[string]string{"go": "h/p/fugaro-base/fugaro-go:0.6.0", "web-node": "h/p/fugaro-base/fugaro-web-node:0.6.0"}}
+	raw, _ := json.Marshal(old)
+	spec, image, err := RewriteCheckSpec(string(raw), "h/p/fugaro-base/fugaro-go:0.6.0", map[string]string{"base": "h/p/fugaro-base/fugaro-base:0.7.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got CheckJobSpec
+	if err := json.Unmarshal([]byte(spec), &got); err != nil {
+		t.Fatal(err)
+	}
+	if image != "h/p/fugaro-base/fugaro-base:0.7.0" || !maps.Equal(got.BaseImages, map[string]string{"base": "h/p/fugaro-base/fugaro-base:0.7.0"}) {
+		t.Errorf("image %s, base_images %v", image, got.BaseImages)
+	}
+	if got.Repo != "acme/app" || got.Registry != "h/p/r" {
+		t.Errorf("other fields changed: %+v", got)
 	}
 }
 
@@ -181,7 +223,7 @@ func checkJobCloud(t *testing.T, edit func(j map[string]any)) (*cloud, RepoSpec,
 	return f, rs, CheckJobOwner{Repo: rs.Name, Label: rs.Label}
 }
 
-var toNew = map[string]string{"web-node": newBase}
+var toNew = map[string]string{"base": newBase}
 
 // The job after the update is the job before it, every field and zero
 // value included (maxRetries 0, unknown fields, the secret env), except
@@ -248,7 +290,7 @@ func TestPlanCheckJobIgnoresASpecsFormWhenNothingMoves(t *testing.T) {
 		out, _ := json.MarshalIndent(m, "", "  ")
 		specEntry(j)["value"] = string(out)
 	})
-	u, err := PlanCheckJob(context.Background(), f.c, "proj-1234", "us-east5", rs.Check.Job, owner, map[string]string{"web-node": oldBase})
+	u, err := PlanCheckJob(context.Background(), f.c, "proj-1234", "us-east5", rs.Check.Job, owner, map[string]string{"base": oldBase})
 	if err != nil || u.Changes() {
 		t.Fatalf("%v %+v", err, u)
 	}
@@ -334,7 +376,7 @@ func TestApplyCheckJobRefusesAConcurrentChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Someone else updates the job between the read and the write.
-	other, _ := PlanCheckJob(ctx, f.c, "proj-1234", "us-east5", rs.Check.Job, owner, map[string]string{"web-node": newBase + "-x"})
+	other, _ := PlanCheckJob(ctx, f.c, "proj-1234", "us-east5", rs.Check.Job, owner, map[string]string{"base": newBase + "-x"})
 	if err := ApplyCheckJob(ctx, f.c, other); err != nil {
 		t.Fatal(err)
 	}

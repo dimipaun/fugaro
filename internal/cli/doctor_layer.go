@@ -167,7 +167,11 @@ func imageConfigChecks(ctx context.Context, rb *blobx.Bucket, slug string, cfg *
 // "workflows.X.image" the way an earlier version of this function did
 // always answered SourceDefault, silently never attributing an image
 // override to anything.
-var imageLeafKeys = []string{"base", "image.node", "image.jdk", "image.apt", "image.setup", "image.skip_build_scripts"}
+// image.node and image.jdk were removed in 0.7.0 (image.tools replaces
+// them, but as a map it has no one leaf path to ask Resolution.SourceOf for:
+// its own leaves are image.tools.<name>, one per declared tool, so it is
+// left out here rather than named at a path that can never match).
+var imageLeafKeys = []string{"base", "image.apt", "image.setup", "image.skip_build_scripts"}
 
 // imageConfigReason names where a workflow's image-affecting settings come
 // from, for imageConfigChecks' message: base's own source first, then every

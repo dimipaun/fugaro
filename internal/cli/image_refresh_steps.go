@@ -88,7 +88,7 @@ func refreshReload(ctx context.Context, p *refreshPlan) (*refreshTarget, error) 
 	for _, w := range cfg.Workflows {
 		kind := w.BaseKind()
 		if specLC.BaseImages[kind] == "" {
-			if specLC.BaseImages[kind], err = image.BaseRef(kind, Version); err != nil {
+			if specLC.BaseImages[kind], err = image.BaseRef(Version); err != nil {
 				return nil, userErr("%v", err)
 			}
 		}

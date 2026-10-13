@@ -11,7 +11,6 @@ agent: { auth: oauth, review_rounds: 1, max_budget_usd: 2 }
 #   trusted: ["557058:00000000-0000-0000-0000-000000000001"]
 workflows:
   web:
-    base: web-node
     commands: { build: "node --check test.js", test: "npm test" }
     image:
       # Proves Cloud Build passes workflow secrets (a file secret, --secret

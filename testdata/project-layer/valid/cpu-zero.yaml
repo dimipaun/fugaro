@@ -2,4 +2,4 @@ version: 1
 project: aurora
 gcp_project: proj-1234
 profiles:
-  p: { base: go, resources: { cpu: 0 } }
+  p: { resources: { cpu: 0 } }

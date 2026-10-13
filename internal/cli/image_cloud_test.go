@@ -207,7 +207,7 @@ func TestImageBuildCloudUsesTheSelectedProjectsLayer(t *testing.T) {
 		t.Fatal(err)
 	}
 	layer := "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n  git: { provider: bitbucket }\n  agent: { auth: api-key }\n" +
-		"profiles:\n  svc:\n    base: web-node\n    commands: { build: sh build.sh, test: sh test.sh }\ndefault_profile: svc\n"
+		"profiles:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh }\ndefault_profile: svc\n"
 	if err := os.WriteFile(filepath.Join(runs, "fugaro", "project-layer.yaml"), []byte(layer), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -654,8 +654,8 @@ func TestImageRenderCloudOutputs(t *testing.T) {
 	if err != nil || json.Unmarshal(data, &spec) != nil {
 		t.Fatalf("selftest.json = %s, %v", data, err)
 	}
-	if want := (image.SelftestSpec{Base: "web-node", RepoDir: "/work/repo", Commit: commit, Origin: "https://github.com/acme/app.git",
-		CheckInit: true, CheckHardening: true, SkipVerify: true}); !reflect.DeepEqual(spec, want) {
+	if want := (image.SelftestSpec{Base: "base", RepoDir: "/work/repo", Commit: commit, Origin: "https://github.com/acme/app.git",
+		CheckInit: true, CheckHardening: true, SkipVerify: true, Tools: "critical", Mise: true}); !reflect.DeepEqual(spec, want) {
 		t.Errorf("selftest.json = %+v\nwant %+v", spec, want)
 	}
 	data, err = os.ReadFile(filepath.Join(ws, "record.json"))

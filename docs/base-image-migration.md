@@ -2,7 +2,13 @@
 
 Fugaro 0.7.0 replaces the `go`, `web-node` and `java-services` bases with one base image (see [base-image.md](base-image.md)). There is no transition release: a 0.7.0 CLI refuses `base:`, `image.node` and `image.jdk`, and a 0.6 one refuses a `fugaro.yaml` without `base:`. So each repository moves in one pull request, and the installation follows right after, in the order below.
 
-**Not enforced yet.** The refusals this document describes (`base:`, `image.node`, `base_images.go`/`web-node`/`java-services`) arrive together with the 0.7.0 release; the work that adds them is in flight in this tree but not merged. Until 0.7.0 ships, `base:` still accepts `go`, `web-node` and `java-services`, and `image.node` still works on `web-node`. This guide is written ahead of that enforcement, so every repository can move in one step once it lands; `image.jdk` is the one exception already refused today, on every base.
+**Already enforced in this tree, not yet in a release.** The base-image plan's hard cut (Task 17) is merged on this branch: a `fugaro` built from this source already refuses `base:`, `image.node` and `image.jdk` in any `fugaro.yaml` it validates, ahead of a 0.7.0 release tag. **This repository's own `fugaro.yaml` is the one deliberate exception**: its `go` workflow still reads `base: go` (see "This repository's own dogfood run" below) — don't take that as evidence the refusal is inactive elsewhere.
+
+## This repository's own dogfood run is broken until Task 22
+
+Fugaro's own `fugaro.yaml` (project `fugaro`, workflow `go`) still reads `base: go` — deliberately not migrated yet: Task 22 ("Release 0.7.0, Fugaro's switch") reserves that flip for the owner, run only after `fugaro-base` is published and `fugaro image refresh` has moved this checkout onto it (today, `fugaro-base` is not published: the `images.yml` workflow's `fugaro-base`/`publish-base` jobs exist, but no release has triggered them yet).
+
+**If the `fugaro` launching the run is itself built from a checkout that has the base-image hard cut (Task 17) — this branch, or any build made from it — `fugaro run --workflow go "<task>"` (docs/dogfooding.md) fails immediately at the config-validate stage, before any agent work starts**, with `workflows.go.base: was removed in 0.7.0: ... (docs/base-image-migration.md)`. A `fugaro` built from an older checkout, or an installed release that predates Task 17, has not read this cut into its `internal/config` package and does not see this failure; the refusal lives in the CLI binary, not in the repository or the job it launches. This is not a bug in the cut: it is `internal/config`'s refusal doing exactly what it is meant to do, applied to a `fugaro.yaml` nobody has migrated yet. It does mean no run launched by a cut-aware `fugaro` can execute against this repository's `go` workflow between the cut landing and Task 22's flip — any further work on this plan's remaining tasks in that window, done with such a build, has to happen directly (a local session or a person, not `fugaro run`), exactly as `docs/dogfooding.md`'s "What went through runs, and what did not" section already describes for security-sensitive code.
 
 ## The order
 
@@ -12,7 +18,7 @@ Fugaro 0.7.0 replaces the `go`, `web-node` and `java-services` bases with one ba
 4. **Between the merge and the refresh finishing, don't launch runs**: the old image's 0.6 runner refuses the new `fugaro.yaml`. It takes minutes.
 5. `fugaro doctor` in the checkout reports nothing about bases.
 
-The local config: delete every `base_images` line other than `base`; `fugaro image refresh` writes `base_images.base`. A 0.7.0 CLI refuses a local config with `base_images.go`, `base_images.web-node` or `base_images.java-services`, naming this doc. Old entries in the project's shared config are ignored with a warning until the next `fugaro init` or `fugaro image refresh` republishes it.
+The local config: delete every `base_images` line other than `base`; `fugaro image refresh` writes `base_images.base`. A 0.7.0 CLI refuses a local config with `base_images.go`, `base_images.web-node` or `base_images.java-services`, naming this doc. Old entries in the project's shared config are meant to be dropped with a warning until the next `fugaro init` or `fugaro image refresh` republishes it; **in this tree today they are refused outright, the same as the local config**, since `internal/localcfg` does not yet parse a published shared config any differently from a local one. Until that split lands, an installation whose shared config still has a legacy `base_images` key cannot parse its own config at all.
 
 ## Everywhere
 
@@ -73,14 +79,18 @@ workflows:
     resources: { cpu: 4, memory: 16Gi }
 ```
 
-- List only the services and emulators your tests use.
-- `fugaro-services start` works as before. It now looks for what you installed and names the package when one is missing.
+- List only the services and emulators your tests use, and set `FUGARO_SERVICES` to match (space separated) if it is not all three: `fugaro-services start`'s default, `postgres redis firebase`, is unchanged, so installing fewer than all three without restricting `FUGARO_SERVICES` tries to start the ones you didn't install too.
+- `fugaro-services start` works as before: it tries every service `FUGARO_SERVICES` names (every one, by default) and fails, naming the apt package or mise tool to add, on whichever one you did not install.
 - `memory: 16Gi` was the base's default; write it explicitly.
 - Gradle still comes from your wrapper.
 
 ## `image.jdk` and other removed settings
 
-`image.jdk` was refused on every base (already true today). Declare Java in `mise.toml` (`java = "temurin-21"`, `java = "zulu-17"`, …). `base:` and `image.node` get the same treatment once 0.7.0 ships (see the note at the top); the fixes above apply either way.
+`image.jdk`, `base:` and `image.node` are all already refused in this tree (see the note at the top), not merely scheduled for 0.7.0: `image.jdk` was refused on every base even before the cut; `base:` and `image.node` are refused now too. Declare Java in `mise.toml` (`java = "temurin-21"`, `java = "zulu-17"`, …); the fixes above apply either way.
+
+## What happens to the already-published `fugaro-go`/`fugaro-web-node`/`fugaro-java-services` tags
+
+They stay on `ghcr.io` forever: a published tag is immutable history, never deleted. Once a maintainer copies `docs/pending-workflows/images.yml` into `.github/workflows/images.yml` (not yet done as of this writing — that file's own README says how and why), the nightly workflow stops refreshing them: there is no `base` build job left to run, so no release after that point republishes a `:X` moving tag for any of the three, and no `fugaro` command accepts `go`, `web-node` or `java-services` as a kind any more (not even `--expect-digest`, which only takes `base` and `history`) to pin one by hand.
 
 ## Checklist for a repository with services (Belong-style)
 

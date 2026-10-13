@@ -4320,9 +4320,11 @@ Expected: build failure (`LintDockerfile` takes two arguments). Once that compil
 
 ```go
 		if w.Base != "" {
-			add(p+".base", "base: was removed in 0.7.0: every workflow builds on the one Fugaro base image. Delete this line and declare the workflow's runtimes in mise.toml (%s)", MigrationDoc)
+			add(p+".base", "was removed in 0.7.0: every workflow builds on the one Fugaro base image. Delete this line and declare the workflow's runtimes in mise.toml (%s)", MigrationDoc)
 		}
 ```
+
+(The code as actually landed does not repeat "base:" at the front of the message: `add` writes it at a path already ending in ".base", and `Problem.String()` would otherwise print "workflows.web.base: base: was removed...", the word doubled. Review round 3 caught this; the message text above reflects the fix, not this plan's original, doubled-prefix draft.)
 
 In `Check`, the `web-node` case goes, and `checkDockerfile` calls `LintDockerfile(data)`.
 
@@ -4395,6 +4397,8 @@ git commit -m "base cut task 17: the config refuses base:, image.node and image.
 
 ### Task 18: Render, selftest and the hash on the base alone
 
+**Fixture call sites left by Task 17 (owned by this task).** Task 17's fixture migration removed `base: web-node` from the shared `testdata/fixture-repo/fugaro.yaml`, which silently turned `strings.Replace(..., "    base: web-node\n", ...)` inserts into no-ops. The inserts of still-valid keys (`image.setup`, `dockerfile:`, `image.skip_build_scripts`) were re-anchored on the `  app:` line in `internal/image/docker_test.go` and `internal/e2e/docker_test.go`. The two that insert `image: { node: ... }` (`internal/image/docker_test.go`, the node 24.19.0 and 18.17.0 cases) now build a config Task 17 refuses (`image.node` was removed); this task rewrites them to the mise path (`image.tools` / `mise.toml`) or deletes them with a stated reason. Until then they are part of the docker-tagged red set.
+
 **Files:**
 - Modify: `images/derived/Dockerfile.tmpl`, `internal/image/render.go`, `render_test.go`, `selftest.go`, `selftest_test.go`, `local.go`, `local_test.go`, `internal/config/nodepm.go`, `internal/imagecheck/record.go`, `record_test.go`, `internal/runner/lockcache.go`, `internal/runner/*_test.go`
 
@@ -4448,7 +4452,7 @@ Expected: FAIL. The goldens still carry `install-node`, `Node` is still a field,
   - `Dockerfile` always detects the PM and mise (no kind switch);
   - `Render` refuses a non-empty `Image.Node` with `fmt.Errorf("image.node was removed in 0.7.0 (%s)", config.MigrationDoc)`, for safety.
 - `selftest.go`: delete the `Node` field and the `node` block. `SpecForCloud` sets `Base: config.BaseKind, Tools: "critical", Mise: true`.
-- `local.go`: the spec is `SelftestSpec{Base: config.BaseKind, …, Tools: "critical", Mise: true}`. `BaseRef(version string)` (the kind argument goes) returns `"ghcr.io/dimipaun/fugaro-base:" + v`, and its dev-build message says `images/build-base.sh base`. Its two callers in `internal/cli/image.go` (lines 122 and 206) become `image.BaseRef(Version)`, and `internal/image/local_test.go`'s `BaseRef` cases follow.
+- `local.go`: the spec is `SelftestSpec{Base: config.BaseKind, …, Tools: "critical", Mise: true}`. `BaseRef(version string)` (the kind argument goes) returns `"ghcr.io/dimipaun/fugaro-base:" + v` **[Ruling 2026-10-13, from the Task 18 review: the signature change moves to Task 19.** Task 18 deliberately kept the two-argument `BaseRef(kind, version)`: `internal/cli/image_refresh_steps.go` (~91), `TestRefreshReloadFillsMissingBaseFromRelease` and `init.go` (~2415) still pass legacy kinds until Task 19 removes them. Task 19 changes `BaseRef` and every caller.**], and its dev-build message says `images/build-base.sh base`. Its two callers in `internal/cli/image.go` (lines 122 and 206) become `image.BaseRef(Version)`, and `internal/image/local_test.go`'s `BaseRef` cases follow.
 - `nodepm.go`: `DefaultCache(root string)`, without the base check. Its callers are `internal/runner/lockcache.go` and `internal/imagecheck/record.go`.
 - `record.go`:
   - `imageSettings` drops `Node` and `JDK`;
@@ -4477,6 +4481,8 @@ git commit -m "base cut task 18: render, selftest and the hash know only the Fug
 **Files:**
 - Modify: `internal/localcfg/localcfg.go`, `localcfg_test.go`, `testdata/shared.golden.yaml`; `internal/cli/sharedcfg.go`, `sharedcfg_validate_test.go`; `internal/infra/checkjob.go`, `checkjob_test.go`, `spec_test.go`, `tf/testdata/golden/*.json`; `internal/cli/init.go`, `init_images.go`, `image.go`, `image_refresh_rules.go`, `doctor.go`, `sharedcfg.go`; every `internal/cli/*_test.go`, `internal/e2e/*_test.go` and `internal/backend/gcp/*_test.go` that names a legacy kind; `deploy/sandbox/fugaro.yaml`, `testdata/fixture-repo/fugaro.yaml`, `deploy/terraform/gcp/roots/repo/tests/testdata/*.tfvars.json`
 - Regenerate: `internal/infra/tf/testdata/golden/repo*.plan.json` with `scripts/gen-golden-plans.sh`
+
+**Named-account tests, forward-merged after this plan was written.** `main`'s named-Claude-accounts work (forward-merged into `next`, then into this branch, after Task 17 landed) added `internal/infra` tests that also build their fixtures on a legacy base kind: `TestBuildRepoSpecUnchangedWithNoClaudeAccounts`, `TestNeedsBuildDedupesNamedAccountVariants`, `TestRepoSpecHasNoVariantForDisallowedName`, `TestRepoSpecHasNoVariantForNonOAuthRepositories`, `TestRepoSpecSecretMountsOnlyTheVariantsOwnToken`, `TestWorkflowEnvOAuthGetsTokenCap` and `TestApplyCheckJobDropsExecutionTokens`. These are real, independently-added coverage of the named-account feature, not base-image scaffolding: Task 19 must **repair** them (move their fixtures off the legacy base kind, the same as every other `internal/infra` test this task's fixture migration touches), not delete them or weaken what they pin. The same holds for the `internal/cli` named-account tests, about thirty of which are red for the same reason (`TestDoctorClaudeAccountsStored*`, `TestDoctorOAuthToken*`, `TestDoctorFlagsOAuthToken*`, `TestDoctorNamedAccountCheckReadsNoValue`, `TestRunToken*`, `TestFollowUpToken*`): their shared fixture `cliMinimalYAML` (`internal/cli/validate_test.go`) still names a legacy base kind. **Every named-account test in `internal/cli` and `internal/infra` must be repaired, not dropped or weakened.**
 
 **Interfaces:**
 - Produces:
@@ -4709,7 +4715,7 @@ func doctorBaseImage(lc *localcfg.Config) doctorCheck {
 - `--expect-digest`: "KIND is base or history";
 - `--replace-image`: "history or base".
 
-`image.go`: the `--base` help says "the published fugaro-base" (`image.BaseRef(Version)` changed in Task 18).
+`image.go`: the `--base` help says "the published fugaro-base"; **this task changes `image.BaseRef(version)` and all its callers** (`image_refresh_steps.go`, `init.go` and their tests; moved here from Task 18, see its Step 3 ruling).
 
 **The test sweep.** Every test that names a legacy kind, in YAML or in Go:
 
@@ -4756,6 +4762,8 @@ git commit -F /tmp/task19-msg.txt
 ---
 
 ### Task 20: Delete the legacy images, their CI and their release lines
+
+**Leftovers from Task 18's review (owned by this task or Task 21).** (a) The four docker-tagged tests still build FROM `testutil.BaseImage(t)` (the web-node image, which has no mise) while the smoke now always asks for `Tools: critical, Mise: true`, so they are red until moved to `BaseImageOf(t, "base")`: `TestDerivedNPMSetupSudoAndSecrets`, `TestDerivedSkipBuildScripts`, `TestRepoDockerfileEscapeHatch` (`internal/image`) and `TestExecInDerivedImage` (`internal/e2e`). (b) Stale wording: `internal/image/render_test.go` (~234, 245, 274, 507, 572) still passes `Base: "web-node"` although the template no longer reads `.Base`; the `SelftestSpec.Base` comment in `internal/image/selftest.go` (~31) still says it "decides the toolchain check"; `internal/imagecheck/record_test.go` (~179-183) still says "only web-node is known today" (the plan asked for `BaseKind` against `""`). (c) `internal/runner/lockcache.go` `toolchainHash` (~152-170) still hashes `img.Node`/`img.JDK` (always empty now) and does not hash `image.tools`: decide in Task 21 whether the cache key must follow mise. (d) **Leftover from Task 19's review (2026-10-13):** `internal/infra/tf/testdata/golden/repo.plan.json` and `repo-adopt.plan.json` (one `fugaro-web-node` string each, in the check job's container image) were not regenerated to `fugaro-base`: they are real `terraform show -json` plans (`scripts/gen-golden-plans.sh`), which need a cached Google provider (`~/.cache/fugaro/terraform-plugins`) and no sandbox this series has run in so far has had one or network access to fetch it. `internal/infra/tf`'s own tests pass either way (`Cover.NotCovered` reads `base_images` by key, not by a hardcoded image string), so this is wording-only; regenerate them (or add them to `TestNoLegacyBaseOutsideHistory`'s allow-list with this reason) whenever a checkout with the plugin cache runs `scripts/gen-golden-plans.sh`.
 
 **Files:**
 - Delete: `images/go/`, `images/web-node/`, `images/java-services/`, `images/go_test.go`, `images/java_services_test.go` (the services tests moved in Task 3), the legacy parts of `images/smoke.sh` and `images/smoke_test.go`

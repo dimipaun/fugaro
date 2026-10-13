@@ -2,4 +2,4 @@ version: 1
 project: aurora
 gcp_project: proj-1234
 profiles:
-  P_1: { base: go }
+  P_1: {}
