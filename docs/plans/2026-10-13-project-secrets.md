@@ -825,6 +825,7 @@ git commit -m "project secrets task 6: a real two-step golden plan proving no se
 - `project-secret-stored`: for every name `config.ReservedSecrets`/a provider's/an account's own list allow-lists this repository for, if neither the repo's own secret nor the project's has an enabled version, red, naming both candidate fix commands.
 - `project-secret-scope-stale`: the repository's **last deployed** job's `secret_env` (read the same way `doctor`'s existing image-config checks already read a deployed job's spec) resolves a different scope than `Readiness` would compute right now — a warning (fails only `--strict`), mirroring `doctor`'s existing project-layer shape, "flags a run that launched without it or on an older generation" (`internal/cli/doctor.go:148-149`).
 - **`project-secret-extra-accessors` (S3, new, project-wide — not per-repository like the two above):** for each project secret, read its live IAM policy (`GetIamPolicy`, metadata-level, never `Access`); for each `secretAccessor` member, resolve the repository slug it belongs to (the job SA's own naming convention, `gcp.ServiceAccountID`'s inverse — a lookup, not a live call) against `localcfg.Config.Repos` (already enumerates every onboarded repository); flag any accessor whose repository is **not currently** allowed by the name's own eligibility rule (`AllowedForProjectSecret`/`AllowsData`/`ProviderKeyAvailable`, whichever applies) — a warning, since this is revocation *lag* (expected until the affected repository's own `fugaro init --repo` catches up), not a failure. Mirrors `noteExtraAccessors` (`internal/infra/discover.go:813`), which only ever compares one repository's own spec against its own secrets' live bindings — this check is the project-wide version nothing today does, since removing a repository from a list or deleting a provider/account leaves its job SA's grant live until that **one** repository's own apply runs again, and no single repository's `init --repo` has reason to look at another repository's bindings.
+- **SF9, decided: stays a warning (design §7's own reasoning — red would fail every installation mid-revocation, the expected, transient case), but its message is specified, not left to the implementer:** must end with the literal fix, naming both the repository and the follow-up command — `"re-run fugaro init --repo for <repo> and pass --allow-delete for the address the plan's refusal names"` — not merely "repository X still has access to secret Y." `tf.Guard`'s own refusal message (`internal/infra/tf/guard.go`) is deliberately **not** changed to mention "revocation": it is a feature-agnostic safety primitive shared by every root, and this is the only one of its callers where a delete means that; the doctor warning is the one place that already knows the cause, so that is where the fix belongs.
 
 **Tests:**
 ```go
@@ -844,9 +845,12 @@ func TestDoctorFlagsExtraProjectSecretAccessor(t *testing.T) {
 	// S3: a project secret's live IAM policy carries a secretAccessor
 	// member for a repository that project_secrets'/the provider's/the
 	// account's current allow_data_to no longer lists. Assert a warning
+	// (not red, SF9 -- this is expected revocation lag, not a failure)
 	// names the repository and the secret -- not the value, not the
 	// service account's raw email beyond what GetIamPolicy already
-	// returns.
+	// returns -- AND, SF9's own fix, that the warning text contains both
+	// "fugaro init --repo" and "--allow-delete", so the operator reading
+	// it needs no cross-referencing to act on it.
 }
 func TestDoctorProjectSecretExtraAccessorsReadsNoValue(t *testing.T) { /* GetIamPolicy only, never Access -- the project-wide check's own mutation-proof case, since it is new code this round */ }
 ```
