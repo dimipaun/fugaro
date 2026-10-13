@@ -36,7 +36,7 @@ func TestExecutableChangesTable(t *testing.T) {
 	}{
 		{
 			name: "add: commands.test newly set",
-			prev: layerPreamble + "profiles:\n  svc:\ndefault_profile: svc\n",
+			prev: layerPreamble + "profiles:\n  svc: {}\ndefault_profile: svc\n",
 			next: layerPreamble + "profiles:\n  svc:\n    commands:\n      test: sh test.sh\ndefault_profile: svc\n",
 			want: []string{`profile svc: commands.test: "" -> "sh test.sh"`},
 		},
@@ -49,7 +49,7 @@ func TestExecutableChangesTable(t *testing.T) {
 		{
 			name: "remove: commands.test cleared",
 			prev: layerPreamble + "profiles:\n  svc:\n    commands:\n      test: sh test.sh\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc: {}\ndefault_profile: svc\n",
 			want: []string{`profile svc: commands.test: "sh test.sh" -> ""`},
 		},
 		{
@@ -114,20 +114,20 @@ func TestExecutableChangesTable(t *testing.T) {
 		},
 		{
 			name: "a profile deleted with executable keys set is a change",
-			prev: layerPreamble + "profiles:\n  svc:\n  other:\n    commands:\n      test: sh other.sh\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\ndefault_profile: svc\n",
+			prev: layerPreamble + "profiles:\n  svc: {}\n  other:\n    commands:\n      test: sh other.sh\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc: {}\ndefault_profile: svc\n",
 			want: []string{`profile other: commands.test: "sh other.sh" -> ""`},
 		},
 		{
 			name: "a profile deleted with no executable keys is not a change",
-			prev: layerPreamble + "profiles:\n  svc:\n  other:\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\ndefault_profile: svc\n",
+			prev: layerPreamble + "profiles:\n  svc: {}\n  other: {}\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc: {}\ndefault_profile: svc\n",
 			want: nil,
 		},
 		{
 			name: "a profile added with executable keys set is a change",
-			prev: layerPreamble + "profiles:\n  svc:\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n  other:\n    commands:\n      test: sh other.sh\ndefault_profile: svc\n",
+			prev: layerPreamble + "profiles:\n  svc: {}\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc: {}\n  other:\n    commands:\n      test: sh other.sh\ndefault_profile: svc\n",
 			want: []string{`profile other: commands.test: "" -> "sh other.sh"`},
 		},
 		{
@@ -138,8 +138,8 @@ func TestExecutableChangesTable(t *testing.T) {
 		},
 		{
 			name: "default_profile a -> b, the old default HasExecutable: gated",
-			prev: layerPreamble + "profiles:\n  svc:\n    commands:\n      test: sh test.sh\n  other:\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    commands:\n      test: sh test.sh\n  other:\ndefault_profile: other\n",
+			prev: layerPreamble + "profiles:\n  svc:\n    commands:\n      test: sh test.sh\n  other: {}\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc:\n    commands:\n      test: sh test.sh\n  other: {}\ndefault_profile: other\n",
 			want: []string{`default_profile: "svc" -> "other" (repositories without workflows: now run profile other's commands)`},
 		},
 		{
@@ -150,8 +150,8 @@ func TestExecutableChangesTable(t *testing.T) {
 		},
 		{
 			name: "default_profile a -> b, neither side HasExecutable: not gated",
-			prev: layerPreamble + "profiles:\n  svc:\n  other:\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n  other:\ndefault_profile: other\n",
+			prev: layerPreamble + "profiles:\n  svc: {}\n  other: {}\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc: {}\n  other: {}\ndefault_profile: other\n",
 			want: nil,
 		},
 		{
@@ -164,8 +164,8 @@ func TestExecutableChangesTable(t *testing.T) {
 			// neither of which HasExecutable considers executable, so this
 			// switch is not gated.
 			name: "default_profile a -> b, the new default's only setting is skip_build_scripts: true: not gated (true is the safe direction)",
-			prev: layerPreamble + "profiles:\n  svc:\n  other:\n    image:\n      skip_build_scripts: true\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n  other:\n    image:\n      skip_build_scripts: true\ndefault_profile: other\n",
+			prev: layerPreamble + "profiles:\n  svc: {}\n  other:\n    image:\n      skip_build_scripts: true\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc: {}\n  other:\n    image:\n      skip_build_scripts: true\ndefault_profile: other\n",
 			want: nil,
 		},
 		{
@@ -178,8 +178,8 @@ func TestExecutableChangesTable(t *testing.T) {
 			// repository without workflows goes from skipping dependency
 			// install/build scripts in its image build to running them.
 			name: "default_profile a -> b, the old default's only setting is skip_build_scripts: true, the new one has it off: gated (the unsafe direction)",
-			prev: layerPreamble + "profiles:\n  safe:\n    image:\n      skip_build_scripts: true\n  other:\ndefault_profile: safe\n",
-			next: layerPreamble + "profiles:\n  safe:\n    image:\n      skip_build_scripts: true\n  other:\ndefault_profile: other\n",
+			prev: layerPreamble + "profiles:\n  safe:\n    image:\n      skip_build_scripts: true\n  other: {}\ndefault_profile: safe\n",
+			next: layerPreamble + "profiles:\n  safe:\n    image:\n      skip_build_scripts: true\n  other: {}\ndefault_profile: other\n",
 			want: []string{`default_profile: "safe" -> "other" (repositories without workflows: now run profile other's commands)`},
 		},
 		{
@@ -203,7 +203,7 @@ func TestExecutableChangesTable(t *testing.T) {
 		{
 			name: "skip_build_scripts true removed (reads as false): a change",
 			prev: layerPreamble + "profiles:\n  svc:\n    image:\n      skip_build_scripts: true\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc: {}\ndefault_profile: svc\n",
 			want: []string{`profile svc: image.skip_build_scripts: true -> false`},
 		},
 		{
@@ -215,13 +215,13 @@ func TestExecutableChangesTable(t *testing.T) {
 		{
 			name: "null vs absent apt: equal, no change",
 			prev: layerPreamble + "profiles:\n  svc:\n    image:\n      apt: null\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc: {}\ndefault_profile: svc\n",
 			want: nil,
 		},
 		{
 			name: "empty list vs absent apt: equal, no change",
 			prev: layerPreamble + "profiles:\n  svc:\n    image:\n      apt: []\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc: {}\ndefault_profile: svc\n",
 			want: nil,
 		},
 	}
