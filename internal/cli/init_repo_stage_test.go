@@ -273,7 +273,7 @@ func TestInitRepoUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, append(data, "base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc}\n"...), 0o600); err != nil {
+	if err := os.WriteFile(path, append(data, "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc}\n"...), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), checkoutYAML("github", "api-key", "aurora", ""))
@@ -335,7 +335,7 @@ func TestRepoStageRunsTheEngine(t *testing.T) {
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
-	r.appendConfig(t, "base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc}\n")
+	r.appendConfig(t, "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc}\n")
 	r.script["show"] = map[string]any{"stdout": `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"x"}]}}}`}
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"project_name": "borealis"})}
 	r.save(t)
@@ -392,7 +392,7 @@ func TestRepoEngineRefusesTheBuildWhenTheLayerBucketIsUnreadable(t *testing.T) {
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
-	r.appendConfig(t, "base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc}\n")
+	r.appendConfig(t, "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc}\n")
 	r.script["show"] = map[string]any{"stdout": `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"x"}]}}}`}
 	r.script["output"] = map[string]any{"stdout": outputsJSON(t)} // project_name: aurora, matching the checkout below
 	r.save(t)
@@ -466,7 +466,7 @@ func TestRepoEngineWritesTheProjectLayerCopyForItsFirstBuild(t *testing.T) {
 	}
 	// A base at layeredSince (0.6.0) or later: an older one is refused
 	// before the copy write this test means to exercise.
-	r.appendConfig(t, "base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:0.6.0}\n")
+	r.appendConfig(t, "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.6.0}\n")
 	r.script["show"] = map[string]any{"stdout": `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"x"}]}}}`}
 	r.script["output"] = map[string]any{"stdout": outputsJSON(t)} // project_name: aurora, matching the checkout below
 	r.save(t)

@@ -615,7 +615,7 @@ func TestInitWritesLocalConfigAndBackup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-0123abc"
+	base := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc"
 	out, _, err := executeStdin(t, "", "init", "--yes", "--base-image", base, "--launcher", "user:launcher@example.com", "--alert-email", "ops@example.com")
 	if err != nil {
 		t.Fatal(err)
@@ -625,7 +625,7 @@ func TestInitWritesLocalConfigAndBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	if lc.RunsBucket != initRunsBucket || lc.RegistryHost != "us-east5-docker.pkg.dev/proj-1234" || lc.LogView != initLogView ||
-		lc.SchedulerRegion != "us-east4" || lc.Terraform.StateBucket != initStateBucket || lc.BaseImage("web-node") != base ||
+		lc.SchedulerRegion != "us-east4" || lc.Terraform.StateBucket != initStateBucket || lc.BaseImage("base") != base ||
 		!slices.Equal(lc.Terraform.Launchers, []string{"user:launcher@example.com"}) || lc.Terraform.AlertEmail != "ops@example.com" {
 		t.Fatalf("local config = %+v", lc)
 	}
@@ -1449,7 +1449,7 @@ func TestInitRepoRefusesAnInstallationOfAnotherProject(t *testing.T) {
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
-	r.appendConfig(t, "base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc}\n")
+	r.appendConfig(t, "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc}\n")
 	r.script["show"] = map[string]any{"stdout": `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"x"}]}}}`}
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"project_name": "borealis"})}
 	r.save(t)
@@ -1473,7 +1473,7 @@ func TestInitRepoPassesPolicyEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, append(data, "budget: { max_run_tokens: 123456, allowed_models: [claude-sonnet-5-5] }\nbase_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc}\n"...), 0o600); err != nil {
+	if err := os.WriteFile(path, append(data, "budget: { max_run_tokens: 123456, allowed_models: [claude-sonnet-5-5] }\nbase_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc}\n"...), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: api-key }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n")
@@ -1499,7 +1499,7 @@ func TestInitRepoShowsCeilingAndClamps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, append(data, "budget: { mode: observe, per_run_usd: 5, max_run_tokens: 1000 }\nbase_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc}\n"...), 0o600); err != nil {
+	if err := os.WriteFile(path, append(data, "budget: { mode: observe, per_run_usd: 5, max_run_tokens: 1000 }\nbase_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc}\n"...), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	yaml := func(block string) string {
@@ -1544,7 +1544,7 @@ func TestInitRepoSilentWithoutCeiling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, append(data, "base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc}\n"...), 0o600); err != nil {
+	if err := os.WriteFile(path, append(data, "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc}\n"...), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: api-key }\n" +
@@ -1558,29 +1558,34 @@ func TestInitRepoSilentWithoutCeiling(t *testing.T) {
 	}
 }
 
-// --base-image sets one base kind's entry of base_images, from the image's
-// name or KIND=IMAGE, and leaves the kinds it doesn't name alone.
+// --base-image sets the base kind's entry of base_images, from the image's
+// name or KIND=IMAGE, and a later run naming it again replaces it.
+//
+// TestInitBaseImagePerKind's "leaves the kinds it doesn't name alone" case
+// is deleted: it needed a second real kind (java-services) to show one
+// kind's --base-image left another's base_images entry untouched, which
+// config.Bases (one kind, "base") can no longer have; --base-image itself
+// now refuses any kind but "base" (ParseBaseImageFlag).
 func TestInitBaseImagePerKind(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
-	web := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-0123abc"
-	java := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-java-services:dev-0123abc"
-	if _, _, err := executeStdin(t, "", "init", "--yes", "--base-image", web, "--base-image", "java-services="+java); err != nil {
+	base := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc"
+	if _, _, err := executeStdin(t, "", "init", "--yes", "--base-image", base); err != nil {
 		t.Fatal(err)
 	}
 	lc, err := localcfg.Load(r.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if lc.BaseImage("web-node") != web || lc.BaseImage("java-services") != java || len(lc.BaseImages) != 2 {
+	if lc.BaseImage("base") != base || len(lc.BaseImages) != 1 {
 		t.Fatalf("base_images = %v", lc.BaseImages)
 	}
-	// A later run naming one kind keeps the other.
-	web2 := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-9999999"
-	if _, _, err := executeStdin(t, "", "init", "--yes", "--base-image", web2); err != nil {
+	// A later run replaces it.
+	base2 := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-9999999"
+	if _, _, err := executeStdin(t, "", "init", "--yes", "--base-image", base2); err != nil {
 		t.Fatal(err)
 	}
-	if lc, err = localcfg.Load(r.cfg); err != nil || lc.BaseImage("web-node") != web2 || lc.BaseImage("java-services") != java {
+	if lc, err = localcfg.Load(r.cfg); err != nil || lc.BaseImage("base") != base2 || len(lc.BaseImages) != 1 {
 		t.Fatalf("base_images = %v, %v", lc.BaseImages, err)
 	}
 	// An image whose kind can't be told is refused before anything else.

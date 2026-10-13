@@ -92,7 +92,7 @@ func TestInstallationImportsCoveredOnlyAsDiscovered(t *testing.T) {
 func repoPlan(t *testing.T, stdin string, changes func(spec infra.RepoSpec) []planChange) (string, error, *initRig, string) {
 	t.Helper()
 	ri := newInitRig(t)
-	ri.appendConfig(t, "base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc}\n")
+	ri.appendConfig(t, "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc}\n")
 	lc, err := localcfg.Load(ri.cfg)
 	if err != nil {
 		t.Fatal(err)
