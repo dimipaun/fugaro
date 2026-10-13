@@ -551,6 +551,25 @@ exec /opt/fugaro/graphify/venv/bin/graphify "$@"
 	}
 }
 
+// TestGraphifyBuildTimeVersionCheck: nothing else in this file proves the
+// Dockerfile actually runs graphify --version at build time and compares it
+// against the pinned ARG GRAPHIFY_VERSION, failing the build on a mismatch
+// -- TestGraphifyPinnedAndIsolated checks the ARG, the lockfile and the
+// wrapper, but not this check, so deleting it entirely left every other
+// graphify test passing. Mutation: delete the "v=$(... graphify --version);
+// ... case "$v" in ..." lines from the Dockerfile -> this test must fail,
+// restored after.
+func TestGraphifyBuildTimeVersionCheck(t *testing.T) {
+	df := baseDockerfile(t)
+	if !strings.Contains(df, `v=$(/opt/fugaro/graphify/venv/bin/graphify --version); echo "$v";`) {
+		t.Error("the Dockerfile never runs graphify --version at build time and captures its output")
+	}
+	const wantCase = `case "$v" in "graphify $GRAPHIFY_VERSION") ;; *) echo "base: graphify --version reports '$v', not the pinned ${GRAPHIFY_VERSION}" >&2; exit 1 ;; esac;`
+	if !strings.Contains(df, wantCase) {
+		t.Errorf("the Dockerfile lacks the exact pinned-version check %q (want it to fail the build on a mismatch against ARG GRAPHIFY_VERSION)", wantCase)
+	}
+}
+
 // TestGraphifyToolsRow: the presence check (design section 6) runs
 // "graphify --version", tier harness, on both architectures -- real wheels
 // exist for graphifyy and every one of its dependencies on linux/arm64
