@@ -319,6 +319,23 @@ func TestUsageTeeUnparsedReason(t *testing.T) {
 	}
 }
 
+// A whole (non-streaming) body with a real input count but no
+// output_tokens at all is the same gap as a stream whose message_delta
+// never names one: no_output_count, not the misleading
+// input_zero_no_cache (input is not zero here).
+func TestUsageTeeJSONNoOutputCountReason(t *testing.T) {
+	tee := newUsageTee(false)
+	tee.provider = true
+	tee.feed([]byte(`{"type":"message","model":"m","usage":{"input_tokens":500}}`))
+	tee.finish()
+	if tee.complete {
+		t.Fatalf("complete %v, want unparsed: no output count", tee.complete)
+	}
+	if got := tee.unparsedReason(); got != "no_output_count" {
+		t.Errorf("reason %q, want no_output_count", got)
+	}
+}
+
 // noteEvent reads the provider's own SSE event name or JSON "type" field,
 // before redactWriter ever sees the response: a hostile one (a key-looking
 // string, embedded newlines, an unbounded length) must never reach the

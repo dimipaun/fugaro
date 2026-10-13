@@ -309,6 +309,17 @@ func (t *usageTee) noteEvent(typ string) {
 	t.events = append(t.events, typ)
 }
 
+// hasOutputCount reports whether an output count that counts as final
+// ever arrived: on a stream, one a message_delta reported (message_start's
+// own is only ever a placeholder, never trusted alone); on a whole body,
+// the single usage object's own output_tokens.
+func (t *usageTee) hasOutputCount() bool {
+	if t.sse {
+		return t.deltas
+	}
+	return t.acc.out.set
+}
+
 // unparsedReason names, from a closed set, why a 2xx call settled at its
 // reservation instead of its usage. Bounded and sanitized: never the
 // provider's text, so a failure explains itself in `fugaro diagnose`.
@@ -322,11 +333,12 @@ func (t *usageTee) unparsedReason() string {
 		return "no_usage_event"
 	case !t.stopped:
 		return "stream_incomplete"
-	case t.sse && t.acc.hasInput() && !t.deltas:
-		// A real input (or cache) count reached message_stop, so it is not
-		// the all-zero fail-safe: it is that no message_delta ever named
-		// an output count at all (message_start's own output is only ever
-		// a placeholder, never trusted alone).
+	case t.acc.hasInput() && !t.hasOutputCount():
+		// A real input (or cache) count reached the end, so it is not the
+		// all-zero fail-safe: it is that no output count ever arrived. On
+		// a stream that is specifically no message_delta (message_start's
+		// own output is only ever a placeholder, never trusted alone); on
+		// a whole body, output_tokens itself.
 		return "no_output_count"
 	default:
 		return "input_zero_no_cache"
