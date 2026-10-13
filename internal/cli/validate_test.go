@@ -17,7 +17,7 @@ const cliMinimalYAML = `version: 1
 project: aurora
 git: { provider: github }
 workflows:
-  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }
+  app: { commands: { build: sh build.sh, test: sh test.sh } }
 `
 
 func writeConfig(t *testing.T, body string) string {
@@ -98,15 +98,13 @@ func TestValidateWarnsNoLanguageRuntime(t *testing.T) {
 	}
 }
 
-// TestValidateSkipsNoLanguageRuntimeWarning covers CheckWarnings' three skip
-// conditions through the CLI: image.tools set, dockerfile: set, and a
-// legacy base all silence the warning that a plain Fugaro-base workflow
-// gets.
+// TestValidateSkipsNoLanguageRuntimeWarning covers CheckWarnings' two skip
+// conditions through the CLI: image.tools set and dockerfile: set both
+// silence the warning that a plain Fugaro-base workflow gets.
 func TestValidateSkipsNoLanguageRuntimeWarning(t *testing.T) {
 	for name, body := range map[string]string{
 		"image.tools set": strings.Replace(cliBaseYAML, "{ commands:", "{ image: { tools: { node: \"24\" } }, commands:", 1),
 		"dockerfile set":  strings.Replace(cliBaseYAML, "{ commands:", "{ dockerfile: .fugaro/app.Dockerfile, commands:", 1),
-		"legacy base":     strings.Replace(cliBaseYAML, "{ commands:", "{ base: web-node, commands:", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := writeConfig(t, body)
@@ -139,7 +137,7 @@ func TestConfigExample(t *testing.T) {
 }
 
 func TestValidateReportsCloudRunLimits(t *testing.T) {
-	cfg := strings.Replace(cliMinimalYAML, "base: web-node,", "base: web-node, resources: { cpu: 3, memory: 4Gi },", 1)
+	cfg := strings.Replace(cliMinimalYAML, "{ commands:", "{ resources: { cpu: 3, memory: 4Gi }, commands:", 1)
 	out, _, err := execute(t, "validate", "--json", writeConfig(t, cfg))
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d (%v), output %s", ExitCode(err), err, out)

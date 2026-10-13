@@ -861,7 +861,7 @@ project: aurora
 git: { provider: github }
 agent: { auth: oauth, oauth_token: acme-overflow }
 workflows:
-  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }
+  app: { commands: { build: sh build.sh, test: sh test.sh } }
 `
 
 // TestDoctorFlagsOAuthTokenNotAllowed is the plan's own named test (Task 8):

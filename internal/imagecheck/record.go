@@ -232,8 +232,14 @@ func ImageConfigHash(cfg *config.Config, workflow string, tree Tree) (string, er
 }
 
 // miseFiles are the root mise config files and lockfile in tree, with their
-// blob IDs: what the derived image's mise install read.
+// blob IDs: what the derived image's mise install read. A nil tree (doctor's
+// local-only call, which has no git tree to read: doctor_layer.go's own
+// comment on its Dockerfile guard says why) reports no mise files rather
+// than panicking on a nil Tree's method set.
 func miseFiles(tree Tree) (map[string]string, error) {
+	if tree == nil {
+		return nil, nil
+	}
 	out := map[string]string{}
 	add := func(p string) error {
 		id, err := tree.BlobID(p)
