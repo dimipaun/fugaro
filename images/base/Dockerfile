@@ -250,7 +250,7 @@ RUN --mount=type=bind,source=images/base/fetch.sh,target=/tmp/fetch.sh \
     UV_PYTHON_DOWNLOADS=never /opt/fugaro/uv/bin/uv venv /opt/fugaro/graphify/venv \
       --python "$GRAPHIFY_PYTHON_VERSION" --python-preference only-managed --no-cache; \
     /opt/fugaro/uv/bin/uv pip install --python /opt/fugaro/graphify/venv/bin/python \
-      -r /opt/fugaro/graphify/requirements.lock.txt --require-hashes --no-cache; \
+      -r /opt/fugaro/graphify/requirements.lock.txt --require-hashes --compile-bytecode --no-cache; \
     v=$(/opt/fugaro/graphify/venv/bin/graphify --version); echo "$v"; \
     case "$v" in "graphify $GRAPHIFY_VERSION") ;; *) echo "base: graphify --version reports '$v', not the pinned ${GRAPHIFY_VERSION}" >&2; exit 1 ;; esac; \
     printf '#!/bin/sh\n# graphify on its own private Python venv, which is not on PATH (design base-image.md section 6).\n# A caller'"'"'s PYTHONPATH/PYTHONHOME/PYTHONSTARTUP/PYTHONUSERBASE could reach into this private venv and shadow its own numpy/tree-sitter.\nunset PYTHONPATH PYTHONHOME PYTHONSTARTUP PYTHONUSERBASE\nexport PYTHONNOUSERSITE=1\nexec /opt/fugaro/graphify/venv/bin/graphify "$@"\n' \

@@ -379,7 +379,10 @@ func graphifyArgs(t *testing.T, df string) (version, pythonVersion string) {
 // ENV PATH line (fails the PATH check); changing the wrapper to exec a bare
 // "python" instead of the venv's own "graphify" entry point (fails the
 // wrapper check); dropping --require-hashes from the pip install (fails the
-// reproducibility check).
+// reproducibility check); dropping --compile-bytecode (fails the
+// pre-compiled-bytecode check: the venv is root-owned, so the unprivileged
+// fugaro user can't write a .pyc at run time, and every invocation would
+// silently recompile numpy/networkx from source).
 func TestGraphifyPinnedAndIsolated(t *testing.T) {
 	df := baseDockerfile(t)
 	version, pythonVersion := graphifyArgs(t, df)
@@ -409,6 +412,9 @@ func TestGraphifyPinnedAndIsolated(t *testing.T) {
 	}
 	if !strings.Contains(df, "images/base/graphify/requirements.lock.txt") {
 		t.Error("the Dockerfile never installs from the committed graphify lockfile")
+	}
+	if !strings.Contains(df, "--compile-bytecode") {
+		t.Error("graphify's pip install does not pre-compile bytecode: the venv is root-owned, so fugaro can't write .pyc at run time and every invocation recompiles numpy/networkx from source")
 	}
 }
 

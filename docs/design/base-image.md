@@ -261,7 +261,10 @@ This is a real risk. Estimates for amd64, uncompressed (the plan's first Docker 
 | gcloud (bundled Python) | 0.55 GB |
 | Harnesses (Claude Code 0.24, Goose 0.2, OpenCode 0.15, Codex 0.1, Crush 0.07, Node and npm harnesses 0.45) | 1.2 GB |
 | mise, gh, yq, Docker CLI, fugaro | 0.2 GB |
-| **Total** | **about 3.1 GB** (1.1 to 1.3 GB compressed) |
+| graphify (uv, a private CPython 3.12.15, numpy, 27 tree-sitter grammars, etc.) | 0.26 GB |
+| **Total (this table's component estimate)** | **about 3.36 GB** |
+
+**Measured, amd64 and arm64 both over the warning line:** CI's `images/size-budget.sh`, on the build that added graphify (PR #326, commit `0fbb2096`, run [38459835112](https://github.com/dimipaun/fugaro/actions/runs/38459835112)), reported **`fugaro-base:ci` is 3787 MB** on `amd64` ([job log](https://github.com/dimipaun/fugaro/actions/runs/38459835112/job/115511934540)) and **3570 MB** on `arm64` ([job log](https://github.com/dimipaun/fugaro/actions/runs/38459835112/job/115511934485)) -- both above this table's 3.36 GB component estimate and the 3500 MB warning line, and both about 210 MB under the 4000 MB hard budget. The gap between the hand-added component estimate and the measured total is apt/pip overhead the table doesn't itemize (duplicated shared libraries across layers, unpacked wheel sizes larger than their downloads, Debian's own dependency closures); the measured number, not this table, is what the budget actually gates on.
 
 Today: `web-node` 0.7 GB, `java-services` 2.1 GB.
 
