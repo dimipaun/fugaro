@@ -350,12 +350,16 @@ func TestValidateWarnsOnLooserThanCeiling(t *testing.T) {
 	if !got.Valid || len(got.Problems) != 0 || len(got.Warnings) != 4 {
 		t.Fatalf("json = %+v", got)
 	}
-	// A tighter file says nothing about the ceilings (the no-language-runtime
-	// warning above still fires: cliMinimalYAML's workflow has no mise
-	// config either way, so a generic "warning" check would always match).
+	// A tighter file says nothing about the ceilings. The no-language-runtime
+	// warning still fires (cliMinimalYAML's workflow has no mise config
+	// either way): stripped out by its own exact text before asserting no
+	// warning at all remains, so a ceiling-unrelated warning this test does
+	// not expect (a clamp, say) would still be caught.
 	path = fileWithBudget(t, "budget: { mode: observe, per_run_usd: 5 }\n", "budget: { mode: enforce, per_run_usd: 2 }\n", pinnedAgent)
-	if _, errOut, err = execute(t, "validate", path); err != nil || strings.Contains(errOut, "ceiling") || strings.Contains(errOut, "looser") {
-		t.Fatalf("tightening warned: %v %q", err, errOut)
+	_, errOut, err = execute(t, "validate", path)
+	stripped := strings.Replace(errOut, "warning: workflows.app: no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)\n", "", 1)
+	if err != nil || strings.Contains(stripped, "warning") {
+		t.Fatalf("tightening warned: %v %q", err, stripped)
 	}
 }
 
@@ -443,15 +447,17 @@ func TestValidateNotOnDefaultBranchSaysSo(t *testing.T) {
 	testutil.Git(t, root, "checkout", "-q", "-b", "feature")
 	// A file with no budget or token key has no policy to bound: no branch
 	// note. The one warning present (no mise config) is unrelated to it.
-	if out, errOut, err := execute(t, "validate", "--json", file); err != nil || strings.Contains(errOut, "default branch") ||
-		strings.Contains(out, "branch") || !strings.Contains(out, `"message": "no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)"`) {
+	out, errOut, err := execute(t, "validate", "--json", file)
+	var noPolicy validateOutput
+	if err != nil || strings.Contains(errOut, "default branch") || json.Unmarshal([]byte(out), &noPolicy) != nil ||
+		len(noPolicy.Warnings) != 1 || noPolicy.Warnings[0].Path != "workflows.app" {
 		t.Fatalf("no policy keys: %v out %q stderr %q", err, out, errOut)
 	}
 	withBudget := strings.Replace(cliMinimalYAML, "workflows:", "budget: { per_run_usd: 1 }\nworkflows:", 1)
 	if err := os.WriteFile(file, []byte(withBudget), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, errOut, err := execute(t, "validate", file)
+	out, errOut, err = execute(t, "validate", file)
 	if err != nil || !strings.Contains(out, "is valid") ||
 		!strings.Contains(errOut, "branch feature, not the default branch (main)") || !strings.Contains(errOut, "can only tighten") {
 		t.Fatalf("%v out %q stderr %q", err, out, errOut)
