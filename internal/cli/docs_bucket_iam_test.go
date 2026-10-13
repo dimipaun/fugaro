@@ -26,9 +26,11 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 		"the bucket stays writable by every launcher until then",
 		"any launcher holding `roles/storage.objectAdmin`, not only an",
 		"any **launcher** holding `roles/storage.objectAdmin` on the runs bucket, not only operators",
+		"Until the bucket IAM hardening ships (release 0.7.0,",
+		"any run of the same repository, since they share the job's service account and bucket prefix — can plant context there",
 	}
 	var files []string
-	for _, g := range []string{"../../docs/*.md", "../../docs/design/*.md", "../../README.md", "../../plugin/skills/*/SKILL.md", "../../plugin/skills/*/reference/*.md"} {
+	for _, g := range []string{"../../docs/*.md", "../../docs/design/*.md", "../../README.md", "../../SECURITY.md", "../../plugin/skills/*/SKILL.md", "../../plugin/skills/*/reference/*.md"} {
 		m, _ := filepath.Glob(g)
 		files = append(files, m...)
 	}
