@@ -233,12 +233,18 @@ New job, after `publish-base`:
       - name: Build the digest manifest
         run: |
           set -eu
+          # digest-*.txt already hold "sha256:<hex>" (sed 's/.*@//' on
+          # RepoDigests, and imagetools inspect's own --format, both keep
+          # the algorithm prefix) — %s alone, not "sha256:%s", or the
+          # manifest would read "fugaro-base-amd64 sha256:sha256:<hex>" and
+          # every consumer (the Go parser, the signature itself) would see
+          # a line that does not match "<name> sha256:<hex>" at all.
           : > image-digests.txt
-          printf 'fugaro-base-amd64 sha256:%s\n' "$(cat digest-amd64.txt)" >> image-digests.txt
-          printf 'fugaro-base-arm64 sha256:%s\n' "$(cat digest-arm64.txt)" >> image-digests.txt
-          printf 'fugaro-base sha256:%s\n' "$(cat digest-index.txt)" >> image-digests.txt
+          printf 'fugaro-base-amd64 %s\n' "$(cat digest-amd64.txt)" >> image-digests.txt
+          printf 'fugaro-base-arm64 %s\n' "$(cat digest-arm64.txt)" >> image-digests.txt
+          printf 'fugaro-base %s\n' "$(cat digest-index.txt)" >> image-digests.txt
           if [ -f digest-history.txt ]; then
-            printf 'fugaro-history sha256:%s\n' "$(cat digest-history.txt)" >> image-digests.txt
+            printf 'fugaro-history %s\n' "$(cat digest-history.txt)" >> image-digests.txt
           fi
       # PIN: resolve sigstore/cosign-installer's current release SHA before
       # copying this file in (docs/pending-workflows/README.md "Before you
@@ -685,23 +691,73 @@ Expected: PASS.
 
 **The ordering hazard (design §4) and its fix.** `base_images.base` is one value shared by the whole installation, while the grant this task removes is applied per repository, by that repository's own `fugaro init --repo`. If an operator runs `fugaro init --repo` for one repository before *any* repository of that installation has ever run `fugaro image refresh`/`fugaro upgrade` (the step that moves `base_images.base` to the new pin, Task 3), that repository's builds and its own daily check job (which submits Cloud Build as, and runs as, the same build account) would try to pull the still-old, Artifact-Registry-hosted base using a grant Terraform just removed, and fail. This is closed with a **Go-side precondition**, not a Terraform `count` (a `count`-conditioned version of an already-unindexed resource would need a `moved` block to avoid Terraform treating the indexing change itself as a replace, and this repository has no existing `moved`-block precedent to build on — enforcing the order in Go, once, before Terraform is ever invoked, is simpler and needs no Terraform-state surgery).
 
+**The precondition is NOT `isManaged` — it cannot be.** An earlier draft of this document gated the precondition on `!isManaged(cur, host, source, kind)`, but `isManaged` (Task 3) is deliberately built to recognize **both** shapes as fine — the old Artifact-Registry-hosted copy and the new ghcr.io pin — exactly so `image refresh` doesn't treat a pre-migration entry as a hostile custom base. That is the right behavior for `image refresh`'s own "is this safe to touch" question, and the wrong one for this task's "is the build account's read grant on `fugaro-base` still needed" question: `isManaged` would return `true` for a repository that has *never* been migrated, so the precondition would never fire for exactly the installation it exists to protect — reproducing the hazard, not closing it. The actual, narrower question this task needs answered is simpler and does not need `isManaged`/`managedVersion` at all: **is `base_images.base` still hosted inside this installation's own `fugaro-base` registry, in any shape** — a pre-migration managed copy, a hand-pushed `dev-<sha>` tag, or any other custom image someone pushed there? If so, the grant is still load-bearing and must not be removed; only once the value points somewhere else entirely (the new ghcr.io pin, or a custom image hosted in a different registry altogether, `--base-image`) is the grant safe to drop:
+
+```go
+// baseStillInInstallationRegistry reports whether ref is hosted inside
+// this installation's own fugaro-base registry (host+"/"+
+// mirror.BaseRepository+"/"), in ANY shape — a release copy isManaged
+// recognizes, a hand-pushed dev tag, or anything else. Unlike isManaged
+// (Task 3), this does not distinguish "a release image fugaro verified"
+// from "a custom one": it only asks whether the build account's read
+// grant on fugaro-base is still load-bearing for this repository, which
+// is true whenever the base is read from there at all, managed or not.
+func baseStillInInstallationRegistry(ref, host string) bool {
+	return strings.HasPrefix(ref, host+"/"+mirror.BaseRepository+"/")
+}
+```
+
 **Files:**
-- Modify: `internal/cli/init_repo_stage.go` (`(*repositoryStage).Plan`, confirmed to exist at `init_repo_stage.go:134` — the implementer confirms the exact point to add the check when this task starts, since it is new code with no existing analogue to cite a line number for yet): gains a precondition, checked before any Terraform plan is generated, that refuses with a clear message naming `fugaro image refresh`/`fugaro upgrade` when the local config's `base_images.base` is not yet recognized as pinned (`isManaged` against the configured host/source, Task 3) — mirroring the shape of the existing `customBaseRefusal`/`gcpProjectProblems` preflight checks elsewhere in this package, not a new pattern.
+- Modify: `internal/cli/init_repo_stage.go` (`(*repositoryStage).Plan`, confirmed to exist at `init_repo_stage.go:134` — the implementer confirms the exact point to add the check when this task starts, since it is new code with no existing analogue to cite a line number for yet): gains a precondition, checked before any Terraform plan is generated, that refuses with a clear message naming `fugaro image refresh`/`fugaro upgrade` when `baseStillInInstallationRegistry` is true for the local config's `base_images.base` — mirroring the shape of the existing `customBaseRefusal`/`gcpProjectProblems` preflight checks elsewhere in this package, not a new pattern, but a **new, separate** predicate from Task 3's `isManaged`, not a reuse of it.
 - Modify: `deploy/terraform/gcp/modules/repo/build.tf` (delete `google_artifact_registry_repository_iam_member.build_base`)
 - Regenerate: `internal/infra/tf/testdata/golden/repo*.plan.json` (`scripts/gen-golden-plans.sh`, per the base-image plan's own Task 19 precedent)
 - Modify: `docs/base-image-migration.md` (a new, short section: the required order — pin first, `init --repo` second — and the one-time `--allow-delete` an operator sees)
 
-**Interfaces:** no new exported type; one new unexported precondition function in `init_repo_stage.go`, shaped like `func (s *repositoryStage) baseIsPinned(lc *localcfg.Config) error` (name is illustrative — the implementer may name it to fit the file's existing conventions), returning a `userErr` naming the fix when `base_images.base` is set but not `isManaged`.
+**Interfaces:** no new exported type; `baseStillInInstallationRegistry(ref, host string) bool` (above) plus one new unexported precondition function in `init_repo_stage.go`, shaped like `func (s *repositoryStage) baseGrantStillNeeded(lc *localcfg.Config, host string) error` (name is illustrative — the implementer may name it to fit the file's existing conventions), returning a `userErr` naming the fix when `baseStillInInstallationRegistry(lc.BaseImage("base"), host)` is true. An empty `base_images.base` is not refused here (nothing has been pinned into `fugaro-base` to strand, and a fresh installation's own `fugaro init` sets it via its own images stage, Task 3, before this stage's Terraform ever runs in the same invocation — see "no new deadlock" below).
+
+**No new deadlock for a brand-new installation.** A plain `fugaro init` from within a checkout runs the images stage (which verifies and pins `base_images.base`, Task 3) before the repository stage's Terraform (this stage), in the same invocation — so a first-ever setup already has the new pin in hand by the time this precondition runs, and never refuses itself. The precondition only ever fires for an **existing**, previously-migrated-under-the-old-mirror installation whose operator runs `fugaro init --repo` for an onboarded (or newly onboarded) repository without first running `fugaro image refresh`/`fugaro upgrade` anywhere in it — exactly the case this task exists to catch.
 
 - [ ] **Step 1: Write the failing tests**
+
+The new predicate, `internal/cli/init_repo_stage_test.go` (or wherever it is defined — the implementer's call):
+
+```go
+func TestBaseStillInInstallationRegistry(t *testing.T) {
+	const host = "us-east5-docker.pkg.dev/proj-1234"
+	for ref, want := range map[string]bool{
+		"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.6.0":    true,  // old managed copy: still in fugaro-base
+		"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc": true,  // hand-pushed dev tag: isManaged would say false, this must still say true
+		"ghcr.io/dimipaun/fugaro-base:0.7.1@sha256:" + strings.Repeat("c", 64): false, // new pin: outside fugaro-base
+		"registry.example.com/acme/custom-base:1":                           false, // a --base-image pointed entirely elsewhere
+		"":                                                                   false, // never pinned: nothing to strand
+	} {
+		if got := baseStillInInstallationRegistry(ref, host); got != want {
+			t.Errorf("baseStillInInstallationRegistry(%q) = %v, want %v", ref, got, want)
+		}
+	}
+}
+```
 
 The ordering precondition, `internal/cli/init_repo_stage_test.go` (shape only — the implementer wires it to this file's actual fixtures, which this plan has not inspected in enough depth to sketch byte-exactly):
 
 ```go
 func TestRepoStageRefusesBeforeTheBaseIsPinned(t *testing.T) {
 	lc := &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", Region: "us-east5",
-		BaseImages: map[string]string{"base": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.6.0"}} // old, unpinned shape
+		BaseImages: map[string]string{"base": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.6.0"}} // old, unpinned shape, still in fugaro-base
 	// ... build the stage fixture this test file's existing helpers use ...
+	if _, err := stage.Plan(context.Background(), initflow.Env{}); err == nil || !strings.Contains(err.Error(), "fugaro image refresh") {
+		t.Errorf("Plan() = %v, want a refusal naming fugaro image refresh", err)
+	}
+}
+
+// TestRepoStageRefusesACustomBaseStillInTheInstallationRegistry: a
+// hand-pushed dev tag still inside fugaro-base must refuse too, even
+// though isManaged (a different question) would call it unmanaged — this
+// is the case an isManaged-based precondition would have gotten backwards.
+func TestRepoStageRefusesACustomBaseStillInTheInstallationRegistry(t *testing.T) {
+	lc := &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", Region: "us-east5",
+		BaseImages: map[string]string{"base": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc123"}}
+	// ... same fixture shape as above ...
 	if _, err := stage.Plan(context.Background(), initflow.Env{}); err == nil || !strings.Contains(err.Error(), "fugaro image refresh") {
 		t.Errorf("Plan() = %v, want a refusal naming fugaro image refresh", err)
 	}
@@ -731,12 +787,12 @@ func TestGoldenRepoPlanNoLongerGrantsBuildBaseRead(t *testing.T) {
 
 - [ ] **Step 2: Run them to see them fail**
 
-Run: `go test ./internal/cli/ -run TestRepoStage -count=1` and `go test ./internal/infra/tf/ -run TestGoldenRepoPlanNoLongerGrantsBuildBaseRead -count=1`
-Expected: FAIL (no precondition yet; the current golden plan still has the grant).
+Run: `go test ./internal/cli/ -run 'TestBaseStillInInstallationRegistry|TestRepoStage' -count=1` and `go test ./internal/infra/tf/ -run TestGoldenRepoPlanNoLongerGrantsBuildBaseRead -count=1`
+Expected: FAIL (no predicate, no precondition yet; the current golden plan still has the grant).
 
 - [ ] **Step 3: Implement**
 
-Add the precondition to `(*repositoryStage).Plan`, before it builds or shows any Terraform plan. Delete the `google_artifact_registry_repository_iam_member.build_base` resource block from `deploy/terraform/gcp/modules/repo/build.tf`; run `scripts/gen-golden-plans.sh` to regenerate the golden JSON fixtures against a fake provider (no live Terraform apply — the existing script already works this way for every other golden-plan change in this repository).
+Add `baseStillInInstallationRegistry` (above) and the precondition that calls it to `(*repositoryStage).Plan`, before it builds or shows any Terraform plan. Delete the `google_artifact_registry_repository_iam_member.build_base` resource block from `deploy/terraform/gcp/modules/repo/build.tf`; run `scripts/gen-golden-plans.sh` to regenerate the golden JSON fixtures against a fake provider (no live Terraform apply — the existing script already works this way for every other golden-plan change in this repository).
 
 `docs/base-image-migration.md` gains, under "Everywhere":
 
