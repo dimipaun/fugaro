@@ -539,11 +539,35 @@ func TestExpectDigestUnusedAndUnpinnedListed(t *testing.T) {
 	}
 }
 
-// TestLaterKindTagMovedRecordsNothing is deleted: its point (one kind
-// copied, a later one's release tag moving before Copy reaches it) needed
-// two kinds in the same run, which config.Bases (one kind, "base") can no
-// longer have. The single-kind form of a moved tag during Copy is covered
-// by TestDestinationMovedAtStageLevel below.
+// TestLaterKindTagMovedRecordsNothing: one init run still copies more than
+// one image (here, history and the base kind, since --firebase pulls in
+// history too), so the all-or-nothing rule survives the cut even with one
+// base kind: if the base's own release tag moves away after the first
+// image (history) is already written, nothing is recorded at all, not a
+// partial base_images.
+func TestLaterKindTagMovedRecordsNothing(t *testing.T) {
+	r := newImagesRig(t, "1.2.3")
+	oldHook := r.dst.onTag
+	moved := false
+	r.dst.onTag = func(repo, tag string) {
+		if !moved && repo == initProject+"/fugaro-base/history" && tag == "latest" {
+			moved = true
+			r.src.tags["dimipaun/fugaro-base:1.2.3"] = cdg([]byte("moved"))
+			r.src.mans[cdg([]byte("moved"))] = []byte("moved")
+			r.src.types[cdg([]byte("moved"))] = "application/vnd.oci.image.index.v1+json"
+		}
+		if oldHook != nil {
+			oldHook(repo, tag)
+		}
+	}
+	_, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes", "--base", "base")
+	if err == nil || !strings.Contains(err.Error(), "moved") {
+		t.Fatalf("err = %v", err)
+	}
+	if bi := r.localConfig(t).BaseImages; len(bi) != 0 {
+		t.Errorf("base_images = %v", bi)
+	}
+}
 
 // The destination tag changing after the plan is refused at the stage too.
 func TestDestinationMovedAtStageLevel(t *testing.T) {
