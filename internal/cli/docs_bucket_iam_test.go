@@ -20,6 +20,12 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 		"`roles/storage.objectAdmin` on it only to launchers",
 		"Anyone holding `roles/storage.objectAdmin` on the runs bucket: launchers and operators",
 		"The bucket stays writable by launchers until the hardening lands",
+		"every launcher holds `roles/storage.objectAdmin` on the runs bucket and can write the layer object",
+		"any launcher's own terminal can publish today",
+		"today that is every launcher and every operator, not operators alone",
+		"the bucket stays writable by every launcher until then",
+		"any launcher holding `roles/storage.objectAdmin`, not only an",
+		"any **launcher** holding `roles/storage.objectAdmin` on the runs bucket, not only operators",
 	}
 	var files []string
 	for _, g := range []string{"../../docs/*.md", "../../docs/design/*.md", "../../README.md", "../../plugin/skills/*/SKILL.md", "../../plugin/skills/*/reference/*.md"} {

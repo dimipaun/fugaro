@@ -117,10 +117,12 @@ Until step 5 nothing changes for teammates: a checkout without the line gets the
 
 ## Rolling out the 0.7.0 bucket hardening
 
-0.7.0 gives launchers who are not operators `roles/storage.objectViewer` on the runs bucket and `roles/storage.objectUser` on its `runs/` only, instead of `objectAdmin` on the whole bucket ([design/bucket-iam.md](design/bucket-iam.md)). This appends two steps to that release's rollout order (after the base-image cut, its own CLI upgrade and image rebuild):
+Release 0.7.0 gives launchers who are not operators `roles/storage.objectViewer` on the runs bucket and `roles/storage.objectUser` on its `runs/` only, instead of `objectAdmin` on the whole bucket ([design/bucket-iam.md](design/bucket-iam.md)). This is a separate rollout from "Rolling out the shared installation config" above (that one is pinned to the release that added `gcp_project:`, not 0.7.0).
 
-5. **One operator runs `fugaro init`** (the installation stage) in their own terminal, reads the plan and the `bucket access (0.7.0)` banner naming each launcher whose old grant is replaced, and types the project's name. On a one-person installation (the only user is both launcher and operator) the plan has no bucket change.
-6. **Every operator and launcher runs `fugaro doctor`,** which reports `runs-bucket-iam` ok.
+0.7.0's own rollout order ([design/bucket-iam.md](design/bucket-iam.md) §8, citing [design/base-image.md](design/base-image.md) §10) is the base-image consolidation's usual order — operators upgrade the CLI, each repository gets its pull request, each repository runs `fugaro image refresh`, doctor shows a clean result — with two steps the bucket hardening appends after those:
+
+1. **One operator runs `fugaro init`** (the installation stage) in their own terminal, reads the plan and the `bucket access (0.7.0)` banner naming each launcher whose old grant is replaced, and types the project's name. On a one-person installation (the only user is both launcher and operator) the plan has no bucket change.
+2. **Every operator and launcher runs `fugaro doctor`,** which reports `runs-bucket-iam` ok.
 
 The bucket change does not depend on the base-image steps, and pre-0.7.0 CLIs keep launching after it: a 0.6.x launch writes only `runs/` already. Claude never applies this migration; the user reviews and applies the plan at their own terminal (no live cloud access in a Claude session).
 
