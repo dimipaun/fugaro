@@ -61,15 +61,16 @@ Project rules (carried over from this repository's existing plans):
 | `internal/infra/installation_terraform_test.go`, `deploy/terraform/gcp/roots/installation/tests/`, `deploy/terraform/gcp/roots/repo/tests/repo.tftest.hcl`, `internal/infra/spec_test.go` golden fixtures | real `terraform test` plan-level fixtures: no secret-resource deletes, but the expected IAM-member replacements, `tf.Guard` refusing/accepting them (B3) | 6 |
 | `internal/cli/doctor.go`, `doctor_test.go` | two per-repository checks plus a project-wide revocation-lag one (design §5, S3) | 7 |
 | `internal/cli/image.go`, `internal/backend/gcp/build.go`, `internal/cli/imagecheck.go`, `internal/cli/doctor.go`, `internal/infra/readiness.go`, `internal/infra/spec.go` | `ResolveSecretID` helper; `cloudBuildSpec` takes a resolved `gitSecretID` parameter; `CheckJobSpec.GitSecretID`; the GitHub App doctor check resolves too (N1) | 8 |
-| `docs/design/v1.md`, `docs/multi-model.md`, `docs/gcp-live-checklist.md`, `docs/release.md`, `docs/gcp-setup.md`, `internal/cli/docs_*_test.go` | cross-references, Check 40, the release checklist bullet, the shared-config list (S6) | 9 |
-| none | full suite | 10 |
-| `docs/gcp-live-checklist.md` (results pasted in) | the owner's own run, Check 40a-g | 11 |
+| `internal/cli/initsecrets.go`, `initsecrets_test.go` | `find()` consults `infra.ProjectSecretCandidate` before calling a name missing; never prompts/stores to the repo copy when a project copy already has a version (N2) | 9 |
+| `docs/design/v1.md`, `docs/multi-model.md`, `docs/gcp-live-checklist.md`, `docs/release.md`, `docs/gcp-setup.md`, `internal/cli/docs_*_test.go` | cross-references, Check 40, the release checklist bullet, the shared-config list (S6) | 10 |
+| none | full suite | 11 |
+| `docs/gcp-live-checklist.md` (results pasted in) | the owner's own run, Check 40a-h | 12 |
 
 ## PR group
 
-One PR, branch `project-secrets`, Tasks 1 to 10 in order for the merge; Task 11 is the owner's own run, not blocking (the same relationship `named-oauth-tokens.md`'s Task 11 has to its own PR).
+One PR, branch `project-secrets`, Tasks 1 to 11 in order for the merge; Task 12 is the owner's own run, not blocking (the same relationship `named-oauth-tokens.md`'s Task 11 has to its own PR).
 
-Parallelizable: **Task 2 needs Task 1** (its P7 mount-condition change reads `ProviderKeyAvailable`; it has no collision check to read `lc.ProjectSecrets` for any more, S1), so they are no longer independent — Task 1 goes first, Task 2 follows directly after. Task 3 needs 1 and 2 (its P7 resolution also reads `ProviderKeyAvailable`). Task 4 needs 1, 2 and the installation Terraform half of itself (its Go and Terraform halves can split further if useful). Task 5 needs 2 (and is reviewed separately from the rest, per P4). Task 6 needs 4 and 5. Task 7 needs 3. **Task 8 needs 3 and 5 (N1, new: `Readiness`'s `CheckJobSpec.GitSecretID` and the reusable resolve helper it extracts, design §5).** Task 9 needs 1 through 8 settled. Task 10 is last.
+Parallelizable: **Task 2 needs Task 1** (its P7 mount-condition change reads `ProviderKeyAvailable`; it has no collision check to read `lc.ProjectSecrets` for any more, S1), so they are no longer independent — Task 1 goes first, Task 2 follows directly after. Task 3 needs 1 and 2 (its P7 resolution also reads `ProviderKeyAvailable`). Task 4 needs 1, 2 and the installation Terraform half of itself (its Go and Terraform halves can split further if useful). Task 5 needs 2 (and is reviewed separately from the rest, per P4). Task 6 needs 4 and 5. Task 7 needs 3. **Task 8 needs 3 and 5 (N1, new: `Readiness`'s `CheckJobSpec.GitSecretID` and the reusable resolve helper it extracts, design §5). Task 9 needs 2's `infra.ProjectSecretCandidate` helper (N2, new: `fugaro init --repo`'s secrets stage reuses it).** Task 10 needs 1 through 9 settled. Task 11 is last. (Task 12, the owner's own live run, is separate and non-blocking, as always.)
 
 ---
 
@@ -260,7 +261,7 @@ git commit -m "project secrets task 1: config.ProjectSecret, its validation, the
 
 **Interfaces:**
 - Produces: `func ProjectSecretID(fugaroProject, logical string) string` — same `derive()` call as `SecretID` (`names.go:143-145`), same length/hash budget (`maxSecretID`, `secretHashHex`), domain-separated from it (a nit from review: hash `"project\x00"+fugaroProject+"\x00"+logical`, not `fugaroProject+"\x00"+logical`, so a Fugaro project name that happened to equal some repository's own slug could never make `ProjectSecretID`/`SecretID` collide on the same byte string).
-- **Produces: `RepoSpec.ProjectSecretCandidates map[string]string` (`json:"-"`) and the code in `infra.Repo()`/`workflow()` that populates it** — this task's home for it, since `Readiness` (Task 3) only ever *consumes* this field and has no local-config access to compute it itself (design §5's mechanism). For each workflow's resolved logical secrets (`uniqueSecrets(ws)`, already computed here) and the check job's, add a `ProjectSecretCandidates[logical] = gcp.ProjectSecretID(lc.Name, logical)` entry whenever `config.AllowedForProjectSecret(lc.ProjectSecrets, logical, repo)`, or `config.ClaudeAccountBySecret(lc.ClaudeAccounts, logical)` resolves to an account whose own `AllowsData(repo)` is true, or (provider names) `config.ProviderBySecret(lc.Providers, logical)` resolves to a provider whose `ProviderKeyAvailable(repo)` is true.
+- **Produces: `RepoSpec.ProjectSecretCandidates map[string]string` (`json:"-"`) and `infra.ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id string, ok bool)`, an exported, reusable helper (not inlined into `workflow()` only)** — one place computes "is `logical` eligible for `repo` to use project-wide, and what ID would it resolve to": `config.AllowedForProjectSecret(lc.ProjectSecrets, logical, repo)`, or `config.ClaudeAccountBySecret(lc.ClaudeAccounts, logical)` resolving to an account whose own `AllowsData(repo)` is true, or (provider names) `config.ProviderBySecret(lc.Providers, logical)` resolving to a provider whose `ProviderKeyAvailable(repo)` is true — `ok` is false and `id` is `""` otherwise. `workflow()`'s own population of `ProjectSecretCandidates` (for each workflow's resolved logical secrets, `uniqueSecrets(ws)`, and the check job's) calls this helper once per logical name, rather than repeating the three-way check inline. **This is the same helper Task 9 (N2) reuses** for `fugaro init --repo`'s secrets stage, which needs the identical eligibility answer but has no `RepoSpec` to read it from yet (the secrets stage runs *before* the repository stage, §6).
 - **No `SecretMounts` collision check for `project_secrets` is added (S1 — an earlier draft of this task proposed one; it was dead code, already covered unconditionally by `config.Validate`, see design §3).**
 - **Changes (P7, owner ruling, design §3a): `SecretMounts`'s existing per-provider mount condition (`spec.go:534`, `if p := lc.Providers[pn]; p.AllowsData(repo) {`) becomes `if p := lc.Providers[pn]; p.ProviderKeyAvailable(repo) {`.** This is pre-existing, already-shipped code (predates this entire feature) being modified, not new code — flag it as such in the commit message. No other line of `SecretMounts` changes for this: the loop still appends exactly one `SecretMount{p.Secret, p.SecretEnv()}` per eligible provider, only *which* providers are eligible widens for a no-list provider.
 
@@ -814,7 +815,48 @@ git commit -m "project secrets task 8: image builds, the daily check and doctor'
 
 ---
 
-### Task 9: Docs, cross-references, Check 40, the release checklist bullet
+### Task 9: `fugaro init --repo`'s secrets stage stops ignoring the project copy (N2)
+
+**This task did not exist in the design's first two drafts: the secrets stage (`internal/cli/initsecrets.go`) decides a name is "missing" by checking only the repo-scoped ID's version state — it has no idea a project copy might already have one. At a terminal this prompts the operator for a value they don't need to re-enter (storing it into the repo copy, which then wins forever — a silent precedence flip, and exactly the re-entry this whole feature exists to remove); without a terminal (`--yes`/CI) it returns `NeedsYou` and blocks the init. Under §3a, this also means `init` prompts every `agent.auth: api-key` repository for a no-list provider's key, even though that key is already available project-wide.**
+
+**Files:**
+- Edit: `internal/cli/initsecrets.go`, `internal/cli/initsecrets_test.go`
+
+**Interfaces:**
+- `(s *secretsStage) find(ctx context.Context, st secretStore) ([]string, error)` (`initsecrets.go:361-371` today: lists `st.List` under `{gcp.LabelRepo: s.tg.label}` and checks each wanted name's repo ID alone) gains a second `List` call, under `{gcp.LabelProject: s.e.lc.Name}` (the same, already-granted project-wide metadata read `fugaro secrets ls --project-wide` uses, §4 — no new IAM), and for each `name` in `s.tg.wanted`: resolve `infra.ProjectSecretCandidate(s.e.lc, name, s.tg.repo)` (Task 2's exported helper); if `ok` and the project list shows that ID with `Latest != ""`, the name is **not** missing, regardless of the repo copy's own state. Only a name with neither a project candidate-with-a-version nor its own repo version is added to `out` (today's existing rule, unchanged for every non-project-shareable name — an installation with no `project_secrets`/no provider/no claude account configured sees byte-for-byte no change, since `infra.ProjectSecretCandidate` then always returns `ok == false`).
+- The prompt/store path itself (`set`, `initsecrets.go:574`-ish) is **unchanged**: a name genuinely missing everywhere still prompts and stores to the repo copy, exactly as today — that is the correct, legitimate bootstrap case (nothing stored anywhere yet), not a bug. The fix is entirely in `find()` correctly recognizing "already available via the project copy" as not missing in the first place, so `set()` is never reached for such a name at all.
+
+**Tests:**
+```go
+func TestInitSecretsFindSkipsNameWithProjectVersion(t *testing.T) { /* a project-shared name (any of the three kinds) has a project-copy version, repo copy has none: find() does not include it in "missing" */ }
+func TestInitSecretsDoesNotPromptForProjectCoveredName(t *testing.T) { /* end-to-end: canPrompt() true, but the stage never calls readSecret/set for the project-covered name -- asserted via a fake prompt reader that must never be invoked for that one name, the same mutation-proof pattern every other *NeverPrintsValue-style test in this plan already uses */ }
+func TestInitSecretsPrecedenceUnchangedWhenRepoAlreadyStored(t *testing.T) { /* repo copy already has a version too: find() does not treat it as missing either (today's existing behavior) -- a regression guard that this fix does not accidentally make the project copy look preferred */ }
+func TestInitSecretsProviderNoListNeverPromptsAnyRepo(t *testing.T) { /* §3a: a provider configured with no allow_data_to, with a value already stored --project-wide: assert find() does not list that provider's secret as missing for ANY repository's init --repo, not just a listed one */ }
+func TestInitSecretsStillPromptsWhenNothingStoredAnywhere(t *testing.T) { /* the legitimate bootstrap case: neither repo nor project has a version -- find() still lists it as missing, canPrompt()/set() behavior is byte-for-byte unchanged */ }
+```
+
+- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `go test -count=1 -run 'TestInitSecretsFindSkips|TestInitSecretsDoesNotPrompt|TestInitSecretsPrecedenceUnchanged|TestInitSecretsProviderNoListNeverPrompts|TestInitSecretsStillPrompts' ./internal/cli/`
+Expected: FAIL.
+
+- [ ] **Step 3: Write the implementation**
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `go vet ./internal/cli/... && go test -count=1 -run 'TestInitSecrets' ./internal/cli/`
+Expected: `ok` (the full `TestInitSecrets*` set, to catch any regression in the existing secrets-stage tests).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/cli/initsecrets.go internal/cli/initsecrets_test.go
+git commit -m "project secrets task 9: init --repo's secrets stage consults the project copy before calling a name missing (N2)"
+```
+
+---
+
+### Task 10: Docs, cross-references, Check 40, the release checklist bullet
 
 **Files:**
 - Edit: `docs/design/v1.md` (one cross-reference sentence, §5.4 local config area, no rewrite)
@@ -839,7 +881,7 @@ git commit -m "project secrets task 8: docs cross-references, Check 40, the rele
 
 ---
 
-### Task 10: Full suite
+### Task 11: Full suite
 
 - [ ] **Step 1: Full focused suite**
 
@@ -859,14 +901,14 @@ Expected: `ok` everywhere, no `gofmt`/`terraform fmt` output, `Success!` from bo
 - [ ] **Step 2: Commit**
 
 ```bash
-git commit -m "project secrets task 10: full suite"
+git commit -m "project secrets task 11: full suite"
 ```
 
 ---
 
-### Task 11: Owner-run live check (not part of the PR; `fugaro`/sandbox installations only, never `belong`)
+### Task 12: Owner-run live check (not part of the PR; `fugaro`/sandbox installations only, never `belong`)
 
-This task is never run by an implementer or by CI. Paste the `FACT:` lines into the PR that eventually implements Tasks 1-10 and into `docs/gcp-live-checklist.md` itself, under Check 40.
+This task is never run by an implementer or by CI. Paste the `FACT:` lines into the PR that eventually implements Tasks 1-11 and into `docs/gcp-live-checklist.md` itself, under Check 40.
 
 - [ ] **40a.** Store a project secret with `--project-wide`, confirm (via `gcloud run jobs describe`/`jobs.get`, never by reading the value) that an opted-in repository's job's `secret_key_ref` names the project's secret ID.
 - [ ] **40b.** For a `project_secrets`/`claude_accounts`-backed name (reserved secrets, named accounts): confirm a repository outside the allow-list is refused at `--project-wide` with a message naming the missing entry, and that its deployed job carries no such env var at all.
@@ -876,3 +918,4 @@ This task is never run by an implementer or by CI. Paste the `FACT:` lines into 
 - [ ] **40f (owner ruling, design §3a).** Configure a provider with **no** `allow_data_to` at all; confirm `fugaro secrets set <provider-secret> --project-wide` succeeds (not refused); confirm, via `jobs.describe`, that an `agent.auth: api-key` repository never named by this provider anywhere still mounts the key; confirm that `fugaro validate` still refuses every repository's pin to it (the data-policy gate stays closed, Option A).
 - [ ] **40g.** Configure a provider **with** an explicit, non-empty `allow_data_to`; confirm an unlisted repository's job does **not** mount the key at all (the non-empty-list case is unaffected by 40f).
 - [ ] **40h (N1).** With `bitbucket-token` project-shared and the repo copy's version disabled: confirm `fugaro image build`/`image refresh`, the daily check's own rebuild, and `fugaro doctor` all still succeed (Task 8's resolve helper and `CheckJobSpec.GitSecretID`).
+- [ ] **40i (N2).** With a project-shared name's repo copy never stored, confirm `fugaro init --repo`'s secrets stage does not prompt for it (terminal) and does not block on `NeedsYou` for it (`--yes`); confirm a name missing everywhere still does both, unchanged.
