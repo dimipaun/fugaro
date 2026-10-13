@@ -192,19 +192,24 @@ func (a *usageAcc) merge(u *wireUsage) {
 
 // hasInput reports whether the usage names enough to settle on. On the
 // Claude route any reported input count does, even zero. On a provider
-// route input alone may legitimately be zero (or absent entirely) under
-// heavy caching, so a cache read or write counts too, whether or not
-// input_tokens was itself present; but a usage that names none of input,
-// cache read or cache write at all is not real usage: a real request
-// always sends some input (a system prompt, at least one message), so a
-// provider that never names an input count simply left it out, and the
-// call settles like any other missing field, at the reservation, however
-// real the output it produced.
+// route input alone may legitimately be zero under heavy caching, so a
+// cache read or write counts too — but only once input_tokens has been
+// reported at all (set), even as an explicit 0: a provider whose usage
+// never includes the input_tokens key, in any event, has left input out
+// entirely, not merely reported it as zero, and OWNER RULING treats that
+// the same as a response with no usage at all (the reservation), never
+// mind a real cache read elsewhere in the same usage. A usage that names
+// none of input, cache read or cache write is not real usage either way:
+// a real request always sends some input (a system prompt, at least one
+// message), so a provider that never names an input count — with or
+// without the key present at zero — simply left it out, and the call
+// settles like any other missing field, at the reservation, however real
+// the output it produced.
 func (a *usageAcc) hasInput() bool {
 	if !a.provider {
 		return a.in.set
 	}
-	return a.in.v > 0 || a.cr.v > 0 || a.cc.v > 0 || a.w5.v > 0 || a.w1.v > 0
+	return a.in.set && (a.in.v > 0 || a.cr.v > 0 || a.cc.v > 0 || a.w5.v > 0 || a.w1.v > 0)
 }
 
 // negative reports whether any reported count is below zero.

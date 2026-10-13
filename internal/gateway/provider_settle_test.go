@@ -538,23 +538,41 @@ func TestZeroInputHeavyCacheSettles(t *testing.T) {
 	}
 }
 
-// Code review (low): hasInput()'s provider branch required a.in.set even
-// though a cache read or write alone is documented as enough. A usage
-// object that never includes an input_tokens key at all (as opposed to
-// sending input_tokens:0 explicitly, every other test's shape) must still
-// settle from its cache read, not fall back to the reservation.
-func TestCacheReadOnlyNoInputKeySettles(t *testing.T) {
-	u := pricing.Usage{CacheRead: 900, Output: 50}
-	call, rep, _ := settleStream(t,
-		`{"cache_read_input_tokens":900,"output_tokens":1}`,
-		`{"cache_read_input_tokens":900,"output_tokens":50}`)
-	want := cost(t, dsModel, u)
-	if got := pricing.Micros(num(call["charged_micros"])); got != want || call["settled"] != settledUsage {
-		t.Errorf("charged %d, want %d, settled %v", got, want, call["settled"])
-	}
-	if rep.UsageUnparsed != 0 {
-		t.Errorf("usage_unparsed %d, want 0", rep.UsageUnparsed)
-	}
+// OWNER RULING (round 3, overriding round 2's low-severity fix): a usage
+// object that never includes an input_tokens key at all, in any event —
+// as opposed to sending input_tokens:0 explicitly, TestZeroInputHeavyCacheSettles's
+// shape, which keeps settling from usage — has left input out entirely,
+// not merely reported it as zero; the gateway settles at the reservation
+// for that, a real cache read elsewhere in the same usage notwithstanding.
+// Review-measured (JSON path, reservation 8199): a round-2 fix made this
+// charge 2005 instead; this reverts it. Covers the stream path too (input
+// absent in every event).
+func TestCacheReadOnlyNoInputKeyChargesReservation(t *testing.T) {
+	t.Run("stream", func(t *testing.T) {
+		call, rep, logs := settleStream(t,
+			`{"cache_read_input_tokens":900,"output_tokens":1}`,
+			`{"cache_read_input_tokens":900,"output_tokens":50}`)
+		if got, res := pricing.Micros(num(call["charged_micros"])), pricing.Micros(num(call["reserved_micros"])); got != res || res == 0 || call["settled"] != settledReserved {
+			t.Errorf("charged %d of %d reserved, settled %v, want the reservation", got, res, call["settled"])
+		}
+		if rep.UsageUnparsed != 1 {
+			t.Errorf("usage_unparsed %d, want 1", rep.UsageUnparsed)
+		}
+		if reason := lastUnparsedReason(t, logs); reason != "input_zero_no_cache" {
+			t.Errorf("reason %q, want input_zero_no_cache", reason)
+		}
+	})
+	t.Run("json", func(t *testing.T) {
+		reply := anthropicfake.Reply{Status: http.StatusOK,
+			Body: `{"type":"message","model":"` + dsModel + `","content":[],"usage":{"cache_read_input_tokens":900,"output_tokens":50}}`}
+		call, rep := settleCase(t, 0, msg(dsModel, 1000), reply)
+		if got, res := pricing.Micros(num(call["charged_micros"])), pricing.Micros(num(call["reserved_micros"])); got != res || res == 0 || call["settled"] != settledReserved {
+			t.Errorf("charged %d of %d reserved, settled %v, want the reservation", got, res, call["settled"])
+		}
+		if rep.UsageUnparsed != 1 {
+			t.Errorf("usage_unparsed %d, want 1", rep.UsageUnparsed)
+		}
+	})
 }
 
 // An all-zero usage (input, cache and output, every field) on a 2xx is
