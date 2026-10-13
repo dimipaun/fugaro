@@ -58,7 +58,7 @@ mechanism this design is the first attempt to build.
   copying declared workflow secrets, adding the auth variables (vertex,
   api-key, oauth), then `spec.Set` (Fugaro's own, e.g. `FUGARO_STATE_DIR`),
   and — **last, so nothing declared or inherited can override it**
-  (`env.go:134-141`, the comment says so explicitly) — the gateway's
+  (`env.go:133-140`, the comment says so explicitly) — the gateway's
   routing variables when the gateway is on. This ordering is the one
   invariant every design below must not weaken.
 - **Per-stage variables (model pins, and now the provider-route fix) go
@@ -184,7 +184,7 @@ must not add a *reviewed, first-class* path around that specific guard):
 
 | Must be impossible | Enforcement |
 |---|---|
-| Redirect model traffic around the gateway (`ANTHROPIC_BASE_URL`, `ANTHROPIC_VERTEX_BASE_URL`, `ANTHROPIC_BEDROCK_BASE_URL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_SKIP_VERTEX_AUTH`, any `CLAUDE_CODE_USE_*`) | Closed allow-list (§2): these names are never on it. `BuildEnv` applies `agent.env`'s values **before** the gateway's own (§2, mirroring the existing `spec.Set` ordering, `env.go:133-141`), so even a bug that let one through would still be overwritten, not merely shadowed. A unit test (`TestAgentEnvAllowListNeverRoutes`, §2) asserts the allow-list and the routing names (`routingEnvKeys`/`CLAUDE_CODE_USE_*`) are disjoint — a narrower claim than disjointness from `ReservedEnvPrefixes`, since the allow-list's `CLAUDE_CODE_*` entries are *expected* to also be in `ReservedEnvPrefixes` (that list is the unrelated secrets deny-list, §0). |
+| Redirect model traffic around the gateway (`ANTHROPIC_BASE_URL`, `ANTHROPIC_VERTEX_BASE_URL`, `ANTHROPIC_BEDROCK_BASE_URL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_SKIP_VERTEX_AUTH`, any `CLAUDE_CODE_USE_*`) | Closed allow-list (§2): these names are never on it. `BuildEnv` applies `agent.env`'s values **before** the gateway's own (§2, mirroring the existing `spec.Set` ordering, `env.go:133-140`), so even a bug that let one through would still be overwritten, not merely shadowed. A unit test (`TestAgentEnvAllowListNeverRoutes`, §2) asserts the allow-list and the routing names (`routingEnvKeys`/`CLAUDE_CODE_USE_*`) are disjoint — a narrower claim than disjointness from `ReservedEnvPrefixes`, since the allow-list's `CLAUDE_CODE_*` entries are *expected* to also be in `ReservedEnvPrefixes` (that list is the unrelated secrets deny-list, §0). |
 | Proxy the agent's traffic (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`, lower-case forms) | Same closed allow-list; these are also in `routingEnvKeys` and in `ReservedEnvPrefixes`/`ReservedEnvNames` already. Not on the allow-list, structurally. |
 | Add a CA or certificate override (`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`) | Already `baseEnv` pass-through only (`env.go:21-22`), never agent-settable; not on the new allow-list either. |
 | Preload or inject code (`LD_PRELOAD`, `LD_LIBRARY_PATH`, `DYLD_INSERT_LIBRARIES`, `NODE_OPTIONS`, `PYTHONSTARTUP`, `BASH_ENV`, `ENV`, `PERL5OPT`, `RUBYOPT`, …) | All already in `ReservedEnvPrefixes`/`ReservedEnvNames` (`validate.go:61-79`); not on the new allow-list. |
@@ -883,21 +883,25 @@ by, the two large 0.7.0 efforts already touching `internal/config` heavily
   channel, neither of which bucket-iam or base-image change.
   `docs/design/named-oauth-tokens.md:117`'s own reasoning for sequencing
   *after* 0.7.0 ("both touching `internal/infra` heavily") does not apply
-  here: this design never touches `internal/infra`.
+  here in the same way: this design's one `internal/infra` edit (the
+  `fugaro init --repo` write-side gate, §5) is a single, narrow check at
+  one call site (`spec.go:610`), nothing like bucket-iam's and
+  base-image's own `internal/infra` work across image builds, Terraform
+  and the job spec more broadly.
   Recommendation: land it as its own small PR group within the 0.7.x line,
   sequenced only by ordinary merge-conflict hygiene with whichever of
-  bucket-iam/base-image's `internal/config` edits lands first — not a hard
-  dependency either way, just "check for a conflicting edit to
-  `scope.go`/`validate.go` before starting," the same courtesy every
-  concurrent config-touching design in this repository already extends
-  (`docs/design/headroom-compression.md`'s plan does the same for `P3`'s
-  `internal/agent/env.go` churn).
-- **Also touches `internal/agent/env.go` and `internal/runner/agentenv.go`**
-  (§3: removing `agent.ProviderRouteVars()`, extending `stagePins`), on top
-  of the `internal/config` files §2 already named — still never
-  `internal/infra`, so the sequencing argument above is unaffected, but an
-  implementer should check these two files for independent churn before
-  starting, same as `scope.go`/`validate.go`.
+  bucket-iam/base-image's `internal/config`/`internal/infra` edits lands
+  first — not a hard dependency either way, just "check for a conflicting
+  edit to `scope.go`/`validate.go`/`spec.go` before starting," the same
+  courtesy every concurrent config-touching design in this repository
+  already extends (`docs/design/headroom-compression.md`'s plan does the
+  same for `P3`'s `internal/agent/env.go` churn).
+- **Also touches `internal/agent/env.go`, `internal/runner/agentenv.go` and
+  `internal/infra/spec.go`** (§3: removing `agent.ProviderRouteVars()`,
+  extending `stagePins`; §5: the `init --repo` gate), on top of the
+  `internal/config` files §2 already named — an implementer should check
+  all of these for independent churn before starting, same as
+  `scope.go`/`validate.go`.
 - **Gated on nothing live before it ships as opt-in.** Unlike
   `agent.compression` (gated on two live checks before it is "ever usable
   at all"), `agent.env`'s v1 scope (§2) sets process environment variables
