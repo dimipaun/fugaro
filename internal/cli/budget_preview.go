@@ -190,11 +190,15 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 		return userErr("--repo: %v", err)
 	}
 	cfg := checkoutConfig(ctx, repo)
-	// The project's recipes live in the runs bucket. It is opened only when
-	// the project layer could hold one: projectRecipesNote says when it
-	// cannot (a runs bucket that is not the default name).
+	root := checkoutRoot(ctx, repo)
+	// A project recipe lives in the runs bucket, and reading the bucket is
+	// not everyone's to do (init removes the plain Viewer's read). Open it
+	// only when the project layer could hold this recipe at all: not when
+	// its name is not the default one (projectRecipesNote), and not when the
+	// repository's own checkout already holds it, since the repository layer
+	// resolves first.
 	env := &cloudEnv{lc: lc}
-	if projectRecipesNote(lc) == "" {
+	if projectRecipesNote(lc) == "" && !repoHasRecipe(root, o.recipe) {
 		if env, err = openCloudFor(ctx, lc); err != nil {
 			return err
 		}
@@ -204,7 +208,7 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 	if err != nil {
 		return err
 	}
-	rr, err := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), o.recipe, budgetNow(), false)
+	rr, err := resolveRecipe(ctx, env, root, o.recipe, budgetNow(), false)
 	if err != nil {
 		return err
 	}
@@ -279,6 +283,17 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 	}
 	printPreview(cmd, doc, doc.PerRunCapUSD, stageUSD)
 	return nil
+}
+
+// repoHasRecipe reports whether the checkout at root holds name in
+// .fugaro/recipes, which resolveRecipe takes before it reaches the runs
+// bucket. A name that is not a recipe name is not one either.
+func repoHasRecipe(root, name string) bool {
+	if root == "" || !recipe.NameRE.MatchString(name) {
+		return false
+	}
+	_, found, err := recipe.ReadRepoFile(root, name)
+	return err == nil && found
 }
 
 func ptr(v float64) *float64 { return &v }
