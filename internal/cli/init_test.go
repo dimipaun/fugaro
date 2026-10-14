@@ -1512,6 +1512,40 @@ func TestInitRepoPassesPolicyEnv(t *testing.T) {
 	}
 }
 
+// TestInitRepoNotesProvidersOpenToEveryRepository: a provider the project
+// config leaves open to every repository (no allow_data_to at all, or
+// ["*"]) is named once, on stderr -- a repository's owner cannot see the
+// project config, and under the old rule an absent list meant nobody, so a
+// silently widened key has to be said out loud. stdout stays the tfvars
+// alone, as every other note of init --repo's does.
+func TestInitRepoNotesProvidersOpenToEveryRepository(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	path := writeProject(t, "aurora", "proj-1234")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	providers := "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n" +
+		"    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n"
+	if err := os.WriteFile(path, append(data, []byte(providers+"base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc}\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: api-key }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+	testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
+	t.Chdir(t.TempDir())
+	out, errOut, err := execute(t, "init", "--repo", "--print-vars", "--project", "aurora", "--github-app-id", "42", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "note: provider openrouter has no allow_data_to, so every repository of the project may mount its key and send it code"
+	if n := strings.Count(errOut, want); n != 1 {
+		t.Errorf("the note appears %d times, want once:\n%s", n, errOut)
+	}
+	if strings.Contains(out, "note:") {
+		t.Errorf("print-vars stdout must stay the tfvars alone:\n%s", out)
+	}
+}
+
 // init --repo says what ceiling it is about to apply and which keys of the
 // checkout's committed budget block it would clamp.
 func TestInitRepoShowsCeilingAndClamps(t *testing.T) {

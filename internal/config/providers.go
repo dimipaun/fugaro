@@ -139,6 +139,47 @@ func (p ModelProvider) AllowsData(repo string) bool {
 	return slices.ContainsFunc(p.AllowDataTo, func(r string) bool { return r == "*" || strings.EqualFold(r, repo) })
 }
 
+// OpenToEveryRepo reports whether every repository of the project may use
+// p's key and send it code: an absent allow_data_to (the key never written
+// at all), or the explicit ["*"] marker -- both mean the same thing (design
+// §3a, the owner's ruling). A list written with no repositories in it is
+// refused by ValidateModelProviders and is not open.
+//
+// It exists so the three surfaces that must make this visible -- validate,
+// init and doctor -- ask one question, rather than each reading the field:
+// before this design an absent list meant nobody, so a config written under
+// the old rule silently becomes the widest setting there is.
+func (p ModelProvider) OpenToEveryRepo() bool {
+	if p.AllowDataTo == nil {
+		return !p.allowDataToWritten
+	}
+	return slices.Contains(p.AllowDataTo, "*")
+}
+
+// OpenToEveryRepoReason is why p is open to every repository, as a clause
+// for a message whose subject is the provider (validate's Problem.Path,
+// init's note, doctor's check), so the three surfaces cannot drift apart in
+// wording. The two spellings read differently on purpose: a key never
+// written is usually an oversight, while ["*"] is the marker for meaning it.
+func (p ModelProvider) OpenToEveryRepoReason() string {
+	if p.AllowDataTo == nil {
+		return "has no allow_data_to, so every repository of the project may mount its key and send it code (write allow_data_to: [\"*\"] to mean that on purpose, or remove the ambiguity by listing the repositories)"
+	}
+	return "has allow_data_to: [\"*\"]: every repository of the project may mount its key and send it code, deliberately"
+}
+
+// OpenProviders are the providers every repository of the project may use,
+// in name order.
+func OpenProviders(providers map[string]ModelProvider) []string {
+	var out []string
+	for _, name := range sortedKeys(providers) {
+		if providers[name].OpenToEveryRepo() {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 // PatternMatches reports whether the model pattern (an exact ID, or a prefix
 // ending in *) claims model. The gateway's routes use the same function.
 func PatternMatches(pat, model string) bool {

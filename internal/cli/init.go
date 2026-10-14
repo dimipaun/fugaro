@@ -402,6 +402,10 @@ type initRun struct {
 	historyNoted bool
 	printed      bool // the --json result has been printed
 	anchorNoted  bool // init --repo's pointer at --anchor has been said
+	// notedOpenProviders is the once-per-run guard on the note about the
+	// providers every repository may use: the converge's repository stage
+	// runs the repo engine too, and the note belongs once.
+	notedOpenProviders bool
 
 	// buildsLeft is the workflows whose first image build was not offered
 	// because this run cannot take a typed confirmation (--yes, --json, a pipe
@@ -502,6 +506,7 @@ func runInit(r *initRun) error {
 		return err
 	}
 	r.setProject(lc)
+	r.noteOpenProviders(lc)
 	if o.publishConfig {
 		if old == nil {
 			return userErr("--publish-config publishes an existing project config, and there is none: run fugaro init first")
@@ -1568,6 +1573,26 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 	return nil
 }
 
+// noteOpenProviders says, once per run, which providers every repository of
+// the project may use (internal/config's rule): their keys are mounted into
+// every repository's job and every repository may send them code. Before
+// this design an absent allow_data_to meant nobody, so an operator who
+// never wrote the key is now at the widest setting; this says so at the one
+// command that acts on it. A note, not a warning: the owner ruled it valid.
+func (r *initRun) noteOpenProviders(lc *localcfg.Config) {
+	if r.notedOpenProviders || lc == nil {
+		return
+	}
+	r.notedOpenProviders = true
+	w := r.w
+	if r.o.printVars {
+		w = r.cmd.ErrOrStderr() // stdout stays the tfvars alone
+	}
+	for _, name := range config.OpenProviders(lc.Providers) {
+		fmt.Fprintf(w, "note: provider %s %s\n", name, lc.Providers[name].OpenToEveryRepoReason())
+	}
+}
+
 // noteSecondProject says, once a new project config is written beside
 // another, what that means for commands run outside a checkout.
 func (r *initRun) noteSecondProject() {
@@ -1886,6 +1911,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		return err
 	}
 	r.setProject(lc)
+	r.noteOpenProviders(lc)
 	r.res.Repo = repo
 	if !embedded && !o.planOnly && !o.forget && !o.printVars {
 		if err := r.gateRepo(ctx, root, lc); err != nil {

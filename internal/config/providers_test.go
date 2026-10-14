@@ -102,15 +102,16 @@ func TestProviderAllowDataToSpellings(t *testing.T) {
 	for name, tc := range map[string]struct {
 		tail    string
 		anyRepo bool
+		open    bool
 		refused bool
 	}{
-		"absent":              {"", true, false},
-		"wildcard":            {"allow_data_to: [\"*\"]\n", true, false},
-		"listed":              {"allow_data_to: [acme/app]\n", false, false},
-		"explicit empty list": {"allow_data_to: []\n", false, true},
-		"null":                {"allow_data_to:\n", false, true},
-		"tilde":               {"allow_data_to: ~\n", false, true},
-		"only comments":       {"allow_data_to:\n  # - acme/app\n", false, true},
+		"absent":              {"", true, true, false},
+		"wildcard":            {"allow_data_to: [\"*\"]\n", true, true, false},
+		"listed":              {"allow_data_to: [acme/app]\n", false, false, false},
+		"explicit empty list": {"allow_data_to: []\n", false, false, true},
+		"null":                {"allow_data_to:\n", false, false, true},
+		"tilde":               {"allow_data_to: ~\n", false, false, true},
+		"only comments":       {"allow_data_to:\n  # - acme/app\n", false, false, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var p ModelProvider
@@ -137,6 +138,20 @@ func TestProviderAllowDataToSpellings(t *testing.T) {
 			}
 			if got := p.AllowsData("acme/anything"); got != tc.anyRepo {
 				t.Errorf("%s: AllowsData(acme/anything) = %v, want %v", name, got, tc.anyRepo)
+			}
+			// OpenToEveryRepo is the one question validate, init and doctor
+			// ask to make the widest setting visible, so it must agree with
+			// AllowsData here and must not call a refused spelling open.
+			if got := p.OpenToEveryRepo(); got != tc.open {
+				t.Errorf("%s: OpenToEveryRepo() = %v, want %v", name, got, tc.open)
+			}
+			named := OpenProviders(map[string]ModelProvider{"openrouter": p, "other": okProvider()})
+			if tc.open {
+				if len(named) != 1 || named[0] != "openrouter" {
+					t.Errorf("%s: OpenProviders = %q, want [openrouter]", name, named)
+				}
+			} else if len(named) != 0 {
+				t.Errorf("%s: OpenProviders = %q, want none", name, named)
 			}
 		})
 	}

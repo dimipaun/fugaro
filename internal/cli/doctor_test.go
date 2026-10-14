@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -266,6 +267,71 @@ func TestDoctorStrictFailsForeignAndUnpinned(t *testing.T) {
 				t.Fatal("--strict: want a failure")
 			}
 		})
+	}
+}
+
+// TestDoctorOpenProvidersIsInformational: doctor names every provider whose
+// project config leaves it open to every repository (an absent
+// allow_data_to, or ["*"] -- design §3a), as an informational finding: the
+// owner ruled that state valid, so it informs and never fails doctor, with
+// --strict or without.
+func TestDoctorOpenProvidersIsInformational(t *testing.T) {
+	r := newDoctorRig(t)
+	doctorJSON := func(t *testing.T) doctorOutput {
+		t.Helper()
+		out, _, err := execute(t, "doctor", "--json", "--dir", t.TempDir())
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		var o doctorOutput
+		if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+			t.Fatalf("json: %v\n%s", jerr, out)
+		}
+		return o
+	}
+	// The rig has failures of its own (no checkout for plugin-pin, no base
+	// image), so strictness is compared rather than expected to pass: the
+	// set of checks that fail under --strict must be the same one as before
+	// the provider existed.
+	failing := func(t *testing.T) map[string]string {
+		t.Helper()
+		out, _, _ := execute(t, "doctor", "--strict", "--json", "--dir", t.TempDir())
+		var o doctorOutput
+		if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+			t.Fatalf("json: %v\n%s", jerr, out)
+		}
+		m := map[string]string{}
+		for _, c := range o.Checks {
+			// "info" is what checksFail never fails on, so an informational
+			// finding is not part of the verdict either way.
+			if !c.OK && c.Severity != "info" {
+				m[c.ID] = c.Severity
+			}
+		}
+		return m
+	}
+	before := failing(t)
+	if _, ok := before["provider-open-to-every-repository"]; ok {
+		t.Fatal("reported with no providers configured")
+	}
+	addLocalLines(t, r, "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n"+
+		"    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n")
+	o := doctorJSON(t)
+	c, ok := doctorCheckByID(o.Checks, "provider-open-to-every-repository")
+	if !ok || c.OK || c.Severity != "info" {
+		t.Fatalf("provider-open-to-every-repository = %+v", c)
+	}
+	if !strings.Contains(c.Problem, "provider openrouter has no allow_data_to") || !strings.Contains(c.Problem, "may mount its key") {
+		t.Fatalf("problem = %q", c.Problem)
+	}
+	if !strings.Contains(c.Fix, "allow_data_to") || !strings.Contains(c.Fix, "init --repo") {
+		t.Fatalf("fix = %q", c.Fix)
+	}
+	if !o.OK {
+		t.Fatalf("an informational state failed doctor: %+v", o)
+	}
+	if after := failing(t); !maps.Equal(before, after) {
+		t.Fatalf("--strict: the finding changed the verdict: before %v, after %v", before, after)
 	}
 }
 

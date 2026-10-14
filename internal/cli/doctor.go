@@ -49,6 +49,29 @@ func fromPreflight(c preflight.Check) doctorCheck {
 	return doctorCheck{ID: c.ID, OK: c.OK, Problem: c.Problem, Fix: c.Fix}
 }
 
+// doctorOpenProvidersCheck is doctor's "provider-open-to-every-repository"
+// finding: every provider the local config leaves open to every repository
+// (an absent allow_data_to, or the explicit ["*"] marker -- design §3a),
+// named, with what that means. Informational, never red and never a
+// failure under --strict: the owner ruled the state valid, and this only
+// makes it visible, because before this design an absent list meant nobody
+// and a config carried over from then now mounts its key into every
+// repository's job. It reads the local config alone: no cloud call, no
+// value.
+func doctorOpenProvidersCheck(lc *localcfg.Config) *doctorCheck {
+	names := config.OpenProviders(lc.Providers)
+	if len(names) == 0 {
+		return nil
+	}
+	lines := make([]string, len(names))
+	for i, name := range names {
+		lines[i] = "provider " + pluginwire.Printable(name) + " " + lc.Providers[name].OpenToEveryRepoReason()
+	}
+	return &doctorCheck{ID: "provider-open-to-every-repository", Severity: "info",
+		Problem: strings.Join(lines, "; "),
+		Fix:     "to narrow it, list the repositories in that provider's allow_data_to and run " + selfCommand() + " init --repo in each one (a deployed job keeps the key's mount and the routes it was applied with until then)"}
+}
+
 // cliVersionCheck is doctor's "cli-version" check: whether this binary is
 // the latest stable fugaro release. Unlike the background nag
 // (warnUpdateAvailable), it always attempts the (cached, bounded) lookup
@@ -258,6 +281,9 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		return failed(err)
 	}
 	o.Checks = append(o.Checks, sharedConfigChecks(ctx, sel, lc, time.Now())...)
+	if c := doctorOpenProvidersCheck(lc); c != nil {
+		o.Checks = append(o.Checks, *c)
+	}
 	if co, err := checkoutProject(ctx, ""); err == nil && needsAnchorHint(ctx, co, lc) {
 		o.Checks = append(o.Checks, doctorCheck{ID: "gcp-project-line", Severity: "info", Problem: anchorHintText,
 			Fix: "fugaro init --anchor writes the gcp_project line into fugaro.yaml after checking the job images"})
