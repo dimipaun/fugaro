@@ -191,7 +191,7 @@ scope and not planned) is reserved by the retire-image-mirror plan's Task 7
 live checks (`docs/plans/2026-10-13-retire-image-mirror.md` Task 7). **Check 42 is
 reserved by the config-transitions design, Check 43 by the registry design
 (PR #353), and Check 44 by the provider price catalog
-(`docs/design/provider-price-catalog.md` §7, `docs/plans/2026-10-14-provider-price-catalog.md`
+(`docs/design/provider-price-catalog.md` §10, `docs/plans/2026-10-14-provider-price-catalog.md`
 Task 7).** **Check
 40 is reserved by the
 project-secrets design** (`docs/design/project-secrets.md` §8,
