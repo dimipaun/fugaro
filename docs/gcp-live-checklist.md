@@ -246,6 +246,7 @@ revocation (40j).
 | 36 | Named Claude accounts, U3: per-project Cloud Run job count comfort at the installation's intended (workflow × account) scale | See "Check 36" below; **you** read the sandbox project's quota. | No cost. **NOT RUN.** |
 | 37 | Named Claude accounts, U4: the real Claude Code error text for an expired or revoked oauth token, and `fugaro diagnose`'s rendering of it | See "Check 37" below; **you** run it, on the sandbox repository only. | One minimal sandbox run (about the cost of check 13). **USER-RUN, NOT RUN.** |
 | 40 | Project-level secrets (design `project-secrets.md` §8, §3a): a project-wide secret reaching an opted-in repository's job, an empty/absent name refused at store time and a narrowed list dropping a mount, a repo-level override's precedence and its fallback once removed, the data-policy gate still enforced for a provider's non-empty, listed case, no value anywhere in a log or a Terraform plan/state print, (§3a, the owner's **final** ruling) a provider with no `allow_data_to`/`["*"]` becoming available to every repository for BOTH mounting AND the data-policy gate, revocation never bricking the excluded repository's own apply, and the CLI's own build/check/doctor paths resolving the real secret ID (including the apply-time/live and base-image version skews they must account for) | See "Check 40" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only. | A handful of small sandbox-sized plan/apply cycles. **USER-RUN, NOT RUN.** |
+| 41 | The one base image's cold start: time from `fugaro run` to the runner's first log line on the sandbox, on the old 0.6 `web-node` image and on `fugaro-base` 0.7.0 (base-image plan Task 22 step 1, design `base-image.md` §13) | See "Check 41" below; run on installation `fugaro`, sandbox repository only, with a no-change task. | **RUN 2026-10-14, PASSED** (no regression beyond the first pull). |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -1088,6 +1089,21 @@ Confirms `docs/design/project-secrets.md`'s §5 precedence and §3 allow-list ho
 12. **Restore** the pre-check state noted in step 1.
 
 **Paste back:** every `FACT` line above, never a secret value.
+
+## Check 41: the one base image's cold start (installation fugaro, sandbox repository only; RUN 2026-10-14: PASSED)
+
+The 0.7.0 base is much larger than the old per-language images (3.8 GB against 1 to 2 GB), so a run's first seconds could get slower while Cloud Run pulls it. The plan's threshold: more than 30 seconds worse than the old image makes the fallback (install tools on demand instead of baking them in) a 0.7.1 task.
+
+**Method.** The sandbox's `web` workflow, a task that changes nothing and opens no pull request (`fugaro run --repo edgeappinc/fugarosandbox --ref master "Cold-start measurement. Do not change any file and do not open a pull request. Reply with the single word ok."`), launched three or four times at least 35 minutes apart so each run starts on an idle container. **Cold start = the run ID's timestamp (the launch time, UTC) to the first Cloud Logging entry of the run's Cloud Run execution** (`gcloud logging read` on the execution named in the run's `launch.json`, oldest entry).
+
+**FACT lines (2026-10-14).**
+
+| Image | Runs | Median |
+|---|---|---|
+| old 0.6 `web-node` image (removed in 0.7.0; measured before the migration) | 11.7, 15.7, 11.6, 11.6 s | about 11.7 s |
+| `fugaro-base` 0.7.0 (sandbox `web` rebuilt on it, build record names `fugaro-base:0.7.0`) | 30.5, 10.3, 10.5 s | about 10.5 s |
+
+The one slow run (30.5 s) was the first on the new base: the larger image pulled onto a cold node after a long idle gap; the next two, 35 minutes apart, matched the old image. Nothing came near the 30-seconds-worse line, so no fallback task. One sample of each kind is small: repeat it after any large image growth (the base is about 188 MB under its 4000 MB size budget).
 
 ## Not covered by these tests (manual)
 
