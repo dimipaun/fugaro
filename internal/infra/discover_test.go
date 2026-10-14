@@ -1442,6 +1442,67 @@ func TestReadinessProviderListedExcludesUnlistedRepo(t *testing.T) {
 	}
 }
 
+// ProjectSecretCandidate is exported and called directly by the CLI's
+// secrets stage and doctor, not only through Repo's candidate map, so its
+// provider (and named-account) gate has to hold by itself. The map-based
+// tests above would still pass if this function answered true for
+// everything: SecretMounts never asks about a name the repository cannot
+// mount. A mutation to `eligible = lc.Providers[name].Secret != ""` is what
+// this test exists to kill.
+func TestProjectSecretCandidateGate(t *testing.T) {
+	const accounts = `claude_accounts:
+  acme-personal:
+    allow_data_to: [acme/sandbox]
+  acme-other:
+    allow_data_to: [acme/other]
+`
+	const wildcard = `providers:
+  any-repo:
+    kind: anthropic-compat
+    base_url: https://any.example
+    auth: bearer
+    secret: any-key
+    models: ["x/*"]
+    allow_data_to: ["*"]
+`
+	tests := []struct {
+		name    string
+		lc      string
+		logical string
+		repo    string
+		want    bool
+	}{
+		{"provider lists this repository", providerLC, "openrouter-api-key", "acme/sandbox", true},
+		{"provider lists another repository", providerLC, "openrouter-api-key", "acme/other", false},
+		{"provider lists another repository, asked by it", providerLC, "other-key", "acme/other", true},
+		{"provider with no list", noListProviderLC, "no-list-key", "acme/other", true},
+		{"provider with the wildcard", wildcard, "any-key", "acme/other", true},
+		{"named account allows this repository", accounts, "claude-oauth-token-acme-personal", "acme/sandbox", true},
+		{"named account excludes this repository", accounts, "claude-oauth-token-acme-personal", "acme/other", false},
+		{"project_secrets entry names this repository", projectSecretLC, "bitbucket-token", "acme/sandbox", true},
+		{"project_secrets entry names another repository", projectSecretLC, "bitbucket-token", "acme/other", false},
+		{"a name nothing configures", providerLC, "sandbox-probe", "acme/sandbox", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lc := parseLC(t, m4LocalConfig+m5Additions+tt.lc)
+			id, ok := ProjectSecretCandidate(lc, tt.logical, tt.repo)
+			if ok != tt.want {
+				t.Fatalf("ProjectSecretCandidate(%q, %q) ok = %v, want %v", tt.logical, tt.repo, ok, tt.want)
+			}
+			if !tt.want {
+				if id != "" {
+					t.Errorf("ProjectSecretCandidate(%q, %q) id = %q, want %q with ok false", tt.logical, tt.repo, id, "")
+				}
+				return
+			}
+			if want := gcp.ProjectSecretID(lc.Name, tt.logical); id != want {
+				t.Errorf("ProjectSecretCandidate(%q, %q) id = %q, want %q", tt.logical, tt.repo, id, want)
+			}
+		})
+	}
+}
+
 // B4: the check job's own secret_env goes through the identical resolution.
 func TestReadinessCheckJobResolvesProjectSecretsToo(t *testing.T) {
 	f := newCloud(t)

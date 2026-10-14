@@ -1640,3 +1640,48 @@ func TestRepoNeverPrunesSecretsButGainsCandidates(t *testing.T) {
 		t.Fatalf("ProjectSecretCandidates = %+v, want %+v", after.ProjectSecretCandidates, want)
 	}
 }
+
+// The containers the installation root plans (design §4, installation
+// secrets.tf): §3a's rule is that every provider gets one whether or not its
+// allow_data_to exists -- an absent list is a valid "every repository" state,
+// not a reason to skip the container -- while a project_secrets or
+// claude_accounts entry needs a non-empty list, an empty one meaning nobody.
+// A mutation that drops the unconditional provider branch, or that lets an
+// empty-list entry through, leaves the rest of the spec identical, so nothing
+// else fails.
+func TestProjectSecretContainers(t *testing.T) {
+	const accounts = `claude_accounts:
+  acme-personal:
+    allow_data_to: [acme/sandbox]
+  acme-nobody:
+    allow_data_to: []
+`
+	tests := []struct {
+		name string
+		lc   string
+		want []string
+	}{
+		{"nothing configured", "", nil},
+		{"project_secrets entry with a list", projectSecretLC, []string{"bitbucket-token"}},
+		{"project_secrets entry with an empty list", "project_secrets:\n  bitbucket-token: { allow_data_to: [] }\n", nil},
+		{"provider with no list", noListProviderLC, []string{"no-list-key"}},
+		{"provider with a list", providerLC, []string{"openrouter-api-key", "other-key"}},
+		{"named account with a list", accounts, []string{"claude-oauth-token-acme-personal"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lc := parseLC(t, m4LocalConfig+m5Additions+tt.lc)
+			spec, err := Installation(lc, InstallOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := map[string]string{}
+			for _, logical := range tt.want {
+				want[logical] = gcp.ProjectSecretID(lc.Name, logical)
+			}
+			if !maps.Equal(spec.ProjectSecrets, want) {
+				t.Errorf("ProjectSecrets = %+v, want %+v", spec.ProjectSecrets, want)
+			}
+		})
+	}
+}

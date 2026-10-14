@@ -588,6 +588,12 @@ func doctorSecrets(cmd *cobra.Command, lc *localcfg.Config) []secretEntry {
 // callers tell apart from a real empty answer: an unreadable installation
 // must not be reported as one that stores nothing.
 func doctorProjectSecrets(ctx context.Context, lc *localcfg.Config) (sm *gcp.Secrets, all []gcp.SecretInfo, ok bool) {
+	if lc.Endpoints.NoAuth && lc.Endpoints.SecretManager == "" {
+		// Fakes only, and no fake for Secret Manager: an empty endpoint
+		// would send the call to Google. The same guard the other cloud
+		// reads behind doctor use.
+		return nil, nil, false
+	}
 	sm, err := gcp.NewSecrets(ctx, gcp.Options{GCPProject: lc.GCPProject, Region: lc.Region,
 		Endpoints: gcp.Endpoints{SecretManager: lc.Endpoints.SecretManager, NoAuth: lc.Endpoints.NoAuth}})
 	if err != nil {
