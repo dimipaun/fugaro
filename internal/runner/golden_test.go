@@ -97,6 +97,12 @@ func TestCeilingOnlyPolicyGolden(t *testing.T) {
 // policy object.
 func checkGolden(t *testing.T, h *harness, name string, withPolicy bool) {
 	t.Helper()
+	// The golden must not carry the machine's own image: bootstrap reads
+	// ImageInfoPath (the default is /etc/fugaro/image.json) before the
+	// clone, so on a Fugaro worker — whose base image writes that file —
+	// the record gains an image block that a CI runner's does not. Point it
+	// at a path that is never there, so the golden is the same in both.
+	h.deps.ImageInfoPath = filepath.Join(t.TempDir(), "no-image.json")
 	if _, err := h.run(t, implement("feature"), review("ship", 0)); err != nil {
 		t.Fatal(err)
 	}

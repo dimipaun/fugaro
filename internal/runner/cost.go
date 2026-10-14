@@ -2,11 +2,53 @@ package runner
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
+
+// stageTiming is the StageTiming for the stage that just ended, so that
+// result.json says what each stage cost and which model it ran on
+// (generic-tool plan Task 24; the cost preview reads it). The cost is the
+// gateway's figure for the stage, which endGatewayStage has already taken
+// into r.lastStage, or, without a gateway, what the agent's own result
+// event reported (an oauth run). Read this right after the stage's agent
+// returned, before anything else closes a stage in the gateway.
+//
+// The stages sum to cost.model_usd only up to gateway spend no stage
+// report carried: a call that settles after its stage's wait ran out is in
+// the ledger's total (gwUsed, so in cost.model_usd) and in the split only
+// as cost.model_by's "unattributed" (modelByUSD). Precisely, over the
+// run's stages minus that residual, and to the micro-dollar:
+//
+//	sum(stages[].model_usd) + cost.model_by["unattributed"] == cost.model_usd
+//
+// which TestStageTimingLateSpendIsUnattributed pins. Model names the model
+// the stage was pinned to, never what the upstream served, and a gateway
+// stage may also have made background-model calls: both are inside this
+// stage's ModelUSD, so it is the stage's spend, not the pinned model's.
+func (r *run) stageTiming(name string, started time.Time, claudeUSD float64) runstore.StageTiming {
+	st := runstore.StageTiming{
+		Name:      name,
+		StartedAt: started.UTC(),
+		DurationS: r.d.Now().Sub(started).Seconds(),
+		Model:     r.cfg.Agent.ModelFor(config.StageRole(name)),
+	}
+	r.mu.Lock()
+	gateway, rep := r.gw != nil, r.lastStage
+	r.mu.Unlock()
+	if !gateway {
+		st.ModelUSD = claudeUSD
+		return st
+	}
+	if rep != nil {
+		st.ModelUSD = rep.Used.USD()
+	}
+	return st
+}
 
 // updateCost refreshes the record's cost breakdown from the model spend so
 // far and the elapsed compute time at list price.
