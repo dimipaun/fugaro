@@ -100,7 +100,8 @@ workflows:
 		t.Errorf("dockerfile = %q", res.Dockerfile)
 	}
 	// The selftest's own hardening checks (no unexpected setuid-root binary,
-	// no leftover sudoers rule) must have run and passed too, not just the
+	// no leftover sudoers rule) and the base image's directory contracts
+	// (mise-cache-dir) must have run and passed too, not just the
 	// checkout-facing checks: a base image that lost them is not hardened.
 	for _, name := range []string{"no-sudo", "no-setuid", "no-setgid", "no-file-caps", "sudoers", "init", "user", "git-credentials", "home-credentials", "mise-cache-dir", "verify-build"} {
 		if c := smokeCheck(res, name); !c.OK {
