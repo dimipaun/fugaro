@@ -154,6 +154,54 @@ func TestMiseSystemConfig(t *testing.T) {
 	}
 }
 
+// miseCacheDir is where mise keeps the downloads a run reuses, and where a
+// derived build mounts its BuildKit cache (derived/Dockerfile.tmpl).
+const miseCacheDir = "/home/fugaro/.cache/mise"
+
+// fugaroOwnedDirs are the directories the base's Dockerfile creates as
+// fugaro with mode 0755, read from its `install -d` invocations (a
+// continuation line belongs to the line above it).
+func fugaroOwnedDirs(df string) map[string]bool {
+	owned := map[string]bool{}
+	re := regexp.MustCompile(`install -d -o fugaro -g fugaro -m 0755 ([^&|\n]*)`)
+	for _, m := range re.FindAllStringSubmatch(strings.ReplaceAll(df, "\\\n", " "), -1) {
+		for _, dir := range strings.Fields(m[1]) {
+			owned[dir] = true
+		}
+	}
+	return owned
+}
+
+// TestMiseCacheDirIsWritableByFugaro pins the fix for the run-time warning
+// "mise WARN failed to write cache file: ~/.cache/mise/terraform/1.16.4/...:
+// Permission denied". A derived build mounts a BuildKit cache on
+// ~/.cache/mise, and BuildKit creates a mount target that does not exist
+// itself, as root: that empty root-owned directory ships in the image and
+// the run's mise, as fugaro, cannot write in it. The base creates it as
+// fugaro, so the mount lands on a directory its owner can write.
+func TestMiseCacheDirIsWritableByFugaro(t *testing.T) {
+	owned := fugaroOwnedDirs(baseDockerfile(t))
+	if !owned[miseCacheDir] {
+		t.Errorf("the Dockerfile does not create %s as fugaro: a derived build's cache mount would create it as root", miseCacheDir)
+	}
+	tmpl, err := os.ReadFile("derived/Dockerfile.tmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Every cache mount the derived template puts under fugaro's home has to
+	// be one of those directories, or the two drift apart and the run gets a
+	// root-owned cache again.
+	mounts := regexp.MustCompile(`--mount=type=cache,[^ ]*target=(/home/fugaro/[^,\s]+)`).FindAllStringSubmatch(string(tmpl), -1)
+	if len(mounts) == 0 {
+		t.Error("the derived template mounts no cache under /home/fugaro: has the mise step moved?")
+	}
+	for _, m := range mounts {
+		if !owned[m[1]] {
+			t.Errorf("the derived template mounts a cache on %s, which the base does not create as fugaro", m[1])
+		}
+	}
+}
+
 // fetch.sh refuses anything but https and a 64-digit sha256 before it
 // downloads, and removes a download whose sum is wrong.
 func TestFetchRefusesHTTPAndBadSums(t *testing.T) {
