@@ -192,7 +192,7 @@ live checks (`docs/plans/2026-10-13-retire-image-mirror.md` Task 7), **as
 amended by the registry-remote-repository plan** (2026-10-14): that plan
 deletes the copy those checks copy into, so **39b** (the copy lands from the
 `-pinned` tag) and **39f** (a round trip whose point was the copy) are
-dropped, 39a, 39c and 39e stand, **with one exception**: 39a's Expected text (*"the copy lands in the installation's own Artifact Registry"*, `docs/plans/2026-10-13-retire-image-mirror.md:562`) is **amended** to *"and the pinned reference is the remote repository's path at that digest; nothing is copied"*, because that plan removes the copy 39a expected, and 39d stays out of scope. **Check
+dropped, 39a, 39c and 39e stand, **with one exception**: 39a's Expected text (*"the copy lands in the installation's own Artifact Registry"*, `docs/plans/2026-10-13-retire-image-mirror.md:562`) is **amended** to *"and the pinned reference is the remote repository's path at that digest; nothing is copied"*, because that plan removes the copy 39a expected, and 39d stays out of scope. **Where the drop is recorded, and where it is not:** this ruling and the registry-remote-repository plan (its Task 7 amendment table and Task 8's Files list) are the only places that say so. *That other plan's own `39b` and `39f` rows are deliberately left untouched by this change* — it edits only 39a's Expected text there, so `docs/plans/2026-10-13-retire-image-mirror.md:563` still reads as if the copy lands from the `-pinned` tag and `:567` still describes a round trip whose point was that copy. Read those two rows through this ruling: **39b is dropped** (there is no copy to source) and **39f is superseded by Check 43f below** (the same round trip, against the remote path); neither is a gap in this checklist's numbering. **Check
 40 is reserved by the
 project-secrets design** (`docs/design/project-secrets.md` §8,
 `docs/plans/2026-10-13-project-secrets.md` Task 10): project-wide secret
@@ -1198,7 +1198,18 @@ gcloud auth configure-docker "${L:?}-docker.pkg.dev"    # if not already done
 
 **FACT lines:** the describe's `mode: REMOTE_REPOSITORY`, `remoteRepositoryConfig.dockerRepository.customRepository.uri: https://ghcr.io`, and `labels.fugaro: managed`; and that the create was accepted with **upstream validation on** (the default) — the design leaves `disable_upstream_validation` unset so a typo'd URI fails the apply rather than a job's first pull.
 
-**Two optional probes, sandbox only, worth running while the repository is fresh:** `docker push "${I:?}:probe"` and record the refusal (Artifact Registry documents reading from a remote repository and never writing to one), and — **only if you want to settle the design's §2.12 (m)** — a second repository created with a path-bearing upstream URI, to see whether the registry itself scopes the proxy:
+**Optional probe 1, sandbox only — whether a push is refused (design §2.12 e), worth running while the repository is fresh.** Artifact Registry documents *reading* from a remote repository and never writing to one; this is the item that settles whether a push is actually refused. **The daemon must hold an image to push**: `docker push` of a tag that is not in the local image store fails **in the daemon** — *"An image does not exist locally with the tag"* — before the registry is contacted at all, and recording that as the refusal would confirm (e) falsely. So build the smallest possible local image first — a scratch image with **one** tiny layer (no pull, no network, and **nothing fetched through `$R`**, so 43b's cold fetch stays cold). One layer on purpose: an image with *no* layers at all invites a registry-side "invalid image" refusal, which would be indistinguishable from the answer this probe wants:
+
+```bash
+PROBE_DIR=$(mktemp -d); printf 'FROM scratch\nCOPY Dockerfile /\n' > "$PROBE_DIR/Dockerfile"
+docker build -t "${I:?}:probe" "$PROBE_DIR"    # the tag must exist locally, or the push never leaves the daemon
+docker push "${I:?}:probe"                     # only THIS line's output settles (e)
+rm -rf "$PROBE_DIR"; docker rmi "${I:?}:probe" # local cleanup: nothing was left in the registry unless the push succeeded
+```
+
+**What settles (e) and what does not.** The FACT is the **registry's** answer: a `403`/`denied`/`PERMISSION_DENIED` from `${L:?}-docker.pkg.dev`, or whatever else Artifact Registry says when asked to write to a remote repository. Three outcomes settle nothing: the daemon's *"An image does not exist locally with the tag"* (no local image — go back a line); an auth error from `${L:?}-docker.pkg.dev` (*"unauthorized"*, *"no basic auth credentials"*: `gcloud auth configure-docker "${L:?}-docker.pkg.dev"` has not been run in this shell); and any Docker Hub error (the reference did not name this repository). If the push **succeeds**, that **refutes** (e) — record the fully-qualified reference and the pushed digest, stop, and say so in the PR: a remote repository that accepts writes is a different design, not a passing check. If your builder refuses to build that image, tag one you already have (`docker tag <image> "${I:?}:probe"`) — and if you must pull one, pull it from Docker Hub or quay.io **directly, never through `$R`**.
+
+**Optional probe 2, sandbox only, and only if you want to settle the design's §2.12 (m):** a second repository created with a path-bearing upstream URI, to see whether the registry itself scopes the proxy:
 
 ```bash
 gcloud artifacts repositories create "${R2:?}" --project="${P:?}" --location="${L:?}" \
