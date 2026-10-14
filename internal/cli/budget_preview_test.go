@@ -3,10 +3,12 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -105,6 +107,193 @@ func (f *budgetFixture) Checkout(t *testing.T, agentYAML string) {
 		t.Fatal(err)
 	}
 	t.Chdir(dir)
+}
+
+// previewStage is one stage of a seeded result.json: its kind, the model it
+// was pinned to, and what its calls cost.
+type previewStage struct {
+	kind, model string
+	usd         float64
+}
+
+// SeedRuns writes n runs of acme/app into the runs bucket, each with the
+// same stages, as the runner records them (generic-tool Task 24's
+// stages[].model_usd and stages[].model). The runs are minted one hour
+// apart, the first firstHourAgo hours back, so a test can seed more than
+// one batch. A stage with usd 0 writes no model_usd, as a record from
+// before that key existed does.
+func (f *budgetFixture) SeedRuns(t *testing.T, firstHourAgo, n int, stages []previewStage) {
+	t.Helper()
+	now := time.Now().UTC()
+	for i := range n {
+		id := now.Add(-time.Duration(firstHourAgo+i) * time.Hour).Format("20060102-150405") + "-aaaa"
+		var ss []map[string]any
+		for _, s := range stages {
+			st := map[string]any{"name": s.kind, "started_at": now.UTC().Format(time.RFC3339), "duration_s": 1.0}
+			if s.usd > 0 {
+				st["model_usd"] = s.usd
+			}
+			if s.model != "" {
+				st["model"] = s.model
+			}
+			ss = append(ss, st)
+		}
+		data, err := json.Marshal(map[string]any{
+			"version": 1, "run_id": id, "repo": "acme/app", "status": "succeeded", "stages": ss})
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := filepath.Join(f.runsDir(), "runs", appSlug, id, "result.json")
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// previewRunStages is the shape a run of a first_line + review recipe
+// records: the implementation, the first line's review and its fix, the
+// senior review, and its fix.
+func previewRunStages(implement, reviewFirst, fix, review float64) []previewStage {
+	return []previewStage{
+		{kind: "implement", usd: implement},
+		{kind: "review_first", usd: reviewFirst},
+		{kind: "fix", usd: fix},
+		{kind: "review", usd: review},
+		{kind: "fix", usd: fix},
+	}
+}
+
+// TestBudgetPreviewTypical: with enough recorded runs, the preview says what
+// a run of the recipe typically costs: the mean recorded cost of each stage
+// kind, at the recipe's typical stage count (one round each).
+func TestBudgetPreviewTypical(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.SetCaps(100, 3, 20, 3)
+	f.SetSpentToday(0)
+	f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
+	f.SeedRuns(t, 0, 6, previewRunStages(0.60, 0.10, 0.20, 1.00))
+	out, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One round each: implement 1, review_first 1, fix 2, review 1 = 5 stages;
+	// $0.60 + $0.10 + 2×$0.20 + $1.00 = $2.10.
+	if !strings.Contains(out, "typical: $2.10 a run (5 stages, mean of 6 runs in the last 30 days)") {
+		t.Errorf("the typical line is missing or wrong:\n%s", out)
+	}
+}
+
+// TestBudgetPreviewTypicalNeedsFiveRuns: fewer than five recorded runs say
+// nothing at all, as the design asks.
+func TestBudgetPreviewTypicalNeedsFiveRuns(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.SetCaps(100, 3, 20, 3)
+	f.SetSpentToday(0)
+	f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
+	f.SeedRuns(t, 0, 4, previewRunStages(0.60, 0.10, 0.20, 1.00))
+	out, errOut, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "typical") || strings.Contains(errOut, "typical") {
+		t.Errorf("four runs are fewer than the five a typical line needs:\n%s%s", out, errOut)
+	}
+}
+
+// TestBudgetPreviewTypicalSkipsOldRecords: a record from before result.json
+// carried a cost per stage has nothing to average, so it is skipped and
+// said to be skipped -- never counted as a run that cost nothing.
+func TestBudgetPreviewTypicalSkipsOldRecords(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.SetCaps(100, 3, 20, 3)
+	f.SetSpentToday(0)
+	f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
+	f.SeedRuns(t, 0, 4, previewRunStages(0.60, 0.10, 0.20, 1.00))
+	f.SeedRuns(t, 4, 3, []previewStage{{kind: "implement"}, {kind: "review"}})
+	const note = "3 of the 7 runs of acme/app in the last 30 days recorded no per-stage cost (result.json from before it was kept); they are not counted"
+	out, errOut, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Four priced runs are still fewer than five, and the skipped ones must
+	// not make up the difference.
+	if strings.Contains(out, "typical:") {
+		t.Errorf("four priced runs printed a typical line:\n%s", out)
+	}
+	if !strings.Contains(errOut, note) {
+		t.Errorf("the skipped records are not explained:\n%s", errOut)
+	}
+	// One priced run more: the line appears, over the priced runs alone.
+	f.SeedRuns(t, 7, 1, previewRunStages(0.60, 0.10, 0.20, 1.00))
+	out, errOut, err = execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "typical: $2.10 a run (5 stages, mean of 5 runs in the last 30 days)") {
+		t.Errorf("the typical line does not stop at the priced runs:\n%s", out)
+	}
+	if !strings.Contains(errOut, note) {
+		t.Errorf("the skipped records are no longer explained:\n%s", errOut)
+	}
+}
+
+// TestBudgetPreviewTypicalUsesThePinnedModel: the mean is per stage kind and
+// model, so history on the models this checkout pins is what counts, not
+// what an earlier configuration ran on.
+func TestBudgetPreviewTypicalUsesThePinnedModel(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.SetCaps(100, 3, 20, 3)
+	f.SetSpentToday(0)
+	f.Checkout(t, "  models: { coder: fast-1, reviewer: smart-2 }\n  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
+	f.SeedRuns(t, 0, 5, []previewStage{
+		{kind: "implement", model: "fast-1", usd: 0.60},
+		{kind: "review_first", model: "fast-1", usd: 0.10},
+		{kind: "fix", model: "fast-1", usd: 0.20},
+		{kind: "fix", model: "fast-1", usd: 0.20},
+		{kind: "review", model: "smart-2", usd: 1.00},
+	})
+	f.SeedRuns(t, 5, 5, previewRunStages(9.00, 9.00, 9.00, 9.00))
+	out, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The pinned models' means only: $0.60 + $0.10 + 2×$0.20 + $1.00 = $2.10,
+	// never anything a run on another model cost.
+	if !strings.Contains(out, "typical: $2.10 a run (5 stages, mean of 10 runs in the last 30 days)") {
+		t.Errorf("the typical line is not the pinned models' costs:\n%s", out)
+	}
+}
+
+// TestBudgetPreviewTypicalJSON: --json carries the history figure and what it
+// was taken from.
+func TestBudgetPreviewTypicalJSON(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.SetCaps(100, 3, 20, 3)
+	f.SetSpentToday(0)
+	f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
+	f.SeedRuns(t, 0, 5, previewRunStages(0.60, 0.10, 0.20, 1.00))
+	f.SeedRuns(t, 5, 2, []previewStage{{kind: "implement"}})
+	out, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Typical *struct {
+			USD     float64 `json:"usd"`
+			Stages  int     `json:"stages"`
+			Runs    int     `json:"runs"`
+			Skipped int     `json:"skipped"`
+		} `json:"typical"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if doc.Typical == nil || doc.Typical.USD != 2.10 || doc.Typical.Stages != 5 || doc.Typical.Runs != 5 || doc.Typical.Skipped != 2 {
+		t.Fatalf("typical = %+v", doc.Typical)
+	}
 }
 
 // TestBudgetPreviewCeiling: the ceiling is the smaller of the per-run cap and
@@ -263,36 +452,67 @@ func TestBudgetPreviewRecipeLayers(t *testing.T) {
 	}
 }
 
-// TestBudgetPreviewReadsOnly: the preview never writes to the database.
+// TestBudgetPreviewReadsOnly: the preview writes nothing at all -- not to one
+// of the paths it reads, and not to any other: every request it makes is a
+// read, and the whole database is the same tree afterwards. It runs the
+// history path too (recorded runs), since that is the preview's other read.
 func TestBudgetPreviewReadsOnly(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.SetCaps(100, 3, 20, 3)
 	f.SetSpentToday(5)
 	f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
-	before := f.db.Value(budget.PathCapsGlobal)
-	if _, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6"); err != nil {
+	f.SeedRuns(t, 0, 6, previewRunStages(0.60, 0.10, 0.20, 1.00))
+	before, err := json.Marshal(f.db.Value(""))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if got := f.db.Value(budget.PathCapsGlobal); got == nil || got.(map[string]any)["dailyMicros"].(json.Number).String() != before.(map[string]any)["dailyMicros"].(json.Number).String() {
-		t.Fatalf("the preview wrote to the database: %v", got)
+	sent := len(f.db.Requests())
+	out, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "typical:") {
+		t.Fatalf("the reads this test watches were not made:\n%s", out)
+	}
+	for _, r := range f.db.Requests()[sent:] {
+		if r.Method != http.MethodGet {
+			t.Errorf("the preview wrote to the database: %s %s", r.Method, r.Path)
+		}
+	}
+	after, err := json.Marshal(f.db.Value(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("the preview changed the database:\nbefore %s\nafter  %s", before, after)
 	}
 }
 
 // TestBudgetPreviewRefusesBadArguments: the flags it needs, and the shapes it
-// refuses.
+// refuses. Each refusal says what is wrong, not only that something is.
 func TestBudgetPreviewRefusesBadArguments(t *testing.T) {
 	newBudgetFixture(t, "")
 	t.Chdir(t.TempDir())
-	for name, args := range map[string][]string{
-		"no recipe":      {"budget", "preview", "--runs", "2", "--repo", "acme/app"},
-		"no runs":        {"budget", "preview", "--recipe", "standard", "--repo", "acme/app"},
-		"zero runs":      {"budget", "preview", "--recipe", "standard", "--runs", "0", "--repo", "acme/app"},
-		"negative runs":  {"budget", "preview", "--recipe", "standard", "--runs", "-1", "--repo", "acme/app"},
-		"unknown recipe": {"budget", "preview", "--recipe", "nope", "--runs", "2", "--repo", "acme/app"},
-		"bad repo":       {"budget", "preview", "--recipe", "standard", "--runs", "2", "--repo", "not-a-repo"},
+	for name, tc := range map[string]struct {
+		args []string
+		want string
+	}{
+		// cobra names every flag the command needs and the run did not set.
+		"no recipe":      {[]string{"budget", "preview", "--runs", "2", "--repo", "acme/app"}, `required flag(s) "recipe" not set`},
+		"no runs":        {[]string{"budget", "preview", "--recipe", "standard", "--repo", "acme/app"}, `required flag(s) "runs" not set`},
+		"zero runs":      {[]string{"budget", "preview", "--recipe", "standard", "--runs", "0", "--repo", "acme/app"}, "--runs must be more than 0"},
+		"negative runs":  {[]string{"budget", "preview", "--recipe", "standard", "--runs", "-1", "--repo", "acme/app"}, "--runs must be more than 0"},
+		"too many runs":  {[]string{"budget", "preview", "--recipe", "standard", "--runs", "100001", "--repo", "acme/app"}, "is more than 100000 runs; estimate a batch, not a project's lifetime"},
+		"unknown recipe": {[]string{"budget", "preview", "--recipe", "nope", "--runs", "2", "--repo", "acme/app"}, "recipe nope is not in .fugaro/recipes"},
+		"bad repo":       {[]string{"budget", "preview", "--recipe", "standard", "--runs", "2", "--repo", "not-a-repo"}, "--repo: the repository must look like owner/name"},
 	} {
-		if _, _, err := execute(t, args...); err == nil {
+		_, _, err := execute(t, tc.args...)
+		if err == nil {
 			t.Errorf("%s: accepted", name)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: error %q never says %q", name, err, tc.want)
 		}
 	}
 }
