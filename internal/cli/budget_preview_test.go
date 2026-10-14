@@ -342,6 +342,51 @@ func TestBudgetPreviewTypicalUsesThePinnedModel(t *testing.T) {
 	}
 }
 
+// TestBudgetPreviewTypicalAppliesTheRecipeRoles: a recipe that maps one role
+// onto the other's model makes its runs record the mapped model, so the pin
+// the preview looks a kind's mean up on must be the mapped one -- premium
+// (coder: reviewer) runs its whole loop on the reviewer's model, solo
+// (reviewer: coder) its review on the coder's, whatever agent.models says.
+func TestBudgetPreviewTypicalAppliesTheRecipeRoles(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.SetCaps(100, 3, 20, 3)
+	f.SetSpentToday(0)
+	f.Checkout(t, "  models: { coder: fast-1, reviewer: smart-2 }\n  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
+	// The window holds runs of both models, the strong one's stages costing
+	// several times the cheap one's, so a pin on the wrong model is no near
+	// miss: only the pinned model's mean answers.
+	f.SeedRuns(t, 0, 5, []previewStage{
+		{kind: "implement", model: "smart-2", usd: 3.00},
+		{kind: "review_first", model: "smart-2", usd: 0.50},
+		{kind: "fix", model: "smart-2", usd: 2.00},
+		{kind: "review", model: "smart-2", usd: 1.00},
+	})
+	f.SeedRuns(t, 5, 5, []previewStage{
+		{kind: "implement", model: "fast-1", usd: 0.30},
+		{kind: "review_first", model: "fast-1", usd: 0.05},
+		{kind: "fix", model: "fast-1", usd: 0.20},
+		{kind: "review", model: "fast-1", usd: 0.10},
+	})
+	// premium maps coder onto reviewer, so its 3 stages all run on smart-2:
+	// $3.00 + $2.00 + $1.00 = $6.00.
+	out, _, err := execute(t, "budget", "preview", "--recipe", "premium", "--runs", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "typical: $6.00 a run (3 stages, from 10 runs of the last 30 days)") {
+		t.Errorf("premium's stages are not priced on the reviewer's model:\n%s", out)
+	}
+	// solo maps reviewer onto coder, so its review runs on fast-1 too:
+	// $0.30 + $0.20 + $0.10 = $0.60.
+	out, _, err = execute(t, "budget", "preview", "--recipe", "solo", "--runs", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "typical: $0.60 a run (3 stages, from 10 runs of the last 30 days)") {
+		t.Errorf("solo's review is not priced on the coder's model:\n%s", out)
+	}
+}
+
 // TestBudgetPreviewTypicalJSON: --json carries the history figure and what it
 // was taken from.
 func TestBudgetPreviewTypicalJSON(t *testing.T) {

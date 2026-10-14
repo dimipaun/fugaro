@@ -71,9 +71,10 @@ func newBudgetPreviewCmd() *cobra.Command {
 			"When the repository's recorded runs of the last 30 days are at least 5,\n" +
 			"the preview also prints, clearly labelled typical:, what one run of the\n" +
 			"recipe usually costs: the mean recorded cost of each stage kind (on the\n" +
-			"model the checkout pins for it), at the recipe's typical stage count, one\n" +
-			"round each. Runs recorded before result.json carried a cost per stage are\n" +
-			"skipped and said to be skipped, never counted as runs that cost nothing.\n\n" +
+			"model the checkout pins for it, with the recipe's role mapping applied as\n" +
+			"a run applies it), at the recipe's typical stage count, one round each.\n" +
+			"Runs recorded before result.json carried a cost per stage are skipped\n" +
+			"and said to be skipped, never counted as runs that cost nothing.\n\n" +
 			"The recipe resolves as it does for a run: the repository's\n" +
 			".fugaro/recipes, the project's published recipes, then the catalog. The\n" +
 			"knobs come from the checkout's fugaro.yaml; without a checkout of the\n" +
@@ -83,9 +84,11 @@ func newBudgetPreviewCmd() *cobra.Command {
 			"It reads the database's caps and today's counters (the Viewer role), and\n" +
 			"the repository's runs (the runs bucket, for the typical line). A recipe\n" +
 			"that is not in the checkout also reads the project's recipes from the\n" +
-			"runs bucket, as recipes ls does, which a plain project Viewer cannot read\n" +
-			"(init removes that access); a bucket it cannot read costs the typical\n" +
-			"line and the project layer, never the ceiling. It writes nothing.",
+			"runs bucket, as recipes ls does, which a plain project Viewer cannot\n" +
+			"read (init removes that access): not reading it costs the project layer,\n" +
+			"and the ceiling with it. The typical line's own read of the bucket is\n" +
+			"the one that costs the line and nothing else: a bucket it cannot read\n" +
+			"leaves the ceiling standing. It writes nothing.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runBudgetPreview(cmd, &o) },
 	}
@@ -455,7 +458,9 @@ func readPreviewHistory(ctx context.Context, b *blobx.Bucket, slug string, now t
 
 // typical is what a run of rp typically costs: every stage kind the recipe
 // would run at one round each (previewTypicalCounts), times the mean cost of
-// that kind's recorded stages. A stages of 0 means there is no figure to
+// that kind's recorded stages on the model the checkout pins for it, with
+// the recipe's roles mapping applied as the runner applies it. A stages of 0
+// means there is no figure to
 // print; missing names the kind the window recorded no cost for, when there
 // is one, and is "" otherwise. A missing kind has no figure rather than a
 // cheaper one: leaving it out of the sum would understate a typical run. The
@@ -469,12 +474,13 @@ func (h previewHistory) typical(rp *recipe.Recipe, cfg *config.Config) (usd floa
 	if h.runs < previewMinRuns || stages == 0 {
 		return 0, 0, ""
 	}
+	pinned := previewPinnedAgent(cfg, rp)
 	for _, kind := range previewStageKinds { // a fixed order, so the note names one kind
 		n := counts[kind]
 		if n == 0 {
 			continue
 		}
-		mean, found := h.meanFor(kind, previewPinnedModel(cfg, kind))
+		mean, found := h.meanFor(kind, previewPinnedModel(pinned, kind))
 		if !found {
 			return 0, 0, kind
 		}
@@ -506,15 +512,32 @@ func (h previewHistory) meanFor(kind, model string) (float64, bool) {
 	return total / float64(stages), true
 }
 
+// previewPinnedAgent is the checkout's agent as the recipe leaves it: when
+// the recipe maps reviewer to coder, or coder to reviewer, the aliased role
+// takes the other's model (runner.ApplyRoles, the runner's own, which the
+// runner applies before it records a stage's model), so the pin below is the
+// model the runs really recorded and not an agent.models key this recipe
+// ignores. nil, when there is no checkout, pins nothing.
+func previewPinnedAgent(cfg *config.Config, rp *recipe.Recipe) *config.Agent {
+	if cfg == nil {
+		return nil
+	}
+	a := cfg.Agent
+	if rp != nil {
+		runner.ApplyRoles(&a, rp)
+	}
+	return &a
+}
+
 // previewPinnedModel is the model a stage kind would run on here: the
-// checkout's model for the kind's role (implement, fix and the first-line
+// agent's model for the kind's role (implement, fix and the first-line
 // review are the coder's, the senior review the reviewer's), "" when there
 // is no checkout or it pins none.
-func previewPinnedModel(cfg *config.Config, kind string) string {
-	if cfg == nil {
+func previewPinnedModel(a *config.Agent, kind string) string {
+	if a == nil {
 		return ""
 	}
-	return cfg.Agent.ModelFor(config.StageRole(kind))
+	return a.ModelFor(config.StageRole(kind))
 }
 
 // previewStageKinds is the order a run's stages are counted and named in:
