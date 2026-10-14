@@ -199,6 +199,38 @@ func (s *Secrets) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// SecretAccessorRole is the role that lets a member read a secret's values,
+// the one Fugaro grants: a job's own service account for what it mounts, and
+// the build account for what its builds read.
+const SecretAccessorRole = "roles/secretmanager.secretAccessor"
+
+// SecretAccessors reads secret id's live IAM policy and returns the members
+// granted SecretAccessorRole, sorted and deduplicated. Metadata only: like
+// every other read here it never touches a version's value.
+//
+// A conditional binding of the same role counts: it is still a grant this
+// caller has to account for. The policy is read at version 3, so a
+// conditional binding is not silently dropped from the answer.
+func (s *Secrets) SecretAccessors(ctx context.Context, id string) ([]string, error) {
+	p, err := s.svc.Projects.Secrets.GetIamPolicy(s.name(id)).OptionsRequestedPolicyVersion(3).Context(ctx).Do()
+	if err != nil {
+		return nil, fmt.Errorf("reading the IAM policy of secret %s: %w", id, err)
+	}
+	var out []string
+	for _, b := range p.Bindings {
+		if b.Role != SecretAccessorRole {
+			continue
+		}
+		for _, m := range b.Members {
+			if !slices.Contains(out, m) {
+				out = append(out, m)
+			}
+		}
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
 func (s *Secrets) name(id string) string { return "projects/" + s.project + "/secrets/" + id }
 
 func lastSegment(name string) string { return name[strings.LastIndex(name, "/")+1:] }
