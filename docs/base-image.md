@@ -44,7 +44,7 @@ python = "3.12"
 java = "temurin-21"
 ```
 
-Pin exact versions where your repository pins them (`.nvmrc`, `go.mod`, a CI image). The image runs `mise install` in your checkout, as the unprivileged `fugaro` user, after cloning it, and the build fails if a tool is still missing. Changing `mise.toml` (or `.tool-versions`, `mise.lock`, `.config/mise/…`) always rebuilds the image. mise's shims are first on `PATH`, so every command (`commands.build`, `commands.test`, the agent's own) sees these versions. pnpm and Yarn come from corepack, through `package.json`'s `packageManager`. An existing `.tool-versions` works as it is. A `.nvmrc` or `.python-version` alone is not read: write it into `mise.toml`.
+Pin exact versions where your repository pins them (`.nvmrc`, `go.mod`, a CI image). The image runs `mise install` in your checkout, as the unprivileged `fugaro` user, after cloning it, and the build fails if a tool is still missing. In a run, mise's cache is writable, so its commands do not warn about it. Changing `mise.toml` (or `.tool-versions`, `mise.lock`, `.config/mise/…`) always rebuilds the image. mise's shims are first on `PATH`, so every command (`commands.build`, `commands.test`, the agent's own) sees these versions. pnpm and Yarn come from corepack, through `package.json`'s `packageManager`. An existing `.tool-versions` works as it is. A `.nvmrc` or `.python-version` alone is not read: write it into `mise.toml`.
 
 Without a `mise.toml`, list the tools in `fugaro.yaml`'s `image.tools` instead (never both):
 

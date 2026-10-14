@@ -91,6 +91,9 @@ ENV HOME=/home/fugaro \
 # PostgreSQL package may create a root-owned cluster: fugaro-services makes
 # its own as fugaro. /etc/claude-code is empty and fugaro's: the runner writes
 # managed settings there, and the selftest refuses anything baked into it.
+# ~/.cache/mise, fugaro's and empty, like corepack and ms-playwright: a
+# derived build's mise cache mount needs a target, and BuildKit creates a
+# missing one as root, which the run's mise cannot write.
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -114,8 +117,8 @@ RUN apt-get update \
  && install -d -o fugaro -g fugaro -m 0755 /work /work/repo /work/state /etc/claude-code \
  && install -d -o fugaro -g fugaro -m 0700 /work/creds \
  && install -d -o fugaro -g fugaro -m 0755 /home/fugaro/.cache /home/fugaro/.cache/corepack \
-      /home/fugaro/.cache/ms-playwright /home/fugaro/.config /home/fugaro/.local /home/fugaro/.local/bin \
-      /home/fugaro/.local/share
+      /home/fugaro/.cache/mise /home/fugaro/.cache/ms-playwright /home/fugaro/.config \
+      /home/fugaro/.local /home/fugaro/.local/bin /home/fugaro/.local/share
 
 # 1b. Single-binary tools, each checksummed per architecture by fetch.sh: gh
 # (the runner configures it with the run's token at run time), Mike Farah's

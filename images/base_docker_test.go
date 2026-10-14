@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -124,6 +125,41 @@ func TestBaseImageTools(t *testing.T) {
 	}
 	if got := testutil.Docker(t, "run", "--rm", img, "mise", "settings", "get", "trusted_config_paths"); !strings.Contains(got, "/work/repo") {
 		t.Errorf("mise does not trust /work/repo: %s", got)
+	}
+}
+
+// TestDerivedMiseCacheMountLeavesTheCacheWritable is the regression test for
+// the run-time warning "mise WARN failed to write cache file:
+// ~/.cache/mise/terraform/1.16.4/...: Permission denied". A derived build
+// mounts a BuildKit cache on ~/.cache/mise (images/derived/Dockerfile.tmpl,
+// the fugaro-mise mount); BuildKit creates a mount target that does not
+// exist itself, as root, and that empty root-owned directory is what the
+// image then carries. The mini image here is that mount and nothing else, so
+// it fails on any base that does not create the directory as fugaro.
+func TestDerivedMiseCacheMountLeavesTheCacheWritable(t *testing.T) {
+	base := testutil.BaseImageOf(t, "base")
+	dir := t.TempDir()
+	df := "FROM " + base + "\n" +
+		"RUN --mount=type=cache,id=fugaro-mise-test,target=" + miseCacheDir + ",uid=1000,gid=1000 true\n"
+	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(df), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tag := "fugaro-mise-cache:test"
+	t.Cleanup(func() { _ = exec.Command("docker", "image", "rm", "--force", tag).Run() })
+	build := exec.Command("docker", "build", "--progress", "plain", "--platform", testutil.DockerPlatform(t),
+		"--file", filepath.Join(dir, "Dockerfile"), "--tag", tag, dir)
+	build.Env = append(os.Environ(), "DOCKER_BUILDKIT=1")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("docker build: %v\n%s", err, testutil.Tail(string(out)))
+	}
+	out, err := exec.Command("docker", "run", "--rm", "--entrypoint", "sh", tag, "-c",
+		`stat -c '%u:%g %a %F' `+miseCacheDir+` && touch `+miseCacheDir+`/probe && rm `+miseCacheDir+`/probe && echo writable`).CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker run: %v\n%s", err, out)
+	}
+	want := "1000:1000 755 directory\nwritable\n"
+	if string(out) != want {
+		t.Fatalf("%s after a derived build's cache mount is %q, want %q: mise cannot write its cache in a run", miseCacheDir, out, want)
 	}
 }
 
