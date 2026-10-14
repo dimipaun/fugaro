@@ -13,8 +13,9 @@
 # GRAPHIFY_VERSION, each matched exactly
 # (not as a substring) against a version token parsed from the tool's own
 # output; every field of /etc/fugaro/base.json is checked against its own
-# pin too. The image's presence checks (images/base/tools.tsv) are run with
-# no network through `fugaro image selftest`.
+# pin too. The image's presence checks (images/base/tools.tsv) and its mise
+# cache directory contract (~/.cache/mise, fugaro's) are run with no network
+# through `fugaro image selftest`.
 set -eu
 image=${1:?usage: smoke.sh IMAGE BASE}
 base=${2:?usage: smoke.sh IMAGE BASE}
@@ -110,8 +111,10 @@ case "$base" in
     echo "base.json matches every pin"
 
     # Every row of images/base/tools.tsv, presence only: no network, and the
-    # selftest gives each tool an empty HOME.
-    report=$(printf '%s' '{"tools":"all","tools_only":true}' | docker run --rm -i --network none "$image" fugaro image selftest) \
+    # selftest gives each tool an empty HOME. check_mise_cache adds the
+    # runtime check that ~/.cache/mise is fugaro's directory, which a derived
+    # build's cache mount needs to land on.
+    report=$(printf '%s' '{"tools":"all","tools_only":true,"check_mise_cache":true}' | docker run --rm -i --network none "$image" fugaro image selftest) \
       || { printf '%s\n' "$report"; fail "the presence checks failed (report above)"; }
     case "$report" in *'"passed":true'*) ;; *) printf '%s\n' "$report"; fail "the presence checks did not pass" ;; esac
     echo "presence checks passed"

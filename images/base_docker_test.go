@@ -110,15 +110,19 @@ func TestBaseImageHardening(t *testing.T) {
 }
 
 // TestBaseImageTools checks that every tools.tsv row answers with no network
-// and an empty HOME, as the CI smoke runs it, and that mise and the harness
-// Node stay apart (no node on the bare base's PATH).
+// and an empty HOME, as the CI smoke runs it, that the same report carries
+// the mise cache directory check (the spec smoke.sh sends), and that mise
+// and the harness Node stay apart (no node on the bare base's PATH).
 func TestBaseImageTools(t *testing.T) {
 	img := testutil.BaseImageOf(t, "base")
 	cmd := exec.Command("docker", "run", "--rm", "-i", "--network", "none", img, "fugaro", "image", "selftest")
-	cmd.Stdin = strings.NewReader(`{"tools":"all","tools_only":true}`)
+	cmd.Stdin = strings.NewReader(`{"tools":"all","tools_only":true,"check_mise_cache":true}`)
 	out, err := cmd.CombinedOutput()
 	if err != nil || !strings.Contains(string(out), `"passed":true`) {
 		t.Fatalf("presence checks: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), `{"name":"mise-cache-dir","ok":true`) {
+		t.Errorf("the report has no passing mise-cache-dir check:\n%s", out)
 	}
 	if out, err := exec.Command("docker", "run", "--rm", img, "sh", "-c", "command -v node").CombinedOutput(); err == nil {
 		t.Errorf("a node is on PATH in the bare base: %s", out)

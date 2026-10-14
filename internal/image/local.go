@@ -116,10 +116,11 @@ type LocalResult struct {
 
 // localSelftestSpec is the SelftestSpec BuildLocal's smoke step sends into
 // the freshly built image: the baked checkout, the workflow's verify
-// settings, and the base kind's critical tool presence and mise-tools check.
+// settings, and the base kind's critical tool presence, mise-tools and
+// mise cache directory checks.
 func localSelftestSpec(w config.Workflow, res *LocalResult) SelftestSpec {
 	return SelftestSpec{Base: config.BaseKind, RepoDir: "/work/repo", Commit: res.Commit, Origin: res.Origin, CheckInit: true, CheckHardening: true,
-		Tools: "critical", Mise: true, Verify: verify.Settings{
+		Tools: "critical", Mise: true, CheckMiseCache: true, Verify: verify.Settings{
 			RepoDir: "/work/repo", Build: w.Commands.Build, Test: w.Commands.Test, RerunFailed: w.Commands.RerunFailed,
 			Reports: w.Commands.Reports, TimeoutS: int(w.Timeouts.Verify.Seconds()),
 		}}

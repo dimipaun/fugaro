@@ -190,7 +190,7 @@ func TestBuildLocal(t *testing.T) {
 		t.Errorf("docker run env = %q, want it to carry NPM_TOKEN", f.runEnv[0])
 	}
 	s := f.spec
-	if s.Base != config.BaseKind || s.Commit != head || s.Origin != "https://github.com/acme/app.git" || s.Tools != "critical" || !s.Mise || !s.CheckInit ||
+	if s.Base != config.BaseKind || s.Commit != head || s.Origin != "https://github.com/acme/app.git" || s.Tools != "critical" || !s.Mise || !s.CheckMiseCache || !s.CheckInit ||
 		s.RepoDir != "/work/repo" || s.Verify.RepoDir != "/work/repo" || s.Verify.Build != "sh build.sh" || !slices.Equal(s.Verify.Reports, []string{"junit.xml"}) {
 		t.Errorf("selftest spec = %+v", s)
 	}
@@ -376,7 +376,7 @@ func TestBuildLocalPassesThePlatformToSelftest(t *testing.T) {
 func TestBuildLocalSpecOnTheBase(t *testing.T) {
 	res := &LocalResult{Commit: "c0ffee", Origin: "https://github.com/acme/app.git"}
 	spec := localSelftestSpec(config.Workflow{}, res)
-	if spec.Tools != "critical" || !spec.Mise || spec.Base != config.BaseKind {
+	if spec.Tools != "critical" || !spec.Mise || !spec.CheckMiseCache || spec.Base != config.BaseKind {
 		t.Errorf("spec = %+v", spec)
 	}
 }
