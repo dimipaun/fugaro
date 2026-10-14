@@ -122,14 +122,20 @@ type StageTiming struct {
 	Name      string    `json:"name"`
 	StartedAt time.Time `json:"started_at"`
 	DurationS float64   `json:"duration_s"`
-	// ModelUSD is what this stage's calls cost, in USD. The stages sum to
-	// Cost.ModelUSD, up to spend no stage report carried (gateway calls
-	// that settled after their stage's wait) and rounding to the
-	// micro-dollar.
+	// ModelUSD is what this stage's calls cost, in USD, whatever model they
+	// were on: under the gateway, every call the stage's report carried,
+	// the background model's (haiku, say) included. The stages sum to
+	// Cost.ModelUSD to the micro-dollar, except for gateway spend that
+	// settled after its stage's wait ran out: that is in Cost.ModelUSD and
+	// in Cost.ModelBy["unattributed"], in no stage. So, exactly:
+	// sum(stages[].model_usd) + Cost.ModelBy["unattributed"] ==
+	// Cost.ModelUSD.
 	ModelUSD float64 `json:"model_usd,omitempty"`
-	// Model is the model the stage ran on: the stage role's models.<role>,
-	// else agent.model. "" when the config pinned none (Claude Code's own
-	// default), and absent in records from before 0.8.0.
+	// Model is the model the stage was pinned to: the stage role's
+	// models.<role>, else agent.model. "" when the config pinned none
+	// (Claude Code's own default). It is what the config asked for, not
+	// what the upstream served, and a stage may also have called the
+	// background model: Model does not account for ModelUSD on its own.
 	Model string `json:"model,omitempty"`
 }
 

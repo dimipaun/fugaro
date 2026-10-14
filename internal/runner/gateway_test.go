@@ -307,18 +307,62 @@ func TestGatewayCostReplacesClaudeCost(t *testing.T) {
 	}
 }
 
+// gwRolesConfig is gwConfig with the reviewer on opus: a coder stage and a
+// reviewer stage differ in Model and in price, so a mix-up between them
+// shows in a test.
+func gwRolesConfig(t *testing.T) string {
+	t.Helper()
+	cfg := gwConfig(t, "")
+	out := strings.Replace(cfg, "reviewer: "+sonnet, "reviewer: "+opus, 1)
+	if out == cfg {
+		t.Fatal("gwConfig has no reviewer line")
+	}
+	return out
+}
+
+// stageMicros is the stages' model_usd total in whole micro-dollars: the
+// unit the gateway settles in, so the sums below compare exactly rather
+// than within a float tolerance.
+func stageMicros(t *testing.T, stages []runstore.StageTiming) pricing.Micros {
+	t.Helper()
+	var sum pricing.Micros
+	for _, s := range stages {
+		sum += micros(t, s.ModelUSD)
+	}
+	return sum
+}
+
+func micros(t *testing.T, usd float64) pricing.Micros {
+	t.Helper()
+	m, err := pricing.FromUSD(usd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
 // TestStageTimingCarriesCost: each StageTiming carries its stage's own model
 // cost and the model the stage was pinned to, so that a cost preview can
-// average by stage kind and model (generic-tool plan Task 24).
+// average by stage kind and model (generic-tool plan Task 24). The coder and
+// the reviewer are on different models, the loop runs a fix and a second
+// review, and one stage also calls the background model, whose spend is
+// inside that stage's figure.
 func TestStageTimingCarriesCost(t *testing.T) {
 	// With the gateway on, a stage's figure is the gateway's StageReport for
-	// that stage, and the stages sum to the record's model cost.
-	g := newGW(t, gwConfig(t, ""), "observe", "",
-		out4k(), anthropicfake.MessageOK(haiku, pricing.Usage{Input: 100000}), out4k())
+	// that stage, and the stages sum to the record's model cost to the
+	// micro-dollar.
+	g := newGW(t, gwRolesConfig(t), "observe", "",
+		out4k(), // implement: sonnet, $0.04
+		anthropicfake.MessageOK(haiku, pricing.Usage{Input: 100000}), // implement's background call, $0.10
+		anthropicfake.MessageOK(opus, pricing.Usage{Output: 4000}),   // review 1: opus, $0.10
+		out4k(), // fix: sonnet, $0.04
+		anthropicfake.MessageOK(opus, pricing.Usage{Output: 4000})) // review 2: opus, $0.10
 	var st []int
 	rec, err := g.run(t,
 		calling(&st, implement("feature"), call{sonnet, 4000}, call{haiku, 1000}),
-		calling(&st, review("ship", 0), call{sonnet, 4000}))
+		calling(&st, review("changes", 1), call{opus, 4000}),
+		calling(&st, fixStep, call{sonnet, 4000}),
+		calling(&st, review("ship", 0), call{opus, 4000}))
 	if err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
@@ -327,48 +371,147 @@ func TestStageTimingCarriesCost(t *testing.T) {
 		model string
 		usd   float64
 	}{
-		{"implement", sonnet, 0.14}, // $0.04 on sonnet plus $0.10 on haiku
-		{"review", sonnet, 0.04},
+		{"implement", sonnet, 0.14}, // the coder's $0.04 plus the background model's $0.10
+		{"review", opus, 0.10},      // the reviewer's model, not the coder's
+		{"fix", sonnet, 0.04},
+		{"review", opus, 0.10}, // the same stage kind a second time
 	}
 	if len(rec.Stages) != len(want) {
 		t.Fatalf("stages = %+v", rec.Stages)
 	}
-	var sum float64
 	for i, w := range want {
 		s := rec.Stages[i]
-		if s.Name != w.name || s.Model != w.model || !near(s.ModelUSD, w.usd) {
+		if s.Name != w.name || s.Model != w.model || micros(t, s.ModelUSD) != micros(t, w.usd) {
 			t.Errorf("stage %d = %+v, want %s on %s for $%v", i, s, w.name, w.model, w.usd)
 		}
-		sum += s.ModelUSD
 	}
-	if rec.Cost == nil || absF(sum-rec.Cost.ModelUSD) > 1e-6 {
-		t.Fatalf("the stages sum to $%v, model_usd = %+v", sum, rec.Cost)
+	if rec.Cost == nil || stageMicros(t, rec.Stages) != micros(t, rec.Cost.ModelUSD) {
+		t.Fatalf("the stages sum to %v, model_usd = %+v", stageMicros(t, rec.Stages), rec.Cost)
 	}
 	// With oauth there is no gateway: a stage's figure is the result event's
-	// total_cost_usd, which implement() and review() report.
-	oauthCfg := strings.Replace(gwConfig(t, ""), "auth: api-key", "auth: oauth", 1)
+	// total_cost_usd, which implement() and review() report. The models are
+	// still told apart.
+	oauthCfg := strings.Replace(gwRolesConfig(t), "auth: api-key", "auth: oauth", 1)
 	og := newGW(t, oauthCfg, "observe", "")
 	og.deps.Env = append(filterEnv(og.deps.Env, "ANTHROPIC_API_KEY"), "CLAUDE_CODE_OAUTH_TOKEN=oauth-token-abcdef")
 	orec, err := og.run(t, implement("feature"), review("ship", 0))
 	if err != nil || orec.Status != runstore.StatusSucceeded {
 		t.Fatalf("rec = %+v, err = %v", orec, err)
 	}
-	if len(orec.Stages) != 2 || !near(orec.Stages[0].ModelUSD, 1) || !near(orec.Stages[1].ModelUSD, 0.5) {
+	if len(orec.Stages) != 2 || micros(t, orec.Stages[0].ModelUSD) != micros(t, 1) || micros(t, orec.Stages[1].ModelUSD) != micros(t, 0.5) {
 		t.Fatalf("oauth stages = %+v", orec.Stages)
 	}
-	if orec.Stages[0].Model != sonnet || orec.Stages[1].Model != sonnet {
+	if orec.Stages[0].Model != sonnet || orec.Stages[1].Model != opus {
 		t.Fatalf("oauth stage models = %+v", orec.Stages)
 	}
-	if orec.Cost == nil || absF(orec.Stages[0].ModelUSD+orec.Stages[1].ModelUSD-orec.Cost.ModelUSD) > 1e-6 {
+	if orec.Cost == nil || stageMicros(t, orec.Stages) != micros(t, orec.Cost.ModelUSD) {
 		t.Fatalf("oauth stages do not sum to model_usd: %+v, %+v", orec.Stages, orec.Cost)
 	}
 }
 
-func absF(f float64) float64 {
-	if f < 0 {
-		return -f
+// TestStageTimingLateSpendIsUnattributed: a gateway call that settles after
+// its stage's wait ran out counts in the run's model cost and in no stage's
+// report. The stages then sum to model_usd minus cost.model_by's
+// "unattributed", which is the exact relation the runner's comment states
+// (generic-tool plan Task 24).
+func TestStageTimingLateSpendIsUnattributed(t *testing.T) {
+	slow := out4k()
+	slow.Events = anthropicfake.StreamOK(sonnet, pricing.Usage{Output: 4000}).Events
+	slow.Body, slow.EventDelay = "", 80*time.Millisecond
+	g := newGW(t, gwConfig(t, ""), "observe", "", slow)
+	g.deps.GatewayStageWait = 20 * time.Millisecond
+	fireAndForget := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		go post(t, req, sonnet, 4000) // outlives its stage's wait
+		time.Sleep(50 * time.Millisecond)
+		return implement("feature")(t, ctx, req)
 	}
-	return f
+	waits := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		time.Sleep(900 * time.Millisecond) // the call settles meanwhile
+		return review("ship", 0)(t, ctx, req)
+	}
+	rec, err := g.run(t, fireAndForget, waits)
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if rec.Cost == nil || micros(t, rec.Cost.ModelUSD) != micros(t, 0.04) {
+		t.Fatalf("cost = %+v: the late call must count in the run's total", rec.Cost)
+	}
+	if got := stageMicros(t, rec.Stages); got != 0 {
+		t.Fatalf("the stages total %v µ$: the late call is in no stage's report (%+v)", got, rec.Stages)
+	}
+	if got := micros(t, rec.Cost.ModelBy["unattributed"]); got != micros(t, 0.04) {
+		t.Fatalf("unattributed = %v µ$, want the whole late call", got)
+	}
+	// The invariant, exactly: the stages plus that residual are model_usd.
+	if sum := stageMicros(t, rec.Stages) + micros(t, rec.Cost.ModelBy["unattributed"]); sum != micros(t, rec.Cost.ModelUSD) {
+		t.Fatalf("stages (%+v) plus unattributed (%v) is %v µ$, model_usd is %v µ$",
+			rec.Stages, rec.Cost.ModelBy["unattributed"], sum, micros(t, rec.Cost.ModelUSD))
+	}
+}
+
+// TestStageTimingFailedStage: a stage that fails still records its own cost
+// and model, so a failed run's per-stage spend is complete.
+func TestStageTimingFailedStage(t *testing.T) {
+	g := newGW(t, gwConfig(t, ""), "observe", "", out4k(), out4k())
+	var st []int
+	fails := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		post(t, req, sonnet, 4000) // the reviewer spent before it fell over
+		return agent.Result{}, errors.New("the reviewer fell over")
+	}
+	rec, err := g.run(t, calling(&st, implement("feature"), call{sonnet, 4000}), fails)
+	if err != nil || rec.Status != runstore.StatusFailed {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if len(rec.Stages) != 2 || rec.Stages[1].Name != "review" || rec.Stages[1].Model != sonnet ||
+		micros(t, rec.Stages[1].ModelUSD) != micros(t, 0.04) {
+		t.Fatalf("stages = %+v: the failed stage's own spend is missing", rec.Stages)
+	}
+	if rec.Cost == nil || stageMicros(t, rec.Stages) != micros(t, rec.Cost.ModelUSD) {
+		t.Fatalf("the stages sum to %v, model_usd = %+v", stageMicros(t, rec.Stages), rec.Cost)
+	}
+}
+
+// TestStageTimingProviderRouteAndReviewFirst: a stage whose coder is a
+// provider's model is recorded with that model and its own figure, and the
+// first-line review is a stage like any other. A stage with no model call
+// records none.
+func TestStageTimingProviderRouteAndReviewFirst(t *testing.T) {
+	use := pricing.Usage{Input: 1000, Output: 500} // $1/M in, $4/M out: 3000 µ$
+	g := providerRun(t, providerFirstLine(t, "on"), "enforce", "50",
+		[]anthropicfake.Reply{
+			anthropicfake.Compat{}.MessageOK(deepseek, use),
+			anthropicfake.Compat{}.MessageOK(deepseek, use),
+		}, "acme/app")
+	var status, firstStatus int
+	var body, firstBody string
+	rec, err := g.run(t,
+		callDeepseek(&status, &body, implement("feature")),
+		callDeepseek(&firstStatus, &firstBody, review("ship", 0)), // review_first, on the coder's model
+		review("ship", 0)) // the senior review, on the reviewer's
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if !eq(stageNames(rec), "implement", "review_first", "review") {
+		t.Fatalf("stages = %v", stageNames(rec))
+	}
+	want := []struct {
+		name  string
+		model string
+		usd   float64
+	}{
+		{"implement", deepseek, 0.003},
+		{"review_first", deepseek, 0.003},
+		{"review", sonnet, 0},
+	}
+	for i, w := range want {
+		s := rec.Stages[i]
+		if s.Name != w.name || s.Model != w.model || micros(t, s.ModelUSD) != micros(t, w.usd) {
+			t.Errorf("stage %d = %+v, want %s on %s for $%v", i, s, w.name, w.model, w.usd)
+		}
+	}
+	if rec.Cost == nil || stageMicros(t, rec.Stages) != micros(t, rec.Cost.ModelUSD) || micros(t, rec.Cost.ModelUSD) != micros(t, 0.006) {
+		t.Fatalf("the stages total %v, model_usd = %+v", stageMicros(t, rec.Stages), rec.Cost)
+	}
 }
 
 func TestCostCrossCheckWarns(t *testing.T) {

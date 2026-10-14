@@ -17,6 +17,19 @@ import (
 // into r.lastStage, or, without a gateway, what the agent's own result
 // event reported (an oauth run). Read this right after the stage's agent
 // returned, before anything else closes a stage in the gateway.
+//
+// The stages sum to cost.model_usd only up to gateway spend no stage
+// report carried: a call that settles after its stage's wait ran out is in
+// the ledger's total (gwUsed, so in cost.model_usd) and in the split only
+// as cost.model_by's "unattributed" (modelByUSD). Precisely, over the
+// run's stages minus that residual, and to the micro-dollar:
+//
+//	sum(stages[].model_usd) + cost.model_by["unattributed"] == cost.model_usd
+//
+// which TestStageTimingLateSpendIsUnattributed pins. Model names the model
+// the stage was pinned to, never what the upstream served, and a gateway
+// stage may also have made background-model calls: both are inside this
+// stage's ModelUSD, so it is the stage's spend, not the pinned model's.
 func (r *run) stageTiming(name string, started time.Time, claudeUSD float64) runstore.StageTiming {
 	st := runstore.StageTiming{
 		Name:      name,
@@ -24,14 +37,15 @@ func (r *run) stageTiming(name string, started time.Time, claudeUSD float64) run
 		DurationS: r.d.Now().Sub(started).Seconds(),
 		Model:     r.cfg.Agent.ModelFor(config.StageRole(name)),
 	}
-	if r.gw == nil {
+	r.mu.Lock()
+	gateway, rep := r.gw != nil, r.lastStage
+	r.mu.Unlock()
+	if !gateway {
 		st.ModelUSD = claudeUSD
 		return st
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.lastStage != nil {
-		st.ModelUSD = r.lastStage.Used.USD()
+	if rep != nil {
+		st.ModelUSD = rep.Used.USD()
 	}
 	return st
 }
