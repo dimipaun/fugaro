@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -126,22 +128,37 @@ type previewStage struct {
 // before that key existed does.
 func (f *budgetFixture) SeedRuns(t *testing.T, firstHourAgo, n int, stages []previewStage) {
 	t.Helper()
+	f.SeedRunsBasis(t, firstHourAgo, n, stages, "")
+}
+
+// SeedRunsBasis is SeedRuns with the run's cost basis (result.json's
+// cost.model_basis): runstore.BasisSubscription is an oauth run, whose
+// model_usd is notional; "" is the record of a run that does not say, which
+// the loader reads as real dollars.
+func (f *budgetFixture) SeedRunsBasis(t *testing.T, firstHourAgo, n int, stages []previewStage, basis string) {
+	t.Helper()
 	now := time.Now().UTC()
 	for i := range n {
 		id := now.Add(-time.Duration(firstHourAgo+i)*time.Hour).Format("20060102-150405") + "-aaaa"
 		var ss []map[string]any
+		var total float64
 		for _, s := range stages {
 			st := map[string]any{"name": s.kind, "started_at": now.UTC().Format(time.RFC3339), "duration_s": 1.0}
 			if s.usd > 0 {
 				st["model_usd"] = s.usd
+				total += s.usd
 			}
 			if s.model != "" {
 				st["model"] = s.model
 			}
 			ss = append(ss, st)
 		}
-		data, err := json.Marshal(map[string]any{
-			"version": 1, "run_id": id, "repo": "acme/app", "status": "succeeded", "stages": ss})
+		rec := map[string]any{
+			"version": 1, "run_id": id, "repo": "acme/app", "status": "succeeded", "stages": ss}
+		if basis != "" {
+			rec["cost"] = map[string]any{"model_usd": total, "model_basis": basis}
+		}
+		data, err := json.Marshal(rec)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -152,6 +169,20 @@ func (f *budgetFixture) SeedRuns(t *testing.T, firstHourAgo, n int, stages []pre
 		if err := os.WriteFile(p, data, 0o644); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// SeedUnreadableRun writes a result.json that cannot be read, hoursAgo hours
+// back: a damaged object, as a run whose record was lost mid-write leaves.
+func (f *budgetFixture) SeedUnreadableRun(t *testing.T, hoursAgo int) {
+	t.Helper()
+	id := time.Now().UTC().Add(-time.Duration(hoursAgo)*time.Hour).Format("20060102-150405") + "-aaaa"
+	p := filepath.Join(f.runsDir(), "runs", appSlug, id, "result.json")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(`{"version": 1, "stages": [`), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -229,7 +260,7 @@ func TestBudgetPreviewTypicalSkipsOldRecords(t *testing.T) {
 	f.SeedRuns(t, 0, 4, previewRunStages(0.60, 0.10, 0.20, 1.00))
 	f.SeedRuns(t, 4, 3, []previewStage{{kind: "implement"}, {kind: "review"}})
 	note := func(runs int) string {
-		return fmt.Sprintf("3 of the %d runs of acme/app in the last 30 days recorded no per-stage cost (result.json from before it was kept); they are not counted", runs)
+		return fmt.Sprintf("3 of the %d runs of acme/app in the last 30 days recorded no cost for any stage (a result.json from before the runner kept one, or stages that all cost nothing); they are not counted", runs)
 	}
 	out, errOut, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
 	if err != nil {
@@ -257,10 +288,113 @@ func TestBudgetPreviewTypicalSkipsOldRecords(t *testing.T) {
 	}
 }
 
+// TestBudgetPreviewTypicalSkipsUnreadableRecords: a run whose result.json is
+// missing or damaged is not an old record, and the note must not call it one:
+// each group of runs the figure cannot use is named for what it is.
+func TestBudgetPreviewTypicalSkipsUnreadableRecords(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.SetCaps(100, 3, 20, 3)
+	f.SetSpentToday(0)
+	f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
+	f.SeedRuns(t, 0, 5, previewRunStages(0.60, 0.10, 0.20, 1.00))
+	f.SeedUnreadableRun(t, 6)
+	out, errOut, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "typical: $2.40 a run (7 stages, from 5 runs of the last 30 days)") {
+		t.Errorf("the readable runs have no figure:\n%s", out)
+	}
+	const want = "1 of the 6 runs of acme/app in the last 30 days have no readable result.json; they are not counted"
+	if !strings.Contains(errOut, want) {
+		t.Errorf("the unreadable record is not named as one:\n%s", errOut)
+	}
+	if strings.Contains(errOut, "before the runner kept one") {
+		t.Errorf("an unreadable record is reported as an old one:\n%s", errOut)
+	}
+}
+
+// TestBudgetPreviewTypicalExcludesSubscriptionRuns: an oauth run records
+// model_usd as what it counted against the plan, not as dollars charged
+// (design §10.1), so it must never be averaged into a figure printed beside
+// real caps -- and the noting of what was left out must say why.
+func TestBudgetPreviewTypicalExcludesSubscriptionRuns(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.SetCaps(100, 3, 20, 3)
+	f.SetSpentToday(0)
+	f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
+	// An oauth-only window: notional costs cannot make a real-dollar figure,
+	// so there is no line at all, and the note says why.
+	f.SeedRunsBasis(t, 0, 6, previewRunStages(9.00, 9.00, 9.00, 9.00), runstore.BasisSubscription)
+	out, errOut, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "typical:") {
+		t.Errorf("notional costs printed a real-dollar typical line:\n%s", out)
+	}
+	const only = "6 of the 6 runs of acme/app in the last 30 days ran on a subscription (agent.auth oauth): their model_usd is notional and is not averaged into a real-dollar figure"
+	if !strings.Contains(errOut, only) {
+		t.Errorf("the oauth runs are not explained:\n%s", errOut)
+	}
+	// Five real-dollar runs beside the six notional ones, costing a tenth as
+	// much: the line comes from the five, and the note says how many it left
+	// out.
+	f.SeedRuns(t, 6, 5, previewRunStages(0.60, 0.10, 0.20, 1.00))
+	out, errOut, err = execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "typical: $2.40 a run (7 stages, from 5 runs of the last 30 days)") {
+		t.Errorf("the notional runs are mixed into the figure:\n%s", out)
+	}
+	const mixed = "6 of the 11 runs of acme/app in the last 30 days ran on a subscription (agent.auth oauth): their model_usd is notional and is not averaged into a real-dollar figure"
+	if !strings.Contains(errOut, mixed) {
+		t.Errorf("the excluded oauth runs are not counted:\n%s", errOut)
+	}
+}
+
+// TestBudgetPreviewTypicalJSONSubscription: --json says the same, in its own
+// fields: the runs the figure was taken from, and of those it left out, the
+// notional ones.
+func TestBudgetPreviewTypicalJSONSubscription(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.SetCaps(100, 3, 20, 3)
+	f.SetSpentToday(0)
+	f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
+	f.SeedRuns(t, 0, 5, previewRunStages(0.60, 0.10, 0.20, 1.00))
+	f.SeedRunsBasis(t, 5, 2, previewRunStages(9.00, 9.00, 9.00, 9.00), runstore.BasisSubscription)
+	f.SeedUnreadableRun(t, 8)
+	out, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Typical struct {
+			USD        float64 `json:"usd"`
+			Runs       int     `json:"runs"`
+			Skipped    int     `json:"skipped"`
+			Notional   int     `json:"notional"`
+			Unreadable int     `json:"unreadable"`
+			Unpriced   int     `json:"unpriced"`
+		} `json:"typical"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	if doc.Typical.USD != 2.40 || doc.Typical.Runs != 5 {
+		t.Errorf("the figure is not the five real-dollar runs: %+v", doc.Typical)
+	}
+	if doc.Typical.Skipped != 3 || doc.Typical.Notional != 2 || doc.Typical.Unreadable != 1 || doc.Typical.Unpriced != 0 {
+		t.Errorf("the runs left out are not split by why: %+v", doc.Typical)
+	}
+}
+
 // TestBudgetPreviewTypicalCountsMatchTheBound: the typical stage count is
-// the recipe's own bound with one round each, so the kinds the history is
-// averaged over must sum to it for every catalog recipe: the mirror of the
-// runner's loop and StageBound must never drift apart.
+// the recipe's own bound with one round of each loop, so the kinds the
+// history is averaged over must sum to it for every catalog recipe and every
+// way the round knobs can leave a loop out: the mirror of the runner's loop
+// and StageBound must never drift apart.
 func TestBudgetPreviewTypicalCountsMatchTheBound(t *testing.T) {
 	for _, name := range recipe.CatalogNames() {
 		t.Run(name, func(t *testing.T) {
@@ -272,12 +406,56 @@ func TestBudgetPreviewTypicalCountsMatchTheBound(t *testing.T) {
 			if len(problems) > 0 {
 				t.Fatalf("%s: %s", name, recipe.ProblemsText(problems))
 			}
-			sum := 0
-			for _, n := range previewTypicalCounts(rp) {
-				sum += n
+			for _, f := range []int{0, 1} {
+				for _, n := range []int{0, 1} {
+					sum := 0
+					for _, c := range previewTypicalCounts(rp, f, n) {
+						sum += c
+					}
+					if want := recipe.StageBound(rp, f, n); sum != want {
+						t.Errorf("first_line_rounds %d, review_rounds %d: the typical shape has %d stages, the bound has %d", f, n, sum, want)
+					}
+				}
 			}
-			if want := recipe.StageBound(rp, 1, 1); sum != want {
-				t.Errorf("the typical shape has %d stages, the bound with one round each has %d", sum, want)
+		})
+	}
+}
+
+// TestBudgetPreviewTypicalCountsHonourTheRoundKnobs: the typical run is one
+// round of each loop, but a knob at 0 leaves a loop out of the run
+// altogether, so its stages leave the count too rather than being counted at
+// one round. config.validate refuses a knob below 1 today, so this cannot be
+// read from a checkout; the count stays the bound's mirror, so a knob that
+// ever does reach 0 (a project layer, say) can never make the preview price
+// stages the runner would not run. A knob above 1 is one round here: the
+// typical run is the one that does not loop.
+func TestBudgetPreviewTypicalCountsHonourTheRoundKnobs(t *testing.T) {
+	text, ok := recipe.CatalogText("standard")
+	if !ok {
+		t.Fatal("no catalog recipe standard")
+	}
+	rp, problems := recipe.Parse(text)
+	if len(problems) > 0 {
+		t.Fatalf("standard: %s", recipe.ProblemsText(problems))
+	}
+	for name, tc := range map[string]struct {
+		first, rounds int
+		want          map[string]int
+	}{
+		// No first-line loop: implement, the senior review and its fix.
+		"first_line_rounds 0": {first: 0, rounds: 2, want: map[string]int{
+			"implement": 1, "review_first": 0, "review": 1, "fix": 1}},
+		// No senior round, so nothing bounces back to the cheap loop either.
+		"review_rounds 0": {first: 1, rounds: 0, want: map[string]int{
+			"implement": 1, "review_first": 1, "review": 0, "fix": 1}},
+		// The knobs at their usual values: one round each, the bounce back
+		// counted, the two fix stages one kind.
+		"both usual": {first: 1, rounds: 2, want: map[string]int{
+			"implement": 1, "review_first": 2, "review": 1, "fix": 3}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := previewTypicalCounts(rp, tc.first, tc.rounds); !maps.Equal(got, tc.want) {
+				t.Errorf("previewTypicalCounts(standard, %d, %d) = %v, want %v", tc.first, tc.rounds, got, tc.want)
 			}
 		})
 	}
@@ -402,16 +580,18 @@ func TestBudgetPreviewTypicalJSON(t *testing.T) {
 	}
 	var doc struct {
 		Typical *struct {
-			USD     float64 `json:"usd"`
-			Stages  int     `json:"stages"`
-			Runs    int     `json:"runs"`
-			Skipped int     `json:"skipped"`
+			USD      float64 `json:"usd"`
+			Stages   int     `json:"stages"`
+			Runs     int     `json:"runs"`
+			Skipped  int     `json:"skipped"`
+			Unpriced int     `json:"unpriced"`
 		} `json:"typical"`
 	}
 	if err := json.Unmarshal([]byte(out), &doc); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if doc.Typical == nil || doc.Typical.USD != 2.40 || doc.Typical.Stages != 7 || doc.Typical.Runs != 5 || doc.Typical.Skipped != 2 {
+	if doc.Typical == nil || doc.Typical.USD != 2.40 || doc.Typical.Stages != 7 || doc.Typical.Runs != 5 ||
+		doc.Typical.Skipped != 2 || doc.Typical.Unpriced != 2 {
 		t.Fatalf("typical = %+v", doc.Typical)
 	}
 }

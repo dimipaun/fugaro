@@ -29,7 +29,8 @@ import (
 //	N × min(per-run cap, stages_max(recipe) × agent.max_budget_usd)
 //
 // and, when the repository has recorded enough runs, what one run of the
-// recipe typically costs, from the cost each stage of those runs recorded.
+// recipe typically costs, from the real-dollar cost each stage of those runs
+// recorded (a subscription run's figure is notional and is left out).
 //
 // Nothing here is written and no run is started: the caps and today's
 // counters are read as budget show reads them, the recipe is resolved as
@@ -72,9 +73,15 @@ func newBudgetPreviewCmd() *cobra.Command {
 			"the preview also prints, clearly labelled typical:, what one run of the\n" +
 			"recipe usually costs: the mean recorded cost of each stage kind (on the\n" +
 			"model the checkout pins for it, with the recipe's role mapping applied as\n" +
-			"a run applies it), at the recipe's typical stage count, one round each.\n" +
-			"Runs recorded before result.json carried a cost per stage are skipped\n" +
-			"and said to be skipped, never counted as runs that cost nothing.\n\n" +
+			"a run applies it), at the recipe's typical stage count -- one round of\n" +
+			"each loop the recipe and its round knobs leave in, the two fix stages\n" +
+			"sharing one mean -- over the runs of the window, whatever they ended as:\n" +
+			"a stage counts once it recorded a cost. Runs the figure cannot use are\n" +
+			"said to be left out, never counted as runs that cost nothing: a run on a\n" +
+			"subscription (agent.auth oauth), whose model_usd is notional rather than\n" +
+			"charged, a result.json that is missing or unreadable, and a record with\n" +
+			"no per-stage cost at all (one from before the runner kept it, or stages\n" +
+			"that all cost nothing).\n\n" +
 			"The recipe resolves as it does for a run: the repository's\n" +
 			".fugaro/recipes, the project's published recipes, then the catalog. The\n" +
 			"knobs come from the checkout's fugaro.yaml; without a checkout of the\n" +
@@ -218,16 +225,20 @@ type previewDoc struct {
 }
 
 // previewTypical is the history figure: the mean recorded cost of each stage
-// kind, at the recipe's typical stage count.
+// kind, at the recipe's typical stage count. Its runs are the real-dollar
+// ones only; Skipped says how many the figure left out, and the three fields
+// under it why, each counted once and never as a run that cost nothing.
 type previewTypical struct {
 	USD    float64 `json:"usd"`
 	Stages int     `json:"stages"`
-	// Runs is how many of the window's runs recorded a per-stage cost -- the
-	// history this figure was taken from -- and Skipped how many recorded
-	// none (a result.json from before the runner kept one), which are never
-	// counted as runs that cost nothing.
-	Runs    int `json:"runs"`
-	Skipped int `json:"skipped"`
+	// Runs is how many of the window's runs recorded a per-stage cost: the
+	// history this figure was taken from.
+	Runs int `json:"runs"`
+	// Skipped is the runs the figure left out, the sum of the three below.
+	Skipped    int `json:"skipped"`
+	Notional   int `json:"notional"`   // subscription (oauth) runs: model_usd is notional
+	Unreadable int `json:"unreadable"` // runs with no readable result.json
+	Unpriced   int `json:"unpriced"`   // runs whose record held no per-stage cost
 }
 
 func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
@@ -378,9 +389,21 @@ func previewAddTypical(ctx context.Context, doc *previewDoc, env *cloudEnv, lc *
 		doc.Notes = append(doc.Notes, "no typical line: reading "+repo+"'s runs: "+oneLine(err.Error()))
 		return
 	}
-	if h.skipped > 0 {
-		doc.Notes = append(doc.Notes, fmt.Sprintf("%d of the %d runs of %s in the last 30 days recorded no per-stage cost (result.json from before it was kept); they are not counted",
-			h.skipped, h.skipped+h.runs, repo))
+	// One note per group of runs the figure left out, in a fixed order, each
+	// naming its own reason: "skipped" alone would say a run was no use
+	// without saying why.
+	total := h.total()
+	if h.notional > 0 {
+		doc.Notes = append(doc.Notes, fmt.Sprintf("%d of the %d runs of %s in the last 30 days ran on a subscription (agent.auth oauth): their model_usd is notional and is not averaged into a real-dollar figure",
+			h.notional, total, repo))
+	}
+	if h.unreadable > 0 {
+		doc.Notes = append(doc.Notes, fmt.Sprintf("%d of the %d runs of %s in the last 30 days have no readable result.json; they are not counted",
+			h.unreadable, total, repo))
+	}
+	if h.unpriced > 0 {
+		doc.Notes = append(doc.Notes, fmt.Sprintf("%d of the %d runs of %s in the last 30 days recorded no cost for any stage (a result.json from before the runner kept one, or stages that all cost nothing); they are not counted",
+			h.unpriced, total, repo))
 	}
 	usd, stages, missing := h.typical(rp, cfg)
 	if missing != "" {
@@ -390,20 +413,31 @@ func previewAddTypical(ctx context.Context, doc *previewDoc, env *cloudEnv, lc *
 	if stages == 0 { // the design's "with fewer than 5 runs, the line is omitted"
 		return
 	}
-	doc.Typical = &previewTypical{USD: usd, Stages: stages, Runs: h.runs, Skipped: h.skipped}
+	doc.Typical = &previewTypical{USD: usd, Stages: stages, Runs: h.runs,
+		Skipped: total - h.runs, Notional: h.notional, Unreadable: h.unreadable, Unpriced: h.unpriced}
 }
 
 // previewHistory is what the repository's runs of the last 30 days say about
 // the cost of one stage.
 type previewHistory struct {
-	// runs counts the runs that recorded a cost for at least one stage, and
-	// skipped the ones that recorded none: a record from before result.json
-	// carried a cost per stage has nothing to average, and must never be
-	// averaged in as a run that cost nothing.
-	runs, skipped int
+	// runs counts the runs the means are taken from: the ones that recorded a
+	// real-dollar cost for at least one stage.
+	runs int
+	// unpriced counts the runs whose record was read but held no per-stage
+	// cost at all (a result.json from before the runner kept one, or a run
+	// whose stages all cost nothing); unreadable the runs with no readable
+	// result.json; and notional the runs that ran on a subscription
+	// (agent.auth oauth, design §10.1), whose model_usd counts against the
+	// plan's limits and is no one's bill. Each is counted and said, and none
+	// is ever averaged in as a run that cost nothing.
+	unpriced, unreadable, notional int
 	// means is the mean cost of the stages seen per (stage kind, model).
 	means map[previewKind]previewMean
 }
+
+// total is every run of the window the read accounted for, whichever group it
+// went into.
+func (h previewHistory) total() int { return h.runs + h.unpriced + h.unreadable + h.notional }
 
 // previewKind keys a mean by a stage's kind and the model it was pinned to;
 // model "" is a stage whose config pinned none (Claude Code's own default).
@@ -417,24 +451,47 @@ type previewMean struct {
 
 func (m previewMean) mean() float64 { return m.total / float64(m.stages) }
 
-// readPreviewHistory reads the repository's runs of the last 30 days as runs
-// ls reads them: the run IDs under the slug, then each run's result.json. A
-// run whose record is missing or unreadable, or that recorded no cost for
-// any stage, is skipped and counted, never failing the read.
+// readPreviewHistory reads the repository's runs of the last 30 days: the run
+// IDs under the slug with runstore.ListRunIDs, as runs ls lists them, and
+// then each run's result.json, read the way runs ls reads a run's objects (in
+// parallel, a bounded number at a time).
+//
+// It is not runs ls's own loader: loadRows also reads launch.json and the
+// task, joins the backend's executions and prices compute, which is three
+// objects and a backend call per run for figures a stage's cost does not use.
+// The read here is bounded by one repository's runs of the last 30 days, and
+// it reads no object but result.json.
+//
+// A run it cannot price is counted, not guessed at: unreadable (no readable
+// result.json), unpriced (a record with no cost for any stage), or notional
+// (a subscription run). Only a read that fails for some other reason fails
+// the whole thing.
 func readPreviewHistory(ctx context.Context, b *blobx.Bucket, slug string, now time.Time) (previewHistory, error) {
 	h := previewHistory{means: map[previewKind]previewMean{}}
 	ids, err := runstore.ListRunIDs(ctx, b.Bucket, slug, now.Add(-previewHistoryWindow))
 	if err != nil {
 		return h, err
 	}
-	for _, id := range ids {
-		rec, err := runstore.Open(b.Bucket, slug, id).ReadRecord(ctx)
-		if err != nil {
+	recs := make([]*runstore.Record, len(ids))
+	errs := make([]error, len(ids))
+	parallel(len(ids), func(i int) {
+		recs[i], errs[i] = runstore.Open(b.Bucket, slug, ids[i]).ReadRecord(ctx)
+	})
+	for i, id := range ids {
+		if err := errs[i]; err != nil {
 			if errors.Is(err, runstore.ErrNotFound) || corruptObject(err) {
-				h.skipped++
+				h.unreadable++
 				continue
 			}
-			return h, err
+			return h, fmt.Errorf("run %s: %w", id, err)
+		}
+		rec := recs[i]
+		if rec.Cost != nil && rec.Cost.ModelBasis == runstore.BasisSubscription {
+			// Notional dollars: they count against the plan's limits, not
+			// against a bill, and a figure printed beside real caps must not
+			// mix them in (design §10.1, as runs ls's own ~ marker says).
+			h.notional++
+			continue
 		}
 		priced := false
 		for _, st := range rec.Stages {
@@ -450,7 +507,7 @@ func readPreviewHistory(ctx context.Context, b *blobx.Bucket, slug string, now t
 		if priced {
 			h.runs++
 		} else {
-			h.skipped++
+			h.unpriced++
 		}
 	}
 	return h, nil
@@ -467,7 +524,8 @@ func readPreviewHistory(ctx context.Context, b *blobx.Bucket, slug string, now t
 // design's "with fewer than 5 runs, the line is omitted" and a recipe that
 // runs no agent stage at all are silent: there is nothing to explain.
 func (h previewHistory) typical(rp *recipe.Recipe, cfg *config.Config) (usd float64, stages int, missing string) {
-	counts := previewTypicalCounts(rp)
+	knobs := previewKnobsOf(cfg) // the same knobs the ceiling's stage bound uses
+	counts := previewTypicalCounts(rp, knobs.first, knobs.rounds)
 	for _, n := range counts {
 		stages += n
 	}
@@ -546,34 +604,52 @@ func previewPinnedModel(a *config.Agent, kind string) string {
 var previewStageKinds = [...]string{"implement", "review_first", "review", "fix"}
 
 // previewTypicalCounts is the kind of every stage a run of rp records with
-// one round each — the design's typical run, and the count the history mean
-// is multiplied by. It mirrors the runner's loop: an implement, then a first
-// line of review_first and its fix, then a senior review, its fix, and, with
-// bounce, one more cheap pair. A mode: review recipe runs the senior review
-// alone.
-func previewTypicalCounts(rp *recipe.Recipe) map[string]int {
+// one round of each loop — the design's typical run, and the count the
+// history mean is multiplied by. It mirrors the runner's loop: an implement,
+// then a first line of review_first and its fix, then a senior review, its
+// fix, and, with bounce, one more cheap pair. A mode: review recipe runs the
+// senior review alone.
+//
+// first and rounds are the checkout's first_line_rounds and review_rounds (a
+// step's own max_rounds overriding its knob, as recipe.StageBound takes
+// them), each read as at most one round: a loop the knobs leave at 0 never
+// runs, so its stages are not counted -- the sum here is StageBound(rp, f, n)
+// for the same f and n, which the tests pin for every catalog recipe.
+func previewTypicalCounts(rp *recipe.Recipe, first, rounds int) map[string]int {
 	if rp.Mode == recipe.ModeReview {
 		return map[string]int{"review": 1}
 	}
-	first, bounce := 0, false
+	f, n, bounce := 0, 0, false
 	for _, s := range rp.Steps {
 		switch s.Kind {
 		case recipe.StepFirstLine:
-			first = 1 // one round: the typical run, not the bound
+			f = roundCount(first, s.MaxRounds)
 		case recipe.StepReview:
-			bounce = s.Bounce
+			n, bounce = roundCount(rounds, s.MaxRounds), s.Bounce
 		}
 	}
 	cheap := 0
-	if bounce && first > 0 {
-		cheap = first
+	if bounce && f > 0 && n > 0 {
+		cheap = f // the senior review sent it back to the cheap loop once
 	}
+	// The fix after the first line and the fix after the senior review are one
+	// kind in result.json ("fix"), so they share one mean and one count here.
 	return map[string]int{
-		"implement":    1,                 // the first_line step's first stage
-		"review_first": first + cheap,     // the first line, and its bounce-back
-		"review":       1,                 // one senior round
-		"fix":          first + 1 + cheap, // each review's demands answered
+		"implement":    1,             // the first_line step's first stage
+		"review_first": f + cheap,     // the first line, and its bounce-back
+		"review":       n,             // one senior round
+		"fix":          f + n + cheap, // each review's demands answered
 	}
+}
+
+// roundCount is how many rounds one loop gets, read as a typical run's count:
+// one, however many the knob and the step allow, and none when they allow
+// none (maxRounds 0 defers to the knob, as recipe.StageBound reads it).
+func roundCount(knob, maxRounds int) int {
+	if maxRounds > 0 {
+		knob = maxRounds
+	}
+	return min(max(knob, 0), 1)
 }
 
 // repoHasRecipe reports whether the checkout at root holds name in
