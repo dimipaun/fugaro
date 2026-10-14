@@ -1167,7 +1167,7 @@ I=${L:?re-run the Check 43 setup block}-docker.pkg.dev/${P:?re-run the Check 43 
   || { echo "Check 43 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R U=$U must not be empty)" >&2; exit 1; }
 fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
   || { echo "Check 43 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
-git remote get-url origin | grep -q 'edgeappinc/fugarosandbox' \
+git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
   || { echo "Check 43 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
 ```
 
@@ -1180,6 +1180,8 @@ git remote get-url origin | grep -q 'edgeappinc/fugarosandbox' \
 - **`fugaro version` is the one exception** — it takes no flags at all (`internal/cli/root.go:82-88`, `NoArgs`, no `Flags()`), and it makes no cloud call, so the setup block's `V=$(fugaro version …)` is not a command the rule was skipped for.
 
 In a terminal, `exit 1` closes that terminal window — that is the intended outcome (nothing after it runs); run the whole check in a `bash` sub-shell or a script file if you would rather keep the window.
+
+**Paste the block into a file, not straight into an interactive zsh.** Every block in this check is the same: it carries `#` comments, and an *interactive* zsh does not honour them unless `setopt interactive_comments` is set first. It still fails safe — a whole-line comment (`# === Check 43 …`) errors with `command not found: #` and runs nothing, and `P=fugaro-dev  # HARD-CODED` leaves `P` unset, which the first hard stop catches before any command reaches `gcloud` — but the comments stop being documentation and the trailing ones become extra arguments (`grep -q 'x' # …` looks for the file `#`). So either run `setopt interactive_comments` once, or (better, and what the blocks are written for) save the block to a file and run `bash check43.sh` / `zsh check43.sh`: a non-interactive shell of either kind honours comments, and `exit 1` then stops the script instead of closing your terminal.
 
 **Why `P` is not `gcloud config get-value project`.** The owner's `gcloud` default is a `*-prod` project, and this check writes (it creates a repository, rewrites the local and shared configs, moves job images). Reading the project from the ambient `gcloud` configuration is a trap that an earlier draft of this check fell into; the sandbox installation's project is a constant, so the check names it. `fugaro doctor`'s `project:` line (`internal/cli/doctor.go:748`, read from the local config, no cloud call) is the read-only cross-check that the checkout you are in really is the `fugaro-dev` one — if it names anything else, fix the checkout before running 43a. Where a command needs the project it takes `--project="${P:?}"`, as below.
 
@@ -1266,7 +1268,7 @@ gcloud artifacts docker images list "${L:?}-docker.pkg.dev/${P:?}/${R:?}" --incl
 # the previous one as fugaro.yaml.bak-<time>). NOT the checkout's
 # fugaro.yaml, which never holds base_images.
 C=$HOME/.config/fugaro/projects/fugaro.yaml          # the installation is `fugaro`: literal, not a placeholder
-cp "$C" "$C.before-43"                               # so the restore has something to go back to
+[ -e "$C.before-43" ] || cp "$C" "$C.before-43"      # so the restore has something to go back to; keep the FIRST copy — a re-run must not overwrite the pre-check config with the one 43d itself just rewrote
 fugaro init --base base --project fugaro             # or: fugaro image refresh --project fugaro
 grep -n 'base_images' -A2 "$C"
 # The sandbox's daily image check job: fugarochk-<slug>-<hash>
@@ -1278,14 +1280,14 @@ gcloud run jobs describe "${CHECK_JOB:?}" --project="${P:?}" --region="${L:?}" |
 gcloud run jobs execute "${CHECK_JOB:?}" --project="${P:?}" --region="${L:?}" --wait
 ```
 
-**FACT lines:** `base_images.base` is `<region>-docker.pkg.dev/<project>/fugaro-ghcr/dimipaun/fugaro-base:<v>@sha256:<the 43b digest>` — the **remote** path, at the digest **43b proved byte-equal**, with the release tag still present as the version marker; the run's own `(digest …)` line names that digest; **nothing was pushed** (the CLI copies no image, and the confirmation says so instead of naming a copy size); and the check job's container image is that same string, from which the execution starts (its outcome is the check's own business — what this item proves is that the image resolves and the container starts). **No tag-move step here:** nothing downstream reads a tag through the proxy (design §2.5, §2.12 f), and the question a move would have asked — whether the plain `:$V` tag can move *under* a pin without disturbing it — is #318's own **39e** (`docs/plans/2026-10-13-retire-image-mirror.md:566`), which this design keeps (§9): it dispatches `images.yml` by `workflow_dispatch` and compares `fugaro-base:<v>-pinned`'s digest before and after, expecting **the plain tag's digest to change (the nightly's existing behavior)** and the `-pinned` tag's not to. That is exactly why 43b's FACT must record which form it used: a `D` read from the plain `:$V` tag is a digest **the nightly can replace the tag under** — the pin keeps pulling its own digest (content-addressed, immutable), but the tag it names stops being the release's image at the next nightly, which is what `-pinned` exists to prevent. A `D` from `:$V-pinned` has neither problem.
+**FACT lines:** `base_images.base` is `<region>-docker.pkg.dev/<project>/fugaro-ghcr/dimipaun/fugaro-base:<v>@sha256:<the 43b digest>` — the **remote** path, at the digest **43b proved byte-equal** (the setup block deliberately does not carry `D`, so in this later shell re-read it as 43e's digest block shows, from the same tag form 43b recorded), with the release tag still present as the version marker; the run's own `(digest …)` line names that digest; **nothing was pushed** (the CLI copies no image, and the confirmation says so instead of naming a copy size); and the check job's container image is that same string, from which the execution starts (its outcome is the check's own business — what this item proves is that the image resolves and the container starts). **No tag-move step here:** nothing downstream reads a tag through the proxy (design §2.5, §2.12 f), and the question a move would have asked — whether the plain `:$V` tag can move *under* a pin without disturbing it — is #318's own **39e** (`docs/plans/2026-10-13-retire-image-mirror.md:566`), which this design keeps (§9): it dispatches `images.yml` by `workflow_dispatch` and compares `fugaro-base:<v>-pinned`'s digest before and after, expecting **the plain tag's digest to change (the nightly's existing behavior)** and the `-pinned` tag's not to. That is exactly why 43b's FACT must record which form it used: a `D` read from the plain `:$V` tag is a digest **the nightly can replace the tag under** — the pin keeps pulling its own digest (content-addressed, immutable), but the tag it names stops being the release's image at the next nightly, which is what `-pinned` exists to prevent. A `D` from `:$V-pinned` has neither problem.
 
 **(43e) The consumers accept `<tag>@<digest>`** — design §2.12 d, and the design's one open structural question (§3.1's fallback is a digest-only reference with the version recorded separately).
 
 **Re-run the setup block first** (the variables and the three hard stops): this item writes `fugaro init --repo .` in the checkout you are in.
 
 ```bash
-docker pull "${I:?}:${V:?}@${D:?}"
+docker pull "${I:?}:${V:?}@${D:?re-read 43b's digest: see the digest block below, which is where this item reads it}"
 fugaro init --repo . --project fugaro                # a real plan: reads, no apply without your answer
 # The sandbox's workflow names — do not assume one. `.repo.workflows` is keyed
 # by gcp.WorkflowVariant(name, <claude account>) (internal/infra/spec.go:806):
@@ -1306,9 +1308,21 @@ fugaro image build --repo edgeappinc/fugarosandbox --project fugaro --workflow <
 ```bash
 BUILD_ID=""                                                  # paste 43e's build ID here (the line above prints it)
 : "${BUILD_ID:?paste the build ID of the build 43e just ran}"
-gcloud builds log "${BUILD_ID:?}" --project="${P:?}" | grep -n 'base .*@sha256:'    # what the build recorded
+# D is 43b's, and the setup block deliberately does not recompute it (that
+# would fetch from ghcr.io on every re-run, and 43b is the step that reads it).
+# In a later shell it is gone, so re-read it THE SAME WAY 43b did — same tag
+# form, from ghcr.io directly, never through $R — or paste the value:
+D=""                                            # paste 43b's digest, or run one of these two lines instead:
+#   D=$(docker buildx imagetools inspect "ghcr.io/${U:?}:${V:?}" --format '{{.Manifest.Digest}}')          # TODAY
+#   D=$(docker buildx imagetools inspect "ghcr.io/${U:?}:${V:?}-pinned" --format '{{.Manifest.Digest}}')   # AFTER #318
+: "${D:?paste 43b's digest, or re-read it with one of the two commented lines above}"
+gcloud builds log "${BUILD_ID:?}" --project="${P:?}" --region="${L:?}" | grep -n 'base .*@sha256:'    # what the build recorded
 echo "${D:?}"                                                # 43b's index digest
 ```
+
+**Re-read `D` from the form 43b recorded, not from whichever is easier to type**, and re-read `$V` with it: if the installed CLI has been updated since 43b, `$V` names a *different* release, so a freshly read `D` describes a different image and the comparison below proves nothing — record the version drift and compare against the release you actually pinned.
+
+**`--region` on `gcloud builds log` is not optional.** Fugaro's builds are regional, not global: `fugaro image build` reads `projects/<project>/locations/<region>/builds/<id>` (`internal/backend/gcp/build.go:309`, `:317`, `:329`), with the region from the project config's `build.region`, which defaults to the Artifact Registry region (`internal/localcfg/localcfg.go:888-893`) — `$L` above, unless that config sets `build.region` to something else. `gcloud builds log` with no `--region` falls back to its ambient `builds/region` property and then to `global` (`gcloud builds log --help`), and a build submitted to a region is not there: the lookup returns NOT_FOUND — read-only and harmless, but it settles nothing. If the command above returns NOT_FOUND, pass the `build.region` the project config actually sets (`grep -n 'region' "$HOME/.config/fugaro/projects/fugaro.yaml"`, the file 43d's `$C` names).
 
 **If they differ, record it and stop:** the daemon resolved the index to the platform manifest, and the consequence is not an error — it is `ReasonBase` firing on **every** daily check, rebuilding every workflow once a day forever, with no log line saying why. That is a finding for the design (the fix belongs at build time: record the index digest the reference names, or compare index-to-index), not something to accept as noise.
 
