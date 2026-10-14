@@ -28,18 +28,29 @@ const recipesSince = "0.5.0"
 const layeredSince = "0.6.0"
 
 // cloneSince is the release that will ship plan Task 17's runner bootstrap
-// (FUGARO_CHECKOUT and the blobless clone it reads at start): Task 17 has
-// not landed yet (no code under internal/ reads FUGARO_CHECKOUT), so no
-// fugaro release knows it, and this gate refuses every checkout: clone
-// launch on any job image's release, including the current one, until it
-// does. checkCloneImageSince below gates it unconditionally, whether or
-// not the workflow also uses a recipe or a project layer: nothing else here
-// checks that base_images.base is actually this recent (fugaro-base could
-// first be published from an older release, or --image-source could mirror
-// one). docs/release.md's ("Before you tag") checklist line for it must
-// stay unchecked, and this constant must equal the release that ships Task
-// 17's runner bootstrap, until that task lands.
+// (FUGARO_CHECKOUT and the blobless clone it reads at start). checkCloneImageSince
+// below gates it unconditionally, whether or not the workflow also uses a
+// recipe or a project layer: nothing else here checks that base_images.base
+// is actually this recent (fugaro-base could first be published from an
+// older release, or --image-source could mirror one). docs/release.md's
+// ("Before you tag") checklist line for it must stay unchecked, and this
+// constant must equal the release that ships Task 17's runner bootstrap,
+// until that task lands (see cloneShipped).
 const cloneSince = "0.7.1"
+
+// cloneShipped is false until the release that ships plan Task 17 (the
+// runner's own FUGARO_CHECKOUT support) is tagged: Task 17 has not landed
+// yet (no code under internal/ reads FUGARO_CHECKOUT), so no fugaro release
+// knows it, and checkCloneImageSince's cloneSince-specific branch below
+// refuses every checkout: clone launch on any job image's release,
+// including the current one, with guidance that the runner side is not
+// released yet. Flip this to true in the same commit that bumps cloneSince
+// to the release that actually ships Task 17: that is the one signal
+// checkCloneImageSince needs to stop special-casing cloneSince and go back
+// to the ordinary "upgrade your base image" refusal (string equality
+// against cloneSince alone cannot tell "not released yet" from "this image
+// just predates a release that now exists").
+const cloneShipped = false
 
 // recipesV07Since is the first fugaro release whose runner knows the 0.7.0
 // recipe format: use_when, mode, roles.coder, a check step and
@@ -170,10 +181,12 @@ func releaseOf(ref string) (string, bool) {
 // ref itself. A non-release ref (dev, hand-pushed, or --image-source
 // without a release tag) only warns, same as checkImageSince; a repository
 // with none at all is refused outright (there is nothing for the job to
-// run). When since is cloneSince itself, an image that predates it is
-// refused with guidance of its own (no release knows FUGARO_CHECKOUT yet,
-// so "run fugaro init --base base" would not fix anything): see the
-// cloneSince-specific branch below.
+// run). When since is cloneSince itself and cloneShipped is still false, an
+// image that predates it is refused with guidance of its own (no release
+// knows FUGARO_CHECKOUT yet, so "run fugaro init --base base" would not fix
+// anything): see the cloneSince-specific branch below. Once cloneShipped
+// flips to true, that branch stops firing and this threshold gets the same
+// "upgrade your base image" refusal as any other.
 func checkCloneImageSince(lc *localcfg.Config, spec *task.Spec, since, subject, knows, alt string, warn io.Writer) error {
 	ref := lc.BaseImage(config.BaseKind)
 	refuse := func(why string) error {
@@ -188,12 +201,16 @@ func checkCloneImageSince(lc *localcfg.Config, spec *task.Spec, since, subject, 
 	case !ok:
 		fmt.Fprintf(warn, "warning: the checkout: clone job image of %s workflow %s is %s, which is not a release base image; whether its runner knows %s is not checked\n",
 			spec.Repo, spec.Workflow, pluginwire.Printable(ref), knows)
-	case imagePredates(rel, since) && since == cloneSince:
+	case imagePredates(rel, since) && since == cloneSince && !cloneShipped:
 		// cloneSince names a release that does not exist yet (plan Task 17
 		// has not shipped its runner side): naming "fugaro init --base base"
 		// here would send the user to re-copy the same base image and hit
 		// this refusal again. Say so plainly, and name checkout: baked, the
-		// only checkout that actually runs today.
+		// only checkout that actually runs today. cloneShipped, not since ==
+		// cloneSince alone, is what turns this off: once Task 17 ships and
+		// cloneShipped flips to true, cloneSince becomes a release that
+		// really exists, and an image predating it needs the ordinary
+		// "upgrade your base image" refusal below instead.
 		return userErr("%s needs a job image whose runner knows %s (fugaro %s or later); checkout: clone's own runner side is not released yet "+
 			"(generic-tool plan Task 17 has not shipped), so the checkout: clone job image of %s workflow %s (%s, release %s) is refused "+
 			"regardless of its release. Use checkout: baked instead to run it today.",
