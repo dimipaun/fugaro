@@ -4,12 +4,13 @@ Status: draft for the owner's review, 2026-10-14. Nothing here is built. Related
 
 ## 1. Summary and recommendation
 
-The cloud loop runs a cheap coder (DeepSeek through OpenRouter). The senior review stays outside it today, because the in-loop DeepSeek reviewer's "ship" is weak. This design asks how to put a Claude Sonnet senior reviewer **inside** the loop. Two ways:
+The cloud loop runs a cheap coder (DeepSeek through OpenRouter). The senior review stays outside it today, because the in-loop DeepSeek reviewer's "ship" is weak. This design asks how to put a Claude Sonnet senior reviewer **inside** the loop. Three ways:
 
 - **Path A: an Anthropic API key behind the gateway.** Mostly works today. Real dollars, capped by the gateway, no new trust exposure. Needs a price check, docs, a recipe choice and a live check.
+- **Path C: a stronger model through OpenRouter** (the owner's idea, 2026-10-14). The senior reviewer is any model OpenRouter serves (Claude Sonnet, Opus or Fable, GPT, Gemini), behind the same route table and gateway as the DeepSeek coder, with the one OpenRouter key. Real dollars, capped, one credential, no new code beyond prices and a live check.
 - **Path B: the subscription OAuth token for the reviewer stage only** ("mixed credentials"). New code. No dollar cost, but the gateway cannot cap it and the token shares a container with a cheap model that reads untrusted repository content.
 
-Owner ruling (2026-10-14): build both. B is worth its residual risk because Fugaro will work mostly with trusted repositories, and an explicit opt-in is enough (no separate reviewer job). A goes first because it is small; the two are independent.
+Owner ruling (2026-10-14): build both. B is worth its residual risk because Fugaro will work mostly with trusted repositories, and an explicit opt-in is enough (no separate reviewer job). C (or A) goes first because it needs no new code; the paths are independent.
 
 ## 2. What exists today (verified in the code)
 
@@ -41,6 +42,37 @@ with the `standard` recipe (`agent.recipe: standard`). Flow: DeepSeek implements
 4. **Optional later:** a catalog recipe only if `standard` plus pins proves awkward. This design adds none, to keep one way to do it.
 
 **Risk:** none beyond today's api-key runs. The gateway holds the key; the D2 residual (a compromised agent reading the runner's `/proc`) is unchanged and already accepted for api-key runs.
+
+## 3b. Path C: a stronger senior reviewer through OpenRouter
+
+**Config (no new keys):** the provider route that already serves DeepSeek also lists the senior model, and the pins name it:
+
+```yaml
+# local operator config
+providers:
+  openrouter:
+    models: ["deepseek/*", "anthropic/*"]
+model_prices:
+  anthropic/claude-sonnet-5.5: { input_per_m: 2, output_per_m: 10, cache_read: 0.2 }
+# fugaro.yaml
+agent:
+  auth: api-key
+  models:
+    coder: deepseek/deepseek-v4.1-flash
+    reviewer: anthropic/claude-sonnet-5.5
+```
+
+Facts checked against OpenRouter's public API on 2026-10-14: `anthropic/claude-sonnet-5.5` is listed at $2 input and $10 output per million tokens (the same as the direct list price), `anthropic/claude-opus-5.5` at $4 and $20, `anthropic/claude-fable-5.1` at $10 and $50. The ZDR endpoint list serves Anthropic models through Amazon Bedrock and Google, so the account's zero-data-retention-only privacy setting keeps working (to re-verify at build time; the list changes).
+
+**Why it matters:** one credential (the OpenRouter key the DeepSeek coder already uses) serves both roles, so no Anthropic API key is needed, and the owner can choose the senior from any provider's models (a different model family reviews a DeepSeek diff, which is also a better second opinion than the same family). The gateway meters and caps it like DeepSeek: per-run and daily caps hold, in real dollars.
+
+**Costs and caveats:**
+
+- OpenRouter's route fee (`route_fee_pct`, 5.5 today) is added to every charge, so Sonnet through OpenRouter costs about 5.5% more than direct.
+- `model_prices` must be keyed by the OpenRouter ID (`anthropic/claude-sonnet-5.5`, with a dot), which differs from the direct ID (`claude-sonnet-5-5`); an unpriced model is refused as with any provider model.
+- `allow_data_to` on the provider decides which repositories may send code to it; adding `anthropic/*` to `models` widens what the existing route serves, so the owner's local config review applies.
+- To verify at the first live check: whether a run whose models all route through OpenRouter still needs the repository's `ANTHROPIC_API_KEY` secret (the gateway's default upstream reads it, `internal/runner/gateway.go`; the current all-DeepSeek runs work, so the answer is probably a placeholder or an existing value), and that Claude Code accepts a Claude model served by OpenRouter's Anthropic-compatible endpoint with its tool use and caching intact.
+- Extended thinking and Anthropic-only beta features may differ through OpenRouter; the live check runs a real review, not only a ping.
 
 ## 4. Path B: the OAuth token for the reviewer stage only
 
@@ -80,19 +112,21 @@ The SECURITY.md known-gaps list gets one line for B if it ships. Path A needs no
 
 ## 6. Comparison
 
-| | A: API key | B: OAuth reviewer stage |
-|---|---|---|
-| Dollar cost of the Sonnet review | real, at list rates | none (subscription) |
-| Capped by the gateway | yes, per-run and daily | no; only the stage's own `--max-budget-usd` |
-| Credential exposure | gateway holds the key | token in the job for the whole run |
-| New code | docs, one live check, price confirmation | validation, runner stage env, result and budget marking, docs, live check |
-| Rollback | change two config lines | remove `stage_auth` |
+| | A: Anthropic API key | B: OAuth reviewer stage | C: OpenRouter |
+|---|---|---|---|
+| Dollar cost of the senior review | real, list rates | none (subscription) | real, list rates plus the route fee (5.5%) |
+| Capped by the gateway | yes | no; only `--max-budget-usd` | yes |
+| Credential exposure | gateway holds the key | token in the job for the whole run | gateway holds the key |
+| Extra secret needed | an Anthropic API key | the OAuth token | none (the OpenRouter key already exists) |
+| Choice of senior model | Claude only | Claude only | any model OpenRouter serves |
+| New code | docs, one live check | validation, runner stage env, budget marking, docs, live check | prices, docs, one live check |
+| Rollback | change two config lines | remove `stage_auth` | change two config lines |
 
 ## 7. Decided and open
 
 Decided (owner, 2026-10-14):
 
-1. Design both paths; build both, A first.
+1. Design the paths; build B (below) and, of A and C, the one the owner has a credential for. The owner's credentials today are an OpenRouter key and subscription OAuth tokens, no Anthropic API key, so C comes before A; A stays documented.
 2. B is worth the residual risk of §5: Fugaro will mostly work with trusted repositories.
 3. For B, an explicit opt-in is enough. The separate-job reviewer (§5 mitigation 4) is not required, and stays an optional hardening for repositories with outside contributors.
 
@@ -105,6 +139,6 @@ Open: should `stage_auth` generalize later to the coder role (an oauth coder wit
 
 ## 9. Phases
 
-1. A: the live check, the cost doc, the user doc. No Go change expected.
+1. C (and A if wanted): the live check, the cost doc, the user doc. No Go change expected beyond what the live check finds.
 2. B: validation and runner stage env, with mitigations 1 (opt-in, trusted repositories only, refused with fork runs) and 2 (stage-scoped environment). Its live check is the sandbox run of §8.
 3. Optional hardening: the separate-job reviewer (§5 mitigation 4), only for repositories with outside contributors.
