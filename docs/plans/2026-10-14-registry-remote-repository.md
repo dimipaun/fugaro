@@ -54,21 +54,27 @@ resource "google_artifact_registry_repository" "ghcr" {
   remote_repository_config {
     description = "ghcr.io"
     docker_repository {
-      custom_repository { uri = "https://ghcr.io" }
+      custom_repository {
+        uri = "https://ghcr.io"
+      }
     }
   }
-  lifecycle { prevent_destroy = true }
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 ```
 
+Each attribute is on its own line, as the module writes them elsewhere — `terraform_test.go`'s `hasAttr` is line-anchored (`^\s*attr\s*=\s*val\s*$`), so a one-line `custom_repository { uri = "…" }` would be a passing-looking resource whose test could not see the URI at all.
+
 - **No `cleanup_policies`** (design §7: an eviction during an upstream outage turns a warm pull into a 504) and **no `upstream_credentials`** (the packages are public; the repository is created unauthenticated, which is the only mode that cannot need rotation, design §2.3).
 - **`disable_upstream_validation` is left at its default (validation on)**, so a typo'd upstream URI fails the apply rather than a job's first pull (design §2.3).
-- **`repository_id` must satisfy `internal/infra/tf/cover.go`'s `repoID = ^fugaro(-[a-z0-9-]+)?$` (`:154`)**: `fugaro-ghcr` does, and the module's own `names` validation (`variables.tf:75-78`) must accept it too.
+- **`repository_id` must satisfy `internal/infra/tf/cover.go`'s `repoID = ^fugaro(-[a-z0-9-]+)?$` (`:154`)**: `fugaro-ghcr` does. The module's own `names` validation is a hand-written list, not a pattern applied to every name — `variables.tf:74-77` is `alltrue([for id in [var.names.legacy_registry, var.names.base_registry] : can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", id))])` — so **`ghcr_registry` must be added to that list** (and named in its `error_message`), or the new name ships with no validation at all.
 - **`prevent_destroy = true` is required** by `TestPreventDestroy`; the remote repository is not disposable (the migration never deletes it).
 - Grants: `google_artifact_registry_repository_iam_member.ghcr_reader` to `var.operators` (`roles/artifactregistry.reader`) — the operator's own credentials do Task 3's read-back; and `google_artifact_registry_repository_iam_member.build_ghcr` in `modules/repo/build.tf` for the build account, whose Cloud Build pulls the derived build's step image and its `FROM` through the remote repository (design §6).
 - Both are `roles/artifactregistry.reader`, the only role `cover.go`'s `grantRules` allowlist permits on a `fugaro-` registry for people or accounts (`cover.go:93-97`), so `TestGrantRulesAreTheModules` keeps passing unchanged.
 - The installation module's API list already includes `artifactregistry.googleapis.com` (`modules/installation/apis.tf:10`) — **no new API, no new secret, no Secret Manager enablement** (design §2.3).
-- **A new import kind, and the ordering trap it removes** (design §5.3). `imports.go` gains `importGhcrRegistry` (`importKind` *"ghcr registry"*) with the `importTable` row `module.installation.google_artifact_registry_repository.ghcr` → `projects/{project}/locations/{region}/repositories/{name}`, and `DiscoverInstallation` (`discover.go:423-431`) gains the third registry lookup, exactly the shape of the base registry's:
+- **A new import kind, and the ordering trap it removes** (design §5.3). `imports.go` gains `importGhcrRegistry` (`importKind` *"ghcr registry"*) with the `importTable` row `module.installation.google_artifact_registry_repository.ghcr` → `projects/{project}/locations/{region}/repositories/{name}`, and `DiscoverInstallation` (`discover.go:422-431`, the base registry's branch) gains the third registry lookup, exactly the shape of the base registry's:
   - the repository exists and carries `fugaro=managed` → `d.add(importGhcrRegistry, spec.Region, "", spec.Names.GhcrRegistry)` — **adopted**, which is what makes Check 43a's hand-created repository safe to leave in place (it passes `--labels=fugaro=managed`);
   - the repository exists without the label → `d.foreign("Artifact Registry repository "+spec.Names.GhcrRegistry, …)`, the same refusal the base registry gets (`discover.go:197-200`: *"… exists but is not this installation's: it carries …, not fugaro=managed. fugaro refuses to adopt it; …"*) — a named message at discovery time rather than a Terraform `already exists` halfway through an apply;
   - it does not exist → nothing, the ordinary create.
