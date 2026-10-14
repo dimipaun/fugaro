@@ -226,7 +226,7 @@ func TestFollowUpExplicitTokenOverridesInheritedAccount(t *testing.T) {
 
 	// Followable: a repeated --run-id reports already-launched (checkExecution
 	// compares against the NEW variant, not the job the root run used), and
-	// fugaro ls shows it pending, not an error.
+	// fugaro runs ls shows it pending, not an error.
 	out2, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--token", "acme-personal", "--json", "more work")
 	if err != nil {
 		t.Fatalf("repeated --run-id: %v", err)
