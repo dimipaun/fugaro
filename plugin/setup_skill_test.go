@@ -737,4 +737,26 @@ func TestSetupSkillOffersClone(t *testing.T) {
 	if !strings.Contains(skill, "`checkout`") {
 		t.Error("SKILL.md never mentions the checkout decision")
 	}
+	// The safety claim (the same honesty the named-oauth-tokens docs test
+	// pins): the skill must not tell a user to set a key every current
+	// binary refuses. Both files say clone is not shipped and to leave the
+	// key out.
+	for name, doc := range map[string]string{"decisions.md": dec, "SKILL.md": skill} {
+		for _, want := range []string{"not shipped", "leave the key out"} {
+			if !strings.Contains(doc, want) {
+				t.Errorf("%s never says checkout: clone is %q", name, want)
+			}
+		}
+	}
+	// The gate, and its effect, must be named: this is the claim that stops
+	// the skill pointing a user at a key every current binary refuses.
+	// Neither file names the two commands the gate refuses, on purpose:
+	// the plugin lint (skills_lint_test.go, ownerViolation) rejects an
+	// applying `fugaro init` in skill prose, and the claim is the refusal,
+	// not the command line it happens on.
+	for _, want := range []string{"cloneShipped", "internal/cli/recipes_skew.go", "refuse"} {
+		if !strings.Contains(dec, want) {
+			t.Errorf("decisions.md's checkout topic never says %q", want)
+		}
+	}
 }

@@ -1928,6 +1928,12 @@ been through the live check there is nothing to justify the flip, and the
 release it names (`cloneSince`) cannot be named before that. Check 38's own
 setup says so and names the build it needs. Nothing else in this task changes;
 the deferred gap (a) above reopens with that separate PR, not with this one.
+That PR owns the edits the flip makes stale as well as the constant:
+`docs/checkout.md`'s "not shipped yet" notes (which
+`internal/cli/docs_checkout_test.go` holds to `cloneShipped`), this skill's
+topic 12 in `plugin/skills/setup/reference/decisions.md` and its one line in
+`plugin/skills/setup/SKILL.md`, and `docs/release.md`'s "Verify `cloneSince`"
+bullet (which now says the flip is not the release commit's edit).
 
 **Files:** `docs/gcp-live-checklist.md` (Check 38), `plugin/skills/setup/reference/decisions.md`, `plugin/skills/setup/SKILL.md` (one line), `plugin/setup_skill_test.go`.
 
