@@ -211,8 +211,11 @@ name as not missing (40i); and the installation root never bricking on
 revocation (40j). **Check 42 is reserved by the config-transitions work**
 (`docs/plans/2026-10-14-config-transitions.md` Task 7 — *"Docs, the skills,
 Check 42 and the release bullet"* — whose Files list names *"Check 42's row
-and section"*; and `docs/design/config-transitions.md` §8 item 5, *"the
-oauth → api-key → oauth round trip with the secrets retained and re-adopted"*).
+and section"*; and `docs/design/config-transitions.md` §5 item 5, *"the
+oauth → api-key → oauth round trip with the secrets retained and re-adopted"*
+— §5 is *"Where users learn"*, and the item names this checklist's Check 42;
+§8 is *"Open questions for the owner"*, whose item 5 is about `fugaro
+validate` gaining state access).
 That plan is on `main`; it reserves the number here even though its own
 checklist edit has not landed yet, and that edit is what will put Check 42's
 row in the table below. It stays reserved meanwhile (a number, once reserved,
@@ -1150,7 +1153,7 @@ P=fugaro-dev          # HARD-CODED, and never read from gcloud: see the guard be
 L=us-east5
 R=fugaro-ghcr
 U=dimipaun/fugaro-base
-V=$(fugaro --version | awk '{print $NF}'); V=${V#v}   # the image tag drops a leading v
+V=$(fugaro version | awk '{print $NF}'); V=${V#v}     # `fugaro version`: there is no --version flag; the image tag drops a leading v
 I=$L-docker.pkg.dev/$P/$R/$U
 ```
 
@@ -1166,7 +1169,7 @@ Both checks are read-only and both are trip-wires for the same trap. `fugaro doc
 
 **Why `P` is not `gcloud config get-value project`.** The owner's `gcloud` default is a `*-prod` project, and this check writes (it creates a repository, rewrites the local and shared configs, moves job images). Reading the project from the ambient `gcloud` configuration is a trap that an earlier draft of this check fell into; the sandbox installation's project is a constant, so the check names it. `fugaro doctor`'s `project:` line (`internal/cli/doctor.go:748`, read from the local config, no cloud call) is the read-only cross-check that the checkout you are in really is the `fugaro-dev` one — if it names anything else, fix the checkout before running 43a. Where a command needs the project it takes `--project="$P"`, as below.
 
-**`V` has no leading `v`.** `fugaro --version` prints the binary's version verbatim (`internal/cli/root.go:82-88`), which GoReleaser sets from the tag, and the tag is `vX.Y.Z`; the image tag CI publishes strips it (`version=${tag#v}`, `.github/workflows/images.yml:78`). The CLI itself strips it the same way (`releaseVersion`, `internal/cli/init_images.go:95-98`), so `V=${V#v}` is what matches the registry tag `ghcr.io/dimipaun/fugaro-base:$V`.
+**`V` has no leading `v`.** The command is **`fugaro version`**, a subcommand — **there is no `--version` flag**: the root command sets no cobra `Version` field, so `fugaro --version` fails with `unknown flag: --version` and exit 1, leaving `V` empty and every later command that interpolates it (`ghcr.io/$U:$V`, `$I:$V`, `$I:$V@$D`) malformed. The subcommand (`internal/cli/root.go:82-88`) prints the binary's version verbatim, which GoReleaser sets from the tag, and the tag is `vX.Y.Z`; the image tag CI publishes strips it (`version=${tag#v}`, `.github/workflows/images.yml:78`). The CLI itself strips it the same way (`releaseVersion`, `internal/cli/init_images.go:95-98`), so `V=${V#v}` is what matches the registry tag `ghcr.io/dimipaun/fugaro-base:$V`.
 
 **(43a) The create** — design §2.12 k, e, m. The upstream is `https://ghcr.io` as a **custom** URI (there is no preset for anything but Docker Hub), in the installation's own region, unauthenticated, and carrying the label Fugaro's own discovery reads.
 
@@ -1305,7 +1308,7 @@ gcloud artifacts repositories delete "$R2" --project="$P" --location="$L"   # �
 gcloud artifacts repositories delete "$R"  --project="$P" --location="$L"   # ⚠ CONFIRM
 ```
 
-(If you ran 43a-43c as the feasibility run and then 43d-43f after merging, do Restore A and then delete the repository: the merged implementation now knows it, so leave it — see the last bullet.)
+(If you ran 43a-43c as the feasibility run and then 43d-43f after merging, do **Restore A only** and delete **only `$R2`**: after the merge `$R` is part of the installation (`fugaro init` creates it, `prevent_destroy` protects it), so it **stays** — the `delete "$R"` line above does not apply to you. The last bullet has the reasoning.)
 
 Four things to know about that restore:
 
