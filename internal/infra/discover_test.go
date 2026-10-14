@@ -1,12 +1,16 @@
 package infra
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"maps"
 	"net/http"
+	"os"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -1667,5 +1671,70 @@ func TestDiscoverInstallationSecondOperatorMissingEntryDoesNotShrink(t *testing.
 		if im.ProjectSecrets[logical] != id {
 			t.Errorf("ProjectSecrets[%s] = %q, want %s (map %v)", logical, im.ProjectSecrets[logical], id, im.ProjectSecrets)
 		}
+	}
+}
+
+// TestReadinessVarsIncludeProjectSecrets (SF2's gap): a RepoSpec field with a
+// correct json tag that nothing threads through RepoVars is invisible from Go
+// unless this asserts the SERIALIZED output. A project copy with an enabled
+// version and a repo copy without one resolves to the project container, and
+// that has to reach the tfvars the repo root plans.
+func TestReadinessVarsIncludeProjectSecrets(t *testing.T) {
+	f := newCloud(t)
+	spec := projectSpec(t, projectSecretLC)
+	// The repo copy exists but has no enabled version, so the project copy wins.
+	f.sm.Seed(spec.Secrets["bitbucket-token"], with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, "bitbucket-token"), nil)
+	want := f.seedProjectSecret(spec, "bitbucket-token")
+	got, _, _ := readinessOf(t, f, spec)
+	data, err := RepoVars(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Repo struct {
+			ProjectSecrets map[string]string `json:"project_secrets"`
+		} `json:"repo"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Repo.ProjectSecrets["bitbucket-token"] != want {
+		t.Errorf("RepoVars project_secrets = %v, want bitbucket-token -> %s\n%s", doc.Repo.ProjectSecrets, want, data)
+	}
+}
+
+// TestProjectSecretsFixtureIsTheGoldenPlusOneKey pins the hand-maintained
+// Terraform fixture (deploy/terraform/gcp/roots/repo/tests/testdata/
+// project-secrets.tfvars.json, see its README): it must stay exactly the
+// golden tfvars plus one repo.project_secrets entry, so regenerating the
+// golden for an unrelated reason cannot let the fixture drift silently.
+func TestProjectSecretsFixtureIsTheGoldenPlusOneKey(t *testing.T) {
+	dir := "../../deploy/terraform/gcp/roots/repo/tests/testdata/"
+	golden, err := os.ReadFile(dir + "bitbucket-oauth.tfvars.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := os.ReadFile(dir + "project-secrets.tfvars.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decode := func(b []byte) map[string]any {
+		t.Helper()
+		var doc map[string]any
+		dec := json.NewDecoder(bytes.NewReader(b))
+		dec.UseNumber()
+		if err := dec.Decode(&doc); err != nil {
+			t.Fatal(err)
+		}
+		return doc
+	}
+	want, got := decode(golden), decode(fixture)
+	repo, ok := want["repo"].(map[string]any)
+	if !ok {
+		t.Fatal("the golden has no repo object")
+	}
+	repo["project_secrets"] = map[string]any{"bitbucket-token": gcp.ProjectSecretID("aurora", "bitbucket-token")}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("project-secrets.tfvars.json is not bitbucket-oauth.tfvars.json plus the one project_secrets key:\n got %v\nwant %v", got, want)
 	}
 }

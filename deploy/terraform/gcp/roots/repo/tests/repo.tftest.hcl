@@ -13,6 +13,9 @@ mock_provider "google" {}
 variables {
   bitbucket = jsondecode(file("tests/testdata/bitbucket-oauth.tfvars.json"))
   github    = jsondecode(file("tests/testdata/github-vertex.tfvars.json"))
+  # The same repository with one repo.project_secrets entry: a name Readiness
+  # resolved to a project-wide container. Hand-maintained; see testdata/README.md.
+  psec = jsondecode(file("tests/testdata/project-secrets.tfvars.json"))
 }
 
 run "root_bitbucket" {
@@ -1144,4 +1147,81 @@ run "bad_fugaro_project" {
   }
 
   expect_failures = [var.fugaro_project]
+}
+
+# The resolved secret reaches every reader (design docs/design/project-secrets.md
+# §5, Task 5): the workflow module's job mount, the job account's accessor
+# grant, the build account's grant and the check job's secret_key_ref must all
+# name the IDENTICAL project-wide container for bitbucket-token, while a name
+# with no project copy (sandbox-probe) keeps the repository's own. A divergence
+# means one of the paths is still reading a stale, repo-only value.
+run "build_and_check_use_the_resolved_secret" {
+  command = plan
+
+  module {
+    source = "../../modules/repo"
+  }
+
+  variables {
+    project        = var.psec.project
+    fugaro_project = var.psec.fugaro_project
+    region         = var.psec.region
+    installation   = var.psec.installation
+    repo           = var.psec.repo
+  }
+
+  assert {
+    condition     = module.workflow["web"].secret_refs["FUGARO_BITBUCKET_TOKEN"] == var.psec.repo.project_secrets["bitbucket-token"]
+    error_message = "the job must mount bitbucket-token from the project-wide container"
+  }
+  assert {
+    condition     = module.workflow["web"].secret_refs["SANDBOX_PROBE"] == var.psec.repo.secrets["sandbox-probe"]
+    error_message = "a name with no project copy must keep the repository's own container"
+  }
+  assert {
+    condition = tomap({ for k, m in google_secret_manager_secret_iam_member.build : k => m.secret_id }) == tomap({
+      bitbucket-token = var.psec.repo.project_secrets["bitbucket-token"]
+      sandbox-probe   = var.psec.repo.secrets["sandbox-probe"]
+    })
+    error_message = "the build account's grant on a resolved name must be the project-wide container, and its other grants the repository's own"
+  }
+  assert {
+    condition = [for e in google_cloud_run_v2_job.check[0].template[0].template[0].containers[0].env :
+      one(one(e.value_source).secret_key_ref).secret
+    if length(e.value_source) > 0] == [var.psec.repo.project_secrets["bitbucket-token"]]
+    error_message = "the check job must mount bitbucket-token from the project-wide container"
+  }
+}
+
+# The workflow module grants its job account accessor on whatever map it is
+# handed, so the repo module's merged local is what decides which container
+# that is; this run pins that the merged map takes the project value for a
+# resolved name (the repo module run above cannot reach this resource).
+run "resolved_secret_job_grant" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.psec.project
+    fugaro_project  = var.psec.fugaro_project
+    region          = var.psec.region
+    name            = "web"
+    repo_label      = var.psec.repo.label
+    workflow        = var.psec.repo.workflows.web
+    secrets         = merge(var.psec.repo.secrets, var.psec.repo.project_secrets)
+    runs_bucket     = var.psec.installation.runs_bucket
+    job_runner_role = var.psec.installation.role_ids.job_runner
+  }
+
+  assert {
+    condition     = google_secret_manager_secret_iam_member.job["bitbucket-token"].secret_id == var.psec.repo.project_secrets["bitbucket-token"]
+    error_message = "the job account's accessor grant on a resolved name must be the project-wide container"
+  }
+  assert {
+    condition     = google_secret_manager_secret_iam_member.job["sandbox-probe"].secret_id == var.psec.repo.secrets["sandbox-probe"]
+    error_message = "the job account's accessor grant on an unresolved name must stay the repository's own container"
+  }
 }
