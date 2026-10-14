@@ -334,11 +334,13 @@ Expected: PASS.
 ## Task 6: Docs
 
 **Files:**
-- Modify: `docs/gcp-setup.md` §"The base image" (the copy paragraph: `fugaro init --base` no longer copies; it verifies and pins a digest through the installation's remote repository; the 1.2 GB note goes), §"What it costs" (the storage line), and — only if design §10.5 is approved — one paragraph on `gcloud artifacts vpcsc-config allow` for a VPC-SC project
-- Modify: `docs/base-image.md` (the local-build note and wherever it describes pulling the base from `fugaro-base`), `docs/release.md` (`publish-base`'s signing and the `-pinned` tag stay; add that the CLI pins the remote path at that digest)
-- Modify: `docs/design/retire-image-mirror.md` (one status line at the top pointing to `registry-remote-repository.md`; **nothing else** — it is the historical design of the copy, design §9)
+- Modify: `docs/gcp-setup.md` §"The base image" (the copy paragraph at `:163`: `fugaro init --base` no longer copies; it verifies and pins a digest through the installation's remote repository; the 1.2 GB note goes; the accepted-risk sentence keeps its substance and gains "the digest is now verified and pinned"), §"What it costs" (the storage line, `:564`), and — only if design §10.5 is approved — one paragraph on `gcloud artifacts vpcsc-config allow` for a VPC-SC project
+- Modify: `docs/base-image.md` (`:3`, `:5`: "a development build or an earlier release has no image to copy") and `docs/base-image-migration.md` (`:15`: "It copies `fugaro-base` into your registry" — the step's *effect* is unchanged, its mechanism is not)
+- Modify: `docs/release.md` — **including a false premise this design disproves**: `:30`'s *"Cloud Build and Cloud Run in a user's project cannot read ghcr.io, and the project's base registry `fugaro-base` is writable only by people, never by a build account. So the `images` stage of `fugaro init` copies the images …"* is no longer the reason (design §1; Cloud Run documents direct public-GHCR pulls) — the copy's surviving justification is the controlled project-local path and the digest pin, and `:32`'s "signing the images and verifying before the copy is a planned follow-up" becomes "the digest is verified and pinned". `publish-base`'s signing and the `-pinned` tag stay; add that the CLI pins the remote path at that digest
+- Modify: `README.md` (`:91`: "`fugaro init` copies base images from the release tag in ghcr.io and checks the copy by digest")
+- Modify: `docs/backends.md` (`:40`'s "the image mirror" stage name, if it stays a stage), `docs/design/retire-image-mirror.md` (one status line at the top pointing to `registry-remote-repository.md`; **nothing else** — it is the historical design of the copy, design §9)
 - Modify: `docs/gcp-live-checklist.md` (Task 8 of this change already writes Check 43; the implementation adds the results table it now carries as NOT RUN)
-- No change: `SECURITY.md`, `docs/base-image-migration.md` (its per-kind migration text is about recipes, not the base's storage)
+- No change: `SECURITY.md`, `docs/SPEC.md` (it never mentions the copy)
 
 **A test constrains this edit:** `TestGCPSetupBaseImageSectionNamesRealKinds` (`internal/cli/docs_base_test.go:225`) requires §3 to keep the literal tokens `` `fugaro init --base base` ``, `` `--expect-digest base=sha256:<hex>` `` and `` `--base-image base=IMAGE` ``. `--expect-digest base=…` keeps its (narrowed) meaning (Task 3, item 5), so the token stays and the sentence around it changes.
 
