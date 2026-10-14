@@ -1556,3 +1556,116 @@ func TestReadinessResolvesCorrectlyLabelledProjectSecret(t *testing.T) {
 		t.Errorf("ProjectSecretsOK = %v, want bitbucket-token true", ex.ProjectSecretsOK)
 	}
 }
+
+// installationSpecWith is installationSpec for a local config with extra
+// blocks (project_secrets, providers, claude_accounts).
+func installationSpecWith(t *testing.T, extraLC string) InstallationSpec {
+	t.Helper()
+	s, err := Installation(parseLC(t, m4LocalConfig+m5Additions+extraLC), InstallOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// projectSecretLCBlock makes bitbucket-token a project-wide secret the
+// sandbox repository may use, so Installation() computes it.
+const projectSecretLCBlock = `project_secrets:
+  bitbucket-token: { allow_data_to: [acme/sandbox] }
+`
+
+// TestDiscoverInstallationImportsPreExistingProjectSecret (S2): a project
+// secret stored with --project-wide before the installation root's first
+// apply is adopted, not conflicted with, and reaches the map the root plans.
+func TestDiscoverInstallationImportsPreExistingProjectSecret(t *testing.T) {
+	f := newCloud(t)
+	inst := installationSpecWith(t, projectSecretLCBlock)
+	id := gcp.ProjectSecretID(inst.FugaroProject, "bitbucket-token")
+	f.sm.Seed(id, with(managed, gcp.LabelProject, inst.FugaroProject, gcp.LabelSecret, "bitbucket-token"), []byte("project-value"))
+	im, err := DiscoverInstallation(context.Background(), f.c, inst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := `module.installation.google_secret_manager_secret.project["bitbucket-token"]`
+	if got := importMap(im)[addr]; got != "projects/proj-1234/secrets/"+id {
+		t.Errorf("imports = %v, want an import of %s at %s", importMap(im), id, addr)
+	}
+	if im.ProjectSecrets["bitbucket-token"] != id {
+		t.Errorf("ProjectSecrets = %v, want bitbucket-token -> %s", im.ProjectSecrets, id)
+	}
+}
+
+// TestDiscoverInstallationRefusesForeignProjectSecret (S2): a secret exists
+// at the computed project ID but its labels aren't ours -- refused, never
+// silently adopted or overwritten.
+func TestDiscoverInstallationRefusesForeignProjectSecret(t *testing.T) {
+	f := newCloud(t)
+	inst := installationSpecWith(t, projectSecretLCBlock)
+	id := gcp.ProjectSecretID(inst.FugaroProject, "bitbucket-token")
+	f.sm.Seed(id, with(managed, gcp.LabelProject, "some-other-project", gcp.LabelSecret, "bitbucket-token"), []byte("someone-elses"))
+	_, err := DiscoverInstallation(context.Background(), f.c, inst)
+	if err == nil || !strings.Contains(err.Error(), "project secret "+id) {
+		t.Fatalf("err = %v, want a foreign-project-secret refusal", err)
+	}
+}
+
+// TestDiscoverInstallationNeverShrinksProjectSecrets (N3 BLOCKER): a name
+// eligible on the first call, discovered live, must still be in the map on a
+// second call whose config no longer makes it eligible at all -- the exact
+// property P2 gives the repo module, extended here. Otherwise
+// google_secret_manager_secret.project's for_each shrinks and
+// prevent_destroy fails the plan itself.
+func TestDiscoverInstallationNeverShrinksProjectSecrets(t *testing.T) {
+	f := newCloud(t)
+	first := installationSpecWith(t, projectSecretLCBlock)
+	id := gcp.ProjectSecretID(first.FugaroProject, "bitbucket-token")
+	f.sm.Seed(id, with(managed, gcp.LabelProject, first.FugaroProject, gcp.LabelSecret, "bitbucket-token"), []byte("project-value"))
+	im, err := DiscoverInstallation(context.Background(), f.c, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := im.ProjectSecrets["bitbucket-token"]; !ok {
+		t.Fatalf("first call: ProjectSecrets = %v, want bitbucket-token", im.ProjectSecrets)
+	}
+	// The second operator's config: the same installation, no
+	// project_secrets entry at all (the list was emptied, or the entry
+	// removed).
+	second := installationSpec(t)
+	if len(second.ProjectSecrets) != 0 {
+		t.Fatalf("the second spec computes %v, want nothing", second.ProjectSecrets)
+	}
+	im2, err := DiscoverInstallation(context.Background(), f.c, second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name := range im.ProjectSecrets {
+		if _, ok := im2.ProjectSecrets[name]; !ok {
+			t.Errorf("the second call dropped %s: %v is not a superset of %v", name, im2.ProjectSecrets, im.ProjectSecrets)
+		}
+	}
+}
+
+// TestDiscoverInstallationSecondOperatorMissingEntryDoesNotShrink (S5): a
+// local config with no project_secrets/providers/claude_accounts entries at
+// all, run against an installation where another operator's config already
+// created project secrets, still plans every one the live discovery finds.
+func TestDiscoverInstallationSecondOperatorMissingEntryDoesNotShrink(t *testing.T) {
+	f := newCloud(t)
+	inst := installationSpec(t)
+	// Two project secrets a first operator's config created, live.
+	ids := map[string]string{}
+	for _, logical := range []string{"bitbucket-token", "claude-oauth-token"} {
+		id := gcp.ProjectSecretID(inst.FugaroProject, logical)
+		f.sm.Seed(id, with(managed, gcp.LabelProject, inst.FugaroProject, gcp.LabelSecret, logical), []byte("v"))
+		ids[logical] = id
+	}
+	im, err := DiscoverInstallation(context.Background(), f.c, inst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for logical, id := range ids {
+		if im.ProjectSecrets[logical] != id {
+			t.Errorf("ProjectSecrets[%s] = %q, want %s (map %v)", logical, im.ProjectSecrets[logical], id, im.ProjectSecrets)
+		}
+	}
+}

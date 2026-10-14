@@ -1145,6 +1145,10 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		return outs, false, initErr(err)
 	}
 	spec.AdoptLegacyRegistry = im.AdoptLegacyRegistry
+	// The installation module's project-wide secret containers: the config's
+	// own eligible names unioned with every one discovery found live, so a
+	// config edit can never shrink the module's for_each (N3).
+	spec.ProjectSecrets = im.ProjectSecrets
 	for _, n := range im.Notes {
 		r.warn(n)
 	}

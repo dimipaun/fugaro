@@ -433,7 +433,99 @@ func DiscoverInstallation(ctx context.Context, c *Clients, spec InstallationSpec
 	if err := d.installationSingletons(spec); err != nil {
 		return Imports{}, err
 	}
+	if err := d.projectSecrets(spec); err != nil {
+		return Imports{}, err
+	}
 	return d.result()
+}
+
+// projectSecrets adopts the installation module's project-wide secret
+// containers that exist and are ours, and unions every correctly-labelled
+// one that exists live into the map the root plans, so a name the current
+// config no longer makes eligible is never dropped from for_each --
+// prevent_destroy turns that into a hard terraform plan failure, before
+// tf.Guard or any Fugaro code runs (N3, P2 extended from the repo module).
+//
+// The per-name Get is what an S2 pre-apply store needs: a value set with
+// --project-wide before the installation root's first apply is adopted, not
+// conflicted with. The List is what N3 needs: a second operator whose own
+// local config lacks the entry (project_secrets/providers/claude_accounts
+// are each operator-local) still plans the container the first operator
+// created.
+func (d *discovery) projectSecrets(spec InstallationSpec) error {
+	out := maps.Clone(spec.ProjectSecrets)
+	if out == nil {
+		out = map[string]string{}
+	}
+	for _, logical := range slices.Sorted(maps.Keys(spec.ProjectSecrets)) {
+		id := spec.ProjectSecrets[logical]
+		s, err := d.c.Secrets.Projects.Secrets.Get("projects/" + d.project + "/secrets/" + id).Context(d.ctx).Do()
+		switch {
+		case d.absent(err, serviceSecretManager):
+			continue
+		case err != nil:
+			return fmt.Errorf("reading project secret %s: %w", id, err)
+		}
+		want := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: spec.FugaroProject, gcp.LabelSecret: logical}
+		if !hasMarks(s.Labels, want) {
+			d.foreign("project secret "+id, s.Labels, want)
+			continue
+		}
+		d.add(importProjectSecret, spec.Region, logical, id)
+	}
+	live, err := d.liveProjectSecrets(spec)
+	if err != nil {
+		return err
+	}
+	for _, logical := range slices.Sorted(maps.Keys(live)) {
+		if _, known := out[logical]; known {
+			continue
+		}
+		out[logical] = live[logical]
+		d.add(importProjectSecret, spec.Region, logical, live[logical])
+	}
+	d.im.ProjectSecrets = out
+	return nil
+}
+
+// liveProjectSecrets lists the project-wide containers that already exist
+// and are ours (label fugaro=managed AND fugaro_project=<installation>), by
+// logical name. A listed secret whose ID is not the one ProjectSecretID
+// derives for its logical name cannot be the resource the plan manages, so
+// it is left alone with a note rather than unioned in: adopting it is
+// impossible and deleting it is not ours to do.
+func (d *discovery) liveProjectSecrets(spec InstallationSpec) (map[string]string, error) {
+	out := map[string]string{}
+	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: spec.FugaroProject}
+	var filter []string
+	for _, k := range slices.Sorted(maps.Keys(labels)) {
+		filter = append(filter, "labels."+k+"="+labels[k])
+	}
+	err := d.c.Secrets.Projects.Secrets.List("projects/"+d.project).Filter(strings.Join(filter, " AND ")).Pages(d.ctx, func(p *secretmanager.ListSecretsResponse) error {
+		for _, sec := range p.Secrets {
+			logical := sec.Labels[gcp.LabelSecret]
+			if logical == "" {
+				continue
+			}
+			name := sec.Name[strings.LastIndex(sec.Name, "/")+1:]
+			if want := gcp.ProjectSecretID(spec.FugaroProject, logical); name != want {
+				d.im.Notes = append(d.im.Notes, fmt.Sprintf("project secret %s carries this installation's labels but is not the derived %s, so the plan neither adopts nor deletes it; remove it by hand, or rename it to %s, if it is not in use",
+					name, want, want))
+				continue
+			}
+			out[logical] = name
+		}
+		return nil
+	})
+	switch {
+	// A disabled Secret Manager API means nothing is there to union, the
+	// same answer every other read in this file gives it.
+	case d.absent(err, serviceSecretManager):
+		return out, nil
+	case err != nil:
+		return nil, fmt.Errorf("listing the project's secrets: %w", err)
+	}
+	return out, nil
 }
 
 // installationSingletons adopts the custom roles, the scheduler account
