@@ -19,11 +19,14 @@ const (
 	RoleBuildSubmitter        = "fugaroBuildSubmitter"
 	RoleTagMover              = "fugaroTagMover"
 	BaseRegistry              = "fugaro-base"
-	LegacyRegistry            = "fugaro"
-	LogBucket                 = "fugaro"
-	LogView                   = "fugaro-runs"
-	LogSink                   = "fugaro-jobs"
-	LogExclusion              = "fugaro-jobs-from-default"
+	// GhcrRegistry is the remote (pull-through) repository over ghcr.io:
+	// the base image's pin goes through it (design §3.1).
+	GhcrRegistry   = "fugaro-ghcr"
+	LegacyRegistry = "fugaro"
+	LogBucket      = "fugaro"
+	LogView        = "fugaro-runs"
+	LogSink        = "fugaro-jobs"
+	LogExclusion   = "fugaro-jobs-from-default"
 	// LogBucketDescription is the log bucket's ownership mark: a log
 	// bucket carries no labels, so discovery adopts a bucket of that name
 	// only when it carries this description.
@@ -111,6 +114,7 @@ type InstallationSpec struct {
 type InstallationNames struct {
 	LegacyRegistry            string              `json:"legacy_registry"`
 	BaseRegistry              string              `json:"base_registry"`
+	GhcrRegistry              string              `json:"ghcr_registry"`
 	SchedulerServiceAccountID string              `json:"scheduler_service_account_id"`
 	RoleIDs                   InstallationRoleIDs `json:"role_ids"`
 	Log                       LogNames            `json:"log"`
@@ -172,6 +176,7 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		Names: InstallationNames{
 			LegacyRegistry:            LegacyRegistry,
 			BaseRegistry:              BaseRegistry,
+			GhcrRegistry:              GhcrRegistry,
 			SchedulerServiceAccountID: SchedulerServiceAccountID,
 			RoleIDs:                   InstallationRoleIDs{Launcher: RoleLauncher, JobRunner: RoleJobRunner, BuildSubmitter: RoleBuildSubmitter, TagMover: RoleTagMover},
 			Log:                       LogNames{Bucket: LogBucket, View: LogView, Sink: LogSink, Exclusion: LogExclusion},

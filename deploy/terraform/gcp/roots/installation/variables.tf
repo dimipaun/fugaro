@@ -25,6 +25,7 @@ variable "names" {
   type = object({
     legacy_registry              = string
     base_registry                = string
+    ghcr_registry                = string
     scheduler_service_account_id = string
     role_ids = object({
       launcher        = string

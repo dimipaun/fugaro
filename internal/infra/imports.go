@@ -54,6 +54,7 @@ const (
 	importRunsBucket     importKind = "runs bucket"
 	importLegacyRegistry importKind = "legacy registry"
 	importBaseRegistry   importKind = "base registry"
+	importGhcrRegistry   importKind = "ghcr registry"
 	importSecret         importKind = "secret"
 	importRepoRegistry   importKind = "repository registry"
 	importJobSA          importKind = "job account"
@@ -84,6 +85,7 @@ var importTable = map[importKind]struct{ to, id string }{
 	importRunsBucket:     {"module.installation.google_storage_bucket.runs", "{project}/{name}"},
 	importLegacyRegistry: {"module.installation.google_artifact_registry_repository.legacy[0]", "projects/{project}/locations/{region}/repositories/{name}"},
 	importBaseRegistry:   {"module.installation.google_artifact_registry_repository.base", "projects/{project}/locations/{region}/repositories/{name}"},
+	importGhcrRegistry:   {"module.installation.google_artifact_registry_repository.ghcr", "projects/{project}/locations/{region}/repositories/{name}"},
 	importSecret:         {"module.repo.google_secret_manager_secret.this[{key}]", "projects/{project}/secrets/{name}"},
 	importRepoRegistry:   {"module.repo.google_artifact_registry_repository.images", "projects/{project}/locations/{region}/repositories/{name}"},
 	importJobSA:          {"module.repo.module.workflow[{key}].google_service_account.job", "projects/{project}/serviceAccounts/{name}"},

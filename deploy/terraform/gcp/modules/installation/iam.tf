@@ -143,3 +143,17 @@ resource "google_artifact_registry_repository_iam_member" "base_writer" {
   role       = "roles/artifactregistry.writer"
   member     = each.value
 }
+
+# The remote repository is read, never written: it proxies the public
+# ghcr.io packages this installation's jobs and builds run (design §3.2,
+# §6). The operators' own credentials are what fugaro init uses to read
+# the verified digest back through it before it pins anything.
+resource "google_artifact_registry_repository_iam_member" "ghcr_reader" {
+  for_each = toset(var.operators)
+
+  project    = var.project
+  location   = google_artifact_registry_repository.ghcr.location
+  repository = google_artifact_registry_repository.ghcr.name
+  role       = "roles/artifactregistry.reader"
+  member     = each.value
+}

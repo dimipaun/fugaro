@@ -125,6 +125,7 @@ type InstallationOutputs struct {
 	RunsBucket              string   `json:"runs_bucket"`
 	RegistryHost            string   `json:"registry_host"`
 	BaseRegistry            string   `json:"base_registry"`
+	GhcrRegistry            string   `json:"ghcr_registry"`
 	LegacyRegistry          string   `json:"legacy_registry"`
 	SchedulerServiceAccount string   `json:"scheduler_service_account"`
 	RoleIDs                 RoleIDs  `json:"role_ids"`
@@ -244,6 +245,7 @@ type RepoInstallation struct {
 	RunsBucket              string      `json:"runs_bucket"`
 	RegistryHost            string      `json:"registry_host"`
 	BaseRegistry            string      `json:"base_registry"`
+	GhcrRegistry            string      `json:"ghcr_registry"`
 	SchedulerServiceAccount string      `json:"scheduler_service_account"`
 	RoleIDs                 RepoRoleIDs `json:"role_ids"`
 	Launchers               []string    `json:"launchers"`
@@ -471,6 +473,7 @@ func withDefaults(o InstallationOutputs, lc *localcfg.Config, bucket string) Ins
 	def(&o.ProjectName, lc.Name)
 	def(&o.RunsBucket, bucket)
 	def(&o.BaseRegistry, BaseRegistry)
+	def(&o.GhcrRegistry, GhcrRegistry)
 	def(&o.SchedulerServiceAccount, serviceAccountEmail(SchedulerServiceAccountID, lc.GCPProject))
 	def(&o.RoleIDs.Launcher, role(RoleLauncher))
 	def(&o.RoleIDs.JobRunner, role(RoleJobRunner))
@@ -784,6 +787,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 			RunsBucket:              c.bucket,
 			RegistryHost:            c.registryHost,
 			BaseRegistry:            c.inst.BaseRegistry,
+			GhcrRegistry:            c.inst.GhcrRegistry,
 			SchedulerServiceAccount: c.inst.SchedulerServiceAccount,
 			RoleIDs:                 RepoRoleIDs{JobRunner: c.inst.RoleIDs.JobRunner, BuildSubmitter: c.inst.RoleIDs.BuildSubmitter, TagMover: c.inst.RoleIDs.TagMover},
 			Launchers:               c.inst.Launchers,

@@ -430,6 +430,20 @@ func DiscoverInstallation(ctx context.Context, c *Clients, spec InstallationSpec
 	case base != nil:
 		d.foreign("Artifact Registry repository "+spec.Names.BaseRegistry, base.Labels, managed)
 	}
+	// The remote repository over ghcr.io (design §5.3): adopted when it
+	// carries our mark — Check 43a creates it by hand before the
+	// implementation exists — and refused by name when it does not, rather
+	// than a Terraform "already exists" halfway through an apply.
+	ghcr, err := d.registry(spec.Region, spec.Names.GhcrRegistry)
+	if err != nil {
+		return Imports{}, err
+	}
+	switch {
+	case ghcr != nil && hasMarks(ghcr.Labels, managed):
+		d.add(importGhcrRegistry, spec.Region, "", spec.Names.GhcrRegistry)
+	case ghcr != nil:
+		d.foreign("Artifact Registry repository "+spec.Names.GhcrRegistry, ghcr.Labels, managed)
+	}
 	if err := d.installationSingletons(spec); err != nil {
 		return Imports{}, err
 	}

@@ -190,6 +190,93 @@ func TestMirrorRunsAsUserNotBuildAccount(t *testing.T) {
 	}
 }
 
+// TestRemoteRepositoryIsARemotePullThroughProxyOfGhcr: the installation
+// owns a Docker remote repository over https://ghcr.io, in the project it
+// installs into, named like every other fugaro registry, unauthenticated
+// (the packages are public), without cleanup policies (design §7), with
+// prevent_destroy (the migration never deletes it), and with upstream
+// validation left on (design §2.3) so a typo fails the apply.
+//
+// Assertions use this file's own helpers, resourceBlocks and hasAttr —
+// there is no HCL decoder here, and adding one would be a new dependency
+// in a test that only needs to read our own HCL (TestResourceBlocks at
+// :288 is the model).
+func TestRemoteRepositoryIsARemotePullThroughProxyOfGhcr(t *testing.T) {
+	found := 0
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_artifact_registry_repository") {
+			if blk.name != "google_artifact_registry_repository.ghcr" {
+				continue
+			}
+			found++
+			if !hasAttr(blk.body, "mode", `"REMOTE_REPOSITORY"`) ||
+				!hasAttr(blk.body, "format", `"DOCKER"`) ||
+				!hasAttr(blk.body, "repository_id", "var.names.ghcr_registry") ||
+				!hasAttr(blk.body, "uri", `"https://ghcr.io"`) {
+				t.Errorf("%s: %s is not the remote repository (design §3.1)", path, blk.name)
+			}
+			if strings.Contains(blk.body, "cleanup_policies") {
+				t.Errorf("%s: %s must carry no cleanup policies (design §7)", path, blk.name)
+			}
+			// Validation is left at its default: an unset attribute, so
+			// assert the absence of the escape hatch, not its value.
+			if strings.Contains(blk.body, "disable_upstream_validation") {
+				t.Errorf("%s: %s must not disable upstream validation (design §2.3)", path, blk.name)
+			}
+			if !hasAttr(blk.body, "labels", `{ fugaro = "managed" }`) {
+				t.Errorf("%s: %s must carry fugaro=managed", path, blk.name)
+			}
+		}
+	})
+	if found != 1 {
+		t.Errorf("found %d google_artifact_registry_repository.ghcr blocks, want exactly 1", found)
+	}
+}
+
+// TestRemoteRepositoryReaderGrants: exactly two reader grants on the new
+// remote repository, and nothing else. The operators' (the run that pins
+// reads the verified digest back through the proxy with their own
+// credentials, design §3.2) and each repository's build account's (Cloud
+// Build pulls the derived build's step image and its FROM through it,
+// design §6). Neither writes it: the packages are public, so nothing in
+// the repository is ever written (§2.3, §5.2).
+//
+// Both must name the remote repository and nothing that matches
+// TestMirrorRunsAsUserNotBuildAccount's own substring test for "on the
+// base registry" — that test reads a grant as being on fugaro-base when
+// its body contains "base_registry" or "repository.base.".
+func TestRemoteRepositoryReaderGrants(t *testing.T) {
+	for _, w := range []struct{ path, name, member string }{
+		{"gcp/modules/installation/iam.tf", "google_artifact_registry_repository_iam_member.ghcr_reader", "toset(var.operators)"},
+		{"gcp/modules/repo/build.tf", "google_artifact_registry_repository_iam_member.build_ghcr", "google_service_account.build.member"},
+	} {
+		var body string
+		walk(t, func(path string, b []byte) {
+			if path != w.path {
+				return
+			}
+			for _, blk := range resourceBlocks(t, path, b, "google_artifact_registry_repository_iam_member") {
+				if blk.name == w.name {
+					body = blk.body
+				}
+			}
+		})
+		switch {
+		case body == "":
+			t.Errorf("%s: no %s", w.path, w.name)
+			continue
+		case !hasAttr(body, "role", `"roles/artifactregistry.reader"`):
+			t.Errorf("%s: %s must be a reader grant: neither the operator's read-back nor the build account writes the remote repository (design §5.2)", w.path, w.name)
+		case !strings.Contains(body, w.member):
+			t.Errorf("%s: %s must grant %s", w.path, w.name, w.member)
+		case !strings.Contains(body, "ghcr"):
+			t.Errorf("%s: %s must name the remote repository", w.path, w.name)
+		case strings.Contains(body, "base_registry") || strings.Contains(body, "repository.base.") || strings.Contains(body, `"fugaro-base"`):
+			t.Errorf("%s: %s names the base registry: the remote repository's grant must name ghcr_registry and nothing else", w.path, w.name)
+		}
+	}
+}
+
 // Destroying the Terraform config must never turn off an API the project
 // (or someone else in it) still uses.
 func TestProjectServicesKeepOnDestroy(t *testing.T) {
