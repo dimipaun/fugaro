@@ -66,7 +66,8 @@ func newBudgetCmd() *cobra.Command {
 			"kill and resume need the budget-admin role (the GCP project's owners and\n" +
 			"editors, and terraform.budget_admins).",
 	}
-	cmd.AddCommand(newBudgetShowCmd(), newBudgetSetCmd(), newBudgetKillCmd(true), newBudgetKillCmd(false), newBudgetPricesCmd(), newBudgetHistoryCmd())
+	cmd.AddCommand(newBudgetShowCmd(), newBudgetSetCmd(), newBudgetKillCmd(true), newBudgetKillCmd(false),
+		newBudgetPreviewCmd(), newBudgetPricesCmd(), newBudgetHistoryCmd())
 	return cmd
 }
 
