@@ -87,22 +87,35 @@ func TestDocsCheckoutMiseConfigsAreListed(t *testing.T) {
 	}
 }
 
-// TestDocsCheckoutSaysWhatOldRevisionsCost (review N1): a clone job's
-// checkout holds the checked-out revision's file contents and the ones the
-// runner prefetches for the branch's diff — no more — and the agent's git
-// has no credentials to fetch the rest on a private repository. The doc has
-// to say so, and in particular must not claim the modes work like `baked`:
-// that claim is what sent a reader to `git blame` on a checkout that cannot
-// answer it.
+// TestDocsCheckoutSaysWhatOldRevisionsCost (review N1, M2, L1): a clone
+// job's checkout holds the checked-out revision's file contents and the ones
+// the runner prefetches for the agent's reads — no more — and only a
+// follow-up's and a review run's agent is without the git credentials to
+// fetch the rest on a private repository. The doc has to say which commands
+// are covered and which are not, so a reader is neither sent to `git blame`
+// on a checkout that cannot answer it nor left expecting `git show HEAD` to
+// fail, and it must not claim the modes work like `baked`.
 func TestDocsCheckoutSaysWhatOldRevisionsCost(t *testing.T) {
 	doc := docsCheckoutDoc(t)
-	for _, cmd := range []string{"git log -p", "git blame"} {
+	// The reads the runner prefetches for: the branch's diff, its own
+	// commits, and the diff against the base tip.
+	for _, cmd := range []string{"git log -p", "git show", "git diff origin/<base>"} {
+		if !strings.Contains(doc, cmd) {
+			t.Errorf("docs/checkout.md does not name %s among what the runner fetches for the agent", cmd)
+		}
+	}
+	for _, cmd := range []string{"git blame", "git show <old-revision>:<path>"} {
 		if !strings.Contains(doc, cmd) {
 			t.Errorf("docs/checkout.md does not name %s among what a clone's checkout cannot fetch", cmd)
 		}
 	}
 	if strings.Contains(doc, "work the same way") {
 		t.Error("docs/checkout.md claims checkout: clone works the same way as baked; it does not, for anything the runner did not prefetch")
+	}
+	// L1: the credential claim is the follow-up's and the review run's, not
+	// every mode's — a first run's agent is given the run's git credentials.
+	if strings.Contains(doc, "in every mode") {
+		t.Error("docs/checkout.md claims the agent has no git credentials in every mode; a first run's agent has them")
 	}
 }
 

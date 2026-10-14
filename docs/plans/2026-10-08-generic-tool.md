@@ -1882,16 +1882,33 @@ in the repository's checkout until then. Closing (d) is a
 image read in `checkCloneImageSince`'s callers.
 
 **A second review round (same day)** found one thing that is *not* deferred and
-had to be fixed here: in a blobless clone the agent's own git cannot fetch on a
-private repository (it carries no credentials, by design), so the diff the
-review stage is told to run — `git diff origin/<base>...HEAD`, whose base side
-no checkout ever brought in — failed with `could not fetch <oid> from promisor
-remote`. The runner now runs that diff itself at bootstrap, with the run's
-credentials, before any stage starts (`internal/runner/prefetch.go`,
-`gitops.PrefetchDiff`), and `docs/checkout.md` states what is and is not in the
-checkout afterwards: the branch's diff is covered; deep history (`log -p`,
-`blame`, `show` of a revision nobody fetched) is not, under `clone`. Check 38
-should still read that doc section before it runs its live check.
+had to be fixed here: in a blobless clone a follow-up's or a review run's agent
+cannot fetch on a private repository (its environment carries no credentials,
+by design), so the diff the review stage is told to run — `git diff
+origin/<base>...HEAD`, whose base side no checkout ever brought in — failed
+with `could not fetch <oid> from promisor remote`. The runner now fetches for
+it at bootstrap, with the run's credentials, before any stage starts
+(`internal/runner/prefetch.go`, `gitops.PrefetchDiff`), and `docs/checkout.md`
+states what is and is not in the checkout afterwards. Check 38 should still
+read that doc section before it runs its live check.
+
+**A third review round (same day)** widened that fix rather than reopening it:
+the same failure hit reads a reviewer does by habit, which a diff of the
+branch's two endpoints does not fetch — `git show <a commit of the branch>`,
+`git log -p origin/<base>..HEAD` (a two-commit pull request's earlier revision
+of a file a later commit changed again) and the two-dot `git diff
+origin/<base>` (the base tip's side, whenever the base has moved on since the
+merge base). The runner now prefetches those two sets as well
+(`gitops.PrefetchCommits`, `gitops.PrefetchBaseDiff`), and the prefetch runs
+for follow-ups and review runs only: a first run's agent gets the run's git
+credentials and fetches for itself, so prefetching there would pay the whole
+divergence at bootstrap for nothing (review L1). What is *still* not fetched is
+`git blame` and `git show <old-revision>:<path>` of a revision nobody fetched;
+`docs/checkout.md` now says exactly that. The live check below has to cover
+this properly: **Check 38 must run a follow-up and a review run on a private
+repository**, not only a first run on the base, or the credential boundary
+this whole fix is about goes unexercised.
+
 
 ### Task 18: Check 38 and the setup skill's offer
 
@@ -1919,6 +1936,8 @@ Check 38, "clone workflows (sandbox only, run by you; USER-RUN, NOT RUN)", in th
 - **step 1:** one run, which records the execution start, the `provision` stage's duration and the first stage's start;
 - **step 2:** the job's image as `gcloud run jobs describe` shows it;
 - **step 3:** whether the image pull needed a grant. If the execution fails with a pull permission error, record it, revert the branch, and hand the error to the bucket-IAM plan;
+- **step 4: the prefetch, on a private repository** (Task 17's third review round). A first run's agent has the run's git credentials, so it hides the whole question: run a **follow-up** and a **review run** on a pull request with at least two commits, whose base has moved on since the merge base, and check in the transcript that the agent's own reads succeed — `git diff origin/<base>...HEAD`, `git log -p origin/<base>..HEAD`, `git show HEAD~1`, `git diff origin/<base>`. `docs/checkout.md`'s "What is and is not in the checkout" says which of them the runner prefetches and which (`git blame`, `git show <old-revision>:<path>`) are still expected to fail with `could not fetch <oid> from promisor remote`;
+- **step 5: whether the provider honours the blobless filter.** Unverified here, and it differs by provider: GitHub serves a lazy fetch of a commit by SHA (reachable-SHA wants, `refs/pull`), while **Bitbucket Cloud may ignore `--filter`** — in which case git warns and makes a full `--no-checkout` clone, which is functionally correct and only gives up the start-up saving. Record what the provider actually did (the clone's stderr, `git config --get remote.origin.partialclonefilter`, and the size of `.git` in the job);
 - **FACT lines** to record, the **paste-back** list and the **restore** steps.
 
 Never run it against EdgeWeb or EdgeServer.

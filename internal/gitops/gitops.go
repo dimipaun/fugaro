@@ -134,8 +134,10 @@ func OpenOrClone(ctx context.Context, dir, remote string, env []string, strip ..
 // CheckoutNewBranch for a first run, checkoutFollowUp for a follow-up, and
 // for review mode, which has no branch of its own, a CheckoutRef of the base
 // in the runner's bootstrap — is what fills the directory, and the blobs it
-// needs are what git then fetches. A revision nobody checked out (the base
-// side of the branch's diff, most of all) is what PrefetchDiff brings in.
+// needs are what git then fetches. Revisions nobody checked out — the base
+// side of the branch's diff, the branch's own earlier commits, the base tip
+// — are what the Prefetch* methods below bring in, for an agent whose git
+// carries no credentials of its own.
 //
 // branch "" clones the remote's own default branch; the runner's bootstrap
 // uses that, since the repository's git.base_branch is not readable until
@@ -262,37 +264,66 @@ func (r *Repo) CheckoutRef(ctx context.Context, rev string) error {
 	return err
 }
 
-// PrefetchDiff brings in the file contents `git diff rev...head` needs, so
-// that whoever runs that diff next does not have to fetch them.
+// The three Prefetch* methods below bring in file contents a reader of a
+// clone job's checkout will ask for, so that whoever runs those commands
+// next does not have to fetch them. They exist because a blobless clone
+// (CloneBlobless) holds the file contents of one revision — the one a
+// checkout brought in — and no others.
 //
-// In a blobless clone (CloneBlobless) the file contents arrive only when a
-// checkout needs them, and a checkout brings in one revision's — the ref it
-// checks out. A diff needs both sides: the checkout of head supplies head's
-// blobs, and the other side of the diff — rev's, at the merge base — is
-// still missing. Git fetches a missing blob lazily through the clone's
-// promisor remote, which is a network call to origin, so it works only for
-// a caller whose git carries credentials: the runner's does (Repo.Env),
-// the agent's deliberately does not (agent.env), and on a private
-// repository the agent's own `git diff origin/<base>...HEAD` — the command
-// the review stage's prompt names — is then `fatal: could not fetch <oid>
-// from promisor remote`. The runner runs this instead, once, before the
-// agent starts.
+// Git fetches a missing blob lazily through the clone's promisor remote,
+// which is a network call to origin, so it works only for a caller whose
+// git carries credentials: the runner's does (Repo.Env), and the agent's
+// deliberately does not (agent.env) in the two modes whose agent reads
+// someone else's work — a follow-up and a review run. On a private
+// repository an unfetched read there is `fatal: could not fetch <oid> from
+// promisor remote` (review N1). The runner runs these instead, once, before
+// the agent starts.
 //
-// The diff itself is run with stdout discarded: what is wanted is not its
-// output but the lazy fetches git performs while producing it. Its exit
-// status is not consulted (plain `git diff` exits 0 whether or not there
-// are differences) — git fails here only if it cannot produce the diff at
-// all, which is exactly the failure this exists to prevent.
+// Each is run with stdout discarded: what is wanted is not the output but
+// the lazy fetches git performs while producing it. A diff exits 0 whether
+// or not there are differences, so what its status reports is only whether
+// the diff could be produced at all — which is exactly the failure these
+// exist to prevent, and what an error from one of them means.
 //
-// Only rev...head is covered, deliberately: a diff of the two tree-ish
-// revisions an agent is pointed at. Deep-history reads (log -p, blame,
-// `git show` of an older revision) need other objects and are not covered;
-// docs/checkout.md says so.
+// What they do not cover: `git blame`, and `git show <rev>:<path>` for a
+// revision no one fetched — the file contents of revisions outside these
+// three sets. docs/checkout.md says so.
+
+// PrefetchDiff brings in the file contents `git diff rev...head` needs: the
+// base's side, at the merge base, of every file the branch changed. This is
+// the command the review stage's prompt names, and the base side of it is
+// what no checkout of the branch ever brings in.
 func (r *Repo) PrefetchDiff(ctx context.Context, rev, head string) error {
-	// --no-ext-diff and --no-textconv: the repository's own .gitattributes
-	// or config must not make this run a program, and neither is needed to
-	// bring the objects in.
-	return r.gitTo(ctx, io.Discard, "diff", "--no-color", "--no-ext-diff", "--no-textconv", rev+"..."+head, "--")
+	return r.prefetchDiff(ctx, rev+"..."+head)
+}
+
+// PrefetchCommits brings in the file contents the branch's own commits need:
+// `git log -p rev..head`, `git show <a commit of the branch>` and
+// `git diff HEAD~1` (review M2). A diff of the two endpoints does not touch
+// them: the revisions in between, and so their versions of the files they
+// changed, are missing until something reads them, which is what a reviewer
+// reading a pull request commit by commit does.
+func (r *Repo) PrefetchCommits(ctx context.Context, rev, head string) error {
+	// --format= empties the commit header, so only the patches are produced.
+	return r.gitTo(ctx, io.Discard, "log", "-p", "--no-color", "--no-ext-diff", "--no-textconv", "--format=", rev+".."+head, "--")
+}
+
+// PrefetchBaseDiff brings in `git diff rev head`'s two sides: the diff
+// against where the base branch is now, rather than against the merge base
+// (review M2). Its base side is missing whenever the base has moved on
+// since the merge base, which is a two-dot diff a reviewer runs by habit.
+func (r *Repo) PrefetchBaseDiff(ctx context.Context, rev, head string) error {
+	return r.prefetchDiff(ctx, rev, head)
+}
+
+// prefetchDiff runs `git diff` over args for its fetches. --no-ext-diff and
+// --no-textconv: the repository's own .gitattributes or config must not make
+// this run a program, and neither is needed to bring the objects in.
+func (r *Repo) prefetchDiff(ctx context.Context, args ...string) error {
+	argv := []string{"diff", "--no-color", "--no-ext-diff", "--no-textconv"}
+	argv = append(argv, args...)
+	argv = append(argv, "--")
+	return r.gitTo(ctx, io.Discard, argv...)
 }
 
 // lfsFiltersOff are -c overrides that keep git from running any

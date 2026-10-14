@@ -47,11 +47,19 @@ Order matters: `fugaro image refresh` only moves a job that is already a clone j
 
 ### What is and is not in the checkout
 
-The blobless clone holds the file contents of the revisions it has needed and no others: the one the run checked out (the task's ref for a first run, the pull request's branch for a follow-up, the base branch and then each reviewed head for a review run) plus what the runner fetched for the branch's diff. Everything else is fetched on demand, through `origin`.
+The blobless clone holds the file contents of the revisions it has needed and no others: the one the run checked out (the task's ref for a first run, the pull request's branch for a follow-up, the base branch and then each reviewed head for a review run) plus what the runner fetched before the agent started. Everything else is fetched on demand, through `origin`.
 
-That is a problem for the agent, which deliberately has no git credentials of its own: on a **private** repository its git cannot fetch anything, so an on-demand fetch fails (`could not fetch <oid> from promisor remote`). The runner therefore brings in what the prompts point the agent at, before any stage starts: it runs the review's own `git diff origin/<base>...HEAD` itself, with the run's credentials, so the base's side of every file the branch changed is already there. The branch's diff, the files as they stand at `HEAD`, and everything the run's own git does (checkpoints, pushes, the diff stat in a follow-up's prompt) are covered, in every mode.
+An on-demand fetch goes to `origin` with whatever credentials the caller's git has, and the agent has none of its own in the two modes that read someone else's work — a **follow-up** and a **review run** (the agent environment is an allowlist, and the git credentials are not on it). On a **private** repository, then, a read of file contents nobody fetched fails with `could not fetch <oid> from promisor remote`. (A first run's agent is given the run's git credentials, so it fetches what it needs for itself.)
 
-**Deep history is not.** `git log -p`, `git blame`, and `git show <old-revision>:<path>` need the file contents of revisions nobody checked out and nobody prefetched, so on a private repository they fail under `clone` where they work under `baked`. The same is true of any file content outside the branch's own diff. Treat `clone` as a checkout for the branch you are working on, not as a full local mirror; `baked` is the option that has every object locally.
+So the runner fetches, before any stage starts and with the credentials it holds, the file contents the agent is pointed at:
+
+- **the branch's diff against the base**: `git diff origin/<base>...HEAD`, the command the review prompt names — its base side, at the merge base, is what no checkout of the branch brings in;
+- **the branch's own commits**: `git log -p origin/<base>..HEAD`, `git show <a commit of the branch>`, `git diff HEAD~1`. Reading a pull request commit by commit is the other thing a reviewer does, and an earlier revision of a file the branch changed again is not in the branch's tip;
+- **the diff against the base tip**: `git diff origin/<base>`, for when the base branch has moved on since the merge base.
+
+What is still not there: `git blame`, and `git show <old-revision>:<path>` for a revision nobody fetched — the file contents of revisions outside those three sets (an earlier revision of a file the branch's own commits did not touch, another branch, the rest of the base branch's history). On a private repository those fail under `clone` where they work under `baked`. Treat `clone` as a checkout for the branch you are working on, not as a full local mirror; `baked` is the option that has every object locally.
+
+The fetching costs a few more calls per run, and the two that read the pull request's own commits and its diff against the base grow with the pull request — the files it changes — rather than with the repository. The third, the diff against the base tip, also brings in the base's side of everything the base branch has changed since the merge base, so on a busy base branch it is the largest of the three.
 
 The dependency warm-up is the agent's job (or your `commands.build`).
 
