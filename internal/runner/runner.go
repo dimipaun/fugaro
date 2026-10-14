@@ -64,6 +64,10 @@ type Deps struct {
 	Log         *slog.Logger
 	Now         func() time.Time
 	CancelPoll  time.Duration
+	// ProvisionTimeout bounds a checkout: clone job's mise install
+	// (provision.go); zero means 10 minutes. Tests inject a small one to
+	// exercise the bound.
+	ProvisionTimeout time.Duration
 	// Bucket is the runs bucket, for the branch lock and caches
 	// (design §3.3). Nil disables both.
 	Bucket *blobx.Bucket
@@ -877,6 +881,19 @@ func (r *run) bootstrap(ctx context.Context) error {
 		if cfg, err = r.readBaseConfig(ctx); err != nil {
 			return err
 		}
+		// A clone job's clone is --no-checkout (gitops.CloneBlobless), and
+		// review mode checks out no branch of its own, so it checks the
+		// base out here — after readBaseConfig's fetch of origin/<ref>, and
+		// before provision, which reads the mise config from the working
+		// tree: the base branch's, the same branch the run's configuration
+		// comes from, not whatever branch the remote happens to call its
+		// default. (A review-only run checks the pull request's own head
+		// out into this directory later, in checkReviewPRs.)
+		if r.cloneJob() {
+			if err := repo.CheckoutRef(ctx, "origin/"+spec.Ref); err != nil {
+				return fmt.Errorf("checking out %s: %w", spec.Ref, err)
+			}
+		}
 	default:
 		branch := "fugaro/" + spec.RunID
 		if err := repo.CheckoutNewBranch(ctx, spec.Ref, branch); err != nil {
@@ -1001,18 +1018,26 @@ func (r *run) bootstrap(ctx context.Context) error {
 	case r.providerKind != cfg.Git.Provider:
 		return fmt.Errorf("fugaro.yaml sets git.provider to %s, but %s says %s", cfg.Git.Provider, r.providerFrom, r.providerKind)
 	}
-	// A job that runs without a derived image installs the repository's
-	// mise tools itself (provision.go, design generic-tool.md §2, G4): the
-	// image installed none for it. It runs here, once the provider is
-	// opened, so mise's own GitHub calls can use the run's git token, and
-	// before any stage records its own time.
-	if err := r.provision(ctx); err != nil {
-		return err
-	}
 	if r.follow != nil {
+		// Before provision, never after (review H1): checkPullRequest is
+		// what refuses a pull request this run must not touch (its state,
+		// its source repository, followup.allow_public), and provision runs
+		// the *branch's own* mise config — code an earlier agent wrote,
+		// which a mise config is free to make arbitrary. Nothing from that
+		// branch may run before the checks that decide the branch may be
+		// used at all.
 		if err := r.checkPullRequest(ctx); err != nil {
 			return err
 		}
+	}
+	// A job that runs without a derived image installs the repository's
+	// mise tools itself (provision.go, design generic-tool.md §2, G4): the
+	// image installed none for it. It runs here, once the provider is
+	// opened, so mise's own GitHub calls can use the run's git token where
+	// provisionGitToken allows one, and before any stage records its own
+	// time.
+	if err := r.provision(ctx); err != nil {
+		return err
 	}
 	if r.review {
 		if err := r.checkReviewPRs(ctx); err != nil {

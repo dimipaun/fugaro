@@ -1869,6 +1869,18 @@ Plus a case where there is no mise config: no `mise` call and no `provision` tim
 - (d) a clone-only repository still gets its own registry plus the build account's writer grants, even though it never builds anything (inert, but worth dropping).
 - (e) user docs for `checkout: clone` exist only in the schema, `docs/release.md` and this design — write them (a user-facing doc, not just internal comments) alongside this task.
 
+**Where these stand after Task 17's review round (2026-10-14):** (b) and (e) are
+closed. (a), (c) and (d) are **explicitly deferred**, not forgotten: all three
+are inert or unreachable while the `cloneShipped` gate is off, none of them
+changes a `baked` workflow, and each is now recorded in the user-facing doc
+(`docs/checkout.md`, "Known gaps") as an open gap rather than described as
+working. (a) — `fugaro run --repo` deciding from the local `fugaro.yaml` rather
+than from the deployed job — reopens when `cloneShipped` flips in Task 18 and is
+the first thing that round should pick up: the doc now says to run `fugaro run`
+in the repository's checkout until then. Closing (d) is a
+`deploy/terraform/gcp/modules/repo` change, and (c) needs the deployed job's
+image read in `checkCloneImageSince`'s callers.
+
 ### Task 18: Check 38 and the setup skill's offer
 
 **Numbering ruling (owner's assistant, 2026-10-13):** this task used to reserve

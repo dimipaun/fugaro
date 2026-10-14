@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/logtail"
 	"github.com/dimipaun/fugaro/internal/procgroup"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -24,6 +25,22 @@ import (
 // internal/infra (spec.go) sets it from this constant, the way it takes
 // runner.BudgetModeEnv and the rest.
 const CheckoutEnv = "FUGARO_CHECKOUT"
+
+// RemoteEnv is the job environment variable internal/infra sets to the
+// repository's credential-free clone URL on a checkout: clone workflow's
+// job: the image has no checkout baked into it, so bootstrap has to clone
+// one, and this says from where. It is what fugaro exec's --remote flag
+// defaults to (internal/cli/exec.go), so the repository reaches the runner
+// the way every other job setting does, from the job's own environment —
+// without it a clone job on Cloud Run has no remote at all and fails
+// bootstrap with "this job has no repository to clone".
+//
+// Named here, in the runner, for the same reason CheckoutEnv is: the runner
+// is what reads it (Deps.Remote), and internal/infra sets it from this
+// constant. It carries no credentials (no userinfo, https only:
+// internal/infra's repoURL checks both); the token travels separately, as
+// the credential env cloneVars builds.
+const RemoteEnv = "FUGARO_REMOTE"
 
 // provisionStage is the name provisioning's own time is recorded under: the
 // stage timing a checkout: clone run pays before its first agent stage
@@ -83,18 +100,57 @@ func (r *run) provision(ctx context.Context) error {
 	return err
 }
 
-// miseInstall runs `mise install` in the checkout, bounded by
-// provisionTimeout, and reports a non-zero exit as an error naming mise's
-// last output line. Its environment is the runner's with the model
-// credentials (and the gateway's provider keys) removed — a tool's own
-// install script is repository-chosen code (a mise backend such as cargo:
-// or go: runs one), and must never see either — and with GITHUB_TOKEN set to
-// the run's git token, which is what mise's GitHub API calls use for their
-// rate limit. The token is already registered for redaction, so nothing
-// mise echoes can publish it.
+// provisionGitToken is the GITHUB_TOKEN provision hands mise: the run's git
+// token, which is what mise's GitHub API calls use for their rate limit —
+// or "" when it must not travel at all. Two cases, both credential
+// boundaries rather than conveniences:
+//
+//   - A follow-up (review H1). It checks out the pull request's branch,
+//     written by an earlier agent that never held the push token
+//     (agent/env.go's allowlist), and then provision would run that branch's
+//     own mise config. A mise config executes code: [env] with {{exec(...)}}
+//     templates, [hooks], and backend plugins fetched from any git URL. So a
+//     branch could exfiltrate the token that pushes it, and the boundary
+//     "an agent never holds the push token" would be gone. A follow-up's
+//     mise installs without it. (checkPullRequest also runs before
+//     provision, never after: nothing from the branch runs at all until the
+//     pull request itself has been checked.)
+//   - A provider other than GitHub (review M1): a Bitbucket access token
+//     exported as GITHUB_TOKEN would be sent to api.github.com and to every
+//     GitHub-backed plugin host, which is a credential handed to the wrong
+//     third party.
+//
+// A first run's ref is the user's own choice and git.provider is GitHub, so
+// there the token travels, and it is already registered for redaction
+// (r.addSecret), so nothing mise echoes can publish it.
+func (r *run) provisionGitToken() string {
+	if r.follow != nil || r.providerKind != gitprov.KindGitHub {
+		return ""
+	}
+	return r.auth.Token
+}
+
+// miseTimeout is how long mise install may take: the run's own bound
+// (Deps.ProvisionTimeout), or provisionTimeout by default.
+func (r *run) miseTimeout() time.Duration {
+	if r.d.ProvisionTimeout > 0 {
+		return r.d.ProvisionTimeout
+	}
+	return provisionTimeout
+}
+
+// miseInstall runs `mise install` in the checkout, bounded by miseTimeout,
+// checks that nothing the config declares is still missing, and reports
+// either failure as an error naming mise's last output line. Its environment
+// is the runner's with the model credentials (and the gateway's provider
+// keys) removed — a tool's own install script is repository-chosen code (a
+// mise backend such as cargo: or go: runs one), and must never see either —
+// and with GITHUB_TOKEN set only when provisionGitToken allows it.
 func (r *run) miseInstall(ctx context.Context, configs []string) error {
-	mctx, cancel := context.WithTimeout(ctx, provisionTimeout)
+	bound := r.miseTimeout()
+	mctx, cancel := context.WithTimeout(ctx, bound)
 	defer cancel()
+	env := provisionEnv(r.d.Env, r.provisionGitToken())
 	// Two buffers, never one: procgroup copies each pipe in its own
 	// goroutine, so one writer shared by both would be a data race.
 	var stdout, stderr strings.Builder
@@ -102,7 +158,7 @@ func (r *run) miseInstall(ctx context.Context, configs []string) error {
 		Name:   "mise",
 		Args:   []string{"install"},
 		Dir:    r.d.WorkDir,
-		Env:    provisionEnv(r.d.Env, r.auth.Token),
+		Env:    env,
 		Stdout: &stdout,
 		Stderr: &stderr,
 	})
@@ -114,16 +170,69 @@ func (r *run) miseInstall(ctx context.Context, configs []string) error {
 		out = stdout.String()
 	}
 	switch {
-	case runErr != nil && ctx.Err() == nil:
+	case ctx.Err() != nil:
+		// The run's own context ended (a cancel, or the run's total
+		// timeout) while mise was running: that is the run's business, not
+		// provision's, and it must be reported as such — a bare "did not
+		// finish within 10m0s" would blame the wrong clock, and a killed
+		// mise that happened to exit 0 must not read as success.
+		return fmt.Errorf("mise install for %s: %w: %s", what, ctx.Err(), lastLine(out))
+	case runErr != nil && mctx.Err() == nil:
 		// procgroup.Run reports a command killed by ctx as ctx.Err() and
 		// nothing else.
 		return fmt.Errorf("running mise install for %s: %w", what, runErr)
-	case code != 0 && ctx.Err() == nil:
-		return fmt.Errorf("mise install failed (exit %d) for %s: %s", code, what, lastLine(out))
+	case mctx.Err() != nil:
+		// The bound fired, not the run's own context (checked above):
+		// procgroup.Run reports the kill as mctx.Err(), the parent context
+		// is still live, and mise's last line is what says where it hung.
+		return fmt.Errorf("mise install for %s did not finish within %s: %s", what, bound, lastLine(out))
 	case code != 0:
-		return fmt.Errorf("mise install for %s did not finish within %s: %s", what, provisionTimeout, lastLine(out))
+		return fmt.Errorf("mise install failed (exit %d) for %s: %s", code, what, lastLine(out))
 	}
-	return nil
+	return r.miseComplete(ctx, bound, env, configs)
+}
+
+// miseComplete checks `mise ls --current --missing` after a successful
+// install and fails the same way the derived image's build does
+// (images/derived/Dockerfile.tmpl): a config whose tool is not installed
+// after mise install exited 0 (a tool the config's own version never
+// resolves, a partial download mise tolerated) would otherwise surface much
+// later, as a stage failing on a missing binary, with auto_install off.
+func (r *run) miseComplete(ctx context.Context, bound time.Duration, env []string, configs []string) error {
+	mctx, cancel := context.WithTimeout(ctx, bound)
+	defer cancel()
+	var stdout, stderr strings.Builder
+	// The exit status is not the answer here: `mise ls --current --missing`
+	// names what is missing on stdout and exits 0 (the derived image's build
+	// reads it exactly this way), so only a broken invocation is an error.
+	_, runErr := procgroup.Run(mctx, procgroup.Cmd{
+		Name:   "mise",
+		Args:   []string{"ls", "--current", "--missing"},
+		Dir:    r.d.WorkDir,
+		Env:    env,
+		Stdout: &stdout,
+		Stderr: &stderr,
+	})
+	out := stderr.String()
+	if strings.TrimSpace(out) == "" {
+		out = stdout.String()
+	}
+	what := strings.Join(configs, " ")
+	switch {
+	case ctx.Err() != nil:
+		return fmt.Errorf("checking the mise install for %s: %w: %s", what, ctx.Err(), lastLine(out))
+	case runErr != nil && mctx.Err() == nil:
+		return fmt.Errorf("checking the mise install for %s: %w", what, runErr)
+	case mctx.Err() != nil:
+		return fmt.Errorf("checking the mise install for %s did not finish within %s: %s", what, bound, lastLine(out))
+	}
+	missing := strings.TrimSpace(stdout.String())
+	if missing == "" {
+		return nil
+	}
+	// mise names each missing tool on its own line; keep the report short
+	// and one-lined, the way every other reason is.
+	return fmt.Errorf("mise installed %s but left these tools missing: %s", what, lastLine(missing))
 }
 
 // provisionEnv is env with the model credentials and the gateway's provider

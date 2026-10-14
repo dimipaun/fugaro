@@ -126,10 +126,19 @@ func OpenOrClone(ctx context.Context, dir, remote string, env []string, strip ..
 //
 // The history stays complete — never a shallow `--depth 1`, which would
 // break checkpoints, follow-ups and merge-base (design §2, G4) — and only
-// branch's refs are fetched (`--single-branch`). branch "" clones the
-// remote's own default branch; the runner's bootstrap uses that, since the
-// repository's git.base_branch is not readable until the checkout exists,
-// and its FetchBase repairs origin/<base> right afterwards either way.
+// branch's refs are fetched (`--single-branch`).
+//
+// It is --no-checkout, as design §2 spells the command, so the clone fetches
+// refs alone and leaves no working tree: the checkout of the task's ref —
+// CheckoutNewBranch for a first run, checkoutFollowUp for a follow-up, and
+// for review mode, which has no branch of its own, a CheckoutDetached of the
+// base in the runner's bootstrap — is what fills the directory, and the
+// blobs it needs are what git then fetches.
+//
+// branch "" clones the remote's own default branch; the runner's bootstrap
+// uses that, since the repository's git.base_branch is not readable until
+// the checkout exists, and its FetchBase repairs origin/<base> right
+// afterwards either way.
 //
 // dir must not exist (git creates it); its parent is created if absent.
 // env and strip are OpenOrClone's: the credential variables, and the
@@ -141,7 +150,7 @@ func CloneBlobless(ctx context.Context, dir, remote, branch string, env []string
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 		return nil, err
 	}
-	args := []string{"clone", "--quiet", "--filter=blob:none", "--single-branch"}
+	args := []string{"clone", "--quiet", "--filter=blob:none", "--no-checkout", "--single-branch"}
 	if branch != "" {
 		args = append(args, "--branch", branch)
 	}
@@ -213,6 +222,24 @@ func (r *Repo) CheckoutNewBranch(ctx context.Context, ref, branch string) error 
 		return err
 	}
 	if _, err := r.git(ctx, "checkout", "--quiet", "-f", "-B", branch, "FETCH_HEAD"); err != nil {
+		return err
+	}
+	_, err := r.git(ctx, "clean", "-fd", "--quiet")
+	return err
+}
+
+// CheckoutRef checks out rev — a ref already in the repository, an
+// origin/<branch> the caller fetched a moment before — with a detached HEAD
+// and removes untracked files (ignored ones are kept, the same guarantee
+// CheckoutNewBranch gives). Nothing is fetched: the point is a working tree
+// over a ref that is already here, for the job that has none (a clone job's
+// clone is --no-checkout, CloneBlobless) and no branch of its own to check
+// out — review mode's base branch, which is what its configuration and its
+// mise config are read from (runner.bootstrap). It detaches, never moving a
+// local branch, because review mode's branch is a lock key, not a ref
+// anything may push.
+func (r *Repo) CheckoutRef(ctx context.Context, rev string) error {
+	if _, err := r.git(ctx, "checkout", "--quiet", "-f", "--detach", rev); err != nil {
 		return err
 	}
 	_, err := r.git(ctx, "clean", "-fd", "--quiet")

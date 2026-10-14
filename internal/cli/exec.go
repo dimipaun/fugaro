@@ -60,7 +60,11 @@ func newExecCmd() *cobra.Command {
 	f.StringVar(&o.run, "run", os.Getenv("FUGARO_RUN"), "run to execute, as <repo-slug>/<run-id>")
 	f.StringVar(&o.taskFile, "task-file", "", "store this task spec (path, or - for stdin) and run it; a run ID is generated if missing")
 	f.StringVar(&o.workDir, "workdir", "/work/repo", "repository checkout; it is force-reset to the task's ref and untracked files are removed (ignored ones are kept)")
-	f.StringVar(&o.remote, "remote", "", "clone this remote when --workdir has no checkout")
+	// The default is the job's own FUGARO_REMOTE (infra.RemoteEnv), which a
+	// checkout: clone workflow's job carries and a baked one does not: the
+	// repository has to reach a clone job from its environment, since its
+	// image holds no checkout and nothing else on Cloud Run names one.
+	f.StringVar(&o.remote, "remote", os.Getenv("FUGARO_REMOTE"), "clone this remote when --workdir has no checkout (default: $FUGARO_REMOTE)")
 	f.StringVar(&o.stateDir, "state-dir", "/work/state", "run state directory, outside the checkout; created if absent, and only Fugaro's own entries in it (verify/, workflow.json, pr.md) are replaced")
 	f.StringVar(&o.provider, "provider", os.Getenv("FUGARO_GIT_PROVIDER"), `git provider: github or bitbucket to open it before fugaro.yaml is read (it must match git.provider), or "fake" for the file-backed test provider; empty lets the origin URL's host, then git.provider, decide`)
 	f.StringVar(&o.providerState, "provider-state", "", "state file for --provider fake")

@@ -69,6 +69,12 @@ const (
 	// plan Task 17). The runner reads it, so the constant lives there
 	// (runner.CheckoutEnv), the same way the budget variables do.
 	CheckoutEnv = runner.CheckoutEnv
+	// RemoteEnv, set to the repository's credential-free clone URL on a
+	// checkout: clone workflow's job (and on no other): the job's image
+	// carries no checkout, so fugaro exec clones one from this URL — its
+	// --remote flag defaults to it (runner.RemoteEnv). Without it the
+	// clone job would have no remote to clone at all (review C1).
+	RemoteEnv = runner.RemoteEnv
 )
 
 // The installation-identity env vars platformEnv and the vertex branch of
@@ -638,6 +644,10 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	}
 	if w.Checkout == config.CheckoutClone {
 		ws.Env[CheckoutEnv] = config.CheckoutClone
+		// Where the run clones from: the repository's own URL, which
+		// c.repoURL already checked is https, credential-free and this
+		// repository's (see repoURL).
+		ws.Env[RemoteEnv] = c.repoURL
 	}
 	if ws.Vertex {
 		ws.Env[VertexRegionEnv] = lc.Region

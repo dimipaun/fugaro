@@ -1437,29 +1437,60 @@ func TestCheckoutDetachedNeverRunsLFSFilters(t *testing.T) {
 }
 
 // remoteWithCommits is a bare remote whose main branch holds n commits (the
-// seeded one included), for the clone tests below.
+// seeded one included), for the clone tests below. It returns the remote's
+// `file://` URL, not the path testutil.NewRemote hands back: over a local
+// path git clones with a local transport, which takes neither --filter nor
+// --depth into account (it just hardlinks what it finds), so a filter or a
+// shallowness bug would be invisible to these tests — review M4, where
+// exactly that left a `--depth 1` mutation green. Over file:// git uses the
+// upload-pack protocol and honours both, and uploadpack.allowFilter=true is
+// what lets it serve the partial clone at all.
 func remoteWithCommits(t *testing.T, n int) string {
 	t.Helper()
 	testutil.IsolateGit(t)
 	remote := testutil.NewRemote(t, map[string]string{"README.md": "hello\n"})
-	if n <= 1 {
-		return remote
+	testutil.Git(t, remote, "config", "uploadpack.allowFilter", "true")
+	if n > 1 {
+		work := filepath.Join(t.TempDir(), "seed")
+		testutil.Git(t, filepath.Dir(work), "clone", "--quiet", remote, work)
+		for i := 1; i < n; i++ {
+			name := fmt.Sprintf("f%d.txt", i)
+			// Distinct contents: two files holding the same bytes are one
+			// blob, and the blobless assertions below count blobs.
+			testutil.WriteFiles(t, work, map[string]string{name: fmt.Sprintf("x%d\n", i)})
+			testutil.Git(t, work, "add", "-A")
+			testutil.Git(t, work, "commit", "--quiet", "-m", "commit "+name)
+		}
+		testutil.Git(t, work, "push", "--quiet", "origin", "HEAD:refs/heads/main")
 	}
-	work := filepath.Join(t.TempDir(), "seed")
-	testutil.Git(t, filepath.Dir(work), "clone", "--quiet", remote, work)
-	for i := 1; i < n; i++ {
-		name := fmt.Sprintf("f%d.txt", i)
-		testutil.WriteFiles(t, work, map[string]string{name: "x\n"})
-		testutil.Git(t, work, "add", "-A")
-		testutil.Git(t, work, "commit", "--quiet", "-m", "commit "+name)
-	}
-	testutil.Git(t, work, "push", "--quiet", "origin", "HEAD:refs/heads/main")
-	return remote
+	return "file://" + remote
 }
 
-// TestCloneBloblessKeepsHistory (plan Task 17, G4): the clone is blobless
-// and single-branch but never shallow — checkpoints, follow-ups and
-// merge-base need the whole history.
+// missingObjects is how many objects `git rev-list --objects
+// --missing=print` reports as absent from the clone: git prints each as a
+// "?"-prefixed line. It answers without fetching anything (which is the
+// point: a lazy fetch would hide exactly what the test is asking about), so
+// a blobless, unchecked-out clone counts the blobs it never downloaded, and
+// a clone that has everything counts none.
+func missingObjects(t *testing.T, dir string) int {
+	t.Helper()
+	var n int
+	for _, line := range strings.Split(testutil.Git(t, dir, "rev-list", "--objects", "--missing=print", "HEAD"), "\n") {
+		if strings.HasPrefix(line, "?") {
+			n++
+		}
+	}
+	return n
+}
+
+// TestCloneBloblessKeepsHistory (plan Task 17, G4): the clone is blobless,
+// single-branch and checked out by nobody yet, but never shallow —
+// checkpoints, follow-ups and merge-base need the whole history.
+//
+// Mutation (run, restore): add "--depth", "1" to CloneBlobless's args — the
+// history and .git/shallow assertions fail; drop "--no-checkout" — the empty
+// worktree and missing-blob assertions fail; drop "--filter=blob:none" — the
+// missing-blob assertion fails.
 func TestCloneBloblessKeepsHistory(t *testing.T) {
 	remote := remoteWithCommits(t, 3)
 	dir := filepath.Join(t.TempDir(), "repo")
@@ -1473,6 +1504,9 @@ func TestCloneBloblessKeepsHistory(t *testing.T) {
 	if n := testutil.Git(t, dir, "rev-list", "--count", "HEAD"); n != "3" {
 		t.Fatalf("history = %s commits, want 3 (not shallow)", n)
 	}
+	if _, err := os.Stat(filepath.Join(dir, ".git", "shallow")); !os.IsNotExist(err) {
+		t.Fatalf(".git/shallow exists (err = %v): a shallow clone breaks checkpoints and merge-base", err)
+	}
 	if v := testutil.Git(t, dir, "config", "remote.origin.partialclonefilter"); v != "blob:none" {
 		t.Fatalf("filter = %q, want blob:none", v)
 	}
@@ -1482,9 +1516,26 @@ func TestCloneBloblessKeepsHistory(t *testing.T) {
 	if got := testutil.Git(t, dir, "config", "remote.origin.fetch"); got != "+refs/heads/main:refs/remotes/origin/main" {
 		t.Fatalf("fetch refspec = %q, want the single branch", got)
 	}
-	// The file contents themselves are fetched on demand, and a checkout
-	// still works: this is what the runner's checkout of the task's ref
-	// does.
+	// --no-checkout: the clone brings refs and trees, no working tree, and
+	// the file contents are not fetched until a checkout wants them.
+	if entries, err := os.ReadDir(dir); err != nil {
+		t.Fatal(err)
+	} else {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		if len(names) != 1 || names[0] != ".git" {
+			t.Fatalf("the clone's directory holds %v, want only .git (--no-checkout)", names)
+		}
+	}
+	if n := missingObjects(t, dir); n == 0 {
+		t.Fatal("every object is already in the clone: it is not blobless")
+	} else if n < 3 {
+		t.Fatalf("%d objects are missing, want the one blob per commit (3)", n)
+	}
+	// The file contents are fetched on demand, and a checkout still works:
+	// this is what the runner's checkout of the task's ref does.
 	if err := r.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
 		t.Fatal(err)
 	}
@@ -1493,6 +1544,9 @@ func TestCloneBloblessKeepsHistory(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "README.md")); err != nil {
 		t.Fatalf("the checkout has no README.md: %v", err)
+	}
+	if n := missingObjects(t, dir); n != 0 {
+		t.Fatalf("%d objects are still missing after the checkout, want none: the checkout fetched what it needs", n)
 	}
 }
 
