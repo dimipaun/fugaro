@@ -132,10 +132,10 @@ model_prices:
 | Header injection / key leak to the wrong upstream | The credential is attached per route; request headers from the agent (`x-api-key`, `authorization`) are dropped, so the gateway token never reaches an upstream and a key never reaches the agent |
 | Key in logs, errors, `result.json` | Redactor gets the value at start; upstream error bodies are passed to the agent as today but scanned for the key before logging (`TestUpstreamErrorEchoingKeyIsRedacted`) |
 | Cost bypass | Same D2 residual as today (runner holds the key; mitigation: provider-side credit limit per Fugaro project) |
-
-Updated 2026-10-13 (project-secrets, §3a): an absent or `["*"]` `allow_data_to` is now a deliberate exception to the row above, not a bootstrap refusal -- see `docs/design/project-secrets.md` §3a.
 | Response-borne prompt injection / exotic stream | The gateway does not interpret content; usage parsing only |
 | Another run's lease/token confusion | Unchanged; per-run gateway token, loopback only |
+
+Updated 2026-10-13 (project-secrets, §3a): an absent or `["*"]` `allow_data_to` is now a deliberate exception to the "Repository sends code to a provider the owner did not approve" row, not a bootstrap refusal -- see `docs/design/project-secrets.md` §3a.
 
 ## 10. Testing without real spend
 
