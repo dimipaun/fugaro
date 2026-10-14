@@ -7,10 +7,10 @@ Status: draft for the owner's review, 2026-10-14, corrected after an independent
 The cloud loop runs a cheap coder (DeepSeek through OpenRouter). The senior review stays outside it today, because the in-loop DeepSeek reviewer's "ship" is weak. This design asks how to put a stronger senior reviewer **inside** the loop. Three ways:
 
 - **Path A: Claude through an Anthropic API key, behind the gateway.** Works today with the code as it is. Real dollars, capped by the gateway, no new trust exposure. Needs an Anthropic API key, docs and a live check.
-- **Path C: a stronger model through OpenRouter.** Any model OpenRouter serves as the senior reviewer, behind the same route table and gateway as the coder. One provider key for both roles. **Not possible today**: the config refuses it for Claude models (§4), so it needs a small, deliberate change to an M10 invariant. For a non-Claude senior (GPT, Gemini) it needs no such change.
+- **Path C: a stronger model through OpenRouter.** Any model OpenRouter serves as the senior reviewer, behind the same route table and gateway as the coder. One provider key for both roles. **Not possible today**: the config refuses it for Claude models (§4), so it needs a small change to an M10 invariant, which the owner has approved as an explicit opt-in. For a non-Claude senior (GPT, Gemini) it needs no such change.
 - **Path B: the subscription OAuth token for the reviewer stage only.** Needs infra and runner changes (§5). No dollar cost, but the gateway cannot cap it and the token shares a job with a cheap model that reads untrusted repository content.
 
-Owner rulings (2026-10-14): B is worth its residual risk because Fugaro will work mostly with trusted repositories, and an explicit opt-in is enough (no separate reviewer job). The senior reviewer is built through whichever of A and C the owner has a credential for; the owner has an OpenRouter key and subscription OAuth tokens, no Anthropic API key. This design recommends: (1) a **non-Claude senior through OpenRouter first**, because it needs no code change and is the cheapest test of the idea; (2) **C for Claude models** once the owner rules on the M10 invariant in §4; (3) **A** only if the owner gets an Anthropic key; (4) **B** as the separate, larger piece of work, behind its opt-in.
+Owner rulings (2026-10-14): B is worth its residual risk because Fugaro will work mostly with trusted repositories, and an explicit opt-in is enough (no separate reviewer job). The senior reviewer is built through whichever of A and C the owner has a credential for; the owner has an OpenRouter key and subscription OAuth tokens, no Anthropic API key. This design recommends: (1) a **non-Claude senior through OpenRouter first**, because it needs no code change and is the cheapest test of the idea; (2) **C for Claude models**, now that the owner has ruled the M10 invariant is relaxed by an explicit opt-in (§4); (3) **A** only if the owner gets an Anthropic key; (4) **B** as the separate, larger piece of work, behind its opt-in.
 
 ## 2. What exists today (verified in the code)
 
@@ -59,7 +59,7 @@ agent:
 
 **A non-Claude senior (GPT, Gemini, a larger DeepSeek or Qwen) works with the existing rules**: the route table, pins, prices and gateway need nothing new, and a different model family reviewing a DeepSeek diff is a better second opinion than the same family. Two things still apply: an existing, at least 4-byte `ANTHROPIC_API_KEY` secret (§2: a placeholder the owner types is enough when no `claude-*` model is pinned, since the gateway sends it upstream only for a Claude model), and `allow_data_to` listing the repository for the provider.
 
-**A Claude senior through OpenRouter (`anthropic/claude-sonnet-5.5`) is refused today**, in three places: `ClaudePatterns` rejects a provider claiming `anthropic/*`, `IsAlias` rejects the key in `model_prices`, and the pin checks reject the ID as an alias. Allowing it is a design change to an M10 invariant, and needs the owner's explicit ruling first. The change would be: an opt-in route entry that claims one explicit `anthropic/<id>` (not a pattern), with `IsAlias` and the pin checks accepting exactly the IDs a route claims, and the alias tests changed on purpose. The cache-marker reasoning (M10 decision 2) is the open technical question: OpenRouter forwards Anthropic's `cache_control`, but whether Claude Code's cache markers survive the Anthropic-compatible endpoint is to be measured, not assumed; the live check compares `cache_read` tokens between a direct and an OpenRouter run.
+**A Claude senior through OpenRouter (`anthropic/claude-sonnet-5.5`) is refused today**, in three places: `ClaudePatterns` rejects a provider claiming `anthropic/*`, `IsAlias` rejects the key in `model_prices`, and the pin checks reject the ID as an alias. The owner ruled on 2026-10-14 that the rule is relaxed with an explicit opt-in in config. The change is: an opt-in route entry that claims one explicit `anthropic/<id>` (not a pattern), with `IsAlias` and the pin checks accepting exactly the IDs a route claims, and the alias tests changed on purpose. The cache-marker reasoning (M10 decision 2) is the open technical question: OpenRouter forwards Anthropic's `cache_control`, but whether Claude Code's cache markers survive the Anthropic-compatible endpoint is to be measured, not assumed; the live check compares `cache_read` tokens between a direct and an OpenRouter run.
 
 Facts from OpenRouter's public API, 2026-10-14 (to re-verify at build time; the lists change): `anthropic/claude-sonnet-5.5` $2/$10 per million tokens, `anthropic/claude-opus-5.5` $4/$20, `anthropic/claude-fable-5.1` $10/$50; Anthropic models are served by Amazon Bedrock and Google on the zero-data-retention endpoint list. The route fee (`route_fee_pct`, 5.5 today) is added to every charge.
 
@@ -109,23 +109,23 @@ The SECURITY.md known-gaps list gets one line for B if it ships. Path A needs no
 
 ## 8. Decided and open
 
-Decided (owner, 2026-10-14): B is worth the residual risk; opt-in is enough; the separate-job reviewer is not required; the senior is built through whichever of A and C has a credential.
+Decided (owner, 2026-10-14): B is worth the residual risk; opt-in is enough; the separate-job reviewer is not required; the senior is built through whichever of A and C has a credential. **M10's "Claude goes direct" rule is relaxed by an explicit opt-in in config**: a provider route may claim a Claude model through OpenRouter only when the operator config names it explicitly (§4); with no such entry the rule is unchanged and everything is refused as today.
 
 Open, for the owner's ruling before a plan is written:
 
-1. **May a provider route claim one explicit `anthropic/<id>`** (the §4 change to M10's "Claude goes direct" invariant), or does Claude stay direct-only and C is limited to non-Claude seniors?
+1. **The opt-in's exact shape** (§4 proposes an explicit `anthropic/<id>` entry on the route, not a pattern, in the local operator config only, never in a repository's `fugaro.yaml`): is that the right place and granularity?
 2. Is a non-Claude senior (GPT or Gemini through OpenRouter) acceptable as the first step, before any Claude senior?
 3. Should `stage_auth` generalize later to the coder role? Recommendation: no.
 
 ## 9. Testing and live checks
 
 - **A and C (non-Claude):** a gateway test with both upstreams in one run (a Claude ID and a provider ID, each charged at its own rates), after checking whether one exists; the sandbox live check runs a real review and compares cost lines. For a Claude senior through OpenRouter, the live check compares `cache_read` tokens against a direct run.
-- **C (Claude), if ruled in:** `CheckModelPattern`, `IsAlias`, pin and price validation tests, with the existing alias case changed on purpose, and a test that an unclaimed `anthropic/<id>` is still refused.
+- **C (Claude):** `CheckModelPattern`, `IsAlias`, pin and price validation tests, with the existing alias case changed on purpose, and a test that an unclaimed `anthropic/<id>` is still refused.
 - **B, if built:** validation tests (the one permitted mix and every refusal); infra tests that `SecretMounts` mounts the token for `api-key` plus `stage_auth` and builds the variant jobs; a runner test that the reviewer process has the token, no gateway URL and a restored managed settings file at stage end, while the coder's environment is the reverse; a budget test that the stage is notional and the cap still binds the other stages; one sandbox run with the owner's token.
 
 ## 10. Phases
 
 1. Docs and the live check for a **non-Claude senior through OpenRouter** (no Go change expected beyond what the check finds), and for A if the owner gets an Anthropic key.
-2. The §4 change and C for Claude, if the owner rules it in.
+2. The §4 change (the explicit opt-in) and C for Claude.
 3. B: infra, runner per-stage spec, validation, with mitigations 1 and 2.
 4. Optional hardening: the separate-job reviewer, only for repositories with outside contributors.
