@@ -1862,6 +1862,13 @@ Plus a case where there is no mise config: no `mise` call and no `provision` tim
 
 - [ ] **Step 5: Commit** `git commit -m "generic tool task 17: a clone workflow clones blobless at start and installs its mise tools"`
 
+**Carried from the Task 16 review** (found while gating Task 16's merged work against Task 17's absence; none block this task, but this task should close them along with its own work):
+- (a) `fugaro run --repo X` launched from outside the checkout decides `clone` only from the local `fugaro.yaml` (`run.go` ~l.379): with `--recipe`/`--token <named>`/a project layer it takes the baked path, is refused "has no build record" and told to run `image refresh`, which never writes a record for `clone` — fall back to the deployed job (the `FUGARO_CHECKOUT` env, or the image being `base_images.base`) to decide `clone` instead.
+- (b) `PlanWorkflowJob` (`internal/infra/checkjob.go` ~l.370) changes only the image: if `fugaro.yaml` switches a workflow to `clone` and `image refresh` runs before `init --repo`, the baked job ends up on `fugaro-base` with no `FUGARO_CHECKOUT` — refuse unless the live job's env already has `FUGARO_CHECKOUT=clone`, and point at `init --repo`.
+- (c) `checkCloneImageSince` judges the local config's `base_images.base`, not the deployed job's actual image — a gap between the two (a refresh not yet run, a manually edited job) is not caught.
+- (d) a clone-only repository still gets its own registry plus the build account's writer grants, even though it never builds anything (inert, but worth dropping).
+- (e) user docs for `checkout: clone` exist only in the schema, `docs/release.md` and this design — write them (a user-facing doc, not just internal comments) alongside this task.
+
 ### Task 18: Check 38 and the setup skill's offer
 
 **Numbering ruling (owner's assistant, 2026-10-13):** this task used to reserve
