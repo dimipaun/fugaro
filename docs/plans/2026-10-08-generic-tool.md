@@ -1875,7 +1875,7 @@ are inert or unreachable while the `cloneShipped` gate is off, none of them
 changes a `baked` workflow, and each is now recorded in the user-facing doc
 (`docs/checkout.md`, "Known gaps") as an open gap rather than described as
 working. (a) — `fugaro run --repo` deciding from the local `fugaro.yaml` rather
-than from the deployed job — reopens when `cloneShipped` flips in Task 18 and is
+than from the deployed job — reopens when `cloneShipped` flips (its own tiny PR, after Check 38) and is
 the first thing that round should pick up: the doc now says to run `fugaro run`
 in the repository's checkout until then. Closing (d) is a
 `deploy/terraform/gcp/modules/repo` change, and (c) needs the deployed job's
@@ -1919,6 +1919,15 @@ after the named-account checks 34 to 37 (`docs/gcp-live-checklist.md`'s
 numbering-ruling note). No existing check is renumbered.
 
 **Depends on:** Tasks 16 and 17, and base-image Task 16 (the setup skill's 0.7.0 rewrite).
+
+**Deviation from the plan's Step 5 (owner's ruling, 2026-10-14): this task does
+NOT flip `cloneShipped` or change `cloneSince` in
+`internal/cli/recipes_skew.go`.** The owner wants that in a separate, tiny PR,
+opened only **after Check 38 has passed**: until a build with the gate open has
+been through the live check there is nothing to justify the flip, and the
+release it names (`cloneSince`) cannot be named before that. Check 38's own
+setup says so and names the build it needs. Nothing else in this task changes;
+the deferred gap (a) above reopens with that separate PR, not with this one.
 
 **Files:** `docs/gcp-live-checklist.md` (Check 38), `plugin/skills/setup/reference/decisions.md`, `plugin/skills/setup/SKILL.md` (one line), `plugin/setup_skill_test.go`.
 
