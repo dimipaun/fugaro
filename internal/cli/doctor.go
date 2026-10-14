@@ -435,7 +435,14 @@ func doctorGitHubApps(ctx context.Context, lc *localcfg.Config, notice io.Writer
 		buildSA := buildAccountMember(gcp.BuildServiceAccountID(slug) + "@" + lc.GCPProject + ".iam.gserviceaccount.com")
 		keyID, err := resolveGitSecretID(ctx, lc, lc.GCPProject, repo, logical, gcp.SecretID(slug, logical), projectID, buildSA, "the GitHub App check of "+repo)
 		if err != nil {
-			out = append(out, doctorCheck{ID: id, OK: false, Severity: "warning", Problem: oneLineCLI(err.Error()),
+			// A drift's own message does not fit this field: Printable cuts
+			// it, and the two IDs are what a reader needs from it (driftError.short).
+			problem := oneLineCLI(err.Error())
+			var drift *driftError
+			if errors.As(err, &drift) {
+				problem = drift.short()
+			}
+			out = append(out, doctorCheck{ID: id, OK: false, Severity: "warning", Problem: problem,
 				Fix: "run " + selfCommand() + " init --repo " + quoteWord(repo) + " in its checkout to reapply it, so the App's key this check reads and the one its builds read are the same secret"})
 			continue
 		}

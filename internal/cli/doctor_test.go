@@ -498,16 +498,11 @@ func doctorApp(t *testing.T, status int, perms map[string]string) (*doctorRig, *
 	return r, auth
 }
 
-// doctorJSON runs doctor --check-github-app --json and returns its output
-// (stdout and stderr together) and the parsed checks.
-func doctorJSON(t *testing.T) (string, []doctorCheck) {
+// doctorAppChecks is doctorJSON with the App check's own flag: doctor's
+// checks, with each recorded GitHub App's installation looked up.
+func doctorAppChecks(t *testing.T) []doctorCheck {
 	t.Helper()
-	out, errOut, _ := execute(t, "doctor", "--check-github-app", "--json", "--dir", t.TempDir())
-	var o doctorOutput
-	if err := json.Unmarshal([]byte(out), &o); err != nil {
-		t.Fatalf("%v\n%s\n%s", err, out, errOut)
-	}
-	return out + errOut, o.Checks
+	return doctorJSON(t, "--check-github-app").Checks
 }
 
 // grantBuildAccount grants the project-wide secret's accessor role to repo's
@@ -542,10 +537,10 @@ func TestDoctorGitHubAppCheckResolvesLive(t *testing.T) {
 	grantBuildAccount(t, r, projectID, "acme/app", true)
 	gitHubAppServer(t, 200, fullPerms)
 
-	out, checks := doctorJSON(t)
+	checks := doctorAppChecks(t)
 	c, ok := doctorCheckByID(checks, "github-app:acme/app")
 	if !ok || !c.OK {
-		t.Fatalf("github-app:acme/app = %+v (%v)\n%s", c, ok, out)
+		t.Fatalf("github-app:acme/app = %+v (%v)", c, ok)
 	}
 	if !slices.Contains(r.sm.Accessed(), projectID) {
 		t.Fatalf("doctor read %v, want the project-wide copy %s (the repository's own %s has no version)", r.sm.Accessed(), projectID, repoID)
@@ -565,10 +560,10 @@ func TestDoctorGitHubAppCheckRefusesOnGrantMismatch(t *testing.T) {
 	grantBuildAccount(t, r, projectID, "acme/app", true) // the grant still names the project copy
 	gitHubAppServer(t, 200, fullPerms)
 
-	out, checks := doctorJSON(t)
+	checks := doctorAppChecks(t)
 	c, ok := doctorCheckByID(checks, "github-app:acme/app")
 	if !ok || c.OK || c.Severity != "warning" {
-		t.Fatalf("github-app:acme/app = %+v (%v)\n%s", c, ok, out)
+		t.Fatalf("github-app:acme/app = %+v (%v)", c, ok)
 	}
 	if !strings.Contains(c.Problem, repoID) || !strings.Contains(c.Problem, projectID) || !strings.Contains(c.Fix, "init --repo") {
 		t.Fatalf("the warning names neither ID nor the fix: %+v", c)
@@ -608,7 +603,7 @@ func gitHubAppServer(t *testing.T, status int, perms map[string]string) *[]strin
 func TestDoctorGitHubApp(t *testing.T) {
 	doctorChecks := func(t *testing.T) (out string, checks []doctorCheck) {
 		t.Helper()
-		return doctorJSON(t)
+		return "", doctorAppChecks(t)
 	}
 	t.Run("fine", func(t *testing.T) {
 		_, auth := doctorApp(t, 200, fullPerms)

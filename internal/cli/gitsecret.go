@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -90,8 +91,31 @@ func resolveGitSecretID(ctx context.Context, lc *localcfg.Config, gcpProject, re
 		return "", remote(err)
 	}
 	if granted != "" && granted != id {
-		return "", userErr("%s reads %s from %s, but the build account %s is granted %s: the secret's scope changed since %s was last applied, and a build's clone would read a secret that account may not. Run %s init --repo %s in its checkout first, so the mounts and the grants agree again",
-			what, logical, id, buildSA, granted, repo, selfCommand(), repo)
+		return "", &ExitError{Code: ExitUserError, Err: &driftError{what: what, logical: logical, resolved: id, granted: granted, buildSA: buildSA, repo: repo}}
 	}
 	return id, nil
+}
+
+// driftError is resolveGitSecretID's one refusal: the secret ID live state
+// resolves for a logical name is not the one the build account's own grant
+// names, the case the apply that fixed that grant cannot have intended
+// (design docs/design/project-secrets.md §6 step 4a).
+type driftError struct {
+	what, logical, resolved, granted, buildSA, repo string
+}
+
+func (e *driftError) Error() string {
+	return fmt.Sprintf("%s reads %s from %s, but the build account %s is granted %s: the secret's scope changed since %s was last applied, and a build's clone would read a secret that account may not. Run %s init --repo %s in its checkout first, so the mounts and the grants agree again",
+		e.what, e.logical, e.resolved, e.buildSA, e.granted, e.repo, selfCommand(), e.repo)
+}
+
+// short is Error() without the parts a doctor check's Problem cannot hold.
+// That field goes through pluginwire.Printable, which cuts a string at
+// MaxPrintable (200) runes: this message is built from two ~50-rune secret
+// IDs, a service account email and a command path, so its tail -- the
+// granted ID among it -- would be lost. The two IDs are the one thing a
+// reader needs here; each caller names the apply that fixes it separately
+// (doctor's own Fix, init's printed fix line).
+func (e *driftError) short() string {
+	return fmt.Sprintf("%s resolves to %s, but the build account is granted %s", e.logical, e.resolved, e.granted)
 }

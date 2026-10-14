@@ -2137,8 +2137,17 @@ func (r *initRun) appPreCheck(ctx context.Context, lc *localcfg.Config, spec inf
 	if r.o.checkApp {
 		id, err := gitSecretID(ctx, lc, spec, "the GitHub App pre-check of "+spec.Name)
 		if err != nil {
+			// One line, and for a drift the short form of it: oneLineCLI
+			// prints through pluginwire.Printable, which would cut the
+			// granted ID out of the full refusal (driftError.short).
 			why := oneLineCLI(err.Error())
-			fmt.Fprintf(r.w, "GitHub App check for %s was not made: %s\n  The first image build is not offered until this is fixed (nothing was billed).\n", spec.Name, why)
+			fix := ""
+			var drift *driftError
+			if errors.As(err, &drift) {
+				why = drift.short()
+				fix = "\n  fix: run " + selfCommand() + " init --repo " + spec.Name + " in its checkout, so the mounts and the grants agree again"
+			}
+			fmt.Fprintf(r.w, "GitHub App check for %s was not made: %s%s\n  The first image build is not offered until this is fixed (nothing was billed).\n", spec.Name, why, fix)
 			return why
 		}
 		keyID = id
