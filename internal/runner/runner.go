@@ -64,6 +64,10 @@ type Deps struct {
 	Log         *slog.Logger
 	Now         func() time.Time
 	CancelPoll  time.Duration
+	// ProvisionTimeout bounds a checkout: clone job's mise install
+	// (provision.go); zero means 10 minutes. Tests inject a small one to
+	// exercise the bound.
+	ProvisionTimeout time.Duration
 	// Bucket is the runs bucket, for the branch lock and caches
 	// (design §3.3). Nil disables both.
 	Bucket *blobx.Bucket
@@ -763,6 +767,33 @@ func clearStateDir(stateDir string) error {
 // timeout does.
 const bashTimeoutSlack = 2 * time.Minute
 
+// openCheckout opens (or makes) the run's checkout at r.d.WorkDir: the one
+// baked into the image when there is one, and otherwise a clone of the
+// run's remote. A job that runs without a derived image
+// (FUGARO_CHECKOUT=clone, design generic-tool.md §2, G4) has no baked
+// checkout, so its clone is the blobless one gitops.CloneBlobless makes:
+// full history, no file contents until the checkout of the task's ref needs
+// them. cloneVars are the git credentials authVars built.
+//
+// The branch cloned is the remote's own default branch, not
+// git.base_branch: that is in the repository's fugaro.yaml, which cannot be
+// read before the checkout exists. It costs nothing — bootstrap's FetchBase
+// brings origin/<base> up to date before anything reads it — and the task's
+// own ref is fetched separately either way (CheckoutNewBranch).
+func (r *run) openCheckout(ctx context.Context, cloneVars map[string]string) (*gitops.Repo, error) {
+	env := gitops.WithVars(gitops.IdentityEnv(), cloneVars)
+	// A checkout already here (baked into the image, or left by an earlier
+	// run on the same container), or a baked job with none to open, is
+	// OpenOrClone's case: there is no clone to choose the shape of.
+	if _, err := gitops.Open(r.d.WorkDir, nil); err == nil || !r.cloneJob() {
+		return gitops.OpenOrClone(ctx, r.d.WorkDir, r.d.Remote, env, modelCredentialVars...)
+	}
+	if r.d.Remote == "" {
+		return nil, fmt.Errorf("%s is empty and this job has no repository to clone (FUGARO_CHECKOUT=%s with no remote)", r.d.WorkDir, config.CheckoutClone)
+	}
+	return gitops.CloneBlobless(ctx, r.d.WorkDir, r.d.Remote, "", env, modelCredentialVars...)
+}
+
 func (r *run) bootstrap(ctx context.Context) error {
 	spec, err := r.d.Store.ReadTask(ctx)
 	if err != nil {
@@ -822,7 +853,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("building git credentials: %w", err)
 	}
-	repo, err := gitops.OpenOrClone(ctx, r.d.WorkDir, r.d.Remote, gitops.WithVars(gitops.IdentityEnv(), cloneVars), modelCredentialVars...)
+	repo, err := r.openCheckout(ctx, cloneVars)
 	if err != nil {
 		return fmt.Errorf("opening checkout %s: %w", r.d.WorkDir, err)
 	}
@@ -849,6 +880,19 @@ func (r *run) bootstrap(ctx context.Context) error {
 		r.rec.Branch = "fugaro/" + spec.RunID
 		if cfg, err = r.readBaseConfig(ctx); err != nil {
 			return err
+		}
+		// A clone job's clone is --no-checkout (gitops.CloneBlobless), and
+		// review mode checks out no branch of its own, so it checks the
+		// base out here — after readBaseConfig's fetch of origin/<ref>, and
+		// before provision, which reads the mise config from the working
+		// tree: the base branch's, the same branch the run's configuration
+		// comes from, not whatever branch the remote happens to call its
+		// default. (A review-only run checks the pull request's own head
+		// out into this directory later, in checkReviewPRs.)
+		if r.cloneJob() {
+			if err := repo.CheckoutRef(ctx, "origin/"+spec.Ref); err != nil {
+				return fmt.Errorf("checking out %s: %w", spec.Ref, err)
+			}
 		}
 	default:
 		branch := "fugaro/" + spec.RunID
@@ -975,15 +1019,38 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("fugaro.yaml sets git.provider to %s, but %s says %s", cfg.Git.Provider, r.providerFrom, r.providerKind)
 	}
 	if r.follow != nil {
+		// Before provision, never after (review H1): checkPullRequest is
+		// what refuses a pull request this run must not touch (its state,
+		// its source repository, followup.allow_public), and provision runs
+		// the *branch's own* mise config — code an earlier agent wrote,
+		// which a mise config is free to make arbitrary. Nothing from that
+		// branch may run before the checks that decide the branch may be
+		// used at all.
 		if err := r.checkPullRequest(ctx); err != nil {
 			return err
 		}
+	}
+	// A job that runs without a derived image installs the repository's
+	// mise tools itself (provision.go, design generic-tool.md §2, G4): the
+	// image installed none for it. It runs here, once the provider is
+	// opened, so mise's own GitHub calls can use the run's git token where
+	// provisionGitToken allows one, and before any stage records its own
+	// time.
+	if err := r.provision(ctx); err != nil {
+		return err
 	}
 	if r.review {
 		if err := r.checkReviewPRs(ctx); err != nil {
 			return err
 		}
 	}
+	// A follow-up's and a review run's agent has no git credentials of its
+	// own, and a blobless clone fetches file contents lazily through
+	// origin: the runner brings in what the agent's own git will read while
+	// it still has the credentials to do it (prefetch.go, review N1/M2).
+	// Here, after the base and the review heads are resolved, and before
+	// any stage runs.
+	r.prefetchObjects(ctx)
 	r.restoreCaches(ctx)
 	if r.follow == nil && !r.review {
 		// A follow-up or a review run fetched its base, and read these

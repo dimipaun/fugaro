@@ -125,6 +125,8 @@ workflows:
 
 **Project layer:** a project can publish shared defaults and named workflow profiles that every anchored repository's minimal `fugaro.yaml` inherits; see [docs/project-layer.md](docs/project-layer.md).
 
+**Checkout:** by default a workflow runs a per-repository image with a clone baked into it (`checkout: baked`); a workflow can instead run the installation's base image and clone blobless at start (`checkout: clone`), for repositories that need no build; see [docs/checkout.md](docs/checkout.md).
+
 ## Requirements
 
 - For the GCP backend, the only one today: a Google Cloud project with billing enabled and `serviceusage.googleapis.com` on; `fugaro init` enables the other APIs it needs. Setting up the installation needs the Owner role ([precondition 7](docs/gcp-setup.md#preconditions)).

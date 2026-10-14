@@ -639,6 +639,32 @@ func TestSpecCloneSetsCheckoutEnv(t *testing.T) {
 	}
 }
 
+// TestSpecCloneSetsRemoteEnv (review C1): a clone job runs the installation's
+// base image, which holds no checkout, and nothing on Cloud Run names a
+// repository for it: FUGARO_CHECKOUT=clone alone would leave the runner with
+// nothing to clone. The job carries the repository's own credential-free
+// clone URL in FUGARO_REMOTE (runner.RemoteEnv), which fugaro exec's --remote
+// defaults to — repoURL is what checks that URL is https, carries no
+// credentials and is this repository's — and a baked workflow's job carries
+// no such key, so nothing baked changes.
+//
+// Mutation (run, restore): delete the `ws.Env[RemoteEnv] = c.repoURL` line in
+// workflow() — this test then fails: web's env has no FUGARO_REMOTE, and the
+// end-to-end test in internal/cli (TestExecCloneJobClonesTheRepositoryItWas
+// DeployedFor) fails with "this job has no repository to clone".
+func TestSpecCloneSetsRemoteEnv(t *testing.T) {
+	rs, err := Repo(cloneInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rs.Workflows["web"].Env[RemoteEnv]; got != "https://github.com/acme/webapp.git" {
+		t.Errorf("web's %s = %q, want the repository's clone URL", RemoteEnv, got)
+	}
+	if _, ok := rs.Workflows["api"].Env[RemoteEnv]; ok {
+		t.Errorf("api (baked) carries %s = %q, want no such key", RemoteEnv, rs.Workflows["api"].Env[RemoteEnv])
+	}
+}
+
 func TestSpecRefuses(t *testing.T) {
 	var ue *UserError
 	for name, mutate := range map[string]func(*Inputs){
