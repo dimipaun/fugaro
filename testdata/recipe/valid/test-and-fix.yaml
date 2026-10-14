@@ -1,0 +1,6 @@
+version: 1
+name: test-and-fix
+steps:
+  - check: { command: test }
+  - first_line: {}
+  - review: { bounce: first_line }

@@ -342,10 +342,10 @@ secrets stage is behind the same gate.`,
 	f.StringVar(&o.runsBucket, "runs-bucket", "", "the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>)")
 	f.StringVar(&o.stateBucket, "state-bucket", "", "the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>)")
 	f.StringArrayVar(&o.baseImages, "base-image", nil, "a base image the image checks run and builds start from, recorded in the local config under its base kind (repeatable; KIND=IMAGE, or just IMAGE when its repository is named fugaro-<kind>; the kinds you don't name keep theirs)")
-	f.StringSliceVar(&o.baseKinds, "base", nil, "base kinds (go, java-services, web-node) whose release image init copies into the project's registry now, besides the ones the checkout's fugaro.yaml names (comma-separated or repeated)")
+	f.StringSliceVar(&o.baseKinds, "base", nil, "copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated)")
 	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release images are copied from (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme)")
-	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "pin the digest of a release image copied by init, KIND=sha256:<hex> (KIND is go, java-services, web-node or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. Without it init trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag")
-	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history, go, java-services or web-node; repeatable): let init replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). It names the intent only: replacing is confirmed by typing the project's name at a real terminal, never by --yes, --non-interactive or --json")
+	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "pin the digest of a release image copied by init, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. Without it init trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag")
+	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history or base; repeatable): let init replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). It names the intent only: replacing is confirmed by typing the project's name at a real terminal, never by --yes, --non-interactive or --json")
 	f.StringArrayVar(&o.launchers, "launcher", nil, "an IAM member who launches and watches runs (repeatable; default: the local config's, and for a new config you, the authenticated user)")
 	f.StringArrayVar(&o.operators, "operator", nil, "an IAM member who onboards repositories (repeatable; default: the local config's, and for a new config you, the authenticated user)")
 	f.Int64Var(&o.budget, "budget", 0, "a monthly budget on the project, in whole units of --budget-currency")
@@ -733,6 +733,9 @@ func (o *initOptions) check() error {
 	}
 	for _, k := range o.baseKinds {
 		if !slices.Contains(config.Bases, k) {
+			if slices.Contains(config.LegacyBaseKinds, k) {
+				return userErr("--base %q is not a base kind (%s): %s was removed in 0.7.0 (%s)", k, strings.Join(config.Bases, ", "), k, config.MigrationDoc)
+			}
 			return userErr("--base %q is not a base kind (%s)", k, strings.Join(config.Bases, ", "))
 		}
 	}
@@ -1233,9 +1236,14 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 			return outs, false, remote(err)
 		}
 		fmt.Fprint(r.w, tf.Summary(plan))
-		if err := guard(plan, r.o.allowDelete); err != nil {
+		// The 0.7.0 bucket hardening deletes launchers' old objectAdmin
+		// grants; exactly those are allowed, and named (bucket-iam.md H7).
+		// A delete is never covered, so the step still asks its own name.
+		hardening := infra.HardeningAllowDelete(plan, spec.Launchers, spec.Operators)
+		if err := guard(plan, append(slices.Clone(r.o.allowDelete), hardening...)); err != nil {
 			return outs, false, err
 		}
+		fmt.Fprint(r.w, infra.HardeningBanner(hardening))
 		counts := infra.CountPlan(plan)
 		r.res.Changes = &counts
 		if r.o.planOnly {
@@ -2276,7 +2284,22 @@ func (r *initRun) installationOutputs(ctx context.Context, lc *localcfg.Config, 
 // planRepo is one discover, gate, plan, guard, confirm and apply of the
 // repository root. It returns what the readiness gates found missing.
 // first says whether this is the run's first plan, whose notes are shown.
+//
+// Before any of that (review finding, 0.7.0 safety fix round 2): a
+// checkout: clone workflow's job must never come to exist while
+// cloneShipped is false (no fugaro release can run one yet), so this
+// refuses outright, before any cloud call, rather than letting Terraform
+// create a job checkCloneImageSince would only catch later, at launch, and
+// only if the launch still decides clone from this same checkout (run.go's
+// checkoutConfig does not, once the job is already deployed). --plan-only
+// skips the refusal so the plan can still be shown; --print-vars never
+// reaches planRepo at all.
 func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, spec infra.RepoSpec, opts infra.RepoRootOptions, first bool) ([]infra.Missing, error) {
+	if !r.o.planOnly {
+		if err := refuseClonesNotShipped(spec.Name, "fugaro init --repo", "deploy", cloneWorkflowNames(spec.Workflows)); err != nil {
+			return nil, err
+		}
+	}
 	im, ex, err := infra.DiscoverRepo(ctx, c, spec)
 	if err != nil {
 		return nil, initErr(err)
@@ -2339,6 +2362,21 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	}
 	r.res.Applied = true
 	return missing, nil
+}
+
+// cloneWorkflowNames are the distinct workflow names among ws whose
+// resolved checkout is clone, sorted. ws may hold one WorkflowSpec per
+// Claude account variant of the same fugaro.yaml workflow
+// (gcp.WorkflowVariant, keyed by the variant, not the plain name), so this
+// dedupes by WorkflowSpec.Name rather than the map key.
+func cloneWorkflowNames(ws map[string]infra.WorkflowSpec) []string {
+	seen := map[string]bool{}
+	for _, w := range ws {
+		if w.Checkout == config.CheckoutClone {
+			seen[w.Name] = true
+		}
+	}
+	return slices.Sorted(maps.Keys(seen))
 }
 
 // cloudBuilder is the Cloud Build client the builds need. Tests replace
@@ -2405,9 +2443,9 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 	}
 	built := 0
 	for _, name := range names {
-		base := lc.BaseImage(cfg.Workflows[name].Base)
+		base := lc.BaseImage(cfg.Workflows[name].BaseKind())
 		if base == "" {
-			if base, err = image.BaseRef(cfg.Workflows[name].Base, Version); err != nil {
+			if base, err = image.BaseRef(Version); err != nil {
 				return built, userErr("%v", err)
 			}
 		}

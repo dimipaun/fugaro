@@ -43,7 +43,7 @@ repos:
 
 // m5Additions are the local config fields an M5 installation adds.
 const m5Additions = `registry_host: us-east5-docker.pkg.dev/proj-1234
-base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-0123abc}
+base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
 `
 
 func parseLC(t *testing.T, yaml string) *localcfg.Config {
@@ -109,13 +109,11 @@ git: { provider: github, base_branch: main }
 agent: { auth: vertex }
 workflows:
   web:
-    base: web-node
     commands: { build: npm run build, test: npm test }
     secrets:
       - { name: npm-token, env: NPM_TOKEN }
     timeouts: { total: 60m }
   api:
-    base: java-services
     commands: { build: ./gradlew assemble, test: ./gradlew test }
     rebuild: { check: "off" }
 `
@@ -130,7 +128,7 @@ gcp_project: proj-1234
 region: us-east5
 runs_bucket: fugaro-runs-proj-1234
 registry_host: us-east5-docker.pkg.dev/proj-1234
-base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-0123abc}
+base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
 compute_prices: { us-east5: { vcpu_second_usd: 0.00002, gib_second_usd: 0.0000025 } }
 repos:
   acme/webapp: { provider: github, base_branch: main, workflows: [web, api], github_app_id: "123456" }
@@ -355,7 +353,7 @@ func TestRepoSpecBitbucket(t *testing.T) {
 		t.Fatal("no check")
 	}
 	if c.Job != gcp.CheckJobName(slug) || c.SchedulerJob != gcp.SchedulerJobName(slug) || c.SchedulerRegion != "us-east4" || !c.Paused ||
-		c.Image != in.LC.BaseImage("web-node") {
+		c.Image != in.LC.BaseImage("base") {
 		t.Errorf("check = %+v", c)
 	}
 	if !regexp.MustCompile(`^([0-9]|[1-5][0-9]) [56] \* \* \*$`).MatchString(c.Schedule) {
@@ -372,7 +370,7 @@ func TestRepoSpecBitbucket(t *testing.T) {
 		Repo: "acme/sandbox", Provider: "bitbucket", RepoURL: "https://bitbucket.org/acme/sandbox.git", BaseBranch: "master",
 		Workflows: []string{"web"}, Registry: "us-east5-docker.pkg.dev/proj-1234/" + gcp.RegistryRepoID(slug),
 		BuildServiceAccount: gcp.BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com",
-		MachineType:         "E2_HIGHCPU_8", BuildRegion: "us-east5", BaseImages: map[string]string{"web-node": in.LC.BaseImage("web-node")},
+		MachineType:         "E2_HIGHCPU_8", BuildRegion: "us-east5", BaseImages: map[string]string{"base": in.LC.BaseImage("base")},
 	}
 	if !equalJSON(t, spec, want) {
 		t.Errorf("check spec = %+v, want %+v", spec, want)
@@ -503,6 +501,141 @@ func TestNoCheckWhenAllOff(t *testing.T) {
 	in.LC.BaseImages = nil
 	if _, err := Repo(in); err != nil {
 		t.Fatal(err)
+	}
+}
+
+const cloneYAML = `version: 1
+project: aurora
+git: { provider: github, base_branch: main }
+agent: { auth: vertex }
+workflows:
+  web:
+    checkout: clone
+    commands: { build: npm run build, test: npm test }
+  api:
+    commands: { build: ./gradlew assemble, test: ./gradlew test }
+`
+
+// cloneInputs is a GitHub repository with one checkout: clone workflow
+// (web) and one ordinarily-built workflow (api, checked daily).
+func cloneInputs(t *testing.T) Inputs {
+	t.Helper()
+	lc := parseLC(t, `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry_host: us-east5-docker.pkg.dev/proj-1234
+base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
+repos:
+  acme/webapp: { provider: github, base_branch: main, workflows: [web, api], github_app_id: "123456" }
+`)
+	return Inputs{LC: lc, Repo: "acme/webapp", Cfg: parseCfg(t, []byte(cloneYAML)), Installation: installationOutputs()}
+}
+
+// TestSpecCloneWorkflowRunsTheBase (design generic-tool.md §2, G3): a
+// checkout: clone workflow's job image is the local config's
+// base_images.base, not a derived image in the repository's own registry,
+// and the daily check never lists it, though it still checks a baked
+// sibling.
+//
+// Mutations (run, restore): (1) in workflow(), remove the `if w.Checkout ==
+// config.CheckoutClone` branch so Image is always the derived
+// ":latest" tag — the image assertion below fails (it would equal
+// ".../acme-webapp-<hash>/web:latest", not the base_images.base ref). (2) in
+// Repo()'s checked loop, remove the `Checkout != config.CheckoutClone &&`
+// clause — web then joins the check job's workflows and the "check covers
+// web" assertion fails.
+func TestSpecCloneWorkflowRunsTheBase(t *testing.T) {
+	in := cloneInputs(t)
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := in.LC.BaseImage(config.BaseKind)
+	if want == "" {
+		t.Fatal("fixture bug: no base_images.base")
+	}
+	if got := rs.Workflows["web"].Image; got != want {
+		t.Errorf("web's image = %q, want base_images.base %q", got, want)
+	}
+	if rs.Workflows["web"].Checkout != config.CheckoutClone {
+		t.Errorf("web's Checkout = %q, want %q", rs.Workflows["web"].Checkout, config.CheckoutClone)
+	}
+	if rs.Check == nil {
+		t.Fatal("no check job, want one covering api")
+	}
+	if slices.Contains(rs.Check.Workflows, "web") {
+		t.Errorf("check covers web, a checkout: clone workflow: %v", rs.Check.Workflows)
+	}
+	if !slices.Contains(rs.Check.Workflows, "api") {
+		t.Errorf("check does not cover api: %v", rs.Check.Workflows)
+	}
+}
+
+// TestSpecCloneVariantsRunTheBase: with a named Claude account allowed for
+// the repository, an oauth checkout: clone workflow gets one job per account
+// (gcp.WorkflowVariant), and every one of them runs base_images.base with
+// FUGARO_CHECKOUT=clone, never a derived :latest tag; the daily check still
+// never lists the clone workflow.
+func TestSpecCloneVariantsRunTheBase(t *testing.T) {
+	in := cloneInputs(t)
+	in.Cfg.Agent.Auth = "oauth"
+	in.LC = parseLC(t, `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry_host: us-east5-docker.pkg.dev/proj-1234
+base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
+claude_accounts:
+  acme-personal:
+    allow_data_to: ["acme/webapp"]
+repos:
+  acme/webapp: { provider: github, base_branch: main, workflows: [web, api], github_app_id: "123456" }
+`)
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	variant := gcp.WorkflowVariant("web", "acme-personal")
+	want := in.LC.BaseImage(config.BaseKind)
+	for _, key := range []string{"web", variant} {
+		ws, ok := rs.Workflows[key]
+		if !ok {
+			t.Fatalf("no job spec %q: %v", key, slices.Sorted(maps.Keys(rs.Workflows)))
+		}
+		if ws.Image != want || ws.Checkout != config.CheckoutClone || ws.Env[CheckoutEnv] != config.CheckoutClone {
+			t.Errorf("%s: image %q, checkout %q, %s=%q; want %q, clone, clone", key, ws.Image, ws.Checkout, CheckoutEnv, ws.Env[CheckoutEnv], want)
+		}
+	}
+	if rs.Check == nil || slices.Contains(rs.Check.Workflows, "web") || slices.Contains(rs.Check.Workflows, variant) {
+		t.Errorf("check job workflows = %v, want api only", rs.Check)
+	}
+}
+
+// TestSpecCloneSetsCheckoutEnv (review finding 2, MED; plan Task 17 says to
+// add this to Task 16's spec change if it is not there): a checkout: clone
+// workflow's job gets FUGARO_CHECKOUT=clone, which the runner's bootstrap
+// (plan Task 17, not yet merged) will read to decide to clone blobless
+// instead of moving a baked-in checkout; a baked workflow's spec carries no
+// such key at all, so every baked workflow's env stays exactly what it was
+// before checkout: clone existed (golden tfvars unchanged, TestRepoRootVars
+// MatchModule's own sandbox fixture has none).
+//
+// Mutation (run, restore): delete the `if w.Checkout == config.CheckoutClone
+// { ws.Env[CheckoutEnv] = config.CheckoutClone }` block in workflow() — this
+// test then fails: web's env lacks FUGARO_CHECKOUT.
+func TestSpecCloneSetsCheckoutEnv(t *testing.T) {
+	rs, err := Repo(cloneInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rs.Workflows["web"].Env[CheckoutEnv]; got != config.CheckoutClone {
+		t.Errorf("web's %s = %q, want %q", CheckoutEnv, got, config.CheckoutClone)
+	}
+	if _, ok := rs.Workflows["api"].Env[CheckoutEnv]; ok {
+		t.Errorf("api (baked) carries %s = %q, want no such key", CheckoutEnv, rs.Workflows["api"].Env[CheckoutEnv])
 	}
 }
 
@@ -695,7 +828,7 @@ func TestInstallationSpec(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Exactly the installation root's variables.
-	want := []string{"adopt_legacy_registry", "alert_email", "bucket_lifecycle", "budget", "enable_vertex", "fugaro_project", "launchers", "log_bucket_description", "manage_apis",
+	want := []string{"adopt_legacy_registry", "alert_email", "bucket_lifecycle", "budget", "enable_vertex", "fugaro_project", "launcher_bucket_condition", "launchers", "log_bucket_description", "manage_apis",
 		"names", "operators", "project", "region", "registry_cleanup", "runs_bucket", "state_bucket"}
 	if got := slices.Sorted(maps.Keys(doc)); !slices.Equal(got, want) {
 		t.Errorf("keys = %v, want %v", got, want)
@@ -720,6 +853,24 @@ func TestInstallationSpec(t *testing.T) {
 	bad := parseLC(t, strings.Replace(m4LocalConfig, "runs_bucket: fugaro-runs-proj-1234", "runs_bucket: proj-1234-runs", 1))
 	if _, err := Installation(bad, InstallOptions{}); !errors.As(err, &ue) {
 		t.Errorf("runs bucket without fugaro-runs-: %v", err)
+	}
+}
+
+// TestInstallationRefusesAnInvalidBucketURLCharset (code review finding):
+// localcfg only charset-checks runs_bucket, not bucket_url, so a local
+// config that names its runs bucket through bucket_url (not runs_bucket)
+// can carry a bucket name gcp.LauncherBucketCondition refuses to widen on;
+// that function panics by design rather than accept it.
+// Installation must turn that into a clean UserError before ever calling
+// it, not let the panic through to fugaro init.
+func TestInstallationRefusesAnInvalidBucketURLCharset(t *testing.T) {
+	lc := parseLC(t, strings.Replace(m4LocalConfig, "runs_bucket: fugaro-runs-proj-1234", "bucket_url: gs://fugaro-runs-Proj1234", 1))
+	if lc.RunsBucketName() != "fugaro-runs-Proj1234" {
+		t.Fatalf("test setup: RunsBucketName() = %q, want the bucket_url's host (uppercase, invalid)", lc.RunsBucketName())
+	}
+	var ue *UserError
+	if _, err := Installation(lc, InstallOptions{}); !errors.As(err, &ue) {
+		t.Fatalf("bucket_url with a byte outside the charset gcp.LauncherBucketCondition accepts: %v", err)
 	}
 }
 
@@ -750,26 +901,28 @@ func TestBaseImageWarnings(t *testing.T) {
 		t.Errorf("no base images: %v", ws)
 	}
 	for base, warn := range map[string]bool{
-		"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-0123abc":  false,
-		"us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro-web-node:dev-0123abc":       true,
-		"us-east5-docker.pkg.dev/proj-1234/fugaro-basex/fugaro-web-node:dev-0123abc": true,
-		"us-east5-docker.pkg.dev/other-proj/fugaro-base/fugaro-web-node:dev-0123abc": true,
+		"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc":  false,
+		"us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro-base:dev-0123abc":       true,
+		"us-east5-docker.pkg.dev/proj-1234/fugaro-basex/fugaro-base:dev-0123abc": true,
+		"us-east5-docker.pkg.dev/other-proj/fugaro-base/fugaro-base:dev-0123abc": true,
 	} {
-		got := BaseImageWarnings(map[string]string{"web-node": base}, outs)
+		got := BaseImageWarnings(map[string]string{"base": base}, outs)
 		if (len(got) != 0) != warn {
 			t.Errorf("%q: warnings %q, want one: %v", base, got, warn)
 		}
-		if warn && (len(got) != 1 || !strings.Contains(got[0], base) || !strings.Contains(got[0], "base_images.web-node") || !strings.Contains(got[0], outs.RegistryHost+"/"+BaseRegistry)) {
+		if warn && (len(got) != 1 || !strings.Contains(got[0], base) || !strings.Contains(got[0], "base_images.base") || !strings.Contains(got[0], outs.RegistryHost+"/"+BaseRegistry)) {
 			t.Errorf("%q: the warnings %q don't name the image, its kind and the base registry", base, got)
 		}
 	}
-	// One warning per offending kind, in kind order.
+	// One warning per offending kind, in kind order: BaseImageWarnings sorts
+	// by map key, whatever strings the caller passes it (only Parse itself
+	// restricts a real base_images key to config.Bases).
 	got := BaseImageWarnings(map[string]string{
-		"web-node":      "us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro-web-node:1",
-		"go":            "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-go:1",
-		"java-services": "ghcr.io/dimipaun/fugaro-java-services:1",
+		"base":   "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1",
+		"kind-a": "us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro-base:1",
+		"kind-z": "ghcr.io/dimipaun/fugaro-base:1",
 	}, outs)
-	if len(got) != 2 || !strings.Contains(got[0], "base_images.java-services") || !strings.Contains(got[1], "base_images.web-node") {
+	if len(got) != 2 || !strings.Contains(got[0], "base_images.kind-a") || !strings.Contains(got[1], "base_images.kind-z") {
 		t.Errorf("warnings = %q", got)
 	}
 }
@@ -1249,35 +1402,30 @@ func TestProvidersEnvInTheJobIsCutToTheRepo(t *testing.T) {
 	}
 }
 
-// The check job runs from the base image of its first workflow's kind and
-// hands the job the base of every checked kind.
-func TestCheckUsesTheBaseOfEachCheckedKind(t *testing.T) {
+// A checked workflow without base: builds from base_images.base, and the
+// check job runs from it.
+func TestCheckJobOnTheBaseKind(t *testing.T) {
 	in := webappInputs(t)
-	api := in.Cfg.Workflows["api"]
-	api.Rebuild.Check = "auto"
-	in.Cfg.Workflows["api"] = api
-	var ue *UserError
-	if _, err := Repo(in); !errors.As(err, &ue) || !strings.Contains(err.Error(), "base_images entry for java-services") {
-		t.Fatalf("no java-services base image: err = %v", err)
+	for name, w := range in.Cfg.Workflows {
+		w.Base, w.Image.Node = "", ""
+		w.Rebuild.Check = "auto"
+		in.Cfg.Workflows[name] = w
 	}
-	java := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-java-services:dev-0123abc"
-	in.LC.BaseImages["java-services"] = java
+	base := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"
+	in.LC.BaseImages = map[string]string{"base": base}
 	rs, err := Repo(in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rs.Check.Image != java {
-		t.Errorf("check image = %s, want the first checked workflow's (api) base %s", rs.Check.Image, java)
+	if rs.Check.Image != base {
+		t.Errorf("check image = %s, want %s", rs.Check.Image, base)
 	}
 	var spec CheckJobSpec
 	if err := json.Unmarshal([]byte(rs.Check.Env[CheckSpecEnv]), &spec); err != nil {
 		t.Fatal(err)
 	}
-	if want := (map[string]string{"web-node": in.LC.BaseImage("web-node"), "java-services": java}); !maps.Equal(spec.BaseImages, want) {
+	if want := map[string]string{"base": base}; !maps.Equal(spec.BaseImages, want) {
 		t.Errorf("job spec base images = %v, want %v", spec.BaseImages, want)
-	}
-	if !slices.Equal(spec.Workflows, []string{"api", "web"}) {
-		t.Errorf("job spec workflows = %v", spec.Workflows)
 	}
 }
 

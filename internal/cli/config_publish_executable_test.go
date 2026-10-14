@@ -36,46 +36,46 @@ func TestExecutableChangesTable(t *testing.T) {
 	}{
 		{
 			name: "add: commands.test newly set",
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      test: sh test.sh\ndefault_profile: svc\n",
+			prev: layerPreamble + "profiles:\n  svc: {}\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc:\n    commands:\n      test: sh test.sh\ndefault_profile: svc\n",
 			want: []string{`profile svc: commands.test: "" -> "sh test.sh"`},
 		},
 		{
 			name: "change: commands.build value changes",
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      build: sh old.sh\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      build: sh new.sh\ndefault_profile: svc\n",
+			prev: layerPreamble + "profiles:\n  svc:\n    commands:\n      build: sh old.sh\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc:\n    commands:\n      build: sh new.sh\ndefault_profile: svc\n",
 			want: []string{`profile svc: commands.build: "sh old.sh" -> "sh new.sh"`},
 		},
 		{
 			name: "remove: commands.test cleared",
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      test: sh test.sh\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\ndefault_profile: svc\n",
+			prev: layerPreamble + "profiles:\n  svc:\n    commands:\n      test: sh test.sh\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc: {}\ndefault_profile: svc\n",
 			want: []string{`profile svc: commands.test: "sh test.sh" -> ""`},
 		},
 		{
 			name: "whitespace-only change is still a change",
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      test: sh test.sh\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      test: \"sh  test.sh\"\ndefault_profile: svc\n",
+			prev: layerPreamble + "profiles:\n  svc:\n    commands:\n      test: sh test.sh\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc:\n    commands:\n      test: \"sh  test.sh\"\ndefault_profile: svc\n",
 			want: []string{`profile svc: commands.test: "sh test.sh" -> "sh  test.sh"`},
 		},
 		{
 			name: "a block scalar's trailing newline decodes equal to the plain form: no change",
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      test: sh test.sh\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      test: |-\n        sh test.sh\ndefault_profile: svc\n",
+			prev: layerPreamble + "profiles:\n  svc:\n    commands:\n      test: sh test.sh\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc:\n    commands:\n      test: |-\n        sh test.sh\ndefault_profile: svc\n",
 			want: nil,
 		},
 		{
 			name: "a different YAML quoting form that decodes equal: no change",
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      test: 'sh test.sh'\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      test: \"sh test.sh\"\ndefault_profile: svc\n",
+			prev: layerPreamble + "profiles:\n  svc:\n    commands:\n      test: 'sh test.sh'\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc:\n    commands:\n      test: \"sh test.sh\"\ndefault_profile: svc\n",
 			want: nil,
 		},
 		{
 			// The bug this whole table guards: rf.Command + " " + rf.Each
 			// read both of these as "pytest -k {id}".
 			name: `rerun_failed boundary shift: "pytest -k"/"{id}" vs "pytest"/"-k {id}"`,
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      rerun_failed: { command: \"pytest -k\", each: \"{id}\" }\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      rerun_failed: { command: \"pytest\", each: \"-k {id}\" }\ndefault_profile: svc\n",
+			prev: layerPreamble + "profiles:\n  svc:\n    commands:\n      rerun_failed: { command: \"pytest -k\", each: \"{id}\" }\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc:\n    commands:\n      rerun_failed: { command: \"pytest\", each: \"-k {id}\" }\ndefault_profile: svc\n",
 			want: []string{
 				`profile svc: commands.rerun_failed.command: "pytest -k" -> "pytest"`,
 				`profile svc: commands.rerun_failed.each: "{id}" -> "-k {id}"`,
@@ -83,8 +83,8 @@ func TestExecutableChangesTable(t *testing.T) {
 		},
 		{
 			name: `rerun_failed boundary shift: "a "/"{id}" vs "a"/" {id}"`,
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      rerun_failed: { command: \"a \", each: \"{id}\" }\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      rerun_failed: { command: \"a\", each: \" {id}\" }\ndefault_profile: svc\n",
+			prev: layerPreamble + "profiles:\n  svc:\n    commands:\n      rerun_failed: { command: \"a \", each: \"{id}\" }\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc:\n    commands:\n      rerun_failed: { command: \"a\", each: \" {id}\" }\ndefault_profile: svc\n",
 			want: []string{
 				`profile svc: commands.rerun_failed.command: "a " -> "a"`,
 				`profile svc: commands.rerun_failed.each: "{id}" -> " {id}"`,
@@ -92,20 +92,20 @@ func TestExecutableChangesTable(t *testing.T) {
 		},
 		{
 			name: "apt reorder is a change",
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    image:\n      apt: [git, curl]\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    image:\n      apt: [curl, git]\ndefault_profile: svc\n",
+			prev: layerPreamble + "profiles:\n  svc:\n    image:\n      apt: [git, curl]\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc:\n    image:\n      apt: [curl, git]\ndefault_profile: svc\n",
 			want: []string{`profile svc: image.apt: ["git" "curl"] -> ["curl" "git"]`},
 		},
 		{
 			name: "a setup step split in two is a change",
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    image:\n      setup: [\"echo hi\"]\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    image:\n      setup: [echo, hi]\ndefault_profile: svc\n",
+			prev: layerPreamble + "profiles:\n  svc:\n    image:\n      setup: [\"echo hi\"]\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc:\n    image:\n      setup: [echo, hi]\ndefault_profile: svc\n",
 			want: []string{`profile svc: image.setup: ["echo hi"] -> ["echo" "hi"]`},
 		},
 		{
 			name: "a profile renamed: the old name loses it, the new name gains it",
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      test: sh test.sh\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc2:\n    base: web-node\n    commands:\n      test: sh test.sh\ndefault_profile: svc2\n",
+			prev: layerPreamble + "profiles:\n  svc:\n    commands:\n      test: sh test.sh\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc2:\n    commands:\n      test: sh test.sh\ndefault_profile: svc2\n",
 			want: []string{
 				`profile svc: commands.test: "sh test.sh" -> ""`,
 				`profile svc2: commands.test: "" -> "sh test.sh"`,
@@ -114,44 +114,44 @@ func TestExecutableChangesTable(t *testing.T) {
 		},
 		{
 			name: "a profile deleted with executable keys set is a change",
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n  other:\n    base: web-node\n    commands:\n      test: sh other.sh\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\ndefault_profile: svc\n",
+			prev: layerPreamble + "profiles:\n  svc: {}\n  other:\n    commands:\n      test: sh other.sh\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc: {}\ndefault_profile: svc\n",
 			want: []string{`profile other: commands.test: "sh other.sh" -> ""`},
 		},
 		{
 			name: "a profile deleted with no executable keys is not a change",
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n  other:\n    base: web-node\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\ndefault_profile: svc\n",
+			prev: layerPreamble + "profiles:\n  svc: {}\n  other: {}\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc: {}\ndefault_profile: svc\n",
 			want: nil,
 		},
 		{
 			name: "a profile added with executable keys set is a change",
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n  other:\n    base: web-node\n    commands:\n      test: sh other.sh\ndefault_profile: svc\n",
+			prev: layerPreamble + "profiles:\n  svc: {}\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc: {}\n  other:\n    commands:\n      test: sh other.sh\ndefault_profile: svc\n",
 			want: []string{`profile other: commands.test: "" -> "sh other.sh"`},
 		},
 		{
 			name: "default_profile first set, the new default HasExecutable: gated",
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      test: sh test.sh\n",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      test: sh test.sh\ndefault_profile: svc\n",
+			prev: layerPreamble + "profiles:\n  svc:\n    commands:\n      test: sh test.sh\n",
+			next: layerPreamble + "profiles:\n  svc:\n    commands:\n      test: sh test.sh\ndefault_profile: svc\n",
 			want: []string{`default_profile: "" -> "svc" (repositories without workflows: now run profile svc's commands)`},
 		},
 		{
 			name: "default_profile a -> b, the old default HasExecutable: gated",
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      test: sh test.sh\n  other:\n    base: web-node\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      test: sh test.sh\n  other:\n    base: web-node\ndefault_profile: other\n",
+			prev: layerPreamble + "profiles:\n  svc:\n    commands:\n      test: sh test.sh\n  other: {}\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc:\n    commands:\n      test: sh test.sh\n  other: {}\ndefault_profile: other\n",
 			want: []string{`default_profile: "svc" -> "other" (repositories without workflows: now run profile other's commands)`},
 		},
 		{
 			name: "default_profile cleared, the old default HasExecutable: gated, says no profile, not \"profile 's commands\"",
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      test: sh test.sh\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      test: sh test.sh\n",
+			prev: layerPreamble + "profiles:\n  svc:\n    commands:\n      test: sh test.sh\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc:\n    commands:\n      test: sh test.sh\n",
 			want: []string{`default_profile: "svc" -> "" (repositories without workflows: now run no profile's commands)`},
 		},
 		{
 			name: "default_profile a -> b, neither side HasExecutable: not gated",
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n  other:\n    base: web-node\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n  other:\n    base: web-node\ndefault_profile: other\n",
+			prev: layerPreamble + "profiles:\n  svc: {}\n  other: {}\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc: {}\n  other: {}\ndefault_profile: other\n",
 			want: nil,
 		},
 		{
@@ -164,8 +164,8 @@ func TestExecutableChangesTable(t *testing.T) {
 			// neither of which HasExecutable considers executable, so this
 			// switch is not gated.
 			name: "default_profile a -> b, the new default's only setting is skip_build_scripts: true: not gated (true is the safe direction)",
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n  other:\n    base: web-node\n    image:\n      skip_build_scripts: true\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n  other:\n    base: web-node\n    image:\n      skip_build_scripts: true\ndefault_profile: other\n",
+			prev: layerPreamble + "profiles:\n  svc: {}\n  other:\n    image:\n      skip_build_scripts: true\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc: {}\n  other:\n    image:\n      skip_build_scripts: true\ndefault_profile: other\n",
 			want: nil,
 		},
 		{
@@ -178,14 +178,14 @@ func TestExecutableChangesTable(t *testing.T) {
 			// repository without workflows goes from skipping dependency
 			// install/build scripts in its image build to running them.
 			name: "default_profile a -> b, the old default's only setting is skip_build_scripts: true, the new one has it off: gated (the unsafe direction)",
-			prev: layerPreamble + "profiles:\n  safe:\n    base: web-node\n    image:\n      skip_build_scripts: true\n  other:\n    base: web-node\ndefault_profile: safe\n",
-			next: layerPreamble + "profiles:\n  safe:\n    base: web-node\n    image:\n      skip_build_scripts: true\n  other:\n    base: web-node\ndefault_profile: other\n",
+			prev: layerPreamble + "profiles:\n  safe:\n    image:\n      skip_build_scripts: true\n  other: {}\ndefault_profile: safe\n",
+			next: layerPreamble + "profiles:\n  safe:\n    image:\n      skip_build_scripts: true\n  other: {}\ndefault_profile: other\n",
 			want: []string{`default_profile: "safe" -> "other" (repositories without workflows: now run profile other's commands)`},
 		},
 		{
 			name: "first publish (nil previous): every executable key of the one profile, plus default_profile",
 			prev: "",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      build: sh build.sh\n      test: sh test.sh\n    image:\n      apt: [git]\n      setup: [\"echo hi\"]\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc:\n    commands:\n      build: sh build.sh\n      test: sh test.sh\n    image:\n      apt: [git]\n      setup: [\"echo hi\"]\ndefault_profile: svc\n",
 			want: []string{
 				`profile svc: commands.build: "" -> "sh build.sh"`,
 				`profile svc: commands.test: "" -> "sh test.sh"`,
@@ -196,32 +196,32 @@ func TestExecutableChangesTable(t *testing.T) {
 		},
 		{
 			name: "skip_build_scripts true -> false turns build scripts back on: a change",
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    image:\n      skip_build_scripts: true\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    image:\n      skip_build_scripts: false\ndefault_profile: svc\n",
+			prev: layerPreamble + "profiles:\n  svc:\n    image:\n      skip_build_scripts: true\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc:\n    image:\n      skip_build_scripts: false\ndefault_profile: svc\n",
 			want: []string{`profile svc: image.skip_build_scripts: true -> false`},
 		},
 		{
 			name: "skip_build_scripts true removed (reads as false): a change",
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    image:\n      skip_build_scripts: true\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\ndefault_profile: svc\n",
+			prev: layerPreamble + "profiles:\n  svc:\n    image:\n      skip_build_scripts: true\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc: {}\ndefault_profile: svc\n",
 			want: []string{`profile svc: image.skip_build_scripts: true -> false`},
 		},
 		{
 			name: "skip_build_scripts false -> true is also reported, even though it is the safer direction",
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    image:\n      skip_build_scripts: false\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    image:\n      skip_build_scripts: true\ndefault_profile: svc\n",
+			prev: layerPreamble + "profiles:\n  svc:\n    image:\n      skip_build_scripts: false\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc:\n    image:\n      skip_build_scripts: true\ndefault_profile: svc\n",
 			want: []string{`profile svc: image.skip_build_scripts: false -> true`},
 		},
 		{
 			name: "null vs absent apt: equal, no change",
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    image:\n      apt: null\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\ndefault_profile: svc\n",
+			prev: layerPreamble + "profiles:\n  svc:\n    image:\n      apt: null\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc: {}\ndefault_profile: svc\n",
 			want: nil,
 		},
 		{
 			name: "empty list vs absent apt: equal, no change",
-			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    image:\n      apt: []\ndefault_profile: svc\n",
-			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\ndefault_profile: svc\n",
+			prev: layerPreamble + "profiles:\n  svc:\n    image:\n      apt: []\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc: {}\ndefault_profile: svc\n",
 			want: nil,
 		},
 	}
@@ -265,7 +265,7 @@ func equalStrings(a, b []string) bool {
 // (loudly, in CI) rather than only discovered on a live publish.
 func TestExecutableKeyValuesCoversEveryExecutableKey(t *testing.T) {
 	p := parseLayerOrFatal(t, layerPreamble+
-		"profiles:\n  svc:\n    base: web-node\n    commands:\n      build: sh build.sh\n      test: sh test.sh\n      rerun_failed: { command: pytest, each: \"-k {id}\" }\n    image:\n      apt: [git]\n      setup: [\"echo hi\"]\ndefault_profile: svc\n",
+		"profiles:\n  svc:\n    commands:\n      build: sh build.sh\n      test: sh test.sh\n      rerun_failed: { command: pytest, each: \"-k {id}\" }\n    image:\n      apt: [git]\n      setup: [\"echo hi\"]\ndefault_profile: svc\n",
 	).Profiles["svc"]
 	for _, key := range config.ExecutableKeys {
 		if err := executableKeyValues(map[string]string{}, p, key); err != nil {

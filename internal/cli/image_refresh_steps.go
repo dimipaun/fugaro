@@ -86,8 +86,9 @@ func refreshReload(ctx context.Context, p *refreshPlan) (*refreshTarget, error) 
 		specLC.BaseImages = map[string]string{}
 	}
 	for _, w := range cfg.Workflows {
-		if specLC.BaseImages[w.Base] == "" {
-			if specLC.BaseImages[w.Base], err = image.BaseRef(w.Base, Version); err != nil {
+		kind := w.BaseKind()
+		if specLC.BaseImages[kind] == "" {
+			if specLC.BaseImages[kind], err = image.BaseRef(Version); err != nil {
 				return nil, userErr("%v", err)
 			}
 		}
@@ -222,18 +223,114 @@ func (r *initRun) askBuild(what string) (confirmed, reachable bool, err error) {
 	return r.askTyped(what)
 }
 
+// refreshCloneJobs is part of step 4: a checkout: clone workflow has no
+// derived image to rebuild, so its job's container image moves to the
+// local config's base_images.base directly, through the Cloud Run Admin
+// API (as refreshCheckJob moves the daily check job's), after its own
+// confirmation; no Cloud Build is ever submitted for it.
+//
+// Before any of that (review finding, 0.7.0 safety fix round 2): while
+// cloneShipped is false, no fugaro release can run a checkout: clone
+// workflow's job at all, so this refuses to move it onto base_images.base
+// in the first place, before the cloud calls below — the same gate
+// planRepo applies before deploying one. refuseClonesNotShipped's error is
+// cloneErr to refreshBuilds' caller, so it never stops the baked rebuild
+// offers the rest of this step makes for the repository's other workflows
+// (same as a declined clone confirmation already does not, see
+// TestRefreshDeclinedCloneJobDoesNotBlockBakedRebuilds).
+func (r *initRun) refreshCloneJobs(ctx context.Context, p *refreshPlan, t *refreshTarget) error {
+	var clones []string
+	for _, wf := range p.workflows {
+		if t.cfg.Workflows[wf].Checkout == config.CheckoutClone {
+			clones = append(clones, wf)
+		}
+	}
+	if len(clones) == 0 {
+		return nil
+	}
+	if err := refuseClonesNotShipped(t.spec.Name, "fugaro image refresh", "move", clones); err != nil {
+		return err
+	}
+	newImage := t.lc.BaseImage(config.BaseKind)
+	if newImage == "" {
+		return userErr("the local config has no base_images.%s after the base step, which every checkout: clone workflow's job runs (%s)", config.BaseKind, strings.Join(clones, ", "))
+	}
+	c, err := newInitClients(ctx, t.lc)
+	if err != nil {
+		return err
+	}
+	owner := infra.CheckJobOwner{Repo: t.spec.Name, Label: t.spec.Label}
+	// Every job of a clone workflow is moved, not only the default
+	// account's: with named Claude accounts (gcp.WorkflowVariant, design
+	// docs/design/named-oauth-tokens.md §4) one fugaro.yaml workflow has a
+	// job per account, each labelled with its own variant key and each
+	// pinned to base_images.base itself (unlike a baked workflow's jobs,
+	// which share the derived image's :latest tag and so move together on
+	// one rebuild).
+	var jobs []string
+	for _, wf := range clones {
+		for _, key := range slices.Sorted(maps.Keys(t.spec.Workflows)) {
+			if key == wf || t.spec.Workflows[key].Name == wf {
+				jobs = append(jobs, key)
+			}
+		}
+	}
+	for _, wf := range jobs {
+		ws := t.spec.Workflows[wf]
+		u, err := infra.PlanWorkflowJob(ctx, c, t.lc.GCPProject, t.lc.Region, ws.Job, wf, newImage, owner)
+		switch {
+		case errors.Is(err, infra.ErrCheckJobShape):
+			return userErr("%v", err)
+		case err != nil:
+			return remote(err)
+		case u == nil:
+			fmt.Fprintf(r.w, "  %s: the job %s was not found: run fugaro init --repo in the checkout to deploy it (nothing was updated)\n", wf, pluginwire.Printable(ws.Job))
+			continue
+		case !u.Changes():
+			fmt.Fprintf(r.w, "  %s: No changes: the job already runs from %s\n", wf, pluginwire.Printable(u.NewImage()))
+			continue
+		}
+		fmt.Fprintf(r.w, "  %s: image %s -> %s\n", wf, pluginwire.Printable(u.OldImage()), pluginwire.Printable(u.NewImage()))
+		if err := r.confirm(fmt.Sprintf("updates the checkout: clone workflow %s's job %s in place through the Cloud Run Admin API, as you: its container image moves to %s; no Cloud Build runs, and no other field of the job changes",
+			wf, pluginwire.Printable(u.Job()), pluginwire.Printable(u.NewImage())), "the job was not updated"); err != nil {
+			return err
+		}
+		if err := infra.ApplyWorkflowJob(ctx, c, u); err != nil {
+			return remote(err)
+		}
+		fmt.Fprintf(r.w, "  updated %s's job\n", wf)
+	}
+	return nil
+}
+
 // refreshBuilds is step 4 (D8, D9): each selected workflow whose image is
 // not built from its current base is rebuilt, after its own confirmation
 // (askBuild), from the base the local config now records. A declined or
-// failed build stops the loop: the builds after it are never submitted.
+// failed build stops the loop: the builds after it are never submitted. A
+// checkout: clone workflow has no build to decide (refreshCloneJobs moves
+// its job's image directly instead) and is skipped here.
+//
+// refreshCloneJobs runs first, but its outcome (including a declined
+// confirmation) never stops the baked rebuild offers below: moving a clone
+// workflow's job image and rebuilding a baked workflow's are independent
+// per-workflow actions, bundled into this one step only because neither
+// touches Terraform (review fix: a decline on the clone side used to short-
+// circuit the whole step, so a mixed repository's baked rebuilds were never
+// even offered). cloneErr is returned only once the baked section below has
+// had its own chance to run; a baked-side error, which already carries its
+// own "built so far" detail, takes precedence over it.
 func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshTarget) error {
+	cloneErr := r.refreshCloneJobs(ctx, p, t)
 	host, err := infra.RegistryHost(t.lc)
 	if err != nil {
 		return userErr("%v", err)
 	}
 	var todo, unrecorded []string
 	for _, wf := range p.workflows {
-		kind := t.cfg.Workflows[wf].Base
+		if t.cfg.Workflows[wf].Checkout == config.CheckoutClone {
+			continue
+		}
+		kind := t.cfg.Workflows[wf].BaseKind()
 		want := t.lc.BaseImage(kind)
 		if want == "" {
 			return userErr("the local config has no base image for kind %s after the base step", kind)
@@ -253,7 +350,7 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 	}
 	if len(todo) == 0 {
 		fmt.Fprintln(r.w, "  No changes: every selected image is built from its current base")
-		return nil
+		return cloneErr
 	}
 	b, err := newCloudBuilder(ctx, t.lc)
 	if err != nil {
@@ -278,7 +375,7 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 			notes()
 			return builtSoFar(userErr("the build of %s/%s was not confirmed (the project's name was not typed), so it and the builds after it were not submitted", t.spec.Name, wf), built)
 		}
-		if id, err := r.submitAndWait(ctx, b, t.lc, t.cfg, t.spec, wf, t.lc.BaseImage(t.cfg.Workflows[wf].Base)); err != nil {
+		if id, err := r.submitAndWait(ctx, b, t.lc, t.cfg, t.spec, wf, t.lc.BaseImage(t.cfg.Workflows[wf].BaseKind())); err != nil {
 			notes()
 			if id != "" {
 				// Submitted, then the wait failed (Ctrl-C included): the
@@ -291,5 +388,5 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 		built = append(built, wf)
 	}
 	notes()
-	return nil
+	return cloneErr
 }

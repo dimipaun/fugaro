@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -17,7 +18,7 @@ const cliMinimalYAML = `version: 1
 project: aurora
 git: { provider: github }
 workflows:
-  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }
+  app: { commands: { build: sh build.sh, test: sh test.sh } }
 `
 
 func writeConfig(t *testing.T, body string) string {
@@ -62,6 +63,115 @@ func TestValidateChecksFiles(t *testing.T) {
 	}
 }
 
+// cliBaseYAML is cliMinimalYAML's workflow with no base: (the default
+// Fugaro base), and no image.tools, dockerfile: or mise config: exactly
+// what CheckWarnings' "installs no language runtime" warning is for.
+const cliBaseYAML = `version: 1
+project: aurora
+git: { provider: github }
+workflows:
+  app: { commands: { build: sh build.sh, test: sh test.sh } }
+`
+
+// TestValidateWarnsNoLanguageRuntime pins config.CheckWarnings' wiring into
+// `fugaro validate` (internal/cli/validate.go's one call to it): a Fugaro-
+// base workflow with no mise config and no image.tools is valid but prints
+// the warning, in both the plain and --json forms.
+func TestValidateWarnsNoLanguageRuntime(t *testing.T) {
+	path := writeConfig(t, cliBaseYAML)
+	out, errOut, err := execute(t, "validate", path)
+	if err != nil {
+		t.Fatalf("out=%q errOut=%q err=%v", out, errOut, err)
+	}
+	if !strings.Contains(errOut, "warning: workflows.app: no mise.toml, .tool-versions or image.tools") {
+		t.Fatalf("errOut = %q", errOut)
+	}
+	out, _, err = execute(t, "validate", "--json", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got validateOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("invalid JSON %q: %v", out, err)
+	}
+	if !got.Valid || len(got.Warnings) != 1 || got.Warnings[0].Path != "workflows.app" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+// TestValidateRefusesLeftoverAllowForks (owner ruling 2026-10-12):
+// review.allow_forks is removed outright, not merely undocumented — a
+// fugaro.yaml still setting it is invalid, refused by the strict parser
+// the same as any other unknown key, not a warning.
+//
+// Mutation (restore the Config.Review field): this test fails, finding
+// the leftover key accepted instead of refused.
+func TestValidateRefusesLeftoverAllowForks(t *testing.T) {
+	path := writeConfig(t, cliMinimalYAML+"review:\n  allow_forks: true\n")
+	_, _, err := execute(t, "validate", path)
+	if err == nil {
+		t.Fatal("want an error for the removed review.allow_forks key, got none")
+	}
+}
+
+// TestValidateSkipsNoLanguageRuntimeWarning covers CheckWarnings' two skip
+// conditions through the CLI: image.tools set and dockerfile: set both
+// silence the warning that a plain Fugaro-base workflow gets.
+func TestValidateSkipsNoLanguageRuntimeWarning(t *testing.T) {
+	for name, body := range map[string]string{
+		"image.tools set": strings.Replace(cliBaseYAML, "{ commands:", "{ image: { tools: { node: \"24\" } }, commands:", 1),
+		"dockerfile set":  strings.Replace(cliBaseYAML, "{ commands:", "{ dockerfile: .fugaro/app.Dockerfile, commands:", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := writeConfig(t, body)
+			if name == "dockerfile set" {
+				if err := os.MkdirAll(filepath.Join(filepath.Dir(path), ".fugaro"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(filepath.Dir(path), ".fugaro", "app.Dockerfile"), []byte("FROM x\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, errOut, _ := execute(t, "validate", path)
+			if strings.Contains(errOut, "installs no language runtime") {
+				t.Fatalf("%s: unexpected warning: %q", name, errOut)
+			}
+		})
+	}
+}
+
+// TestValidateWarnsCheckoutClone (0.7.0 safety fix, review finding): a
+// checkout: clone workflow is valid config — the config shape does not
+// change whether fugaro can actually run it — but a launch of it is
+// refused until fugaro cloneSince, since plan Task 17 (the runner's own
+// FUGARO_CHECKOUT support) has not shipped yet. fugaro validate must warn
+// about that, not error, and name checkout: baked as what runs today.
+func TestValidateWarnsCheckoutClone(t *testing.T) {
+	path := writeConfig(t, strings.Replace(cliMinimalYAML, "{ commands:", "{ checkout: clone, commands:", 1))
+	out, errOut, err := execute(t, "validate", path)
+	if err != nil {
+		t.Fatalf("out=%q errOut=%q err=%v", out, errOut, err)
+	}
+	if !strings.Contains(out, "is valid") {
+		t.Fatalf("out = %q, want valid", out)
+	}
+	if !strings.Contains(errOut, "warning: workflows.app.checkout: clone runs are refused at launch until fugaro "+cloneSince) ||
+		!strings.Contains(errOut, "generic-tool plan Task 17") || !strings.Contains(errOut, "checkout: baked runs today") {
+		t.Fatalf("errOut = %q", errOut)
+	}
+	out, _, err = execute(t, "validate", "--json", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got validateOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("invalid JSON %q: %v", out, err)
+	}
+	if !got.Valid || !slices.ContainsFunc(got.Warnings, func(p config.Problem) bool { return p.Path == "workflows.app.checkout" }) {
+		t.Fatalf("got %+v", got)
+	}
+}
+
 func TestConfigExample(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	t.Chdir(t.TempDir())
@@ -75,7 +185,7 @@ func TestConfigExample(t *testing.T) {
 }
 
 func TestValidateReportsCloudRunLimits(t *testing.T) {
-	cfg := strings.Replace(cliMinimalYAML, "base: web-node,", "base: web-node, resources: { cpu: 3, memory: 4Gi },", 1)
+	cfg := strings.Replace(cliMinimalYAML, "{ commands:", "{ resources: { cpu: 3, memory: 4Gi }, commands:", 1)
 	out, _, err := execute(t, "validate", "--json", writeConfig(t, cfg))
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d (%v), output %s", ExitCode(err), err, out)
@@ -282,13 +392,22 @@ func TestValidateWarnsOnLooserThanCeiling(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatal(err)
 	}
-	if !got.Valid || len(got.Problems) != 0 || len(got.Warnings) != 3 {
+	// 4, not 3: workflows.app also warns that the image installs no
+	// language runtime (no mise.toml, .tool-versions or image.tools),
+	// unrelated to the ceiling checks this test is about.
+	if !got.Valid || len(got.Problems) != 0 || len(got.Warnings) != 4 {
 		t.Fatalf("json = %+v", got)
 	}
-	// A tighter file says nothing.
+	// A tighter file says nothing about the ceilings. The no-language-runtime
+	// warning still fires (cliMinimalYAML's workflow has no mise config
+	// either way): stripped out by its own exact text before asserting no
+	// warning at all remains, so a ceiling-unrelated warning this test does
+	// not expect (a clamp, say) would still be caught.
 	path = fileWithBudget(t, "budget: { mode: observe, per_run_usd: 5 }\n", "budget: { mode: enforce, per_run_usd: 2 }\n", pinnedAgent)
-	if _, errOut, err = execute(t, "validate", path); err != nil || strings.Contains(errOut, "warning") {
-		t.Fatalf("tightening warned: %v %q", err, errOut)
+	_, errOut, err = execute(t, "validate", path)
+	stripped := strings.Replace(errOut, "warning: workflows.app: no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)\n", "", 1)
+	if err != nil || strings.Contains(stripped, "warning") {
+		t.Fatalf("tightening warned: %v %q", err, stripped)
 	}
 }
 
@@ -326,10 +445,12 @@ func TestValidateWithoutProjectConfigChecksShapeOnly(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	t.Chdir(t.TempDir())
 	// Nothing of the ceiling is known, so nothing is simulated: a clamp, a
-	// missing pin or an allow-list is not judged.
+	// missing pin or an allow-list is not judged. The one warning that does
+	// fire (cliMinimalYAML's workflow has no mise config) is unrelated to
+	// the ceiling.
 	body := strings.Replace(cliMinimalYAML, "workflows:", "agent: { auth: api-key, model: sonnet }\nbudget: { mode: enforce, per_run_usd: 20, allowed_models: [claude-haiku-4-5] }\nworkflows:", 1)
 	out, errOut, err := execute(t, "validate", writeConfig(t, body))
-	if err != nil || errOut != "" {
+	if err != nil || errOut != "warning: workflows.app: no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)\n" {
 		t.Fatalf("no project config, nothing to simulate: %v %q %q", err, out, errOut)
 	}
 	// The shape is still checked.
@@ -372,24 +493,28 @@ func TestValidateNotOnDefaultBranchSaysSo(t *testing.T) {
 		t.Fatalf("on the default branch: %v %q", err, errOut)
 	}
 	testutil.Git(t, root, "checkout", "-q", "-b", "feature")
-	// A file with no budget or token key has no policy to bound: no note.
-	if out, errOut, err := execute(t, "validate", "--json", file); err != nil || strings.Contains(errOut, "default branch") ||
-		strings.Contains(out, "branch") || !strings.Contains(out, `"warnings": []`) {
+	// A file with no budget or token key has no policy to bound: no branch
+	// note. The one warning present (no mise config) is unrelated to it.
+	out, errOut, err := execute(t, "validate", "--json", file)
+	var noPolicy validateOutput
+	if err != nil || strings.Contains(errOut, "default branch") || json.Unmarshal([]byte(out), &noPolicy) != nil ||
+		len(noPolicy.Warnings) != 1 || noPolicy.Warnings[0].Path != "workflows.app" {
 		t.Fatalf("no policy keys: %v out %q stderr %q", err, out, errOut)
 	}
 	withBudget := strings.Replace(cliMinimalYAML, "workflows:", "budget: { per_run_usd: 1 }\nworkflows:", 1)
 	if err := os.WriteFile(file, []byte(withBudget), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, errOut, err := execute(t, "validate", file)
+	out, errOut, err = execute(t, "validate", file)
 	if err != nil || !strings.Contains(out, "is valid") ||
 		!strings.Contains(errOut, "branch feature, not the default branch (main)") || !strings.Contains(errOut, "can only tighten") {
 		t.Fatalf("%v out %q stderr %q", err, out, errOut)
 	}
-	// The JSON warning names where it is about.
+	// The JSON warning names where it is about (alongside the unrelated
+	// no-mise-config one every cliMinimalYAML-based fixture here gets).
 	out, _, err = execute(t, "validate", "--json", file)
 	var got validateOutput
-	if err != nil || json.Unmarshal([]byte(out), &got) != nil || len(got.Warnings) != 1 || got.Warnings[0].Path != "branch" {
+	if err != nil || json.Unmarshal([]byte(out), &got) != nil || len(got.Warnings) != 2 || got.Warnings[1].Path != "branch" {
 		t.Fatalf("%v %s", err, out)
 	}
 	// A detached HEAD (a CI checkout) is not a branch: no note.

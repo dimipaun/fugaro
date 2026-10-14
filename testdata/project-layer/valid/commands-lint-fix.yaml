@@ -1,0 +1,6 @@
+version: 1
+project: aurora
+gcp_project: proj-1234
+profiles:
+  p:
+    commands: { build: make, test: make test, lint: make lint, fix: make fmt }

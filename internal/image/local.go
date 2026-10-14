@@ -56,14 +56,14 @@ func ExecRunner(ctx context.Context, c Cmd) error {
 
 var releaseRE = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 
-// BaseRef is the published base image for base that matches fugaro version.
-// A development build has none, so the caller must name one.
-func BaseRef(base, version string) (string, error) {
+// BaseRef is the published Fugaro base image matching fugaro version. A
+// development build has none, so the caller must name one.
+func BaseRef(version string) (string, error) {
 	v := strings.TrimPrefix(version, "v")
 	if !releaseRE.MatchString(v) {
-		return "", fmt.Errorf("fugaro %s is a development build with no published base image; pass --base (build one with images/build-base.sh %s)", version, base)
+		return "", fmt.Errorf("fugaro %s is a development build with no published base image; pass --base (build one with images/build-base.sh base)", version)
 	}
-	return "ghcr.io/dimipaun/fugaro-" + base + ":" + v, nil
+	return "ghcr.io/dimipaun/fugaro-base:" + v, nil
 }
 
 var tagUnsafeRE = regexp.MustCompile(`[^a-z0-9._-]+`)
@@ -112,6 +112,17 @@ type LocalResult struct {
 	Origin     string  `json:"origin"`     // the origin URL the checkout keeps
 	Smoke      *Report `json:"smoke,omitempty"`
 	Error      string  `json:"error,omitempty"`
+}
+
+// localSelftestSpec is the SelftestSpec BuildLocal's smoke step sends into
+// the freshly built image: the baked checkout, the workflow's verify
+// settings, and the base kind's critical tool presence and mise-tools check.
+func localSelftestSpec(w config.Workflow, res *LocalResult) SelftestSpec {
+	return SelftestSpec{Base: config.BaseKind, RepoDir: "/work/repo", Commit: res.Commit, Origin: res.Origin, CheckInit: true, CheckHardening: true,
+		Tools: "critical", Mise: true, Verify: verify.Settings{
+			RepoDir: "/work/repo", Build: w.Commands.Build, Test: w.Commands.Test, RerunFailed: w.Commands.RerunFailed,
+			Reports: w.Commands.Reports, TimeoutS: int(w.Timeouts.Verify.Seconds()),
+		}}
 }
 
 // BuildLocal builds the workflow's derived image with the local Docker
@@ -217,13 +228,7 @@ func BuildLocal(ctx context.Context, o LocalOptions) (*LocalResult, error) {
 	// image's own hardening, alongside the checkout check; this is not a
 	// user option, since an image that fails it must not be pushed. The sudoers check runs here, and
 	// the setuid, setgid and file-capability scans run as root below.
-	spec := SelftestSpec{Base: w.Base, RepoDir: "/work/repo", Commit: res.Commit, Origin: res.Origin, CheckInit: true, CheckHardening: true, Verify: verify.Settings{
-		RepoDir: "/work/repo", Build: w.Commands.Build, Test: w.Commands.Test, RerunFailed: w.Commands.RerunFailed,
-		Reports: w.Commands.Reports, TimeoutS: int(w.Timeouts.Verify.Seconds()),
-	}}
-	if w.Base == "web-node" {
-		spec.Node = w.Image.Node
-	}
+	spec := localSelftestSpec(w, res)
 	in, err := json.Marshal(spec)
 	if err != nil {
 		return res, err

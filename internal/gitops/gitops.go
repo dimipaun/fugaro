@@ -11,13 +11,34 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
+
+// commitSHARE matches a full git object ID in hex: 40 characters (SHA-1)
+// or 64 (SHA-256, git's newer, not yet default, object format) — never an
+// abbreviation (git has no short-hash wire protocol: `git fetch origin
+// <12-hex>` fails outright, "couldn't find remote ref") and never
+// anything else: a rev accepted here reaches `git fetch origin <rev>` as
+// a bare positional argument, and git itself accepts an option
+// (--upload-pack=...) in that position, which a provider-supplied value
+// (review mode's PRHead.SHA) must never be allowed to smuggle in.
+var commitSHARE = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+
+// ValidCommitSHA reports whether sha is a full, lower-hex git object ID —
+// checked again here, right before the only two git calls (CheckoutDetached,
+// Worktree) that ever take a caller-supplied rev, even though review mode
+// (reviewmode.go, checkReviewPRs) already checks this once itself: this is
+// the point nothing can reach `git fetch`/`git worktree add` without
+// passing through, so a future caller that forgets review mode's own check
+// is still covered.
+func ValidCommitSHA(sha string) bool { return commitSHARE.MatchString(sha) }
 
 // gitWaitDelay bounds how long a git invocation's Wait spends draining
 // output after the git process itself has exited, or after ctx ends. A
@@ -160,6 +181,78 @@ func (r *Repo) CheckoutNewBranch(ctx context.Context, ref, branch string) error 
 	return err
 }
 
+// lfsFiltersOff are -c overrides that keep git from running any
+// externally-configured smudge/process/clean filter — in practice,
+// git-lfs, wherever a prior `git lfs install` left it configured, locally
+// or globally — while fetching or checking out a reviewed pull request's
+// head (reviewmode.go, design generic-tool §3.6, G12). Review mode never
+// builds or tests the checkout, so there is no reason to run whatever
+// external command a fork's own .gitattributes points a filter at before
+// stripClaudeConfig has had a chance to run, or at all.
+var lfsFiltersOff = []string{"-c", "filter.lfs.process=", "-c", "filter.lfs.smudge=", "-c", "filter.lfs.clean=", "-c", "filter.lfs.required=false"}
+
+// withLFSFiltersOff returns args with lfsFiltersOff's -c overrides first,
+// as a fresh slice each call (never aliasing lfsFiltersOff's own backing
+// array).
+func withLFSFiltersOff(args ...string) []string {
+	return append(append([]string{}, lfsFiltersOff...), args...)
+}
+
+// CheckoutDetached fetches rev (a commit, full, never abbreviated — see
+// ValidCommitSHA) from origin and checks it out with a detached HEAD,
+// review mode's single-pull-request case (design generic-tool §3.6, G12):
+// the commit is never a branch of its own, and gitprov.Provider.FetchPRHead
+// already named the exact one to read, so this never resolves a ref of its
+// own. Untracked files are removed but ignored ones (warm build caches)
+// are kept, the same as CheckoutNewBranch. Filters (lfsFiltersOff) are off
+// for the fetch and the checkout, the two steps that could run one.
+func (r *Repo) CheckoutDetached(ctx context.Context, rev string) error {
+	if !ValidCommitSHA(rev) {
+		return fmt.Errorf("checking out %s: not a full commit hash", safetext.OneLine(rev))
+	}
+	if _, err := r.git(ctx, withLFSFiltersOff("fetch", "--quiet", "origin", rev)...); err != nil {
+		return err
+	}
+	if _, err := r.git(ctx, withLFSFiltersOff("checkout", "--quiet", "-f", "--detach", "FETCH_HEAD")...); err != nil {
+		return err
+	}
+	_, err := r.git(ctx, "clean", "-fd", "--quiet")
+	return err
+}
+
+// Worktree fetches rev from origin and adds it as a detached worktree at
+// dir: review mode's pick case (design generic-tool §3.6, G12), one
+// directory per pull request it compares, so the reviewer can read every
+// attempt at once. dir's parent must already exist. Filters (lfsFiltersOff)
+// are off for the fetch and the worktree add, the two steps that could run
+// one.
+//
+// dir is removed first, and any worktree administration left over for it
+// pruned, so a dir left behind by an earlier run on the same warm
+// container or retried execution (reviewDir's own doc: pick's checkouts
+// are not part of the image or clone that gets reset between runs the way
+// r.d.WorkDir itself is) does not make `worktree add` fail outright — the
+// same reuse `CheckoutDetached`'s own force checkout and clean already
+// handle for the single-pull-request case, just reached a different way
+// here since a worktree's target directory, unlike a checked-out branch,
+// cannot simply be overwritten in place.
+func (r *Repo) Worktree(ctx context.Context, rev, dir string) error {
+	if !ValidCommitSHA(rev) {
+		return fmt.Errorf("adding a worktree at %s: not a full commit hash", safetext.OneLine(rev))
+	}
+	if _, err := r.git(ctx, withLFSFiltersOff("fetch", "--quiet", "origin", rev)...); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("removing %s before adding it as a worktree: %w", dir, err)
+	}
+	if _, err := r.git(ctx, "worktree", "prune"); err != nil {
+		return err
+	}
+	_, err := r.git(ctx, withLFSFiltersOff("worktree", "add", "--quiet", "--detach", dir, "FETCH_HEAD")...)
+	return err
+}
+
 // FetchBase updates origin/<base>, which AheadOf and the reviewer diff against.
 func (r *Repo) FetchBase(ctx context.Context, base string) error {
 	_, err := r.git(ctx, "fetch", "--quiet", "origin", "+refs/heads/"+base+":refs/remotes/origin/"+base)
@@ -211,6 +304,26 @@ func (r *Repo) CommitAll(ctx context.Context, msg string) (bool, error) {
 // where the agent committed nothing.
 func (r *Repo) CommitEmpty(ctx context.Context, msg string) error {
 	_, err := r.git(ctx, "commit", "--quiet", "--no-verify", "--allow-empty", "-m", msg)
+	return err
+}
+
+// ResetTo resets HEAD and the working tree to ref (a commit, never a
+// symbolic ref the command being discarded could itself have moved —
+// gate.go passes the commit it read before running commands.fix, not
+// "HEAD", which a fix that committed on its own would have moved out from
+// under a literal HEAD reset), discarding every change to a tracked file —
+// including any commit the discarded command made on top of ref — then
+// removes untracked files and directories (git clean -fd, never -x):
+// anything git already ignores — a warm dependency cache, a restored
+// toolchain — survives, the same guarantee CheckoutNewBranch's own clean
+// -fd gives a fresh checkout. Used when a command's output, or its own
+// history, cannot be trusted (gate.go: commands.fix timed out, failed, or
+// committed on its own).
+func (r *Repo) ResetTo(ctx context.Context, ref string) error {
+	if _, err := r.git(ctx, "reset", "--quiet", "--hard", ref); err != nil {
+		return err
+	}
+	_, err := r.git(ctx, "clean", "-fd", "--quiet")
 	return err
 }
 

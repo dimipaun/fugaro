@@ -420,6 +420,100 @@ func TestBitbucketPullRequestOpen(t *testing.T) {
 	}
 }
 
+// TestBitbucketFetchPRHead covers review mode's three cases against the
+// same fixture shape TestBitbucketPullRequestOpen uses, plus the one more
+// exchange #12's own fix now needs (pull_open_head.json, not the shared
+// pull_open.json: PullRequest-only tests must not see an extra, unconsumed
+// exchange): PR #12 is open and not a fork — resolveFullHash resolves its
+// abbreviated source.commit.hash to a full one, which gitops.ValidCommitSHA
+// requires and Bitbucket's pull-request response never gives on its own —
+// #14's source repository is unknown (a deleted fork: fails closed,
+// Fork=true, and no commit to resolve), and #15 really is a fork (also no
+// resolution: a fork's own commit may not be reachable from this
+// repository, and review mode refuses every Bitbucket fork before checkout
+// regardless).
+//
+// Mutation (invert the Fork comparison to ==): #12 fails, wanting
+// Fork=false but getting true.
+func TestBitbucketFetchPRHead(t *testing.T) {
+	p := open(t, "pull_open_head.json")
+	got, err := p.FetchPRHead(ctx, 12)
+	want := gitprov.PRHead{SHA: "0123456789abcdef0123456789abcdef01234567", Fork: false, Open: true,
+		AuthorID: "712020:00000000-0000-4000-8000-00000000b07e", AuthorLogin: "fugaro-bot", SourceRepo: "acme/web"}
+	if err != nil || got != want {
+		t.Fatalf("FetchPRHead(12) = %+v, %v, want %+v", got, err, want)
+	}
+	if got.Collaborator || got.Self {
+		t.Fatalf("FetchPRHead(12) = %+v, want Collaborator=false, Self=false (Bitbucket has no such signal)", got)
+	}
+	// Mutation (guard the comparison with `info.SourceRepo != "" && ...`):
+	// this fails, wanting Fork=true but getting false (PR #14's source
+	// repository is unknown, which must fail closed, not read as a match).
+	if got, err := p.FetchPRHead(ctx, 14); err != nil || !got.Fork {
+		t.Fatalf("FetchPRHead(14) = %+v, %v, want Fork=true", got, err)
+	}
+	if got, err := p.FetchPRHead(ctx, 15); err != nil || !got.Fork {
+		t.Fatalf("FetchPRHead(15) = %+v, %v, want Fork=true", got, err)
+	}
+}
+
+// TestBitbucketFetchPRHeadResolvesAbbreviatedHash: review mode runs every
+// PRHead.SHA through gitops.ValidCommitSHA before any checkout, which
+// requires a full 40- or 64-character hex object ID; Bitbucket's own
+// pull-request API gives only an abbreviated, 12-hex one
+// (pullDetail.Source.Commit.Hash), which always failed that check on its
+// own — refusing every single Bitbucket pull request review mode ever
+// saw, a trusted, same-repository one included, contradicting
+// docs/recipes.md §3's own claim that such a PR is reviewable. Pinned here
+// directly, rather than only implicitly by TestBitbucketFetchPRHead's own
+// `want`, since this is the property that actually matters.
+//
+// Mutation (in FetchPRHead, use info.HeadSHA directly instead of calling
+// resolveFullHash): this test fails, finding the 12-character abbreviated
+// hash instead of a full one.
+func TestBitbucketFetchPRHeadResolvesAbbreviatedHash(t *testing.T) {
+	got, err := open(t, "pull_open_head_only12.json").FetchPRHead(ctx, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.SHA) != 40 {
+		t.Fatalf("SHA = %q (%d chars), want a full, 40-character hash", got.SHA, len(got.SHA))
+	}
+}
+
+// TestBitbucketFetchPRHeadMerged covers a pull request already merged: not
+// open, review mode must refuse it. Uses the plain pull_merged.json, not a
+// "_head" variant: a merged PR's hash is never resolved at all now (only
+// an OPEN, same-repository head's is — see TestBitbucketFetchPRHeadClosedNoCommit404,
+// the case that fix is actually for), so no extra commit-endpoint exchange
+// is needed here any more.
+func TestBitbucketFetchPRHeadMerged(t *testing.T) {
+	got, err := open(t, "pull_merged.json").FetchPRHead(ctx, 12)
+	if err != nil || got.Open {
+		t.Fatalf("got %+v, %v, want Open=false", got, err)
+	}
+}
+
+// TestBitbucketFetchPRHeadClosedNoCommit404: a closed/declined pull
+// request's source branch, and the commit it pointed at, can be gone from
+// Bitbucket entirely (its branch deleted once the pull request closed);
+// resolving its hash would 404 against the commit endpoint, surfacing as
+// a "reading pull request" infra error instead of checkReviewPRs' own,
+// clearer "not open" refusal. This fixture has no commit-endpoint
+// exchange configured at all: if FetchPRHead still tried to resolve the
+// hash, the fake server would answer "unexpected request" instead (the
+// mutation below reproduces exactly that).
+//
+// Mutation (drop `&& open` from FetchPRHead's `if sha != "" && !fork && open`
+// condition): this test fails, finding an "unexpected request" error from
+// the fake server instead of a clean Open=false result.
+func TestBitbucketFetchPRHeadClosedNoCommit404(t *testing.T) {
+	got, err := open(t, "pull_declined_commit404.json").FetchPRHead(ctx, 12)
+	if err != nil || got.Open {
+		t.Fatalf("got %+v, %v, want Open=false, no error", got, err)
+	}
+}
+
 // TestBitbucketPullRequestWrongID: a response naming another pull request
 // than the one asked for is an error, and an update by number never
 // writes to it.
@@ -713,5 +807,25 @@ func TestBitbucketEnsureByNumberDeclined(t *testing.T) {
 		if !errors.Is(err, gitprov.ErrPRNotOpen) || pr.Number != n || pr.URL == "" {
 			t.Fatalf("EnsurePR(#%d) = %+v, %v; want ErrPRNotOpen with the PR", n, pr, err)
 		}
+	}
+}
+
+// TestBitbucketResolveFullHashRejectsMismatch: resolveFullHash's response
+// is trusted all the way to `git fetch`/`git worktree add` as the
+// revision to check out, so accepting whatever hash the commit endpoint
+// returns — not necessarily a full hash OF THE SAME COMMIT asked for —
+// would let a compromised or misbehaving Bitbucket endpoint substitute an
+// unrelated commit (still a validly-shaped 40-hex string, so
+// gitops.ValidCommitSHA alone would not have caught it). This fixture's
+// response hash shares no prefix with the requested "0123456789ab" at
+// all.
+//
+// Mutation (drop the `!strings.HasPrefix(c.Hash, rev)` half of the
+// condition, keeping only ValidCommitSHA): this test fails, finding the
+// mismatched hash accepted instead of refused.
+func TestBitbucketResolveFullHashRejectsMismatch(t *testing.T) {
+	got, err := open(t, "pull_open_head_mismatched.json").FetchPRHead(ctx, 12)
+	if err == nil || !strings.Contains(err.Error(), "not a full hash of the same commit") {
+		t.Fatalf("got %+v, %v, want an error rejecting the mismatched hash", got, err)
 	}
 }

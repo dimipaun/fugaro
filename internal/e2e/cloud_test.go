@@ -341,7 +341,7 @@ func (r *cloudRig) cli(args ...string) (string, error) {
 // lsRun is id's row in ls --json of acme/app, and ls's totals.
 func (r *cloudRig) lsRun(id string, extra ...string) (map[string]any, map[string]any) {
 	r.t.Helper()
-	out, err := r.cli(append([]string{"ls", "--json", "--repo", "acme/app", "--since", "0"}, extra...)...)
+	out, err := r.cli(append([]string{"runs", "ls", "--json", "--repo", "acme/app", "--since", "0"}, extra...)...)
 	if err != nil {
 		r.t.Fatalf("ls: %v", err)
 	}
@@ -653,7 +653,7 @@ func TestCloudRunLsLogsDiagnose(t *testing.T) {
 		t.Fatalf("ls --batch other: totals %v", totals)
 	}
 	// Plain ls: the local config's repositories, the last 7 days.
-	if out, err := r.cli("ls"); err != nil || !strings.Contains(out, id) || !strings.Contains(out, "succeeded") {
+	if out, err := r.cli("runs", "ls"); err != nil || !strings.Contains(out, id) || !strings.Contains(out, "succeeded") {
 		t.Fatalf("ls: %s, %v", out, err)
 	}
 
@@ -965,7 +965,7 @@ func TestCloudFollowUpOnePR(t *testing.T) {
 	}
 
 	// ls --pr 1 shows both runs and the PR's total cost.
-	out, err = r.cli("ls", "--json", "--pr", "1")
+	out, err = r.cli("runs", "ls", "--json", "--pr", "1")
 	var ls struct {
 		Runs   []map[string]any `json:"runs"`
 		Totals map[string]any   `json:"totals"`
@@ -1038,7 +1038,7 @@ func TestCloudFollowUpOnePR(t *testing.T) {
 	if len(calls) != 6 || !slices.Contains(calls[4].Args, "--resume") || !strings.Contains(calls[4].Prompt, "Renamed x as asked. key [REDACTED]") {
 		t.Fatalf("the second follow-up's implement: %d calls; %+v", len(calls), calls[min(4, len(calls)-1)])
 	}
-	out, err = r.cli("ls", "--json", "--pr", "1")
+	out, err = r.cli("runs", "ls", "--json", "--pr", "1")
 	if err != nil || json.Unmarshal([]byte(out), &ls) != nil || !sameRunIDs(ls.Runs, first, second, third) ||
 		ls.Totals["runs"] != float64(3) || ls.Totals["model_usd"] != float64(4.5) {
 		t.Fatalf("ls --pr 1 after the second follow-up: %s, %v", out, err)

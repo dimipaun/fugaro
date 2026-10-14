@@ -273,7 +273,7 @@ func TestInitRepoUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, append(data, "base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc}\n"...), 0o600); err != nil {
+	if err := os.WriteFile(path, append(data, "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc}\n"...), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), checkoutYAML("github", "api-key", "aurora", ""))
@@ -335,7 +335,7 @@ func TestRepoStageRunsTheEngine(t *testing.T) {
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
-	r.appendConfig(t, "base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc}\n")
+	r.appendConfig(t, "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc}\n")
 	r.script["show"] = map[string]any{"stdout": `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"x"}]}}}`}
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"project_name": "borealis"})}
 	r.save(t)
@@ -392,7 +392,7 @@ func TestRepoEngineRefusesTheBuildWhenTheLayerBucketIsUnreadable(t *testing.T) {
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
-	r.appendConfig(t, "base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc}\n")
+	r.appendConfig(t, "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc}\n")
 	r.script["show"] = map[string]any{"stdout": `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"x"}]}}}`}
 	r.script["output"] = map[string]any{"stdout": outputsJSON(t)} // project_name: aurora, matching the checkout below
 	r.save(t)
@@ -400,7 +400,7 @@ func TestRepoEngineRefusesTheBuildWhenTheLayerBucketIsUnreadable(t *testing.T) {
 	// Anchored (gcp_project), on bitbucket (no GitHub App to pre-check), with
 	// one workflow that needs no build record to be offered a first build.
 	yaml := "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: bitbucket }\nagent: { auth: oauth }\nworkflows:\n" +
-		"  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+		"  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", yaml)
 	t.Chdir(dir)
 	// Both of app's secrets (its git credential and, agent.auth: oauth,
@@ -466,7 +466,7 @@ func TestRepoEngineWritesTheProjectLayerCopyForItsFirstBuild(t *testing.T) {
 	}
 	// A base at layeredSince (0.6.0) or later: an older one is refused
 	// before the copy write this test means to exercise.
-	r.appendConfig(t, "base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:0.6.0}\n")
+	r.appendConfig(t, "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.6.0}\n")
 	r.script["show"] = map[string]any{"stdout": `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"x"}]}}}`}
 	r.script["output"] = map[string]any{"stdout": outputsJSON(t)} // project_name: aurora, matching the checkout below
 	r.save(t)
@@ -495,7 +495,7 @@ func TestRepoEngineWritesTheProjectLayerCopyForItsFirstBuild(t *testing.T) {
 	// testProjectLayer's own anchor is project aurora, gcp_project proj-1234,
 	// matching this checkout and r.script["output"]'s project_name.
 	yaml := "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: bitbucket }\nworkflows:\n" +
-		"  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+		"  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", yaml)
 	t.Chdir(dir)
 	// testProjectLayer's defaults.agent.auth is api-key, so the workflow

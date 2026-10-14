@@ -65,7 +65,7 @@ func TestCloudCommandsPrintProjectHeader(t *testing.T) {
 	newCloudFixture(t)
 	const ref = "20260927-100000-abcd"
 	for _, args := range [][]string{
-		{"ls"}, {"run", "--retry", ref}, {"cancel", ref}, {"logs", ref}, {"diagnose", ref},
+		{"runs", "ls"}, {"run", "--retry", ref}, {"cancel", ref}, {"logs", ref}, {"diagnose", ref},
 		{"secrets", "ls", "--repo", "acme/app"}, {"image", "status"}, {"image", "check"},
 	} {
 		_, stderr, _ := execute(t, args...)
@@ -79,14 +79,14 @@ func TestCloudCommandsPrintProjectHeader(t *testing.T) {
 // it can't point a project config at another GCP project.
 func TestGCPProjectFlagMustAgree(t *testing.T) {
 	newCloudFixture(t)
-	_, stderr, err := execute(t, "ls", "--gcp-project", "other-proj-99")
+	_, stderr, err := execute(t, "runs", "ls", "--gcp-project", "other-proj-99")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "other-proj-99") || !strings.Contains(err.Error(), "proj-1234") {
 		t.Fatalf("another GCP project: exit %d, err %v", ExitCode(err), err)
 	}
 	if firstLine(stderr) != projectHeader {
 		t.Errorf("stderr %q, want the header first", stderr)
 	}
-	if _, _, err := execute(t, "ls", "--gcp-project", "proj-1234"); err != nil {
+	if _, _, err := execute(t, "runs", "ls", "--gcp-project", "proj-1234"); err != nil {
 		t.Fatalf("the same GCP project: %v", err)
 	}
 }
@@ -97,7 +97,7 @@ func TestProjectFlagNamesNoProject(t *testing.T) {
 	newCloudFixture(t)
 	writeProject(t, "borealis", "proj-5678")
 	for _, name := range []string{"cyan", "proj-1234"} {
-		_, _, err := execute(t, "ls", "--project", name)
+		_, _, err := execute(t, "runs", "ls", "--project", name)
 		if ExitCode(err) != ExitUserError {
 			t.Fatalf("--project %s: exit %d, err %v", name, ExitCode(err), err)
 		}
@@ -108,7 +108,7 @@ func TestProjectFlagNamesNoProject(t *testing.T) {
 		}
 	}
 	// The fixture's own name selects it.
-	if _, stderr, err := execute(t, "ls", "--project", "aurora"); err != nil || firstLine(stderr) != projectHeader {
+	if _, stderr, err := execute(t, "runs", "ls", "--project", "aurora"); err != nil || firstLine(stderr) != projectHeader {
 		t.Fatalf("--project aurora: %v, stderr %q", err, stderr)
 	}
 }
@@ -119,7 +119,7 @@ func TestSelectConfigWithOtherProjectFlag(t *testing.T) {
 	newCloudFixture(t)
 	aurora := os.Getenv("FUGARO_CONFIG")
 	writeProject(t, "borealis", "proj-5678")
-	_, _, err := execute(t, "ls", "--config", aurora, "--project", "borealis")
+	_, _, err := execute(t, "runs", "ls", "--config", aurora, "--project", "borealis")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--config names project aurora, but --project says borealis") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -146,7 +146,7 @@ func TestJSONOutputsCarryProject(t *testing.T) {
 	exec := seedRun(t, f, finished, "", "", true)
 	f.run.SetState(exec, backend.StateSucceeded)
 	for _, args := range [][]string{
-		{"ls", "--json"},
+		{"runs", "ls", "--json"},
 		{"run", "--repo", "acme/app", "--run-id", launched, "--json", "Add a feature"},
 		{"cancel", "--json", finished},
 		{"diagnose", "--json", finished},
@@ -387,7 +387,7 @@ func TestInitInCheckoutWithoutConfig(t *testing.T) {
 		t.Fatalf("--config %s --project borealis: exit %d, err %v", missing, ExitCode(err), err)
 	}
 	// Every other command is refused there: it has no config to act on.
-	_, _, err = execute(t, "ls")
+	_, _, err = execute(t, "runs", "ls")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro init --config-only --gcp-project <id>") {
 		t.Fatalf("ls: exit %d, err %v", ExitCode(err), err)
 	}
@@ -410,7 +410,7 @@ func TestSelectionNotesFollowHeader(t *testing.T) {
 	newCloudFixture(t)
 	writeProject(t, "borealis", "proj-5678")
 	t.Setenv("FUGARO_PROJECT", "borealis")
-	_, stderr, err := execute(t, "ls", "--project", "aurora")
+	_, stderr, err := execute(t, "runs", "ls", "--project", "aurora")
 	lines := strings.Split(stderr, "\n")
 	if err != nil || len(lines) < 2 || lines[0] != projectHeader || lines[1] != "fugaro: note: ignoring FUGARO_PROJECT (borealis): --project selects aurora" {
 		t.Fatalf("ls: %v, stderr %q", err, stderr)

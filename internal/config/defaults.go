@@ -2,25 +2,29 @@ package config
 
 import "time"
 
-// Bases are the base images Fugaro publishes, the values of a workflow's
-// base: (and the keys of the local config's base_images).
-var Bases = []string{"go", "java-services", "web-node"}
+// BaseKind is the one Fugaro base image's kind (design base-image.md): what a
+// workflow without base: builds on, and its key in the local config's
+// base_images.
+const BaseKind = "base"
 
-type baseDefault struct {
-	reports []string
-	cpu     int
-	memory  string
-}
+// MigrationDoc is the guide every refusal of a removed base setting names
+// (design/base-image.md §10).
+const MigrationDoc = "docs/base-image-migration.md"
 
-var baseDefaults = map[string]baseDefault{
-	// java-services runs the repository's services (Postgres, Redis, the
-	// Firebase emulators) next to Gradle and the test JVM in one container,
-	// and the services' data lives in memory on Cloud Run: 16Gi, the most a
-	// 4 vCPU container may have.
-	"java-services": {reports: []string{"**/build/test-results/**/*.xml"}, cpu: 4, memory: "16Gi"},
-	"go":            {reports: []string{"**/junit*.xml"}, cpu: 4, memory: "8Gi"},
-	"web-node":      {reports: []string{"**/junit*.xml"}, cpu: 4, memory: "8Gi"},
-}
+// Bases are the base kinds: the one Fugaro base (the legacy kinds were
+// removed in 0.7.0).
+var Bases = []string{BaseKind}
+
+// legacyBaseMessage is the "base: removed in 0.7.0" refusal, shared by
+// validate.go's workflows.*.base check and layer.go's profiles.*.base
+// check: TestBadBaseMessageConsistency pins that both give byte-for-byte
+// the same message, which a shared constant, not two independent literals,
+// is what actually guarantees. %s is MigrationDoc. It does not repeat
+// "base:" at the front: both callers add() this at a path already ending
+// in ".base" (such as "workflows.web.base"), and Problem.String() joins
+// path and message with ": ", so a leading "base:" here used to print as
+// "workflows.web.base: base: was removed in 0.7.0...", the word doubled.
+const legacyBaseMessage = "was removed in 0.7.0: every workflow builds on the one Fugaro base image. Delete this line and declare the workflow's runtimes in mise.toml (%s)"
 
 // applyDefaults fills in every field fugaro.yaml may omit. The per-base cache
 // default depends on the checkout's lockfile, so it is not applied here:
@@ -49,16 +53,17 @@ func applyDefaults(c *Config) {
 		c.Agent.MaxBudgetUSD = 25
 	}
 	for name, w := range c.Workflows {
-		if d, ok := baseDefaults[w.Base]; ok {
-			if len(w.Commands.Reports) == 0 {
-				w.Commands.Reports = d.reports
-			}
-			if w.Resources.CPU == 0 {
-				w.Resources.CPU = d.cpu
-			}
-			if w.Resources.Memory == "" {
-				w.Resources.Memory = d.memory
-			}
+		if len(w.Commands.Reports) == 0 {
+			w.Commands.Reports = []string{"**/junit*.xml", "**/build/test-results/**/*.xml"}
+		}
+		if w.Resources.CPU == 0 {
+			w.Resources.CPU = 4
+		}
+		if w.Resources.Memory == "" {
+			w.Resources.Memory = "8Gi"
+		}
+		if w.Checkout == "" {
+			w.Checkout = CheckoutBaked
 		}
 		w.Rebuild = w.Rebuild.Defaults()
 		t := &w.Timeouts

@@ -77,7 +77,7 @@
         "review_rounds": { "type": "integer", "minimum": 1, "maximum": 10 },
         "first_line_review": { "enum": ["auto", "on", "off"], "description": "A review by the coder's own model, with a fix between, before the senior review. auto: on only when a provider serves the coder and not the reviewer." },
         "first_line_rounds": { "type": "integer", "minimum": 1, "maximum": 3, "description": "First-line review/fix cycles, counted apart from review_rounds." },
-        "recipe": { "type": "string", "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?)?$", "description": "The recipe (task loop) runs use unless fugaro run --recipe names one: .fugaro/recipes/<name>.yaml, the project's fugaro/recipes/<name>.yaml, or the catalog (default, cheap-loop-senior, claude-solo). Fugaro before 0.5.0 refuses this key." },
+        "recipe": { "type": "string", "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?)?$", "description": "The recipe (task loop) runs use unless fugaro run --recipe names one: .fugaro/recipes/<name>.yaml, the project's fugaro/recipes/<name>.yaml, or the catalog (default, solo, standard, premium, review-only, pick, test-and-fix, lint-fix). Fugaro before 0.5.0 refuses this key." },
         "oauth_token": {
           "type": "string",
           "pattern": "^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$",
@@ -159,34 +159,36 @@
       "not": { "required": ["image", "dockerfile"] },
       "allOf": [
         {
-          "if": { "required": ["base"], "properties": { "base": { "const": "go" } } },
-          "then": {
-            "properties": {
-              "image": { "not": { "required": ["node"] }, "properties": { "skip_build_scripts": { "const": false } } }
-            }
-          }
-        },
-        {
-          "if": { "required": ["base"], "properties": { "base": { "const": "java-services" } } },
-          "then": {
-            "properties": {
-              "image": { "not": { "required": ["node"] }, "properties": { "skip_build_scripts": { "const": false } } }
-            }
-          }
-        },
-        {
           "if": { "not": { "required": ["profile"] } },
-          "then": { "required": ["base", "commands"], "properties": { "commands": { "required": ["build", "test"] } } }
+          "then": { "required": ["commands"], "properties": { "commands": { "required": ["build", "test"] } } }
+        },
+        {
+          "if": { "required": ["checkout"], "properties": { "checkout": { "const": "clone" } } },
+          "then": {
+            "properties": {
+              "dockerfile": { "const": "" },
+              "image": {
+                "properties": {
+                  "apt": { "maxItems": 0 },
+                  "setup": { "maxItems": 0 },
+                  "tools": { "maxProperties": 0 },
+                  "skip_build_scripts": { "const": false }
+                }
+              }
+            }
+          }
         }
       ],
       "properties": {
         "profile": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "The project layer's profile this workflow starts from; its own keys override the profile's field by field. Needs fugaro 0.6.0." },
-        "base": { "enum": ["go", "java-services", "web-node"] },
+        "base": { "not": {}, "$comment": "not: {} forbids this key outright (matches nothing), including an explicit null: the removed-key tombstone idiom (6x across fugaro.schema.json and project-layer.schema.json: base, image.node and image.jdk), not dead code. It keeps the key documented in an editor's tooltip (see description) while still refusing any value. Do not delete when touching this key.", "description": "Removed in 0.7.0: delete it and declare runtimes in mise.toml (docs/base-image-migration.md)" },
+        "checkout": { "enum": ["baked", "clone"], "description": "baked (default): a derived image is built per repository and the job runs it. clone: the job runs the installation's base_images.base directly, with no per-repository build or daily check; image.apt, image.setup, image.tools, image.skip_build_scripts and dockerfile are refused, since they would need a build. clone is not released yet: it needs the runner's own blobless-clone support (generic-tool plan Task 17, not merged) and a published fugaro-base; until fugaro 0.7.1 ships Task 17, a checkout: clone launch is refused at the gate (use checkout: baked to run a workflow today)." },
         "image": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "node": { "type": ["string", "integer"], "pattern": "^[0-9]+(\\.[0-9]+\\.[0-9]+)?$" },
+            "node": { "not": {}, "$comment": "not: {} forbids this key outright (matches nothing), including an explicit null: the removed-key tombstone idiom (6x across fugaro.schema.json and project-layer.schema.json: base, image.node and image.jdk), not dead code. It keeps the key documented in an editor's tooltip (see description) while still refusing any value. Do not delete when touching this key.", "description": "Removed in 0.7.0: declare node in mise.toml ([tools] node = \"24\") or in image.tools (docs/base-image-migration.md)" },
+            "jdk": { "not": {}, "$comment": "not: {} forbids this key outright (matches nothing), including an explicit null: the removed-key tombstone idiom (6x across fugaro.schema.json and project-layer.schema.json: base, image.node and image.jdk), not dead code. It keeps the key documented in an editor's tooltip (see description) while still refusing any value. Do not delete when touching this key.", "description": "Removed in 0.7.0: declare Java in mise.toml ([tools] java = \"temurin-25\") (docs/base-image-migration.md)" },
             "skip_build_scripts": { "type": "boolean" },
             "apt": {
               "type": "array",
@@ -199,6 +201,11 @@
                 "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$",
                 "not": { "pattern": "<<|\\\\\\s*$|^[\\s\\v]*[-\\[]" }
               }
+            },
+            "tools": {
+              "type": "object",
+              "propertyNames": { "pattern": "^[a-z0-9][a-z0-9._/:@-]*$", "maxLength": 128 },
+              "additionalProperties": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._+~:-]*$", "maxLength": 64 }
             }
           }
         },
@@ -210,9 +217,12 @@
         "commands": {
           "type": "object",
           "additionalProperties": false,
+          "dependentRequired": { "fix": ["lint"] },
           "properties": {
             "build": { "type": "string", "minLength": 1 },
             "test": { "type": "string", "minLength": 1 },
+            "lint": { "type": "string", "minLength": 1, "description": "The check step's gate command (build | test | lint)." },
+            "fix": { "type": "string", "minLength": 1, "description": "The check step's autofix command; needs lint, since the gate runs fix, then lint." },
             "rerun_failed": {
               "type": "object",
               "additionalProperties": false,

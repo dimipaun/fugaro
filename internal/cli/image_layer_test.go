@@ -27,7 +27,7 @@ func TestImageBuildRefusesOldBaseWithLayer(t *testing.T) {
 	}
 	slug := mustSlug("github", "acme/other")
 	ctx := context.Background()
-	if _, err := prepareLayerCopy(ctx, env.bucket, slug, l, "ghcr.io/dimipaun/fugaro-web-node:0.5.1"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro image refresh") {
+	if _, err := prepareLayerCopy(ctx, env.bucket, slug, l, "ghcr.io/dimipaun/fugaro-base:0.5.1"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro image refresh") {
 		t.Fatalf("old base: %v", err)
 	}
 	if bucketText(t, f, config.LayerCopyKey(slug)) != "" {
@@ -79,7 +79,7 @@ func TestSubmitRebuildRefusesOldBaseWithLayer(t *testing.T) {
 		t.Fatal(ps)
 	}
 	rs := infra.RepoSpec{Slug: "s", Provider: "github", Workflows: map[string]infra.WorkflowSpec{config.ImplicitWorkflow: {}}}
-	s := infra.CheckJobSpec{BaseImages: map[string]string{"web-node": "ghcr.io/dimipaun/fugaro-web-node:0.5.1"}}
+	s := infra.CheckJobSpec{BaseImages: map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.5.1"}}
 	_, _, err := submitRebuild(context.Background(), nil, "proj-1234", rs, cfg, config.ImplicitWorkflow, s, "gs://fugaro-runs-proj-1234")
 	if err == nil || !strings.Contains(err.Error(), "rebuild the base image first") || !strings.Contains(err.Error(), "fugaro image refresh") || !strings.Contains(err.Error(), "0.5.1") {
 		t.Fatalf("err = %v", err)

@@ -26,6 +26,12 @@ type PrecheckInput struct {
 	Slug    string    // the repository's storage slug (raw, as the path builders escape it)
 	Capped  bool      // false for an oauth workflow: dollars are never capped, kills still apply
 	Now     time.Time // the clock; its UTC day names the day counters
+	// Amount is the headroom lease this precheck judges; zero means
+	// MinLaunchHeadroom, the ordinary single-launch check. A best-of-N
+	// batch (fugaro run --attempts N) passes N * MinLaunchHeadroom once, so
+	// the whole batch is refused before any of its N launches when there
+	// is not room for all of them, not refused one at a time mid-batch.
+	Amount Micros
 }
 
 // PrecheckResult is the pre-check's verdict. When Refused, Reason, Scope and
@@ -128,7 +134,11 @@ func Precheck(ctx context.Context, r Reader, in PrecheckInput) (PrecheckResult, 
 	big := Micros(math.MaxInt64)
 	caps.Limits = &Limits{MaxReserveMicros: &big}
 
-	d := Evaluate(st, Write{Op: OpLease, Day: day, Amount: MinLaunchHeadroom}, caps, kills, in.Now)
+	amount := in.Amount
+	if amount == 0 {
+		amount = MinLaunchHeadroom
+	}
+	d := Evaluate(st, Write{Op: OpLease, Day: day, Amount: amount}, caps, kills, in.Now)
 	switch {
 	case !d.Allow:
 		res.Refused, res.Reason, res.Scope, res.Detail = true, d.Reason, d.Scope, d.Detail

@@ -14,10 +14,10 @@ Ground rules:
 
 ## 1. Find the run
 
-Take the run from the conversation: a `fugaro run` result, a `fugaro ls` row's `run`, or what the user says. A run is `<repo-slug>/<run-id>`, or a bare run ID. If you don't have one:
+Take the run from the conversation: a `fugaro run` result, a `fugaro runs ls` row's `run`, or what the user says. A run is `<repo-slug>/<run-id>`, or a bare run ID. If you don't have one:
 
 ```bash
-fugaro ls --json
+fugaro runs ls --json
 ```
 
 ## 2. Read the logs
@@ -44,11 +44,11 @@ Give the user:
 - the stages reached, in order (`bootstrap`, the agent's stages, `verify`, `review`, `finalize`), and the one the run is in or stopped at
 - what the agent said it was doing, in a line or two
 - errors and warnings, quoted briefly
-- whether the run is still going, from `fugaro ls --json`
+- whether the run is still going, from `fugaro runs ls --json`
 
 Don't dump the log. Quote only the lines that matter. If the run failed or halted, go on with `reference/diagnose.md`, whose `fugaro diagnose <run>` already collects the reason, the failed tests, the review findings and the pull request.
 
 ## 4. When there is nothing to read
 
-- No entries yet: the run may still be `launching` or `pending`. Check `fugaro ls --json` and try again in a minute.
+- No entries yet: the run may still be `launching` or `pending`. Check `fugaro runs ls --json` and try again in a minute.
 - A failed log read: the CLI warns and prints what it has. The user's Cloud Logging access, or the project's log isolation, may be the cause. Tell them what the CLI said.

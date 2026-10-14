@@ -221,6 +221,29 @@ func TestNeedsBuild(t *testing.T) {
 	}
 }
 
+// A checkout: clone workflow never needs a build, with or without a build
+// record: it runs the installation's base image directly, so there is no
+// per-repository image to build or push.
+//
+// Mutation (run, restore): change the `ws.Checkout ==
+// config.CheckoutClone` clause of the skip guard in NeedsBuild to compare against
+// an unreachable value — this test then fails, because "web" (no build
+// record, secret satisfied) joins "api" in the result (got ["api" "web"]).
+func TestNeedsBuildSkipsClone(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	rs, err := Repo(cloneInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.gcs.AddBucket(rs.Installation.RunsBucket, testProjectNumber, managed)
+	all := map[string]bool{"github-app-key": true}
+	got, err := NeedsBuild(ctx, f.c, rs, all)
+	if err != nil || !slices.Equal(got, []string{"api"}) {
+		t.Fatalf("got %q, %v, want only api", got, err)
+	}
+}
+
 // With a named Claude account configured, spec.Workflows holds one entry
 // per account ("web" and "web_acme-personal", design
 // docs/design/named-oauth-tokens.md §4): they share one image, so

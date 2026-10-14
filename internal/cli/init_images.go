@@ -120,10 +120,11 @@ func (s *imagesStage) kinds(ctx context.Context) []string {
 		set[k] = true
 	}
 	if _, cfg, err := loadCheckoutConfigAt(ctx, "."); err == nil && cfg != nil {
+		// loadCheckoutConfigAt only returns a cfg that validated (validate.go
+		// checks w.Base against config.Bases), so every w.BaseKind() here is
+		// already a member of config.Bases.
 		for _, w := range cfg.Workflows {
-			if slices.Contains(config.Bases, w.Base) {
-				set[w.Base] = true
-			}
+			set[w.BaseKind()] = true
 		}
 	}
 	return slices.Sorted(maps.Keys(set))
@@ -156,6 +157,9 @@ func parseExpectDigests(vs []string) (map[string]string, error) {
 	out := map[string]string{}
 	for _, v := range vs {
 		k, d, ok := strings.Cut(v, "=")
+		if ok && slices.Contains(config.LegacyBaseKinds, k) {
+			return nil, fmt.Errorf("--expect-digest %q: want KIND=sha256:<64 hex digits>, KIND one of history, %s: %s was removed in 0.7.0 (%s)", v, strings.Join(config.Bases, ", "), k, config.MigrationDoc)
+		}
 		if !ok || !(k == "history" || slices.Contains(config.Bases, k)) || !expectRE.MatchString(d) {
 			return nil, fmt.Errorf("--expect-digest %q: want KIND=sha256:<64 hex digits>, KIND one of history, %s", v, strings.Join(config.Bases, ", "))
 		}

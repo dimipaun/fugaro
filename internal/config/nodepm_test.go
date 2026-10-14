@@ -88,14 +88,17 @@ func TestDetectNodePMErrors(t *testing.T) {
 	}
 }
 
+// Every workflow builds on the Fugaro base (design base-image.md section 4,
+// base-image plan Task 10), so DefaultCache always detects and warms up the
+// checkout's Node package manager; there is no other kind to special-case.
 func TestDefaultCache(t *testing.T) {
 	root := writeTree(t, map[string]string{"package.json": `{"packageManager":"yarn@4.16.0"}`, "yarn.lock": ""})
-	got, err := DefaultCache("web-node", root)
+	got, err := DefaultCache(root)
 	if err != nil || len(got) != 1 || !slices.Equal(got[0].Key, []string{"yarn.lock"}) || !slices.Equal(got[0].Paths, []string{"~/.yarn/berry/cache"}) {
 		t.Fatalf("DefaultCache = %+v, %v", got, err)
 	}
-	if got, err := DefaultCache("java-services", root); got != nil || err != nil {
-		t.Fatalf("java-services DefaultCache = %+v, %v", got, err)
+	if got, err := DefaultCache(t.TempDir()); got != nil || err != nil {
+		t.Fatalf("a checkout with no package.json: DefaultCache = %+v, %v", got, err)
 	}
 }
 

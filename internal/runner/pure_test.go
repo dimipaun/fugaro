@@ -250,3 +250,33 @@ func TestSystemPromptDataCheckpointRule(t *testing.T) {
 		t.Errorf("a follow-up lacks the never-wait rule")
 	}
 }
+
+// TestSystemPromptDataLintRule pins what the run really gives the agent:
+// `fugaro verify lint` is only named when the run's own fugaro.yaml
+// configures commands.lint. verify.Run refuses an unconfigured lint
+// outright ("this repository does not configure commands.lint"), so naming
+// it unconditionally would tell most repositories' agents — commands.lint
+// is optional, unlike build and test — to run a command that always errors.
+func TestSystemPromptDataLintRule(t *testing.T) {
+	const rule = "fugaro verify lint"
+	mk := func(lint string) string {
+		r := &run{
+			d:    Deps{StateDir: "/s"},
+			rec:  &runstore.Record{Branch: "fugaro/x"},
+			cfg:  &config.Config{},
+			spec: &task.Spec{},
+		}
+		r.cfg.Git.BaseBranch = "main"
+		r.wf.Commands.Lint = lint
+		return SystemPrompt(r.systemPromptData(), "")
+	}
+	if got := mk("golangci-lint run"); !strings.Contains(got, rule) {
+		t.Errorf("commands.lint configured: the prompt lacks the lint rule: %s", got)
+	}
+	if got := mk(""); strings.Contains(got, rule) {
+		t.Errorf("commands.lint unconfigured: the prompt still names fugaro verify lint: %s", got)
+	}
+	if got := mk("   "); strings.Contains(got, rule) {
+		t.Errorf("commands.lint whitespace-only: the prompt still names fugaro verify lint: %s", got)
+	}
+}

@@ -3,7 +3,6 @@ project: acme
 git: { provider: github, base_branch: main }
 workflows:
   go:
-    base: go
     commands:
       build: go build ./...
       test: go test ./...

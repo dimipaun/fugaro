@@ -52,6 +52,7 @@ var skillJSONFields = []jsonFieldClaim{
 	{"config layer", configLayerDoc{}, "generation"},
 	{"config layer", configLayerDoc{}, "sha256"},
 	{"config layer", configLayerDoc{}, "yaml"},
+	{"recipes ls", recipeRow{}, "use_when"},
 }
 
 func init() {
@@ -61,7 +62,7 @@ func init() {
 		}
 	}
 	add("run", launchResult{}, "run", "repo", "run_id", "branch", "execution", "log_url", "status", "previous_run")
-	add("ls", lsDoc{}, "project", "runs", "totals", "warnings",
+	add("runs ls", lsDoc{}, "project", "runs", "totals", "warnings",
 		"runs[].run", "runs[].repo", "runs[].status", "runs[].stage", "runs[].reason", "runs[].halt", "runs[].pr_url",
 		"runs[].branch", "runs[].outcome", "runs[].created", "runs[].cost", "runs[].cost.route_by", "runs[].cost.reported_usd",
 		"runs[].terminal", "runs[].settled", "runs[].base_branch", "runs[].stale_draft", "runs[].draft_fallback", "runs[].pr_status_at")
@@ -149,7 +150,8 @@ func TestLintJSONFieldsExist(t *testing.T) {
 // notFields are backticked tokens on a line about JSON that are not field
 // names: values, files and keys of other documents.
 var notFields = []string{
-	"fugaro.yaml", "yarn.lock", "commands.test", "git.base_branch", "gcp_project", // files and fugaro.yaml keys
+	"fugaro.yaml", "yarn.lock", "commands.test", "git.base_branch", "gcp_project", "mise.toml", // files and fugaro.yaml keys
+	"engines.node",      // a package.json key, not a fugaro field
 	"tool_error",        // a value of a log entry's event
 	"claude_accounts",   // a local-config key (never in --json output: it is operator-only and never published)
 	"agent.oauth_token", // a fugaro.yaml key, not a JSON output field

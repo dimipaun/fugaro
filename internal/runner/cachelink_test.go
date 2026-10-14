@@ -87,7 +87,6 @@ git: { provider: github, base_branch: main }
 agent: { auth: api-key, review_rounds: 1 }
 workflows:
   app:
-    base: web-node
     commands:
       build: sh build.sh
       test: sh test.sh

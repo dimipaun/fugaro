@@ -96,13 +96,13 @@ func TestViewsStripTerminalControls(t *testing.T) {
 	fix := `{"type":"result","subtype":"success","result":` + jsonString("done"+evil) + `}` + "\n"
 	_ = runstore.Open(b, appSlug, id).PutFile(context.Background(), "transcripts/implement-1.jsonl", []byte(fix), "application/x-ndjson")
 	b.Close()
-	for _, args := range [][]string{{"ls"}, {"logs", id}, {"diagnose", id}, {"cancel", "--poll", "10ms", id}} {
+	for _, args := range [][]string{{"runs", "ls"}, {"logs", id}, {"diagnose", id}, {"cancel", "--poll", "10ms", id}} {
 		out, errOut, err := execute(t, args...)
 		if err != nil {
 			t.Fatalf("%v: %v (%s)", args, err, errOut)
 		}
-		if args[0] == "ls" && !strings.Contains(out, id) {
-			t.Fatalf("ls does not list the run it was to be checked on:\n%s", out)
+		if args[0] == "runs" && !strings.Contains(out, id) {
+			t.Fatalf("runs ls does not list the run it was to be checked on:\n%s", out)
 		}
 		noControls(t, strings.Join(args, " "), out)
 		noControls(t, strings.Join(args, " ")+" stderr", errOut)

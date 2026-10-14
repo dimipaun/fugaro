@@ -15,7 +15,6 @@ git:
   provider: github
 workflows:
   web:
-    base: web-node
     commands:
       build: npm run build
       test: npm test
@@ -23,7 +22,6 @@ workflows:
 
 func TestParseImage(t *testing.T) {
 	cfg, problems := Parse([]byte(webYAML + `    image:
-      node: 24
       apt: [libvips-dev, fonts-liberation=1:2.1.5-3]
       setup: ["npx playwright install --with-deps chromium"]
 `))
@@ -31,7 +29,7 @@ func TestParseImage(t *testing.T) {
 		t.Fatalf("unexpected problems: %v", problems)
 	}
 	img := cfg.Workflows["web"].Image
-	if img.Node != "24" || len(img.Apt) != 2 || img.Setup[0] != "npx playwright install --with-deps chromium" || img.IsZero() {
+	if len(img.Apt) != 2 || img.Setup[0] != "npx playwright install --with-deps chromium" || img.IsZero() {
 		t.Fatalf("image = %+v", img)
 	}
 	if !(Image{}).IsZero() {
@@ -51,19 +49,15 @@ func TestParseImageSkipBuildScripts(t *testing.T) {
 	if cfg, _ := Parse([]byte(webYAML)); cfg.Workflows["web"].Image.SkipBuildScripts {
 		t.Fatal("skip_build_scripts defaults to true")
 	}
-	jvm := strings.Replace(webYAML, "web-node", "java-services", 1)
-	if _, problems := Parse([]byte(jvm + "    image: { skip_build_scripts: false }\n")); len(problems) > 0 {
-		t.Fatalf("an explicit false on java-services: %v", problems)
-	}
 }
 
 // imageFieldReasons is config.Image's fields that never run as shell and so
-// stay off ExecutableKeys, with why: Node is a version string checked
-// against nodeVersionRE, never interpolated into a command, and JDK is
-// refused on every base by validateImage, so it never reaches a Dockerfile.
+// stay off ExecutableKeys, with why: Node and JDK were removed in 0.7.0 and
+// are refused unconditionally by validateImage, so neither ever reaches a
+// Dockerfile.
 var imageFieldReasons = map[string]string{
-	"Node": "a version string, matched against nodeVersionRE, never run as shell",
-	"JDK":  "refused on every base by validateImage; it never reaches a Dockerfile",
+	"Node": "removed in 0.7.0; refused unconditionally by validateImage, never run as shell",
+	"JDK":  "removed in 0.7.0; refused unconditionally by validateImage, never reaches a Dockerfile",
 }
 
 // TestImageFieldsAreClassified is decision L7's reflection-style guard: a
@@ -90,14 +84,11 @@ func TestImageFieldsAreClassified(t *testing.T) {
 }
 
 func TestImageProblems(t *testing.T) {
-	jvm := strings.Replace(webYAML, "web-node", "java-services", 1)
 	cases := []struct{ name, yaml, path, msg string }{
-		{"image and dockerfile", webYAML + "    image: { node: \"24\" }\n    dockerfile: .fugaro/web.Dockerfile\n", "workflows.web.dockerfile", "mutually exclusive"},
-		{"jdk on web-node", webYAML + "    image: { jdk: \"21\" }\n", "workflows.web.image.jdk", "is not supported"},
-		{"node on java-services", jvm + "    image: { node: \"24\" }\n", "workflows.web.image.node", "only applies to base web-node"},
-		{"node minor only", webYAML + "    image: { node: \"24.19\" }\n", "workflows.web.image.node", "major version such as 24"},
-		{"node alias", webYAML + "    image: { node: lts }\n", "workflows.web.image.node", "major version such as 24"},
-		{"jdk on java-services", jvm + "    image: { jdk: \"21\" }\n", "workflows.web.image.jdk", "is not supported"},
+		{"image and dockerfile", webYAML + "    image: { apt: [libvips-dev] }\n    dockerfile: .fugaro/web.Dockerfile\n", "workflows.web.dockerfile", "mutually exclusive"},
+		// Image.IsZero must count Tools: before it did, a workflow with
+		// only image.tools set and a dockerfile: slipped past this check.
+		{"tools and dockerfile", webYAML + "    image: { tools: { node: \"24.19.0\" } }\n    dockerfile: .fugaro/web.Dockerfile\n", "workflows.web.dockerfile", "mutually exclusive"},
 		{"apt injection", webYAML + "    image: { apt: [\"curl; rm -rf /\"] }\n", "workflows.web.image.apt[0]", "package name"},
 		{"apt upper case", webYAML + "    image: { apt: [LibVips] }\n", "workflows.web.image.apt[0]", "package name"},
 		{"setup empty", webYAML + "    image: { setup: [\"  \"] }\n", "workflows.web.image.setup[0]", "must not be empty"},
@@ -107,7 +98,6 @@ func TestImageProblems(t *testing.T) {
 		{"setup flag-like (RUN mount)", webYAML + "    image: { setup: [\"--mount=type=secret,id=git-credentials,target=/tmp/c cp /tmp/c /work/repo/.leak\"] }\n", "workflows.web.image.setup[0]", "must not start with - or ["},
 		{"setup exec form", webYAML + "    image: { setup: [\"[\\\"sh\\\", \\\"-c\\\", \\\"echo hi\\\"]\"] }\n", "workflows.web.image.setup[0]", "must not start with - or ["},
 		{"setup leading whitespace then flag", webYAML + "    image: { setup: [\"  --mount=type=bind,target=/x\"] }\n", "workflows.web.image.setup[0]", "must not start with - or ["},
-		{"skip_build_scripts on java-services", jvm + "    image: { skip_build_scripts: true }\n", "workflows.web.image.skip_build_scripts", "only applies to base web-node"},
 		{"skip_build_scripts and dockerfile", webYAML + "    image: { skip_build_scripts: true }\n    dockerfile: .fugaro/web.Dockerfile\n", "workflows.web.dockerfile", "mutually exclusive"},
 		{"dockerfile absolute", webYAML + "    dockerfile: /etc/Dockerfile\n", "workflows.web.dockerfile", "relative path inside the repository"},
 		{"dockerfile parent", webYAML + "    dockerfile: .fugaro/../../x.Dockerfile\n", "workflows.web.dockerfile", "relative path inside the repository"},
@@ -125,32 +115,270 @@ func TestImageProblems(t *testing.T) {
 	}
 }
 
-func TestGoBase(t *testing.T) {
-	data, err := os.ReadFile("../../testdata/config/valid/go.yaml")
-	if err != nil {
-		t.Fatal(err)
+// TestCloneRefusesImageBuildKeys pins design generic-tool.md §2 (G3): a
+// checkout: clone workflow runs the installation's base image with no
+// build, so a key that only a build can honor is refused, naming
+// checkout: baked.
+func TestCloneRefusesImageBuildKeys(t *testing.T) {
+	const msg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
+	cases := []struct{ name, extra, path string }{
+		{"image.apt", "    image: { apt: [jq] }\n", "workflows.web.image.apt"},
+		{"image.setup", "    image: { setup: [\"make deps\"] }\n", "workflows.web.image.setup"},
+		{"image.tools", "    image: { tools: { node: \"24\" } }\n", "workflows.web.image.tools"},
+		{"image.skip_build_scripts", "    image: { skip_build_scripts: true }\n", "workflows.web.image.skip_build_scripts"},
+		{"dockerfile", "    dockerfile: .fugaro/web.Dockerfile\n", "workflows.web.dockerfile"},
 	}
-	cfg, problems := Parse(data)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, problems := Parse([]byte(webYAML + "    checkout: clone\n" + tc.extra))
+			if !hasProblem(problems, tc.path, msg, 0) {
+				t.Errorf("problems = %v, want one at %s: %s", problems, tc.path, msg)
+			}
+		})
+	}
+	cfg, problems := Parse([]byte(webYAML))
 	if len(problems) > 0 {
 		t.Fatalf("unexpected problems: %v", problems)
 	}
-	w := cfg.Workflows["go"]
-	if w.Resources.CPU != 4 || w.Resources.Memory != "8Gi" || len(w.Commands.Reports) == 0 {
-		t.Errorf("defaults = %+v, reports %v", w.Resources, w.Commands.Reports)
+	if cfg.Workflows["web"].Checkout != CheckoutBaked {
+		t.Fatalf("default checkout = %q, want %q", cfg.Workflows["web"].Checkout, CheckoutBaked)
 	}
-	for file, path := range map[string]string{"image-node-on-go": "workflows.go.image.node"} {
-		data, err := os.ReadFile("../../testdata/config/invalid/" + file + ".yaml")
-		if err != nil {
-			t.Fatal(err)
+}
+
+// cloneYAML is webYAML without base: web-node: checkout: clone always runs
+// the Fugaro base image, so combining it with a legacy base is refused
+// (TestCheckoutCloneRefusesLegacyBase), and these two tests must not
+// trip that rule while pinning something else.
+const cloneYAML = `
+version: 1
+project: aurora
+git:
+  provider: github
+workflows:
+  web:
+    commands:
+      build: npm run build
+      test: npm test
+`
+
+// TestCheckoutCloneAlone is the companion to TestCloneRefusesImageBuildKeys:
+// checkout: clone with no build keys set is valid.
+func TestCheckoutCloneAlone(t *testing.T) {
+	cfg, problems := Parse([]byte(cloneYAML + "    checkout: clone\n"))
+	if len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+	if cfg.Workflows["web"].Checkout != CheckoutClone {
+		t.Fatalf("checkout = %q, want %q", cfg.Workflows["web"].Checkout, CheckoutClone)
+	}
+}
+
+// TestCheckoutCloneAllowsEmptyBuildKeys pins that checkout: clone checks a
+// build key's value, not its mere presence: an empty image.apt, image.setup
+// or image.tools, or an empty dockerfile:, means nothing to refuse (schema
+// corpus: testdata/config/valid/checkout-clone-empty-apt.yaml exercises the
+// same boundary against fugaro.schema.json).
+func TestCheckoutCloneAllowsEmptyBuildKeys(t *testing.T) {
+	cfg, problems := Parse([]byte(cloneYAML + "    checkout: clone\n    image: { apt: [], setup: [], tools: {}, skip_build_scripts: false }\n"))
+	if len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+	if cfg.Workflows["web"].Checkout != CheckoutClone {
+		t.Fatalf("checkout = %q, want %q", cfg.Workflows["web"].Checkout, CheckoutClone)
+	}
+}
+
+// TestCheckoutInvalidValue pins that checkout: is an enum of baked and clone.
+func TestCheckoutInvalidValue(t *testing.T) {
+	_, problems := Parse([]byte(webYAML + "    checkout: sometimes\n"))
+	if !hasProblem(problems, "workflows.web.checkout", "must be baked or clone", 0) {
+		t.Fatalf("problems = %v", problems)
+	}
+}
+
+// TestCheckoutBadValueCorpus is testdata/config/invalid/checkout-bad-value.yaml
+// (the schema corpus: fugaro.schema.json's checkout enum had no corpus case),
+// read from disk like TestGoBase's and TestJavaServicesBase's corpus cases:
+// it must fail for exactly the one reason the file exists to pin.
+func TestCheckoutBadValueCorpus(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/config/invalid/checkout-bad-value.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != "workflows.web.checkout" || !strings.Contains(ps[0].Message, "must be baked or clone") {
+		t.Fatalf("problems = %v, want exactly one at workflows.web.checkout: must be baked or clone", ps)
+	}
+}
+
+// TestCheckoutCloneToolsCorpus is testdata/config/invalid/checkout-clone-tools.yaml:
+// checkout: clone refuses image.tools exactly like image.apt and
+// image.setup, read from disk like TestCheckoutBadValueCorpus.
+func TestCheckoutCloneToolsCorpus(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/config/invalid/checkout-clone-tools.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const msg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
+	if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != "workflows.web.image.tools" || !strings.Contains(ps[0].Message, msg) {
+		t.Fatalf("problems = %v, want exactly one at workflows.web.image.tools: %s", ps, msg)
+	}
+}
+
+// TestCheckoutCloneSkipBuildCorpus is
+// testdata/config/invalid/checkout-clone-skip-build.yaml: checkout: clone
+// refuses image.skip_build_scripts, read from disk like
+// TestCheckoutCloneToolsCorpus. It closes a schema corpus gap: fugaro.schema.json's
+// checkout: clone branch has a skip_build_scripts: {const: false} clause
+// with no corpus file exercising it (every other clause in that branch had
+// one).
+func TestCheckoutCloneSkipBuildCorpus(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/config/invalid/checkout-clone-skip-build.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const msg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
+	if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != "workflows.web.image.skip_build_scripts" || !strings.Contains(ps[0].Message, msg) {
+		t.Fatalf("problems = %v, want exactly one at workflows.web.image.skip_build_scripts: %s", ps, msg)
+	}
+}
+
+// TestCheckoutCloneRefusesLegacyBase (review finding 4, LOW): checkout:
+// clone always runs the Fugaro base image, so a base: alongside it is
+// refused rather than silently ignored. Since the 0.7.0 cut every base:
+// (the legacy go, java-services, web-node, and base itself) is refused by
+// the shared legacyBaseMessage; this pins that the refusal still holds with
+// checkout: clone, and that it is exactly one problem (not doubled by a
+// clone-specific copy).
+//
+// Mutation (run, restore): remove the `if w.Base != ""` refusal from
+// validate.go's workflow loop — this test then wrongly accepts every base:
+// with checkout: clone.
+func TestCheckoutCloneRefusesLegacyBase(t *testing.T) {
+	for _, base := range []string{"go", "java-services", "web-node", "base"} {
+		yaml := "\nversion: 1\nproject: aurora\ngit:\n  provider: github\nworkflows:\n  web:\n    base: " + base +
+			"\n    checkout: clone\n    commands:\n      build: x\n      test: x\n"
+		_, ps := Parse([]byte(yaml))
+		if len(ps) != 1 || ps[0].Path != "workflows.web.base" || !strings.Contains(ps[0].Message, "was removed in 0.7.0") {
+			t.Errorf("base %s: problems = %v, want exactly one at workflows.web.base: was removed in 0.7.0", base, ps)
 		}
-		if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != path {
-			t.Errorf("%s: problems = %v, want one at %s", file, ps, path)
+	}
+	// No base: at all is the clone shape.
+	cfg, problems := Parse([]byte(cloneYAML + "    checkout: clone\n"))
+	if len(problems) > 0 {
+		t.Fatalf("checkout: clone with no base: unexpected problems: %v", problems)
+	}
+	if cfg.Workflows["web"].Checkout != CheckoutClone {
+		t.Fatalf("checkout = %q, want %q", cfg.Workflows["web"].Checkout, CheckoutClone)
+	}
+}
+
+// TestCheckoutCloneLegacyBaseCorpus is
+// testdata/config/invalid/checkout-clone-legacy-base.yaml, read from disk
+// like TestCheckoutCloneSkipBuildCorpus: exactly one problem, the cut's
+// base: refusal.
+func TestCheckoutCloneLegacyBaseCorpus(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/config/invalid/checkout-clone-legacy-base.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const msg = "was removed in 0.7.0"
+	if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != "workflows.web.base" || !strings.Contains(ps[0].Message, msg) {
+		t.Fatalf("problems = %v, want exactly one at workflows.web.base: %s", ps, msg)
+	}
+}
+
+// TestValidMiseTool is a table test of the single gate validateImage uses
+// for every image.tools entry. Every image.tools key or version reaches a
+// Dockerfile or a generated mise config verbatim (design base-image.md
+// section 4), so this charset is a strict allowlist, not a denylist: each
+// bad case below is a valid prefix plus exactly one character (or, for the
+// length caps, one byte) that must not be let through. A regex or cap
+// change that lets any of these pass is a real security regression
+// (arbitrary code execution through a mise backend such as cargo:, go:,
+// npm:, asdf:/vfox: or ubi:/github:/aqua:, per the ExecutableKeys ruling
+// above).
+func TestValidMiseTool(t *testing.T) {
+	for _, name := range []string{"npm:@scope/pkg", "aqua:owner/repo", "node"} {
+		if !ValidMiseTool(name, "1.0.0") {
+			t.Errorf("ValidMiseTool(%q, \"1.0.0\") = false, want true", name)
+		}
+	}
+	for _, version := range []string{"temurin-25", "24.19.0"} {
+		if !ValidMiseTool("node", version) {
+			t.Errorf("ValidMiseTool(\"node\", %q) = false, want true", version)
+		}
+	}
+	badVersions := []string{
+		"24\"", "24'", "24\\", "24\n", "24 ", "24;", "24$x", "24`x`",
+		"24/x", "24@x", "24%", "24\x00", "２４", "-24",
+	}
+	for _, v := range badVersions {
+		if ValidMiseTool("node", v) {
+			t.Errorf("ValidMiseTool(\"node\", %q) = true, want false", v)
+		}
+	}
+	badNames := []string{
+		`node"`, "node\n", "node x", "node=", "node]", "!node", "Node", "-node", "ｎode",
+	}
+	for _, name := range badNames {
+		if ValidMiseTool(name, "1.0.0") {
+			t.Errorf("ValidMiseTool(%q, \"1.0.0\") = true, want false", name)
 		}
 	}
 }
 
-func TestJavaServicesBase(t *testing.T) {
-	data, err := os.ReadFile("../../testdata/config/valid/java-services.yaml")
+// TestValidMiseToolLengthCaps pins the exact boundary of each cap: the
+// longest accepted key or version, and one byte past it.
+func TestValidMiseToolLengthCaps(t *testing.T) {
+	longName := strings.Repeat("a", maxMiseToolNameLen)
+	if !ValidMiseTool(longName, "1.0.0") {
+		t.Errorf("a %d-byte name must be valid", maxMiseToolNameLen)
+	}
+	if ValidMiseTool(longName+"a", "1.0.0") {
+		t.Errorf("a %d-byte name must be refused", maxMiseToolNameLen+1)
+	}
+	longVersion := strings.Repeat("1", maxMiseToolVersionLen)
+	if !ValidMiseTool("node", longVersion) {
+		t.Errorf("a %d-byte version must be valid", maxMiseToolVersionLen)
+	}
+	if ValidMiseTool("node", longVersion+"1") {
+		t.Errorf("a %d-byte version must be refused", maxMiseToolVersionLen+1)
+	}
+}
+
+// TestImageToolsVersionMustBeAQuotedString pins the ruling that an
+// image.tools version must be a YAML string scalar: "python: 3.10" is an
+// unquoted YAML float (a human reading it expects the string "3.10"), and
+// schemas/fugaro.schema.json already requires a JSON string there, so Go
+// must refuse it rather than silently stringify it (looser than the
+// schema). A plain scalar YAML does not resolve as a number, bool or null,
+// such as temurin-25, stays accepted without quotes.
+func TestImageToolsVersionMustBeAQuotedString(t *testing.T) {
+	for _, tc := range []struct{ value, want string }{
+		{"3.10", "must be a quoted string version"},
+		{"24", "must be a quoted string version"},
+		{"25.00", "must be a quoted string version"},
+		{"true", "must be a quoted string version"},
+		{`"24.19.0"`, ""},
+		{"temurin-25", ""},
+	} {
+		y := strings.Replace(baseYAML, "    commands:", "    image: { tools: { node: "+tc.value+" } }\n    commands:", 1)
+		_, problems := Parse([]byte(y))
+		got := ""
+		for _, p := range problems {
+			got += p.String() + "\n"
+		}
+		if (tc.want == "") != (got == "") || (tc.want != "" && !strings.Contains(got, tc.want)) {
+			t.Errorf("node: %s: problems %q, want %q", tc.value, got, tc.want)
+		}
+	}
+}
+
+// TestServicesCorpusGetsUniformDefaults: testdata/config/valid/services.yaml
+// (the java-services replacement, design base-image.md §5) gets the uniform
+// defaults (B10), not the old java-services base's 16Gi.
+func TestServicesCorpusGetsUniformDefaults(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/config/valid/services.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,20 +387,8 @@ func TestJavaServicesBase(t *testing.T) {
 		t.Fatalf("unexpected problems: %v", problems)
 	}
 	w := cfg.Workflows["server"]
-	if w.Resources.CPU != 4 || w.Resources.Memory != "16Gi" ||
-		len(w.Commands.Reports) != 1 || w.Commands.Reports[0] != "**/build/test-results/**/*.xml" {
+	if w.Resources.CPU != 4 || w.Resources.Memory != "8Gi" ||
+		!slices.Equal(w.Commands.Reports, []string{"**/junit*.xml", "**/build/test-results/**/*.xml"}) {
 		t.Errorf("defaults = %+v, reports %v", w.Resources, w.Commands.Reports)
-	}
-	for file, path := range map[string]string{
-		"image-node-on-java-services": "workflows.server.image.node",
-		"image-jdk-on-java-services":  "workflows.server.image.jdk",
-	} {
-		data, err := os.ReadFile("../../testdata/config/invalid/" + file + ".yaml")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != path {
-			t.Errorf("%s: problems = %v, want one at %s", file, ps, path)
-		}
 	}
 }

@@ -77,7 +77,7 @@ func withRigAnchor(yaml string) string {
 }
 
 // releaseBase is a release base image a current build ran FROM.
-const releaseBase = "ghcr.io/dimipaun/fugaro-web-node:0.4.0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+const releaseBase = "ghcr.io/dimipaun/fugaro-base:0.4.0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 // putWorkflowRecord is a build record of acme/app's workflow wf submitted by
 // a fugaro of version, built FROM a 0.4.0 release base image.
@@ -150,8 +150,8 @@ func TestInitAnchorOldRecordFails(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
-	want := wantFail("app", "web-node", r.cfg, false, reasonRecordVersionOld("0.3.1"))
-	for _, s := range []string{"fugaro 0.3.1", "In order: (1) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it copies this release's web-node base image, points the daily image check job at it and rebuilds the image), (2) fugaro init --anchor"} {
+	want := wantFail("app", "base", r.cfg, false, reasonRecordVersionOld("0.3.1"))
+	for _, s := range []string{"fugaro 0.3.1", "In order: (1) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it copies this release's base base image, points the daily image check job at it and rebuilds the image), (2) fugaro init --anchor"} {
 		if !strings.Contains(want, s) {
 			t.Errorf("message lacks %q: %s", s, want)
 		}
@@ -166,7 +166,7 @@ func TestInitAnchorOldRecordFails(t *testing.T) {
 func TestInitAnchorMissingRecordFails(t *testing.T) {
 	r := newAnchorModeRig(t, anchorModeYAML(), true)
 	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
-	if ExitCode(err) != ExitUserError || out != wantFail("app", "web-node", r.cfg, false, reasonNoRecord()) {
+	if ExitCode(err) != ExitUserError || out != wantFail("app", "base", r.cfg, false, reasonNoRecord()) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	if !strings.Contains(out, "has no build record") {
@@ -181,7 +181,7 @@ func TestInitAnchorDevRecordFails(t *testing.T) {
 		r := newAnchorModeRig(t, anchorModeYAML(), true)
 		putWorkflowRecord("app", v)
 		out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
-		if ExitCode(err) != ExitUserError || out != wantFail("app", "web-node", r.cfg, false, reasonDevCLI(v)) || !strings.Contains(out, "built by a development CLI") {
+		if ExitCode(err) != ExitUserError || out != wantFail("app", "base", r.cfg, false, reasonDevCLI(v)) || !strings.Contains(out, "built by a development CLI") {
 			t.Fatalf("%s: exit %d, err %v\n%s", v, ExitCode(err), err, out)
 		}
 		r.check(t, r.yaml)
@@ -193,11 +193,11 @@ func TestInitAnchorDevRecordFails(t *testing.T) {
 // with the local config since moved on to 0.4.0, is refused.
 func TestInitAnchorRecordBuiltFromAnOldBaseFails(t *testing.T) {
 	r := newAnchorModeRig(t, anchorModeYAML(), true)
-	r.appendConfig(t, "base_images:\n  web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:0.4.0\n")
-	const from = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:0.3.1"
+	r.appendConfig(t, "base_images:\n  base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.4.0\n")
+	const from = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.3.1"
 	putWorkflowRecordFrom("app", "0.4.0", from+"@sha256:"+strings.Repeat("a", 64))
 	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
-	if ExitCode(err) != ExitUserError || out != wantFail("app", "web-node", r.cfg, false, reasonBaseRefOld(from+"@sha256:"+strings.Repeat("a", 64), "0.3.1")) {
+	if ExitCode(err) != ExitUserError || out != wantFail("app", "base", r.cfg, false, reasonBaseRefOld(from+"@sha256:"+strings.Repeat("a", 64), "0.3.1")) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	if !strings.Contains(out, "built from the base image "+from) {
@@ -210,10 +210,10 @@ func TestInitAnchorRecordBuiltFromAnOldBaseFails(t *testing.T) {
 // is refused: the image still holds the dev binary.
 func TestInitAnchorRecordBuiltFromADevBaseFails(t *testing.T) {
 	r := newAnchorModeRig(t, anchorModeYAML(), true)
-	const from = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-8fe2647"
+	const from = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-8fe2647"
 	putWorkflowRecordFrom("app", "0.4.0", from)
 	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
-	if ExitCode(err) != ExitUserError || out != wantFail("app", "web-node", r.cfg, false, reasonBaseRefDev(from)) {
+	if ExitCode(err) != ExitUserError || out != wantFail("app", "base", r.cfg, false, reasonBaseRefDev(from)) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	r.check(t, r.yaml)
@@ -225,7 +225,7 @@ func TestInitAnchorRecordWithoutBaseRefFails(t *testing.T) {
 	r := newAnchorModeRig(t, anchorModeYAML(), true)
 	putWorkflowRecordFrom("app", "0.4.0", "")
 	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
-	if ExitCode(err) != ExitUserError || out != wantFail("app", "web-node", r.cfg, false, reasonNoBaseRef()) {
+	if ExitCode(err) != ExitUserError || out != wantFail("app", "base", r.cfg, false, reasonNoBaseRef()) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	if !strings.Contains(out, "does not say which base image it was built from") || !strings.Contains(out, "fugaro image refresh --repo acme/app --workflow app") {
@@ -237,7 +237,7 @@ func TestInitAnchorRecordWithoutBaseRefFails(t *testing.T) {
 // A release base at or after the field, on any host (an unset base is the
 // release's own in ghcr.io; --image-source names another), passes.
 func TestInitAnchorRecordBuiltFromAReleaseBasePasses(t *testing.T) {
-	for _, from := range []string{"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:0.4.0", "ghcr.io/acme/fugaro-web-node:v0.5.1", releaseBase} {
+	for _, from := range []string{"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.4.0", "ghcr.io/acme/fugaro-base:v0.5.1", releaseBase} {
 		r := newAnchorModeRig(t, anchorModeYAML(), true)
 		putWorkflowRecordFrom("app", "0.4.0", from)
 		if out, _, err := anchorExec(t, "", "init", "--anchor", "--yes"); err != nil {
@@ -251,18 +251,18 @@ func TestInitAnchorRecordBuiltFromAReleaseBasePasses(t *testing.T) {
 // record: the next build would bake its binary in again. Its fix comes
 // first in the one ordered list.
 func TestInitAnchorCustomBaseFails(t *testing.T) {
-	yaml := strings.Replace(anchorModeYAML(), "base: web-node", "base: go", 1)
+	yaml := anchorModeYAML()
 	r := newAnchorModeRig(t, yaml, true)
-	const ref = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-go:dev-8fe2647"
-	r.appendConfig(t, "base_images:\n  go: "+ref+"\n")
-	putWorkflowRecordFrom("app", "0.4.0", "ghcr.io/dimipaun/fugaro-go:0.4.0")
+	const ref = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-8fe2647"
+	r.appendConfig(t, "base_images:\n  base: "+ref+"\n")
+	putWorkflowRecordFrom("app", "0.4.0", "ghcr.io/dimipaun/fugaro-base:0.4.0")
 	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
-	want := wantFail("app", "go", r.cfg, true, reasonConfigBaseCustom(ref, "go"))
-	for _, s := range []string{"the local config's base image " + ref + " for kind go is not a release >= 0.4.0", "is never replaced by fugaro init --base or fugaro image refresh",
-		"(1) remove base_images.go from " + quoteWord(r.cfg) + " (keep a backup), (2) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it copies this release's go base image, points the daily image check job at it and rebuilds the image), (3) fugaro init --anchor"} {
+	want := wantFail("app", "base", r.cfg, true, reasonConfigBaseCustom(ref, "base"))
+	for _, s := range []string{"the local config's base image " + ref + " for kind base is not a release >= 0.4.0", "is never replaced by fugaro init --base or fugaro image refresh",
+		"(1) remove base_images.base from " + quoteWord(r.cfg) + " (keep a backup), (2) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it copies this release's base base image, points the daily image check job at it and rebuilds the image), (3) fugaro init --anchor"} {
 		if !strings.Contains(want, s) {
 			t.Errorf("message lacks %q: %s", s, want)
 		}
@@ -284,17 +284,17 @@ func TestAnchorProblemTextQuotesThePath(t *testing.T) {
 // (f) A managed release base image older than the field fails too.
 func TestInitAnchorOldManagedBaseFails(t *testing.T) {
 	r := newAnchorModeRig(t, anchorModeYAML(), true)
-	const ref = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:0.3.1"
-	r.appendConfig(t, "base_images:\n  web-node: "+ref+"\n")
+	const ref = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.3.1"
+	r.appendConfig(t, "base_images:\n  base: "+ref+"\n")
 	putWorkflowRecord("app", "0.4.0")
 	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
-	if ExitCode(err) != ExitUserError || out != wantFail("app", "web-node", r.cfg, false, reasonConfigBaseOld(ref, "web-node", "0.3.1")) {
+	if ExitCode(err) != ExitUserError || out != wantFail("app", "base", r.cfg, false, reasonConfigBaseOld(ref, "base", "0.3.1")) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	r.check(t, r.yaml)
 	// A managed 0.4.0 base passes.
 	r = newAnchorModeRig(t, anchorModeYAML(), true)
-	r.appendConfig(t, "base_images:\n  web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:0.4.0\n")
+	r.appendConfig(t, "base_images:\n  base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.4.0\n")
 	putWorkflowRecord("app", "0.4.0")
 	if out, _, err := anchorExec(t, "", "init", "--anchor", "--yes"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
@@ -307,13 +307,13 @@ func TestInitAnchorOldManagedBaseFails(t *testing.T) {
 func TestGCPProjectProblemsRegistryHostError(t *testing.T) {
 	lc := anchorLC()
 	lc.RegistryHost = "us-east5-docker.pkg.dev/another-project"
-	lc.BaseImages = map[string]string{"web-node": "us-east5-docker.pkg.dev/fugaro-aurora/fugaro-base/fugaro-web-node:0.4.0"}
+	lc.BaseImages = map[string]string{"base": "us-east5-docker.pkg.dev/fugaro-aurora/fugaro-base/fugaro-base:0.4.0"}
 	records = map[string]string{}
 	prev := openRecordBucket
 	openRecordBucket = openFakeRecords
 	t.Cleanup(func() { openRecordBucket = prev })
 	putRecordData(t, `{"version":1,"fugaro_version":"0.4.0","base_ref":"`+releaseBase+`"}`)
-	ps := gcpProjectProblems(t.Context(), lc, "", "github", "acme/app", map[string]string{"app": "web-node"})
+	ps := gcpProjectProblems(t.Context(), lc, "", "github", "acme/app", map[string]string{"app": "base"})
 	if len(ps) != 1 || !strings.Contains(ps[0].text, "the registry host is unknown") || strings.Contains(ps[0].text, "remove base_images") {
 		t.Fatalf("%+v", ps)
 	}
@@ -321,13 +321,13 @@ func TestGCPProjectProblemsRegistryHostError(t *testing.T) {
 
 // (g) Two workflows, one stale: the stale one is named, alone.
 func TestInitAnchorTwoWorkflowsOneStale(t *testing.T) {
-	yaml := anchorModeYAML() + "  api: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	yaml := anchorModeYAML() + "  api: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 	r := newAnchorModeRig(t, yaml, false)
 	r.appendConfig(t, "  acme/app: { provider: github, workflows: [api, app] }\n")
 	putWorkflowRecord("app", "0.4.0")
 	putWorkflowRecord("api", "0.3.1")
 	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
-	if ExitCode(err) != ExitUserError || out != wantFail("api", "web-node", r.cfg, false, reasonRecordVersionOld("0.3.1")) {
+	if ExitCode(err) != ExitUserError || out != wantFail("api", "base", r.cfg, false, reasonRecordVersionOld("0.3.1")) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	r.check(t, yaml)
@@ -349,7 +349,7 @@ func TestInitAnchorAlreadyPresent(t *testing.T) {
 	r = newAnchorModeRig(t, yaml, true)
 	putWorkflowRecord("app", "0.3.1")
 	out, _, err = anchorExec(t, "", "init", "--anchor")
-	if ExitCode(err) != ExitUserError || out != r.path+" already has "+anchorRigLine+"; nothing to write\n"+wantFail("app", "web-node", r.cfg, false, reasonRecordVersionOld("0.3.1")) {
+	if ExitCode(err) != ExitUserError || out != r.path+" already has "+anchorRigLine+"; nothing to write\n"+wantFail("app", "base", r.cfg, false, reasonRecordVersionOld("0.3.1")) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	if !strings.Contains(err.Error(), "already has gcp_project") {
@@ -379,7 +379,7 @@ func TestInitAnchorResolvesTheLayerForTheSelectedProject(t *testing.T) {
 	old := layerBucketOpener
 	layerBucketOpener = func(ctx context.Context, _ string) (*blobx.Bucket, error) { return blobx.Open(ctx, "file://"+runs) }
 	t.Cleanup(func() { layerBucketOpener = old })
-	putWorkflowRecord("default", "0.4.0") // config.ImplicitWorkflow: the layer's default_profile svc names base web-node
+	putWorkflowRecord("default", "0.4.0") // config.ImplicitWorkflow: the layer's default_profile svc names base base
 	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
 	if err != nil || !strings.Contains(out, "already has "+anchorRigLine+"; nothing to write") {
 		t.Fatalf("err %v\n%s", err, out)
@@ -490,7 +490,7 @@ func TestInitAnchorJSON(t *testing.T) {
 	}
 	res = initResult{}
 	if err := json.Unmarshal([]byte(out), &res); err != nil || res.Anchor == nil || res.Anchor.State != "not_written" ||
-		len(res.Anchor.Problems) != 1 || failText(res.Anchor.Problems[0]) != wantFail("app", "web-node", r.cfg, false, reasonRecordVersionOld("0.3.1")) || res.Error == "" {
+		len(res.Anchor.Problems) != 1 || failText(res.Anchor.Problems[0]) != wantFail("app", "base", r.cfg, false, reasonRecordVersionOld("0.3.1")) || res.Error == "" {
 		t.Fatalf("%v %+v\n%s", err, res.Anchor, out)
 	}
 	r.check(t, r.yaml)
@@ -501,7 +501,7 @@ func TestInitAnchorRecordReadFailureIsRemote(t *testing.T) {
 	r := newAnchorModeRig(t, anchorModeYAML(), true)
 	openRecordBucket = func(context.Context, string) (*blobx.Bucket, error) { return nil, errors.New("boom") }
 	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
-	if ExitCode(err) != ExitRemoteError || out != wantFail("app", "web-node", r.cfg, false, reasonUnreadable("boom")) {
+	if ExitCode(err) != ExitRemoteError || out != wantFail("app", "base", r.cfg, false, reasonUnreadable("boom")) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	r.check(t, r.yaml)
@@ -591,33 +591,33 @@ func TestBaseRefReason(t *testing.T) {
 		ref, kind string
 		ok        bool
 	}{
-		{"ghcr.io/dimipaun/fugaro-web-node:0.4.0", "web-node", true},
-		{"ghcr.io/dimipaun/fugaro-web-node:0.4.0@sha256:" + hex, "web-node", true},
-		{"localhost:5000/x/fugaro-go:0.4.0", "go", true},
-		{"ghcr.io/dimipaun/fugaro-go:0.10.0", "go", true},
-		{"ghcr.io/dimipaun/fugaro-go:v0.4.0", "go", true},
-		{"us-east5-docker.pkg.dev/p/fugaro-base/fugaro-java-services:0.4.0", "java-services", true},
-		{"ghcr.io/dimipaun/fugaro-go:0.4.0", "", true}, // the workflow's kind not known
-		{"ghcr.io/dimipaun/fugaro-web-node:0.4.0", "go", false},
-		{"ghcr.io/dimipaun/fugaro-go:0.4.0-rc1", "go", false},
-		{"ghcr.io/dimipaun/fugaro-go:0.3.9", "go", false},
-		{"ghcr.io/dimipaun/fugaro-go:latest", "go", false},
-		{"ghcr.io/dimipaun/fugaro-go:0.4", "go", false},
-		{"ghcr.io/dimipaun/fugaro-go:0.4.0RC", "go", false},
-		{"ghcr.io/dimipaun/FUGARO-GO:0.4.0", "go", false},
-		{"ghcr.io/dimipaun/fugaro-go@sha256:" + hex, "go", false},
-		{"ghcr.io/dimipaun/fugaro-go:0.4.0@sha256:" + strings.Repeat("A", 64), "go", false},
-		{"ghcr.io/dimipaun/evilfugaro-go:0.4.0", "go", false},
-		{"ghcr.io/dimipaun/fugaro-go/evil:0.4.0", "go", false},
-		{"fugaro-go:0.4.0", "go", false},
-		{"ubuntu:24.04", "go", false},
-		{"", "go", false},
-		{"ghcr.io/dimipaun/fugaro-go:0.4.0\n", "go", false},
-		{"ubuntu:22.04\n/fugaro-go:0.4.0", "go", false},
-		{"ubuntu:24.04 /fugaro-go:0.4.0", "go", false},
-		{"x/fugaro-go-evil:0.4.0", "go", false},
+		{"ghcr.io/dimipaun/fugaro-base:0.4.0", "base", true},
+		{"ghcr.io/dimipaun/fugaro-base:0.4.0@sha256:" + hex, "base", true},
+		{"localhost:5000/x/fugaro-base:0.4.0", "base", true},
+		{"ghcr.io/dimipaun/fugaro-base:0.10.0", "base", true},
+		{"ghcr.io/dimipaun/fugaro-base:v0.4.0", "base", true},
+		{"us-east5-docker.pkg.dev/p/fugaro-base/fugaro-base:0.4.0", "base", true},
+		{"ghcr.io/dimipaun/fugaro-base:0.4.0", "", true},       // the workflow's kind not known
+		{"ghcr.io/dimipaun/fugaro-base:0.4.0", "other", false}, // a kind the ref does not match
+		{"ghcr.io/dimipaun/fugaro-base:0.4.0-rc1", "base", false},
+		{"ghcr.io/dimipaun/fugaro-base:0.3.9", "base", false},
+		{"ghcr.io/dimipaun/fugaro-base:latest", "base", false},
+		{"ghcr.io/dimipaun/fugaro-base:0.4", "base", false},
+		{"ghcr.io/dimipaun/fugaro-base:0.4.0RC", "base", false},
+		{"ghcr.io/dimipaun/FUGARO-BASE:0.4.0", "base", false},
+		{"ghcr.io/dimipaun/fugaro-base@sha256:" + hex, "base", false},
+		{"ghcr.io/dimipaun/fugaro-base:0.4.0@sha256:" + strings.Repeat("A", 64), "base", false},
+		{"ghcr.io/dimipaun/evilfugaro-base:0.4.0", "base", false},
+		{"ghcr.io/dimipaun/fugaro-base/evil:0.4.0", "base", false},
+		{"fugaro-base:0.4.0", "base", false},
+		{"ubuntu:24.04", "base", false},
+		{"", "base", false},
+		{"ghcr.io/dimipaun/fugaro-base:0.4.0\n", "base", false},
+		{"ubuntu:22.04\n/fugaro-base:0.4.0", "base", false},
+		{"ubuntu:24.04 /fugaro-base:0.4.0", "base", false},
+		{"x/fugaro-base-evil:0.4.0", "base", false},
 		{"x/fugaro-x:0.4.0", "", false},
-		{"us-east5-docker.pkg.dev/p/fugaro-base/fugaro-go-cuda:1.2.0", "", false},
+		{"us-east5-docker.pkg.dev/p/fugaro-base/fugaro-base-cuda:1.2.0", "", false},
 	} {
 		if got := baseRefReason(c.ref, c.kind); (got == "") != c.ok {
 			t.Errorf("baseRefReason(%q, %q) = %q, want ok %v", c.ref, c.kind, got, c.ok)
@@ -626,12 +626,12 @@ func TestBaseRefReason(t *testing.T) {
 }
 
 // repoReady is an applied installation of aurora with a base image for
-// web-node, and a repository plan with nothing to change: init --repo of the
+// base, and a repository plan with nothing to change: init --repo of the
 // listed acme/sandbox runs to its end.
 func (r *initRig) repoReady(t *testing.T) {
 	t.Helper()
 	r.installationState(t)
-	r.appendConfig(t, "base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:0.4.0}\n")
+	r.appendConfig(t, "base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.4.0}\n")
 	r.setPlan(t)
 	r.script["plan"] = map[string]any{"exit": 0}
 	r.script["show"] = map[string]any{"stdout": `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"x"}]}}}`}

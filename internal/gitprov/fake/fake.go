@@ -36,6 +36,16 @@ type PRState struct {
 	// AuthorID is the PR author's account ID; empty means the provider's
 	// SelfID (Fugaro opened it).
 	AuthorID string `json:"author_id,omitempty"`
+	// AuthorLogin is the PR author's login, for a test that checks the
+	// trust-refusal message's text; empty means "fugaro" (a plausible
+	// bot login, when AuthorID also defaults to SelfID) or, when AuthorID
+	// is set without a login, simply "".
+	AuthorLogin string `json:"author_login,omitempty"`
+	// Collaborator is review mode's trust signal (gitprov.PRHead.Collaborator):
+	// a test sets it true for a PR whose author should be trusted by
+	// association alone, without relying on AuthorID defaulting to SelfID
+	// or being listed in followup.trusted.
+	Collaborator bool `json:"collaborator,omitempty"`
 	// Foreign are comments a test injects as if people wrote them.
 	Foreign []gitprov.Comment `json:"foreign,omitempty"`
 	// Head, when set, overrides the head PullRequest reports, as when
@@ -451,6 +461,46 @@ func (p *Provider) Comments(_ context.Context, number int) ([]gitprov.Comment, e
 	}
 	slices.SortStableFunc(out, func(a, b gitprov.Comment) int { return a.CreatedAt.Compare(b.CreatedAt) })
 	return out, nil
+}
+
+// FetchPRHead implements gitprov.Provider: the same lookup PullRequest uses
+// (PRState.Head when set, else the tip of the PR's branch in Remote), plus
+// the fork test injects (PRState.Source set to something other than Repo),
+// and the author-trust fields (PRState.AuthorID/AuthorLogin/Collaborator)
+// a trust test sets. Self is AuthorID == SelfID: the same default
+// PullRequest/pullRequest already give AuthorID when a test leaves it
+// unset (cmp.Or(st.AuthorID, p.SelfID)), so an existing test that never
+// mentions trust at all keeps reviewing its own (self) PR exactly as
+// before. Self is forced false whenever Fork is true (PRHead's own
+// documented invariant, gitprov.go): Fugaro never opens a pull request
+// from a fork, so a fork PR is never self regardless of what its author
+// fields happen to be set to.
+func (p *Provider) FetchPRHead(ctx context.Context, number int) (gitprov.PRHead, error) {
+	info, err := p.PullRequest(ctx, number)
+	if err != nil {
+		return gitprov.PRHead{}, err
+	}
+	p.mu.Lock()
+	st, ferr := p.findLocked(number)
+	p.mu.Unlock()
+	if ferr != nil {
+		return gitprov.PRHead{}, ferr
+	}
+	fork := !strings.EqualFold(info.SourceRepo, p.Repo)
+	// st.AuthorID unset is PRState's own documented default ("Fugaro
+	// opened it"), regardless of whether the harness bothered to set a
+	// non-empty SelfID at all (most don't): that must count as self on
+	// its own, not just when it happens to equal a configured SelfID.
+	self := (st.AuthorID == "" || (p.SelfID != "" && st.AuthorID == p.SelfID)) && !fork
+	login := st.AuthorLogin
+	if login == "" && self {
+		login = "fugaro"
+	}
+	return gitprov.PRHead{
+		SHA: info.HeadSHA, Fork: fork, Open: info.State == gitprov.PROpen,
+		AuthorID: info.AuthorID, AuthorLogin: login, Collaborator: st.Collaborator,
+		Self: self, SourceRepo: info.SourceRepo,
+	}, nil
 }
 
 // GitAuth implements gitprov.Provider.

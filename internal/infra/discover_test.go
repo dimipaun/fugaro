@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 )
@@ -851,6 +852,63 @@ func TestReadinessWaitsForImageAndSecrets(t *testing.T) {
 	}
 }
 
+// TestReadinessCloneDeploysWithoutAnImageBuild (design generic-tool.md §2):
+// a checkout: clone workflow's job is ready as soon as its secrets have
+// versions, with no Artifact Registry "latest" tag to wait for — its image
+// is the installation's base, never a tag in the repository's own registry.
+// Without one (an empty base_images.base), it is reported missing instead
+// of making Readiness fail outright.
+//
+// Mutation (run, restore): in Readiness, change the checkout: clone branch's
+// `built = ws.Image != ""` to instead call hasLatest unconditionally (as the
+// non-clone branch does) — this test then fails with a *UserError ("is not
+// <registry>/<package>:latest in the repository's registry"), because
+// base_images.base is never a tag in the repository's own registry.
+func TestReadinessCloneDeploysWithoutAnImageBuild(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	rs, err := Repo(cloneInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.gcs.AddBucket(rs.Installation.RunsBucket, testProjectNumber, managed)
+	for logical, id := range rs.Secrets {
+		f.sm.Seed(id, with(managed, gcp.LabelRepo, rs.Label, gcp.LabelSecret, logical), []byte("v"))
+	}
+	_, ex, err := DiscoverRepo(ctx, f.c, rs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, missing, err := Readiness(ctx, f.c, rs, ex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Workflows["web"].DeployJob {
+		t.Errorf("web (checkout: clone) not ready: missing = %v", missing)
+	}
+	for _, m := range missing {
+		if m.Workflow == "web" {
+			t.Errorf("web (checkout: clone) has a missing reason: %v", m)
+		}
+	}
+	// Without a base image, web is reported missing, not a hard failure.
+	rs.Workflows = maps.Clone(rs.Workflows)
+	w := rs.Workflows["web"]
+	w.Image = ""
+	rs.Workflows["web"] = w
+	_, ex, err = DiscoverRepo(ctx, f.c, rs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, missing, err = Readiness(ctx, f.c, rs, ex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(missing, func(m Missing) bool { return m.Workflow == "web" && m.Kind == MissingImage }) {
+		t.Errorf("no MissingImage for web without base_images.base: %v", missing)
+	}
+}
+
 // A named account's job variant (gcp.WorkflowVariant, design
 // docs/design/named-oauth-tokens.md §4) shares its logical workflow's one
 // image, built once: its own "image not built yet" hint must still tell the
@@ -1091,6 +1149,60 @@ func TestReadinessRefusesJobWithoutImage(t *testing.T) {
 	var ue *UserError
 	if !errors.As(err, &ue) || !strings.Contains(err.Error(), spec.Workflows["web"].Job) {
 		t.Errorf("err = %v; want a user error naming the job", err)
+	}
+}
+
+// TestReadinessCloneJobWithoutImageNamesTheConfig (review fix): a checkout:
+// clone workflow's job existing with no container image, and the local
+// config lacking base_images.base too, must not interpolate an empty
+// ws.Image into the hard-failure message — unlike a baked workflow's
+// (TestReadinessRefusesJobWithoutImage), ws.Image can itself be empty here
+// (there is no base_images.base to name), so the message must say what is
+// actually missing instead of leaving a blank.
+//
+// Mutation (run, restore): revert the `what`/`fix` branch in Readiness back
+// to the single `userErr(..., ws.Image, fix)` call it replaced — this test
+// then fails: the message reads "...and  is not built yet..." (a double
+// space, naming nothing).
+func TestReadinessCloneJobWithoutImageNamesTheConfig(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	in := cloneInputs(t)
+	in.LC.BaseImages = maps.Clone(in.LC.BaseImages)
+	delete(in.LC.BaseImages, config.BaseKind)
+	// A clone-only repository: since the 0.7.0 cut the baked api would
+	// need base_images.base too (its daily check's base), so without it
+	// Repo itself refuses before Readiness is reached. Only a clone-only
+	// repository can still have no base_images.base at Readiness time.
+	in.Cfg.Workflows = maps.Clone(in.Cfg.Workflows)
+	delete(in.Cfg.Workflows, "api")
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Workflows["web"].Image != "" {
+		t.Fatalf("fixture bug: web's image = %q, want empty (no base_images.%s)", rs.Workflows["web"].Image, config.BaseKind)
+	}
+	f.gcs.AddBucket(rs.Installation.RunsBucket, testProjectNumber, managed)
+	for logical, id := range rs.Secrets {
+		f.sm.Seed(id, with(managed, gcp.LabelRepo, rs.Label, gcp.LabelSecret, logical), []byte("v"))
+	}
+	f.run.SetJob(rs.Workflows["web"].Job, rs.Workflows["web"].Labels, "")
+	_, ex, err := DiscoverRepo(ctx, f.c, rs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = Readiness(ctx, f.c, rs, ex)
+	var ue *UserError
+	if !errors.As(err, &ue) {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "and  is") || strings.Contains(msg, "  ") {
+		t.Fatalf("malformed message (an empty %%s left a double space): %q", msg)
+	}
+	if !strings.Contains(msg, "base_images."+config.BaseKind) {
+		t.Errorf("message does not name the missing config key: %q", msg)
 	}
 }
 

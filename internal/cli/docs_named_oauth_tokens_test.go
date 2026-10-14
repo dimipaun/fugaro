@@ -69,7 +69,7 @@ func TestDocsNamedOAuthTokensDoctorSeverity(t *testing.T) {
 // rename of the prefix or a dropped command in the skill text fails this
 // test the same way TestDocsNamedOAuthTokensDoctorSeverity already holds the
 // design doc to its own code. It also keeps the U2 "not yet verified"
-// placeholder honest: until docs/gcp-live-checklist.md's Check 33 answers
+// placeholder honest: until docs/gcp-live-checklist.md's Check 35 answers
 // U2, the skill must say plainly that it does not know the exact
 // claude-setup-token multi-account sequence, never invent one.
 func TestDocsNamedOAuthTokensSetupSkill(t *testing.T) {
@@ -96,7 +96,7 @@ func TestDocsNamedOAuthTokensSetupSkill(t *testing.T) {
 		t.Errorf("SKILL.md no longer shows %q (config.ClaudeOAuthTokenPrefix changed, or the command was dropped)", namedSecretCmd)
 	}
 	// U2 (the exact claude-setup-token multi-account sequence) is not
-	// answered yet (docs/gcp-live-checklist.md Check 33): the skill must
+	// answered yet (docs/gcp-live-checklist.md Check 35): the skill must
 	// never invent a step this repository has not verified, such as a
 	// log-out command or an --account-style flag.
 	for _, invented := range []string{
@@ -104,7 +104,7 @@ func TestDocsNamedOAuthTokensSetupSkill(t *testing.T) {
 		"by running claude logout first",
 	} {
 		if strings.Contains(text, invented) {
-			t.Errorf("setup skill text invents an unverified claude setup-token step (%q); U2 is not yet answered, see docs/gcp-live-checklist.md Check 33", invented)
+			t.Errorf("setup skill text invents an unverified claude setup-token step (%q); U2 is not yet answered, see docs/gcp-live-checklist.md Check 35", invented)
 		}
 	}
 }

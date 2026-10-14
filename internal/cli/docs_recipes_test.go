@@ -37,7 +37,8 @@ func TestRecipesGuideMatchesTheCLI(t *testing.T) {
 			t.Errorf("docs/recipes.md never names the catalog's %s", name)
 		}
 	}
-	for _, want := range []string{"fugaro run --recipe", "agent.recipe", ".fugaro/recipes/", "fugaro/recipes/", "16 KiB", "0.5.0", "fugaro init"} {
+	for _, want := range []string{"fugaro run --recipe", "agent.recipe", ".fugaro/recipes/", "fugaro/recipes/", "16 KiB", "0.5.0", "fugaro init",
+		"use_when", "0.7.0", "commands.lint"} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("docs/recipes.md never says %q", want)
 		}
@@ -71,7 +72,7 @@ func TestRecipesGuideMatchesTheCLI(t *testing.T) {
 			t.Errorf("fugaro %s has no --%s", strings.Join(want.path, " "), want.flag)
 		}
 	}
-	for _, c := range []string{"fugaro validate", "fugaro watch", "fugaro ls", "fugaro image build", "fugaro init"} {
+	for _, c := range []string{"fugaro validate", "fugaro watch", "fugaro runs ls", "fugaro image build", "fugaro init"} {
 		if !strings.Contains(doc, c) {
 			continue
 		}
@@ -80,7 +81,7 @@ func TestRecipesGuideMatchesTheCLI(t *testing.T) {
 		}
 	}
 	// Each reserved key the guide lists is really refused with its own message.
-	for _, key := range []string{"checks", "goto", "on_reject", "extends", "on_pass", "on_fail", "model", "models"} {
+	for _, key := range []string{"goto", "on_reject", "extends", "on_pass", "on_fail", "model", "models"} {
 		if !strings.Contains(doc, "`"+key+"`") {
 			t.Errorf("docs/recipes.md never lists the reserved key %s", key)
 		}
@@ -88,6 +89,13 @@ func TestRecipesGuideMatchesTheCLI(t *testing.T) {
 		if len(ps) == 0 || strings.Contains(recipe.ProblemsText(ps), "is not a recipe key") {
 			t.Errorf("reserved key %s is not refused with a message of its own: %v", key, ps)
 		}
+	}
+	// checks is refused only as a step name: the step type is check.
+	if !strings.Contains(doc, "`checks`") {
+		t.Error("docs/recipes.md never lists the reserved step name checks")
+	}
+	if _, ps := recipe.Parse([]byte("version: 1\nname: x\nsteps:\n  - checks: {}\n  - review: {}\n")); len(ps) == 0 || strings.Contains(recipe.ProblemsText(ps), "is not a recipe key") {
+		t.Errorf("a checks step is not refused with a message of its own: %v", ps)
 	}
 	for _, sub := range []string{"ls", "show", "validate"} {
 		if !strings.Contains(doc, "`"+sub+"`") || !strings.Contains(doc, "take `--json`") {
@@ -97,5 +105,28 @@ func TestRecipesGuideMatchesTheCLI(t *testing.T) {
 	readme, _ := os.ReadFile("../../README.md")
 	if !strings.Contains(string(readme), "docs/recipes.md") {
 		t.Error("README.md does not link docs/recipes.md")
+	}
+}
+
+// TestLaunchSkillAllowsReviewModeTaskText: the working skill's launch.md
+// guides the agent's own `fugaro run` invocations, so a wrong claim there
+// about review-only/pick taking "never a task description" (true once,
+// before task 12 wired TEXT/--task-file through to the review prompt as
+// optional extra instructions — see TestReviewModeIncludesLauncherTaskText,
+// internal/runner/reviewmode_test.go) could make the agent wrongly omit a
+// user's review instructions when launching one of these recipes. Must
+// agree with docs/recipes.md's own, correct claim ("TEXT, or --task-file,
+// is optional then too").
+func TestLaunchSkillAllowsReviewModeTaskText(t *testing.T) {
+	data, err := os.ReadFile("../../plugin/skills/working/reference/launch.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	if strings.Contains(doc, "never a task description") {
+		t.Error("launch.md still claims review-only/pick take no task description; they take one, optionally")
+	}
+	if !strings.Contains(doc, "a task description is optional for either") {
+		t.Error("launch.md no longer says a task description is optional for review-only/pick")
 	}
 }

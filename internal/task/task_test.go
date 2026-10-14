@@ -194,6 +194,50 @@ func TestParseErrorMessages(t *testing.T) {
 	}
 }
 
+// TestReviewPRsValidation covers review_prs' own shape rules (Task 12 of
+// the generic-tool plan): 1 to 4 positive, distinct pull request numbers,
+// and never together with a follow-up's branch/pr/previous_run. A task
+// naming review_prs alone needs no task text either.
+//
+// Mutation (drop the anyReview case from the "task is required" check,
+// i.e. change it back to `if !anyFollowUp`): the last case below (task-less
+// review_prs) wrongly fails "task is required".
+func TestReviewPRsValidation(t *testing.T) {
+	base := func() *Spec {
+		return &Spec{Version: 1, RunID: "20260926-221530-a1b2", Repo: "acme/app", Ref: "main"}
+	}
+	cases := []struct {
+		name string
+		edit func(*Spec)
+		want string
+	}{
+		{"with a follow-up", func(s *Spec) {
+			s.ReviewPRs = []int{7}
+			s.Branch, s.PR, s.PreviousRun = "fugaro/20260926-221530-a1b2", 7, "20260926-221530-a1b2"
+		},
+			"review_prs and branch/pr/previous_run don't go together"},
+		{"five", func(s *Spec) { s.ReviewPRs = []int{1, 2, 3, 4, 5} }, "1 to 4 pull requests"},
+		{"empty but present", func(s *Spec) { s.ReviewPRs = []int{} }, "1 to 4 pull requests"},
+		{"zero entry", func(s *Spec) { s.ReviewPRs = []int{0} }, "positive pull request numbers"},
+		{"negative entry", func(s *Spec) { s.ReviewPRs = []int{-1} }, "positive pull request numbers"},
+		{"duplicate", func(s *Spec) { s.ReviewPRs = []int{3, 3} }, "repeats #3"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := base()
+			c.edit(s)
+			if err := s.Validate(); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("Validate() = %v, want it to mention %q", err, c.want)
+			}
+		})
+	}
+	s := base()
+	s.ReviewPRs = []int{7, 9}
+	if err := s.Validate(); err != nil {
+		t.Fatalf("1 to 4 distinct positive review_prs and no task: %v", err)
+	}
+}
+
 func TestApply(t *testing.T) {
 	rounds, budget := 4, 10.0
 	s := &Spec{Overrides: Overrides{ReviewRounds: &rounds, MaxBudgetUSD: &budget, Model: "m", TotalTimeout: "45m"}}

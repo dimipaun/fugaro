@@ -219,7 +219,13 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 	}
 	set := map[string]bool{}
 	for _, w := range wfs {
-		set[cfg.Workflows[w].Base] = true
+		// A checkout: clone workflow always runs the Fugaro base directly
+		// (design generic-tool.md §2), whatever its (legacy) base: says.
+		if cfg.Workflows[w].Checkout == config.CheckoutClone {
+			set[config.BaseKind] = true
+			continue
+		}
+		set[cfg.Workflows[w].BaseKind()] = true
 	}
 	kinds := slices.Sorted(maps.Keys(set))
 	host, err := infra.RegistryHost(lc)
@@ -250,7 +256,14 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 		}
 	}
 	for _, w := range wfs {
-		kind := cfg.Workflows[w].Base
+		// A clone workflow has no build record to compare: its job image
+		// moves straight to base_images.base, in refreshBuilds, with no
+		// Cloud Build submission.
+		if cfg.Workflows[w].Checkout == config.CheckoutClone {
+			p.why[w] = "runs the base image directly (checkout: clone): its job's image moves to base_images." + config.BaseKind + ", no build"
+			continue
+		}
+		kind := cfg.Workflows[w].BaseKind()
 		rec, err := readRefreshRecord(ctx, lc, slug, w)
 		if err != nil {
 			return nil, err

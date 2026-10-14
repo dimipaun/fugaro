@@ -13,7 +13,8 @@
 #                render step read, and without it the branch's head is used
 # Build secrets, all optional: git-credentials (a git credential-store file
 # for REPO_URL) and one per workflow secret, mounted as a file and exported
-# as that variable inside the warm-up and setup commands only.
+# as that variable inside the warm-up and setup commands only. mise's
+# download cache (fugaro-mise) is a BuildKit cache mount.
 ARG FUGARO_BASE
 FROM ${FUGARO_BASE}
 # The base as built FROM (Cloud Build passes its digest); cache keys use it.
@@ -52,6 +53,13 @@ RUN --mount=type=bind,target=/src \
       || { echo "commit $FUGARO_COMMIT is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }; \
     fi \
  && git remote set-url origin -- "$REPO_ORIGIN"
+
+# The runtimes: the repository's root mise config and image.tools, installed
+# as fugaro into ~/.local/share/mise (design base-image.md section 4). The
+# download cache survives local rebuilds; nothing may be left missing.
+RUN --mount=type=cache,id=fugaro-mise,target=/home/fugaro/.cache/mise,uid=1000,gid=1000 mise install \
+ && missing="$(mise ls --current --missing)" \
+ && if [ -n "$missing" ]; then printf 'mise left these tools missing:\n%s\n' "$missing" >&2; exit 1; fi
 
 USER root
 RUN rm -f /etc/sudoers.d/fugaro-build \

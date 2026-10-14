@@ -19,8 +19,8 @@ import (
 )
 
 const (
-	oldBase = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-0123abc"
-	newBase = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:0.5.1"
+	oldBase = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc"
+	newBase = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.5.1"
 )
 
 // The rewrite is byte for byte what Repo renders for the new base: the next
@@ -31,7 +31,7 @@ func TestRewriteCheckSpecEqualsTerraformRendering(t *testing.T) {
 		t.Fatal(err)
 	}
 	in := sandboxInputs(t, m5Additions)
-	in.LC.BaseImages = map[string]string{"web-node": newBase} // the fixture's local config already sets base_images
+	in.LC.BaseImages = map[string]string{"base": newBase} // the fixture's local config already sets base_images
 	after, err := Repo(in)
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +39,7 @@ func TestRewriteCheckSpecEqualsTerraformRendering(t *testing.T) {
 	if before.Check.Image != oldBase || after.Check.Image != newBase {
 		t.Fatalf("fixture: %s, %s", before.Check.Image, after.Check.Image)
 	}
-	spec, image, err := RewriteCheckSpec(before.Check.Env[CheckSpecEnv], before.Check.Image, map[string]string{"web-node": newBase, "go": "ignored: the spec names no go"})
+	spec, image, err := RewriteCheckSpec(before.Check.Env[CheckSpecEnv], before.Check.Image, map[string]string{"base": newBase, "other-kind": "ignored: the spec names no such kind"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,23 +71,65 @@ func TestRewriteCheckSpecRefusals(t *testing.T) {
 	indented, _ := json.MarshalIndent(m, "", "  ")
 	delete(m, "future_key")
 	reformatted, _ := json.MarshalIndent(m, "", "  ")
+	// The same three malformed shapes, but of a legacy-kind spec: the
+	// legacy-rewrite branch must refuse them exactly as the per-key move
+	// above does, never silently dropping the unknown key or rewriting a
+	// hand-edited form.
+	legacyRaw, err := json.Marshal(CheckJobSpec{Repo: "acme/app", Registry: "h/p/r", BaseImages: map[string]string{"go": oldBase}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lm map[string]any
+	if err := json.Unmarshal(legacyRaw, &lm); err != nil {
+		t.Fatal(err)
+	}
+	lm["future_key"] = "kept by a newer fugaro"
+	legacyUnknown, _ := json.Marshal(lm)
+	delete(lm, "future_key")
+	legacyReformatted, _ := json.MarshalIndent(lm, "", "  ")
 	for name, tc := range map[string]struct{ raw, image, why string }{
-		"not json":            {"{", oldBase, "not a check spec"},
-		"image names no kind": {`{"base_images":{"web-node":"` + oldBase + `"}}`, "elsewhere/img:1", "none of its spec's base images"},
-		"unknown key":         {string(unknown), oldBase, "keys this fugaro does not know"},
-		"unknown, indented":   {string(indented), oldBase, "keys this fugaro does not know"},
-		"reformatted":         {string(reformatted), oldBase, "not in the form fugaro init --repo writes"},
+		"not json":                         {"{", oldBase, "not a check spec"},
+		"image names no kind":              {`{"base_images":{"base":"` + oldBase + `"}}`, "elsewhere/img:1", "none of its spec's base images"},
+		"legacy spec, image names no kind": {`{"base_images":{"go":"` + oldBase + `"}}`, "elsewhere/img:1", "none of its spec's base images"},
+		"unknown key":                      {string(unknown), oldBase, "keys this fugaro does not know"},
+		"unknown, indented":                {string(indented), oldBase, "keys this fugaro does not know"},
+		"reformatted":                      {string(reformatted), oldBase, "not in the form fugaro init --repo writes"},
+		"legacy spec, unknown key":         {string(legacyUnknown), oldBase, "keys this fugaro does not know"},
+		"legacy spec, reformatted":         {string(legacyReformatted), oldBase, "not in the form fugaro init --repo writes"},
 	} {
-		_, _, err := RewriteCheckSpec(tc.raw, tc.image, map[string]string{"web-node": newBase})
+		_, _, err := RewriteCheckSpec(tc.raw, tc.image, map[string]string{"base": newBase})
 		if !errors.Is(err, ErrCheckJobShape) || !strings.Contains(err.Error(), tc.why) || !strings.Contains(err.Error(), "fugaro init --repo") {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
 	// Nothing to move: the spec is kept as it is, unknown keys and form too.
 	for _, raw := range []string{string(unknown), string(reformatted)} {
-		if spec, image, err := RewriteCheckSpec(raw, oldBase, map[string]string{"web-node": oldBase}); err != nil || spec != raw || image != oldBase {
+		if spec, image, err := RewriteCheckSpec(raw, oldBase, map[string]string{"base": oldBase}); err != nil || spec != raw || image != oldBase {
 			t.Errorf("no move: %v %s %s", err, spec, image)
 		}
+	}
+}
+
+// A spec whose base_images still names a kind removed in 0.7.0 is rewritten
+// wholesale to the one base kind, with the job's new image: the per-key
+// move above only touches a kind still in config.Bases, which after the
+// cut can never match "go" or "web-node" again.
+func TestRewriteCheckSpecReplacesLegacyKinds(t *testing.T) {
+	old := CheckJobSpec{Repo: "acme/app", Registry: "h/p/r", BaseImages: map[string]string{"go": "h/p/fugaro-base/fugaro-go:0.6.0", "web-node": "h/p/fugaro-base/fugaro-web-node:0.6.0"}}
+	raw, _ := json.Marshal(old)
+	spec, image, err := RewriteCheckSpec(string(raw), "h/p/fugaro-base/fugaro-go:0.6.0", map[string]string{"base": "h/p/fugaro-base/fugaro-base:0.7.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got CheckJobSpec
+	if err := json.Unmarshal([]byte(spec), &got); err != nil {
+		t.Fatal(err)
+	}
+	if image != "h/p/fugaro-base/fugaro-base:0.7.0" || !maps.Equal(got.BaseImages, map[string]string{"base": "h/p/fugaro-base/fugaro-base:0.7.0"}) {
+		t.Errorf("image %s, base_images %v", image, got.BaseImages)
+	}
+	if got.Repo != "acme/app" || got.Registry != "h/p/r" {
+		t.Errorf("other fields changed: %+v", got)
 	}
 }
 
@@ -181,7 +223,69 @@ func checkJobCloud(t *testing.T, edit func(j map[string]any)) (*cloud, RepoSpec,
 	return f, rs, CheckJobOwner{Repo: rs.Name, Label: rs.Label}
 }
 
-var toNew = map[string]string{"web-node": newBase}
+var toNew = map[string]string{"base": newBase}
+
+// workflowJobJSON is a workflow job as Cloud Run's jobs get returns it after
+// init --repo made it: labels on the job and its template (fugaro_workflow
+// in place of the check job's fugaro_role/check), max_retries 0, one
+// container, and output-only fields and fields this Go client does not
+// model, which must all survive. edit changes it first.
+func workflowJobJSON(t *testing.T, ws WorkflowSpec, repoLabel, image string, edit func(j map[string]any)) string {
+	t.Helper()
+	labels := map[string]any{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel, gcp.LabelWorkflow: ws.Name}
+	j := map[string]any{
+		"name":               "projects/proj-1234/locations/us-east5/jobs/" + ws.Job,
+		"uid":                "0f4e1c2a-0000-4000-8000-000000000002",
+		"generation":         "3",
+		"observedGeneration": "3",
+		"labels":             labels,
+		"executionCount":     json.Number("7"),
+		"reconciling":        false,
+		"futureJobField":     map[string]any{"enabled": false},
+		"template": map[string]any{
+			"labels":      maps.Clone(labels),
+			"taskCount":   json.Number("1"),
+			"parallelism": json.Number("0"),
+			"template": map[string]any{
+				"maxRetries":           json.Number("0"),
+				"timeout":              "900s",
+				"serviceAccount":       ws.ServiceAccountEmail,
+				"executionEnvironment": "EXECUTION_ENVIRONMENT_GEN2",
+				"futureTaskField":      map[string]any{"off": false},
+				"containers": []any{map[string]any{
+					"image":     image,
+					"resources": map[string]any{"limits": map[string]any{"cpu": "1", "memory": "2Gi"}, "cpuIdle": false},
+				}},
+			},
+		},
+	}
+	if edit != nil {
+		edit(j)
+	}
+	data, err := json.Marshal(j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// workflowJobCloud is the fake with acme/sandbox's "web" workflow job
+// (workflowJobJSON, edited by edit, image oldBase) and polls that do not
+// wait.
+func workflowJobCloud(t *testing.T, edit func(j map[string]any)) (*cloud, RepoSpec, WorkflowSpec, CheckJobOwner) {
+	t.Helper()
+	f := newCloud(t)
+	rs, err := Repo(sandboxInputs(t, m5Additions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := rs.Workflows["web"]
+	f.run.SetJobJSON(ws.Job, workflowJobJSON(t, ws, rs.Label, oldBase, edit))
+	old := checkJobPoll
+	checkJobPoll = 0
+	t.Cleanup(func() { checkJobPoll = old })
+	return f, rs, ws, CheckJobOwner{Repo: rs.Name, Label: rs.Label}
+}
 
 // The job after the update is the job before it, every field and zero
 // value included (maxRetries 0, unknown fields, the secret env), except
@@ -248,7 +352,7 @@ func TestPlanCheckJobIgnoresASpecsFormWhenNothingMoves(t *testing.T) {
 		out, _ := json.MarshalIndent(m, "", "  ")
 		specEntry(j)["value"] = string(out)
 	})
-	u, err := PlanCheckJob(context.Background(), f.c, "proj-1234", "us-east5", rs.Check.Job, owner, map[string]string{"web-node": oldBase})
+	u, err := PlanCheckJob(context.Background(), f.c, "proj-1234", "us-east5", rs.Check.Job, owner, map[string]string{"base": oldBase})
 	if err != nil || u.Changes() {
 		t.Fatalf("%v %+v", err, u)
 	}
@@ -334,7 +438,7 @@ func TestApplyCheckJobRefusesAConcurrentChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Someone else updates the job between the read and the write.
-	other, _ := PlanCheckJob(ctx, f.c, "proj-1234", "us-east5", rs.Check.Job, owner, map[string]string{"web-node": newBase + "-x"})
+	other, _ := PlanCheckJob(ctx, f.c, "proj-1234", "us-east5", rs.Check.Job, owner, map[string]string{"base": newBase + "-x"})
 	if err := ApplyCheckJob(ctx, f.c, other); err != nil {
 		t.Fatal(err)
 	}
@@ -501,6 +605,223 @@ func TestApplyCheckJobDropsExecutionTokens(t *testing.T) {
 	a, _ := json.Marshal(after)
 	if string(a) != string(b) {
 		t.Fatalf("the job changed beyond its image and spec:\nbefore %s\nafter  %s", b, a)
+	}
+}
+
+// The job after the update is the job before it, every field and zero
+// value included (maxRetries 0, unknown fields), except exactly the
+// container's image, which moves to newBase.
+func TestApplyWorkflowJobChangesOnlyImage(t *testing.T) {
+	f, _, ws, owner := workflowJobCloud(t, nil)
+	ctx := context.Background()
+	before := f.run.JobJSON("proj-1234", "us-east5", ws.Job)
+	u, err := PlanWorkflowJob(ctx, f.c, "proj-1234", "us-east5", ws.Job, ws.Name, newBase, owner)
+	if err != nil || u == nil || !u.Changes() || u.OldImage() != oldBase || u.NewImage() != newBase ||
+		u.Job() != "projects/proj-1234/locations/us-east5/jobs/"+ws.Job {
+		t.Fatalf("plan: %v %+v", err, u)
+	}
+	if len(f.run.Patches()) != 0 {
+		t.Fatal("planning wrote")
+	}
+	if err := ApplyWorkflowJob(ctx, f.c, u); err != nil {
+		t.Fatal(err)
+	}
+	after := f.run.JobJSON("proj-1234", "us-east5", ws.Job)
+	if container(after)["image"] != newBase {
+		t.Fatalf("after: image = %v, want %s", container(after)["image"], newBase)
+	}
+	if mr := after["template"].(map[string]any)["template"].(map[string]any)["maxRetries"]; mr != json.Number("0") {
+		t.Fatalf("maxRetries = %v, want 0 sent back", mr)
+	}
+	for _, j := range []map[string]any{before, after} {
+		container(j)["image"] = "IMAGE"
+		delete(j, "etag")
+	}
+	b, _ := json.Marshal(before)
+	a, _ := json.Marshal(after)
+	if string(a) != string(b) {
+		t.Fatalf("the job changed beyond its image:\nbefore %s\nafter  %s", b, a)
+	}
+	// Now current: nothing to do, nothing written.
+	u, err = PlanWorkflowJob(ctx, f.c, "proj-1234", "us-east5", ws.Job, ws.Name, newBase, owner)
+	if err != nil || u.Changes() {
+		t.Fatalf("replan: %v %+v", err, u)
+	}
+	if err := ApplyWorkflowJob(ctx, f.c, u); err != nil || len(f.run.Patches()) != 1 {
+		t.Fatalf("a no-op apply wrote: %v", err)
+	}
+	// No such job at all.
+	if u, err := PlanWorkflowJob(ctx, f.c, "proj-1234", "us-east5", "fugaro-none", "web", newBase, owner); u != nil || err != nil {
+		t.Fatalf("missing job: %+v %v", u, err)
+	}
+}
+
+// A job that is not this repository's workflow job as init --repo made it
+// is refused before anything is written. The "wrong workflow" case is the
+// one that matters most: it is what would let PlanWorkflowJob match and
+// rewrite another workflow's job (or the check job) by mistake.
+func TestPlanWorkflowJobRefusesAForeignOrMisshapenJob(t *testing.T) {
+	for name, tc := range map[string]struct {
+		edit func(j map[string]any)
+		why  string
+	}{
+		"no labels":    {func(j map[string]any) { delete(j, "labels") }, "by its labels"},
+		"another repo": {func(j map[string]any) { j["labels"].(map[string]any)[gcp.LabelRepo] = "other_repo" }, "by its labels"},
+		"no workflow label": {func(j map[string]any) {
+			delete(j["labels"].(map[string]any), gcp.LabelWorkflow)
+		}, "by its labels"},
+		"another workflow": {func(j map[string]any) { j["labels"].(map[string]any)[gcp.LabelWorkflow] = "api" }, "by its labels"},
+		"a check role, not a workflow": {func(j map[string]any) {
+			labels := j["labels"].(map[string]any)
+			delete(labels, gcp.LabelWorkflow)
+			labels[gcp.LabelRole] = gcp.RoleCheck
+		}, "by its labels"},
+		"not managed": {func(j map[string]any) { delete(j["labels"].(map[string]any), gcp.LabelManaged) }, "by its labels"},
+		"no container": {func(j map[string]any) {
+			j["template"].(map[string]any)["template"].(map[string]any)["containers"] = []any{}
+		}, "0 containers"},
+		"two containers": {func(j map[string]any) {
+			task := j["template"].(map[string]any)["template"].(map[string]any)
+			task["containers"] = append(task["containers"].([]any), map[string]any{"image": "sidecar:1"})
+		}, "2 containers"},
+		"no image": {func(j map[string]any) { container(j)["image"] = "" }, "no image"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, _, ws, owner := workflowJobCloud(t, tc.edit)
+			u, err := PlanWorkflowJob(context.Background(), f.c, "proj-1234", "us-east5", ws.Job, ws.Name, newBase, owner)
+			if !errors.Is(err, ErrCheckJobShape) || !strings.Contains(err.Error(), tc.why) || u != nil {
+				t.Fatalf("%v %+v", err, u)
+			}
+		})
+	}
+	f, _, ws, _ := workflowJobCloud(t, nil)
+	if _, err := PlanWorkflowJob(context.Background(), f.c, "proj-1234", "us-east5", ws.Job, ws.Name, newBase, CheckJobOwner{}); err == nil {
+		t.Fatal("planned with no owner")
+	}
+}
+
+// A read that fails other than with 404 is an error, not "no job".
+func TestPlanWorkflowJobReportsAFailedRead(t *testing.T) {
+	f, _, ws, owner := workflowJobCloud(t, nil)
+	f.run.SetJobFaults(gcpfake.JobFaults{GetStatus: http.StatusForbidden})
+	u, err := PlanWorkflowJob(context.Background(), f.c, "proj-1234", "us-east5", ws.Job, ws.Name, newBase, owner)
+	var ae *googleapi.Error
+	if u != nil || !errors.As(err, &ae) || ae.Code != http.StatusForbidden || errors.Is(err, ErrCheckJobShape) {
+		t.Fatalf("%v %+v", err, u)
+	}
+}
+
+func TestApplyWorkflowJobRefusesAConcurrentChange(t *testing.T) {
+	f, _, ws, owner := workflowJobCloud(t, nil)
+	ctx := context.Background()
+	u, err := PlanWorkflowJob(ctx, f.c, "proj-1234", "us-east5", ws.Job, ws.Name, newBase, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Someone else updates the job between the read and the write.
+	other, err := PlanWorkflowJob(ctx, f.c, "proj-1234", "us-east5", ws.Job, ws.Name, newBase+"-x", owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyWorkflowJob(ctx, f.c, other); err != nil {
+		t.Fatal(err)
+	}
+	err = ApplyWorkflowJob(ctx, f.c, u)
+	var ae *googleapi.Error
+	if !errors.As(err, &ae) || ae.Code != http.StatusConflict || !strings.Contains(err.Error(), "changed since it was read") {
+		t.Fatalf("stale write: %v", err)
+	}
+	if len(f.run.Patches()) != 1 {
+		t.Fatal("the stale write landed")
+	}
+}
+
+// A plan not made by PlanWorkflowJob, or applied already, is refused, never
+// a panic or a second write.
+func TestApplyWorkflowJobRefusesAForeignOrSpentPlan(t *testing.T) {
+	f, _, ws, owner := workflowJobCloud(t, nil)
+	ctx := context.Background()
+	if err := ApplyWorkflowJob(ctx, f.c, nil); err == nil {
+		t.Fatal("applied nil")
+	}
+	if err := ApplyWorkflowJob(ctx, f.c, &WorkflowJobUpdate{}); err == nil {
+		t.Fatal("applied a zero plan")
+	}
+	var none *WorkflowJobUpdate
+	if none.Changes() {
+		t.Fatal("a nil plan changes")
+	}
+	u, err := PlanWorkflowJob(ctx, f.c, "proj-1234", "us-east5", ws.Job, ws.Name, newBase, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyWorkflowJob(ctx, f.c, u); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyWorkflowJob(ctx, f.c, u); err == nil || !strings.Contains(err.Error(), "already applied") || len(f.run.Patches()) != 1 {
+		t.Fatalf("a second apply: %v, %d patches", err, len(f.run.Patches()))
+	}
+}
+
+// The job's execution tokens are never sent back (one could start an
+// execution): the patch body has neither, and the stored job is otherwise
+// what it was, except the image.
+func TestApplyWorkflowJobDropsExecutionTokens(t *testing.T) {
+	f, _, ws, owner := workflowJobCloud(t, func(j map[string]any) {
+		j["startExecutionToken"] = "start-tok"
+		j["runExecutionToken"] = "run-tok"
+	})
+	ctx := context.Background()
+	before := f.run.JobJSON("proj-1234", "us-east5", ws.Job)
+	if before["startExecutionToken"] == nil || before["runExecutionToken"] == nil {
+		t.Fatalf("fixture: %v", before)
+	}
+	u, err := PlanWorkflowJob(ctx, f.c, "proj-1234", "us-east5", ws.Job, ws.Name, newBase, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyWorkflowJob(ctx, f.c, u); err != nil {
+		t.Fatal(err)
+	}
+	p := f.run.Patches()
+	if len(p) != 1 {
+		t.Fatalf("%d patches", len(p))
+	}
+	for _, k := range []string{"startExecutionToken", "runExecutionToken"} {
+		if _, ok := p[0][k]; ok {
+			t.Errorf("the patch body carries %s", k)
+		}
+	}
+	after := f.run.JobJSON("proj-1234", "us-east5", ws.Job)
+	for _, j := range []map[string]any{before, after} {
+		container(j)["image"] = "IMAGE"
+		delete(j, "etag")
+		delete(j, "startExecutionToken")
+		delete(j, "runExecutionToken")
+	}
+	b, _ := json.Marshal(before)
+	a, _ := json.Marshal(after)
+	if string(a) != string(b) {
+		t.Fatalf("the job changed beyond its image:\nbefore %s\nafter  %s", b, a)
+	}
+}
+
+// ApplyWorkflowJob waits for its operation, the same read-modify-write
+// ApplyCheckJob uses (applyJobPatch, TestApplyCheckJobWaitsForTheOperation
+// already covers its poll matrix in full): one poll proves the wiring.
+func TestApplyWorkflowJobWaitsForTheOperation(t *testing.T) {
+	ctx := context.Background()
+	f, _, ws, owner := workflowJobCloud(t, nil)
+	u, err := PlanWorkflowJob(ctx, f.c, "proj-1234", "us-east5", ws.Job, ws.Name, newBase, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.run.SetJobFaults(gcpfake.JobFaults{Polls: 3})
+	if err := ApplyWorkflowJob(ctx, f.c, u); err != nil {
+		t.Fatal(err)
+	}
+	if got := container(f.run.JobJSON("proj-1234", "us-east5", ws.Job))["image"]; got != newBase {
+		t.Fatalf("returned before the operation was done: image %v", got)
 	}
 }
 

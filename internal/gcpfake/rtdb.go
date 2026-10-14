@@ -29,6 +29,7 @@ type RTDB struct {
 	root     any
 	denyNext int
 	deny     []string
+	denyKeys []string
 	clock    func() time.Time
 	creds    []string
 	streams  map[*rtdbStream]struct{}
@@ -107,6 +108,15 @@ func (f *RTDB) Deny(path string) {
 		return
 	}
 	f.deny = append(f.deny, strings.Join(split(path), "/"))
+}
+
+// DenyKeys makes any write whose value is an object carrying one of keys (at
+// its top level) answer 401 and change nothing, as rules deployed before a
+// key existed would refuse it through their $other node. No keys lifts it.
+func (f *RTDB) DenyKeys(keys ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.denyKeys = append([]string(nil), keys...)
 }
 
 // HoldNext makes the next request to path stamp its Date header and then
@@ -340,6 +350,14 @@ func (f *RTDB) write(w http.ResponseWriter, r *http.Request, path []string, body
 			if touches(strings.Join(c.path, "/"), d) {
 				writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "Permission denied"})
 				return
+			}
+		}
+		if m, ok := c.v.(map[string]any); ok {
+			for _, k := range f.denyKeys {
+				if _, present := m[k]; present {
+					writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "Permission denied"})
+					return
+				}
 			}
 		}
 	}

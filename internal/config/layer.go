@@ -103,6 +103,9 @@ type Profile struct {
 	Resources   Resources    `yaml:"resources"`
 	Timeouts    Timeouts     `yaml:"timeouts"`
 	Rebuild     Rebuild      `yaml:"rebuild"`
+	// Checkout is workflows.*.checkout's value through this profile; "" sets
+	// none (a workflow or the Fugaro default decides).
+	Checkout string `yaml:"checkout,omitempty"`
 }
 
 // HasExecutable reports whether the profile sets a key that runs as shell
@@ -114,7 +117,8 @@ type Profile struct {
 // executableChanges key comparison in internal/cli/config_publish.go, not
 // through this method.
 func (p Profile) HasExecutable() bool {
-	return p.Commands.Build != "" || p.Commands.Test != "" || p.Commands.RerunFailed != nil || len(p.Image.Apt) > 0 || len(p.Image.Setup) > 0
+	return p.Commands.Build != "" || p.Commands.Test != "" || p.Commands.Lint != "" || p.Commands.Fix != "" ||
+		p.Commands.RerunFailed != nil || len(p.Image.Apt) > 0 || len(p.Image.Setup) > 0 || len(p.Image.Tools) > 0
 }
 
 // LayerSum is the hex sha256 of a project layer's text.
@@ -568,10 +572,13 @@ func validateProfile(p string, pr Profile) []Problem {
 	if utf8.RuneCountInString(pr.Description) > maxProfileDescription || strings.ContainsFunc(pr.Description, badKeyRune) {
 		add(p+".description", "must be one line of at most %d characters, with no control or formatting characters", maxProfileDescription)
 	}
-	if pr.Base != "" && !slices.Contains(Bases, pr.Base) {
-		add(p+".base", "must be one of %s", strings.Join(Bases, ", "))
+	if pr.Base != "" {
+		add(p+".base", legacyBaseMessage, MigrationDoc)
 	}
 	ps = append(ps, validateImage(p, Workflow{Base: pr.Base, Image: pr.Image})...)
+	if pr.Checkout != "" {
+		ps = append(ps, validateCheckout(p, Workflow{Base: pr.Base, Image: pr.Image, Checkout: pr.Checkout})...)
+	}
 	if rf := pr.Commands.RerunFailed; rf != nil {
 		if strings.TrimSpace(rf.Command) == "" {
 			add(p+".commands.rerun_failed.command", "is required")
