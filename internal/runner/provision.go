@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -235,10 +236,43 @@ func (r *run) miseComplete(ctx context.Context, bound time.Duration, env []strin
 	return fmt.Errorf("mise installed %s but left these tools missing: %s", what, lastLine(missing))
 }
 
-// provisionEnv is env with the model credentials and the gateway's provider
-// keys removed and GITHUB_TOKEN set to token (the run's git token, for
-// mise's rate limit; left unset when the run has none, so an empty variable
-// never shadows one the job's own environment carries).
+// provisionEnv is env with everything Fugaro's own and everything secret
+// removed, and GITHUB_TOKEN set to token (the run's git token, for mise's
+// rate limit; left unset when the run has none, so an empty variable never
+// shadows one the job's own environment carries).
+//
+// mise install is repository-chosen code: a mise backend such as `cargo:` or
+// `go:` runs the tool's install script, a `[hooks]` entry and an `[env]`
+// template run whatever the config says, and a plugin is fetched from any
+// git URL. On a follow-up the config that runs is the pull request branch's
+// own — written by an agent — so what mise may see is a credential boundary,
+// not a convenience. Removed, therefore:
+//
+//   - every FUGARO_* variable, by prefix rather than by list: they are
+//     Fugaro's own protocol and credentials, mise reads none of them, and a
+//     prefix rule is fail-closed — a credential added later cannot be
+//     forgotten here. This is what covers the static git-provider
+//     credentials specifically: providers.EnvBitbucketToken (a repository
+//     access token), EnvGitHubAppKey/EnvGitHubAppKeyFile/EnvGitHubAppID
+//     (from that private key an installation token for every repository the
+//     App covers can be minted), and the derived FUGARO_GIT_TOKEN. The
+//     boundary H1 and M1 draw is only a boundary if the key it comes from
+//     goes too. Withholding the GITHUB_TOKEN minted
+//     from the App key while handing over the key itself would be no
+//     boundary at all.
+//   - the model credentials (modelCredentialVars) and the gateway's provider
+//     keys (config.IsProviderKeyEnv, which is absent from the agent's own
+//     allowlist for the same reason).
+//   - GITHUB_TOKEN and GH_TOKEN, the names mise or a git it shells out to
+//     would send to api.github.com: readded below only when the caller
+//     allows one.
+//
+// What is kept is everything else the job carries — PATH, HOME, the proxy
+// and CA-certificate variables, TMPDIR, MISE_* and whatever a repository's
+// own Dockerfile set — because a mise backend may need them and the agent's
+// allowlist (agent.baseEnv) does not carry them all. A denylist is weaker
+// than an allowlist here, which is why the FUGARO_-prefix rule above is what
+// the credential names are derived from rather than enumerated.
 func provisionEnv(env []string, token string) []string {
 	if env == nil {
 		env = os.Environ()
@@ -246,7 +280,8 @@ func provisionEnv(env []string, token string) []string {
 	out := make([]string, 0, len(env)+1)
 	for _, kv := range env {
 		k, _, _ := strings.Cut(kv, "=")
-		if k == "GITHUB_TOKEN" || config.IsProviderKeyEnv(k) || contains(modelCredentialVars, k) {
+		if strings.HasPrefix(k, "FUGARO_") || k == "GITHUB_TOKEN" || k == "GH_TOKEN" ||
+			config.IsProviderKeyEnv(k) || slices.Contains(modelCredentialVars, k) {
 			continue
 		}
 		out = append(out, kv)
@@ -255,16 +290,6 @@ func provisionEnv(env []string, token string) []string {
 		out = append(out, "GITHUB_TOKEN="+token)
 	}
 	return out
-}
-
-// contains reports whether ss holds s.
-func contains(ss []string, s string) bool {
-	for _, v := range ss {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }
 
 // lastLine is the last non-empty line of out, one-lined and clipped: what a

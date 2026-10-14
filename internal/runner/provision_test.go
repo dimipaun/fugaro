@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -209,21 +210,37 @@ func TestCloneProvisionRunsMiseInstall(t *testing.T) {
 	}
 }
 
-// TestCloneProvisionMiseEnvironment (review M5): the environment mise runs
-// with is pinned exactly: the run's model credentials and the gateway's
-// provider keys are gone (a mise backend runs repository-chosen code), and
-// the run's git token is GITHUB_TOKEN, which is what mise's GitHub API calls
-// use for their rate limit.
+// TestCloneProvisionMiseEnvironment (review M5 and this round's high
+// finding): the environment mise runs with is pinned exactly. A mise backend
+// runs repository-chosen code and, on a follow-up, the branch's own config,
+// so the run's model credentials, the gateway's provider keys, and the static
+// git-provider credentials (the App private key, the Bitbucket token, and
+// every other FUGARO_* variable, from which the run's GITHUB_TOKEN is minted)
+// are gone. The run's git token is GITHUB_TOKEN, which is what mise's GitHub
+// API calls use for their rate limit.
 //
 // Mutation (run, restore): drop `contains(modelCredentialVars, k)` (or the
 // GITHUB_TOKEN drop) from provisionEnv — the ANTHROPIC_API_KEY (or the token
-// absence) assertion fails; drop the GITHUB_TOKEN append in
-// provisionGitToken — the token assertion fails.
+// absence) assertion fails; drop the `strings.HasPrefix(k, "FUGARO_")` arm —
+// the git-provider credential assertions fail; drop the GITHUB_TOKEN append
+// in provisionGitToken — the token assertion fails.
 func TestCloneProvisionMiseEnvironment(t *testing.T) {
 	h := newHarnessFiles(t, cloneYAML, nil, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n"})
 	h.fakeMise(t, 0)
 	h.cloneJob(t)
-	h.deps.Env = append(h.deps.Env, "ANTHROPIC_API_KEY=model-secret", "FUGARO_PROVIDER_KEY_OPENROUTER=provider-secret")
+	h.deps.Env = append(h.deps.Env,
+		"ANTHROPIC_API_KEY=model-secret",
+		"FUGARO_PROVIDER_KEY_OPENROUTER=provider-secret",
+		"GH_TOKEN=planted-gh-secret",
+		// The static git-provider credentials (this round's high finding):
+		// mise runs the branch's own code, so none of these may reach it.
+		providers.EnvGitHubAppKey+"=app-private-key-secret",
+		providers.EnvGitHubAppKeyFile+"=/secrets/app.pem",
+		providers.EnvGitHubAppID+"=1234567",
+		providers.EnvBitbucketToken+"=bitbucket-secret",
+		providers.EnvGitHubAPIURL+"=https://api.github.com",
+		"FUGARO_GIT_TOKEN=derived-git-secret",
+	)
 	if _, err := h.run(t, implement("feature"), review("ship", 0)); err != nil {
 		t.Fatal(err)
 	}
@@ -237,6 +254,24 @@ func TestCloneProvisionMiseEnvironment(t *testing.T) {
 		}
 		if _, ok := env["FUGARO_PROVIDER_KEY_OPENROUTER"]; ok {
 			t.Errorf("mise call %d sees a provider key", i)
+		}
+		if _, ok := env["GH_TOKEN"]; ok {
+			t.Errorf("mise call %d sees GH_TOKEN", i)
+		}
+		for _, k := range []string{
+			providers.EnvGitHubAppKey, providers.EnvGitHubAppKeyFile, providers.EnvGitHubAppID,
+			providers.EnvBitbucketToken, providers.EnvGitHubAPIURL,
+		} {
+			if _, ok := env[k]; ok {
+				t.Errorf("mise call %d sees the git-provider credential %s", i, k)
+			}
+		}
+		// Nothing of Fugaro's own at all: the prefix rule is what makes
+		// this fail closed for a credential added later.
+		for k := range env {
+			if strings.HasPrefix(k, "FUGARO_") {
+				t.Errorf("mise call %d sees Fugaro's own %s", i, k)
+			}
 		}
 		if got := env["GITHUB_TOKEN"]; got != gitToken {
 			t.Errorf("mise call %d's GITHUB_TOKEN = %q, want the run's git token", i, got)
