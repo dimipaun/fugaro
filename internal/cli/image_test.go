@@ -266,7 +266,7 @@ func cloudBuildCheckoutWithProjectSecret(t *testing.T, granted bool) (*cloudFixt
 	f.appendConfig(t, "project_secrets:\n  bitbucket-token:\n    allow_data_to: [acme/app]\n")
 	slug := mustSlug("bitbucket", "acme/app")
 	repoID, projectID := gcp.SecretID(slug, "bitbucket-token"), gcp.ProjectSecretID("aurora", "bitbucket-token")
-	f.sm.Seed(repoID, nil, nil)         // created, no enabled version: a build cannot read it
+	f.sm.Seed(repoID, nil, nil) // created, no enabled version: a build cannot read it
 	f.sm.Seed(projectID, nil, []byte("project-token"))
 	if granted {
 		sa := "serviceAccount:" + gcp.BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com"
@@ -277,7 +277,9 @@ func cloudBuildCheckoutWithProjectSecret(t *testing.T, granted bool) (*cloudFixt
 
 // gitSecretVersionName is the availableSecrets versionName a build naming
 // secret ID id sends.
-func gitSecretVersionName(id string) string { return "projects/proj-1234/secrets/" + id + "/versions/latest" }
+func gitSecretVersionName(id string) string {
+	return "projects/proj-1234/secrets/" + id + "/versions/latest"
+}
 
 // availableGitSecret is the credential versionName of the last request the
 // fake Cloud Build saw.

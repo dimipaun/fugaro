@@ -71,7 +71,7 @@ func TestGrantedSecretIDCountsConditionalBinding(t *testing.T) {
 	f := newCloud(t)
 	f.sm.Seed("repo-id", nil, []byte("v"))
 	f.sm.SetPolicy("repo-id", []gcpfake.Binding{{Role: gcp.SecretAccessorRole,
-		Members: []string{"serviceAccount:build@proj-1234.iam.gserviceaccount.com"},
+		Members:   []string{"serviceAccount:build@proj-1234.iam.gserviceaccount.com"},
 		Condition: &gcpfake.IAMCondition{Expression: "request.time < timestamp('2030-01-01T00:00:00Z')"}}})
 	id, err := GrantedSecretID(t.Context(), resolveSM(t, f), "proj-1234", "serviceAccount:build@proj-1234.iam.gserviceaccount.com", "repo-id", "")
 	if err != nil || id != "repo-id" {
