@@ -222,11 +222,18 @@ func TestFirstBuildWaitsForTheGitHubApp(t *testing.T) {
 	run := func(t *testing.T, g *githubRig) (*initRun, string, int) {
 		t.Helper()
 		fb := gcpfake.NewBuild(t)
+		// The pre-check resolves the git credential live before it asks
+		// GitHub (a project-wide copy may be the one a build reads, design
+		// project-secrets.md §6 step 4a): this rig stores the repository's
+		// own, so the ID it resolves is the one spec names and the check
+		// below is the App's own, as before.
+		sm := gcpfake.NewSecrets(t)
+		sm.Seed("app-key-secret", map[string]string{gcp.LabelManaged: gcp.ManagedValue}, []byte("stored-already-0001"))
 		r, _, out := conditions()[6].run(t, "") // no terminal: an offered build is left, never typed
 		r.o.checkApp = true
 		lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5",
 			BaseImages: map[string]string{"base": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"},
-			Endpoints:  localcfg.Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}
+			Endpoints:  localcfg.Endpoints{CloudBuild: fb.URL + "/", SecretManager: sm.URL + "/", NoAuth: true}}
 		built, err := r.offerBuilds(t.Context(), lc, cfg, spec, []string{"app"})
 		if err != nil || built != 0 {
 			t.Fatalf("built %d, %v", built, err)

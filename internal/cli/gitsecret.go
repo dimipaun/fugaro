@@ -20,7 +20,11 @@ func gitSecretID(ctx context.Context, lc *localcfg.Config, spec infra.RepoSpec, 
 		return "", nil
 	}
 	projectID, _ := infra.ProjectSecretCandidate(lc, logical, spec.Name)
-	return resolveGitSecretID(ctx, lc, spec.GCPProject, spec.Name, logical, spec.Secrets[logical], projectID, buildAccountMember(spec.BuildServiceAccountEmail), what)
+	// The project is the local config's, the same one the client below is
+	// built for: spec.GCPProject is that value (infra.Repo sets it from the
+	// same config), and the two must not be able to disagree about which
+	// project's secrets are being read.
+	return resolveGitSecretID(ctx, lc, lc.GCPProject, spec.Name, logical, spec.Secrets[logical], projectID, buildAccountMember(spec.BuildServiceAccountEmail), what)
 }
 
 // buildAccountMember is the IAM member form of a repository's build service
