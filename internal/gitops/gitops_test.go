@@ -3,6 +3,7 @@ package gitops
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -1432,5 +1433,103 @@ func TestCheckoutDetachedNeverRunsLFSFilters(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("the lfs filter ran during the checkout")
+	}
+}
+
+// remoteWithCommits is a bare remote whose main branch holds n commits (the
+// seeded one included), for the clone tests below.
+func remoteWithCommits(t *testing.T, n int) string {
+	t.Helper()
+	testutil.IsolateGit(t)
+	remote := testutil.NewRemote(t, map[string]string{"README.md": "hello\n"})
+	if n <= 1 {
+		return remote
+	}
+	work := filepath.Join(t.TempDir(), "seed")
+	testutil.Git(t, filepath.Dir(work), "clone", "--quiet", remote, work)
+	for i := 1; i < n; i++ {
+		name := fmt.Sprintf("f%d.txt", i)
+		testutil.WriteFiles(t, work, map[string]string{name: "x\n"})
+		testutil.Git(t, work, "add", "-A")
+		testutil.Git(t, work, "commit", "--quiet", "-m", "commit "+name)
+	}
+	testutil.Git(t, work, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+	return remote
+}
+
+// TestCloneBloblessKeepsHistory (plan Task 17, G4): the clone is blobless
+// and single-branch but never shallow — checkpoints, follow-ups and
+// merge-base need the whole history.
+func TestCloneBloblessKeepsHistory(t *testing.T) {
+	remote := remoteWithCommits(t, 3)
+	dir := filepath.Join(t.TempDir(), "repo")
+	r, err := CloneBlobless(ctx, dir, remote, "main", IdentityEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Dir != dir {
+		t.Fatalf("Dir = %q, want %q", r.Dir, dir)
+	}
+	if n := testutil.Git(t, dir, "rev-list", "--count", "HEAD"); n != "3" {
+		t.Fatalf("history = %s commits, want 3 (not shallow)", n)
+	}
+	if v := testutil.Git(t, dir, "config", "remote.origin.partialclonefilter"); v != "blob:none" {
+		t.Fatalf("filter = %q, want blob:none", v)
+	}
+	if b := testutil.Git(t, dir, "rev-parse", "--abbrev-ref", "HEAD"); b != "main" {
+		t.Fatalf("branch = %q, want main", b)
+	}
+	if got := testutil.Git(t, dir, "config", "remote.origin.fetch"); got != "+refs/heads/main:refs/remotes/origin/main" {
+		t.Fatalf("fetch refspec = %q, want the single branch", got)
+	}
+	// The file contents themselves are fetched on demand, and a checkout
+	// still works: this is what the runner's checkout of the task's ref
+	// does.
+	if err := r.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	if got := testutil.Git(t, dir, "rev-parse", "--abbrev-ref", "HEAD"); got != "fugaro/x" {
+		t.Fatalf("checked-out branch = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "README.md")); err != nil {
+		t.Fatalf("the checkout has no README.md: %v", err)
+	}
+}
+
+// An empty branch clones the remote's own default branch; a remote that
+// does not exist is an error, not a checkout.
+func TestCloneBloblessDefaultBranchAndErrors(t *testing.T) {
+	remote := remoteWithCommits(t, 2)
+	dir := filepath.Join(t.TempDir(), "sub", "repo")
+	if _, err := CloneBlobless(ctx, dir, remote, "", IdentityEnv()); err != nil {
+		t.Fatal(err)
+	}
+	if n := testutil.Git(t, dir, "rev-list", "--count", "HEAD"); n != "2" {
+		t.Fatalf("history = %s commits, want 2", n)
+	}
+	if _, err := CloneBlobless(ctx, filepath.Join(t.TempDir(), "x"), "", "main", nil); err == nil {
+		t.Fatal("cloned with no remote")
+	}
+	if _, err := CloneBlobless(ctx, filepath.Join(t.TempDir(), "y"), filepath.Join(t.TempDir(), "nope"), "main", nil); err == nil {
+		t.Fatal("cloned a remote that does not exist")
+	}
+}
+
+// CloneBlobless strips the model credential from the clone's own git calls,
+// as OpenOrClone does (its hook and filter commands must never see one).
+func TestCloneBloblessStripsFromTheStart(t *testing.T) {
+	remote := remoteWithCommits(t, 1)
+	env := append(IdentityEnv(), "ANTHROPIC_API_KEY=test-key")
+	r, err := CloneBlobless(ctx, filepath.Join(t.TempDir(), "repo"), remote, "main", env, ModelCredentialVars...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.StripEnv) != len(ModelCredentialVars) {
+		t.Fatalf("StripEnv = %v", r.StripEnv)
+	}
+	for _, kv := range r.Environ() {
+		if strings.HasPrefix(kv, "ANTHROPIC_API_KEY=") {
+			t.Fatal("the clone's environment holds the model credential")
+		}
 	}
 }

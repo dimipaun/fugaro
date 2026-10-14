@@ -117,6 +117,44 @@ func OpenOrClone(ctx context.Context, dir, remote string, env []string, strip ..
 	return &Repo{Dir: dir, Env: env, StripEnv: strip}, nil
 }
 
+// CloneBlobless clones remote into dir as a blobless, single-branch partial
+// clone of branch: git's `--filter=blob:none` downloads the commits and
+// trees but no file contents, which a later checkout fetches for the files
+// it actually needs. It is what a job with no derived image clones its
+// repository with (design generic-tool.md §2, G4): nothing is baked into
+// that job's image, so the start-up cost is this clone.
+//
+// The history stays complete — never a shallow `--depth 1`, which would
+// break checkpoints, follow-ups and merge-base (design §2, G4) — and only
+// branch's refs are fetched (`--single-branch`). branch "" clones the
+// remote's own default branch; the runner's bootstrap uses that, since the
+// repository's git.base_branch is not readable until the checkout exists,
+// and its FetchBase repairs origin/<base> right afterwards either way.
+//
+// dir must not exist (git creates it); its parent is created if absent.
+// env and strip are OpenOrClone's: the credential variables, and the
+// variables (the model credential) no git call may see.
+func CloneBlobless(ctx context.Context, dir, remote, branch string, env []string, strip ...string) (*Repo, error) {
+	if remote == "" {
+		return nil, fmt.Errorf("cloning %s: no remote", dir)
+	}
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return nil, err
+	}
+	args := []string{"clone", "--quiet", "--filter=blob:none", "--single-branch"}
+	if branch != "" {
+		args = append(args, "--branch", branch)
+	}
+	// The `--` keeps a remote that looks like an option (a path beginning
+	// with "-") from being read as one.
+	args = append(args, "--", remote, dir)
+	parent := &Repo{Dir: filepath.Dir(dir), Env: env, StripEnv: strip}
+	if _, err := parent.git(ctx, args...); err != nil {
+		return nil, err
+	}
+	return &Repo{Dir: dir, Env: env, StripEnv: strip}, nil
+}
+
 // noHooks is prepended to every runner-owned git invocation. The runner's
 // git is plumbing: a repository hook (husky, lint-staged, a pre-push test
 // run) must never block bootstrap's checkout, finalize's commit or push, and
