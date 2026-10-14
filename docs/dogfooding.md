@@ -11,7 +11,7 @@ The repository's root `fugaro.yaml` points a Fugaro installation at this reposit
 - **One project holds everything.** The installation (runs bucket, registries, jobs, secrets, scheduler) and the Firebase budget backend are in the same GCP and Firebase project, `fugaro-dev`, Fugaro project name `fugaro` (the "same-project layout", design `m9-budget-and-dashboard.md` §6.0). The budget runs in `observe` mode; Firestore history is on, its location (`us-east5`) permanent.
 - **Remove `roles/editor` from the default service accounts.** In this layout anything that runs as the default Compute Engine, Cloud Build or App Engine account and holds `roles/editor` can reach the budget backend, so on `fugaro-dev` the user removed it from the default Compute account by hand. `fugaro doctor` and `init` flag it (`default-service-accounts`); see gcp-setup.md, precondition 9.
 - **The GitHub App** is created by the user in a browser and installed on `dimipaun/fugaro` ([git-providers.md](git-providers.md)). Its name is unique across GitHub, so the bare `Fugaro` was taken and the maintainer picked another; its ID is not a secret. It has Contents, Pull requests, Issues and Metadata, and **never the Workflows permission** (below).
-- **The secrets are the user's.** The App's private key (`github-app-key`) and the Claude credential (`claude-oauth-token`, from `claude setup-token`, since `agent.auth` is `oauth`) are entered by the user in their own terminal, at the `secrets` stage's hidden prompts or with `fugaro secrets set`. No agent sees a value; `init` refuses to prompt through one.
+- **The secrets are the user's.** The App's private key (`github-app-key`) and the model credentials (`anthropic-api-key` and `openrouter-api-key`, since `agent.auth` is `api-key` and the coder and reviewer are DeepSeek models through OpenRouter) are entered by the user in their own terminal, at the `secrets` stage's hidden prompts or with `fugaro secrets set`. No agent sees a value; `init` refuses to prompt through one.
 - **Reviewers.** `git.pr.reviewers` and `labels` in `fugaro.yaml` are empty, with a `TODO(user)` for a GitHub login; changing them is a normal PR to `main`.
 
 ## Setup
@@ -51,7 +51,7 @@ Each run has its own worker, branch and PR, so independent tasks run side by sid
 
 - **One owner per file.** Two runs that edit the same file give conflicting PRs. Settle shared names and interfaces first and put them in every task's text.
 - **Merge in dependency order**, and launch a dependent task only after its base has merged.
-- **Check headroom first**: `fugaro budget show`; `max_parallel` (20) refuses beyond that. `oauth` runs have no dollar cap, so the bound is your subscription and the day's headroom.
+- **Check headroom first**: `fugaro budget show`; `max_parallel` (20) refuses beyond that. The budget gateway prices every call on `api-key`, so the bounds are the owner's per-run and project caps (`budget.per_run_usd` in the local config) and the day's headroom; the cloud loop costs cents per run.
 - **Expect to read each PR's CI**, not just the run's verify.
 
 ## What went through runs, and what did not
