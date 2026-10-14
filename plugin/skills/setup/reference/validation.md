@@ -36,5 +36,6 @@ When it fails, read the `error` and the end of the build log, then fix `fugaro.y
 | Smoke `claude`, `no-setuid`, `no-setgid`, `no-file-caps` or `sudoers` fails | The Dockerfile or a setup step removed Claude Code, added setuid or setgid binaries or file capabilities, or left sudo rules. Restore the contract. |
 | Smoke `root-scan` fails | The filesystem scans must run as root (uid 0). Something changed the image's user or the scan's access. Restore the contract. |
 | Smoke `managed-settings-dir` fails | Something baked files into the directory the runner writes Claude Code's managed settings to at run time. Remove that step. |
+| Smoke `mise-cache-dir` fails | Something removed, replaced or changed the owner of `~/.cache/mise`, the mise download cache the base image creates for the run. Remove that step. |
 
 If the same failure survives three different fixes, stop and ask the user. Then the loop is over only when both checks pass for every workflow.

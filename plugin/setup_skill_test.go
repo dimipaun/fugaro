@@ -336,7 +336,7 @@ func TestSetupSkillContent(t *testing.T) {
 			"own terminal", "## 9. `agent.recipe`", "Only the people the user names", "list only the people the user names", "recommend asking the user for a number", "`vertex` supports `observe` only", "Ask the user whether the repository is public", "never from CODEOWNERS",
 		},
 		"skills/setup/reference/validation.md": {
-			"root-scan", "managed-settings-dir", "runs the repository's code", "Don't have the token put into your own environment", "visible to the repository's code in the build and to every command your agent runs",
+			"root-scan", "managed-settings-dir", "mise-cache-dir", "runs the repository's code", "Don't have the token put into your own environment", "visible to the repository's code in the build and to every command your agent runs",
 		},
 		"skills/setup/reference/discovery.md": {
 			"16 GB on a public one", "GOTOOLCHAIN", "go.mod", "must be a plain version",

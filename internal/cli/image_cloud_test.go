@@ -655,7 +655,7 @@ func TestImageRenderCloudOutputs(t *testing.T) {
 		t.Fatalf("selftest.json = %s, %v", data, err)
 	}
 	if want := (image.SelftestSpec{Base: "base", RepoDir: "/work/repo", Commit: commit, Origin: "https://github.com/acme/app.git",
-		CheckInit: true, CheckHardening: true, SkipVerify: true, Tools: "critical", Mise: true}); !reflect.DeepEqual(spec, want) {
+		CheckInit: true, CheckHardening: true, SkipVerify: true, Tools: "critical", Mise: true, CheckMiseCache: true}); !reflect.DeepEqual(spec, want) {
 		t.Errorf("selftest.json = %+v\nwant %+v", spec, want)
 	}
 	data, err = os.ReadFile(filepath.Join(ws, "record.json"))

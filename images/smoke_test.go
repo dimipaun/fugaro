@@ -108,7 +108,9 @@ case "$cmd" in
       *"--network none"*) ;;
       *) echo "fake-docker: fugaro image selftest ran without --network none: $all_args" >&2; exit 1 ;;
     esac
-    [ "$spec" = '{"tools":"all","tools_only":true}' ] \
+    # The base's smoke asks for the presence checks alone and, with them,
+    # the mise cache directory contract (tools_only ignores no other field).
+    [ "$spec" = '{"tools":"all","tools_only":true,"check_mise_cache":true}' ] \
       || { echo "fake-docker: unexpected selftest spec on stdin: $spec" >&2; exit 1; }
     if [ "$missing" = selftest ]; then echo '{"passed":false,"checks":[{"name":"tool:gemini","ok":false}]}'; exit 1; fi
     if [ "$missing" = selftest-passed-false ]; then echo '{"passed":false,"checks":[{"name":"tool:gemini","ok":false}]}'; exit 0; fi

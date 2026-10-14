@@ -1660,7 +1660,7 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		r.rec.CostUSD += res.CostUSD
 	}
 	r.updateCost()
-	r.rec.Stages = append(r.rec.Stages, runstore.StageTiming{Name: name, StartedAt: started.UTC(), DurationS: r.d.Now().Sub(started).Seconds()})
+	r.rec.Stages = append(r.rec.Stages, r.stageTiming(name, started, res.CostUSD))
 	var errText any // the agent's error may carry a key an upstream echoed
 	if err != nil {
 		errText = r.redact(err.Error())

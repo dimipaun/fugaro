@@ -51,7 +51,7 @@ Each run has its own worker, branch and PR, so independent tasks run side by sid
 
 - **One owner per file.** Two runs that edit the same file give conflicting PRs. Settle shared names and interfaces first and put them in every task's text.
 - **Merge in dependency order**, and launch a dependent task only after its base has merged.
-- **Check headroom first**: `fugaro budget show`; `max_parallel` (20) refuses beyond that. The budget gateway prices every call on `api-key`, so the bounds are the owner's per-run and project caps (`budget.per_run_usd` in the local config) and the day's headroom; the cloud loop costs cents per run.
+- **Check headroom first**: `fugaro budget show`, and size the batch with `fugaro budget preview --recipe standard --runs N` (the ceiling `N` runs may cost, against today's remaining caps); `max_parallel` (20) refuses beyond that. The budget gateway prices every call on `api-key`, so the bounds are the owner's per-run and project caps (`budget.per_run_usd` in the local config) and the day's headroom; the cloud loop costs cents per run.
 - **Expect to read each PR's CI**, not just the run's verify.
 
 ## What went through runs, and what did not

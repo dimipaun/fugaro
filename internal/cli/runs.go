@@ -68,8 +68,9 @@ type lsDoc struct {
 	Warnings []string `json:"warnings"`
 }
 
-// newRunsCmd is "fugaro runs", with ls (the renamed "fugaro ls") as its
-// only subcommand today.
+// newRunsCmd is "fugaro runs". ls is its only subcommand today; the 0.7.0
+// top-level `fugaro ls` tombstone was deleted in 0.8.0 (design generic-tool
+// §5, G17).
 func newRunsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "runs",

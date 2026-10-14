@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -54,12 +55,20 @@ type SelftestSpec struct {
 	// (a derived image's smoke), "all" (the base's CI smoke) or "" (none).
 	Tools string `json:"tools,omitempty"`
 	// ToolsOnly runs the presence checks alone (Tools, default "all"), for
-	// the base image itself, which has no checkout. Every other field is
-	// ignored.
+	// the base image itself, which has no checkout. CheckMiseCache is
+	// honoured with them; every other field is ignored.
 	ToolsOnly bool `json:"tools_only,omitempty"`
 	// Mise checks that every tool the checkout's mise config and
 	// image.tools declare is installed: the base kind.
 	Mise bool `json:"mise,omitempty"`
+	// CheckMiseCache requires the base image's mise download cache,
+	// /home/fugaro/.cache/mise, to exist as a directory the agent's user
+	// owns and can write in. A derived build mounts a BuildKit cache on that
+	// path, and BuildKit creates a mount target that does not exist itself
+	// as root, so the base must create it (§4). It inspects an absolute
+	// path, so it is only meaningful inside the real container, the same way
+	// CheckInit and CheckHardening are.
+	CheckMiseCache bool `json:"check_mise_cache,omitempty"`
 }
 
 // SpecForCloud is the selftest the Cloud Build smoke step runs in the
@@ -74,7 +83,7 @@ func SpecForCloud(cfg *config.Config, workflow, commit, origin string) (Selftest
 		return SelftestSpec{}, fmt.Errorf("fugaro.yaml has no workflow %q", workflow)
 	}
 	return SelftestSpec{Base: config.BaseKind, RepoDir: "/work/repo", Commit: commit, Origin: origin,
-		CheckInit: true, CheckHardening: true, SkipVerify: true, Tools: "critical", Mise: true}, nil
+		CheckInit: true, CheckHardening: true, SkipVerify: true, Tools: "critical", Mise: true, CheckMiseCache: true}, nil
 }
 
 // Check is one smoke-test result.
@@ -158,6 +167,9 @@ func Selftest(ctx context.Context, spec SelftestSpec, log io.Writer) Report {
 	uid := os.Geteuid()
 	if spec.ToolsOnly {
 		checkTools(ctx, cmp.Or(spec.Tools, "all"), add)
+		if spec.CheckMiseCache {
+			checkMiseCacheDir(agentMiseCacheDir, agentUID, agentGID, add)
+		}
 		r.Passed = len(r.Checks) > 0
 		for _, c := range r.Checks {
 			r.Passed = r.Passed && c.OK
@@ -208,6 +220,9 @@ func Selftest(ctx context.Context, spec SelftestSpec, log io.Writer) Report {
 		checkMise(ctx, spec.RepoDir, add)
 	}
 	checkHome(add)
+	if spec.CheckMiseCache {
+		checkMiseCacheDir(agentMiseCacheDir, agentUID, agentGID, add)
+	}
 	if checkoutOK && !spec.SkipVerify {
 		if err := verifyBuild(ctx, spec.Verify, log); err != nil {
 			add("verify-build", false, "%v", err)
@@ -515,6 +530,11 @@ func checkSudoers(sudoersDir, sudoersFile string, add func(string, bool, string,
 // agentUID and agentGID are the fugaro user's, as the base image creates it.
 const agentUID, agentGID = 1000, 1000
 
+// agentMiseCacheDir is where mise keeps the downloads a run reuses, and
+// where a derived build mounts its BuildKit cache (§4). The base image
+// creates it, owned by fugaro.
+const agentMiseCacheDir = "/home/fugaro/.cache/mise"
+
 // checkManagedSettingsDir reports the "managed-settings-dir" check: dir
 // (normally /etc/claude-code) exists, is a real directory, is writable by
 // the agent's user (uid, gid), and is empty. The runner is not root, so the
@@ -546,17 +566,7 @@ func checkManagedSettingsDir(dir string, uid, gid uint32, add func(string, bool,
 		add(name, false, "cannot read the owner of %s on this platform", dir)
 		return
 	}
-	// Writing an entry needs write and search permission on the directory.
-	var bits os.FileMode
-	switch {
-	case st.Uid == uid:
-		bits = fi.Mode().Perm() >> 6 & 0o7
-	case st.Gid == gid:
-		bits = fi.Mode().Perm() >> 3 & 0o7
-	default:
-		bits = fi.Mode().Perm() & 0o7
-	}
-	if bits&0o3 != 0o3 {
+	if !dirWritableBy(fi, st, uid, gid) {
 		add(name, false, "%s (owner %d:%d, mode %04o) is not writable by uid %d; the base image must create it owned by the fugaro user", dir, st.Uid, st.Gid, fi.Mode().Perm(), uid)
 		return
 	}
@@ -575,6 +585,89 @@ func checkManagedSettingsDir(dir string, uid, gid uint32, add func(string, bool,
 		return
 	}
 	add(name, true, "%s is an empty directory writable by uid %d", dir, uid)
+}
+
+// dirWritableBy reports whether the directory fi, owned as st records, is
+// writable and searchable by the user uid in group gid: the owner, group
+// and mode bits decide, and writing an entry in a directory needs both the
+// write and the search bit. It reads the bits rather than writing for the
+// callers that are not that user: checkManagedSettingsDir always (the
+// runner writes there, not the selftest) and checkMiseCacheDir when the
+// selftest runs as anyone but the directory's owner, such as root in the
+// second scan container, for whom every directory is writable.
+func dirWritableBy(fi os.FileInfo, st *syscall.Stat_t, uid, gid uint32) bool {
+	var bits os.FileMode
+	switch {
+	case st.Uid == uid:
+		bits = fi.Mode().Perm() >> 6 & 0o7
+	case st.Gid == gid:
+		bits = fi.Mode().Perm() >> 3 & 0o7
+	default:
+		bits = fi.Mode().Perm() & 0o7
+	}
+	return bits&0o3 == 0o3
+}
+
+// checkMiseCacheDir reports the "mise-cache-dir" check: dir (normally
+// /home/fugaro/.cache/mise) exists, is a real directory, is owned by the
+// agent's user (uid, gid), and is writable by it — the last by writing a
+// probe file when the selftest runs as that user, and from the mode bits
+// otherwise. The base image creates it as fugaro (§4); a derived build's
+// BuildKit cache mount on it would otherwise create it as root, and the
+// run's mise could not write its cache in the root-owned directory that
+// ships in the image.
+func checkMiseCacheDir(dir string, uid, gid uint32, add func(string, bool, string, ...any)) {
+	const name = "mise-cache-dir"
+	fi, err := os.Lstat(dir)
+	switch {
+	case err != nil:
+		add(name, false, "%s: %v; the base image must create it as the fugaro user, or a derived build's mise cache mount leaves it root-owned", dir, err)
+		return
+	case fi.Mode()&os.ModeSymlink != 0:
+		add(name, false, "%s is a symbolic link", dir)
+		return
+	case !fi.IsDir():
+		add(name, false, "%s is not a directory", dir)
+		return
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		add(name, false, "cannot read the owner of %s on this platform", dir)
+		return
+	}
+	if st.Uid != uid {
+		add(name, false, "%s is owned by uid %d (mode %04o), not the fugaro user's uid %d; a derived build's mise cache mount would leave it root-owned, and the run's mise could not write its cache", dir, st.Uid, fi.Mode().Perm(), uid)
+		return
+	}
+	// When the selftest runs as the user that must write (the fugaro user,
+	// in the image), prove it by creating and removing a file: the mode
+	// bits alone miss an ACL, a read-only mount and an immutable flag. As
+	// anyone else, such as root in the second scan container, for whom
+	// every directory is writable, the owner, group and mode bits have to
+	// decide (see dirWritableBy).
+	if os.Geteuid() == int(uid) {
+		if err := probeDirWritable(dir); err != nil {
+			add(name, false, "%s (owner %d:%d, mode %04o) is not writable by uid %d: creating and removing a file in it failed: %v", dir, st.Uid, st.Gid, fi.Mode().Perm(), uid, err)
+			return
+		}
+	} else if !dirWritableBy(fi, st, uid, gid) {
+		add(name, false, "%s (owner %d:%d, mode %04o) is not writable by uid %d", dir, st.Uid, st.Gid, fi.Mode().Perm(), uid)
+		return
+	}
+	add(name, true, "%s is a directory owned by uid %d and writable by it", dir, uid)
+}
+
+// probeDirWritable creates and removes a file in dir, which is what mise
+// does when it writes a cache entry there. The probe is removed even when
+// closing it fails, so a check that fails leaves the directory as it found
+// it.
+func probeDirWritable(dir string) error {
+	f, err := os.CreateTemp(dir, ".fugaro-selftest-*")
+	if err != nil {
+		return err
+	}
+	name := f.Name()
+	return errors.Join(f.Close(), os.Remove(name))
 }
 
 // verifyBuild runs `fugaro verify build` from PATH, as the agent would,

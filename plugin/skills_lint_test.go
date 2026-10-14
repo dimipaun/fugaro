@@ -1156,7 +1156,6 @@ func TestLintRejectsUnclosedFence(t *testing.T) {
 }
 
 func TestLintRefusesHiddenCommands(t *testing.T) {
-	expectViolation(t, demoTree(t, "Run `fugaro ls`.\n"), "is a hidden command and may not be named by a skill")
 	expectViolation(t, demoTree(t, "```bash\nfugaro exec\n```\n"), "is a hidden command and may not be named by a skill")
 	expectViolation(t, demoTree(t, "```bash\nfugaro image gate\n```\n"), "is a hidden command and may not be named by a skill")
 }
@@ -1166,7 +1165,10 @@ func TestLintRejectsUnknownCommand(t *testing.T) {
 	expectViolation(t, demoTree(t, "```bash\nfugaro frobnicate --now\n```\n"), "names no fugaro command")
 	expectViolation(t, demoTree(t, "```bash\n$ fugaro frobnicate\n```\n"), "names no fugaro command")
 	expectViolation(t, demoTree(t, "~~~bash\ntime fugaro frobnicate\n~~~\n"), "names no fugaro command")
-	expectViolation(t, demoTree(t, "```bash\nFOO=1 fugaro ls && fugaro frobnicate\n```\n"), "names no fugaro command")
+	expectViolation(t, demoTree(t, "```bash\nFOO=1 fugaro validate && fugaro frobnicate\n```\n"), "names no fugaro command")
+	// The 0.7.0 `ls` tombstone is deleted in 0.8.0, so `fugaro ls` is an
+	// unknown command now, not a hidden one.
+	expectViolation(t, demoTree(t, "Run `fugaro ls`.\n"), "names no fugaro command")
 }
 
 func TestLintRejectsUnknownSubcommand(t *testing.T) {
