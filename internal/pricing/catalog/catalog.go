@@ -8,6 +8,19 @@
 // scripts/gen-price-catalog.sh. Nothing here reads the network.
 package catalog
 
+import (
+	"bytes"
+	_ "embed"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+)
+
 // Version is the only file version this package understands. A file with
 // any other version is refused at load, never read partially.
 const Version = 1
@@ -19,7 +32,126 @@ const Version = 1
 // catalog charges the selected tier's maximum rather than refusing the run
 // (design D10, P7). One number, so budget prices, doctor and the run all
 // mean the same thing by "stale".
-const StaleAfter = 30 * 24 * 60 * 60 // seconds; 30 days
+const StaleAfter = 30 * 24 * time.Hour
+
+// maxPrice is the largest price the file may carry, in the file's own unit
+// (US dollars per million tokens, or per 1,000 searches). It restates
+// pricing.MaxPerM and pricing.MaxWebSearchPer1k, which are both 1000: this
+// package must not import pricing, because pricing imports it.
+const maxPrice = 1000
+
+//go:embed catalog.json
+var embedded []byte
+
+// Load decodes the embedded catalog strictly and validates it. A malformed
+// file is an error, never a partially applied table: the caller refuses the
+// run rather than pricing from half a catalog.
+func Load() (*File, error) { return parse(embedded) }
+
+// parse is Load's body, exported to the tests through Load alone.
+func parse(raw []byte) (*File, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var f File
+	if err := dec.Decode(&f); err != nil {
+		return nil, fmt.Errorf("the built-in price catalog is malformed: %w", err)
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, errors.New("the built-in price catalog is malformed: trailing data after the JSON object")
+	}
+	if err := f.validate(); err != nil {
+		return nil, fmt.Errorf("the built-in price catalog is malformed: %w", err)
+	}
+	return &f, nil
+}
+
+// validate is every rule the loader enforces. It is also what the
+// generator's own test would catch first: the compile-time test
+// (pricing.ApplyCatalog) makes a malformed shipped file unreachable in a
+// released binary.
+func (f *File) validate() error {
+	var errs []error
+	if f.Version != Version {
+		errs = append(errs, fmt.Errorf("version is %d: this build reads version %d", f.Version, Version))
+	}
+	if _, err := time.Parse("2006-01-02", f.CheckedAt); err != nil {
+		errs = append(errs, fmt.Errorf("checked_at %q is not YYYY-MM-DD", f.CheckedAt))
+	}
+	if len(f.Sources) == 0 {
+		errs = append(errs, errors.New("sources is empty: the file must say what it was generated from"))
+	}
+	if len(f.Models) == 0 {
+		errs = append(errs, errors.New("models is empty"))
+	}
+	for _, id := range sortedIDs(f.Models) {
+		e := f.Models[id]
+		if e.Endpoints <= 0 {
+			errs = append(errs, fmt.Errorf("%s: endpoints is %d", id, e.Endpoints))
+		}
+		if e.ZDREndpoints < 0 || e.ZDREndpoints > e.Endpoints {
+			errs = append(errs, fmt.Errorf("%s: zdr_endpoints is %d of %d endpoints", id, e.ZDREndpoints, e.Endpoints))
+		}
+		if (len(e.ZDR) > 0) != (e.ZDREndpoints > 0) {
+			errs = append(errs, fmt.Errorf("%s: zdr_endpoints is %d but the zdr tier has %d dimensions", id, e.ZDREndpoints, len(e.ZDR)))
+		}
+		if len(e.All) == 0 {
+			errs = append(errs, fmt.Errorf("%s: the all tier prices nothing", id))
+		}
+		for _, d := range Dimensions {
+			for _, tier := range []struct {
+				name string
+				m    map[string]Bound
+			}{{"all", e.All}, {"zdr", e.ZDR}} {
+				b, ok := tier.m[d]
+				if !ok {
+					continue
+				}
+				for _, x := range []struct{ name, s string }{{"min", b.Min}, {"max", b.Max}} {
+					v, err := strconv.ParseFloat(x.s, 64)
+					switch {
+					case err != nil:
+						errs = append(errs, fmt.Errorf("%s %s/%s.%s: %q is not a number", id, tier.name, d, x.name, x.s))
+					case !(v > 0) || v > maxPrice:
+						errs = append(errs, fmt.Errorf("%s %s/%s.%s: %v is not more than 0 and at most %d", id, tier.name, d, x.name, v, maxPrice))
+					}
+				}
+				if less(b.Max, b.Min) {
+					errs = append(errs, fmt.Errorf("%s %s/%s: max %s is below min %s", id, tier.name, d, b.Max, b.Min))
+				}
+				if b.MinOf == "" || b.MaxOf == "" {
+					errs = append(errs, fmt.Errorf("%s %s/%s: min_of and max_of must name the endpoint at each extreme", id, tier.name, d))
+				}
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// less compares two decimal price strings as numbers, without parsing them
+// into a float: the file's numbers are decimal strings on purpose, and a
+// comparison that rounded would let a max below its min through.
+func less(a, b string) bool {
+	ai, af, _ := strings.Cut(a, ".")
+	bi, bf, _ := strings.Cut(b, ".")
+	ai, bi = strings.TrimLeft(ai, "0"), strings.TrimLeft(bi, "0")
+	if len(ai) != len(bi) {
+		return len(ai) < len(bi)
+	}
+	if ai != bi {
+		return ai < bi
+	}
+	n := max(len(af), len(bf))
+	return af+strings.Repeat("0", n-len(af)) < bf+strings.Repeat("0", n-len(bf))
+}
+
+func sortedIDs(m map[string]Entry) []string {
+	ids := make([]string, 0, len(m))
+	for id := range m {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
 
 // File is the decoded catalog.json: the whole file, exactly as it is
 // embedded. Every price is a decimal string in US dollars per million

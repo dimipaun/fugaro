@@ -64,11 +64,29 @@ type Model struct {
 	Unverified     bool
 	PriceSource    string
 	PriceCheckedAt string
+	// Catalog is where a row the built-in provider price catalog priced
+	// came from: the tier and bound the route's switches selected, how many
+	// endpoints that tier covers, and the catalog's own source, date and
+	// staleness. It is nil on every other row, and With clears it exactly
+	// as it clears the three fields above: an owner's model_prices replaces
+	// the row whole, provenance included.
+	Catalog *CatalogPrice
 	// CacheDefaulted names the cache multipliers an owner's override left
 	// at 0 on a provider row and With raised to 1 (the input rate), so
 	// cache tokens are never free there: a provider that reports cache
 	// tokens bills them, and 0 is almost always a field left out.
 	CacheDefaulted []string
+}
+
+// CatalogPrice is the provenance of a catalog-priced row (see Model.Catalog).
+type CatalogPrice struct {
+	Tier         string // "zdr" or "all": which endpoint set the price is over
+	Bound        string // "min" or "max": which end of that set's range is charged
+	Endpoints    int    // how many endpoints the tier covers
+	ZdrEndpoints int    // how many endpoints the model has that are ZDR-eligible
+	Source       string // the catalog's own source URL
+	CheckedAt    string // the catalog's own YYYY-MM-DD
+	Stale        bool   // checked_at is past catalog.StaleAfter: the bound is forced to max
 }
 
 // CodeCacheRateDefaulted marks the warning CacheWarning returns, for callers
@@ -237,7 +255,7 @@ func (t *Table) With(o Overrides) (*Table, error) {
 		r := o[key].clone()
 		if m, ok := out.Lookup(key); ok {
 			m.Rates = r
-			m.Unverified, m.PriceSource, m.PriceCheckedAt = false, "", ""
+			m.Unverified, m.PriceSource, m.PriceCheckedAt, m.Catalog = false, "", "", nil
 			m.CacheDefaulted = defaultCacheRates(m.ID, &m.Rates)
 			out.Models[m.ID] = m
 			continue
@@ -279,6 +297,10 @@ func (t *Table) clone() *Table {
 	for id, m := range t.Models {
 		m.Aliases = append([]string(nil), m.Aliases...)
 		m.CacheDefaulted = append([]string(nil), m.CacheDefaulted...)
+		if m.Catalog != nil {
+			c := *m.Catalog
+			m.Catalog = &c
+		}
 		m.Rates = m.Rates.clone()
 		out.Models[id] = m
 	}
