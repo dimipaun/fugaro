@@ -1,0 +1,188 @@
+# Provider price catalog: implementation plan
+
+**Goal:** ship a generated catalog of OpenRouter model prices **inside the fugaro binary**, so a project that routes to a provider needs no hand-typed `model_prices`, and so the price the budget charges reflects the range OpenRouter may actually serve rather than a single marketplace headline. No code in this plan has been written or run; this is a design-to-code plan, the same status `docs/plans/2026-10-14-*` had before its Task 1 started. **This PR (the one that adds this plan and its design doc) is docs-only: no Go, Terraform or product-behavior file under this plan's "Files" lists is touched by it — the one exception is `docs/gcp-live-checklist.md`, Task 7's own list, which IS one of the three files this PR itself edits, since reserving Check 44's number and writing its not-yet-run steps is itself a docs-only act. Tasks 1 onward are future work, gated on the owner approving the design.**
+
+**Spec:** [docs/design/provider-price-catalog.md](../design/provider-price-catalog.md). Its decisions (§3 D1-D12, §4 the file format, §5 the generator, §6 the undercharge bounds, §7 staleness, §8 the ZDR honesty point) are settled there; this plan's own decisions continue as P1 onward, each independently vetoable.
+
+**Depends on:** release 0.7.x on `main` (the M10 budget gateway, `internal/pricing`, and the provider route table are all merged); [mixed-credentials.md](../design/mixed-credentials.md) merged (the Claude-through-OpenRouter opt-in is the only reason the Claude rows exist). Nothing in this plan depends on the config-transitions work behind Check 42 or the registry design behind Check 43; where they would change the answer (D3's "which layer spells the switches") the design states what follows and this plan says so at that task.
+
+**Checked before this plan was written:** every fact the design doc cites was read from this branch's base — `internal/pricing/{table.go,pricing.go,overrides.go,alias.go}`, `internal/pricing/provider_test.go`, `internal/config/{providers.go,pins.go,layer.go,config.go}`, `internal/localcfg/{localcfg.go,shared.go}`, `internal/cli/{budget.go,doctor.go,sharedcfg.go,recipes_skew.go}`, `internal/runner/{providers.go,spend.go,policy.go,gateway.go}`, `internal/gateway/{route.go,forward.go,ledger.go,sse.go}`, `docs/design/m10-multi-model.md`, `docs/design/mixed-credentials.md`, `docs/multi-model.md`, `docs/gcp-live-checklist.md`. Every claim about OpenRouter was read from its public APIs and documentation on 2026-10-14 (the URLs are in the design doc); the figures the file will carry were measured then and will drift. If the merged code differs when a task starts, that task's implementer adapts its edits to the then-current file, not the other way round (the rule `docs/plans/2026-10-08-upgrade.md` and `docs/plans/2026-10-13-project-secrets.md` use).
+
+## Decisions (veto any before execution starts)
+
+- **P1. The catalog is a generated JSON file, embedded with `go:embed`, not Go source and not a job environment variable.** `internal/pricing/catalog/catalog.json` holds hundreds of decimal strings; a Go literal set would be a file no reviewer reads, and the repo already generates embedded artifacts this way (`internal/budget/rules/rules.json.tmpl`, `internal/recipe/catalog/*.yaml`, `internal/config/example.yaml`). Prices cannot travel in the environment: `FUGARO_MODEL_PROVIDERS` is capped at 16 KiB (`internal/runner/providers.go:25`) and `FUGARO_MODEL_PRICES` at 32 KiB (`internal/pricing/overrides.go:51`), and a per-project calibration of every model is exactly the hand-typing this replaces. *Veto alternative:* a `model_prices` block the generator writes into `fugaro.yaml` — rejected because it puts a generated marketplace price into a file the owner edits by hand, where the next regeneration is a merge conflict and a stale price looks owner-authored.
+- **P2. The catalog carries a range per dimension, per tier (design D1).** `zdr` and `all`, each with `input_per_m`, `output_per_m`, `cache_read_per_m`, min and max, and the endpoint `tag` at each extreme. Not one endpoint's three numbers: the extremes live on different endpoints, and a per-endpoint record would bound nothing. *Veto alternative:* per-endpoint min/max triples — rejected in the design (§3 D1) as not a bound at all.
+- **P3. Two switches on `config.ModelProvider`: `RequireZDR *bool` (nil = true) and `PricePolicy string` (`""` = `cheapest`).** Both are owner-only, because `providers.<name>` is owner-only today (design D3): the project layer has no `providers` field and the shared bucket config refuses the section by name (`internal/cli/sharedcfg.go:155`). A repository cannot set them, and neither can a repo's `fugaro.yaml` (`TestRepoCannotAddProvider`). *Veto alternative:* put the policy in the project config so a repository can express it — rejected: `price_policy: cheapest` on a repository the owner did not vet is precisely a way for the repo to make its own spend look smaller.
+- **P4. `ProvidersEnv` omits both keys when they hold their defaults, and a non-default value is version-gated at `fugaro init --repo` (design D11).** `FUGARO_MODEL_PROVIDERS` is decoded with `DisallowUnknownFields` (`internal/runner/providers.go:65`) and a decode failure is a hard bootstrap error, so a newer CLI writing a new key would break every older runner mid-flight — a run that today works would start failing at bootstrap with an error naming a field nobody typed. The mitigation is the shape `cloneSince`/`imagePredates` already use (`internal/cli/recipes_skew.go:43`, `internal/cli/init_fugaroyaml.go:133`): the fields are omitted at their defaults (byte-identical output for every config that does not touch them), and a non-default value refuses `init --repo` against a pre-release base image, naming the release. **Flagged for opus review (version skew across the CLI/runner boundary): Task 4.** *Veto alternative:* always write both keys — rejected outright: it makes every new CLI break every older runner at once, for a field the owner never set.
+- **P5. The catalog compiles into the `pricing.Table` at runner start, and the gateway is not edited (design D5).** One lookup path prices every call; `spendFromEnv`'s `.With(overrides)` runs last so an owner's `model_prices` still wins. Only models a route's patterns claim get a catalog row, and only for a route whose `base_url` host is `openrouter.ai` (or loopback, so the hermetic fake works) — so a direct vendor route still needs `model_prices`, and the same model ID can be catalog-priced on one route and owner-priced on another. *Veto alternative:* a live catalog lookup inside `internal/gateway/forward.go` — rejected as a second pricing branch, a second provenance state, and a way for `validate`, `budget prices`, `CheckPins` and the gateway to disagree about one price.
+- **P6. The `providerRows()` placeholder is deleted in the same commit as the wiring (Task 4), and the tests that pin it are updated there, not softened.** `internal/pricing/table.go:79-87` invents `deepseek/deepseek-v4-flash` at 1/4 with `Unverified: true`, and `Check 25` step 2, `docs/design/m10-multi-model.md` §5 and `docs/multi-model.md` §2 all name it. Leaving it in place beside real catalog rows would price a collapsed ID at ~100x the real model while looking verified-by-provenance. *Veto alternative:* keep it as a fallback for an ungenerated model — rejected: it is a price nobody read, and the honest answer for a model with no price is the refusal that already exists.
+- **P7. A stale catalog forces the selected tier's maximum; it never refuses the run (design D10).** Reusing `priceStaleAfter` (90 days, `internal/cli/budget.go:41`). A refusal would make an unrelated merge of a generated file into a blocker for every repository; forcing the maximum over-counts (safe) and is visible in three places. *Veto alternative:* refuse the run — rejected; the failure mode of a stale price is over-charging, not an unpriceable call.
+- **P8. A model the selected tier cannot price refuses the pin; nothing falls back to `all`.** The bootstrap error names the switch, the model and both ways out (`require_zdr: false`, or `model_prices`), and the gateway's existing refuse (`internal/gateway/forward.go:543`) stays as the backstop. Silent fallback from the ZDR set to the all-endpoints set would quietly price a data-policy-sensitive route against a data-retaining endpoint. *Veto alternative:* fall back to `all` with a warning — rejected as a default that trades a run's data policy for its convenience.
+- **P9. `require_zdr` is documented as a price tier, never as routing enforcement (design §8).** Fugaro cannot add OpenRouter's per-request `provider` object (the gateway never rewrites a body, and `provider` is a refused key on a routed call), and it cannot read the account's privacy setting (the documented `GET /api/v1/key` response has no data-policy field — UNVERIFIED whether some undocumented one does). `fugaro doctor` says exactly that, and the user doc says it too. *Veto alternative:* imply enforcement and let the account setting be discovered from a bill — rejected: a data-policy claim that is not enforced is the worst kind of wrong documentation.
+- **P10. Provider pinning is out of this slice; it appears in the docs as a later option only (owner ruling 5).** Sending `provider.order`/`only`/`sort`/`max_price` needs a body rewrite the gateway deliberately does not do. Naming it as available would be a lie about what a price means. *Veto alternative:* ship a narrow rewrite for the `provider` key alone — rejected: a money-relevant body rewrite is a new correctness surface, and the owner's ruling puts it out of slice one.
+- **P11. `Cheapest` is the default because it is OpenRouter's own default, and the docs state the undercharge and its four bounds in the same paragraph that recommends it (design D6, §6).** `allow_fallbacks` defaults to true and routing prefers the lowest price, so charging the cheapest endpoint can charge less than the call cost — measured up to 29.8x on input and 13.3x on output for the DeepSeek example over the ZDR set, 3.2x/4.3x over the four providers the owner's account allows. A default is allowed to be the cheaper estimate only if the documentation is not: the caps, the recorded `usage.cost`, `price_policy: highest`, and the reported-vs-charged reading are named next to it. *Veto alternative:* default to `highest` — rejected as over-charging every call by the range's spread for a bound most calls never reach, and because it makes Fugaro's number disagree with OpenRouter's own default routing for no reason the owner can see.
+- **P12. Cache read is a bound price in the file and a multiplier in the engine (design D7).** `Rates.CacheRead` is a multiplier of `InputPerM` (`internal/pricing/pricing.go:36-41`), so the compiler emits `cache_read_per_m / input_per_m` per bound, making the effective cache-read price exactly the recorded extreme. A tier with no endpoint reporting `input_cache_read` leaves the multiplier above 1 (never 0), consistent with `defaultCacheRates` raising a provider row's 0 to 1 so a cache token is never free. Cache writes are not read from the API; the rows use the existing `1.25`/`2` defaults (`internal/pricing/overrides.go:20-25`). *Veto alternative:* store `cache_read` as a multiplier in the file — rejected: the file's numbers are prices in the same unit as the other two, so a reviewer compares them without arithmetic.
+
+## Global Constraints
+
+From the design:
+- The file is decimal strings in USD per million tokens, produced by an exact decimal shift of the API's per-token strings — never `float64` formatting, so a diff shows a price change and not a rounding wobble (design §4).
+- The catalog never changes what is charged for a model the owner priced by hand: `model_prices` replaces the row whole and always wins (owner ruling 4).
+- The catalog is route-scoped: a model no route claims gets no catalog row, so a direct vendor route is priced by `model_prices` only (P5).
+- A stale catalog never prices a call lower than the current one; it charges the selected tier's maximum (P7).
+- A tier with no eligible endpoint refuses the pin rather than pricing an empty set (P8).
+- No live network call in any automated test: the generator reads saved snapshots, and the gateway tests use the loopback provider fake (the existing hermetic pattern).
+- No credential of any kind in the generator: three public GETs (design §5).
+- Check 44 (Task 7) is the owner's own task, run once, **sandbox installation and sandbox repository only, never the `belong` project, and never applied by an agent**.
+
+Project rules (carried over from this repository's existing plans):
+- Every task's own test run is in the foreground, `-count=1`, and `-race` where the package's existing tests use it.
+- Fakes only in tests: no real OpenRouter call, no real provider key.
+- Docs must match behavior: `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1` stays green throughout (this plan adds a `fugaro.yaml` key nowhere, so no schema/docs-lint edit is expected — a task that finds otherwise stops and reports rather than loosening the lint).
+- `fugaro verify build` / `fugaro verify test` are the only build and test entry points for this repository's own conventions; a task runs them before it is considered done.
+
+## Review Focus (mutation-proof notes)
+
+1. **A model the owner priced by hand stops being priced by the owner's number.** Pinned by `TestOverrideBeatsCatalog` (Task 4) — the same table holds a catalog row and an override for one model ID, and the charged rates are the override's, whole (not a merge of the override's input with the catalog's output).
+2. **A catalog row leaks onto a route it does not belong to** — a direct vendor route picks up OpenRouter's marketplace price for a model ID that route also serves. Pinned by `TestCatalogSkipsNonOpenRouterRoute` and `TestCatalogSkipsUnclaimedModel` (Task 2/Task 4): a route whose `base_url` host is not `openrouter.ai`/loopback, and a model no route's patterns claim, both leave the table's rows untouched.
+3. **`require_zdr: true` prices the `all` tier.** Pinned by `TestRequireZDRDefaultsTrue` and `TestRequireZDRFalseUsesAllTier` (Task 4), asserting the *charged rate* for one model under each setting, not merely that the field survives the config round trip.
+4. **`price_policy: highest` silently behaves as `cheapest`.** Pinned by `TestPricePolicyHighestChargesTierMax` (Task 4), asserting the exact µ$ of a fixed usage under each policy, and by `TestPricePolicyZeroValueIsCheapest` so the default is not the accident of an unset field reaching the wrong branch.
+5. **A stale catalog under-prices instead of over-pricing.** Pinned by `TestStaleCatalogChargesTierMax` (Task 4): a table built from a fixture with `checked_at` 200 days old charges the tier maximum under `price_policy: cheapest`, and sets `catalog_stale` — the test fails if the staleness check is inverted or dropped, which is the mutation that matters.
+6. **A new switch breaks an older runner at bootstrap.** Pinned by `TestProvidersEnvOmitsDefaultSwitchKeys` (Task 4): the JSON written for a provider that sets neither field contains neither key, byte-identical to the pre-change output for the same config, and `TestProvidersFromEnvAcceptsOldAndNewShapes` decodes both an old value and a new one.
+7. **The generator's output stops being deterministic, or a rename quietly shrinks the file.** Pinned by `TestGeneratedFileMatchesSnapshots` (Task 1), which regenerates from `testdata/openrouter/` and compares bytes, and by `TestGeneratorRefusesMissingAllowlistedModel`/`...DuplicateTagWithDifferentPrices` (Task 1), which fail on a silent pick.
+8. **A `:` variant or `~`-alias row enters the file.** Pinned by `TestGeneratorSkipsVariantsAndAliases` (Task 1), asserting the file has no key containing `:` or starting with `~` — the pin grammar (`pricing.IsAlias`) refuses those, so a row for one could never be charged and would only mislead a reviewer.
+9. **The doctor check for `require_zdr` claims to have verified the account setting.** Pinned by `TestDoctorZDRCheckSaysUnverified` (Task 5), asserting the check's text names that Fugaro cannot read the account setting, at `info` severity, so a later "improvement" that turns it into a passing check has to delete an assertion that says what is true.
+10. **The exception message points at the wrong switch.** Pinned by `TestPinRefusedNamesTheSwitchAndBothWaysOut` (Task 4), asserting the bootstrap error contains `require_zdr`, `model_prices` and the model ID for a `require_zdr: true` route whose model has no ZDR tier — the message is the whole fix path for an owner who hits this.
+
+## File Structure
+
+| Path | Responsibility | Task |
+|---|---|---|
+| `internal/pricing/catalog/gencatalog/main.go` (new), `main_test.go` (new), `testdata/openrouter/*.json` (new) | the generator: read snapshots or the public APIs, allowlist, tier matching, exact decimal shift, deterministic JSON, the refusal cases | 1 |
+| `internal/pricing/catalog/catalog.json` (new, generated) | the embedded catalog; `checked_at`, `sources`, per-model tier ranges | 1 |
+| `scripts/gen-price-catalog.sh` (new) | the one command that regenerates the file (design §5) | 1 |
+| `internal/pricing/catalog/catalog.go` (new), `catalog_test.go` (new) | `Load`, strict decode, validation (version, `checked_at`, decimal parse), `Apply(table, routes)` → the compiled `*pricing.Table` | 2 |
+| `internal/config/providers.go`, `providers_test.go` | `RequireZDR *bool` + `RequireZDROn()`, `PricePolicy string` + its validation in `ValidateModelProviders`; `CatalogEligible(baseURL)` (the host inference, P5) | 3 |
+| `docs/config-reference.md` or the local-config section of `docs/multi-model.md` (whichever documents `providers.<name>` today) | the two fields' documentation and their defaults | 3 |
+| `internal/runner/spend.go`, `spend_test.go` | `spendFromEnv` compiles the catalog before applying overrides (P5, owner override last) | 4 |
+| `internal/runner/providers.go`, `providers_test.go` | `ProvidersEnv` omits the default switch keys (P4); `GatewayRoute` carries nothing new (the switches are config, not gateway) | 4 |
+| `internal/pricing/table.go`, `internal/pricing/{table,provider}_test.go` | delete `providerRows()` (P6); update the tests that pinned the placeholder row | 4 |
+| `internal/cli/budget.go`, `budget_test.go` | the `CATALOG` column in `budget prices`, the catalog's own staleness line, tier/bound in the row | 5 |
+| `internal/cli/validate.go`, `internal/gateway/forward.go` (message only, if needed), `internal/config/pins.go` | the tier/bound note on a catalog-priced pin; the pin-refusal message naming the switch (P8) | 5 |
+| `internal/cli/doctor.go`, `doctor_test.go` | `provider-price-catalog` and `provider-zdr-unverified` checks (P9, design §8) | 5 |
+| `internal/runner/gateway.go` | `cost.catalog_stale` in `result.json`, the stale WARN | 5 |
+| `docs/multi-model.md`, `docs/design/m10-multi-model.md` (§5/§13), `docs/release.md` | the user-facing story, the superseded placeholder row, the release-checklist line | 6 |
+| `docs/gcp-live-checklist.md` | **Check 44** (the next free number; 42 and 43 are reserved by the config-transitions and registry designs) — sandbox only, never `belong`, run by the owner | 7 |
+
+## PR groups
+
+**Group A (Tasks 1-2): the file and its compiler.** No behavior change: the file is generated and embedded, and `catalog.Apply` is written and tested but no caller uses it yet. Review flag: the file is large and generated — read `testdata/openrouter/` and the generator's refusals, not the JSON.
+
+**Group B (Task 3): the two config fields.** Validation and documentation only; nothing reads them yet, so a veto here is cheap.
+
+**Group C (Task 4): the wiring, and the placeholder's removal.** The one behavior-changing group, and the one to review hardest: it deletes a price row, changes what `spendFromEnv` builds, and touches the CLI/runner environment boundary (P4). **Flagged for opus review.**
+
+**Group D (Tasks 5-6): the surfaces and the docs.** Nothing is charged differently; what the owner can see and read changes.
+
+**Group E (Task 7): Check 44.** Documentation of a check the owner runs; nothing in this repository's CI.
+
+## Tasks
+
+### Task 1: the catalog file and its generator
+
+**Files:** `internal/pricing/catalog/gencatalog/main.go` (new), `internal/pricing/catalog/gencatalog/main_test.go` (new), `internal/pricing/catalog/testdata/openrouter/{models.json,models_deepseek_deepseek-v4.1-flash_endpoints.json,zdr.json}` (new), `internal/pricing/catalog/catalog.json` (new, generated), `scripts/gen-price-catalog.sh` (new).
+
+1. Write the generator with the flags the design names: `-from <dir>` (snapshots), `-models`/`-zdr` (single files), `-allow <file>`, `-date YYYY-MM-DD` (required when fetching; never the wall clock), `-o <path>`. The allowlist default is the design's §3 D8 list (the three DeepSeek rows, one Qwen, one Moonshot, and the three `anthropic/*` IDs that exist only for the mixed-credentials opt-in).
+2. Implement the tier match as `(model_id, tag)` against `/api/v1/endpoints/zdr`; per-dimension min/max with ties broken by the lexicographically smallest `tag`; collapse duplicate `tag`s with identical prices; hard-error on a duplicate `tag` with different prices, and on an allowlisted model the API no longer serves.
+3. Shift each per-token decimal string six places with `math/big`-free exact decimal arithmetic (operate on the string: `"0.00000002016"` → `"0.02016"`), so no `float64` appears anywhere in the generator.
+4. Emit `json.MarshalIndent` with two-space indent, sorted keys, sorted models, a trailing newline.
+5. Save the three snapshots the checked-in file was generated from into `testdata/openrouter/` (the real API responses read on 2026-10-14, trimmed of fields the generator does not read), and generate `catalog.json` from them.
+6. `scripts/gen-price-catalog.sh`: `go run ./internal/pricing/catalog/gencatalog "$@"`, then print the summary diff (models added/removed, per-dimension min/max deltas, endpoint counts, old and new `checked_at`).
+
+**Tests:** `TestGeneratedFileMatchesSnapshots` (regenerate from `testdata/`, byte-compare with the checked-in `catalog.json`); `TestGeneratorSkipsVariantsAndAliases`; `TestGeneratorRefusesMissingAllowlistedModel`; `TestGeneratorRefusesDuplicateTagWithDifferentPrices`; `TestGeneratorExactDecimalShift` (a table of per-token strings and their produced prices, including one the API spells with a trailing zero); `TestGeneratorNoFloat64` is not a test — instead the package uses no `float64` by construction, and a reviewer checks the import list.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/pricing/catalog/... -count=1`.
+
+### Task 2: load and compile the catalog
+
+**Files:** `internal/pricing/catalog/catalog.go` (new), `catalog_test.go` (new).
+
+1. `//go:embed catalog.json`; `Load()` decodes strictly (`DisallowUnknownFields`), validates `version == 1`, `checked_at` parses as `YYYY-MM-DD`, every price string parses and is `> 0` and `<= pricing.MaxPerM`, and `min <= max` per dimension; a malformed file is an error, never a partially applied table.
+2. `Apply(t *pricing.Table, routes []RouteSwitches) (*pricing.Table, error)`: for each route, for each allowlisted model the route's `Models` patterns claim (reuse the existing matcher — `config.MatchPattern`/`ModelProvider.Matches`'s own function, whichever is the unexported one the runner already calls), if the route is catalog-eligible (`base_url` host `openrouter.ai` or loopback), add or replace a `pricing.Model` with:
+   - `Rates` from the selected tier and bound, `CacheRead` as the ratio (P12), `CacheWrite5m: 1.25`, `CacheWrite1h: 2`, `WebSearchPer1k: 0` (a provider row does not get Anthropic's $10/search — the existing placeholder row sets it via `rates()`; the catalog rows are set explicitly);
+   - `ContextTokens`/`MaxOutputTokens` from the file (meaning `pricing.DefaultContextTokens`/`DefaultMaxOutputTokens` when the file says nothing smaller);
+   - `ImageTokens: 0` (images refused, the existing `providerRows()` default);
+   - a new `pricing.Model` provenance field (see below) carrying tier, bound, endpoint count, source, `checked_at` and the stale flag.
+3. Add `pricing.Model.Catalog *CatalogPrice` (new type in `internal/pricing/pricing.go`) with `Tier`, `Bound`, `Endpoints`, `ZdrEndpoints`, `Source`, `CheckedAt`, `Stale bool`. `Table.With`'s override branch clears it exactly as it clears `Unverified`/`PriceSource`/`PriceCheckedAt` (the one line in `pricing.go:240`), so an override is where the catalog stops applying.
+4. Staleness: `Apply` takes the `checked_at`, compares against `priceStaleAfter` via `now`; stale ⇒ force the tier's maximum and set `Stale` (P7). Keep the clock injectable so the tests are not time-dependent.
+
+**Tests:** `TestLoadRejectsMalformedFile` (a table of the five validation failures); `TestApplyCompilesTierMinMax` (exact `Rates` for a `cheapest` and a `highest` fixture, including the `CacheRead` ratio); `TestApplySkipsNonOpenRouterRoute`; `TestApplySkipsUnclaimedModel`; `TestApplyStaleForcesTierMax`; `TestOverrideClearsCatalogProvenance`; `TestApplyRefusesEmptyZDRTier` (P8's data, the message assertion is Task 4's).
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/pricing/... -count=1`.
+
+### Task 3: the two provider fields
+
+**Files:** `internal/config/providers.go`, `providers_test.go`, and the doc that documents `providers.<name>` today (locate it in this task: `docs/multi-model.md` §1-§2 or `docs/config-reference.md`).
+
+1. `RequireZDR *bool \`yaml:"require_zdr,omitempty" json:"require_zdr,omitempty"\`` with `RequireZDROn() bool { return p.RequireZDR == nil || *p.RequireZDR }` (the `PRSettings.EarlyDraftOn` shape, `internal/config/config.go:115`).
+2. `PricePolicy string \`yaml:"price_policy,omitempty" json:"price_policy,omitempty"\`` — `""` means `cheapest`; a `PricePolicySet()`-style accessor returns the effective value (`cheapest` when empty), and `ValidateModelProviders` refuses anything outside `cheapest|highest` with the name of the provider and the field.
+3. `CatalogEligible(baseURL string) bool` (or a method on `ModelProvider`): the host is `openrouter.ai` (any subdomain) or loopback (`127.0.0.1`, `::1`, `localhost`). Document in the file's comment that this is an inference, not a knob (design D5), and that a direct vendor route is priced by `model_prices`.
+4. Document both fields where `route_fee_pct` is documented, with the defaults, the undercharge note (P11) and the "this prices a tier, it does not enforce routing" note (P9).
+
+**Tests:** `TestRequireZDRDefaultsTrue` (nil → true; explicit false → false); `TestPricePolicyDefaultIsCheapest`; `TestValidateModelProvidersRefusesUnknownPolicy`; `TestCatalogEligible` (a table: `https://openrouter.ai/api/v1`, a subdomain, `http://127.0.0.1:8080`, `https://api.deepseek.com/anthropic`, an empty URL). And the existing `TestRepoCannotAddProvider` stays untouched and green — it is the assertion that a repository cannot set these.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/config/... -count=1`.
+
+### Task 4: wire it up, and delete the placeholder
+
+**Files:** `internal/runner/spend.go`, `spend_test.go`, `internal/runner/providers.go`, `providers_test.go`, `internal/pricing/table.go`, `internal/pricing/table_test.go`, `internal/pricing/provider_test.go`, `internal/config/pins.go` (+ its test), `docs/multi-model.md` §2's placeholder paragraph (moved to Task 6 if it reads better there — the implementer decides and says which).
+
+1. `spendFromEnv` builds `pricing.Embedded()`, applies `catalog.Apply` with the route switches from `r.d.Providers`, then applies `o` via `.With(o)` **last** (P5). `spendFromEnv`'s signature grows the providers map and a clock; `policy.go:108-113`'s fallback path (`pricing.Embedded()` with no overrides) becomes the same call with an empty override set, so a run with the budget off is priced identically.
+2. `ProvidersEnv` omits `require_zdr` when `p.RequireZDR == nil` and `price_policy` when `p.PricePolicy == ""` (P4) — the omitempty tags from Task 3 do this, so the test is what pins it. `fugaro init --repo` refuses a non-default value against a base image older than the release that reads it (a `catalogSince`-style constant + `imagePredates`, `internal/cli/recipes_skew.go:43` / `internal/cli/init_fugaroyaml.go:133`), naming the release; the constant starts unshipped, like `cloneShipped` (`recipes_skew.go:45-67`), with a release-checklist line.
+3. Delete `providerRows()` and its call in `Embedded()` (`internal/pricing/table.go:64,79-87`) in **this** commit (P6). Update `internal/pricing/table_test.go` and `provider_test.go` (`TestUnverifiedPriceWarns` at `:43` reads the placeholder row): keep a synthetic `Unverified` row in the test fixtures rather than deleting the behavior's coverage — the flag, `PriceSource`, `PriceCheckedAt` and `CacheWarning` all still exist and are still exercised.
+4. The refusal message (P8): a `require_zdr: true` route whose model has no ZDR tier, or a model in neither the catalog nor `model_prices`, fails with text containing the model ID, `require_zdr`, and `model_prices`. Put it where `config.CheckPins` lives (`internal/config/pins.go:29-32`) so bootstrap catches it, and keep `internal/gateway/forward.go:543`'s existing refuse as the backstop.
+5. `PinWarnings` gains the tier/bound note for a catalog-priced row, so `validate`, `diagnose` and the runner's pin-warning log line all inherit it from one place.
+
+**Tests:** the ten Review Focus tests above, all in `internal/runner` except `TestOverrideBeatsCatalog` (in `internal/pricing`, where the table is) and the pin-message test (in `internal/config`); plus `TestGatewayUnchangedWhenNoCatalogRow` (a run with a provider route and no catalog entry still refuses exactly as before).
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/runner/... ./internal/pricing/... ./internal/config/... ./internal/gateway/... -count=1`.
+
+### Task 5: what the owner sees
+
+**Files:** `internal/cli/budget.go`, `budget_test.go`, `internal/cli/validate.go` (+ test), `internal/cli/doctor.go`, `doctor_test.go`, `internal/runner/gateway.go` (+ test), `internal/cli/diagnose.go` if the fee-stripped comparison needs the catalog's `checked_at` (it may not — check first, and say so).
+
+1. `budget prices`: a `CATALOG` column (`zdr/cheapest`, `all/highest`, or `—`), the catalog's own source and `checked_at` in the existing STALE line when any row is catalog-priced, and the row's endpoint count. The Anthropic table's source and the catalog's are printed distinctly — one shared `Source`/`CheckedAt` on the `Table` is no longer enough once two sources exist, so the catalog's values live on the row (`Model.Catalog`) and `Table.Source`/`CheckedAt` keep meaning the embedded Claude table.
+2. `validate`: the pin warning from Task 4 step 5, plus one note for a `cheapest` row naming the tier's endpoint count and that `price_policy: highest` charges the range's top (P11).
+3. `doctor`: `provider-price-catalog` (`""` severity, OK with the age; `"warning"` past 90 days, naming `scripts/gen-price-catalog.sh` as the fix) and `provider-zdr-unverified` (`"info"`, fired when any provider has `RequireZDROn()` true, text naming that Fugaro prices the ZDR tier, that enforcement is the account's privacy setting, and that Fugaro cannot read it — P9).
+4. `result.json`: `cost.catalog_stale: true` and the per-run `budget: price catalog stale` WARN (`internal/runner/gateway.go`).
+
+**Tests:** `TestBudgetPricesCatalogColumn`; `TestBudgetPricesStaleCatalogWarns`; `TestDoctorPriceCatalogStaleIsWarning`; `TestDoctorZDRCheckSaysUnverified`; `TestResultJSONCatalogStale`. Update `internal/cli/budget_test.go:696-742`, which asserts the placeholder row's `VERIFIED = NO` line — that fixture moves to the synthetic row Task 4 keeps.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/cli/... ./internal/runner/... -count=1`.
+
+### Task 6: the docs
+
+**Files:** `docs/multi-model.md`, `docs/design/m10-multi-model.md` (§5's placeholder paragraph and §13's assumptions), `docs/release.md`.
+
+1. `docs/multi-model.md`: replace §2's placeholder-row caveat; add "the prices come from the built-in catalog" with the two switches, their defaults, the `cheapest` undercharge paragraph (P11, with the measured numbers and the four bounds), the "`require_zdr` is a price tier, not enforcement" paragraph (P9), how to override one model with `model_prices` (unchanged), and how to read the catalog's own staleness in `budget prices`/`doctor`.
+2. `docs/design/m10-multi-model.md`: §5's "an embedded starter row is `unverified`" and its "a price check command is out of scope ("a later nicety")" line are **superseded** — say so and point at the new design; §13's assumption list gains a pointer to U1-U6.
+3. `docs/release.md`: a line for regenerating the catalog and reading the diff, next to the existing `cloneSince` lines, and the `catalogSince` flip from Task 4.
+
+**Tests:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1` (the repo's docs/schema lint — no `fugaro.yaml` key is added anywhere, so nothing should need a schema entry; if the lint says otherwise, stop and report rather than loosening it).
+
+### Task 7: Check 44 (owner-run; sandbox only)
+
+**Files:** `docs/gcp-live-checklist.md`.
+
+Append `## Check 44: what the provider catalog charges, and what the account actually serves (sandbox installation and sandbox repository only, never `belong`; run by you; NOT RUN)` — the next free number (42 and 43 are reserved by the config-transitions and registry designs). Steps, all against a **sandbox** project and a sandbox repository, with a provider route whose `price_policy` the owner flips between runs:
+
+1. `fugaro budget prices` on the sandbox project: paste the `CATALOG` column for the routed model, the tier, the endpoint count and the catalog's `checked_at`. **FACT:** whether the row is catalog-priced at all.
+2. `curl` `GET https://openrouter.ai/api/v1/key` with the sandbox key and paste the field **names** only (never a value): does any field describe a data policy, ZDR or provider allow-list? This settles U1, and with it whether `fugaro doctor`'s `provider-zdr-unverified` check can ever become a real check.
+3. One small run with `require_zdr: true`, `price_policy: cheapest`: paste `cost.charged_usd`, `cost.reported_usd`, the `model call` log lines' token counts and whether `reported_micros` is nonzero (U3: does the Anthropic-compatible endpoint report `usage.cost` at all?), and the provider name in the response if it appears anywhere Fugaro logs it.
+4. The same run with `price_policy: highest`: paste the same numbers. **FACT:** whether the settled charge moves to the tier maximum, and how far `reported` sits from each.
+5. The same run with `require_zdr: false`: paste the serving provider (`provider` in the response body, or whatever the log shows) and whether the charged price changed — this settles U2 (does an account-side ZDR setting still constrain routing when the switch is off?) and U4 (is the charged price the recorded one, or is `discount` applied?).
+6. `fugaro doctor` on the sandbox installation: paste the two new checks' lines verbatim, so their wording is recorded as read by an owner.
+
+End with: "**Paste back:** every FACT line above, never a secret value. Never run this against `belong`." No agent runs any step of this check; nothing in this repository's CI calls OpenRouter.
+
+**Tests:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1` (the checklist is linted with the docs).
