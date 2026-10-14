@@ -64,10 +64,14 @@ func TestCheckRecipeImage(t *testing.T) {
 // TestCheckCloneImageSince (review finding 1, HIGH): checkCloneImageSince
 // judges base_images.base's own release directly, since a checkout: clone
 // workflow's job has no derived image and so no build record to judge. One
-// row per threshold it backs (recipesSince, layeredSince, cloneSince, each
-// refusing an image that predates it), plus a dev/custom ref (warned about,
-// not refused: its release is unknown) and a current release (passes
-// clean).
+// row per threshold it backs (recipesSince, layeredSince, each refusing an
+// image that predates it), plus a dev/custom ref under cloneSince (warned
+// about, not refused: its release is unknown, so it is not judged against
+// cloneSince's own unconditional refusal either — see
+// TestCheckCloneImageSinceRefusedUntilCloneSince for that). cloneSince
+// itself gets its own wording, pinned separately, since the gate always
+// refuses today (no release ships plan Task 17 yet): folding it into this
+// generic loop would require asserting two different message shapes here.
 func TestCheckCloneImageSince(t *testing.T) {
 	f := newCloudFixture(t)
 	env := fileEnv(t, f)
@@ -86,9 +90,7 @@ func TestCheckCloneImageSince(t *testing.T) {
 		{"no base image at all", layeredSince, "-", "is not set (the local config has no base_images.base)", ""},
 		{"below recipesSince", recipesSince, "ghcr.io/dimipaun/fugaro-base:0.4.0", "is ghcr.io/dimipaun/fugaro-base:0.4.0, release 0.4.0", ""},
 		{"below layeredSince", layeredSince, "ghcr.io/dimipaun/fugaro-base:0.5.0", "is ghcr.io/dimipaun/fugaro-base:0.5.0, release 0.5.0", ""},
-		{"below cloneSince", cloneSince, "ghcr.io/dimipaun/fugaro-base:0.6.0", "is ghcr.io/dimipaun/fugaro-base:0.6.0, release 0.6.0", ""},
 		{"a dev ref warns, not refused", cloneSince, "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c", "", "not a release base image"},
-		{"a current release passes", cloneSince, "ghcr.io/dimipaun/fugaro-base:0.7.0", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			warn, err := check(tc.since, tc.baseImage)
@@ -111,6 +113,47 @@ func TestCheckCloneImageSince(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestCheckCloneImageSinceRefusedUntilCloneSince (0.7.0 safety fix, review
+// finding: tagging 0.7.0 with cloneSince = "0.7.0" would let a checkout:
+// clone workflow pass this gate and then fail every run at bootstrap,
+// since plan Task 17's runner side — the only thing that reads
+// FUGARO_CHECKOUT — has not shipped). A checkout: clone launch must be
+// refused on any image's release, including today's current release
+// (0.7.0), with guidance that says plainly the runner side is not released
+// yet and names checkout: baked as the way to run the workflow today; only
+// an image built from cloneSince itself (0.7.1, the release that will ship
+// Task 17) passes.
+func TestCheckCloneImageSinceRefusedUntilCloneSince(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
+	lc := *env.lc
+	lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.7.0"}
+	var warn bytes.Buffer
+	err := checkCloneImageSince(&lc, spec, cloneSince, "this checkout: clone workflow", "how to provision a blobless clone (FUGARO_CHECKOUT)", "", &warn)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("0.7.0 (today's current release): err = %v, want refused", err)
+	}
+	for _, want := range []string{
+		"this checkout: clone workflow needs a job image whose runner knows how to provision a blobless clone (FUGARO_CHECKOUT) (fugaro 0.7.1 or later)",
+		"checkout: clone's own runner side is not released yet",
+		"generic-tool plan Task 17",
+		"acme/app workflow web",
+		"ghcr.io/dimipaun/fugaro-base:0.7.0, release 0.7.0",
+		"checkout: baked",
+		"today",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:0.7.1"
+	warn.Reset()
+	if err := checkCloneImageSince(&lc, spec, cloneSince, "this checkout: clone workflow", "how to provision a blobless clone (FUGARO_CHECKOUT)", "", &warn); err != nil {
+		t.Fatalf("0.7.1 (ships Task 17): %v", err)
 	}
 }
 
