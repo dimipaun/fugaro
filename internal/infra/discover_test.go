@@ -1535,6 +1535,43 @@ func TestReadinessUnionsExtraSecretsNeverShrinksRsSecrets(t *testing.T) {
 	}
 }
 
+// Plan follow-up 3 (review M1): an extra secret is not only unioned into the
+// plan's Secrets (the test above) but imported and its live policy read,
+// exactly as the secrets the config still computes are. Without the import
+// the next apply tries to create a container that already exists: the 409
+// that re-running init after `fugaro forget` (or with any missing repo
+// state) would hit. Without the policy, the extra-accessors note sees
+// nothing for the name, so a grant that outlives the config that made it
+// goes unsaid.
+func TestDiscoverRepoImportsExtraSecretsAndNotesTheirGrant(t *testing.T) {
+	f := newCloud(t)
+	spec := projectSpec(t, "")
+	const logical = "openrouter-api-key"
+	if _, ok := spec.Secrets[logical]; ok {
+		t.Fatalf("the fixture already computes %s", logical)
+	}
+	id := gcp.SecretID(spec.Slug, logical)
+	f.sm.Seed(id, with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, logical), []byte("v"))
+	member := saMember(spec.Workflows["web"].ServiceAccountEmail)
+	f.sm.SetPolicy(id, []gcpfake.Binding{{Role: gcp.SecretAccessorRole, Members: []string{member}}})
+	im, ex, err := DiscoverRepo(context.Background(), f.c, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ex.ExtraSecrets[logical] != id {
+		t.Fatalf("ExtraSecrets = %v, want %s → %s", ex.ExtraSecrets, logical, id)
+	}
+	want := fmt.Sprintf("module.repo.google_secret_manager_secret.this[%q]", logical)
+	if !slices.ContainsFunc(im.List, func(i Import) bool {
+		return i.To == want && i.ID == "projects/"+spec.GCPProject+"/secrets/"+id
+	}) {
+		t.Errorf("imports = %+v, want %s at the live ID %s", im.List, want, id)
+	}
+	if !slices.ContainsFunc(im.Notes, func(n string) bool { return strings.Contains(n, id) && strings.Contains(n, member) }) {
+		t.Errorf("notes = %q, want one naming %s and its accessor %s", im.Notes, id, member)
+	}
+}
+
 // SF7: a secret at the candidate's derived ID that is not ours is refused,
 // the same path an unmarked repo secret already takes.
 func TestReadinessRefusesAccidentalLabelMismatch(t *testing.T) {

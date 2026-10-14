@@ -720,6 +720,22 @@ func DiscoverRepo(ctx context.Context, c *Clients, spec RepoSpec) (Imports, Exis
 	if err := d.extraSecrets(spec, ex.ExtraSecrets); err != nil {
 		return Imports{}, Existing{}, err
 	}
+	// Readiness unions these into the plan's Secrets too (N4), so each one
+	// is a container Terraform plans just as the loop above plans the ones
+	// the config still computes -- and gets the same two things that loop
+	// gives them (plan follow-up 3): the import, without which the next
+	// apply tries to create a container that already exists (a 409), and the
+	// live policy, without which the grant checks and the extra-accessors
+	// note below see nothing at all for that name.
+	for _, logical := range slices.Sorted(maps.Keys(ex.ExtraSecrets)) {
+		id := ex.ExtraSecrets[logical]
+		d.add(importSecret, spec.Region, logical, id)
+		p, err := secretPolicy(ctx, c.Secrets, spec.GCPProject, id)
+		if err != nil {
+			return Imports{}, Existing{}, err
+		}
+		secretPolicies[logical] = p
+	}
 
 	// The project-wide candidates: does a secret already exist at the
 	// computed ID, and is it ours? A mismatch is refused (d.foreign), the
@@ -834,7 +850,7 @@ func DiscoverRepo(ctx context.Context, c *Clients, spec RepoSpec) (Imports, Exis
 			}
 		}
 	}
-	d.noteExtraAccessors(spec, secretPolicies)
+	d.noteExtraAccessors(spec, ex.ExtraSecrets, secretPolicies)
 
 	im, err := d.result()
 	if err != nil {
@@ -982,7 +998,10 @@ func (d *discovery) checkGrants(spec RepoSpec, ws WorkflowSpec, b *storage.Bucke
 
 // noteExtraAccessors notes the accessors of each existing secret that the
 // spec doesn't plan: the plan leaves them, since it grants only members.
-func (d *discovery) noteExtraAccessors(spec RepoSpec, secretPolicies map[string]*secretmanager.Policy) {
+// extras carries the live IDs of the secrets the current config no longer
+// computes (Existing.ExtraSecrets) -- their names are in this map's keys
+// but not in spec.Secrets, which Readiness's own union fills in later.
+func (d *discovery) noteExtraAccessors(spec RepoSpec, extras map[string]string, secretPolicies map[string]*secretmanager.Policy) {
 	planned := map[string]map[string]bool{}
 	plan := func(logical, email string) {
 		if planned[logical] == nil {
@@ -1012,8 +1031,12 @@ func (d *discovery) noteExtraAccessors(spec RepoSpec, secretPolicies map[string]
 		}
 		if len(extra) > 0 {
 			slices.Sort(extra)
+			id := spec.Secrets[logical]
+			if id == "" {
+				id = extras[logical]
+			}
 			d.im.Notes = append(d.im.Notes, fmt.Sprintf("secret %s can also be read by %s, which the plan neither grants nor removes; remove the grant by hand once nothing needs it",
-				spec.Secrets[logical], strings.Join(extra, ", ")))
+				id, strings.Join(extra, ", ")))
 		}
 	}
 }
