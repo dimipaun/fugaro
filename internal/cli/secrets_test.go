@@ -759,6 +759,58 @@ func TestSecretsLsAddsScopeColumn(t *testing.T) {
 	}
 }
 
+// TestSecretsLsScopeIsProjectWhenTheRepoCopyHasNoVersion: §5's precedence is
+// a repository copy with an enabled version, not a container. A repository
+// container whose versions are all disabled resolves to the project-wide
+// copy -- the state §6 step 4a deliberately leaves behind while a name moves
+// project-wide -- so ls must say "project", not "project, repo override
+// stored" beside the "-" LATEST and 0 VERSIONS of the same row, which would
+// tell the operator the migration did not take.
+func TestSecretsLsScopeIsProjectWhenTheRepoCopyHasNoVersion(t *testing.T) {
+	sm := secretsFixture(t)
+	projectSecretFixture(t, listedProvider)
+	if _, _, err := executeStdin(t, "or-not-a-real-key-1234", "secrets", "set", "openrouter-api-key", "--project-wide"); err != nil {
+		t.Fatal(err)
+	}
+	// The repository's own container with every version disabled: what
+	// `fugaro secrets set ... --project-wide` leaves behind when a name
+	// moves, and what init --repo's own container looks like before a value
+	// is ever stored in it.
+	sm.Seed(gcp.SecretID(appSlug, "openrouter-api-key"), map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, appSlug), gcp.LabelSecret: "openrouter-api-key"}, nil)
+	out, _, err := execute(t, "secrets", "ls", "--repo", "acme/app", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list []struct {
+		Name, ID, Scope string
+	}
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		t.Fatalf("ls --json = %s, %v", out, err)
+	}
+	scopes := map[string]string{}
+	for _, s := range list {
+		scopes[s.Name] = s.Scope
+	}
+	if scopes["openrouter-api-key"] != "project" {
+		t.Errorf("openrouter-api-key scope = %q, want project: the repository copy holds no version to override with (entries %+v)",
+			scopes["openrouter-api-key"], list)
+	}
+	// The human table agrees, and the row is the project container's own.
+	text, _, err := execute(t, "secrets", "ls", "--repo", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(text, "repo override stored") || !strings.Contains(text, gcp.ProjectSecretID("aurora", "openrouter-api-key")) {
+		t.Fatalf("ls = %s", text)
+	}
+	for _, r := range sm.Requests() {
+		if strings.Contains(r.Path, ":access") {
+			t.Fatalf("ls read a value: %s", r.Path)
+		}
+	}
+}
+
 // TestSecretsLsProjectWideNeverPrintsValue: --project-wide lists by the
 // installation's own label, prints the allowed repositories from local
 // config, and never reads a value.

@@ -605,7 +605,8 @@ func projectSecretEnabled(list []gcp.SecretInfo) map[string]bool {
 type doctorRepoSecrets struct {
 	repo       string
 	candidates map[string]string // logical -> the project-wide ID it resolves to
-	logical    map[string]string // the repository's own secret ID -> logical name
+	logical    map[string]string // a secret ID either scope stores this name under -> logical name
+	repoIDs    map[string]string // logical -> the repository's own secret ID
 	jobs       map[string]string // workflow name -> its default-account job
 }
 
@@ -617,7 +618,7 @@ type doctorRepoSecrets struct {
 // repository whose jobs cannot be built at all.
 func doctorRepoSecretsOf(lc *localcfg.Config, cfg *config.Config, repo string) (doctorRepoSecrets, bool) {
 	facts := doctorRepoSecrets{repo: repo,
-		candidates: map[string]string{}, logical: map[string]string{}, jobs: map[string]string{}}
+		candidates: map[string]string{}, logical: map[string]string{}, repoIDs: map[string]string{}, jobs: map[string]string{}}
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
 		ws, err := infra.Workflow(infra.Inputs{LC: lc, Repo: repo, Cfg: cfg}, name)
 		if err != nil {
@@ -625,9 +626,16 @@ func doctorRepoSecretsOf(lc *localcfg.Config, cfg *config.Config, repo string) (
 		}
 		facts.jobs[name] = ws.Job
 		for logical, id := range ws.SecretIDs {
+			// ws.SecretIDs is the repository-scoped ID wherever the name is
+			// stored (infra.Workflow), so the reverse lookup has to hold
+			// the project-wide ID as well: a deployed job may mount either
+			// scope's container, and both directions are a scope the
+			// project-secret-scope-stale check exists to compare.
 			facts.logical[id] = logical
+			facts.repoIDs[logical] = id
 			if projectID, ok := infra.ProjectSecretCandidate(lc, logical, repo); ok {
 				facts.candidates[logical] = projectID
+				facts.logical[projectID] = logical
 			}
 		}
 	}
@@ -751,9 +759,17 @@ func doctorProjectSecretScopeCheck(ctx context.Context, lc *localcfg.Config, fac
 			if !isCandidate {
 				continue // not a name this repository may use project-wide, so there is no other scope to move to
 			}
-			want := id
+			// What Readiness resolves for this name now, §5's precedence: a
+			// repository copy with an enabled version wins, else the
+			// project-wide copy. It is compared against the ID the job
+			// actually mounts, never against the repository-scoped ID: the
+			// warning has to fire whichever of the two scopes the job was
+			// applied with, so a job still mounting the project copy after
+			// this repository stored one of its own is caught too.
+			want := facts.repoIDs[name]
 			switch {
 			case repoEnabled[name]:
+				// The repository's own copy wins: want is repoIDs[name].
 			case projEnabled[name]:
 				want = projectID
 			default:

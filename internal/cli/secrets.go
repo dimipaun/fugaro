@@ -534,8 +534,15 @@ with the repositories the local config allows to use each one.`,
 
 // listRepoScope lists a repository's own secrets, each with the SCOPE that
 // says where its value comes from: repo (the repository's own container),
-// project (an allow-listed project container with no repo copy), or
-// "project, repo override stored" (both exist; the repo copy wins, §5).
+// project (an allow-listed project container with no copy of its own), or
+// "project, repo override stored" (both exist and the repo copy wins, §5).
+//
+// The override is a copy with an enabled version, not a container: a
+// repository container whose versions are all disabled resolves to the
+// project-wide copy (infra.ResolveSecretID), which is exactly the state
+// §6 step 4a leaves behind while a name moves project-wide. Claiming an
+// override there would tell the operator the migration did not take, beside
+// the "-" LATEST and 0 VERSIONS of the same row.
 func listRepoScope(cmd *cobra.Command, env *cloudEnv, o secretsOptions, r *secretRepo) error {
 	ctx := cmd.Context()
 	sm, err := gcp.NewSecrets(ctx, env.gcp)
@@ -563,8 +570,18 @@ func listRepoScope(cmd *cobra.Command, env *cloudEnv, o secretsOptions, r *secre
 	for _, s := range list {
 		name := s.Labels[gcp.LabelSecret]
 		seen[name] = true
+		project, shared := shared[name]
+		shared = shared && repoMayUseProject(env.lc, name, r.repo)
 		e := secretEntry{Name: name, Scope: scopeRepo, SecretInfo: s}
-		if _, ok := shared[name]; ok && repoMayUseProject(env.lc, name, r.repo) {
+		switch {
+		case s.Latest == "" && shared:
+			// The repository's container holds no version, so the copy
+			// Fugaro resolves for this name is the project-wide one: the
+			// row is that container's, and SCOPE says project. An override
+			// here would sit beside the "-" LATEST and 0 VERSIONS of the
+			// repository container and claim a value that is not used.
+			e = secretEntry{Name: name, Scope: scopeProject, SecretInfo: project}
+		case shared:
 			e.Scope = scopeProjectOverride
 		}
 		entries = append(entries, e)

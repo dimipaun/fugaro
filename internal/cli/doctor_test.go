@@ -1398,6 +1398,46 @@ func TestDoctorNoStaleScopeWhenTheJobAlreadyMountsTheProjectCopy(t *testing.T) {
 	}
 }
 
+// TestDoctorFlagsStaleScopeWhenTheRepoCopyComesBack: the same repository
+// moving the other way. The deployed job was applied while the project-wide
+// copy was the one Readiness resolved, and a repository copy has since been
+// stored again (`fugaro secrets set github-app-key --repo acme/app`). The
+// job still mounts the project's ID, while the copy Fugaro resolves for it
+// now is the repository's own -- so the warning has to fire in this
+// direction too, or a job keeps reading the project value after the
+// operator moved the name back, with nothing said.
+func TestDoctorFlagsStaleScopeWhenTheRepoCopyComesBack(t *testing.T) {
+	r := projectSecretsRig(t)
+	slug := mustSlug("github", "acme/app")
+	repoID := gcp.SecretID(slug, "github-app-key")
+	r.sm.Seed(repoID, map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, slug), gcp.LabelSecret: "github-app-key"}, []byte("repo-value"))
+	projID := putProjectSecret(t, r.sm, "aurora", "github-app-key", []byte("project-value"))
+
+	// The deployed job's own mounted reference: the project-wide copy, as
+	// the apply that ran before this repository had one of its own wrote it.
+	job := gcp.JobName(slug, "app")
+	r.run.SetJobJSON(job, `{"name":"projects/proj-1234/locations/us-east5/jobs/`+job+`",
+	  "template":{"template":{"containers":[{"image":"fake/app","env":[
+	    {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueSource":{"secretKeyRef":{"secret":"`+projID+`","version":"latest"}}}]}]}}}`)
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("a warning must not fail doctor without --strict: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "project-secret-scope-stale")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("project-secret-scope-stale = %+v, want a warning: the job mounts the project copy and the repository's own copy wins now", c)
+	}
+	if !strings.Contains(c.Problem, "github-app-key") || !strings.Contains(c.Problem, projID) || !strings.Contains(c.Problem, repoID) {
+		t.Fatalf("problem doesn't name the secret and both copies: %q", c.Problem)
+	}
+}
+
 // extraAccessorRig is a doctor rig whose local config opts github-app-key
 // into project-wide storage for acme/app only, and records acme/old (which
 // is not allow-listed any more) with one workflow, so its job's service
