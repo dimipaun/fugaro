@@ -752,25 +752,20 @@ func TestSchemaAcceptsReviewFirstStage(t *testing.T) {
 	}
 }
 
-// The repository's own fugaro.yaml (Fugaro dogfooding itself) still reads
-// base: go, a kind the 0.7.0 cut removed: deleting it is Task 22's own
-// release-gated step (plan docs/plans/2026-10-08-base-image.md, Task 22
-// Step 4), run by the owner only after fugaro-base is published and
-// `fugaro image refresh` has moved this checkout onto it. Until then, the
-// schema and the Go parser must agree that base: go is 0.7.0-refused, for
-// the same reason, so a schema or parser change that quietly re-admits it
-// is caught here.
+// The repository's own fugaro.yaml (Fugaro dogfooding itself) is on the one
+// Fugaro base since 0.7.0 (Task 22 Step 4 removed its base: go): the schema
+// and the Go parser must both accept it with no problem, so a schema or
+// parser change that breaks the file Fugaro runs on itself is caught here.
 func TestRepositoryFugaroYAML(t *testing.T) {
 	data, err := os.ReadFile("../fugaro.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := compile(t, "fugaro.schema.json").Validate(yamlInstance(t, data)); err == nil {
-		t.Error("schema accepts fugaro.yaml's base: go, removed in 0.7.0")
+	if err := compile(t, "fugaro.schema.json").Validate(yamlInstance(t, data)); err != nil {
+		t.Errorf("schema rejects fugaro.yaml: %v", err)
 	}
-	_, problems := config.Parse(data)
-	if len(problems) != 1 || problems[0].Path != "workflows.go.base" || !strings.Contains(problems[0].Message, "removed in 0.7.0") {
-		t.Errorf("fugaro.yaml: problems = %v, want exactly one at workflows.go.base naming the 0.7.0 removal", problems)
+	if _, problems := config.Parse(data); len(problems) != 0 {
+		t.Errorf("fugaro.yaml: problems = %v, want none", problems)
 	}
 }
 
