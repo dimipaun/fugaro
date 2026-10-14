@@ -14,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -178,10 +179,10 @@ func TestBudgetPreviewTypical(t *testing.T) {
 		// standard bounces (bounce: first_line), so one round each is
 		// implement 1, review_first 2, fix 3, review 1 = 7 stages:
 		// $0.60 + 2×$0.10 + 3×$0.20 + $1.00 = $2.40.
-		"standard": {recipe: "standard", want: "typical: $2.40 a run (7 stages, mean of 6 runs in the last 30 days)"},
+		"standard": {recipe: "standard", want: "typical: $2.40 a run (7 stages, from 6 runs of the last 30 days)"},
 		// solo has no first_line step: implement 1, review 1, fix 1 = 3
 		// stages; $0.60 + $1.00 + $0.20 = $1.80.
-		"solo": {recipe: "solo", want: "typical: $1.80 a run (3 stages, mean of 6 runs in the last 30 days)"},
+		"solo": {recipe: "solo", want: "typical: $1.80 a run (3 stages, from 6 runs of the last 30 days)"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newBudgetFixture(t, "")
@@ -248,11 +249,37 @@ func TestBudgetPreviewTypicalSkipsOldRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "typical: $2.40 a run (7 stages, mean of 5 runs in the last 30 days)") {
+	if !strings.Contains(out, "typical: $2.40 a run (7 stages, from 5 runs of the last 30 days)") {
 		t.Errorf("the typical line does not stop at the priced runs:\n%s", out)
 	}
 	if !strings.Contains(errOut, note(8)) {
 		t.Errorf("the skipped records are no longer explained:\n%s", errOut)
+	}
+}
+
+// TestBudgetPreviewTypicalCountsMatchTheBound: the typical stage count is
+// the recipe's own bound with one round each, so the kinds the history is
+// averaged over must sum to it for every catalog recipe: the mirror of the
+// runner's loop and StageBound must never drift apart.
+func TestBudgetPreviewTypicalCountsMatchTheBound(t *testing.T) {
+	for _, name := range recipe.CatalogNames() {
+		t.Run(name, func(t *testing.T) {
+			text, ok := recipe.CatalogText(name)
+			if !ok {
+				t.Fatalf("no catalog recipe %s", name)
+			}
+			rp, problems := recipe.Parse(text)
+			if len(problems) > 0 {
+				t.Fatalf("%s: %s", name, recipe.ProblemsText(problems))
+			}
+			sum := 0
+			for _, n := range previewTypicalCounts(rp) {
+				sum += n
+			}
+			if want := recipe.StageBound(rp, 1, 1); sum != want {
+				t.Errorf("the typical shape has %d stages, the bound with one round each has %d", sum, want)
+			}
+		})
 	}
 }
 
@@ -283,7 +310,7 @@ func TestBudgetPreviewTypicalNeedsEveryStageKind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "typical: $1.80 a run (3 stages, mean of 6 runs in the last 30 days)") {
+	if !strings.Contains(out, "typical: $1.80 a run (3 stages, from 6 runs of the last 30 days)") {
 		t.Errorf("the recipe that runs no missing kind has no figure:\n%s", out)
 	}
 }
@@ -310,7 +337,7 @@ func TestBudgetPreviewTypicalUsesThePinnedModel(t *testing.T) {
 	}
 	// The pinned models' means only, at standard's 7 stages: $0.60 + 2×$0.10
 	// + 3×$0.20 + $1.00 = $2.40, never anything the other model cost.
-	if !strings.Contains(out, "typical: $2.40 a run (7 stages, mean of 10 runs in the last 30 days)") {
+	if !strings.Contains(out, "typical: $2.40 a run (7 stages, from 10 runs of the last 30 days)") {
 		t.Errorf("the typical line is not the pinned models' costs:\n%s", out)
 	}
 }

@@ -219,9 +219,10 @@ type previewDoc struct {
 type previewTypical struct {
 	USD    float64 `json:"usd"`
 	Stages int     `json:"stages"`
-	// Runs is how many of the window's runs the mean is over, and Skipped
-	// how many recorded no per-stage cost (a result.json from before the
-	// runner kept one), which are never counted as runs that cost nothing.
+	// Runs is how many of the window's runs recorded a per-stage cost -- the
+	// history this figure was taken from -- and Skipped how many recorded
+	// none (a result.json from before the runner kept one), which are never
+	// counted as runs that cost nothing.
 	Runs    int `json:"runs"`
 	Skipped int `json:"skipped"`
 }
@@ -519,7 +520,7 @@ func previewPinnedModel(cfg *config.Config, kind string) string {
 // previewStageKinds is the order a run's stages are counted and named in:
 // the runner's own order, so an absent kind is always reported as the same
 // one.
-var previewStageKinds = []string{"implement", "review_first", "review", "fix"}
+var previewStageKinds = [...]string{"implement", "review_first", "review", "fix"}
 
 // previewTypicalCounts is the kind of every stage a run of rp records with
 // one round each — the design's typical run, and the count the history mean
@@ -621,7 +622,7 @@ func printPreview(cmd *cobra.Command, d *previewDoc) {
 		fmt.Fprintf(w, "exceeds the project's daily cap (%s left today)\n", usdFixed(*d.Headroom.GlobalUSD))
 	}
 	if t := d.Typical; t != nil {
-		fmt.Fprintf(w, "typical: %s a run (%d stages, mean of %d runs in the last 30 days)\n",
+		fmt.Fprintf(w, "typical: %s a run (%d stages, from %d runs of the last 30 days)\n",
 			usdFixed(t.USD), t.Stages, t.Runs)
 	}
 }
