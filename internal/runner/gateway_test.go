@@ -307,6 +307,69 @@ func TestGatewayCostReplacesClaudeCost(t *testing.T) {
 	}
 }
 
+// TestStageTimingCarriesCost: each StageTiming carries its stage's own model
+// cost and the model the stage was pinned to, so that a cost preview can
+// average by stage kind and model (generic-tool plan Task 24).
+func TestStageTimingCarriesCost(t *testing.T) {
+	// With the gateway on, a stage's figure is the gateway's StageReport for
+	// that stage, and the stages sum to the record's model cost.
+	g := newGW(t, gwConfig(t, ""), "observe", "", out4k(), out4k(), out4k())
+	var st []int
+	rec, err := g.run(t,
+		calling(&st, implement("feature"), call{sonnet, 4000}, call{haiku, 1000}),
+		calling(&st, review("ship", 0), call{sonnet, 4000}))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	want := []struct {
+		name  string
+		model string
+		usd   float64
+	}{
+		{"implement", sonnet, 0.14}, // $0.04 on sonnet plus $0.10 on haiku
+		{"review", sonnet, 0.04},
+	}
+	if len(rec.Stages) != len(want) {
+		t.Fatalf("stages = %+v", rec.Stages)
+	}
+	var sum float64
+	for i, w := range want {
+		s := rec.Stages[i]
+		if s.Name != w.name || s.Model != w.model || !near(s.ModelUSD, w.usd) {
+			t.Errorf("stage %d = %+v, want %s on %s for $%v", i, s, w.name, w.model, w.usd)
+		}
+		sum += s.ModelUSD
+	}
+	if rec.Cost == nil || absF(sum-rec.Cost.ModelUSD) > 1e-6 {
+		t.Fatalf("the stages sum to $%v, model_usd = %+v", sum, rec.Cost)
+	}
+	// With oauth there is no gateway: a stage's figure is the result event's
+	// total_cost_usd, which implement() and review() report.
+	oauthCfg := strings.Replace(gwConfig(t, ""), "auth: api-key", "auth: oauth", 1)
+	og := newGW(t, oauthCfg, "observe", "")
+	og.deps.Env = append(filterEnv(og.deps.Env, "ANTHROPIC_API_KEY"), "CLAUDE_CODE_OAUTH_TOKEN=oauth-token-abcdef")
+	orec, err := og.run(t, implement("feature"), review("ship", 0))
+	if err != nil || orec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", orec, err)
+	}
+	if len(orec.Stages) != 2 || !near(orec.Stages[0].ModelUSD, 1) || !near(orec.Stages[1].ModelUSD, 0.5) {
+		t.Fatalf("oauth stages = %+v", orec.Stages)
+	}
+	if orec.Stages[0].Model != sonnet || orec.Stages[1].Model != sonnet {
+		t.Fatalf("oauth stage models = %+v", orec.Stages)
+	}
+	if orec.Cost == nil || absF(orec.Stages[0].ModelUSD+orec.Stages[1].ModelUSD-orec.Cost.ModelUSD) > 1e-6 {
+		t.Fatalf("oauth stages do not sum to model_usd: %+v, %+v", orec.Stages, orec.Cost)
+	}
+}
+
+func absF(f float64) float64 {
+	if f < 0 {
+		return -f
+	}
+	return f
+}
+
 func TestCostCrossCheckWarns(t *testing.T) {
 	g := newGW(t, gwConfig(t, ""), "observe", "", out4k())
 	var st []int
