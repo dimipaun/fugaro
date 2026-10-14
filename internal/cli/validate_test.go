@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -136,6 +137,38 @@ func TestValidateSkipsNoLanguageRuntimeWarning(t *testing.T) {
 				t.Fatalf("%s: unexpected warning: %q", name, errOut)
 			}
 		})
+	}
+}
+
+// TestValidateWarnsCheckoutClone (0.7.0 safety fix, review finding): a
+// checkout: clone workflow is valid config — the config shape does not
+// change whether fugaro can actually run it — but a launch of it is
+// refused until fugaro cloneSince, since plan Task 17 (the runner's own
+// FUGARO_CHECKOUT support) has not shipped yet. fugaro validate must warn
+// about that, not error, and name checkout: baked as what runs today.
+func TestValidateWarnsCheckoutClone(t *testing.T) {
+	path := writeConfig(t, strings.Replace(cliMinimalYAML, "{ commands:", "{ checkout: clone, commands:", 1))
+	out, errOut, err := execute(t, "validate", path)
+	if err != nil {
+		t.Fatalf("out=%q errOut=%q err=%v", out, errOut, err)
+	}
+	if !strings.Contains(out, "is valid") {
+		t.Fatalf("out = %q, want valid", out)
+	}
+	if !strings.Contains(errOut, "warning: workflows.app.checkout: clone runs are refused at launch until fugaro "+cloneSince) ||
+		!strings.Contains(errOut, "generic-tool plan Task 17") || !strings.Contains(errOut, "checkout: baked runs today") {
+		t.Fatalf("errOut = %q", errOut)
+	}
+	out, _, err = execute(t, "validate", "--json", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got validateOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("invalid JSON %q: %v", out, err)
+	}
+	if !got.Valid || !slices.ContainsFunc(got.Warnings, func(p config.Problem) bool { return p.Path == "workflows.app.checkout" }) {
+		t.Fatalf("got %+v", got)
 	}
 }
 
