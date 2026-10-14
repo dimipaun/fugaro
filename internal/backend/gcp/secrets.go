@@ -54,6 +54,18 @@ func NewSecrets(ctx context.Context, o Options) (*Secrets, error) {
 	return &Secrets{svc: svc, project: o.GCPProject}, nil
 }
 
+// NewSecretManager connects to Secret Manager and returns the client
+// itself, for callers that read metadata through infra's own resolution
+// helpers (infra.ResolveSecretID, infra.GrantedSecretID) rather than
+// through Secrets' own methods.
+func NewSecretManager(ctx context.Context, o Options) (*secretmanager.Service, error) {
+	svc, err := secretmanager.NewService(ctx, o.client(o.Endpoints.SecretManager)...)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to Secret Manager: %w", err)
+	}
+	return svc, nil
+}
+
 // Access reads the value of secret id's latest version, with the caller's own
 // credentials. It exists for one purpose: the GitHub App pre-check of init and
 // doctor signs a JWT with the App's key, in memory, to ask GitHub what the

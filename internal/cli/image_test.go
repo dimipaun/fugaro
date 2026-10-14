@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/image"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -213,7 +215,9 @@ func cloudBuildCheckout(t *testing.T, bare bool) (*gcpfake.Build, *cloudFixture)
 	dir := checkoutWith(t, files)
 	testutil.Git(t, dir, "remote", "set-url", "origin", "https://bitbucket.org/acme/app.git")
 	fb := gcpfake.NewBuild(t)
-	f := newCloudFixture(t, "cloud_build: "+fb.URL+"/")
+	sm := gcpfake.NewSecrets(t)
+	f := newCloudFixture(t, "cloud_build: "+fb.URL+"/", "secret_manager: "+sm.URL+"/")
+	f.sm = sm
 	path := os.Getenv("FUGARO_CONFIG")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -226,6 +230,114 @@ func cloudBuildCheckout(t *testing.T, bare bool) (*gcpfake.Build, *cloudFixture)
 		fb.AddRegistry("proj-1234", "us-east5", gcp.RegistryRepoID(mustSlug("bitbucket", "acme/app")))
 	}
 	return fb, f
+}
+
+// cloudBuildSpec's GitSecretID is the parameter it is given, never
+// rs.Secrets[ws.GitSecret] looked up inside again (N1): the repository's own
+// copy is not what Readiness may have resolved the logical name to, so a
+// regression to the old internal read would submit every build naming a
+// secret ID the build account may not be granted.
+func TestCloudBuildSpecUsesPassedGitSecretID(t *testing.T) {
+	cfg, problems := config.Parse([]byte(bitbucketYAML))
+	if len(problems) != 0 {
+		t.Fatal(problems)
+	}
+	rs := infra.RepoSpec{Name: "acme/app", Slug: mustSlug("bitbucket", "acme/app"), Provider: "bitbucket",
+		RepoURL:   "https://bitbucket.org/acme/app.git",
+		Workflows: map[string]infra.WorkflowSpec{"app": {}},
+		Secrets:   map[string]string{"bitbucket-token": "repo-scoped-id"}}
+	spec, err := cloudBuildSpec(rs, cfg, "app", "b:1", "E2_HIGHCPU_8", "gs://runs", "project-wide-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.GitSecretID != "project-wide-id" {
+		t.Fatalf("GitSecretID = %q, want the parameter project-wide-id (not the repository's own %q)", spec.GitSecretID, rs.Secrets["bitbucket-token"])
+	}
+}
+
+// cloudBuildCheckoutWithProjectSecret is cloudBuildCheckout with
+// bitbucket-token allow-listed project-wide for acme/app, the repository's
+// own container present with no enabled version, the project copy holding
+// one, and the build account granted member of it when granted is true.
+// It returns the fixture, the fake's Cloud Build and the two secret IDs.
+func cloudBuildCheckoutWithProjectSecret(t *testing.T, granted bool) (*cloudFixture, *gcpfake.Build, string, string) {
+	t.Helper()
+	fb, f := cloudBuildCheckout(t, false)
+	f.appendConfig(t, "project_secrets:\n  bitbucket-token:\n    allow_data_to: [acme/app]\n")
+	slug := mustSlug("bitbucket", "acme/app")
+	repoID, projectID := gcp.SecretID(slug, "bitbucket-token"), gcp.ProjectSecretID("aurora", "bitbucket-token")
+	f.sm.Seed(repoID, nil, nil)         // created, no enabled version: a build cannot read it
+	f.sm.Seed(projectID, nil, []byte("project-token"))
+	if granted {
+		sa := "serviceAccount:" + gcp.BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com"
+		f.sm.SetPolicy(projectID, []gcpfake.Binding{{Role: gcp.SecretAccessorRole, Members: []string{sa}}})
+	}
+	return f, fb, repoID, projectID
+}
+
+// gitSecretVersionName is the availableSecrets versionName a build naming
+// secret ID id sends.
+func gitSecretVersionName(id string) string { return "projects/proj-1234/secrets/" + id + "/versions/latest" }
+
+// availableGitSecret is the credential versionName of the last request the
+// fake Cloud Build saw.
+func availableGitSecret(t *testing.T, fb *gcpfake.Build) string {
+	t.Helper()
+	secrets, _ := fb.Last()["availableSecrets"].(map[string]any)
+	sm, _ := secrets["secretManager"].([]any)
+	first, _ := sm[0].(map[string]any)
+	s, _ := first["versionName"].(string)
+	return s
+}
+
+// B1: a standalone fugaro image build resolves the provider credential's ID
+// from live state (the repository's own copy has no version, so the project
+// copy wins) and, when the build account's own grant already names that
+// same ID, submits the build naming it -- no refusal.
+func TestRunImageBuildCloudResolvesLiveAndMatchesGrant(t *testing.T) {
+	_, fb, repoID, projectID := cloudBuildCheckoutWithProjectSecret(t, true)
+	if _, _, err := executeBuild(t, "image", "build", "--base", "b:1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := availableGitSecret(t, fb); got != gitSecretVersionName(projectID) {
+		t.Fatalf("availableSecrets names %q, want the project-wide copy %q (the repository's own %q has no version)", got, projectID, repoID)
+	}
+}
+
+// B1: a repository override stored after the last apply makes the live
+// resolution prefer the repository's own ID while the build account's grant
+// still names the project copy. The build is refused, naming both IDs,
+// before anything is submitted (a build submitted on the wrong ID fails its
+// clone at the end, long after it was billed).
+func TestRunImageBuildCloudRefusesOnGrantMismatch(t *testing.T) {
+	f, fb, repoID, projectID := cloudBuildCheckoutWithProjectSecret(t, true)
+	// The override: a version stored for the repository's own copy after
+	// the last apply, so the live resolution now prefers it -- while the
+	// grant the apply fixed still names the project copy.
+	f.sm.Seed(repoID, nil, []byte("repo-token"))
+	_, _, err := executeBuild(t, "image", "build", "--base", "b:1")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), repoID) || !strings.Contains(err.Error(), projectID) || !strings.Contains(err.Error(), "init --repo") {
+		t.Fatalf("exit %d, err %v: want a refusal naming both %s and %s and fugaro init --repo", ExitCode(err), err, repoID, projectID)
+	}
+	if len(fb.Requests()) != 0 {
+		t.Errorf("a build was submitted anyway: %v", fb.Requests())
+	}
+}
+
+// B1's third outcome, the one a naive "" == mismatch implementation would
+// get wrong: nothing has ever granted the build account either candidate
+// (the pre-first-apply state), but the repository's own copy does have an
+// enabled version, so the build proceeds on it rather than being refused.
+// Refusing here would block every repository's genuinely first build.
+func TestRunImageBuildCloudProceedsWhenNothingGrantedYet(t *testing.T) {
+	f, fb, repoID, _ := cloudBuildCheckoutWithProjectSecret(t, false)
+	f.sm.Seed(repoID, nil, []byte("repo-token")) // the repository's own copy, versioned
+	if _, _, err := executeBuild(t, "image", "build", "--base", "b:1"); err != nil {
+		t.Fatalf("a first build was refused: %v", err)
+	}
+	if got := availableGitSecret(t, fb); got != gitSecretVersionName(repoID) {
+		t.Fatalf("availableSecrets names %q, want the live-resolved %q", got, repoID)
+	}
 }
 
 func TestImageBuildCloud(t *testing.T) {

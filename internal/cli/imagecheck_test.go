@@ -277,6 +277,54 @@ func TestCheckJobSubmitsBuild(t *testing.T) {
 	}
 }
 
+// newCheckBuilder is the *gcp.Builder submitRebuild submits through, on
+// the fixture's Cloud Build fake.
+func newCheckBuilder(t *testing.T, fb *gcpfake.Build) *gcp.Builder {
+	t.Helper()
+	b, err := gcp.NewBuilder(t.Context(), gcp.Options{GCPProject: "proj-1234", Endpoints: gcp.Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}, "us-east5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// The in-job rebuild names the ID the deployed job's own spec resolved
+// (CheckJobSpec.GitSecretID), never the repository's own ID recomputed
+// here: the check job runs as the build account and reads the same
+// repo-wide local.secrets local the workflow jobs do, so the ID it
+// resolved is the ID its grant was fixed for. A deliberately-distinct value
+// proves the field is read rather than rs.Secrets[ws.GitSecret], which
+// infra.Repo computes unconditionally (P2) and would otherwise win.
+func TestSubmitRebuildUsesCheckJobSpecGitSecretIDNeverRecomputes(t *testing.T) {
+	f := newCheckJob(t, checkFiles(), bitbucketYAML)
+	cfg, _ := config.Parse([]byte(bitbucketYAML))
+	s := infra.CheckJobSpec{BaseImages: map[string]string{"base": checkBase}, MachineType: "E2_HIGHCPU_8", GitSecretID: "the-resolved-project-id"}
+	id, status, err := submitRebuild(t.Context(), newCheckBuilder(t, f.fb), "proj-1234", f.rs, cfg, "app", s, "gs://"+checkBucket)
+	if err != nil || id == "" || status == "" {
+		t.Fatalf("id %q, status %q, err %v", id, status, err)
+	}
+	if got := availableGitSecret(t, f.fb); got != gitSecretVersionName("the-resolved-project-id") {
+		t.Fatalf("the rebuild names %q, want the spec's own %q, not the repository's %q", got, "the-resolved-project-id", f.rs.Secrets["bitbucket-token"])
+	}
+}
+
+// The "" fallback: a stale, pre-feature spec (or a newer fugaro running in
+// an older job) has no GitSecretID at all, and the rebuild falls back to
+// the repository's own ID infra.Repo computes unconditionally, rather than
+// resolving to no secret -- the exact request every build named before this
+// feature existed.
+func TestSubmitRebuildFallsBackOnEmptyGitSecretID(t *testing.T) {
+	f := newCheckJob(t, checkFiles(), bitbucketYAML)
+	cfg, _ := config.Parse([]byte(bitbucketYAML))
+	s := infra.CheckJobSpec{BaseImages: map[string]string{"base": checkBase}, MachineType: "E2_HIGHCPU_8"}
+	if _, _, err := submitRebuild(t.Context(), newCheckBuilder(t, f.fb), "proj-1234", f.rs, cfg, "app", s, "gs://"+checkBucket); err != nil {
+		t.Fatalf("a stale spec's rebuild was refused: %v", err)
+	}
+	if got := availableGitSecret(t, f.fb); got != gitSecretVersionName(f.rs.Secrets["bitbucket-token"]) {
+		t.Fatalf("the rebuild names %q, want the repository's own %q", got, f.rs.Secrets["bitbucket-token"])
+	}
+}
+
 // layeredCheckInstalledYAML is what fugaro init --repo would have seen
 // when it installed the check job: same workflow name and base kind as
 // layeredCheckYAML (below), but with base and image.* given directly

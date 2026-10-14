@@ -32,7 +32,7 @@ func TestPlanRepoRefusesCloneWorkflow(t *testing.T) {
 	spec := infra.RepoSpec{Name: "acme/app", Workflows: map[string]infra.WorkflowSpec{
 		"app": {Name: "app", Checkout: config.CheckoutClone},
 	}}
-	_, err := r.planRepo(t.Context(), nil, nil, nil, spec, infra.RepoRootOptions{}, true)
+	_, _, err := r.planRepo(t.Context(), nil, nil, nil, spec, infra.RepoRootOptions{}, true)
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want a refusal", err)
 	}
@@ -58,7 +58,7 @@ func TestPlanRepoRefusalNamesOnlyTheCloneWorkflow(t *testing.T) {
 		"app": {Name: "app", Checkout: config.CheckoutClone},
 		"api": {Name: "api"},
 	}}
-	_, err := r.planRepo(t.Context(), nil, nil, nil, spec, infra.RepoRootOptions{}, true)
+	_, _, err := r.planRepo(t.Context(), nil, nil, nil, spec, infra.RepoRootOptions{}, true)
 	if err == nil || !strings.Contains(err.Error(), "workflow app") {
 		t.Fatalf("err = %v, want a refusal naming app", err)
 	}
@@ -81,7 +81,7 @@ func TestPlanRepoPlanOnlySkipsTheCloneRefusal(t *testing.T) {
 			t.Fatal("want a panic reaching infra.DiscoverRepo with a nil *infra.Clients: the clone refusal was not skipped")
 		}
 	}()
-	_, _ = r.planRepo(t.Context(), nil, nil, nil, spec, infra.RepoRootOptions{}, true)
+	_, _, _ = r.planRepo(t.Context(), nil, nil, nil, spec, infra.RepoRootOptions{}, true)
 }
 
 // TestPlanRepoNoCloneWorkflowUnaffected: a repository with no checkout:
@@ -99,5 +99,5 @@ func TestPlanRepoNoCloneWorkflowUnaffected(t *testing.T) {
 			t.Fatal("want a panic reaching infra.DiscoverRepo with a nil *infra.Clients: a baked-only repository must not be refused")
 		}
 	}()
-	_, _ = r.planRepo(t.Context(), nil, nil, nil, spec, infra.RepoRootOptions{}, true)
+	_, _, _ = r.planRepo(t.Context(), nil, nil, nil, spec, infra.RepoRootOptions{}, true)
 }

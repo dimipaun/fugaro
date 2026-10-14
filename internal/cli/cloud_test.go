@@ -36,6 +36,12 @@ type cloudFixture struct {
 	bucket  string // file:// URL
 	run     *gcpfake.Run
 	logging *gcpfake.Logging
+	// sm is the Secret Manager fake a rig that needs one wires in (the
+	// image build rig: a standalone build resolves the provider
+	// credential's live ID before submitting, B1). Nil for a rig with no
+	// secret_manager endpoint, which is every other cloudFixture -- and
+	// deliberately so for the test that proves a command needs none.
+	sm *gcpfake.Secrets
 }
 
 // newCloudFixture writes a local config whose endpoints point at the Run and

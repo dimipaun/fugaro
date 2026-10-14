@@ -2,6 +2,7 @@ package infra
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -89,7 +90,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 		ok, seen := versions[id]
 		if !seen {
 			var err error
-			if ok, err = hasEnabledVersion(ctx, c, tg, id); err != nil {
+			if ok, err = hasEnabledVersion(ctx, c.Secrets, tg, id); err != nil {
 				return false, err
 			}
 			versions[id] = ok
@@ -98,12 +99,11 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 	}
 	hasVersion := func(logical string) (bool, error) { return hasVersionID(spec.Secrets[logical]) }
 	// resolveProject is Readiness's own repo-wins-else-project precedence
-	// (design docs/design/project-secrets.md §5), applied per logical name:
-	// the repo copy wins whenever it has an enabled version; otherwise the
-	// project copy, when this repository is an eligible candidate for it and
-	// that copy is really ours (ex.ProjectSecretsOK, DiscoverRepo's own
-	// label check). resolved is false when nothing can be mounted yet, and
-	// fix names the command that would change that.
+	// (design docs/design/project-secrets.md §5), through the one helper
+	// that decides it (resolveSecretID, ResolveSecretID's own body). It is
+	// only ever called for a logical name whose repository copy has no
+	// enabled version, so resolved is true exactly when the project copy is
+	// the one that resolves; fix names the command that would change that.
 	resolveProject := func(logical string) (resolved bool, fix string, err error) {
 		fix = fmt.Sprintf("fugaro secrets set %s --repo %s", logical, spec.Name)
 		cand, isCandidate := spec.ProjectSecretCandidates[logical]
@@ -114,11 +114,11 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 		if !ex.ProjectSecretsOK[logical] {
 			return false, fix, nil
 		}
-		ok, err := hasVersionID(cand)
+		id, ok, err := resolveSecretID(hasVersionID, spec.Secrets[logical], cand)
 		if err != nil {
 			return false, fix, err
 		}
-		if !ok {
+		if !ok || id != cand {
 			return false, fix, nil
 		}
 		if out.ProjectSecrets == nil {
@@ -232,12 +232,21 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 	if spec.Check != nil {
 		ready := true
 		var unresolved []string
+		// The provider credential's resolved ID, carried by the check job's
+		// own spec so the rebuild it submits names the secret it reads
+		// (CheckJobSpec.GitSecretID, design §7): derived here from the very
+		// decision this loop just made, not resolved a second time.
+		gitLogical, _ := GitSecret(spec.Provider)
+		gitSecretID := ""
 		for _, logical := range slices.Compact(slices.Sorted(maps.Values(out.Check.SecretEnv))) {
 			ok, err := hasVersion(logical)
 			if err != nil {
 				return RepoSpec{}, nil, err
 			}
 			if ok {
+				if logical == gitLogical {
+					gitSecretID = spec.Secrets[logical]
+				}
 				continue
 			}
 			// B4: the check job mounts a subset of the same logical names,
@@ -248,12 +257,18 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 				return RepoSpec{}, nil, err
 			}
 			if resolved {
+				if logical == gitLogical {
+					gitSecretID = spec.ProjectSecretCandidates[logical]
+				}
 				continue
 			}
 			unresolved = append(unresolved, logical)
 			ready = false
 			missing = append(missing, Missing{Check: true, Kind: MissingSecret, Deployed: ex.CheckJob,
 				Reason: fmt.Sprintf("secret %s has no version: %s", logical, fix)})
+		}
+		if err := setCheckGitSecretID(out.Check, gitSecretID); err != nil {
+			return RepoSpec{}, nil, err
 		}
 		// P7a for the check job: it runs as the build account and its image
 		// is always the base image, so an unresolvable entry left in place
@@ -291,24 +306,34 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 
 // ResolveSecretID is the one place Readiness's own repo-wins-else-project
 // precedence lives, extracted so the CLI's own live call sites (image
-// builds, doctor) can resolve a single logical name without a full
-// Readiness pass. repoID is always checked first; projectID is checked only
-// if repoID has no enabled version, and projectID == "" means no candidate
-// exists for this repository (not eligible at all), in which case repoID is
-// returned regardless of its own version state -- byte-for-byte today's
-// unconditional repo-only behavior for a non-eligible name. hasVersion is
-// the chosen ID's own version state, so a caller can report a
-// Missing-style error the same way Readiness already does.
-func ResolveSecretID(ctx context.Context, c *Clients, repoID, projectID string) (id string, hasVersion bool, err error) {
-	tg := target{}
-	ok, err := hasEnabledVersion(ctx, c, tg, repoID)
+// builds, the GitHub App pre-checks) can resolve a single logical name
+// without a full Readiness pass. repoID is always checked first; projectID
+// is checked only if repoID has no enabled version, and projectID == "" means
+// no candidate exists for this repository (not eligible at all), in which
+// case repoID is returned regardless of its own version state -- byte-for-byte
+// today's unconditional repo-only behavior for a non-eligible name. hasVersion
+// is the chosen ID's own version state, so a caller can report a
+// Missing-style error the same way Readiness already does. project is the
+// GCP project both IDs live in.
+func ResolveSecretID(ctx context.Context, sm *secretmanager.Service, project, repoID, projectID string) (id string, hasVersion bool, err error) {
+	tg := target{project: project}
+	has := func(id string) (bool, error) { return hasEnabledVersion(ctx, sm, tg, id) }
+	return resolveSecretID(has, repoID, projectID)
+}
+
+// resolveSecretID is ResolveSecretID over a version lookup the caller
+// controls: Readiness passes its own memoized one, so the precedence is
+// still decided in one place while a full pass still asks about each
+// secret at most once.
+func resolveSecretID(hasVersion func(string) (bool, error), repoID, projectID string) (string, bool, error) {
+	ok, err := hasVersion(repoID)
 	if err != nil {
 		return repoID, false, err
 	}
 	if ok || projectID == "" || projectID == repoID {
 		return repoID, ok, nil
 	}
-	ok, err = hasEnabledVersion(ctx, c, tg, projectID)
+	ok, err = hasVersion(projectID)
 	if err != nil {
 		return repoID, false, err
 	}
@@ -316,6 +341,39 @@ func ResolveSecretID(ctx context.Context, c *Clients, repoID, projectID string) 
 		return projectID, true, nil
 	}
 	return repoID, false, nil
+}
+
+// setCheckGitSecretID rewrites the check job's own spec (CheckSpecEnv) with
+// the secret ID Readiness resolved for the provider credential. It is the
+// one place Readiness touches an env var's value rather than only which
+// secret ID a job mounts, and it is why the job's own rebuild cannot name a
+// different copy than the job's clone reads: the ID travels with the
+// deployed job.
+//
+// An absent or unparsable spec is left exactly as it is: infra.Repo always
+// writes one, and refusing a spec this fugaro cannot read is checkjob.go's
+// own, separate gate. id == "" (nothing resolved anywhere) leaves the field
+// empty, which the in-job rebuild reads as "fall back to the repository's
+// own ID" -- the pre-feature behavior, and never a silently missing mount.
+func setCheckGitSecretID(check *CheckSpec, id string) error {
+	if id == "" || check.Env == nil {
+		return nil
+	}
+	raw, ok := check.Env[CheckSpecEnv]
+	if !ok {
+		return nil
+	}
+	var cs CheckJobSpec
+	if err := json.Unmarshal([]byte(raw), &cs); err != nil {
+		return nil
+	}
+	cs.GitSecretID = id
+	b, err := json.Marshal(cs)
+	if err != nil {
+		return err
+	}
+	check.Env[CheckSpecEnv] = string(b)
+	return nil
 }
 
 // cloneRepoSpec is a deep copy of spec's maps, slices and check, so
@@ -347,8 +405,8 @@ func cloneRepoSpec(spec RepoSpec) RepoSpec {
 
 // hasEnabledVersion reports whether secret id has an enabled version; a
 // missing secret has none.
-func hasEnabledVersion(ctx context.Context, c *Clients, tg target, id string) (bool, error) {
-	err := c.Secrets.Projects.Secrets.Versions.List("projects/"+tg.project+"/secrets/"+id).Pages(ctx, func(p *secretmanager.ListSecretVersionsResponse) error {
+func hasEnabledVersion(ctx context.Context, sm *secretmanager.Service, tg target, id string) (bool, error) {
+	err := sm.Projects.Secrets.Versions.List("projects/"+tg.project+"/secrets/"+id).Pages(ctx, func(p *secretmanager.ListSecretVersionsResponse) error {
 		for _, v := range p.Versions {
 			if v.State == "ENABLED" {
 				return errFound

@@ -705,9 +705,9 @@ func DiscoverRepo(ctx context.Context, c *Clients, spec RepoSpec) (Imports, Exis
 			continue
 		}
 		d.add(importSecret, spec.Region, logical, id)
-		p, err := c.Secrets.Projects.Secrets.GetIamPolicy(name).OptionsRequestedPolicyVersion(3).Context(ctx).Do()
+		p, err := secretPolicy(ctx, c.Secrets, spec.GCPProject, id)
 		if err != nil {
-			return Imports{}, Existing{}, fmt.Errorf("reading the IAM policy of secret %s: %w", id, err)
+			return Imports{}, Existing{}, err
 		}
 		secretPolicies[logical] = p
 	}

@@ -419,8 +419,27 @@ func doctorGitHubApps(ctx context.Context, lc *localcfg.Config, notice io.Writer
 		if err != nil {
 			continue
 		}
-		c := checkGitHubApp(ctx, lc, repo, lc.Repos[repo].GitHubAppID, appKeySource{Read: true, SecretID: gcp.SecretID(slug, "github-app-key"), Notice: notice})
 		id := "github-app:" + repo
+		// The secret the check signs with is the one live state resolves for
+		// github-app-key, not the repository's own ID unconditionally: once
+		// that name moves to project scope the repository's own copy has no
+		// version at all, and the check would report "its private key is not
+		// stored yet" for a key that is stored, just project-wide. The
+		// resolution is compared with the build account's own live grant
+		// first (B1), the identical comparison fugaro image build makes: a
+		// grant naming a different ID means this check would read a key the
+		// build's clone would not, which makes the diagnostic misleading
+		// rather than wrong, so it is a warning with the apply that fixes it.
+		logical := "github-app-key"
+		projectID, _ := infra.ProjectSecretCandidate(lc, logical, repo)
+		buildSA := buildAccountMember(gcp.BuildServiceAccountID(slug) + "@" + lc.GCPProject + ".iam.gserviceaccount.com")
+		keyID, err := resolveGitSecretID(ctx, lc, lc.GCPProject, repo, logical, gcp.SecretID(slug, logical), projectID, buildSA, "the GitHub App check of "+repo)
+		if err != nil {
+			out = append(out, doctorCheck{ID: id, OK: false, Severity: "warning", Problem: oneLineCLI(err.Error()),
+				Fix: "run " + selfCommand() + " init --repo " + quoteWord(repo) + " in its checkout to reapply it, so the App's key this check reads and the one its builds read are the same secret"})
+			continue
+		}
+		c := checkGitHubApp(ctx, lc, repo, lc.Repos[repo].GitHubAppID, appKeySource{Read: true, SecretID: keyID, Notice: notice})
 		switch c.Verdict {
 		case appFine:
 			out = append(out, doctorCheck{ID: id, OK: true})

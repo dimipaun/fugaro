@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -493,6 +494,101 @@ func doctorApp(t *testing.T, status int, perms map[string]string) (*doctorRig, *
 		t.Fatal(err)
 	}
 	putSecret(t, r.sm, "proj-1234", mustSlug("github", "acme/app"), "github-app-key", []byte(appKeyPEM(t)))
+	auth := gitHubAppServer(t, status, perms)
+	return r, auth
+}
+
+// doctorJSON runs doctor --check-github-app --json and returns its output
+// (stdout and stderr together) and the parsed checks.
+func doctorJSON(t *testing.T) (string, []doctorCheck) {
+	t.Helper()
+	out, errOut, _ := execute(t, "doctor", "--check-github-app", "--json", "--dir", t.TempDir())
+	var o doctorOutput
+	if err := json.Unmarshal([]byte(out), &o); err != nil {
+		t.Fatalf("%v\n%s\n%s", err, out, errOut)
+	}
+	return out + errOut, o.Checks
+}
+
+// grantBuildAccount grants the project-wide secret's accessor role to repo's
+// build service account, as the apply that resolved that name to the
+// project copy did (grantedTo is true) -- or to nothing at all, the
+// pre-first-apply state, when it is false.
+func grantBuildAccount(t *testing.T, r *doctorRig, secretID, repo string, grantedTo bool) {
+	t.Helper()
+	member := buildAccountMember(gcp.BuildServiceAccountID(mustSlug("github", repo)) + "@" + initProject + ".iam.gserviceaccount.com")
+	var bindings []gcpfake.Binding
+	if grantedTo {
+		bindings = []gcpfake.Binding{{Role: gcp.SecretAccessorRole, Members: []string{member}}}
+	}
+	r.sm.SetPolicy(secretID, bindings)
+}
+
+// The doctor GitHub App check reads the key live state resolves for
+// github-app-key, not the repository's own ID unconditionally (small item
+// 5): with the repository's own copy holding no version and the project
+// copy holding one -- and the build account's grant already naming the
+// project copy -- the check signs with the PROJECT secret's value and
+// reports the App fine, where the old hard-coded repo ID would have
+// reported "its private key is not stored yet".
+func TestDoctorGitHubAppCheckResolvesLive(t *testing.T) {
+	r := projectSecretsRig(t)
+	r.sm.AllowAccess()
+	slug := mustSlug("github", "acme/app")
+	repoID := gcp.SecretID(slug, "github-app-key")
+	r.sm.Seed(repoID, map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, slug), gcp.LabelSecret: "github-app-key"}, nil)
+	projectID := putProjectSecret(t, r.sm, "aurora", "github-app-key", []byte(appKeyPEM(t)))
+	grantBuildAccount(t, r, projectID, "acme/app", true)
+	gitHubAppServer(t, 200, fullPerms)
+
+	out, checks := doctorJSON(t)
+	c, ok := doctorCheckByID(checks, "github-app:acme/app")
+	if !ok || !c.OK {
+		t.Fatalf("github-app:acme/app = %+v (%v)\n%s", c, ok, out)
+	}
+	if !slices.Contains(r.sm.Accessed(), projectID) {
+		t.Fatalf("doctor read %v, want the project-wide copy %s (the repository's own %s has no version)", r.sm.Accessed(), projectID, repoID)
+	}
+}
+
+// B1 at doctor's call site: the live resolution and the build account's own
+// grant disagree (a repository override stored since the last apply), so
+// the check is a warning naming both IDs and the apply that fixes it,
+// rather than silently signing with whichever one resolved live.
+func TestDoctorGitHubAppCheckRefusesOnGrantMismatch(t *testing.T) {
+	r := projectSecretsRig(t)
+	r.sm.AllowAccess()
+	slug := mustSlug("github", "acme/app")
+	repoID := putSecretID(t, r.sm, slug, "github-app-key", []byte(appKeyPEM(t))) // the override: versioned
+	projectID := seedProjectSecret(t, r.sm, "aurora", "github-app-key")
+	grantBuildAccount(t, r, projectID, "acme/app", true) // the grant still names the project copy
+	gitHubAppServer(t, 200, fullPerms)
+
+	out, checks := doctorJSON(t)
+	c, ok := doctorCheckByID(checks, "github-app:acme/app")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("github-app:acme/app = %+v (%v)\n%s", c, ok, out)
+	}
+	if !strings.Contains(c.Problem, repoID) || !strings.Contains(c.Problem, projectID) || !strings.Contains(c.Fix, "init --repo") {
+		t.Fatalf("the warning names neither ID nor the fix: %+v", c)
+	}
+}
+
+// putSecretID stores a version of name for repo's slug directly in the
+// fake, through the production client (as fugaro secrets set does), and
+// returns the secret ID.
+func putSecretID(t *testing.T, sm *gcpfake.Secrets, slug, name string, value []byte) string {
+	t.Helper()
+	putSecret(t, sm, initProject, slug, name, value)
+	return gcp.SecretID(slug, name)
+}
+
+// gitHubAppServer points githubAPIURL at a GitHub answering the App's
+// installation lookup with status and perms, and returns the Authorization
+// headers it saw.
+func gitHubAppServer(t *testing.T, status int, perms map[string]string) *[]string {
+	t.Helper()
 	var auth []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		auth = append(auth, req.Header.Get("Authorization"))
@@ -503,7 +599,7 @@ func doctorApp(t *testing.T, status int, perms map[string]string) (*doctorRig, *
 	old := githubAPIURL
 	githubAPIURL = srv.URL
 	t.Cleanup(func() { githubAPIURL = old })
-	return r, &auth
+	return &auth
 }
 
 // doctor says whether each recorded GitHub App is installed with what runs
@@ -512,12 +608,7 @@ func doctorApp(t *testing.T, status int, perms map[string]string) (*doctorRig, *
 func TestDoctorGitHubApp(t *testing.T) {
 	doctorChecks := func(t *testing.T) (out string, checks []doctorCheck) {
 		t.Helper()
-		out, errOut, _ := execute(t, "doctor", "--check-github-app", "--json", "--dir", t.TempDir())
-		var o doctorOutput
-		if err := json.Unmarshal([]byte(out), &o); err != nil {
-			t.Fatalf("%v\n%s\n%s", err, out, errOut)
-		}
-		return out + errOut, o.Checks
+		return doctorJSON(t)
 	}
 	t.Run("fine", func(t *testing.T) {
 		_, auth := doctorApp(t, 200, fullPerms)

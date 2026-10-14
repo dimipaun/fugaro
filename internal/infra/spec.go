@@ -227,6 +227,13 @@ type CheckJobSpec struct {
 	// BaseImages are the base images of the checked workflows' base kinds
 	// (kind -> image): what a rebuild the check submits builds FROM.
 	BaseImages map[string]string `json:"base_images"`
+	// GitSecretID is the secret ID of the provider credential as Readiness
+	// resolved it for this repository (the repository's own copy, or the
+	// project-wide one; design docs/design/project-secrets.md §5, §7), so
+	// the rebuild the check job submits names the secret the job itself
+	// reads. Empty in a spec written before this field existed: the in-job
+	// rebuild falls back to the repository's own ID (imagecheck.go).
+	GitSecretID string `json:"git_secret_id,omitempty"`
 }
 
 // RepoInstallation are the installation values a repository root needs.
