@@ -279,7 +279,7 @@ reserved it.
 | 37 | Named Claude accounts, U4: the real Claude Code error text for an expired or revoked oauth token, and `fugaro diagnose`'s rendering of it | See "Check 37" below; **you** run it, on the sandbox repository only. | One minimal sandbox run (about the cost of check 13). **USER-RUN, NOT RUN.** |
 | 40 | Project-level secrets (design `project-secrets.md` §8, §3a): a project-wide secret reaching an opted-in repository's job, an empty/absent name refused at store time and a narrowed list dropping a mount, a repo-level override's precedence and its fallback once removed, the data-policy gate still enforced for a provider's non-empty, listed case, no value anywhere in a log or a Terraform plan/state print, (§3a, the owner's **final** ruling) a provider with no `allow_data_to`/`["*"]` becoming available to every repository for BOTH mounting AND the data-policy gate, revocation never bricking the excluded repository's own apply, and the CLI's own build/check/doctor paths resolving the real secret ID (including the apply-time/live and base-image version skews they must account for) | See "Check 40" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only. | A handful of small sandbox-sized plan/apply cycles. **USER-RUN, NOT RUN.** |
 | 41 | The one base image's cold start: time from `fugaro run` to the runner's first log line on the sandbox, on the old 0.6 `web-node` image and on `fugaro-base` 0.7.0 (base-image plan Task 22 step 1, design `base-image.md` §13) | See "Check 41" below; run on installation `fugaro`, sandbox repository only, with a no-change task. | **RUN 2026-10-14, PASSED** (no regression beyond the first pull). |
-| 43 | The base image through an Artifact Registry **remote** repository over ghcr.io, with no copy (design `registry-remote-repository.md` §2, §8; plan `2026-10-14-registry-remote-repository.md` Task 8): the create and its `fugaro=managed` label (43a), a cold **digest** fetch and the digest surviving the hop (43b), the path a **custom** upstream takes (43c), the CLI pinning it and the check job running from the pin (43d), the consumers (docker, Cloud Build, Cloud Run Jobs) accepting `<tag>@<digest>` (43e), and the sandbox round trip with its restore (43f) | See "Check 43" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only. **43a to 43c need no Fugaro change** and are the go/no-go for the whole design; **43d to 43f also need a tagged release that ran #318's Task 1** (no signed `-pinned` image exists before one). | A few cents of registry storage for the cached base image, and one sandbox-sized image build (about $0.21) in 43e. **USER-RUN, NOT RUN.** |
+| 43 | The base image through an Artifact Registry **remote** repository over ghcr.io, with no copy (design `registry-remote-repository.md` §2, §8; plan `2026-10-14-registry-remote-repository.md` Task 8): the create and its `fugaro=managed` label (43a), a cold **digest** fetch and the digest surviving the hop (43b), the path a **custom** upstream takes (43c), the CLI pinning it and the check job running from the pin (43d), the consumers (docker, Cloud Build, Cloud Run Jobs) accepting `<tag>@<digest>` (43e), and the sandbox round trip with its restore (43f) | See "Check 43" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — and every step re-runs the one guarded setup block, which hard-stops unless the project is `fugaro-dev` and the checkout is the sandbox. **43a to 43c need no Fugaro change** and are the go/no-go for the whole design; **43d to 43f also need a tagged release that ran #318's Task 1** (no signed `-pinned` image exists before one). | A few cents of registry storage for the cached base image, and one sandbox-sized image build (about $0.21) in 43e. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -1146,60 +1146,73 @@ The registry-remote-repository design ([design/registry-remote-repository.md](de
 
 **What needs what, and the one precondition that is not a Fugaro change.** **43a, 43b and 43c are runnable today, with nothing merged**: they are a handful of `gcloud`/`docker` commands, and they are the design's **go/no-go** — if the path shape or the digest hop fails, the design stops there, with nothing shipped and nothing migrated. **43d, 43e and 43f need the implementation *and* a tagged release that ran #318's Task 1** (`docs/plans/2026-10-13-retire-image-mirror.md`, which signs the pushed base image by OCI digest and publishes the nightly-immune `<v>-pinned` tag): **until such a release exists there is no signed `-pinned` image, so there is nothing to resolve, verify or pin.** Run 43a-43c first either way; they order the rest.
 
-Set these once. `P` is the installation's project, `L` its region, `R` the remote repository's ID, `U` the upstream path, `V` the release you are checking (the installed CLI's own version):
+⚠ **Set these, and pass the three hard stops, by running ONE block — and re-run that whole block at the start of every later step.** `P` is the installation's project, `L` its region, `R` the remote repository's ID, `R2` 43a's optional second repository, `U` the upstream path, `V` the release you are checking (the installed CLI's own version). The block is self-contained and idempotent, and **43a, 43d, 43e, 43f, Restore A and Restore B each begin with it**: 43d-43f are gated on a future release and run days or weeks later, and the restores run after them, so all of them are **later shells** where these variables are gone. An empty `$P` is the N1 trap itself: `gcloud` then falls back to its ambient `core/project`, which for the owner is a `*-prod` project, while the `fugaro` commands fall back to the checkout's `fugaro.yaml` (`internal/cli/cloud.go:53`) — and this check writes.
 
 ```bash
-P=fugaro-dev          # HARD-CODED, and never read from gcloud: see the guard below
+# === Check 43: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
+# step (43a, 43d, 43e, 43f, Restore A, Restore B). It is idempotent, and
+# nothing below the three hard stops runs unless all three pass. ===
+P=fugaro-dev                 # HARD-CODED, and never read from gcloud
 L=us-east5
 R=fugaro-ghcr
+R2=fugaro-ghcr-scoped        # only 43a's optional scoping probe creates this
 U=dimipaun/fugaro-base
-V=$(fugaro version | awk '{print $NF}'); V=${V#v}     # `fugaro version`: there is no --version flag; the image tag drops a leading v
-I=$L-docker.pkg.dev/$P/$R/$U
+V=$(fugaro version | awk '{print $NF}'); V=${V#v}   # `fugaro version`: no --version flag; the image tag drops a leading v
+
+# ${VAR:?} everywhere: an empty variable is a hard error, never an empty
+# argument that gcloud would resolve from its ambient configuration.
+I=${L:?re-run the Check 43 setup block}-docker.pkg.dev/${P:?re-run the Check 43 setup block}/${R:?re-run the Check 43 setup block}/${U:?re-run the Check 43 setup block}
+
+[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$R" ] && [ -n "$U" ] \
+  || { echo "Check 43 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L R=$R U=$U must not be empty)" >&2; exit 1; }
+fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,' \
+  || { echo "Check 43 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
+git remote get-url origin | grep -q 'edgeappinc/fugarosandbox' \
+  || { echo "Check 43 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
 ```
 
-⚠ **Run this guard first, in the same shell, before any command of this check — 43a creates a repository, so a wrong `P` writes.** It stops unless the project is exactly `fugaro-dev`, this installation's own sandbox project (43a-43f stop there on purpose: 43d rewrites the project's shared config and moves every repository's job image with it, which must not happen on a real installation):
+**Why the guard is one block, and why it is re-run.** The project alone is not enough, and neither is running the check once. 43d rewrites the project's shared config and moves the job image of **every** repository opted in to the installation, and 43e and Restore A run `fugaro init --repo .` in the checkout you are in — so a `fugaro-dev` shell sitting in EdgeWeb's or EdgeServer's checkout would still turn a sandbox-shaped check into a real change on `belong`. That is what the second and third checks catch, and they are **assertions now, not prints**: the first stop also asserts that the **block itself** ran — `P` is exactly `fugaro-dev` **and** `L`, `R` and `U` are non-empty, so a skipped, partially pasted or hand-edited block stops there instead of reaching `gcloud` with an empty argument; `fugaro doctor`'s `project:` line is the local config's project (`internal/cli/doctor.go:748`, no cloud call; a `doctor` with no `project:` line at all means it could not read the local config — `:317`, `:747-749` — and that must be fixed first, since 43d edits that same file), and the checkout's origin is the repository 43d-43f run in — **the sandbox, never EdgeWeb's or EdgeServer's**.
 
-```bash
-[ "$P" = fugaro-dev ] || { echo "Check 43 is fugaro-dev only; P=$P" >&2; exit 1; }
-fugaro doctor | grep -m1 '^project:'     # must print: project: <name> (GCP fugaro-dev, <region>)
-git remote get-url origin                # must name the sandbox: edgeappinc/fugarosandbox
-```
+**Every `fugaro` command that takes `--project` gets `--project fugaro`** (the installation's *name*: the project is `fugaro-dev`), the same way the `gcloud` commands get `--project="$P"`. Which command picks its installation from where:
 
-Both checks are read-only and both are trip-wires for the same trap. `fugaro doctor`'s `project:` line is the local config's GCP project (no cloud call), and the checkout's origin is the repository 43d-43f run in — **the sandbox, never EdgeWeb's or EdgeServer's**. The project alone is not enough: 43d rewrites the project's shared config and moves the job images of every repository opted in to it, so a `fugaro-dev` shell sitting in EdgeWeb's checkout would still turn a sandbox-shaped check into a real change. A `fugaro doctor` with no `project:` line at all means it could not read the sandbox's local config (`internal/cli/doctor.go:317`, `:747-749`): fix that first, since 43d edits that same file.
+- **from the checkout, with nothing else to pin it** — `fugaro init --base base`, `fugaro image refresh`, `fugaro init --repo .`, `fugaro image build`, `fugaro run`: each resolves its installation from the checkout's `fugaro.yaml` `project:`, else `$FUGARO_PROJECT`, else the only project config (`internal/cli/cloud.go:53`). **These must run only from the sandbox checkout**, and `--project fugaro` is what enforces it: `--project` disagreeing with the checkout's `project:` is **refused**, not silently resolved (`this checkout belongs to project <x>; --project says fugaro`, `internal/localcfg/select.go:163`). That refusal is a fourth hard stop, and it is the one that protects the `fugaro` half of the check;
+- `fugaro doctor`, `fugaro image status`, `fugaro diagnose`: read-only, `--project fugaro` as well, so they cannot report on another installation. The guard above already passes it to `fugaro doctor` (`internal/cli/doctor.go:169`), which makes that stop **two** stops in one: on a foreign checkout `doctor` itself refuses before printing a `project:` line, and the `grep` then fails either way;
+- **`fugaro version` is the one exception** — it takes no flags at all (`internal/cli/root.go:82-88`, `NoArgs`, no `Flags()`), and it makes no cloud call, so the setup block's `V=$(fugaro version …)` is not a command the rule was skipped for.
+
+In a terminal, `exit 1` closes that terminal window — that is the intended outcome (nothing after it runs); run the whole check in a `bash` sub-shell or a script file if you would rather keep the window.
 
 **Why `P` is not `gcloud config get-value project`.** The owner's `gcloud` default is a `*-prod` project, and this check writes (it creates a repository, rewrites the local and shared configs, moves job images). Reading the project from the ambient `gcloud` configuration is a trap that an earlier draft of this check fell into; the sandbox installation's project is a constant, so the check names it. `fugaro doctor`'s `project:` line (`internal/cli/doctor.go:748`, read from the local config, no cloud call) is the read-only cross-check that the checkout you are in really is the `fugaro-dev` one — if it names anything else, fix the checkout before running 43a. Where a command needs the project it takes `--project="$P"`, as below.
 
 **`V` has no leading `v`.** The command is **`fugaro version`**, a subcommand — **there is no `--version` flag**: the root command sets no cobra `Version` field, so `fugaro --version` fails with `unknown flag: --version` and exit 1, leaving `V` empty and every later command that interpolates it (`ghcr.io/$U:$V`, `$I:$V`, `$I:$V@$D`) malformed. The subcommand (`internal/cli/root.go:82-88`) prints the binary's version verbatim, which GoReleaser sets from the tag, and the tag is `vX.Y.Z`; the image tag CI publishes strips it (`version=${tag#v}`, `.github/workflows/images.yml:78`). The CLI itself strips it the same way (`releaseVersion`, `internal/cli/init_images.go:95-98`), so `V=${V#v}` is what matches the registry tag `ghcr.io/dimipaun/fugaro-base:$V`.
 
-**(43a) The create** — design §2.12 k, e, m. The upstream is `https://ghcr.io` as a **custom** URI (there is no preset for anything but Docker Hub), in the installation's own region, unauthenticated, and carrying the label Fugaro's own discovery reads.
+**(43a) The create** — design §2.12 k, e, m. **Re-run the setup block first** (the variables and the three hard stops). The upstream is `https://ghcr.io` as a **custom** URI (there is no preset for anything but Docker Hub), in the installation's own region, unauthenticated, and carrying the label Fugaro's own discovery reads.
 
 ```bash
-gcloud artifacts repositories create "$R" --project="$P" --location="$L" \
+gcloud artifacts repositories create "${R:?}" --project="${P:?}" --location="${L:?}" \
   --repository-format=docker --mode=remote-repository \
   --remote-docker-repo=https://ghcr.io --description="ghcr.io" \
   --labels=fugaro=managed
-gcloud artifacts repositories describe "$R" --project="$P" --location="$L"
-gcloud auth configure-docker "$L-docker.pkg.dev"    # if not already done
+gcloud artifacts repositories describe "${R:?}" --project="${P:?}" --location="${L:?}"
+gcloud auth configure-docker "${L:?}-docker.pkg.dev"    # if not already done
 ```
 
 **FACT lines:** the describe's `mode: REMOTE_REPOSITORY`, `remoteRepositoryConfig.dockerRepository.customRepository.uri: https://ghcr.io`, and `labels.fugaro: managed`; and that the create was accepted with **upstream validation on** (the default) — the design leaves `disable_upstream_validation` unset so a typo'd URI fails the apply rather than a job's first pull.
 
-**Two optional probes, sandbox only, worth running while the repository is fresh:** `docker push "$I:probe"` and record the refusal (Artifact Registry documents reading from a remote repository and never writing to one), and — **only if you want to settle the design's §2.12 (m)** — a second repository created with a path-bearing upstream URI, to see whether the registry itself scopes the proxy:
+**Two optional probes, sandbox only, worth running while the repository is fresh:** `docker push "${I:?}:probe"` and record the refusal (Artifact Registry documents reading from a remote repository and never writing to one), and — **only if you want to settle the design's §2.12 (m)** — a second repository created with a path-bearing upstream URI, to see whether the registry itself scopes the proxy:
 
 ```bash
-R2=fugaro-ghcr-scoped
-gcloud artifacts repositories create "$R2" --project="$P" --location="$L" \
+gcloud artifacts repositories create "${R2:?}" --project="${P:?}" --location="${L:?}" \
   --repository-format=docker --mode=remote-repository \
   --remote-docker-repo=https://ghcr.io/dimipaun --description="ghcr.io/dimipaun" \
   --labels=fugaro=managed
-# ... then fetch a digest or pull a tag through $L-docker.pkg.dev/$P/$R2 and see
-# whether the path is scoped to dimipaun/ (design §2.12 m).
+# ... then fetch a digest or pull a tag through ${L:?}-docker.pkg.dev/${P:?}/${R2:?} and
+# see whether the path is scoped to dimipaun/ (design §2.12 m).
 ```
 
-If it does scope the proxy, that is strictly better than the shape rule (§3.6) and this design should be told; if it refuses the URI, record the refusal. **Delete `$R2` at the end of 43a whichever way it went** — it settles an optional question and nothing else in this check reads it:
+This is **UNVERIFIED**: Google's [remote-repository overview](https://cloud.google.com/artifact-registry/docs/repositories/remote-overview) shows a **path-bearing** custom upstream URI for **npm, Maven and Python only** (its `https://MY_NEXUS_IP/repository/MY_UPSTREAM_REPOSITORY` rows) and every **Docker** row there is a bare host (`https://ghcr.io`, `https://registry-1.docker.io`, …), so neither answer is documented and either one is new information. If it does scope the proxy, that is strictly better than the shape rule (§3.6) and this design should be told; if it refuses the URI, record the refusal. **Delete `$R2` at the end of 43a whichever way it went** — it settles an optional question and nothing else in this check reads it:
 
 ```bash
-gcloud artifacts repositories delete "$R2" --project="$P" --location="$L"   # ⚠ CONFIRM, sandbox only
+gcloud artifacts repositories delete "${R2:?}" --project="${P:?}" --location="${L:?}"   # ⚠ CONFIRM, sandbox only
 ```
 
 The design does not depend on either answer.
@@ -1208,10 +1221,10 @@ The design does not depend on either answer.
 
 ```bash
 # TODAY (no #318 yet): the digest of the plain release tag.
-D=$(docker buildx imagetools inspect ghcr.io/$U:$V --format '{{.Manifest.Digest}}')
+D=$(docker buildx imagetools inspect "ghcr.io/${U:?}:${V:?}" --format '{{.Manifest.Digest}}')
 # AFTER #318's Task 1 has shipped in a tagged release: the tag CI signed.
-# D=$(docker buildx imagetools inspect ghcr.io/$U:$V-pinned --format '{{.Manifest.Digest}}')
-docker buildx imagetools inspect "$I@$D" --format '{{.Manifest.Digest}}'
+# D=$(docker buildx imagetools inspect "ghcr.io/${U:?}:${V:?}-pinned" --format '{{.Manifest.Digest}}')
+docker buildx imagetools inspect "${I:?}@${D:?}" --format '{{.Manifest.Digest}}'
 ```
 
 **FACT lines:** whether the cold digest fetch succeeds at all (nothing was requested from this repository before it); the two digests, which must be **identical**; and, in the `-pinned` form, that `D` is the digest the release's workflow signed (from that run). **Record which form you ran**: a `D` from the plain `:$V` tag proves the hop and nothing about signing, and it is what 43d uses until a signed release exists. If the fetch fails on a repository something already read from, recreate the repository and retry: the whole point is that nothing was fetched before.
@@ -1219,69 +1232,82 @@ docker buildx imagetools inspect "$I@$D" --format '{{.Manifest.Digest}}'
 **(43c) The path a custom upstream takes** — design §2.12 a, and incidentally the tag cache, f. This is the one item the documentation cannot settle: the only worked example Google publishes is a one-segment Docker Hub preset, so whether a two-segment custom path is appended verbatim is an inference (§2.2).
 
 ```bash
-docker pull "$I:$V"                                 # the by-tag request, cold
+docker pull "${I:?}:${V:?}"                         # the by-tag request, cold
 # List the REPOSITORY, not the package: the package path is the answer this
 # item is here to discover, so passing it would presuppose it (Check 27, B.10,
-# lists the repository the same way). --package="$U" is the other form, and it
+# lists the repository the same way). --package="${U:?}" is the other form, and it
 # asserts the answer rather than reporting it.
-gcloud artifacts docker images list "$L-docker.pkg.dev/$P/$R" --include-tags --project="$P"
+gcloud artifacts docker images list "${L:?}-docker.pkg.dev/${P:?}/${R:?}" --include-tags --project="${P:?}"
 ```
 
 **FACT lines:** `docker pull` succeeds **before** you are ever asked for ghcr.io credentials (a public package, anonymously); **what package name Artifact Registry itself created** — read it out of the listing, which is why the command lists the repository and not `$I`; and the tag it lists. Whether that name is `dimipaun/fugaro-base` — i.e. whether the upstream path is appended verbatim — is what this item settles: if the by-tag pull works but the package is named something else, say so in the PR, because the pinned reference's shape (§3.1) and every validator in §3.6 are written against the verbatim path.
 
 **(43d) The CLI pins it, and the check job runs from the pin** — design §2.12 d. Needs the implementation and a signed release (43a-43c do not).
 
+**Re-run the setup block first** (the variables and the three hard stops): this item runs in a later shell, after a release, and it is one of the two that write.
+
 ⚠ **This item changes the whole installation, not just the sandbox repository.** `fugaro init --base base` / `fugaro image refresh` rewrites `base_images` in your **local** config for the project and republishes the project's **shared** config, so every repository's clone-workflow job image moves with it; in this sandbox that is `edgeappinc/fugarosandbox`'s jobs, and on a real installation it would be every opted-in repository's. Nothing on `belong` is touched by any of it.
 
 ```bash
-# The project's LOCAL config — ~/.config/fugaro/projects/<project>.yaml
-# ($XDG_CONFIG_HOME moves the root; $FUGARO_CONFIG or --config can name
-# another file; `fugaro init` also keeps the previous one as
-# <project>.yaml.bak-<time>). NOT the checkout's fugaro.yaml, which never
-# holds base_images.
-C=$HOME/.config/fugaro/projects/<project>.yaml
+# The installation `fugaro`'s LOCAL config — a real path, not a placeholder:
+# ~/.config/fugaro/projects/fugaro.yaml ($XDG_CONFIG_HOME moves the root;
+# $FUGARO_CONFIG or --config can name another file; `fugaro init` also keeps
+# the previous one as fugaro.yaml.bak-<time>). NOT the checkout's
+# fugaro.yaml, which never holds base_images.
+C=$HOME/.config/fugaro/projects/fugaro.yaml          # the installation is `fugaro`: literal, not a placeholder
 cp "$C" "$C.before-43"                               # so the restore has something to go back to
-fugaro init --base base                              # or: fugaro image refresh
+fugaro init --base base --project fugaro             # or: fugaro image refresh --project fugaro
 grep -n 'base_images' -A2 "$C"
-gcloud run jobs describe <the check job> --project="$P" --region="$L" | grep -n 'image:'
-gcloud run jobs execute <the check job> --project="$P" --region="$L" --wait
+# The sandbox's daily image check job: fugarochk-<slug>-<hash>
+# (internal/backend/gcp/names.go:180). Read it, don't guess it.
+CHECK_JOB=$(gcloud run jobs list --project="${P:?}" --region="${L:?}" \
+  --format='value(metadata.name)' | grep -m1 '^fugarochk-')
+: "${CHECK_JOB:?no fugarochk- job in this project and region: the sandbox has one (see Check 30), so find it before continuing}"
+gcloud run jobs describe "${CHECK_JOB:?}" --project="${P:?}" --region="${L:?}" | grep -n 'image:'
+gcloud run jobs execute "${CHECK_JOB:?}" --project="${P:?}" --region="${L:?}" --wait
 ```
 
 **FACT lines:** `base_images.base` is `<region>-docker.pkg.dev/<project>/fugaro-ghcr/dimipaun/fugaro-base:<v>@sha256:<the 43b digest>` — the **remote** path, at the digest **43b proved byte-equal**, with the release tag still present as the version marker; the run's own `(digest …)` line names that digest; **nothing was pushed** (the CLI copies no image, and the confirmation says so instead of naming a copy size); and the check job's container image is that same string, from which the execution starts (its outcome is the check's own business — what this item proves is that the image resolves and the container starts). **No tag-move step here:** nothing downstream reads a tag through the proxy (design §2.5, §2.12 f), and the question a move would have asked — whether the plain `:$V` tag can move *under* a pin without disturbing it — is #318's own **39e** (`docs/plans/2026-10-13-retire-image-mirror.md:566`), which this design keeps (§9): it dispatches `images.yml` by `workflow_dispatch` and compares `fugaro-base:<v>-pinned`'s digest before and after, expecting **the plain tag's digest to change (the nightly's existing behavior)** and the `-pinned` tag's not to. That is exactly why 43b's FACT must record which form it used: a `D` read from the plain `:$V` tag is a digest **the nightly can replace the tag under** — the pin keeps pulling its own digest (content-addressed, immutable), but the tag it names stops being the release's image at the next nightly, which is what `-pinned` exists to prevent. A `D` from `:$V-pinned` has neither problem.
 
 **(43e) The consumers accept `<tag>@<digest>`** — design §2.12 d, and the design's one open structural question (§3.1's fallback is a digest-only reference with the version recorded separately).
 
+**Re-run the setup block first** (the variables and the three hard stops): this item writes `fugaro init --repo .` in the checkout you are in.
+
 ```bash
-docker pull "$I:$V@$D"
-fugaro init --repo .                                 # a real plan: reads, no apply without your answer
+docker pull "${I:?}:${V:?}@${D:?}"
+fugaro init --repo . --project fugaro                # a real plan: reads, no apply without your answer
 # The sandbox's workflow names — do not assume one. `.repo.workflows` is keyed
 # by gcp.WorkflowVariant(name, <claude account>) (internal/infra/spec.go:806):
 # the workflow's own name for the default account, and name_<token> for each
 # other allowed oauth account (internal/backend/gcp/names.go:285-295), so the
 # name --workflow wants is the key with no "_<token>" suffix — or read the
 # sandbox checkout's fugaro.yaml `workflows:` keys, which are the names.
-fugaro init --repo . --print-vars | jq -r '.repo.workflows | keys[]'
-fugaro image build --repo edgeappinc/fugarosandbox --workflow <a BAKED one from that list>
+fugaro init --repo . --project fugaro --print-vars | jq -r '.repo.workflows | keys[]'
+fugaro image build --repo edgeappinc/fugarosandbox --project fugaro --workflow <a BAKED one from that list>
 ```
 
 **`--workflow` must name a `checkout: baked` workflow, and the name is the sandbox's, not this check's inference.** A `checkout: clone` workflow has no derived image at all — `fugaro image build` refuses it with *"this workflow runs the base image (checkout: clone): there is nothing to build"* (`internal/cli/image.go:185-187`; the local form is `:120-122`) — so the name above is a placeholder you fill from the listing, and if the listing has no baked workflow there is nothing for 43e's build half to prove (record that and stop there rather than inventing a workflow). Check 41's Method calls the sandbox's workflow `web` and ran a `fugaro run` through it on 2026-10-14, but it never passed `--workflow`, so that is evidence about the sandbox's `fugaro.yaml` at that date, not a guarantee about this one: read the name.
 
-**FACT lines:** the combined reference pulls with docker; the real `fugaro init --repo` plan renders the check job (and every clone workflow's job) with that string and asks Terraform for it without an error — **a refusal here is the signal to take the §3.1 fallback**, and to say so in the PR; and the build's Cloud Build run shows `_FUGARO_BASE` as that string and succeeds — its first step and its `FROM` both pull through the remote repository as the build account. Record the build ID and the resolved digest from the build log. (**`--print-vars` is not enough here:** it prints the substitutions without running Terraform, so it cannot show that the plan accepts the string — the point of this item.)
+**FACT lines:** the combined reference pulls with docker; the real `fugaro init --repo` plan renders the check job (and every clone workflow's job) with that string and asks Terraform for it without an error — **a refusal here is the signal to take the §3.1 fallback**, and to say so in the PR; and the build's Cloud Build run shows `_FUGARO_BASE` as that string and succeeds — its first step and its `FROM` both pull through the remote repository as the build account. Record the build ID and the resolved digest from the build log. (**`--print-vars` above is only for the workflow names** — it is read-only, makes no cloud call and runs no Terraform, which is exactly what makes it a safe way to list them; it is *not* the evidence this item needs. The evidence is the real plan: `--print-vars` prints the substitutions without running Terraform, so it cannot show that the plan accepts the string.)
 
 **⚠ And compare two digests, not one (design §2.12 n).** The build's own log prints `base <ref>@sha256:…` from `docker image inspect … RepoDigests` (`images/derived/cloudbuild.yaml:144-146`), which becomes the record's `base_digest` (`image record --base-digest-from`); the daily check compares that against its own read of the same reference (`internal/imagecheck/triggers.go:36-38`). The check's read is the **index** digest — it is the reference's own digest, returned with no registry call — so **this FACT is whether the daemon's answer is the same digest**:
 
 ```bash
-gcloud builds log <the build ID from above> --project="$P" | grep -n 'base .*@sha256:'    # what the build recorded
-echo "$D"                                                                   # 43b's index digest
+BUILD_ID=""                                                  # paste 43e's build ID here (the line above prints it)
+: "${BUILD_ID:?paste the build ID of the build 43e just ran}"
+gcloud builds log "${BUILD_ID:?}" --project="${P:?}" | grep -n 'base .*@sha256:'    # what the build recorded
+echo "${D:?}"                                                # 43b's index digest
 ```
 
 **If they differ, record it and stop:** the daemon resolved the index to the platform manifest, and the consequence is not an error — it is `ReasonBase` firing on **every** daily check, rebuilding every workflow once a day forever, with no log line saying why. That is a finding for the design (the fix belongs at build time: record the index digest the reference names, or compare index-to-index), not something to accept as noise.
 
 **(43f) The round trip, and the restore.**
 
+**Re-run the setup block first** (the variables and the three hard stops): this item writes, in the checkout you are in.
+
 ```bash
-fugaro image refresh                                 # base: no copy; check job: the pinned image
-fugaro run --repo edgeappinc/fugarosandbox --ref master "Do not change any file and do not open a pull request. Reply with the single word ok."
+fugaro image refresh --project fugaro                # base: no copy; check job: the pinned image
+fugaro run --repo edgeappinc/fugarosandbox --project fugaro --ref master "Do not change any file and do not open a pull request. Reply with the single word ok."
 ```
 
 **FACT lines:** the refresh copies nothing for the base kind and moves nothing it should not; the run starts on the pinned base (its cold start is Check 41's concern, not this one's); `fugaro diagnose`/`doctor` report no missing base image and no `base_images` warning.
@@ -1290,10 +1316,12 @@ fugaro run --repo edgeappinc/fugarosandbox --ref master "Do not change any file 
 
 **Restore A — after 43d-43f ran (implementation merged).**
 
+**Re-run the setup block first** — this is a new shell, and the restores delete.
+
 ```bash
-C=$HOME/.config/fugaro/projects/<project>.yaml        # in a new shell, name it again
+C=$HOME/.config/fugaro/projects/fugaro.yaml           # in a new shell, name it again (the installation is `fugaro`)
 cp "$C.before-43" "$C"                                # ⚠ CONFIRM: the local config back
-fugaro init --repo .                                  # ⚠ CONFIRM: republishes the shared config and moves the job images back
+fugaro init --repo . --project fugaro                 # ⚠ CONFIRM: republishes the shared config and moves the job images back
 # ⚠ Do NOT run `fugaro init --base base` here. After the implementation it
 # would RE-PIN the remote path — a restored copy-shaped entry is stale by
 # design (currentness is the version AND the shape, design §5.4) — and undo the
@@ -1303,9 +1331,11 @@ fugaro init --repo .                                  # ⚠ CONFIRM: republishes
 
 **Restore B — after the feasibility run only (43a-43c, nothing merged).** Nothing in Fugaro changed, so `$C.before-43` and the `fugaro init --repo .` line above are **not** part of it: run them and you republish a shared config and move job images for a change you never made. The only thing to undo is the repository 43a created, which Fugaro does not know about yet:
 
+**Re-run the setup block first** — this is a new shell, and the deletes below would otherwise interpolate empty `$P`, `$L`, `$R` and `$R2`, which is exactly how `gcloud` falls back to its ambient configuration.
+
 ```bash
-gcloud artifacts repositories delete "$R2" --project="$P" --location="$L"   # ⚠ CONFIRM, if 43a's scoping probe created it
-gcloud artifacts repositories delete "$R"  --project="$P" --location="$L"   # ⚠ CONFIRM
+gcloud artifacts repositories delete "${R2:?}" --project="${P:?}" --location="${L:?}"   # ⚠ CONFIRM, if 43a's scoping probe created it
+gcloud artifacts repositories delete "${R:?}"  --project="${P:?}" --location="${L:?}"   # ⚠ CONFIRM
 ```
 
 (If you ran 43a-43c as the feasibility run and then 43d-43f after merging, do **Restore A only** and delete **only `$R2`**: after the merge `$R` is part of the installation (`fugaro init` creates it, `prevent_destroy` protects it), so it **stays** — the `delete "$R"` line above does not apply to you. The last bullet has the reasoning.)
