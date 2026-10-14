@@ -1,6 +1,7 @@
 package gitops
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -1585,5 +1586,95 @@ func TestCloneBloblessStripsFromTheStart(t *testing.T) {
 		if strings.HasPrefix(kv, "ANTHROPIC_API_KEY=") {
 			t.Fatal("the clone's environment holds the model credential")
 		}
+	}
+}
+
+// remoteWithABranch seeds a remote whose main holds a file, plus a branch
+// "feat" that modifies it — the shape a pull request has: a file that
+// exists on both sides, changed by the branch. It returns the remote's
+// path and its file:// URL.
+func remoteWithABranch(t *testing.T) (path, url string) {
+	t.Helper()
+	testutil.IsolateGit(t)
+	remote := testutil.NewRemote(t, map[string]string{"app.txt": "one\n", "other.txt": "other\n"})
+	testutil.Git(t, remote, "config", "uploadpack.allowFilter", "true")
+	work := filepath.Join(t.TempDir(), "seed")
+	testutil.Git(t, filepath.Dir(work), "clone", "--quiet", remote, work)
+	testutil.WriteFiles(t, work, map[string]string{"app.txt": "one\ntwo\n"})
+	testutil.Git(t, work, "add", "-A")
+	testutil.Git(t, work, "commit", "--quiet", "-m", "change app.txt")
+	testutil.Git(t, work, "push", "--quiet", "origin", "HEAD:refs/heads/feat")
+	return remote, "file://" + remote
+}
+
+// diffOut runs `git diff origin/main...HEAD` in dir with the process's own
+// environment — no credentials of the runner's — and returns what git said.
+// It is what the agent's own git does: the command the review prompt names.
+func diffOut(t *testing.T, dir string) (string, error) {
+	t.Helper()
+	cmd := exec.Command("git", "diff", "origin/main...HEAD")
+	cmd.Dir = dir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	return stdout.String() + stderr.String(), err
+}
+
+// TestPrefetchDiffFetchesTheBaseSide (review N1): in a blobless clone the
+// checkout brings in the checked-out revision's file contents and no
+// others, so `git diff origin/main...HEAD` needs a lazy fetch from origin —
+// and on a private repository the agent's own git has no credentials to
+// make it with. PrefetchDiff runs that diff on the runner's side, whose git
+// does carry them, and the objects it fetches are what the agent's later
+// diff reads.
+//
+// The remote is moved away for the agent's attempts, the review's own
+// stand-in: with no credentials, any lazy fetch from it fails. The
+// prefetch's own call happens while it is still there.
+//
+// Mutation (run, restore): make PrefetchDiff a no-op (or drop the diff it
+// runs) — the second diffOut fails with "could not fetch <oid> from
+// promisor remote", which is the bug.
+func TestPrefetchDiffFetchesTheBaseSide(t *testing.T) {
+	remote, url := remoteWithABranch(t)
+	dir := filepath.Join(t.TempDir(), "repo")
+	r, err := CloneBlobless(ctx, dir, url, "", IdentityEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The runner's checkout of the pull request's branch (CheckoutNewBranch
+	// fetches it by its full name), then the base.
+	if err := r.CheckoutNewBranch(ctx, "refs/heads/feat", "feat"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.FetchBase(ctx, "main"); err != nil {
+		t.Fatal(err)
+	}
+	// Moving the remote away stands in for the agent having no credentials:
+	// a lazy fetch from it fails either way, and the runner's own prefetch
+	// below happens while it is back in place.
+	away := remote + ".away"
+	if err := os.Rename(remote, away); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Rename(away, remote) }()
+	if out, err := diffOut(t, dir); err == nil {
+		t.Fatalf("the agent's diff already works with no remote: %s", out)
+	}
+	if err := os.Rename(away, remote); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.PrefetchDiff(ctx, "origin/main", "HEAD"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(remote, away); err != nil {
+		t.Fatal(err)
+	}
+	out, err := diffOut(t, dir)
+	if err != nil {
+		t.Fatalf("the agent's diff still fails after the prefetch: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "+two") {
+		t.Fatalf("the agent's diff says nothing about the change:\n%s", out)
 	}
 }

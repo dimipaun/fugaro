@@ -87,6 +87,25 @@ func TestDocsCheckoutMiseConfigsAreListed(t *testing.T) {
 	}
 }
 
+// TestDocsCheckoutSaysWhatOldRevisionsCost (review N1): a clone job's
+// checkout holds the checked-out revision's file contents and the ones the
+// runner prefetches for the branch's diff — no more — and the agent's git
+// has no credentials to fetch the rest on a private repository. The doc has
+// to say so, and in particular must not claim the modes work like `baked`:
+// that claim is what sent a reader to `git blame` on a checkout that cannot
+// answer it.
+func TestDocsCheckoutSaysWhatOldRevisionsCost(t *testing.T) {
+	doc := docsCheckoutDoc(t)
+	for _, cmd := range []string{"git log -p", "git blame"} {
+		if !strings.Contains(doc, cmd) {
+			t.Errorf("docs/checkout.md does not name %s among what a clone's checkout cannot fetch", cmd)
+		}
+	}
+	if strings.Contains(doc, "work the same way") {
+		t.Error("docs/checkout.md claims checkout: clone works the same way as baked; it does not, for anything the runner did not prefetch")
+	}
+}
+
 // TestDocsCheckoutSaysWhetherCloneIsShipped (review M6/H2): the doc's claim
 // about the clone gate has to match the gate. While cloneShipped is false
 // (`internal/cli/recipes_skew.go`) no clone job can be deployed — `fugaro

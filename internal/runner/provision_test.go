@@ -77,6 +77,11 @@ func (h *harness) fakeMise(t *testing.T, exit int) string {
 	envLog := filepath.Join(dir, "mise.env")
 	st := strconv.Itoa(exit)
 	script := "#!/bin/sh\n" +
+		// The install line is printed before anything else the script does:
+		// the timeout test's bound is short, and the first execution of a
+		// freshly written script (macOS especially, where a new file's first
+		// exec is slow) must not eat it before mise says anything.
+		"if [ \"$1\" = install ]; then echo 'mise: installing tools'; fi\n" +
 		"printf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$MISE_LOG\"\n" +
 		"printf -- '--- %s\\n' \"$*\" >> \"$MISE_ENV\"\n" +
 		// Which mise config this call actually saw (its first line), for the
@@ -86,9 +91,8 @@ func (h *harness) fakeMise(t *testing.T, exit int) string {
 		"case \"$1\" in\n" +
 		"ls)\n" +
 		"  printf '%s' \"$MISE_MISSING\"\n" +
-		"  exit 0 ;;\n" +
+		"  exit \"${MISE_LS_EXIT:-0}\" ;;\n" +
 		"install)\n" +
-		"  echo 'mise: installing tools'\n" +
 		"  if [ -f \"$MISE_HANG\" ]; then sleep 30; fi\n" +
 		"  test " + strconv.Quote(st) + " -eq 0 || {\n" +
 		"    echo 'mise: no such tool node' >&2\n" +
@@ -354,7 +358,7 @@ func TestCloneFollowUpProvisionsWithoutTheToken(t *testing.T) {
 // too — not from whatever branch the remote calls its default, which is all
 // a clone leaves behind.
 //
-// Mutation (run, restore): drop the `if r.cloneJob() { repo.CheckoutDetached
+// Mutation (run, restore): drop the `if r.cloneJob() { repo.CheckoutRef
 // ... }` block from the review case in bootstrap — there is no working tree
 // to read, so mise sees no config at all and the test fails.
 func TestCloneReviewProvisionsTheBaseBranch(t *testing.T) {
@@ -551,6 +555,34 @@ func TestCloneProvisionLeavesNothingMissing(t *testing.T) {
 	}
 }
 
+// TestCloneProvisionMiseListFailureIsInfraError (review L1): `mise ls
+// --current --missing` says what is missing on stdout, so its status is not
+// consulted for that — but a non-zero status with nothing on stdout (a
+// config mise cannot parse) is a broken check, not a clean install, and the
+// derived image's own `missing="$(mise ls ...)" && ...` fails on exactly
+// that. Without the exit-status check the run went on as if nothing were
+// missing.
+//
+// Mutation (run, restore): drop the `code != 0` case from miseComplete —
+// the run no longer fails and the agent runs.
+func TestCloneProvisionMiseListFailureIsInfraError(t *testing.T) {
+	h := newHarnessFiles(t, cloneYAML, nil, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n"})
+	h.fakeMise(t, 0)
+	h.cloneJob(t)
+	h.deps.Env = append(h.deps.Env, "MISE_LS_EXIT=2")
+	rec, err := h.run(t, implement("feature"))
+	if err == nil {
+		t.Fatal("a failing mise ls did not fail the run")
+	}
+	if rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "checking the mise install") ||
+		!strings.Contains(rec.Reason, "exit 2") {
+		t.Fatalf("record = %+v", rec)
+	}
+	if len(h.agent.calls) != 0 {
+		t.Fatalf("the agent ran anyway: %+v", h.agent.calls)
+	}
+}
+
 // TestCloneProvisionTimeoutIsItsOwnFailure (review M2): the ten-minute
 // bound ends provision as its own error, naming the bound and mise's last
 // line, rather than as a bare context deadline that reads like the run's own
@@ -560,7 +592,13 @@ func TestCloneProvisionTimeoutIsItsOwnFailure(t *testing.T) {
 	h.fakeMise(t, 0)
 	h.cloneJob(t)
 	h.miseHang(t)
-	h.deps.ProvisionTimeout = 200 * time.Millisecond
+	// Two seconds, not a few hundred milliseconds: mise prints its line as
+	// the script's first act (fakeMise), but the first execution of a
+	// freshly written script costs enough on macOS that a tighter bound
+	// killed it before it printed anything, and the test then failed there
+	// with "mise said nothing" (review L2). The bound only has to be
+	// smaller than the fake's 30-second hang, not small in itself.
+	h.deps.ProvisionTimeout = 2 * time.Second
 	rec, err := h.run(t, implement("feature"))
 	if err == nil {
 		t.Fatal("a hanging mise install did not fail the run")
@@ -568,7 +606,7 @@ func TestCloneProvisionTimeoutIsItsOwnFailure(t *testing.T) {
 	if rec.Status != runstore.StatusInfraError {
 		t.Fatalf("record = %+v", rec)
 	}
-	if !strings.Contains(rec.Reason, "did not finish within 200ms") {
+	if !strings.Contains(rec.Reason, "did not finish within 2s") {
 		t.Fatalf("reason = %q, want provision's own bound", rec.Reason)
 	}
 	if !strings.Contains(rec.Reason, "installing tools") {

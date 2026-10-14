@@ -1881,6 +1881,18 @@ in the repository's checkout until then. Closing (d) is a
 `deploy/terraform/gcp/modules/repo` change, and (c) needs the deployed job's
 image read in `checkCloneImageSince`'s callers.
 
+**A second review round (same day)** found one thing that is *not* deferred and
+had to be fixed here: in a blobless clone the agent's own git cannot fetch on a
+private repository (it carries no credentials, by design), so the diff the
+review stage is told to run — `git diff origin/<base>...HEAD`, whose base side
+no checkout ever brought in — failed with `could not fetch <oid> from promisor
+remote`. The runner now runs that diff itself at bootstrap, with the run's
+credentials, before any stage starts (`internal/runner/prefetch.go`,
+`gitops.PrefetchDiff`), and `docs/checkout.md` states what is and is not in the
+checkout afterwards: the branch's diff is covered; deep history (`log -p`,
+`blame`, `show` of a revision nobody fetched) is not, under `clone`. Check 38
+should still read that doc section before it runs its live check.
+
 ### Task 18: Check 38 and the setup skill's offer
 
 **Numbering ruling (owner's assistant, 2026-10-13):** this task used to reserve

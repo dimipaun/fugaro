@@ -203,10 +203,13 @@ func (r *run) miseComplete(ctx context.Context, bound time.Duration, env []strin
 	mctx, cancel := context.WithTimeout(ctx, bound)
 	defer cancel()
 	var stdout, stderr strings.Builder
-	// The exit status is not the answer here: `mise ls --current --missing`
-	// names what is missing on stdout and exits 0 (the derived image's build
-	// reads it exactly this way), so only a broken invocation is an error.
-	_, runErr := procgroup.Run(mctx, procgroup.Cmd{
+	// `mise ls --current --missing` names what is missing on stdout and
+	// exits 0 (the derived image's build reads it exactly this way), so its
+	// stdout, not its status, says whether a tool is missing — but a
+	// non-zero status with nothing on stdout (a config mise cannot parse,
+	// say) is a broken check, not a clean bill of health, and the derived
+	// image's own `missing="$(mise ls ...)" && ...` fails on exactly that.
+	code, runErr := procgroup.Run(mctx, procgroup.Cmd{
 		Name:   "mise",
 		Args:   []string{"ls", "--current", "--missing"},
 		Dir:    r.d.WorkDir,
@@ -226,6 +229,8 @@ func (r *run) miseComplete(ctx context.Context, bound time.Duration, env []strin
 		return fmt.Errorf("checking the mise install for %s: %w", what, runErr)
 	case mctx.Err() != nil:
 		return fmt.Errorf("checking the mise install for %s did not finish within %s: %s", what, bound, lastLine(out))
+	case code != 0:
+		return fmt.Errorf("checking the mise install for %s failed (exit %d): %s", what, code, lastLine(out))
 	}
 	missing := strings.TrimSpace(stdout.String())
 	if missing == "" {

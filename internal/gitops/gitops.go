@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -131,16 +132,19 @@ func OpenOrClone(ctx context.Context, dir, remote string, env []string, strip ..
 // It is --no-checkout, as design §2 spells the command, so the clone fetches
 // refs alone and leaves no working tree: the checkout of the task's ref —
 // CheckoutNewBranch for a first run, checkoutFollowUp for a follow-up, and
-// for review mode, which has no branch of its own, a CheckoutDetached of the
-// base in the runner's bootstrap — is what fills the directory, and the
-// blobs it needs are what git then fetches.
+// for review mode, which has no branch of its own, a CheckoutRef of the base
+// in the runner's bootstrap — is what fills the directory, and the blobs it
+// needs are what git then fetches. A revision nobody checked out (the base
+// side of the branch's diff, most of all) is what PrefetchDiff brings in.
 //
 // branch "" clones the remote's own default branch; the runner's bootstrap
 // uses that, since the repository's git.base_branch is not readable until
 // the checkout exists, and its FetchBase repairs origin/<base> right
 // afterwards either way.
 //
-// dir must not exist (git creates it); its parent is created if absent.
+// dir is created by git, so it must not already be a repository; an empty
+// directory is fine (what a container's /work/repo is before a clone job's
+// first run clones into it), and its parent is created if absent.
 // env and strip are OpenOrClone's: the credential variables, and the
 // variables (the model credential) no git call may see.
 func CloneBlobless(ctx context.Context, dir, remote, branch string, env []string, strip ...string) (*Repo, error) {
@@ -194,12 +198,24 @@ func (r *Repo) processEnv() []string {
 
 // gitRaw runs git and returns its stdout exactly as written.
 func (r *Repo) gitRaw(ctx context.Context, args ...string) ([]byte, error) {
+	var stdout bytes.Buffer
+	if err := r.gitTo(ctx, &stdout, args...); err != nil {
+		return nil, err
+	}
+	return stdout.Bytes(), nil
+}
+
+// gitTo runs git with its stdout going to out: gitRaw, for a command whose
+// output is either wanted exactly as written (a file's bytes) or not wanted
+// at all (a diff run only for the lazy object fetches it performs —
+// io.Discard, since that output may be far too large to hold in memory).
+func (r *Repo) gitTo(ctx context.Context, out io.Writer, args ...string) error {
 	cmd := exec.CommandContext(ctx, "git", append(slices.Clone(noHooks), args...)...)
 	cmd.Dir = r.Dir
 	cmd.Env = r.processEnv()
 	cmd.WaitDelay = gitWaitDelay
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	var stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = out, &stderr
 	err := cmd.Run()
 	if err != nil && errors.Is(err, exec.ErrWaitDelay) && ctx.Err() == nil && cmd.ProcessState != nil && cmd.ProcessState.Success() {
 		// git itself exited 0; WaitDelay fired only because a leaked
@@ -210,9 +226,9 @@ func (r *Repo) gitRaw(ctx context.Context, args ...string) ([]byte, error) {
 		err = nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+		return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
-	return stdout.Bytes(), nil
+	return nil
 }
 
 // CheckoutNewBranch fetches ref from origin and points a fresh branch at it.
@@ -244,6 +260,39 @@ func (r *Repo) CheckoutRef(ctx context.Context, rev string) error {
 	}
 	_, err := r.git(ctx, "clean", "-fd", "--quiet")
 	return err
+}
+
+// PrefetchDiff brings in the file contents `git diff rev...head` needs, so
+// that whoever runs that diff next does not have to fetch them.
+//
+// In a blobless clone (CloneBlobless) the file contents arrive only when a
+// checkout needs them, and a checkout brings in one revision's — the ref it
+// checks out. A diff needs both sides: the checkout of head supplies head's
+// blobs, and the other side of the diff — rev's, at the merge base — is
+// still missing. Git fetches a missing blob lazily through the clone's
+// promisor remote, which is a network call to origin, so it works only for
+// a caller whose git carries credentials: the runner's does (Repo.Env),
+// the agent's deliberately does not (agent.env), and on a private
+// repository the agent's own `git diff origin/<base>...HEAD` — the command
+// the review stage's prompt names — is then `fatal: could not fetch <oid>
+// from promisor remote`. The runner runs this instead, once, before the
+// agent starts.
+//
+// The diff itself is run with stdout discarded: what is wanted is not its
+// output but the lazy fetches git performs while producing it. Its exit
+// status is not consulted (plain `git diff` exits 0 whether or not there
+// are differences) — git fails here only if it cannot produce the diff at
+// all, which is exactly the failure this exists to prevent.
+//
+// Only rev...head is covered, deliberately: a diff of the two tree-ish
+// revisions an agent is pointed at. Deep-history reads (log -p, blame,
+// `git show` of an older revision) need other objects and are not covered;
+// docs/checkout.md says so.
+func (r *Repo) PrefetchDiff(ctx context.Context, rev, head string) error {
+	// --no-ext-diff and --no-textconv: the repository's own .gitattributes
+	// or config must not make this run a program, and neither is needed to
+	// bring the objects in.
+	return r.gitTo(ctx, io.Discard, "diff", "--no-color", "--no-ext-diff", "--no-textconv", rev+"..."+head, "--")
 }
 
 // lfsFiltersOff are -c overrides that keep git from running any

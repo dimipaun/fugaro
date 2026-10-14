@@ -1044,6 +1044,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 			return err
 		}
 	}
+	// The agent's git has no credentials of its own, and a blobless clone
+	// fetches file contents lazily through origin: the runner brings in
+	// what the agent's diff will need while it still has the credentials
+	// to do it (prefetch.go, review N1). Here, after the base and the
+	// review heads are resolved, and before any stage runs.
+	r.prefetchDiff(ctx)
 	r.restoreCaches(ctx)
 	if r.follow == nil && !r.review {
 		// A follow-up or a review run fetched its base, and read these
