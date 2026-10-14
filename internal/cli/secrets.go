@@ -492,9 +492,13 @@ func repoMayUseProject(lc *localcfg.Config, logical, repo string) bool {
 
 // projectSecretAllowed are the repositories the local config allows to use
 // logical project-wide (--project-wide's ALLOWED column), from the same
-// three sources ProjectSecretCandidate reads but with the list as given: a
-// provider with no allow_data_to is available to every repository, which an
-// empty list here shows as none.
+// three sources ProjectSecretCandidate reads but with the list as given.
+// The one list that does not read as itself is a provider's: with no
+// allow_data_to the key is available to every repository (design §3a), and
+// an empty column would say the opposite of what the runner does, so it
+// answers "any repository" in words; the explicit ["*"] marker is left as
+// written, since it already says so. project_secrets and claude_accounts
+// keep "absent or empty means nobody".
 func projectSecretAllowed(lc *localcfg.Config, logical string) []string {
 	if ps, ok := lc.ProjectSecrets[logical]; ok {
 		return slices.Clone(ps.AllowDataTo)
@@ -503,7 +507,11 @@ func projectSecretAllowed(lc *localcfg.Config, logical string) []string {
 		return slices.Clone(lc.ClaudeAccounts[name].AllowDataTo)
 	}
 	if name, ok := config.ProviderBySecret(lc.Providers, logical); ok {
-		return slices.Clone(lc.Providers[name].AllowDataTo)
+		p := lc.Providers[name]
+		if p.OpenToEveryRepo() && p.AllowDataTo == nil {
+			return []string{"any repository"}
+		}
+		return slices.Clone(p.AllowDataTo)
 	}
 	return nil
 }

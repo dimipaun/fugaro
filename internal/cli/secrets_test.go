@@ -800,6 +800,96 @@ func TestSecretsLsAddsScopeColumn(t *testing.T) {
 	}
 }
 
+// TestSecretsLsProjectWideShowsAnyRepository: a provider stored
+// project-wide with no allow_data_to is available to every repository
+// (design §3a), and the ALLOWED column is the operator's only view of who
+// may mount that key, so it says so in words instead of the "-" that reads
+// as nobody. The explicit ["*"] marker and a real list are left as written.
+func TestSecretsLsProjectWideShowsAnyRepository(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		block string
+		want  string
+	}{
+		{"no list", noListProvider, "any repository"},
+		{"wildcard", strings.Replace(listedProvider, `["acme/app"]`, `["*"]`, 1), "*"},
+		{"listed", listedProvider, "acme/app"},
+	} {
+		secretsFixture(t)
+		projectSecretFixture(t, tc.block)
+		if _, _, err := executeStdin(t, "or-not-a-real-key-1234", "secrets", "set", "openrouter-api-key", "--project-wide"); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		out, _, err := execute(t, "secrets", "ls", "--project-wide")
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if !strings.Contains(out, tc.want) {
+			t.Errorf("%s: ALLOWED does not say %q:\n%s", tc.name, tc.want, out)
+		}
+		out, _, err = execute(t, "secrets", "ls", "--project-wide", "--json")
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		var list []struct {
+			Name    string
+			Allowed []string
+		}
+		if err := json.Unmarshal([]byte(out), &list); err != nil {
+			t.Fatalf("%s: ls --json = %s, %v", tc.name, out, err)
+		}
+		if len(list) != 1 || list[0].Allowed == nil || strings.Join(list[0].Allowed, ",") != tc.want {
+			t.Errorf("%s: allowed = %+v, want [%s]", tc.name, list, tc.want)
+		}
+	}
+}
+
+// TestSecretsLsRepoScopeIgnoresProjectCopyItMayNotUse: a repository's
+// listing answers with the plan's own rule (infra.ProjectSecretCandidate),
+// not with "a project-wide copy exists". This repository is on no
+// allow_data_to, so its own container is all it has: the project-wide copy
+// of the same name must not appear, and must not turn the row into
+// "project" or the override note.
+func TestSecretsLsRepoScopeIgnoresProjectCopyItMayNotUse(t *testing.T) {
+	sm := secretsFixture(t)
+	// The other repository is a repo entry of the fixture's own repos block
+	// (--repo needs to know its git provider); the provider's allow_data_to
+	// is the fixture's ["acme/app"].
+	appendConfig(t, "  acme/other: { provider: github }\n")
+	projectSecretFixture(t, listedProvider)
+	if _, _, err := executeStdin(t, "or-not-a-real-key-1234", "secrets", "set", "openrouter-api-key", "--project-wide"); err != nil {
+		t.Fatal(err)
+	}
+	// No container of its own: nothing is listed at all.
+	out, _, err := execute(t, "secrets", "ls", "--repo", "acme/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "no secrets stored for acme/other") {
+		t.Fatalf("a project copy it may not use is listed:\n%s", out)
+	}
+	// With a container of its own (seeded: `secrets set --repo` refuses this
+	// repository, which is the rule being listed), the row is the
+	// repository's own.
+	other := mustSlug("github", "acme/other")
+	sm.Seed(gcp.SecretID(other, "openrouter-api-key"), map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, other), gcp.LabelSecret: "openrouter-api-key"},
+		[]byte("or-not-a-real-key-5678"))
+	out, _, err = execute(t, "secrets", "ls", "--repo", "acme/other", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list []struct {
+		Name, ID, Scope string
+	}
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		t.Fatalf("ls --json = %s, %v", out, err)
+	}
+	if len(list) != 1 || list[0].Scope != "repo" || list[0].ID != gcp.SecretID(other, "openrouter-api-key") {
+		t.Fatalf("entries = %+v, want the repository's own container alone", list)
+	}
+}
+
 // TestSecretsLsScopeIsProjectWhenTheRepoCopyHasNoVersion: §5's precedence is
 // a repository copy with an enabled version, not a container. A repository
 // container whose versions are all disabled resolves to the project-wide
