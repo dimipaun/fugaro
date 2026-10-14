@@ -1100,7 +1100,7 @@ The 0.7.0 base is much larger than the old per-language images (3.8 GB against 1
 
 | Image | Runs | Median |
 |---|---|---|
-| old 0.6 `web-node` image (before the migration) | 11.7, 15.7, 11.6, 11.6 s | about 11.7 s |
+| old 0.6 `web-node` image (removed in 0.7.0; measured before the migration) | 11.7, 15.7, 11.6, 11.6 s | about 11.7 s |
 | `fugaro-base` 0.7.0 (sandbox `web` rebuilt on it, build record names `fugaro-base:0.7.0`) | 30.5, 10.3, 10.5 s | about 10.5 s |
 
 The one slow run (30.5 s) was the first on the new base: the larger image pulled onto a cold node after a long idle gap; the next two, 35 minutes apart, matched the old image. Nothing came near the 30-seconds-worse line, so no fallback task. One sample of each kind is small: repeat it after any large image growth (the base is about 188 MB under its 4000 MB size budget).
