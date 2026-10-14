@@ -378,8 +378,12 @@ func previewAddTypical(ctx context.Context, doc *previewDoc, env *cloudEnv, lc *
 		doc.Notes = append(doc.Notes, fmt.Sprintf("%d of the %d runs of %s in the last 30 days recorded no per-stage cost (result.json from before it was kept); they are not counted",
 			h.skipped, h.skipped+h.runs, repo))
 	}
-	usd, stages, ok := h.typical(rp, cfg)
-	if !ok {
+	usd, stages, missing := h.typical(rp, cfg)
+	if missing != "" {
+		doc.Notes = append(doc.Notes, fmt.Sprintf("no typical line: no %s stage of %s recorded a cost in the last 30 days", missing, repo))
+		return
+	}
+	if stages == 0 { // the design's "with fewer than 5 runs, the line is omitted"
 		return
 	}
 	doc.Typical = &previewTypical{USD: usd, Stages: stages, Runs: h.runs, Skipped: h.skipped}
@@ -450,30 +454,32 @@ func readPreviewHistory(ctx context.Context, b *blobx.Bucket, slug string, now t
 
 // typical is what a run of rp typically costs: every stage kind the recipe
 // would run at one round each (previewTypicalCounts), times the mean cost of
-// that kind's recorded stages. ok is false when the window holds fewer than
-// previewMinRuns priced runs, when the recipe runs no agent stage at all, or
-// when the window holds no stage of a kind the recipe would run: a figure
-// missing one of the recipe's stage kinds would understate a typical run,
-// which is worse than no figure.
-func (h previewHistory) typical(rp *recipe.Recipe, cfg *config.Config) (usd float64, stages int, ok bool) {
+// that kind's recorded stages. A stages of 0 means there is no figure to
+// print; missing names the kind the window recorded no cost for, when there
+// is one, and is "" otherwise. A missing kind has no figure rather than a
+// cheaper one: leaving it out of the sum would understate a typical run. The
+// design's "with fewer than 5 runs, the line is omitted" and a recipe that
+// runs no agent stage at all are silent: there is nothing to explain.
+func (h previewHistory) typical(rp *recipe.Recipe, cfg *config.Config) (usd float64, stages int, missing string) {
 	counts := previewTypicalCounts(rp)
 	for _, n := range counts {
 		stages += n
 	}
 	if h.runs < previewMinRuns || stages == 0 {
-		return 0, 0, false
+		return 0, 0, ""
 	}
-	for kind, n := range counts {
+	for _, kind := range previewStageKinds { // a fixed order, so the note names one kind
+		n := counts[kind]
 		if n == 0 {
 			continue
 		}
 		mean, found := h.meanFor(kind, previewPinnedModel(cfg, kind))
 		if !found {
-			return 0, 0, false
+			return 0, 0, kind
 		}
 		usd += mean * float64(n)
 	}
-	return usd, stages, true
+	return usd, stages, ""
 }
 
 // meanFor is the mean cost of one stage kind's recorded stages: the ones on
@@ -509,6 +515,11 @@ func previewPinnedModel(cfg *config.Config, kind string) string {
 	}
 	return cfg.Agent.ModelFor(config.StageRole(kind))
 }
+
+// previewStageKinds is the order a run's stages are counted and named in:
+// the runner's own order, so an absent kind is always reported as the same
+// one.
+var previewStageKinds = []string{"implement", "review_first", "review", "fix"}
 
 // previewTypicalCounts is the kind of every stage a run of rp records with
 // one round each — the design's typical run, and the count the history mean

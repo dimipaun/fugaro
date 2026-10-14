@@ -256,6 +256,38 @@ func TestBudgetPreviewTypicalSkipsOldRecords(t *testing.T) {
 	}
 }
 
+// TestBudgetPreviewTypicalNeedsEveryStageKind: a kind the recipe would run
+// that the window has no cost for leaves the line out and says which one,
+// rather than printing a sum that leaves that stage's cost at nothing. The
+// same history answers a recipe that would not run the kind.
+func TestBudgetPreviewTypicalNeedsEveryStageKind(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.SetCaps(100, 3, 20, 3)
+	f.SetSpentToday(0)
+	f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
+	f.SeedRuns(t, 0, 6, []previewStage{
+		{kind: "implement", usd: 0.60}, {kind: "fix", usd: 0.20}, {kind: "review", usd: 1.00}})
+	out, errOut, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "typical:") {
+		t.Errorf("a kind with no recorded cost still printed a figure:\n%s", out)
+	}
+	const want = "no typical line: no review_first stage of acme/app recorded a cost in the last 30 days"
+	if !strings.Contains(errOut, want) {
+		t.Errorf("the absent kind is not named:\n%s", errOut)
+	}
+	// solo runs no review_first stage: the same history gives its figure.
+	out, _, err = execute(t, "budget", "preview", "--recipe", "solo", "--runs", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "typical: $1.80 a run (3 stages, mean of 6 runs in the last 30 days)") {
+		t.Errorf("the recipe that runs no missing kind has no figure:\n%s", out)
+	}
+}
+
 // TestBudgetPreviewTypicalUsesThePinnedModel: the mean is per stage kind and
 // model, so history on the models this checkout pins is what counts, not
 // what an earlier configuration ran on.
