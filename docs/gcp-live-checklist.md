@@ -1405,4 +1405,4 @@ Confirms `docs/design/provider-price-catalog.md` against the real OpenRouter API
 7. **The doctor wording as an owner reads it.** `fugaro doctor` on the sandbox installation. **FACT:** the `provider-price-catalog` and `provider-zdr-unverified` lines verbatim.
 8. **Restore** the pre-check state noted in step 1 (the route's switches, the pins, and the sandbox key's credit limit), and confirm one ordinary sandbox run still succeeds.
 
-**Paste back:** every `FACT` line above, never a secret value and never a key value. Until this check runs, `docs/design/provider-price-catalog.md` §8 keeps "UNVERIFIED" on the account-setting question and §10 keeps U1 to U6 open, and `fugaro doctor`'s `provider-zdr-unverified` check says plainly that Fugaro cannot read the account's privacy setting.
+**Paste back:** every `FACT` line above, never a secret value and never a key value. Until this check runs, `docs/design/provider-price-catalog.md` §8 keeps "UNVERIFIED" on the account-setting question and §10 keeps U1 to U7 open, and `fugaro doctor`'s `provider-zdr-unverified` check says plainly that Fugaro cannot read the account's privacy setting.
