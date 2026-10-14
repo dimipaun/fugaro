@@ -9,7 +9,7 @@ The cloud loop runs a cheap coder (DeepSeek through OpenRouter). The senior revi
 - **Path A: an Anthropic API key behind the gateway.** Mostly works today. Real dollars, capped by the gateway, no new trust exposure. Needs a price check, docs, a recipe choice and a live check.
 - **Path B: the subscription OAuth token for the reviewer stage only** ("mixed credentials"). New code. No dollar cost, but the gateway cannot cap it and the token shares a container with a cheap model that reads untrusted repository content.
 
-Recommendation: build A first. Build B only as an explicit opt-in for trusted repositories, after the owner has read §5's residual risk. The two are independent; A does not block B.
+Owner ruling (2026-10-14): build both. B is worth its residual risk because Fugaro will work mostly with trusted repositories, and an explicit opt-in is enough (no separate reviewer job). A goes first because it is small; the two are independent.
 
 ## 2. What exists today (verified in the code)
 
@@ -90,13 +90,13 @@ The SECURITY.md known-gaps list gets one line for B if it ships. Path A needs no
 
 ## 7. Decided and open
 
-Decided (owner, 2026-10-14): design both paths; A is recommended first.
+Decided (owner, 2026-10-14):
 
-Open, for the owner's ruling before a plan is written:
+1. Design both paths; build both, A first.
+2. B is worth the residual risk of §5: Fugaro will mostly work with trusted repositories.
+3. For B, an explicit opt-in is enough. The separate-job reviewer (§5 mitigation 4) is not required, and stays an optional hardening for repositories with outside contributors.
 
-1. Is B worth the residual risk, or is A enough? (Recommendation: ship A, hold B.)
-2. If B: is a reviewer-in-a-separate-job (mitigation 4) required before it ships, or is opt-in for trusted repositories enough for the first slice?
-3. Should `stage_auth` generalize later to the coder role (an oauth coder with a provider reviewer)? Recommendation: no; the reviewer is the case that has a cost reason.
+Open: should `stage_auth` generalize later to the coder role (an oauth coder with a provider reviewer)? Recommendation: no; the reviewer is the case that has a cost reason.
 
 ## 8. Testing and live checks
 
@@ -106,5 +106,5 @@ Open, for the owner's ruling before a plan is written:
 ## 9. Phases
 
 1. A: the live check, the cost doc, the user doc. No Go change expected.
-2. B, if ruled in: validation and runner stage env (the first slice, with mitigations 1 and 2).
-3. B hardening: the separate-job reviewer (mitigation 4), only if the owner wants B for repositories with outside contributors.
+2. B: validation and runner stage env, with mitigations 1 (opt-in, trusted repositories only, refused with fork runs) and 2 (stage-scoped environment). Its live check is the sandbox run of §8.
+3. Optional hardening: the separate-job reviewer (§5 mitigation 4), only for repositories with outside contributors.
