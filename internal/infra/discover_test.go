@@ -1561,6 +1561,49 @@ func TestReadinessOmitsUnresolvableMountFromExistingJob(t *testing.T) {
 	}
 }
 
+// P7a for the check job (readiness.go's own branch, review L3): the check
+// job runs as the build account from the base image, so an unresolvable entry
+// left in its secret_env points secret_key_ref at a secret with zero
+// versions, and its daily rebuild fails with no way to see why. The workflow
+// jobs' half of P7a is the test above; this one fails if the check job's
+// branch is disabled, which no test caught before.
+func TestReadinessOmitsUnresolvableMountFromExistingCheckJob(t *testing.T) {
+	f := newCloud(t)
+	spec := projectSpec(t, projectSecretLC)
+	f.bootstrap(t, spec, legacyDisplay)
+	f.m5(t, spec) // the check job exists
+	var gitEnv string
+	for env, logical := range spec.Check.SecretEnv {
+		if logical == "bitbucket-token" {
+			gitEnv = env
+		}
+	}
+	if gitEnv == "" {
+		t.Fatalf("the sandbox fixture's check job mounts no bitbucket-token: %v", spec.Check.SecretEnv)
+	}
+	// No version anywhere: the repo copy is unversioned and no project copy
+	// exists.
+	f.sm.Seed(spec.Secrets["bitbucket-token"], with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, "bitbucket-token"), nil)
+	got, missing, _ := readinessOf(t, f, spec)
+	if _, ok := got.Check.SecretEnv[gitEnv]; ok {
+		t.Errorf("the existing check job still mounts %s: %v", gitEnv, got.Check.SecretEnv)
+	}
+	if env := config.ReservedSecrets["bitbucket-token"]; env != gitEnv {
+		t.Errorf("the git credential's env name is %s, not %s", env, gitEnv)
+	}
+	if !got.Check.DeployJob {
+		t.Error("the check job must stay deployed: check.tf's count would destroy it outright")
+	}
+	if !slices.ContainsFunc(missing, func(m Missing) bool {
+		return m.Check && m.Kind == MissingSecret && m.Deployed && strings.Contains(m.Reason, "bitbucket-token")
+	}) {
+		t.Errorf("missing = %v, want a Deployed MissingSecret for the check job", missing)
+	}
+	if strings.Contains(got.Check.Env[runner.SecretEnvsVar], gitEnv) {
+		t.Errorf("%s = %q, still names %s: the redaction list must be recomputed", runner.SecretEnvsVar, got.Check.Env[runner.SecretEnvsVar], gitEnv)
+	}
+}
+
 func TestReadinessNewJobStillRefusesOnUnresolvableMount(t *testing.T) {
 	f := newCloud(t)
 	spec := projectSpec(t, projectSecretLC)
@@ -1769,6 +1812,34 @@ func TestDiscoverInstallationSecondOperatorMissingEntryDoesNotShrink(t *testing.
 		if im.ProjectSecrets[logical] != id {
 			t.Errorf("ProjectSecrets[%s] = %q, want %s (map %v)", logical, im.ProjectSecrets[logical], id, im.ProjectSecrets)
 		}
+	}
+}
+
+// A live secret carrying this installation's labels but sitting at an ID the
+// plan does not derive for its logical name is neither adopted nor deleted
+// (liveProjectSecrets's own check, plan follow-up 2): adopting it cannot work
+// -- the resource the plan manages is the derived ID -- and deleting it is
+// not ours to do. Without the check, it would be imported under
+// prevent_destroy and managed by the installation, so a mutation to `if
+// false` there used to pass every test.
+func TestDiscoverInstallationLeavesAMisnamedProjectSecretAlone(t *testing.T) {
+	f := newCloud(t)
+	inst := installationSpec(t)
+	want := gcp.ProjectSecretID(inst.FugaroProject, "bitbucket-token")
+	f.sm.Seed(want+"9", with(managed, gcp.LabelProject, inst.FugaroProject, gcp.LabelSecret, "bitbucket-token"), []byte("v"))
+	im, err := DiscoverInstallation(context.Background(), f.c, inst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id, ok := im.ProjectSecrets["bitbucket-token"]; ok {
+		t.Errorf("ProjectSecrets[bitbucket-token] = %q, want no entry: the live secret is not at the derived %s", id, want)
+	}
+	addr := `module.installation.google_secret_manager_secret.project["bitbucket-token"]`
+	if got := importMap(im)[addr]; got != "" {
+		t.Errorf("imports[%s] = %q, want no import of a secret that is not the derived %s", addr, got, want)
+	}
+	if joined := strings.Join(im.Notes, "\n"); !strings.Contains(joined, "not the derived") || !strings.Contains(joined, want) {
+		t.Errorf("Notes = %v, want one naming the derived ID %s", im.Notes, want)
 	}
 }
 

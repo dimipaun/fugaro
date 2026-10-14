@@ -270,6 +270,18 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 			return userErr("no workflow in this checkout's fugaro.yaml declares that secret NAME; add it under a workflow's secrets: first")
 		}
 	}
+	if repoMayUseProject(env.lc, name, r.repo) {
+		// §5's precedence has no override-the-override: a --repo copy of a
+		// name this repository may already read project-wide takes over from
+		// now on, and only disabling the copy's last enabled version gives
+		// the repository back to the project copy. The same footgun the
+		// secrets stage's own prompt and the GitHub App fixes warn about, on
+		// the command a person types by hand. On stderr, so --json's stdout
+		// stays the document alone.
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"note: %s is available project-wide to %s as well; this repository's own copy overrides the project copy from now on, and disabling the copy's last enabled version is the only way back\n",
+			pluginwire.Printable(name), pluginwire.Printable(r.repo))
+	}
 	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: r.label, gcp.LabelSecret: name}
 	return storeSecret(cmd, env, o, gcp.SecretID(r.slug, name), labels, name)
 }

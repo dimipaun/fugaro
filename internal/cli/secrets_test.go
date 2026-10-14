@@ -755,6 +755,36 @@ func TestSecretsRepoAndProjectWideAreExclusive(t *testing.T) {
 	}
 }
 
+// TestSecretsSetRepoCopyNotesTheProjectWideOverride: a --repo copy of a name
+// the repository may already read project-wide wins from then on, and only
+// disabling the copy's last enabled version goes back (design §5), so the
+// hand-typed command says so once, on stderr. A repository's own secret,
+// which has no project-wide meaning, gets no note: the warning is about the
+// precedence, not about storing a value.
+func TestSecretsSetRepoCopyNotesTheProjectWideOverride(t *testing.T) {
+	secretsFixture(t)
+	projectSecretFixture(t, listedProvider)
+	if _, _, err := executeStdin(t, "or-not-a-real-key-1234", "secrets", "set", "openrouter-api-key", "--project-wide"); err != nil {
+		t.Fatal(err)
+	}
+	_, errOut, err := executeStdin(t, "or-not-a-real-key-5678", "secrets", "set", "openrouter-api-key", "--repo", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut, "note:") || !strings.Contains(errOut, "overrides the project copy") {
+		t.Errorf("stderr = %q, want the override note", errOut)
+	}
+	if strings.Contains(errOut, "or-not-a-real-key-5678") {
+		t.Error("the note quoted the value")
+	}
+	appCheckout(t)
+	if _, errOut, err := executeStdin(t, tokenValue, "secrets", "set", "npm-token", "--repo", "acme/app"); err != nil {
+		t.Fatal(err)
+	} else if strings.Contains(errOut, "note:") {
+		t.Errorf("stderr = %q, want no note for a repository's own secret", errOut)
+	}
+}
+
 // TestSecretsLsAddsScopeColumn: a name with both a repo-owned version and a
 // project copy the repository may use shows "project, repo override stored";
 // an allow-listed project secret with no repo-owned entry at all shows
