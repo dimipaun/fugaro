@@ -1,16 +1,13 @@
 package runner_test
 
 import (
+	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/testutil"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/dimipaun/fugaro/internal/gitprov"
-	"github.com/dimipaun/fugaro/internal/runner"
-	"github.com/dimipaun/fugaro/internal/runstore"
-	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // cloneYAML is the fixture workflow with checkout: clone (design
@@ -38,10 +35,6 @@ workflows:
     timeouts: { total: 5m, stage: 2m, verify: 1m, finalize_reserve: 30s }
 `
 
-// gitToken is what the harness's provider hands the run, and what the fake
-// mise echoes: a published reason must never carry it.
-const gitToken = "ghs_fixture_token"
-
 // cloneJob makes the run's job a checkout: clone one: no checkout in
 // WorkDir (the harness never creates it) and FUGARO_CHECKOUT=clone in the
 // job's environment, with a provider token for mise's rate limit.
@@ -51,9 +44,7 @@ func (h *harness) cloneJob(t *testing.T) {
 		t.Fatalf("the harness's checkout already exists: %v", err)
 	}
 	h.deps.Env = append(h.deps.Env, runner.CheckoutEnv+"=clone")
-	h.provider.Auth = func(time.Duration) gitprov.GitAuth {
-		return gitprov.GitAuth{Username: "x-access-token", Token: gitToken}
-	}
+	h.provider.Auth = staticAuth(gitToken)
 }
 
 // fakeMise puts a mise on the run's PATH that appends "<cwd>|<argv>" to a
@@ -65,13 +56,24 @@ func (h *harness) fakeMise(t *testing.T, exit int) string {
 	log := filepath.Join(dir, "mise.log")
 	script := "#!/bin/sh\n" +
 		"printf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$MISE_LOG\"\n" +
-		"echo \"token $GITHUB_TOKEN\"\n" +
-		"echo 'mise: no such tool node' >&2\n" +
-		"exit " + string(rune('0'+exit)) + "\n"
+		"echo 'mise: installing tools'\n" +
+		"test " + itoa(exit) + " -eq 0 || {\n" +
+		"  echo 'mise: no such tool node' >&2\n" +
+		"  echo \"mise: github api said: token $GITHUB_TOKEN\" >&2\n" +
+		"}\n" +
+		"exit " + itoa(exit) + "\n"
 	testutil.WriteFiles(t, dir, map[string]string{"mise": script})
-	h.deps.Env = append(filterEnv(h.deps.Env, "PATH"), "PATH="+dir+":"+os.Getenv("PATH"), "MISE_LOG="+log)
+	// exec.Command resolves the binary through the *test process's* PATH,
+	// not through the child's environment, so the fake has to be first
+	// there as well as in the run's own environment.
+	path := dir + ":" + os.Getenv("PATH")
+	t.Setenv("PATH", path)
+	h.deps.Env = append(filterEnv(h.deps.Env, "PATH"), "PATH="+path, "MISE_LOG="+log)
 	return log
 }
+
+// itoa is exit as a shell literal: the fake mise script's own exit status.
+func itoa(exit int) string { return string(rune('0' + exit)) }
 
 type miseCall struct {
 	Dir  string
@@ -82,6 +84,9 @@ type miseCall struct {
 func miseCalls(t *testing.T, log string) []miseCall {
 	t.Helper()
 	data, err := os.ReadFile(log)
+	if os.IsNotExist(err) {
+		return nil // mise never ran
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,11 +184,11 @@ func TestCloneProvisionFailureIsInfraError(t *testing.T) {
 	if rec.Status != runstore.StatusInfraError || rec.Reason == "" {
 		t.Fatalf("record = %+v", rec)
 	}
-	if !strings.Contains(rec.Reason, "mise install failed") || !strings.Contains(rec.Reason, "no such tool node") {
+	if !strings.Contains(rec.Reason, "mise install failed") || !strings.Contains(rec.Reason, "github api said") {
 		t.Fatalf("reason = %q, want mise's last line", rec.Reason)
 	}
-	if strings.Contains(rec.Reason, gitToken) {
-		t.Fatalf("reason leaks the git token: %q", rec.Reason)
+	if !strings.Contains(rec.Reason, "[REDACTED]") || strings.Contains(rec.Reason, gitToken) {
+		t.Fatalf("reason is not redacted: %q", rec.Reason)
 	}
 	if provisionTiming(rec) == nil {
 		t.Fatalf("a failed provision was not timed: %+v", rec.Stages)

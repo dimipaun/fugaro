@@ -95,25 +95,33 @@ func (r *run) provision(ctx context.Context) error {
 func (r *run) miseInstall(ctx context.Context, configs []string) error {
 	mctx, cancel := context.WithTimeout(ctx, provisionTimeout)
 	defer cancel()
-	var out strings.Builder
+	// Two buffers, never one: procgroup copies each pipe in its own
+	// goroutine, so one writer shared by both would be a data race.
+	var stdout, stderr strings.Builder
 	code, runErr := procgroup.Run(mctx, procgroup.Cmd{
 		Name:   "mise",
 		Args:   []string{"install"},
 		Dir:    r.d.WorkDir,
 		Env:    provisionEnv(r.d.Env, r.auth.Token),
-		Stdout: &out,
-		Stderr: &out,
+		Stdout: &stdout,
+		Stderr: &stderr,
 	})
 	what := strings.Join(configs, " ")
+	// mise reports what it could not install on stderr; stdout is the
+	// fallback for a mise that says nothing there.
+	out := stderr.String()
+	if strings.TrimSpace(out) == "" {
+		out = stdout.String()
+	}
 	switch {
 	case runErr != nil && ctx.Err() == nil:
 		// procgroup.Run reports a command killed by ctx as ctx.Err() and
 		// nothing else.
 		return fmt.Errorf("running mise install for %s: %w", what, runErr)
 	case code != 0 && ctx.Err() == nil:
-		return fmt.Errorf("mise install failed (exit %d) for %s: %s", code, what, lastLine(out.String()))
+		return fmt.Errorf("mise install failed (exit %d) for %s: %s", code, what, lastLine(out))
 	case code != 0:
-		return fmt.Errorf("mise install for %s did not finish within %s: %s", what, provisionTimeout, lastLine(out.String()))
+		return fmt.Errorf("mise install for %s did not finish within %s: %s", what, provisionTimeout, lastLine(out))
 	}
 	return nil
 }
