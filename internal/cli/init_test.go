@@ -16,9 +16,12 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -1615,3 +1618,281 @@ func TestInitBaseImagePerKind(t *testing.T) {
 }
 
 func writeFileForTest(path, data string) error { return os.WriteFile(path, []byte(data), 0o644) }
+
+// sandboxProjectSecretLC makes bitbucket-token a project-wide secret
+// acme/sandbox may use, so Readiness can resolve that name to the project
+// copy.
+const sandboxProjectSecretLC = "project_secrets:\n  bitbucket-token: { allow_data_to: [acme/sandbox] }\n"
+
+// repoPlanYAML is acme/sandbox's fugaro.yaml for the planRepo tests: one
+// workflow, and (the default) the daily image check job B2's gate judges.
+const repoPlanYAML = "version: 1\nproject: aurora\ngit: { provider: bitbucket, base_branch: master }\nworkflows:\n  web: { commands: { build: sh b.sh, test: sh t.sh } }\n"
+
+// repoPlanRig is one repository-root run for the rig's acme/sandbox,
+// prepared the way init's own repository stage prepares it: a fake
+// terraform reporting changes, the installation's outputs, clients on the
+// fakes. It stops just before planRepo, which the caller runs.
+type repoPlanRig struct {
+	ri   *initRig
+	run  *initRun
+	out  *strings.Builder
+	wd   *infra.Workdir
+	tfr  *tf.TF
+	c    *infra.Clients
+	lc   *localcfg.Config
+	cfg  *config.Config
+	spec infra.RepoSpec
+}
+
+// newRepoPlanRig prepares the rig. stdin answers the repository stage's own
+// confirmations, one line each (the run confirmation is taken first, as an
+// earlier step of the run would).
+func newRepoPlanRig(t *testing.T, stdin, baseImage, extraLC string, changes func(infra.RepoSpec) []planChange) *repoPlanRig {
+	t.Helper()
+	fakeTerminal(t)
+	ri := newInitRig(t)
+	ri.appendConfig(t, "base_images: {base: "+baseImage+"}\n"+extraLC)
+	lc, err := localcfg.Load(ri.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, problems := config.Parse([]byte(repoPlanYAML))
+	if len(problems) != 0 {
+		t.Fatal(problems)
+	}
+	r, _, out, _, _ := condition{"a terminal", initOptions{}, true, ""}.reviewRun(t, stdin, true)
+	if err := r.confirmOrdinary("applies an earlier step", "nothing was applied", ""); err != nil {
+		t.Fatal(err)
+	}
+	wd, tfr, err := r.terraform("terraform", t.TempDir(), "repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := tfr.Output(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	outs, err := infra.DecodeOutputs(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := infra.Repo(infra.Inputs{LC: lc, Repo: "acme/sandbox", Cfg: cfg, RepoURL: "https://bitbucket.org/acme/sandbox.git", Installation: outs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Check == nil {
+		t.Fatal("the fixture has no check job")
+	}
+	ri.ar.AddRepository(initProject, "us-east5", spec.Registry.RepositoryID,
+		map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: spec.Label})
+	ri.setPlan(t, changes(spec)...)
+	c, err := newInitClients(t.Context(), lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &repoPlanRig{ri: ri, run: r, out: out, wd: wd, tfr: tfr, c: c, lc: lc, cfg: cfg, spec: spec}
+}
+
+// plan runs the repository stage.
+func (p *repoPlanRig) plan(t *testing.T) (infra.RepoSpec, []infra.Missing, error) {
+	t.Helper()
+	return p.run.planRepo(t.Context(), p.c, p.tfr, p.wd, p.spec, infra.RepoRootOptions{}, true)
+}
+
+// seedSandboxProjectSecret seeds bitbucket-token's project-wide container
+// (the ID Readiness resolves to for acme/sandbox) with an enabled version
+// and the marks discovery checks before adopting it, and returns its ID.
+func (p *repoPlanRig) seedProjectSecret(t *testing.T) string {
+	t.Helper()
+	id := gcp.ProjectSecretID(initProjectName, "bitbucket-token")
+	p.ri.sm.Seed(id, projectLabels(initProjectName, "bitbucket-token"), []byte("project-token"))
+	return id
+}
+
+// changedRepoBuild is the one plan change the repository stage needs to have
+// something to apply.
+func changedRepoBuild(infra.RepoSpec) []planChange {
+	return []planChange{change("module.repo.google_service_account.build", "create")}
+}
+
+// sandboxBaseRelease is a release base image of the sandbox fixture's base
+// kind, at or after gitSecretIDSince (B2's gate judges it).
+const sandboxBaseRelease = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.7.1"
+
+// B1 inside init's own flow: the spec planRepo returns is the one Readiness
+// resolved (not the pre-Readiness one its callers used to keep), and the
+// first build reads the apply-time choice back out of it rather than
+// resolving live again -- the grants the apply just made were fixed for
+// exactly that choice, so re-deriving it could only disagree with them.
+//
+// The proof that no live resolve happens is the drift itself: a version
+// stored for the repository's own copy after planRepo returns would win any
+// live resolution, and the build must still name the project copy.
+func TestPlanRepoThreadsReadyToFirstBuild(t *testing.T) {
+	fb := useFakeBuilder(t)
+	p := newRepoPlanRig(t, names(3), sandboxBaseRelease, sandboxProjectSecretLC, changedRepoBuild)
+	projectID := p.seedProjectSecret(t)
+	ready, _, err := p.plan(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ready.ProjectSecrets["bitbucket-token"] != projectID {
+		t.Fatalf("ready.ProjectSecrets = %v, want bitbucket-token resolved to %s", ready.ProjectSecrets, projectID)
+	}
+	// The drift, after the apply: a version for the repository's own copy.
+	// A build that resolved live would now name it.
+	p.ri.sm.Seed(gcp.SecretID(p.spec.Slug, "bitbucket-token"), nil, []byte("repo-token"))
+	names := slices.Sorted(maps.Keys(ready.Workflows))
+	if built, err := p.run.buildImages(t.Context(), p.lc, p.cfg, ready, names); err != nil || built != 1 || len(fb.specs) != 1 {
+		t.Fatalf("built %d, err %v, specs %+v", built, err, fb.specs)
+	}
+	if fb.specs[0].GitSecretID != projectID {
+		t.Fatalf("the first build names %q, want the apply's own %s (the repository's copy %s was stored after it, so this is not a live resolve)",
+			fb.specs[0].GitSecretID, projectID, gcp.SecretID(p.spec.Slug, "bitbucket-token"))
+	}
+}
+
+// B2: the check job's own base image is what its rebuild's fugaro comes
+// from, so a resolved project-wide credential needs a base image whose
+// fugaro reads CheckJobSpec.GitSecretID. When the repository's own copy has
+// no version (resolution fell through to the project copy) and the check
+// job's base image predates that field, the run is refused before tfvars are
+// written or anything is applied, naming both ways out.
+func TestPlanRepoRefusesProjectScopeOnOldBaseImage(t *testing.T) {
+	p := newRepoPlanRig(t, names(1), "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.5.0", sandboxProjectSecretLC, changedRepoBuild)
+	p.seedProjectSecret(t)
+	_, _, err := p.plan(t)
+	if ExitCode(err) != ExitUserError ||
+		!strings.Contains(err.Error(), "0.5.0") || !strings.Contains(err.Error(), gitSecretIDSince) ||
+		!strings.Contains(err.Error(), "base_images") || !strings.Contains(err.Error(), "--project-wide") && !strings.Contains(err.Error(), "fugaro secrets set bitbucket-token") {
+		t.Fatalf("exit %d, err %v: want a refusal naming the base image's release, %s, and both fixes", ExitCode(err), err, gitSecretIDSince)
+	}
+	if applies := p.ri.ran(t, "apply"); len(applies) != 0 {
+		t.Errorf("the run applied anyway: %v", applies)
+	}
+	if _, err := os.Stat(filepath.Join(p.wd.Root, infra.VarsFile)); err == nil {
+		t.Error("the refusal wrote the root's tfvars")
+	}
+}
+
+// B2's other half: a check job whose base image is not a release image at
+// all (a custom or development build) has an unknown fugaro version, so the
+// run warns and goes on -- the identical distinction baseRefReason draws
+// between an old release and a dev ref for its own constant.
+func TestPlanRepoWarnsOnUnparseableBaseImage(t *testing.T) {
+	p := newRepoPlanRig(t, names(3), "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc", sandboxProjectSecretLC, changedRepoBuild)
+	p.seedProjectSecret(t)
+	if _, _, err := p.plan(t); err != nil {
+		t.Fatalf("%v", err)
+	}
+	if out := p.out.String(); !strings.Contains(out, "is not a release base image") || !strings.Contains(out, gitSecretIDSince) {
+		t.Fatalf("no warning about the unknown base image release:\n%s", out)
+	}
+	if applies := p.ri.ran(t, "apply"); len(applies) != 1 {
+		t.Fatalf("%d applies, want the run to go on: %v", len(applies), applies)
+	}
+}
+
+// appPreCheckRig is init's GitHub App pre-check (init.go's appPreCheck) with
+// --check-github-app on -- the one path that reads the App's key from Secret
+// Manager, so the only one a resolved secret ID decides anything for.
+type appPreCheckRig struct {
+	ri     *initRig
+	run    *initRun
+	out    *strings.Builder
+	lc     *localcfg.Config
+	spec   infra.RepoSpec
+	readID string // the secret ID the check read the key from
+	auth   *[]string
+}
+
+// newAppPreCheckRig prepares it for the rig's acme/sandbox as a GitHub
+// repository, with bitbucket-token's sibling github-app-key allow-listed
+// project-wide for that repository.
+func newAppPreCheckRig(t *testing.T, stdin string) *appPreCheckRig {
+	t.Helper()
+	ri := newInitRig(t)
+	ri.appendConfig(t, "project_secrets:\n  github-app-key: { allow_data_to: [acme/sandbox] }\n")
+	lc, err := localcfg.Load(ri.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slug := mustSlug(gitprov.KindGitHub, "acme/sandbox")
+	spec := infra.RepoSpec{Name: "acme/sandbox", Slug: slug, Provider: gitprov.KindGitHub, GitHubAppID: "12345",
+		GCPProject:               initProject,
+		BuildServiceAccountEmail: gcp.BuildServiceAccountID(slug) + "@" + initProject + ".iam.gserviceaccount.com",
+		Secrets:                  map[string]string{"github-app-key": gcp.SecretID(slug, "github-app-key")}}
+	r, _, out, _, _ := condition{"a terminal", initOptions{checkApp: true}, true, ""}.reviewRun(t, stdin, true)
+	rg := &appPreCheckRig{ri: ri, run: r, out: out, lc: lc, spec: spec}
+	oldRead, oldAPI := readAppKey, githubAPIURL
+	readAppKey = func(_ context.Context, _ *localcfg.Config, id string) ([]byte, error) {
+		rg.readID = id
+		return []byte(appKeyPEM(t)), nil
+	}
+	t.Cleanup(func() { readAppKey, githubAPIURL = oldRead, oldAPI })
+	rg.auth = gitHubAppServer(t, 200, fullPerms)
+	return rg
+}
+
+// check runs the pre-check and returns why the first build must wait ("" to
+// go on).
+func (g *appPreCheckRig) check(t *testing.T) string {
+	t.Helper()
+	return g.run.appPreCheck(t.Context(), g.lc, g.spec)
+}
+
+// Small item 5's fifth call site, and B1 at it: the key this pre-check signs
+// with is the one live state resolves for github-app-key -- here the
+// project-wide copy, since the repository's own has no version -- and only
+// after the build account's own grant is found to name that same ID.
+func TestInitAppPreCheckResolvesLiveNotAlwaysRepoID(t *testing.T) {
+	g := newAppPreCheckRig(t, "")
+	projectID := projectLabelsSeed(t, g.ri.sm, "github-app-key", []byte(appKeyPEM(t)))
+	grantBuildAccountFor(t, g.ri.sm, projectID, g.spec.BuildServiceAccountEmail)
+	if why := g.check(t); why != "" {
+		t.Fatalf("the pre-check held the build: %s\n%s", why, g.out.String())
+	}
+	if g.readID != projectID {
+		t.Fatalf("the key was read from %q, want the project-wide copy %s (the repository's own %s has no version)",
+			g.readID, projectID, g.spec.Secrets["github-app-key"])
+	}
+}
+
+// B1's mismatch case at init's own call site: a repository override stored
+// with no apply in between, while the build account's grant still names the
+// project copy. The build is held, with both IDs and the apply that fixes
+// them, rather than offered on a key the build's clone would not read.
+func TestInitAppPreCheckRefusesOnGrantMismatch(t *testing.T) {
+	g := newAppPreCheckRig(t, "")
+	repoID := g.spec.Secrets["github-app-key"]
+	g.ri.sm.Seed(repoID, nil, []byte(appKeyPEM(t))) // the override, versioned
+	projectID := projectLabelsSeed(t, g.ri.sm, "github-app-key", nil)
+	grantBuildAccountFor(t, g.ri.sm, projectID, g.spec.BuildServiceAccountEmail)
+	why := g.check(t)
+	if !strings.Contains(why, repoID) || !strings.Contains(why, projectID) {
+		t.Fatalf("the hold does not name both IDs: %q", why)
+	}
+	if out := g.out.String(); !strings.Contains(out, "init --repo acme/sandbox") || !strings.Contains(out, "not offered") {
+		t.Fatalf("the hold names no fix:\n%s", out)
+	}
+	if g.readID != "" || len(*g.auth) != 0 {
+		t.Errorf("the check read %q and asked GitHub %d times, want neither", g.readID, len(*g.auth))
+	}
+}
+
+// projectLabelsSeed creates (or updates) the project-wide container of
+// logical in the rig's fake Secret Manager, marked as the installation
+// module's own would be, and returns its ID.
+func projectLabelsSeed(t *testing.T, sm *gcpfake.Secrets, logical string, value []byte) string {
+	t.Helper()
+	id := gcp.ProjectSecretID(initProjectName, logical)
+	sm.Seed(id, projectLabels(initProjectName, logical), value)
+	return id
+}
+
+// grantBuildAccountFor makes secretID's policy grant email the accessor
+// role, the grant the apply that resolved that name makes.
+func grantBuildAccountFor(t *testing.T, sm *gcpfake.Secrets, secretID, email string) {
+	t.Helper()
+	sm.SetPolicy(secretID, []gcpfake.Binding{{Role: gcp.SecretAccessorRole, Members: []string{"serviceAccount:" + email}}})
+}

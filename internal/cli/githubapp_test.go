@@ -389,3 +389,36 @@ func TestGitHubAppCheckRefusesOddRepoNames(t *testing.T) {
 		t.Errorf("reads %d, GitHub asked %d", g.reads, len(g.auth))
 	}
 }
+
+// Small item 5, second half: both of the check's "store the App's .pem
+// again" fixes name the repository-scoped command, and a --repo copy wins
+// over a project-wide one forever. When this repository may read the
+// project-wide github-app-key, the fix therefore has to say so and name
+// --project-wide as the alternative, or the person following it silently
+// moves this repository off the project-wide key for good.
+func TestCheckGitHubAppFixWarnsOnProjectCoveredName(t *testing.T) {
+	covered := func(t *testing.T) *localcfg.Config {
+		t.Helper()
+		return &localcfg.Config{Name: "aurora", GCPProject: initProject,
+			ProjectSecrets: map[string]config.ProjectSecret{"github-app-key": {AllowDataTo: []string{"acme/app"}}}}
+	}
+	for name, tc := range map[string]struct {
+		lc   func(*testing.T) *localcfg.Config
+		warn bool
+	}{
+		"covered by the project copy": {covered, true},
+		"not covered":                 {func(t *testing.T) *localcfg.Config { return &localcfg.Config{Name: "aurora", GCPProject: initProject} }, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := newGitHubRig(t)
+			g.key = []byte("not a PEM private key") // the parse-error Fix
+			c := checkGitHubApp(t.Context(), tc.lc(t), "acme/app", "12345", appKeySource{Read: true, SecretID: "app-key-secret"})
+			if c.Verdict != appFailed || !strings.Contains(c.Fix, "secrets set github-app-key --repo acme/app") {
+				t.Fatalf("%+v", c)
+			}
+			if got := strings.Contains(c.Fix, "--project-wide"); got != tc.warn {
+				t.Errorf("the fix warns of the project-wide copy: %v, want %v: %s", got, tc.warn, c.Fix)
+			}
+		})
+	}
+}
