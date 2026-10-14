@@ -711,6 +711,63 @@ func (m *Mirror) getManifest(ctx context.Context, src Ref, ref string) (raw []by
 	return raw, digest, mediaType, nil
 }
 
+// VerifyThroughRemote reads the manifest for upstream@digest through the
+// remote repository with the caller's own Google credentials (the
+// operator's ADC; the operator's reader grant is Task 1's, design §5.3)
+// and fails unless the bytes it reads hash to exactly that digest. It
+// reads one manifest and no layers. It is the design's §3.2 step 3.
+//
+// It reads the BODY and hashes it — it does not trust
+// Docker-Content-Digest. That is getManifest's own rule (computed, and
+// equal to the one a digest ref names and to the registry's header when it
+// sends one), and a header-only check would prove reachability, not
+// unchanged bytes. A remote repository is a proxy: the header is the
+// proxy's word about someone else's bytes.
+//
+// The digest is never taken from the response: it is the one the caller
+// asked for, or nothing. A mismatch is an error, never a fallback.
+//
+// client carries the operator's Artifact Registry credential, so it must
+// be one that keeps that credential on registryHost (no cross-host
+// redirect with the Authorization header attached). Artifact Registry is
+// not known to redirect a manifest request elsewhere; the live check
+// (design §8, Check 43c) is what settles that.
+func VerifyThroughRemote(ctx context.Context, client *http.Client, registryHost, project, remoteRepo, upstream, digest string) error {
+	if !digestRE.MatchString(digest) {
+		return fmt.Errorf("%q is not a sha256 digest", digest)
+	}
+	ref := registryHost + "/" + project + "/" + remoteRepo + "/" + upstream
+	u := "https://" + registryHost + "/v2/" + project + "/" + remoteRepo + "/" + upstream + "/manifests/" + digest
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", acceptManifest)
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("reading %s through the remote repository: %w", ref, urlErr(err))
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		return fmt.Errorf("the remote repository %s cannot serve %s: HTTP 404 (it pulls from its upstream on demand, so a 404 here means the upstream has no such version)", ref, digest)
+	default:
+		return fmt.Errorf("the remote repository %s cannot serve %s: HTTP %d", ref, digest, resp.StatusCode)
+	}
+	raw, err := readCapped(resp.Body, DefaultLimits.Manifest)
+	if err != nil {
+		return fmt.Errorf("reading %s's manifest through the remote repository: %w", ref, err)
+	}
+	if got := sum(raw); got != digest {
+		return fmt.Errorf("%w: %s serves %s as %s", ErrDigestMismatch, ref, digest, got)
+	}
+	if h := resp.Header.Get("Docker-Content-Digest"); h != "" && h != digest {
+		return fmt.Errorf("%w: %s serves %s, which the registry says is %s", ErrDigestMismatch, ref, digest, h)
+	}
+	return nil
+}
+
 func (m *Mirror) getChild(ctx context.Context, src Ref, digest string) ([]byte, string, string, error) {
 	raw, d, mt, err := m.getManifest(ctx, src, digest)
 	if err == nil && isIndex(mt) {

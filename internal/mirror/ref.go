@@ -39,7 +39,10 @@
 // is deliberately not used. The user checks these in the live check. An
 // Artifact Registry access token lasts about an hour; it is read per request,
 // and a single upload that outlives it fails with a clear message and is
-// resumed by a rerun. A transfer that makes no progress for Mirror.Idle is
+// resumed by a rerun. So is VerifyThroughRemote's read of a manifest
+// through an Artifact Registry remote (pull-through) repository — the path
+// the design infers, with the operator's own reader grant (design
+// registry-remote-repository.md §2.12 a, Check 43c). A transfer that makes no progress for Mirror.Idle is
 // cancelled. A token endpoint is accepted on the registry's own host or a
 // sibling under the same two-label domain, never http elsewhere.
 package mirror
@@ -127,6 +130,22 @@ func Dest(registryHost, gcpProject, name, tag string) (Ref, error) {
 		return Ref{}, fmt.Errorf("image tag %q is not a tag", tag)
 	}
 	return Ref{Host: m[1] + "-docker.pkg.dev", Repo: m[2] + "/" + BaseRepository + "/" + name, Tag: tag}, nil
+}
+
+// RemoteRef is the reference an installation pins: the remote repository
+// path for an upstream image name, carrying both the release tag (the
+// version marker managedVersion, baseRefReleaseRE and refreshVerdict's
+// never-downgrade rule read) and the verified digest (what the pull
+// resolves). See the design's §3.1 for why the tag stays.
+//
+// registryHost is the bare host ("<region>-docker.pkg.dev"); project,
+// remoteRepo and upstream are the path segments beneath it, so the result
+// is "<region>-docker.pkg.dev/<project>/<remoteRepo>/<upstream>:<tag>@<digest>".
+// Nothing here checks the pieces: the pin's own shape is enforced where it
+// is written and read back (the confinement's baseImageRE), and the digest
+// is only ever the one VerifyThroughRemote proved.
+func RemoteRef(registryHost, project, remoteRepo, upstream, tag, digest string) string {
+	return registryHost + "/" + project + "/" + remoteRepo + "/" + upstream + ":" + tag + "@" + digest
 }
 
 // Typed refusals the stage and the tests tell apart.
