@@ -33,9 +33,9 @@ const providersConfig = "providers:\n  openrouter: { kind: anthropic-compat, bas
 // any confirmation.
 func stubCurrentRefresh(t *testing.T, r *anchorModeRig) {
 	t.Helper()
-	r.appendConfig(t, "base_images: {web-node: "+managedRef("web-node", "0.5.1")+", go: "+managedRef("go", "0.5.1")+"}\n")
-	putWorkflowRecordFrom("app", "0.5.1", managedRef("web-node", "0.5.1"))
-	putWorkflowRecordFrom("api", "0.5.1", managedRef("go", "0.5.1"))
+	r.appendConfig(t, "base_images: {base: "+managedRef("base", "0.5.1")+"}\n")
+	putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.5.1"))
+	putWorkflowRecordFrom("api", "0.5.1", managedRef("base", "0.5.1"))
 }
 
 // upgradeRigWithGitHubAppID is upgradeRig with acme/app's github_app_id set
@@ -591,10 +591,10 @@ func TestUpgradeCloudSecretValueSourceEntriesAreNeverConfigCopy(t *testing.T) {
 	})
 }
 
-// upgradeRig is an onboarded checkout of acme/app (two workflows, kinds go
-// and web-node) whose local config records no base image yet, at version
-// 0.5.1, with no claude; it returns the rig and the checkout's top as
-// fugaro upgrade sees it.
+// upgradeRig is an onboarded checkout of acme/app (two workflows, both on
+// the one base kind) whose local config records no base image yet, at
+// version 0.5.1, with no claude; it returns the rig and the checkout's top
+// as fugaro upgrade sees it.
 func upgradeRig(t *testing.T) (*anchorModeRig, string) {
 	t.Helper()
 	fakeTerraform(t) // builds with go, which upgradeEnv takes off PATH
@@ -634,7 +634,7 @@ func TestUpgradeCheckSeesTheCloudWithoutTouchingIt(t *testing.T) {
 	noRecordReads(t)
 	ran := fakeSteps(t, "", nil)
 	out, _, err := executeStdin(t, "", "upgrade", "--check")
-	if ExitCode(err) != ExitUserError || !strings.Contains(out, "cloud: stale: base images to move: go: none recorded, this release's is "+managedRef("go", "0.5.1")) {
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "cloud: stale: base images to move: base: none recorded, this release's is "+managedRef("base", "0.5.1")) {
 		t.Fatalf("exit %d\n%s", ExitCode(err), out)
 	}
 	if len(*ran) != 0 || len(r.calls(t)) != 0 {
@@ -739,9 +739,9 @@ func TestUpgradeTeammateSkipsTheCloud(t *testing.T) {
 // settings write, and a cloud plan with no base to copy and no build.
 func TestUpgradeRerunWhenCurrentIsNothingToDo(t *testing.T) {
 	r, root := upgradeRig(t)
-	r.appendConfig(t, "base_images: {web-node: "+managedRef("web-node", "0.5.1")+", go: "+managedRef("go", "0.5.1")+"}\n")
-	putWorkflowRecordFrom("app", "0.5.1", managedRef("web-node", "0.5.1"))
-	putWorkflowRecordFrom("api", "0.5.1", managedRef("go", "0.5.1"))
+	r.appendConfig(t, "base_images: {base: "+managedRef("base", "0.5.1")+"}\n")
+	putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.5.1"))
+	putWorkflowRecordFrom("api", "0.5.1", managedRef("base", "0.5.1"))
 	settings := filepath.Join(root, ".claude", "settings.json")
 	if err := os.MkdirAll(filepath.Dir(settings), 0o755); err != nil {
 		t.Fatal(err)
@@ -871,7 +871,7 @@ func TestUpgradePassesTheCloudFlagsToTheRefresh(t *testing.T) {
 // --check switch; M17 pass "" as the rerun in cloudStep's cloudCheck call.
 func TestUpgradeCheckBlockedIsAFailureWithTheRerunLine(t *testing.T) {
 	r, root := upgradeRig(t)
-	r.appendConfig(t, "base_images: {go: "+refreshHost+"/fugaro-base/fugaro-go:dev-abc}\n")
+	r.appendConfig(t, "base_images: {base: "+refreshHost+"/fugaro-base/fugaro-base:dev-abc}\n")
 	ran := fakeSteps(t, "", nil)
 	out, _, err := executeStdin(t, "", "upgrade", "--check")
 	if ExitCode(err) != ExitUserError || len(*ran) != 0 || !strings.Contains(out, "cloud: stale:") || strings.Contains(out, "cloud: skipped") {
@@ -888,7 +888,7 @@ func TestUpgradeCheckBlockedIsAFailureWithTheRerunLine(t *testing.T) {
 // switch.
 func TestUpgradeCheckCurrentCloudIsCurrent(t *testing.T) {
 	r, _ := upgradeRig(t)
-	r.appendConfig(t, "base_images: {web-node: "+managedRef("web-node", "0.5.1")+", go: "+managedRef("go", "0.5.1")+"}\n")
+	r.appendConfig(t, "base_images: {base: "+managedRef("base", "0.5.1")+"}\n")
 	fakeSteps(t, "", nil)
 	out, _, err := executeStdin(t, "", "upgrade", "--check")
 	if !strings.Contains(out, "cloud: current:") {

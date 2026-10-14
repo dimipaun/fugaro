@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,9 +19,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-const release060 = "ghcr.io/dimipaun/fugaro-web-node:0.6.0"
+const release060 = "ghcr.io/dimipaun/fugaro-base:0.6.0"
 
 // registerOtherLocally registers acme/other's provider and (implicit)
 // workflow in the fixture's local config.
@@ -109,6 +111,33 @@ func TestRunAnnouncesABuildOnlyProfile(t *testing.T) {
 	}
 }
 
+// Merge of base kind task 9 (commands.lint/commands.fix, generic-tool Task
+// 9) into the layered-config work: layerAnnounceKeys originally listed only
+// the run-time keys that existed when it was written (build, test,
+// rerun_failed), so a profile whose only run-time key is commands.lint ran
+// shell from the bucket with zero announcement, the exact gap
+// TestRunAnnouncesABuildOnlyProfile above pins for commands.build.
+func TestRunAnnouncesALintOnlyProfile(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	layer := strings.Replace(testProjectLayer, "commands: { build: sh build.sh, test: sh test.sh }", "commands: { lint: sh lint.sh }", 1)
+	if layer == testProjectLayer {
+		t.Fatal("testProjectLayer's profile commands line changed shape")
+	}
+	publishedLayer(t, f, layer)
+	layerCheckout(t, f, minimalAnchored+"workflows:\n  svc: { profile: svc, commands: { build: sh build.sh, test: sh test.sh } }\n")
+	f.run.AddJob(gcp.JobName(mustSlug("github", "acme/other"), "svc"), "2", "4Gi")
+	f.appendConfig(t, "  acme/other: { provider: github, base_branch: main, workflows: [svc] }\n")
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", release060)
+	_, errOut, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut, "commands: from profile svc (lint; project layer generation") {
+		t.Errorf("stderr %q lacks the lint-only announcement", errOut)
+	}
+}
+
 // Review Focus 3.
 func TestRunRefusesLayerOnOldImage(t *testing.T) {
 	f := newCloudFixture(t)
@@ -119,6 +148,36 @@ func TestRunRefusesLayerOnOldImage(t *testing.T) {
 	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, release050)
 	wantRefused(t, f, "the project layer needs a job image whose runner knows the project layer (fugaro 0.6.0 or later)",
 		"run", "--run-id", "20261008-100000-abcd", "A task")
+}
+
+// TestRunClonedWorkflowWithProjectLayerLaunchesWithNoBuildRecord (review
+// finding 1, HIGH): checkImageSince's project-layer gate judges a
+// workflow's derived-image build record too, which a checkout: clone
+// workflow never has.
+//
+// Mutation (run, restore): in runRun, change `clone = w.Checkout ==
+// config.CheckoutClone` to `clone = false` — this test then fails, refused
+// "has no build record".
+func TestRunClonedWorkflowWithProjectLayerLaunchesWithNoBuildRecord(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	f.appendConfig(t, "base_images: {base: ghcr.io/dimipaun/fugaro-base:0.7.1}\n")
+	testutil.IsolateGit(t)
+	other := mustSlug("github", "acme/other")
+	f.run.AddJob(gcp.JobName(other, "svc"), "2", "4Gi")
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: github, base_branch: develop }\nagent: { auth: api-key }\n" +
+		"workflows:\n  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"})
+	t.Chdir(dir)
+	if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err != nil {
+		t.Fatal(err)
+	}
+	if pl := readSpecOf(t, f, other, "20261008-100000-abcd").ProjectLayer; pl == nil {
+		t.Fatal("no project layer embedded: the test fixture is not exercising the layer gate")
+	}
 }
 
 func TestRunWithoutALayerEmbedsNothing(t *testing.T) {
@@ -261,7 +320,7 @@ func TestEmbedProjectLayerUsesTheCheckoutsOwnProject(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer) // aurora/proj-1234's; must not be the one embedded
-	otherLayer := "version: 1\nproject: otherproj\ngcp_project: proj-9999\nprofiles:\n  x:\n    base: web-node\n    commands: { build: sh build.sh, test: sh test.sh }\ndefault_profile: x\n"
+	otherLayer := "version: 1\nproject: otherproj\ngcp_project: proj-9999\nprofiles:\n  x:\n    commands: { build: sh build.sh, test: sh test.sh }\ndefault_profile: x\n"
 	otherBucket := blobx.Wrap(memblob.OpenBucket(nil))
 	if _, err := otherBucket.Create(context.Background(), config.LayerKey, []byte(otherLayer), "application/yaml"); err != nil {
 		t.Fatal(err)
@@ -600,5 +659,23 @@ func TestRunOutsideACheckoutEmbedsTheInstallationLayer(t *testing.T) {
 	}
 	if pl := readSpec(t, f, "20261008-100000-abcd").ProjectLayer; pl == nil || pl.SHA256 != config.LayerSum([]byte(testProjectLayer)) {
 		t.Fatalf("task project_layer = %+v", pl)
+	}
+}
+
+// TestLayerAnnounceKeysCoversEveryExecutableKey (0.7.0 reconciliation):
+// every config.ExecutableKeys entry is either one of this launch's run-time
+// keys (layerAnnounceKeys, printed by announceProfileCommands) or an
+// image-time one (workflows.*.image.*, which runs later in Cloud Build, not
+// as part of this launch; see layerAnnounceKeys' own comment). A key that is
+// neither falls silently out of the launch-time announcement.
+func TestLayerAnnounceKeysCoversEveryExecutableKey(t *testing.T) {
+	for _, key := range config.ExecutableKeys {
+		bare := strings.TrimPrefix(key, "workflows.*.")
+		if strings.HasPrefix(bare, "image.") {
+			continue
+		}
+		if !slices.Contains(layerAnnounceKeys, bare) {
+			t.Errorf("config.ExecutableKeys has %q, which is neither in layerAnnounceKeys nor image-time: classify it", key)
+		}
 	}
 }

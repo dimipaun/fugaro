@@ -93,7 +93,7 @@ type Row struct {
 	ImageAgeS *int64 `json:"image_age_s,omitempty"`
 	Terminal  bool   `json:"terminal"`
 	// Settled means the row won't change on its own: terminal, or
-	// unlaunched (nobody is launching it). ls --watch stops when every row
+	// unlaunched (nobody is launching it). runs ls --watch stops when every row
 	// is settled; a launching row is not, since its launch.json is coming.
 	Settled bool `json:"settled"`
 

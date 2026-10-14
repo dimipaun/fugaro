@@ -25,12 +25,13 @@ import (
 const implementWarm = `{"shell":"cp build/warm-marker feature.txt && git add feature.txt && git commit -qm 'Add feature' && fugaro verify test; printf 'Add feature\\n\\nCopies the warm marker.\\n' > \"$FUGARO_STATE_DIR/pr.md\"","cost":1}`
 
 func TestExecInDerivedImage(t *testing.T) {
-	base := testutil.BaseImage(t)
+	base := testutil.BaseImageOf(t, "base")
 	testutil.IsolateGit(t)
 	files := testutil.FixtureFiles(t)
 	maps.Copy(files, testutil.NPMFixtureFiles())
-	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "    base: web-node\n",
-		"    base: web-node\n    image:\n      setup: [\"mkdir -p build && echo warm > build/warm-marker\"]\n", 1)
+	files["mise.toml"] = "[tools]\nnode = \"24\"\n"
+	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "  app:\n",
+		"  app:\n    image:\n      setup: [\"mkdir -p build && echo warm > build/warm-marker\"]\n", 1)
 	remote := testutil.NewRemote(t, files)
 
 	// Build the derived image from a developer-style clone.

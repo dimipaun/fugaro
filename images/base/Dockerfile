@@ -67,6 +67,11 @@ ARG GOOSE_SHA256_ARM64=e156799760a174bfbc5d14443aacef064ce7592f9099dc9ce04c3db74
 ARG CRUSH_VERSION=0.97.1
 ARG CRUSH_SHA256_AMD64=1b7cbe0600a3797538a74dc00dd8c4bac54ac4b8f4455ba5ff2312b29c7bd598
 ARG CRUSH_SHA256_ARM64=16c9477a178d69e02a51bf4babe6174e62051314b2cd7f36b1ec5fea47e25a88
+ARG UV_VERSION=0.13.0
+ARG UV_SHA256_AMD64=1468ebd5a5541121837c5a2817b9972ba6090fa6caa3d142620850a47fb75154
+ARG UV_SHA256_ARM64=3ccfb6af6e242433eb552f7d9676abd5412c6595c497e990d9c8cb7b5bd4d2c3
+ARG GRAPHIFY_PYTHON_VERSION=3.12.15
+ARG GRAPHIFY_VERSION=0.9.89
 ENV HOME=/home/fugaro \
     PATH=/home/fugaro/.local/share/mise/shims:/home/fugaro/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LANG=C.UTF-8 \
@@ -160,10 +165,25 @@ RUN --mount=type=bind,source=images/base/fetch.sh,target=/tmp/fetch.sh \
     rm -rf /root/.local /root/.cache /root/.config
 
 # 3. The agent harnesses (design section 6). Only Claude Code is driven by the
-# runner; the others are present for later. The Node ones run on a private
-# Node in /opt/fugaro/node, never on PATH, through wrappers that exec it
-# without touching PATH, so neither side sees the other's Node. They come
-# from the committed lockfile, without install scripts, into root-owned /opt.
+# runner; the others are present for later. The Node ones (Gemini, Pi, Qwen)
+# run on a private Node in /opt/fugaro/node, never on PATH, through wrappers
+# that exec it without touching PATH, so neither side sees the other's Node.
+# They come from the committed lockfile, without install scripts, into
+# root-owned /opt.
+#
+# DeepSeek Harness (dsh, @deepseek-ai/dsh, MIT) is NOT wired into the loop
+# below yet, on purpose (design base-image.md section 6, updated 2026-10-12):
+# no npm was available to pin an exact version in harnesses/package.json and
+# regenerate harnesses/package-lock.json's integrity hashes for a package
+# with this many transitive dependencies. A prior version of this comment
+# added dsh to the loop without that lockfile entry; npm ci then installed
+# nothing for it and the loop's own "entry point is missing" guard failed
+# every build (confirmed on PR #302's fugaro-base (amd64/arm64) and
+# docker-tests checks). Add dsh:@deepseek-ai/dsh/lib/bin.js to the `for h in
+# ...` line below, and a tools.tsv row, only in the same change that pins a
+# real version and regenerates the lockfile with
+# `npm install --package-lock-only` (images/base_test.go's
+# TestDeepSeekHarnessNotHalfWired pins that the three move together).
 COPY --chmod=0755 images/base/install-node.sh /usr/local/lib/fugaro/install-node
 COPY images/base/harnesses/package.json images/base/harnesses/package-lock.json /opt/fugaro/harnesses/
 RUN set -eu; \
@@ -197,13 +217,55 @@ RUN --mount=type=bind,source=images/base/fetch.sh,target=/tmp/fetch.sh \
       "$(pick "$GOOSE_SHA256_AMD64" "$GOOSE_SHA256_ARM64")"; \
     one crush "https://github.com/charmbracelet/crush/releases/download/v${CRUSH_VERSION}/crush_${CRUSH_VERSION}_Linux_$(pick x86_64 arm64).tar.gz" \
       "$(pick "$CRUSH_SHA256_AMD64" "$CRUSH_SHA256_ARM64")"
+# graphify (design base-image.md section 6 update, 2026-10-13): a Python CLI
+# (PyPI graphifyy, github.com/Graphify-Labs/graphify) that builds a
+# knowledge graph of a folder. The base has no system Python beyond Debian's
+# own (no pip; design section 4: a runtime-bound package manager is never a
+# system package, and a project that wants one uses mise), so graphify gets
+# the same private-runtime treatment as the Node harnesses above: uv itself
+# is one pinned, checksummed single binary (like gh, yq, docker and gcloud,
+# 1b above), kept out of /usr/local/bin; it installs its own managed CPython
+# and graphify's dependencies -- verified against this committed,
+# hash-pinned lockfile (`uv pip compile --generate-hashes`; see
+# images/base/graphify/requirements.in for how to regenerate it), so a PyPI
+# change can't alter the image -- into a private venv at
+# /opt/fugaro/graphify/venv, never on PATH. A two-line wrapper execs it. uv's
+# own Python download (python-build-standalone) is believed pinned by uv's
+# own embedded checksums, not a hand-pinned sha256 here; that embedded
+# pinning itself is not verified in this change (uv's source was not read
+# for it), unlike every other download in this file.
+COPY images/base/graphify/requirements.lock.txt /opt/fugaro/graphify/requirements.lock.txt
+RUN --mount=type=bind,source=images/base/fetch.sh,target=/tmp/fetch.sh \
+    set -eu; arch=$(dpkg --print-architecture); \
+    pick() { if [ "$arch" = amd64 ]; then echo "$1"; else echo "$2"; fi; }; \
+    tmp=$(mktemp -d); \
+    sh /tmp/fetch.sh "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-$(pick x86_64 aarch64)-unknown-linux-gnu.tar.gz" \
+      "$(pick "$UV_SHA256_AMD64" "$UV_SHA256_ARM64")" "$tmp/uv.tgz"; \
+    tar -xzf "$tmp/uv.tgz" -C "$tmp"; \
+    install -d -m 0755 /opt/fugaro/uv/bin; \
+    install -m 0755 "$tmp/uv-$(pick x86_64 aarch64)-unknown-linux-gnu/uv" /opt/fugaro/uv/bin/uv; \
+    rm -rf "$tmp"; \
+    export HOME=/root UV_NO_CONFIG=1 UV_PYTHON_INSTALL_DIR=/opt/fugaro/graphify/python; \
+    /opt/fugaro/uv/bin/uv --version; \
+    /opt/fugaro/uv/bin/uv python install "$GRAPHIFY_PYTHON_VERSION" --no-bin --no-cache; \
+    UV_PYTHON_DOWNLOADS=never /opt/fugaro/uv/bin/uv venv /opt/fugaro/graphify/venv \
+      --python "$GRAPHIFY_PYTHON_VERSION" --python-preference only-managed --no-cache; \
+    /opt/fugaro/uv/bin/uv pip install --python /opt/fugaro/graphify/venv/bin/python \
+      -r /opt/fugaro/graphify/requirements.lock.txt --require-hashes --compile-bytecode --no-cache; \
+    v=$(/opt/fugaro/graphify/venv/bin/graphify --version); echo "$v"; \
+    case "$v" in "graphify $GRAPHIFY_VERSION") ;; *) echo "base: graphify --version reports '$v', not the pinned ${GRAPHIFY_VERSION}" >&2; exit 1 ;; esac; \
+    printf '#!/bin/sh\n# graphify on its own private Python venv, which is not on PATH (design base-image.md section 6).\n# A caller'"'"'s PYTHONPATH/PYTHONHOME/PYTHONSTARTUP/PYTHONUSERBASE could reach into this private venv and shadow its own numpy/tree-sitter.\nunset PYTHONPATH PYTHONHOME PYTHONSTARTUP PYTHONUSERBASE\nexport PYTHONNOUSERSITE=1\nexec /opt/fugaro/graphify/venv/bin/graphify "$@"\n' \
+      > /usr/local/bin/graphify; \
+    chmod 0755 /usr/local/bin/graphify; \
+    rm -rf /root/.cache /root/.local
 # 4. Fugaro's plumbing, and what the base is (design section 3).
 COPY --chmod=0755 images/common/finalize-checkout.sh /usr/local/lib/fugaro/finalize-checkout
 COPY --chmod=0755 images/common/fugaro-services /usr/local/bin/fugaro-services
 RUN mkdir -p /etc/fugaro \
- && printf '{"debian":"trixie-slim@%s","mise":"%s","claude_code":"%s","gh":"%s","yq":"%s","gcloud":"%s","docker_cli":"%s","harness_node":"%s","codex":"%s","opencode":"%s","goose":"%s","crush":"%s"}\n' \
+ && printf '{"debian":"trixie-slim@%s","mise":"%s","claude_code":"%s","gh":"%s","yq":"%s","gcloud":"%s","docker_cli":"%s","harness_node":"%s","codex":"%s","opencode":"%s","goose":"%s","crush":"%s","uv":"%s","graphify":"%s"}\n' \
       "$DEBIAN_DIGEST" "$MISE_VERSION" "$CLAUDE_CODE_VERSION" "$GH_VERSION" "$YQ_VERSION" "$GCLOUD_VERSION" "$DOCKER_CLI_VERSION" \
-      "$HARNESS_NODE_VERSION" "$CODEX_VERSION" "$OPENCODE_VERSION" "$GOOSE_VERSION" "$CRUSH_VERSION" > /etc/fugaro/base.json \
+      "$HARNESS_NODE_VERSION" "$CODEX_VERSION" "$OPENCODE_VERSION" "$GOOSE_VERSION" "$CRUSH_VERSION" \
+      "$UV_VERSION" "$GRAPHIFY_VERSION" > /etc/fugaro/base.json \
  && chmod 0644 /etc/fugaro/base.json
 USER fugaro
 WORKDIR /work/repo

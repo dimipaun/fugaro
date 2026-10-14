@@ -17,6 +17,7 @@ import (
 	run "google.golang.org/api/run/v2"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 // The daily image check job's base, set directly (design image-refresh.md,
@@ -77,6 +78,32 @@ func RewriteCheckSpec(raw, image string, bases map[string]string) (spec, newImag
 	if kind == "" {
 		return "", "", fmt.Errorf("%w: its image %s is none of its spec's base images (%s); run fugaro init --repo in the checkout", ErrCheckJobShape, image, strings.Join(slices.Sorted(maps.Values(s.BaseImages)), ", "))
 	}
+	legacy := false
+	for k := range s.BaseImages {
+		if !slices.Contains(config.Bases, k) {
+			legacy = true
+		}
+	}
+	if legacy && bases[config.BaseKind] != "" {
+		// The 0.7.0 cut: a spec of the removed kinds becomes the one base,
+		// with the job's image, in this one update (design base-image.md
+		// section 10). image was already checked above to be one of the
+		// spec's own base images, the same guard the non-legacy path below
+		// gets: a job whose image is not in its spec is refused, never
+		// silently rewritten to point at some other base. checkStrictAndCanonical
+		// gives it the same refusal, before anything is rewritten, as the
+		// non-legacy path: an unknown key or a hand-edited spec is refused,
+		// never silently dropped.
+		if err := checkStrictAndCanonical(raw, s); err != nil {
+			return "", "", err
+		}
+		s.BaseImages = map[string]string{config.BaseKind: bases[config.BaseKind]}
+		out, err := json.Marshal(s)
+		if err != nil {
+			return "", "", err
+		}
+		return string(out), bases[config.BaseKind], nil
+	}
 	moved := maps.Clone(s.BaseImages)
 	for k := range moved {
 		if b := bases[k]; b != "" {
@@ -86,13 +113,8 @@ func RewriteCheckSpec(raw, image string, bases map[string]string) (spec, newImag
 	if maps.Equal(moved, s.BaseImages) {
 		return raw, image, nil
 	}
-	strict := json.NewDecoder(strings.NewReader(raw))
-	strict.DisallowUnknownFields()
-	if err := strict.Decode(&CheckJobSpec{}); err != nil {
-		return "", "", fmt.Errorf("%w: its %s has keys this fugaro does not know (%v), so rewriting it would drop them; run fugaro init --repo in the checkout with this fugaro first", ErrCheckJobShape, CheckSpecEnv, err)
-	}
-	if canon, err := json.Marshal(s); err != nil || string(canon) != raw {
-		return "", "", fmt.Errorf("%w: its %s is not in the form fugaro init --repo writes, so it cannot be rewritten as Terraform would render it; run fugaro init --repo in the checkout first", ErrCheckJobShape, CheckSpecEnv)
+	if err := checkStrictAndCanonical(raw, s); err != nil {
+		return "", "", err
 	}
 	s.BaseImages = moved
 	out, err := json.Marshal(s)
@@ -100,6 +122,26 @@ func RewriteCheckSpec(raw, image string, bases map[string]string) (spec, newImag
 		return "", "", err
 	}
 	return string(out), moved[kind], nil
+}
+
+// checkStrictAndCanonical refuses raw when it has a key CheckJobSpec does
+// not know, or when s (already decoded from raw) does not re-marshal to
+// exactly raw: either way, rewriting raw through CheckJobSpec would lose
+// information this fugaro does not model (an unknown key, or hand-edited
+// formatting Repo never renders), so both of RewriteCheckSpec's rewrite
+// paths -- the legacy-kind one and the per-key move -- refuse through
+// this before changing anything, per the function's own documented
+// contract.
+func checkStrictAndCanonical(raw string, s CheckJobSpec) error {
+	strict := json.NewDecoder(strings.NewReader(raw))
+	strict.DisallowUnknownFields()
+	if err := strict.Decode(&CheckJobSpec{}); err != nil {
+		return fmt.Errorf("%w: its %s has keys this fugaro does not know (%v), so rewriting it would drop them; run fugaro init --repo in the checkout with this fugaro first", ErrCheckJobShape, CheckSpecEnv, err)
+	}
+	if canon, err := json.Marshal(s); err != nil || string(canon) != raw {
+		return fmt.Errorf("%w: its %s is not in the form fugaro init --repo writes, so it cannot be rewritten as Terraform would render it; run fugaro init --repo in the checkout first", ErrCheckJobShape, CheckSpecEnv)
+	}
+	return nil
 }
 
 // CheckJobOwner is the repository whose check job a plan may touch: the
@@ -253,21 +295,29 @@ func ApplyCheckJob(ctx context.Context, c *Clients, u *CheckJobUpdate) error {
 		return errors.New("updating the check job: not a plan from PlanCheckJob")
 	}
 	u.applied = true
-	data, err := runJSON(ctx, c, http.MethodPatch, u.job, u.body)
+	return applyJobPatch(ctx, c, u.job, u.body)
+}
+
+// applyJobPatch sends body as a Cloud Run v2 jobs.patch of job and waits for
+// the operation: the read-modify-write ApplyCheckJob and ApplyWorkflowJob
+// share, once each has made its own pre-apply checks (Changes, applied,
+// body != nil).
+func applyJobPatch(ctx context.Context, c *Clients, job string, body []byte) error {
+	data, err := runJSON(ctx, c, http.MethodPatch, job, body)
 	if err != nil {
 		var ae *googleapi.Error
 		if errors.As(err, &ae) && (ae.Code == http.StatusConflict || ae.Code == http.StatusPreconditionFailed) {
-			return fmt.Errorf("updating Cloud Run job %s: it changed since it was read; rerun: %w", u.job, err)
+			return fmt.Errorf("updating Cloud Run job %s: it changed since it was read; rerun: %w", job, err)
 		}
-		return fmt.Errorf("updating Cloud Run job %s: %w", u.job, err)
+		return fmt.Errorf("updating Cloud Run job %s: %w", job, err)
 	}
 	var op run.GoogleLongrunningOperation
 	if err := json.Unmarshal(data, &op); err != nil {
-		return fmt.Errorf("updating Cloud Run job %s: reading its operation: %w", u.job, err)
+		return fmt.Errorf("updating Cloud Run job %s: reading its operation: %w", job, err)
 	}
 	for i := 0; !op.Done; i++ {
 		if i == checkJobPolls {
-			return fmt.Errorf("updating Cloud Run job %s: not done after %d checks; see gcloud run jobs describe", u.job, checkJobPolls)
+			return fmt.Errorf("updating Cloud Run job %s: not done after %d checks; see gcloud run jobs describe", job, checkJobPolls)
 		}
 		select {
 		case <-ctx.Done():
@@ -276,14 +326,126 @@ func ApplyCheckJob(ctx context.Context, c *Clients, u *CheckJobUpdate) error {
 		}
 		next, err := c.Run.Projects.Locations.Operations.Get(op.Name).Context(ctx).Do()
 		if err != nil {
-			return fmt.Errorf("updating Cloud Run job %s: %w", u.job, err)
+			return fmt.Errorf("updating Cloud Run job %s: %w", job, err)
 		}
 		op = *next
 	}
 	if op.Error != nil {
-		return fmt.Errorf("updating Cloud Run job %s: %s", u.job, op.Error.Message)
+		return fmt.Errorf("updating Cloud Run job %s: %s", job, op.Error.Message)
 	}
 	return nil
+}
+
+// WorkflowJobUpdate is a planned direct update of a checkout: clone
+// workflow's job: its container's image alone. Unlike the check job, a
+// clone workflow's job carries no embedded spec to rewrite: there is
+// nothing to keep in step with it, because there is no per-repository
+// image or build record to compare against (fugaro image refresh always
+// moves it straight to base_images.base). Only PlanWorkflowJob makes one,
+// and ApplyWorkflowJob writes it at most once.
+type WorkflowJobUpdate struct {
+	job                string
+	oldImage, newImage string
+	body               []byte
+	applied            bool
+}
+
+// Job is the job's full resource name.
+func (u *WorkflowJobUpdate) Job() string { return u.job }
+
+// OldImage and NewImage are the container's image before and after.
+func (u *WorkflowJobUpdate) OldImage() string { return u.oldImage }
+func (u *WorkflowJobUpdate) NewImage() string { return u.newImage }
+
+// Changes reports whether the update changes anything.
+func (u *WorkflowJobUpdate) Changes() bool { return u != nil && u.oldImage != u.newImage }
+
+// PlanWorkflowJob reads a checkout: clone workflow's job and plans moving
+// its container's image to newImage (the local config's base_images.base).
+// It is read-only; nil, nil when there is no such job. The job must be
+// owner's workflow job as init --repo made it: labelled fugaro=managed,
+// fugaro_repo=owner.Label and fugaro_workflow=workflow; anything else is
+// ErrCheckJobShape (the same shape error the check job's own plan uses:
+// both name the same fix, fugaro init --repo).
+func PlanWorkflowJob(ctx context.Context, c *Clients, gcpProject, region, job, workflow, newImage string, owner CheckJobOwner) (*WorkflowJobUpdate, error) {
+	if owner.Repo == "" || owner.Label == "" {
+		return nil, errors.New("planning the workflow job: no owner repository")
+	}
+	full := "projects/" + gcpProject + "/locations/" + region + "/jobs/" + job
+	data, err := runJSON(ctx, c, http.MethodGet, full, nil)
+	switch {
+	case notFound(err):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("reading Cloud Run job %s: %w", job, err)
+	}
+	j, err := decodeJSONObject(data)
+	if err != nil {
+		return nil, fmt.Errorf("reading Cloud Run job %s: %w", job, err)
+	}
+	shape := func(format string, a ...any) error {
+		return fmt.Errorf("%w: job %s %s; run fugaro init --repo in the checkout", ErrCheckJobShape, job, fmt.Sprintf(format, a...))
+	}
+	labels := map[string]string{}
+	if m, ok := j["labels"].(map[string]any); ok {
+		for k, v := range m {
+			if s, ok := v.(string); ok {
+				labels[k] = s
+			}
+		}
+	}
+	want := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelWorkflow: workflow, gcp.LabelRepo: owner.Label}
+	for k, v := range want {
+		if labels[k] != v {
+			return nil, shape("is not %s's %s job by its labels (%s, want %s)", owner.Repo, workflow, marks(labels, want), marks(want, want))
+		}
+	}
+	tmpl, _ := j["template"].(map[string]any)
+	task, _ := tmpl["template"].(map[string]any)
+	cs, _ := task["containers"].([]any)
+	if len(cs) != 1 {
+		return nil, shape("has %d containers, not one", len(cs))
+	}
+	ct, _ := cs[0].(map[string]any)
+	image, _ := ct["image"].(string)
+	if image == "" {
+		return nil, shape("has a container with no image")
+	}
+	u := &WorkflowJobUpdate{job: full, oldImage: image, newImage: newImage}
+	if !u.Changes() {
+		return u, nil
+	}
+	if etag, _ := j["etag"].(string); etag == "" {
+		return nil, fmt.Errorf("reading Cloud Run job %s: it has no etag, so a concurrent change could not be refused", job)
+	}
+	ct["image"] = newImage
+	// Sending an execution token back could start an execution: never.
+	delete(j, "startExecutionToken")
+	delete(j, "runExecutionToken")
+	if u.body, err = json.Marshal(j); err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+
+// ApplyWorkflowJob writes u: the job exactly as read, with only its
+// container's image changed. Same read-modify-write as ApplyCheckJob, for a
+// workflow job instead of the check job.
+func ApplyWorkflowJob(ctx context.Context, c *Clients, u *WorkflowJobUpdate) error {
+	if u == nil || u.job == "" {
+		return errors.New("updating the workflow job: not a plan from PlanWorkflowJob")
+	}
+	if !u.Changes() {
+		return nil
+	}
+	if u.applied {
+		return fmt.Errorf("updating Cloud Run job %s: this plan was already applied; plan again", u.job)
+	}
+	if u.body == nil {
+		return errors.New("updating the workflow job: not a plan from PlanWorkflowJob")
+	}
+	u.applied = true
+	return applyJobPatch(ctx, c, u.job, u.body)
 }
 
 // runJSON sends a raw Cloud Run Admin v2 call on name, through the client

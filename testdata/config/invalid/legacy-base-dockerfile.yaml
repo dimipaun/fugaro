@@ -1,0 +1,11 @@
+version: 1
+project: aurora
+git:
+  provider: github
+workflows:
+  server:
+    base: go
+    dockerfile: .fugaro/app.Dockerfile
+    commands:
+      build: ./gradlew assemble
+      test: ./gradlew test

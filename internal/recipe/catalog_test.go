@@ -5,29 +5,29 @@ import (
 	"testing"
 )
 
-func TestCatalog(t *testing.T) {
-	if got := CatalogNames(); !slices.Equal(got, []string{"cheap-loop-senior", "claude-solo", "default"}) {
-		t.Fatalf("names = %v", got)
+// TestCatalogIsTheStarterSet: the catalog holds exactly the spec's starter
+// set (design generic-tool.md §3.5), each one parses clean, every recipe but
+// default has a use_when, and no recipe pins max_rounds outside mode: review
+// (a catalog recipe takes the agent.* knobs, G6) other than the one-round
+// cap mode: review itself requires.
+func TestCatalogIsTheStarterSet(t *testing.T) {
+	want := []string{"default", "lint-fix", "pick", "premium", "review-only", "solo", "standard", "test-and-fix"}
+	if got := CatalogNames(); !slices.Equal(got, want) {
+		t.Fatalf("catalog = %v", got)
 	}
-	want := map[string]struct {
-		alias bool
-		steps []Step
-	}{
-		"default":           {false, []Step{{Kind: StepFirstLine}, {Kind: StepReview}}},
-		"cheap-loop-senior": {false, []Step{{Kind: StepFirstLine, MaxRounds: 2}, {Kind: StepReview, MaxRounds: 1}}},
-		"claude-solo":       {true, []Step{{Kind: StepReview, MaxRounds: 1}}},
-	}
-	for _, name := range CatalogNames() {
-		text, ok := CatalogText(name)
-		if !ok {
-			t.Fatalf("%s: no text", name)
+	for _, n := range want {
+		data, _ := CatalogText(n)
+		r, ps := Parse(data)
+		if len(ps) != 0 {
+			t.Fatalf("%s: %s", n, ProblemsText(ps))
 		}
-		r, ps := Parse(text)
-		if len(ps) > 0 || r.Name != name || r.Description == "" {
-			t.Fatalf("%s: %+v, %v", name, r, ps)
+		if n != DefaultName && r.UseWhen == "" {
+			t.Errorf("%s has no use_when", n)
 		}
-		if w := want[name]; r.ReviewerIsCoder != w.alias || !slices.Equal(r.Steps, w.steps) {
-			t.Errorf("%s = %+v, want %+v", name, r, w)
+		for _, s := range r.Steps {
+			if s.MaxRounds != 0 && r.Mode != ModeReview {
+				t.Errorf("%s pins max_rounds: catalog recipes take the knobs (G6)", n)
+			}
 		}
 	}
 	if _, ok := CatalogText("nope"); ok {
@@ -35,6 +35,16 @@ func TestCatalog(t *testing.T) {
 	}
 	if _, ok := CatalogText("../catalog/default"); ok {
 		t.Fatal("a path is a catalog name")
+	}
+}
+
+// TestCatalogRenamedNamesAreGone: the two 0.6 catalog recipes the 0.7.0
+// catalog retired are not in the new catalog (they moved to recipe.Renamed).
+func TestCatalogRenamedNamesAreGone(t *testing.T) {
+	for old := range Renamed {
+		if _, ok := CatalogText(old); ok {
+			t.Errorf("%s is still in the catalog; it was renamed", old)
+		}
 	}
 }
 

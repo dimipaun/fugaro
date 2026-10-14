@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -60,9 +62,15 @@ func recipeDirProblems(root string, cfg *config.Config) (problems, warnings []co
 	}
 	if n := cfg.Agent.Recipe; n != "" {
 		warnings = append(warnings, config.Problem{Path: "agent.recipe", Message: "fugaro before " + recipesSince + " refuses this key: every teammate's CLI, every CI pin and every workflow's job image must be on " + recipesSince + " or later before you merge it"})
-		if _, inCatalog := recipe.CatalogText(n); inCatalog && !have[n] {
+		_, inCatalog := recipe.CatalogText(n)
+		renamedTo, renamed := recipe.Renamed[n]
+		switch {
+		case have[n]:
+		case renamed:
+			warnings = append(warnings, config.Problem{Path: "agent.recipe", Message: fmt.Sprintf("%s was renamed in 0.7.0: use %s (a project or repository recipe of this name still wins over the rename)", n, renamedTo)})
+		case inCatalog:
 			warnings = append(warnings, config.Problem{Path: "agent.recipe", Message: fmt.Sprintf("%s is a catalog recipe here, but a project recipe of this name takes precedence over the catalog for every run (fugaro recipes show %s)", n, n)})
-		} else if !have[n] && !inCatalog {
+		default:
 			warnings = append(warnings, config.Problem{Path: "agent.recipe", Message: fmt.Sprintf("%s is neither in %s nor in the catalog, so it must be a project recipe (fugaro recipes ls); a run launched outside a checkout of this repository can't get one", n, recipe.RepoDir)})
 		}
 	}
@@ -98,15 +106,36 @@ func localRecipe(root string, cfg *config.Config) *recipe.Recipe {
 	return rcp
 }
 
+// gateCheckProblems is `fugaro validate`'s check that the recipe the file
+// selects (localRecipe) never leaves a check step's gate silently doing
+// nothing: the same two refusals bootstrap's checkGateCommands makes at
+// launch (runner.RecipeGateProblems), checked against every workflow since
+// validate has no one run to pick a single workflow for. nil when the
+// recipe can't be read locally (a project recipe) or has no check step.
+func gateCheckProblems(root string, cfg *config.Config) []config.Problem {
+	rcp := localRecipe(root, cfg)
+	if rcp == nil {
+		return nil
+	}
+	var problems []config.Problem
+	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
+		for _, msg := range runner.RecipeGateProblems(rcp, cfg.Workflows[name].Commands) {
+			problems = append(problems, config.Problem{Path: "workflows." + name + ".commands", Message: "the " + msg})
+		}
+	}
+	return problems
+}
+
 // withRecipeRoles is cfg as the runner will see it for the recipe the file
-// selects: when that recipe maps reviewer to coder, the reviewer role is the
-// coder's (runner.ApplyRoles, the runner's own), so the pin, allow-list and
-// provider checks judge the models the run uses and not an
-// agent.models.reviewer it ignores. A project recipe is not readable here,
-// so cfg is returned as it is.
+// selects: when that recipe maps reviewer to coder, or coder to reviewer,
+// the aliased role takes the other's model and output limit
+// (runner.ApplyRoles, the runner's own), so the pin, allow-list, provider
+// and policy-tightening checks judge the models and limits the run really
+// uses and not an agent.models.reviewer or agent.models.coder it ignores. A
+// project recipe is not readable here, so cfg is returned as it is.
 func withRecipeRoles(root string, cfg *config.Config) *config.Config {
 	rcp := localRecipe(root, cfg)
-	if rcp == nil || !rcp.ReviewerIsCoder {
+	if rcp == nil || (!rcp.ReviewerIsCoder && !rcp.CoderIsReviewer) {
 		return cfg
 	}
 	aliased := *cfg
@@ -114,18 +143,21 @@ func withRecipeRoles(root string, cfg *config.Config) *config.Config {
 	return &aliased
 }
 
-// annotateProjectRecipe tells, on the reviewer's problems, that they may not
-// apply: agent.recipe names a recipe found neither in the checkout nor in the
-// catalog, so a project recipe that maps reviewer to coder would ignore the
-// key the problem is about.
+// annotateProjectRecipe tells, on the coder's and reviewer's problems, that
+// they may not apply: agent.recipe names a recipe found neither in the
+// checkout nor in the catalog, so a project recipe that maps reviewer to
+// coder (or coder to reviewer) would ignore the key the problem is about.
 func annotateProjectRecipe(root string, cfg *config.Config, problems []config.Problem) {
 	n := cfg.Agent.Recipe
 	if n == "" || localRecipe(root, cfg) != nil || !recipe.NameRE.MatchString(n) {
 		return
 	}
 	for i, p := range problems {
-		if strings.HasPrefix(p.Path, "agent.models.reviewer") {
+		switch {
+		case strings.HasPrefix(p.Path, "agent.models.reviewer"):
 			problems[i].Message += fmt.Sprintf(" (if project recipe %s maps reviewer to coder, this key is ignored; remove it)", n)
+		case strings.HasPrefix(p.Path, "agent.models.coder"):
+			problems[i].Message += fmt.Sprintf(" (if project recipe %s maps coder to reviewer, this key is ignored; remove it)", n)
 		}
 	}
 }

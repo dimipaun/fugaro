@@ -33,6 +33,7 @@ const (
 	whySecrets   = "secrets belong to one repository's Secret Manager entries"
 	whyFollowup  = "it decides whose comments steer a run with the repository's credentials"
 	whyRepoShape = "it is the repository's own"
+	whyRemoved   = "it was removed in 0.7.0 (" + MigrationDoc + ")"
 )
 
 // Scopes is every fugaro.yaml key and the layers it may be set in. A key
@@ -70,15 +71,19 @@ var Scopes = []ScopeRow{
 	{Key: "budget.allowed_models", In: InRepo, Why: whyPolicy},
 	{Key: "budget.per_day_usd", In: InRepo, Why: whyPolicy},
 	{Key: "workflows.*.profile", In: InRepo, Why: "it chooses a profile"},
-	{Key: "workflows.*.base", In: InProfile | InRepo},
-	{Key: "workflows.*.image.node", In: InProfile | InRepo},
-	{Key: "workflows.*.image.jdk", In: InRepo, Why: "it is refused on every base"},
+	{Key: "workflows.*.base", In: InProfile | InRepo, Why: whyRemoved},
+	{Key: "workflows.*.checkout", In: InProfile | InRepo},
+	{Key: "workflows.*.image.node", In: InProfile | InRepo, Why: whyRemoved},
+	{Key: "workflows.*.image.jdk", In: InRepo, Why: whyRemoved},
 	{Key: "workflows.*.image.apt", In: InProfile | InRepo},
 	{Key: "workflows.*.image.setup", In: InProfile | InRepo},
 	{Key: "workflows.*.image.skip_build_scripts", In: InProfile | InRepo},
+	{Key: "workflows.*.image.tools", In: InProfile | InRepo},
 	{Key: "workflows.*.dockerfile", In: InRepo, Why: whyFiles},
 	{Key: "workflows.*.commands.build", In: InProfile | InRepo},
 	{Key: "workflows.*.commands.test", In: InProfile | InRepo},
+	{Key: "workflows.*.commands.lint", In: InProfile | InRepo},
+	{Key: "workflows.*.commands.fix", In: InProfile | InRepo},
 	{Key: "workflows.*.commands.rerun_failed", In: InProfile | InRepo},
 	{Key: "workflows.*.commands.reports", In: InProfile | InRepo},
 	{Key: "workflows.*.cache", In: InProfile | InRepo},
@@ -105,9 +110,35 @@ var Scopes = []ScopeRow{
 // (or being dropped) turns the dependency install/build scripts back on in
 // the image build; going from false to true is reported too (the owner's
 // ruling: a direction being safer is not a reason to leave it ungated).
+//
+// workflows.*.image.tools is here too because it is exactly as powerful as
+// image.setup: every mise backend with a URL or host form (cargo:, go:,
+// npm:, asdf:/vfox:, ubi:/github:/aqua:) passes ValidMiseTool's charset, and
+// a build installs it with the workflow's build secrets mounted, so a mise
+// "tool" can name an arbitrary git ref or release to fetch and run
+// (install scripts, build.rs, a plugin). That is within the threat model
+// for a repository's own reviewed fugaro.yaml, the same as image.setup; a
+// profile published from the bucket must gate it the same way.
+//
+// workflows.*.image.skip_build_scripts going from true to false (or being
+// dropped) turns the dependency install/build scripts back on in the image
+// build; going from false to true is reported too (the owner's ruling: a
+// direction being safer is not a reason to leave it ungated).
 var ExecutableKeys = []string{
-	"workflows.*.commands.build", "workflows.*.commands.test", "workflows.*.commands.rerun_failed",
-	"workflows.*.image.apt", "workflows.*.image.setup", "workflows.*.image.skip_build_scripts",
+	"workflows.*.commands.build", "workflows.*.commands.test", "workflows.*.commands.lint", "workflows.*.commands.fix",
+	"workflows.*.commands.rerun_failed", "workflows.*.image.apt", "workflows.*.image.setup", "workflows.*.image.tools",
+	"workflows.*.image.skip_build_scripts",
+}
+
+// NonExecutableImageKeys are the Image struct's fields ExecutableKeys
+// deliberately leaves out, each with why its value never runs as shell.
+// TestEveryImageFieldIsClassified walks Image by reflection and fails if a
+// future field is in neither this map nor ExecutableKeys, so a field that
+// slips past config publish's --executable-changes gate (PR #244) is a
+// compile-time-visible test failure, not a silent gap.
+var NonExecutableImageKeys = map[string]string{
+	"workflows.*.image.node": "removed in 0.7.0, refused unconditionally by validateImage (" + MigrationDoc + "); never a command",
+	"workflows.*.image.jdk":  "removed in 0.7.0, refused unconditionally by validateImage (" + MigrationDoc + "); never reaches a Dockerfile",
 }
 
 // ScopeOf is the row of path, a fugaro.yaml path with a real workflow name

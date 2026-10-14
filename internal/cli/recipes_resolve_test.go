@@ -34,7 +34,7 @@ func TestResolveRecipeLayers(t *testing.T) {
 		{root, "team", recipe.SourceRepo, repoTeam},
 		{"", "team", recipe.SourceProject, projectTeam},
 		{root, "claude-solo", recipe.SourceProject, projectSolo},
-		{root, "cheap-loop-senior", recipe.SourceCatalog, ""},
+		{root, "standard", recipe.SourceCatalog, ""},
 		{root, "default", recipe.SourceCatalog, ""},
 	} {
 		rr, err := resolveRecipe(ctx, env, tc.root, tc.name, now, false)
@@ -53,15 +53,30 @@ func TestResolveRecipeLayers(t *testing.T) {
 	}
 }
 
+// TestResolveRecipeRenamedNameFails: a 0.6 catalog name that 0.7.0 retired
+// resolves to an error naming its replacement, checked only once neither the
+// repository nor the project define a recipe of that name (TestResolveRecipeLayers's
+// "claude-solo" row above shows a project recipe of a renamed name still wins).
+func TestResolveRecipeRenamedNameFails(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	for old, want := range recipe.Renamed {
+		_, err := resolveRecipe(context.Background(), env, "", old, time.Now(), false)
+		if err == nil || !strings.Contains(err.Error(), old+" was renamed in 0.7.0: use "+want) {
+			t.Errorf("%s: err = %v", old, err)
+		}
+	}
+}
+
 func TestResolveRecipeTaskRecipe(t *testing.T) {
-	text, _ := recipe.CatalogText("claude-solo")
+	text, _ := recipe.CatalogText("solo")
 	if got := (&resolvedRecipe{Name: "default", Source: recipe.SourceCatalog}).taskRecipe(); got != nil {
 		t.Fatalf("catalog default carries %+v", got)
 	}
 	if got := (&resolvedRecipe{Name: "team", Source: recipe.SourceRepo, Text: []byte(repoTeam)}).taskRecipe(); got.YAML != "" || got.SHA256 != "" || got.Source != "repo" {
 		t.Fatalf("repo = %+v", got)
 	}
-	got := (&resolvedRecipe{Name: "claude-solo", Source: recipe.SourceCatalog, Text: text}).taskRecipe()
+	got := (&resolvedRecipe{Name: "solo", Source: recipe.SourceCatalog, Text: text}).taskRecipe()
 	if got.YAML != string(text) || got.SHA256 != recipe.Sum(text) || got.Source != "catalog" {
 		t.Fatalf("catalog = %+v", got)
 	}
@@ -72,8 +87,8 @@ func TestResolveRecipeTaskRecipe(t *testing.T) {
 
 func TestResolveRecipeCustomBucketSkipsProject(t *testing.T) {
 	f := newCloudFixture(t) // runs_bucket: unused-bucket, not the default name
-	writeBucketFile(t, f, recipe.ObjectKey("claude-solo"), projectSolo)
-	rr, err := resolveRecipe(context.Background(), fileEnv(t, f), "", "claude-solo", time.Now(), false)
+	writeBucketFile(t, f, recipe.ObjectKey("solo"), "version: 1\nname: solo\nroles:\n  reviewer: coder\nsteps:\n  - review: { max_rounds: 2 }\n")
+	rr, err := resolveRecipe(context.Background(), fileEnv(t, f), "", "solo", time.Now(), false)
 	if err != nil || rr.Source != recipe.SourceCatalog {
 		t.Fatalf("rr = %+v, %v", rr, err)
 	}

@@ -181,9 +181,9 @@ func TestRunConfirmationNeverCoversTheSeparateSteps(t *testing.T) {
 		fb := gcpfake.NewBuild(t)
 		r, _ := taken(t, "")
 		lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5",
-			BaseImages: map[string]string{"web-node": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:1.2.3"},
+			BaseImages: map[string]string{"base": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"},
 			Endpoints:  localcfg.Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}
-		cfgs := &config.Config{Workflows: map[string]config.Workflow{"app": {Base: "web-node"}}}
+		cfgs := &config.Config{Workflows: map[string]config.Workflow{"app": {}}}
 		spec := infra.RepoSpec{Name: initProjectName, BuildServiceAccountEmail: "b@x.iam", RegistryPath: "r"}
 		built, err := r.buildImages(t.Context(), lc, cfgs, spec, []string{"app"})
 		for _, rq := range fb.Requests() {
@@ -505,7 +505,7 @@ func TestFirebaseRunTakesOnePromptPlusTheLocation(t *testing.T) {
 			r.markedRuns(t, "", "")
 		}
 		fakeTerminal(t)
-		out, errOut, err := executeStdin(t, stdin, "init", "--firebase", fp, "--base", "go")
+		out, errOut, err := executeStdin(t, stdin, "init", "--firebase", fp, "--base", "base")
 		return out + errOut, err, r
 	}
 	// One project for everything (the Firebase project is the installation's).
@@ -516,7 +516,7 @@ func TestFirebaseRunTakesOnePromptPlusTheLocation(t *testing.T) {
 	if got := strings.Join(r.applies(t), ","); got != "installation,firebase,installation" {
 		t.Errorf("applies %s", got)
 	}
-	if r.dst.tags[initProject+"/fugaro-base/fugaro-go:1.2.3"] == "" || r.dst.tags[initProject+"/fugaro-base/history:latest"] == "" {
+	if r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] == "" || r.dst.tags[initProject+"/fugaro-base/history:latest"] == "" {
 		t.Errorf("images not copied: %v", r.dst.tags)
 	}
 	runP, stepP := prompts(out)
@@ -526,7 +526,7 @@ func TestFirebaseRunTakesOnePromptPlusTheLocation(t *testing.T) {
 	if n := strings.Count(out, "covered by the run confirmation"); n < 5 {
 		t.Errorf("%d covered steps:\n%s", n, out)
 	}
-	if !strings.Contains(out, "images:         copy history latest, go 1.2.3") || !strings.Contains(out, "NOT pinned with --expect-digest: history, go") {
+	if !strings.Contains(out, "images:         copy history latest, base 1.2.3") || !strings.Contains(out, "NOT pinned with --expect-digest: history, base") {
 		t.Errorf("the review does not name the images and their pinning before the typed name:\n%s", out)
 	}
 	if i, j := strings.Index(out, "NOT pinned"), strings.Index(out, "Type aurora to apply all of the above"); i < 0 || j < i {
@@ -724,7 +724,7 @@ func TestReviewScreenPrintsOnlySafeText(t *testing.T) {
 	r := &initRun{cmd: &cobra.Command{}, o: &initOptions{launchersChanged: true, alertEmail: "a\x1b[2Jb@example.com", billingAccount: "AAAA\x1b[31m-BBBB", imageSource: "ghcr.io/ev\x1bil"},
 		w: &b, projectName: initProjectName, gcpProject: initProject}
 	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5", RegistryHost: "us-east5-docker.pkg.dev/" + initProject,
-		BaseImages: map[string]string{"go": "evil.example/\x1b[1mx:1", "web-node": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:1.2.3"}}
+		BaseImages: map[string]string{"other": "evil.example/\x1b[1mx:1", "base": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"}}
 	e := &initEngine{r: r, lc: lc, adminsRead: true, images: &imagesStage{}, spec: infra.InstallationSpec{RunsBucket: initRunsBucket, StateBucket: initStateBucket,
 		Launchers: []string{"user:a\x1b[31m@example.com", "domain:example.com"}}}
 	e.images.e = e
@@ -734,12 +734,12 @@ func TestReviewScreenPrintsOnlySafeText(t *testing.T) {
 	if strings.Contains(out, "\x1b") {
 		t.Fatalf("an escape sequence reached the screen:\n%q", out)
 	}
-	for _, want := range []string{"WARNING: launchers lists domain:example.com", "base image go: ", "OUTSIDE this project's registry", "billing account:", "image source: ghcr.io/ev"} {
+	for _, want := range []string{"WARNING: launchers lists domain:example.com", "base image other: ", "OUTSIDE this project's registry", "billing account:", "image source: ghcr.io/ev"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("lacks %q:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "base image web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:1.2.3 (OUTSIDE") {
+	if strings.Contains(out, "base image base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3 (OUTSIDE") {
 		t.Errorf("the project's own base image is flagged:\n%s", out)
 	}
 }
@@ -863,13 +863,40 @@ func TestFirstBuildsUseSubmitAndWait(t *testing.T) {
 	fakeTerminal(t)
 	e, out := stageEngine(t, initProjectName+"\n", nil)
 	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5",
-		BaseImages: map[string]string{"web-node": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:1.2.3"}}
+		BaseImages: map[string]string{"base": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"}}
 	e.r.setProject(lc)
-	cfg := &config.Config{Workflows: map[string]config.Workflow{"app": {Base: "web-node"}}}
+	cfg := &config.Config{Workflows: map[string]config.Workflow{"app": {}}}
 	spec := infra.RepoSpec{Name: "acme/app", Slug: "acme-app", BuildServiceAccountEmail: "b@x.iam", RegistryPath: "r",
 		Workflows: map[string]infra.WorkflowSpec{"app": {}}}
 	built, err := e.r.buildImages(t.Context(), lc, cfg, spec, []string{"app"})
-	if err != nil || built != 1 || len(fb.specs) != 1 || fb.specs[0].Base != lc.BaseImages["web-node"] {
+	if err != nil || built != 1 || len(fb.specs) != 1 || fb.specs[0].Base != lc.BaseImages["base"] {
+		t.Fatalf("built %d, err %v, specs %+v", built, err, fb.specs)
+	}
+	if !strings.Contains(out.String(), "built acme/app/app (Cloud Build build b0001)") || len(e.r.res.Builds) != 1 {
+		t.Fatalf("output %s, builds %v", out.String(), e.r.res.Builds)
+	}
+}
+
+// A workflow with no base: (the implicit Fugaro base) builds from
+// base_images.base, not a malformed ref for kind "".
+//
+// Mutation (run, restore): change buildImages' lc.BaseImage/image.BaseRef
+// calls back to the raw cfg.Workflows[name].Base, and this test fails:
+// lc.BaseImage("") misses the base_images.base entry entirely, so it falls
+// through to image.BaseRef("", Version), computing the malformed
+// ghcr.io/dimipaun/fugaro-:1.2.3 instead of reusing lc.BaseImages["base"].
+func TestFirstBuildsOnTheBaseKindUseSubmitAndWait(t *testing.T) {
+	fb := useFakeBuilder(t)
+	fakeTerminal(t)
+	e, out := stageEngine(t, initProjectName+"\n", nil)
+	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5",
+		BaseImages: map[string]string{"base": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"}}
+	e.r.setProject(lc)
+	cfg := &config.Config{Workflows: map[string]config.Workflow{"app": {}}}
+	spec := infra.RepoSpec{Name: "acme/app", Slug: "acme-app", BuildServiceAccountEmail: "b@x.iam", RegistryPath: "r",
+		Workflows: map[string]infra.WorkflowSpec{"app": {}}}
+	built, err := e.r.buildImages(t.Context(), lc, cfg, spec, []string{"app"})
+	if err != nil || built != 1 || len(fb.specs) != 1 || fb.specs[0].Base != lc.BaseImages["base"] {
 		t.Fatalf("built %d, err %v, specs %+v", built, err, fb.specs)
 	}
 	if !strings.Contains(out.String(), "built acme/app/app (Cloud Build build b0001)") || len(e.r.res.Builds) != 1 {
@@ -885,9 +912,9 @@ func twoWorkflowBuild(t *testing.T) (*initEngine, *syncBuf, *localcfg.Config, *c
 	e, out := stageEngine(t, initProjectName+"\n"+initProjectName+"\n", nil)
 	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5", RunsBucket: "proj-runs",
 		Bucket: "gs://other-read", Build: localcfg.Build{MachineType: "E2_HIGHCPU_32"},
-		BaseImages: map[string]string{"web-node": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:1.2.3"}}
+		BaseImages: map[string]string{"base": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"}}
 	e.r.setProject(lc)
-	cfg := &config.Config{Workflows: map[string]config.Workflow{"a": {Base: "web-node"}, "b": {Base: "web-node"}}}
+	cfg := &config.Config{Workflows: map[string]config.Workflow{"a": {}, "b": {}}}
 	spec := infra.RepoSpec{Name: "acme/app", Slug: "acme-app", BuildServiceAccountEmail: "b@x.iam", RegistryPath: "r",
 		Workflows: map[string]infra.WorkflowSpec{"a": {}, "b": {}}}
 	return e, out, lc, cfg, spec
@@ -954,11 +981,11 @@ func TestSubmitAndWaitSpecCarriesMachineBucketBase(t *testing.T) {
 		t.Fatalf("err %v, specs %d", err, len(fb.specs))
 	}
 	got := fb.specs[0]
-	want, err := cloudBuildSpec(spec, cfg, "a", lc.BaseImages["web-node"], "E2_HIGHCPU_32", "gs://proj-runs")
+	want, err := cloudBuildSpec(spec, cfg, "a", lc.BaseImages["base"], "E2_HIGHCPU_32", "gs://proj-runs")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.MachineType != "E2_HIGHCPU_32" || got.Bucket != "gs://proj-runs" || got.Base != lc.BaseImages["web-node"] {
+	if got.MachineType != "E2_HIGHCPU_32" || got.Bucket != "gs://proj-runs" || got.Base != lc.BaseImages["base"] {
 		t.Fatalf("machine %q, bucket %q, base %q", got.MachineType, got.Bucket, got.Base)
 	}
 	if !reflect.DeepEqual(got, want) {

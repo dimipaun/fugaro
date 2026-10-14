@@ -112,7 +112,7 @@ func cloudCheck(ctx context.Context, root string, co cloudOptions, rerun string)
 	ver := releaseVersion()
 	set := map[string]bool{}
 	for _, w := range cfg.Workflows {
-		set[w.Base] = true
+		set[w.BaseKind()] = true
 	}
 	var custom, stale []string
 	for _, k := range slices.Sorted(maps.Keys(set)) {

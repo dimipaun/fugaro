@@ -20,17 +20,25 @@ func recipeSpec(r *task.Recipe) *task.Spec {
 	return &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "Add a feature", Recipe: r}
 }
 
-// catalogTask is catalog recipe name as the CLI embeds it.
-func catalogTask(t *testing.T, name string) *task.Recipe {
-	t.Helper()
-	text, ok := recipe.CatalogText(name)
-	if !ok {
-		t.Fatalf("no catalog recipe %s", name)
-	}
-	return &task.Recipe{Name: name, Source: string(recipe.SourceCatalog), SHA256: recipe.Sum(text), YAML: string(text)}
+// embeddedTask is a task.Recipe the way the CLI embeds a recipe it resolved
+// (any source, trusted as given: the runner never re-checks an embedded
+// recipe's YAML against its source, resolveRecipe). It is used below for the
+// exact shape of the two 0.6 catalog recipes 0.7.0 retired (recipe.Renamed):
+// the runner's handling of an embedded recipe does not care that they are no
+// longer in the catalog, only the CLI's image gate does (recipes_skew.go).
+func embeddedTask(name, yaml string) *task.Recipe {
+	return &task.Recipe{Name: name, Source: string(recipe.SourceCatalog), SHA256: recipe.Sum([]byte(yaml)), YAML: yaml}
 }
 
 const twoRounds = "version: 1\nname: two-rounds\nsteps:\n  - review: { max_rounds: 2 }\n"
+
+// retiredCheapLoopSenior and retiredClaudeSolo are the exact 0.6 catalog
+// texts of the two recipes the 0.7.0 catalog renamed away (solo, standard):
+// pinned rounds, no use_when, so they still parse that way under any runner.
+const (
+	retiredCheapLoopSenior = "version: 1\nname: cheap-loop-senior\ndescription: Cheap first-line review/fix loop by the coder's model (2 rounds), then one senior review\nsteps:\n  - first_line: { max_rounds: 2 }\n  - review: { max_rounds: 1 }\n"
+	retiredClaudeSolo      = "version: 1\nname: claude-solo\ndescription: One model plays both parts. The coder's model reviews in a fresh session, one senior round, no first line.\nroles:\n  reviewer: coder\nsteps:\n  - review: { max_rounds: 1 }\n"
+)
 
 func TestRecipeDefaultRecorded(t *testing.T) {
 	h := newHarness(t, firstLineCfg(t, 2, "  first_line_review: off\n"), nil)
@@ -45,7 +53,7 @@ func TestRecipeDefaultRecorded(t *testing.T) {
 }
 
 func TestRecipeEmbeddedCatalog(t *testing.T) {
-	h := newHarness(t, firstLineCfg(t, 3, "  first_line_review: off\n"), recipeSpec(catalogTask(t, "cheap-loop-senior")))
+	h := newHarness(t, firstLineCfg(t, 3, "  first_line_review: off\n"), recipeSpec(embeddedTask("cheap-loop-senior", retiredCheapLoopSenior)))
 	rec, err := h.run(t, implement("feature"), review("changes", 1), fixStep, review("changes", 1), fixStep, review("changes", 1))
 	if err != nil {
 		t.Fatal(err)
@@ -61,10 +69,10 @@ func TestRecipeEmbeddedCatalog(t *testing.T) {
 }
 
 func TestRecipeRepoLayerWins(t *testing.T) {
-	// The task embeds the catalog's cheap-loop-senior; the repository has its
-	// own file of that name, which wins.
+	// The task embeds a recipe named cheap-loop-senior; the repository has
+	// its own file of that name, which wins.
 	own := "version: 1\nname: cheap-loop-senior\nsteps:\n  - review: { max_rounds: 1 }\n"
-	h := newHarnessFiles(t, firstLineCfg(t, 2, ""), recipeSpec(catalogTask(t, "cheap-loop-senior")),
+	h := newHarnessFiles(t, firstLineCfg(t, 2, ""), recipeSpec(embeddedTask("cheap-loop-senior", retiredCheapLoopSenior)),
 		map[string]string{".fugaro/recipes/cheap-loop-senior.yaml": own})
 	rec, err := h.run(t, implement("feature"), review("ship", 0))
 	if err != nil {
@@ -109,6 +117,82 @@ func TestRecipeRepoInvalidFailsNoFallback(t *testing.T) {
 	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, ".fugaro/recipes/broken.yaml") ||
 		!strings.Contains(rec.Reason, "must end with a review step") || len(h.agent.calls) != 0 {
 		t.Fatalf("rec = %+v, err = %v, calls %d", rec, err, len(h.agent.calls))
+	}
+}
+
+// TestRecipeModeReviewMismatchFailsBeforeImplement: bootstrap cross-checks
+// a resolved recipe's Mode against the task (r.review, decided from
+// spec.ReviewPRs before the recipe is even known) and refuses a mismatch
+// before implement ever runs — the runner's own guard, independent of the
+// CLI's: it is what actually protects a repository recipe or a bare
+// agent.recipe name, which the CLI never reads the text of before launch.
+// This task (a first run, Task: "Add a feature", no ReviewPRs) can never
+// carry a mode: review recipe and run it as ordinary implement; Task 12's
+// bootstrap refuses it instead of silently running implement regardless (as
+// it did before review mode existed at all). A check step is no gap at
+// all: Task 11's runner gates the run on it (TestRecipeCheckStepReachesTheGate).
+//
+// Mutation (run, restore): comment out the Mode-mismatch check in
+// runner.go's bootstrap, and this test fails: implement runs and the
+// record is not an infra_error.
+func TestRecipeModeReviewMismatchFailsBeforeImplement(t *testing.T) {
+	const yaml = "version: 1\nname: reviewonly\nmode: review\nsteps:\n  - review: { max_rounds: 1 }\n"
+	h := newHarness(t, firstLineCfg(t, 2, ""), recipeSpec(embeddedTask("reviewonly", yaml)))
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "the task names no pull request to review") {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if len(h.agent.calls) != 0 {
+		t.Fatalf("%d agent calls, want none (implement must not run)", len(h.agent.calls))
+	}
+}
+
+// TestRecipeNonReviewModeMismatchFailsBeforeImplement: the mirror of
+// TestRecipeModeReviewMismatchFailsBeforeImplement's own mismatch check —
+// a task naming pull requests to review (r.review, decided from
+// spec.ReviewPRs alone) but an ordinary, non-"mode: review" recipe, must
+// be refused before implement, the same as the opposite mismatch is.
+//
+// Mutation (drop the `r.review && rcp.Mode != recipe.ModeReview` case from
+// runner.go's bootstrap switch): this test fails, finding implement runs
+// against the named pull request's branch instead of refusing up front.
+func TestRecipeNonReviewModeMismatchFailsBeforeImplement(t *testing.T) {
+	spec := recipeSpec(embeddedTask("two-rounds", twoRounds))
+	spec.ReviewPRs = []int{7}
+	h := newHarness(t, firstLineCfg(t, 2, ""), spec)
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "is not mode: review, but the task names pull requests to review") {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if len(h.agent.calls) != 0 {
+		t.Fatalf("%d agent calls, want none (implement must not run)", len(h.agent.calls))
+	}
+}
+
+// TestRecipeCheckStepReachesTheGate: an embedded recipe with a check step —
+// the same resolution path recipe.NotYetRunnable used to refuse before
+// Task 11's runner gated the run on it — now runs the gate instead: a clean
+// check ends the run at once, with no implement stage and no pull request.
+// (internal/runner/gate_test.go covers the gate's own behaviour in full;
+// this test is only that the *embedded-task* resolution path, which
+// TestRecipeNotYetRunnableFailsBeforeImplement above also uses, really
+// reaches it — the repo-recipe path gate_test.go exercises is a different
+// branch of resolveRecipe.)
+//
+// Mutation (restore the StepCheck branch of recipe.NotYetRunnable): this
+// test fails, back to infra_error "cannot be run yet", zero agent calls.
+func TestRecipeCheckStepReachesTheGate(t *testing.T) {
+	const yaml = "version: 1\nname: gated\nsteps:\n  - check: { command: test }\n  - review: {}\n"
+	h := newHarness(t, firstLineCfg(t, 2, ""), recipeSpec(embeddedTask("gated", yaml)))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeNone || rec.Gate != "clean" {
+		t.Fatalf("rec = %+v", rec)
+	}
+	if len(h.agent.calls) != 0 {
+		t.Fatalf("%d agent calls, want none (a clean gate never reaches implement)", len(h.agent.calls))
 	}
 }
 
@@ -182,7 +266,7 @@ func TestRecipeFollowUpReadsBase(t *testing.T) {
 // The loop's rounds come from the plan, not from agent.review_rounds: a
 // recipe of one review round on a config saying 3 runs one senior review.
 func TestRecipeRoundsComeFromThePlan(t *testing.T) {
-	h := newHarness(t, firstLineCfg(t, 3, "  first_line_review: off\n"), recipeSpec(catalogTask(t, "claude-solo")))
+	h := newHarness(t, firstLineCfg(t, 3, "  first_line_review: off\n"), recipeSpec(embeddedTask("claude-solo", retiredClaudeSolo)))
 	rec, err := h.run(t, implement("feature"), review("changes", 1))
 	if err != nil {
 		t.Fatal(err)

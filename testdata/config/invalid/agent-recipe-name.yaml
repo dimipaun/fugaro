@@ -5,4 +5,4 @@ agent:
   auth: api-key
   recipe: Claude_Solo
 workflows:
-  app: { base: go, commands: { build: go build ./..., test: go test ./... } }
+  app: { commands: { build: go build ./..., test: go test ./... } }

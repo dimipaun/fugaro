@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -18,19 +21,19 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitops"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
 // SelftestSpec is what `fugaro image build --local` asks `fugaro image
 // selftest`, running inside the freshly built image, to check.
 type SelftestSpec struct {
-	Base      string          `json:"base"`           // the workflow's base; decides the toolchain check
-	RepoDir   string          `json:"repo_dir"`       // the baked checkout, /work/repo
-	Commit    string          `json:"commit"`         // the commit the checkout must be at
-	Origin    string          `json:"origin"`         // the origin URL the checkout must keep
-	Node      string          `json:"node,omitempty"` // the Node.js version image.node pinned, if any
-	CheckInit bool            `json:"check_init"`     // require tini as PID 1
-	Verify    verify.Settings `json:"verify"`         // the workflow's settings for `fugaro verify build`
+	Base      string          `json:"base"`       // the workflow's base (always config.BaseKind now)
+	RepoDir   string          `json:"repo_dir"`   // the baked checkout, /work/repo
+	Commit    string          `json:"commit"`     // the commit the checkout must be at
+	Origin    string          `json:"origin"`     // the origin URL the checkout must keep
+	CheckInit bool            `json:"check_init"` // require tini as PID 1
+	Verify    verify.Settings `json:"verify"`     // the workflow's settings for `fugaro verify build`
 	// CheckHardening requires /etc/sudoers.d to hold only its README and
 	// /etc/sudoers to grant the fugaro user nothing. It inspects real
 	// absolute paths, so it is only meaningful inside the real container,
@@ -54,6 +57,9 @@ type SelftestSpec struct {
 	// the base image itself, which has no checkout. Every other field is
 	// ignored.
 	ToolsOnly bool `json:"tools_only,omitempty"`
+	// Mise checks that every tool the checkout's mise config and
+	// image.tools declare is installed: the base kind.
+	Mise bool `json:"mise,omitempty"`
 }
 
 // SpecForCloud is the selftest the Cloud Build smoke step runs in the
@@ -64,16 +70,11 @@ type SelftestSpec struct {
 // runs repository code: it gets no secrets and no network, and nothing in
 // it may need them.
 func SpecForCloud(cfg *config.Config, workflow, commit, origin string) (SelftestSpec, error) {
-	w, ok := cfg.Workflows[workflow]
-	if !ok {
+	if _, ok := cfg.Workflows[workflow]; !ok {
 		return SelftestSpec{}, fmt.Errorf("fugaro.yaml has no workflow %q", workflow)
 	}
-	spec := SelftestSpec{Base: w.Base, RepoDir: "/work/repo", Commit: commit, Origin: origin,
-		CheckInit: true, CheckHardening: true, SkipVerify: true}
-	if w.Base == "web-node" {
-		spec.Node = w.Image.Node
-	}
-	return spec, nil
+	return SelftestSpec{Base: config.BaseKind, RepoDir: "/work/repo", Commit: commit, Origin: origin,
+		CheckInit: true, CheckHardening: true, SkipVerify: true, Tools: "critical", Mise: true}, nil
 }
 
 // Check is one smoke-test result.
@@ -91,23 +92,28 @@ type Report struct {
 
 // homeCredentialFiles must not exist in the agent user's HOME: the agent's
 // credentials come from the environment and the runner, never from files
-// baked into the image.
-var homeCredentialFiles = []string{".git-credentials", ".netrc", ".docker/config.json", ".config/gh/hosts.yml"}
+// baked into the image. The harness credential files are design
+// base-image.md section 6's table.
+var homeCredentialFiles = []string{
+	".git-credentials", ".netrc", ".docker/config.json", ".config/gh/hosts.yml",
+	".codex/auth.json", ".gemini/oauth_creds.json", ".local/share/opencode/auth.json",
+	".config/gcloud/credentials.db", ".config/gcloud/application_default_credentials.json", ".claude/.credentials.json",
+}
 
 // literalTokenRE finds a registry token written into .npmrc or .yarnrc.yml
 // as a literal rather than as an environment reference such as ${NPM_TOKEN}.
 var literalTokenRE = regexp.MustCompile(`(?m)(_authToken\s*=|npmAuthToken\s*:)\s*["']?[^"'\s$]`)
 
-// expectedSetuidBinaries is the standard Ubuntu 24.04 setuid-root set,
-// observed directly on the fugaro-web-node base image (`find / -xdev -perm
+// expectedSetuidBinaries is the standard Debian 13 setuid-root set,
+// observed directly on the Fugaro base image (`find / -xdev -perm
 // -4000 -type f`): chfn, chsh, gpasswd, mount, newgrp, passwd and umount,
-// all shipped by Ubuntu's login/util-linux packages that
-// images/web-node/Dockerfile installs transitively. sudo and su are
+// all shipped by Debian's login/util-linux packages that
+// images/base/Dockerfile installs transitively. sudo and su are
 // deliberately absent from this set: the base image ships both setuid, but
 // every derived-image build strips their setuid bits (`chmod u-s` in
 // images/derived/Dockerfile.tmpl) once image.setup steps are done. For su
 // this closes the route a setup step's `passwd -d root` would open, since
-// Ubuntu's pam_unix allows an empty password (nullok). If sudo, su or
+// Debian's pam_unix allows an empty password (nullok). If sudo, su or
 // anything else shows up here, that is a real finding, not noise.
 //
 // A package installed by image.setup or image.apt that ships its own setuid
@@ -123,8 +129,8 @@ var expectedSetuidBinaries = map[string]bool{
 	"usr/bin/umount":  true,
 }
 
-// expectedSetgidBinaries is the standard Ubuntu 24.04 setgid set, observed
-// on the fugaro-web-node base image the same way (`find / -xdev -perm -2000
+// expectedSetgidBinaries is the standard Debian 13 setgid set, observed
+// on the Fugaro base image the same way (`find / -xdev -perm -2000
 // -type f`): chage and expiry (group shadow, from passwd) and the PAM
 // password helpers. It has the same semantics as expectedSetuidBinaries:
 // anything else is a finding, and a package that legitimately ships one
@@ -197,15 +203,10 @@ func Selftest(ctx context.Context, spec SelftestSpec, log io.Writer) Report {
 	if spec.Tools != "" {
 		checkTools(ctx, spec.Tools, add)
 	}
-	if spec.Base == "web-node" {
-		if out, err := output(ctx, "node", "-v"); err != nil {
-			add("node", false, "node -v: %v: %s", err, out)
-		} else {
-			ok := spec.Node == "" || out == "v"+spec.Node || strings.HasPrefix(out, "v"+spec.Node+".")
-			add("node", ok, "%s (image.node %q)", out, spec.Node)
-		}
-	}
 	checkoutOK := checkCheckout(ctx, spec, add)
+	if spec.Mise && checkoutOK {
+		checkMise(ctx, spec.RepoDir, add)
+	}
 	checkHome(add)
 	if checkoutOK && !spec.SkipVerify {
 		if err := verifyBuild(ctx, spec.Verify, log); err != nil {
@@ -291,6 +292,40 @@ func credentialConfigSection(ctx context.Context, repo string) string {
 		}
 	}
 	return ""
+}
+
+// checkMise reports "mise-tools": every tool the checkout's mise config and
+// image.tools declare is installed. It reads mise offline in dir, so it
+// works in the smoke's container, which has no network.
+func checkMise(ctx context.Context, dir string, add func(string, bool, string, ...any)) {
+	cmd := exec.CommandContext(ctx, "mise", "ls", "--current", "--missing", "--json")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "MISE_OFFLINE=1", "NO_COLOR=1")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		add("mise-tools", false, "mise ls --current --missing: %v: %s", err, pluginwire.Printable(strings.TrimSpace(stderr.String())))
+		return
+	}
+	var missing map[string][]struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(out, &missing); err != nil {
+		add("mise-tools", false, "mise ls printed no JSON: %v", err)
+		return
+	}
+	var names []string
+	for _, tool := range slices.Sorted(maps.Keys(missing)) {
+		for _, v := range missing[tool] {
+			names = append(names, tool+"@"+v.Version)
+		}
+	}
+	if len(names) > 0 {
+		add("mise-tools", false, "not installed: %s (the image's mise install did not run or failed; start from fugaro image render)", pluginwire.Printable(strings.Join(names, ", ")))
+		return
+	}
+	add("mise-tools", true, "every tool the mise config declares is installed")
 }
 
 func checkHome(add func(string, bool, string, ...any)) {

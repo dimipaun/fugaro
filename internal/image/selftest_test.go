@@ -16,7 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
-// selftestEnv puts fake claude, node and sudo (exiting sudoExit) and the
+// selftestEnv puts fake claude, mise and sudo (exiting sudoExit) and the
 // real fugaro first on PATH, and points HOME at an empty directory.
 func selftestEnv(t *testing.T, sudoExit int) {
 	t.Helper()
@@ -26,7 +26,7 @@ func selftestEnv(t *testing.T, sudoExit int) {
 	bin := t.TempDir()
 	testutil.WriteFiles(t, bin, map[string]string{
 		"claude": "#!/bin/sh\necho '2.1.283 (Claude Code)'\n",
-		"node":   "#!/bin/sh\necho v24.19.0\n",
+		"mise":   "#!/bin/sh\nprintf '{}\\n'\n",
 		"sudo":   fmt.Sprintf("#!/bin/sh\nexit %d\n", sudoExit),
 	})
 	fugaro := testutil.BuildFugaro(t)
@@ -44,7 +44,7 @@ func selftestFixture(t *testing.T) SelftestSpec {
 	repo := filepath.Join(parent, "repo")
 	testutil.Git(t, parent, "clone", "--quiet", remote, repo)
 	return SelftestSpec{
-		Base: "web-node", RepoDir: repo, Commit: testutil.Git(t, repo, "rev-parse", "HEAD"), Origin: remote, Node: "24",
+		RepoDir: repo, Commit: testutil.Git(t, repo, "rev-parse", "HEAD"), Origin: remote, Mise: true,
 		Verify: verify.Settings{RepoDir: repo, Build: "sh build.sh", Test: "true"},
 	}
 }
@@ -66,7 +66,7 @@ func TestSelftestPasses(t *testing.T) {
 	if !r.Passed {
 		t.Fatalf("report %+v\nlog:\n%s", r, log.String())
 	}
-	for _, name := range []string{"user", "no-sudo", "claude", "node", "checkout", "origin", "git-credentials", "home-credentials", "verify-build"} {
+	for _, name := range []string{"user", "no-sudo", "claude", "checkout", "origin", "git-credentials", "home-credentials", "verify-build"} {
 		if _, ok := checkNamed(r, name); !ok {
 			t.Errorf("no %s check in %+v", name, r)
 		}
@@ -106,8 +106,6 @@ func TestSelftestFailures(t *testing.T) {
 		mutate      func(t *testing.T, spec *SelftestSpec)
 	}{
 		{"wrong commit", "checkout", 1, func(t *testing.T, s *SelftestSpec) { s.Commit = strings.Repeat("0", 40) }},
-		{"node major mismatch", "node", 1, func(t *testing.T, s *SelftestSpec) { s.Node = "22" }},
-		{"node exact mismatch", "node", 1, func(t *testing.T, s *SelftestSpec) { s.Node = "24.1.0" }},
 		{"passwordless sudo", "no-sudo", 0, nil},
 		{"credential file in HOME", "home-credentials", 1, func(t *testing.T, s *SelftestSpec) {
 			testutil.WriteFiles(t, os.Getenv("HOME"), map[string]string{".git-credentials": "https://u:s3cr3t@example.invalid\n"})
@@ -507,7 +505,7 @@ func TestSpecForCloud(t *testing.T) {
 project: aurora
 git: { provider: github }
 workflows:
-  web: { base: web-node, image: { node: "24" }, commands: { build: sh build.sh, test: sh test.sh } }
+  web: { commands: { build: sh build.sh, test: sh test.sh } }
 `
 	cfg, problems := config.Parse([]byte(yaml))
 	if len(problems) > 0 {
@@ -517,8 +515,8 @@ workflows:
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := SelftestSpec{Base: "web-node", RepoDir: "/work/repo", Commit: "abc123", Origin: "https://github.com/acme/webapp.git", Node: "24",
-		CheckInit: true, CheckHardening: true, SkipVerify: true}
+	want := SelftestSpec{Base: config.BaseKind, RepoDir: "/work/repo", Commit: "abc123", Origin: "https://github.com/acme/webapp.git",
+		CheckInit: true, CheckHardening: true, SkipVerify: true, Tools: "critical", Mise: true}
 	if !reflect.DeepEqual(spec, want) {
 		t.Fatalf("SpecForCloud = %+v\nwant %+v", spec, want)
 	}
@@ -654,5 +652,111 @@ func TestSelftestManagedSettingsDirExtraEntries(t *testing.T) {
 				t.Fatalf("an entry %s passed: %+v", name, c)
 			}
 		})
+	}
+}
+
+// fakeMise puts a mise on PATH that prints out for `ls --current --missing --json`.
+func fakeMise(t *testing.T, out string) {
+	t.Helper()
+	bin := t.TempDir()
+	testutil.WriteFiles(t, bin, map[string]string{"mise": "#!/bin/sh\n[ \"$MISE_OFFLINE\" = 1 ] || { echo 'not offline' >&2; exit 2; }\nprintf '%s\\n' '" + out + "'\n"})
+	if err := os.Chmod(filepath.Join(bin, "mise"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestSelftestMiseToolsMissing(t *testing.T) {
+	selftestEnv(t, 1)
+	spec := selftestFixture(t)
+	spec.Mise = true
+	fakeMise(t, `{"node":[{"version":"24.19.0","requested_version":"24","install_path":"/x"}]}`)
+	r := Selftest(context.Background(), spec, &bytes.Buffer{})
+	c, ok := checkNamed(r, "mise-tools")
+	if !ok || c.OK || !strings.Contains(c.Detail, "node@24.19.0") || r.Passed {
+		t.Fatalf("mise-tools = %+v (passed %v)", c, r.Passed)
+	}
+	fakeMise(t, `{}`)
+	r = Selftest(context.Background(), spec, &bytes.Buffer{})
+	if c, ok := checkNamed(r, "mise-tools"); !ok || !c.OK {
+		t.Fatalf("nothing missing: %+v", c)
+	}
+}
+
+// TestSelftestMiseFailureDetailIsPrintable: checkMise's failure detail
+// interpolates mise's own stderr, which this image never controls (a bad
+// mise config, a corrupt cache); it must go through pluginwire.Printable
+// like every other untrusted string in a check's message, so an ANSI
+// escape or control character in it cannot corrupt the terminal or the
+// --json output's framing.
+func TestSelftestMiseFailureDetailIsPrintable(t *testing.T) {
+	selftestEnv(t, 1)
+	spec := selftestFixture(t)
+	spec.Mise = true
+	bin := t.TempDir()
+	testutil.WriteFiles(t, bin, map[string]string{"mise": "#!/bin/sh\nprintf '\\033[31mmise: boom\\033[0m' >&2\nexit 1\n"})
+	if err := os.Chmod(filepath.Join(bin, "mise"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	r := Selftest(context.Background(), spec, &bytes.Buffer{})
+	c, ok := checkNamed(r, "mise-tools")
+	if !ok || c.OK {
+		t.Fatalf("mise-tools = %+v", c)
+	}
+	if strings.ContainsRune(c.Detail, '\x1b') {
+		t.Fatalf("mise-tools detail carries a raw escape byte: %q", c.Detail)
+	}
+	if !strings.Contains(c.Detail, `\u001b`) || !strings.Contains(c.Detail, "mise: boom") {
+		t.Fatalf("mise-tools detail does not show the escaped control character: %q", c.Detail)
+	}
+}
+
+// TestSelftestMiseMissingToolNameIsPrintable: checkMise's "not installed"
+// detail interpolates the tool names and versions mise reports missing,
+// which come from the checkout's own mise config (and so, like mise's
+// stderr above, are never under this image's control); it must go through
+// pluginwire.Printable the same way.
+func TestSelftestMiseMissingToolNameIsPrintable(t *testing.T) {
+	selftestEnv(t, 1)
+	spec := selftestFixture(t)
+	spec.Mise = true
+	fakeMise(t, `{"node":[{"version":"1\u001b[31mboom\u001b[0m","requested_version":"1","install_path":"/x"}]}`)
+	r := Selftest(context.Background(), spec, &bytes.Buffer{})
+	c, ok := checkNamed(r, "mise-tools")
+	if !ok || c.OK {
+		t.Fatalf("mise-tools = %+v", c)
+	}
+	if strings.ContainsRune(c.Detail, '\x1b') {
+		t.Fatalf("mise-tools detail carries a raw escape byte: %q", c.Detail)
+	}
+	if !strings.Contains(c.Detail, `\u001b`) || !strings.Contains(c.Detail, "node@1") || !strings.Contains(c.Detail, "boom") {
+		t.Fatalf("mise-tools detail does not show the escaped control character: %q", c.Detail)
+	}
+}
+
+func TestSelftestRefusesHarnessCredentialFiles(t *testing.T) {
+	for _, rel := range []string{".codex/auth.json", ".gemini/oauth_creds.json", ".local/share/opencode/auth.json",
+		".config/gcloud/credentials.db", ".config/gcloud/application_default_credentials.json", ".claude/.credentials.json"} {
+		t.Run(rel, func(t *testing.T) {
+			selftestEnv(t, 1)
+			spec := selftestFixture(t)
+			testutil.WriteFiles(t, os.Getenv("HOME"), map[string]string{rel: "x"})
+			r := Selftest(context.Background(), spec, &bytes.Buffer{})
+			if c, _ := checkNamed(r, "home-credentials"); c.OK || !strings.Contains(c.Detail, rel) {
+				t.Fatalf("home-credentials = %+v", c)
+			}
+		})
+	}
+}
+
+func TestSpecForCloudOnTheBase(t *testing.T) {
+	cfg, problems := config.Parse([]byte("version: 1\nproject: acme\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: make, test: make test } }\n"))
+	if len(problems) > 0 {
+		t.Fatal(problems)
+	}
+	base, _ := SpecForCloud(cfg, "app", "c0ffee", "https://github.com/acme/app.git")
+	if base.Tools != "critical" || !base.Mise || base.Base != config.BaseKind {
+		t.Errorf("base: %+v", base)
 	}
 }

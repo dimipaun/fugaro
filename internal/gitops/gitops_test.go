@@ -58,6 +58,248 @@ func TestCheckoutNewBranchKeepsIgnored(t *testing.T) {
 	}
 }
 
+// TestCheckoutDetachedKeepsIgnored: review mode's single-pull-request
+// checkout (design generic-tool §3.6, G12). It fetches by SHA alone (no
+// branch name, as a PR's commit may belong to another repository's fork)
+// and lands with a detached HEAD at exactly that commit, the same ignored-
+// file and untracked-file behaviour as CheckoutNewBranch.
+//
+// Mutation (drop --detach from the checkout args): this still passes on a
+// bare rev, since git then creates a local branch instead, UNLESS asked to
+// check out a commit with no branch pointing at it (a second commit after
+// the fetch, below): then "checkout" alone resolves FETCH_HEAD to that
+// branch's current tip, not the fetched commit, and the HEAD assertion
+// below fails.
+func TestCheckoutDetachedKeepsIgnored(t *testing.T) {
+	repo, remote := setup(t)
+	testutil.WriteFiles(t, repo.Dir, map[string]string{
+		"node_modules/dep/index.js": "warm cache\n",
+		"stray.txt":                 "untracked\n",
+	})
+	sha := testutil.Git(t, remote, "rev-parse", "refs/heads/main")
+	if err := repo.CheckoutDetached(ctx, sha); err != nil {
+		t.Fatal(err)
+	}
+	if got := testutil.Git(t, repo.Dir, "rev-parse", "HEAD"); got != sha {
+		t.Fatalf("HEAD = %s, want %s", got, sha)
+	}
+	if got := testutil.Git(t, repo.Dir, "rev-parse", "--abbrev-ref", "HEAD"); got != "HEAD" {
+		t.Fatalf("branch = %q, want a detached HEAD", got)
+	}
+	if _, err := os.Stat(filepath.Join(repo.Dir, "stray.txt")); !os.IsNotExist(err) {
+		t.Fatal("untracked file survived the checkout")
+	}
+	if _, err := os.Stat(filepath.Join(repo.Dir, "node_modules", "dep", "index.js")); err != nil {
+		t.Fatal("ignored warm cache was wiped:", err)
+	}
+}
+
+// TestCheckoutDetachedRefusesAnythingButAFullHash: review mode's SHA comes
+// straight from a provider's own PRHead.FetchPRHead (gitprov), reaching
+// this function's rev argument unvalidated (checkReviewPRs' own check is
+// the first line of defense, not the only one). git itself accepts an
+// option in the position a positional revision goes, so a rev of
+// "--upload-pack=touch /tmp/x;git-upload-pack" is executed as a shell
+// command by `git fetch` — reproduced independently before this fix (a
+// throwaway test, not kept): the injected command's marker file existed
+// afterward. An abbreviated hash (Bitbucket's own pull-request API gives a
+// 12-hex one) is refused too, with a clear error, rather than reaching
+// `git fetch` to fail there with "couldn't find remote ref".
+//
+// Mutation (drop the `if !ValidCommitSHA(rev)` check from CheckoutDetached):
+// this test fails for both cases: the option-injection case, by actually
+// running the injected command (the marker file would exist); the
+// abbreviated-hash case, by reaching git's own, less clear failure instead
+// of refusing up front.
+func TestCheckoutDetachedRefusesAnythingButAFullHash(t *testing.T) {
+	repo, _ := setup(t)
+	marker := filepath.Join(t.TempDir(), "injected")
+	injection := "--upload-pack=touch " + marker + ";git-upload-pack"
+	if err := repo.CheckoutDetached(ctx, injection); err == nil {
+		t.Fatal("want an error for an option-injection rev, got none")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("the injected command ran: the marker file exists")
+	}
+	if err := repo.CheckoutDetached(ctx, "abc1234"); err == nil {
+		t.Fatal("want an error for an abbreviated hash, got none")
+	}
+}
+
+// TestWorktreeAddsDetachedCopy: review mode's pick case, one directory per
+// pull request it compares (design generic-tool §3.6, G12). The main
+// checkout is left exactly where it was: only the new worktree moves.
+func TestWorktreeAddsDetachedCopy(t *testing.T) {
+	repo, remote := setup(t)
+	before := testutil.Git(t, repo.Dir, "rev-parse", "HEAD")
+	testutil.Git(t, remote, "update-ref", "refs/heads/other", "refs/heads/main")
+	seed := filepath.Join(t.TempDir(), "seed2")
+	testutil.Git(t, filepath.Dir(seed), "clone", "--quiet", remote, seed)
+	testutil.WriteFiles(t, seed, map[string]string{"other.txt": "from another attempt\n"})
+	testutil.Git(t, seed, "add", "-A")
+	testutil.Git(t, seed, "commit", "--quiet", "-m", "other attempt")
+	testutil.Git(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/other")
+	sha := testutil.Git(t, remote, "rev-parse", "refs/heads/other")
+
+	dir := filepath.Join(t.TempDir(), "review", "9")
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Worktree(ctx, sha, dir); err != nil {
+		t.Fatal(err)
+	}
+	if got := testutil.Git(t, dir, "rev-parse", "HEAD"); got != sha {
+		t.Fatalf("worktree HEAD = %s, want %s", got, sha)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "other.txt")); err != nil {
+		t.Fatal("worktree is missing the other attempt's file:", err)
+	}
+	if got := testutil.Git(t, repo.Dir, "rev-parse", "HEAD"); got != before {
+		t.Fatalf("main checkout moved to %s, want %s", got, before)
+	}
+}
+
+// TestWorktreeRefusesAnythingButAFullHash: the same rev-validation
+// TestCheckoutDetachedRefusesAnythingButAFullHash proves for the
+// single-pull-request case, for pick's per-pull-request worktree instead.
+// The injected command's marker lives under t.TempDir(), not a fixed path
+// like /tmp/x: under the mutation below, the injected `touch` would
+// otherwise run against the real host's /tmp, not a path this test owns.
+//
+// Mutation (drop the `if !ValidCommitSHA(rev)` check from Worktree): this
+// test fails, finding no error for either an option-injection rev or an
+// abbreviated hash.
+func TestWorktreeRefusesAnythingButAFullHash(t *testing.T) {
+	repo, _ := setup(t)
+	dir := filepath.Join(t.TempDir(), "review", "9")
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "injected")
+	injection := "--upload-pack=touch " + marker + ";git-upload-pack"
+	if err := repo.Worktree(ctx, injection, dir); err == nil {
+		t.Fatal("want an error for an option-injection rev, got none")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("the injected command ran: the marker file exists")
+	}
+	if err := repo.Worktree(ctx, "abc1234", dir); err == nil {
+		t.Fatal("want an error for an abbreviated hash, got none")
+	}
+}
+
+// TestWorktreeReusesExistingDir: a pick run's review/<N> directory is not
+// part of the image or clone that gets reset between runs the way
+// r.d.WorkDir itself is (reviewDir's own doc), and nothing removes it after
+// a run — so a retried execution, or a later pick run comparing the same
+// pull request number again, finds the directory (and its worktree
+// registration) left over from before. `git worktree add` fails outright
+// if the target directory already exists; Worktree must handle this the
+// same way CheckoutDetached's force checkout already handles reusing
+// r.d.WorkDir itself, not leave it to error out as infra_error.
+func TestWorktreeReusesExistingDir(t *testing.T) {
+	repo, remote := setup(t)
+	testutil.Git(t, remote, "update-ref", "refs/heads/other", "refs/heads/main")
+	seed := filepath.Join(t.TempDir(), "seed3")
+	testutil.Git(t, filepath.Dir(seed), "clone", "--quiet", remote, seed)
+	testutil.WriteFiles(t, seed, map[string]string{"first.txt": "first attempt\n"})
+	testutil.Git(t, seed, "add", "-A")
+	testutil.Git(t, seed, "commit", "--quiet", "-m", "first attempt")
+	testutil.Git(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/other")
+	firstSHA := testutil.Git(t, remote, "rev-parse", "refs/heads/other")
+
+	dir := filepath.Join(t.TempDir(), "review", "9")
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Worktree(ctx, firstSHA, dir); err != nil {
+		t.Fatal(err)
+	}
+
+	testutil.WriteFiles(t, seed, map[string]string{"first.txt": "second attempt\n"})
+	testutil.Git(t, seed, "add", "-A")
+	testutil.Git(t, seed, "commit", "--quiet", "-m", "second attempt")
+	testutil.Git(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/other")
+	secondSHA := testutil.Git(t, remote, "rev-parse", "refs/heads/other")
+
+	// dir, and the worktree Worktree just registered for it, are both left
+	// exactly as the first call made them — nothing removes either, the
+	// same as the real runner never does between runs on a warm container.
+	if err := repo.Worktree(ctx, secondSHA, dir); err != nil {
+		t.Fatalf("second Worktree call on the same dir failed: %v", err)
+	}
+	if got := testutil.Git(t, dir, "rev-parse", "HEAD"); got != secondSHA {
+		t.Fatalf("worktree HEAD = %s, want %s (the second attempt)", got, secondSHA)
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, "first.txt")); err != nil || string(got) != "second attempt\n" {
+		t.Fatalf("first.txt = %q, %v, want the second attempt's content", got, err)
+	}
+}
+
+// TestResetToRevertsTrackedRemovesUntrackedKeepsIgnored: a tracked file's
+// modification is reverted, an untracked file is removed, and an ignored
+// file (a warm dependency cache) survives — the same guarantee
+// CheckoutNewBranch's own clean -fd gives a fresh checkout, used instead
+// when a command's output (gate.go: commands.fix) cannot be trusted.
+func TestResetToRevertsTrackedRemovesUntrackedKeepsIgnored(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	head, err := repo.HeadSHA(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{
+		"README.md":                 "half-written\n",
+		"half.txt":                  "untracked\n",
+		"node_modules/dep/index.js": "warm cache\n",
+	})
+	if err := repo.ResetTo(ctx, head); err != nil {
+		t.Fatal(err)
+	}
+	if clean, err := repo.IsClean(ctx); err != nil || !clean {
+		t.Fatalf("IsClean after ResetTo = %v, %v", clean, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(repo.Dir, "README.md")); err != nil || string(data) != "hello\n" {
+		t.Fatalf("README.md = %q, %v, want it reverted to \"hello\\n\"", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(repo.Dir, "half.txt")); !os.IsNotExist(err) {
+		t.Fatal("untracked file survived ResetTo")
+	}
+	if _, err := os.Stat(filepath.Join(repo.Dir, "node_modules", "dep", "index.js")); err != nil {
+		t.Fatal("ignored warm cache was wiped:", err)
+	}
+}
+
+// TestResetToDiscardsACommitMadeAfterRef: ResetTo(ctx, ref) must move HEAD
+// back to ref, discarding a commit made on top of it — the exact gap
+// gate.go's runAutofix closes: a fix that commits on its own moves HEAD, so
+// resetting to the literal string "HEAD" (what the code used to pass)
+// would be a no-op that leaves the fix's own commit in place.
+func TestResetToDiscardsACommitMadeAfterRef(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	preFixHEAD, err := repo.HeadSHA(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"evil.txt": "evil\n"})
+	testutil.Git(t, repo.Dir, "add", "evil.txt")
+	testutil.Git(t, repo.Dir, "commit", "--quiet", "-m", "evil")
+	if err := repo.ResetTo(ctx, preFixHEAD); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := repo.HeadSHA(ctx); err != nil || got != preFixHEAD {
+		t.Fatalf("HEAD = %s, %v, want %s", got, err, preFixHEAD)
+	}
+	if _, err := os.Stat(filepath.Join(repo.Dir, "evil.txt")); !os.IsNotExist(err) {
+		t.Fatal("the commit made after ref survived ResetTo")
+	}
+}
+
 func TestCommitAllAheadAndClean(t *testing.T) {
 	repo, _ := setup(t)
 	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
@@ -1143,5 +1385,52 @@ func TestCommitOfAndIsAncestor(t *testing.T) {
 		if sha, err := repo.CommitOf(ctx, ref); err == nil {
 			t.Errorf("CommitOf(%q) = %q, want an error", ref, sha)
 		}
+	}
+}
+
+// TestCheckoutDetachedNeverRunsLFSFilters: a reviewed pull request's own
+// .gitattributes can mark any path filter=lfs; wherever git-lfs (or any
+// other command registered under that name) is already configured in
+// this git config — locally or, in a real environment, globally, from an
+// earlier `git lfs install` — checking out that content would otherwise
+// run it. CheckoutDetached must never do that (design generic-tool §3.6,
+// G12, reviewmode.go's stripClaudeConfig and the fork threat model it
+// guards against): review mode never builds or tests the checkout, so
+// there is no reason to run an externally-configured filter command at
+// all, let alone one a fork's own .gitattributes pointed at.
+//
+// Mutation (drop withLFSFiltersOff from the checkout call, leaving the
+// fetch's own in place): this test fails — the checkout itself errors
+// (filter.lfs.process's long-running protocol speaks pkt-lines, and
+// "touch" doesn't, so git reports a broken pipe as "the remote end hung
+// up unexpectedly"), which the test treats as a failure the same as
+// finding the marker would, since neither one is the clean, filter-free
+// checkout this is pinning.
+func TestCheckoutDetachedNeverRunsLFSFilters(t *testing.T) {
+	repo, remote := setup(t)
+	marker := filepath.Join(t.TempDir(), "smudge-ran")
+	testutil.Git(t, repo.Dir, "config", "filter.lfs.smudge", "touch "+marker)
+	testutil.Git(t, repo.Dir, "config", "filter.lfs.process", "touch "+marker)
+	testutil.Git(t, repo.Dir, "config", "filter.lfs.required", "true")
+
+	seed := filepath.Join(t.TempDir(), "seed-lfs")
+	testutil.Git(t, filepath.Dir(seed), "clone", "--quiet", remote, seed)
+	testutil.WriteFiles(t, seed, map[string]string{
+		".gitattributes": "secret.bin filter=lfs -text\n",
+		"secret.bin":     "pretend-lfs-pointer\n",
+	})
+	testutil.Git(t, seed, "add", "-A")
+	testutil.Git(t, seed, "commit", "--quiet", "-m", "lfs file")
+	testutil.Git(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/lfs")
+	sha := testutil.Git(t, remote, "rev-parse", "refs/heads/lfs")
+
+	if err := repo.CheckoutDetached(ctx, sha); err != nil {
+		t.Fatal(err)
+	}
+	if got := testutil.Git(t, repo.Dir, "rev-parse", "HEAD"); got != sha {
+		t.Fatalf("HEAD = %s, want %s", got, sha)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the lfs filter ran during the checkout")
 	}
 }

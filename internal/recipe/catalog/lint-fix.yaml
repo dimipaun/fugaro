@@ -1,0 +1,11 @@
+version: 1
+name: lint-fix
+description: Runs the repository's autofix and linter first; a model fixes only what the tools could not.
+use_when: Routine mechanical cleanup (formatting, lint and type-check errors) in a repository with commands.lint and commands.fix.
+roles:
+  reviewer: coder
+steps:
+  - check:
+      command: lint
+      autofix: true
+  - review: {}

@@ -21,7 +21,6 @@ defaults:
   agent: { auth: api-key }
 profiles:
   svc:
-    base: web-node
     commands: { build: sh build.sh, test: sh test.sh }
 default_profile: svc
 `

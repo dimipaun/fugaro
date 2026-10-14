@@ -53,7 +53,7 @@ func TestLsWithNoLocalConfigUsesTheSharedOne(t *testing.T) {
 	f := sharedEnd2End(t)
 	t.Chdir(gitCheckout(t, filepath.Join(f.dir, "app"), "version: 1\nproject: aurora\ngcp_project: proj-1234\n"))
 
-	out, errOut, err := execute(t, "ls")
+	out, errOut, err := execute(t, "runs", "ls")
 	if err != nil {
 		t.Fatalf("ls: %v\n%s", err, errOut)
 	}
@@ -81,7 +81,7 @@ func TestLsWithNoLocalConfigAndNoGCPProjectAsksForTheLine(t *testing.T) {
 	f := sharedEnd2End(t)
 	t.Chdir(gitCheckout(t, filepath.Join(f.dir, "app"), "version: 1\nproject: aurora\n"))
 
-	_, _, err := execute(t, "ls")
+	_, _, err := execute(t, "runs", "ls")
 	if ExitCode(err) != ExitUserError || err == nil {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -100,7 +100,7 @@ func TestSharedSelectionFlagContradictingTheCheckoutIsRefused(t *testing.T) {
 	f := sharedEnd2End(t)
 	t.Chdir(gitCheckout(t, filepath.Join(f.dir, "app"), "version: 1\nproject: aurora\ngcp_project: proj-1234\n"))
 
-	_, _, err := execute(t, "ls", "--gcp-project", "other-proj")
+	_, _, err := execute(t, "runs", "ls", "--gcp-project", "other-proj")
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "contradicts this checkout's gcp_project proj-1234") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -227,7 +227,7 @@ func TestConfigFileIgnoresTheCheckoutsGCPProject(t *testing.T) {
 	f := newCloudFixture(t)
 	t.Chdir(gitCheckout(t, filepath.Join(f.dir, "app"), "version: 1\nproject: aurora\ngcp_project: other-proj\n"))
 	cfg := os.Getenv("FUGARO_CONFIG")
-	_, errOut, err := execute(t, "ls", "--config", cfg, "--gcp-project", "proj-1234")
+	_, errOut, err := execute(t, "runs", "ls", "--config", cfg, "--gcp-project", "proj-1234")
 	if err != nil {
 		t.Fatalf("ls: %v\n%s", err, errOut)
 	}
@@ -235,7 +235,7 @@ func TestConfigFileIgnoresTheCheckoutsGCPProject(t *testing.T) {
 		t.Errorf("the shared config was used:\n%s", errOut)
 	}
 	// Override still compares the flag with the selected config.
-	_, _, err = execute(t, "ls", "--config", cfg, "--gcp-project", "other-proj")
+	_, _, err = execute(t, "runs", "ls", "--config", cfg, "--gcp-project", "other-proj")
 	if err == nil || !strings.Contains(err.Error(), "can't be pointed at another GCP project") {
 		t.Fatalf("err = %v", err)
 	}
@@ -246,7 +246,7 @@ func TestConfigFileIgnoresTheCheckoutsGCPProject(t *testing.T) {
 func TestSharedConfigFromTheFlagAlone(t *testing.T) {
 	f := sharedEnd2End(t)
 	t.Chdir(gitCheckout(t, filepath.Join(f.dir, "app"), "version: 1\nproject: aurora\n"))
-	_, errOut, err := execute(t, "ls", "--gcp-project", "proj-1234")
+	_, errOut, err := execute(t, "runs", "ls", "--gcp-project", "proj-1234")
 	if err != nil {
 		t.Fatalf("ls: %v\n%s", err, errOut)
 	}
@@ -264,7 +264,7 @@ func TestSharedSelectionPassesTheRequestedNameToTheMarkerCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(t.TempDir())
-	_, _, err := execute(t, "ls", "--project", "aurora", "--gcp-project", "proj-1234")
+	_, _, err := execute(t, "runs", "ls", "--project", "aurora", "--gcp-project", "proj-1234")
 	if err == nil || !strings.Contains(err.Error(), "is project borealis, not aurora") {
 		t.Fatalf("err = %v", err)
 	}

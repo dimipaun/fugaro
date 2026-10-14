@@ -589,3 +589,20 @@ func TestPrintableTruncatesHostileStrings(t *testing.T) {
 		t.Errorf("%q", out[:20])
 	}
 }
+
+// TestPrintableNUsesItsOwnLimit: PrintableN(s, n) cuts at n runes, not at
+// MaxPrintable, so a caller with its own, larger size limit (a recipe's
+// use_when, bounded to 300 bytes, so never more than 300 runes) does not
+// lose text Printable's own 200-rune default would have cut.
+func TestPrintableNUsesItsOwnLimit(t *testing.T) {
+	s := strings.Repeat("x", 300)
+	if out := PrintableN(s, 300); out != s {
+		t.Fatalf("300 runes at a 300 limit: got %q", out)
+	}
+	if out := Printable(s); !strings.HasSuffix(out, "(truncated)") {
+		t.Fatalf("300 runes at the default 200 limit should still truncate: got %q", out)
+	}
+	if out := PrintableN(s, 10); len([]rune(out)) > 10+16 || !strings.HasSuffix(out, "(truncated)") {
+		t.Fatalf("a 10 limit should cut: got %q", out)
+	}
+}

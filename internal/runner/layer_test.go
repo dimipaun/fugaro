@@ -21,7 +21,6 @@ defaults:
   agent: { auth: api-key, review_rounds: 2 }
 profiles:
   app:
-    base: web-node
     commands:
       build: sh build.sh
       test: sh test.sh
@@ -145,7 +144,6 @@ defaults:
   agent: { auth: api-key, review_rounds: 4 }
 profiles:
   app:
-    base: web-node
     commands:
       build: sh build.sh
       test: sh test.sh

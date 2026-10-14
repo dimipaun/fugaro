@@ -164,7 +164,7 @@ func TestRunPRRefusesActiveRun(t *testing.T) {
 	n := len(f.run.Executions())
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), active) || !strings.Contains(err.Error(), "still") ||
-		!strings.Contains(err.Error(), "fugaro ls --pr 7 --repo acme/app") {
+		!strings.Contains(err.Error(), "fugaro runs ls --pr 7 --repo acme/app") {
 		t.Fatalf("err = %v", err)
 	}
 	if len(f.run.Executions()) != n {
@@ -921,10 +921,10 @@ func TestRunPRRefusesOversizedLock(t *testing.T) {
 	wantRefused(t, f, key, "run", "--repo", "acme/app", "--pr", "7")
 }
 
-// ls --pr and run --pr look back over the same window.
+// runs ls --pr and run --pr look back over the same window.
 func TestPRLookbacksAgree(t *testing.T) {
 	if d, err := parseSince(prLookback); err != nil || d != followUpLookback {
-		t.Fatalf("ls --pr looks back %v (%v), run --pr %v", d, err, followUpLookback)
+		t.Fatalf("runs ls --pr looks back %v (%v), run --pr %v", d, err, followUpLookback)
 	}
 }
 

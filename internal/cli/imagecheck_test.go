@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	checkBase    = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc"
+	checkBase    = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc"
 	checkRepoURL = "https://bitbucket.org/acme/app.git"
 	checkBucket  = "fugaro-runs-proj-1234"
 	checkToken   = "bb-token-value"
@@ -93,13 +93,13 @@ func (f *checkFixture) hookCheck(t *testing.T) {
 	checkRegistry = func() *imagecheck.Registry {
 		return &imagecheck.Registry{HTTP: &http.Client{}, Google: &http.Client{}, Endpoint: func(string) string { return f.reg.URL }}
 	}
-	f.reg.SetManifest("proj-1234/fugaro-base/fugaro-web-node", "dev-abc", checkBaseDigest)
+	f.reg.SetManifest("proj-1234/fugaro-base/fugaro-base", "dev-abc", checkBaseDigest)
 }
 
 // checkLC is the local config the check job's spec is made from.
 func checkLC() *localcfg.Config {
 	return &localcfg.Config{
-		Version: 1, Name: "aurora", GCPProject: "proj-1234", Region: "us-east5", RunsBucket: checkBucket, BaseImages: map[string]string{"web-node": checkBase},
+		Version: 1, Name: "aurora", GCPProject: "proj-1234", Region: "us-east5", RunsBucket: checkBucket, BaseImages: map[string]string{"base": checkBase},
 		Build: localcfg.Build{MachineType: "E2_HIGHCPU_8"},
 		Repos: map[string]localcfg.Repo{"acme/app": {Provider: "bitbucket", BaseBranch: "main", Workflows: []string{"app"}}},
 	}
@@ -288,7 +288,7 @@ project: aurora
 gcp_project: proj-1234
 git: { provider: bitbucket }
 workflows:
-  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh }, secrets: [{ name: npm-token, env: NPM_TOKEN }] }
+  app: { commands: { build: sh build.sh, test: sh test.sh }, secrets: [{ name: npm-token, env: NPM_TOKEN }] }
 `
 
 // layeredCheckYAML is acme/app's actual fugaro.yaml for the layer test:
@@ -305,14 +305,13 @@ workflows:
 `
 
 // layeredCheckLayer is the project layer layeredCheckYAML's workflow
-// names: profile svc supplies the base (web-node, matching checkLC's own
-// base_images) and image.apt/setup/skip_build_scripts.
+// names: profile svc supplies image.apt/setup/skip_build_scripts (the base
+// is always the one Fugaro base now, matching checkLC's own base_images).
 const layeredCheckLayer = `version: 1
 project: aurora
 gcp_project: proj-1234
 profiles:
   svc:
-    base: web-node
     image: { apt: [graphviz], setup: ["./scripts/warm.sh"], skip_build_scripts: true }
 default_profile: svc
 `
@@ -381,7 +380,7 @@ func TestCheckJobResolvesAndSubmitsWithTheLayer(t *testing.T) {
 	if len(ps) > 0 {
 		t.Fatal(ps)
 	}
-	if wantCfg.Workflows["app"].Base != "web-node" || len(wantCfg.Workflows["app"].Image.Apt) == 0 || !wantCfg.Workflows["app"].Image.SkipBuildScripts {
+	if len(wantCfg.Workflows["app"].Image.Apt) == 0 || !wantCfg.Workflows["app"].Image.SkipBuildScripts {
 		t.Fatalf("test fixture itself does not resolve the layer: %+v", wantCfg.Workflows["app"])
 	}
 	testutil.Git(t, f.work, "pull", "--quiet", "--ff-only")
@@ -501,10 +500,70 @@ func TestCheckJobNeedsItsSpec(t *testing.T) {
 	}
 }
 
+// TestCheckedWorkflowsExcludesClone pins checkedWorkflows's own rule
+// directly: a checkout: clone workflow is never checked, whatever its
+// rebuild.check says; one with rebuild.check: off still isn't either, and
+// an ordinary workflow still is.
+//
+// Mutation (run, restore): change `w.Checkout != config.CheckoutClone &&
+// w.Rebuild...` to drop the Checkout clause — this test then fails: "web"
+// (checkout: clone) joins "api" in the result.
+func TestCheckedWorkflowsExcludesClone(t *testing.T) {
+	cfg := &config.Config{Workflows: map[string]config.Workflow{
+		"web": {Checkout: config.CheckoutClone},
+		"api": {},
+		"off": {Rebuild: config.Rebuild{Check: "off"}},
+	}}
+	if got, want := checkedWorkflows(cfg), []string{"api"}; !slices.Equal(got, want) {
+		t.Fatalf("checkedWorkflows = %v, want %v", got, want)
+	}
+}
+
+// TestLocalCheckRefusesCloneWorkflowFlag: fugaro image check --workflow
+// naming a checkout: clone workflow is refused (it has no image to check
+// or rebuild), even though checkedWorkflows already excludes it from the
+// default run; an ordinary workflow named the same way still works.
+//
+// Mutation (run, restore): remove the `if w.Checkout == config.CheckoutClone`
+// guard in runImageCheckLocal's --workflow handling — this test's first
+// case then fails: --workflow web proceeds into evaluate/Decide instead of
+// refusing, and the error (if any) no longer contains "checkout: clone".
+func TestLocalCheckRefusesCloneWorkflowFlag(t *testing.T) {
+	files := checkFiles()
+	files["fugaro.yaml"] = bitbucketYAML + "  web: { checkout: clone, commands: { build: \"true\", test: \"true\" } }\n"
+	f := checkRemote(t, files)
+	f.hookCheck(t)
+	dir := filepath.Join(t.TempDir(), "app")
+	testutil.Git(t, filepath.Dir(dir), "clone", "--quiet", checkRepoURL, dir)
+	testutil.Git(t, dir, "remote", "set-url", "origin", checkRepoURL)
+	t.Chdir(dir)
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	old := checkLocalEnv
+	t.Cleanup(func() { checkLocalEnv = old })
+	checkLocalEnv = func() []string { return append(os.Environ(), "GIT_CONFIG_GLOBAL="+f.gitCfg) }
+	cf := newCloudFixture(t, "cloud_build: "+f.fb.URL+"/")
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(string(data), "provider: github", "provider: bitbucket", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cf.appendConfig(t, "base_images: {base: "+checkBase+"}\n")
+
+	if _, _, err := execute(t, "image", "check", "--workflow", "web"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "checkout: clone") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	if out, _, err := execute(t, "image", "check", "--workflow", "app"); err != nil || !strings.Contains(out, "app:") {
+		t.Fatalf("app: %v\n%s", err, out)
+	}
+}
+
 func TestCheckNotInstalledWorkflow(t *testing.T) {
 	// Head has a second daily workflow the installed job doesn't know.
 	files := checkFiles()
-	files["fugaro.yaml"] = bitbucketYAML + "  api: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	files["fugaro.yaml"] = bitbucketYAML + "  api: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 	f := newCheckJob(t, files, bitbucketYAML)
 	f.seedRecord(t)
 	lines, err := runCheckJob(t)
@@ -527,7 +586,7 @@ func TestCheckNotInstalledWorkflow(t *testing.T) {
 
 	// Head turns app's check off: the installed schedule no longer
 	// matches, so nothing is built until init --repo runs.
-	yaml := strings.Replace(files["fugaro.yaml"], "base: web-node, secrets:", "base: web-node, rebuild: { check: off }, secrets:", 1)
+	yaml := strings.Replace(files["fugaro.yaml"], "secrets:", "rebuild: { check: off }, secrets:", 1)
 	testutil.WriteFiles(t, f.work, map[string]string{"fugaro.yaml": yaml, "package-lock.json": `{"changed":true}`})
 	testutil.Git(t, f.work, "commit", "--quiet", "-am", "check off")
 	testutil.Git(t, f.work, "push", "--quiet", "origin", "HEAD:main")
@@ -570,7 +629,7 @@ func localCheck(t *testing.T) *checkFixture {
 	if err := os.WriteFile(path, []byte(strings.Replace(string(data), "provider: github", "provider: bitbucket", 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cf.appendConfig(t, "base_images: {web-node: "+checkBase+"}\n")
+	cf.appendConfig(t, "base_images: {base: "+checkBase+"}\n")
 	f.bucket = cf.bucket
 	cfg, _ := config.Parse([]byte(bitbucketYAML))
 	lc := checkLC()
@@ -639,7 +698,7 @@ func TestLocalCheckUsesTheSelectedProjectsLayer(t *testing.T) {
 	f := newCloudFixture(t)
 	publishedLayer(t, f, testProjectLayer)
 	cfgPath := os.Getenv("FUGARO_CONFIG")
-	f.appendConfig(t, "base_images: {web-node: "+checkBase+"}\n")
+	f.appendConfig(t, "base_images: {base: "+checkBase+"}\n")
 	layerCheckout(t, f, minimalAnchored)
 	// A clean slate: isolateProjects clears $FUGARO_PROJECT/$FUGARO_CONFIG
 	// and points XDG at an empty directory, and isolateCache gives the
@@ -983,29 +1042,39 @@ func TestLocalCheckResolvesSpec(t *testing.T) {
 	}
 }
 
-// A workflow of a base kind head's fugaro.yaml gained after the job was
-// installed has no base image in the job's spec; the spec still resolves, so
-// the job reports that workflow as not installed instead of failing them all.
-func TestCheckJobResolvesSpecWithAKindAddedSinceInstall(t *testing.T) {
+// TestCheckJobResolvesSpecWithAKindAddedSinceInstall and
+// TestCheckJobBackfillsTheImplicitBaseKind were deleted in an earlier
+// commit on the reasoning that a valid installed spec always already has
+// a base_images.base entry, so repoSpec's backfill branch could never fire
+// for a real fugaro.yaml again. That reasoning missed the migration
+// window: a daily check job whose own installed FUGARO_CHECK_SPEC
+// predates the 0.7.0 cut (its fugaro image refresh or init --repo has not
+// run there since the cut) still names a removed kind, not "base", so the
+// backfill is exactly how that job keeps resolving instead of refusing
+// outright. TestCheckJobBackfillsFromAPreCutLegacySpec below restores a
+// one-kind test for it.
+func TestCheckJobBackfillsFromAPreCutLegacySpec(t *testing.T) {
 	newCheckJob(t, checkFiles(), bitbucketYAML)
 	e, err := readJobEnv()
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg, problems := config.Parse([]byte(bitbucketYAML + "  server: { base: java-services, commands: { build: make, test: make test } }\n"))
+	// Simulate a daily check job whose own installed spec predates the
+	// 0.7.0 cut: it still names a removed kind, not "base".
+	e.spec.BaseImages = map[string]string{"web-node": checkBase}
+	cfg, problems := config.Parse([]byte(bitbucketYAML))
 	if len(problems) > 0 {
 		t.Fatal(problems)
 	}
-	rs, _, err := e.repoSpec(cfg)
+	rs, lc, err := e.repoSpec(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rs.Check == nil || rs.Check.Image == "" {
-		t.Fatalf("check = %+v", rs.Check)
+	if lc.BaseImages["base"] != checkBase {
+		t.Fatalf("base_images = %v, want base backfilled from the legacy spec's web-node: %s", lc.BaseImages, checkBase)
 	}
-	// The installed kind is still what the job was installed with.
-	if want := e.spec.BaseImages["web-node"]; want != checkBase || e.spec.BaseImages["java-services"] != "" {
-		t.Errorf("spec base images = %v", e.spec.BaseImages)
+	if rs.Check == nil || rs.Check.Image != checkBase {
+		t.Fatalf("check = %+v, want image %s", rs.Check, checkBase)
 	}
 }
 

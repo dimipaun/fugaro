@@ -11,6 +11,16 @@ import (
 // baseImageRE matches a published Fugaro base image reference and captures the base name.
 var baseImageRE = regexp.MustCompile(`^ghcr\.io/dimipaun/fugaro-([a-z0-9-]+)(:[A-Za-z0-9._-]+)?(@sha256:[0-9a-f]{64})?$`)
 
+// LegacyBaseKinds are the base kinds the 0.7.0 cut removed from Bases: a
+// Dockerfile that still builds FROM one of their published images
+// (ghcr.io/dimipaun/fugaro-<kind>) gets a refusal naming MigrationDoc,
+// instead of LintDockerfile's generic "not a known base" message, and
+// localcfg's dropLegacyBaseImages drops exactly these keys (and no other)
+// from a published shared config. This list is migration-window-only: once
+// the images themselves are deleted (plan Task 20), delete it along with
+// every place that reads it.
+var LegacyBaseKinds = []string{"go", "java-services", "web-node"}
+
 // heredocRE finds heredoc openers such as <<EOF, <<-EOF and <<'EOF'.
 var heredocRE = regexp.MustCompile(`<<-?["']?([A-Za-z_][A-Za-z0-9_]*)["']?`)
 
@@ -125,13 +135,13 @@ func splitStages(ins []instruction) (globalArgs []string, stages []stage) {
 }
 
 // LintDockerfile checks a repository Dockerfile (the dockerfile: escape
-// hatch) against the derived-image contract for a workflow on base (design
-// §7.2). The final stage, followed back through any earlier stages it builds
-// on, must start FROM a Fugaro base image, bake the checkout into
-// /work/repo, and leave the base's user, working directory and init process
-// in place. It returns one message per broken rule. `fugaro image build
-// --local` checks the rest when it smoke-tests the built image.
-func LintDockerfile(data []byte, base string) []string {
+// hatch) against the derived-image contract (design §7.2). The final stage,
+// followed back through any earlier stages it builds on, must start FROM the
+// one Fugaro base image, bake the checkout into /work/repo, and leave the
+// base's user, working directory and init process in place. It returns one
+// message per broken rule. `fugaro image build --local` checks the rest when
+// it smoke-tests the built image.
+func LintDockerfile(data []byte) []string {
 	globalArgs, stages := splitStages(parseDockerfile(data))
 	if len(stages) == 0 {
 		return []string{"has no FROM instruction"}
@@ -152,12 +162,11 @@ func LintDockerfile(data []byte, base string) []string {
 		if !slices.Contains(globalArgs, "FUGARO_BASE") {
 			msgs = append(msgs, "uses ${FUGARO_BASE} without declaring ARG FUGARO_BASE before the first FROM")
 		}
-	case m != nil:
-		if m[1] != base {
-			msgs = append(msgs, fmt.Sprintf("builds FROM fugaro-%s, but the workflow's base is %s", m[1], base))
-		}
+	case m != nil && m[1] == BaseKind:
+	case m != nil && slices.Contains(LegacyBaseKinds, m[1]):
+		msgs = append(msgs, fmt.Sprintf("builds FROM fugaro-%s, a base removed in 0.7.0: build FROM ${FUGARO_BASE} (%s)", m[1], MigrationDoc))
 	default:
-		msgs = append(msgs, fmt.Sprintf("must build its final stage FROM ${FUGARO_BASE} or ghcr.io/dimipaun/fugaro-%s, not %s", base, root))
+		msgs = append(msgs, fmt.Sprintf("must build its final stage FROM ${FUGARO_BASE} or ghcr.io/dimipaun/fugaro-base, not %s", root))
 	}
 	var workdir, user string
 	bakes := false

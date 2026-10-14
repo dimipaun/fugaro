@@ -118,6 +118,26 @@ func TestRTDBFakeMultiPathAtomic(t *testing.T) {
 	}
 }
 
+func TestRTDBFakeDenyKeysChecksContentNotPath(t *testing.T) {
+	f := NewRTDB(t)
+	f.DenyKeys("action")
+	// An object write that carries the denied key is refused...
+	if code, _, _ := rtdbDo(t, "PUT", f.URL+"/agents/r.json", `{"stage":"x","action":"tool Bash: ls"}`, nil); code != 401 {
+		t.Fatalf("write carrying the key = %d, want 401", code)
+	}
+	if f.Value("agents/r") != nil {
+		t.Fatalf("a denied write changed the tree: %#v", f.Value("agents/r"))
+	}
+	// ...but the same path without the key goes through.
+	if code, _, _ := rtdbDo(t, "PUT", f.URL+"/agents/r.json", `{"stage":"x"}`, nil); code != 200 {
+		t.Fatalf("write without the key = %d, want 200", code)
+	}
+	f.DenyKeys()
+	if code, _, _ := rtdbDo(t, "PUT", f.URL+"/agents/r.json", `{"stage":"x","action":"tool Bash: ls"}`, nil); code != 200 {
+		t.Fatalf("write after DenyKeys() lifted = %d, want 200", code)
+	}
+}
+
 func TestRTDBFakeDenyNextCountsWritesOnly(t *testing.T) {
 	f := NewRTDB(t)
 	f.DenyNext(2)

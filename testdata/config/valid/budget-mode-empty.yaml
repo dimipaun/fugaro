@@ -4,4 +4,4 @@ git: { provider: github }
 budget:
   mode: ""
 workflows:
-  server: { base: java-services, commands: { build: make, test: make test } }
+  server: { commands: { build: make, test: make test } }

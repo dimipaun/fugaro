@@ -153,21 +153,36 @@ func TestDoctorLayerChecksDistrustsARewrittenOrigin(t *testing.T) {
 	}
 }
 
-// TestDoctorImageConfigNamesEachDifferingSource: when a workflow's base
-// comes from its profile but its image settings are overridden directly in
-// the repository (or vice versa), imageConfigChecks' message must name both
-// sources, never silently attribute the whole thing to just one of them.
+// TestDoctorImageConfigNamesEachDifferingSource: when two different image
+// leaves come from two different sources (one from the profile, one
+// overridden directly in the repository), imageConfigChecks' message must
+// name both sources, never silently attribute the whole thing to just one
+// of them. (base: is always removed in 0.7.0 now, so it can never itself be
+// one of the differing sources; two image: leaves stand in.)
 //
 // Mutation (run, restore): revert imageConfigReason to the single `from :=
 // res.SourceOf(...base); if s := res.SourceOf(...image); s !=
 // SourceDefault { from = s }` form, and this test fails: the message says
-// only "its base comes from repo" (image's source silently overwrote
-// base's), never naming profile svc at all.
+// only "its base comes from repo" (one image leaf's source silently
+// overwrote base's, and the other leaf's source, profile svc, is never
+// named at all).
 func TestDoctorImageConfigNamesEachDifferingSource(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
-	publishedLayer(t, f, testProjectLayer)
-	dir := layerCheckout(t, f, minimalAnchored+"git: { provider: github }\nworkflows:\n  default: { profile: svc, image: { node: \"22\" } }\n")
+	layer := `version: 1
+project: aurora
+gcp_project: proj-1234
+defaults:
+  git: { provider: github }
+  agent: { auth: api-key }
+profiles:
+  svc:
+    image: { apt: [git] }
+    commands: { build: sh build.sh, test: sh test.sh }
+default_profile: svc
+`
+	publishedLayer(t, f, layer)
+	dir := layerCheckout(t, f, minimalAnchored+"git: { provider: github }\nworkflows:\n  default: { profile: svc, image: { setup: [\"echo hi\"] } }\n")
 	slug := mustSlug("github", "acme/other")
 	data, _ := json.Marshal(imagecheck.Record{Version: 1, Repo: "acme/other", Workflow: config.ImplicitWorkflow, ImageConfigHash: strings.Repeat("0", 64)})
 	writeBucketFile(t, f, imagecheck.RecordKey(slug, config.ImplicitWorkflow), string(data))
@@ -176,7 +191,7 @@ func TestDoctorImageConfigNamesEachDifferingSource(t *testing.T) {
 	rf := resolvedLayerFixture(t, ctx, lc, dir)
 
 	c := layerCheck(doctorLayerChecks(ctx, lc, dir, rf), "image-config-"+config.ImplicitWorkflow)
-	if c == nil || !strings.Contains(c.Problem, "its base comes from profile svc") || !strings.Contains(c.Problem, "its image settings from repo") {
+	if c == nil || !strings.Contains(c.Problem, "its base comes from default") || !strings.Contains(c.Problem, "its image settings from profile svc, repo") {
 		t.Fatalf("check %+v", c)
 	}
 }
@@ -213,7 +228,7 @@ func TestDoctorImageConfigSkipsDockerfileWorkflows(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
-	dir := layerCheckout(t, f, minimalAnchored+"git: { provider: github }\nworkflows:\n  app: { base: web-node, dockerfile: .fugaro/app.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n")
+	dir := layerCheckout(t, f, minimalAnchored+"git: { provider: github }\nworkflows:\n  app: { dockerfile: .fugaro/app.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n")
 	testutil.WriteFiles(t, dir, map[string]string{".fugaro/app.Dockerfile": "ARG FUGARO_BASE\nFROM ${FUGARO_BASE}\nRUN git clone \"$REPO_URL\" /work/repo\n"})
 	slug := mustSlug("github", "acme/other")
 	data, _ := json.Marshal(imagecheck.Record{Version: 1, Repo: "acme/other", Workflow: "app", ImageConfigHash: strings.Repeat("0", 64)})
@@ -281,7 +296,7 @@ func TestDoctorLayerUnknownWhenBucketUnreachable(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
-	selfSufficient := "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: github }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	selfSufficient := "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 	dir := layerCheckout(t, f, selfSufficient)
 	lc := fileEnv(t, f).lc
 	ctx := context.Background()
@@ -318,9 +333,9 @@ func TestDoctorLayerUnknownWhenBucketUnreachable(t *testing.T) {
 // message lists "repo, profile zzz" instead of "profile zzz, repo".
 func TestImageConfigReasonSortsMultipleSources(t *testing.T) {
 	res := &config.Resolution{Sources: map[string]string{
-		"workflows.default.base":       config.SourceDefault,
-		"workflows.default.image.node": "repo",
-		"workflows.default.image.jdk":  config.SourceProfile("zzz"),
+		"workflows.default.base":        config.SourceDefault,
+		"workflows.default.image.apt":   "repo",
+		"workflows.default.image.setup": config.SourceProfile("zzz"),
 	}}
 	got := imageConfigReason(res, "default")
 	want := "its base comes from default and its image settings from profile zzz, repo"

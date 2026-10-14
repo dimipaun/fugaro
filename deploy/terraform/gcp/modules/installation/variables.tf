@@ -159,6 +159,19 @@ variable "operators" {
   }
 }
 
+variable "launcher_bucket_condition" {
+  description = "The condition of the launchers' objectUser grant on the runs bucket: runs/ of that bucket only (gcp.LauncherBucketCondition). Passed byte for byte, so every launcher shares one binding."
+  type = object({
+    title      = string
+    expression = string
+  })
+
+  validation {
+    condition     = startswith(var.launcher_bucket_condition.expression, "resource.name.startsWith(\"projects/_/buckets/") && length(var.launcher_bucket_condition.title) > 0
+    error_message = "launcher_bucket_condition needs a title and a resource.name.startsWith expression on a bucket."
+  }
+}
+
 variable "budget" {
   description = "An optional budget on the project, which needs billing-account permissions. thresholds are fractions of amount."
   type = object({
@@ -232,7 +245,7 @@ variable "enable_budget" {
 }
 
 variable "history" {
-  description = "The history job (it sweeps the run registry of crashed runs), used only with enable_budget. Its job name must not start with fugaro-, which fugaro ls and max_parallel count as workflow jobs. deploy_job stays false in the first apply and is set once the Firebase root has output rtdb_url (the third apply), when the job's image exists."
+  description = "The history job (it sweeps the run registry of crashed runs), used only with enable_budget. Its job name must not start with fugaro-, which fugaro runs ls and max_parallel count as workflow jobs. deploy_job stays false in the first apply and is set once the Firebase root has output rtdb_url (the third apply), when the job's image exists."
   type = object({
     account_id             = string
     job                    = string

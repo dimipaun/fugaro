@@ -20,15 +20,15 @@ func TestCloudCheckReadsOnlyLocalFiles(t *testing.T) {
 		state        cloudState
 		has, lacks   string
 	}{
-		{"nothing recorded", "", cloudStale, "go: none recorded, this release's is " + managedRef("go", "0.5.1"), ""},
-		{"one kind behind", "base_images: {web-node: " + managedRef("web-node", "0.5.1") + ", go: " + managedRef("go", "0.4.0") + "}\n",
-			cloudStale, "go: " + managedRef("go", "0.4.0") + ", this release's is " + managedRef("go", "0.5.1"), "web-node:"},
-		{"current", "base_images: {web-node: " + managedRef("web-node", "0.5.1") + ", go: " + managedRef("go", "0.5.1") + "}\n",
+		{"nothing recorded", "", cloudStale, "base: none recorded, this release's is " + managedRef("base", "0.5.1"), ""},
+		{"behind", "base_images: {base: " + managedRef("base", "0.4.0") + "}\n",
+			cloudStale, "base: " + managedRef("base", "0.4.0") + ", this release's is " + managedRef("base", "0.5.1"), ""},
+		{"current", "base_images: {base: " + managedRef("base", "0.5.1") + "}\n",
 			cloudCurrent, "reads no build record", ""},
-		{"a newer copy is kept", "base_images: {web-node: " + managedRef("web-node", "0.6.0") + ", go: " + managedRef("go", "0.5.1") + "}\n",
+		{"a newer copy is kept", "base_images: {base: " + managedRef("base", "0.6.0") + "}\n",
 			cloudCurrent, "", ""},
-		{"a custom base blocks", "base_images: {go: " + refreshHost + "/fugaro-base/fugaro-go:dev-abc}\n",
-			cloudBlocked, "base_images.go is " + refreshHost + "/fugaro-base/fugaro-go:dev-abc", ""},
+		{"a custom base blocks", "base_images: {base: " + refreshHost + "/fugaro-base/fugaro-base:dev-abc}\n",
+			cloudBlocked, "base_images.base is " + refreshHost + "/fugaro-base/fugaro-base:dev-abc", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			useVersion(t, "0.5.1")
@@ -50,6 +50,32 @@ func TestCloudCheckReadsOnlyLocalFiles(t *testing.T) {
 	}
 }
 
+// A workflow with no base: (the implicit Fugaro base) is checked against
+// base_images.base, not against the empty-string key (which always misses),
+// so it doesn't permanently misreport the base as stale with a malformed
+// image reference.
+//
+// Mutation (run, restore): change cloudCheck's set[w.BaseKind()] = true back
+// to set[w.Base] = true, and this test fails: the kind set becomes {""}
+// instead of {"base"}, lc.BaseImage("") always misses the base_images.base
+// entry this test records, and the verdict is cloudStale (reporting a
+// malformed ghcr.io/dimipaun/fugaro-:0.5.1 "this release's is" reference)
+// instead of cloudCurrent.
+func TestCloudCheckOnTheBaseKind(t *testing.T) {
+	useVersion(t, "0.5.1")
+	useSelf(t)
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n" +
+		"  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	r := newAnchorModeRig(t, yaml, true)
+	r.appendConfig(t, "base_images: {base: "+managedRef("base", "0.5.1")+"}\n")
+	noRecordReads(t)
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", filepath.Join(t.TempDir(), "none.json"))
+	v := cloudCheck(t.Context(), r.root, cloudOptions{}, "")
+	if v.state != cloudCurrent {
+		t.Fatalf("%+v, want current: base_images.base already matches this release", v)
+	}
+}
+
 // TestCloudCheckReadsOnlyLocalFilesWhenAnchored is
 // TestCloudCheckReadsOnlyLocalFiles for a checkout that already has
 // gcp_project: (an anchored repository, the common case once fugaro init
@@ -68,7 +94,7 @@ func TestCloudCheckReadsOnlyLocalFilesWhenAnchored(t *testing.T) {
 	noLayerBucketReads(t)
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", filepath.Join(t.TempDir(), "none.json"))
 	v := cloudCheck(t.Context(), r.root, cloudOptions{}, "")
-	if v.state != cloudStale || !strings.Contains(v.reason, "go: none recorded, this release's is "+managedRef("go", "0.5.1")) {
+	if v.state != cloudStale || !strings.Contains(v.reason, "base: none recorded, this release's is "+managedRef("base", "0.5.1")) {
 		t.Fatalf("%+v", v)
 	}
 	if calls := r.calls(t); len(calls) != 0 || len(r.ar.Requests()) != 0 {
@@ -118,7 +144,7 @@ func TestCloudCheckFailsOnRealErrors(t *testing.T) {
 		has  string
 	}{
 		{"invalid fugaro.yaml", func(t *testing.T, r *anchorModeRig, _ *cloudOptions) {
-			bad := strings.Replace(refreshYAML, "base: go", "base: no/such kind", 1) + "  broken: { base: go }\n"
+			bad := refreshYAML + "  broken: { base: no/such kind }\n"
 			if err := os.WriteFile(r.path, []byte(bad), 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -175,7 +201,7 @@ func TestCloudCheckPrintsNothing(t *testing.T) {
 func TestCloudCheckBlockedRerunLine(t *testing.T) {
 	useVersion(t, "0.5.1")
 	r := newAnchorModeRig(t, refreshYAML, true)
-	r.appendConfig(t, "base_images: {go: "+refreshHost+"/fugaro-base/fugaro-go:dev-abc}\n")
+	r.appendConfig(t, "base_images: {base: "+refreshHost+"/fugaro-base/fugaro-base:dev-abc}\n")
 	again := "fugaro upgrade --check " + quoteWord("/tmp/my repo")
 	v := cloudCheck(t.Context(), r.root, cloudOptions{}, again)
 	if v.state != cloudBlocked || !strings.Contains(v.reason, again) {

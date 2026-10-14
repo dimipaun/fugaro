@@ -56,6 +56,21 @@ func parseRecipeAt(data []byte, name, where string) (*recipe.Recipe, error) {
 	return rcp, nil
 }
 
+// refuseFollowUpReviewMode refuses rcp for a follow-up (fugaro run --pr N
+// continuing PR N, the only kind newFollowUpSpec and carryChosenRecipe
+// build): mode: review only ever reviews an existing pull request and
+// never pushes or opens one (design generic-tool.md §3.6, G12), so it
+// cannot continue one either. The runner refuses the same mismatch again,
+// at bootstrap, for a recipe this never sees (a bare agent.recipe name, or
+// a repository recipe whose text isn't read until the run itself); this is
+// the CLI's own chance to say so before any cloud work starts.
+func refuseFollowUpReviewMode(rcp *recipe.Recipe, name string) error {
+	if rcp.Mode == recipe.ModeReview {
+		return userErr("recipe %s is mode: review, which only reviews an existing pull request and cannot continue one; launch it with --recipe %s --pr N instead (no other --pr)", name, name)
+	}
+	return nil
+}
+
 // projectRecipesNote is why lc's project recipes are not read, or "": as
 // for the shared config, only the default runs bucket name is supported.
 func projectRecipesNote(lc *localcfg.Config) string {
@@ -132,6 +147,9 @@ func resolveRecipe(ctx context.Context, env *cloudEnv, root, name string, now ti
 			}
 			return &resolvedRecipe{Name: name, Source: recipe.SourceProject, Text: data, Recipe: rcp, Where: where, Note: n}, nil
 		}
+	}
+	if to, ok := recipe.Renamed[name]; ok {
+		return nil, userErr("%s was renamed in 0.7.0: use %s", name, to)
 	}
 	if text, ok := recipe.CatalogText(name); ok {
 		rcp, err := parseRecipeAt(text, name, "catalog recipe "+name)

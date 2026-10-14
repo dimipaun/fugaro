@@ -17,6 +17,7 @@ A self-contained coding task with clear acceptance criteria that builds and test
 - a feature or refactor with named files and checkable behaviour
 - tests, docs, migrations of code, dependency bumps the CI covers
 - work for several independent runs at once (see the `parallelism` skill)
+- a codebase question: the image carries `graphify`, which the agent can use to build and query a knowledge graph of the checkout ([base-image.md](https://github.com/dimipaun/fugaro/blob/main/docs/base-image.md))
 
 ## Local
 
@@ -42,5 +43,23 @@ Split it. Send the self-contained part to the cloud and keep the rest. If the sp
 | "Update the release workflow" | local | a GitHub App cannot push `.github/workflows/*` |
 | "Migrate the service, then check it against prod" | split | the code change to the cloud, the prod check local |
 | "Try this idea and tell me what you think" | local | exploratory; no acceptance criteria yet |
+
+## Choosing a recipe
+
+Having decided on the cloud, the task loop after implement still needs a recipe. Run `fugaro recipes ls --json` once per session: it lists the repository's, the project's and the catalog's recipes, each with its `use_when`, so the choice always comes from what is actually there, never a fixed table this skill keeps that could drift out of sync with it.
+
+To choose: match the task against each recipe's `use_when`, falling back to its `description` when a recipe defines none. A recipe the user named wins outright, whatever the catalog suggests. Otherwise, when nothing in the catalog is clearly a better fit than the repository's own `agent.recipe`, pass no `--recipe` and let that default apply.
+
+For a single task, say the choice and the reason in one line before launching, for example: "a typical change with checkable tests, so the standard loop."
+
+For a batch, choose per task and never wait for approval between individual launches — approval was already given for the whole batch (see the `parallelism` skill). End with one summary line naming the mix, such as: "15 runs: 12 standard, 2 solo, 1 premium."
+
+For a hard, well-specified task where the approach itself is uncertain, suggest launching it several times and comparing the results with `pick` once every attempt has opened a pull request; say plainly that this costs N times the usual spend, and only do it with the user's go-ahead (the `parallelism` skill's redundant-attempts section has the detail).
+
+A recipe that only reviews (`mode: review`, always launched with `--pr`) answers a different kind of request: offer it when the user wants a second opinion on, or wants to compare, pull requests that already exist, not for new work.
+
+Pick only a recipe `fugaro recipes ls --json` lists with `launchable: true`; never invent a recipe name, and read a catalog recipe's own `use_when` for what it actually requires.
+
+A launch can still be refused by the job-image gate (a recipe needs a 0.5.0 job image, 0.7.0 for a 0.7.0 construct — `reference/launch.md` has the detail). When it is, report the refusal and the fix command it names to the user — never edit `fugaro.yaml`, a secret or any other config to get around it, and never silently fall back to a different recipe: for one task, offer the alternative and wait for the user; for a batch, report the refused item and continue the rest.
 
 Having decided on the cloud, launch with the `working` skill, and only task text the user has approved.

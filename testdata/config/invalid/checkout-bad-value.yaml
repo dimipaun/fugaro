@@ -1,0 +1,7 @@
+version: 1
+project: aurora
+git: { provider: github }
+workflows:
+  web:
+    checkout: sometimes
+    commands: { build: npm run build, test: npm test }

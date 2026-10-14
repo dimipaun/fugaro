@@ -16,7 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
-const yamlRest = "git: { provider: github }\nagent: { auth: oauth }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+const yamlRest = "git: { provider: github }\nagent: { auth: oauth }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 
 func TestSetGCPProjectLine(t *testing.T) {
 	const id = "fugaro-belong"
@@ -81,6 +81,29 @@ func TestImagePredates(t *testing.T) {
 		if got := imagePredates(c.v, "0.4.0"); got != c.want {
 			t.Errorf("imagePredates(%q) = %v, want %v", c.v, got, c.want)
 		}
+	}
+}
+
+// A workflow with no base: (the implicit Fugaro base) is seen by the anchor
+// health check as "base", not as an unknown/empty kind: gcpProjectProblems
+// skips the custom-base and stale-base checks entirely for a kind not in
+// config.Bases (bases[wf], customBase := ...; if
+// !slices.Contains(config.Bases, kind) { kind = "" }), so an implicit-base
+// workflow must come out of workflowBases as "base" to be checked at all.
+//
+// Mutation (run, restore): change workflowBases' m[name] = w.BaseKind() back
+// to w.Base, and this test fails: m["app"] is "" instead of "base".
+// TestWorkflowBasesSeesTheImplicitBaseKind: every workflow resolves to the
+// one Fugaro base (Workflow.BaseKind ignores Base, a legacy field Validate
+// refuses outright if a real fugaro.yaml sets it); a name workflowBases is
+// told about but that is not one of cfg.Workflows (extra, from a local
+// config's own repo listing) maps to "", not the base kind, since there is
+// no workflow to resolve a kind for.
+func TestWorkflowBasesSeesTheImplicitBaseKind(t *testing.T) {
+	cfg := &config.Config{Workflows: map[string]config.Workflow{"app": {}, "api": {Base: "go"}}}
+	m := workflowBases(cfg, []string{"api", "gone"})
+	if m["app"] != config.BaseKind || m["api"] != config.BaseKind || m["gone"] != "" {
+		t.Fatalf("workflowBases = %v, want app and api: %s, gone: \"\"", m, config.BaseKind)
 	}
 }
 
@@ -165,10 +188,10 @@ const cliCaution = "Every teammate's CLI and every CI job or pin that runs fugar
 
 func warnedLine(msg string) string { return "warning: " + msg + "\n" }
 
-// stageWarn is the stage's one warning about acme/app's workflow app (base
-// web-node): the same text as fugaro init --anchor's FAIL line.
+// stageWarn is the stage's one warning about acme/app's workflow app (the
+// base kind): the same text as fugaro init --anchor's FAIL line.
 func stageWarn(lcPath string, customBase bool, reasons ...string) string {
-	return warnedLine(anchorProblemText("acme/app", "app", "web-node", lcPath, reasons, customBase))
+	return warnedLine(anchorProblemText("acme/app", "app", "base", lcPath, reasons, customBase))
 }
 
 func TestRepoStageAnchorYesWrites(t *testing.T) {
@@ -362,16 +385,16 @@ func TestRepoStageAnchorWarnsDevImageAndCustomBase(t *testing.T) {
 		t.Errorf("output:\n%s\nwant:\n%s", out, want)
 	}
 	lc := anchorLC()
-	const ref = "us-east5-docker.pkg.dev/fugaro-aurora/fugaro-base/fugaro-web-node:dev-8fe2647"
+	const ref = "us-east5-docker.pkg.dev/fugaro-aurora/fugaro-base/fugaro-base:dev-8fe2647"
 	lc.Region = "us-east5"
-	lc.BaseImages = map[string]string{"web-node": ref}
+	lc.BaseImages = map[string]string{"base": ref}
 	s, out, _ = anchorRig(t, lc, withAnchor(anchorYAML()), "")
 	s.e.path = "/home/me/.config/fugaro/projects/aurora.yaml"
 	putRecord(t, "0.4.0")
 	if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
 		t.Fatal(err)
 	}
-	if want := stageWarn(s.e.path, true, reasonConfigBaseCustom(ref, "web-node")); out.String() != want {
+	if want := stageWarn(s.e.path, true, reasonConfigBaseCustom(ref, "base")); out.String() != want {
 		t.Errorf("output:\n%s\nwant:\n%s", out, want)
 	}
 }
@@ -396,7 +419,7 @@ func TestRepoStageAnchorUnreadableRecord(t *testing.T) {
 	}
 	got := out.String()
 	if !strings.Contains(got, "its build record could not be read (") || !strings.Contains(got, "so its age is unknown") ||
-		!strings.HasSuffix(got, "(1) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it copies this release's web-node base image, points the daily image check job at it and rebuilds the image), (2) fugaro init --anchor, before you merge a change that adds gcp_project\n") {
+		!strings.HasSuffix(got, "(1) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it copies this release's base base image, points the daily image check job at it and rebuilds the image), (2) fugaro init --anchor, before you merge a change that adds gcp_project\n") {
 		t.Errorf("output:\n%s", got)
 	}
 }

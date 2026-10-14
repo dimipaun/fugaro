@@ -67,7 +67,7 @@ agent:
   first_line_rounds: 1                # 1 to 3
 ```
 
-The catalog recipes `cheap-loop-senior` (two first-line rounds by the coder's model, then one senior round) and `claude-solo` (the coder's model also reviews) package the common shapes; see [recipes.md](recipes.md).
+The catalog recipes `standard` (a first-line loop by the coder's model, then one senior round) and `solo` (the coder's model also reviews) package the common shapes; see [recipes.md](recipes.md).
 
 `fugaro validate` checks the config-side rules above against the local config (a provider that claims the model, `allow_data_to`, `agent.auth`, the gateway being on, variants, prices); it cannot see whether the key is mounted or well formed, which only the runner refuses. With a provider coder and a Claude reviewer, `first_line_review: auto` makes the coder's model review and fix its own work first (`review_first` stages, recorded with `tier: first`); the Claude `review` always runs afterwards and alone decides whether the pull request is ready. The first line is priced as the provider model, so it adds cents; it can only add cost, never replace the senior review.
 
@@ -141,3 +141,31 @@ Two shapes a prior round of this fix also charged less than main for are reverte
 
   **Open question for Check 25, not yet settled:** with both variables set, Claude Code's `messages` array can carry an item with `"role":"system"` (a mid-conversation system message, a Claude Code beta turned on by the `anthropic-beta` header above). The gateway does not validate a message's `role` at all, so it is forwarded unchanged (`TestRoutedAcceptsNoThinkingClaudeCodeShape`, `internal/gateway/route_test.go`) — this is not a gap being left open, it is simply untouched by this fix. Whether **OpenRouter's compatible endpoint** accepts a `role: "system"` message mid-conversation (rather than only as the top-level `system` field) is unverified: no live call has been made. Check 25 step 4 must record what the endpoint does with it; nothing here assumes an answer either way.
   - The two variables only reach Claude Code's environment and the managed settings file's `env`; they say nothing about a setting outside `env`, such as a repository's or the agent's own `.claude/settings.json` carrying `"alwaysThinkingEnabled": true`. Whether that setting overrides `MAX_THINKING_TOKENS=0` (or interacts with it some other way) was not measured. If it does turn thinking back on, the request grows `context_management` again, and the gateway's existing allowlist refuses it (above): the call fails with no spend, the same `field "context_management" is not allowed on a provider route` error as before this fix, not a silent bypass. This fails closed, not open; nobody has confirmed whether `alwaysThinkingEnabled` even survives next to a provider-model pin, since `checkSettingsRouting` (`internal/runner/agentenv.go`) does not refuse it (it is not a routing key).
+
+## Direct to the vendor
+
+A model family does not have to go through OpenRouter. The same `providers:` block (§2) accepts a second entry pointed straight at the vendor's own Anthropic-compatible endpoint instead:
+
+```yaml
+providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["qwen/*"]
+    allow_data_to: [edgeappinc/fugarosandbox]
+  deepseek:
+    kind: anthropic-compat
+    base_url: https://api.deepseek.com/anthropic   # the vendor's own endpoint, not openrouter.ai
+    auth: bearer
+    secret: deepseek-api-key
+    models: ["deepseek/*"]
+    allow_data_to: [edgeappinc/fugarosandbox]
+```
+
+There is no separate "direct" knob: the `providers:` map is the only knob there is. The provider entry that claims a model is its route: to switch a model family between OpenRouter and its vendor, move its pattern from one entry to the other and run `fugaro init --repo`. Providers may not overlap (`fugaro validate` refuses two entries claiming the same model), so a family belongs to exactly one route at a time, and Claude models never go through a provider: `claude-*` and `anthropic/*` are unclaimable (§2), and always go direct to Anthropic regardless of what `providers:` lists.
+
+The account-side settings of §1 (no fallbacks, the data policy) are OpenRouter's own; a vendor's own endpoint has its own account-side settings to review, which are not enumerated here.
+
+**Unverified until Check 33:** that a vendor's own Anthropic-compatible endpoint (DeepSeek's, Moonshot's) accepts the gateway's forwarded request bodies byte for byte and reports usage the way the gateway reads it. Check 25 (§1) settles this for OpenRouter only; Check 33 of [gcp-live-checklist.md](gcp-live-checklist.md) is the equivalent for a vendor's own endpoint, and is optional and user-run.

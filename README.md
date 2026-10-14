@@ -8,11 +8,15 @@
 
 ## Why Fugaro
 
-- **The agent does not run on your machine.** It runs in a throwaway container in your cloud project, so it cannot read your laptop: not your files, your shell history, your SSH keys or your other credentials. It can reach the internet without restriction, its repository's secrets and git token, and (on GitHub) every repository its GitHub App is installed on: see [Safety and cost controls](#safety-and-cost-controls).
-- **Real parallelism.** Each task is its own job execution (up to `max_parallel`, 20 by default). Several agents with sub-agents, compiles and test suites no longer fight over one laptop's CPU, memory and battery.
-- **Always a pull request.** Every run that pushed ends in a pull request, a draft one if it failed, with the diff, the report and the logs. Fugaro never merges; protect the base branch so that only a person can.
-- **Cost control.** A per-stage dollar limit on every run; opt-in per-run dollar or token caps; optional project-wide daily caps with kill switches (they start in `observe`, which counts but does not refuse); and a cost line on every run.
-- **Your cloud, your model credentials.** It runs in your GCP project with your Claude subscription token, Anthropic API key or Vertex AI. There is no Fugaro service in between, and Cloud Run bills a task only while it runs (storage, the registries, Secret Manager, logging, the daily image check and image builds bill separately).
+Four reasons, in the order most people decide on them.
+
+**1. Safe by construction.** The agent does not run on your machine. It runs in a throwaway container in your own cloud project, so it cannot read your laptop: not your files, your shell history, your SSH keys or your other credentials. There is no Fugaro service in between: it uses your Google Cloud project and your model credentials (a Claude subscription token, an Anthropic API key or Vertex AI), and Cloud Run bills a task only while it runs. Every run that pushed ends in a pull request, a draft one if it failed, with the diff, the report and the logs; Fugaro never merges, so protect the base branch. The container can still reach the internet without restriction, its repository's secrets and git token, and (on GitHub) every repository its GitHub App is installed on: see [Safety and cost controls](#safety-and-cost-controls) for what it can and cannot reach.
+
+**2. Scale out, and walk away.** Each task is its own job execution (up to `max_parallel`, 20 by default, and bounded by your Cloud Run quotas and your budget caps), so several agents with sub-agents, compiles and test suites no longer fight over one laptop's CPU, memory and battery. Start a batch (`fugaro run --attempts N` for best-of-N on one task, or many tasks at once), close the laptop and come back to pull requests with their reports, logs and cost.
+
+**3. Team control in one place.** Policy lives in the project, not on each laptop. A project layer publishes shared defaults and named workflow profiles that every repository inherits, with rules for what a repository may change; the review loop is chosen from a catalog of recipes; only trusted authors can start a review or a follow-up; the owner decides which repositories' code may be sent to which model provider; spend is capped per stage by default, per run and per project when you turn the budget on, with kill switches; each workflow's job reads only the secrets that workflow mounts. These are enforcement points, not guarantees: the people who operate an installation are trusted, and the [security model](docs/design/v1.md#6-security-model) lists the residual risks.
+
+**4. The newest tools and models, ready to use.** One pinned, multi-architecture base image (Debian, with `mise` for each project's runtimes from its `mise.toml`) carries Claude Code, the tooling agents reach for, and [graphify](docs/base-image.md), so a run starts the same way for everyone and the image is rebuilt when a daily check finds it stale. Codex, Gemini CLI, Pi, Qwen Code, OpenCode, Goose and Crush are installed in it too, ready to be wired in; **today only Claude Code is driven by Fugaro**. You choose the model per role: the coder can be a non-Anthropic model through OpenRouter (a DeepSeek coder and reviewer has run end to end, and it is still marked experimental) while Claude Code stays the harness, and recipes combine a cheap coder with a strong reviewer. See [docs/multi-model.md](docs/multi-model.md) and [docs/recipes.md](docs/recipes.md).
 
 ## Getting started
 
@@ -31,7 +35,7 @@ Commit the `.claude/settings.json` change: a teammate who opens the folder in a 
 
 ```sh
 fugaro run "add a --verbose flag to the export command"
-fugaro ls --watch          # your runs until they settle
+fugaro runs ls --watch          # your runs until they settle
 fugaro diagnose <run>      # what happened: tests, review findings, cost, PR
 fugaro run --pr 42         # continue PR 42 from its trusted review comments
 ```
@@ -55,7 +59,7 @@ fugaro CLI ---- run ------------->    one execution per task, then gone
                                     Firebase (optional): the shared budget
 ```
 
-1. **Start** from the image of the repository's workflow (a named build-and-test setup in its `fugaro.yaml`): a base (`web-node`, `go` or `java-services`) plus its checkout and dependencies, rebuilt by Cloud Build when a daily check finds it stale.
+1. **Start** from the image of the repository's workflow (a named build-and-test setup in its `fugaro.yaml`): the one Fugaro base plus its checkout, its runtimes (from `mise.toml`) and its dependencies, rebuilt by Cloud Build when a daily check finds it stale.
 2. **Sync** to the exact target commit and restore the dependency caches.
 3. **Loop:** Claude Code implements, writes tests, runs the build and tests through a recording wrapper, reviews and fixes, for as many review rounds as configured.
 4. **Push and open the pull request**: each commit is pushed within about a minute while the agent works, a draft opens at the first push (marked not verified), and it is marked ready only when the run passes. Reviewers are requested only then. Set `git.pr.checkpoints` only once everyone is on 0.5.1, and refresh older job images with `fugaro image refresh`; on a host without draft PRs set `git.pr.early_draft: false` ([details](docs/git-providers.md#checkpoint-pushes-gitprcheckpoints)).
@@ -105,7 +109,7 @@ agent:
   max_budget_usd: 25          # per stage
 workflows:
   web:
-    base: web-node            # go | java-services | web-node
+    # the repository's mise.toml (or image.tools) declares its runtimes
     commands:
       build: npm run build
       test: npm test
@@ -117,7 +121,7 @@ workflows:
 
 `agent.models` pins a model per role (coder, reviewer, background), and an optional `budget:` block can only tighten the owner's caps ([docs/gcp-setup.md](docs/gcp-setup.md#turning-the-model-budget-on)). **Other models (experimental):** the coder can be a non-Anthropic model through OpenRouter, while Claude Code stays the harness and Claude the reviewer; the project owner opts each repository in. See [docs/multi-model.md](docs/multi-model.md).
 
-**Recipes:** pick the review loop per run (`fugaro run --recipe claude-solo`) or per repository (`agent.recipe`); see [docs/recipes.md](docs/recipes.md).
+**Recipes:** pick the review loop per run (`fugaro run --recipe solo`) or per repository (`agent.recipe`); see [docs/recipes.md](docs/recipes.md).
 
 **Project layer:** a project can publish shared defaults and named workflow profiles that every anchored repository's minimal `fugaro.yaml` inherits; see [docs/project-layer.md](docs/project-layer.md).
 
@@ -138,7 +142,7 @@ A new cloud is a backend behind the interface in `internal/backend` plus its pro
 
 ## Roadmap
 
-- [x] Runner, git providers (GitHub, Bitbucket Cloud), base images (`web-node`, `go`, `java-services`), the Cloud Run backend and CLI
+- [x] Runner, git providers (GitHub, Bitbucket Cloud), the base image (one, multi-architecture, with mise), the Cloud Run backend and CLI
 - [x] `fugaro init` and `/fugaro:setup`, the five plugin skills, teammates with no setup
 - [x] Follow-up runs, early draft PRs, the shared budget, `fugaro watch` and `fugaro report`, other models through OpenRouter (experimental)
 - [x] Releases with GoReleaser, the Homebrew tap and cosign-signed checksums

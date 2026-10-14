@@ -1,0 +1,8 @@
+version: 1
+project: aurora
+gcp_project: proj-1234
+profiles:
+  p:
+    checkout: clone
+    image: { tools: { node: "24" } }
+    commands: { build: npm run build, test: npm test }

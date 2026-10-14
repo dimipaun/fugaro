@@ -61,6 +61,13 @@ const (
 	RTDBURLEnv        = runner.RTDBURLEnv
 	FirebaseAPIKeyEnv = runner.FirebaseAPIKeyEnv
 	BudgetGraceEnv    = runner.BudgetGraceEnv
+	// CheckoutEnv, set to config.CheckoutClone on a checkout: clone
+	// workflow's job (never on a baked one, whose spec stays exactly what
+	// it was before clone existed), tells the runner's bootstrap to make a
+	// blobless clone at start instead of moving a baked-in one (design
+	// generic-tool.md §2, G4; plan Task 17, not yet merged: this value is
+	// inert until the runner reads it).
+	CheckoutEnv = "FUGARO_CHECKOUT"
 )
 
 // The installation-identity env vars platformEnv and the vertex branch of
@@ -176,6 +183,10 @@ type WorkflowSpec struct {
 	// LegacyImage is the M4 image path in the local config's legacy
 	// registry, untagged as M4 printed it; empty without one.
 	LegacyImage string `json:"-"`
+	// Checkout is the workflow's config.Checkout (baked or clone): clone
+	// runs the installation's base image directly (Image is base_images.base,
+	// not a derived image), with no per-repository build or daily check.
+	Checkout string `json:"-"`
 }
 
 // Registry is the repository's own image registry.
@@ -588,10 +599,20 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	lc, slug := c.lc, c.slug
 	variant := gcp.WorkflowVariant(name, token)
 	saID := gcp.ServiceAccountID(slug, variant)
+	// checkout: clone runs the installation's base image directly (design
+	// generic-tool.md §2, G3): there is no per-repository derived image, so
+	// the job's image is base_images.base, not a :latest tag in the
+	// repository's own registry. Every token variant of the workflow runs
+	// the same image.
+	image := gcp.ImageName(c.registryPath(), slug, name) + ":latest"
+	if w.Checkout == config.CheckoutClone {
+		image = lc.BaseImage(config.BaseKind)
+	}
 	ws := WorkflowSpec{
 		Job:            gcp.JobName(slug, variant),
 		ServiceAccount: ServiceAccount{AccountID: saID, DisplayName: gcp.JobSADisplayName(slug, variant)},
-		Image:          gcp.ImageName(c.registryPath(), slug, name) + ":latest",
+		Image:          image,
+		Checkout:       w.Checkout,
 		CPU:            strconv.Itoa(w.Resources.CPU),
 		Memory:         w.Resources.Memory,
 		TaskTimeoutS:   int((w.Timeouts.Total.Duration + backend.TaskTimeoutSlack) / time.Second),
@@ -613,6 +634,9 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	}
 	if lc.Registry != "" {
 		ws.LegacyImage = gcp.ImageName(lc.Registry, slug, name)
+	}
+	if w.Checkout == config.CheckoutClone {
+		ws.Env[CheckoutEnv] = config.CheckoutClone
 	}
 	if ws.Vertex {
 		ws.Env[VertexRegionEnv] = lc.Region
@@ -786,8 +810,10 @@ func Repo(in Inputs) (RepoSpec, error) {
 		}
 		// The daily check covers the workflow's image, the same image
 		// across every token variant: once per logical workflow, not once
-		// per variant.
-		if in.Cfg.Workflows[name].Rebuild.Defaults().Check != "off" {
+		// per variant. A checkout: clone workflow has no derived image to
+		// rebuild, so the daily check never covers it, whatever its
+		// rebuild.check says.
+		if in.Cfg.Workflows[name].Checkout != config.CheckoutClone && in.Cfg.Workflows[name].Rebuild.Defaults().Check != "off" {
 			checked = append(checked, name)
 		}
 	}
@@ -840,7 +866,7 @@ func (c *repoCtx) check(rs RepoSpec, checked []string) (*CheckSpec, error) {
 	bases := map[string]string{}
 	var missing []string
 	for _, name := range checked {
-		kind := c.in.Cfg.Workflows[name].Base
+		kind := c.in.Cfg.Workflows[name].BaseKind()
 		if ref := lc.BaseImage(kind); ref != "" {
 			bases[kind] = ref
 		} else if !slices.Contains(missing, kind) {
@@ -876,7 +902,7 @@ func (c *repoCtx) check(rs RepoSpec, checked []string) (*CheckSpec, error) {
 	env[runner.SecretEnvsVar] = gitEnv
 	return &CheckSpec{
 		Job:             gcp.CheckJobName(c.slug),
-		Image:           bases[c.in.Cfg.Workflows[checked[0]].Base],
+		Image:           bases[c.in.Cfg.Workflows[checked[0]].BaseKind()],
 		SchedulerJob:    gcp.SchedulerJobName(c.slug),
 		SchedulerRegion: region,
 		Schedule:        Schedule(c.slug),

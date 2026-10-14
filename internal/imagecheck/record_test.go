@@ -32,14 +32,15 @@ const webYAML = `version: 1
 project: aurora
 git: { provider: github }
 workflows:
-  web: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }
+  web: { commands: { build: sh build.sh, test: sh test.sh } }
 `
 
-// TestKeyFilesDefaultsWebNode: a web-node workflow without cache: gets the
-// per-base default, keyed by the lockfile package.json's packageManager
-// picks (yarn here, although an npm lockfile is also present), and the
+// TestKeyFilesDefaultsNodeLockfiles: a base-kind workflow without cache:
+// gets the Node default, keyed by the lockfile package.json's
+// packageManager picks (yarn here, although an npm lockfile is also
+// present), and every lockfile the default knows is found on its own; the
 // key files carry git's blob IDs.
-func TestKeyFilesDefaultsWebNode(t *testing.T) {
+func TestKeyFilesDefaultsNodeLockfiles(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{
 		"package.json":      `{"name":"web","packageManager":"yarn@1.22.22"}`,
@@ -122,8 +123,7 @@ project: aurora
 git: { provider: github }
 workflows:
   web:
-    base: web-node
-    image: { node: "20", apt: [curl], setup: [echo hi] }
+    image: { tools: { node: "20" }, apt: [curl], setup: [echo hi] }
     commands: { build: sh build.sh, test: sh test.sh }
 `
 	const withDockerfile = `version: 1
@@ -131,7 +131,6 @@ project: aurora
 git: { provider: github }
 workflows:
   web:
-    base: web-node
     dockerfile: .fugaro/web.Dockerfile
     commands: { build: sh build.sh, test: sh test.sh }
 `
@@ -161,13 +160,13 @@ workflows:
 		{"same dockerfile", withDockerfile, withDockerfile, "FROM x\n", false},
 		{"image.apt", withImage, strings.Replace(withImage, "apt: [curl]", "apt: [curl, jq]", 1), "FROM x\n", true},
 		{"image.setup", withImage, strings.Replace(withImage, "echo hi", "echo bye", 1), "FROM x\n", true},
-		{"image.node", withImage, strings.Replace(withImage, `node: "20"`, `node: "22"`, 1), "FROM x\n", true},
+		{"image.tools", withImage, strings.Replace(withImage, `node: "20"`, `node: "22"`, 1), "FROM x\n", true},
 		{"dockerfile content", withDockerfile, withDockerfile, "FROM y\n", true},
 		{"dockerfile path", withDockerfile, strings.Replace(withDockerfile, "web.Dockerfile", "other.Dockerfile", 1), "FROM x\n", true},
 		{"dockerfile instead of image", withImage, withDockerfile, "FROM x\n", true},
 		{"commands", withImage, strings.Replace(withImage, "sh build.sh", "make", 1), "FROM x\n", false},
-		{"secrets", withImage, strings.Replace(withImage, "    base: web-node\n", "    base: web-node\n    secrets: [{ name: npm-token, env: NPM_TOKEN }]\n", 1), "FROM x\n", false},
-		{"rebuild", withImage, strings.Replace(withImage, "    base: web-node\n", "    base: web-node\n    rebuild: { max_age: 3d }\n", 1), "FROM x\n", false},
+		{"secrets", withImage, strings.Replace(withImage, "    commands:", "    secrets: [{ name: npm-token, env: NPM_TOKEN }]\n    commands:", 1), "FROM x\n", false},
+		{"rebuild", withImage, strings.Replace(withImage, "    commands:", "    rebuild: { max_age: 3d }\n    commands:", 1), "FROM x\n", false},
 		{"agent", withImage, strings.Replace(withImage, "git: { provider: github }\n", "git: { provider: github }\nagent: { model: other }\n", 1), "FROM x\n", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -177,10 +176,10 @@ workflows:
 			}
 		})
 	}
-	// base: only web-node is known today, so a different base is compared
-	// on the canonical form directly.
-	a, _ := json.Marshal(imageConfig{Base: "web-node"})
-	b, _ := json.Marshal(imageConfig{Base: "java-services"})
+	// base: only config.BaseKind is known today, so a different base is
+	// compared on the canonical form directly.
+	a, _ := json.Marshal(imageConfig{Base: config.BaseKind})
+	b, _ := json.Marshal(imageConfig{Base: ""})
 	if hashOf(a) == hashOf(b) {
 		t.Error("base does not change the hash")
 	}
@@ -211,6 +210,92 @@ func TestRecordJSON(t *testing.T) {
 	}
 	if RecordKey("acme-webapp-0123456789abcdef", "web") != "builds/acme-webapp-0123456789abcdef/web/image.json" {
 		t.Errorf("RecordKey = %s", RecordKey("acme-webapp-0123456789abcdef", "web"))
+	}
+}
+
+const baseWorkflowYAML = `version: 1
+project: aurora
+git: { provider: github }
+workflows:
+  app: { commands: { build: make, test: make test } }
+`
+
+// A changed root mise file or image.tools makes the image wrong: the hash
+// moves. Files mise does not read at the root leave it alone.
+func TestImageConfigHashCoversMiseFiles(t *testing.T) {
+	hash := func(t *testing.T, yaml string, files map[string]string) string {
+		t.Helper()
+		dir := t.TempDir()
+		testutil.WriteFiles(t, dir, files)
+		h, err := ImageConfigHash(parse(t, yaml), "app", Dir{Root: dir})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h
+	}
+	ref := hash(t, baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n"})
+	for _, tc := range []struct {
+		name    string
+		yaml    string
+		files   map[string]string
+		changes bool
+	}{
+		{"same", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n"}, false},
+		{"mise.toml", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"22\"\n"}, true},
+		{"mise.lock", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", "mise.lock": "x"}, true},
+		{"conf.d", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", ".config/mise/conf.d/a.toml": "x"}, true},
+		// mise itself ignores a dotfile fragment in conf.d (hidden files
+		// aren't config), so miseFiles must skip it too: a project dropping
+		// a .x.toml there (an editor swap file, say) must not rebuild.
+		{"dotfile in conf.d", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", ".config/mise/conf.d/.x.toml": "x"}, false},
+		{".tool-versions", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", ".tool-versions": "go 1.27\n"}, true},
+		{"subdirectory", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", "web/mise.toml": "x"}, false},
+		{"mise.local.toml", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", "mise.local.toml": "x"}, false},
+		{"image.tools", strings.Replace(baseWorkflowYAML, "app: {", "app: { image: { tools: { node: \"24\" } },", 1), map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hash(t, tc.yaml, tc.files); (got != ref) != tc.changes {
+				t.Errorf("changed = %v, want %v", got != ref, tc.changes)
+			}
+		})
+	}
+}
+
+// TestImageConfigHashLegacyCanonicalForm pins the canonical JSON shape of an
+// already-archived legacy record of a kind the 0.7.0 cut removed (go, web-node, java-services):
+// no new keys such as tools or mise_files, so an old record read back for
+// comparison still decodes the same way. It no longer
+// pins a golden hash for a *recomputed* legacy workflow: base: is refused by
+// Validate in 0.7.0 (TestLegacyBaseRefusedWithTheMigrationDoc), and
+// Workflow.BaseKind() always returns BaseKind now, so there is no longer a
+// code path that recomputes an image config hash with Base other than
+// BaseKind. A repository's one rebuild on migrating off a legacy base (Task
+// 22's fugaro image refresh) is the intended effect of the cut, not a bug.
+func TestImageConfigHashLegacyCanonicalForm(t *testing.T) {
+	c := imageConfig{Base: "web-node"} // a 0.7.0-removed kind, archived before the cut
+	data, _ := json.Marshal(c)
+	if strings.Contains(string(data), "tools") || strings.Contains(string(data), "mise_files") {
+		t.Errorf("legacy canonical form gained keys: %s", data)
+	}
+}
+
+// TestKeyFilesDefaultsBaseKind: the base kind's default cache is the Node
+// package manager's (KeyFiles gives the base kind the Node default cache),
+// keyed by whatever lockfile is present.
+func TestKeyFilesDefaultsBaseKind(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"package.json": `{"name":"app","packageManager":"yarn@1.22.22"}`,
+		"yarn.lock":    "# yarn lockfile v1\n",
+	}
+	testutil.WriteFiles(t, dir, files)
+	got, err := KeyFiles(parse(t, baseWorkflowYAML), "app", Dir{Root: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"yarn.lock": gitBlobID(files["yarn.lock"])}
+	if !maps.Equal(got, want) {
+		t.Fatalf("KeyFiles = %v, want %v", got, want)
 	}
 }
 

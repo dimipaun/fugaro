@@ -190,7 +190,7 @@ func (c *checkTarget) evaluate(ctx context.Context, name string) (evaluation, er
 			}
 		}
 	}
-	kind := c.cfg.Workflows[name].Base
+	kind := c.cfg.Workflows[name].BaseKind()
 	in := imagecheck.Inputs{
 		Config: c.cfg, Workflow: name, Record: rec, LastCheck: ev.prev, LastBuildStatus: ev.lastStatus,
 		Head: c.tree.Head(), Tree: c.tree, Changed: c.tree.Changed,
@@ -215,11 +215,14 @@ func (c *checkTarget) evaluate(ctx context.Context, name string) (evaluation, er
 	return ev, nil
 }
 
-// checkedWorkflows are head's workflows whose rebuild.check is not off.
+// checkedWorkflows are head's workflows whose rebuild.check is not off. A
+// checkout: clone workflow has no derived image to rebuild, so it is never
+// checked, whatever its rebuild.check says.
 func checkedWorkflows(cfg *config.Config) []string {
 	var out []string
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
-		if cfg.Workflows[name].Rebuild.Defaults().Check != "off" {
+		w := cfg.Workflows[name]
+		if w.Checkout != config.CheckoutClone && w.Rebuild.Defaults().Check != "off" {
 			out = append(out, name)
 		}
 	}
@@ -462,15 +465,18 @@ func readJobEnv() (jobEnv, error) {
 func (e jobEnv) repoSpec(cfg *config.Config) (infra.RepoSpec, *localcfg.Config, error) {
 	s := e.spec
 	host, _, _ := strings.Cut(s.Registry, "/"+e.gcpProject+"/")
-	// The spec names the base of the kinds the job was installed for. A kind
-	// head's fugaro.yaml has since added has no base here, and its workflow
-	// is reported as not installed rather than checked, so the job's own
-	// image stands in for the spec's sake.
+	// The spec names the base of the kinds the job was installed for. A job
+	// whose own installed spec predates the 0.7.0 cut (fugaro image refresh
+	// or init --repo has not run there since) still names a kind config.Bases
+	// no longer has, so the one kind every HEAD workflow now resolves to
+	// (base) has no entry here yet; it stands in with whichever kind's
+	// image the old spec does have, rather than refusing the whole job.
 	bases := maps.Clone(s.BaseImages)
 	stand := bases[slices.Sorted(maps.Keys(bases))[0]]
 	for _, w := range cfg.Workflows {
-		if bases[w.Base] == "" {
-			bases[w.Base] = stand
+		kind := w.BaseKind()
+		if bases[kind] == "" {
+			bases[kind] = stand
 		}
 	}
 	lc := &localcfg.Config{
@@ -687,7 +693,7 @@ func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 // build sends, generated now by this fugaro. The check never skips the
 // smoke test: a request without it is refused before it is sent.
 func submitRebuild(ctx context.Context, b *gcp.Builder, project string, rs infra.RepoSpec, cfg *config.Config, name string, s infra.CheckJobSpec, recordBucket string) (id, status string, err error) {
-	kind := cfg.Workflows[name].Base
+	kind := cfg.Workflows[name].BaseKind()
 	base := s.BaseImages[kind]
 	if base == "" {
 		return "", "", fmt.Errorf("the installed check job has no %s base image: %s", kind, notInstalledReason)
@@ -747,7 +753,7 @@ func runImageCheckLocal(cmd *cobra.Command, o imageCheckOptions) error {
 	}
 	checkoutCfg := rf.Cfg
 	for _, name := range checkedWorkflows(checkoutCfg) {
-		if kind := checkoutCfg.Workflows[name].Base; lc.BaseImage(kind) == "" {
+		if kind := checkoutCfg.Workflows[name].BaseKind(); lc.BaseImage(kind) == "" {
 			return userErr("the local config has no base_images.%s, which the daily check builds %s from; set it first", kind, name)
 		}
 	}
@@ -788,8 +794,12 @@ func runImageCheckLocal(cmd *cobra.Command, o imageCheckOptions) error {
 	}
 	workflows := checkedWorkflows(cfg)
 	if o.workflow != "" {
-		if _, ok := cfg.Workflows[o.workflow]; !ok {
+		w, ok := cfg.Workflows[o.workflow]
+		if !ok {
 			return userErr("the base branch's fugaro.yaml has no workflow %q", o.workflow)
+		}
+		if w.Checkout == config.CheckoutClone {
+			return userErr("workflow %s runs checkout: clone; it has no image for fugaro image check to evaluate", o.workflow)
 		}
 		workflows = []string{o.workflow}
 	}

@@ -13,6 +13,7 @@ import (
 
 	storage "google.golang.org/api/storage/v1"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 )
 
@@ -159,7 +160,9 @@ func SecretVersions(ctx context.Context, c *Clients, spec RepoSpec) (map[string]
 // NeedsBuild are the workflows, sorted, whose first image build can go
 // ahead: there is no build record yet (a new repository, or an adopted one
 // whose image is still the bootstrap's), and every secret the workflow
-// mounts has a version (versions, from SecretVersions).
+// mounts has a version (versions, from SecretVersions). A checkout: clone
+// workflow never needs one: it runs the installation's base image directly,
+// and there is no per-repository image to build or push.
 //
 // spec.Workflows may hold several keys per fugaro.yaml workflow, one per
 // Claude account the repository may choose (gcp.WorkflowVariant, design
@@ -173,7 +176,7 @@ func NeedsBuild(ctx context.Context, c *Clients, spec RepoSpec, versions map[str
 	var out []string
 	for _, key := range slices.Sorted(maps.Keys(spec.Workflows)) {
 		ws := spec.Workflows[key]
-		if key != ws.Name {
+		if key != ws.Name || ws.Checkout == config.CheckoutClone {
 			continue
 		}
 		if slices.ContainsFunc(uniqueSecrets(ws), func(l string) bool { return !versions[l] }) {

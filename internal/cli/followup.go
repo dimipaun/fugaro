@@ -91,7 +91,7 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 		case runview.StatusError:
 			return nil, userErr("run %s on PR #%d can't be read (%s), so the PR's state is unknown; see fugaro diagnose %s", r.Run, pr, oneLine(r.Reason), r.Run)
 		case runview.StatusLaunching, runview.StatusPending, string(runstore.StatusRunning):
-			return nil, userErr("run %s on PR #%d is still %s; wait for it to finish (fugaro ls --pr %d --repo %s) or cancel it", r.Run, pr, r.Status, pr, repo)
+			return nil, userErr("run %s on PR #%d is still %s; wait for it to finish (fugaro runs ls --pr %d --repo %s) or cancel it", r.Run, pr, r.Status, pr, repo)
 		case runview.StatusUnlaunched:
 			fmt.Fprintf(warn, "warning: run %s on PR #%d never launched; leaving it out\n", oneLine(r.Run), pr)
 			continue
@@ -367,7 +367,7 @@ func prSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tota
 			return slug, spec, spec != nil, err
 		}
 	}
-	c, err := resolvePR(ctx, env, repo, slug, o.pr, o.runID, warn)
+	c, err := resolvePR(ctx, env, repo, slug, o.pr[0], o.runID, warn)
 	if err != nil {
 		return "", nil, false, err
 	}
@@ -400,7 +400,7 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 	if have.Recipe != nil {
 		haveRecipe = have.Recipe.Name
 	}
-	if have.PR != o.pr || have.Task != text || have.Batch != o.batch || string(a) != string(b) || (o.recipe != "" && o.recipe != haveRecipe) ||
+	if have.PR != o.pr[0] || have.Task != text || have.Batch != o.batch || string(a) != string(b) || (o.recipe != "" && o.recipe != haveRecipe) ||
 		(o.token != "" && o.token != cmp.Or(have.OAuthToken, config.DefaultClaudeAccount)) {
 		return nil, userErr("run ID %s already holds a different task", o.runID)
 	}
@@ -494,6 +494,9 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		if err != nil {
 			return nil, err
 		}
+		if err := refuseFollowUpReviewMode(rr.Recipe, rr.Name); err != nil {
+			return nil, err
+		}
 		printRecipeNote(warn, rr, true)
 		rcp = rr.taskRecipe()
 	} else if rcp == nil && c.Chosen != nil {
@@ -503,12 +506,16 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		}
 	} else if rcp != nil && rcp.YAML != "" {
 		// An inherited recipe is parsed again: a bad one fails here, not in the cloud.
-		if _, err := parseRecipeAt([]byte(rcp.YAML), rcp.Name, "the recipe of the previous run ("+rcp.Name+")"); err != nil {
+		inherited, err := parseRecipeAt([]byte(rcp.YAML), rcp.Name, "the recipe of the previous run ("+rcp.Name+")")
+		if err != nil {
+			return nil, err
+		}
+		if err := refuseFollowUpReviewMode(inherited, rcp.Name); err != nil {
 			return nil, err
 		}
 	}
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: c.Ref, Workflow: workflow, Task: text,
-		Branch: c.Branch, PR: o.pr, PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp}
+		Branch: c.Branch, PR: o.pr[0], PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
 	}
@@ -551,16 +558,22 @@ func carryChosenRecipe(ctx context.Context, env *cloudEnv, repo string, c *prCha
 	if ch.Source == string(recipe.SourceRepo) {
 		rcp = &task.Recipe{Name: ch.Name, Source: ch.Source}
 	} else {
-		rr, err := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), ch.Name, time.Now(), false)
-		if err != nil {
-			msg := func(cause error) error {
-				return fmt.Errorf("the recipe run %s ran (%s) cannot be used: %w; pass --recipe NAME to choose another", pluginwire.Printable(oneLineCLI(c.Previous.Run)), ch.Name, cause)
-			}
+		msg := func(cause error) error {
+			return fmt.Errorf("the recipe run %s ran (%s) cannot be used: %w; pass --recipe NAME to choose another", pluginwire.Printable(oneLineCLI(c.Previous.Run)), ch.Name, cause)
+		}
+		wrap := func(err error) error {
 			var ee *ExitError
 			if errors.As(err, &ee) {
-				return nil, &ExitError{Code: ee.Code, Err: msg(ee.Err)}
+				return &ExitError{Code: ee.Code, Err: msg(ee.Err)}
 			}
-			return nil, msg(err)
+			return msg(err)
+		}
+		rr, err := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), ch.Name, time.Now(), false)
+		if err != nil {
+			return nil, wrap(err)
+		}
+		if err := refuseFollowUpReviewMode(rr.Recipe, rr.Name); err != nil {
+			return nil, wrap(err)
 		}
 		printRecipeNote(warn, rr, true)
 		rcp = rr.taskRecipe()

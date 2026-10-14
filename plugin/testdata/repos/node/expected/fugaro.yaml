@@ -1,0 +1,10 @@
+version: 1
+project: acme
+git: { provider: github, base_branch: main }
+workflows:
+  web:
+    image:
+      apt: [libvips-dev]
+    commands:
+      build: npm run build
+      test: CI=true npm test
