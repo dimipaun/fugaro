@@ -251,12 +251,15 @@ type Workflow struct {
 	Timeouts   Timeouts     `yaml:"timeouts"`
 	Rebuild    Rebuild      `yaml:"rebuild"`
 	// Checkout is baked (the derived image holds a clone the runner moves
-	// to the task's ref) or clone (the job is meant to run the
-	// installation's base image, with the runner making a blobless clone at
-	// start); "" defaults to baked (design generic-tool.md §2, G3, G5).
-	// Validates only today: the runner and the build do not yet act on
-	// clone (Tasks 16/17, not merged), so every workflow still builds and
-	// runs the baked image regardless of this value.
+	// to the task's ref) or clone (the job runs the installation's base
+	// image directly, with the runner making a blobless clone at start);
+	// "" defaults to baked (design generic-tool.md §2, G3, G5). The build
+	// acts on it (generic-tool plan Task 16): a clone workflow's job image
+	// is base_images.base, with no per-repository image build or daily
+	// check. The runner does not yet (plan Task 17, not merged), so a
+	// clone workflow's job cannot actually run until it lands, and the
+	// installation's base image (fugaro-base) is published, which is a
+	// separate, person-run step this plan does not do.
 	Checkout string `yaml:"checkout,omitempty"`
 }
 

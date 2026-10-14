@@ -371,27 +371,60 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		}
 	}
 	if prior == nil {
-		agentRecipe, kind := "", ""
+		agentRecipe, kind, clone := "", "", false
 		if co := checkoutConfig(ctx, spec.Repo); co != nil {
 			agentRecipe = co.Agent.Recipe
 			if w, ok := co.Workflows[spec.Workflow]; ok {
 				kind = w.BaseKind()
+				clone = w.Checkout == config.CheckoutClone
 			}
 		}
-		if needsRecipeImage(spec, agentRecipe) {
-			if err := checkRecipeImage(ctx, env, slug, spec, kind, warn); err != nil {
+		// checkRecipeImage and checkImageSince judge a workflow's derived
+		// image by its build record, which a checkout: clone workflow never
+		// has (it runs the installation's base image directly, not a
+		// per-repository build): checkCloneImageSince judges base_images.base
+		// itself instead. cloneSince is unconditional: a clone workflow needs
+		// the runner's own blobless-clone bootstrap (plan Task 17,
+		// FUGARO_CHECKOUT) whether or not it uses a recipe or a project
+		// layer, and nothing else here enforces that base_images.base is
+		// actually that recent: fugaro-base could first be published from an
+		// older release, or --image-source could mirror one.
+		if clone {
+			if err := checkCloneImageSince(env.lc, spec, cloneSince, "this checkout: clone workflow", "how to provision a blobless clone (FUGARO_CHECKOUT)", "", warn); err != nil {
 				return launchResult{}, err
 			}
-		}
-		if spec.ProjectLayer != nil {
-			if err := checkImageSince(ctx, env, slug, spec, kind, layeredSince, "the project layer", "the project layer", "", warn); err != nil {
-				return launchResult{}, err
+			if needsRecipeImage(spec, agentRecipe) {
+				if err := checkCloneRecipeImage(env.lc, spec, warn); err != nil {
+					return launchResult{}, err
+				}
 			}
-		}
-		if spec.OAuthToken != "" {
-			if err := checkImageSince(ctx, env, slug, spec, kind, namedTokensSince,
-				"Claude account "+pluginwire.Printable(spec.OAuthToken), "named Claude accounts", "", warn); err != nil {
-				return launchResult{}, err
+			if spec.ProjectLayer != nil {
+				if err := checkCloneImageSince(env.lc, spec, layeredSince, "the project layer", "the project layer", "", warn); err != nil {
+					return launchResult{}, err
+				}
+			}
+			if spec.OAuthToken != "" {
+				if err := checkCloneImageSince(env.lc, spec, namedTokensSince,
+					"Claude account "+pluginwire.Printable(spec.OAuthToken), "named Claude accounts", "", warn); err != nil {
+					return launchResult{}, err
+				}
+			}
+		} else {
+			if needsRecipeImage(spec, agentRecipe) {
+				if err := checkRecipeImage(ctx, env, slug, spec, kind, warn); err != nil {
+					return launchResult{}, err
+				}
+			}
+			if spec.ProjectLayer != nil {
+				if err := checkImageSince(ctx, env, slug, spec, kind, layeredSince, "the project layer", "the project layer", "", warn); err != nil {
+					return launchResult{}, err
+				}
+			}
+			if spec.OAuthToken != "" {
+				if err := checkImageSince(ctx, env, slug, spec, kind, namedTokensSince,
+					"Claude account "+pluginwire.Printable(spec.OAuthToken), "named Claude accounts", "", warn); err != nil {
+					return launchResult{}, err
+				}
 			}
 		}
 		if err := checkMaxParallel(ctx, env); err != nil {

@@ -1,0 +1,8 @@
+version: 1
+project: aurora
+git: { provider: github }
+workflows:
+  web:
+    base: go # any base: was removed in 0.7.0, with checkout: clone too
+    checkout: clone
+    commands: { build: go build ./..., test: go test ./... }

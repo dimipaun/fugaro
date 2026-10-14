@@ -215,11 +215,14 @@ func (c *checkTarget) evaluate(ctx context.Context, name string) (evaluation, er
 	return ev, nil
 }
 
-// checkedWorkflows are head's workflows whose rebuild.check is not off.
+// checkedWorkflows are head's workflows whose rebuild.check is not off. A
+// checkout: clone workflow has no derived image to rebuild, so it is never
+// checked, whatever its rebuild.check says.
 func checkedWorkflows(cfg *config.Config) []string {
 	var out []string
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
-		if cfg.Workflows[name].Rebuild.Defaults().Check != "off" {
+		w := cfg.Workflows[name]
+		if w.Checkout != config.CheckoutClone && w.Rebuild.Defaults().Check != "off" {
 			out = append(out, name)
 		}
 	}
@@ -791,8 +794,12 @@ func runImageCheckLocal(cmd *cobra.Command, o imageCheckOptions) error {
 	}
 	workflows := checkedWorkflows(cfg)
 	if o.workflow != "" {
-		if _, ok := cfg.Workflows[o.workflow]; !ok {
+		w, ok := cfg.Workflows[o.workflow]
+		if !ok {
 			return userErr("the base branch's fugaro.yaml has no workflow %q", o.workflow)
+		}
+		if w.Checkout == config.CheckoutClone {
+			return userErr("workflow %s runs checkout: clone; it has no image for fugaro image check to evaluate", o.workflow)
 		}
 		workflows = []string{o.workflow}
 	}

@@ -156,6 +156,9 @@ func validateCheckout(p string, w Workflow) []Problem {
 		return ps
 	}
 	const msg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
+	// A base: alongside clone needs no refusal of its own here: since the
+	// 0.7.0 cut every non-empty base: (legacy or not) is refused by the
+	// caller with legacyBaseMessage, so clone can never silently ignore one.
 	if len(w.Image.Apt) > 0 {
 		add(p+".image.apt", "%s", msg)
 	}

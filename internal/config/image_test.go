@@ -145,10 +145,26 @@ func TestCloneRefusesImageBuildKeys(t *testing.T) {
 	}
 }
 
+// cloneYAML is webYAML without base: web-node: checkout: clone always runs
+// the Fugaro base image, so combining it with a legacy base is refused
+// (TestCheckoutCloneRefusesLegacyBase), and these two tests must not
+// trip that rule while pinning something else.
+const cloneYAML = `
+version: 1
+project: aurora
+git:
+  provider: github
+workflows:
+  web:
+    commands:
+      build: npm run build
+      test: npm test
+`
+
 // TestCheckoutCloneAlone is the companion to TestCloneRefusesImageBuildKeys:
 // checkout: clone with no build keys set is valid.
 func TestCheckoutCloneAlone(t *testing.T) {
-	cfg, problems := Parse([]byte(webYAML + "    checkout: clone\n"))
+	cfg, problems := Parse([]byte(cloneYAML + "    checkout: clone\n"))
 	if len(problems) > 0 {
 		t.Fatalf("unexpected problems: %v", problems)
 	}
@@ -163,7 +179,7 @@ func TestCheckoutCloneAlone(t *testing.T) {
 // corpus: testdata/config/valid/checkout-clone-empty-apt.yaml exercises the
 // same boundary against fugaro.schema.json).
 func TestCheckoutCloneAllowsEmptyBuildKeys(t *testing.T) {
-	cfg, problems := Parse([]byte(webYAML + "    checkout: clone\n    image: { apt: [], setup: [], tools: {}, skip_build_scripts: false }\n"))
+	cfg, problems := Parse([]byte(cloneYAML + "    checkout: clone\n    image: { apt: [], setup: [], tools: {}, skip_build_scripts: false }\n"))
 	if len(problems) > 0 {
 		t.Fatalf("unexpected problems: %v", problems)
 	}
@@ -223,6 +239,51 @@ func TestCheckoutCloneSkipBuildCorpus(t *testing.T) {
 	const msg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
 	if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != "workflows.web.image.skip_build_scripts" || !strings.Contains(ps[0].Message, msg) {
 		t.Fatalf("problems = %v, want exactly one at workflows.web.image.skip_build_scripts: %s", ps, msg)
+	}
+}
+
+// TestCheckoutCloneRefusesLegacyBase (review finding 4, LOW): checkout:
+// clone always runs the Fugaro base image, so a base: alongside it is
+// refused rather than silently ignored. Since the 0.7.0 cut every base:
+// (the legacy go, java-services, web-node, and base itself) is refused by
+// the shared legacyBaseMessage; this pins that the refusal still holds with
+// checkout: clone, and that it is exactly one problem (not doubled by a
+// clone-specific copy).
+//
+// Mutation (run, restore): remove the `if w.Base != ""` refusal from
+// validate.go's workflow loop — this test then wrongly accepts every base:
+// with checkout: clone.
+func TestCheckoutCloneRefusesLegacyBase(t *testing.T) {
+	for _, base := range []string{"go", "java-services", "web-node", "base"} {
+		yaml := "\nversion: 1\nproject: aurora\ngit:\n  provider: github\nworkflows:\n  web:\n    base: " + base +
+			"\n    checkout: clone\n    commands:\n      build: x\n      test: x\n"
+		_, ps := Parse([]byte(yaml))
+		if len(ps) != 1 || ps[0].Path != "workflows.web.base" || !strings.Contains(ps[0].Message, "was removed in 0.7.0") {
+			t.Errorf("base %s: problems = %v, want exactly one at workflows.web.base: was removed in 0.7.0", base, ps)
+		}
+	}
+	// No base: at all is the clone shape.
+	cfg, problems := Parse([]byte(cloneYAML + "    checkout: clone\n"))
+	if len(problems) > 0 {
+		t.Fatalf("checkout: clone with no base: unexpected problems: %v", problems)
+	}
+	if cfg.Workflows["web"].Checkout != CheckoutClone {
+		t.Fatalf("checkout = %q, want %q", cfg.Workflows["web"].Checkout, CheckoutClone)
+	}
+}
+
+// TestCheckoutCloneLegacyBaseCorpus is
+// testdata/config/invalid/checkout-clone-legacy-base.yaml, read from disk
+// like TestCheckoutCloneSkipBuildCorpus: exactly one problem, the cut's
+// base: refusal.
+func TestCheckoutCloneLegacyBaseCorpus(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/config/invalid/checkout-clone-legacy-base.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const msg = "was removed in 0.7.0"
+	if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != "workflows.web.base" || !strings.Contains(ps[0].Message, msg) {
+		t.Fatalf("problems = %v, want exactly one at workflows.web.base: %s", ps, msg)
 	}
 }
 

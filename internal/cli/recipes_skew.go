@@ -7,7 +7,9 @@ import (
 	"io"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -24,6 +26,18 @@ const recipesSince = "0.5.0"
 // fugaro renders with --layer-bucket; an older one refuses all of them.
 // docs/release.md ("Before you tag") has the checklist verify it.
 const layeredSince = "0.6.0"
+
+// cloneSince is the first fugaro release whose runner knows FUGARO_CHECKOUT
+// and makes a blobless clone at start (generic-tool plan Task 17); an older
+// one starts from an empty checkout with no idea why. A checkout: clone
+// workflow is gated on it unconditionally (checkCloneImageSince below),
+// whether or not it also uses a recipe or a project layer: nothing else
+// here checks that base_images.base is actually this recent (fugaro-base
+// could first be published from an older release, or --image-source could
+// mirror one). It must equal the release that ships plan Task 17's runner
+// bootstrap: docs/release.md ("Before you tag") has the release checklist
+// verify it.
+const cloneSince = "0.7.0"
 
 // recipesV07Since is the first fugaro release whose runner knows the 0.7.0
 // recipe format: use_when, mode, roles.coder, a check step and
@@ -123,15 +137,72 @@ func checkImageSince(ctx context.Context, env *cloudEnv, slug string, spec *task
 		return refuse("has a build record that does not say which base image it was built from")
 	}
 	ref := pluginwire.Printable(rec.BaseRef)
-	m := baseRefReleaseRE.FindStringSubmatch(rec.BaseRef)
 	// Only the binary's release matters: the image's base kind may differ from
 	// the workflow's (a rebuilt image, a renamed kind) and that is deliberately
 	// not judged here; init and image build own that.
-	switch {
-	case m == nil:
+	switch rel, ok := releaseOf(rec.BaseRef); {
+	case !ok:
 		fmt.Fprintf(warn, "warning: the job image of %s workflow %s was built from %s, which is not a release base image; whether its runner knows %s is not checked\n", spec.Repo, spec.Workflow, ref, knows)
-	case imagePredates(m[2], since):
-		return refuse(fmt.Sprintf("was built from base image %s, release %s", ref, m[2]))
+	case imagePredates(rel, since):
+		return refuse(fmt.Sprintf("was built from base image %s, release %s", ref, rel))
 	}
 	return nil
+}
+
+// releaseOf is ref's release version, through baseRefReleaseRE (a release
+// base image of one of config.Bases, <host and path>/fugaro-<kind>:<X.Y.Z>,
+// with an optional digest), and whether it matched at all: a dev build, a
+// hand-pushed image or one --image-source mirrored without a release tag
+// does not, and is never judged, only warned about.
+func releaseOf(ref string) (string, bool) {
+	m := baseRefReleaseRE.FindStringSubmatch(ref)
+	if m == nil {
+		return "", false
+	}
+	return m[2], true
+}
+
+// checkCloneImageSince is checkImageSince for a checkout: clone workflow:
+// its job has no derived image and so no build record to judge (it is
+// never built, only base_images.base's ref, run as is); the judge is that
+// ref itself. A non-release ref (dev, hand-pushed, or --image-source
+// without a release tag) only warns, same as checkImageSince; a repository
+// with none at all is refused outright (there is nothing for the job to
+// run).
+func checkCloneImageSince(lc *localcfg.Config, spec *task.Spec, since, subject, knows, alt string, warn io.Writer) error {
+	ref := lc.BaseImage(config.BaseKind)
+	refuse := func(why string) error {
+		return userErr("%s needs a job image whose runner knows %s (fugaro %s or later), but the checkout: clone job image of %s workflow %s %s. "+
+			"Run fugaro init --base base in your own terminal window to move the installation's base image to a current release%s",
+			subject, knows, since, spec.Repo, spec.Workflow, why, alt)
+	}
+	if ref == "" {
+		return refuse("is not set (the local config has no base_images.base)")
+	}
+	switch rel, ok := releaseOf(ref); {
+	case !ok:
+		fmt.Fprintf(warn, "warning: the checkout: clone job image of %s workflow %s is %s, which is not a release base image; whether its runner knows %s is not checked\n",
+			spec.Repo, spec.Workflow, pluginwire.Printable(ref), knows)
+	case imagePredates(rel, since):
+		return refuse(fmt.Sprintf("is %s, release %s", pluginwire.Printable(ref), rel))
+	}
+	return nil
+}
+
+// checkCloneRecipeImage is checkRecipeImage for a checkout: clone workflow
+// (recipesSince, or recipesV07Since for an embedded recipe that uses a 0.7.0
+// construct): see checkCloneImageSince.
+func checkCloneRecipeImage(lc *localcfg.Config, spec *task.Spec, warn io.Writer) error {
+	subject, alt := "fugaro.yaml's agent.recipe", ""
+	if spec.Recipe != nil {
+		subject = "recipe " + spec.Recipe.Name
+		if spec.Recipe.Name != recipe.DefaultName { // a carried default cannot be the way out
+			alt = "; or launch with --recipe default to run today's loop"
+		}
+	}
+	since := recipesSince
+	if r := embeddedRecipeOf(spec); r != nil && recipe.UsesV07(r) {
+		since = recipesV07Since
+	}
+	return checkCloneImageSince(lc, spec, since, subject, "recipes", alt, warn)
 }

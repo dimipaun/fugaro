@@ -504,6 +504,141 @@ func TestNoCheckWhenAllOff(t *testing.T) {
 	}
 }
 
+const cloneYAML = `version: 1
+project: aurora
+git: { provider: github, base_branch: main }
+agent: { auth: vertex }
+workflows:
+  web:
+    checkout: clone
+    commands: { build: npm run build, test: npm test }
+  api:
+    commands: { build: ./gradlew assemble, test: ./gradlew test }
+`
+
+// cloneInputs is a GitHub repository with one checkout: clone workflow
+// (web) and one ordinarily-built workflow (api, checked daily).
+func cloneInputs(t *testing.T) Inputs {
+	t.Helper()
+	lc := parseLC(t, `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry_host: us-east5-docker.pkg.dev/proj-1234
+base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
+repos:
+  acme/webapp: { provider: github, base_branch: main, workflows: [web, api], github_app_id: "123456" }
+`)
+	return Inputs{LC: lc, Repo: "acme/webapp", Cfg: parseCfg(t, []byte(cloneYAML)), Installation: installationOutputs()}
+}
+
+// TestSpecCloneWorkflowRunsTheBase (design generic-tool.md §2, G3): a
+// checkout: clone workflow's job image is the local config's
+// base_images.base, not a derived image in the repository's own registry,
+// and the daily check never lists it, though it still checks a baked
+// sibling.
+//
+// Mutations (run, restore): (1) in workflow(), remove the `if w.Checkout ==
+// config.CheckoutClone` branch so Image is always the derived
+// ":latest" tag — the image assertion below fails (it would equal
+// ".../acme-webapp-<hash>/web:latest", not the base_images.base ref). (2) in
+// Repo()'s checked loop, remove the `Checkout != config.CheckoutClone &&`
+// clause — web then joins the check job's workflows and the "check covers
+// web" assertion fails.
+func TestSpecCloneWorkflowRunsTheBase(t *testing.T) {
+	in := cloneInputs(t)
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := in.LC.BaseImage(config.BaseKind)
+	if want == "" {
+		t.Fatal("fixture bug: no base_images.base")
+	}
+	if got := rs.Workflows["web"].Image; got != want {
+		t.Errorf("web's image = %q, want base_images.base %q", got, want)
+	}
+	if rs.Workflows["web"].Checkout != config.CheckoutClone {
+		t.Errorf("web's Checkout = %q, want %q", rs.Workflows["web"].Checkout, config.CheckoutClone)
+	}
+	if rs.Check == nil {
+		t.Fatal("no check job, want one covering api")
+	}
+	if slices.Contains(rs.Check.Workflows, "web") {
+		t.Errorf("check covers web, a checkout: clone workflow: %v", rs.Check.Workflows)
+	}
+	if !slices.Contains(rs.Check.Workflows, "api") {
+		t.Errorf("check does not cover api: %v", rs.Check.Workflows)
+	}
+}
+
+// TestSpecCloneVariantsRunTheBase: with a named Claude account allowed for
+// the repository, an oauth checkout: clone workflow gets one job per account
+// (gcp.WorkflowVariant), and every one of them runs base_images.base with
+// FUGARO_CHECKOUT=clone, never a derived :latest tag; the daily check still
+// never lists the clone workflow.
+func TestSpecCloneVariantsRunTheBase(t *testing.T) {
+	in := cloneInputs(t)
+	in.Cfg.Agent.Auth = "oauth"
+	in.LC = parseLC(t, `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry_host: us-east5-docker.pkg.dev/proj-1234
+base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
+claude_accounts:
+  acme-personal:
+    allow_data_to: ["acme/webapp"]
+repos:
+  acme/webapp: { provider: github, base_branch: main, workflows: [web, api], github_app_id: "123456" }
+`)
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	variant := gcp.WorkflowVariant("web", "acme-personal")
+	want := in.LC.BaseImage(config.BaseKind)
+	for _, key := range []string{"web", variant} {
+		ws, ok := rs.Workflows[key]
+		if !ok {
+			t.Fatalf("no job spec %q: %v", key, slices.Sorted(maps.Keys(rs.Workflows)))
+		}
+		if ws.Image != want || ws.Checkout != config.CheckoutClone || ws.Env[CheckoutEnv] != config.CheckoutClone {
+			t.Errorf("%s: image %q, checkout %q, %s=%q; want %q, clone, clone", key, ws.Image, ws.Checkout, CheckoutEnv, ws.Env[CheckoutEnv], want)
+		}
+	}
+	if rs.Check == nil || slices.Contains(rs.Check.Workflows, "web") || slices.Contains(rs.Check.Workflows, variant) {
+		t.Errorf("check job workflows = %v, want api only", rs.Check)
+	}
+}
+
+// TestSpecCloneSetsCheckoutEnv (review finding 2, MED; plan Task 17 says to
+// add this to Task 16's spec change if it is not there): a checkout: clone
+// workflow's job gets FUGARO_CHECKOUT=clone, which the runner's bootstrap
+// (plan Task 17, not yet merged) will read to decide to clone blobless
+// instead of moving a baked-in checkout; a baked workflow's spec carries no
+// such key at all, so every baked workflow's env stays exactly what it was
+// before checkout: clone existed (golden tfvars unchanged, TestRepoRootVars
+// MatchModule's own sandbox fixture has none).
+//
+// Mutation (run, restore): delete the `if w.Checkout == config.CheckoutClone
+// { ws.Env[CheckoutEnv] = config.CheckoutClone }` block in workflow() — this
+// test then fails: web's env lacks FUGARO_CHECKOUT.
+func TestSpecCloneSetsCheckoutEnv(t *testing.T) {
+	rs, err := Repo(cloneInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rs.Workflows["web"].Env[CheckoutEnv]; got != config.CheckoutClone {
+		t.Errorf("web's %s = %q, want %q", CheckoutEnv, got, config.CheckoutClone)
+	}
+	if _, ok := rs.Workflows["api"].Env[CheckoutEnv]; ok {
+		t.Errorf("api (baked) carries %s = %q, want no such key", CheckoutEnv, rs.Workflows["api"].Env[CheckoutEnv])
+	}
+}
+
 func TestSpecRefuses(t *testing.T) {
 	var ue *UserError
 	for name, mutate := range map[string]func(*Inputs){

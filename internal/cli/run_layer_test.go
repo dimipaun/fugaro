@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 const release060 = "ghcr.io/dimipaun/fugaro-base:0.6.0"
@@ -147,6 +148,36 @@ func TestRunRefusesLayerOnOldImage(t *testing.T) {
 	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, release050)
 	wantRefused(t, f, "the project layer needs a job image whose runner knows the project layer (fugaro 0.6.0 or later)",
 		"run", "--run-id", "20261008-100000-abcd", "A task")
+}
+
+// TestRunClonedWorkflowWithProjectLayerLaunchesWithNoBuildRecord (review
+// finding 1, HIGH): checkImageSince's project-layer gate judges a
+// workflow's derived-image build record too, which a checkout: clone
+// workflow never has.
+//
+// Mutation (run, restore): in runRun, change `clone = w.Checkout ==
+// config.CheckoutClone` to `clone = false` — this test then fails, refused
+// "has no build record".
+func TestRunClonedWorkflowWithProjectLayerLaunchesWithNoBuildRecord(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	f.appendConfig(t, "base_images: {base: ghcr.io/dimipaun/fugaro-base:0.7.0}\n")
+	testutil.IsolateGit(t)
+	other := mustSlug("github", "acme/other")
+	f.run.AddJob(gcp.JobName(other, "svc"), "2", "4Gi")
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: github, base_branch: develop }\nagent: { auth: api-key }\n" +
+		"workflows:\n  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"})
+	t.Chdir(dir)
+	if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err != nil {
+		t.Fatal(err)
+	}
+	if pl := readSpecOf(t, f, other, "20261008-100000-abcd").ProjectLayer; pl == nil {
+		t.Fatal("no project layer embedded: the test fixture is not exercising the layer gate")
+	}
 }
 
 func TestRunWithoutALayerEmbedsNothing(t *testing.T) {

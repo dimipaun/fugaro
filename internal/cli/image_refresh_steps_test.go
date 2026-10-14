@@ -658,6 +658,164 @@ func TestRefreshBuildsDeclineStopsSubsequentBuilds(t *testing.T) {
 	}
 }
 
+// TestRefreshMovesCloneJobsToTheNewBase (design generic-tool.md §2): on the
+// refresh rig, a checkout: clone workflow's job gets its container image
+// patched to the local config's new base_images.base through the Cloud Run
+// Admin API, after its own confirmation, and no Cloud Build is submitted
+// for it.
+//
+// Mutation (run, restore): remove the `if err := r.refreshCloneJobs(ctx, p,
+// t); err != nil { return err }` call at the top of refreshBuilds — this
+// test then fails: r.run.Patches() is empty (the job's image is never
+// moved) and the output lacks "updated app's job".
+func TestRefreshMovesCloneJobsToTheNewBase(t *testing.T) {
+	r := newInitRig(t)
+	e := rigEngine(t, r, &initOptions{})
+	fb := useFakeBuilder(t)
+	slug, label := checkJobOwner(t, "github", "acme/app")
+	oldRef, newRef := managedRef("base", "0.4.0"), managedRef("base", "0.5.1")
+	jobName := gcp.JobName(slug, "app")
+	r.run.SetJob(jobName, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelWorkflow: "app"}, oldRef)
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc.BaseImages = map[string]string{config.BaseKind: newRef}
+	cfg, problems := config.Parse([]byte("version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n  app: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"))
+	if cfg == nil {
+		t.Fatal(problems)
+	}
+	p := &refreshPlan{workflows: []string{"app"}}
+	tg := &refreshTarget{lc: lc, cfg: cfg, spec: infra.RepoSpec{Name: "acme/app", Slug: slug, Label: label,
+		Workflows: map[string]infra.WorkflowSpec{"app": {Job: jobName}}}}
+	out := atTerminal(t, e, initProjectName+"\n")
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	for _, want := range []string{"image " + oldRef + " -> " + newRef, "⚠ CONFIRM", "updated app's job"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, out.String())
+		}
+	}
+	if len(r.run.Patches()) != 1 {
+		t.Fatalf("%d patches", len(r.run.Patches()))
+	}
+	if len(fb.specs) != 0 {
+		t.Fatalf("a Cloud Build was submitted for a checkout: clone workflow: %+v", fb.specs)
+	}
+	// A rerun with nothing changed says so and patches nothing more.
+	out = atTerminal(t, e, "")
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil || len(r.run.Patches()) != 1 || !strings.Contains(out.String(), "No changes") {
+		t.Fatalf("rerun: %v\n%s", err, out.String())
+	}
+}
+
+// TestRefreshMovesEveryCloneVariantJob: with a named Claude account, one
+// checkout: clone workflow has a job per account (gcp.WorkflowVariant), each
+// pinned to base_images.base itself, so refresh moves every one of them, not
+// only the default account's.
+//
+// Mutation (run, restore): in refreshCloneJobs, collect only `key == wf`
+// (drop the ws.Name match) — this test then fails with 1 patch, the named
+// account's job left on the old base.
+func TestRefreshMovesEveryCloneVariantJob(t *testing.T) {
+	r := newInitRig(t)
+	e := rigEngine(t, r, &initOptions{yes: true})
+	fb := useFakeBuilder(t)
+	slug, label := checkJobOwner(t, "github", "acme/app")
+	oldRef, newRef := managedRef("base", "0.4.0"), managedRef("base", "0.5.1")
+	variant := gcp.WorkflowVariant("app", "acme-personal")
+	if variant == "app" {
+		t.Fatal("the named account's variant key is the default's")
+	}
+	defJob, varJob := gcp.JobName(slug, "app"), gcp.JobName(slug, variant)
+	r.run.SetJob(defJob, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelWorkflow: "app"}, oldRef)
+	r.run.SetJob(varJob, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelWorkflow: variant}, oldRef)
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc.BaseImages = map[string]string{config.BaseKind: newRef}
+	cfg, problems := config.Parse([]byte("version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n  app: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"))
+	if cfg == nil {
+		t.Fatal(problems)
+	}
+	p := &refreshPlan{workflows: []string{"app"}}
+	tg := &refreshTarget{lc: lc, cfg: cfg, spec: infra.RepoSpec{Name: "acme/app", Slug: slug, Label: label,
+		Workflows: map[string]infra.WorkflowSpec{"app": {Name: "app", Job: defJob}, variant: {Name: "app", Job: varJob}}}}
+	out := atTerminal(t, e, "")
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(r.run.Patches()) != 2 {
+		t.Fatalf("%d patches, want 2 (every account's job)\n%s", len(r.run.Patches()), out.String())
+	}
+	for _, want := range []string{"updated app's job", "updated " + variant + "'s job"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, out.String())
+		}
+	}
+	if len(fb.specs) != 0 {
+		t.Fatalf("a Cloud Build was submitted for a checkout: clone workflow: %+v", fb.specs)
+	}
+}
+
+// mixedCloneYAML is acme/app with one checkout: clone workflow (app) and
+// one baked workflow (api, on the base kind).
+const mixedCloneYAML = "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n" +
+	"  app: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n" +
+	"  api: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+
+// TestRefreshDeclinedCloneJobDoesNotBlockBakedRebuilds (review finding 3,
+// LOW): a declined checkout: clone job confirmation must not stop the baked
+// rebuild offers for the rest of the repository: moving a clone workflow's
+// job image and rebuilding a baked workflow's are independent per-workflow
+// actions, bundled into step 4 only because neither touches Terraform.
+//
+// Mutation (run, restore): revert refreshBuilds to `if err :=
+// r.refreshCloneJobs(ctx, p, t); err != nil { return err }` (dropping the
+// cloneErr capture) — this test then fails: the baked workflow's rebuild is
+// never even offered (0 Cloud Builds submitted), because the clone
+// decline's error returns before the baked loop is ever reached.
+func TestRefreshDeclinedCloneJobDoesNotBlockBakedRebuilds(t *testing.T) {
+	useVersion(t, "0.5.1")
+	r := newAnchorModeRig(t, mixedCloneYAML, true)
+	fb := useFakeBuilder(t)
+	e := rigEngine(t, r.initRig, &initOptions{})
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc.BaseImages = map[string]string{config.BaseKind: managedRef("base", "0.5.1")}
+	cfg, problems := config.Parse([]byte(mixedCloneYAML))
+	if cfg == nil {
+		t.Fatal(problems)
+	}
+	slug := mustSlug("github", "acme/app")
+	label, err := gcp.RepoLabel(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobName := gcp.JobName(slug, "app")
+	r.run.SetJob(jobName, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelWorkflow: "app"}, managedRef("base", "0.4.0"))
+	tg := &refreshTarget{lc: lc, cfg: cfg, spec: infra.RepoSpec{Name: "acme/app", Slug: slug, Label: label, RegistryPath: "r", BuildServiceAccountEmail: "b@x.iam",
+		Workflows: map[string]infra.WorkflowSpec{"app": {Job: jobName}, "api": {}}}}
+	p := &refreshPlan{workflows: []string{"api", "app"}}
+	putWorkflowRecordFrom("api", "0.4.0", managedRef("base", "0.4.0"))
+	// Decline the clone job's confirmation (the first typed prompt), then
+	// confirm the baked rebuild (the second).
+	out := atTerminal(t, e, "nope\n"+initProjectName+"\n")
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err == nil || !strings.Contains(err.Error(), "the job was not updated") {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(fb.specs) != 1 || fb.specs[0].Workflow != "api" {
+		t.Fatalf("the baked rebuild was not offered despite the clone decline: %+v", fb.specs)
+	}
+	if len(r.run.Patches()) != 0 {
+		t.Fatalf("the declined clone job was patched anyway: %d patches", len(r.run.Patches()))
+	}
+}
+
 // Review fix (code review on the prior fix): submitAndWait's project-layer
 // copy write now opens the record bucket through openRecordBucket (the
 // test seam every other record-bucket caller uses), not blobx.Open

@@ -26,6 +26,12 @@ const refreshYAML = "version: 1\nproject: aurora\ngit: { provider: github }\nage
 	"  app: { commands: { build: sh build.sh, test: sh test.sh } }\n" +
 	"  api: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 
+// cloneRefreshYAML is acme/app with one checkout: clone workflow (no
+// legacy base:), for the review-fix test that refresh asks for the base
+// kind, never the legacy kind a bare w.Base would give.
+const cloneRefreshYAML = "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n" +
+	"  app: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"
+
 func useVersion(t *testing.T, v string) {
 	t.Helper()
 	old := Version
@@ -81,6 +87,40 @@ func TestRefreshPreflightPlans(t *testing.T) {
 	p, err = refreshPreflight(t.Context(), refreshOptions{workflows: []string{"app"}}, &initOptions{})
 	if err != nil || strings.Join(p.kinds, ",") != "base" || len(p.builds) != 0 || !strings.HasPrefix(p.why["app"], "current") {
 		t.Fatalf("current: %v %+v", err, p)
+	}
+}
+
+// TestRefreshClonePicksAndCopiesTheBaseKind (review finding 3, MED test
+// gap): a checkout: clone workflow's kind, for refresh's base step, is
+// always config.BaseKind ("base"), never the legacy kind a bare w.Base
+// (empty: a clone workflow sets no base:) would give.
+//
+// Mutation (run, restore): in refreshPreflight's clone branch
+// (image_refresh.go, building set), change `set[config.BaseKind] = true`
+// to `set[cfg.Workflows[w].Base] = true` — this test then fails: p.kinds is
+// [""], not ["base"], and the base step copies no image at all (an empty
+// kind publishes nothing to mirror).
+func TestRefreshClonePicksAndCopiesTheBaseKind(t *testing.T) {
+	r := newImagesRig(t, "1.2.3")
+	r.appendConfig(t, "  acme/app: { provider: github, workflows: [app] }\n")
+	t.Chdir(repoCheckout(t, githubOrigin, cloneRefreshYAML))
+	p, err := refreshPreflight(t.Context(), refreshOptions{repo: "acme/app"}, &initOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(p.kinds, ",") != "base" {
+		t.Fatalf("kinds = %v, want [base]", p.kinds)
+	}
+	if want := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"; p.want["base"] != want {
+		t.Fatalf("want[base] = %q, want %q", p.want["base"], want)
+	}
+	e := rigEngine(t, r.initRig, &initOptions{})
+	out := atTerminal(t, e, initProjectName+"\n")
+	if err := e.r.refreshBase(t.Context(), e, p.kinds); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] == "" {
+		t.Fatalf("the base kind was not copied: %v", r.dst.tags)
 	}
 }
 
