@@ -208,8 +208,13 @@ the excluded repository's own apply (40g); the CLI's own build/check/doctor
 paths and the apply-time/base-image version skews they must account for
 (40h); `fugaro init --repo`'s secrets stage recognizing a project-covered
 name as not missing (40i); and the installation root never bricking on
-revocation (40j). **Check 42 is reserved by the config-transitions work**
-(the owner's numbering note, 2026-10-14). **Check 43 (43a-43f) is reserved
+revocation (40j). **Check 42 is reserved, by the owner rather than by a
+document:** the owner's numbering note of 2026-10-14 puts the
+config-transitions work there, and no plan in this repository claims it
+yet — so unlike every other reservation above, which names the doc that
+reserves it, this one has nothing to point at. It stays reserved anyway
+(a number, once reserved, is never reused or renumbered), and whoever
+writes that plan should record the reservation here. **Check 43 (43a-43f) is reserved
 by the registry-remote-repository plan** (`docs/design/registry-remote-repository.md`,
 `docs/plans/2026-10-14-registry-remote-repository.md` Task 8): the base
 image served through an Artifact Registry **remote** repository over
@@ -1164,9 +1169,15 @@ docker buildx imagetools inspect "$I@$D" --format '{{.Manifest.Digest}}'
 **(43c) The CLI pins it, and the check job runs from the pin** — design §2.12 d, f, h.
 
 ```bash
-cp .fugaro/fugaro.yaml /tmp/fugaro.yaml.before        # so the restore has something to go back to
+# The project's LOCAL config — ~/.config/fugaro/projects/<project>.yaml
+# ($XDG_CONFIG_HOME moves the root; $FUGARO_CONFIG or --config can name
+# another file; `fugaro init` also keeps the previous one as
+# <project>.yaml.bak-<time>). NOT the checkout's fugaro.yaml, which never
+# holds base_images.
+C=$HOME/.config/fugaro/projects/<project>.yaml
+cp "$C" "$C.before-43"                               # so the restore has something to go back to
 fugaro init --base base                              # or: fugaro image refresh
-grep -n 'base_images' -A2 .fugaro/fugaro.yaml
+grep -n 'base_images' -A2 "$C"
 gcloud run jobs describe <the check job> --project="$P" --region="$L" | grep -n 'image:'
 gcloud run jobs execute <the check job> --project="$P" --region="$L" --wait
 ```
@@ -1207,8 +1218,10 @@ fugaro run --repo edgeappinc/fugarosandbox --ref master "Do not change any file 
 ```bash
 # Only when 43a/43b ran WITHOUT the implementation merged (the feasibility run):
 gcloud artifacts repositories delete "$R" --project="$P" --location="$L"   # ⚠ CONFIRM
-# Only if you want the sandbox back on the copied base instead of the pin:
-cp /tmp/fugaro.yaml.before .fugaro/fugaro.yaml                            # ⚠ CONFIRM
+# Only if you want the sandbox back on the copied base instead of the pin
+# (the same local config 43c backed up; in a new shell, name it again):
+C=$HOME/.config/fugaro/projects/<project>.yaml
+cp "$C.before-43" "$C"                                                    # ⚠ CONFIRM
 ```
 
 Once the implementation is merged, the repository is part of the sandbox installation (`fugaro init` creates it, `prevent_destroy` protects it) and stays: delete it only in the pre-implementation feasibility run, where Fugaro does not know about it yet. **If you ran 43a before the implementation and left the repository in place, delete it before the first `fugaro init`** — the apply would otherwise fail with `already exists` (discovery looks up the names it knows one at a time, and a remote repository is not something it adopts; `terraform import module.installation.google_artifact_registry_repository.ghcr projects/$P/locations/$L/repositories/$R` is the alternative). The cached image and the base copy already in `fugaro-base` cost a few cents until the existing cleanup policy prunes them; nothing else is left behind. **Cost:** the cached base image's linux/amd64 layers (about 1.2 GB, design §2.8), and one sandbox-sized `E2_HIGHCPU_8` image build in 43d (about $0.21, `docs/gcp-setup.md` §"What it costs").
