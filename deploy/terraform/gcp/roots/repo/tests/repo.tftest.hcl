@@ -450,6 +450,16 @@ run "secret_ref_short_form_job" {
     job_runner_role = var.bitbucket.installation.role_ids.job_runner
   }
 
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
   assert {
     condition = alltrue([for e in google_cloud_run_v2_job.this[0].template[0].template[0].containers[0].env :
       one(one(e.value_source).secret_key_ref).secret == var.bitbucket.repo.secrets[var.bitbucket.repo.workflows.web.secret_env[e.name]] &&
@@ -473,6 +483,60 @@ run "secret_ref_short_form_job" {
   assert {
     condition     = alltrue([for m in google_secret_manager_secret_iam_member.job : m.role == "roles/secretmanager.secretAccessor"])
     error_message = "the job account's secret grants must be secretAccessor"
+  }
+  assert {
+    condition = alltrue([for m in google_secret_manager_secret_iam_member.job :
+    m.member == "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"])
+    error_message = "the job account's secret grants must go to its own account, and no other"
+  }
+}
+
+# The github fixture's repository holds two secrets (github-app-key and
+# npm-token) and its "api" workflow mounts only the first, so this run
+# separates "the secrets the workflow mounts" from "the secrets the repository
+# has": grants widened to every secret in the map it was handed, or addressed
+# at any account but the job's own, fail here (the web workflow mounts both, so
+# a run against it cannot tell the two apart).
+run "job_grants_follow_the_workflow" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.github.project
+    fugaro_project  = var.github.fugaro_project
+    region          = var.github.region
+    name            = "api"
+    repo_label      = var.github.repo.label
+    workflow        = var.github.repo.workflows.api
+    secrets         = var.github.repo.secrets
+    runs_bucket     = var.github.installation.runs_bucket
+    job_runner_role = var.github.installation.role_ids.job_runner
+  }
+
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-acme-webapp-ap-7daad322@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-acme-webapp-ap-7daad322@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-acme-webapp-ap-7daad322@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition = tomap({ for k, m in google_secret_manager_secret_iam_member.job : k => m.secret_id }) == tomap({
+      github-app-key = "fugaro-acme-webapp-github-app-key-35b331db19bcc682"
+    })
+    error_message = "the job account must get accessor on the secrets its own workflow mounts, not on every secret in the repository"
+  }
+  assert {
+    condition = alltrue([for m in google_secret_manager_secret_iam_member.job :
+      m.role == "roles/secretmanager.secretAccessor" &&
+    m.member == "serviceAccount:fugaro-acme-webapp-ap-7daad322@proj-1234.iam.gserviceaccount.com"])
+    error_message = "the job account's secret grants must be secretAccessor to its own account, and no other"
   }
 }
 
@@ -644,6 +708,11 @@ run "build_iam" {
   assert {
     condition     = alltrue([for m in google_secret_manager_secret_iam_member.build : m.role == "roles/secretmanager.secretAccessor"])
     error_message = "the build account's secret grants must be secretAccessor"
+  }
+  assert {
+    condition = alltrue([for m in google_secret_manager_secret_iam_member.build :
+    m.member == "serviceAccount:fugaro-b-acme-webapp-5b8bba58@proj-1234.iam.gserviceaccount.com"])
+    error_message = "the build account's secret grants must go to its own account, and no other"
   }
   assert {
     condition = tomap({ for k, m in google_project_iam_member.build : k => m.role }) == tomap({
