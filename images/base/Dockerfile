@@ -91,13 +91,9 @@ ENV HOME=/home/fugaro \
 # PostgreSQL package may create a root-owned cluster: fugaro-services makes
 # its own as fugaro. /etc/claude-code is empty and fugaro's: the runner writes
 # managed settings there, and the selftest refuses anything baked into it.
-# ~/.cache/mise is fugaro's too, and empty: a derived build mounts its mise
-# download cache there (design base-image.md section 4), and BuildKit creates
-# a mount target that is missing itself, as root. That empty root-owned
-# directory is what such a run then inherits, so mise cannot write its cache
-# and warns "failed to write cache file: ~/.cache/mise/terraform/...:
-# Permission denied" on every command that reads the cache. Creating it here
-# as fugaro is what keeps the mount target a directory its owner can write.
+# ~/.cache/mise, fugaro's and empty, like corepack and ms-playwright: a
+# derived build's mise cache mount needs a target, and BuildKit creates a
+# missing one as root, which the run's mise cannot write.
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
