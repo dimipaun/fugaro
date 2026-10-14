@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -589,9 +590,11 @@ func checkManagedSettingsDir(dir string, uid, gid uint32, add func(string, bool,
 // dirWritableBy reports whether the directory fi, owned as st records, is
 // writable and searchable by the user uid in group gid: the owner, group
 // and mode bits decide, and writing an entry in a directory needs both the
-// write and the search bit. Reading the bits rather than trying to write
-// matches checkManagedSettingsDir, and for the same reason: part of the
-// selftest runs as root, for whom every directory is writable.
+// write and the search bit. It reads the bits rather than writing for the
+// callers that are not that user: checkManagedSettingsDir always (the
+// runner writes there, not the selftest) and checkMiseCacheDir when the
+// selftest runs as anyone but the directory's owner, such as root in the
+// second scan container, for whom every directory is writable.
 func dirWritableBy(fi os.FileInfo, st *syscall.Stat_t, uid, gid uint32) bool {
 	var bits os.FileMode
 	switch {
@@ -607,10 +610,12 @@ func dirWritableBy(fi os.FileInfo, st *syscall.Stat_t, uid, gid uint32) bool {
 
 // checkMiseCacheDir reports the "mise-cache-dir" check: dir (normally
 // /home/fugaro/.cache/mise) exists, is a real directory, is owned by the
-// agent's user (uid, gid), and is writable by it. The base image creates it
-// as fugaro (§4); a derived build's BuildKit cache mount on it would
-// otherwise create it as root, and the run's mise could not write its cache
-// in the root-owned directory that ships in the image.
+// agent's user (uid, gid), and is writable by it — the last by writing a
+// probe file when the selftest runs as that user, and from the mode bits
+// otherwise. The base image creates it as fugaro (§4); a derived build's
+// BuildKit cache mount on it would otherwise create it as root, and the
+// run's mise could not write its cache in the root-owned directory that
+// ships in the image.
 func checkMiseCacheDir(dir string, uid, gid uint32, add func(string, bool, string, ...any)) {
 	const name = "mise-cache-dir"
 	fi, err := os.Lstat(dir)
@@ -634,11 +639,35 @@ func checkMiseCacheDir(dir string, uid, gid uint32, add func(string, bool, strin
 		add(name, false, "%s is owned by uid %d (mode %04o), not the fugaro user's uid %d; a derived build's mise cache mount would leave it root-owned, and the run's mise could not write its cache", dir, st.Uid, fi.Mode().Perm(), uid)
 		return
 	}
-	if !dirWritableBy(fi, st, uid, gid) {
+	// When the selftest runs as the user that must write (the fugaro user,
+	// in the image), prove it by creating and removing a file: the mode
+	// bits alone miss an ACL, a read-only mount and an immutable flag. As
+	// anyone else, such as root in the second scan container, for whom
+	// every directory is writable, the owner, group and mode bits have to
+	// decide (see dirWritableBy).
+	if os.Geteuid() == int(uid) {
+		if err := probeDirWritable(dir); err != nil {
+			add(name, false, "%s (owner %d:%d, mode %04o) is not writable by uid %d: creating and removing a file in it failed: %v", dir, st.Uid, st.Gid, fi.Mode().Perm(), uid, err)
+			return
+		}
+	} else if !dirWritableBy(fi, st, uid, gid) {
 		add(name, false, "%s (owner %d:%d, mode %04o) is not writable by uid %d", dir, st.Uid, st.Gid, fi.Mode().Perm(), uid)
 		return
 	}
 	add(name, true, "%s is a directory owned by uid %d and writable by it", dir, uid)
+}
+
+// probeDirWritable creates and removes a file in dir, which is what mise
+// does when it writes a cache entry there. The probe is removed even when
+// closing it fails, so a check that fails leaves the directory as it found
+// it.
+func probeDirWritable(dir string) error {
+	f, err := os.CreateTemp(dir, ".fugaro-selftest-*")
+	if err != nil {
+		return err
+	}
+	name := f.Name()
+	return errors.Join(f.Close(), os.Remove(name))
 }
 
 // verifyBuild runs `fugaro verify build` from PATH, as the agent would,
