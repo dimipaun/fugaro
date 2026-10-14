@@ -30,8 +30,9 @@ const layeredSince = "0.6.0"
 
 // cloneSince names the release whose runner reads FUGARO_CHECKOUT and makes
 // a blobless clone at start (plan Task 17). Today it names a release that
-// does not exist yet, on purpose (see cloneShipped): until Task 17 lands,
-// this constant is a placeholder for "the release that will ship it", not
+// does not exist yet, on purpose (see cloneShipped): until that release is
+// tagged, this constant is a placeholder for "the release that will ship
+// it", not
 // a verified fact the way recipesSince/layeredSince/namedTokensSince above
 // are. checkCloneImageSince below gates it unconditionally, whether or not
 // the workflow also uses a recipe or a project layer: nothing else here
@@ -43,9 +44,10 @@ const layeredSince = "0.6.0"
 const cloneSince = "0.7.1"
 
 // cloneShipped is false until the release named by cloneSince is actually
-// tagged: Task 17 (the runner's own FUGARO_CHECKOUT support, and the
-// refusal of any deployed checkout: clone job before it) has not landed
-// yet, so no fugaro release can run one. While it is false:
+// tagged: Task 17's runner side (the runner's own FUGARO_CHECKOUT support,
+// and the refusal of any deployed checkout: clone job before it) is in the
+// tree, but no tagged fugaro release carries it yet, so no released binary
+// can run one. While it is false:
 //   - checkCloneImageSince's cloneSince-specific branches refuse every
 //     checkout: clone launch on any job image, known release or not,
 //     including the current one, with guidance that the runner side is

@@ -1,8 +1,10 @@
 package gitops
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -1432,5 +1434,328 @@ func TestCheckoutDetachedNeverRunsLFSFilters(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("the lfs filter ran during the checkout")
+	}
+}
+
+// remoteWithCommits is a bare remote whose main branch holds n commits (the
+// seeded one included), for the clone tests below. It returns the remote's
+// `file://` URL, not the path testutil.NewRemote hands back: over a local
+// path git clones with a local transport, which takes neither --filter nor
+// --depth into account (it just hardlinks what it finds), so a filter or a
+// shallowness bug would be invisible to these tests — review M4, where
+// exactly that left a `--depth 1` mutation green. Over file:// git uses the
+// upload-pack protocol and honours both, and uploadpack.allowFilter=true is
+// what lets it serve the partial clone at all.
+func remoteWithCommits(t *testing.T, n int) string {
+	t.Helper()
+	testutil.IsolateGit(t)
+	remote := testutil.NewRemote(t, map[string]string{"README.md": "hello\n"})
+	testutil.Git(t, remote, "config", "uploadpack.allowFilter", "true")
+	if n > 1 {
+		work := filepath.Join(t.TempDir(), "seed")
+		testutil.Git(t, filepath.Dir(work), "clone", "--quiet", remote, work)
+		for i := 1; i < n; i++ {
+			name := fmt.Sprintf("f%d.txt", i)
+			// Distinct contents: two files holding the same bytes are one
+			// blob, and the blobless assertions below count blobs.
+			testutil.WriteFiles(t, work, map[string]string{name: fmt.Sprintf("x%d\n", i)})
+			testutil.Git(t, work, "add", "-A")
+			testutil.Git(t, work, "commit", "--quiet", "-m", "commit "+name)
+		}
+		testutil.Git(t, work, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+	}
+	return "file://" + remote
+}
+
+// missingObjects is how many objects `git rev-list --objects
+// --missing=print` reports as absent from the clone: git prints each as a
+// "?"-prefixed line. It answers without fetching anything (which is the
+// point: a lazy fetch would hide exactly what the test is asking about), so
+// a blobless, unchecked-out clone counts the blobs it never downloaded, and
+// a clone that has everything counts none.
+func missingObjects(t *testing.T, dir string) int {
+	t.Helper()
+	var n int
+	for _, line := range strings.Split(testutil.Git(t, dir, "rev-list", "--objects", "--missing=print", "HEAD"), "\n") {
+		if strings.HasPrefix(line, "?") {
+			n++
+		}
+	}
+	return n
+}
+
+// TestCloneBloblessKeepsHistory (plan Task 17, G4): the clone is blobless,
+// single-branch and checked out by nobody yet, but never shallow —
+// checkpoints, follow-ups and merge-base need the whole history.
+//
+// Mutation (run, restore): add "--depth", "1" to CloneBlobless's args — the
+// history and .git/shallow assertions fail; drop "--no-checkout" — the empty
+// worktree and missing-blob assertions fail; drop "--filter=blob:none" — the
+// missing-blob assertion fails.
+func TestCloneBloblessKeepsHistory(t *testing.T) {
+	remote := remoteWithCommits(t, 3)
+	dir := filepath.Join(t.TempDir(), "repo")
+	r, err := CloneBlobless(ctx, dir, remote, "main", IdentityEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Dir != dir {
+		t.Fatalf("Dir = %q, want %q", r.Dir, dir)
+	}
+	if n := testutil.Git(t, dir, "rev-list", "--count", "HEAD"); n != "3" {
+		t.Fatalf("history = %s commits, want 3 (not shallow)", n)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git", "shallow")); !os.IsNotExist(err) {
+		t.Fatalf(".git/shallow exists (err = %v): a shallow clone breaks checkpoints and merge-base", err)
+	}
+	if v := testutil.Git(t, dir, "config", "remote.origin.partialclonefilter"); v != "blob:none" {
+		t.Fatalf("filter = %q, want blob:none", v)
+	}
+	if b := testutil.Git(t, dir, "rev-parse", "--abbrev-ref", "HEAD"); b != "main" {
+		t.Fatalf("branch = %q, want main", b)
+	}
+	if got := testutil.Git(t, dir, "config", "remote.origin.fetch"); got != "+refs/heads/main:refs/remotes/origin/main" {
+		t.Fatalf("fetch refspec = %q, want the single branch", got)
+	}
+	// --no-checkout: the clone brings refs and trees, no working tree, and
+	// the file contents are not fetched until a checkout wants them.
+	if entries, err := os.ReadDir(dir); err != nil {
+		t.Fatal(err)
+	} else {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		if len(names) != 1 || names[0] != ".git" {
+			t.Fatalf("the clone's directory holds %v, want only .git (--no-checkout)", names)
+		}
+	}
+	if n := missingObjects(t, dir); n == 0 {
+		t.Fatal("every object is already in the clone: it is not blobless")
+	} else if n < 3 {
+		t.Fatalf("%d objects are missing, want the one blob per commit (3)", n)
+	}
+	// The file contents are fetched on demand, and a checkout still works:
+	// this is what the runner's checkout of the task's ref does.
+	if err := r.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	if got := testutil.Git(t, dir, "rev-parse", "--abbrev-ref", "HEAD"); got != "fugaro/x" {
+		t.Fatalf("checked-out branch = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "README.md")); err != nil {
+		t.Fatalf("the checkout has no README.md: %v", err)
+	}
+	if n := missingObjects(t, dir); n != 0 {
+		t.Fatalf("%d objects are still missing after the checkout, want none: the checkout fetched what it needs", n)
+	}
+}
+
+// An empty branch clones the remote's own default branch; a remote that
+// does not exist is an error, not a checkout.
+func TestCloneBloblessDefaultBranchAndErrors(t *testing.T) {
+	remote := remoteWithCommits(t, 2)
+	dir := filepath.Join(t.TempDir(), "sub", "repo")
+	if _, err := CloneBlobless(ctx, dir, remote, "", IdentityEnv()); err != nil {
+		t.Fatal(err)
+	}
+	if n := testutil.Git(t, dir, "rev-list", "--count", "HEAD"); n != "2" {
+		t.Fatalf("history = %s commits, want 2", n)
+	}
+	if _, err := CloneBlobless(ctx, filepath.Join(t.TempDir(), "x"), "", "main", nil); err == nil {
+		t.Fatal("cloned with no remote")
+	}
+	if _, err := CloneBlobless(ctx, filepath.Join(t.TempDir(), "y"), filepath.Join(t.TempDir(), "nope"), "main", nil); err == nil {
+		t.Fatal("cloned a remote that does not exist")
+	}
+}
+
+// CloneBlobless strips the model credential from the clone's own git calls,
+// as OpenOrClone does (its hook and filter commands must never see one).
+func TestCloneBloblessStripsFromTheStart(t *testing.T) {
+	remote := remoteWithCommits(t, 1)
+	env := append(IdentityEnv(), "ANTHROPIC_API_KEY=test-key")
+	r, err := CloneBlobless(ctx, filepath.Join(t.TempDir(), "repo"), remote, "main", env, ModelCredentialVars...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.StripEnv) != len(ModelCredentialVars) {
+		t.Fatalf("StripEnv = %v", r.StripEnv)
+	}
+	for _, kv := range r.Environ() {
+		if strings.HasPrefix(kv, "ANTHROPIC_API_KEY=") {
+			t.Fatal("the clone's environment holds the model credential")
+		}
+	}
+}
+
+// remoteWithABranch seeds a remote whose main holds a file, a branch "feat"
+// that changes it twice, and a main that then moves on: the shape a pull
+// request has once the base has moved past the merge base. Three revisions
+// of app.txt exist and none of them is the branch tip's — the merge base's,
+// the branch's first commit's, and the base tip's — which is exactly what a
+// blobless clone's checkout of the branch does not bring in. It returns the
+// remote's path and its file:// URL.
+func remoteWithABranch(t *testing.T) (path, url string) {
+	t.Helper()
+	testutil.IsolateGit(t)
+	remote := testutil.NewRemote(t, map[string]string{"app.txt": "one\n", "other.txt": "other\n"})
+	testutil.Git(t, remote, "config", "uploadpack.allowFilter", "true")
+	work := filepath.Join(t.TempDir(), "seed")
+	testutil.Git(t, filepath.Dir(work), "clone", "--quiet", remote, work)
+	testutil.WriteFiles(t, work, map[string]string{"app.txt": "one\ntwo\n"})
+	testutil.Git(t, work, "add", "-A")
+	testutil.Git(t, work, "commit", "--quiet", "-m", "change app.txt")
+	testutil.WriteFiles(t, work, map[string]string{"app.txt": "one\ntwo\nthree\n"})
+	testutil.Git(t, work, "add", "-A")
+	testutil.Git(t, work, "commit", "--quiet", "-m", "change app.txt again")
+	testutil.Git(t, work, "push", "--quiet", "origin", "HEAD:refs/heads/feat")
+	// Back to the merge base, then main moves on: the base tip's version of
+	// app.txt is then neither the merge base's nor the branch's.
+	testutil.Git(t, work, "reset", "--hard", "--quiet", "HEAD~2")
+	testutil.WriteFiles(t, work, map[string]string{"app.txt": "one\nbase moved\n"})
+	testutil.Git(t, work, "add", "-A")
+	testutil.Git(t, work, "commit", "--quiet", "-m", "base moved")
+	testutil.Git(t, work, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+	return remote, "file://" + remote
+}
+
+// gitOut runs git with args in dir, with the process's own environment — no
+// credentials of the runner's — and returns what git said. It is what the
+// agent's own git does.
+func gitOut(t *testing.T, dir string, args ...string) (string, error) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	return stdout.String() + stderr.String(), err
+}
+
+// moveRemoteAway renames the remote out of the way and returns a func that
+// puts it back: the review's own stand-in for the agent having no
+// credentials, under which any lazy fetch from it fails.
+func moveRemoteAway(t *testing.T, remote string) (back func()) {
+	t.Helper()
+	away := remote + ".away"
+	if err := os.Rename(remote, away); err != nil {
+		t.Fatal(err)
+	}
+	return func() {
+		t.Helper()
+		if err := os.Rename(away, remote); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestPrefetchDiffFetchesTheBaseSide (review N1): in a blobless clone the
+// checkout brings in the checked-out revision's file contents and no
+// others, so `git diff origin/main...HEAD` needs a lazy fetch from origin —
+// and on a private repository the agent's own git has no credentials to
+// make it with. PrefetchDiff runs that diff on the runner's side, whose git
+// does carry them, and the objects it fetches are what the agent's later
+// diff reads.
+//
+// The remote is moved away for the agent's attempts, the review's own
+// stand-in: with no credentials, any lazy fetch from it fails. The
+// prefetch's own call happens while it is still there.
+//
+// Mutation (run, restore): make PrefetchDiff a no-op (or drop the diff it
+// runs) — the second diff fails with "could not fetch <oid> from promisor
+// remote", which is the bug.
+func TestPrefetchDiffFetchesTheBaseSide(t *testing.T) {
+	remote, url := remoteWithABranch(t)
+	dir := filepath.Join(t.TempDir(), "repo")
+	r, err := CloneBlobless(ctx, dir, url, "", IdentityEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The runner's checkout of the pull request's branch (CheckoutNewBranch
+	// fetches it by its full name), then the base.
+	if err := r.CheckoutNewBranch(ctx, "refs/heads/feat", "feat"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.FetchBase(ctx, "main"); err != nil {
+		t.Fatal(err)
+	}
+	// Moving the remote away stands in for the agent having no credentials:
+	// a lazy fetch from it fails either way, and the runner's own prefetch
+	// below happens while it is back in place.
+	back := moveRemoteAway(t, remote)
+	defer back()
+	if out, err := gitOut(t, dir, "diff", "origin/main...HEAD"); err == nil {
+		t.Fatalf("the agent's diff already works with no remote: %s", out)
+	}
+	back()
+	if err := r.PrefetchDiff(ctx, "origin/main", "HEAD"); err != nil {
+		t.Fatal(err)
+	}
+	moveRemoteAway(t, remote)
+	out, err := gitOut(t, dir, "diff", "origin/main...HEAD")
+	if err != nil {
+		t.Fatalf("the agent's diff still fails after the prefetch: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "+two") {
+		t.Fatalf("the agent's diff says nothing about the change:\n%s", out)
+	}
+}
+
+// TestPrefetchFetchesTheBranchsOwnCommits (review M2): the three-dot diff
+// covers the two endpoints of the branch's diff and no more, so reading a
+// pull request commit by commit — `git show <a commit of the branch>`,
+// `git log -p origin/main..HEAD`, `git diff HEAD~1` — and a two-dot
+// `git diff origin/main` against a base that has moved on each need file
+// contents the endpoints' diff never fetched. On a private repository,
+// where the agent's git has no credentials, each fails with "could not
+// fetch <oid> from promisor remote" until the runner prefetches them.
+//
+// Mutation (run, restore): drop either PrefetchCommits or PrefetchBaseDiff
+// from the two below and the commands it serves fail here.
+func TestPrefetchFetchesTheBranchsOwnCommits(t *testing.T) {
+	remote, url := remoteWithABranch(t)
+	dir := filepath.Join(t.TempDir(), "repo")
+	r, err := CloneBlobless(ctx, dir, url, "", IdentityEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.CheckoutNewBranch(ctx, "refs/heads/feat", "feat"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.FetchBase(ctx, "main"); err != nil {
+		t.Fatal(err)
+	}
+	// What a reviewer reads a pull request with, and what it needs of
+	// app.txt that the checkout of the branch tip did not bring in: the
+	// branch's first commit's version; the branch's second; the base tip's.
+	reads := [][]string{
+		{"show", "HEAD~1"},
+		{"log", "-p", "origin/main..HEAD"},
+		{"diff", "origin/main"},
+	}
+	back := moveRemoteAway(t, remote)
+	defer back()
+	for _, args := range reads {
+		if out, err := gitOut(t, dir, args...); err == nil {
+			t.Fatalf("git %s already works with no remote: %s", strings.Join(args, " "), out)
+		}
+	}
+	back()
+	if err := r.PrefetchCommits(ctx, "origin/main", "HEAD"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.PrefetchBaseDiff(ctx, "origin/main", "HEAD"); err != nil {
+		t.Fatal(err)
+	}
+	moveRemoteAway(t, remote)
+	for _, args := range reads {
+		out, err := gitOut(t, dir, args...)
+		if err != nil {
+			t.Fatalf("git %s still fails after the prefetch: %v\n%s", strings.Join(args, " "), err, out)
+		}
+		if !strings.Contains(out, "app.txt") {
+			t.Fatalf("git %s says nothing about the file the branch changed:\n%s", strings.Join(args, " "), out)
+		}
 	}
 }

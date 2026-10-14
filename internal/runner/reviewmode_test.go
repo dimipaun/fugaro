@@ -47,16 +47,20 @@ func agentReviewSlashCfg(t *testing.T, command string) string {
 	return out
 }
 
-// pushReviewBranch commits change in a fresh clone of h's remote and pushes it to
-// branch: review mode's pull requests are never the run's own branch, so
-// this never touches main or a fugaro/<run-id> branch.
-func pushReviewBranch(t *testing.T, h *harness, branch string, change func(dir string)) string {
+// pushReviewBranch commits each of changes in a fresh clone of h's remote —
+// one commit each, so a branch of several commits is one call — and pushes
+// the result to branch: review mode's pull requests are never the run's own
+// branch, so this never touches main or a fugaro/<run-id> branch. It
+// returns the branch's tip.
+func pushReviewBranch(t *testing.T, h *harness, branch string, changes ...func(dir string)) string {
 	t.Helper()
 	seed := filepath.Join(t.TempDir(), "seed-"+branch)
 	testutil.Git(t, filepath.Dir(seed), "clone", "--quiet", h.remote, seed)
-	change(seed)
-	testutil.Git(t, seed, "add", "-A")
-	testutil.Git(t, seed, "commit", "--quiet", "-m", "someone else's change")
+	for _, change := range changes {
+		change(seed)
+		testutil.Git(t, seed, "add", "-A")
+		testutil.Git(t, seed, "commit", "--quiet", "-m", "someone else's change")
+	}
 	testutil.Git(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/"+branch)
 	return testutil.Git(t, seed, "rev-parse", "HEAD")
 }

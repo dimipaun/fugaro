@@ -364,9 +364,12 @@ func (u *WorkflowJobUpdate) Changes() bool { return u != nil && u.oldImage != u.
 // its container's image to newImage (the local config's base_images.base).
 // It is read-only; nil, nil when there is no such job. The job must be
 // owner's workflow job as init --repo made it: labelled fugaro=managed,
-// fugaro_repo=owner.Label and fugaro_workflow=workflow; anything else is
+// fugaro_repo=owner.Label and fugaro_workflow=workflow, with
+// FUGARO_CHECKOUT=clone in its container's environment; anything else is
 // ErrCheckJobShape (the same shape error the check job's own plan uses:
-// both name the same fix, fugaro init --repo).
+// both name the same fix, fugaro init --repo). The environment is checked
+// as well as the labels because a baked job's image must never be moved to
+// the base image: it still expects the checkout baked into its own image.
 func PlanWorkflowJob(ctx context.Context, c *Clients, gcpProject, region, job, workflow, newImage string, owner CheckJobOwner) (*WorkflowJobUpdate, error) {
 	if owner.Repo == "" || owner.Label == "" {
 		return nil, errors.New("planning the workflow job: no owner repository")
@@ -411,6 +414,9 @@ func PlanWorkflowJob(ctx context.Context, c *Clients, gcpProject, region, job, w
 	if image == "" {
 		return nil, shape("has a container with no image")
 	}
+	if !cloneJobEnv(ct) {
+		return nil, shape("is not a checkout: clone job: its container has no %s=%s, so moving its image would leave a job expecting a baked checkout", CheckoutEnv, config.CheckoutClone)
+	}
 	u := &WorkflowJobUpdate{job: full, oldImage: image, newImage: newImage}
 	if !u.Changes() {
 		return u, nil
@@ -426,6 +432,28 @@ func PlanWorkflowJob(ctx context.Context, c *Clients, gcpProject, region, job, w
 		return nil, err
 	}
 	return u, nil
+}
+
+// cloneJobEnv reports whether ct's environment sets FUGARO_CHECKOUT=clone
+// as a plain value: the mark init --repo writes on a checkout: clone
+// workflow's job (workflow() in spec.go sets it from config.CheckoutClone).
+// A variable set from a secret reference is not the mark, and a job that
+// names it twice is not one Fugaro wrote either way, so only the first
+// entry counts.
+func cloneJobEnv(ct map[string]any) bool {
+	envs, _ := ct["env"].([]any)
+	for _, e := range envs {
+		m, ok := e.(map[string]any)
+		if !ok || m["name"] != CheckoutEnv {
+			continue
+		}
+		v, plain := m["value"].(string)
+		if _, src := m["valueSource"]; !plain || src {
+			return false
+		}
+		return v == config.CheckoutClone
+	}
+	return false
 }
 
 // ApplyWorkflowJob writes u: the job exactly as read, with only its

@@ -15,6 +15,7 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 )
 
@@ -197,6 +198,16 @@ func container(j map[string]any) map[string]any {
 	return j["template"].(map[string]any)["template"].(map[string]any)["containers"].([]any)[0].(map[string]any)
 }
 
+// envEntry is the FUGARO_CHECKOUT env entry of a workflow job's container.
+func envEntry(j map[string]any) map[string]any {
+	for _, e := range container(j)["env"].([]any) {
+		if e := e.(map[string]any); e["name"] == CheckoutEnv {
+			return e
+		}
+	}
+	return nil
+}
+
 // specEntry is the FUGARO_CHECK_SPEC env entry of j's container.
 func specEntry(j map[string]any) map[string]any {
 	for _, e := range container(j)["env"].([]any) {
@@ -255,6 +266,9 @@ func workflowJobJSON(t *testing.T, ws WorkflowSpec, repoLabel, image string, edi
 				"containers": []any{map[string]any{
 					"image":     image,
 					"resources": map[string]any{"limits": map[string]any{"cpu": "1", "memory": "2Gi"}, "cpuIdle": false},
+					"env": []any{map[string]any{
+						"name": CheckoutEnv, "value": config.CheckoutClone,
+					}},
 				}},
 			},
 		},
@@ -685,6 +699,15 @@ func TestPlanWorkflowJobRefusesAForeignOrMisshapenJob(t *testing.T) {
 			task["containers"] = append(task["containers"].([]any), map[string]any{"image": "sidecar:1"})
 		}, "2 containers"},
 		"no image": {func(j map[string]any) { container(j)["image"] = "" }, "no image"},
+		// A baked workflow's job must never be moved onto the base image: it
+		// still expects the checkout baked into its own image, so the
+		// FUGARO_CHECKOUT=clone init --repo writes is required too.
+		"no FUGARO_CHECKOUT": {func(j map[string]any) { delete(container(j), "env") }, "no FUGARO_CHECKOUT=clone"},
+		"a baked job":        {func(j map[string]any) { envEntry(j)["value"] = config.CheckoutBaked }, "no FUGARO_CHECKOUT=clone"},
+		"FUGARO_CHECKOUT from a secret": {func(j map[string]any) {
+			delete(envEntry(j), "value")
+			envEntry(j)["valueSource"] = map[string]any{"secretKeyRef": map[string]any{"name": "s", "key": "k"}}
+		}, "no FUGARO_CHECKOUT=clone"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f, _, ws, owner := workflowJobCloud(t, tc.edit)
