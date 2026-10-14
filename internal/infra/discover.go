@@ -566,7 +566,12 @@ func (d *discovery) extraSecrets(spec RepoSpec, out map[string]string) error {
 		}
 		return nil
 	})
-	if err != nil {
+	switch {
+	// A disabled Secret Manager API means nothing is there to union, the
+	// same answer every other read in this file gives it.
+	case d.absent(err, serviceSecretManager):
+		return nil
+	case err != nil:
 		return fmt.Errorf("listing the repository's secrets: %w", err)
 	}
 	return nil
