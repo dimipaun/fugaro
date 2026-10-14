@@ -518,6 +518,19 @@ type Existing struct {
 	DisplayNames map[string]string
 	// CheckJob says the repository's check job exists (and is ours).
 	CheckJob bool
+	// ExtraSecrets are the correctly-labelled repo secrets that exist live
+	// but that the current config no longer computes (logical name → ID),
+	// e.g. a provider that was eligible everywhere under §3a's no-list rule
+	// and is now excluded by a newly added list. Readiness unions them into
+	// the tfvars-reaching Secrets map, so a config edit can never shrink
+	// rs.Secrets's for_each and trip prevent_destroy (P2 extended, N4).
+	ExtraSecrets map[string]string
+	// ProjectSecretsOK are the project-wide candidates whose live secret at
+	// gcp.ProjectSecretID carries this installation's own labels, by logical
+	// name. A candidate whose secret does not exist yet is simply absent;
+	// one that exists with the wrong labels is refused outright (an
+	// accident/drift guard, not a squatting defense -- SF7).
+	ProjectSecretsOK map[string]bool
 	// ProjectNumber is the project's number, which the readiness gates
 	// match a SERVICE_DISABLED answer's consumer against (0: unknown).
 	ProjectNumber uint64
@@ -526,6 +539,37 @@ type Existing struct {
 // uniqueSecrets are the logical secrets ws mounts, sorted.
 func uniqueSecrets(ws WorkflowSpec) []string {
 	return slices.Compact(slices.Sorted(maps.Values(ws.SecretEnv)))
+}
+
+// extraSecrets lists the repository's own secrets (label fugaro_repo) and
+// reports, in out, every logical name that is not already a key of
+// spec.Secrets: one the current config no longer computes, but that exists
+// and is ours. The caller unions these into the plan's Secrets map so a
+// config edit can never shrink it (N4). Listing by label is the same
+// metadata-only call the repository's own secrets loop already makes.
+func (d *discovery) extraSecrets(spec RepoSpec, out map[string]string) error {
+	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: spec.Label}
+	var filter []string
+	for _, k := range slices.Sorted(maps.Keys(labels)) {
+		filter = append(filter, "labels."+k+"="+labels[k])
+	}
+	err := d.c.Secrets.Projects.Secrets.List("projects/"+d.project).Filter(strings.Join(filter, " AND ")).Pages(d.ctx, func(p *secretmanager.ListSecretsResponse) error {
+		for _, sec := range p.Secrets {
+			logical := sec.Labels[gcp.LabelSecret]
+			if logical == "" {
+				continue
+			}
+			if _, known := spec.Secrets[logical]; known {
+				continue
+			}
+			out[logical] = sec.Name[strings.LastIndex(sec.Name, "/")+1:]
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("listing the repository's secrets: %w", err)
+	}
+	return nil
 }
 
 // DiscoverRepo finds the repository's resources that exist and checks
@@ -540,7 +584,7 @@ func uniqueSecrets(ws WorkflowSpec) []string {
 // *BindingError: the plan would add a second grant next to it.
 func DiscoverRepo(ctx context.Context, c *Clients, spec RepoSpec) (Imports, Existing, error) {
 	d := &discovery{ctx: ctx, c: c, project: spec.GCPProject}
-	ex := Existing{Jobs: map[string]string{}, DisplayNames: map[string]string{}}
+	ex := Existing{Jobs: map[string]string{}, DisplayNames: map[string]string{}, ExtraSecrets: map[string]string{}, ProjectSecretsOK: map[string]bool{}}
 	b, err := d.bucket(spec.Installation.RunsBucket, spec.Installation.ProjectName)
 	if err != nil {
 		return Imports{}, Existing{}, err
@@ -569,6 +613,37 @@ func DiscoverRepo(ctx context.Context, c *Clients, spec RepoSpec) (Imports, Exis
 			return Imports{}, Existing{}, fmt.Errorf("reading the IAM policy of secret %s: %w", id, err)
 		}
 		secretPolicies[logical] = p
+	}
+
+	// Secrets the current config no longer computes but that still exist and
+	// are ours (N4): a List under this repository's own label, so a name a
+	// narrowed config dropped is unioned back into the plan rather than
+	// deleted. Only the label set is trusted here; the ID is whatever the
+	// live secret carries, so a name that was ours stays ours.
+	if err := d.extraSecrets(spec, ex.ExtraSecrets); err != nil {
+		return Imports{}, Existing{}, err
+	}
+
+	// The project-wide candidates: does a secret already exist at the
+	// computed ID, and is it ours? A mismatch is refused (d.foreign), the
+	// same path an unmarked repo secret already takes; an absent one is
+	// simply not in the map yet.
+	for _, logical := range slices.Sorted(maps.Keys(spec.ProjectSecretCandidates)) {
+		id := spec.ProjectSecretCandidates[logical]
+		name := "projects/" + spec.GCPProject + "/secrets/" + id
+		s, err := c.Secrets.Projects.Secrets.Get(name).Context(ctx).Do()
+		switch {
+		case d.absent(err, serviceSecretManager):
+			continue
+		case err != nil:
+			return Imports{}, Existing{}, fmt.Errorf("reading project secret %s: %w", id, err)
+		}
+		want := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: spec.Installation.ProjectName, gcp.LabelSecret: logical}
+		if !hasMarks(s.Labels, want) {
+			d.foreign("project secret "+id, s.Labels, want)
+			continue
+		}
+		ex.ProjectSecretsOK[logical] = true
 	}
 
 	// The repository's image registry.
