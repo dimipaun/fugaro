@@ -1163,7 +1163,7 @@ L=us-east5
 R=fugaro-ghcr
 R2=fugaro-ghcr-scoped        # only 43a's optional scoping probe creates this
 U=dimipaun/fugaro-base
-V=$(fugaro version | awk '{print $NF}'); V=${V#v}   # `fugaro version`: no --version flag; the image tag drops a leading v
+V=$(fugaro version | awk '{print $NF}'); V=${V#v}   # `fugaro version`: no --version flag; a release already prints X.Y.Z, so the #v is a no-op kept for the tag form
 
 # ${VAR:?} everywhere: an empty variable is a hard error, never an empty
 # argument that gcloud would resolve from its ambient configuration.
