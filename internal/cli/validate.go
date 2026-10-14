@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -291,6 +293,7 @@ func newValidateCmd() *cobra.Command {
 				bp, bw := budgetProblems(ecfg, lc)
 				problems, warnings = append(problems, bp...), append(bw, rw...)
 				warnings = append(warnings, config.CheckWarnings(cfg, filepath.Dir(path))...)
+				warnings = append(warnings, cloneWorkflowWarnings(cfg)...)
 				pp, pw := providerProblems(cmd.Context(), ecfg, lc)
 				problems, warnings = append(problems, pp...), append(warnings, pw...)
 				annotateProjectRecipe(filepath.Dir(path), cfg, problems)
@@ -367,4 +370,22 @@ func usesProfiles(c *config.Config) bool {
 		}
 	}
 	return false
+}
+
+// cloneWorkflowWarnings warns, one per workflow, that checkout: clone is
+// valid config but runs nothing yet: cloneSince's launch gate
+// (recipes_skew.go) refuses every checkout: clone launch until fugaro
+// cloneSince ships, since plan Task 17 (the runner's own FUGARO_CHECKOUT
+// support) has not landed. The config stays valid — this is for later,
+// when Task 17 ships — so it is a warning, not a Problem from Check.
+func cloneWorkflowWarnings(c *config.Config) []config.Problem {
+	var ps []config.Problem
+	for _, name := range slices.Sorted(maps.Keys(c.Workflows)) {
+		if c.Workflows[name].Checkout != config.CheckoutClone {
+			continue
+		}
+		ps = append(ps, config.Problem{Path: "workflows." + name + ".checkout", Message: fmt.Sprintf(
+			"clone runs are refused at launch until fugaro %s: checkout: clone's own runner side (generic-tool plan Task 17) has not shipped yet; checkout: baked runs today", cloneSince)})
+	}
+	return ps
 }

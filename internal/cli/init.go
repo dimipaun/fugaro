@@ -2284,7 +2284,22 @@ func (r *initRun) installationOutputs(ctx context.Context, lc *localcfg.Config, 
 // planRepo is one discover, gate, plan, guard, confirm and apply of the
 // repository root. It returns what the readiness gates found missing.
 // first says whether this is the run's first plan, whose notes are shown.
+//
+// Before any of that (review finding, 0.7.0 safety fix round 2): a
+// checkout: clone workflow's job must never come to exist while
+// cloneShipped is false (no fugaro release can run one yet), so this
+// refuses outright, before any cloud call, rather than letting Terraform
+// create a job checkCloneImageSince would only catch later, at launch, and
+// only if the launch still decides clone from this same checkout (run.go's
+// checkoutConfig does not, once the job is already deployed). --plan-only
+// skips the refusal so the plan can still be shown; --print-vars never
+// reaches planRepo at all.
 func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, spec infra.RepoSpec, opts infra.RepoRootOptions, first bool) ([]infra.Missing, error) {
+	if !r.o.planOnly {
+		if err := refuseClonesNotShipped(spec.Name, "fugaro init --repo", "deploy", cloneWorkflowNames(spec.Workflows)); err != nil {
+			return nil, err
+		}
+	}
 	im, ex, err := infra.DiscoverRepo(ctx, c, spec)
 	if err != nil {
 		return nil, initErr(err)
@@ -2347,6 +2362,21 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	}
 	r.res.Applied = true
 	return missing, nil
+}
+
+// cloneWorkflowNames are the distinct workflow names among ws whose
+// resolved checkout is clone, sorted. ws may hold one WorkflowSpec per
+// Claude account variant of the same fugaro.yaml workflow
+// (gcp.WorkflowVariant, keyed by the variant, not the plain name), so this
+// dedupes by WorkflowSpec.Name rather than the map key.
+func cloneWorkflowNames(ws map[string]infra.WorkflowSpec) []string {
+	seen := map[string]bool{}
+	for _, w := range ws {
+		if w.Checkout == config.CheckoutClone {
+			seen[w.Name] = true
+		}
+	}
+	return slices.Sorted(maps.Keys(seen))
 }
 
 // cloudBuilder is the Cloud Build client the builds need. Tests replace

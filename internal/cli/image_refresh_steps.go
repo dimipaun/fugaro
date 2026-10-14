@@ -228,6 +228,16 @@ func (r *initRun) askBuild(what string) (confirmed, reachable bool, err error) {
 // local config's base_images.base directly, through the Cloud Run Admin
 // API (as refreshCheckJob moves the daily check job's), after its own
 // confirmation; no Cloud Build is ever submitted for it.
+//
+// Before any of that (review finding, 0.7.0 safety fix round 2): while
+// cloneShipped is false, no fugaro release can run a checkout: clone
+// workflow's job at all, so this refuses to move it onto base_images.base
+// in the first place, before the cloud calls below — the same gate
+// planRepo applies before deploying one. refuseClonesNotShipped's error is
+// cloneErr to refreshBuilds' caller, so it never stops the baked rebuild
+// offers the rest of this step makes for the repository's other workflows
+// (same as a declined clone confirmation already does not, see
+// TestRefreshDeclinedCloneJobDoesNotBlockBakedRebuilds).
 func (r *initRun) refreshCloneJobs(ctx context.Context, p *refreshPlan, t *refreshTarget) error {
 	var clones []string
 	for _, wf := range p.workflows {
@@ -237,6 +247,9 @@ func (r *initRun) refreshCloneJobs(ctx context.Context, p *refreshPlan, t *refre
 	}
 	if len(clones) == 0 {
 		return nil
+	}
+	if err := refuseClonesNotShipped(t.spec.Name, "fugaro image refresh", "move", clones); err != nil {
+		return err
 	}
 	newImage := t.lc.BaseImage(config.BaseKind)
 	if newImage == "" {
