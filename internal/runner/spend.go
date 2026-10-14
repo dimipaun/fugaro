@@ -5,9 +5,11 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 )
 
 // The job environment variables that carry the project's budget (the
@@ -53,8 +55,7 @@ func SpendFromEnv(lookup func(string) (string, bool)) (Spend, error) {
 	if err != nil {
 		return Spend{}, err
 	}
-	getenv := func(k string) string { v, _ := lookup(k); return v }
-	s, err := spendFromEnv(getenv)
+	s, err := spendFromEnv(lookup)
 	if err != nil {
 		return Spend{}, err
 	}
@@ -87,7 +88,8 @@ func policyFromEnv(lookup func(string) (string, bool)) (int64, []string, error) 
 	return tokens, models, nil
 }
 
-func spendFromEnv(getenv func(string) string) (Spend, error) {
+func spendFromEnv(lookup func(string) (string, bool)) (Spend, error) {
+	getenv := func(k string) string { v, _ := lookup(k); return v }
 	var s Spend
 	switch mode := getenv(BudgetModeEnv); mode {
 	case "", "off":
@@ -119,9 +121,38 @@ func spendFromEnv(getenv func(string) string) (Spend, error) {
 		if err != nil {
 			return Spend{}, err
 		}
-		if s.Prices, err = pricing.Embedded().With(o); err != nil {
-			return Spend{}, fmt.Errorf("%s: %w", ModelPricesEnv, err)
+		if s.Prices, err = priceTableFromEnv(lookup, o); err != nil {
+			return Spend{}, err
 		}
 	}
 	return s, nil
+}
+
+// priceTableFromEnv is the run's price table: config.PriceTable over the
+// providers the job carries and the built-in price catalog, with the owner's
+// overrides. The routes come from FUGARO_MODEL_PROVIDERS, the same value the
+// run routes with (Deps.Providers), so the models the run prices and the
+// models it may send to a provider cannot disagree.
+func priceTableFromEnv(lookup func(string) (string, bool), ov pricing.Overrides) (*pricing.Table, error) {
+	providers, err := ProvidersFromEnv(lookup)
+	if err != nil {
+		return nil, err
+	}
+	return priceTable(providers, ov)
+}
+
+// priceTable is config.PriceTable with the built-in catalog and the clock:
+// the one place the runner builds a table, so a run with the budget off is
+// priced by the same rules as one with it on.
+func priceTable(providers map[string]config.ModelProvider, ov pricing.Overrides) (*pricing.Table, error) {
+	cat, err := catalog.Load()
+	if err != nil {
+		return nil, err
+	}
+	return config.PriceTable(providers, ov, cat, time.Now())
+}
+
+// priceTable is the run's own table (priceTable over the job's providers).
+func (r *run) priceTable(ov pricing.Overrides) (*pricing.Table, error) {
+	return priceTable(r.d.Providers, ov)
 }

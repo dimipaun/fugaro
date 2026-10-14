@@ -396,7 +396,13 @@ func (r *run) checkProviderModels() error {
 	}
 	prices := r.spend.Prices
 	if prices == nil {
-		prices = pricing.Embedded()
+		// The budget is off, so the ceiling loaded no table; the checks
+		// below still judge the prices the run would charge, built the
+		// same way.
+		var err error
+		if prices, err = r.priceTable(nil); err != nil {
+			return fmt.Errorf("pricing the models: %w", err)
+		}
 	}
 	ps := config.CheckProviderPolicy(r.cfg.Agent, allowed, r.spec.Repo, r.d.Providers, prices)
 	ps = append(ps, config.CheckProviderAuth(r.cfg.Agent, r.d.Providers)...)
