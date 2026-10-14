@@ -2164,9 +2164,11 @@ Add to the operator steps, after the base-image upgrade order:
 
 ---
 
-## Release 0.8.0: the Docker-capable backend and the cost preview (owner rulings R2 and R4; not part of 0.7.0)
+## After 0.7.0: the cost preview (owner rulings R2 and R4; not part of 0.7.0)
 
 Starts right after 0.7.0 is released. **No task below is in any 0.7.0 group or in the 0.7.0 release notes.**
+
+**Owner ruling, 2026-10-14: Tasks 26, 27 and 28 are dropped.** Cloud Run gen-2 does not support Docker, so the Check 31 measurement and the Docker-on-gen-2 backend are pointless, and Task 28 (a Cloud Batch backend) was conditional on Check 31, so it is not scheduled either (a Docker-capable backend can be designed again if real demand appears). Tasks 24, 25 and 29 may ship in 0.7.1.
 
 ## Group F: cost preview (branch `gt-cost`)
 
@@ -2236,7 +2238,7 @@ Plus:
 
 ---
 
-### Task 26: Check 31 and its probe (the measurement, G1, G2)
+### Task 26 (DROPPED, owner ruling 2026-10-14): Check 31 and its probe (the measurement, G1, G2)
 
 **Files:** `deploy/sandbox/docker-probe/Dockerfile`, `deploy/sandbox/docker-probe/probe.sh`, `deploy/sandbox/docker-probe/batch-job.json`, `docs/gcp-live-checklist.md` (Check 31), `images/docker_probe_test.go` (static: the Dockerfile builds `FROM` the published `fugaro-base` by digest, pins every package, and the script prints only `FACT:` lines and timings).
 
@@ -2249,7 +2251,7 @@ Plus:
   - **FACT lines** to record, the **paste-back** list, and the **restore** (delete the throwaway job, the Batch jobs and the probe image).
 - [ ] **Step 3:** `go test -count=1 ./images/ -run TestDockerProbe`. Commit and open a docs PR. The owner runs the check.
 
-### Task 27 (BLOCKED on Check 31): Docker on gen-2, if A and B pass the threshold
+### Task 27 (DROPPED, owner ruling 2026-10-14: gen-2 does not support Docker): Docker on gen-2, if A and B pass the threshold
 
 Outline only; the full tasks are written after the FACT lines:
 - `workflows.<n>.docker: true` (scope table, schema);
@@ -2260,7 +2262,7 @@ Outline only; the full tasks are written after the FACT lines:
 - the selftest checks the socket is user-owned;
 - SECURITY.md is updated.
 
-### Task 28 (BLOCKED on Check 31): a Cloud Batch backend, if only C passes
+### Task 28 (DROPPED with Task 26: it was conditional on Check 31): a Cloud Batch backend, if only C passes
 
 Outline only, about 12 tasks:
 - `internal/backend/batch` passes `backendtest.Run` on a new Batch fake in `internal/gcpfake`;
@@ -2272,7 +2274,7 @@ Outline only, about 12 tasks:
 
 ### Task 29: Delete the `fugaro ls` tombstone (P3)
 
-One function and its test. It goes in 0.8.0 whatever Check 31 finds.
+One function and its test. Owner ruling 2026-10-14: it may ship in 0.7.1.
 
 ---
 
