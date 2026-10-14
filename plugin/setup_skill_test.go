@@ -712,3 +712,29 @@ func TestSetupSkillUsesTheProjectLayer(t *testing.T) {
 		t.Error("decisions.md has no section on the minimal file")
 	}
 }
+
+// TestSetupSkillOffersClone (generic-tool Task 18): the setup skill offers
+// the checkout decision instead of leaving every workflow on baked. The topic
+// names both values, says clone needs no system package and no Dockerfile,
+// and says which value is the default.
+func TestSetupSkillOffersClone(t *testing.T) {
+	files := setupFiles(t)
+	skill, dec := files["skills/setup/SKILL.md"], files["skills/setup/reference/decisions.md"]
+	if !regexp.MustCompile("(?m)^## \\d+\\. `checkout`").MatchString(dec) {
+		t.Error("decisions.md has no `checkout` topic")
+	}
+	for _, want := range []string{
+		"`checkout: clone`",
+		"`checkout: baked`",
+		"needs no system package and no Dockerfile",
+		"the default is `baked`",
+		"the user's decision",
+	} {
+		if !strings.Contains(dec, want) {
+			t.Errorf("decisions.md's checkout topic never says %q", want)
+		}
+	}
+	if !strings.Contains(skill, "`checkout`") {
+		t.Error("SKILL.md never mentions the checkout decision")
+	}
+}
