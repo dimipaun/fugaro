@@ -516,7 +516,7 @@ workflows:
 		t.Fatal(err)
 	}
 	want := SelftestSpec{Base: config.BaseKind, RepoDir: "/work/repo", Commit: "abc123", Origin: "https://github.com/acme/webapp.git",
-		CheckInit: true, CheckHardening: true, SkipVerify: true, Tools: "critical", Mise: true}
+		CheckInit: true, CheckHardening: true, SkipVerify: true, Tools: "critical", Mise: true, CheckMiseCache: true}
 	if !reflect.DeepEqual(spec, want) {
 		t.Fatalf("SpecForCloud = %+v\nwant %+v", spec, want)
 	}
@@ -652,6 +652,79 @@ func TestSelftestManagedSettingsDirExtraEntries(t *testing.T) {
 				t.Fatalf("an entry %s passed: %+v", name, c)
 			}
 		})
+	}
+}
+
+// --- The mise download cache (~/.cache/mise).
+
+// miseCacheResult is checkMiseCacheDir's one check, run against dir as if
+// dir were the mise cache of the user uid:gid.
+func miseCacheResult(t *testing.T, dir string, uid, gid uint32) Check {
+	t.Helper()
+	add, r := addRecorder()
+	checkMiseCacheDir(dir, uid, gid, add)
+	c, ok := checkNamed(*r, "mise-cache-dir")
+	if !ok {
+		t.Fatalf("no mise-cache-dir check in %+v", r.Checks)
+	}
+	return c
+}
+
+func TestCheckMiseCacheDir(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "cache", "mise")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	uid, gid := ownerIDs(t, dir)
+	if c := miseCacheResult(t, dir, uid, gid); !c.OK {
+		t.Fatalf("a directory owned and writable by the agent: %+v", c)
+	}
+	// A missing directory: the derived build's cache mount would create it
+	// as root.
+	missing := filepath.Join(root, "missing")
+	if c := miseCacheResult(t, missing, uid, gid); c.OK || !strings.Contains(c.Detail, missing) {
+		t.Fatalf("a missing directory passed: %+v", c)
+	}
+	// Root-owned with mode 0755 is exactly what BuildKit's mount target
+	// leaves behind: a directory the run's mise cannot write in.
+	if c := miseCacheResult(t, dir, uid+1000, gid+1000); c.OK || !strings.Contains(c.Detail, "owned by uid") {
+		t.Fatalf("a root-owned directory passed: %+v", c)
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	if c := miseCacheResult(t, dir, uid, gid); c.OK || !strings.Contains(c.Detail, "not writable") {
+		t.Fatalf("a read-only directory passed: %+v", c)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatal(err)
+	}
+	if c := miseCacheResult(t, link, uid, gid); c.OK || !strings.Contains(c.Detail, "symbolic link") {
+		t.Fatalf("a symlink passed: %+v", c)
+	}
+	file := filepath.Join(root, "file")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if c := miseCacheResult(t, file, uid, gid); c.OK {
+		t.Fatalf("a file passed: %+v", c)
+	}
+}
+
+// TestSelftestToolsOnlyMiseCacheCheck: the base image's smoke asks for the
+// presence checks and the mise cache check together, and the spec without
+// the flag leaves it out (TestSelftestToolsCriticalOnly pins that side).
+func TestSelftestToolsOnlyMiseCacheCheck(t *testing.T) {
+	presenceTable(t)
+	r := Selftest(context.Background(), SelftestSpec{ToolsOnly: true, Tools: "critical", CheckMiseCache: true}, &bytes.Buffer{})
+	if _, ok := checkNamed(r, "mise-cache-dir"); !ok {
+		t.Fatalf("no mise-cache-dir check in %+v", r.Checks)
 	}
 }
 
