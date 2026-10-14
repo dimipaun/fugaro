@@ -714,6 +714,47 @@ func TestSecretsSetRepoScopeAcceptsProviderSecretWithNoList(t *testing.T) {
 	}
 }
 
+// TestSecretsRepoAndProjectWideAreExclusive: --repo names one repository's
+// container and --project-wide works on the project's own, which no
+// repository owns. The project-wide path ignores --repo, so the pair used to
+// store and list a container the operator had not named; it is refused now,
+// before the value is read, and neither flag alone is affected.
+func TestSecretsRepoAndProjectWideAreExclusive(t *testing.T) {
+	sm := secretsFixture(t)
+	projectSecretFixture(t, "project_secrets:\n  bitbucket-token: { allow_data_to: [acme/app] }\n")
+	spy := &readerSpy{Reader: strings.NewReader(tokenValue)}
+	cmd := NewRootCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetIn(spy)
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"secrets", "set", "bitbucket-token", "--project-wide", "--repo", "acme/app"})
+	err := cmd.Execute()
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--repo and --project-wide") {
+		t.Fatalf("set: err = %v", err)
+	}
+	if spy.read {
+		t.Fatal("the value was read before the refusal")
+	}
+	if strings.Contains(out.String()+errOut.String()+err.Error(), tokenValue) {
+		t.Fatal("the value leaked")
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", "bitbucket-token")) != nil || sm.Latest(gcp.SecretID(appSlug, "bitbucket-token")) != nil {
+		t.Fatal("a refused value was stored")
+	}
+	if _, _, err := execute(t, "secrets", "ls", "--project-wide", "--repo", "acme/app"); ExitCode(err) != ExitUserError ||
+		!strings.Contains(err.Error(), "--repo and --project-wide") {
+		t.Fatalf("ls: err = %v", err)
+	}
+	// The flags on their own still work, project-wide first.
+	if _, errOut, err := execute(t, "secrets", "ls", "--project-wide"); err != nil {
+		t.Fatalf("--project-wide alone: %v (%s)", err, errOut)
+	}
+	if _, _, err := execute(t, "secrets", "ls", "--repo", "acme/app"); err != nil {
+		t.Fatalf("--repo alone: %v", err)
+	}
+}
+
 // TestSecretsLsAddsScopeColumn: a name with both a repo-owned version and a
 // project copy the repository may use shows "project, repo override stored";
 // an allow-listed project secret with no repo-owned entry at all shows

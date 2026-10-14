@@ -73,8 +73,20 @@ type secretsOptions struct {
 func (o *secretsOptions) addFlags(cmd *cobra.Command) {
 	addCloudFlags(cmd, &o.cloud)
 	cmd.Flags().StringVar(&o.repo, "repo", "", "repository as owner/name (default: this checkout's origin)")
-	cmd.Flags().BoolVar(&o.projectWide, "project-wide", false, "store or list the secret once per Fugaro project, not per repository")
+	cmd.Flags().BoolVar(&o.projectWide, "project-wide", false, "store or list the secret once per Fugaro project, not per repository (cannot be combined with --repo)")
 	cmd.Flags().BoolVar(&o.asJSON, "json", false, "print machine-readable output")
+}
+
+// checkScope refuses --repo with --project-wide before anything is read or
+// written. The two name different containers -- one repository's, and the
+// project's own, which no single repository owns -- and the project-wide
+// path ignores --repo, so accepting both would work on a container the
+// operator did not name.
+func (o *secretsOptions) checkScope(cmd *cobra.Command) error {
+	if o.projectWide && cmd.Flags().Changed("repo") {
+		return userErr("--repo and --project-wide cannot be combined: --project-wide stores and lists the project's own secret, which no repository owns; drop --repo (or drop --project-wide to work on one repository)")
+	}
+	return nil
 }
 
 // newSecretsSetCmd is `fugaro secrets set NAME`. It has no flag or argument
@@ -209,6 +221,9 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 		// The name is not quoted: a value typed in its place must not be echoed.
 		return userErr("the secret NAME must be one of %s, or a workflow secret's name matching %s",
 			strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", "), config.SecretNameRE)
+	}
+	if err := o.checkScope(cmd); err != nil {
+		return err
 	}
 	ctx := cmd.Context()
 	env, err := openCloud(ctx, o.cloud)
@@ -512,6 +527,9 @@ override stored" (both exist; the repository's own version wins).
 with the repositories the local config allows to use each one.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := o.checkScope(cmd); err != nil {
+				return err
+			}
 			ctx := cmd.Context()
 			env, err := openCloud(ctx, o.cloud)
 			if err != nil {
