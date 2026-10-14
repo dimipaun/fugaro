@@ -313,7 +313,8 @@ func TestGatewayCostReplacesClaudeCost(t *testing.T) {
 func TestStageTimingCarriesCost(t *testing.T) {
 	// With the gateway on, a stage's figure is the gateway's StageReport for
 	// that stage, and the stages sum to the record's model cost.
-	g := newGW(t, gwConfig(t, ""), "observe", "", out4k(), out4k(), out4k())
+	g := newGW(t, gwConfig(t, ""), "observe", "",
+		out4k(), anthropicfake.MessageOK(haiku, pricing.Usage{Input: 100000}), out4k())
 	var st []int
 	rec, err := g.run(t,
 		calling(&st, implement("feature"), call{sonnet, 4000}, call{haiku, 1000}),

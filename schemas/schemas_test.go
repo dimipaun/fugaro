@@ -235,7 +235,7 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			Warning: "w", StartedAt: at, DurationS: 1.5,
 		}},
 		CostUSD: 4.12, Cost: &cost,
-		Stages:    []runstore.StageTiming{{Name: "implement", StartedAt: at, DurationS: 61}},
+		Stages:    []runstore.StageTiming{{Name: "implement", StartedAt: at, DurationS: 61, ModelUSD: 0.42, Model: "claude-sonnet-5-5"}},
 		StartedAt: at, Deadline: &deadline, FinishedAt: &finished,
 		FinalizeReserveS: 90,
 	}

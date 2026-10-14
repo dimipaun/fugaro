@@ -111,11 +111,26 @@ const (
 	TierSenior = "senior"
 )
 
-// StageTiming records how long one stage took.
+// StageTiming records how long one stage took, and what its model calls
+// cost (generic-tool plan Task 24). ModelUSD is the gateway's StageReport
+// figure for the stage when the run went through the gateway, and the
+// result event's total_cost_usd otherwise (an oauth run); Model is the
+// model the stage was pinned to (config.Agent.ModelFor). Both are absent
+// in records from before 0.8.0, and in a local run that had no gateway and
+// reported no cost.
 type StageTiming struct {
 	Name      string    `json:"name"`
 	StartedAt time.Time `json:"started_at"`
 	DurationS float64   `json:"duration_s"`
+	// ModelUSD is what this stage's calls cost, in USD. The stages sum to
+	// Cost.ModelUSD, up to spend no stage report carried (gateway calls
+	// that settled after their stage's wait) and rounding to the
+	// micro-dollar.
+	ModelUSD float64 `json:"model_usd,omitempty"`
+	// Model is the model the stage ran on: the stage role's models.<role>,
+	// else agent.model. "" when the config pinned none (Claude Code's own
+	// default), and absent in records from before 0.8.0.
+	Model string `json:"model,omitempty"`
 }
 
 // Record is result.json, the run record (design §4.6).

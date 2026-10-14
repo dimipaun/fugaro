@@ -2,11 +2,39 @@ package runner
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
+
+// stageTiming is the StageTiming for the stage that just ended, so that
+// result.json says what each stage cost and which model it ran on
+// (generic-tool plan Task 24; the cost preview reads it). The cost is the
+// gateway's figure for the stage, which endGatewayStage has already taken
+// into r.lastStage, or, without a gateway, what the agent's own result
+// event reported (an oauth run). Read this right after the stage's agent
+// returned, before anything else closes a stage in the gateway.
+func (r *run) stageTiming(name string, started time.Time, claudeUSD float64) runstore.StageTiming {
+	st := runstore.StageTiming{
+		Name:      name,
+		StartedAt: started.UTC(),
+		DurationS: r.d.Now().Sub(started).Seconds(),
+		Model:     r.cfg.Agent.ModelFor(config.StageRole(name)),
+	}
+	if r.gw == nil {
+		st.ModelUSD = claudeUSD
+		return st
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.lastStage != nil {
+		st.ModelUSD = r.lastStage.Used.USD()
+	}
+	return st
+}
 
 // updateCost refreshes the record's cost breakdown from the model spend so
 // far and the elapsed compute time at list price.
