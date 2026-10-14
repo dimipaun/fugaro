@@ -65,13 +65,13 @@ func TestCheckRecipeImage(t *testing.T) {
 // judges base_images.base's own release directly, since a checkout: clone
 // workflow's job has no derived image and so no build record to judge. One
 // row per threshold it backs (recipesSince, layeredSince, each refusing an
-// image that predates it), plus a dev/custom ref under cloneSince (warned
-// about, not refused: its release is unknown, so it is not judged against
-// cloneSince's own unconditional refusal either — see
-// TestCheckCloneImageSinceRefusedUntilCloneSince for that). cloneSince
-// itself gets its own wording, pinned separately, since the gate always
-// refuses today (no release ships plan Task 17 yet): folding it into this
-// generic loop would require asserting two different message shapes here.
+// image that predates it), plus a dev/custom ref under one of those other
+// thresholds (warned about, not refused: its release is unknown — this
+// behaviour is unchanged by the 0.7.0 safety fix). cloneSince itself gets
+// its own wording, pinned separately in TestCheckCloneImageSinceRefusedUntilCloneSince,
+// since the gate always refuses today (no release ships plan Task 17 yet,
+// and that includes a dev/custom ref too): folding it into this generic
+// loop would require asserting two different message shapes here.
 func TestCheckCloneImageSince(t *testing.T) {
 	f := newCloudFixture(t)
 	env := fileEnv(t, f)
@@ -90,7 +90,7 @@ func TestCheckCloneImageSince(t *testing.T) {
 		{"no base image at all", layeredSince, "-", "is not set (the local config has no base_images.base)", ""},
 		{"below recipesSince", recipesSince, "ghcr.io/dimipaun/fugaro-base:0.4.0", "is ghcr.io/dimipaun/fugaro-base:0.4.0, release 0.4.0", ""},
 		{"below layeredSince", layeredSince, "ghcr.io/dimipaun/fugaro-base:0.5.0", "is ghcr.io/dimipaun/fugaro-base:0.5.0, release 0.5.0", ""},
-		{"a dev ref warns, not refused", cloneSince, "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c", "", "not a release base image"},
+		{"a dev ref warns, not refused (not cloneSince)", layeredSince, "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c", "", "not a release base image"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			warn, err := check(tc.since, tc.baseImage)
@@ -126,6 +126,13 @@ func TestCheckCloneImageSince(t *testing.T) {
 // yet and names checkout: baked as the way to run the workflow today; only
 // an image built from cloneSince itself (0.7.1, the release that will ship
 // Task 17) passes.
+//
+// A non-release ref (dev, hand-pushed, --image-source) gets the same
+// refusal, not just a warning (0.7.0 safety fix round 2, review finding:
+// while cloneShipped is false, no build of any kind — release or not —
+// reads FUGARO_CHECKOUT, so a dev ref cannot make the launch work either;
+// warning and letting it through used to contradict that and fail the run
+// at bootstrap just the same).
 func TestCheckCloneImageSinceRefusedUntilCloneSince(t *testing.T) {
 	f := newCloudFixture(t)
 	env := fileEnv(t, f)
@@ -148,6 +155,28 @@ func TestCheckCloneImageSinceRefusedUntilCloneSince(t *testing.T) {
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	// A dev ref: still refused, not merely warned about, while cloneShipped
+	// is false.
+	lc.BaseImages["base"] = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c"
+	warn.Reset()
+	err = checkCloneImageSince(&lc, spec, cloneSince, "this checkout: clone workflow", "how to provision a blobless clone (FUGARO_CHECKOUT)", "", &warn)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("dev ref: err = %v, want refused", err)
+	}
+	if warn.Len() != 0 {
+		t.Errorf("dev ref: warn = %q, want none (refused, not warned)", warn.String())
+	}
+	for _, want := range []string{
+		"checkout: clone's own runner side is not released yet",
+		"generic-tool plan Task 17",
+		"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c",
+		"checkout: baked",
+		"today",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("dev ref: %v lacks %q", err, want)
 		}
 	}
 	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:0.7.1"
