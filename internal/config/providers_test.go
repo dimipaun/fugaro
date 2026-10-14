@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"gopkg.in/yaml.v3"
 )
 
 // TestProvidersAreTheGitprovKinds keeps config.Providers in step with the
@@ -85,6 +86,67 @@ func TestValidateModelProvidersRefusesExplicitEmptyList(t *testing.T) {
 	// states instead of only the explicit one.
 	if ps := ValidateModelProviders(map[string]ModelProvider{"openrouter": okProvider()}); len(ps) != 0 {
 		t.Fatalf("an absent allow_data_to (the zero value) was wrongly refused too: %+v", ps)
+	}
+}
+
+// TestProviderAllowDataToSpellings is the round-6 ruling: every spelling of
+// "written, but with no repositories listed" is the same ambiguity as an
+// explicit [], and is refused the same way. The dangerous ones are the null
+// spellings -- `allow_data_to:` with every entry commented out, or `~` --
+// which YAML gives the same Go value as an absent key, and which therefore
+// used to mean "every repository" by accident (design §3a: absent, or
+// ["*"], is every repository).
+func TestProviderAllowDataToSpellings(t *testing.T) {
+	const body = "kind: anthropic-compat\nbase_url: https://openrouter.ai/api\nauth: bearer\n" +
+		"secret: openrouter-api-key\nmodels: [\"deepseek/*\"]\n"
+	for name, tc := range map[string]struct {
+		tail    string
+		anyRepo bool
+		refused bool
+	}{
+		"absent":              {"", true, false},
+		"wildcard":            {"allow_data_to: [\"*\"]\n", true, false},
+		"listed":              {"allow_data_to: [acme/app]\n", false, false},
+		"explicit empty list": {"allow_data_to: []\n", false, true},
+		"null":                {"allow_data_to:\n", false, true},
+		"tilde":               {"allow_data_to: ~\n", false, true},
+		"only comments":       {"allow_data_to:\n  # - acme/app\n", false, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var p ModelProvider
+			if err := yaml.Unmarshal([]byte(body+tc.tail), &p); err != nil {
+				t.Fatal(err)
+			}
+			ps := ValidateModelProviders(map[string]ModelProvider{"openrouter": p})
+			if tc.refused {
+				if len(ps) != 1 || ps[0].Path != "providers.openrouter.allow_data_to" {
+					t.Fatalf("%s: problems = %q, want one refusal of allow_data_to", name, problemsText(ps))
+				}
+				if !strings.Contains(ps[0].Message, "ambiguous") {
+					t.Fatalf("%s: the refusal does not name the ambiguity: %q", name, ps[0].Message)
+				}
+				// ... and it stays fail-closed even if validation is
+				// bypassed, exactly as the explicit [] does.
+				if p.AllowsData("acme/anything") {
+					t.Fatalf("%s: allows every repository despite being refused", name)
+				}
+				return
+			}
+			if len(ps) != 0 {
+				t.Fatalf("%s: refused though it must be accepted: %q", name, problemsText(ps))
+			}
+			if got := p.AllowsData("acme/anything"); got != tc.anyRepo {
+				t.Errorf("%s: AllowsData(acme/anything) = %v, want %v", name, got, tc.anyRepo)
+			}
+		})
+	}
+	// Reading the mapping node to tell a null from an absent key must not
+	// cost the decoder's own strictness: an unknown field is still refused,
+	// and still names the type, as yaml.v3's KnownFields does.
+	var p ModelProvider
+	err := yaml.Unmarshal([]byte(body+"api_key: sk-secret\n"), &p)
+	if err == nil || !strings.Contains(err.Error(), "api_key") || !strings.Contains(err.Error(), "not found in type") {
+		t.Fatalf("an unknown provider field: %v", err)
 	}
 }
 

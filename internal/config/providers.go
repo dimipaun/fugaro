@@ -5,11 +5,13 @@ import (
 	"math"
 	"net"
 	"net/url"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"gopkg.in/yaml.v3"
 )
 
 // Model providers are the owner's list of non-Anthropic backends a run's
@@ -44,9 +46,66 @@ type ModelProvider struct {
 	// AllowDataTo are the repositories (owner/name) whose code may be sent
 	// here. Absent (the zero value) or ["*"] mean every repository (owner
 	// ruling, 2026-10-13 and its follow-ups, design
-	// docs/design/project-secrets.md §3a); an explicit, non-nil, empty list
+	// docs/design/project-secrets.md §3a); a list written with no
+	// repositories in it -- [] , or the key with nothing under it at all --
 	// is refused by ValidateModelProviders as ambiguous.
 	AllowDataTo []string `yaml:"allow_data_to,omitempty" json:"allow_data_to,omitempty"`
+	// allowDataToWritten records that the YAML gave allow_data_to at all.
+	// It exists because a key written with nothing under it (`allow_data_to:`
+	// with every entry commented out, or `~`) decodes to the same nil slice
+	// as an absent key -- which means every repository -- and only the
+	// mapping node can tell the two apart (UnmarshalYAML).
+	allowDataToWritten bool
+}
+
+// modelProviderType is ModelProvider's own type name, for the unknown-field
+// refusal below: UnmarshalYAML has to build the message yaml.v3's strict
+// mode would have built, and that mode names the type it was decoding into.
+var modelProviderType = reflect.TypeOf(ModelProvider{})
+
+// providerKeys are the yaml keys a providers entry accepts, read from the
+// struct's own tags so a new field is picked up without a second list.
+var providerKeys = func() map[string]bool {
+	out := map[string]bool{}
+	t := reflect.TypeOf(ModelProvider{})
+	for i := range t.NumField() {
+		if tag, _, _ := strings.Cut(t.Field(i).Tag.Get("yaml"), ","); tag != "" && tag != "-" {
+			out[tag] = true
+		}
+	}
+	return out
+}()
+
+// UnmarshalYAML decodes one providers entry, and refuses a key it does not
+// know. That second job is normally yaml.v3's own (Decoder.KnownFields), but
+// known fields are a property of a Decoder while decoding through a Node --
+// the only way to see a key that was written with nothing under it -- is
+// always lenient, so the check is repeated here, with the same message.
+func (p *ModelProvider) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: a provider must be a mapping of field to value", node.Line)}}
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if k := node.Content[i]; !providerKeys[k.Value] {
+			return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: field %s not found in type %s", k.Line, k.Value, modelProviderType)}}
+		}
+	}
+	type plain ModelProvider // no methods: decodes the fields without recursing into this one
+	var v plain
+	if err := node.Decode(&v); err != nil {
+		return err
+	}
+	*p = ModelProvider(v)
+	// A null value is short-circuited by yaml.v3 before any unmarshaler
+	// sees it, so the key's presence is read off the node itself: written
+	// with nothing under it is not the same state as absent.
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == "allow_data_to" {
+			p.allowDataToWritten = true
+			break
+		}
+	}
+	return nil
 }
 
 var (
@@ -64,16 +123,18 @@ func (p ModelProvider) Matches(model string) bool {
 // every repository when AllowDataTo is nil (the key is absent -- never
 // written at all), or when it contains the literal entry "*" (owner ruling,
 // 2026-10-13, and its follow-ups, design docs/design/project-secrets.md
-// §3a). An explicit, non-nil, zero-length AllowDataTo ([] in the YAML) is
-// refused by ValidateModelProviders before this method is ever called on
-// valid config -- checking p.AllowDataTo == nil here, not len(...) == 0, is
-// deliberate: it keeps this method correctly fail-closed (an
-// empty-but-not-absent list matches nothing in the ContainsFunc below) even
-// if that validation were ever bypassed. Otherwise, an exact,
-// case-insensitive match against a listed repository, as before.
+// §3a). A list written with no repositories in it -- [] , or a null key,
+// which the unmarshaller marks with allowDataToWritten -- is refused by
+// ValidateModelProviders before this method is ever called on valid config.
+// Checking the zero value here, rather than len(...) == 0, is deliberate: it
+// keeps this method correctly fail-closed (an empty-but-not-absent list
+// matches nothing in the ContainsFunc below, and a written-but-null one
+// answers false above) even if that validation were ever bypassed.
+// Otherwise, an exact, case-insensitive match against a listed repository,
+// as before.
 func (p ModelProvider) AllowsData(repo string) bool {
 	if p.AllowDataTo == nil {
-		return true
+		return !p.allowDataToWritten
 	}
 	return slices.ContainsFunc(p.AllowDataTo, func(r string) bool { return r == "*" || strings.EqualFold(r, repo) })
 }
@@ -159,10 +220,15 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 				add(at+".models", "%s", msg)
 			}
 		}
-		if p.AllowDataTo != nil && len(p.AllowDataTo) == 0 {
-			// An absent key and ["*"] both mean "every repository", but an
-			// explicit [] cannot be told apart from "not decided yet"
-			// (design §3a, round 5): refuse rather than guess.
+		if len(p.AllowDataTo) == 0 && (p.allowDataToWritten || p.AllowDataTo != nil) {
+			// An absent key and ["*"] both mean "every repository", but a
+			// list written with nothing in it cannot be told apart from
+			// "not decided yet" (design §3a, round 5). That covers [] and
+			// the null spellings alike: `allow_data_to:` with every entry
+			// commented out, or `~`, decodes to a nil slice -- the same
+			// value as an absent key, and the reason unmarshalling reads
+			// the key's presence off the node (round 6). Refuse rather
+			// than guess.
 			add(at+".allow_data_to", "an explicit empty list is ambiguous: write [\"*\"] for any repository, or remove the key entirely")
 		}
 		for _, r := range p.AllowDataTo {
