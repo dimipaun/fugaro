@@ -1180,10 +1180,14 @@ docker buildx imagetools inspect "$I@$D" --format '{{.Manifest.Digest}}'
 
 ```bash
 docker pull "$I:$V"                                 # the by-tag request, cold
-gcloud artifacts docker images list "$I" --include-tags --project="$P"
+# List the REPOSITORY, not the package: the package path is the answer this
+# item is here to discover, so passing it would presuppose it (Check 27, B.10,
+# lists the repository the same way). --package="$U" is the other form, and it
+# asserts the answer rather than reporting it.
+gcloud artifacts docker images list "$L-docker.pkg.dev/$P/$R" --include-tags --project="$P"
 ```
 
-**FACT lines:** `docker pull` succeeds **before** you are ever asked for ghcr.io credentials (a public package, anonymously); whether `gcloud artifacts docker images list` names the package as `dimipaun/fugaro-base` — i.e. whether the upstream path is appended verbatim; and the tag it lists. If the by-tag pull works but the path is *not* `dimipaun/fugaro-base`, say so in the PR: the pinned reference's shape (§3.1) and every validator in §3.6 are written against the verbatim path.
+**FACT lines:** `docker pull` succeeds **before** you are ever asked for ghcr.io credentials (a public package, anonymously); **what package name Artifact Registry itself created** — read it out of the listing, which is why the command lists the repository and not `$I`; and the tag it lists. Whether that name is `dimipaun/fugaro-base` — i.e. whether the upstream path is appended verbatim — is what this item settles: if the by-tag pull works but the package is named something else, say so in the PR, because the pinned reference's shape (§3.1) and every validator in §3.6 are written against the verbatim path.
 
 **(43d) The CLI pins it, and the check job runs from the pin** — design §2.12 d. Needs the implementation and a signed release (43a-43c do not).
 
@@ -1215,6 +1219,15 @@ fugaro image build --repo edgeappinc/fugarosandbox --workflow web
 
 **FACT lines:** the combined reference pulls with docker; the real `fugaro init --repo` plan renders the check job (and every clone workflow's job) with that string and asks Terraform for it without an error — **a refusal here is the signal to take the §3.1 fallback**, and to say so in the PR; and the build's Cloud Build run shows `_FUGARO_BASE` as that string and succeeds — its first step and its `FROM` both pull through the remote repository as the build account. Record the build ID and the resolved digest from the build log. (**`--print-vars` is not enough here:** it prints the substitutions without running Terraform, so it cannot show that the plan accepts the string — the point of this item.)
 
+**⚠ And compare two digests, not one (design §2.12 n).** The build's own log prints `base <ref>@sha256:…` from `docker image inspect … RepoDigests` (`images/derived/cloudbuild.yaml:144-146`), which becomes the record's `base_digest` (`image record --base-digest-from`); the daily check compares that against its own read of the same reference (`internal/imagecheck/triggers.go:36-38`). The check's read is the **index** digest — it is the reference's own digest, returned with no registry call — so **this FACT is whether the daemon's answer is the same digest**:
+
+```bash
+gcloud builds log <the build ID from above> | grep -n 'base .*@sha256:'    # what the build recorded
+echo "$D"                                                                   # 43b's index digest
+```
+
+**If they differ, record it and stop:** the daemon resolved the index to the platform manifest, and the consequence is not an error — it is `ReasonBase` firing on **every** daily check, rebuilding every workflow once a day forever, with no log line saying why. That is a finding for the design (the fix belongs at build time: record the index digest the reference names, or compare index-to-index), not something to accept as noise.
+
 **(43f) The round trip, and the restore.**
 
 ```bash
@@ -1230,14 +1243,18 @@ fugaro run --repo edgeappinc/fugarosandbox --ref master "Do not change any file 
 C=$HOME/.config/fugaro/projects/<project>.yaml        # in a new shell, name it again
 cp "$C.before-43" "$C"                                # ⚠ CONFIRM: the local config back
 fugaro init --repo .                                  # ⚠ CONFIRM: republishes the shared config and moves the job images back
-fugaro init --base base                               # ⚠ CONFIRM: re-reads the restored base (no copy either way)
+# ⚠ Do NOT run `fugaro init --base base` here. After the implementation it
+# would RE-PIN the remote path — a restored copy-shaped entry is stale by
+# design (currentness is the version AND the shape, design §5.4) — and undo the
+# three lines above. It is only meaningful in the pre-implementation
+# feasibility run, where there is nothing to pin and it re-reads the copy.
 # Only when 43a-43c ran WITHOUT the implementation merged (the feasibility run):
 gcloud artifacts repositories delete "$R" --project="$P" --location="$L"   # ⚠ CONFIRM
 ```
 
 Four things to know about that restore:
 
-- **The copied base image must still be there.** The design deletes nothing from `fugaro-base` (its cleanup policies prune it as usual), so going back to `…/fugaro-base/fugaro-base:<v>` works — **unless** the cleanup policy has since pruned that version, in which case `fugaro init --base base` re-pins the remote path and there is nothing to go back to. Check the repository first if you care.
+- **The copied base image must still be there.** The design deletes nothing from `fugaro-base` (its cleanup policies prune it as usual), so going back to `…/fugaro-base/fugaro-base:<v>` works — **unless** the cleanup policy has since pruned that version, in which case there is nothing to go back to. `fugaro init --base base` never takes you *to* the copy: after the implementation it moves you to the pin, which is why the restore block above does not run it. Check the repository first if you care whether the old copy is still there.
 - **Restoring the local config is not enough on its own.** The shared config is republished by `fugaro init`/`fugaro image refresh`, and the check job's image is moved by `fugaro init --repo` — a restored `~/.config` file with neither command run leaves the installation half-back, with the shared config and every job still naming the pin.
 - **After the implementation, a restored copy-shaped entry is *stale* by design**, not current: currentness is the version **and** the shape, so the next `fugaro init`/`fugaro image refresh`/`fugaro upgrade` re-pins it (design §5.4). A restore to the copy is therefore a temporary state you keep by not refreshing — it is the right state only for the pre-implementation feasibility run, or to hand the installation back to an older CLI.
 - Once the implementation is merged, the repository is part of the sandbox installation (`fugaro init` creates it, `prevent_destroy` protects it) and stays: delete it only in the pre-implementation feasibility run, where Fugaro does not know about it yet. **If you created it in 43a and leave it in place with the `fugaro=managed` label 43a sets, the first `fugaro init` after the implementation imports it** (it is an import kind, `importGhcrRegistry`) — without the label the run refuses it at discovery time with a named message instead of a Terraform `already exists` halfway through an apply. Deleting it is still the cleaner restore.
