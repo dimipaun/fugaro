@@ -26,6 +26,14 @@ var Bases = []string{BaseKind}
 // "workflows.web.base: base: was removed in 0.7.0...", the word doubled.
 const legacyBaseMessage = "was removed in 0.7.0: every workflow builds on the one Fugaro base image. Delete this line and declare the workflow's runtimes in mise.toml (%s)"
 
+// The round knobs' defaults, named: `fugaro budget preview` counts a
+// recipe's stages at these when it has no checkout of the repository to read
+// the knobs from, so the two must not drift apart.
+const (
+	DefaultFirstLineRounds = 1
+	DefaultReviewRounds    = 2
+)
+
 // applyDefaults fills in every field fugaro.yaml may omit. The per-base cache
 // default depends on the checkout's lockfile, so it is not applied here:
 // DefaultCache computes it, and M4's cache restore applies it.
@@ -41,13 +49,13 @@ func applyDefaults(c *Config) {
 		c.Agent.Auth = "vertex"
 	}
 	if c.Agent.ReviewRounds == 0 {
-		c.Agent.ReviewRounds = 2
+		c.Agent.ReviewRounds = DefaultReviewRounds
 	}
 	if c.Agent.FirstLineReview == "" {
 		c.Agent.FirstLineReview = FirstLineAuto
 	}
 	if c.Agent.FirstLineRounds == 0 {
-		c.Agent.FirstLineRounds = 1
+		c.Agent.FirstLineRounds = DefaultFirstLineRounds
 	}
 	if c.Agent.MaxBudgetUSD == 0 {
 		c.Agent.MaxBudgetUSD = 25
