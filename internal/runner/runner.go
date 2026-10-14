@@ -763,6 +763,33 @@ func clearStateDir(stateDir string) error {
 // timeout does.
 const bashTimeoutSlack = 2 * time.Minute
 
+// openCheckout opens (or makes) the run's checkout at r.d.WorkDir: the one
+// baked into the image when there is one, and otherwise a clone of the
+// run's remote. A job that runs without a derived image
+// (FUGARO_CHECKOUT=clone, design generic-tool.md §2, G4) has no baked
+// checkout, so its clone is the blobless one gitops.CloneBlobless makes:
+// full history, no file contents until the checkout of the task's ref needs
+// them. cloneVars are the git credentials authVars built.
+//
+// The branch cloned is the remote's own default branch, not
+// git.base_branch: that is in the repository's fugaro.yaml, which cannot be
+// read before the checkout exists. It costs nothing — bootstrap's FetchBase
+// brings origin/<base> up to date before anything reads it — and the task's
+// own ref is fetched separately either way (CheckoutNewBranch).
+func (r *run) openCheckout(ctx context.Context, cloneVars map[string]string) (*gitops.Repo, error) {
+	env := gitops.WithVars(gitops.IdentityEnv(), cloneVars)
+	// A checkout already here (baked into the image, or left by an earlier
+	// run on the same container), or a baked job with none to open, is
+	// OpenOrClone's case: there is no clone to choose the shape of.
+	if _, err := gitops.Open(r.d.WorkDir, nil); err == nil || !r.cloneJob() {
+		return gitops.OpenOrClone(ctx, r.d.WorkDir, r.d.Remote, env, modelCredentialVars...)
+	}
+	if r.d.Remote == "" {
+		return nil, fmt.Errorf("%s is empty and this job has no repository to clone (FUGARO_CHECKOUT=%s with no remote)", r.d.WorkDir, config.CheckoutClone)
+	}
+	return gitops.CloneBlobless(ctx, r.d.WorkDir, r.d.Remote, "", env, modelCredentialVars...)
+}
+
 func (r *run) bootstrap(ctx context.Context) error {
 	spec, err := r.d.Store.ReadTask(ctx)
 	if err != nil {
@@ -822,7 +849,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("building git credentials: %w", err)
 	}
-	repo, err := gitops.OpenOrClone(ctx, r.d.WorkDir, r.d.Remote, gitops.WithVars(gitops.IdentityEnv(), cloneVars), modelCredentialVars...)
+	repo, err := r.openCheckout(ctx, cloneVars)
 	if err != nil {
 		return fmt.Errorf("opening checkout %s: %w", r.d.WorkDir, err)
 	}
@@ -973,6 +1000,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 		}
 	case r.providerKind != cfg.Git.Provider:
 		return fmt.Errorf("fugaro.yaml sets git.provider to %s, but %s says %s", cfg.Git.Provider, r.providerFrom, r.providerKind)
+	}
+	// A job that runs without a derived image installs the repository's
+	// mise tools itself (provision.go, design generic-tool.md §2, G4): the
+	// image installed none for it. It runs here, once the provider is
+	// opened, so mise's own GitHub calls can use the run's git token, and
+	// before any stage records its own time.
+	if err := r.provision(ctx); err != nil {
+		return err
 	}
 	if r.follow != nil {
 		if err := r.checkPullRequest(ctx); err != nil {

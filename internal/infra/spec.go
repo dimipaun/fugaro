@@ -64,10 +64,11 @@ const (
 	// CheckoutEnv, set to config.CheckoutClone on a checkout: clone
 	// workflow's job (never on a baked one, whose spec stays exactly what
 	// it was before clone existed), tells the runner's bootstrap to make a
-	// blobless clone at start instead of moving a baked-in one (design
-	// generic-tool.md §2, G4; plan Task 17, not yet merged: this value is
-	// inert until the runner reads it).
-	CheckoutEnv = "FUGARO_CHECKOUT"
+	// blobless clone at start instead of moving a baked-in one, and to
+	// install the checkout's mise tools (design generic-tool.md §2, G4;
+	// plan Task 17). The runner reads it, so the constant lives there
+	// (runner.CheckoutEnv), the same way the budget variables do.
+	CheckoutEnv = runner.CheckoutEnv
 )
 
 // The installation-identity env vars platformEnv and the vertex branch of
