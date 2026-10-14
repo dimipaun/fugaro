@@ -59,9 +59,9 @@ agent:
 
 **A non-Claude senior (GPT, Gemini, a larger DeepSeek or Qwen) works with the existing rules**: the route table, pins, prices and gateway need nothing new, and a different model family reviewing a DeepSeek diff is a better second opinion than the same family. Two things still apply: an existing, at least 4-byte `ANTHROPIC_API_KEY` secret (§2: a placeholder the owner types is enough when no `claude-*` model is pinned, since the gateway sends it upstream only for a Claude model), and `allow_data_to` listing the repository for the provider.
 
-**A Claude senior through OpenRouter (`anthropic/claude-sonnet-5.5`) is refused today**, in three places: `ClaudePatterns` rejects a provider claiming `anthropic/*`, `IsAlias` rejects the key in `model_prices`, and the pin checks reject the ID as an alias. The owner ruled on 2026-10-14 that the rule is relaxed with an explicit opt-in in config. The change is: an opt-in route entry that claims one explicit `anthropic/<id>` (not a pattern), with `IsAlias` and the pin checks accepting exactly the IDs a route claims, and the alias tests changed on purpose. The cache-marker reasoning (M10 decision 2) is the open technical question: OpenRouter forwards Anthropic's `cache_control`, but whether Claude Code's cache markers survive the Anthropic-compatible endpoint is to be measured, not assumed; the live check compares `cache_read` tokens between a direct and an OpenRouter run.
+**A Claude senior through OpenRouter (`anthropic/claude-sonnet-5.5`) is refused today**, in three places: `ClaudePatterns` rejects a provider claiming `anthropic/*`, `IsAlias` rejects the key in `model_prices`, and the pin checks reject the ID as an alias. The owner ruled on 2026-10-14 that the rule is relaxed with an explicit opt-in in config. The change is: an opt-in route entry that claims one explicit `anthropic/<id>` (not a pattern), with `IsAlias` and the pin checks accepting exactly the IDs a route claims, and the alias tests changed on purpose. **Where the entry lives** (owner ruling, 2026-10-14): in the local operator config or in the shared project layer, so a project lead can enable it without editing local config; a repository's own `fugaro.yaml` can choose the model (`agent.models.reviewer`) but cannot add or enable a route, and `allow_data_to` on the provider still decides which repositories may send code. The plumbing is wider than the config check: the gateway's `validateRoutes` shares `CheckModelPattern`, and the claimed IDs must reach the pricing package (`IsAlias`, `CheckPins`, `CheckProviderPolicy`). With a provider-served senior, `first_line_review: auto` turns the first-line review **off** (it is on only when the coder is provider-served and the reviewer is not), so a Path C senior runs without the cheap first line unless `first_line_review: on` is set. The cache-marker reasoning (M10 decision 2) is the open technical question: OpenRouter forwards Anthropic's `cache_control`, but whether Claude Code's cache markers survive the Anthropic-compatible endpoint is to be measured, not assumed; the live check compares `cache_read` tokens between a direct and an OpenRouter run.
 
-Facts from OpenRouter's public API, 2026-10-14 (to re-verify at build time; the lists change): `anthropic/claude-sonnet-5.5` $2/$10 per million tokens, `anthropic/claude-opus-5.5` $4/$20, `anthropic/claude-fable-5.1` $10/$50; Anthropic models are served by Amazon Bedrock and Google on the zero-data-retention endpoint list. The route fee (`route_fee_pct`, 5.5 today) is added to every charge.
+Facts from OpenRouter's public API, 2026-10-14 (to re-verify at build time; the lists change): `anthropic/claude-sonnet-5.5` $2/$10 per million tokens, `anthropic/claude-opus-5.5` $4/$20, `anthropic/claude-fable-5.1` $10/$50; Anthropic models are served by Amazon Bedrock and Google on the zero-data-retention endpoint list. The route fee (`route_fee_pct`) is added to every charge; the code default is 0, and 5.5 is the value in the owner's operator config. A route that reports no cache fields is charged at the full input rate, so a senior with worse caching costs more as well as risking different behavior; `fugaro budget preview` (#351) gives a ceiling.
 
 ## 5. Path B: the OAuth token for the reviewer stage only
 
@@ -88,7 +88,7 @@ In Path B the subscription token and a cheap model that reads untrusted reposito
 
 Mitigations, honestly:
 
-1. **Opt-in, trusted repositories only.** Enforced by validation as far as config can: `claude_accounts.allow_data_to`, and refusing `stage_auth` where the workflow takes follow-ups from public-repository comments (`followup.allow_public`). It is only as strong as who can push branches and comment.
+1. **Opt-in, trusted repositories only.** Enforced by validation as far as config can: `claude_accounts.allow_data_to`, and refusing `stage_auth` where the workflow takes follow-ups from public-repository comments (`followup.allow_public`), together with review mode's trusted-author rule and SECURITY.md's fork handling. `allow_public` does not gate the first run on a public repository, so the gate is only as strong as who can push branches and comment.
 2. **Stage-scoped environment** keeps the token out of the coder's own environment and logs. It does **not** narrow the `/proc` attack above.
 3. **Fetching the token at stage start** shortens the window but does not close it: the service account keeps access.
 4. **A separate job execution for the reviewer**, with its own container and service account, is the only mitigation that closes the gap. Not required by the owner's ruling; an optional hardening for repositories with outside contributors.
@@ -102,7 +102,7 @@ The SECURITY.md known-gaps list gets one line for B if it ships. Path A needs no
 | Dollar cost of the senior review | real, list rates | real, list rates plus the route fee (5.5%) | none (subscription) |
 | Capped by the gateway | yes | yes | no; only Claude Code's own estimate |
 | Credential exposure | gateway holds the key | gateway holds the key | token in the job for the whole run |
-| Extra secret | an Anthropic API key | none (a placeholder for `ANTHROPIC_API_KEY`) | the OAuth token |
+| Extra secret | an Anthropic API key | no new secret; the existing `anthropic-api-key` secret must hold a placeholder of at least 4 bytes | the OAuth token |
 | Senior model | Claude | non-Claude today; Claude after the §4 ruling | Claude |
 | New code | docs, one live check, a gateway test | none for a non-Claude senior; for Claude: `ClaudePatterns`, `IsAlias`, pin checks and their tests | infra mounts and variant jobs, per-stage runner spec, validation, budget marking |
 | Rollback | change two config lines | change two config lines | remove `stage_auth` |
@@ -111,11 +111,12 @@ The SECURITY.md known-gaps list gets one line for B if it ships. Path A needs no
 
 Decided (owner, 2026-10-14): B is worth the residual risk; opt-in is enough; the separate-job reviewer is not required; the senior is built through whichever of A and C has a credential. **M10's "Claude goes direct" rule is relaxed by an explicit opt-in in config**: a provider route may claim a Claude model through OpenRouter only when the operator config names it explicitly (§4); with no such entry the rule is unchanged and everything is refused as today.
 
+The opt-in's place is decided (owner, 2026-10-14): the route entry lives in the local operator config or the shared project layer, one explicit `anthropic/<id>` and not a pattern; a repository can choose the model but cannot enable a route.
+
 Open, for the owner's ruling before a plan is written:
 
-1. **The opt-in's exact shape** (§4 proposes an explicit `anthropic/<id>` entry on the route, not a pattern, in the local operator config only, never in a repository's `fugaro.yaml`): is that the right place and granularity?
-2. Is a non-Claude senior (GPT or Gemini through OpenRouter) acceptable as the first step, before any Claude senior?
-3. Should `stage_auth` generalize later to the coder role? Recommendation: no.
+1. Is a non-Claude senior (GPT or Gemini through OpenRouter) acceptable as the first step, before any Claude senior?
+2. Should `stage_auth` generalize later to the coder role? Recommendation: no.
 
 ## 9. Testing and live checks
 
