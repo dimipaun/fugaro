@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	terraform "github.com/dimipaun/fugaro/deploy/terraform"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 )
 
 // writeTree writes the embedded Terraform tree into dir.
@@ -71,9 +72,15 @@ func TestGeneratedRootValidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inst := installationSpec(t)
+	// The installation's own local config has one project-wide secret
+	// (bitbucket-token, allowed for acme/sandbox), and its container is
+	// already live and correctly marked: the S2 pre-apply store discovery
+	// adopts, which is the only path that generates this kind's import.
+	inst := installationSpecWith(t, projectSecretLCBlock)
 	f.ar.AddRepository("proj-1234", "us-east5", LegacyRegistry, managed)
 	f.m5Installation(inst)
+	f.sm.Seed(inst.ProjectSecrets["bitbucket-token"], map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: inst.FugaroProject, gcp.LabelSecret: "bitbucket-token"}, []byte("v"))
 	instIm, err := DiscoverInstallation(ctx, f.c, inst)
 	if err != nil {
 		t.Fatal(err)
