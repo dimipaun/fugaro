@@ -1613,3 +1613,30 @@ func TestRepoSpecSecretMountsOnlyTheVariantsOwnToken(t *testing.T) {
 		}
 	}
 }
+
+func TestRepoNeverPrunesSecretsButGainsCandidates(t *testing.T) {
+	before, err := Repo(sandboxInputs(t, m5Additions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before.ProjectSecretCandidates) != 0 {
+		t.Fatalf("ProjectSecretCandidates = %+v, want none with no project_secrets configured", before.ProjectSecretCandidates)
+	}
+	// bitbucket-token is the sandbox's git credential, mounted by every
+	// workflow (SecretMounts's unconditional first entry) -- allow-listing
+	// it project-wide here is the design's own worked example (§6).
+	after, err := Repo(sandboxInputs(t, m5Additions+"project_secrets:\n  bitbucket-token:\n    allow_data_to: [\"acme/sandbox\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// (a) P2's golden property: the key SET (and every ID) is identical,
+	// unaffected by project_secrets existing at all.
+	if !maps.Equal(before.Secrets, after.Secrets) {
+		t.Fatalf("rs.Secrets changed:\nbefore: %+v\nafter:  %+v", before.Secrets, after.Secrets)
+	}
+	// (b) ProjectSecretCandidates gains EXACTLY the expected new entry.
+	want := map[string]string{"bitbucket-token": gcp.ProjectSecretID("aurora", "bitbucket-token")}
+	if !maps.Equal(after.ProjectSecretCandidates, want) {
+		t.Fatalf("ProjectSecretCandidates = %+v, want %+v", after.ProjectSecretCandidates, want)
+	}
+}
