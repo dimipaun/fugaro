@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -126,7 +127,7 @@ func (f *budgetFixture) SeedRuns(t *testing.T, firstHourAgo, n int, stages []pre
 	t.Helper()
 	now := time.Now().UTC()
 	for i := range n {
-		id := now.Add(-time.Duration(firstHourAgo+i) * time.Hour).Format("20060102-150405") + "-aaaa"
+		id := now.Add(-time.Duration(firstHourAgo+i)*time.Hour).Format("20060102-150405") + "-aaaa"
 		var ss []map[string]any
 		for _, s := range stages {
 			st := map[string]any{"name": s.kind, "started_at": now.UTC().Format(time.RFC3339), "duration_s": 1.0}
@@ -170,19 +171,32 @@ func previewRunStages(implement, reviewFirst, fix, review float64) []previewStag
 // a run of the recipe typically costs: the mean recorded cost of each stage
 // kind, at the recipe's typical stage count (one round each).
 func TestBudgetPreviewTypical(t *testing.T) {
-	f := newBudgetFixture(t, "")
-	f.SetCaps(100, 3, 20, 3)
-	f.SetSpentToday(0)
-	f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
-	f.SeedRuns(t, 0, 6, previewRunStages(0.60, 0.10, 0.20, 1.00))
-	out, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// One round each: implement 1, review_first 1, fix 2, review 1 = 5 stages;
-	// $0.60 + $0.10 + 2×$0.20 + $1.00 = $2.10.
-	if !strings.Contains(out, "typical: $2.10 a run (5 stages, mean of 6 runs in the last 30 days)") {
-		t.Errorf("the typical line is missing or wrong:\n%s", out)
+	for name, tc := range map[string]struct {
+		recipe string
+		want   string
+	}{
+		// standard bounces (bounce: first_line), so one round each is
+		// implement 1, review_first 2, fix 3, review 1 = 7 stages:
+		// $0.60 + 2×$0.10 + 3×$0.20 + $1.00 = $2.40.
+		"standard": {recipe: "standard", want: "typical: $2.40 a run (7 stages, mean of 6 runs in the last 30 days)"},
+		// solo has no first_line step: implement 1, review 1, fix 1 = 3
+		// stages; $0.60 + $1.00 + $0.20 = $1.80.
+		"solo": {recipe: "solo", want: "typical: $1.80 a run (3 stages, mean of 6 runs in the last 30 days)"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newBudgetFixture(t, "")
+			f.SetCaps(100, 3, 20, 3)
+			f.SetSpentToday(0)
+			f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
+			f.SeedRuns(t, 0, 6, previewRunStages(0.60, 0.10, 0.20, 1.00))
+			out, _, err := execute(t, "budget", "preview", "--recipe", tc.recipe, "--runs", "6")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out, tc.want) {
+				t.Errorf("the typical line is missing or wrong, want %q:\n%s", tc.want, out)
+			}
+		})
 	}
 }
 
@@ -213,7 +227,9 @@ func TestBudgetPreviewTypicalSkipsOldRecords(t *testing.T) {
 	f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
 	f.SeedRuns(t, 0, 4, previewRunStages(0.60, 0.10, 0.20, 1.00))
 	f.SeedRuns(t, 4, 3, []previewStage{{kind: "implement"}, {kind: "review"}})
-	const note = "3 of the 7 runs of acme/app in the last 30 days recorded no per-stage cost (result.json from before it was kept); they are not counted"
+	note := func(runs int) string {
+		return fmt.Sprintf("3 of the %d runs of acme/app in the last 30 days recorded no per-stage cost (result.json from before it was kept); they are not counted", runs)
+	}
 	out, errOut, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
 	if err != nil {
 		t.Fatal(err)
@@ -223,7 +239,7 @@ func TestBudgetPreviewTypicalSkipsOldRecords(t *testing.T) {
 	if strings.Contains(out, "typical:") {
 		t.Errorf("four priced runs printed a typical line:\n%s", out)
 	}
-	if !strings.Contains(errOut, note) {
+	if !strings.Contains(errOut, note(7)) {
 		t.Errorf("the skipped records are not explained:\n%s", errOut)
 	}
 	// One priced run more: the line appears, over the priced runs alone.
@@ -232,10 +248,10 @@ func TestBudgetPreviewTypicalSkipsOldRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "typical: $2.10 a run (5 stages, mean of 5 runs in the last 30 days)") {
+	if !strings.Contains(out, "typical: $2.40 a run (7 stages, mean of 5 runs in the last 30 days)") {
 		t.Errorf("the typical line does not stop at the priced runs:\n%s", out)
 	}
-	if !strings.Contains(errOut, note) {
+	if !strings.Contains(errOut, note(8)) {
 		t.Errorf("the skipped records are no longer explained:\n%s", errOut)
 	}
 }
@@ -260,9 +276,9 @@ func TestBudgetPreviewTypicalUsesThePinnedModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The pinned models' means only: $0.60 + $0.10 + 2×$0.20 + $1.00 = $2.10,
-	// never anything a run on another model cost.
-	if !strings.Contains(out, "typical: $2.10 a run (5 stages, mean of 10 runs in the last 30 days)") {
+	// The pinned models' means only, at standard's 7 stages: $0.60 + 2×$0.10
+	// + 3×$0.20 + $1.00 = $2.40, never anything the other model cost.
+	if !strings.Contains(out, "typical: $2.40 a run (7 stages, mean of 10 runs in the last 30 days)") {
 		t.Errorf("the typical line is not the pinned models' costs:\n%s", out)
 	}
 }
@@ -291,7 +307,7 @@ func TestBudgetPreviewTypicalJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &doc); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if doc.Typical == nil || doc.Typical.USD != 2.10 || doc.Typical.Stages != 5 || doc.Typical.Runs != 5 || doc.Typical.Skipped != 2 {
+	if doc.Typical == nil || doc.Typical.USD != 2.40 || doc.Typical.Stages != 7 || doc.Typical.Runs != 5 || doc.Typical.Skipped != 2 {
 		t.Fatalf("typical = %+v", doc.Typical)
 	}
 }
