@@ -27,7 +27,7 @@ providers:
     secret: openrouter-api-key        # the secret's NAME; never the key
     route_fee_pct: 5.5                # 0 to 50, added to every charge and reservation
     models: ["deepseek/*"]            # exact IDs or a prefix ending in *; providers may not overlap, and may not claim Claude models
-    allow_data_to: [edgeappinc/fugarosandbox, dimipaun/fugaro]   # repositories whose code may go here; none when absent
+    allow_data_to: [edgeappinc/fugarosandbox, dimipaun/fugaro]   # repositories whose code may go here; every repository when absent or ["*"] (an explicit [] is refused)
 model_prices:
   deepseek/deepseek-v4-flash:         # example numbers: use the real ones
     input_per_m: 0.14
@@ -38,7 +38,7 @@ budget:
   per_run_usd: 2                      # enforce needs a per-run cap
 ```
 
-Then run `fugaro init --repo` in each repository that is listed, so its job carries the provider list and mounts the key's variable. A repository not in `allow_data_to` gets neither, and a run on it that names a provider model is refused. Removing a repository from `allow_data_to` takes effect only after `fugaro init --repo` is run again for it (the list and the key's mount live in the job's configuration until then). **A version upgrade does not refresh this copy**: `fugaro upgrade`'s cloud step compares the deployed job's whole copy of the local project config (`providers`, `model_prices`, budget settings, the region's compute price override and the GitHub App ID) with what the local config would write now and, when they differ, prints a note naming the fields and this same command; it never runs `fugaro init --repo` itself, so its Terraform confirmations stay yours. `fugaro upgrade --check` makes no cloud call, so it cannot tell and says so instead. It checks each workflow's default-account job; a named-account job ([design/named-oauth-tokens.md](design/named-oauth-tokens.md)) is updated by the same `fugaro init --repo`, not checked separately.
+Then run `fugaro init --repo` in each repository that is listed, so its job carries the provider list and mounts the key's variable. A repository not in a real, non-empty, non-`["*"]` `allow_data_to` gets neither, and a run on it that names a provider model is refused. An absent `allow_data_to` (or the explicit marker `["*"]`) is the deliberate exception: every repository of the project gets both the mount and the routing (design/project-secrets.md §3a, the owner's 2026-10-13 ruling); an explicit `allow_data_to: []` is refused outright as ambiguous, so the only way to revoke everyone is to remove the provider's entry. Removing a repository from `allow_data_to` takes effect only after `fugaro init --repo` is run again for it (the list and the key's mount live in the job's configuration until then). **A version upgrade does not refresh this copy**: `fugaro upgrade`'s cloud step compares the deployed job's whole copy of the local project config (`providers`, `model_prices`, budget settings, the region's compute price override and the GitHub App ID) with what the local config would write now and, when they differ, prints a note naming the fields and this same command; it never runs `fugaro init --repo` itself, so its Terraform confirmations stay yours. `fugaro upgrade --check` makes no cloud call, so it cannot tell and says so instead. It checks each workflow's default-account job; a named-account job ([design/named-oauth-tokens.md](design/named-oauth-tokens.md)) is updated by the same `fugaro init --repo`, not checked separately.
 
 **Provider models require `budget.mode: enforce`.** Provider calls are real dollars and `observe` never refuses a call, so a run (and `fugaro validate`) that names a provider model under `observe` or `off` is refused, naming the rule. Set `budget.mode: enforce` and `budget.per_run_usd` in the local project config and run `fugaro init --repo`; `fugaro budget set --global --mode enforce` (which needs the global `--daily` and `--per-run` caps, and asks you to type the project's name to lower it again) makes the shared database enforce too.
 
@@ -52,7 +52,7 @@ From a checkout of the repository (any listed repository), paste or pipe the key
 fugaro secrets set openrouter-api-key
 ```
 
-It is refused for a repository the provider does not list in `allow_data_to`. The key is mounted into the runner's environment only (as `FUGARO_PROVIDER_KEY_OPENROUTER_API_KEY`) and, for workflows with `agent.auth: api-key`; the agent's own environment never has it, and it is registered with the log redactor. A workflow's own `secrets:` may not use the provider's secret name.
+It is refused for a repository an explicit, non-empty, non-`["*"]` `allow_data_to` excludes; a provider with an absent list (or `["*"]`) is available to every repository, and one with an explicit `[]` is refused by the local-config validator. The key is mounted into the runner's environment only (as `FUGARO_PROVIDER_KEY_OPENROUTER_API_KEY`) and, for workflows with `agent.auth: api-key`; the agent's own environment never has it, and it is registered with the log redactor. A workflow's own `secrets:` may not use the provider's secret name.
 
 ## 4. The repository's `fugaro.yaml`
 
@@ -75,7 +75,7 @@ The catalog recipes `standard` (a first-line loop by the coder's model, then one
 
 Each is an `infra_error` before any model call, naming the pin and the rule (and `fugaro validate` reports the same):
 
-- **No provider claims the model**, or the provider's `allow_data_to` does not name this repository. Code only goes where the owner said it may.
+- **No provider claims the model**, or the provider's `allow_data_to` is a real, non-empty, non-`["*"]` list that does not name this repository. Code only goes where the owner said it may; an absent list (or `["*"]`) means every repository, on purpose.
 - **`agent.auth` is `oauth` or `vertex`.** An OAuth token is a Claude subscription credential and is never sent elsewhere, and a run does not mix credentials. Use `api-key`.
 - **The gateway is off or only observing** (`budget.mode: off` or `observe`). The gateway is what holds the key and prices the calls, and only `enforce` refuses a call that would go over a cap.
 - **A variant suffix (`:free`, `:nitro`, `:online`) or an alias.** A variant is another price and routing; pins are exact upstream IDs.
