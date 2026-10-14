@@ -37,7 +37,7 @@ Project rules (carried over from this repository's existing plans):
 
 ## Review Focus (mutation-proof notes)
 
-1. **A repository outside an allow-list gets a project secret's variable anyway**, or `secrets set --project-wide` accepts a name with an empty allow-list. Pinned by `TestProjectSecretAllowedRepos` (Task 1), `TestReadinessOmitsProjectSecretForUnlistedRepo` (Task 3), `TestSecretsSetProjectWideRefusesEmptyAllowList` (Task 4).
+1. **A repository outside an allow-list gets a project secret's variable anyway**, or `secrets set --project-wide` accepts a (non-provider) name with an empty allow-list — **a provider's own name is explicitly the opposite case, round 4/5: an absent or `["*"]` list is accepted on purpose, and an explicit empty list is refused outright (round 5, MUST-FIX 2) — this focus item is about `project_secrets`/`claude_accounts`, which keep "empty means nobody" unchanged.** Pinned by `TestProjectSecretAllowedRepos` (Task 1), `TestReadinessOmitsProjectSecretForUnlistedRepo` (Task 3), `TestSecretsSetProjectWideRefusesEmptyAllowList` (Task 4).
 2. **A repo-level override stops winning even though it still has a version**, or a project copy is chosen while the repo copy is live — the precise bug an earlier draft of Task 3 had (B2 in review: "populated unconditionally wherever eligible" plus a Terraform-side `merge()` that lets the second map win would always resolve to the project copy, inverting "repo > project" for every eligible name, not just the unversioned ones). Pinned by `TestReadinessRepoVersionMeansNoProjectSecretsEntry` and `TestReadinessFallsBackOnceRepoVersionGone` (Task 3) — both assert `out.ProjectSecrets` has no entry (or gains one only once the repo version is gone), not merely that the job deploys or that some other field looks right.
 3. **A scope change plans a delete of an existing repo-owned secret.** Pinned by `TestRepoNeverPrunesSecretsButGainsCandidates` (Task 2, a golden diff of `rs.Secrets`'s key set before/after a name becomes project-shared, made to fail first per S6 via its second assertion — named for `infra.Repo`, the function's actual current name; an earlier draft of this item called it `TestBuildRepoSpecNeverPrunes...`, `BuildRepoSpec` being that function's name before a rename this plan's authoring predates having noticed) and the real two-step golden plan (Task 6, B3) that observes the real Terraform plan's resource actions — the only way to see a secret-resource delete (or lack of one) that pure Go cannot.
 4. **The build account's grant (or the check job's secret reference, B4) drifts from the job account's resolved secret** (P4): the `repo.tftest.hcl` `run "build_and_check_use_the_resolved_secret"` block (Task 5) asserts all **three** `local.secrets`-consuming paths (job, build, check) resolve the identical ID for the identical logical name, for every fixture — through the real Terraform test framework, not a Go unit test, since only it can observe what a Terraform `local` actually resolves to.
@@ -72,7 +72,9 @@ One PR, branch `project-secrets`, Tasks 1 to 11 in order for the merge; Task 12 
 
 Parallelizable: **Task 2 needs Task 1** (its `ProjectSecretCandidate` helper reads `AllowsData`, fixed by Task 1's P7 change; it has no collision check to read `lc.ProjectSecrets` for any more, S1), so they are no longer independent — Task 1 goes first, Task 2 follows directly after. Task 3 needs 1 and 2 (its precedence resolution also reads `AllowsData`, uniform across all three name sources now, P7). Task 4 needs 1, 2 and the installation Terraform half of itself (its Go and Terraform halves can split further if useful). Task 5 needs 2 (and is reviewed separately from the rest, per P4). Task 6 needs 4 and 5. Task 7 needs 3. **Task 8 needs 3 and 5 (N1, new: `Readiness`'s `CheckJobSpec.GitSecretID` and the reusable resolve helper it extracts, design §5). Task 9 needs 2's `infra.ProjectSecretCandidate` helper (N2, new: `fugaro init --repo`'s secrets stage reuses it).** Task 10 needs 1 through 9 settled. Task 11 is last. (Task 12, the owner's own live run, is separate and non-blocking, as always.)
 
-## Known follow-ups before implementation (round 4 — noted, not reworked into the tasks above; each is a real gap or correction a future implementer must check against the then-current code before writing the task it touches)
+## Known follow-ups before implementation (round 4, recounted round 5 — noted, not reworked into the tasks above; each is a real gap or correction a future implementer must check against the then-current code before writing the task it touches)
+
+**Recounted, a nit: exactly 7 items below, not 8 — the label-vs-ID equality check is already folded into item 3 (the union mechanics), not a separate item of its own, consistent with how it was first written.**
 
 1. **A shared git credential's reach goes beyond the mount (threat model gap).** A project-wide `bitbucket-token` (a workspace token) or `github-app-key` (an App installation that mints tokens for every repository it is installed on) is readable, by design, from any allowed repository's job or build — including a PR's own code running inside that job. §3's fourth "must stay impossible" bullet ("a PR author's code reading more than a repo-level secret already lets it read today") holds for *the mount itself* but says nothing about what the *value* can then reach: a shared git credential can plausibly grant access to repositories *other than* the one whose job holds it, a strictly bigger blast radius than a repo-scoped token ever had. State this explicitly in the threat model (§3) before this design ships, not as an implicit consequence of §5's mounting mechanics.
 2. **Task 8 never names `runImageBuildCloud` (`internal/cli/image.go:232`, inside `func runImageBuildCloud` at `image.go:156`) as a third caller of `cloudBuildSpec`** — the design and Task 8 both describe exactly two callers (`submitAndWait`, `internal/cli/init.go:2370`, and `submitRebuild`), but `runImageBuildCloud` (the `fugaro image build` command's own handler) calls `cloudBuildSpec` directly too, a separate operator-machine call site needing the identical live-resolve/apply-time-comparison fix (BLOCKING 1) `submitAndWait` gets.
@@ -613,11 +615,19 @@ func TestReadinessDropsMountButKeepsContainerOnNarrowedEligibility(t *testing.T)
 	// the repo's own apply, N4's original bug).
 }
 
-func TestReadinessRefusesSquattedProjectSecret(t *testing.T) {
-	// SF7: a secret already exists at gcp.ProjectSecretID(fugaroProject,
-	// logical) in the fake Secret Manager, WITHOUT the
-	// {LabelManaged, LabelProject, LabelSecret} marks DiscoverRepo's new
-	// step checks for (e.g. created by some other principal/process, not
+func TestReadinessRefusesAccidentalLabelMismatch(t *testing.T) {
+	// SF7, renamed this round (small item 3, round 4: the original name
+	// and comment framed this as a defense against a squatting attacker,
+	// which is wrong -- labels are set by whoever creates the secret, so
+	// a principal able to pre-create one at the guessable ProjectSecretID
+	// address could set the correct labels too, and the import would
+	// adopt it exactly as it would the legitimate one. This guards
+	// against ACCIDENT AND DRIFT instead -- the same reason DiscoverRepo's
+	// equivalent repo-scoped check exists -- not an attacker). A secret
+	// already exists at gcp.ProjectSecretID(fugaroProject, logical) in the
+	// fake Secret Manager, WITHOUT the {LabelManaged, LabelProject,
+	// LabelSecret} marks DiscoverRepo's new step checks for (e.g. a
+	// coincidental name collision with something else entirely, not
 	// fugaro secrets set --project-wide). Assert DiscoverRepo returns a
 	// *ForeignError (the same path an unmarked repo secret already takes)
 	// and that Readiness, given ex.ProjectSecretsOK with no entry for
@@ -626,7 +636,7 @@ func TestReadinessRefusesSquattedProjectSecret(t *testing.T) {
 	// -- the two facts that alone would otherwise resolve to the project
 	// ID. This is the test an implementation that skips the label check
 	// (resolving on hasEnabledVersion alone) would fail: it would happily
-	// mount the squatted secret's value into every eligible repository.
+	// mount an unrelated secret's value into every eligible repository.
 }
 
 func TestReadinessResolvesCorrectlyLabelledProjectSecret(t *testing.T) {
