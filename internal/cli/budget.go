@@ -62,9 +62,11 @@ func newBudgetCmd() *cobra.Command {
 		Short: "Show and change the project's model-spend caps and kill switches",
 		Long: "Look at and change the project's budget: the caps, today's counters, the kill\n" +
 			"switches and the runs in flight, kept in the project's Firebase Realtime\n" +
-			"Database (design §8). show and preview need the Viewer role on the Firebase\n" +
-			"project; set, kill and resume need the budget-admin role (the GCP project's\n" +
-			"owners and editors, and terraform.budget_admins).",
+			"Database (design §8). show needs the Viewer role on the Firebase project;\n" +
+			"set, kill and resume need the budget-admin role (the project's owners and\n" +
+			"editors, and terraform.budget_admins). preview needs the Viewer role too,\n" +
+			"and reads the project's recipes from the runs bucket as recipes ls does,\n" +
+			"which a plain project Viewer cannot (see docs/gcp-setup.md).",
 	}
 	cmd.AddCommand(newBudgetShowCmd(), newBudgetSetCmd(), newBudgetKillCmd(true), newBudgetKillCmd(false),
 		newBudgetPreviewCmd(), newBudgetPricesCmd(), newBudgetHistoryCmd())

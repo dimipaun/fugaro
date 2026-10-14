@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -58,8 +59,10 @@ func newBudgetPreviewCmd() *cobra.Command {
 			"repository here, agent.max_budget_usd is unknown and only\n" +
 			"budget.per_run_usd bounds the figure, so with neither the preview says it\n" +
 			"is unbounded.\n\n" +
-			"It reads the database's caps and today's counters (the Viewer role) and\n" +
-			"writes nothing.",
+			"It reads the database's caps and today's counters (the Viewer role); a\n" +
+			"recipe that is not in the checkout also reads the project's recipes from\n" +
+			"the runs bucket, as recipes ls does, which a plain project Viewer cannot\n" +
+			"read (init removes that access). It writes nothing.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runBudgetPreview(cmd, &o) },
 	}
@@ -98,12 +101,19 @@ type previewHeadroom struct {
 	known bool
 }
 
-// previewPerRun is the per-run cap a run would be held to: the smallest of
-// the ceiling a job carries ($FUGARO_MAX_RUN_USD, or the project config's
-// budget.per_run_usd when the variable is not set here) and the database's
-// own per-run cap. ok is false when none is set, and then only the per-stage
-// cap bounds a run. srcs names each one found, with its value.
-func previewPerRun(lc *localcfg.Config, caps budget.Caps) (best budget.Micros, srcs []string, ok bool) {
+// previewPerRun is the per-run cap a run launched from here would be held
+// to: $FUGARO_MAX_RUN_USD when it is set (the job's own cap, which
+// init --repo writes from the project config's budget.per_run_usd), else
+// that config value; and always the database's own per-run cap. ok is false
+// when neither side is set, and then only the per-stage cap bounds a run.
+// srcs names each one found, with its value.
+//
+// The two owner-side values are alternatives, not a min: a stale
+// $FUGARO_MAX_RUN_USD tells the runner to ignore the config, so taking the
+// smaller of the two would report a ceiling the runner never enforces -- the
+// unsafe direction for a ceiling. The database's cap is a min, because the
+// rules deny a lease that exceeds either.
+func previewPerRun(lc *localcfg.Config, caps budget.Caps) (best budget.Micros, srcs []string, ok bool, err error) {
 	take := func(m budget.Micros, what string) {
 		srcs = append(srcs, what+" "+usdFixed(m.USD()))
 		if !ok || m < best {
@@ -111,21 +121,30 @@ func previewPerRun(lc *localcfg.Config, caps budget.Caps) (best budget.Micros, s
 		}
 	}
 	if v := os.Getenv(runner.MaxRunUSDEnv); v != "" {
-		if usd, err := strconv.ParseFloat(v, 64); err == nil && usd > 0 {
-			if m, err := pricing.FromUSD(usd); err == nil {
-				take(m, runner.MaxRunUSDEnv)
-			}
+		// The same checks the runner makes (runner.spendFromEnv): a
+		// malformed cap is an infra error there, and the preview must not
+		// quietly price a run at a cap it would refuse to start with.
+		usd, perr := strconv.ParseFloat(v, 64)
+		if perr != nil || math.IsNaN(usd) || usd <= 0 {
+			return 0, nil, false, userErr("%s %q: it must be a number of US dollars, more than 0 and at most %d", runner.MaxRunUSDEnv, v, pricing.MaxUSD)
 		}
-	}
-	if lc.Budget.PerRunUSD > 0 {
-		if m, err := pricing.FromUSD(lc.Budget.PerRunUSD); err == nil {
+		m, ferr := pricing.FromUSD(usd)
+		if ferr != nil {
+			return 0, nil, false, userErr("%s %q: %v", runner.MaxRunUSDEnv, v, ferr)
+		}
+		if m < 1 {
+			return 0, nil, false, userErr("%s %q: it rounds to nothing; the smallest cap is $0.000001", runner.MaxRunUSDEnv, v)
+		}
+		take(m, runner.MaxRunUSDEnv)
+	} else if lc.Budget != nil && lc.Budget.PerRunUSD > 0 {
+		if m, ferr := pricing.FromUSD(lc.Budget.PerRunUSD); ferr == nil {
 			take(m, "budget.per_run_usd")
 		}
 	}
-	if m, ok := caps.PerRun(); ok {
+	if m, capOK := caps.PerRun(); capOK {
 		take(m, "the database's per-run cap")
 	}
-	return best, srcs, ok
+	return best, srcs, ok, nil
 }
 
 // previewDoc is --json's document.
@@ -219,6 +238,13 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 		Recipe: rr.Name, Source: string(rr.Source), Runs: o.runs, Stages: stages,
 		KnobsFrom: knobs.from, PerRunCapSource: []string{}, Notes: []string{}}
 	doc.Knobs.FirstLineRounds, doc.Knobs.ReviewRounds = knobs.first, knobs.rounds
+	// resolveRecipe's note says where the stages come from when the recipe
+	// was not simply found: a stale cached project recipe standing in for an
+	// unreachable bucket, or the project layer skipped. run prints it for the
+	// same reason (printRecipeNote), and here it explains the figures.
+	if rr.Note != "" {
+		doc.Notes = append(doc.Notes, rr.Note)
+	}
 	if knobs.maxStageUSD > 0 {
 		v := knobs.maxStageUSD
 		doc.PerStageCapUSD = &v
@@ -260,7 +286,9 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 
 	// The ceiling: N × the smaller side of a run's bound.
 	var perRunUSD, stageUSD *float64
-	if m, srcs, ok := previewPerRun(lc, caps); ok {
+	if m, srcs, ok, err := previewPerRun(lc, caps); err != nil {
+		return err
+	} else if ok {
 		v := m.USD()
 		perRunUSD, doc.PerRunCapUSD, doc.PerRunCapSource = &v, &v, srcs
 	}
