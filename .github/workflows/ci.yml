@@ -6,7 +6,37 @@ on:
 permissions:
   contents: read
 jobs:
+  # A pull request that changes only documentation (docs/ and top-level
+  # Markdown files) skips test, rules and terraform: they cannot fail on it.
+  # A skipped job is not a failure, so the pull request merges as usual. Every
+  # push to main runs them all, so a documentation guard test (a link, a
+  # command name, a legacy name) that a docs-only change breaks is caught
+  # there; run the guards locally before merging a docs-only change
+  # (go test ./internal/cli ./internal/config ./images -run 'Docs|Migration|BaseImageDoc|Design|SecurityMd|RecipesGuide|NoLegacy').
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.diff.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - id: diff
+        run: |
+          docs_only=false
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            # The checked-out merge commit's first parent is the base branch.
+            files=$(git diff --name-only HEAD^1 HEAD)
+            if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qvE '^(docs/|[^/]+\.md$)'; then
+              docs_only=true
+            fi
+          fi
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
   test:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -38,6 +68,8 @@ jobs:
   # emulator-jar downloads. FUGARO_REQUIRE_EMULATOR makes a missing emulator a
   # failure instead of a skip, so this required check cannot pass vacuously.
   rules:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -74,6 +106,8 @@ jobs:
   # credentials: init -backend=false only downloads the provider the lock
   # file pins.
   terraform:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
