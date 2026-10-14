@@ -1120,16 +1120,19 @@ func TestRunsLsIsTheOldLs(t *testing.T) {
 	}
 }
 
-func TestLsIsATombstone(t *testing.T) {
+// TestLsIsGone: the 0.7.0 tombstone was deleted in 0.8.0 (design
+// generic-tool §5, G17, P3), so there is no top-level `ls` command at all.
+// `fugaro runs ls` is the only listing (TestRunsLsIsTheOldLs).
+func TestLsIsGone(t *testing.T) {
 	newCloudFixture(t)
-	_, _, err := execute(t, "ls", "--all", "--since", "1d") // its old flags are accepted and ignored
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro ls was renamed in 0.7.0: use fugaro runs ls") {
-		t.Fatalf("ls: %v", err)
-	}
 	for _, c := range NewRootCmd().Commands() {
-		if c.Name() == "ls" && !c.Hidden {
-			t.Fatal("the tombstone is listed in help")
+		if c.Name() == "ls" {
+			t.Fatal("a top-level ls command is still registered: the 0.7.0 tombstone should be gone in 0.8.0")
 		}
+	}
+	_, _, err := execute(t, "ls")
+	if err == nil || !strings.Contains(err.Error(), `unknown command "ls"`) {
+		t.Fatalf("ls = %v, want an unknown-command error", err)
 	}
 }
 
