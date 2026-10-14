@@ -306,7 +306,7 @@ Expected: PASS. Then confirm the copy is really gone: `grep -n 'mirror.Dest' int
 - Modify: `internal/cli/sharedcfg.go` (`baseImageRE` `:301-308`), `internal/infra/spec.go` (`BaseImageWarnings` `:846-856`)
 - Modify: `internal/imagecheck/registry.go` (`parseImageRef` `:223-257`) — **B2, a real bug otherwise**
 - Modify: `images/derived/cloudbuild.yaml` **only if** design §2.12 (d) comes back negative (Check 43e)
-- Modify: the tests: `internal/cli/init_images_test.go`, `internal/cli/image_refresh_rules_test.go`, `internal/cli/sharedcfg_test.go`, `internal/infra/spec_test.go`, `internal/infra/tf/cover_test.go` (and `cover_grants_test.go` if the new field needs it), `internal/cli/init_review_test.go`'s `tf.Cover{…}` literal, `internal/imagecheck/registry_test.go`
+- Modify: the tests: `internal/cli/init_images_test.go`, `internal/cli/image_refresh_rules_test.go`, `internal/cli/sharedcfg_test.go`, `internal/infra/spec_test.go`, `internal/infra/tf/cover_test.go` (and `cover_grants_test.go` if the new field needs it), `internal/cli/init_review_test.go` (its `tf.Cover{…}` literal at `:39` still compiles — a new field is zero — but any review test that expects a plan with a job image to be *covered* must set the owner, or it will now be refused), `internal/imagecheck/registry_test.go`
 
 **Interfaces — the shape rule (design §3.6), stated once:**
 
