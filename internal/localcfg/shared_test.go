@@ -280,3 +280,28 @@ func TestSharedDropsBaseBranchAndBuildAccount(t *testing.T) {
 		t.Errorf("merged build = %+v", m.Build)
 	}
 }
+
+// TestMergeSharedNeverCarriesProjectSecrets: project_secrets is
+// operator-only local config (design docs/design/project-secrets.md §7),
+// never published -- neither the local nor a published config's block
+// reaches the output.
+func TestMergeSharedNeverCarriesProjectSecrets(t *testing.T) {
+	block := "project_secrets:\n  anthropic-api-key:\n    allow_data_to: [acme/web]\n"
+	existing := sharedBase(t, block)
+	local := sharedBase(t, strings.ReplaceAll(block, "anthropic-api-key", "bitbucket-token"))
+	if len(existing.ProjectSecrets) != 1 || len(local.ProjectSecrets) != 1 {
+		t.Fatalf("fixtures: %v %v", existing.ProjectSecrets, local.ProjectSecrets)
+	}
+	for name, got := range map[string]*Config{"merged": MergeShared(existing, local), "nil published": MergeShared(nil, local), "published only": MergeShared(existing, sharedBase(t, ""))} {
+		if got.ProjectSecrets != nil {
+			t.Errorf("%s: project_secrets = %v", name, got.ProjectSecrets)
+		}
+		out, _ := got.Marshal()
+		if strings.Contains(string(out), "project_secrets") {
+			t.Errorf("%s: output carries project_secrets:\n%s", name, out)
+		}
+	}
+	if len(local.ProjectSecrets) != 1 {
+		t.Error("MergeShared cleared the local project_secrets")
+	}
+}

@@ -42,7 +42,10 @@ type ModelProvider struct {
 	// ending in "*" such as "deepseek/*". No two providers may overlap.
 	Models []string `yaml:"models" json:"models"`
 	// AllowDataTo are the repositories (owner/name) whose code may be sent
-	// here; empty means none.
+	// here. Absent (the zero value) or ["*"] mean every repository (owner
+	// ruling, 2026-10-13 and its follow-ups, design
+	// docs/design/project-secrets.md §3a); an explicit, non-nil, empty list
+	// is refused by ValidateModelProviders as ambiguous.
 	AllowDataTo []string `yaml:"allow_data_to,omitempty" json:"allow_data_to,omitempty"`
 }
 
@@ -57,10 +60,22 @@ func (p ModelProvider) Matches(model string) bool {
 	return slices.ContainsFunc(p.Models, func(pat string) bool { return PatternMatches(pat, model) })
 }
 
-// AllowsData reports whether repo (owner/name) may send code to p. Git hosts
-// treat owner and repository names case-insensitively, so so does this.
+// AllowsData reports whether repo (owner/name) may send code to p: true for
+// every repository when AllowDataTo is nil (the key is absent -- never
+// written at all), or when it contains the literal entry "*" (owner ruling,
+// 2026-10-13, and its follow-ups, design docs/design/project-secrets.md
+// §3a). An explicit, non-nil, zero-length AllowDataTo ([] in the YAML) is
+// refused by ValidateModelProviders before this method is ever called on
+// valid config -- checking p.AllowDataTo == nil here, not len(...) == 0, is
+// deliberate: it keeps this method correctly fail-closed (an
+// empty-but-not-absent list matches nothing in the ContainsFunc below) even
+// if that validation were ever bypassed. Otherwise, an exact,
+// case-insensitive match against a listed repository, as before.
 func (p ModelProvider) AllowsData(repo string) bool {
-	return slices.ContainsFunc(p.AllowDataTo, func(r string) bool { return strings.EqualFold(r, repo) })
+	if p.AllowDataTo == nil {
+		return true
+	}
+	return slices.ContainsFunc(p.AllowDataTo, func(r string) bool { return r == "*" || strings.EqualFold(r, repo) })
 }
 
 // PatternMatches reports whether the model pattern (an exact ID, or a prefix
@@ -144,9 +159,15 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 				add(at+".models", "%s", msg)
 			}
 		}
+		if p.AllowDataTo != nil && len(p.AllowDataTo) == 0 {
+			// An absent key and ["*"] both mean "every repository", but an
+			// explicit [] cannot be told apart from "not decided yet"
+			// (design §3a, round 5): refuse rather than guess.
+			add(at+".allow_data_to", "an explicit empty list is ambiguous: write [\"*\"] for any repository, or remove the key entirely")
+		}
 		for _, r := range p.AllowDataTo {
-			if !repoSlugRE.MatchString(r) {
-				add(at+".allow_data_to", "%q must be a repository as owner/name", r)
+			if r != "*" && !repoSlugRE.MatchString(r) {
+				add(at+".allow_data_to", "%q must be a repository as owner/name (or \"*\" for every repository)", r)
 			}
 		}
 	}
