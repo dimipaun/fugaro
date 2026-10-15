@@ -278,11 +278,12 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 		// gate and not the runner is the refusal.
 		//
 		// A budget-on job stops on the shipped error below, and so does a job
-		// whose launcher minted a token: the marker means this launch HAD a
-		// policy to read, and the run must not read its own missing credential
-		// as "this project has published nothing" (M2). So does a budget-off
-		// job whose environment names a backend it cannot parse (BackendErr
-		// above, L-b), which never reaches here.
+		// whose launcher minted a token: with the mode off the launcher mints
+		// only when a policy exists (internal/cli's budgetMintOn), so the
+		// marker says this launch had one to read, and the run must not read
+		// its own missing credential as "this project has published nothing"
+		// (M2). So does a budget-off job whose environment names a backend it
+		// cannot parse (BackendErr above, L-b), which never reaches here.
 		return nil, nil
 	}
 	custom, err := r.takeBudgetToken(ctx)
