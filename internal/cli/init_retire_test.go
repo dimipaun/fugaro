@@ -2100,40 +2100,63 @@ func TestInitRepoRetireSaysWhenThereIsNothingToRetire(t *testing.T) {
 	}
 }
 
-// "Nothing to retire" and "could not look" are different sentences (design
-// §3.1a, review round 3): with the job list refused, the labels never
-// answered, and the run may not claim they found nothing. What it says is
-// that it cannot say -- and it still removes nothing, deletes nothing and
-// confirms nothing.
-func TestInitRepoRetireSaysTheCheckCouldNotBeMade(t *testing.T) {
-	r := newRetireRig(t, retireOpts{protection: false, stateEmpty: true, noOrphanJob: true, keptAsNote: true})
-	r.run.FailListWith = 403
-	out, errOut, err := executeStdin(t, "", "init", "--repo", "--retire", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
-	if err != nil {
-		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
-	}
-	text := out + errOut
-	if !strings.Contains(text, "could not list the repository's Cloud Run jobs (run.jobs.list)") {
-		t.Errorf("the refused label call is not named:\n%s", text)
-	}
-	if strings.Contains(text, "Nothing to retire:") {
-		t.Errorf("the run claims there is nothing to retire after a look it could not make:\n%s", text)
-	}
-	if !strings.Contains(text, "Cannot say whether there is anything to retire:") {
-		t.Errorf("the run does not say the check could not be made:\n%s", text)
-	}
-	if calls := r.ran(t, "state rm"); len(calls) != 0 {
-		t.Errorf("state rm ran: %v", calls)
+// M-4: a label call that did not answer stops --retire, and the refusal names
+// the call. §3.1a's degradation is for the ordinary run; here the set drives
+// state removals, and without the labels a live container of the repository
+// that no job mounts is called KEPT -- and Kept is what Removals takes out of
+// the state, so the container would silently lose Terraform's management while
+// keeping its value and its labels. That is the false positive §3.1a forbids,
+// so the run refuses before it computes anything, removes nothing, deletes
+// nothing and confirms nothing -- and does not reach a prompt.
+func TestInitRepoRetireRefusesAFailedLabelCall(t *testing.T) {
+	for _, tc := range []struct {
+		name, want string
+		fail       func(r *retireRig)
+	}{
+		{"the job list", "could not list the repository's Cloud Run jobs (run.jobs.list)", func(r *retireRig) { r.run.FailListWith = 403 }},
+		{"the secrets list", "could not list the repository's secrets (secretmanager.secrets.list)", func(r *retireRig) { r.sm.FailListWith = 403 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRetireRig(t, retireOpts{protection: false, keptAsNote: true})
+			tc.fail(r)
+			// No typed confirmation is fed in: a refusal that reached the
+			// first prompt would fail on EOF instead of on the message.
+			out, errOut, err := executeStdin(t, "", "init", "--repo", "--retire", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
+			if ExitCode(err) != ExitRemoteError {
+				t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
+			}
+			msg := err.Error()
+			for _, want := range []string{
+				tc.want,
+				"it will not run on a retirement set read without the labels",
+				"the removal would release the live one from Terraform's management",
+				"Nothing was removed from the state, nothing was deleted and nothing was confirmed.",
+				"rerun without --retire",
+			} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("the refusal does not say %q:\n%v", want, err)
+				}
+			}
+			if calls := r.ran(t, "state rm"); len(calls) != 0 {
+				t.Errorf("state rm ran: %v", calls)
+			}
+			if got := r.ran(t, "plan"); len(got) != 0 {
+				t.Errorf("the run planned anyway: %v", got)
+			}
+			if got := r.applies(t); len(got) != 0 {
+				t.Errorf("the run applied anyway: %v", got)
+			}
+		})
 	}
 }
 
-// A refused secrets list does not end the run (design §3.1a, review round
-// 3): discovery cannot union a container the configuration no longer
-// computes back into the plan, and it says so rather than aborting the
-// ordinary `fugaro init --repo` -- the same permission answers the
-// retirement's own label call, which the run reports the same way. What is
-// lost is the union, and the plan's own prevent_destroy refusal is what
-// catches the consequence.
+// The same two calls degrade loudly on the ordinary run, and the run goes on
+// (design §3.1a, review round 3): discovery cannot union a container the
+// configuration no longer computes back into the plan, and it says so rather
+// than aborting the ordinary `fugaro init --repo` -- the same permission
+// answers the retirement's own label call, which the run reports the same
+// way. What is lost is the union, and the plan's own prevent_destroy refusal
+// is what catches the consequence.
 func TestInitRepoRefusedSecretsListDegradesInsteadOfAborting(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: false})
 	r.sm.FailListWith = 403
