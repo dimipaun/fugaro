@@ -930,6 +930,39 @@ func TestImagesStageConfirmationSaysTheBaseIsNotCopied(t *testing.T) {
 	}
 }
 
+// The stage's own outcome line is past tense, and each of its two clauses
+// appears only when the run did that thing: a base kind is pinned and never
+// copied, and it never reaches the Copy loop, so a base-only run (and a
+// rerun whose history tag is already the release image) must report the pin
+// alone rather than leading with a copy that did not happen.
+func TestImagesOutcomeSaysOnlyWhatItDid(t *testing.T) {
+	const (
+		copied = "images copied and verified by digest"
+		pinned = "base images pinned by digest through the remote repository"
+	)
+	// Base and history together: both clauses.
+	newImagesRig(t, "1.2.3")
+	out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes", "--base", "base")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if want := copied + "; " + pinned; !strings.Contains(out, want) {
+		t.Errorf("a base+history run does not report %q:\n%s", want, out)
+	}
+	// Base alone: the pin clause, and no copy claim anywhere.
+	newImagesRig(t, "1.2.3")
+	out, _, err = executeStdin(t, "us-east5\n", "init", "--yes", "--base", "base")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, pinned) {
+		t.Errorf("a base-only run does not report %q:\n%s", pinned, out)
+	}
+	if strings.Contains(out, copied) {
+		t.Errorf("a base-only run still claims a copy:\n%s", out)
+	}
+}
+
 // The preview line under the review screen lists what is unpinned, and a
 // base kind is never one of them: it is pinned to a digest whose signature
 // was verified, whether or not --expect-digest repeated the value.

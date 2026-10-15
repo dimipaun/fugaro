@@ -661,6 +661,22 @@ func changeDetail(n int, bytes int64, base int) string {
 	return strings.Join(parts, ", ")
 }
 
+// applyDetail is changeDetail's past tense, and it is built the same way:
+// each clause appears only when the run did that thing. A base kind is
+// pinned, never copied, and it never reaches the Copy loop — so a run that
+// pinned a base image and copied nothing (a base-only run, or a rerun whose
+// history tag is already the release image) must not say a copy happened.
+func applyDetail(copied bool, base int) string {
+	var parts []string
+	if copied {
+		parts = append(parts, "images copied and verified by digest")
+	}
+	if base > 0 {
+		parts = append(parts, "base images pinned by digest through the remote repository")
+	}
+	return strings.Join(parts, "; ")
+}
+
 func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
 	if err := s.e.adoptGuard(initflow.Images); err != nil {
 		return initflow.Outcome{}, err
@@ -733,7 +749,7 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 	if !changed && len(base) == 0 {
 		return initflow.Outcome{Detail: "No changes"}, nil
 	}
-	return initflow.Outcome{Changed: true, Detail: "images copied and verified by digest; base images pinned by digest through the remote repository"}, nil
+	return initflow.Outcome{Changed: true, Detail: applyDetail(changed, len(base))}, nil
 }
 
 // confirmText is the stage's own confirmation: what it copies (and how big,
