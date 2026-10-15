@@ -149,16 +149,36 @@ func TestParseKeyIsStrict(t *testing.T) {
 	if err != nil || !bytes.Equal(got, key) {
 		t.Fatalf("ParseKey(EncodeKey(k)) = %v, %v", got, err)
 	}
+	// The refusal may not carry any part of the value: this parse is the
+	// marker's, and the marker's error is what a run publishes before any
+	// redactor exists (D19, internal/runner's MalformedEnv). The test reads the
+	// whole text rather than searching it for the value: the refusal words
+	// itself and nothing else, so every bad value must produce the same
+	// sentence. A search cannot hold that — it is vacuous for a value the
+	// sentence itself contains (the empty string, a lone space) — and it would
+	// pass while the text was built from the value.
+	refusal := ""
 	for _, bad := range []string{
 		"", " ", "1", enc + "=", enc + "\n", enc + " ", "\t" + enc, enc[:len(enc)-1], enc + "A",
 		"+" + enc[1:], "/" + enc[1:], enc + "." + enc,
 	} {
-		if _, err := token.ParseKey(bad); !errors.Is(err, token.ErrSealKey) {
-			t.Errorf("ParseKey(%q) = %v, want ErrSealKey", bad, err)
+		_, perr := token.ParseKey(bad)
+		if !errors.Is(perr, token.ErrSealKey) {
+			t.Errorf("ParseKey(%q) = %v, want ErrSealKey", bad, perr)
+			continue
 		}
-		if bad != "" && err != nil && strings.Contains(err.Error(), bad) {
-			t.Errorf("ParseKey(%q) echoes the value in its error", bad)
+		switch {
+		case refusal == "":
+			refusal = perr.Error()
+			if refusal == "" {
+				t.Fatalf("ParseKey(%q) refuses with an empty message", bad)
+			}
+		case perr.Error() != refusal:
+			t.Errorf("ParseKey(%q) = %q, want the same refusal every other bad value gets (%q): the text depends on the value", bad, perr, refusal)
 		}
+	}
+	if strings.Contains(refusal, enc) {
+		t.Errorf("the refusal carries the key's own spelling: %q", refusal)
 	}
 }
 
