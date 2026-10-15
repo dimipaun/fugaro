@@ -37,6 +37,10 @@ What the plan actually wanted — visible only after the owner had removed the p
 
 14 = 12 + 2, and 12 = 11 + 1. The counts are per-installation (the operator and launcher lists decide several of them), which is why the plan computes the list rather than printing a fixed one — 14 is this origin's number, with one operator and one launcher, not a constant.
 
+**These are the numbers of the state alone, and the state is not the whole answer any more.** The incident happened before #329's N4 union was on `main`. `Readiness` now puts every live, correctly-labelled container back into `RepoSpec.Secrets` (`Existing.ExtraSecrets`), so **today's code re-adopts the two OAuth containers instead of retiring them**: the plan produces their addresses again, the repository module keeps making the four per-secret operator grants, and the retirement set is the other eight addresses — **8 retired = 7 going away (6 the apply deletes + 1 through the API) + 0 kept, and 1 state-removed before the plan** (the protected job; the containers are not removed from anything). The `14/12/2/3/11` set is still exactly what §1's narrative, §3.2's second shape and the fixtures of `internal/infra/retire_test.go` describe, and it is what a retirement sees when the label list does not find the containers — unlabelled, or a refused `secrets.list` (§3.1a) — which was the owner's case: the labels could not vouch for them, so nothing adopted them and Terraform refused to destroy them. Both sets are pinned: `TestRetirementsOriginTransition` for the 14, `TestRetirementsOriginTransitionWithTheUnion` for the 8.
+
+Consequence for the two sections that quote counts: **§3.2 prints today's shape first and this one second**, and every later count of `14`/`12`/`3`/`11` in this document is this set's, not today's default.
+
 - **2 imports**: the new api-key secrets (`anthropic-api-key`, and the provider key), created by `fugaro secrets set` through the Secret Manager API and adopted by label.
 - **6 creates**: operator and job-accessor IAM members.
 - **3 updates**: the surviving jobs' specs.
@@ -164,54 +168,56 @@ func (rs RepoSpec) Addresses() []string
 
 ### 3.2 The retirement summary
 
-Printed **instead of** Terraform's text, **before the plan**, whenever the retirement set is non-empty — a state-held address or a label-discovered orphan job, never a kept container alone (§3.1a). Shape (this is the origin case, with the numbers the owner actually saw):
+Printed **instead of** Terraform's text, **before the plan**, whenever the retirement set is non-empty — a state-held address or a label-discovered orphan job, never a kept container alone (§3.1a). Shape (this is the origin case, with #329's union on `main`, which is the code of the day: the numbers are the ones §1's note derives):
 
 ```
-⚠ This change retires 14 addresses (project <name>, GCP project <id>, repository <owner/name>).
-  12 go away; 2 secrets stay in Secret Manager with their values.
+⚠ This change retires 8 addresses (project <name>, GCP project <id>, repository <owner/name>).
+  7 go away.
 
 Why: agent.auth changed from oauth to api-key, so the named Claude account
-"bmb" is no longer a variant this repository deploys, and the OAuth secrets
-are no longer mounted.
+"bmb" is no longer a variant this repository deploys, and one secret is no
+longer mounted.
 
-Going away (12, predicted from the state) — 11 the plan will delete, 1 deleted
-through the Cloud Run API after it:
-  module.repo.module.workflow["go_bmb"]            the job, account and grants of workflow "go"
-                                                   as account "bmb" (7 addresses, one of them
-                                                   the job, which the API deletes after)
-  module.repo.module.workflow["go"]                the accessor to the OAuth secret that the
-    .…secret_iam_member.job["claude-oauth-token"]  surviving default variant no longer mounts (1)
-  module.repo.google_secret_manager_secret_iam_member.operator[…]  grants tied to the two
-                                                   OAuth secrets (4: two per container)
-
-Removed from Terraform's state, and never deleted (2):
-  module.repo.google_secret_manager_secret.this["claude-oauth-token"]
-  module.repo.google_secret_manager_secret.this["claude-oauth-token-bmb"]
-
-KEPT — Fugaro never deletes a secret or a secret version:
-  claude-oauth-token       stays in Secret Manager, unmanaged, with its value
-  claude-oauth-token-bmb   stays in Secret Manager, unmanaged, with its value
-  Their containers carry the fugaro labels, so re-adding oauth later re-adopts them.
+Going away (7, predicted from the state and the labels) — 6 the plan will
+delete, 1 deleted through the Cloud Run API after it:
+  module.repo.module.workflow["go_bmb"].<resource>  the job, account and grants of workflow
+                                                    "go" as account "bmb" (6 addresses, one of
+                                                    them the job, which the API deletes after)
+  module.repo.module.workflow["go"]                 the accessor to the OAuth secret that the
+    .…secret_iam_member.job["claude-oauth-token"]   surviving default variant no longer mounts (1)
 
 Order of operations:
-  1. remove 3 addresses from Terraform's state without destroying them:
-     the 2 secret containers (prevent_destroy) and the 1 orphaned job
-     (deletion_protection, which no apply can lower once the job has left
-     the configuration). Nothing in the cloud is deleted by this step.
+  1. remove 1 address from Terraform's state without destroying it: the
+     addresses no apply can delete (a secret container's prevent_destroy, a
+     job whose deletion_protection the state says is on). Nothing in the
+     cloud is deleted by this step.
   2. plan, show the plan's own counts and its full delete list, and ask
-     again — a typed confirmation, the same one the ordinary path takes
-     with a real plan in front of it.
-  3. apply, then delete the 1 orphaned Cloud Run job step 1 left unmanaged
+     again — the project's name typed at a real terminal, never --yes.
+  3. apply, then delete the 1 orphaned Cloud Run job through the API.
 
 Next command:
   fugaro init --repo . --retire
 ```
 
-**The summary shows no imports, creates or updates, and no deletes other than the retirement's own.** It is printed *before* the plan, so those numbers do not exist yet — this section's first draft printed `2 imports, 6 creates, 3 updates, 11 deletes` in a summary that runs before any plan can (§3.3's own argument: no plan exists until the protected addresses have left the state). The plan's own counts, and the *real* delete list, are shown **after** the plan, at the second confirmation of §4.2.
+**The three groups are the counts made visible, and with the union there is no `KEPT` block in this case.** A live container carrying this repository's labels goes back into `RepoSpec.Secrets` in `Readiness` (#329's N4, `Existing.ExtraSecrets`), so the plan **produces** its address again and adopts it: the container is not retired at all, the repository module keeps making its per-secret operator grants, and none of that is a leftover to keep or to fear for. `KEPT` is what the yaml cannot ask for — a container the label list did not find, or did not find *correctly labelled* — and then it names the logical name and the Secret Manager ID, says the value stays, and points at `fugaro secrets ls`:
+
+```
+Removed from Terraform's state, and never deleted (2):
+  module.repo.google_secret_manager_secret.this["claude-oauth-token"]
+  module.repo.google_secret_manager_secret.this["claude-oauth-token-bmb"]
+
+KEPT — Fugaro never deletes a secret or a secret version:
+  claude-oauth-token-bmb           leaves Terraform's state, unmanaged; Secret Manager is untouched
+  Nothing here deletes a container, so one that still exists keeps its value. A live container
+  carrying this repository's labels is adopted back into the plan instead of being retired at
+  all, so these are the ones the label list did not find: check them with `fugaro secrets ls`.
+```
+
+That is the shape §1's unlabelled case produces — **14 retired, 12 going away, 2 kept, 3 state-removed before the plan** (§1's note has the two number sets side by side, and says which is which) — and it is what a state-only retirement sees before discovery has run in front of it. The `KEPT` list is still built from the same label discovery as the orphan set (§3.1a), so **a rerun after a failed delete still names the kept secret** even though its container is no longer in the state. Its addresses come from `Orphans` for exactly that reason.
+
+**The summary shows no imports, creates or updates, and no deletes other than the retirement's own.** It is printed *before* the plan, so those numbers do not exist yet — this section's first draft printed `2 imports, 6 creates, 3 updates, 11 deletes` in a summary that runs before any plan can (§3.3's own argument: no plan exists until the protected addresses have left the state). The plan's own counts, and the *real* delete list, are shown **after** the plan, at the second confirmation of §4.2. Step 1's count is the state removal's own: every address step 1 takes out, the API-deleted jobs included, which is why it can exceed the rows of the `Removed from Terraform's state` list (that list is the narrower one: what leaves the state and is then never deleted).
 
 The three `<…>` tokens in the first line are **placeholders**: the origin's real project name, GCP project ID and repository are the owner's, and this document does not reproduce them.
-
-**The three groups are the four counts of §1, made visible:** 14 retired = 12 going away (11 apply + 1 API) + 2 state-removed and kept. The `KEPT` list is not a decoration — it is what tells the user their token values are safe — and it is built from the same label discovery as the orphan set (§3.1a), so **a rerun after a failed delete still names the kept secrets** even though their containers are no longer in the state. Its addresses come from `Orphans` for exactly that reason.
 
 Every line is required by the origin's three failures: *what* is going (the address list, which Terraform never printed), *why* (the config change, which Terraform's text never named), *what is kept* (so the user does not fear for their tokens), and *the exact next command*.
 
@@ -247,7 +253,7 @@ Two classes are protected, and both are the modules' own doing:
 - **`google_secret_manager_secret.this[*]`** carries `prevent_destroy = true` (`deploy/terraform/gcp/modules/repo/secrets.tf:22`), which aborts the plan *before* it prints a resource list — §1's failure (2). These are retired from state and **never deleted**: they are §3.1's `Kept` rows.
 - **A Cloud Run job carries `deletion_protection = !var.allow_job_delete`** (`deploy/terraform/gcp/modules/workflow/job.tf:15`; the check job, `deploy/terraform/gcp/modules/repo/check.tf:27`) — **and only a job whose state says `true` is protected**. `--allow-job-delete` is a tfvars **variable of an apply that still contains the job**, so once the resource has left the configuration there is nothing left to carry it and the provider refuses the delete at apply time: those jobs are retired from state and then deleted through the Cloud Run API (§4.2c). A job whose state says `false` was already lowered by an earlier apply, the ordinary path deletes it, and `Removals` leaves it in state for exactly that (the `Protected` field of §3.1).
 
-**So in the origin `Removals` returns 3 of the 14 retired addresses** — the 2 containers and the 1 job — and the other 11 stay in the state for the apply to delete, which is exactly the plan §1 quotes and the counts §1's table defines (3 state-removed before the plan, 11 deleted by the apply). §6 pins the narrow rule with a test, because the failure mode is silent: a too-wide `Removals` produces a clean plan and a GCP project with leftovers — so the pair is asserted from both sides, `TestRemovalsReturnsEveryProtectedAddressStillInState` and `TestRemovalsKeepsAnUnprotectedJobForTheApply` (two retirements differing only in `Protected` must give different answers), since the rule is per-address and not a property of the set. The primary mechanic is the runner's existing `(*TF).StateRm` (`internal/infra/tf/tf.go:302`), which fugaro already uses for `--forget` (`internal/cli/init.go:1751` and `:2588`) and which is **exactly what the owner ran by hand** in the origin:
+**So in the origin's unlabelled set `Removals` returns 3 of the 14 retired addresses** — the 2 containers and the 1 job — and the other 11 stay in the state for the apply to delete, which is exactly the plan §1 quotes and the counts §1's table defines (3 state-removed before the plan, 11 deleted by the apply). With #329's union on `main` the same transition returns **1** (the protected job): the two containers are adopted back into the plan rather than retired (§1's note), so nothing about them is removed, and the apply deletes the 6 remaining addresses while the API deletes the job. §6 pins the narrow rule with a test, because the failure mode is silent: a too-wide `Removals` produces a clean plan and a GCP project with leftovers — so the pair is asserted from both sides, `TestRemovalsReturnsEveryProtectedAddressStillInState` and `TestRemovalsKeepsAnUnprotectedJobForTheApply` (two retirements differing only in `Protected` must give different answers), since the rule is per-address and not a property of the set. The primary mechanic is the runner's existing `(*TF).StateRm` (`internal/infra/tf/tf.go:302`), which fugaro already uses for `--forget` (`internal/cli/init.go:1751` and `:2588`) and which is **exactly what the owner ran by hand** in the origin:
 
 ```go
 // package infra/tf — already exists, unedited by this design.
@@ -305,7 +311,7 @@ The safety rules, spelled out, because this is the one new *cloud* mutation the 
 ## 5. Where users learn
 
 1. **Error and warning texts** — the retirement summary (§3.2) and the `prevent_destroy` re-framing (§3.3). Neither shows raw Terraform text; both name the cause and the command. The `--json` document gains `retire` (the `[]Retirement` list) so a scripted user sees the same facts, and keeps `failed[].error` as the raw Terraform text.
-2. **A docs section** in `docs/gcp-setup.md`: "Changing auth, or removing a workflow, secret or provider", with the ordered steps and this worked example (the 2026-10-14 oauth→api-key transition, its 11 deletes and the two secrets that stayed). The existing "Turning checks off, or removing a workflow" and "Offboarding a repository" sections are **edited to point at it** rather than kept as a second, divergent outline; the "do it in this order" advice stays, restated as "the order matters, and `fugaro init --repo` now tells you when you have passed it".
+2. **A docs section** in `docs/gcp-setup.md`: "Changing auth, or removing a workflow, secret or provider", with the ordered steps and a worked example — a small transcript of the run's own output, three addresses of which one is a secret kept in Secret Manager (the 2026-10-14 origin's own numbers are §1's, and §1's note says how the union moves them today). The existing "Turning checks off, or removing a workflow" and "Offboarding a repository" sections are **edited to point at it** rather than kept as a second, divergent outline; the "do it in this order" advice stays, restated as "the order matters, and `fugaro init --repo` now tells you when you have passed it".
 3. **The setup and upgrade skills** (`plugin/skills/setup`, `plugin/skills/upgrade`): each gains the refusal text an agent will see, with the instruction not to attempt the transition from an agent session and to hand the user the `--retire` command instead. The skills lint (`plugin/skills_lint_test.go`, `internal/cli/skills_test.go`) is updated with them.
 4. **`fugaro init --repo --plan-only`** warns when the checkout's configuration, compared against what the project's state holds, would retire resources: it reads the state, the label-discovered orphans and the spec, and prints the **full predicted retirement summary** — `printRetirements` (§3.2), the same text and the same address list, kept secrets and next command that the `--retire` path prints — **first**, and then continues into the ordinary read-only path: it shows the ordinary plan and its delete list whenever one can be produced, and exits, having removed nothing, deleted nothing and applied nothing (§3.3). It is a prediction rather than the retirement's own delete list, because in the case that matters — the protected addresses still in the state — no plan can exist at all, and the summary is then all `--plan-only` can show; the real list comes from `--retire` itself. The plan pins both with `TestInitRepoPlanOnlyRemovesNothing`, which asserts the summary is printed in full and that no `state rm` was recorded, and with the assertion that a `. --plan-only` run which *can* produce a plan still shows it. **`fugaro validate` is deliberately not in this list, and the first draft of this design was wrong to include it:** `internal/cli/validate.go` has no Terraform and no state access at all, so it cannot make this comparison, and giving it one would turn a documented offline command into a live, state-reading one. `fugaro doctor` is in the same position and is likewise **not changed by this design**: it reads no state, and the plan's tasks contain no doctor edit (if the owner wants doctor to point at `fugaro init --plan-only`, that is a one-line change with its own plan entry, not an orphan of this one). *This is §8's open question 5: whether a read-only state access in `validate` is worth the change to what that command is.*
 5. **`docs/gcp-live-checklist.md` Check 42** (owner-run, sandbox): the oauth → api-key → oauth round trip with the secrets retained and re-adopted (§6).
@@ -327,12 +333,12 @@ The safety rules, spelled out, because this is the one new *cloud* mutation the 
 - `internal/gcpfake/run.go` has **no job DELETE handler** and does not render job **labels** in `jobs.list` (`listJobs` returns names only), so neither the delete, nor the 404, nor the label-ownership refusal, nor `Orphans`' discovery by label can be tested against it.
 - `internal/gcpfake/secrets.go` has a delete handler but **no call recording**, so "Fugaro never deletes a secret or a secret version" cannot be asserted; it needs per-method counters the test can read (the same shape as `Run.RunRequests`/`Run.Patches`, which already record calls).
 
-- **The origin transcript as a fixture**, with its 14 addresses listed once in §1 (12 going away, 2 removed from state and kept): the `prevent_destroy` failure text, the two secret addresses, the `go_bmb` variant and the 11-delete plan, asserting that `init --repo` prints the retirement summary and never the raw text. The new golden lives beside the existing ones as `internal/cli/testdata/init_retire.golden`.
+- **The origin transcript as a fixture**, with its 14 addresses listed once in §1 (12 going away, 2 removed from state and kept — the state-only set of §1's note, which the union narrows to 8): the `prevent_destroy` failure text, the two secret addresses, the `go_bmb` variant and the 11-delete plan, asserting that `init --repo` prints the retirement summary and never the raw text. The new golden lives beside the existing ones as `internal/cli/testdata/init_retire.golden`.
 - **`RepoSpec.Addresses()` completeness**: a test diffing `Addresses()` against the `resource_changes` of a **real** `terraform plan` of the real `repo` root, planned from a fixture spec that turns everything on. The plan output is committed as a golden (`internal/infra/testdata/repo_root_addresses.golden`) and regenerated by a build-tagged test gated on a **`-update` flag** — the one step that reaches outside the repository, run at build time on the owner's machine and never applying anything (it plans a temp copy of the root with the provider's credential checks skipped; whether that override suffices is a build-time question, and the fallback is read-only credentials for a sandbox project). **The gate matters because CI does reach this file:** `.github/workflows/ci.yml:115` runs `go test -tags terraform ./internal/infra/...`, so a `//go:build terraform` test in this package is compiled and executed there. It must therefore **skip unless `-update` is set**, and its body — `terraform init`, the provider download, the credentials question — must be behind that skip, so CI compiles and vets it (which is what keeps the generator from rotting) but never downloads a provider or touches a network. Global Constraints' "no live cloud or network call in any automated test" is upheld by the skip, not by the file's location. The CI-visible assertion is the **untagged** test in `spec_test.go`, which diffs `Addresses()` against the committed golden, so a resource added to a module without an address here fails the build. This is the guard against the mirror drifting (see §3.1).
 - **The user-changed-the-file-first order**, which is the origin: the workflow has already left `fugaro.yaml` and the job still carries `deletion_protection = true` in state. Asserts the state-remove-then-delete-by-API path is chosen, that the removal happens before the plan and the API delete after the apply, and that the `--allow-job-delete` pre-step is *not* offered as if it were still available.
 - **A baked/clone transition** (row E), asserting the check job, its invoker grant and its Scheduler job appear in the retirement set exactly when the last checked workflow leaves. **The check job is a job of its own kind**, and the tests pin both directions of the rule §3.1a gives it: `TestOrphansNeverReturnsTheCheckJobItStillNeeds` (with `spec.Check != nil` the check job — which carries `fugaro_role=check` and no `fugaro_workflow`, `modules/repo/check.tf:22-26` — is **not** an orphan, so it is never deleted while it is still wanted) and `TestOrphansCheckJobIsAnOrphanWhenSpecCheckIsNil` (with `spec.Check == nil` it is, and `deleteOrphanedJob` deletes it under the role label rather than refusing it for a missing `fugaro_workflow`). Without the pair, a check job reads as an orphan on every run, and a genuinely retired one is state-removed but never deleted — state and cloud disagreeing silently, which §6 forbids.
 - **A reverse transition** (row A in reverse), asserting the labelled containers are re-imported and the named variants come back as creates, with **zero** deletes of any `google_secret_manager_secret.*` resource.
-- **The state removal is narrow, and never eats what the apply must delete**: a test over the origin's 14 retired addresses asserts `Removals` returns exactly the **protected** ones still in the state — the 2 containers and the 1 job — and that a retired variant's service account and IAM members are **not** returned, because the plan has to delete them. The companion assertion is on the plan itself: the retirement-mode plan still contains those 11 deletes, so a `Removals` that widened by accident fails the test instead of quietly planning a clean run over a project full of leftovers.
+- **The state removal is narrow, and never eats what the apply must delete**: a test over the origin's 14 retired addresses (the state-only set again) asserts `Removals` returns exactly the **protected** ones still in the state — the 2 containers and the 1 job — and that a retired variant's service account and IAM members are **not** returned, because the plan has to delete them. The companion assertion is on the plan itself: the retirement-mode plan still contains those 11 deletes, so a `Removals` that widened by accident fails the test instead of quietly planning a clean run over a project full of leftovers.
 - **Failure injection, in both phases**: a `state rm` that fails half-way (some addresses removed, some not), and an apply that succeeds while the API delete fails. The rule to pin: the run reports exactly which addresses were removed from state, which were deleted in the cloud and which were not, writes nothing else, and a rerun resumes — `Removals` returns only **protected** addresses still in state, so an already-removed address is never passed to `state rm` again (`terraform state rm` of an address no longer in state fails, so this filtering is what makes the rerun safe), and a delete of an already-deleted job is a 404 treated as done. Never leaving state and cloud disagreeing without saying so.
 - **The orphaned-job delete's own cases** (§4.2c): a job whose labels are not ours is refused; a job with our marks but another workflow's `fugaro_workflow` is refused; a job already gone (404) is reported done; a check job is deleted under `fugaro_role=check` while a workflow job under `fugaro_workflow=<variant>`, and each is refused when its own third label is the other kind's; and `--plan-only`, `--json`, `--non-interactive`, `--yes` and an agent session each never reach the call. **Every refusal exits 1** and reports the job as out of state, alive and still protected — the exit status is part of the contract, not left to the implementation.
 - **A kept container alone never keeps the retirement alive** (§3.1a, the convergence rule): with the two OAuth containers already released and out of the state, a later `fugaro init --repo` returns them as **notes**, prints no summary, opens no gate and never suggests `--retire`; the same run with one state-held address does print it. This is the test that stops the summary, the gate and the next command from recurring forever on a project that has nothing left to retire.

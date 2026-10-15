@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -412,23 +413,32 @@ func TestInitRepoRetireConfirmationNamesEveryKeptSecret(t *testing.T) {
 	}
 }
 
-// --yes, --non-interactive, --json and a coding agent's session cover
-// neither confirmation: each refuses, and nothing leaves the state and
-// nothing is deleted.
+// --yes, --non-interactive, --json, a coding agent's session and a stdin
+// that is a pipe rather than a terminal cover neither confirmation: each
+// refuses, and nothing leaves the state and nothing is deleted.
 func TestInitRepoRetireTypedConfirmationsAreNotCoveredByAnythingElse(t *testing.T) {
 	for name, tc := range map[string]struct {
-		args  []string
-		agent string
+		args   []string
+		agent  string
+		notTTY bool
 	}{
 		"--yes":             {args: []string{"--yes"}},
 		"--non-interactive": {args: []string{"--yes", "--non-interactive"}},
 		"--json":            {args: []string{"--yes", "--json"}},
 		"a coding agent":    {args: []string{"--yes"}, agent: "CLAUDECODE"},
+		// A pipe: the answers are there to be read, but nobody is at a
+		// terminal to read them, so the confirmation is unreachable.
+		"a pipe, not a terminal": {notTTY: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newRetireRig(t, retireOpts{protection: true})
 			if tc.agent != "" {
 				t.Setenv(tc.agent, "1")
+			}
+			if tc.notTTY {
+				old := stdinIsTerminal
+				stdinIsTerminal = func(io.Reader) bool { return false }
+				t.Cleanup(func() { stdinIsTerminal = old })
 			}
 			args := append([]string{"init", "--repo", "--retire", "--no-build"}, tc.args...)
 			out, errOut, err := executeStdin(t, "aurora\naurora\n", args...)
@@ -437,6 +447,11 @@ func TestInitRepoRetireTypedConfirmationsAreNotCoveredByAnythingElse(t *testing.
 			}
 			if s := out + errOut; !strings.Contains(s, "⚠ CONFIRM") {
 				t.Errorf("%s: the confirmation was not even shown:\n%s", name, s)
+			}
+			if tc.notTTY {
+				if s := err.Error(); !strings.Contains(s, "needs a real terminal") {
+					t.Errorf("the refusal does not say what is missing: %q", s)
+				}
 			}
 			if calls := r.ran(t, "state rm"); len(calls) != 0 {
 				t.Errorf("%s removed state: %v", name, calls)
@@ -932,6 +947,63 @@ func TestInitRepoPreventDestroyReframed(t *testing.T) {
 	}
 }
 
+// The owner's own flow, end to end, across two runs of the CLI: the plan
+// aborts on prevent_destroy for the container the configuration stopped
+// producing, the refusal names --retire, and the rerun -- which removes that
+// address from the state before it plans -- gets past the same plan. The
+// two runs share one rig and one script, and the fake terraform's sequencing
+// is what tells them apart: `plan@repo`'s first step is the abort, its
+// second is the plan the rerun sees.
+func TestInitRepoPreventDestroyThenRetireFinishesIt(t *testing.T) {
+	aborted := fixture(t, "prevent_destroy_wrapped.txt") // before the rig chdirs
+	// The job's own deletion_protection is off, so the first run is not
+	// stopped by the refusal gate: it gets as far as the plan, which is
+	// where the container's prevent_destroy refuses it.
+	r := newRetireRig(t, retireOpts{})
+	r.script["plan@repo"] = []map[string]any{
+		{"exit": 1, "stderr": aborted},
+		{"exit": 2}, // the rerun's plan: the same changes, no destroy to refuse
+	}
+	r.save(t)
+
+	out, errOut, err := executeStdin(t, "", "init", "--repo", "--no-build", "--yes")
+	if ExitCode(err) != ExitUserError || err == nil ||
+		!strings.Contains(err.Error(), "the plan was refused: "+retireKeptAddr) {
+		t.Fatalf("the first run was not refused on the container: exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
+	}
+	if err := err; !strings.Contains(err.Error(), retireNextCommand) {
+		t.Fatalf("the refusal does not name the rerun: %v", err)
+	}
+	if calls := r.ran(t, "state rm"); len(calls) != 0 {
+		t.Fatalf("the refused run removed state: %v", calls)
+	}
+
+	out, errOut, err = executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	if err != nil {
+		t.Fatalf("the rerun failed: exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
+	}
+	var removed []string
+	for _, c := range r.ran(t, "state rm") {
+		for _, arg := range c {
+			if strings.HasPrefix(arg, "module.") {
+				removed = append(removed, arg)
+			}
+		}
+	}
+	if !slices.Contains(removed, retireKeptAddr) {
+		t.Errorf("the rerun did not remove the container the plan refused to destroy: %v", removed)
+	}
+	if applies := r.applies(t); len(applies) != 1 {
+		t.Errorf("applies = %v, want the rerun's one apply", applies)
+	}
+	// The job's deletion_protection is off here, so the plan deletes it and
+	// no API delete is needed; what this test is about is the plan the
+	// first run could not get past and the rerun could.
+	if deletes := r.run.JobDeletes(); len(deletes) != 0 {
+		t.Errorf("JobDeletes = %v, want none for an unprotected job", deletes)
+	}
+}
+
 // A retirement that stops after the state removal may not stop quietly: the
 // addresses that left the state are alive in GCP with nothing managing them,
 // and the run says which ones, with the job delete named as the step still to
@@ -1260,5 +1332,52 @@ func TestInitRepoRetireConvergesOnAnAdoptedContainer(t *testing.T) {
 	}
 	if got := r.sm.Deleted(); len(got) != 0 {
 		t.Errorf("a secret was deleted: %v", got)
+	}
+}
+
+// The retirement flow is entered once, and only from planRepo's first call
+// (design Task 5, review D3): the run calls planRepo twice whenever it built
+// an image -- the second time to deploy the freshly built images -- and by
+// then the state removal has run and the orphan is still alive in the cloud,
+// so a second entry would re-prompt for a confirmed transition and could
+// attempt the same delete twice. This run is the one with builds left (no
+// --no-build), so it goes past the retirement; the steps the user sees ran
+// once each.
+// The whole flow runs once in a run that has builds left: without
+// --no-build the run goes on past the retirement (plan, apply, deploy), and
+// nothing the retirement does may be done twice. The rig's fake cannot carry
+// the run far enough to build an image -- the billable build needs a real
+// Cloud Build behind it -- so the once-only assertions are the user-visible
+// ones: the summary, the two typed confirmations, one state removal per
+// address and one API delete.
+func TestInitRepoRetireRunsTheFlowOnce(t *testing.T) {
+	r := newRetireRig(t, retireOpts{protection: true})
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire")
+	text := out + errOut
+	if err != nil {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, text)
+	}
+	if n := strings.Count(text, "⚠ This change retires"); n != 1 {
+		t.Errorf("the retirement summary was printed %d times, want once:\n%s", n, text)
+	}
+	if n := strings.Count(text, "⚠ CONFIRM"); n != 2 {
+		t.Errorf("%d confirmations, want the two typed ones:\n%s", n, text)
+	}
+	// state rm takes one address per call, so the assertion is that each
+	// address was removed exactly once -- the same address twice is what a
+	// second entry into the flow would look like.
+	seen := map[string]int{}
+	for _, c := range r.ran(t, "state rm") {
+		for _, arg := range c {
+			if strings.HasPrefix(arg, "module.") {
+				seen[arg]++
+			}
+		}
+	}
+	if len(seen) != 2 || seen[retireKeptAddr] != 1 || seen[retireJobAddr] != 1 {
+		t.Errorf("state removals = %v, want each of the container and the job once", seen)
+	}
+	if deletes := r.run.JobDeletes(); len(deletes) != 1 || deletes[0] != retireJobName {
+		t.Errorf("JobDeletes = %v, want exactly one delete of %s", deletes, retireJobName)
 	}
 }

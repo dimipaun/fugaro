@@ -175,8 +175,15 @@ func (r *initRun) printRetirements(spec infra.RepoSpec, rets []infra.Retirement)
 		}
 		fmt.Fprintln(r.w, "  Nothing here deletes a container, so one that still exists keeps its value. A live container carrying this repository's labels is adopted back into the plan instead of being retired at all, so these are the ones the label list did not find: check them with `fugaro secrets ls`.")
 	}
+	// Step 1's count is every address the state removal takes out, the
+	// API-deleted jobs included: they leave the state by the same step,
+	// which is what makes the plan able to run at all. The list above
+	// (retireRemovals) is the narrower one -- what leaves the state and is
+	// then never deleted -- so the two counts differ by the API jobs, and
+	// the confirmation's own "remove N from Terraform's state" is this one.
+	n := len(infra.Removals(r.retireState, rets))
 	fmt.Fprintf(r.w, "\nOrder of operations:\n  1. remove %d %s from Terraform's state without destroying %s: the addresses no apply can delete (a secret container's prevent_destroy, a job whose deletion_protection the state says is on). Nothing in the cloud is deleted by this step.\n",
-		len(r.retireRemovals(spec, rets)), plural(len(r.retireRemovals(spec, rets)), "address", "addresses"), plural(len(r.retireRemovals(spec, rets)), "it", "them"))
+		n, plural(n, "address", "addresses"), plural(n, "it", "them"))
 	fmt.Fprintln(r.w, "  2. plan, show the plan's own counts and its full delete list, and ask again — the project's name typed at a real terminal, never --yes.")
 	fmt.Fprintf(r.w, "  3. apply, then delete the %d orphaned Cloud Run %s through the API.\n", len(api), plural(len(api), "job", "jobs"))
 	fmt.Fprintln(r.w, "\nNext command:\n  fugaro init --repo . --retire")

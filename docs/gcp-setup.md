@@ -458,7 +458,7 @@ The same transition has a one-command form since 0.7.2, and it is the one to rea
 
 ```
 ⚠ This change retires 3 addresses (project aurora, GCP project proj-1234, repository acme/sandbox).
-  2 go away; 1 secret stays in Secret Manager with its value.
+  2 go away; fugaro deletes no secret.
 
 Why: agent.auth no longer mounts claude-oauth-token-bmb; the named Claude account bmb is no longer a variant this repository deploys.
 
@@ -470,11 +470,11 @@ Removed from Terraform's state, and never deleted (1):
   module.repo.google_secret_manager_secret.this["claude-oauth-token-bmb"]
 
 KEPT — Fugaro never deletes a secret or a secret version:
-  claude-oauth-token-bmb           claude-oauth-token-bmb stays in Secret Manager, unmanaged, with its value
-  Their containers carry the fugaro labels, so re-adding one later re-adopts it.
+  claude-oauth-token-bmb           leaves Terraform's state, unmanaged; Secret Manager is untouched
+  Nothing here deletes a container, so one that still exists keeps its value. A live container carrying this repository's labels is adopted back into the plan instead of being retired at all, so these are the ones the label list did not find: check them with `fugaro secrets ls`.
 
 Order of operations:
-  1. remove 1 address from Terraform's state without destroying it: the addresses no apply can delete (a secret container's prevent_destroy, a job whose deletion_protection the state says is on). Nothing in the cloud is deleted by this step.
+  1. remove 2 addresses from Terraform's state without destroying them: the addresses no apply can delete (a secret container's prevent_destroy, a job whose deletion_protection the state says is on). Nothing in the cloud is deleted by this step.
   2. plan, show the plan's own counts and its full delete list, and ask again — the project's name typed at a real terminal, never --yes.
   3. apply, then delete the 1 orphaned Cloud Run job through the API.
 

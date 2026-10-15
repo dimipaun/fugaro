@@ -45,8 +45,15 @@ import (
 // caller's account ID and the provider registry. The root's own provider
 // block sets project, region, billing_project and user_project_override;
 // an override file merges into it, so those survive.
+//
+// access_token is what makes the generator runnable with no credentials at
+// all: the provider insists on finding one before it will even load, and
+// any non-empty string satisfies it. Nothing sends it anywhere: the plan
+// reads no data source, so the provider never calls the API, and the token
+// is never a real one.
 const providerOverride = `
 provider "google" {
+  access_token                = "no-credentials-the-plan-makes-no-api-call"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_provider_registry      = true
