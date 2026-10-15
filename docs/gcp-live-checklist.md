@@ -267,9 +267,11 @@ personal account, **never the `edgeappinc` workspace the sandbox repository live
 in** — carries unrelated files, is exported into, and the check asserts they are
 untouched, that a branch which moved is followed onto its new tip without a
 **force**, and that an edit made inside the folder is refused by name. It is
-the first number free past every reservation above it, and the three between 56
-and it are other plans': **58 is the artifact-runs plan's** (PR #393, **merged
-to `main` as `fd06635`**, whose row and section its own Task 9 writes — this
+the first number free past every reservation above it, and the four between 56
+and it are all spoken for: **57 is the compute-backend design's** (above, and
+not this plan's to write), and the other three are other plans': **58 is the
+artifact-runs plan's** (PR #393, **merged to `main` as `fd06635`**, whose row
+and section its own Task 9 writes — this
 register, on `next`, does not carry it yet), **59 is the desktop-console plan's**
 (PR #401, **merged to `main` as `411fc18`** on 2026-10-15 — its own Task 4.3
 writes the number's rows and sections when that plan's phase 4 ships, so `main`'s
