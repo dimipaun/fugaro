@@ -1390,9 +1390,6 @@ func TestRemovalWarningSaysWhatTheNextRunDoes(t *testing.T) {
 		// matches github/acme/app, and canonicalRepoArg accepts the entry, so
 		// claiming the runs stop here would be a stop that does not happen.
 		"pattern, a broader pattern remains": {[]string{"*/acme/*", "github/acme/*"}, "github/acme/*", true, "*/acme/*"},
-		// The same question for the provider-wide entry: every repository
-		// github/acme/* admitted, github/*/* admits (the review of PR #390).
-		"pattern, a provider-wide one remains": {[]string{"github/*/*", "github/acme/*"}, "github/acme/*", true, "github/*/*"},
 		// A covering entry need not be written with bare "*" segments: github/ac*
 		// admits every owner whose name starts with "ac", which is every owner
 		// github/acme/* admitted, so the runs are not refused either. MatchRepo

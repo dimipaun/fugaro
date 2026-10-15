@@ -70,10 +70,8 @@ type Backend struct {
 	// would let a budget-off job skip the read of the project's policy without
 	// a word, which is the one place the marker did not fail closed. A
 	// malformed value that describes no backend at all (a stray grace, an API
-	// key with no URL, an empty URL) leaves it false, and a budget-off run
-	// ignores it as it ignores the rest of the backend's environment. The URL
-	// is read for that: a present-but-empty value names no database, so it is
-	// not a backend the environment carries and could not parse.
+	// key with no URL) leaves it false, and a budget-off run ignores it as it
+	// ignores the rest of the backend's environment.
 	MalformedEnv bool
 	// Tune, for tests only, adjusts the session's configuration (the fakes'
 	// URLs, short intervals).
@@ -101,13 +99,8 @@ func BackendFromEnv(lookup func(string) (string, bool), loopbackOK bool) (Backen
 	grace, hasGrace := lookup(BudgetGraceEnv)
 	// Everything but the two below describes no backend on its own: a stray
 	// grace or an API key with no URL is damage a budget-off run ignores, as it
-	// ignores the rest of the backend's environment. An empty URL is one of
-	// those and not damage: the variable is set and names no database, which is
-	// the state an operator leaves it in by clearing the field (in the console,
-	// or as FUGARO_RTDB_URL= on a launch override), and reading it as damage to
-	// a backend the job never had stopped every run of that job, mode off
-	// included (code review, medium).
-	b.MalformedEnv = (hasURL && url != "") || hasMarker
+	// ignores the rest of the backend's environment.
+	b.MalformedEnv = hasURL || hasMarker
 	if hasURL {
 		if err := rtdb.ValidateURL(url, loopbackOK); err != nil {
 			return b, fmt.Errorf("%s: %v", RTDBURLEnv, err)

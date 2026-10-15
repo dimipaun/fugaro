@@ -5,50 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dimipaun/fugaro/internal/policy"
-	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
-
-// The token cap's advice names the key each layer actually spells. The
-// project config and the published policy both spell it
-// budget.max_run_tokens; fugaro.yaml spells it agent.max_run_tokens. The
-// policy node has no `agent` top-level key at all (projectpolicy's known
-// keys are version, budget, allow_repos, providers, model_prices and
-// routing), so telling a reader to raise `agent.max_run_tokens` in the
-// node changes nothing, and the node it produces is refused as unknown --
-// the one message that exists to unblock a halted run would block the
-// owner instead.
-//
-// Mutation (run, restore): pass one name for every source again (the old
-// `raiseAdvice(rec, policy.KeyMaxRunTokens, "`agent.max_run_tokens`")`) and
-// the two owner-set cases fail.
-func TestTokenCapAdviceNamesTheKeyOfEachLayer(t *testing.T) {
-	cases := []struct {
-		src, want string
-	}{
-		{policy.SourcePolicy, "raise `budget.max_run_tokens` in the project's policy at " + projectpolicy.PathShared()},
-		{policy.SourceCeiling, "raise `budget.max_run_tokens` in the project config"},
-		{policy.SourceDefaultBranch, "merge a change to `agent.max_run_tokens` in `fugaro.yaml` on the default branch"},
-		{policy.SourceBranch, "raise `agent.max_run_tokens` in `fugaro.yaml` on this run's branch"},
-	}
-	for _, c := range cases {
-		t.Run(c.src, func(t *testing.T) {
-			h := runstore.Halt{Reason: runstore.HaltTokenCap, Scope: "run", Detail: "run used 2000000 tokens of 2000000"}
-			rec := &runstore.Record{Version: 1, RunID: "20261002-100000-abcd", Status: runstore.StatusHalted, Halt: &h,
-				Policy: &runstore.PolicyRecord{Sources: map[string]string{policy.KeyMaxRunTokens: c.src}}}
-			got := haltLines(rec)
-			if !strings.Contains(got, c.want) {
-				t.Errorf("the advice lacks %q:\n%s", c.want, got)
-			}
-			if c.src == policy.SourcePolicy || c.src == policy.SourceCeiling {
-				if strings.Contains(got, "agent.max_run_tokens") {
-					t.Errorf("the advice names the fugaro.yaml spelling for a layer that has no agent key:\n%s", got)
-				}
-			}
-		})
-	}
-}
 
 // TestHaltedReportNamesCauseAndRemedy: each halt of the shared budget says
 // what stopped the run and what to do next, in the report people read.

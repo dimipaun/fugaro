@@ -1617,8 +1617,7 @@ func removalWarning(allow []string, canonical string) string {
 // that too, because it matches its second argument as a *repository*: an entry
 // that matches the string github/acme/* is one whose own segments match
 // "github", "acme" and "*", which is exactly what admitting github/acme/<any>
-// takes. github/*/* matches it, */acme/* matches it (a legal entry,
-// canonicalRepoArg accepts it), github/ac*/* matches it (github/ac* is every
+// takes. github/*/* matches it, github/ac*/* matches it (github/ac* is every
 // owner whose name starts with "ac"), and github/*/app does not — its middle
 // segment would have to match the literal string "*". The reading is sound in
 // the direction that matters: a pattern that matches a string matches every
@@ -1645,7 +1644,6 @@ func admittedBy(allow []string, arg string) (bool, string) {
 	}
 	return false, ""
 }
-
 
 // canonicalRepoArg is the operator's argument as a canonical allow-list
 // entry. A bare owner/name takes its provider from this machine's config
