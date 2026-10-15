@@ -330,7 +330,7 @@ func TestGeneratorSkipsVariantsAndAliases(t *testing.T) {
 			t.Errorf("%s is a \"~\" alias: the pin grammar refuses those, so the row could never be charged", id)
 		}
 		if strings.HasPrefix(id, "anthropic/") {
-			t.Errorf("%s is an anthropic/ row: no route may claim one until the mixed-credentials opt-in relaxes CheckModelPattern", id)
+			t.Errorf("%s is an anthropic/ row: the shipped file carries none until the price catalog's own phase adds the claimed Claude IDs", id)
 		}
 	}
 }
@@ -338,8 +338,16 @@ func TestGeneratorSkipsVariantsAndAliases(t *testing.T) {
 // TestGeneratorRefusesIsAliasKey pins the enforcement behind the previous
 // test: an allowlisted ID pricing.IsAlias refuses is a hard error, so a
 // later allowlist edit cannot add a key nothing can claim.
+//
+// Once the mixed-credentials opt-in shipped, IsAlias stopped calling an
+// explicit "anthropic/<id>" an alias -- it is the one shape a provider route
+// may claim -- so "anthropic/claude-sonnet-5.5" is no longer a refused key
+// here and its case moved out of this list. Everything else IsAlias refuses
+// (a "~" alias, a ":" variant) is still refused, and
+// TestGeneratorSkipsVariantsAndAliases still keeps anthropic/ rows out of
+// the shipped file until the price catalog's own phase adds them.
 func TestGeneratorRefusesIsAliasKey(t *testing.T) {
-	for _, id := range []string{"anthropic/claude-sonnet-5.5", "~deepseek/deepseek-v4.1-flash-latest", "deepseek/deepseek-v4.1-flash:batch"} {
+	for _, id := range []string{"~deepseek/deepseek-v4.1-flash-latest", "deepseek/deepseek-v4.1-flash:batch"} {
 		t.Run(id, func(t *testing.T) {
 			s := newSnapshots(t, id)
 			_, err := s.gen(id)

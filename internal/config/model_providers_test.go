@@ -301,3 +301,208 @@ func TestProviderPolicyAllowedModelsEntries(t *testing.T) {
 		t.Errorf("problems = %q", got)
 	}
 }
+
+// claimID is the ID the claim tests route: one explicit Claude model through
+// a provider route, the shape the mixed-credentials opt-in allows and the
+// only shape it allows.
+const claimID = "anthropic/claude-sonnet-5.5"
+
+// claimPrices is the table a run has once the owner has priced the claimed ID
+// under model_prices, built by the one builder every surface prices from. The
+// price table never asks who may route a model (P4), which is why the row
+// exists here before any route claims anything.
+func claimPrices(t *testing.T, ps map[string]ModelProvider) *pricing.Table {
+	t.Helper()
+	cat, err := catalog.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked, err := time.Parse("2006-01-02", cat.CheckedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tbl, err := PriceTable(ps, pricing.Overrides{claimID: pricing.Rates{InputPerM: 2, OutputPerM: 10}}, cat, checked.Add(24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tbl
+}
+
+// TestUnclaimedClaudeIDStillRefused pins Review Focus 1 and 5: the pricing
+// half moving (Task 4) does not make an anthropic/<id> pinnable, and the
+// refusal an owner meets tells the truth about the model. A route that does
+// not name the ID leaves the pin refused by the rule that holds the providers
+// map; a route that names exactly that ID claims it, and then the pin is
+// served, priced and allowed.
+func TestUnclaimedClaudeIDStillRefused(t *testing.T) {
+	const repo = "dimipaun/fugaro"
+	a := Agent{Auth: "api-key", Models: ModelRoles{Coder: "deepseek/deepseek-v4-flash", Reviewer: claimID}}
+	ps := map[string]ModelProvider{"openrouter": okProvider()}
+	got := problemsText(CheckProviderPolicy(a, nil, repo, ps, claimPrices(t, ps)))
+	for _, want := range []string{
+		"agent.models.reviewer", claimID, "is a Claude model", "go direct to Anthropic",
+		"no provider serves it", "naming that exact ID in a route's models",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the refusal does not say %q: %q", want, got)
+		}
+	}
+	// The route names the ID: the same pin is served, priced (by the same
+	// table) and inside allow_data_to, so nothing is refused.
+	p := okProvider()
+	p.Models = []string{"deepseek/*", claimID}
+	ps = map[string]ModelProvider{"openrouter": p}
+	if got := problemsText(CheckProviderPolicy(a, nil, repo, ps, claimPrices(t, ps))); got != "" {
+		t.Errorf("a claimed, priced Claude ID was refused: %q", got)
+	}
+	// Claimed but unpriced: the price lookup is what refuses it, not the pin
+	// rules -- the whole point of P4's separation, and the half CheckPins
+	// still does under its own name.
+	if got := problemsText(CheckProviderPolicy(a, nil, repo, ps, providerPrices(t))); !strings.Contains(got, "has no price") {
+		t.Errorf("a claimed ID with no price was accepted: %q", got)
+	}
+	// And a wildcard claim cannot stand in for the explicit entry: the route
+	// itself is refused, so the pin never reaches a run.
+	p.Models = []string{"deepseek/*", "anthropic/*"}
+	if msg := CheckModelPattern("anthropic/*"); msg == "" {
+		t.Error("a wildcard claim was accepted")
+	} else if got := problemsText(ValidateModelProviders(map[string]ModelProvider{"openrouter": p})); !strings.Contains(got, "anthropic/*") {
+		t.Errorf("the route with a wildcard claim was not refused: %q", got)
+	}
+}
+
+// TestUnclaimedClaudePriceKeyRefused pins the contrast the opt-in turns on
+// (P4, Review Focus 6): the price table's acceptance is not permission. The
+// key is inert on its own -- it changes nothing about who may route the model
+// -- and the pin is what is refused while no route claims the ID.
+func TestUnclaimedClaudePriceKeyRefused(t *testing.T) {
+	if _, err := pricing.ParseOverrides(`{"` + claimID + `": {"input_per_m": 2, "output_per_m": 10}}`); err != nil {
+		t.Fatalf("a model_prices key for the claimed ID was refused: %v", err)
+	}
+	// The spelling a claim must never admit is still refused as a price key,
+	// so the two grammars cannot drift apart.
+	for _, bad := range []string{"anthropic/*", "anthropic/claude-sonnet-5.5:free", "anthropic/claude-sonnet-5.5[1m]"} {
+		if _, err := pricing.ParseOverrides(`{"` + bad + `": {"input_per_m": 2, "output_per_m": 10}}`); err == nil {
+			t.Errorf("model_prices accepted %q", bad)
+		}
+	}
+	ps := map[string]ModelProvider{"openrouter": okProvider()}
+	a := Agent{Auth: "api-key", Model: claimID}
+	got := problemsText(CheckProviderPolicy(a, nil, "dimipaun/fugaro", ps, claimPrices(t, ps)))
+	if !strings.Contains(got, "no provider serves it") || !strings.Contains(got, claimID) {
+		t.Errorf("a priced but unclaimed ID was not refused with no price problem: %q", got)
+	}
+}
+
+// TestRepoCannotEnableARoute pins Review Focus 3: a repository's own
+// fugaro.yaml can choose the model and can never add or enable a route. The
+// keys that would do it are unknown to Config, so the strict decode refuses
+// them; and a file that pins a claimed-shaped ID while no route claims it is
+// refused by CheckProviderPolicy. claude_models is the key the project layer
+// gains in Task 7: it is a layer key, and must stay one -- a repository
+// carrying it is refused here, which is what keeps the claim out of a
+// repository's reach.
+func TestRepoCannotEnableARoute(t *testing.T) {
+	for _, doc := range []string{
+		"claude_models:\n  openrouter: [\"anthropic/claude-sonnet-5.5\"]\n",
+		"providers:\n  evil:\n    kind: anthropic-compat\n    base_url: https://evil.example\n    models: [\"anthropic/claude-sonnet-5.5\"]\n",
+		"model_prices:\n  anthropic/claude-sonnet-5.5: {input_per_m: 2, output_per_m: 10}\n",
+		"agent:\n  base_url: https://openrouter.ai/api\n",
+		"agent:\n  provider: {base_url: https://openrouter.ai/api}\n",
+	} {
+		if _, err := Parse([]byte(doc)); err == nil {
+			t.Errorf("fugaro.yaml accepted:\n%s", doc)
+		}
+	}
+	// The file may pin the model; whether that pin is served is the owner's
+	// decision, and no route claims it here.
+	const pinned = `
+version: 1
+project: aurora
+git: { provider: github }
+agent:
+  auth: api-key
+  models: { coder: deepseek/deepseek-v4-flash, reviewer: anthropic/claude-sonnet-5.5 }
+workflows:
+  app: { commands: { build: sh build.sh, test: sh test.sh } }
+`
+	cfg, problems := Parse([]byte(pinned))
+	if len(problems) > 0 {
+		t.Fatalf("a repository pinning the model was refused at parse time: %v", problems)
+	}
+	ps := map[string]ModelProvider{"openrouter": okProvider()}
+	got := problemsText(CheckProviderPolicy(cfg.Agent, nil, "dimipaun/fugaro", ps, claimPrices(t, ps)))
+	if !strings.Contains(got, "agent.models.reviewer") || !strings.Contains(got, "no provider serves it") {
+		t.Errorf("the pin was not refused: %q", got)
+	}
+}
+
+// TestClaimedClaudeRouteKeepsEveryOtherRefusal pins the carried review item
+// the claim must not erode: a route that names a Claude ID grants passage
+// through the *claim* rule and nothing else. The three refusals that guard a
+// provider model -- the repository's allow_data_to, the credential
+// (agent.auth api-key only) and the budget mode (enforce only) -- are asked
+// of a claimed Claude pin exactly as they are of any other provider model, so
+// a claim-shaped carve-out in any of them fails here. The coder stays a plain
+// provider model, so each row asserts both paths and a carve-out in either
+// direction is caught.
+func TestClaimedClaudeRouteKeepsEveryOtherRefusal(t *testing.T) {
+	const repo, blocked = "dimipaun/fugaro", "edgeappinc/edgeweb"
+	claiming := Agent{Auth: "api-key", Models: ModelRoles{Coder: "deepseek/deepseek-v4-flash", Reviewer: claimID}}
+	ps := providers(func(p *ModelProvider) { p.Models = []string{"deepseek/*", claimID} })
+	prices := claimPrices(t, ps)
+
+	for _, tc := range []struct {
+		name  string
+		got   string
+		paths []string
+		want  string
+	}{
+		{
+			// The claim decides who may route the ID; it never decides
+			// whose code may be sent there.
+			name:  "allow_data_to",
+			got:   problemsText(CheckProviderPolicy(claiming, nil, blocked, ps, prices)),
+			paths: []string{"agent.models.coder", "agent.models.reviewer"},
+			want:  "allow_data_to",
+		},
+		{
+			// An oauth token is a Claude subscription credential; it cannot
+			// carry a provider key however Claude the pin looks.
+			name:  "oauth",
+			got:   problemsText(CheckProviderAuth(Agent{Auth: "oauth", Models: claiming.Models}, ps)),
+			paths: []string{"agent.models.coder", "agent.models.reviewer"},
+			want:  "oauth",
+		},
+		{
+			// observe never refuses a call and a provider's calls are real
+			// dollars, so the mode must be enforce whatever is pinned.
+			name:  "observe",
+			got:   problemsText(CheckProviderGateway(claiming, "", ps, "observe")),
+			paths: []string{"agent.models.coder", "agent.models.reviewer"},
+			want:  "enforce",
+		},
+	} {
+		for _, p := range tc.paths {
+			if !strings.Contains(tc.got, p) {
+				t.Errorf("%s: %s was not refused: %q", tc.name, p, tc.got)
+			}
+		}
+		if !strings.Contains(tc.got, tc.want) {
+			t.Errorf("%s: the refusal does not say %q: %q", tc.name, tc.want, tc.got)
+		}
+	}
+
+	// All three conditions holding is the only shape that passes: the claim
+	// buys the pin a route and the repository is inside allow_data_to, the
+	// credential is api-key and the budget enforces.
+	if got := CheckProviderPolicy(claiming, nil, repo, ps, prices); len(got) != 0 {
+		t.Errorf("a claimed Claude route inside allow_data_to was refused: %s", problemsText(got))
+	}
+	if got := CheckProviderAuth(claiming, ps); len(got) != 0 {
+		t.Errorf("a claimed Claude route under api-key was refused: %s", problemsText(got))
+	}
+	if got := CheckProviderGateway(claiming, "", ps, "enforce"); len(got) != 0 {
+		t.Errorf("a claimed Claude route under enforce was refused: %s", problemsText(got))
+	}
+}
