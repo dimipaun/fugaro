@@ -549,3 +549,135 @@ synthetic "execution" under it (`.../jobs/<fugaro job>/executions/<run id>`),
 which lies in the stored data model and would confuse `fugaro ls`, `cancel`
 and the sweeper the first time someone reads a raw name. **C12 is an owner
 decision by size, not by uncertainty.**
+
+## 3. Security
+
+The honest statement a reader wants first: **a run that needs Docker is
+root-equivalent on its host.** Everything below is the consequence of that,
+stated rather than argued away (project-centric §3, principle 5).
+
+### 3.1 VM-per-run versus the shared Cloud Run job
+
+project-centric §4.1 removes boundaries when several repositories share one
+Cloud Run job, and D4 **accepts and documents** that loss: inside one shared
+project job, every run can read every secret the job mounts, and a run — an
+untrusted agent, unlike a launcher — could poison another repository's cache
+or locks, because the bucket condition narrows to one prefix.
+
+**A VM per run does not have that loss.** A shared project job brings the
+repo-to-repo regression only because Cloud Run cannot vary the image, service
+account, CPU or memory per execution, so it has to share one job across
+repositories. A VM backend does not share anything: each run gets its own VM,
+its own service account, its own process, its own Docker state, and its own
+kernel-level boundary from every other run. The bucket condition stays per
+slug — there is no reason to broaden it. So:
+
+- **C3 restated as a security property:** the VM per run *restores*, relative
+  to a shared Cloud Run job, both the cross-repository bucket isolation of
+  0.7.0 (bucket-iam.md §3) and the secret isolation. The VM backend is the one
+  place in the project-centric redesign where D4's accepted loss does not
+  apply.
+- **But it removes a boundary Cloud Run had:** on Cloud Run the job is a
+  container with no daemon and no root. On a VM the run is root on the host
+  (§3.5). The isolation that people must rely on moves from "the container" to
+  "the VM", which is *stronger against other runs* and *weaker against the
+  host* than Cloud Run. Both directions are stated in SECURITY.md.
+
+### 3.2 The instance service account
+
+- **One service account per run class, and never the default Compute Engine
+  service account.** Batch uses the default Compute Engine SA when
+  `allocationPolicy.serviceAccount` is omitted (Batch REST reference, checked
+  2026-10-15); the default is project-wide and broadly privileged, so omitting
+  it is forbidden. The VM backend names the job service account of
+  (`profile`, `account`), exactly the one project-centric §4.1 already defines
+  and the one the runner already binds to (`slug == task.Slug(...)`).
+- **Scope it to what the run needs and nothing more:** `objectUser`
+  conditioned to `runs/<slug>/`, `cache/<slug>/`, `locks/<slug>/`
+  (`gcp.BucketCondition`), `secretAccessor` on the mounted secrets only,
+  `logging.logWriter`, and `artifactregistry.reader` on the base image's
+  registry. No project-level grants beyond the Vertex `aiplatform.user` a
+  Vertex workflow already needs.
+- **The service account's power is the blast radius.** A run's SA can read
+  only its own slug's objects and its own secrets; that bound is what makes
+  the root-on-the-VM problem survivable. If the SA were project-wide, root on
+  any one VM would be root on the project's data.
+
+### 3.3 The metadata server
+
+The VM's metadata server (`169.254.169.254`) hands any process on the VM a
+token for the VM's service account. Two facts follow:
+
+- **The agent can read its own run's SA token.** It already can on Cloud Run
+  (the job SA is the container's identity), so this is not new in kind — but on
+  a VM the agent can also start its *own* containers, and each of those can
+  reach the metadata server unless the container is started with
+  `--network none` or a blocked route. So the exposure widens from "the agent"
+  to "the agent and anything the agent runs". The mitigation is §3.2's minimal
+  scope, and SECURITY.md says so.
+- **The container cannot be sealed off from it** while it holds the Docker
+  socket: a socket-holding process can `docker run` with host networking and
+  reach the metadata server regardless. This is why the VM, not the container,
+  is the boundary.
+
+### 3.4 Deleting the instance on every exit path
+
+A leaked VM is both a cost and a security problem (a live host holding a run's
+secrets and SA token). Batch does most of this for free — when a job reaches
+`SUCCEEDED`, `FAILED` or `DELETION_IN_PROGRESS`, Batch tears down its VMs —
+but the design does not rely on that alone, because "most exit paths" is not
+"every exit path":
+
+- **Success, failure, cancelled:** Batch job terminal states, VMs torn down by
+  the service, and `jobs.delete` (cancel) moves the job to
+  `DELETION_IN_PROGRESS` (Batch REST reference, checked 2026-10-15).
+- **A crashed runner:** if `fugaro exec` exits non-zero or panics, the task
+  fails, the job fails, the VMs go — provided `maxRetryCount` stays 0 (§2.3),
+  since a retry would start a second run of a non-idempotent task.
+- **A hung job:** Batch itself fails a job that runs longer than 14 days
+  (cloud.google.com/batch/quotas, checked 2026-10-15), but Fugaro's own
+  `maxRunDuration` binds first and is far shorter.
+- **The residual, and the reaper.** A stuck `DELETION_IN_PROGRESS`, an orphaned
+  VM after a Batch-side fault, or (on the plain-instance alternative) a
+  startup script that never ran: for these the design keeps **a reaper** — the
+  existing scheduled sweeper pattern (project-centric §8, `history.tf`)
+  extended to list Batch jobs and Compute Engine instances labelled
+  `fugaro=managed` whose age exceeds the longest workflow timeout plus
+  `backend.TaskTimeoutSlack` plus a margin, and delete them, writing a FACT
+  line. Batch's optional Pub/Sub job-state notifications (Batch REST
+  reference, checked 2026-10-15) are a cheaper trigger than polling and are a
+  plan option. **C14**: keep a reaper even though Batch mostly self-cleans;
+  the veto alternative is to rely on Batch teardown alone and accept a rare
+  orphan, which the owner may prefer to save the machinery — the trade-off is
+  an occasional VM billing until someone notices.
+
+### 3.5 What a Docker-capable agent can do to the host
+
+Stated plainly, for SECURITY.md:
+
+- **Root on the VM.** Through the socket, `docker run --privileged -v /:/host`
+  gives the agent the VM's filesystem, its SA token, and its network. It can
+  read the runner's own environment (the secrets the bootstrap exported) — but
+  it holds those secrets anyway, in-process, so this is not a new secret
+  exposure *within* the run.
+- **Not root on the project.** The SA's IAM (§3.2) is the wall: the agent
+  cannot read another repository's runs, another run's secrets, or (with the
+  log sink fixed, §1.5) another run's logs. It can, however, do anything the
+  run's SA can — so the SA's scope is the security control that matters, and
+  it must stay per-slug.
+- **Not the neighbouring run.** Separate VM, separate kernel, separate SA:
+  nothing in one run reaches another.
+- **Egress is open**, exactly as on Cloud Run (generic-tool §9): the agent can
+  send whatever it can read to anywhere the network allows. Cloud NAT does not
+  change this; it only removes inbound reachability.
+
+### 3.6 SECURITY.md additions
+
+The VM backend adds a section to SECURITY.md stating: the run is root on its
+VM; the VM is the isolation unit and is never reused; the run's service
+account and its per-slug scope; the VM metadata server is reachable by the
+agent and by containers it starts; a leaked VM is reaped; and the egress
+posture is unchanged. Veto alternative: leave SECURITY.md and let the design
+document carry it — rejected, because a trust model an adopter cannot find in
+SECURITY.md is not a trust model (the same ruling the generic-tool work made,
+G21).
