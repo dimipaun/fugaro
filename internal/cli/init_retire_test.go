@@ -1235,13 +1235,23 @@ func TestInitRepoRetireNeverTouchesSecretManager(t *testing.T) {
 var updateRetireGolden = flag.Bool("update-retire", false, "rewrite testdata/init_retire.golden")
 
 // retireTranscriptRE are the run's few non-deterministic pieces: the test
-// binary's own path, the checkout's temp dir, the fake servers' ports and
-// the backup's timestamp. Everything else -- the addresses, the counts, the
-// confirmations, the commands -- must be exactly what the golden holds.
+// binary's own path, the checkout's temp dir, the fake servers' ports, the
+// backup's timestamp, and the one line that quotes a tool's own failure
+// text. Everything else -- the addresses, the counts, the confirmations,
+// the commands -- must be exactly what the golden holds.
 var retireTranscriptRE = []struct {
 	re *regexp.Regexp
 	to string
 }{
+	// "warning: couldn't check origin/main's fugaro.yaml ...": the rig's
+	// origin is a local URL the fetch cannot reach, and the sentence is
+	// git's, so its tail is the curl on the machine -- "Could not connect
+	// to server" on the builder's Linux, "Couldn't connect" in CI's
+	// macOS -- and the golden may not pin that. The whole line is folded:
+	// what it says is that the check could not be made, which is the same
+	// on every machine.
+	{regexp.MustCompile(`warning: couldn't check origin/main's fugaro\.yaml[^\n]*`),
+		"warning: couldn't check origin/main's fugaro.yaml for project: aurora: <the fetch did not reach it>; runs read it from there"},
 	{regexp.MustCompile(`/tmp/go-build[0-9]+/b[0-9]+/cli\.test`), "fugaro"},
 	{regexp.MustCompile(regexp.QuoteMeta(os.TempDir()) + `/[^ "'\n)\]]*`), "<tmp>"},
 	{regexp.MustCompile(`127\.0\.0\.1:[0-9]+`), "127.0.0.1:<port>"},
