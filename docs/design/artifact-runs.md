@@ -774,18 +774,24 @@ delivers something an owner can use:
    in `docs/recipes.md` and `docs/base-image.md` (ffmpeg via `image.apt`), the
    routing skill's "when to choose an artifact recipe", and **the SECURITY.md
    text of §8.7 verbatim**.
-9. **Check 58** (owner-run, sandbox only) — §11.
-10. **The durable-retention design** (D2's alternative), **signed URLs** (D7)
-    and **compute-in-the-cap** (D4's alternative) are **not tasks in this
-    plan**: each is its own design, named here so the plan is not mistaken for
-    the whole story.
+9. **The docs, the skills, SECURITY.md's two paragraphs (§8.7) and Check 58's
+   row and section** — written last in the plan, because the docs and skill
+   lints resolve the flags they name.
+10. **Check 58** (owner-run, sandbox only) — §11. Not part of the pull request.
 11. **The full suite** and the `fugaro verify build`/`verify test` run.
+
+**And three things that are deliberately not tasks in this plan:** the durable
+**retention** prefix (D2's alternative), **signed URLs** (D7) and
+**compute-in-the-cap** (D4's alternative). Each is its own design, named here
+so this plan is not mistaken for the whole story.
 
 **Release placement.** Tasks 1–9 extend the recipe format, add a step kind, add
 one optional key to two stored schemas and add a CLI subcommand — all additive,
-and all shippable in **0.8.x**, one point release, with the recipe gate
-(`recipesV0xSince`, `docs/design/generic-tool.md:132`) bumped so a recipe using
-the new keys is refused by an older image. Which of them could land in a
+and all shippable in **0.8.0**, one point release, with a new launch-time
+`*Since` constant (`artifactsSince`, through the existing `checkImageSince`
+seam, `internal/cli/recipes_skew.go:204-270`) so a recipe or an `--attach`
+using the new keys is refused against a job image whose runner predates them.
+Which of them could land in a
 *patch*: Task 1 (format only, nothing executes it), Task 2 (the step, unused by
 every existing recipe), Task 7 (`budget preview`, display only) and Task 8 (the
 docs) are each safe alone; Tasks 3–6 are the feature and belong in the point
@@ -799,12 +805,22 @@ wait on them.
 `P` hard-coded to `fugaro-dev` and never read from `gcloud`, `${P:?}` on every
 argument, a `fugaro doctor` check, the checkout's git origin as a hard stop,
 **never the `belong` project** (`:1431`), and **every step run by the owner,
-none by an agent** — plus a Restore block. Five steps: three tiny PNGs in (the
-check generates them locally), a five-second video out, `ffprobe` verification
-through `commands.probe`, the artifact retrieved with a **sha256 match**, and
-the Restore. The plan's Task 9 carries the full text, because a check's steps
-belong in the file that owns them and the plan does not quote them back
-(`../plans/2026-10-14-openrouter-senior-reviewer.md` Task 3's rule).
+none by an agent** — plus a Restore block. **Seven numbered steps**, each
+preceded by a re-run of the guard block: (1) the sandbox's prerequisites —
+ffmpeg in the image through `image.apt`, one `fugaro image refresh`, and the
+fixture artifact recipe, render script and probe committed to the sandbox;
+(2) three tiny PNGs in, generated locally, and the launch with three
+`--attach`; (3) a five-second video out — the `render` record, the counters,
+the absence of any push or pull request; (4) `ffprobe` verification through
+`commands.probe` **and** an independent local `ffprobe` of the downloaded
+file; (5) the recorded content type against the object's own (U5); (6) the
+artifact retrieved with a **sha256 match**, and the upload's wall clock
+against `finalize_reserve` (U6); (7) the failure direction, both halves — a
+probe that must fail the run and upload nothing, and an over-cap set that
+must refuse cleanly and leave the container alive (U3). Then the Restore.
+The seven steps are written out in the plan's Task 9 (the checklist text) and
+**run** in its Task 10, because a check's steps belong in the file that owns
+them (`../plans/2026-10-14-openrouter-senior-reviewer.md` Task 3's rule).
 
 **The numbering is checked, not assumed.** On `main`, `docs/gcp-live-checklist.md`
 has rows for 42–47 and **57** (the compute backend's, `:325`); **48–56 and 58
