@@ -262,7 +262,13 @@ type Workflow struct {
 	// §4.1 writes the selection as `workflows.<name>.profile`; this release
 	// spells it job_profile, and the design needs the same one-word
 	// correction (flagged for the plan's task 3.1 review).
-	JobProfile string `yaml:"job_profile,omitempty"`
+	//
+	// The json tag is what Config.SHA256 hashes: a field without one changes
+	// every configuration hash in the installation — the goldens of
+	// TestNoPolicyIsM9aBehaviour and TestCeilingOnlyPolicyGolden among them —
+	// for a key most files do not set. It is omitempty, like every other
+	// optional key here (the Agent.OAuthToken precedent).
+	JobProfile string `yaml:"job_profile,omitempty" json:"job_profile,omitempty"`
 	// Base is removed in 0.7.0: kept so Validate can refuse it with the
 	// migration (MigrationDoc). Read the workflow's base kind through
 	// BaseKind, which always returns BaseKind now.
@@ -313,6 +319,14 @@ const DefaultJobProfile = "standard"
 // JobProfileOrDefault is the policy profile w runs on: w.JobProfile, or
 // DefaultJobProfile when it names none. One accessor, so the default cannot
 // differ between the readers of the selection.
+//
+// No caller reads it in this release. A run selects a job profile where it
+// builds the job it launches — Task 3.2's job layout, which is what makes one
+// Cloud Run job and one job service account per (profile, provider, account) —
+// and today none does: internal/runner/project.go and
+// internal/cli/run_allowlist.go hold the run to the project's allow_repos and
+// nothing more. Until that layout exists, this accessor is the single place the
+// default is spelled, so the readers that follow cannot disagree about it.
 func (w Workflow) JobProfileOrDefault() string {
 	if w.JobProfile == "" {
 		return DefaultJobProfile
@@ -498,15 +512,21 @@ type Duration struct {
 
 var daysRE = regexp.MustCompile(`^([0-9]+)d(.*)$`)
 
-// UnmarshalYAML parses a Go duration string, with an optional day count.
-func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
+// ParseDuration parses a duration the way fugaro.yaml writes one: Go syntax
+// such as "90m" or "1h30m", optionally led by whole days, as in "14d" or
+// "1d12h". It is the one parser for that spelling, so a duration accepted in
+// one document is accepted in every document: the project policy's
+// profile timeout_class is held to it too (projectpolicy.validTimeoutClass),
+// where bare time.ParseDuration would refuse a "14d" the same installation
+// accepts for timeouts.total.
+func ParseDuration(s string) (time.Duration, error) {
 	var days time.Duration
-	rest, hasDays := n.Value, false
+	rest, hasDays := s, false
 	if m := daysRE.FindStringSubmatch(rest); m != nil {
 		count, err := strconv.Atoi(m[1])
 		// The rest must be unsigned: 1d-5h is not 19h.
 		if err != nil || count > 36500 || strings.HasPrefix(m[2], "-") || strings.HasPrefix(m[2], "+") {
-			return fmt.Errorf("line %d: invalid duration %q (days lead an unsigned duration, as in 14d or 1d12h)", n.Line, n.Value)
+			return 0, fmt.Errorf("invalid duration %q (days lead an unsigned duration, as in 14d or 1d12h)", s)
 		}
 		days, rest, hasDays = time.Duration(count)*24*time.Hour, m[2], true
 	}
@@ -514,10 +534,19 @@ func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 	if rest != "" || !hasDays {
 		var err error
 		if v, err = time.ParseDuration(rest); err != nil {
-			return fmt.Errorf("line %d: invalid duration %q (use Go syntax such as 90m or 1h30m, or days such as 14d)", n.Line, n.Value)
+			return 0, fmt.Errorf("invalid duration %q (use Go syntax such as 90m or 1h30m, or days such as 14d)", s)
 		}
 	}
-	d.Duration, d.Set = days+v, true
+	return days + v, nil
+}
+
+// UnmarshalYAML parses a Go duration string, with an optional day count.
+func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
+	v, err := ParseDuration(n.Value)
+	if err != nil {
+		return fmt.Errorf("line %d: %w", n.Line, err)
+	}
+	d.Duration, d.Set = v, true
 	return nil
 }
 

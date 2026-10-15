@@ -3,6 +3,9 @@ package projectpolicy
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 // decodeProfiles is a policy node carrying the profiles block under test, with
@@ -336,5 +339,47 @@ func TestProfileAdmitsAlsoRequiresTheProjectList(t *testing.T) {
 	// "not admitted": the two have different messages and different fixes.
 	if _, err := p.Admits("nope", "github/acme/app"); err == nil {
 		t.Error("Admits of an undefined profile returned a verdict")
+	}
+}
+
+// TestProfileTimeoutUsesFugaroYAMLsOwnDurationSpelling: timeout_class is read
+// with config.ParseDuration, the parser timeouts.total is read with, so a day
+// count is a spelling both documents accept. The mutation is bare
+// time.ParseDuration, which refuses "14d" here while the same installation
+// accepts `timeouts: { total: 14d }` — the two documents disagreeing about one
+// value's spelling, which the comment used to claim they did not.
+func TestProfileTimeoutUsesFugaroYAMLsOwnDurationSpelling(t *testing.T) {
+	base := func(timeout string) string {
+		return `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"` + timeout + `"}}`
+	}
+	for _, class := range []string{"90m", "6h", "1d12h", "7d", "168h"} {
+		if _, err := decodeProfiles(t, base(class)); err != nil {
+			t.Errorf("the timeout %q was refused: %v", class, err)
+		}
+	}
+	// A day count is parsed rather than refused as a spelling: 14d is 336h, so
+	// it breaks Cloud Run's 168h ceiling — and the refusal says so, instead of
+	// claiming the value is not a duration.
+	for _, class := range []string{"14d", "8d"} {
+		_, err := decodeProfiles(t, base(class))
+		if err == nil {
+			t.Errorf("the timeout %q was accepted, past Cloud Run's 168h ceiling", class)
+			continue
+		}
+		if strings.Contains(err.Error(), "is not a duration") {
+			t.Errorf("the timeout %q was refused as a spelling, not for the ceiling: %v", class, err)
+		}
+		if !strings.Contains(err.Error(), "Cloud Run") {
+			t.Errorf("the refusal for %q does not name the ceiling it breaks: %v", class, err)
+		}
+	}
+	// And the claim in validTimeoutClass's comment is checked rather than
+	// asserted: this package and internal/config parse one spelling.
+	d, err := config.ParseDuration("1d12h")
+	if err != nil {
+		t.Fatalf("config.ParseDuration(1d12h) = %v", err)
+	}
+	if d != 36*time.Hour {
+		t.Errorf("config.ParseDuration(1d12h) = %s, want 36h", d)
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -50,6 +49,11 @@ func ValidProfileName(name string) error {
 // workflow selected halts the run rather than running it on anything else
 // (§5(3), the Task 1.3 path). The error lists the profiles the policy does
 // define, so an operator reads one line.
+//
+// It is the gate Task 3.2's job layout calls when it reads a workflow's
+// job_profile (config.Workflow.JobProfileOrDefault). Nothing in this release
+// calls it outside tests: no run selects a job profile yet, and the refusal
+// this returns is the halt a run takes once the selection exists.
 func (p *Policy) ProfileFor(name string) (Profile, error) {
 	if name == "" {
 		name = DefaultProfileName
@@ -98,6 +102,13 @@ func (p *Policy) Admission(profile string) ([]string, error) {
 // An undefined profile is an error, not a refusal: the caller reports it as
 // the fail-closed halt it is (ProfileFor), rather than as an unenrolled
 // repository.
+//
+// As with ProfileFor, nothing outside tests calls it in this release: a run
+// checks the project's allow_repos (internal/runner/project.go,
+// internal/cli/run_allowlist.go) and no run has a selected profile to narrow
+// it with. This is the check that second gate will be applied through, not one
+// applied today — which is why the profile's list is validated strictly here
+// (validProfiles) rather than trusted to a caller that does not exist yet.
 func (p *Policy) Admits(profile, canonical string) (bool, error) {
 	list, err := p.Admission(profile)
 	if err != nil {
@@ -189,14 +200,16 @@ func validProfiles(profiles map[string]Profile) error {
 // is the authority (gcp.MaxTaskTimeout, 168h) exactly as its cpu and memory
 // limits are: the value becomes the job's task timeout, so a form the API
 // would refuse must be refused where the owner can read it. The spelling is
-// Go's duration syntax, the one timeouts.total uses in fugaro.yaml.
+// config.ParseDuration's — the one timeouts.total is read with in fugaro.yaml,
+// day counts and all — so "14d" is a timeout here because it is a timeout
+// there, rather than a form this package refused and that one accepted.
 func validTimeoutClass(at, class string) error {
 	if class == "" {
 		return fmt.Errorf("%s.timeout_class: a profile must name its task timeout, for example \"6h\"", at)
 	}
-	d, err := time.ParseDuration(class)
+	d, err := config.ParseDuration(class)
 	if err != nil {
-		return fmt.Errorf("%s.timeout_class: %q is not a duration, for example \"90m\" or \"6h\"", at, class)
+		return fmt.Errorf("%s.timeout_class: %q is not a duration, for example \"90m\", \"6h\" or \"7d\"", at, class)
 	}
 	if d <= 0 {
 		return fmt.Errorf("%s.timeout_class: %q is not a positive duration", at, class)
