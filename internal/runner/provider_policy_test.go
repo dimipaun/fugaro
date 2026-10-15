@@ -140,6 +140,27 @@ func TestNoCallBeforeRefusal(t *testing.T) {
 	})
 }
 
+// TestAllowDataToStillGatesProviderRoutes (plan Task 2.1, Review Focus 8; the
+// plan files it under internal/gateway, where it cannot live: internal/gateway
+// has no repository identity at all and never reads allow_data_to -- the gate
+// is the runner's provider-policy check, enforced before any call, and this
+// file is where the rest of that check is tested). D2 stores keys
+// project-wide, and this pins that it changes nothing about which
+// repositories' code a provider route may carry: the data-policy gate is
+// unchanged, and a key mounted in a shared job is still no permission.
+func TestAllowDataToStillGatesProviderRoutes(t *testing.T) {
+	t.Run("a repository the list does not name is refused", func(t *testing.T) {
+		refusedBeforeAnyCall(t, providerGW(t, providerPinned(t), "acme/other"), "allow_data_to", "acme/app")
+	})
+	t.Run("a repository the list names runs", func(t *testing.T) {
+		g := providerGW(t, providerPinned(t), "acme/app")
+		rec, err := g.run(t, implement("feature"), review("ship", 0))
+		if err != nil || rec.Status != runstore.StatusSucceeded {
+			t.Fatalf("rec = %+v, err = %v", rec, err)
+		}
+	})
+}
+
 func TestProviderModelApprovedBootstraps(t *testing.T) {
 	g := providerGW(t, providerPinned(t), "ACME/App")
 	rec, err := g.run(t, implement("feature"), review("ship", 0))

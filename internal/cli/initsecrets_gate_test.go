@@ -108,7 +108,7 @@ func TestSecretsTypedOptInThenPrompt(t *testing.T) {
 				t.Fatal(lr.err)
 			}
 			if tc.stored {
-				if stateOf(lr.res, initflow.Secrets) != initflow.Changed || r.store.latest(bitbucketSlug, "bitbucket-token") == "" {
+				if stateOf(lr.res, initflow.Secrets) != initflow.Changed || r.store.latestProject("aurora", "bitbucket-token") == "" {
 					t.Fatalf("%+v", lr.res.Stages)
 				}
 				if !strings.Contains(r.errOut.String(), "bitbucket-token for acme/app on bitbucket.org") {

@@ -38,6 +38,32 @@ func AllowedForProjectSecret(secrets map[string]ProjectSecret, name, repo string
 	return ok && p.AllowsData(repo)
 }
 
+// ProjectScopeByDefault reports whether name is one of the reserved secrets
+// D2 swept into project scope (plan Task 2.1 step 2, design
+// docs/design/project-centric.md §6.3): the names the platform itself mounts,
+// so its own rules already decide who may read them, minus the Claude OAuth
+// namespace, which stays person-owned until phase 5 substitutes person-owned
+// secrets for it (design project-centric §7).
+//
+// The bare claude-oauth-token is the one name of the four that is not swept
+// in: it is the default Claude account's own token, refused by name
+// (claudeOAuthAccountRefusal in the CLI) until phase 5 replaces it, and only
+// a project_secrets entry reaches it today. A *named* account's derived
+// secret is not in ReservedSecrets at all; its account's own allow_data_to
+// stays its rule, as it already is on main (plan Task 2.1 step 2, finding 12).
+//
+// This is the shape question only -- whose project copy Fugaro may speak
+// about -- never the eligibility question. Every site that decides project
+// scope (infra.ProjectSecretCandidate, the CLI's write path, the CLI's
+// listing) asks this one function, so D2 cannot hold at one and not the
+// others.
+func ProjectScopeByDefault(name string) bool {
+	if _, reserved := ReservedSecrets[name]; !reserved {
+		return false
+	}
+	return name != ClaudeAccountSecret(DefaultClaudeAccount) && !strings.HasPrefix(name, ClaudeOAuthTokenPrefix)
+}
+
 // ValidateProjectSecrets reports every rule the local config's
 // project_secrets block breaks, the same shape as ValidateClaudeAccounts.
 // The only key rule is membership in ReservedSecrets (P1): a provider's

@@ -166,7 +166,10 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 		if !isCandidate {
 			return false, fix, nil
 		}
-		fix = fmt.Sprintf("fugaro secrets set %s --project-wide", logical)
+		// D2: the project copy is what `secrets set <name>` stores by
+		// default, so the fix names that command, not the synonym flag
+		// (plan Task 2.1 step 3, the message half of finding 13).
+		fix = fmt.Sprintf("fugaro secrets set %s", logical)
 		if !ex.ProjectSecretsOK[logical] {
 			return false, fix, nil
 		}

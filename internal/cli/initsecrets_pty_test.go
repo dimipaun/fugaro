@@ -354,9 +354,15 @@ func TestSecretsStageAgainstSecretManagerFake(t *testing.T) {
 		if lr.res.Failed != nil || stateOf(lr.res, "secrets") != initflow.Changed {
 			t.Fatalf("%+v", lr.res)
 		}
-		id := gcp.SecretID(bitbucketSlug, "bitbucket-token")
+		// D2: the prompt stores the git credential project-wide, where the
+		// prompt's own text says it will -- with the installation's labels,
+		// never a repository's, and never in the repository's own container.
+		id := gcp.ProjectSecretID("aurora", "bitbucket-token")
 		if string(sm.Latest(id)) != val {
-			t.Fatalf("stored %q", sm.Latest(id))
+			t.Fatalf("stored %q, want %s", sm.Latest(id), id)
+		}
+		if sm.Latest(gcp.SecretID(bitbucketSlug, "bitbucket-token")) != nil {
+			t.Error("the prompt stored a repository copy as well")
 		}
 		var labels map[string]string
 		for _, rq := range sm.Requests() {
@@ -366,7 +372,7 @@ func TestSecretsStageAgainstSecretManagerFake(t *testing.T) {
 				labels = body.Labels
 			}
 		}
-		if labels[gcp.LabelManaged] != gcp.ManagedValue || labels[gcp.LabelRepo] != mustLabel(t, bitbucketSlug) || labels[gcp.LabelSecret] != "bitbucket-token" {
+		if labels[gcp.LabelManaged] != gcp.ManagedValue || labels[gcp.LabelProject] != "aurora" || labels[gcp.LabelRepo] != "" || labels[gcp.LabelSecret] != "bitbucket-token" {
 			t.Errorf("labels = %v", labels)
 		}
 	})

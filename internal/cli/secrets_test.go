@@ -998,3 +998,224 @@ func TestSecretsLsProjectWideNeverPrintsValue(t *testing.T) {
 		}
 	}
 }
+
+// --- Task 2.1: project scope is the default (D2) -------------------------
+//
+// D2 (design docs/design/project-centric.md §6.3) reverses #343's
+// default-safe rule for a name that has a project-wide meaning:
+// `fugaro secrets set NAME` with neither flag stores the PROJECT copy, and
+// `--repo` -- bare, or with a slug -- is what asks for one repository's own
+// copy. `--project-wide` stays an accepted synonym of the default, so every
+// existing script and skill keeps working. A repository's own application
+// secret has no project-wide meaning and keeps today's repository scope:
+// the default is "project where project exists", never "project always"
+// (plan Task 2.1 step 3b).
+
+// TestSecretsSetDefaultsToProjectScope: the value lands under the
+// installation's own secret ID with the project's labels, and no repository
+// container is created for it.
+func TestSecretsSetDefaultsToProjectScope(t *testing.T) {
+	sm := secretsFixture(t)
+	out, errOut, err := executeStdin(t, tokenValue, "secrets", "set", "anthropic-api-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := gcp.ProjectSecretID("aurora", "anthropic-api-key")
+	if got := string(sm.Latest(id)); got != tokenValue {
+		t.Fatalf("stored %q, want the project copy %s", got, id)
+	}
+	if sm.Latest(gcp.SecretID(appSlug, "anthropic-api-key")) != nil {
+		t.Error("a repository copy was stored as well")
+	}
+	if !strings.Contains(out, id) || strings.Contains(out+errOut, tokenValue) {
+		t.Fatalf("out %q errOut %q", out, errOut)
+	}
+	// The reach is stated where the person storing it reads it (plan Task
+	// 2.1 step 3): the project copy, and the profile as the boundary.
+	for _, want := range []string{"project", "profile"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr %q does not say %q", errOut, want)
+		}
+	}
+	var sec struct{ Labels map[string]string }
+	for _, r := range sm.Requests() {
+		if r.Method == "POST" && strings.HasSuffix(r.Path, "/secrets") {
+			_ = json.Unmarshal(r.Body, &sec)
+		}
+	}
+	if sec.Labels[gcp.LabelProject] != "aurora" || sec.Labels[gcp.LabelRepo] != "" {
+		t.Fatalf("labels = %v, want the installation's, never a repository's", sec.Labels)
+	}
+}
+
+// TestSecretsSetRepoFlagStoresTheRepoCopy: --repo, with a slug or bare, is
+// the opt-out of the project default: one repository's own container, whose
+// version wins over the project copy from then on (design §5).
+func TestSecretsSetRepoFlagStoresTheRepoCopy(t *testing.T) {
+	sm := secretsFixture(t)
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", "anthropic-api-key", "--repo", "acme/app"); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(sm.Latest(gcp.SecretID(appSlug, "anthropic-api-key"))); got != tokenValue {
+		t.Fatalf("stored %q, want the repository copy", got)
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", "anthropic-api-key")) != nil {
+		t.Error("--repo stored the project copy too")
+	}
+}
+
+// TestProjectWideIsStillAccepted: the flag every existing script and skill
+// writes stays a synonym of the default, and lands on the same container.
+func TestProjectWideIsStillAccepted(t *testing.T) {
+	sm := secretsFixture(t)
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", "bitbucket-token", "--project-wide"); err != nil {
+		t.Fatal(err)
+	}
+	id := gcp.ProjectSecretID("aurora", "bitbucket-token")
+	if got := string(sm.Latest(id)); got != tokenValue {
+		t.Fatalf("stored %q, want %s", got, id)
+	}
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", "bitbucket-token"); err != nil {
+		t.Fatalf("the default: %v", err)
+	}
+	if got := string(sm.Latest(id)); got != tokenValue {
+		t.Fatalf("the default stored somewhere else: %q", got)
+	}
+	if sm.Latest(gcp.SecretID(appSlug, "bitbucket-token")) != nil {
+		t.Error("the default stored a repository copy")
+	}
+}
+
+// TestAnthropicKeyNeedsNoAllowDataToList: D2 sweeps the reserved names in
+// (plan Task 2.1 step 2): the key stores project-wide with no
+// project_secrets entry anywhere, and the value is never read before a
+// refusal that would still be a refusal.
+func TestAnthropicKeyNeedsNoAllowDataToList(t *testing.T) {
+	sm := secretsFixture(t) // the fixture's local config has no project_secrets at all
+	for _, args := range [][]string{
+		{"secrets", "set", "anthropic-api-key"},
+		{"secrets", "set", "anthropic-api-key", "--project-wide"},
+	} {
+		if _, _, err := executeStdin(t, "sk-ant-not-a-real-key-01", args...); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	if got := string(sm.Latest(gcp.ProjectSecretID("aurora", "anthropic-api-key"))); got != "sk-ant-not-a-real-key-01" {
+		t.Fatalf("stored %q", got)
+	}
+}
+
+// TestOAuthTokenStillRefusesProjectScope: D2 covers the API keys and the git
+// credential, not the Claude OAuth token (design project-centric §7, §6.3):
+// the default account's bare claude-oauth-token is not swept in. With no
+// flag it keeps the repository scope it has today, and --project-wide still
+// needs the project_secrets entry that lists a repository -- refused before
+// the value is read.
+func TestOAuthTokenStillRefusesProjectScope(t *testing.T) {
+	sm := secretsFixture(t)
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", "claude-oauth-token", "--repo", "acme/app"); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(sm.Latest(gcp.SecretID(appSlug, "claude-oauth-token"))); got != tokenValue {
+		t.Fatalf("stored %q, want the repository copy", got)
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", "claude-oauth-token")) != nil {
+		t.Error("the default Claude account's token went project-wide")
+	}
+	spy := &readerSpy{Reader: strings.NewReader(tokenValue)}
+	cmd := NewRootCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetIn(spy)
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"secrets", "set", "claude-oauth-token", "--project-wide"})
+	err := cmd.Execute()
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "project_secrets") {
+		t.Fatalf("err = %v", err)
+	}
+	if spy.read {
+		t.Fatal("the value was read before the refusal")
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", "claude-oauth-token")) != nil {
+		t.Fatal("a refused value was stored")
+	}
+}
+
+// TestSecretsSetBareRepoUsesThisCheckout: a bare `--repo` means this
+// checkout's repository, the same one a missing --repo used to mean, and
+// asks for its copy (plan Task 2.1 step 3b, finding 13).
+func TestSecretsSetBareRepoUsesThisCheckout(t *testing.T) {
+	sm := secretsFixture(t)
+	appCheckout(t)
+	out, errOut, err := executeStdin(t, tokenValue, "secrets", "set", "npm-token", "--repo")
+	if err != nil {
+		t.Fatalf("bare --repo: %v (%s)", err, errOut)
+	}
+	if got := string(sm.Latest(gcp.SecretID(appSlug, "npm-token"))); got != tokenValue {
+		t.Fatalf("stored %q, want this checkout's repository copy", got)
+	}
+	if !strings.Contains(out, gcp.SecretID(appSlug, "npm-token")) {
+		t.Fatalf("out = %q", out)
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", "npm-token")) != nil {
+		t.Error("a bare --repo stored a project copy")
+	}
+	// The listing takes the same bare form: one repository's view.
+	if out, _, err := execute(t, "secrets", "ls", "--repo"); err != nil || !strings.Contains(out, gcp.SecretID(appSlug, "npm-token")) {
+		t.Fatalf("ls --repo = %q, %v", out, err)
+	}
+}
+
+// TestSecretsSetKeepsRepoScopeForAWorkflowSecret: a repository's own
+// application secret has no project-wide meaning, so the new default does
+// not sweep it in: with no flag it keeps today's repository scope.
+func TestSecretsSetKeepsRepoScopeForAWorkflowSecret(t *testing.T) {
+	sm := secretsFixture(t)
+	appCheckout(t)
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", "npm-token"); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(sm.Latest(gcp.SecretID(appSlug, "npm-token"))); got != tokenValue {
+		t.Fatalf("stored %q, want the repository copy", got)
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", "npm-token")) != nil {
+		t.Error("a workflow secret was stored project-wide")
+	}
+}
+
+// TestSecretsLsDefaultsToProjectAndSaysSo: the listing follows the same
+// default as set, with --repo for one repository's view, and says which
+// container its rows come from (plan Task 2.1 step 3b).
+func TestSecretsLsDefaultsToProjectAndSaysSo(t *testing.T) {
+	sm := secretsFixture(t)
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", "bitbucket-token", "--project-wide"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", "claude-oauth-token", "--repo", "acme/app"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "secrets", "ls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, gcp.ProjectSecretID("aurora", "bitbucket-token")) {
+		t.Fatalf("the default listing is not the project's:\n%s", out)
+	}
+	if strings.Contains(out, gcp.SecretID(appSlug, "claude-oauth-token")) {
+		t.Fatalf("the default listing is not the project's: it shows a repository container:\n%s", out)
+	}
+	if strings.Contains(out, tokenValue) {
+		t.Fatal("the value leaked")
+	}
+	// --project-wide is still accepted, and is the same listing.
+	wide, _, err := execute(t, "secrets", "ls", "--project-wide")
+	if err != nil || wide != out {
+		t.Fatalf("--project-wide differs from the default: %q, %v", wide, err)
+	}
+	// The help text says which container each form shows.
+	help, _, _ := execute(t, "secrets", "ls", "--help")
+	if !strings.Contains(help, "--repo") || !strings.Contains(help, "project") {
+		t.Fatalf("secrets ls help does not say which container each form lists:\n%s", help)
+	}
+	_ = sm
+}

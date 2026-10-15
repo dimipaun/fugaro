@@ -128,6 +128,17 @@ func (m *memStore) latest(slug, name string) string {
 	return ""
 }
 
+// latestProject is latest for a project-wide copy (D2's default scope for a
+// name that has a project-wide meaning, gcp.ProjectSecretID).
+func (m *memStore) latestProject(project, name string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s := m.secrets[gcp.ProjectSecretID(project, name)]; s != nil && len(s.versions) > 0 {
+		return string(s.versions[len(s.versions)-1])
+	}
+	return ""
+}
+
 func (m *memStore) setCalls() int { m.mu.Lock(); defer m.mu.Unlock(); return m.sets }
 
 // secretsRig is the secrets stage in the loop, in a checkout of origin, with
@@ -506,7 +517,7 @@ func TestInitSecretsListsEveryAllowedName(t *testing.T) {
 	cmds := strings.Join(res.Left[0].Commands, "\n")
 	for _, want := range []string{
 		"fugaro secrets set claude-oauth-token --repo acme/app",
-		"fugaro secrets set claude-oauth-token-acme-personal --repo acme/app",
+		"fugaro secrets set claude-oauth-token-acme-personal",
 	} {
 		if !strings.Contains(cmds, want) {
 			t.Errorf("missing %q in %q", want, cmds)
@@ -776,6 +787,36 @@ func TestInitSecretsFindSkipsNameWithProjectVersion(t *testing.T) {
 	})
 }
 
+// TestInitRepoDoesNotAskForAProjectCoveredSecret: D2 extends #343's 40i to
+// the swept-in reserved names (plan Task 2.1 step 4). A git credential the
+// project already holds is not missing here even though the local config has
+// no project_secrets entry and no allow-list at all: eligibility for a
+// reserved name no longer needs one, so the stage must not ask for a value
+// that would then be stored as a repository copy and win over the project's
+// forever.
+func TestInitRepoDoesNotAskForAProjectCoveredSecret(t *testing.T) {
+	ctx := context.Background()
+	r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
+	if r.e.lc.ProjectSecrets != nil {
+		t.Fatalf("the rig's local config has project_secrets; this test proves nothing: %v", r.e.lc.ProjectSecrets)
+	}
+	r.stage.resolve(ctx)
+	if _, ok := infra.ProjectSecretCandidate(r.e.lc, "bitbucket-token", "acme/app"); !ok {
+		t.Fatal("the swept-in name is not a project candidate here: the test would prove nothing")
+	}
+	r.store.seedProject(r.e.lc.Name, "bitbucket-token", tokenValue)
+	got, err := r.stage.find(ctx, r.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(got, "bitbucket-token") {
+		t.Errorf("find = %v, want the project-covered git credential not missing", got)
+	}
+	if r.store.setCalls() != 0 {
+		t.Fatal("a value was stored")
+	}
+}
+
 // End to end at a terminal: the stage never reaches the prompt for a name the
 // project copy already covers. It is not merely told the names exist -- the
 // stage is Done, so nothing it would print or store is anywhere, and no
@@ -910,9 +951,11 @@ func TestInitSecretsStillPromptsWhenNothingStoredAnywhere(t *testing.T) {
 	for _, l := range res.Left {
 		cmds += strings.Join(l.Commands, "\n") + "\n"
 	}
+	// The fix line carries the scope the default stores to (D2): both names
+	// are allow-listed in project_secrets here, so neither line names --repo.
 	for _, want := range []string{
-		"fugaro secrets set bitbucket-token --repo acme/app",
-		"fugaro secrets set claude-oauth-token --repo acme/app",
+		"fugaro secrets set bitbucket-token",
+		"fugaro secrets set claude-oauth-token",
 	} {
 		if !strings.Contains(cmds, want) {
 			t.Errorf("missing %q in %q", want, cmds)
@@ -976,7 +1019,7 @@ func TestInitSecretsStageThroughTheCommand(t *testing.T) {
 		}
 		if len(res.Left) > 0 {
 			last := res.Left[len(res.Left)-1]
-			if last["stage"] == "secrets" && !strings.Contains(last["commands"], "secrets set bitbucket-token --repo acme/sandbox") {
+			if last["stage"] == "secrets" && !strings.Contains(last["commands"], "secrets set bitbucket-token") {
 				t.Fatalf("%v: left %v", flags, res.Left)
 			}
 		}

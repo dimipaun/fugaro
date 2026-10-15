@@ -1417,6 +1417,11 @@ func TestReadinessOmitsProjectSecretForUnlistedRepo(t *testing.T) {
 	}
 }
 
+// D2 (plan Task 2.1 step 3): the fix for a name the plan would resolve to
+// the project copy is `fugaro secrets set <name>` -- the form that stores
+// project-wide by default -- and never the repository-copy form, which would
+// store a copy that then wins over the project one forever, nor the
+// --project-wide synonym a person no longer has to know.
 func TestReadinessMissingNamesProjectWideFix(t *testing.T) {
 	f := newCloud(t)
 	spec := projectSpec(t, projectSecretLC)
@@ -1427,9 +1432,9 @@ func TestReadinessMissingNamesProjectWideFix(t *testing.T) {
 		t.Errorf("ProjectSecrets[bitbucket-token] = %q, want no entry: nothing resolves yet", id)
 	}
 	if !slices.ContainsFunc(missing, func(m Missing) bool {
-		return strings.Contains(m.Reason, "fugaro secrets set bitbucket-token --project-wide")
+		return strings.Contains(m.Reason, "fugaro secrets set bitbucket-token") && !strings.Contains(m.Reason, "--repo")
 	}) {
-		t.Errorf("missing = %v, want the fix to name --project-wide", missing)
+		t.Errorf("missing = %v, want the project-scope fix (secrets set, no --repo)", missing)
 	}
 }
 
@@ -1495,6 +1500,36 @@ func TestReadinessProviderListedExcludesUnlistedRepo(t *testing.T) {
 // everything: SecretMounts never asks about a name the repository cannot
 // mount. A mutation to `eligible = lc.Providers[name].Secret != ""` is what
 // this test exists to kill.
+// D2 (plan Task 2.1 step 3b, finding 13): a reserved name is a project-wide
+// candidate with no project_secrets entry at all, which is the case this
+// function refused before -- only an entry reached it, and that is exactly
+// the set D2 sweeps in. The bare claude-oauth-token (the default account's
+// own, phase 5's) and a repository's own application secret are not swept in,
+// and an entry the owner wrote still decides.
+func TestProjectSecretCandidateAcceptsAReservedNameWithNoList(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+m5Additions) // no project_secrets, no providers, no claude_accounts
+	for _, name := range []string{"anthropic-api-key", "bitbucket-token", "github-app-key"} {
+		id, ok := ProjectSecretCandidate(lc, name, "acme/sandbox")
+		if !ok || id != gcp.ProjectSecretID(lc.Name, name) {
+			t.Errorf("ProjectSecretCandidate(%q) = %q, %v; want %q, true", name, id, ok, gcp.ProjectSecretID(lc.Name, name))
+		}
+	}
+	for _, name := range []string{"claude-oauth-token", "sandbox-probe"} {
+		if id, ok := ProjectSecretCandidate(lc, name, "acme/sandbox"); ok {
+			t.Errorf("ProjectSecretCandidate(%q) = %q, true; want not a candidate", name, id)
+		}
+	}
+	// An entry the owner wrote is still the owner's answer: a reserved name
+	// allow-listed for another repository is not a candidate for this one.
+	listed := parseLC(t, m4LocalConfig+m5Additions+"project_secrets:\n  bitbucket-token: { allow_data_to: [acme/other] }\n")
+	if id, ok := ProjectSecretCandidate(listed, "bitbucket-token", "acme/sandbox"); ok {
+		t.Errorf("ProjectSecretCandidate = %q, true; want not a candidate: the entry names acme/other", id)
+	}
+	if _, ok := ProjectSecretCandidate(listed, "bitbucket-token", "acme/other"); !ok {
+		t.Error("the entry's own repository is not a candidate")
+	}
+}
+
 func TestProjectSecretCandidateGate(t *testing.T) {
 	const accounts = `claude_accounts:
   acme-personal:

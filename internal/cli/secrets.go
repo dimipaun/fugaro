@@ -72,9 +72,51 @@ type secretsOptions struct {
 
 func (o *secretsOptions) addFlags(cmd *cobra.Command) {
 	addCloudFlags(cmd, &o.cloud)
-	cmd.Flags().StringVar(&o.repo, "repo", "", "repository as owner/name (default: this checkout's origin)")
-	cmd.Flags().BoolVar(&o.projectWide, "project-wide", false, "store or list the secret once per Fugaro project, not per repository (cannot be combined with --repo)")
+	// --repo is the flag that opts OUT of the project default (D2): it names
+	// one repository's own container, and with no value means this checkout's
+	// origin, the repository a missing scope used to mean.
+	cmd.Flags().StringVar(&o.repo, "repo", "", "work on one repository's own copy, given as owner/name (no value: this checkout's origin); without it, a name that has a project-wide meaning is stored and listed project-wide")
+	cmd.Flags().BoolVar(&o.projectWide, "project-wide", false, "the default for a name that has a project-wide meaning, accepted as a synonym so existing scripts keep working (cannot be combined with --repo)")
 	cmd.Flags().BoolVar(&o.asJSON, "json", false, "print machine-readable output")
+}
+
+// NormalizeRepoArgs is argv with a bare --repo (no "=value" and no token
+// after it) rewritten to --repo=, whose empty value resolveSecretRepo already
+// reads as "this checkout's origin".
+//
+// pflag cannot express the form itself: with a string flag's NoOptDefVal set,
+// parseLongArg stops consuming the token after the flag, so the documented
+// `--repo acme/app` -- the form every script and the skills write -- would
+// leave acme/app as a positional argument. Only the argv boundary can tell
+// the bare form from the space-separated one, so cmd/fugaro/main.go and the
+// tests' execute helpers call this before cobra parses anything. A token
+// after `--` is a positional argument, never a flag, and is left alone.
+// It rewrites nothing outside `secrets set` and `secrets ls`: init's --repo
+// is a bool (the repository-scoped init), so `fugaro init --repo` must keep
+// parsing as the flag it is, and no other command's --repo takes an optional
+// value.
+func NormalizeRepoArgs(args []string) []string {
+	out := slices.Clone(args)
+	// Everything before the secrets subcommand -- the global flags and their
+	// values -- is left exactly as it came in.
+	at := slices.IndexFunc(args, func(a string) bool { return a == "secrets" || a == "secret" })
+	if at < 0 || at+1 >= len(args) || (args[at+1] != "set" && args[at+1] != "ls") {
+		return out
+	}
+	for i := at + 2; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			break
+		}
+		if a != "--repo" {
+			continue
+		}
+		if i+1 < len(args) && args[i+1] != "--" && !strings.HasPrefix(args[i+1], "-") {
+			continue // --repo owner/name
+		}
+		out[i] = "--repo="
+	}
+	return out
 }
 
 // checkScope refuses --repo with --project-wide before anything is read or
@@ -114,14 +156,22 @@ a flag or the environment, and never printed. One trailing newline (\n or
 redirected from a file), and a one-line value may not start or end with
 whitespace (a copy-and-paste slip, so it is refused rather than stored). Ctrl-C at the prompt stores nothing and restores the terminal.
 
-With --project-wide, the value is stored once for the whole Fugaro project
-instead of once per repository, and no --repo is needed: NAME must be a
-reserved secret your local config's project_secrets block allow-lists, a
-model provider's own key (any provider, allow_data_to or not), or a named
-Claude account's token whose account allow-lists at least one repository.
-Every repository the name is allow-listed for mounts the project copy, and
-a repository that also has its own copy of the same name keeps using that
-one.`,
+Scope: with neither flag, a NAME that has a project-wide meaning is stored
+once for the whole Fugaro project, in the project's own Secret Manager --
+the API key, the git credentials, a model provider's own key (any provider,
+allow_data_to or not), a reserved secret your local config's project_secrets
+block allow-lists, or a named Claude account's token whose account
+allow-lists at least one repository. --project-wide is accepted as a
+synonym of that default, so existing scripts keep working. Inside a shared
+job there is no IAM boundary between repositories: the profile is the
+boundary, and the value reaches every enrolled repository. A workflow's own
+secret has no project-wide meaning and is stored in the repository's own
+container as before.
+
+With --repo (owner/name, or with no value for this checkout's origin) the
+value is stored as the repository's own copy instead. That copy overrides
+the project copy from then on: disabling its last enabled version is the
+only way back.`,
 		Args: func(_ *cobra.Command, args []string) error {
 			switch {
 			case len(args) == 0:
@@ -146,8 +196,9 @@ type secretRepo struct {
 	checkout   func() *config.Config // the checkout's fugaro.yaml, when it is repo's
 }
 
-// resolveSecretRepo resolves --repo (or the checkout's origin) to its slug
-// and label.
+// resolveSecretRepo resolves --repo to its slug and label. flag is empty for
+// a bare --repo (NormalizeRepoArgs rewrites it to --repo=) and for a caller
+// that passed no flag at all, and both mean this checkout's origin.
 func resolveSecretRepo(cmd *cobra.Command, env *cloudEnv, flag string) (*secretRepo, error) {
 	ctx := cmd.Context()
 	r := &secretRepo{repo: flag}
@@ -231,7 +282,13 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 		return err
 	}
 	defer env.Close()
-	if o.projectWide {
+	// D2 (plan Task 2.1 step 1): with neither flag the project copy is the
+	// default -- but only for a name that has a project-wide meaning at all.
+	// A repository's own application secret has none, so it keeps today's
+	// repository scope rather than being swept into a container no job would
+	// mount it from: the default is "project where project exists", never
+	// "project always" (finding 13).
+	if o.projectWide || (!cmd.Flags().Changed("repo") && projectScopeName(env.lc, name)) {
 		return secretsSetProjectWide(cmd, env, o, name)
 	}
 	r, err := resolveSecretRepo(cmd, env, o.repo)
@@ -286,6 +343,37 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 	return storeSecret(cmd, env, o, gcp.SecretID(r.slug, name), labels, name)
 }
 
+// projectScopeName reports whether name has a project-wide meaning in this
+// installation, and so stores project-wide when neither --repo nor
+// --project-wide is passed (D2, plan Task 2.1 steps 1 and 3b):
+//
+//   - a name the owner already allow-listed in project_secrets -- their
+//     explicit opt-in under #343, which the new default now reaches without
+//     a flag;
+//   - a reserved secret D2 swept in (config.ProjectScopeByDefault): the API
+//     key and the git credentials;
+//   - a model provider's own key (accepted project-wide with no list, §3a);
+//   - a named Claude account's token whose account lists a repository.
+//
+// The bare claude-oauth-token is none of these: it is the default account's
+// own, and it keeps the refusal and the repository scope it has on main. A
+// workflow's own secret is none of these either, and keeps repository scope.
+func projectScopeName(lc *localcfg.Config, name string) bool {
+	if ps, ok := lc.ProjectSecrets[name]; ok && len(ps.AllowDataTo) > 0 {
+		return true
+	}
+	if config.ProjectScopeByDefault(name) {
+		return true
+	}
+	if _, ok := config.ProviderBySecret(lc.Providers, name); ok {
+		return true
+	}
+	if account, ok := config.ClaudeAccountBySecret(lc.ClaudeAccounts, name); ok && account != config.DefaultClaudeAccount {
+		return len(lc.ClaudeAccounts[account].AllowDataTo) > 0
+	}
+	return false
+}
+
 // projectSecretRefusal is the one message every --project-wide eligibility
 // refusal uses. path is the config field the owner would have to fill in
 // (project_secrets.<name>.allow_data_to, or a named account's own), stated
@@ -300,8 +388,13 @@ func projectSecretRefusal(name, path string) error {
 // run in the design's fixed order (§4, S1) and before any value is read:
 //
 //  1. a reserved name (config.ReservedSecrets, which takes claude-oauth-token
-//     first, so it never falls through to the named-account branch) needs a
-//     project_secrets entry with a non-empty allow_data_to;
+//     first, so it never falls through to the named-account branch): a name
+//     D2 swept in (config.ProjectScopeByDefault -- the API key and the git
+//     credentials) is accepted with no project_secrets entry at all, and an
+//     entry the owner wrote still decides when there is one -- a list that
+//     is present and empty keeps meaning "nobody". The bare
+//     claude-oauth-token is not swept in and still needs an entry with a
+//     non-empty allow_data_to;
 //  2. a model provider's own key is accepted unconditionally -- no condition
 //     on allow_data_to at all (§3a: an absent list is a valid, intentional
 //     "available to every repository" state for a provider, not a reason to
@@ -313,7 +406,14 @@ func projectSecretRefusal(name, path string) error {
 //     meaning and is refused (§3).
 func secretsSetProjectWide(cmd *cobra.Command, env *cloudEnv, o secretsOptions, name string) error {
 	if _, reserved := config.ReservedSecrets[name]; reserved {
-		if ps, ok := env.lc.ProjectSecrets[name]; !ok || len(ps.AllowDataTo) == 0 {
+		ps, listed := env.lc.ProjectSecrets[name]
+		switch {
+		case listed && len(ps.AllowDataTo) > 0:
+			// The owner's own entry, which is the explicit opt-in #343 had
+			// and the answer a D2 default must not overrule.
+		case !listed && config.ProjectScopeByDefault(name):
+			// D2: swept in, no per-name list needed.
+		default:
 			return projectSecretRefusal(name, "project_secrets."+pluginwire.Printable(name))
 		}
 	} else if _, ok := config.ProviderBySecret(env.lc.Providers, name); ok {
@@ -327,7 +427,22 @@ func secretsSetProjectWide(cmd *cobra.Command, env *cloudEnv, o secretsOptions, 
 			pluginwire.Printable(name), strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", "))
 	}
 	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: env.lc.Name, gcp.LabelSecret: name}
-	return storeSecret(cmd, env, o, gcp.ProjectSecretID(env.lc.Name, name), labels, name)
+	if err := storeSecret(cmd, env, o, gcp.ProjectSecretID(env.lc.Name, name), labels, name); err != nil {
+		return err
+	}
+	// Plan Task 2.1 step 3: the reach is stated where the person storing the
+	// value reads it, in one sentence, because D2 is a default that shares a
+	// value with repositories the operator did not name on this command line.
+	// "Every enrolled repository" is spelled out for both states of the
+	// installation (finding 13): a published policy admits a set of
+	// repositories, and with nothing published the local config is what
+	// enrollment means today. The profile is named as the boundary, since
+	// inside a shared job no IAM boundary separates repositories. On stderr,
+	// so --json's stdout stays the document alone.
+	fmt.Fprintf(cmd.ErrOrStderr(),
+		"note: %s is stored project-wide for %s, where every enrolled repository can mount it -- every repository a published policy admits, or, with no policy published, every repository this local config knows. Inside a shared job there is no IAM boundary between repositories: the profile is the boundary. A workflow's own secret (workflows.<n>.secrets) cannot be shared this way and stays a repository copy.\n",
+		pluginwire.Printable(name), pluginwire.Printable(env.lc.Name))
+	return nil
 }
 
 // storeSecret reads name's value (stdin, or a hidden prompt on a terminal)
@@ -515,6 +630,12 @@ func projectSecretAllowed(lc *localcfg.Config, logical string) []string {
 	if ps, ok := lc.ProjectSecrets[logical]; ok {
 		return slices.Clone(ps.AllowDataTo)
 	}
+	if config.ProjectScopeByDefault(logical) {
+		// D2's sweep, and the same answer ProjectSecretCandidate gives: with
+		// no entry to the contrary, every repository may mount it. An empty
+		// column here would say the opposite of what the plan resolves.
+		return []string{"any repository"}
+	}
 	if name, ok := config.ClaudeAccountBySecret(lc.ClaudeAccounts, logical); ok {
 		return slices.Clone(lc.ClaudeAccounts[name].AllowDataTo)
 	}
@@ -534,17 +655,21 @@ func newSecretsLsCmd() *cobra.Command {
 	var o secretsOptions
 	cmd := &cobra.Command{
 		Use:   "ls",
-		Short: "List a repository's (or, with --project-wide, the project's) secrets: names, scope and versions, never values",
+		Short: "List the project's (or, with --repo, a repository's) secrets: names, scope and versions, never values",
 		Long: `List secrets: their logical names, IDs, version counts and where each
 value comes from, never any value (this command has no access call at all).
 
-A repository's listing (the default, with --repo or the checkout's origin)
-shows, per name, SCOPE: repo (the repository's own container), project (an
-allow-listed project-wide container with no repo copy), or "project, repo
-override stored" (both exist; the repository's own version wins).
+The default listing is the installation's project-wide containers -- the
+scope secrets set stores to by default -- one row per name, with the
+repositories the local config allows to use each one. --project-wide is
+accepted as a synonym, so existing scripts keep working.
 
---project-wide lists the installation's project-wide containers instead,
-with the repositories the local config allows to use each one.`,
+--repo (or a bare --repo, for this checkout's origin) lists one repository
+instead: its own containers, each with SCOPE repo (the repository's own
+container), project (a project-wide container this repository may use and
+has no copy of), or "project, repo override stored" (both exist; the
+repository's own version wins). Nothing about a repository is listed
+without --repo: the project's containers are not one repository's.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := o.checkScope(cmd); err != nil {
@@ -556,7 +681,11 @@ with the repositories the local config allows to use each one.`,
 				return err
 			}
 			defer env.Close()
-			if o.projectWide {
+			// D2: the listing follows the same default as set -- the
+			// installation's project-wide containers -- with --repo for one
+			// repository's own view. --project-wide stays a synonym of the
+			// default, as it is on set.
+			if o.projectWide || !cmd.Flags().Changed("repo") {
 				return listProjectWide(cmd, env, o)
 			}
 			r, err := resolveSecretRepo(cmd, env, o.repo)

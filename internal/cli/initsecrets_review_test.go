@@ -61,10 +61,16 @@ func TestNeededSecretsFollowAuth(t *testing.T) {
 			"elsewhere":  {Secret: "elsewhere-key", AllowDataTo: []string{"acme/other"}},
 		}
 		text := left(t, r)
-		for _, want := range []string{"bitbucket-token", "anthropic-api-key", "openrouter-api-key", "npm-token"} {
-			if !strings.Contains(text, "secrets set "+want+" --repo acme/app") {
-				t.Errorf("left lacks %s: %q", want, text)
+		// D2: the three names that have a project-wide meaning get the
+		// project-scope command (no --repo); the checkout's own workflow
+		// secret keeps the repository one.
+		for _, want := range []string{"bitbucket-token", "anthropic-api-key", "openrouter-api-key"} {
+			if !strings.Contains(text, "secrets set "+want+"\n") {
+				t.Errorf("left lacks the project-scope form of %s: %q", want, text)
 			}
+		}
+		if !strings.Contains(text, "secrets set npm-token --repo acme/app") {
+			t.Errorf("left lacks the repository-scope form of the workflow secret: %q", text)
 		}
 		if strings.Contains(text, "elsewhere") || strings.Contains(text, "claude") {
 			t.Errorf("left = %q", text)

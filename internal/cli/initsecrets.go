@@ -500,7 +500,15 @@ func (s *secretsStage) Left() initflow.Left {
 	}
 	var cmds []string
 	for _, name := range needs {
-		set := selfCommand() + " secrets set " + quoteWord(name) + " --repo " + quoteWord(s.tg.repo)
+		// The scope the command stores to is the scope the prompt above
+		// stores to (secretsScope): a name with a project-wide meaning
+		// defaults to the project's own container, and the fix the user is
+		// handed must not quietly store a repository copy that would then
+		// override the project one forever.
+		set := selfCommand() + " secrets set " + quoteWord(name)
+		if !projectScopeName(s.e.lc, name) {
+			set += " --repo " + quoteWord(s.tg.repo)
+		}
 		switch {
 		case isClaudeOAuthSecret(name):
 			cmds = append(cmds, "claude setup-token", set)
@@ -597,7 +605,16 @@ func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w i
 		value []byte
 		err   error
 	)
-	fmt.Fprintf(w, "%s for %s on %s (stored in project %s's Secret Manager):\n", name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject))
+	// The prompt is where a person learns the blast radius (plan Task 2.1
+	// step 4): a name with a project-wide meaning is stored project-wide --
+	// D2's default for `secrets set <name>` with no flag -- and the same
+	// command with --repo keeps the value to this repository instead.
+	if projectScopeName(s.e.lc, name) {
+		fmt.Fprintf(w, "%s for %s on %s (stored project-wide in project %s's Secret Manager, where every enrolled repository can mount it; pass --repo to keep it to this repository instead):\n",
+			name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject))
+	} else {
+		fmt.Fprintf(w, "%s for %s on %s (stored in project %s's Secret Manager, in this repository's own copy):\n", name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject))
+	}
 	if isClaudeOAuthSecret(name) {
 		fmt.Fprintln(w, name+": run claude setup-token in your own terminal first, then paste the token it prints")
 	}
@@ -619,8 +636,14 @@ func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w i
 	}
 	defer release()
 
+	// The same scope decision the prompt above announced, from the same
+	// function, so the two cannot disagree.
 	id := gcp.SecretID(s.tg.slug, name)
 	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: s.tg.label, gcp.LabelSecret: name}
+	if projectScopeName(s.e.lc, name) {
+		id = gcp.ProjectSecretID(s.e.lc.Name, name)
+		labels = map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: s.e.lc.Name, gcp.LabelSecret: name}
+	}
 	if _, err := st.Set(ctx, id, value, labels); err != nil {
 		if ny := s.smProblem(err); ny != nil {
 			return ny
