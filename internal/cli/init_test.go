@@ -1730,7 +1730,7 @@ func newRepoPlanRig(t *testing.T, stdin, baseImage, extraLC string, changes func
 // plan runs the repository stage.
 func (p *repoPlanRig) plan(t *testing.T) (infra.RepoSpec, []infra.Missing, error) {
 	t.Helper()
-	return p.run.planRepo(t.Context(), p.c, p.tfr, p.wd, p.spec, infra.RepoRootOptions{}, true)
+	return p.run.planRepo(t.Context(), p.c, p.tfr, p.wd, p.spec, p.lc, infra.RepoRootOptions{}, true)
 }
 
 // seedSandboxProjectSecret seeds bitbucket-token's project-wide container

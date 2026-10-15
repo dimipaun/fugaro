@@ -16,6 +16,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 const testSigner = "fugaro-token-signer@aurora-fp.iam.gserviceaccount.com"
@@ -145,6 +147,87 @@ func TestRetryMintsFresh(t *testing.T) {
 	if n := len(f.iam.SignCalls()); n != 1 {
 		t.Fatalf("sign calls = %d", n)
 	}
+}
+
+// newOffModeBudget is the launch fixture with the budget mode off in the
+// operator's config and the budget block spelled as given, so that what makes
+// a launch mint (or refuse to) is the only thing that varies.
+func newOffModeBudget(t *testing.T, budget string) *launchBudgetFixture {
+	t.Helper()
+	iam := gcpfake.NewIAMCredentials(t)
+	iam.AddSigner(testSigner)
+	f := &launchBudgetFixture{cloudFixture: newCloudFixture(t, "iam_credentials: "+iam.URL+"/"), db: gcpfake.NewRTDB(t), iam: iam}
+	f.appendConfig(t, budget)
+	f.db.Set("fugaro/project", "aurora")
+	f.db.Set("config/mode", "enforce")
+	return f
+}
+
+// The launcher's mint decision follows the published policy, not the
+// operator's local mode (plan task 1.3 step 2): a job of a project that has
+// published a policy must be able to read it, whatever mode its environment
+// was deployed with, and the runner reads the policy's mode through that
+// identity. Without a policy there is nothing to read and no token is minted
+// — which is what makes the runner's "budget off, no token" path a legacy
+// installation rather than a hole.
+func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) {
+	budget := func(f *launchBudgetFixture) string {
+		return "budget: { mode: off, per_run_usd: 5, rtdb_url: " + f.db.URL + ", token_signer: " + testSigner +
+			", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n"
+	}
+	policy := `{"version":1,"budget":{"mode":"enforce","per_run_usd":5}}`
+
+	t.Run("no policy, no token", func(t *testing.T) {
+		f := newOffModeBudget(t, "")
+		f.appendConfig(t, budget(f))
+		if _, _, err := runBudget(t); err != nil {
+			t.Fatal(err)
+		}
+		if tok := readToken(t, f.cloudFixture, budgetRun); tok != "" {
+			t.Fatalf("a launch for a project with no policy minted a token: %q", tok)
+		}
+		if n := len(f.iam.SignCalls()); n != 0 {
+			t.Fatalf("sign calls = %d", n)
+		}
+	})
+	t.Run("a policy, a token", func(t *testing.T) {
+		f := newOffModeBudget(t, "")
+		f.appendConfig(t, budget(f))
+		f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+		f.db.Set(projectpolicy.PathShared(), json.RawMessage(policy))
+		var env map[string]string
+		f.run.OnRun = func(c gcpfake.RunCall) { env = c.Env }
+		if _, _, err := runBudget(t); err != nil {
+			t.Fatal(err)
+		}
+		tok := readToken(t, f.cloudFixture, budgetRun)
+		if tok == "" {
+			t.Fatal("a launch for a project with a published policy minted no token")
+		}
+		if c := claimsOf(t, f, tok); c["fs"] != appSlug || c["fr"] != budgetRun || c["fp"] != "aurora" {
+			t.Fatalf("claims = %v", c)
+		}
+		// The launch is not the deploy: the job's own environment is the one
+		// the mode was deployed with, and the launcher does not rewrite it to
+		// the policy's mode. What the policy decides is the runner's mode,
+		// which it reads with the identity minted here.
+		if env[runner.BudgetModeEnv] == "enforce" {
+			t.Fatalf("the launcher rewrote the job's %s to the policy's", runner.BudgetModeEnv)
+		}
+	})
+	t.Run("a policy with no signer is refused", func(t *testing.T) {
+		f := newOffModeBudget(t, "")
+		f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
+		f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+		f.db.Set(projectpolicy.PathShared(), json.RawMessage(policy))
+		_, _, err := runBudget(t)
+		if err == nil || !strings.Contains(err.Error(), "budget.token_signer") {
+			t.Fatalf("err = %v, want the missing-signer refusal", err)
+		}
+		if launchedAny(f) {
+			t.Fatal("the run was launched without a budget identity")
+		}
+	})
 }
 
 func TestMintedTokenNotInJobsRunRequest(t *testing.T) {

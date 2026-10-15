@@ -42,10 +42,42 @@ func budgetBackendOn(lc *localcfg.Config) (bool, error) {
 	if lc.BudgetMode() == localcfg.BudgetOff || lc.Budget == nil || lc.Budget.RTDBURL == "" {
 		return false, nil
 	}
-	if lc.Budget.TokenSigner == "" {
-		return false, userErr("budget.token_signer is not set in project %s's config, so runs cannot be given a budget identity: an operator runs fugaro init --firebase <firebase-project-id> --name %s", lc.Name, lc.Name)
+	return true, budgetSignerOn(lc)
+}
+
+// budgetSignerOn refuses a launch that needs a budget identity but has no
+// signer to mint it with: the CLI holds the only copy of that permission, so
+// nothing else can give a run its identity.
+func budgetSignerOn(lc *localcfg.Config) error {
+	if lc.Budget == nil || lc.Budget.TokenSigner == "" {
+		return userErr("budget.token_signer is not set in project %s's config, so runs cannot be given a budget identity: an operator runs fugaro init --firebase <firebase-project-id> --name %s", lc.Name, lc.Name)
 	}
-	return true, nil
+	return nil
+}
+
+// budgetMintOn reports whether this launch must mint the run a budget
+// identity: Firebase is configured and either the project's budget mode is not
+// off or the project has published a policy. The mode decision follows the
+// policy, not the operator's local mode (plan task 1.3 step 2): a job of a
+// project-centric installation reads the policy — and the mode in it — through
+// its Firebase identity, and a job launched without one would run on the
+// ceiling the environment was deployed with, whatever the policy says. What
+// the local mode still decides is the job's FUGARO_BUDGET_MODE, which is the
+// fallback for the case the policy node is absent (P3).
+func (e *cloudEnv) budgetMintOn(ctx context.Context) (bool, error) {
+	if on, err := budgetBackendOn(e.lc); err != nil || on {
+		return on, err
+	}
+	if e.lc.Budget == nil || e.lc.Budget.RTDBURL == "" {
+		return false, nil // no database: no policy this CLI could see either
+	}
+	p, found, err := projectPolicyOf(ctx, e.lc)
+	if err != nil || !found || p == nil {
+		return false, err
+	}
+	// A policy exists: this run must be able to read it. That needs a signer,
+	// whatever the mode is.
+	return true, budgetSignerOn(e.lc)
 }
 
 // projectPolicyOf reads the project's policy with the operator's own
@@ -191,7 +223,7 @@ func (e *cloudEnv) batchBudgetPrecheck(ctx context.Context, slug, repo string, n
 // and the new mint supersedes the old identity's delivery). On error nothing
 // of this attempt remains in the bucket.
 func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.Spec) (minted bool, err error) {
-	on, err := budgetBackendOn(e.lc)
+	on, err := e.budgetMintOn(ctx)
 	if err != nil || !on {
 		return false, err
 	}
