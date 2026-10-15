@@ -3,6 +3,7 @@ package token_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
@@ -135,10 +136,38 @@ func TestUnsealRefusesShortTamperedAndUnknownEnvelopes(t *testing.T) {
 	}
 }
 
+// TestSealRefusesAKeyThatIsNotKeySize: 16 and 24 bytes are the two other
+// lengths aes.NewCipher accepts, so without an explicit length check the
+// channel's "AES-256-GCM under a 32-byte key" would quietly become AES-128 or
+// AES-192 for a key its generator never produces; 33 bytes is a cipher that
+// refuses it. Both halves refuse, and so does the marker's parse, because all
+// three are the same statement: a seal key is KeySize bytes.
+func TestSealRefusesAKeyThatIsNotKeySize(t *testing.T) {
+	name := token.ObjectKey("aurora-app", "20261002-120000-ab12")
+	good := sealKey(0xa0)
+	env, err := token.Seal(good, name, []byte("the run's custom token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, size := range []int{0, 16, 24, token.KeySize - 1, token.KeySize + 1} {
+		short := make([]byte, size)
+		if _, err := token.Seal(short, name, []byte("the run's custom token")); !errors.Is(err, token.ErrSealKey) {
+			t.Errorf("Seal with a %d-byte key = %v, want ErrSealKey", size, err)
+		}
+		if _, err := token.Unseal(short, name, env); !errors.Is(err, token.ErrSealKey) {
+			t.Errorf("Unseal with a %d-byte key = %v, want ErrSealKey", size, err)
+		}
+		if _, err := token.ParseKey(token.EncodeKey(short)); !errors.Is(err, token.ErrSealKey) {
+			t.Errorf("ParseKey of a %d-byte key = %v, want ErrSealKey", size, err)
+		}
+	}
+}
+
 // TestParseKeyIsStrict: the marker's value decides whether the run unseals
 // anything at all, so anything but one unpadded base64url string decoding to
 // KeySize bytes is refused — whitespace, '=' padding, a second segment, the
-// standard alphabet, a shorter or longer key.
+// standard alphabet, a shorter or longer key, and a non-canonical spelling of
+// the right bytes.
 func TestParseKeyIsStrict(t *testing.T) {
 	key := sealKey(0x50)
 	enc := token.EncodeKey(key)
@@ -149,6 +178,28 @@ func TestParseKeyIsStrict(t *testing.T) {
 	if err != nil || !bytes.Equal(got, key) {
 		t.Fatalf("ParseKey(EncodeKey(k)) = %v, %v", got, err)
 	}
+	// The three other 43-character spellings of the same key. 32 bytes is
+	// three whole base64 groups plus two bytes, so the last character carries
+	// four significant bits and two this encoding discards: three other
+	// characters in the alphabet order decode to exactly these 32 bytes under
+	// a non-strict decoder. They are refused, because the channel has one
+	// spelling of a key and the redactor is told that one: without Strict()
+	// these would be three live spellings the registration never saw.
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	last := strings.IndexByte(alphabet, enc[len(enc)-1])
+	if last < 0 {
+		t.Fatalf("EncodeKey = %q: the last character is not in the alphabet", enc)
+	}
+	var nonCanonical []string
+	for d := 1; d <= 3; d++ {
+		spelling := enc[:len(enc)-1] + string(alphabet[last+d])
+		// The fixture is only meaningful if a lax decoder accepts it and
+		// reads the same key back.
+		if got, err := base64.RawURLEncoding.DecodeString(spelling); err != nil || !bytes.Equal(got, key) {
+			t.Fatalf("the fixture is wrong: %q does not decode to the same key (%v)", spelling, err)
+		}
+		nonCanonical = append(nonCanonical, spelling)
+	}
 	// The refusal may not carry any part of the value: this parse is the
 	// marker's, and the marker's error is what a run publishes before any
 	// redactor exists (D19, internal/runner's MalformedEnv). The test reads the
@@ -158,10 +209,15 @@ func TestParseKeyIsStrict(t *testing.T) {
 	// sentence itself contains (the empty string, a lone space) — and it would
 	// pass while the text was built from the value.
 	refusal := ""
-	for _, bad := range []string{
+	bad := append([]string{
 		"", " ", "1", enc + "=", enc + "\n", enc + " ", "\t" + enc, enc[:len(enc)-1], enc + "A",
 		"+" + enc[1:], "/" + enc[1:], enc + "." + enc,
-	} {
+		// Padding and whitespace inside a string of exactly the right length:
+		// the length check cannot catch these, only the decoder can.
+		enc[:len(enc)-1] + "=", enc[:len(enc)-1] + " ", enc[:len(enc)-1] + "\n",
+		enc[:21] + " " + enc[22:], enc[:21] + "\n" + enc[22:],
+	}, nonCanonical...)
+	for _, bad := range bad {
 		_, perr := token.ParseKey(bad)
 		if !errors.Is(perr, token.ErrSealKey) {
 			t.Errorf("ParseKey(%q) = %v, want ErrSealKey", bad, perr)
