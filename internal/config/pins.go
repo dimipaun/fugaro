@@ -101,7 +101,7 @@ func catalogWarning(model string, c *pricing.CatalogPrice) string {
 	if c.Stale {
 		where = fmt.Sprintf("the %s tier of %d endpoint(s), and the catalog is stale (checked %s), so the dearest end is charged", c.Tier, n, c.CheckedAt)
 	}
-	return fmt.Sprintf("%s is priced from the built-in provider price catalog: %s. require_zdr selects the tier and price_policy the end of its range: price_policy: highest charges the top of the range (an owner's model_prices replaces this row whole)",
+	return fmt.Sprintf("%s is priced from the built-in provider price catalog: %s. require_zdr selects the tier and price_policy selects the end of its range: price_policy: highest charges the top of the range (an owner's model_prices replaces this row whole)",
 		model, where)
 }
 

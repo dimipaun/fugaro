@@ -87,6 +87,22 @@ func TestLoadRejectsMalformedFile(t *testing.T) {
 			d["models"].(map[string]any)["vendor/model"].(map[string]any)["sneaky"] = true
 			return marshal(t, d)
 		}, "sneaky"},
+		// A map's keys are outside DisallowUnknownFields, so a misspelled
+		// dimension would otherwise be dropped and folded (design D7(a)
+		// exists to make a dimension nobody priced explicit, not to let a
+		// typo price it): the loader refuses it in both tiers.
+		{"an unknown dimension in the all tier", func(t *testing.T) []byte {
+			d := valid(t)
+			d["models"].(map[string]any)["vendor/model"].(map[string]any)["all"].(map[string]any)["cache_read_per_M"] =
+				map[string]any{"min": "1", "max": "1", "min_of": "a", "max_of": "a"}
+			return marshal(t, d)
+		}, `"cache_read_per_M" is not a price dimension`},
+		{"an unknown dimension in the zdr tier", func(t *testing.T) []byte {
+			d := valid(t)
+			d["models"].(map[string]any)["vendor/model"].(map[string]any)["zdr"].(map[string]any)["web_search"] =
+				map[string]any{"min": "1", "max": "1", "min_of": "a", "max_of": "a"}
+			return marshal(t, d)
+		}, `"web_search" is not a price dimension`},
 		{"a zdr tier with no zdr endpoints", func(t *testing.T) []byte {
 			return []byte(strings.Replace(string(marshal(t, valid(t))), `"zdr_endpoints":1`, `"zdr_endpoints":0`, 1))
 		}, "zdr_endpoints"},

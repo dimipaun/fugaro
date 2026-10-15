@@ -15,6 +15,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -97,11 +99,22 @@ func (f *File) validate() error {
 		if len(e.All) == 0 {
 			errs = append(errs, fmt.Errorf("%s: the all tier prices nothing", id))
 		}
-		for _, d := range Dimensions {
-			for _, tier := range []struct {
-				name string
-				m    map[string]Bound
-			}{{"all", e.All}, {"zdr", e.ZDR}} {
+		for _, tier := range []struct {
+			name string
+			m    map[string]Bound
+		}{{"all", e.All}, {"zdr", e.ZDR}} {
+			// A dimension the six names do not cover is refused, never
+			// folded: DisallowUnknownFields does not reach a map's keys,
+			// so without this a misspelled "cache_read_per_m" would be
+			// silently dropped and priced at the fold value (design D7's
+			// whole point is that a dimension nobody priced is not a
+			// dimension nobody charges).
+			for _, d := range slices.Sorted(maps.Keys(tier.m)) {
+				if !slices.Contains(Dimensions, d) {
+					errs = append(errs, fmt.Errorf("%s %s: %q is not a price dimension (%s)", id, tier.name, d, strings.Join(Dimensions, ", ")))
+				}
+			}
+			for _, d := range Dimensions {
 				b, ok := tier.m[d]
 				if !ok {
 					continue
