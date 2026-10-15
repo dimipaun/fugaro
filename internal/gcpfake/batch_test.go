@@ -353,7 +353,17 @@ func TestLoggingFakeReadsBatchTaskLogsByUID(t *testing.T) {
 			t.Errorf("filter %q: status %d, want 400", f, code)
 		}
 	}
-	if len(failed) != 2 {
-		t.Fatalf("the fake failed the test %d times, want 2: %v", len(failed), failed)
+	// A Batch filter with no resource name, or with more than one: the
+	// project check reads ResourceNames[0], so it must come after the count
+	// is checked -- otherwise the fake panics instead of failing the test,
+	// which is not what a fake that fails closed owes its caller.
+	for _, names := range [][]string{{}, {"projects/p", "projects/q"}} {
+		body, _ := json.Marshal(map[string]any{"resourceNames": names, "filter": filter})
+		if code, _ := batchCall(t, "POST", l.URL+"/v2/entries:list", string(body)); code != http.StatusBadRequest {
+			t.Errorf("resourceNames %q: status %d, want 400", names, code)
+		}
+	}
+	if len(failed) != 4 {
+		t.Fatalf("the fake failed the test %d times, want 4: %v", len(failed), failed)
 	}
 }

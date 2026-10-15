@@ -67,9 +67,14 @@ func (c batchCodec) FromEnv(getenv func(string) string) (string, error) {
 
 // On reports whether this process is one of Batch's tasks. Batch injects
 // both BATCH_TASK_INDEX and BATCH_TASK_COUNT into every task (design §2.5),
-// so requiring both is what keeps a stray variable from claiming a process;
-// neither is a Fugaro variable, so no job environment can forge the answer
-// by itself.
+// so requiring both is what keeps a stray variable from claiming a process.
+//
+// Neither name is a Fugaro variable, which is not the same as being
+// unforgeable: whether a job's own environment can override the signal Batch
+// injects, and so whether whoever can submit a job can forge this answer, is
+// exactly the open question Check 57a step 12 settles (design §2.5, §9). This
+// build has not measured it, so it claims nothing beyond "these two variables
+// are set".
 func (batchCodec) On(getenv func(string) string) bool {
 	return getenv("BATCH_TASK_INDEX") != "" && getenv("BATCH_TASK_COUNT") != ""
 }

@@ -265,9 +265,16 @@ func (l *Logging) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	}
 	// A Batch filter names the log's project as well, and the real API
 	// requires it to be one the request may read: a mismatch is a request
-	// Fugaro must never send, so it fails the test.
-	badLogName := q.batch() && resourceProject(req.ResourceNames[0]) != q.project
-	if !ok || !wantRes() || badLogName ||
+	// Fugaro must never send, so it fails the test. It is asked only after
+	// wantRes has established there is exactly one resource name, which is
+	// the one it reads.
+	wantProject := func() bool {
+		if !q.batch() {
+			return true
+		}
+		return resourceProject(req.ResourceNames[0]) == q.project
+	}
+	if !ok || !wantRes() || !wantProject() ||
 		(req.OrderBy != "" && req.OrderBy != "timestamp asc") {
 		l.failf("gcpfake: entries.list request the fake cannot answer: resourceNames=%q filter=%q orderBy=%q", req.ResourceNames, req.Filter, req.OrderBy)
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "unsupported request")

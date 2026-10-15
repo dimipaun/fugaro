@@ -19,20 +19,23 @@ import (
 //
 // A create that fails with a 4xx other than 408, 429 and 499 created
 // nothing, and the error says so (backend.ErrRejected). Anything else,
-// including a timeout, is ambiguous: the job may exist.
+// including a timeout, is ambiguous: the job may exist. Everything that can
+// fail before the create -- an argument no job can be built from, a label the
+// installation cannot write, an unreadable workflow timeout -- created
+// nothing either, and says so the same way.
 func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.ExecutionRef, error) {
 	if spec.Repo.Slug == "" || spec.Workflow == "" || spec.RunID == "" {
-		return backend.ExecutionRef{}, fmt.Errorf("launching: a run needs a repository slug, a workflow and a run id (got %q, %q, %q)", spec.Repo.Slug, spec.Workflow, spec.RunID)
+		return backend.ExecutionRef{}, notCreated(fmt.Errorf("launching: a run needs a repository slug, a workflow and a run id (got %q, %q, %q)", spec.Repo.Slug, spec.Workflow, spec.RunID))
 	}
 	timeout, err := b.timeout(spec)
 	if err != nil {
-		return backend.ExecutionRef{}, err
+		return backend.ExecutionRef{}, notCreated(err)
 	}
 	id := JobID(spec.Repo.Slug, spec.Workflow, spec.RunID)
 	full := b.location() + "/jobs/" + id
 	job, err := b.jobDefinition(spec, id, full, timeout)
 	if err != nil {
-		return backend.ExecutionRef{}, err
+		return backend.ExecutionRef{}, notCreated(err)
 	}
 	created, err := b.batch.Projects.Locations.Jobs.Create(b.location(), job).JobId(id).Context(ctx).Do()
 	if err != nil {
@@ -238,7 +241,14 @@ func (b *Backend) List(ctx context.Context, f backend.ListFilter) ([]backend.Exe
 			if err != nil {
 				return nil, err
 			}
-			if !f.Since.IsZero() && x.Created.Before(f.Since) {
+			// A job whose createTime was empty or unreadable is kept, not
+			// cut: its Created is the zero time, which is Before every Since.
+			// gcp's List applies the same cut only to a time it parsed, and
+			// dropping it here is the fail-dangerous direction -- the caller
+			// is the sweeper's ActiveOnly+Since listing, where a job that
+			// vanishes from the listing is a VM nobody reaps (Options.Warn:
+			// one bad job does not fail a whole listing).
+			if !f.Since.IsZero() && !x.Created.IsZero() && x.Created.Before(f.Since) {
 				continue
 			}
 			if f.ActiveOnly && x.State.Terminal() {

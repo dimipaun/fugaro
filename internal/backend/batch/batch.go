@@ -252,6 +252,20 @@ func launchError(job string, err error) error {
 	return fmt.Errorf("launching %s (the job may have started): %w", job, err)
 }
 
+// notCreated marks a Launch failure from before the create: nothing was sent
+// to Batch, so nothing was created, whatever the cause. ErrRejected is how a
+// backend says that (design §2.3), and the launcher acts on it by dropping
+// the run's claim and the budget token it minted and telling the operator to
+// fix the cause and retry (internal/cli/run.go). Without it a bad argument or
+// an unwritable label reads as "the outcome is unknown; don't relaunch before
+// <claim TTL>", which is both untrue and what makes a corrected retry wait.
+//
+// The wrapped error stays visible to errors.Is, so an unknown workflow is
+// still ErrNotFound as well.
+func notCreated(err error) error {
+	return fmt.Errorf("%w: %w", backend.ErrRejected, err)
+}
+
 // stateOf maps a Batch JobStatus.State to the seam's State, and reports
 // whether this build knows the value.
 //

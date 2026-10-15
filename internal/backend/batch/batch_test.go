@@ -391,16 +391,80 @@ func TestLaunchTimeoutComesFromTheWorkflow(t *testing.T) {
 
 // TestLaunchOfAnUnknownWorkflowIsNotFound: the timeouts are a config read, so
 // a workflow that does not exist must be reported as such rather than
-// launched with a guessed timeout.
+// launched with a guessed timeout. It created nothing, so it is also a
+// definitive refusal: the launcher drops the run's claim and its minted
+// budget token instead of holding them and telling the operator the outcome
+// is unknown.
 func TestLaunchOfAnUnknownWorkflowIsNotFound(t *testing.T) {
 	b, bf, _, _ := newTestBackend(t, func(o *Options) {
 		o.Timeouts = testTimeouts{err: fmt.Errorf("no such workflow: %w", backend.ErrNotFound)}
 	})
-	if _, err := b.Launch(context.Background(), spec()); !errors.Is(err, backend.ErrNotFound) {
+	_, err := b.Launch(context.Background(), spec())
+	if !errors.Is(err, backend.ErrNotFound) {
 		t.Fatalf("Launch = %v, want ErrNotFound", err)
+	}
+	if !errors.Is(err, backend.ErrRejected) {
+		t.Fatalf("Launch = %v, want ErrRejected too: nothing was created", err)
 	}
 	if got := bf.Creates(); len(got) != 0 {
 		t.Fatalf("a job was created for an unknown workflow: %v", got)
+	}
+}
+
+// TestLaunchBeforeTheCreateIsRejected: everything that can fail before the
+// create created nothing, whatever the cause, so it says so with ErrRejected
+// (design §2.3). The launcher acts on that by releasing the run's claim and
+// dropping the budget token it minted, so a corrected retry goes at once --
+// without it, an operator is told "the outcome is unknown; don't relaunch
+// before <claim TTL>" for a launch that never reached the API.
+func TestLaunchBeforeTheCreateIsRejected(t *testing.T) {
+	ctx := context.Background()
+	// A workflow the installation cannot write as a label: the job can never
+	// be built, and no request is sent.
+	b, bf, _, _ := newTestBackend(t, nil)
+	s := spec()
+	s.Workflow = "Web"
+	_, err := b.Launch(ctx, s)
+	if !errors.Is(err, backend.ErrRejected) {
+		t.Fatalf("Launch with an unwritable label = %v, want ErrRejected", err)
+	}
+	// The timeout source failing for a reason that is not a missing workflow
+	// (an unreadable config, say) is still nothing created.
+	b2, bf2, _, _ := newTestBackend(t, func(o *Options) {
+		o.Timeouts = testTimeouts{err: errors.New("reading the workflow's timeout: permission denied")}
+	})
+	if _, err := b2.Launch(ctx, spec()); !errors.Is(err, backend.ErrRejected) {
+		t.Fatalf("Launch with an unreadable timeout = %v, want ErrRejected", err)
+	}
+	for _, f := range []*gcpfake.Batch{bf, bf2} {
+		if got := f.Creates(); len(got) != 0 {
+			t.Fatalf("a rejected launch created a job: %v", got)
+		}
+	}
+}
+
+// TestLaunchNeedsARun checks the argument validation, the one place a
+// caller's own mistake is caught before any request is sent. A run Fugaro
+// cannot turn into a job created nothing, so it is a refusal, not an unknown
+// outcome.
+func TestLaunchNeedsARun(t *testing.T) {
+	b, bf, _, _ := newTestBackend(t, nil)
+	for name, s := range map[string]backend.LaunchSpec{
+		"no slug":     {Workflow: "web", RunID: "20260927-100000-abcd"},
+		"no workflow": {Repo: backend.RepoRef{Slug: "acme-app"}, RunID: "20260927-100000-abcd"},
+		"no run id":   {Repo: backend.RepoRef{Slug: "acme-app"}, Workflow: "web"},
+	} {
+		_, err := b.Launch(context.Background(), s)
+		if err == nil {
+			t.Errorf("Launch accepted a run with %s", name)
+			continue
+		}
+		if !errors.Is(err, backend.ErrRejected) {
+			t.Errorf("Launch with %s = %v, want ErrRejected", name, err)
+		}
+	}
+	if got := bf.Creates(); len(got) != 0 {
+		t.Fatalf("a job was created for an invalid run: %v", got)
 	}
 }
 
@@ -418,24 +482,6 @@ func TestLaunchRefusalIsRejected(t *testing.T) {
 	bf.FailCreateWith = 500
 	if _, err := b.Launch(context.Background(), spec()); err == nil || errors.Is(err, backend.ErrRejected) {
 		t.Fatalf("Launch with a 500 = %v, want an ambiguous error", err)
-	}
-}
-
-// TestLaunchNeedsARun checks the argument validation, the one place a
-// caller's own mistake is caught before any request is sent.
-func TestLaunchNeedsARun(t *testing.T) {
-	b, bf, _, _ := newTestBackend(t, nil)
-	for name, s := range map[string]backend.LaunchSpec{
-		"no slug":     {Workflow: "web", RunID: "20260927-100000-abcd"},
-		"no workflow": {Repo: backend.RepoRef{Slug: "acme-app"}, RunID: "20260927-100000-abcd"},
-		"no run id":   {Repo: backend.RepoRef{Slug: "acme-app"}, Workflow: "web"},
-	} {
-		if _, err := b.Launch(context.Background(), s); err == nil {
-			t.Errorf("Launch accepted a run with %s", name)
-		}
-	}
-	if got := bf.Creates(); len(got) != 0 {
-		t.Fatalf("a job was created for an invalid run: %v", got)
 	}
 }
 
@@ -641,6 +687,54 @@ func TestListFiltersByLabelStateAndTime(t *testing.T) {
 		if r.Method == "GET" && strings.HasSuffix(r.Path, "/jobs") && !strings.Contains(r.Query, "filter=") {
 			t.Errorf("jobs.list without a filter: %s?%s", r.Path, r.Query)
 		}
+	}
+}
+
+// TestListKeepsAJobWhoseCreateTimeIsMissing: a job the API answered without a
+// createTime reads as the zero time, which is Before every Since. It is kept
+// rather than cut (Options.Warn: one bad job does not fail a whole listing),
+// because the caller of ActiveOnly+Since is the sweeper, where a job missing
+// from the listing is a VM nobody reaps. gcp's List applies the same cut only
+// to a time it parsed and that is non-zero.
+func TestListKeepsAJobWhoseCreateTimeIsMissing(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, nil)
+	unreadable, err := b.Launch(ctx, spec())
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	s := spec()
+	s.RunID = "20260927-110000-beef"
+	live, err := b.Launch(ctx, s)
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	// The job's createTime goes missing, which is what an unreadable or
+	// absent one looks like to the backend.
+	bf.SetCreated(unreadable.Job, time.Time{})
+	bf.SetState(live.Job, "RUNNING")
+
+	got, err := b.List(ctx, backend.ListFilter{Since: time.Now().Add(-time.Hour), ActiveOnly: true})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("List(Since, ActiveOnly) = %+v, want both jobs: a missing createTime is kept", got)
+	}
+	// The one that was cut, if any, is the zero-time job; it is the last of
+	// the newest-first order.
+	if !got[1].Created.IsZero() || got[1].Name != unreadable.Name {
+		t.Fatalf("List(Since, ActiveOnly)[1] = %+v, want %s with a zero time", got[1], unreadable.Name)
+	}
+	// And a job whose createTime is readable and older than Since is still
+	// cut: keeping the unreadable one must not turn the cut off.
+	bf.SetCreated(unreadable.Job, time.Now().Add(-48*time.Hour))
+	got, err = b.List(ctx, backend.ListFilter{Since: time.Now().Add(-time.Hour), ActiveOnly: true})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != live.Name {
+		t.Fatalf("List(Since, ActiveOnly) = %+v, want only %s", got, live.Name)
 	}
 }
 
