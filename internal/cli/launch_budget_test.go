@@ -289,6 +289,12 @@ func TestLaunchRefusesAPolicyKeyThisFugaroDoesNotKnow(t *testing.T) {
 	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "allow_repo") {
 		t.Fatalf("err = %v, want a refusal naming the unknown key", err)
 	}
+	// The refusal names the node itself, and policyReadErr must leave it alone:
+	// re-prefixing it printed the same path twice ("config/policy/shared:
+	// config/policy/shared lists ...").
+	if n := strings.Count(err.Error(), projectpolicy.PathShared()); n != 1 {
+		t.Errorf("the refusal names %s %d times, want once: %v", projectpolicy.PathShared(), n, err)
+	}
 	if launchedAny(f) {
 		t.Fatal("the run was launched with a policy this Fugaro does not understand")
 	}

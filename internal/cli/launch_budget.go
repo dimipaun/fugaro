@@ -151,6 +151,14 @@ func policyReadErr(err error) error {
 	case errors.Is(err, rtdb.ErrUnavailable):
 		return remote(err)
 	default:
+		// An error that already carries an exit code is one of this file's own
+		// refusals (projectPolicyRead's unknown keys, the only one that can
+		// reach here), and it already names the node: prefixing it again would
+		// print the same path twice.
+		var ee *ExitError
+		if errors.As(err, &ee) {
+			return err
+		}
 		return userErr("%s: %w", projectpolicy.PathShared(), err)
 	}
 }
