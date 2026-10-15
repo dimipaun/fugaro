@@ -659,12 +659,13 @@ additional options … for example, `--network host`" (`Runnable.Container`;
 2026-10-15 — it is **not** an array, and an array is rejected) and therefore
 UNVERIFIED for this use. The variants to try, in order (each is a committed file
 of §7.2 — `check57/job.json` with exactly these two fields replaced — and 57a
-step 6 walks all four submissions: these three and the no-`options` baseline):
+step 6 walks all four submissions: these three and the no-`options` baseline,
+then the two it builds from the winner):
 
 ```json
 "options": "--group-add __DOCKER_GID__"   // (a) keep the image's uid, join the socket's group
 "options": "--user 0"                     // (b) root by docker's own flag, whatever the image's USER says
-"options": "--privileged"                 // (c) last resort: the socket's power without the mount's subtlety
+"options": "--privileged"                 // (c) the host's devices and capability sets -- and NOT a uid change, so it is expected to be refused like the baseline (§2.2)
 ```
 
 The gid is **numeric, and read off the VM** (`stat -c %g /var/run/docker.sock`,
@@ -674,17 +675,26 @@ group, so the name form fails with `Unable to find group docker` before docker
 is ever reached. A gid that does not exist in the container is what
 `--group-add` takes; a name has to be looked up, and this one is not there.
 
-`--user 0` and (c) are the same outcome — a root container — reached through the
-container runtime instead of Batch's field; `--privileged` is documented as
-**ignoring `--group-add`**, so (c) is not a way to test (a). It is also not a
-way to test anything much: `--privileged` grants the container the host's
-devices and capabilities, so a socket that "works" under (c) proves only that
-docker is reachable by a container that has already been given the VM. Two
+(c) is **not** a second way to root, and it is not a way to test (a) either.
+`--privileged` gives the container the host's devices and the full capability
+**sets**, but it does not change the **uid**: the container still starts as the
+image's own user, and a uid-1000 process starts with an **empty effective
+capability set** — Linux clears permitted→effective at `execve` for a non-root
+uid with no file capabilities and no ambient set (`capabilities(7)`,
+`execve(2)`) — so `CAP_DAC_OVERRIDE` is not there to open a mode-`0660`
+`root:docker` socket, and (c) is **expected to be refused exactly like the
+no-`options` baseline**. Whether the runtime sets ambient capabilities anyway is
+what 57a-6's `id` and error lines measure; if (c) *does* get in, then the uid is
+not 1000 or the runtime is granting what the kernel would not, and either way
+that is the finding. Two
 things must be checked alongside them, and 57a step 6 records both: `options`
 are **dropped altogether when image streaming is on** (§1.2 — streaming honours
 only `imageUri`, `commands`, `entrypoint`, `volumes` and `enableImageStreaming`),
 so **with streaming (C4) the only socket path left is the group baked into the
-image** — there is no `options` to pass and no `--user` to set; and whether a
+image** — there is no `options` to pass and no `--user` to set. That sentence is
+an argument from the five-subfield list, and it is **UNVERIFIED as behaviour**
+until 57a-6's combination submission runs the variant that worked with streaming
+on and the socket probe's own commands; and whether a
 `docker` group **exists on the COS boot image**, and with which gid, is
 **UNVERIFIED** — if it does, baked-in membership is the cleanest ordering of
 all, because it needs no `options` and survives streaming. Check 57a step 6
@@ -707,8 +717,9 @@ gid into the image and add the container user to it, so nothing else changes and
 streaming cannot drop it; (2) `--group-add <gid>` through `options` if Batch
 honours it; (3) root, with the ownership consequence written into SECURITY.md.
 Whether the host's `docker` gid can be baked into the image without a rebuild on
-every COS change is **UNVERIFIED** — Check 57a step 6 records the gid, and step
-11 records whether the image-baked path is the one the build takes.
+every COS change is **UNVERIFIED** — Check 57a step 6 records the gid, and which
+of these orderings the build takes is §8.1's task 7 (the socket, with the image
+side in task 6), not this check's.
 
 Security consequence, repeated because it is the whole of §3: **a run that has
 this socket is root on the VM.** The mount is not a privilege boundary and is
@@ -1445,8 +1456,10 @@ A VM backend is **orthogonal to shared project jobs** (project-centric phase
 3). Shared jobs exist because Cloud Run cannot vary a job per execution; a VM
 backend creates a fresh job per run, so it never needs to share — but **it
 does not sidestep the isolation loss D4 accepted**: IAM isolation follows the
-service account, and C6's account is the profile's, so the loss applies on the
-VM backend exactly as it does on a shared job (§3.1, C21). What it removes is
+service account, and **the account's granularity is C21's decision, not the
+VM's**: it is the (`profile`, `account`) account the design keeps (§3.1), which
+before phase 3 is today's per-repository account (§3.2), so the loss applies on
+the VM backend exactly as it does on a shared job. What it removes is
 the *shared job*, and with it the reason Cloud Run had to share. Consequences:
 
 - **Before phase 3**, a VM backend uses the current model: a per-repository
@@ -1456,9 +1469,10 @@ the *shared job*, and with it the reason Cloud Run had to share. Consequences:
   (`profile`, `account`) and profiles select the VM class (§4.3) — the intended
   end state.
 - The **seam generalisation (C12)** is independent of both and can land first.
-- Recommendation: the plan's first cloud-free task is the conformance suite
-  against a fake (§8.1, Task 2), which needs neither phase 3 nor any cloud,
-  while the live measurement (Check 57a, Task 0) gates the rest.
+- Recommendation: the first cloud-free task is the seam's name codec (§8.1,
+  Task 1), and the first that needs neither a cloud **nor an owner step** is
+  the conformance suite against a fake (Task 2), which needs neither phase 3
+  nor any cloud, while the live measurement (Check 57a, Task 0) gates the rest.
 
 ### 6.3 Out of scope
 
@@ -1608,22 +1622,25 @@ design's own text is the source; the plan task writes it to
 }
 ```
 
-**`__IMG__`, `__SA_EMAIL__` and `__DOCKER_GID__` are the three places the JSON
-and the terminal have to agree, so the JSON does not fix them.** They are
-placeholders and the block above is not valid JSON until they are substituted:
-the setup block below renders them from its own variables into
-`/tmp/check57*.json`, and **every** submission in 57a and 57b then uses those
-files and never the committed ones — so a run of the check cannot send an image,
-a project, a region, an account or a socket gid the rest of the check is not
-using.
+**`__IMG__`, `__SA_EMAIL__`, `__DOCKER_GID__`, `__QUOTA_MT__` and
+`__PRELOAD_IMG__` are the five places the JSON and the terminal have to agree,
+so the JSON does not fix them.** They are placeholders and the block above is
+not valid JSON until they are substituted: the setup block below renders them
+from its own variables into `/tmp/check57*.json`, and **every** submission in
+57a and 57b then uses those files and never the committed ones — so a run of the
+check cannot send an image, a project, a region, an account, a socket gid, a
+machine type or a boot image the rest of the check is not using.
 
 `IMG` is the installation's own base image, and the setup block **reads it out
 of the installation** (`fugaro doctor --json`'s `project.base_images.base`)
 rather than naming a tag by hand; its shape is
 `<region>-docker.pkg.dev/<project>/fugaro-base/fugaro-base:<version>` — the
 **base repository the installation creates**, named by
-`infra.BaseRegistry = "fugaro-base"` (`internal/infra/tfvars.go`:23;
-`LegacyRegistry` is the older `sandbox/` path and a different name). It is
+`infra.BaseRegistry = "fugaro-base"` (`internal/infra/tfvars.go`:23).
+`infra.LegacyRegistry` (`:24`) is the older single repository, named `fugaro`,
+that a pre-0.7.5 installation has and discovery adopts
+(`internal/infra/discover.go`:394-421) — a different repository name, and not a
+path this check pulls from. It is
 **not** the `fugaro-ghcr/dimipaun/fugaro-base` remote-repository path of
 `docs/design/registry-remote-repository.md`: that work is **PR #362, not
 merged**, and this check does not depend on it. Should #362 land, pointing the
@@ -1651,20 +1668,27 @@ and each would otherwise take a default that contradicts the design.
   submitted, and Restore deletes it; nothing below may run without it.
 - `network.networkInterfaces[0].noExternalIpAddress: true`. The documented
   default is **false** (Batch REST reference, `NetworkInterface`), i.e. an
-  external IP, where §3.2's C7 has the run without one. The `network` block
+  external IP, where §1.10's C7 has the run without one. The `network` block
   names `global/networks/default` only because the sandbox is a bare project;
   an installation with its own network sets the network and the subnetwork
   here. **If the job cannot pull its image or write its logs with no external
   IP, that is the finding**, not a reason to add one back: it means the Private
-  Google Access or Cloud NAT §1.7 assumes is missing. Step 1 records it.
-- `instancePolicy.blockProjectSshKeys: true`, which closes project-wide SSH
-  keys on the instance (§3.2).
+  Google Access or Cloud NAT §1.7 assumes is missing. Step 0b settles the route
+  *before* the first submission, and step 2's first line is where a missing one
+  would still show.
+- `allocationPolicy.instances[0].blockProjectSshKeys: true`, which closes
+  project-wide SSH keys on the instance (§3.2). It is a field of
+  `InstancePolicyOrTemplate` — **beside** `policy`, not inside it (Batch REST
+  reference, checked 2026-10-15).
 
 **Step 6's four socket variants are committed files too** — `check57/job-socket-none.json`,
 `check57/job-socket-groupadd.json`, `check57/job-socket-user0.json` and
 `check57/job-socket-priv.json` — because a described variant is a variant nobody
-runs twice the same way, and the point of step 6 is that four submissions are
-comparable. **Each is the committed `check57/job.json` above with exactly two
+runs twice the same way, and the point of step 6 is that the four are
+comparable. (The step's fifth and sixth submissions — the streaming combination
+and the timing run — are **built at the terminal from whichever of these four
+worked**, since which one that is cannot be known when the files are committed.)
+**Each is the committed `check57/job.json` above with exactly two
 fields replaced — `options` and `commands` — and nothing else**, so the socket
 mount, the network posture, the account, the boot disk and the labels are the
 same in all four and in 57a-4. The replacements, verbatim:
@@ -1685,7 +1709,11 @@ same in all four and in 57a-4. The replacements, verbatim:
 "options": "--user 0"
 "commands": ["bash", "-lc", "id; stat -c %g /var/run/docker.sock; docker version; docker run --rm docker.io/library/hello-world; echo chk57-socket-done"]
 
-// check57/job-socket-priv.json -- §2.2's (c)
+// check57/job-socket-priv.json -- §2.2's (c). Expected to be refused exactly
+// like the no-"options" baseline: `--privileged` hands over the host's devices
+// and capability sets but does not change the uid, and a uid-1000 process's
+// effective set is cleared at execve, so it has no CAP_DAC_OVERRIDE for the
+// socket. Its "id" line is what would show that it is not 1000 after all.
 "options": "--privileged"
 "commands": ["bash", "-lc", "id; stat -c %g /var/run/docker.sock; docker version; docker run --rm docker.io/library/hello-world; echo chk57-socket-done"]
 ```
@@ -1710,6 +1738,12 @@ they go in that structure, and the setup block renders each into
 // check57/job-streaming.json -- 57a-3(a): image streaming, §1.2's prerequisite.
 "taskGroups[0].taskSpec.runnables[0].container.enableImageStreaming": true
 
+// check57/job-preload.json -- 57a-3(b): the boot disk 57a-3b built, instead of
+// the `batch-cos` family. __PRELOAD_IMG__ is rendered from $P and $SA, so the
+// job cannot point at an image the build step did not create; `sizeGb` stays at
+// the base file's 50, which a disk created from the image is grown to.
+"allocationPolicy.instances[0].policy.bootDisk.image": "__PRELOAD_IMG__"
+
 // check57/job-teardown-fail.json -- 57a-8, the failure path.
 "taskGroups[0].taskSpec.runnables[0].container.commands": ["bash", "-lc", "echo chk57-teardown-fail; exit 3"]
 
@@ -1722,15 +1756,24 @@ they go in that structure, and the setup block renders each into
 // the one that asks whether Batch's teardown survives an abnormal death.
 "taskGroups[0].taskSpec.runnables[0].container.commands": ["bash", "-lc", "echo chk57-teardown-crash; sleep 2; kill -9 $$"]
 
-// check57/job-signal.json -- 57a-12: the same index/count claim in BOTH places
-// Batch documents environment, so the two are answered separately.
+// check57/job-signal-job.json -- 57a-12(a): the index/count claim set at the
+// TaskSpec's own `environment`, which is the job-level place.
 "taskGroups[0].taskSpec.environment": {"variables": {"BATCH_TASK_INDEX": "99", "BATCH_TASK_COUNT": "99"}}
+"taskGroups[0].taskSpec.runnables[0].container.commands": ["bash", "-lc", "echo \"IDX=${BATCH_TASK_INDEX:-unset} COUNT=${BATCH_TASK_COUNT:-unset}\"; curl -s -m 3 -H \"Metadata-Flavor: Google\" http://metadata.google.internal/computeMetadata/v1/instance/id || echo no-metadata"]
+
+// check57/job-signal-task.json -- 57a-12(b): the same claim set in
+// `taskEnvironments`, the per-task place. Two files, not one: a single job that
+// set both could not say which place the container's value came from.
 "taskGroups[0].taskEnvironments": [{"variables": {"BATCH_TASK_INDEX": "99", "BATCH_TASK_COUNT": "99"}}]
 "taskGroups[0].taskSpec.runnables[0].container.commands": ["bash", "-lc", "echo \"IDX=${BATCH_TASK_INDEX:-unset} COUNT=${BATCH_TASK_COUNT:-unset}\"; curl -s -m 3 -H \"Metadata-Flavor: Google\" http://metadata.google.internal/computeMetadata/v1/instance/id || echo no-metadata"]
 
 // check57/job-quota.json -- 57a-11: raised until the sandbox's regional quota
-// cannot place it, which is the point of the step.
-"allocationPolicy.instances[0].policy.machineType": "c2-standard-60"
+// cannot place it, which is the point of the step. The type is a placeholder
+// because c2-standard-60 is NOT offered in every region (us-east5 among them):
+// the setup block discovers the largest vCPU count the region's own zones offer
+// (__QUOTA_MT__), so the step cannot fail at submit for a type the region does
+// not have -- a 400 that reads like the quota answer the step is after.
+"allocationPolicy.instances[0].policy.machineType": "__QUOTA_MT__"
 ```
 
 **Two things about that JSON are deliberate.** First, the runnable carries the **socket bind mount**
@@ -1808,27 +1851,45 @@ BASE_REPO=$(printf '%s\n' "${IMG}" | cut -d/ -f3)
 git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
   || { echo "Check 57 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
 
-# The committed JSON's three placeholders, resolved from the variables above;
+# The committed JSON's five placeholders, resolved from the variables above;
 # every submission in 57a and 57b uses a /tmp/check57*.json, never a committed
-# file. DOCKER_GID is the ONE variable this block does not know at first: it is
-# the socket's gid on the COS boot image, and 57a-6's baseline submission is what
-# reads it off the VM ("stat -c %g /var/run/docker.sock"), after which it is
-# exported and this block re-run, so the (a) variant can be rendered with it.
+# file. Three are resolved rather than typed here:
+#   DOCKER_GID   the socket's gid on the COS boot image -- 57a-6's baseline
+#                submission reads it off the VM ("stat -c %g
+#                /var/run/docker.sock"), after which it is exported and this
+#                block re-run, so the (a) variant can be rendered with it.
+#   QUOTA_MT     57a-11's machine type, discovered from the region because
+#                c2-standard-60 is NOT offered in every region: the largest
+#                vCPU count the region's own zones do offer. --zones is a
+#                server-side query (a bare list is every type in every zone);
+#                if the region has no -a/-b/-c the command fails and the
+#                fallback below fills the placeholder anyway, which 57a-11's
+#                FACT records as "not discovered".
+#   PRELOAD_IMG  57a-3b's boot image, named after $SA like everything else this
+#                check creates, in Batch's `Disk.image` path form.
 DOCKER_GID=${DOCKER_GID:-}
+QUOTA_MT=$(gcloud compute machine-types list --project="${P:?}" \
+             --zones="${L:?}-a,${L:?}-b,${L:?}-c" --format='value(name,guestCpus)' 2>/dev/null | \
+             sort -k2,2nr | head -1 | cut -f1)
+QUOTA_MT=${QUOTA_MT:-c2-standard-60}
+PRELOAD_IMG="projects/${P}/global/images/${SA}-preload"
 render() { sed -e "s|__IMG__|${IMG:?}|g" \
               -e "s|__SA_EMAIL__|${SA_EMAIL:?}|g" \
               -e "s|__DOCKER_GID__|${DOCKER_GID}|g" \
+              -e "s|__QUOTA_MT__|${QUOTA_MT:?}|g" \
+              -e "s|__PRELOAD_IMG__|${PRELOAD_IMG:?}|g" \
               -e "s|global/networks/default|global/networks/${NET:?}|g" "$1"; }
 render check57/job.json > /tmp/check57.json          # the probe's own template
-for F in docker streaming socket-none socket-user0 socket-priv \
-         teardown-fail teardown-cancel teardown-crash signal quota; do
+for F in docker streaming preload socket-none socket-user0 socket-priv \
+         teardown-fail teardown-cancel teardown-crash signal-job signal-task quota; do
   render "check57/job-${F}.json" > "/tmp/check57-${F}.json"
 done
 # The (a) variant only exists once the gid is known; 57a-6 renders it there.
 [ -n "$DOCKER_GID" ] && render check57/job-socket-groupadd.json > /tmp/check57-socket-groupadd.json
 grep -lq __ /tmp/check57*.json \
   && { echo "Check 57 stopped: a placeholder survived rendering (a __…__ field with no value). If it is __DOCKER_GID__, export DOCKER_GID=<gid> from 57a-6's baseline log and re-run this block" >&2; exit 1; }
-for F in /tmp/check57.json /tmp/check57-docker.json /tmp/check57-streaming.json /tmp/check57-signal.json \
+for F in /tmp/check57.json /tmp/check57-docker.json /tmp/check57-streaming.json /tmp/check57-preload.json \
+         /tmp/check57-signal-job.json /tmp/check57-signal-task.json \
          /tmp/check57-quota.json /tmp/check57-socket-none.json /tmp/check57-socket-user0.json \
          /tmp/check57-socket-priv.json /tmp/check57-teardown-fail.json /tmp/check57-teardown-cancel.json \
          /tmp/check57-teardown-crash.json; do
@@ -1886,7 +1947,7 @@ leaked VM of *this check* is told from a real run's.
    ```
 
    `roles/logging.logWriter` is what lets the job write its own lines (step 10
-   reads them back); `roles/batch.agentReporter` is §3.2's C21 grant, the one
+   reads them back); `roles/batch.agentReporter` is §3.2's other grant, the one
    Batch needs to report task state to the agent; and the repository reader
    binding is what lets the agent pull the private base image at all — a grant
    the probe cannot run without and the first thing to check when a job fails
@@ -1902,7 +1963,7 @@ leaked VM of *this check* is told from a real run's.
 
 0b. **Egress, before anything submits a job — without it nothing below runs at
    all.** The job JSON sets `noExternalIpAddress: true` (the design's network
-   posture, §3.2's C7), and Batch supplies no egress of its own: with neither a
+   posture, §1.10's C7), and Batch supplies no egress of its own: with neither a
    Cloud NAT nor Private Google Access behind the subnet, the VM has no route
    out, the agent's image pull is denied, and **every** submission below fails
    before its first line — a probe that measures nothing and a go/no-go with no
@@ -1912,12 +1973,14 @@ leaked VM of *this check* is told from a real run's.
    installation level (§1.7), it **borrows** a NAT where one already exists and
    creates its own only when there is none — named `${SA}-*`, which is how the
    Restore finds it and the reason it can never find the project's own. It
-   borrows a NAT only when the NAT's own rules say it covers every subnet:
-   editing the project's router to add the subnet
+   borrows a NAT only when that NAT is **on the probe's own network in the
+   probe's region** *and* its own rules say it covers every subnet: a NAT on
+   another network cannot carry this VM's egress at all, and editing the
+   project's router to add the subnet
    (`gcloud compute routers nats update … --nat-custom-subnet-ip-ranges`) would
-   be a change to something the Restore may not undo, so an unreadable or
-   subnet-listing NAT sends the check to its own `${SA}-router`/`${SA}-nat`
-   instead:
+   be a change to something the Restore may not undo, so a NAT elsewhere, an
+   unreadable one, or one that lists its subnets by name sends the check to its
+   own `${SA}-router`/`${SA}-nat` instead:
 
    ```bash
    ROUTER=${SA}-router
@@ -1928,16 +1991,45 @@ leaked VM of *this check* is told from a real run's.
    # address). A NAT that lists its subnets by name, or one whose rules cannot
    # be read, is NOT borrowed -- editing the project's router is a change the
    # Restore below cannot undo, so this check makes its own pair instead.
-   if gcloud compute routers describe "${ROUTER}" --project="${P:?}" --region="${L:?}" >/dev/null 2>&1; then
-     :                                 # an earlier run of this block created this pair
-   elif gcloud compute routers nats list --project="${P:?}" --region="${L:?}" --format='value(name)' | grep -q . && \
-        gcloud compute routers list --project="${P:?}" --regions="${L:?}" --format='value(name)' | \
-          while read -r R; do
-            gcloud compute routers describe "${R}" --project="${P:?}" --region="${L:?}" \
-              --format='value(nats[].sourceSubnetworkIpRangesToNat)'
-          done | grep -Eq 'ALL_SUBNETWORKS_ALL_(IP|PRIMARY_IP)_RANGES'; then
-     echo "57a-0b: ${P}/${L} already has a NAT covering every subnet; borrowing it, creating none (this check deletes only ${SA}-*)"
+   #
+   # There is no project-wide NAT list: `gcloud compute routers nats list` takes
+   # --router and nothing else (checked 2026-10-15), so the search is routers
+   # first, then the NATs of each. And the routers are the ones on ${NET} in
+   # ${L}: a NAT on another network cannot carry this VM's egress, so borrowing
+   # one would send every submission below out with no route while the check
+   # read it as a job failure.
+   borrowed=""
+   for R in $(gcloud compute routers list --project="${P:?}" --regions="${L:?}" \
+                --filter="network~global/networks/${NET:?}\$" --format='value(name)'); do
+     if gcloud compute routers nats list --project="${P:?}" --region="${L:?}" --router="${R}" \
+          --format='value(sourceSubnetworkIpRangesToNat)' 2>/dev/null | \
+          grep -Eq '^ALL_SUBNETWORKS_ALL_(IP|PRIMARY_IP)_RANGES$'; then
+       borrowed="${R}"
+       break
+     fi
+   done
+
+   if [ -n "${borrowed}" ]; then
+     echo "57a-0b: borrowing ${borrowed}'s NAT on ${NET}/${L} (its rules cover every subnet); creating none (this check deletes only ${SA}-*)"
+   elif gcloud compute routers describe "${ROUTER}" --project="${P:?}" --region="${L:?}" \
+          --format='value(network)' 2>/dev/null | grep -q "global/networks/${NET:?}\$" && \
+        gcloud compute routers nats describe "${NAT}" --project="${P:?}" --region="${L:?}" \
+          --router="${ROUTER}" --format='value(sourceSubnetworkIpRangesToNat)' 2>/dev/null | \
+          grep -Eq '^ALL_SUBNETWORKS_ALL_(IP|PRIMARY_IP)_RANGES$'; then
+     # A re-run of this step. The ROUTER ALONE IS NOT THE PAIR: an earlier run
+     # that died between the two creates leaves a router with no NAT, and every
+     # submission below would then fail for want of egress -- a setup failure
+     # the check would read as a job failure. Both halves are required, and the
+     # router has to be on ${NET}.
+     echo "57a-0b: this check's own ${ROUTER}/${NAT} is already in place; reusing it"
    else
+     # Named ${SA}-*, so this is a change to nothing but this check's own
+     # leftovers. NAT first: a router that still has a NAT on it cannot be
+     # deleted.
+     gcloud compute routers nats delete "${NAT}" --project="${P:?}" --region="${L:?}" \
+       --router="${ROUTER}" --quiet >/dev/null 2>&1 || true
+     gcloud compute routers delete "${ROUTER}" --project="${P:?}" --region="${L:?}" \
+       --quiet >/dev/null 2>&1 || true
      gcloud compute routers create "${ROUTER}" --project="${P:?}" --region="${L:?}" --network="${NET:?}" || exit 1
      gcloud compute routers nats create "${NAT}" --project="${P:?}" --region="${L:?}" --router="${ROUTER}" \
        --auto-allocate-nat-external-ips --nat-all-subnet-ip-ranges || exit 1
@@ -1948,16 +2040,19 @@ leaked VM of *this check* is told from a real run's.
    create` takes labels in the pinned gcloud — the `${SA}-*` name is the marker,
    exactly as it is for `${SA}-preload` in the Restore below.)
 
-   **FACT:** which of the three branches ran, and — if it borrowed — the
-   `sourceSubnetworkIpRangesToNat` value it accepted. A NAT that exists but is
-   not a borrow candidate (its rules list subnets by name, or none can be read)
-   is **not** a setup failure and not a reason to touch the project: the check
-   falls to the third branch and creates its own `${SA}-router`/`${SA}-nat`,
-   which the Restore deletes. **Private Google Access is not the remedy** — it
-   reaches Google APIs only, so steps 4 and 6's `docker.io/library/postgres:17`
-   and `hello-world` pulls fail behind it and the go/no-go measures nothing —
-   and it is the *project's* subnet setting, which the Restore (deleting only
-   `${SA}-*`) must leave alone rather than turn back off by hand.
+   **FACT:** which of the three outcomes ran — borrowed an existing NAT, reused
+   this check's own pair, or created one — the name of the router it borrowed
+   from and the `sourceSubnetworkIpRangesToNat` value it accepted, and, on the
+   reuse branch, that the **NAT** was there and not only the router. A NAT that
+   exists but is not a borrow candidate (it is on another network, its rules
+   list subnets by name, or none can be read) is **not** a setup failure and not
+   a reason to touch the project: the check creates its own
+   `${SA}-router`/`${SA}-nat`, which the Restore deletes. **Private Google
+   Access is not the remedy** — it reaches Google APIs only, so steps 4 and 6's
+   `docker.io/library/postgres:17` and `hello-world` pulls fail behind it and
+   the go/no-go measures nothing — and it is the *project's* subnet setting,
+   which the Restore (deleting only `${SA}-*`) must leave alone rather than turn
+   back off by hand.
 
 0c. **Image streaming's prerequisite, before step 3a needs it.** Streaming is
    not a Batch-side flag alone: it is served by the
@@ -2028,14 +2123,78 @@ leaked VM of *this check* is told from a real run's.
    true` on the runnable, and nothing else — as
    `--config /tmp/check57-streaming.json`; the `containerfilesystem` API is
    enabled by 57a-0c and the image is in the job's own region (both prerequisites
-   are on the design's list, §1.2). (b) **The preloaded boot disk**: a boot image with
-   `fugaro-base` already in the Docker data root, built by the check as
-   `${SA:?}-preload` and deleted by the Restore. Five fresh jobs each, as in
-   step 2. **FACT:** the five times, the median and the delta over steps 1 and 2
-   for **each**, whether streaming accepted the job at all (it is documented as
-   ignoring `options`, §1.2, so this also says whether it is compatible with the
-   socket path of step 6), and whether the custom boot image was accepted — an
-   image Batch "might not be supported" is exactly the question. **The
+   are on the design's list, §1.2). Five fresh jobs, as in step 2.
+   (b) **The preloaded boot disk**: the boot image **3b builds below**, with
+   `fugaro-base` already in the Docker data root, submitted as
+   `--config /tmp/check57-preload.json` — the committed JSON whose only change
+   is `bootDisk.image`, pointing at the image 3b creates and the Restore
+   deletes. Five fresh jobs, as in step 2.
+
+   **3b — build the preloaded image.** It is a check artefact, not a build
+   change (C19 puts the real one in `fugaro init`'s Batch stage), so the check
+   builds and deletes it itself, named `${SA}-preload` like everything else it
+   creates. The base is the image Batch's own `Disk.image: batch-cos` resolves
+   to, so the result differs from the default boot disk **only** by the Docker
+   store's contents — which is what makes the (b) comparison a comparison:
+
+   ```bash
+   # The instance runs as THIS CHECK's account ($SA, which 57a-0 gave
+   # roles/artifactregistry.reader on the base repository), never the default
+   # Compute Engine SA; it carries fugaro_chk=57 so the Restore's VM sweep finds
+   # it if anything below fails halfway.
+   #
+   # PRELOAD_OK gates (b)'s five submissions: a build that does not finish
+   # leaves no image, and a job whose bootDisk.image does not exist would
+   # measure a setup failure instead of a cold start.
+   PRELOAD_OK=""
+   PRELOAD_BASE=$(gcloud compute images describe-from-family batch-cos --project="${P:?}" --format='value(name)' 2>/dev/null) \
+     || echo "Check 57: could not resolve the batch-cos family; the (b) half has no base image" >&2
+   if [ -n "${PRELOAD_BASE}" ]; then
+     gcloud compute instances create "${SA:?}-preload-build" --project="${P:?}" --zone="${L:?}-b" \
+       --image="${PRELOAD_BASE:?}" --machine-type=e2-medium --no-address \
+       --service-account="${SA_EMAIL:?}" --scopes=cloud-platform --labels=fugaro_chk=57 \
+       --metadata=startup-script="$(printf '%s\n' \
+           '#!/bin/bash' 'set -e' \
+           "docker-credential-gcr configure-docker --registries=${L}-docker.pkg.dev" \
+           "docker pull '${IMG:?}'" \
+           "docker image inspect '${IMG:?}' >/dev/null" \
+           'echo chk57-preload-built')" \
+       || echo "Check 57: could not create ${SA}-preload-build" >&2
+     # The pull is what this waits for, and the instance has no external IP, so
+     # the serial port is where its startup script's last line is read from.
+     # Bounded at ten minutes: a pull that fails never prints the marker, and
+     # this loop must end anyway.
+     for _ in $(seq 1 60); do
+       gcloud compute instances get-serial-port-output "${SA:?}-preload-build" --project="${P:?}" \
+         --zone="${L:?}-b" --port=1 2>/dev/null | grep -q chk57-preload-built && { PRELOAD_OK=yes; break; }
+       sleep 10
+     done
+     gcloud compute instances stop "${SA:?}-preload-build" --project="${P:?}" --zone="${L:?}-b" >/dev/null 2>&1 || true
+     if [ -n "${PRELOAD_OK}" ]; then
+       gcloud compute images create "${SA:?}-preload" --project="${P:?}" \
+         --source-disk="${SA:?}-preload-build" --source-disk-zone="${L:?}-b" \
+         --labels=fugaro_chk=57 || PRELOAD_OK=""
+     fi
+     gcloud compute instances delete "${SA:?}-preload-build" --project="${P:?}" --zone="${L:?}-b" --quiet >/dev/null 2>&1 || true
+   fi
+   [ -n "${PRELOAD_OK}" ] \
+     || echo "Check 57: 57a-3b built no image -- run (a)'s five submissions and SKIP (b)'s: a job whose bootDisk.image does not exist measures a setup failure, not a cold start. The FACT is this build's own error text" >&2
+   ```
+
+   A build that fails is **not** a failed check and not a licence to skip the
+   question: it is a FACT ("the preloaded-image half has no number, because the
+   image could not be built"), and it is the same question Google hedges on
+   ("might not be supported"), so record the failure's own text.
+
+   **FACT:** the five times, the median and the delta over steps 1 and 2 for
+   **each** alternative; whether streaming accepted the job at all; whether the
+   custom boot image was **accepted** by Batch and, if it was, whether the
+   container's start was actually faster — the two halves of Google's hedge; and
+   for 3b, the base family's image name, whether the startup script's pull
+   succeeded, and the image's own id. Note what this step does **not** settle:
+   neither job runs Docker, so streaming's compatibility with the socket path of
+   step 6 is **not** measured here — step 6's combination submission is what
+   measures it, and §2.2's claim stays UNVERIFIED until it does. **The
    recommendation for C4 follows these two numbers, not this document** (§1.2,
    §1.9).
 4. **Docker inside a run.** Submit `check57/job-docker.json` — the committed
@@ -2054,8 +2213,12 @@ leaked VM of *this check* is told from a real run's.
    socket was reachable at all (the CLI's own error if not); which permission
    path let the container open it (container as
    root, a supplementary group via the runnable's `options`, or a socket group
-   baked into the boot image — §2.2's three orderings); the pull time; and the
-   time to `pg_isready`.
+   baked into the boot image — §2.2's three orderings). It does **not** measure
+   the pull time or the time to `pg_isready`: a job refused at its first
+   `docker run` never reaches either, and asking a refused job for those two
+   numbers is asking for numbers it cannot have. Step 6 runs this same Docker
+   chain again under the variant that worked, and those two times come from
+   there.
 5. **The cost of one run.** Read the billing export (or the console's cost
    table) for one step-2 job and compare it with what the run's own record says
    (`cost.compute_usd` on a real run, 57b-5; on the probe, compute the estimate
@@ -2064,7 +2227,7 @@ leaked VM of *this check* is told from a real run's.
    one, NAT if used, the estimate, and how much the **one-minute minimum** added
    (a Compute Engine instance bills a one-minute minimum and then per second,
    §5.2).
-6. **The socket's permission path, in detail — four submissions, and this is
+6. **The socket's permission path, in detail — six submissions, and this is
    where the go/no-go gets a socket result rather than a uid.** Submit the four
    committed `check57/job-socket-*.json` files of §7.2, each with its own run id
    the way step 2 does, in this order:
@@ -2084,6 +2247,49 @@ leaked VM of *this check* is told from a real run's.
    done
    ```
 
+   Then two more — submissions (5) and (6) of the six, the loop above being (1)
+   to (4). They are **built here from the rendered files** rather than
+   committed, because which variant worked is only known at this point. Set `V`
+   to the variant that got a container in — `groupadd`, `user0`, `priv`, or
+   `none` if none did (with `none`, submission (5) is still worth its answer:
+   streaming over the baseline's options-less container, which is a refusal):
+
+   ```bash
+   # (5) the combination that decides §2.2's streaming claim: the variant that
+   #     worked, with streaming ON. Streaming honours only five subfields, and
+   #     `options` is not one of them, so this also says whether the socket
+   #     survives streaming -- which is the whole of §2.2's "with streaming the
+   #     only socket path left is the baked-in group". Its commands are the
+   #     socket probe's own, so "it ran docker" is what is read back.
+   # (6) the timing run: the same variant's `options` with STEP 4's Docker
+   #     chain, which is where the postgres:17 pull time and the time to
+   #     `pg_isready` are measured. 57a-4 cannot measure them (it is expected to
+   #     be refused at its first `docker run`), so this submission is what the
+   #     FACT lines for both steps come from.
+   python3 - "${V:?}" <<'PY'
+   import json, sys
+   v = sys.argv[1]
+   src = f"/tmp/check57-socket-{v}.json"
+   j = json.load(open(src))
+   c = j["taskGroups"][0]["taskSpec"]["runnables"][0]["container"]
+   c["enableImageStreaming"] = True
+   json.dump(j, open("/tmp/check57-socket-streaming.json", "w"), indent=2)
+   j = json.load(open(src))
+   j["taskGroups"][0]["taskSpec"]["runnables"][0]["container"]["commands"] = [
+       "bash", "-lc",
+       "t0=$(date +%s); docker pull docker.io/library/postgres:17; t1=$(date +%s); "
+       "echo \"chk57-pull-seconds=$((t1-t0))\"; "
+       "docker run -d --name pg -e POSTGRES_PASSWORD=x docker.io/library/postgres:17; t2=$(date +%s); "
+       "until docker exec pg pg_isready -U postgres; do sleep 1; done; t3=$(date +%s); "
+       "echo \"chk57-ready-seconds=$((t3-t2))\"; echo chk57-docker-timed"]
+   json.dump(j, open("/tmp/check57-socket-timed.json", "w"), indent=2)
+   PY
+   for F in streaming timed; do
+     gcloud batch jobs submit "${J:?}-${V}-${F}-$(date +%s)" --project="${P:?}" --location="${L:?}" \
+       --config "/tmp/check57-socket-${F}.json"
+   done
+   ```
+
    **FACT, per submission**, read out of its log lines, never inferred: the uid
    `id` reports (§2.2's open question — this is what settles it); the gid `stat`
    reports (and whether it is the same number on every VM); whether `docker
@@ -2092,14 +2298,19 @@ leaked VM of *this check* is told from a real run's.
    CLI's exact error when it did not. Then, separately: whether Batch **accepted**
    each `options` string at all — a rejected one fails at `jobs.submit` with a
    400 and never reaches a VM, which is itself the answer to "does `options`
-   carry `--group-add`". The go/no-go is: **at least one of (a) or (b) gives a
-   running container via the host socket, or the socket design has no
-   uid-preserving path** — and if only (c) works, §2.2's ordering drops to root
-   with the ownership consequence recorded. It is also why streaming (which
-   discards `options`) is only combinable with the socket if the **baked-in
-   group** path works: with streaming on, none of (a), (b) or (c) exists, and
-   that is the result step 3's streaming runs and this step's number have to
-   agree on.
+   carry `--group-add`". And for the two built-here submissions: whether the
+   streaming combination ran a container (the answer to §2.2's streaming claim,
+   which is UNVERIFIED until this line exists), and the pull and `pg_isready`
+   times from the timing run. The go/no-go is: **at least one of (a) or (b)
+   gives a running container via the host socket, or the socket design has no
+   uid-preserving path** — and if only (b) works, §2.2's ordering drops to
+   `--user 0` with the ownership consequence recorded; (c) is expected to be
+   refused like the baseline, so "only (c) works" is not an outcome this step
+   can produce (if it did, see §2.2). It is also why streaming (which discards
+   `options`) is only combinable with the socket if the **baked-in group** path
+   works — and submission (5) is what says whether it is: with streaming on,
+   none of (a), (b) or (c) exists, and that is the result step 3's streaming
+   runs and this step's number have to agree on.
 7. **(Optional) Preemption.** Run one `$J` job with a spot provisioning model
    and preempt it (or let it happen). The notice period is 0 seconds by default,
    or 120 seconds if the job asks for it, and the shutdown afterwards is best
@@ -2108,8 +2319,8 @@ leaked VM of *this check* is told from a real run's.
    whether it reached `finalize`, and the time from the preemption notice to the
    VM's death.
 8. **Teardown on every exit path.** For each of: success; failure (a runnable
-   that exits non-zero); **cancel** (`gcloud batch jobs cancel "${NAME:?}"
-   --project="${P:?}" --location="${L:?}"` — `jobs.cancel`, **not**
+   that exits non-zero); **cancel** (`gcloud batch jobs cancel` on the job the
+   cancel iteration submitted — `jobs.cancel`, **not**
    `jobs.delete`: delete erases the job and its history, which is why §1.4 makes
    cancel a `cancel` and the reaper a `delete`); and a crashed runner (the
    committed `check57/job-teardown-crash.json`, which SIGKILLs the container's own
@@ -2119,9 +2330,23 @@ leaked VM of *this check* is told from a real run's.
    ```bash
    # Four fresh jobs, since one job runs once (§2.3): check57/job.json's own
    # command is the success path and needs no variant file.
+   #
+   # N is the name THIS iteration submitted -- the cancel below needs it, and
+   # nothing else in the block knows it (a bare ${NAME} would be an empty
+   # argument, which is the "gcloud falls back to its ambient config" trap the
+   # setup block's ${VAR:?} rule exists for).
    for V in "" fail cancel crash; do
-     gcloud batch jobs submit "${J:?}-teardown${V:+-$V}-$(date +%s)" --project="${P:?}" --location="${L:?}" \
+     N="${J:?}-teardown${V:+-$V}-$(date +%s)"
+     gcloud batch jobs submit "${N}" --project="${P:?}" --location="${L:?}" \
        --config "/tmp/check57${V:+-teardown-$V}.json"
+     if [ "${V}" = cancel ]; then
+       # Cancel a RUNNING job, which is the path being tested: wait for the
+       # state rather than racing the submission. A job that never reaches
+       # RUNNING is itself a FACT.
+       until gcloud batch jobs describe "${N}" --project="${P:?}" --location="${L:?}" \
+               --format='value(status.state)' | grep -q '^RUNNING$'; do sleep 5; done
+       gcloud batch jobs cancel "${N}" --project="${P:?}" --location="${L:?}"
+     fi
    done
 
    # ... then, per path, the surviving resources:
@@ -2189,8 +2414,12 @@ leaked VM of *this check* is told from a real run's.
     ```bash
     NAME=$(gcloud batch jobs list --project="${P:?}" --location="${L:?}" \
       --filter="labels.fugaro_chk=57" --format='value(name)' --limit=1)
-    UID=$(gcloud batch jobs describe "${NAME:?}" --project="${P:?}" --location="${L:?}" --format='value(uid)')
-    gcloud logging read "resource.type=\"batch.googleapis.com/Job\" AND labels.\"job_uid\"=\"${UID:?}\"" \
+    # JOB_UID, never UID: UID is a READONLY bash variable (the shell's own user
+    # id), and assigning to it aborts a non-interactive script -- which is how
+    # this block is run (`bash check57.sh`), so `UID=$(...)` would end the check
+    # on that line rather than measure anything.
+    JOB_UID=$(gcloud batch jobs describe "${NAME:?}" --project="${P:?}" --location="${L:?}" --format='value(uid)')
+    gcloud logging read "resource.type=\"batch.googleapis.com/Job\" AND labels.\"job_uid\"=\"${JOB_UID:?}\"" \
       --project="${P:?}" --limit=1 --format=json
     gcloud logging read 'resource.type="batch.googleapis.com/Job" AND labels.fugaro_chk=57' \
       --project="${P:?}" --limit=1 --format=json
@@ -2210,13 +2439,19 @@ leaked VM of *this check* is told from a real run's.
     entry — apply it if the owner wants the answer now, and revert it in the
     Restore if so.
 11. **(Optional, quota.) Queueing, and what a queued job does.** Submit
-    `check57/job-quota.json` — the committed JSON with the machine type raised to
-    `c2-standard-60`, so it asks for more vCPUs than the sandbox region's quota
-    leaves — as `--config /tmp/check57-quota.json` (or fill the quota with
+    `check57/job-quota.json` — the committed JSON whose machine type is the
+    largest vCPU count **the region's own zones offer** (`__QUOTA_MT__`, resolved
+    by the setup block; not a hard-coded `c2-standard-60`, which is not offered
+    in every region — us-east5 among them — and a type the region does not have
+    fails at `jobs.submit` with a 400 that reads like the quota answer this step
+    is after) — as `--config /tmp/check57-quota.json` (or fill the quota with
     step-2 jobs) and watch it: the state should be
     `QUEUED`, and Batch holds a job in `QUEUED` for at most **2 days** before
-    failing it (`cloud.google.com/batch/quotas`, §1.4). **FACT:** the state
-    observed, how long it sat there, and what the API said. Batch has no
+    failing it (`cloud.google.com/batch/quotas`, §1.4). If even that type is
+    placed, record it: the regional quota was not the constraint, and that is an
+    answer too. **FACT:** the state observed, how long it sat there, what the API
+    said, and whether the machine type came from the discovery or from the
+    fallback. Batch has no
     queue-deadline *field* — the design's queue deadline (§1.4, C8) is a
     Fugaro-side reaper action, so this step measures the state it acts on, not
     a Google knob. Cancel it and continue.
@@ -2225,9 +2460,13 @@ leaked VM of *this check* is told from a real run's.
     `BATCH_TASK_INDEX`/`BATCH_TASK_COUNT`, which Batch injects into every task.
     If a job's own environment can set or overwrite them, that signal is only
     as good as the launch path — still better than a Fugaro variable, but the
-    design has to say so. Submit `check57/job-signal.json` — the committed JSON
-    whose job-level `environment` *and* whose `taskEnvironments` both set
-    `BATCH_TASK_INDEX=99` and `BATCH_TASK_COUNT=99`, and whose container command is
+    design has to say so. **Two submissions, one per place Batch documents
+    environment**, because a single job that set both could not say which place
+    the container's value came from: `check57/job-signal-job.json`, whose
+    `taskSpec.environment` sets `BATCH_TASK_INDEX=99` and
+    `BATCH_TASK_COUNT=99`, and `check57/job-signal-task.json`, which sets the
+    same pair in `taskEnvironments[0].variables` and nothing at TaskSpec level.
+    Both carry the same container command:
 
     ```bash
     bash -lc 'echo "IDX=${BATCH_TASK_INDEX:-unset} COUNT=${BATCH_TASK_COUNT:-unset}"; \
@@ -2235,12 +2474,17 @@ leaked VM of *this check* is told from a real run's.
                 http://metadata.google.internal/computeMetadata/v1/instance/id || echo "no-metadata"'
     ```
 
-    — as `--config /tmp/check57-signal.json`. **FACT:** the values the container
-    saw — the injected ones (index 0 of a
-    one-task job, count 1), the job's `99`, or nothing (a var Batch strips) —
-    for each of the two places separately; and whether the metadata server
-    answered at all without an external IP, which is the fallback C12 names and
-    §1.7's Private Google Access question in one line.
+    — as `--config /tmp/check57-signal-job.json` and
+    `--config /tmp/check57-signal-task.json`, one at a time. **FACT:** the values
+    the container saw — the injected ones (index 0 of a one-task job, count 1),
+    the job's `99`, or nothing (a var Batch strips) — **named per place**, since
+    each submission answers for exactly one of them. The metadata line is
+    **not** a Private Google Access result: the metadata server is the link-local
+    `169.254.169.254`, which no external IP, NAT or PGA setting affects (§3.3),
+    so what it records is whether a job can read its own VM's identity from the
+    metadata server — the mechanism §3.3's token comes from — from a VM with no
+    external IP. PGA's own question is step 0b's, and its answer is the pulls in
+    steps 2 to 4.
 
 ### 57b. The post-build acceptance run (after the enable task)
 
@@ -2261,7 +2505,16 @@ of the same repository — the owner's, a scheduled one, an earlier check's — 
 the restore deletes only what this check created. So **record each 57b run's job
 name in the FACT lines**: that name is both how the restore finds the job and
 how the assertion counts it, and a name missing from the list is a job left
-behind.
+behind. **Record each run's `fugaro_run` label value as well**, read back off
+the job rather than reconstructed
+(`gcloud batch jobs describe RUN --format='value(labels.fugaro_run)'`): a job's
+name never reaches its VMs — `Job.labels` do not, only `allocationPolicy.labels`
+do (§2.4) — so that label value is the **only** handle the Restore's VM sweep
+has on the VMs these runs leave, and it cannot be derived from the name (the
+name ends in a 12-hex hash of the run id, while the label carries the slug and
+the run id, truncated with a short hash when the two are too long for 63
+characters — §2.4). A run whose label value is missing from the list is a VM the
+restore cannot find.
 
 1. **A real run with Docker.** `fugaro run` on the sandbox with the backend
    set to `cloud-batch` and the workflow's `docker: true` (§4.2, C16), where the
@@ -2304,11 +2557,16 @@ behind.
 
 **FACT lines to record:** every `FACT:` above; the `fugaro version` and the
 date; the machine type and boot-image version; the median launch-to-first-line
-for 57a-1, -2 and -3; whether Docker worked and by which permission path; the
+for 57a-1, -2 and -3 (both alternatives, and whether 3b's image was built at
+all); whether Docker worked and by which permission path, and whether it still
+worked with streaming on (57a-6's combination submission); the postgres pull
+time and the time to `pg_isready` (57a-6's timing run, not 57a-4); the
 billed cost of one run and the estimate; the final state and the survivor list
 for each 57a-8 and 57b-4 path; the IAM bindings of 57a-9; the raw log entry of
 57a-10; the injected-signal values and the metadata answer of 57a-12; the job
-name of every 57b run; and whether `fugaro logs` found the Batch run's lines.
+name **and the `fugaro_run` label value** of every 57b run (the Restore needs
+both: the name for the job, the label value for its VMs); which branch 57a-0b
+took for egress; and whether `fugaro logs` found the Batch run's lines.
 
 **Paste back:** the FACT lines, verbatim, plus any correction the run found and
 **57a's go/no-go: build the VM backend only if 57a-2 or 57a-3's median is at
@@ -2333,9 +2591,19 @@ would otherwise interpolate an empty `$P`, `$L` or `$SA`, which is exactly how
 # restore after 57a alone: nothing of 57b's was created. Set it before running
 # the block, and do not put anything in it that this check did not start.
 RUNS=""
+# The `fugaro_run` label values of those same runs, read back off each job with
+# `gcloud batch jobs describe RUN --format='value(labels.fugaro_run)'` (57b's
+# FACT line records one per run), space-separated. These are the ONLY handle on
+# 57b's VMs: a job's name never reaches its VMs (Job.labels do not, only
+# allocationPolicy.labels do, §2.4), and the label value cannot be derived from
+# the name -- the name ends in a 12-hex hash of the run id, the label carries
+# the slug and the run id, truncated with a short hash when they are too long
+# for 63 characters (§2.4). EMPTY IS CORRECT only when RUNS is empty too.
+RUN_LABELS=""
 
-# 1. Every job the check submitted: 57a-2, -3, -4, -6 (its four socket variants),
-#    -7, -8, -11 and -12 -- the probe's -- and 57b-1, -3 and -4 (real runs).
+# 1. Every job the check submitted: 57a-2, -3 (both alternatives), -4, -6 (its
+#    four socket variants and the two submissions built from them), -7, -8, -11
+#    and -12 (both places) -- the probe's -- and 57b-1, -3 and -4 (real runs).
 #    jobs.delete -- not cancel: the check is finished with them.
 #
 #    TWO SETS, and neither is "every job of the sandbox repository", which is
@@ -2394,6 +2662,24 @@ gcloud compute instances list --project="${P:?}" --filter='labels.fugaro_chk=57'
     gcloud compute instances delete "${NAME:?}" --project="${P:?}" --zone="${ZONE:?}" --quiet
   done
 
+# 2b. The VMs 57b's runs left, if any. Same sweep, different handle, because a
+#     57b job's own name never reaches its VM (§2.4): the handle is the per-run
+#     fugaro_run label value this check read back off each job (RUN_LABELS, and
+#     57b's FACT line). It is an exact match on a value this check recorded, so
+#     it cannot reach another run's VM -- a filter on fugaro=managed or on the
+#     repository label could, which is why neither is used (step 1 says the
+#     same about jobs). A leaked VM here is 57b-4's finding, so record what this
+#     deletes: the FACT lines are the evidence, this sweep is the cleanup.
+for RL in ${RUN_LABELS}; do
+  gcloud compute instances list --project="${P:?}" --filter="labels.fugaro_run=${RL:?}" \
+    --format='csv[no-heading](name,zone.basename())' | \
+    while IFS=, read -r NAME ZONE; do
+      gcloud compute instances delete "${NAME:?}" --project="${P:?}" --zone="${ZONE:?}" --quiet
+    done
+done
+[ -n "${RUN_LABELS}" ] \
+  || echo "Restore: RUN_LABELS is empty; 57b's VMs were not swept (correct after a 57a-only run, and a gap after 57b unless the label values were recorded)"
+
 # 3. The IAM this check added, BEFORE deleting the account. Deleting a service
 #    account does NOT remove its bindings: the policy keeps the member as
 #    `deleted:serviceAccount:...`, which is a grant nobody meant to leave and a
@@ -2436,10 +2722,12 @@ fi
 ```
 
 The NAT/router/subnet note, if the check had to create egress of its own: it
-**borrows** the installation's NAT where one exists **and its rules cover every
-subnet** (the design puts NAT at the installation level, §1.7, and 57a-0b prints
-which branch it took, creating its own pair rather than editing a NAT it cannot
-read or that names its subnets), and names
+**borrows** the installation's NAT where one exists **on the probe's own network
+in the probe's region, and only when its rules cover every subnet** (the design
+puts NAT at the installation level, §1.7, and 57a-0b prints
+which branch it took, creating its own pair rather than borrowing a NAT on
+another network or editing a NAT it cannot read or that names its subnets), and
+names
 anything it creates `${SA}-*` — step 5 above — so this restore never reaches
 resources the check did not create, and never by `fugaro=managed`, which is the
 installation's label and reaches resources this check never touched. The log sink
@@ -2450,25 +2738,46 @@ is touched at any step.
 **The restore's assertion — run it and paste the output; every line must read
 `0`.** These are counts, so a line that looks empty is a `gcloud` that failed or
 a filter that matched nothing for the wrong reason, not a clean project. `RUNS`
-is the same list step 1 used: set it again here, or the `jobs (57b)` line counts
-nothing and says so:
+and `RUN_LABELS` are the same two lists step 1 and step 2b used: set them again
+here, or the `jobs (57b)` and `vms (57b)` lines count nothing and say so:
 
 ```bash
-RUNS="${RUNS:-}"   # the names 57b recorded; empty only if 57b did not run
+RUNS="${RUNS:-}"            # the names 57b recorded; empty only if 57b did not run
+RUN_LABELS="${RUN_LABELS:-}"  # their fugaro_run label values, same rule
 LEFT57B=0; for N in ${RUNS}; do
   gcloud batch jobs describe "${N:?}" --project="${P:?}" --location="${L:?}" >/dev/null 2>&1 && LEFT57B=$((LEFT57B + 1))
 done
+LEFT57B_VMS=0; for RL in ${RUN_LABELS}; do
+  LEFT57B_VMS=$((LEFT57B_VMS + $(gcloud compute instances list --project="${P:?}" \
+    --filter="labels.fugaro_run=${RL:?}" --format='value(name)' | wc -l)))
+done
 echo "jobs (57a): $(gcloud batch jobs list --project="${P:?}" --location="${L:?}" --filter='labels.fugaro_chk=57' --format='value(name)' | wc -l)"
 echo "jobs (57b): ${LEFT57B}"
-echo "vms:        $(gcloud compute instances list --project="${P:?}" --filter='labels.fugaro_chk=57' --format='value(name)' | wc -l)"
+echo "vms (57a):  $(gcloud compute instances list --project="${P:?}" --filter='labels.fugaro_chk=57' --format='value(name)' | wc -l)"
+echo "vms (57b):  ${LEFT57B_VMS}"
 echo "image:      $(gcloud compute images list --project="${P:?}" --filter="name~^${SA}-preload" --format='value(name)' | wc -l)"
 echo "account:    $(gcloud iam service-accounts list --project="${P:?}" --filter="email~^${SA}@" --format='value(email)' | wc -l)"
+echo "iam:        $(gcloud projects get-iam-policy "${P:?}" --flatten='bindings[].members' \
+                 --format='value(bindings.members)' | grep -c "${SA_EMAIL:?}" || true)"
 echo "router:     $(gcloud compute routers list --project="${P:?}" --regions="${L:?}" --filter="name~^${SA}-" --format='value(name)' | wc -l)"
 ```
 
-**Six zeroes, one per line** — the probe's jobs and 57b's named runs (two
+The `iam` line is the one the account line cannot answer: **deleting a service
+account does not remove its bindings** (step 3 says why), so a `deleted:
+serviceAccount:` member left in the policy reads as `0` on the `account` line and
+non-zero here — which is exactly the leak this line exists to catch. It counts
+the **project** policy; the repository-level `artifactregistry.reader` binding
+step 3 removed is the same read against
+`gcloud artifacts repositories get-iam-policy "${BASE_REPO:?}" --location="${L:?}"`
+with the same `--flatten`, and it is worth pasting too, since a repository policy
+is not part of the project's.
+
+**Eight zeroes, one per line** — the probe's jobs and 57b's named runs (two
 different questions, so two lines: a label filter for the first, the recorded
-names for the second, step 1), the VMs, the preload image, the account, and the
+names for the second, step 1), their VMs (two more, for the same reason: the
+check's own label for the probe's, the recorded `fugaro_run` values for 57b's,
+step 2b), the preload image, the account, the probe account's remaining
+bindings, and the
 `${SA}-*` router — and the check left nothing behind. The
 `containerfilesystem.googleapis.com` API is deliberately **not** a line here: it
 is not a resource that can be counted, and whether it stays enabled depends on
@@ -2734,10 +3043,13 @@ backend-agnosticism (`internal/runner`); the launch path
 (`internal/cli/run.go`, `launch_budget.go`); the naming/labels
 (`internal/backend/gcp/names.go`); the base registry's id
 (`internal/infra/tfvars.go`:23, `BaseRegistry = "fugaro-base"`); the job
-environment's own names and who writes them (`internal/infra/spec.go`:88 and
-`platformEnv`); the compute-price gate and its `cloud-run`-only comparison
+environment's own names and who writes them (`internal/infra/spec.go`:85-94 for
+the names, `platformEnv` at `:522` for the writer); the compute-price gate and
+its `cloud-run`-only comparison
 (`internal/cli/exec.go`:369-371, §5.2's third site); the base image's CLI-only
-Docker and its 3812 MB size (`images/base/Dockerfile`, base-image.md §9, §13). The live
+Docker and its 3812 MB size (`images/base/Dockerfile`;
+`docs/design/base-image.md` §3 for the CLI-only contents and §13 for the
+measurement, which is the design file, not `docs/base-image.md`). The live
 checklist's own numbering is verified the same way: check 31 there is
 `fugaro upgrade` with the real `claude` CLI (`docs/gcp-live-checklist.md`), not
 the dropped gen-2 Docker probe the generic-tool plan numbered 31 — the reason
@@ -2753,7 +3065,8 @@ the dropped gen-2 Docker probe the generic-tool plan numbered 31 — the reason
   back — and a variant's `id` output is what decides the socket path (§2.2).
 - Whether `Container.options` (a **string**, not an array) reaches the runtime
   as `--group-add <gid>`, and whether `--privileged` is accepted there at all —
-  Check 57a step 6.
+  and, if it is, whether it changes the outcome at all for a uid-1000 process,
+  which §2.2 says it does not — Check 57a step 6.
 - Whether a `docker` group exists on the COS boot image, and with which gid —
   Check 57a step 6 reads the gid off the mounted socket
   (`stat -c %g /var/run/docker.sock`), because the name form is looked up inside
@@ -2766,19 +3079,26 @@ the dropped gen-2 Docker probe the generic-tool plan numbered 31 — the reason
 - Whether Batch truly tears down every VM on `DELETION_IN_PROGRESS` and on a
   crashed runnable — Check 57a step 8.
 - Whether image streaming works for a base image served through an Artifact
-  Registry **remote** repository — Check 57a step 3 (pairs with Check 43).
+  Registry **remote** repository — Check 57a step 3, **if `IMG` is pointed at
+  the proxy**: the committed check pulls the direct repository (pairs with
+  Check 43).
 - Whether Batch accepts a **custom boot image** at all ("might not be
-  supported" is Google's own hedge) — Check 57a step 3b.
+  supported" is Google's own hedge) — Check 57a step 3b, which builds it.
 - Whether a Batch job's queue deadline can be expressed as a Google-side field
   — it cannot, as far as the pages read show, so the design's queue deadline
   is a Fugaro-side reaper action; and how long a job really sits in `QUEUED` —
-  Check 57a step 11.
+  Check 57a step 11, whose machine type is discovered from the region rather
+  than named.
 - Whether an IAM Condition narrowing `batch.jobsEditor` to Fugaro-shaped job
   names is accepted — Check 57a step 9.
 - Whether a job's own environment can **override** the injected
   `BATCH_TASK_INDEX`/`BATCH_TASK_COUNT` (a signal the job can set is only as
-  good as the launch path), and whether the metadata server answers from a VM
-  with no external IP — Check 57a step 12.
+  good as the launch path) — Check 57a step 12, once per place Batch documents
+  environment (TaskSpec and `taskEnvironments`); and, separately, whether a job
+  can read its own VM's identity from the metadata server at
+  `169.254.169.254` from a VM with no external IP, which is **not** a Private
+  Google Access result (the address is link-local) but the mechanism §3.3's
+  token comes from.
 - Whether `resource.labels.job_id` on a `batch.googleapis.com/Job` entry is the
   job's **name** or its **UID** (the resource list says only "The identifier of
   the Job"), which is why the shipped filter uses the documented
