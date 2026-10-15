@@ -43,7 +43,7 @@ Source: [docs/design/retire-image-mirror.md](../design/retire-image-mirror.md). 
 - **The digest that gets signed is read from the create call's own `--metadata-file`, never from a tag** (PR #377 review H1). `docker buildx imagetools create` takes `--metadata-file FILE`, and the file's `containerimage.descriptor.digest` is the index it just published — that key, not `containerimage.digest`, is what docker's docs document for *this* command (`imagetools create`; `containerimage.digest` is `buildx build`'s — checked against docs.docker.com 2026-10-15). A missing or malformed value fails the job rather than signing something unknown. Re-reading the just-created `-pinned` tag instead (an earlier draft's approach, and a severe mistake) makes the signed digest whatever that tag names **at that moment**: anyone who can write this repository's tags — a leaked `packages: write` token is enough — could move it between the create and the re-read, and this workflow's own OIDC identity would then sign *their* image, which is exactly the trust anchor this design exists to remove.
 - The index's own children are asserted against the two child digests **this job** pushed (`imagetools inspect --raw "$repo@$digest"`'s `.manifests[].digest` vs the two `RepoDigests` from the per-arch pushes), so a digest that is not this job's build is never signed whatever the metadata file says.
 - A second, nightly-immune tag, `fugaro-base:<v>-pinned`, created **only after** the signature exists and has been verified (PR #377 review M1), and pointing at that same signed digest — `docker buildx imagetools create --tag "$repo:$VERSION-pinned" "$repo@$DIGEST"`, one index source, which docker's docs say is copied as-is (carbon copy, same digest) — followed by a read-back that fails unless the tag resolves to that digest. The nightly/`workflow_dispatch` runs, whose version-picking step resolves the identical `$VERSION`, must never create or move it: every step of the chain below carries `if: github.event_name == 'push'` exactly.
-- `cosign sign --yes "ghcr.io/dimipaun/fugaro-base@$DIGEST"` for that digest (never a tag), and then `cosign verify` against the same digest with `--certificate-identity https://github.com/dimipaun/fugaro/.github/workflows/images.yml@refs/tags/v$VERSION --certificate-oidc-issuer https://token.actions.githubusercontent.com` (PR #377 review M3) — an independent read-back that fails the job on a wrong identity. No `--insecure-ignore-tlog` or "verify without an artifact" mode anywhere.
+- `cosign sign --yes "ghcr.io/dimipaun/fugaro-base@$DIGEST"` for that digest (never a tag), and then `cosign verify` against the same digest with `--certificate-identity https://github.com/dimipaun/fugaro/.github/workflows/images.yml@refs/tags/v$VERSION --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-github-workflow-trigger push --certificate-github-workflow-repository dimipaun/fugaro` (PR #377 review M3; the last two added by its re-review, M1 — the identity alone is also what a `workflow_dispatch` run against the same tag ref presents) — an independent read-back that fails the job on a wrong identity, a non-push trigger, or another repository. No `--insecure-ignore-tlog` or "verify without an artifact" mode anywhere.
 - `sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2` — the exact, real pin `release.yml:95` already uses, not a placeholder; it is gated `if: github.event_name == 'push'` like the rest of the chain, and it runs before the sign step so `cosign` is on `PATH` there.
 
 - [ ] **Step 1: Write the failing tests**
@@ -68,11 +68,12 @@ What `signingProblems` must catch (each mutation is one test case in `TestSignin
 
 - the sign step signs a **tag** (`"$repo:$VERSION"`) instead of the digest handed to it, or takes its `DIGEST` from anything but `steps.index.outputs.digest`;
 - the index step no longer takes the digest from `--metadata-file` (in particular, learns it by `imagetools inspect`ing a tag), or stops asserting the published index's children are the two digests this job pushed;
-- `cosign sign ... || true`, or `continue-on-error: true` on any chain step: a failed signature must fail the job;
+- `cosign sign ... || true` — or the same thing spelled `|| :`, `|| /bin/true`, `|| exit 0` — `continue-on-error: true` on any chain step, or `continue-on-error` at the **job** level on `publish-base`: a failed signature must fail the job;
 - an insecure mode anywhere (`--insecure-ignore-tlog`, …);
 - the sign, verify or `-pinned` step's `if` is not exactly `github.event_name == 'push'` (a widened condition signs or tags on an event this release's identity does not cover), or `-pinned` is made unconditional with the guard left in a comment;
 - a workflow-level `id-token: write`, or `id-token: write` on any job but `publish-base`;
-- the verify step's `--certificate-identity`/`--certificate-oidc-issuer` missing or wrong, or the verify step dropped;
+- the verify step's `--certificate-identity`, `--certificate-oidc-issuer`, `--certificate-github-workflow-trigger` or `--certificate-github-workflow-repository` missing or wrong (the last two are what make the first two mean *a tag push*), or the verify step dropped;
+- `publish-base`'s own `if:` widened past its publish/kinds gate (to `always()`, say), or dropped;
 - a floating `cosign-installer` pin (anything but the full commit SHA);
 - **the step order**: index → sign → verify → `-pinned`, with the installer before sign. The `-pinned` tag must never precede the signature.
 
@@ -187,12 +188,27 @@ type TagResolver interface {
 	ResolveDigest(ctx context.Context, source, kind, version string) (digest string, err error)
 }
 
-// CertIdentity is what a signing certificate must name: the workflow ref
-// GitHub's OIDC issues for a TAG PUSH specifically (Task 1's own event
-// guard is exactly why this identity is the one to expect).
+// CertIdentity is what a signing certificate must name. WorkflowRef and
+// Issuer are NOT enough on their own (PR #377's review, M1): a
+// workflow_dispatch run started against a tag ref gets the very same
+// ".../images.yml@refs/tags/vX.Y.Z" subject, so a ref that looks like a
+// release proves nothing about what triggered the run. Trigger and
+// Repository are the claims that distinguish them — the Fulcio extensions
+// 1.3.6.1.4.1.57264.1.2 ("event_name") and 1.3.6.1.4.1.57264.1.5
+// ("repository") — and all four MUST be required. With the cosign binary
+// that is exactly:
+//   cosign verify \
+//     --certificate-identity "$WorkflowRef" \
+//     --certificate-oidc-issuer "$Issuer" \
+//     --certificate-github-workflow-trigger "$Trigger" \
+//     --certificate-github-workflow-repository "$Repository"
+// (flag names checked against cosign v3's own cosign_verify docs; the
+// extension OIDs against fulcio's docs/oid-info.md).
 type CertIdentity struct {
 	WorkflowRef string // "https://github.com/<owner>/<repo>/.github/workflows/images.yml@refs/tags/vX.Y.Z"
 	Issuer      string // "https://token.actions.githubusercontent.com"
+	Trigger     string // "push" — never a dispatch run against the same tag ref
+	Repository  string // "<owner>/fugaro" — the same owner Resolve was given, never one read back from the registry
 }
 
 // OCIVerifier checks a specific digest's OCI-attached cosign signature
@@ -220,13 +236,13 @@ func Resolve(ctx context.Context, tr TagResolver, v OCIVerifier, owner, repoOnGi
 
 **A subtlety worth one sentence (design §9 Decision 1, M3):** cosign's OCI signature binds to the **digest**, not to which repository name it is referenced under — so a digest signed as `fugaro-base`'s could, in principle, verify just as well if (by mistake or by copying bytes) the same digest were ever referenced under `fugaro-history`'s name instead. Low impact here, since `Resolve`'s own `ref` is always built from the caller's own, correctly-known `kind`, never read from anywhere an attacker could substitute it — but worth knowing if this code is ever reused more generally.
 
-**Finding the signature (sigstore-go route, if chosen — design §9 Decision 1).** `sigstore-go` itself fetches nothing from a registry; the implementer must locate the signature artifact first. Under cosign v3 (paired with `cosign-installer` v4.x, Task 1's pin), a signature is stored either as an OCI *referrer* of the signed digest, or, where referrers aren't supported, under the fallback tag `sha256-<hex>.sig` in the same repository — the implementer checks which ghcr.io actually uses (not verified here) before writing the fetch. **The verifier must set an artifact-digest policy equal to the resolved digest and must never use a "without artifact" / unsafe verification mode** — accepting a signature with no artifact binding at all would defeat the entire point of digest-pinning.
+**Finding the signature (sigstore-go route, if chosen — design §9 Decision 1).** `sigstore-go` itself fetches nothing from a registry; the implementer must locate the signature artifact first. Under cosign v3 (paired with `cosign-installer` v4.x, Task 1's pin), a signature is stored as an **OCI referrer** of the signed digest (the OCI 1.1 `subject` field, listed through the registry's referrers API), or, where that API is missing, through the OCI distribution spec's **referrers tag schema**: an image index at tag `<algorithm>-<hex>` — i.e. `sha256-<hex>`, with **no `.sig` suffix** — in the same repository (spec §"Unavailable Referrers API", whose table maps a `sha256:aaaa…` subject to the tag `sha256-aaaa…`). The `sha256-<hex>.sig` tag is cosign's *older* layout, used only with `--registry-referrers-mode=legacy`, not what the pinned v3 writes; a fetch that looks for `.sig` will find nothing and must not then conclude "unsigned". The implementer checks which of the two ghcr.io actually produces (not verified here) before writing the fetch. **The verifier must set an artifact-digest policy equal to the resolved digest and must never use a "without artifact" / unsafe verification mode** — accepting a signature with no artifact binding at all would defeat the entire point of digest-pinning.
 
 **Info for the Task 2 verifier (PR #377's supply-chain review, after Task 1's signing chain was hardened).** Three things the implementer of this task must check, because Task 1's workflow now guarantees them and `Resolve` is where that guarantee is *enforced*:
 
-- **The certificate must say the run was a tag push, of `dimipaun/fugaro`'s own workflow.** Task 1 signs only under `if: github.event_name == 'push'`, so the certificate's identity is `https://github.com/dimipaun/fugaro/.github/workflows/images.yml@refs/tags/vX.Y.Z` — the `refs/tags/...` component is what distinguishes a release's signature from one made on any other event, and `--certificate-oidc-issuer https://token.actions.githubusercontent.com` is the issuer GitHub's own OIDC vouches for. Check the identity **exactly** (this is `CertIdentity.WorkflowRef`), and check the source repository too: the workflow ref's owner/repo must be the `<owner>/fugaro` the caller asked for, never a name read out of anything the registry or the image returned. (A fork's `--image-source ghcr.io/<fork-owner>` expects `<fork-owner>/fugaro`; see "Forks and --image-source" above.)
+- **The certificate must say the run was a tag *push*, of `dimipaun/fugaro`'s own workflow — four claims, not two.** Task 1 signs only under `if: github.event_name == 'push'`, so the certificate's identity is `https://github.com/dimipaun/fugaro/.github/workflows/images.yml@refs/tags/vX.Y.Z` and its issuer is `https://token.actions.githubusercontent.com` (`CertIdentity.WorkflowRef` and `.Issuer`, both checked exactly). **The ref alone does not prove a push** (PR #377's re-review, M1): a `workflow_dispatch` run started against a tag ref is issued the very same `...images.yml@refs/tags/vX.Y.Z` subject, so identity-plus-issuer would accept an image signed by a manual run on a release ref. The claims that distinguish them are the Fulcio extensions **1.3.6.1.4.1.57264.1.2** (`event_name`) and **1.3.6.1.4.1.57264.1.5** (`repository`), i.e. `CertIdentity.Trigger` = `"push"` and `CertIdentity.Repository` = `"<owner>/fugaro"`; with the cosign binary they are `--certificate-github-workflow-trigger push` and `--certificate-github-workflow-repository dimipaun/fugaro` (flag names checked against cosign v3's `cosign_verify` docs; the OIDs against fulcio's `docs/oid-info.md`). All four MUST be required, and the repository must be the one the caller asked for — a fork's `--image-source ghcr.io/<fork-owner>` expects `<fork-owner>/fugaro` (see "Forks and --image-source" above) — never a name read out of anything the registry or the image returned. Task 1's own `cosign verify` step carries all four for the same reason.
 - **Never use a cosign mode that skips the transparency log or the digest binding.** Specifically not `--insecure-ignore-tlog`, not `--insecure-ignore-sct`, and not any "verify without an artifact" / `verify-blob`-style path that accepts a signature covering some other digest: the signature must be checked against exactly the `<source>/fugaro-<kind>@sha256:<hex>` digest `TagResolver` just resolved, or the whole of digest-pinning is decoration. (Design §9 Decision 1's "correctness beats convenience"; the same rule applies whether the route is `sigstore-go` or the `cosign` binary.)
-- **Look for the signature in the right place, in `fugaro-base` itself.** Under cosign v3 (paired with Task 1's `cosign-installer` v4.x pin), the signature is attached in the **same repository** as the signed image — either as an OCI *referrer* of the signed digest, or, where referrers aren't supported, under the fallback tag `sha256-<hex>.sig` derived from that digest. Which of the two ghcr.io actually produces is **not verified here** (no live registry access in this run): the implementer must determine it before writing the fetch, and a fetch that finds nothing must fail closed, never fall through to "no signature found, accept" or to the plain `<version>` tag.
+- **Look for the signature in the right place, in `fugaro-base` itself.** Under cosign v3 (paired with Task 1's `cosign-installer` v4.x pin), the signature is attached in the **same repository** as the signed image — as an OCI *referrer* of the signed digest, or, where the registry has no referrers API, through the OCI distribution spec's referrers tag schema, an image index at `sha256-<hex>` (no `.sig`: that suffix is cosign's older, legacy-mode tag, and looking only for it finds nothing on a v3 signature). Which of the two ghcr.io actually produces is **not verified here** (no live registry access in this run): the implementer must determine it before writing the fetch, and a fetch that finds nothing must fail closed, never fall through to "no signature found, accept" or to the plain `<version>` tag.
 
 **Network, beyond ghcr.io (design §2's "new operational cost").** Keyless verification needs the sigstore TUF trusted root and Rekor to be reachable from wherever `Resolve` runs (the operator's machine, or a CI runner doing `fugaro image refresh --yes`) — not only `ghcr.io` itself.
 
@@ -267,10 +283,14 @@ func (f fakeVerifier) Verify(_ context.Context, ref string, id CertIdentity) err
 	return f.err
 }
 
+// All four claims, not just the ref: the ref alone is also what a
+// workflow_dispatch run against a tag ref is issued (see CertIdentity).
 func wantIdentity(owner, repoOnGitHub, version string) CertIdentity {
 	return CertIdentity{
 		WorkflowRef: "https://github.com/" + owner + "/" + repoOnGitHub + "/.github/workflows/images.yml@refs/tags/v" + version,
 		Issuer:      "https://token.actions.githubusercontent.com",
+		Trigger:     "push",
+		Repository:  owner + "/" + repoOnGitHub,
 	}
 }
 

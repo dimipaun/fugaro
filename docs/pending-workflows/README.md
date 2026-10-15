@@ -87,10 +87,18 @@ verbatim, comments included. Diff summary against the committed file:
     signature covers, and no tag is read to find it.
   - `Verify the signature just attached` (`id: verify`): `cosign verify`
     against that same digest, with `--certificate-identity
-    https://github.com/dimipaun/fugaro/.github/workflows/images.yml@refs/tags/v$VERSION`
-    and `--certificate-oidc-issuer
-    https://token.actions.githubusercontent.com`. A signature made by any
-    other identity or workflow fails the job here. No mode that skips the
+    https://github.com/dimipaun/fugaro/.github/workflows/images.yml@refs/tags/v$VERSION`,
+    `--certificate-oidc-issuer
+    https://token.actions.githubusercontent.com`, plus
+    `--certificate-github-workflow-trigger push` and
+    `--certificate-github-workflow-repository dimipaun/fugaro`. A signature
+    made by any other identity or workflow fails the job here. **The last two
+    are not decoration:** the identity alone does *not* prove a tag push — a
+    `workflow_dispatch` run started against a tag ref is issued the same
+    `...images.yml@refs/tags/vX.Y.Z` subject — so the trigger claim
+    (Fulcio extension `1.3.6.1.4.1.57264.1.2`, `event_name`) and the
+    repository claim (`.1.5`) are what make the other two mean "a release,
+    in this repository", and all four are required. No mode that skips the
     transparency log or the artifact binding is used.
   - `Publish the -pinned tag at the signed digest` (`id: pinned`): **only
     now**, with the signature made and verified, does anything name
@@ -121,17 +129,19 @@ children assertion, signing by the digest handed to the step, the identity
 the verification demands, the `-pinned` tag written last and at that digest,
 the step order, the cosign-installer pin, the push-only gates, and
 `id-token: write` on `publish-base` alone. Its companion
-`TestSigningProblemsFindEveryMutation` feeds that checker thirty-six
-weakenings — a tag instead of the digest, `|| true`, `continue-on-error:
-true`, the sign step before the push or after the verification, `-pinned`
-unconditional with the gate left in a comment, `-pinned` added back to the
-index step's create call, the `--metadata-file` flag or the
-`containerimage.descriptor` read surviving only in a comment, a verify step
-without this workflow's identity or GitHub's issuer, workflow-level
-`id-token: write`, a widened condition, a floating installer pin, each chain
-step dropped — and requires every one to be reported **by the check that
-names it**, not merely to produce some problem, so no check can rot
-unnoticed — and `TestOnlyPublishJobsHoldPackagesWrite`,
+`TestSigningProblemsFindEveryMutation` feeds that checker forty-three
+weakenings — a tag instead of the digest, `|| true` and `|| :`,
+`continue-on-error: true` on a step or on the whole job, publish-base's own
+`if:` widened to `always()`, the sign step before the push or after the
+verification, `-pinned` unconditional with the gate left in a comment,
+`-pinned` added back to the index step's create call, the `--metadata-file`
+flag or the `containerimage.descriptor` read surviving only in a comment, a
+verify step without this workflow's identity, GitHub's issuer, the `push`
+trigger or the repository claim, workflow-level `id-token: write`, a widened
+condition, a floating installer pin, each chain step dropped — and requires
+every one to be reported **by the check that names it**, not merely to
+produce some problem, so no check can rot unnoticed — and
+`TestOnlyPublishJobsHoldPackagesWrite`,
 `TestVerifyPublicRunsEvenWhenPublishBaseIsSkipped`,
 `TestImagesWorkflowPublishesAMultiArchBase`,
 `TestImagesWorkflowBuildsTheBaseAndHistory` and
@@ -193,10 +203,16 @@ source; a re-run after the artifacts have expired has nothing to sign, so
 the tag cannot be signed after that. GitHub also only offers re-runs for a
 limited window (about 30 days for a workflow run); past that, a release's
 `-pinned` image stays unsigned and the copy-time resolve fails loudly rather
-than accepting anything else. A re-run does move `-pinned` again, at the
-same digest (the artifacts are the same bytes) — harmless, and the nightly
-never does it: that is the property the tag exists for, and what Check 39e
-verifies.
+than accepting anything else. A re-run re-creates `-pinned` again —
+**normally at the same digest**, since it consumes the same uploaded
+artifacts, so nothing a reader resolved changes. It is not guaranteed to be
+the same one (an artifact could be re-uploaded, or the job re-run from a
+different commit's tree), and that is **safe either way**: the re-run signs
+whatever digest it creates, verifies it, and only then points `-pinned` at
+it, so the tag and the signature always move together and a copy either reads
+the release-day bytes or a re-signed equivalent — never an unsigned digest.
+The nightly never touches it: that is the property the tag exists for, and
+what Check 39e verifies.
 
 ### Not verified
 
