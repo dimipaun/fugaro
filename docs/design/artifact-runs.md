@@ -195,6 +195,11 @@ brief asked to be verified, and two of its entries were wrong):
 7. **A probe** that judges the output without a test suite: `ffprobe`-shaped,
    repository-owned, and the reason the run can say "succeeded" with no PR and
    no test.
+8. **A byte-streaming write and read in `blobx`.** Every write today is a
+   `[]byte` through `WriteAll` and every read is capped at one mebibyte
+   (`internal/blobx/blobx.go:51-54,109-138,173-198,314`) — fine for locks,
+   claims and `result.json`, and no way to move a video. Two new methods on
+   the same type, no new dependency (§3).
 
 ## 3. The shape: `mode: artifact`, `outputs:`, and a `render` step
 
@@ -367,6 +372,24 @@ format:
 sanitised (§8). That is the one place the run's own account may write
 (`runs/<slug>/`, §1's verified condition), it expires with the run record
 (§7), and it needs no new IAM, no new lifecycle rule and no new prefix.
+
+**And the bytes do not fit `blobx` as it stands — this is the one place the
+existing object layer is too small, and it is a checked fact.** Every write in
+`internal/blobx` takes a `[]byte` and goes through `WriteAll`
+(`internal/blobx/blobx.go:109-138`, `:314`), and every read is capped at
+`MaxReadBytes = 1 << 20` — **one mebibyte**, sized for locks, claims and
+`result.json` (`blobx.go:51-54`, `:173-198`; `ReadMax` exists but is still a
+buffer). So the change needs **two new methods on the same type, and no new
+dependency**: a streaming write (`PutFile(ctx, key, path, contentType)` — a
+`NewWriter` plus `io.Copy` from the file, hashing with a `MultiWriter` in the
+same pass, so a 256 MiB render is never a 256 MiB slice in memory) and a
+streaming read for `fugaro artifacts get` (`GetFile(ctx, key, path, limit)` —
+a `NewReader`, an `io.LimitReader` at the object's recorded size plus one, and
+a sha256 checked before the temp file is renamed into place). Both are
+testable against a `file://` bucket, and both preserve the properties the
+existing methods have: a content type recorded on write, a cap that refuses
+rather than truncates, and a classification of 403 as forbidden
+(`isForbidden`, `blobx.go:200`).
 
 ## 4. Files in: `fugaro run --attach PATH...`
 
@@ -736,7 +759,9 @@ delivers something an owner can use:
    deadline, the failure path, the `render` record. Proven with a
    `file://` bucket and no cloud.
 3. **The outputs: selection, sanitisation, caps, hashing, upload** to
-   `runs/<slug>/<run>/artifacts/`, and the `result.json` + schema additions.
+   `runs/<slug>/<run>/artifacts/`, and the `result.json` + schema additions —
+   **on two new `blobx` methods** (`PutFile`, and `GetFile` for Task 6), since
+   every write today is a `[]byte` and every read is capped at 1 MiB (§3, V23).
 4. **The probe**: `commands.probe`, the two environment variables, the
    record.
 5. **The attachments: `--attach`, the task-spec list, the download, the
@@ -816,6 +841,7 @@ line read for it — the plan's Review Focus repeats the important ones):
 | V20 | A repository-less run needs project-centric phase 3's project jobs, which are not shipped; `checkout: clone` is not shipped either | `docs/design/project-centric.md:15,66-68,109`, `internal/cli/recipes_skew.go:36`, `internal/cli/docs_checkout_test.go:123-132` |
 | V21 | Check numbers: rows exist for 42–47 and 57; 48–56 and 58 are free; Check 43's guard block is at `:1437-1458` and "never `belong`" at `:1431` | `docs/gcp-live-checklist.md` |
 | V22 | The three PNGs Check 58's step 1 generates are real PNGs — the generator in the plan was run here and produced three valid 320×240 8-bit RGB PNGs | run in this session |
+| V23 | `blobx` has no streaming write and no read above 1 MiB (`MaxReadBytes`), and no `Put`/`Create` variant that takes a path | `internal/blobx/blobx.go:51-54,109-138,148-198,314` |
 
 **UNVERIFIED, with the check that would settle each:**
 
