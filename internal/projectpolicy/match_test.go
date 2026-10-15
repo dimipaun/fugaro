@@ -196,3 +196,68 @@ func TestValidPatternCapsWildcards(t *testing.T) {
 		}
 	}
 }
+
+// TestAdmitRepoEmptyListIsDenyAll: an empty allow_repos list admits nothing,
+// and that is not the same thing as an installation with no policy — the
+// caller decides which of the two it is holding, and only the published-policy
+// case reaches this function at all (internal/runner's admissionCheck returns
+// before it when the policy node is absent). The design calls the distinction
+// out by name ("Default empty means no repository is enrolled", P4), because
+// the two are one line apart in the code that reads them: reading the empty
+// list as "no restriction" would turn a policy that enrolls nobody into one
+// that enrolls everybody, on every repository at once. Red if AdmitRepo ever
+// treats "no patterns" as "matches".
+func TestAdmitRepoEmptyListIsDenyAll(t *testing.T) {
+	for name, patterns := range map[string][]string{
+		"nil":          nil,
+		"empty":        {},
+		"blank string": {""},
+	} {
+		for _, repo := range []string{"github/acme/app", "github/acme/sandbox", "*", ""} {
+			if AdmitRepo(patterns, repo) {
+				t.Errorf("%s: AdmitRepo(%q, %q) = true, want false: an empty allow-list admits nothing", name, patterns, repo)
+			}
+		}
+	}
+	// The wildcard the design does use for "every repository" is an explicit
+	// entry, never the absence of one.
+	if !AdmitRepo([]string{"*"}, "github/acme/app") {
+		t.Error(`AdmitRepo(["*"], "github/acme/app") = false, want true: ["*"] is the written-down spelling of "every repository"`)
+	}
+	// One entry among others decides on its own: a list is a union.
+	if !AdmitRepo([]string{"github/other/repo", "github/acme/*"}, "github/acme/app") {
+		t.Error("a list admits a repository its second pattern admits")
+	}
+	if AdmitRepo([]string{"github/other/repo", "bitbucket/acme/*"}, "github/acme/app") {
+		t.Error("a list admits nothing beyond its patterns: the provider is part of the match")
+	}
+}
+
+// TestNotAdmittedWordsTheDenyAllCase: the refusal is the run's and the
+// launcher's, worded once (its doc says why), and the empty list is the case it
+// has to say out loud — an operator who reads "allow_repos is []" would go
+// looking for a list that is not there. Red if the empty case stops naming
+// itself, or if the message stops telling the operator the command that fixes
+// it.
+func TestNotAdmittedWordsTheDenyAllCase(t *testing.T) {
+	empty := NotAdmitted(nil, "github/acme/app")
+	if !strings.Contains(empty, "empty") || !strings.Contains(empty, "admits no repository") {
+		t.Errorf("NotAdmitted(nil, ...) = %q, want the deny-all case stated rather than quoted as []", empty)
+	}
+	if !strings.Contains(empty, "github/acme/app") {
+		t.Errorf("NotAdmitted(nil, ...) = %q, want the repository named", empty)
+	}
+	if !strings.Contains(empty, "fugaro project repos add github/acme/app") {
+		t.Errorf("NotAdmitted(nil, ...) = %q, want the command that enrolls it", empty)
+	}
+	// A non-empty list is quoted as it is: the operator sees which patterns
+	// were there, which is the whole difference between "I forgot to enroll
+	// it" and "I enrolled it under another name".
+	listed := NotAdmitted([]string{"github/other/repo"}, "github/acme/app")
+	if !strings.Contains(listed, `["github/other/repo"]`) {
+		t.Errorf("NotAdmitted(list, ...) = %q, want the list quoted", listed)
+	}
+	if !strings.Contains(listed, "github/acme/app") {
+		t.Errorf("NotAdmitted(list, ...) = %q, want the repository named", listed)
+	}
+}

@@ -52,11 +52,16 @@
 //     https, a kind that is not anthropic-compat, an auth style that is not
 //     bearer or x-api-key, an ambiguous empty allow_data_to, a route_fee_pct
 //     over the cap or a models list two providers both claim is refused here
-//     rather than reaching a run; price_policy, which internal/config does not
-//     know yet, is checked against the catalogue's two values beside them.
-//     Unknown keys *inside* an entry stay ignored (P8) — which is safe only
-//     because every value is checked: a misspelt key leaves its field zero and
-//     is refused, so tolerance costs no silence.
+//     rather than reaching a run, and so is price_policy, through the same
+//     carrier.
+//     Unknown keys *inside* an entry are refused too, unlike the top level's,
+//     because an entry's fields are the ones a run is routed, shared and
+//     metered by and three of them have a permissive zero: a misspelt
+//     allow_data_to would publish "every repository", a misspelt route_fee_pct
+//     would charge no fee, and a misspelt price_policy would price at the
+//     cheapest end without anyone having chosen it. Tolerating them made this
+//     node the one carrier where a typo flips a default, since fugaro.yaml and
+//     FUGARO_MODEL_PROVIDERS both refuse the same key.
 //
 // The readable node holds nothing personal and no secret values: every run
 // token can read it, and a prompt-injected agent can take the token through
@@ -70,7 +75,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -128,53 +135,24 @@ type Budget struct {
 // It is config.ModelProvider, embedded rather than respelled, so the policy's
 // provider document is byte-for-byte the one internal/runner's
 // ProvidersFromEnv decodes out of FUGARO_MODEL_PROVIDERS: kind, base_url,
-// auth, secret, models, allow_data_to, route_fee_pct. A respelling here would
-// be a second carrier for one document, and the two would drift — a kind of
-// drift no test can see, because each side would be self-consistent.
+// auth, secret, models, allow_data_to, route_fee_pct, and the two
+// price-catalogue switches require_zdr and price_policy (docs/design/
+// provider-price-catalog.md D3). A respelling here would be a second carrier
+// for one document, and the two would drift — a kind of drift no test can see,
+// because each side would be self-consistent.
 //
-// RequireZDR and PricePolicy are the two price-catalogue switches
-// (docs/design/provider-price-catalog.md D3), which the catalogue design puts
-// on config.ModelProvider beside RouteFeePct; they are spelled here the way
-// that slice will spell them, and when it lands they move into the carrier
-// and this struct loses them.
+// It declares no field of its own, and that is a fix rather than an accident:
+// an earlier revision re-declared RequireZDR and PricePolicy here, which
+// shadowed the carrier's own copies at depth 0. The values a published node
+// carried were decoded into the outer fields; the map validProviders hands
+// to config.ValidateModelProviders is built from the inner one, so the
+// price_policy check there validated a field that was always empty — a check
+// that could not fail, which is the drift this type exists to prevent, in the
+// direction nobody looks. The switches are the carrier's now, their accessors
+// (RequireZDROn, PricePolicySet) come with the embedding, and their JSON names
+// come from the carrier's own tags.
 type Provider struct {
 	config.ModelProvider
-	// RequireZDR prices the route against the ZDR-eligible endpoints. Unset
-	// means true: nil is the default-true spelling the repository already
-	// uses for a switch (config.PRSettings.EarlyDraft), so an entry written
-	// before the field existed keeps the conservative price. What this is
-	// NOT: a routing guarantee — Fugaro cannot read the account's privacy
-	// setting (catalogue design §8).
-	RequireZDR *bool `json:"require_zdr,omitempty"`
-	// PricePolicy is which end of the catalogue's price range a routed call
-	// is charged at. Unset means PricePolicyCheapest, the default the
-	// catalogue design chose (D3); the empty string is written as an omission
-	// so a job written by a newer CLI stays readable by an older image (D11).
-	PricePolicy string `json:"price_policy,omitempty"`
-}
-
-// The values price_policy accepts (docs/design/provider-price-catalog.md D3).
-const (
-	// PricePolicyCheapest charges the cheapest eligible endpoint's price, and
-	// is what an unset price_policy means (the catalogue's own default).
-	PricePolicyCheapest = "cheapest"
-	// PricePolicyHighest charges the dearest eligible endpoint's price.
-	PricePolicyHighest = "highest"
-)
-
-// RequireZDROn reports whether this route is priced as if only ZDR-eligible
-// endpoints may serve it: true unless require_zdr is explicitly false.
-func (p Provider) RequireZDROn() bool { return p.RequireZDR == nil || *p.RequireZDR }
-
-// EffectivePricePolicy is the policy a route is priced under:
-// PricePolicyCheapest when the policy does not set one (D3). The plan for the
-// catalogue slice calls the same accessor PricePolicySet(); whichever name it
-// lands under in config.ModelProvider, the meaning is this one.
-func (p Provider) EffectivePricePolicy() string {
-	if p.PricePolicy == "" {
-		return PricePolicyCheapest
-	}
-	return p.PricePolicy
 }
 
 // Price is one model's owner-set rates, spelled exactly as the price catalogue
@@ -328,20 +306,34 @@ func Decode(raw []byte) (*Policy, bool, error) {
 }
 
 // validProviders holds the providers block to the rules internal/config holds
-// the same document to in fugaro.yaml (ValidateModelProviders), plus the one
-// rule that only a reader of the written document can apply.
+// the same document to in fugaro.yaml (ValidateModelProviders), plus the two
+// rules that only a reader of the written document can apply: an unknown key
+// inside an entry, and the null spelling of allow_data_to.
 //
-// The block is decoded tolerantly, unlike the budget block and unlike
-// ProvidersFromEnv's own decoder: an unknown key inside an entry is ignored
-// rather than refused, because the node must stay readable by an older runner
-// (P8) — and a misspelling is not silently accepted for it, since the value it
-// would have set stays zero and every one of these fields is checked below. So
-// "agth": "bearer" is refused, and a field a newer Fugaro adds is not.
+// An unknown key inside an entry is refused, and it used to be ignored, on the
+// argument that a misspelling is harmless because "the value it would have set
+// stays zero and every one of these fields is checked below". That argument was
+// false for the three fields whose zero is not a refusal: a misspelt
+// allow_data_to leaves the nil slice that ModelProvider.AllowsData reads as
+// every repository, a misspelt route_fee_pct charges no fee, and a misspelt
+// price_policy silently prices at the catalogue's cheapest end. The same
+// document in fugaro.yaml is refused outright (config's own decode is strict,
+// and runner.ProvidersFromEnv's is DisallowUnknownFields), so tolerating it
+// here made the readable node the one carrier where a typo flips a
+// security-relevant default — the two carriers disagreeing in the unsafe
+// direction. Forward compatibility is not lost with it: P8's mechanism is the
+// version integer (the runner refuses a version it does not know), not a
+// silently ignored field, and a newer CLI that adds a provider field publishes
+// a newer version with it.
 //
-// The one rule ValidateModelProviders cannot apply here is the null spelling of
-// allow_data_to: it reads "the key was written with nothing under it" off the
-// YAML node, and JSON has no such marker, so a written null arrives as the nil
-// slice that means every repository (ModelProvider.AllowsData). That is the
+// The keys an entry may carry are read off config.ModelProvider's own JSON
+// tags (providerEntryKeys), never respelled, for the same reason the type is
+// embedded rather than copied.
+//
+// The second rule is the null spelling of allow_data_to:
+// ValidateModelProviders reads "the key was written with nothing under it" off
+// the YAML node, and JSON has no such marker, so a written null arrives as the
+// nil slice that means every repository (ModelProvider.AllowsData). That is the
 // same ambiguity the YAML rule refuses — "shared with nobody" and "not decided
 // yet" would both be published as "every repository" — so it is refused here,
 // from the raw document.
@@ -353,15 +345,17 @@ func validProviders(raw json.RawMessage, providers map[string]Provider) error {
 	carrier := make(map[string]config.ModelProvider, len(providers))
 	for _, name := range providerNames(providers) {
 		p := providers[name]
-		if err := validPricePolicy(name, p.PricePolicy); err != nil {
-			return err
-		}
 		if entry := entries[name]; entry != nil {
 			var fields map[string]json.RawMessage
-			if err := json.Unmarshal(entry, &fields); err == nil {
-				if data, ok := fields["allow_data_to"]; ok && isNull(data) {
-					return fmt.Errorf("projectpolicy: providers.%s.allow_data_to: an explicit empty list is ambiguous: write [\"*\"] for every repository, or remove the key entirely", name)
-				}
+			if err := json.Unmarshal(entry, &fields); err != nil {
+				return fmt.Errorf("projectpolicy: providers.%s: %w", name, err)
+			}
+			if unknown := unknownProviderKeys(fields); len(unknown) > 0 {
+				return fmt.Errorf("projectpolicy: providers.%s: unknown %s: an entry carries %s. A misspelt key leaves the field it names unset, and for %s that is not the safe value, so it is refused here rather than published; the same entry in fugaro.yaml is refused the same way",
+					name, quoteKeys(unknown), strings.Join(providerEntryKeyNames(), ", "), strings.Join(typoUnsafeKeys, ", "))
+			}
+			if data, ok := fields["allow_data_to"]; ok && isNull(data) {
+				return fmt.Errorf("projectpolicy: providers.%s.allow_data_to: an explicit empty list is ambiguous: write [\"*\"] for every repository, or remove the key entirely", name)
 			}
 		}
 		carrier[name] = p.ModelProvider
@@ -410,16 +404,63 @@ func validRouting(r *Routing) error {
 	return fmt.Errorf("projectpolicy: routing.claude.via %q must be %s, %s or %s", via, RouteDirect, RouteOpenRouter, RouteAuto)
 }
 
-// validPricePolicy checks the one provider field internal/config does not know
-// yet: the two switches are the price catalogue's (docs/design/
-// provider-price-catalog.md D3), and an unrecognised value would price a route
-// at the wrong end of the catalogue's range rather than fail.
-func validPricePolicy(name, policy string) error {
-	switch policy {
-	case "", PricePolicyCheapest, PricePolicyHighest:
-		return nil
+// typoUnsafeKeys are the provider keys whose zero value, left in place by a
+// misspelt key, is not a refusal: allow_data_to's nil slice is "every
+// repository" (ModelProvider.AllowsData), route_fee_pct's 0 is "no fee on this
+// route", and price_policy's "" is the cheapest end of the catalogue's range.
+// They are named in the refusal unknownProviderKeys words, because they are the
+// reason an unknown key is an error here rather than a tolerated field.
+var typoUnsafeKeys = []string{"allow_data_to", "route_fee_pct", "price_policy"}
+
+// providerEntryKeys is the set of keys a providers entry may carry: exactly the
+// JSON names of config.ModelProvider's own fields. It is read off the type,
+// never respelled, so a field added to the carrier is known here the moment it
+// exists and the two cannot drift apart.
+var providerEntryKeys = providerKeysOf(reflect.TypeOf(config.ModelProvider{}))
+
+// providerKeysOf collects the JSON names of a struct's fields.
+func providerKeysOf(t reflect.Type) map[string]bool {
+	keys := make(map[string]bool, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		if name != "" && name != "-" {
+			keys[name] = true
+		}
 	}
-	return fmt.Errorf("projectpolicy: providers.%s.price_policy %q must be %s or %s", name, policy, PricePolicyCheapest, PricePolicyHighest)
+	return keys
+}
+
+// providerEntryKeyNames is the known keys, sorted, for the refusal to quote.
+func providerEntryKeyNames() []string {
+	names := make([]string, 0, len(providerEntryKeys))
+	for name := range providerEntryKeys {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// unknownProviderKeys is the keys of one entries[name] object that
+// config.ModelProvider does not declare, sorted: the misspellings and the
+// fields of a Fugaro this one is not.
+func unknownProviderKeys(fields map[string]json.RawMessage) []string {
+	var unknown []string
+	for key := range fields {
+		if !providerEntryKeys[key] {
+			unknown = append(unknown, key)
+		}
+	}
+	sort.Strings(unknown)
+	return unknown
+}
+
+// quoteKeys renders keys as a comma-separated list of quoted names.
+func quoteKeys(keys []string) string {
+	out := make([]string, len(keys))
+	for i, key := range keys {
+		out[i] = strconv.Quote(key)
+	}
+	return strings.Join(out, ", ")
 }
 
 // validBudget mirrors internal/config's checks of fugaro.yaml's budget: block
