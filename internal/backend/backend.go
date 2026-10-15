@@ -84,8 +84,9 @@ type Execution struct {
 	// it instead of parsing the name themselves, because a name's shape is
 	// the backend's business and a second platform's name need not have
 	// Cloud Run's fields (design compute-backend.md §5.2). "" when the
-	// backend does not report one; callers then fall back to the codec's
-	// parse of the name, which answers the same question.
+	// backend does not report one; a caller that needs a region anyway
+	// falls back to its own default, which is a fact about the caller and
+	// not a second reading of the name.
 	Region string
 	// MachineType is the Compute Engine machine type backing this
 	// execution, "" when the backend does not run on VMs (Cloud Run's
