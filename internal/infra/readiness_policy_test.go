@@ -2,6 +2,8 @@ package infra
 
 import (
 	"context"
+	"errors"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -41,6 +43,96 @@ func readinessPolicy(t *testing.T, f *cloud, spec RepoSpec, policy bool) (RepoSp
 		t.Fatal(err)
 	}
 	return got, missing
+}
+
+// readinessPolicyErr is readinessPolicy for the applies Readiness refuses: it
+// hands the error back instead of failing the test on it.
+func readinessPolicyErr(t *testing.T, f *cloud, spec RepoSpec, policy bool) (RepoSpec, []Missing, error) {
+	t.Helper()
+	_, ex, err := DiscoverRepo(context.Background(), f.c, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex.PolicyExists = policy
+	return Readiness(context.Background(), f.c, spec, ex)
+}
+
+// The other half of D11's gate, which nothing pinned before (the review of
+// PR #379: replacing carriesFirebase with true left this package green): a
+// job whose environment carries both variables satisfies it, so a project
+// that has published a policy and an installation that has the backend deploy
+// exactly as they did without one. Both shapes of the job are here because
+// the gate is decided on the spec's environment, not on what is deployed.
+func TestReadinessDeploysAJobThatCanReadAPublishedPolicy(t *testing.T) {
+	for _, exists := range []bool{false, true} {
+		f := newCloud(t)
+		spec, err := Repo(budgetInputs(t, "budget:\n  mode: observe\n"+backendBlock))
+		if err != nil {
+			t.Fatal(err)
+		}
+		readyJob(t, f, spec)
+		if exists {
+			for _, ws := range spec.Workflows {
+				f.run.SetJob(ws.Job, ws.Labels, ws.Image)
+			}
+		}
+		got, missing := readinessPolicy(t, f, spec, true)
+		if slices.ContainsFunc(missing, func(m Missing) bool { return m.Kind == MissingFirebase }) {
+			t.Errorf("job exists = %v: missing = %v, want no Firebase gate for a job that carries %s and %s",
+				exists, missing, RTDBURLEnv, FirebaseAPIKeyEnv)
+		}
+		for name, ws := range got.Workflows {
+			if !ws.DeployJob {
+				t.Errorf("job exists = %v: workflow %s is not deployed: %v", exists, name, missing)
+			}
+		}
+	}
+}
+
+// D11's gate, the second shape (the review of PR #379): a job that already
+// exists is deployed by this apply whatever the reasons say — P7a never
+// un-deploys one, because job.tf's count would destroy it — so for such a job
+// the Missing above is reported while the apply deploys the very job it is
+// about, and every run of the repository keeps being bound by a policy it can
+// no longer read. The apply is refused instead, as the user's own error: the
+// local config is what lost the backend.
+func TestReadinessRefusesAnApplyThatWouldStrandAnExistingJobsPolicy(t *testing.T) {
+	f := newCloud(t)
+	spec, err := Repo(budgetInputs(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readyJob(t, f, spec)
+	// The jobs carry what this config no longer names: an installation that
+	// ran init --firebase, met again by a config without budget.rtdb_url.
+	for _, ws := range spec.Workflows {
+		f.run.SetJob(ws.Job, ws.Labels, ws.Image)
+		f.run.SetJobEnv(ws.Job, map[string]string{
+			RTDBURLEnv:        "https://aurora-fp-default-rtdb.firebaseio.com",
+			FirebaseAPIKeyEnv: "AIzaSyFakeWebApiKeyForTests000000000",
+		})
+	}
+	_, _, err = readinessPolicyErr(t, f, spec, true)
+	if err == nil {
+		t.Fatal("the apply went ahead: the jobs stay deployed without the backend, so the policy binding them stops being readable")
+	}
+	var ue *UserError
+	if !errors.As(err, &ue) {
+		t.Errorf("err = %v (%T), want a user error: the operator's own config is what lost the backend", err, err)
+	}
+	first := slices.Sorted(maps.Keys(spec.Workflows))[0]
+	for _, want := range []string{first, RTDBURLEnv, FirebaseAPIKeyEnv, projectpolicy.PathShared(), "fugaro init --firebase", "fugaro init --repo"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	// Before a policy exists the same apply is only a note (L3): nothing is
+	// bound by a policy the project has not published.
+	if _, missing, err := readinessPolicyErr(t, f, spec, false); err != nil {
+		t.Errorf("err = %v, want the apply to go ahead and warn before a policy exists", err)
+	} else if !slices.ContainsFunc(missing, func(m Missing) bool { return m.Kind == MissingNote }) {
+		t.Errorf("missing = %v, want the L3 note", missing)
+	}
 }
 
 // D11 (plan task 1.4 step 2): a job that carries neither FUGARO_RTDB_URL nor

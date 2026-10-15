@@ -36,7 +36,11 @@ const (
 	// Firebase web key, so a run of it cannot read the project's policy
 	// (D11, plan task 1.4 step 2). It gates the job only once a policy
 	// exists: an installation that has not adopted the model is not
-	// blocked, it is warned.
+	// blocked, it is warned. The gate has two shapes, because a job's
+	// deployment does: a job that does not exist yet is left undeployed
+	// (this Missing, Deployed false), and one that already exists — which
+	// nothing ever un-deploys (P7a) — is refused outright, in Readiness's
+	// loop rather than here.
 	MissingFirebase MissingKind = "firebase"
 )
 
@@ -284,6 +288,18 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 			}
 		}
 		current, exists := ex.Jobs[name]
+		// D11's gate needs a second shape for a job that already exists, and
+		// the review of PR #379 is why: DeployJob is never false for an
+		// existing job (P7a, below), so the Missing above would be reported
+		// while this apply deployed the very job it is about. A job that
+		// exists is deployed by this apply whatever the gate says, so here
+		// the refusal is the apply's: deploying it without the backend takes
+		// the published policy away from every run of the repository, and
+		// the operator learns at the next launch instead of here.
+		if exists && ex.PolicyExists && !carriesFirebase(ws) {
+			return RepoSpec{}, nil, userErr("the project has published a policy (%s), and this init --repo would deploy workflow %s's job without %s or %s in its environment: the job exists already, so it stays deployed and the policy it is bound by would stop being readable by every run of %s. Set the project's Firebase backend (fugaro init --firebase <firebase-project-id>) and run fugaro init --repo again",
+				projectpolicy.PathShared(), name, RTDBURLEnv, FirebaseAPIKeyEnv, spec.Name)
+		}
 		// P7a: an existing job must never carry a secret_env entry with no
 		// version anywhere. Omitting it (rather than refusing the update)
 		// keeps the job's other properties updating; DeployJob is never set
