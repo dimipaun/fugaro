@@ -1539,9 +1539,10 @@ and each would otherwise take a default that contradicts the design.
 - `instancePolicy.blockProjectSshKeys: true`, which closes project-wide SSH
   keys on the instance (§3.2).
 
-Step 6's three `options` variants (§2.2) are rendered the same way: each is
-this JSON with one field added, submitted under the same name with the same
-substitutions.
+Step 6's three `options` variants (§2.2) are this JSON with that one field
+added, and the setup block's `render` is what substitutes their placeholders
+too: write each to a file next to the committed two and render it the same way
+(`render check57/job-group-add.json > /tmp/check57-group-add.json`).
 
 **Two things about that JSON are deliberate.** First, the runnable carries the **socket bind mount**
 (`volumes: ["/var/run/docker.sock:/var/run/docker.sock"]`) — Batch documents
