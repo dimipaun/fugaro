@@ -247,6 +247,22 @@ type Workflow struct {
 	// the workflow's own keys override it field by field. "" is none.
 	// Binaries before 0.6.0 refuse the key.
 	Profile string `yaml:"profile,omitempty"`
+	// JobProfile names the project policy's job profile
+	// (projectpolicy.Profile, design project-centric §4.1) this workflow
+	// runs on: the Cloud Run job's shape — its provider, cpu, memory, task
+	// timeout, secret mounts and admission list — selected by name from the
+	// published policy. "" is the default, DefaultJobProfile.
+	//
+	// It is job_profile and NOT profile: profile: has named the project
+	// layer's workflow template since 0.6.0 (internal/config/layer.go's
+	// Profiles), and one key cannot carry both meanings — a layered
+	// repository's `profile: server` would then also have to be a policy
+	// profile called server, and `fugaro project policy publish` would
+	// refuse every installation that uses a layer profile. The design's
+	// §4.1 writes the selection as `workflows.<name>.profile`; this release
+	// spells it job_profile, and the design needs the same one-word
+	// correction (flagged for the plan's task 3.1 review).
+	JobProfile string `yaml:"job_profile,omitempty"`
 	// Base is removed in 0.7.0: kept so Validate can refuse it with the
 	// migration (MigrationDoc). Read the workflow's base kind through
 	// BaseKind, which always returns BaseKind now.
@@ -286,6 +302,22 @@ const (
 // base. A non-empty w.Base is a removed legacy value, refused by Validate.
 func (w Workflow) BaseKind() string {
 	return BaseKind
+}
+
+// DefaultJobProfile is the project policy profile a workflow that names none
+// runs on (design project-centric §4.1). It is the one profile a published
+// policy must define: internal/projectpolicy refuses a policy that carries a
+// profiles block without it.
+const DefaultJobProfile = "standard"
+
+// JobProfileOrDefault is the policy profile w runs on: w.JobProfile, or
+// DefaultJobProfile when it names none. One accessor, so the default cannot
+// differ between the readers of the selection.
+func (w Workflow) JobProfileOrDefault() string {
+	if w.JobProfile == "" {
+		return DefaultJobProfile
+	}
+	return w.JobProfile
 }
 
 // Rebuild says when the daily image check rebuilds the workflow's image
@@ -418,6 +450,34 @@ var ReservedSecrets = map[string]string{
 type Resources struct {
 	CPU    int    `yaml:"cpu"`
 	Memory string `yaml:"memory"`
+}
+
+// JobProfile is the shape of one project job (design project-centric §4.1):
+// what Cloud Run fixes per job and one workflow's selection picks by name.
+// It is declared once, here, and carried in two documents — the operator's
+// config file (localcfg.Config.Profiles) and the project policy
+// (projectpolicy.Profile, which embeds this type) — so the two cannot drift.
+//
+// CPU and Memory are the same two fields Resources carries, and Cloud Run's
+// own limits are checked against them (internal/backend/gcp.CheckResources):
+// a profile naming a job the API would refuse must be refused here, where the
+// operator can see it. TimeoutClass is the task timeout, a duration in Go
+// syntax ("90m", "6h") through the same spelling timeouts.total uses; it
+// becomes the job's task timeout, so Cloud Run's 168h ceiling applies to it.
+// Secrets are logical secret NAMES the job mounts, never values — the policy
+// node is readable by every run token. AllowRepos is the profile's admission
+// list (design §4.1): empty means the project's allow_repos applies.
+//
+// The provider is not optional (finding 4): one job serves one provider,
+// because the provider is part of the slug, the job's identity and the git
+// credential the job holds.
+type JobProfile struct {
+	Provider     string   `yaml:"provider" json:"provider"`
+	CPU          int      `yaml:"cpu" json:"cpu"`
+	Memory       string   `yaml:"memory" json:"memory"`
+	TimeoutClass string   `yaml:"timeout_class" json:"timeout_class"`
+	Secrets      []string `yaml:"secrets,omitempty" json:"secrets,omitempty"`
+	AllowRepos   []string `yaml:"allow_repos,omitempty" json:"allow_repos,omitempty"`
 }
 
 // Timeouts bound a run (design §4.5).

@@ -101,6 +101,20 @@ type Policy struct {
 	Prices     Prices              `json:"model_prices,omitempty"` // the owner's price overrides, keyed by model ID (Prices documents the node's own spelling)
 	Routing    *Routing            `json:"routing,omitempty"`      // phase 1b writes it; nil = direct (D1b)
 
+	// Profiles are the project's job profiles (design project-centric §4.1,
+	// task 3.1), keyed by profile name. A repository's workflow selects one by
+	// name (config.Workflow.JobProfile, default DefaultProfileName) and the
+	// runner refuses the run when the policy does not define it (§5(3), fail
+	// closed), so this block is a closed set a workflow may only name, never
+	// extend: a backlog job, a budget backlog entry and the run's own identity
+	// are all built from the profile the node defines.
+	//
+	// An absent block is a phase-1 node: it declares no profile, and a workflow
+	// that selects one is then refused at run start rather than run on
+	// something else. validProfiles holds the block to the rule that makes that
+	// safe — a block that is present must define the default.
+	Profiles map[string]Profile `json:"profiles,omitempty"`
+
 	// UnknownKeys lists the top-level keys of the node this Fugaro does not
 	// know, sorted. Decode fills it in and never writes it back (json:"-"):
 	// the keys are tolerated so that a policy a newer Fugaro wrote does not
@@ -118,6 +132,7 @@ type Policy struct {
 var knownTopLevelKeys = map[string]bool{
 	"version": true, "budget": true, "allow_repos": true,
 	"providers": true, "model_prices": true, "routing": true,
+	"profiles": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -335,7 +350,45 @@ func Decode(raw []byte) (*Policy, bool, error) {
 			return nil, true, err
 		}
 	}
+	if fraw, ok := doc["profiles"]; ok && !isNull(fraw) {
+		ps, err := decodeProfileBlock(fraw)
+		if err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: profiles: %w", err)
+		}
+		p.Profiles = ps
+		if err := validProfiles(p.Profiles); err != nil {
+			return nil, true, err
+		}
+	}
 	return &p, true, nil
+}
+
+// decodeProfileBlock reads the profiles block off the node, refusing a key inside
+// an entry this Fugaro does not know. A profile is what a job is deployed as —
+// its cpu, memory, task timeout, provider and the secrets it mounts — so a
+// misspelt key is not a dropped field: a misspelt timeout_class would deploy a
+// job with no timeout, a misspelt allow_repos would deploy it with the
+// project's wider list, and a misspelt secrets entry would mount nothing where
+// the owner listed a secret. The node tolerates unknown *top-level* keys so a
+// newer Fugaro's field does not brick an older runner (P8); inside this block
+// the same tolerance fails open, and a newer profile field bumps Version,
+// which is what refuses a node this binary cannot read.
+func decodeProfileBlock(raw json.RawMessage) (map[string]Profile, error) {
+	var entries map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil, err
+	}
+	out := make(map[string]Profile, len(entries))
+	for _, name := range sortedProfileNames(entries) {
+		dec := json.NewDecoder(bytes.NewReader(entries[name]))
+		dec.DisallowUnknownFields()
+		var pr Profile
+		if err := dec.Decode(&pr); err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		out[name] = pr
+	}
+	return out, nil
 }
 
 // decodeProviders reads the providers block off the node, refusing a key inside

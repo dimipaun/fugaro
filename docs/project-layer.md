@@ -95,6 +95,7 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `budget.allowed_models` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it |
 | `budget.per_day_usd` | repo | it is policy: the owner's ceiling lives in the installation config, and a repository can only tighten it |
 | `workflows.*.profile` | repo | it chooses a profile |
+| `workflows.*.job_profile` | repo | it chooses a job profile of the project policy; the policy is the project's, so a repository picks among the profiles it defines and never writes them |
 | `workflows.*.base` | profile, repo |  |
 | `workflows.*.checkout` | profile, repo |  |
 | `workflows.*.image.node` | profile, repo |  |
