@@ -30,11 +30,11 @@
 //     documented spellings decode;
 //   - the budget block is decoded strictly, the way internal/config decodes
 //     fugaro.yaml's budget block ("a misspelt key is an error, never 'no
-//     policy'"), and its values are checked as validateBudget checks them: a
-//     mode outside off/observe/enforce is refused, because policy.Merge skips
-//     a mode it does not recognise and the run then falls back to off —
-//     enforcement that silently never turns on, the exact failure this
-//     package promises to prevent;
+//     policy'"), and its values — allowed_models entry by entry — are checked
+//     as validateBudget checks them: a mode outside off/observe/enforce is
+//     refused, because policy.Merge skips a mode it does not recognise and the
+//     run then falls back to off — enforcement that silently never turns on,
+//     the exact failure this package promises to prevent;
 //   - model_prices is read with the catalogue's own parser and keeps the
 //     catalogue's pointer spelling, so an omitted optional rate keeps its list
 //     default instead of being priced at zero;
@@ -42,9 +42,14 @@
 //     decodes out of FUGARO_MODEL_PROVIDERS (Provider embeds
 //     config.ModelProvider, so the spelling cannot drift) and is checked by
 //     internal/config's own ValidateModelProviders, so a base URL that is not
-//     https, an auth style that is not bearer or x-api-key, an ambiguous empty
-//     allow_data_to, a route_fee_pct over the cap or a models list two
-//     providers both claim is refused here rather than reaching a run.
+//     https, a kind that is not anthropic-compat, an auth style that is not
+//     bearer or x-api-key, an ambiguous empty allow_data_to, a route_fee_pct
+//     over the cap or a models list two providers both claim is refused here
+//     rather than reaching a run; price_policy, which internal/config does not
+//     know yet, is checked against the catalogue's two values beside them.
+//     Unknown keys *inside* an entry stay ignored (P8) — which is safe only
+//     because every value is checked: a misspelt key leaves its field zero and
+//     is refused, so tolerance costs no silence.
 //
 // The readable node holds nothing personal and no secret values: every run
 // token can read it, and a prompt-injected agent can take the token through
