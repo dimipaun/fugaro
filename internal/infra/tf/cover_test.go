@@ -19,7 +19,8 @@ func grant(typ, member, role string) ResourceChange {
 }
 
 var testCover = Cover{Projects: []string{"proj-1", "fp-2"}, Listed: []string{"user:me@example.com", "group:ops@example.com", "domain:example.com", "allUsers"},
-	Registry: "us-east5-docker.pkg.dev", Region: "us-east5", Buckets: []string{"fugaro-runs-proj-1"}, Billing: []string{"AAAA-BBBB"}}
+	Registry: "us-east5-docker.pkg.dev", Region: "us-east5", Buckets: []string{"fugaro-runs-proj-1"}, Billing: []string{"AAAA-BBBB"},
+	Ghcr: "fugaro-ghcr", Owner: "dimipaun"}
 
 func bucket(after map[string]any) ResourceChange {
 	m := map[string]any{"public_access_prevention": "enforced", "uniform_bucket_level_access": true}
@@ -599,5 +600,108 @@ func TestAPITargetsIsAFreshSlice(t *testing.T) {
 	a[0] = "storage.googleapis.com"
 	if got := APITargets(); got[0] != "identitytoolkit.googleapis.com" || len(got) != 2 {
 		t.Fatalf("APITargets() = %v after a caller changed its copy", got)
+	}
+}
+
+// The remote (pull-through) repository proxies ALL of ghcr.io, so
+// "<registry>/<project>/" stops confining anything the moment it exists: a
+// job CONTAINER's image under the remote repository's ID must match the
+// base pin's closed shape (design registry-remote-repository.md §3.6) — the
+// RECORDED owner, a fugaro-<kind> image, a version tag and a required
+// digest — and anything else under that ID is refused.
+//
+// This is the container's own inline test, which is NOT checkSpecs's
+// inRegistry: it is the one that guards what a run's job pulls, and the
+// hole this change exists to close. The owner is a parameter, so an empty
+// one refuses every remote path rather than trusting whatever owner the
+// reference names.
+// Mutation (run, restore): in Cover.attributes' container loop, call
+// inRegistry instead of baseImageOK — every "refused" row but the empty
+// owner's becomes covered.
+func TestCoverRefusesAJobImageFromAProxyPathThatIsNotThePin(t *testing.T) {
+	const reg = "us-east5-docker.pkg.dev/proj-1/"
+	pin := func(s string) string { return reg + "fugaro-ghcr/dimipaun/fugaro-" + s }
+	d := strings.Repeat("a", 64)
+	noOwner := testCover
+	noOwner.Owner = ""
+	for name, tc := range map[string]struct {
+		cover   Cover
+		image   string
+		covered bool
+	}{
+		"this installation's pin":           {testCover, pin("base:1.2.3@sha256:") + d, true},
+		"a foreign owner through the proxy": {testCover, reg + "fugaro-ghcr/evil/fugaro-base:9.9.9@sha256:" + d, false},
+		"the pin without a digest":          {testCover, pin("base:1.2.3"), false},
+		"the pin without a version tag":     {testCover, pin("base@sha256:") + d, false},
+		"the pin with an empty version tag": {testCover, pin("base:@sha256:") + d, false},
+		// The tag is the version marker every reader of a pin works from,
+		// so a tag that is not a release version is not a pin this tool
+		// wrote (managedVersion and baseIsCurrent would read "" or a dev
+		// sha out of it).
+		"the pin with a latest tag":         {testCover, pin("base:latest@sha256:") + d, false},
+		"the pin with a dev tag":            {testCover, pin("base:dev-abc1234@sha256:") + d, false},
+		"the pin with a two-part version":   {testCover, pin("base:1.2@sha256:") + d, false},
+		"not a fugaro image":                {testCover, reg + "fugaro-ghcr/dimipaun/nginx:1.2.3@sha256:" + d, false},
+		"not a sha256 digest":               {testCover, pin("base:1.2.3@sha256:") + strings.Repeat("a", 63), false},
+		"a bare path under the proxy":       {testCover, reg + "fugaro-ghcr/anything", false},
+		"the remote repository itself":      {testCover, reg + "fugaro-ghcr/", false},
+		"an empty owner refuses the pin":    {noOwner, pin("base:1.2.3@sha256:") + d, false},
+		"an empty owner, the base registry": {noOwner, reg + "fugaro-base/x:1", true},
+		"the base registry is as it was":    {testCover, reg + "fugaro-base/x:1", true},
+		"the run's own repository":          {testCover, reg + "fugaro-acme-webapp/app:1", true},
+		"dot-dot under the proxy":           {testCover, reg + "fugaro-ghcr/../evil/fugaro-base:1@sha256:" + d, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := &Plan{ResourceChanges: []ResourceChange{job(tc.image, []any{"fugaro"}, []any{"image", "check", "--job"})}}
+			if got := tc.cover.NotCovered(p, nil); (len(got) == 0) != tc.covered {
+				t.Fatalf("NotCovered = %q, covered want %v", got, tc.covered)
+			}
+		})
+	}
+}
+
+// TestCoverRefusesACheckSpecOutsideThePin is the OTHER path: checkSpecs's
+// inRegistry, reached through FUGARO_CHECK_SPEC. The spec's own registry
+// and each of its base images must be refused in exactly the same cases as
+// the job image above — two tests, not one, because a change that fixes
+// only this one leaves the container accepting anything under
+// <registry>/<project>/, and vice versa.
+// Mutation (run, restore): make inRegistry return true after the prefix
+// test alone and every "refused" row is covered.
+func TestCoverRefusesACheckSpecOutsideThePin(t *testing.T) {
+	const reg = "us-east5-docker.pkg.dev/proj-1/"
+	d := strings.Repeat("a", 64)
+	ok := reg + "fugaro-acme-webapp-e9eafd3c6e8c"
+	pin := reg + "fugaro-ghcr/dimipaun/fugaro-base:1.2.3@sha256:" + d
+	foreign := reg + "fugaro-ghcr/evil/fugaro-base:9.9.9@sha256:" + d
+	noDigest := reg + "fugaro-ghcr/dimipaun/fugaro-base:1.2.3"
+	noOwner := testCover
+	noOwner.Owner = ""
+	for name, tc := range map[string]struct {
+		cover    Cover
+		registry string
+		bases    []string
+		covered  bool
+	}{
+		"the pin, as the migrated module writes it": {testCover, ok, []string{pin}, true},
+		"the pre-migration copy":                    {testCover, ok, []string{reg + "fugaro-base/web:1"}, true},
+		"a foreign owner":                           {testCover, ok, []string{foreign}, false},
+		"the pin without a digest":                  {testCover, ok, []string{noDigest}, false},
+		"an empty owner refuses the pin":            {noOwner, ok, []string{pin}, false},
+		"the spec's own registry under the proxy":   {testCover, reg + "fugaro-ghcr/dimipaun/fugaro-base:1.2.3", nil, false},
+		"a foreign registry, as before":             {testCover, "evil.example/x/y", nil, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			b := map[string]string{}
+			for i, r := range tc.bases {
+				b[string(rune('a'+i))] = r
+			}
+			m := map[string]any{"repo": "acme/webapp", "registry": tc.registry, "build_service_account": okBuild, "base_images": b}
+			v, _ := json.Marshal(m)
+			p := &Plan{ResourceChanges: []ResourceChange{jobWithSpec(string(v), false)}}
+			if got := tc.cover.NotCovered(p, nil); (len(got) == 0) != tc.covered {
+				t.Fatalf("NotCovered = %q, covered want %v", got, tc.covered)
+			}
+		})
 	}
 }

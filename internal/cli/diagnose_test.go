@@ -470,6 +470,10 @@ func TestDiagnoseShowsRouteReportedAndPinWarnings(t *testing.T) {
 	const key = "sk-or-v1-testkeyshouldneverprint"
 	t.Setenv("OPENROUTER_API_KEY", key)
 	f := newCloudFixture(t)
+	// The owner's route, so the run's model is the one the built-in catalog
+	// prices: the pin warning is the catalog's note (the embedded placeholder
+	// row is gone, P6).
+	f.appendConfig(t, validateProviderBlock)
 	const id = "20260927-130000-dddd"
 	exec := seedRun(t, f, id, "", "someone@example.com", true)
 	ctx := context.Background()
@@ -489,7 +493,7 @@ func TestDiagnoseShowsRouteReportedAndPinWarnings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Route:", "openrouter $0.3000", "Reported:", "$0.4000", "charged $0.3000", "unverified placeholder", "more than 10% above", "may be too low"} {
+	for _, want := range []string{"Route:", "openrouter $0.3000", "Reported:", "$0.4000", "charged $0.3000", "built-in provider price catalog", "zdr", "more than 10% above", "may be too low"} {
 		if !strings.Contains(human, want) {
 			t.Fatalf("diagnose lacks %q:\n%s", want, human)
 		}
@@ -522,6 +526,49 @@ func TestDiagnoseShowsRouteReportedAndPinWarnings(t *testing.T) {
 	human, _, err = execute(t, "diagnose", id2)
 	if err != nil || strings.Contains(human, "Route:") || strings.Contains(human, "Reported:") || strings.Contains(human, "Warning:") {
 		t.Fatalf("err %v; a Claude run shows provider lines:\n%s", err, human)
+	}
+}
+
+// TestDiagnoseShowsAStaleCatalog: a run whose models the catalog priced while
+// it was past its own 30 days charged the dearest end of their tier's range,
+// and diagnose says so and says how to fix it (design §7, P7). The line is
+// driven by the record's own flag — result.json's cost.catalog_stale, written
+// by the run that charged — so diagnose reports what the run did rather than
+// re-measuring the catalog's age today; a run that charged no such row has no
+// line.
+func TestDiagnoseShowsAStaleCatalog(t *testing.T) {
+	f := newCloudFixture(t)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	for i, tc := range []struct {
+		stale bool
+	}{{true}, {false}} {
+		id := fmt.Sprintf("20260927-15000%d-aaaa", i)
+		exec := seedRun(t, f, id, "", "someone@example.com", true)
+		s := runstore.Open(b, appSlug, id)
+		cost := runstore.NewCost(0.42, 0, runstore.BasisAPIList)
+		cost.ModelBy = map[string]float64{"deepseek/deepseek-v4-flash": 0.42}
+		cost.CatalogStale = tc.stale
+		if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+			Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, CostUSD: 0.42, Cost: &cost}); err != nil {
+			t.Fatal(err)
+		}
+		human, _, err := execute(t, "diagnose", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !tc.stale {
+			if strings.Contains(human, "Catalog:") {
+				t.Fatalf("a run with no stale row shows the catalog line:\n%s", human)
+			}
+			continue
+		}
+		for _, want := range []string{"Catalog:", "stale", "dearest end", "scripts/gen-price-catalog.sh"} {
+			if !strings.Contains(human, want) {
+				t.Errorf("diagnose lacks %q:\n%s", want, human)
+			}
+		}
 	}
 }
 
@@ -619,5 +666,30 @@ func TestRouteOfComparesWithoutTheRouteFee(t *testing.T) {
 		if tc.warn && !strings.Contains(d.ReportedWarning, "may") {
 			t.Errorf("warning %q isn't worded as a possibility", d.ReportedWarning)
 		}
+	}
+}
+
+// TestDiagnoseReportedWarningNamesPricePolicy: on a catalog-priced route a
+// reported cost above the charge is as likely to be OpenRouter serving a
+// dearer endpoint as a wrong model_prices, so the warning names both ways
+// out (design §7, D12, Task 5 step 4).
+func TestDiagnoseReportedWarningNamesPricePolicy(t *testing.T) {
+	cost := runstore.NewCost(0.42, 0, runstore.BasisAPIList)
+	cost.RouteBy = map[string]float64{"openrouter": 0.30}
+	cost.ReportedUSD = 0.40
+	rec := &runstore.Record{Version: 1, RunID: "20261001-120000-abcd", Cost: &cost}
+	var d Diagnosis
+	routeOf(&d, rec, nil, func(s string) string { return s })
+	for _, want := range []string{"model_prices", "price_policy: highest", "reported"} {
+		if !strings.Contains(d.ReportedWarning, want) {
+			t.Errorf("the warning lacks %q: %q", want, d.ReportedWarning)
+		}
+	}
+	// A report within the margin warns nothing.
+	cost.ReportedUSD = 0.31
+	d = Diagnosis{}
+	routeOf(&d, rec, nil, func(s string) string { return s })
+	if d.ReportedWarning != "" {
+		t.Errorf("a report inside the margin warned: %q", d.ReportedWarning)
 	}
 }

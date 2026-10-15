@@ -12,7 +12,7 @@ Fugaro's own `fugaro.yaml` (project `fugaro`, workflow `go`) dropped its `base: 
 
 1. Every operator upgrades the CLI to 0.7.0 (`fugaro upgrade --local`, then Homebrew for the binary).
 2. Per repository, one pull request: the `mise.toml` and the `fugaro.yaml` change below (the `/fugaro:setup` skill writes both). Before opening it, `fugaro validate` must pass and `fugaro image build --local` must pass the smoke test.
-3. Merge it, then **at once**, in that checkout: `fugaro image refresh`. It copies `fugaro-base` into your registry, records `base_images.base`, moves the daily check job onto it, and rebuilds every workflow's image. **This step needs `fugaro-base` to be published on ghcr.io first**, which the 0.7.0 release tag does; before it (a development build, or an earlier release) `fugaro image refresh` finds no release image and refuses with a clear error.
+3. Merge it, then **at once**, in that checkout: `fugaro image refresh`. It verifies the release's signed digest and pins it through your registry's remote repository, records `base_images.base`, moves the daily check job onto it, and rebuilds every workflow's image — nothing is copied. **This step needs `fugaro-base` to be published on ghcr.io first**, which the 0.7.0 release tag does; before it (a development build, or an earlier release) `fugaro image refresh` finds no release image and refuses with a clear error.
 4. **Between the merge and the refresh finishing, don't launch runs**: the old image's 0.6 runner refuses the new `fugaro.yaml`. It takes minutes.
 5. `fugaro doctor` in the checkout reports nothing about bases.
 

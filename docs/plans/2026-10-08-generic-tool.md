@@ -1875,7 +1875,7 @@ are inert or unreachable while the `cloneShipped` gate is off, none of them
 changes a `baked` workflow, and each is now recorded in the user-facing doc
 (`docs/checkout.md`, "Known gaps") as an open gap rather than described as
 working. (a) — `fugaro run --repo` deciding from the local `fugaro.yaml` rather
-than from the deployed job — reopens when `cloneShipped` flips in Task 18 and is
+than from the deployed job — reopens when `cloneShipped` flips (its own tiny PR, after Check 38) and is
 the first thing that round should pick up: the doc now says to run `fugaro run`
 in the repository's checkout until then. Closing (d) is a
 `deploy/terraform/gcp/modules/repo` change, and (c) needs the deployed job's
@@ -1920,6 +1920,29 @@ numbering-ruling note). No existing check is renumbered.
 
 **Depends on:** Tasks 16 and 17, and base-image Task 16 (the setup skill's 0.7.0 rewrite).
 
+**Deviation from the plan's Step 5 (owner's ruling, 2026-10-14): this task does
+NOT flip `cloneShipped` or change `cloneSince` in
+`internal/cli/recipes_skew.go`.** The owner wants that in a separate, tiny PR,
+opened only **after Check 38 has passed**: until a build with the gate open has
+been through the live check there is nothing to justify the flip, and the
+release it names (`cloneSince`) cannot be named before that. Check 38's own
+setup says so and names the build it needs. Nothing else in this task changes;
+the deferred gap (a) above reopens with that separate PR, not with this one.
+That PR also bumps `cloneSince` if Check 38 found the runner side needs a fix:
+the release that fix ships in is the release `cloneSince` then has to name (the
+check's own finding decides it). If the check needed no runner fix, `cloneSince`
+already names the release that shipped Task 17 and stays as it is. That PR owns
+the edits the flip makes stale as well as the constant:
+`docs/checkout.md`'s "not shipped yet" notes (which
+`internal/cli/docs_checkout_test.go` holds to `cloneShipped`), this skill's
+topic 12 in `plugin/skills/setup/reference/decisions.md` and its one line in
+`plugin/skills/setup/SKILL.md`, `plugin/setup_skill_test.go`'s
+`TestSetupSkillOffersClone` (which asserts "not shipped", "leave the key out",
+`cloneShipped` and the gate's refusal in both files: rewriting topic 12 to say
+clone ships turns it red, so the flip PR rewrites those assertions with the
+text), and `docs/release.md`'s "Verify `cloneSince`" bullet (which now says
+the flip is not the release commit's edit).
+
 **Files:** `docs/gcp-live-checklist.md` (Check 38), `plugin/skills/setup/reference/decisions.md`, `plugin/skills/setup/SKILL.md` (one line), `plugin/setup_skill_test.go`.
 
 - [ ] **Step 1: Write the failing test.** `TestSetupSkillOffersClone`:
@@ -1932,6 +1955,7 @@ numbering-ruling note). No existing check is renumbered.
 - [ ] **Step 3: Write**
 
 Check 38, "clone workflows (sandbox only, run by you; USER-RUN, NOT RUN)", in the format of Checks 29 and 30:
+- **step 0:** the two builds the check cannot start without — the CLI binary (from a scratch checkout of the flag branch, with `cloneShipped` flipped to `true` by hand, never committed) and a base image built and pushed from that same checkout — and pointing the installation's `base_images.base` at the dev image, because the sandbox's release base image predates `cloneSince` and no released base image carries Task 17's runner;
 - **the setup:** a sandbox workflow switched to `checkout: clone` on a branch, merged in the sandbox repository, `fugaro init --repo` in your terminal;
 - **step 1:** one run, which records the execution start, the `provision` stage's duration and the first stage's start;
 - **step 2:** the job's image as `gcloud run jobs describe` shows it;

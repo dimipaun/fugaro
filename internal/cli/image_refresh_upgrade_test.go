@@ -54,19 +54,22 @@ func TestRefreshRerunLineAndOnPlan(t *testing.T) {
 }
 
 func TestRefreshPlanCurrent(t *testing.T) {
-	cur := managedRef("base", "0.5.1")
-	p := &refreshPlan{kinds: []string{"base"}, want: map[string]string{"base": cur}, lc: &localcfg.Config{BaseImages: map[string]string{"base": cur}}}
+	cur := pinnedRef("base", "0.5.1")
+	p := &refreshPlan{kinds: []string{"base"}, want: map[string]string{"base": cur}, atPin: map[string]bool{"base": true}, lc: &localcfg.Config{BaseImages: map[string]string{"base": cur}}}
 	if !p.current() {
-		t.Fatal("a recorded base and no build is not current")
+		t.Fatal("a recorded base at this release's pin and no build is not current")
 	}
 	p.builds = []string{"api"}
 	if p.current() {
 		t.Fatal("a build to run is current")
 	}
 	p.builds = nil
-	p.lc.BaseImages["base"] = managedRef("base", "0.5.0")
+	// A kind whose entry is the pre-migration copy (or nothing at all) has
+	// no offline value to compare: atPin is false and the run is not
+	// current, whatever the recorded entry looks like (B3).
+	p.atPin["base"], p.want["base"] = false, ""
 	if p.current() {
-		t.Fatal("a base to copy is current")
+		t.Fatal("a base to pin is current")
 	}
 }
 

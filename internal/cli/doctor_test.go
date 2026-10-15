@@ -11,12 +11,15 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/basepin"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -39,6 +42,12 @@ type doctorRig struct {
 func newDoctorRig(t *testing.T) *doctorRig {
 	t.Helper()
 	dir := t.TempDir()
+	// The rig runs the whole command, catalog check included, on a clock
+	// inside the shipped catalog's own window: a check that turns into a
+	// warning as the file ages (the catalog's 30 days, catalog.StaleAfter)
+	// must not decide whether these tests pass, and --strict fails on a
+	// warning.
+	pinCatalogClock(t, shippedCatalog(t), 24*time.Hour)
 	r := &doctorRig{dir: dir, crm: gcpfake.NewCRM(t), billing: gcpfake.NewBilling(t), sm: gcpfake.NewSecrets(t), run: gcpfake.NewRun(t)}
 	r.crm.AddProject("proj-1234", 123456789012)
 	r.crm.SetPolicy("proj-1234", gcpfake.Binding{Role: "roles/owner", Members: []string{"user:owner@example.com"}})
@@ -1257,6 +1266,92 @@ func TestDoctorWithoutFlagNeverReadsTheKey(t *testing.T) {
 	}
 }
 
+// TestDoctorPriceCatalogStaleIsWarning: the catalog check measures the
+// catalog's own 30 days, not the Claude table's 90, and a stale catalog is a
+// warning (it fails doctor only under --strict) whose fix is the command
+// that regenerates the file (design §7, P7, Task 5 step 3).
+func TestDoctorPriceCatalogStaleIsWarning(t *testing.T) {
+	cat, err := catalog.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked, err := time.Parse("2006-01-02", cat.CheckedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh := doctorPriceCatalog(checked.Add(29 * 24 * time.Hour))
+	if fresh.ID != "provider-price-catalog" || fresh.Severity == "warning" || !strings.Contains(fresh.Problem, cat.CheckedAt) {
+		t.Errorf("29 days: %+v", fresh)
+	}
+	if !strings.Contains(fresh.Problem, cat.Sources[0]) {
+		t.Errorf("the fresh check does not name the catalog's source: %+v", fresh)
+	}
+	if checksFail([]doctorCheck{fresh}, true) {
+		t.Error("a fresh catalog failed doctor")
+	}
+	// The threshold is 30 days, not the Anthropic table's 90: 89 days is
+	// already stale here.
+	stale := doctorPriceCatalog(checked.Add(31 * 24 * time.Hour))
+	if stale.Severity != "warning" || !strings.Contains(stale.Problem, "stale") {
+		t.Errorf("31 days: %+v", stale)
+	}
+	if !strings.Contains(stale.Fix, "scripts/gen-price-catalog.sh") {
+		t.Errorf("the stale check does not name the regeneration command: %+v", stale)
+	}
+	if checksFail([]doctorCheck{stale}, false) || !checksFail([]doctorCheck{stale}, true) {
+		t.Error("a stale catalog is not a --strict-only warning")
+	}
+	if long := doctorPriceCatalog(checked.Add(89 * 24 * time.Hour)); long.Severity != "warning" {
+		t.Errorf("89 days is not stale: %+v", long)
+	}
+}
+
+// TestDoctorZDRCheckSaysUnverified: a route whose require_zdr is on (the
+// default) is priced at the ZDR-eligible endpoints, and doctor says plainly
+// that this is a price and not an enforcement Fugaro can make or read
+// (design §8, P9, Task 5 step 3). Only the routes the built-in catalog prices
+// are named: require_zdr on a vendor's own endpoint selects no price, so the
+// sentence would be false there.
+func TestDoctorZDRCheckSaysUnverified(t *testing.T) {
+	if c := doctorProviderZDR(&localcfg.Config{}); c != nil {
+		t.Errorf("no route, but %+v", c)
+	}
+	off := false
+	lc := &localcfg.Config{Providers: map[string]config.ModelProvider{
+		"quiet": {BaseURL: "https://openrouter.ai/api", RequireZDR: &off},
+		"zdr":   {BaseURL: "https://openrouter.ai/api"},
+		// A vendor's own endpoint: require_zdr selects no price there, so
+		// the note must not claim its models are priced from the catalog.
+		"vendor": {BaseURL: "https://api.deepseek.com/anthropic"},
+	}}
+	c := doctorProviderZDR(lc)
+	if c == nil {
+		t.Fatal("a require_zdr route is not reported")
+	}
+	if c.Severity != "info" || c.OK {
+		t.Errorf("the check is not informational: %+v", c)
+	}
+	for _, want := range []string{"zdr", "price", "privacy setting", "cannot read", "zdr"} {
+		if !strings.Contains(c.Problem, want) {
+			t.Errorf("the check lacks %q: %s", want, c.Problem)
+		}
+	}
+	if strings.Contains(c.Problem, "quiet") || strings.Contains(c.Problem, "vendor") || !strings.Contains(c.Problem, "zdr") {
+		t.Errorf("the check names the wrong routes: %s", c.Problem)
+	}
+	// A require_zdr route the catalog does not price is not this check's
+	// business at all: with no catalog-eligible route there is nothing to
+	// say, rather than a sentence that would be false.
+	if c := doctorProviderZDR(&localcfg.Config{Providers: map[string]config.ModelProvider{
+		"vendor": {BaseURL: "https://api.deepseek.com/anthropic"},
+	}}); c != nil {
+		t.Errorf("a route the catalog does not price is reported as catalog-priced: %+v", c)
+	}
+	if checksFail([]doctorCheck{*c}, true) {
+		t.Error("the informational ZDR check failed doctor under --strict")
+	}
+}
+
 // addLocalLines appends configuration to the rig's local config file, as an
 // owner's own hand edit would (project_secrets and repos are local-config-only
 // and never written by a Fugaro command other than init --repo).
@@ -1684,5 +1779,51 @@ func TestDoctorProjectSecretExtraAccessorsReadsNoValue(t *testing.T) {
 		if req.Method != http.MethodGet {
 			t.Errorf("the project-wide accessor check made a non-read call: %s %s", req.Method, req.Path)
 		}
+	}
+}
+
+// The base pin's verifier: `cosign` must be on PATH for any base pin
+// (internal/basepin shells out to it, design registry-remote-repository.md
+// §9 Decision 1's option (ii)), and a missing binary refuses the pin rather
+// than warning past it — so doctor says so before the project's name is
+// typed. It is a warning, not a failure: a repository that only copies
+// history never needs it.
+func TestDoctorChecksTheCosignVerifier(t *testing.T) {
+	old := basepin.CosignBin
+	t.Cleanup(func() { basepin.CosignBin = old })
+	bin := filepath.Join(t.TempDir(), "cosign")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	check := func(t *testing.T, o doctorOutput) doctorCheck {
+		t.Helper()
+		for _, c := range o.Checks {
+			if c.ID == "cosign" {
+				return c
+			}
+		}
+		t.Fatalf("no cosign check in %+v", o.Checks)
+		return doctorCheck{}
+	}
+	run := func(t *testing.T) doctorOutput {
+		t.Helper()
+		newDoctorRig(t)
+		out, _, _ := execute(t, "doctor", "--json", "--dir", t.TempDir())
+		var o doctorOutput
+		if err := json.Unmarshal([]byte(out), &o); err != nil {
+			t.Fatalf("json: %v\n%s", err, out)
+		}
+		return o
+	}
+
+	basepin.CosignBin = bin
+	if c := check(t, run(t)); !c.OK || c.Problem != "" || c.Severity != "" {
+		t.Errorf("with cosign on PATH: %+v", c)
+	}
+
+	basepin.CosignBin = filepath.Join(t.TempDir(), "not-here")
+	c := check(t, run(t))
+	if c.OK || c.Severity != "info" || !strings.Contains(c.Problem, "cosign is not on PATH") || !strings.Contains(c.Fix, "install cosign") {
+		t.Errorf("with no cosign: %+v", c)
 	}
 }

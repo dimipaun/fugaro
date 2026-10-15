@@ -1,0 +1,171 @@
+{
+ "data": {
+  "endpoints": [
+   {
+    "context_length": 1024000,
+    "max_completion_tokens": 384000,
+    "pricing": {
+     "completion": "0.00000070296",
+     "discount": 0.798,
+     "input_cache_read": "0.00000002929",
+     "prompt": "0.00000035148"
+    },
+    "tag": "streamlake/fp8"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 393216,
+    "pricing": {
+     "completion": "0.00000070642",
+     "discount": 0.791,
+     "input_cache_read": "0.00000002926",
+     "prompt": "0.00000035321"
+    },
+    "tag": "baidu/fp8"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.00000348",
+     "discount": 0,
+     "input_cache_read": "0.0000001",
+     "prompt": "0.00000045"
+    },
+    "tag": "parasail/fp8"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.000001914",
+     "discount": 0.45,
+     "input_cache_read": "0.00000007975",
+     "prompt": "0.000000957"
+    },
+    "tag": "gmicloud/fp8"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 384000,
+    "pricing": {
+     "completion": "0.000002088",
+     "discount": 0,
+     "input_cache_read": "0.0000002088",
+     "prompt": "0.000001044"
+    },
+    "tag": "digitalocean"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 393216,
+    "pricing": {
+     "completion": "0.0000105",
+     "discount": 0.3,
+     "input_cache_read": "0.00000021",
+     "prompt": "0.00000105"
+    },
+    "tag": "reka"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.00000255",
+     "discount": 0,
+     "input_cache_read": "0.0000002",
+     "prompt": "0.00000115"
+    },
+    "tag": "cloudflare"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 16384,
+    "pricing": {
+     "completion": "0.0000026",
+     "discount": 0,
+     "input_cache_read": "0.0000001",
+     "prompt": "0.0000013"
+    },
+    "tag": "deepinfra/fp8"
+   },
+   {
+    "context_length": 1000000,
+    "max_completion_tokens": 393216,
+    "pricing": {
+     "completion": "0.000002832",
+     "discount": 0,
+     "input_cache_read": "0.000000118",
+     "prompt": "0.000001416"
+    },
+    "tag": "alibaba/fp8"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 393216,
+    "pricing": {
+     "completion": "0.000003135",
+     "discount": 0,
+     "input_cache_read": "0.000000135",
+     "prompt": "0.00000150162"
+    },
+    "tag": "siliconflow/fp8"
+   },
+   {
+    "context_length": 1000000,
+    "max_completion_tokens": 393216,
+    "pricing": {
+     "completion": "0.00000312",
+     "discount": 0,
+     "input_cache_read": "0.00000013",
+     "prompt": "0.00000156"
+    },
+    "tag": "alibaba/fp8/us-east-1"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 393216,
+    "pricing": {
+     "completion": "0.0000032",
+     "discount": 0,
+     "input_cache_read": "0.000000135",
+     "prompt": "0.0000016"
+    },
+    "tag": "novita/fp8"
+   },
+   {
+    "context_length": 1000000,
+    "max_completion_tokens": 32768,
+    "pricing": {
+     "completion": "0.000003301",
+     "discount": 0,
+     "input_cache_read": "0.00000033",
+     "prompt": "0.00000165"
+    },
+    "tag": "venice"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 393216,
+    "pricing": {
+     "completion": "0.00000338",
+     "discount": 0,
+     "input_cache_read": "0.00000013",
+     "prompt": "0.00000168"
+    },
+    "tag": "atlas-cloud/fp4"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 384000,
+    "pricing": {
+     "completion": "0.00000383",
+     "discount": 0,
+     "input_cache_read": "0.00000016",
+     "prompt": "0.00000191"
+    },
+    "tag": "azure/us"
+   }
+  ]
+ }
+}

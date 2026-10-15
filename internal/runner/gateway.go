@@ -13,7 +13,6 @@ import (
 	"golang.org/x/oauth2/google"
 
 	"github.com/dimipaun/fugaro/internal/agent"
-	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -281,12 +280,16 @@ func (r *run) closeGateway() {
 }
 
 // routingKnob reports whether the live test's knob skips the
-// routing refusal. On Cloud Run, or against a test upstream, it never does.
+// routing refusal. In the cloud, or against a test upstream, it never
+// does: Deps.Local is the CLI's answer and its zero value is the cloud
+// (design compute-backend.md §2.5), so a platform no backend claims
+// refuses the knob too. The warning still says Cloud Run, the only cloud
+// platform that can reach it today.
 func (r *run) routingKnob() bool {
 	if envLookup(r.d.Env, allowRoutingSettingsEnv) != "1" {
 		return false
 	}
-	if backend.OnCloudRun(func(k string) string { return envLookup(r.d.Env, k) }) {
+	if !r.d.Local {
 		if !r.warnedKnob {
 			r.warnedKnob = true
 			r.d.Log.Warn(allowRoutingSettingsEnv + " is ignored on Cloud Run")
@@ -354,6 +357,15 @@ func (r *run) checkBudget() error {
 	for _, w := range config.PinWarnings(r.cfg.Agent, s.Prices) {
 		r.d.Log.Warn("model pin: "+w.String(), "code", w.Code)
 	}
+	if catalogStale(s.Prices, r.cfg.Agent.PinnedModels()) {
+		// One line per run, whatever the mode: the models this run is pinned
+		// to are charged the dearest end of their tier's range, and
+		// result.json says what was charged once the run is over (design §7,
+		// P7). A stale row no pin names is not this run's business: the routes
+		// may have materialized one, and a run that never calls it, or prices
+		// it by hand, over-charges nothing.
+		r.d.Log.Warn("budget: price catalog stale", "code", "catalog_stale")
+	}
 	if err := r.checkManagedDirWritable(); err != nil {
 		return err
 	}
@@ -397,7 +409,13 @@ func (r *run) checkProviderModels() error {
 	}
 	prices := r.spend.Prices
 	if prices == nil {
-		prices = pricing.Embedded()
+		// The budget is off, so the ceiling loaded no table; the checks
+		// below still judge the prices the run would charge, built the
+		// same way.
+		var err error
+		if prices, err = r.priceTable(nil); err != nil {
+			return fmt.Errorf("pricing the models: %w", err)
+		}
 	}
 	ps := config.CheckProviderPolicy(r.cfg.Agent, allowed, r.spec.Repo, r.d.Providers, prices)
 	ps = append(ps, config.CheckProviderAuth(r.cfg.Agent, r.d.Providers)...)

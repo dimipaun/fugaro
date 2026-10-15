@@ -499,12 +499,20 @@ func TestStageTimingFailedStage(t *testing.T) {
 // first-line review is a stage like any other. A stage with no model call
 // records none.
 func TestStageTimingProviderRouteAndReviewFirst(t *testing.T) {
-	use := pricing.Usage{Input: 1000, Output: 500} // $1/M in, $4/M out: 3000 µ$
+	use := pricing.Usage{Input: 1000, Output: 500}
 	g := providerRun(t, providerFirstLine(t, "on"), "enforce", "50",
 		[]anthropicfake.Reply{
 			anthropicfake.Compat{}.MessageOK(deepseek, use),
 			anthropicfake.Compat{}.MessageOK(deepseek, use),
 		}, "acme/app")
+	// The figure is the run's own table's for that usage (Task 4: the
+	// catalog prices the route's model, so naming a number here would only
+	// pin the catalog's rates, not the stage's attribution).
+	m, ok := g.deps.Spend.Prices.Lookup(deepseek)
+	if !ok {
+		t.Fatal("the run's table has no row for the model it routed")
+	}
+	one := m.Rates.Cost(use).USD()
 	var status, firstStatus int
 	var body, firstBody string
 	rec, err := g.run(t,
@@ -522,8 +530,8 @@ func TestStageTimingProviderRouteAndReviewFirst(t *testing.T) {
 		model string
 		usd   float64
 	}{
-		{"implement", deepseek, 0.003},
-		{"review_first", deepseek, 0.003},
+		{"implement", deepseek, one},
+		{"review_first", deepseek, one},
 		{"review", sonnet, 0},
 	}
 	for i, w := range want {
@@ -532,7 +540,7 @@ func TestStageTimingProviderRouteAndReviewFirst(t *testing.T) {
 			t.Errorf("stage %d = %+v, want %s on %s for $%v", i, s, w.name, w.model, w.usd)
 		}
 	}
-	if rec.Cost == nil || stageMicros(t, rec.Stages) != micros(t, rec.Cost.ModelUSD) || micros(t, rec.Cost.ModelUSD) != micros(t, 0.006) {
+	if rec.Cost == nil || stageMicros(t, rec.Stages) != micros(t, rec.Cost.ModelUSD) || micros(t, rec.Cost.ModelUSD) != micros(t, 2*one) {
 		t.Fatalf("the stages total %v, model_usd = %+v", stageMicros(t, rec.Stages), rec.Cost)
 	}
 }
@@ -941,9 +949,11 @@ func TestManagedSettingsWrittenBeforeFirstStage(t *testing.T) {
 	}
 }
 
-func TestTestKnobIgnoredOnCloudRun(t *testing.T) {
+func TestTestKnobIgnoredInCloud(t *testing.T) {
 	g := newGWFiles(t, gwConfig(t, ""), "observe", "", map[string]string{".claude/settings.json": rerouting})
 	g.deps.GatewayUpstream = "" // as a local run against the real API would be
+	g.deps.Local = false        // the CLI's resolved platform: a Cloud Run execution, or any it can't name
+	g.deps.Project = "aurora"   // and its job names the project, as every job does
 	g.deps.Env = append(g.deps.Env, "FUGARO_TEST_ALLOW_ROUTING_SETTINGS=1", "CLOUD_RUN_EXECUTION=exec-1")
 	rec, err := g.run(t)
 	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "ANTHROPIC_BASE_URL") {

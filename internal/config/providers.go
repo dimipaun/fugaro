@@ -28,6 +28,15 @@ const ModelProviderKind = "anthropic-compat"
 // MaxRouteFeePct bounds route_fee_pct; a larger fee is a typo.
 const MaxRouteFeePct = 50
 
+// The two price policies a provider route may set: which end of the selected
+// tier's price range the built-in price catalog charges. They are the config's
+// spelling of pricing.CatalogRoute.Policy, and ValidateModelProviders refuses
+// anything else.
+const (
+	PricePolicyCheapest = "cheapest"
+	PricePolicyHighest  = "highest"
+)
+
 // ModelProvider is one entry of the local config's providers block.
 type ModelProvider struct {
 	Kind string `yaml:"kind" json:"kind"`
@@ -41,6 +50,18 @@ type ModelProvider struct {
 	Secret string `yaml:"secret" json:"secret"`
 	// RouteFeePct is added to every charge on this provider; 0 is none.
 	RouteFeePct float64 `yaml:"route_fee_pct,omitempty" json:"route_fee_pct,omitempty"`
+	// RequireZDR prices the provider's models at the endpoints that hold no
+	// data (the built-in price catalog's zdr tier) rather than at every
+	// endpoint the model is served by. Unset means true: a route's safe end
+	// is the one the owner would have picked. It prices a tier; it does not
+	// enforce routing (see PricePolicy).
+	RequireZDR *bool `yaml:"require_zdr,omitempty" json:"require_zdr,omitempty"`
+	// PricePolicy is which end of the selected tier's price range is charged:
+	// "cheapest" or "highest"; unset means cheapest (PricePolicySet). It
+	// prices a tier; it does not choose the endpoint OpenRouter serves from,
+	// so a call may still be billed at the other end of the range (see
+	// docs/multi-model.md §2).
+	PricePolicy string `yaml:"price_policy,omitempty" json:"price_policy,omitempty"`
 	// Models are the model IDs the provider serves: exact IDs, or a prefix
 	// ending in "*" such as "deepseek/*". No two providers may overlap.
 	Models []string `yaml:"models" json:"models"`
@@ -114,6 +135,43 @@ var (
 	modelPatternRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]*\*?$`)
 	repoSlugRE     = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
 )
+
+// RequireZDROn reports whether the route prices the ZDR-eligible endpoints
+// only: true unless require_zdr is false (the PRSettings.EarlyDraftOn shape).
+func (p ModelProvider) RequireZDROn() bool { return p.RequireZDR == nil || *p.RequireZDR }
+
+// PricePolicySet is the policy to apply, spelled out: cheapest when the field
+// is unset. It is the value that reaches the price table, so the compiler
+// never branches on the empty string.
+func (p ModelProvider) PricePolicySet() string {
+	if p.PricePolicy == "" {
+		return PricePolicyCheapest
+	}
+	return p.PricePolicy
+}
+
+// CatalogEligible reports whether the built-in price catalog may price a
+// route at baseURL. It is an inference, not a knob: the catalog is generated
+// from OpenRouter's public API, so it prices OpenRouter itself (openrouter.ai
+// and any subdomain of it) and a loopback address, which is the fake a test
+// routes to. A vendor's own endpoint — api.deepseek.com, a Bedrock host — is
+// priced by model_prices, because its prices are the vendor's and nothing
+// here has read them (design D5, P6).
+func CatalogEligible(baseURL string) bool {
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Hostname() == "" {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "openrouter.ai" || strings.HasSuffix(host, ".openrouter.ai") {
+		return true
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
 
 // Matches reports whether the provider serves model.
 func (p ModelProvider) Matches(model string) bool {
@@ -272,6 +330,9 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 		}
 		if math.IsNaN(p.RouteFeePct) || p.RouteFeePct < 0 || p.RouteFeePct > MaxRouteFeePct {
 			add(at+".route_fee_pct", "must be between 0 and %d (a percentage added to every charge)", MaxRouteFeePct)
+		}
+		if p.PricePolicy != "" && p.PricePolicy != PricePolicyCheapest && p.PricePolicy != PricePolicyHighest {
+			add(at+".price_policy", "%q must be one of %s, %s (which end of the built-in price catalog's range to charge; unset means %s)", p.PricePolicy, PricePolicyCheapest, PricePolicyHighest, PricePolicyCheapest)
 		}
 		if len(p.Models) == 0 {
 			add(at+".models", "must list the model IDs the provider serves, such as deepseek/*")
@@ -487,7 +548,14 @@ func CheckProviderPolicy(a Agent, allowed []string, repo string, providers map[s
 			ps = append(ps, Problem{Path: path, Message: fmt.Sprintf("%s is not an explicit model ID: name a plain vendor/model ID", CodeSpan(model))})
 		case prices != nil:
 			if _, ok := prices.Lookup(model); !ok {
-				ps = append(ps, Problem{Path: path, Message: fmt.Sprintf("%s has no price: add it under model_prices in the project config", CodeSpan(model))})
+				// A model the catalog refused says why — the switch to
+				// flip and both ways out (P8) — rather than only naming
+				// model_prices.
+				msg := fmt.Sprintf("%s has no price: add it under model_prices in the project config", CodeSpan(model))
+				if why := prices.Refusal(model); why != "" {
+					msg = why
+				}
+				ps = append(ps, Problem{Path: path, Message: msg})
 			}
 		}
 	}

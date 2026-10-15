@@ -226,10 +226,23 @@ func parseImageRef(ref string) (host, name, tagOrDigest string, err error) {
 	}
 	rest := ref
 	if i := strings.Index(rest, "@"); i >= 0 {
-		rest, tagOrDigest = rest[:i], rest[i+1:]
-		if !gcp.IsDigest(tagOrDigest) {
+		named, digest := rest[:i], rest[i+1:]
+		if !gcp.IsDigest(digest) {
 			return bad()
 		}
+		// name[:tag]@digest is ONE reference (distribution/reference's own
+		// grammar), and the pin keeps its version tag beside the digest. The
+		// tag is redundant next to the digest but it must come off here: left
+		// on, it stays part of the repository name, repoNameRE refuses the
+		// whole reference and readBaseDigests logs "its base trigger is
+		// skipped" on every check, forever, silently.
+		if colon := strings.LastIndex(named, ":"); colon > strings.LastIndex(named, "/") {
+			if !tagRE.MatchString(named[colon+1:]) {
+				return bad()
+			}
+			named = named[:colon]
+		}
+		rest, tagOrDigest = named, digest
 	}
 	if slash := strings.LastIndex(rest, "/"); tagOrDigest == "" {
 		if colon := strings.LastIndex(rest, ":"); colon > slash {
