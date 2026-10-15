@@ -37,6 +37,12 @@ func CosignPath() string {
 // artifact-digest policy: a signature that does not cover exactly these
 // bytes cannot satisfy it. There is no "without artifact" mode here and
 // no flag that would relax it.
+//
+// All four claims the certificate must satisfy are passed: the identity and
+// the issuer (the SAN and the issuer of the certificate), and the trigger
+// and repository (Fulcio's event_name and repository extensions, which are
+// what make it a push of THIS repository rather than a workflow_dispatch
+// run against the same tag ref, or a run in a fork).
 type CosignVerifier struct{}
 
 // Verify implements OCIVerifier.
@@ -45,6 +51,8 @@ func (CosignVerifier) Verify(ctx context.Context, ref string, id CertIdentity) e
 		"verify",
 		"--certificate-identity", id.WorkflowRef,
 		"--certificate-oidc-issuer", id.Issuer,
+		"--certificate-github-workflow-trigger", id.Trigger,
+		"--certificate-github-workflow-repository", id.Repository,
 		ref,
 	}
 	cmd := exec.CommandContext(ctx, CosignBin, args...)
@@ -59,8 +67,8 @@ func (CosignVerifier) Verify(ctx context.Context, ref string, id CertIdentity) e
 	case errors.Is(err, exec.ErrNotFound), errors.Is(err, fs.ErrNotExist):
 		return fmt.Errorf("%s is not installed: install cosign to verify a release's base image, or name a base explicitly with --base-image", CosignBin)
 	case errors.As(err, &ee):
-		return fmt.Errorf("cosign rejected %s (it must be signed by %s from %s): %s",
-			ref, id.WorkflowRef, id.Issuer, firstLine(errb.String()))
+		return fmt.Errorf("cosign rejected %s (it must be signed by %s from %s, by a %s of %s): %s",
+			ref, id.WorkflowRef, id.Issuer, id.Trigger, id.Repository, firstLine(errb.String()))
 	default:
 		return fmt.Errorf("running %s: %w", CosignBin, err)
 	}
