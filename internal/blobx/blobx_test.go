@@ -486,6 +486,7 @@ func TestTouchForbiddenIsClassified(t *testing.T) {
 //	TestGetFileWithoutAnExpectedHashStillReturnsOne  the returned hash is of nothing
 //	TestGetFileAcceptsAMatchingHash              the expected hash is never accepted (the check becomes "if want != \"\""); separately, EqualFold becomes ==, which fails the upper-case hash; separately, TrimSpace is dropped, which fails the padded one
 //	TestGetFileLeavesAPreExistingFileAloneWhenItRefuses  the temp file is dropped and the bytes are written straight to path, so the file that was already there is truncated and overwritten
+//	TestGetFileRefusesATruncatedObject            the announced-size check after the copy is removed, so a reader that stops early at EOF is reported as a success and the prefix lands at path
 //	TestGetFileRefusesOverTheCapBeforeReadingTheBody  the r.Size() > limit pre-check is removed, so the body is read before the cap can refuse it (the post-copy check still returns ErrTooLarge — only the read count moves)
 //	TestPutFileReportsASourceFailureAsTheSource  the source stops being read through sourceReader, so its error is classified as the bucket's and the message stops naming the file
 //	TestStrictReadsAgreeWithGetFileOnForbidden   a strict read goes back to returning the bare 403 (read: strictReadErr -> err), so errors.Is(err, ErrForbidden) is false for callers that cannot inspect a googleapi.Error
@@ -893,9 +894,14 @@ func (r *sizedReader) As(any) bool { return false }
 
 // TestGetFileRefusesAnOverCapObjectTheReaderDoesNotAnnounce: the cap is the
 // bytes read, not the size the backend claims. Every other backend in these
-// tests reports an accurate size, so only a reader with none — or a lying
-// one — reaches the post-copy check, and without it the object streams
-// straight past its cap into the destination.
+// tests reports an accurate size, so only a reader with none — or one whose
+// number is smaller than the object — reaches the post-copy check, and
+// without it the object streams straight past its cap into the destination.
+// An understated reader that serves MORE than it announced is refused as
+// ErrChanged rather than trusted (TestGetFileRefusesATruncatedObject is the
+// same guard from the short side), so the "still arrives" half below uses an
+// honest reader: what it pins is that the post-copy check does not refuse a
+// legal download.
 func TestGetFileRefusesAnOverCapObjectTheReaderDoesNotAnnounce(t *testing.T) {
 	ctx := context.Background()
 	data := bytes.Repeat([]byte("z"), 100)
@@ -908,8 +914,17 @@ func TestGetFileRefusesAnOverCapObjectTheReaderDoesNotAnnounce(t *testing.T) {
 				t.Fatalf("GetFile of an unannounced 100-byte object under a 99-byte cap = %v, want ErrTooLarge", err)
 			}
 			assertDirEmpty(t, dir)
-			// The same object under a cap that fits still arrives: the
-			// post-copy check must not refuse a legal download.
+			if size >= 0 {
+				// A reader that announced 10 and served 100 is a broken
+				// backend, and the bytes it served are not what it said they
+				// would be: refused, not recorded.
+				if _, _, err := b.GetFile(ctx, "artifacts/a.mp4", path, "", 100, true); !errors.Is(err, blobx.ErrChanged) {
+					t.Fatalf("GetFile of an understated reader = %v, want ErrChanged", err)
+				}
+				assertDirEmpty(t, dir)
+				return
+			}
+			// The same object under a cap that fits still arrives.
 			if _, _, err := b.GetFile(ctx, "artifacts/a.mp4", path, "", 100, true); err != nil {
 				t.Fatalf("GetFile at the cap = %v", err)
 			}
@@ -1000,6 +1015,7 @@ func TestGetFileLeavesAPreExistingFileAloneWhenItRefuses(t *testing.T) {
 	}{
 		"a mismatch":                {&sizedDriver{data: data, size: int64(len(data))}, sha256Hex([]byte("something else")), 1 << 20, blobx.ErrMismatch},
 		"an unannounced cap":        {&sizedDriver{data: data, size: -1}, "", 99, blobx.ErrTooLarge},
+		"an object that ends early": {&sizedDriver{data: data, size: 1 << 20}, "", 1 << 21, blobx.ErrChanged},
 		"a read that fails partway": {&sizedDriver{data: data, size: int64(len(data)), failAfter: 10}, "", 1 << 20, errReadFailure},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1028,6 +1044,38 @@ func TestGetFileLeavesAPreExistingFileAloneWhenItRefuses(t *testing.T) {
 				}
 				t.Fatalf("%s holds %v, want just the pre-existing a.mp4", dir, names)
 			}
+		})
+	}
+}
+
+// TestGetFileRefusesATruncatedObject: an object that ends before the size its
+// reader announced ends CLEANLY — the reader returns io.EOF, io.Copy returns
+// nil, and nothing in the copy loop notices — so without a comparison against
+// the announced size the prefix is hashed and renamed into the destination as
+// a success. With no expected hash (the ordinary artifact download) the
+// caller would then record a hash of partial bytes as the artifact's, and
+// with one it would fail as a mismatch against bytes it never fully had. The
+// destination must be left empty and the error must name the shortfall.
+func TestGetFileRefusesATruncatedObject(t *testing.T) {
+	ctx := context.Background()
+	const announced = 1 << 20
+	served := bytes.Repeat([]byte("z"), 4096) // what the reader actually hands over
+	for name, size := range map[string]int64{
+		"announced a megabyte, served 4 KiB": announced,
+		"announced nothing, served 4 KiB":    0, // the same guard, from the other side
+	} {
+		t.Run(name, func(t *testing.T) {
+			b := blobx.Wrap(blob.NewBucket(&sizedDriver{data: served, size: size}))
+			dir := t.TempDir()
+			path := filepath.Join(dir, "a.mp4")
+			n, sum, err := b.GetFile(ctx, "artifacts/a.mp4", path, "", 1<<21, true)
+			if !errors.Is(err, blobx.ErrChanged) {
+				t.Fatalf("GetFile of an object that announced %d bytes and served %d = %d, %q, %v; want ErrChanged", size, len(served), n, sum, err)
+			}
+			if n != 0 || sum != "" {
+				t.Fatalf("GetFile returned %d bytes and hash %q for a truncated object", n, sum)
+			}
+			assertDirEmpty(t, dir)
 		})
 	}
 }

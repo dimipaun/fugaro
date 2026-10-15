@@ -42,13 +42,23 @@ var (
 	ErrConflict = errors.New("the object changed")
 	// ErrExists means Create found the object already there.
 	ErrExists = errors.New("object already exists")
-	// ErrForbidden means GCS refused a read, write or delete for lack of
-	// permission (HTTP 403). gocloud reports a 403 as NotFound, so without
-	// it a refused write would read as a missing object
-	// (docs/design/bucket-iam.md §2.3). It is produced by every write, by
-	// every delete and by every STRICT read (ReadStrict, ReadMaxStrict,
-	// GetFile with strict true) — never by a non-strict one, which folds a
-	// 403 into ErrNotExist on purpose (see Read and GetFile).
+	// ErrForbidden means GCS refused a read, a write or a delete for lack
+	// of permission (HTTP 403). gocloud reports a 403 as NotFound, so
+	// without it a refused write would read as a missing object
+	// (docs/design/bucket-iam.md §2.3). On GCS it is produced by every
+	// write, by every delete and by every STRICT read (ReadStrict,
+	// ReadMaxStrict, GetFile with strict true); a non-strict read never
+	// produces it, folding a 403 into ErrNotExist on purpose (see Read and
+	// GetFile).
+	//
+	// It is the GCS answer and nothing more: it is made from a 403, so a
+	// driver with no 403 to report keeps its own refusal instead — file://
+	// and mem:// refuse with fs.ErrPermission, which reaches the caller
+	// unchanged. "Not ErrForbidden" therefore does not mean "not a
+	// permission problem", and a caller deciding between an access problem
+	// and a missing object asks errors.Is(err, ErrForbidden) first and
+	// then its driver's own refusal (internal/cli's isAccessDenied checks
+	// both, plus gcerrors.PermissionDenied and a 401).
 	ErrForbidden = errors.New("permission denied")
 	// ErrNotExist means Read found no object.
 	ErrNotExist = errors.New("object does not exist")
@@ -57,9 +67,11 @@ var (
 	// ErrMismatch means GetFile read an object whose sha256 is not the one
 	// its caller expected. Nothing is written to the destination.
 	ErrMismatch = errors.New("the object's hash does not match")
-	// ErrChanged means PutFile read a different number of bytes than the
-	// source's own size said, so the file changed while it was uploaded.
-	// Nothing is committed to the bucket.
+	// ErrChanged means a streaming call read a different number of bytes
+	// than the size the other end announced. In PutFile the source changed
+	// while it was uploaded and nothing is committed to the bucket; in
+	// GetFile the object ended before its announced size and nothing is
+	// written to the destination.
 	ErrChanged = errors.New("the file changed while it was read")
 )
 
@@ -221,13 +233,15 @@ func (b *Bucket) ReadMaxStrict(ctx context.Context, key string, limit int) ([]by
 // isAccessDenied is both shapes), a non-strict caller has already had that
 // 403 folded into ErrNotExist by the check above.
 //
-// ErrForbidden is the answer a caller must be able to ask for with
-// errors.Is, because it is the only driver-independent one: 403 is what GCS
-// says, and on file:// or mem:// the same refusal arrives as fs.ErrPermission
-// with no googleapi.Error anywhere in it. A caller deciding between "an IAM
-// problem" and "no such object" asks errors.Is(err, ErrForbidden) and falls
-// back to its own backend-specific check; every strict read produces the
-// sentinel, and no non-strict read ever does.
+// What strictness guarantees is that a refusal is never reported as
+// ErrNotExist. ErrForbidden is the answer for the GCS half of that, and the
+// one a caller should ask for first, because it saves it from knowing about
+// googleapi at all — but it is made from a 403 and a non-GCS driver has none
+// to make it from: file:// and mem:// refuse with fs.ErrPermission, which
+// this returns as itself, and no strict read of theirs produces the
+// sentinel. A caller deciding between an access problem and a missing
+// object must therefore check both (internal/cli's isAccessDenied is that
+// pair, plus gcerrors.PermissionDenied and a 401).
 func strictReadErr(err error, strict bool) error {
 	if strict && isForbidden(err) {
 		return fmt.Errorf("%w: %w", ErrForbidden, err)
@@ -461,10 +475,13 @@ func (b *Bucket) PutFile(ctx context.Context, key, path, contentType string, ifN
 // returns the size and the lower-case hex sha256 of what it wrote. Nothing
 // is ever placed at path unless the whole object arrived: the bytes go to a
 // temporary file in the destination's own directory which is renamed into
-// place only after the hash is checked, so a mismatch or an over-cap object
-// removes the temp file and leaves no destination at all. The cap refuses,
-// it never truncates — the object's own size is checked first when the
-// backend reports one (file:// and GCS both do).
+// place only after the hash is checked, so a mismatch, an over-cap object or
+// a truncated one removes the temp file and leaves no destination at all.
+// The cap refuses, it never truncates — the object's own size is checked
+// first when the backend reports one (file:// and GCS both do) — and an
+// object that ends before its announced size is ErrChanged, because a reader
+// that stops early stops cleanly and the copy would otherwise report success
+// over a prefix of the object.
 //
 // sum is the *expected* hash (the record's own, or the task spec's for an
 // input): when it is non-empty and does not match what was read, the result
@@ -480,7 +497,10 @@ func (b *Bucket) PutFile(ctx context.Context, key, path, contentType string, ifN
 //
 //   - strict (fugaro artifacts get): a 403 is ErrForbidden, with the
 //     googleapi.Error still reachable through errors.As, and a 404 stays
-//     ErrNotExist. This caller holds unconditional objectAdmin, which
+//     ErrNotExist. As ErrForbidden's own comment says, that is the GCS
+//     answer: the sentinel is made from a 403 alone, so a non-GCS driver
+//     keeps its own refusal (fs.ErrPermission) and a caller that wants both
+//     checks both. This caller holds unconditional objectAdmin, which
 //     includes storage.objects.list (docs/design/bucket-iam.md:88,126-128),
 //     so for it a 403 really is an access problem and "no such artifact"
 //     would be a lie.
@@ -539,6 +559,18 @@ func (b *Bucket) GetFile(ctx context.Context, key, path, sum string, limit int64
 	if n > limit {
 		_ = tmp.Close()
 		return 0, "", fmt.Errorf("%s: %w (%d bytes, the cap is %d)", key, ErrTooLarge, n, limit)
+	}
+	// An object that ends early ends cleanly: the reader returns io.EOF, so
+	// the copy above reports no error at all and what is hashed is a
+	// prefix of the object — which would then be renamed into place, or,
+	// with no expected hash, recorded as the artifact's. The announced size
+	// is what tells the two apart, and it is the same guard PutFile makes
+	// on its source, from the other side. -1 means the driver does not know
+	// the size, and then there is nothing to compare against, exactly as
+	// the pre-check above skips it.
+	if r.Size() >= 0 && n != r.Size() {
+		_ = tmp.Close()
+		return 0, "", fmt.Errorf("%s: %w (read %d bytes, the object's size said %d)", key, ErrChanged, n, r.Size())
 	}
 	if err := tmp.Close(); err != nil {
 		return 0, "", err
