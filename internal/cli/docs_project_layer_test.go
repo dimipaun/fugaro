@@ -89,6 +89,7 @@ func TestDocsProjectLayerSaysWhatDoctorReports(t *testing.T) {
 		"**deployed rules older than the marker**",
 		"**a rules marker below the generation this Fugaro reads a policy under**",
 		"**deployed rules newer than this Fugaro**",
+		"the eight states that need the operator",
 		"`model_prices` one line per model",
 	} {
 		if !strings.Contains(doc, want) {

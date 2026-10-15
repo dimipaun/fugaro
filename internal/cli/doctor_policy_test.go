@@ -116,7 +116,12 @@ func doctorChecksByID(t *testing.T) map[string]doctorCheck {
 // rules are older than the marker that is itself the wrong value. The "rules
 // older than the marker" subtest also holds the newer-release caveat in that
 // body's Fix: without it, a document that came from a newer Fugaro would be
-// replaced by this release's template.
+// replaced by this release's template. Mutation for the comparison the check
+// shares with the deploy (verified, run and restored): replace infra.SameJSON
+// in doctorRulesSkew with `string(live) == string(want)` — "the deployed rules
+// differ only in formatting" fails, the check warning about the generated rules
+// re-indented, which `fugaro init --firebase` itself (infra.Plan, the same
+// SameJSON) would leave alone.
 func TestDoctorPolicyChecks(t *testing.T) {
 	t.Run("an installation with no budget backend publishes no policy", func(t *testing.T) {
 		newDoctorRig(t)
@@ -287,6 +292,36 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		}
 		if !strings.Contains(c.Fix, "newer Fugaro") {
 			t.Errorf("the fix does not warn that the rules may be a newer release's, which this template would replace: %+v", c)
+		}
+	})
+
+	t.Run("the deployed rules differ only in formatting", func(t *testing.T) {
+		// The check must ask the question the deploy asks. The deployed document
+		// comes back as the database holds it, and a document is not a skew for
+		// being spelled with different whitespace: `fugaro init --firebase`
+		// considers the rules current whenever infra.SameJSON does, so a check
+		// comparing bytes would warn about an installation the deploy itself
+		// leaves alone — and the operator's remedy for this warning is that very
+		// redeploy, which would change nothing and warn again.
+		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+		gen, err := rules.Generate()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc any
+		if err := json.Unmarshal(gen, &doc); err != nil {
+			t.Fatal(err)
+		}
+		reindented, err := json.MarshalIndent(doc, "", "    ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(reindented) == string(gen) {
+			t.Fatal("the re-indented copy is byte-identical to the generated rules: this test would hold under byte equality too")
+		}
+		db.SetRules(reindented)
+		if c, ok := doctorChecksByID(t)["policy-rules-skew"]; ok {
+			t.Errorf("policy-rules-skew fired for the generated rules re-indented, with the marker at generation %d: %+v", projectpolicy.RulesVersion, c)
 		}
 	})
 

@@ -1565,16 +1565,3 @@ func emptyPolicyNode(raw []byte) bool {
 	s := strings.TrimSpace(string(raw))
 	return s == "" || s == "null"
 }
-
-// policyDocEqual reports whether a and b are the same JSON document,
-// ignoring formatting: the deployed rules come back as the database holds
-// them, and a document that differs only in whitespace is not a skew.
-func policyDocEqual(a, b []byte) bool {
-	var x, y any
-	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
-		return string(a) == string(b)
-	}
-	xb, _ := json.Marshal(x)
-	yb, _ := json.Marshal(y)
-	return string(xb) == string(yb)
-}
