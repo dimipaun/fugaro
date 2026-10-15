@@ -1153,7 +1153,10 @@ func newBudgetPricesCmd() *cobra.Command {
 		Long: "Show the model prices the budget accounts with: the table built into this\n" +
 			"fugaro, its source and the day it was last checked (a warning when that is over\n" +
 			"90 days ago), with the selected project config's model_prices applied and\n" +
-			"marked local. It never reaches the network.",
+			"marked local. A model a provider route claims is priced from the built-in\n" +
+			"provider price catalog instead: its CATALOG column says which tier and which\n" +
+			"end of that tier's range is charged, and the catalog has its own source, date\n" +
+			"and 30-day staleness warning. It never reaches the network.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runBudgetPrices(cmd, &o) },
 	}
@@ -1178,6 +1181,29 @@ type priceRow struct {
 	Unverified bool   `json:"unverified"`
 	Source     string `json:"source,omitempty"`
 	CheckedAt  string `json:"checked_at,omitempty"`
+	// Catalog is the provenance of a row the built-in provider price
+	// catalog priced — its own tier, the end of that tier's range charged
+	// and the endpoints behind it. nil on every other row: Source and
+	// CheckedAt above stay the Claude table's, and the catalog's are its
+	// own (design §7, plan Task 5 step 1).
+	Catalog *priceCatalog `json:"catalog,omitempty"`
+}
+
+// priceCatalog is a catalog-priced row's provenance, as `budget prices
+// --json` prints it.
+type priceCatalog struct {
+	Tier string `json:"tier"` // zdr | all
+	// Bound is the end of the tier's range charged: min (cheapest) or max
+	// (the dearest, whether price_policy asked for it or the catalog is
+	// stale).
+	Bound string `json:"bound"`
+	// Endpoints is every endpoint the model is served by; ZdrEndpoints is
+	// how many of them are ZDR-eligible (the zdr tier's own count).
+	Endpoints    int    `json:"endpoints"`
+	ZdrEndpoints int    `json:"zdr_endpoints"`
+	Source       string `json:"source"`
+	CheckedAt    string `json:"checked_at"`
+	Stale        bool   `json:"stale"`
 }
 
 type pricesDoc struct {
@@ -1186,6 +1212,14 @@ type pricesDoc struct {
 	AgeDays   int        `json:"age_days"`
 	Stale     bool       `json:"stale"`
 	Models    []priceRow `json:"models"`
+	// CatalogSource, CatalogCheckedAt, CatalogAgeDays and CatalogStale are
+	// the built-in provider price catalog's own provenance, kept apart from
+	// the embedded Claude table's above. Empty (and false) when no row is
+	// catalog-priced.
+	CatalogSource    string `json:"catalog_source,omitempty"`
+	CatalogCheckedAt string `json:"catalog_checked_at,omitempty"`
+	CatalogAgeDays   int    `json:"catalog_age_days,omitempty"`
+	CatalogStale     bool   `json:"catalog_stale,omitempty"`
 }
 
 func runBudgetPrices(cmd *cobra.Command, o *budgetPricesOptions) error {
@@ -1197,7 +1231,7 @@ func runBudgetPrices(cmd *cobra.Command, o *budgetPricesOptions) error {
 	if err != nil {
 		return err
 	}
-	table, ov, err := priceTable(lc)
+	table, ov, err := priceTable(lc, budgetNow())
 	if err != nil {
 		return userErr("%v", err)
 	}
@@ -1226,6 +1260,16 @@ func runBudgetPrices(cmd *cobra.Command, o *budgetPricesOptions) error {
 			CacheReadPerM: r.InputPerM * r.CacheRead, CacheWrite5mPerM: r.InputPerM * r.CacheWrite5m,
 			CacheWrite1hPerM: r.InputPerM * r.CacheWrite1h, WebSearchPer1k: r.WebSearchPer1k, Local: local[id],
 			Unverified: m.Unverified, Source: m.PriceSource, CheckedAt: m.PriceCheckedAt}
+		if c := m.Catalog; c != nil {
+			row.Catalog = &priceCatalog{Tier: c.Tier, Bound: c.Bound, Endpoints: c.Endpoints, ZdrEndpoints: c.ZdrEndpoints,
+				Source: c.Source, CheckedAt: c.CheckedAt, Stale: c.Stale}
+			if doc.CatalogSource == "" {
+				doc.CatalogSource, doc.CatalogCheckedAt, doc.CatalogStale = c.Source, c.CheckedAt, c.Stale
+				if t, err := time.Parse("2006-01-02", c.CheckedAt); err == nil {
+					doc.CatalogAgeDays = int(budgetNow().Sub(t).Hours() / 24)
+				}
+			}
+		}
 		if r.LongContext != nil {
 			row.LongContext = fmt.Sprintf("above %d input tokens: $%g in / $%g out", r.LongContext.AboveInputTokens, r.LongContext.InputPerM, r.LongContext.OutputPerM)
 		}
@@ -1235,19 +1279,54 @@ func runBudgetPrices(cmd *cobra.Command, o *budgetPricesOptions) error {
 		fmt.Fprintf(errw, "warning: the built-in price table was last checked %s, older than 90 days (%d days ago); check %s and set model_prices in the project config where it differs\n",
 			doc.CheckedAt, doc.AgeDays, doc.Source)
 	}
+	if doc.CatalogStale {
+		// The catalog's own threshold is 30 days, not the Claude table's 90
+		// (design D10): a marketplace price moves for reasons an age check
+		// cannot see, so a stale catalog charges every model it prices at
+		// the dearest end of its tier's range rather than under-pricing.
+		fmt.Fprintf(errw, "warning: the built-in provider price catalog (%s) was last checked %s, older than 30 days (%d days ago); regenerate it with scripts/gen-price-catalog.sh and commit the result (catalog-priced models are charged the dearest end of their tier's range until then)\n",
+			doc.CatalogSource, doc.CatalogCheckedAt, doc.CatalogAgeDays)
+	}
 	if o.json {
 		return writeJSON(cmd.OutOrStdout(), doc)
 	}
 	w := cmd.OutOrStdout()
 	fmt.Fprintf(w, "model prices, US dollars per million tokens (source %s, checked %s)\n", doc.Source, doc.CheckedAt)
+	if doc.CatalogCheckedAt != "" {
+		// The table holds two sources once a route is priced from the
+		// catalog: the embedded Claude table's own source and date are the
+		// header line above, and the catalog's are this one (design §7).
+		fmt.Fprintf(w, "provider price catalog: %s, checked %s (%d days ago)\n", doc.CatalogSource, doc.CatalogCheckedAt, doc.CatalogAgeDays)
+	}
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "MODEL\tINPUT\tOUTPUT\tCACHE READ\tCACHE WRITE 5M\tCACHE WRITE 1H\tWEB SEARCH/1K\tVERIFIED\tNOTES")
+	fmt.Fprintln(tw, "MODEL\tINPUT\tOUTPUT\tCACHE READ\tCACHE WRITE 5M\tCACHE WRITE 1H\tWEB SEARCH/1K\tVERIFIED\tCATALOG\tNOTES")
 	for _, r := range doc.Models {
 		var notes []string
-		verified := "yes"
+		verified, catalog := "yes", "—"
 		if r.Unverified {
 			verified = "NO"
 			notes = append(notes, "UNVERIFIED placeholder: "+r.Source+" ("+r.CheckedAt+")")
+		}
+		if c := r.Catalog; c != nil {
+			// Which tier and which end of that tier's range is charged;
+			// "highest" is the dearest end, whether price_policy asked for
+			// it or the catalog is stale (the bound is the compiled one).
+			bound := "cheapest"
+			if c.Bound == "max" {
+				bound = "highest"
+			}
+			catalog = c.Tier + "/" + bound
+			// The endpoints behind the row: the tier's own count, of every
+			// endpoint the model is served by. They differ only for a
+			// require_zdr route (the zdr tier).
+			note := fmt.Sprintf("catalog %s: %d endpoints, checked %s", c.Tier, c.Endpoints, c.CheckedAt)
+			if c.Tier == "zdr" {
+				note = fmt.Sprintf("catalog %s: %d/%d endpoints, checked %s", c.Tier, c.ZdrEndpoints, c.Endpoints, c.CheckedAt)
+			}
+			if c.Stale {
+				note += " (stale: charged the dearest end)"
+			}
+			notes = append(notes, note)
 		}
 		if r.Local {
 			notes = append(notes, "local override")
@@ -1258,8 +1337,8 @@ func runBudgetPrices(cmd *cobra.Command, o *budgetPricesOptions) error {
 		if len(r.Aliases) > 0 {
 			notes = append(notes, "aliases "+strings.Join(r.Aliases, ", "))
 		}
-		fmt.Fprintf(tw, "%s\t$%g\t$%g\t$%g\t$%g\t$%g\t$%g\t%s\t%s\n", oneLine(r.ID), r.InputPerM, r.OutputPerM, r.CacheReadPerM,
-			r.CacheWrite5mPerM, r.CacheWrite1hPerM, r.WebSearchPer1k, verified, oneLine(strings.Join(notes, "; ")))
+		fmt.Fprintf(tw, "%s\t$%g\t$%g\t$%g\t$%g\t$%g\t$%g\t%s\t%s\t%s\n", oneLine(r.ID), r.InputPerM, r.OutputPerM, r.CacheReadPerM,
+			r.CacheWrite5mPerM, r.CacheWrite1hPerM, r.WebSearchPer1k, verified, catalog, oneLine(strings.Join(notes, "; ")))
 	}
 	return tw.Flush()
 }

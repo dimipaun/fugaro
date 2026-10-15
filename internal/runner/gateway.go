@@ -353,6 +353,12 @@ func (r *run) checkBudget() error {
 	for _, w := range config.PinWarnings(r.cfg.Agent, s.Prices) {
 		r.d.Log.Warn("model pin: "+w.String(), "code", w.Code)
 	}
+	if catalogStale(s.Prices) {
+		// One line per run, whatever the mode: every catalog-priced model
+		// is charged the dearest end of its tier's range, and result.json
+		// says so too (design §7, P7).
+		r.d.Log.Warn("budget: price catalog stale", "code", "catalog_stale")
+	}
 	if err := r.checkManagedDirWritable(); err != nil {
 		return err
 	}

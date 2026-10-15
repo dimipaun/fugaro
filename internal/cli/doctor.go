@@ -27,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/preflight"
+	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/updatecheck"
 )
@@ -257,6 +258,10 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		return failed(err)
 	}
 	o.Checks = append(o.Checks, sharedConfigChecks(ctx, sel, lc, time.Now())...)
+	o.Checks = append(o.Checks, doctorPriceCatalog(time.Now()))
+	if c := doctorProviderZDR(lc); c != nil {
+		o.Checks = append(o.Checks, *c)
+	}
 	if co, err := checkoutProject(ctx, ""); err == nil && needsAnchorHint(ctx, co, lc) {
 		o.Checks = append(o.Checks, doctorCheck{ID: "gcp-project-line", Severity: "info", Problem: anchorHintText,
 			Fix: "fugaro init --anchor writes the gcp_project line into fugaro.yaml after checking the job images"})
@@ -372,6 +377,70 @@ func doctorBaseImage(lc *localcfg.Config) doctorCheck {
 	return doctorCheck{ID: "base-image", OK: false, Severity: "warning",
 		Problem: "the local config has no base_images.base (" + config.MigrationDoc + ")",
 		Fix:     "fugaro image refresh   # in the repository's checkout"}
+}
+
+// doctorPriceCatalog is the built-in provider price catalog's age (design
+// provider-price-catalog.md §7, plan Task 5 step 3): the day it was generated
+// and what it was generated from, and a warning once it is past the catalog's
+// own 30 days (catalog.StaleAfter, not the embedded Claude table's 90), the
+// same threshold the run measures its bound by. It is informational while
+// fresh — an owner reads the age here — and a warning past the threshold,
+// which fails doctor only under --strict.
+func doctorPriceCatalog(now time.Time) doctorCheck {
+	f, err := catalog.Load()
+	if err != nil {
+		return doctorCheck{ID: "provider-price-catalog",
+			Problem: err.Error(),
+			Fix:     "regenerate the file with scripts/gen-price-catalog.sh and rebuild fugaro"}
+	}
+	checked, err := time.Parse("2006-01-02", f.CheckedAt)
+	if err != nil {
+		return doctorCheck{ID: "provider-price-catalog",
+			Problem: "the built-in provider price catalog has no readable checked_at: " + f.CheckedAt,
+			Fix:     "regenerate the file with scripts/gen-price-catalog.sh and rebuild fugaro"}
+	}
+	source := ""
+	if len(f.Sources) > 0 {
+		source = f.Sources[0]
+	}
+	c := doctorCheck{ID: "provider-price-catalog", Severity: "info",
+		Problem: fmt.Sprintf("the built-in provider price catalog was generated from %s, checked %s (%s ago)", source, f.CheckedAt, ageDays(now.Sub(checked))),
+		Fix:     "regenerate it with scripts/gen-price-catalog.sh before it is 30 days old"}
+	if now.Sub(checked) > catalog.StaleAfter {
+		c.Severity = "warning"
+		c.Problem = fmt.Sprintf("the built-in provider price catalog was generated from %s, checked %s (%s ago): it is stale, so every model it prices is charged the dearest end of its tier's range, not the end price_policy asks for",
+			source, f.CheckedAt, ageDays(now.Sub(checked)))
+		c.Fix = "scripts/gen-price-catalog.sh   # regenerates internal/pricing/catalog/catalog.json; commit the result"
+	}
+	return c
+}
+
+// doctorProviderZDR is the honesty check design §8 calls for (P9): a route's
+// require_zdr (true unless it is set false) prices its models at the
+// ZDR-eligible endpoints of the built-in price catalog. It is a price, not
+// enforcement: OpenRouter's zero-data-retention policy is the account's own
+// privacy setting, which Fugaro can neither set (the gateway never rewrites a
+// request body and refuses the `provider` key) nor read (the key endpoint has
+// no data-policy field). Informational, so it never fails doctor, not even
+// under --strict: it is a warning to check the account, not a fault here.
+func doctorProviderZDR(lc *localcfg.Config) *doctorCheck {
+	if lc == nil {
+		return nil
+	}
+	var names []string
+	for name, p := range lc.Providers {
+		if p.RequireZDROn() {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	slices.Sort(names)
+	return &doctorCheck{ID: "provider-zdr-unverified", Severity: "info",
+		Problem: "require_zdr is on for the provider route(s) " + strings.Join(names, ", ") + " (the default), so their models are priced at the ZDR-eligible endpoints: " +
+			"that is the conservative price, not enforcement. Whether calls are actually zero-data-retention is your OpenRouter account's privacy setting, and Fugaro cannot read it",
+		Fix: "confirm the account's data policy in the OpenRouter settings; require_zdr: false prices every endpoint the model is served by instead"}
 }
 
 // doctorGitHubApps is the GitHub App pre-check (githubapp.go), only behind

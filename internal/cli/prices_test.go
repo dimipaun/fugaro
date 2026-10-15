@@ -2,6 +2,7 @@ package cli
 
 import (
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -21,7 +22,7 @@ func cliRoute() map[string]config.ModelProvider {
 // for the route's model, so a surface left on a bare pricing.Embedded()
 // fails here rather than printing a number no run would charge.
 func TestSurfaceSeesCatalogRow(t *testing.T) {
-	tbl, _, err := priceTable(&localcfg.Config{Providers: cliRoute()})
+	tbl, _, err := priceTable(&localcfg.Config{Providers: cliRoute()}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +35,7 @@ func TestSurfaceSeesCatalogRow(t *testing.T) {
 	}
 	// No project config: the embedded table, and the provider model has no
 	// row at all (nothing says it goes to OpenRouter).
-	bare, ov, err := priceTable(nil)
+	bare, ov, err := priceTable(nil, time.Now())
 	if err != nil || len(ov) != 0 {
 		t.Fatalf("no project: %v %v", ov, err)
 	}

@@ -43,7 +43,7 @@ func TestCatalogPriceWarns(t *testing.T) {
 	if len(ws) != 2 || ws[0].Code != CodeCatalogPrice {
 		t.Fatalf("warnings: %v", ws)
 	}
-	for _, want := range []string{"built-in provider price catalog", "zdr", "min", "require_zdr", "price_policy: highest", "model_prices"} {
+	for _, want := range []string{"built-in provider price catalog", "zdr", "cheapest", "require_zdr", "price_policy: highest", "model_prices"} {
 		if !strings.Contains(ws[0].Message, want) {
 			t.Errorf("the catalog note does not name %q: %s", want, ws[0].Message)
 		}

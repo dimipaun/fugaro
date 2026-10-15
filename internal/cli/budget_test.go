@@ -747,3 +747,136 @@ func TestPricesOverrideClearsUnverified(t *testing.T) {
 	}
 	t.Fatalf("no deepseek row:\n%s", out)
 }
+
+// catalogRouteYAML is a project config's route block that the built-in
+// provider price catalog prices (OpenRouter, claiming the DeepSeek rows).
+const catalogRouteYAML = `providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["deepseek/*"]
+    allow_data_to: ["acme/app"]
+`
+
+// TestBudgetPricesCatalogColumn: a row the built-in provider price catalog
+// priced says so in its own column — the tier and the end of that tier's
+// range charged — and its note carries the endpoint count and the catalog's
+// own date, so the two sources in one table are never read as one (design
+// §7, Task 5 step 1).
+func TestBudgetPricesCatalogColumn(t *testing.T) {
+	newBudgetFixture(t, "budget: { mode: observe, per_run_usd: 5, rtdb_url: http://127.0.0.1:9 }\n"+catalogRouteYAML)
+	out, _, err := execute(t, "budget", "prices")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "CATALOG") {
+		t.Fatalf("no CATALOG column:\n%s", out)
+	}
+	var row string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "deepseek/deepseek-v4.1-flash") {
+			row = l
+		}
+	}
+	if row == "" {
+		t.Fatalf("the route's model has no row:\n%s", out)
+	}
+	for _, want := range []string{"zdr/cheapest", "26/33", "2026-10-14"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("the catalog row lacks %q:\n%s", want, row)
+		}
+	}
+	// A Claude row is not catalog-priced: the column says so with a dash,
+	// and the catalog's provenance is not on it.
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "claude-sonnet-5-5") && !strings.Contains(l, "—") {
+			t.Errorf("a Claude row claims a catalog:\n%s", l)
+		}
+	}
+	js, _, err := execute(t, "budget", "prices", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		CatalogSource    string `json:"catalog_source"`
+		CatalogCheckedAt string `json:"catalog_checked_at"`
+		CatalogStale     bool   `json:"catalog_stale"`
+		Models           []struct {
+			ID      string `json:"id"`
+			Catalog *struct {
+				Tier         string `json:"tier"`
+				Bound        string `json:"bound"`
+				Endpoints    int    `json:"endpoints"`
+				ZdrEndpoints int    `json:"zdr_endpoints"`
+				Stale        bool   `json:"stale"`
+			} `json:"catalog"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal([]byte(js), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.CatalogCheckedAt != "2026-10-14" || doc.CatalogStale || !strings.Contains(doc.CatalogSource, "openrouter.ai") {
+		t.Fatalf("the catalog summary is %+v", doc)
+	}
+	found := false
+	for _, m := range doc.Models {
+		if m.Catalog == nil {
+			continue
+		}
+		if m.ID == "deepseek/deepseek-v4.1-flash" {
+			found = true
+			if m.Catalog.Tier != "zdr" || m.Catalog.Bound != "min" || m.Catalog.Endpoints != 33 || m.Catalog.ZdrEndpoints != 26 || m.Catalog.Stale {
+				t.Errorf("%s's catalog row is %+v", m.ID, m.Catalog)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no catalog-priced row in the JSON: %s", js)
+	}
+}
+
+// TestBudgetPricesStaleCatalogWarns: past the catalog's own 30 days the
+// catalog-priced rows charge the dearest end of their tier and the command
+// says so, naming the catalog (not the Claude table) and the command that
+// regenerates it (design §7, P7).
+func TestBudgetPricesStaleCatalogWarns(t *testing.T) {
+	newBudgetFixture(t, "budget: { mode: observe, per_run_usd: 5, rtdb_url: http://127.0.0.1:9 }\n"+catalogRouteYAML)
+	old := budgetNow
+	t.Cleanup(func() { budgetNow = old })
+
+	budgetNow = func() time.Time { return time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC) }
+	out, errOut, err := execute(t, "budget", "prices")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(errOut, "gen-price-catalog") {
+		t.Fatalf("a 6-day-old catalog was called stale: %q", errOut)
+	}
+	if !strings.Contains(out, "zdr/cheapest") {
+		t.Fatalf("the fresh row is not at the cheapest end:\n%s", out)
+	}
+
+	// 2026-10-14 + 30 days is 2026-11-13; a day past it is stale.
+	budgetNow = func() time.Time { return time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC) }
+	out, errOut, err = execute(t, "budget", "prices")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"provider price catalog", "older than 30 days", "scripts/gen-price-catalog.sh"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("the stale warning lacks %q: %q", want, errOut)
+		}
+	}
+	if !strings.Contains(out, "zdr/highest") {
+		t.Errorf("a stale row does not charge the dearest end:\n%s", out)
+	}
+	js, _, err := execute(t, "budget", "prices", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(js, `"catalog_stale": true`) {
+		t.Errorf("the JSON does not mark the catalog stale: %s", js)
+	}
+}

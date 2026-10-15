@@ -9,12 +9,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -1098,5 +1100,78 @@ func TestDoctorWithoutFlagNeverReadsTheKey(t *testing.T) {
 	}
 	if a := r.sm.Accessed(); len(a) != 0 || len(*auth) != 0 {
 		t.Errorf("accessed %v, GitHub asked %d times", a, len(*auth))
+	}
+}
+
+// TestDoctorPriceCatalogStaleIsWarning: the catalog check measures the
+// catalog's own 30 days, not the Claude table's 90, and a stale catalog is a
+// warning (it fails doctor only under --strict) whose fix is the command
+// that regenerates the file (design §7, P7, Task 5 step 3).
+func TestDoctorPriceCatalogStaleIsWarning(t *testing.T) {
+	cat, err := catalog.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked, err := time.Parse("2006-01-02", cat.CheckedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh := doctorPriceCatalog(checked.Add(29 * 24 * time.Hour))
+	if fresh.ID != "provider-price-catalog" || fresh.Severity == "warning" || !strings.Contains(fresh.Problem, cat.CheckedAt) {
+		t.Errorf("29 days: %+v", fresh)
+	}
+	if !strings.Contains(fresh.Problem, cat.Sources[0]) {
+		t.Errorf("the fresh check does not name the catalog's source: %+v", fresh)
+	}
+	if checksFail([]doctorCheck{fresh}, true) {
+		t.Error("a fresh catalog failed doctor")
+	}
+	// The threshold is 30 days, not the Anthropic table's 90: 89 days is
+	// already stale here.
+	stale := doctorPriceCatalog(checked.Add(31 * 24 * time.Hour))
+	if stale.Severity != "warning" || !strings.Contains(stale.Problem, "stale") {
+		t.Errorf("31 days: %+v", stale)
+	}
+	if !strings.Contains(stale.Fix, "scripts/gen-price-catalog.sh") {
+		t.Errorf("the stale check does not name the regeneration command: %+v", stale)
+	}
+	if checksFail([]doctorCheck{stale}, false) || !checksFail([]doctorCheck{stale}, true) {
+		t.Error("a stale catalog is not a --strict-only warning")
+	}
+	if long := doctorPriceCatalog(checked.Add(89 * 24 * time.Hour)); long.Severity != "warning" {
+		t.Errorf("89 days is not stale: %+v", long)
+	}
+}
+
+// TestDoctorZDRCheckSaysUnverified: a route whose require_zdr is on (the
+// default) is priced at the ZDR-eligible endpoints, and doctor says plainly
+// that this is a price and not an enforcement Fugaro can make or read
+// (design §8, P9, Task 5 step 3).
+func TestDoctorZDRCheckSaysUnverified(t *testing.T) {
+	if c := doctorProviderZDR(&localcfg.Config{}); c != nil {
+		t.Errorf("no route, but %+v", c)
+	}
+	off := false
+	lc := &localcfg.Config{Providers: map[string]config.ModelProvider{
+		"quiet": {RequireZDR: &off},
+		"zdr":   {},
+	}}
+	c := doctorProviderZDR(lc)
+	if c == nil {
+		t.Fatal("a require_zdr route is not reported")
+	}
+	if c.Severity != "info" || c.OK {
+		t.Errorf("the check is not informational: %+v", c)
+	}
+	for _, want := range []string{"zdr", "price", "privacy setting", "cannot read", "zdr"} {
+		if !strings.Contains(c.Problem, want) {
+			t.Errorf("the check lacks %q: %s", want, c.Problem)
+		}
+	}
+	if strings.Contains(c.Problem, "quiet") || !strings.Contains(c.Problem, "zdr") {
+		t.Errorf("the check names the wrong routes: %s", c.Problem)
+	}
+	if checksFail([]doctorCheck{*c}, true) {
+		t.Error("the informational ZDR check failed doctor under --strict")
 	}
 }

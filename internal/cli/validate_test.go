@@ -694,9 +694,20 @@ func TestValidateProviderModels(t *testing.T) {
 	path := budgetProject(t, budget, coder)
 	inCheckoutOf(t, "acme/sandbox")
 	out, errOut, err := execute(t, "validate", path)
-	if err != nil || !strings.Contains(out, "is valid") ||
-		!strings.Contains(errOut, "warning: agent.models.coder: deepseek/deepseek-v4-flash is priced from the built-in provider price catalog: the zdr tier") {
+	if err != nil || !strings.Contains(out, "is valid") {
 		t.Fatalf("%v\nout: %s\nerr: %s", err, out, errOut)
+	}
+	// The note says which tier and which end of its range is charged, and
+	// for the default (cheapest) row that the charge is the cheapest of the
+	// tier's endpoints, with the switch that would charge the top (P11,
+	// Task 5 step 2).
+	for _, want := range []string{
+		"warning: agent.models.coder: deepseek/deepseek-v4-flash is priced from the built-in provider price catalog: the zdr tier",
+		"10 endpoint(s)", "the cheapest of those endpoints", "price_policy: highest", "model_prices",
+	} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("validate's catalog note lacks %q:\n%s", want, errOut)
+		}
 	}
 	// Another repository is refused, naming the rule.
 	inCheckoutOf(t, "acme/other")

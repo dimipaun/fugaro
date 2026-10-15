@@ -625,3 +625,28 @@ func TestRouteOfComparesWithoutTheRouteFee(t *testing.T) {
 		}
 	}
 }
+
+// TestDiagnoseReportedWarningNamesPricePolicy: on a catalog-priced route a
+// reported cost above the charge is as likely to be OpenRouter serving a
+// dearer endpoint as a wrong model_prices, so the warning names both ways
+// out (design §7, D12, Task 5 step 4).
+func TestDiagnoseReportedWarningNamesPricePolicy(t *testing.T) {
+	cost := runstore.NewCost(0.42, 0, runstore.BasisAPIList)
+	cost.RouteBy = map[string]float64{"openrouter": 0.30}
+	cost.ReportedUSD = 0.40
+	rec := &runstore.Record{Version: 1, RunID: "20261001-120000-abcd", Cost: &cost}
+	var d Diagnosis
+	routeOf(&d, rec, nil, func(s string) string { return s })
+	for _, want := range []string{"model_prices", "price_policy: highest", "reported"} {
+		if !strings.Contains(d.ReportedWarning, want) {
+			t.Errorf("the warning lacks %q: %q", want, d.ReportedWarning)
+		}
+	}
+	// A report within the margin warns nothing.
+	cost.ReportedUSD = 0.31
+	d = Diagnosis{}
+	routeOf(&d, rec, nil, func(s string) string { return s })
+	if d.ReportedWarning != "" {
+		t.Errorf("a report inside the margin warned: %q", d.ReportedWarning)
+	}
+}

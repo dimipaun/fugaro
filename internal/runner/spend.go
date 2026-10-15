@@ -156,3 +156,20 @@ func priceTable(providers map[string]config.ModelProvider, ov pricing.Overrides)
 func (r *run) priceTable(ov pricing.Overrides) (*pricing.Table, error) {
 	return priceTable(r.d.Providers, ov)
 }
+
+// catalogStale reports whether a table holds a row the built-in provider
+// price catalog priced while the catalog was past its own 30-day threshold
+// (catalog.StaleAfter). Every such row has been forced to the dearest end of
+// its tier's range (design D10, P7), which result.json records and the run
+// warns about once.
+func catalogStale(t *pricing.Table) bool {
+	if t == nil {
+		return false
+	}
+	for _, m := range t.Models {
+		if m.Catalog != nil && m.Catalog.Stale {
+			return true
+		}
+	}
+	return false
+}

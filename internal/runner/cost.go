@@ -77,6 +77,11 @@ func (r *run) updateCost() {
 	c.ModelSource = "claude-code"
 	if gateway {
 		c.ModelSource = "gateway"
+		// The catalog only prices the routes' models, so its staleness is a
+		// fact about a run that went through the gateway: the flag says the
+		// charge was the dearest end of every catalog-priced tier (design
+		// §7, P7).
+		c.CatalogStale = catalogStale(r.spend.Prices)
 	}
 	r.rec.Cost = &c
 }

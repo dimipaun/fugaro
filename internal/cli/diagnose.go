@@ -270,7 +270,10 @@ func routeOf(d *Diagnosis, rec *runstore.Record, lc *localcfg.Config, red func(s
 		// Only a report above the charge is a sign of under-pricing: a lower
 		// one may be partial reporting (a cut stream, a call without a cost).
 		if d.Reported > bare*(1+reportedGapPct/100.0) {
-			d.ReportedWarning = fmt.Sprintf("the providers reported $%.4f, more than %d%% above the $%.4f the table charged without the route fee: model_prices may be too low (partial reporting is also possible); check model_prices and the account's provider settings",
+			// Two answers, because a catalog-priced route has two: the
+			// owner's own price, or the built-in catalog's cheapest end
+			// while OpenRouter served a dearer endpoint (design §7, D12).
+			d.ReportedWarning = fmt.Sprintf("the providers reported $%.4f, more than %d%% above the $%.4f the table charged without the route fee: model_prices may be too low, or a catalog-priced route was charged its cheapest end while a dearer endpoint served the call — set price_policy: highest, or price the model under model_prices (partial reporting is also possible); check model_prices and the account's provider settings",
 				d.Reported, reportedGapPct, bare)
 		}
 	}
@@ -278,7 +281,7 @@ func routeOf(d *Diagnosis, rec *runstore.Record, lc *localcfg.Config, red func(s
 	// included). A table that cannot be built leaves the pin warnings out
 	// (a nil table looks nothing up): they would be about a table no run
 	// would use.
-	prices, _, err := priceTable(lc)
+	prices, _, err := priceTable(lc, time.Now())
 	if err != nil {
 		prices = nil
 	}
@@ -481,6 +484,11 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		fmt.Fprintf(&b, "%s\n", oneLine(line))
 	}
 	fmt.Fprintf(&b, "%s\n", oneLine(strings.ReplaceAll(runner.CostLine(r.Cost), "**", "")))
+	if r.Cost.CatalogStale {
+		// The run charged, and over-counted on purpose: the catalog it
+		// priced from was past its own 30 days (design §7, P7).
+		fmt.Fprintf(&b, "Catalog:  the built-in provider price catalog was stale, so every model it priced was charged the dearest end of its tier's range (regenerate it with scripts/gen-price-catalog.sh)\n")
+	}
 	if len(d.Route) > 0 {
 		fmt.Fprintf(&b, "Route:    %s\n", oneLine(spendList(d.Route)))
 	}

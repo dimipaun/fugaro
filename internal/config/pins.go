@@ -89,7 +89,15 @@ func catalogWarning(model string, c *pricing.CatalogPrice) string {
 	if c.Tier == "zdr" {
 		n = c.ZdrEndpoints
 	}
-	where := fmt.Sprintf("the %s tier of %d endpoint(s), checked %s, charged at the %s of its range", c.Tier, n, c.CheckedAt, c.Bound)
+	// The bound the compiler charged, said in the owner's own words: the
+	// default (cheapest) charges the cheapest of the tier's endpoints, and
+	// a call may still be served by a dearer one (P11) — which is why the
+	// sentence below names the switch that moves it.
+	end := "the dearest of those endpoints"
+	if c.Bound == "min" {
+		end = "the cheapest of those endpoints"
+	}
+	where := fmt.Sprintf("the %s tier of %d endpoint(s), checked %s, charged at %s", c.Tier, n, c.CheckedAt, end)
 	if c.Stale {
 		where = fmt.Sprintf("the %s tier of %d endpoint(s), and the catalog is stale (checked %s), so the dearest end is charged", c.Tier, n, c.CheckedAt)
 	}
