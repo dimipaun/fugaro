@@ -3,6 +3,7 @@ package image
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -731,6 +732,96 @@ func TestCheckMiseCacheDir(t *testing.T) {
 	}
 	if c := miseCacheResult(t, file, uid, gid); c.OK {
 		t.Fatalf("a file passed: %+v", c)
+	}
+}
+
+// TestCheckMiseCacheDirProbeFails: the read-only case, root or not. The
+// block above can only chmod its way to it as a non-root run (root ignores
+// the mode bits, so its probe file is created in a 0555 directory and the
+// check rightly passes), which would leave the failing half of the probe
+// path — and the detail it reports — uncovered in a root container. The
+// probe is a var, so the failure is injected instead: the check is the
+// directory's owner here (euid is uid), so it takes the probe path and must
+// report the probe's own error, not the mode bits.
+func TestCheckMiseCacheDirProbeFails(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "mise")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	uid, gid := ownerIDs(t, dir)
+	prev := miseCacheProbe
+	miseCacheProbe = func(string) error { return errors.New("read-only file system") }
+	t.Cleanup(func() { miseCacheProbe = prev })
+	c := miseCacheResult(t, dir, uid, gid)
+	if c.OK || !strings.Contains(c.Detail, "not writable") ||
+		!strings.Contains(c.Detail, fmt.Sprintf("owner %d:%d", uid, gid)) ||
+		!strings.Contains(c.Detail, "creating and removing a file in it failed") ||
+		!strings.Contains(c.Detail, "read-only file system") {
+		t.Fatalf("a directory whose probe failed passed: %+v", c)
+	}
+}
+
+// TestCheckMiseCacheDirSymlinkedParent: only the last path component is
+// judged for being a symlink. A symlinked parent such as ~/.cache is
+// followed and passes, which is harmless in the image (a real chain, and
+// moving ~/.cache only moves the cache), while the mise directory itself
+// being a symlink is refused (the block above).
+func TestCheckMiseCacheDirSymlinkedParent(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "real-cache")
+	dir := filepath.Join(real, "mise")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	parent := filepath.Join(root, ".cache")
+	if err := os.Symlink(real, parent); err != nil {
+		t.Fatal(err)
+	}
+	uid, gid := ownerIDs(t, dir)
+	if c := miseCacheResult(t, filepath.Join(parent, "mise"), uid, gid); !c.OK {
+		t.Fatalf("a real mise directory under a symlinked .cache: %+v", c)
+	}
+}
+
+// TestDirWritableByBitsOnly: the branch checkMiseCacheDir takes for a
+// directory it does not own — root in the second scan container, which may
+// write anywhere whatever the bits say. The owner, group and mode bits have
+// to decide, so a directory owned by uid 1000 is judged for that user even
+// though this process is not it.
+func TestDirWritableByBitsOnly(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "d")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name     string
+		mode     os.FileMode
+		uid, gid uint32
+		want     bool
+	}{
+		{"the owner has rwx", 0o700, 1000, 1000, true},
+		{"the owner lacks the search bit", 0o600, 1000, 1000, false},
+		{"the owner lacks the write bit", 0o500, 1000, 1000, false},
+		{"the group has rwx", 0o070, 2000, 1000, true},
+		{"the group lacks the search bit", 0o060, 2000, 1000, false},
+		{"the other bits count for a stranger", 0o007, 2000, 2000, true},
+		{"a stranger with nothing", 0o700, 2000, 2000, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.Chmod(dir, tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			fi, err := os.Lstat(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			st := *(fi.Sys().(*syscall.Stat_t))
+			st.Uid, st.Gid = 1000, 1000
+			if got := dirWritableBy(fi, &st, tc.uid, tc.gid); got != tc.want {
+				t.Fatalf("dirWritableBy(mode %04o, uid %d, gid %d) = %v, want %v", tc.mode, tc.uid, tc.gid, got, tc.want)
+			}
+		})
 	}
 }
 
