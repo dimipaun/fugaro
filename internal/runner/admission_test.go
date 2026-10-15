@@ -87,7 +87,7 @@ func mintUnder(t *testing.T, b *bk, slug string, at time.Time) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := token.PutObject(context.Background(), b.bucket, slug, runID, tok); err != nil {
+	if err := token.PutObject(context.Background(), b.bucket, slug, runID, tok, nil); err != nil {
 		t.Fatal(err)
 	}
 }

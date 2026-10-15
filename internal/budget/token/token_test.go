@@ -250,11 +250,11 @@ func TestTokenObjectCreateIfAbsent(t *testing.T) {
 	_, b := bucket(t)
 	c := claims()
 	first := e.mint(t, c, t0)
-	if err := token.PutObject(ctx, b, c.Slug, c.Run, first); err != nil {
+	if err := token.PutObject(ctx, b, c.Slug, c.Run, first, nil); err != nil {
 		t.Fatal(err)
 	}
 	second := e.mint(t, c, t0.Add(time.Minute))
-	if err := token.PutObject(ctx, b, c.Slug, c.Run, second); !errors.Is(err, token.ErrObjectExists) {
+	if err := token.PutObject(ctx, b, c.Slug, c.Run, second, nil); !errors.Is(err, token.ErrObjectExists) {
 		t.Fatalf("second put: %v", err)
 	}
 	got, _, err := b.Read(ctx, token.ObjectKey(c.Slug, c.Run))
@@ -265,7 +265,7 @@ func TestTokenObjectCreateIfAbsent(t *testing.T) {
 	other := c
 	other.Run = "someone-elses"
 	foreign := e.mint(t, other, t0)
-	if err := token.PutObject(ctx, b, "aurora-app", "fresh-run", foreign); !errors.Is(err, token.ErrTokenMismatch) {
+	if err := token.PutObject(ctx, b, "aurora-app", "fresh-run", foreign, nil); !errors.Is(err, token.ErrTokenMismatch) {
 		t.Fatalf("foreign token: %v", err)
 	}
 }
@@ -276,14 +276,14 @@ func TestTokenObjectDeletedAfterRead(t *testing.T) {
 	g, b := bucket(t)
 	c := claims()
 	tok := e.mint(t, c, t0)
-	if err := token.PutObject(ctx, b, c.Slug, c.Run, tok); err != nil {
+	if err := token.PutObject(ctx, b, c.Slug, c.Run, tok, nil); err != nil {
 		t.Fatal(err)
 	}
-	got, err := token.TakeObject(ctx, b, c.Slug, c.Run)
+	got, err := token.TakeObject(ctx, b, c.Slug, c.Run, nil)
 	if err != nil || got != tok {
 		t.Fatalf("take: %v", err)
 	}
-	if _, err := token.TakeObject(ctx, b, c.Slug, c.Run); !errors.Is(err, token.ErrNoToken) {
+	if _, err := token.TakeObject(ctx, b, c.Slug, c.Run, nil); !errors.Is(err, token.ErrNoToken) {
 		t.Fatalf("second take: %v", err)
 	}
 	if _, _, err := b.Read(ctx, token.ObjectKey(c.Slug, c.Run)); !errors.Is(err, blobx.ErrNotExist) {
@@ -291,13 +291,13 @@ func TestTokenObjectDeletedAfterRead(t *testing.T) {
 	}
 
 	// A failed delete fails the take and the token is not handed out.
-	if err := token.PutObject(ctx, b, c.Slug, c.Run, tok); err != nil {
+	if err := token.PutObject(ctx, b, c.Slug, c.Run, tok, nil); err != nil {
 		t.Fatal(err)
 	}
 	g.FailObjectDeletes(1000)
 	cctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	got, err = token.TakeObject(cctx, b, c.Slug, c.Run)
+	got, err = token.TakeObject(cctx, b, c.Slug, c.Run, nil)
 	if err == nil || got != "" {
 		t.Fatalf("a failed delete returned a token (%v, %v)", got != "", err)
 	}
@@ -317,7 +317,7 @@ func TestTakeObjectDeletesAMismatchedToken(t *testing.T) {
 	if _, err := b.Create(ctx, token.ObjectKey("aurora-app", "victim"), []byte(foreign), "text/plain"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := token.TakeObject(ctx, b, "aurora-app", "victim"); !errors.Is(err, token.ErrTokenMismatch) {
+	if _, err := token.TakeObject(ctx, b, "aurora-app", "victim", nil); !errors.Is(err, token.ErrTokenMismatch) {
 		t.Fatalf("err = %v", err)
 	}
 	if _, _, err := b.Read(ctx, token.ObjectKey("aurora-app", "victim")); !errors.Is(err, blobx.ErrNotExist) {
@@ -326,7 +326,7 @@ func TestTakeObjectDeletesAMismatchedToken(t *testing.T) {
 	if _, err := b.Create(ctx, token.ObjectKey("aurora-app", "junk"), []byte("not a jwt"), "text/plain"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := token.TakeObject(ctx, b, "aurora-app", "junk"); !errors.Is(err, token.ErrTokenInvalid) {
+	if _, err := token.TakeObject(ctx, b, "aurora-app", "junk", nil); !errors.Is(err, token.ErrTokenInvalid) {
 		t.Fatalf("junk: %v", err)
 	}
 }
@@ -339,13 +339,13 @@ func TestDeleteObject(t *testing.T) {
 	if err := token.DeleteObject(ctx, b, c.Slug, c.Run); err != nil {
 		t.Fatalf("a missing object: %v", err)
 	}
-	if err := token.PutObject(ctx, b, c.Slug, c.Run, e.mint(t, c, t0)); err != nil {
+	if err := token.PutObject(ctx, b, c.Slug, c.Run, e.mint(t, c, t0), nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := token.DeleteObject(ctx, b, c.Slug, c.Run); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := token.TakeObject(ctx, b, c.Slug, c.Run); !errors.Is(err, token.ErrNoToken) {
+	if _, err := token.TakeObject(ctx, b, c.Slug, c.Run, nil); !errors.Is(err, token.ErrNoToken) {
 		t.Fatal(err)
 	}
 }
@@ -359,7 +359,7 @@ func TestDeleteObjectForbiddenIsNotSilentSuccess(t *testing.T) {
 	ctx := context.Background()
 	g, b := bucket(t)
 	c := claims()
-	if err := token.PutObject(ctx, b, c.Slug, c.Run, e.mint(t, c, t0)); err != nil {
+	if err := token.PutObject(ctx, b, c.Slug, c.Run, e.mint(t, c, t0), nil); err != nil {
 		t.Fatal(err)
 	}
 	g.DenyWrites("runs", token.ObjectKey(c.Slug, c.Run))

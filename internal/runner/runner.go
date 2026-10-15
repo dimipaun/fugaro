@@ -25,6 +25,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gateway"
@@ -382,6 +383,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		rec = r.rec
 	}()
 
+	r.addSealKey()
 	r.addMountedSecrets()
 	if onNewRun != nil {
 		onNewRun(r)
@@ -547,6 +549,24 @@ const SecretEnvsVar = "FUGARO_SECRET_ENVS"
 // minSecretLen is the shortest value redacted; agent.BuildEnv refuses a
 // shorter declared secret for the same reason.
 const minSecretLen = 4
+
+// addSealKey registers the launch's seal key with the redactor, before
+// anything can print it. The key arrives in the job's environment — it is the
+// value of the launcher's marker (Backend.TokenKey, D15) — so the runner holds
+// it from its first moment, long before takeBudgetToken unseals anything with
+// it, and every reason the run publishes from here on is redacted of it.
+// That is why it is registered at the top of Run and not where the key is
+// used: the parse that reads the marker cannot register anything (it runs
+// before this process has a redactor at all, internal/cli's runExec), so the
+// runner is the earliest holder that can.
+//
+// The value registered is the *encoded* key, because that is the form it
+// travels in and therefore the form a print of the environment would show.
+func (r *run) addSealKey() {
+	if len(r.d.Backend.TokenKey) > 0 {
+		r.addSecret(token.EncodeKey(r.d.Backend.TokenKey))
+	}
+}
 
 // addMountedSecrets registers the values of the variables SecretEnvsVar
 // names, before anything else runs, so even a failure reason from the

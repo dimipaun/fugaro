@@ -30,7 +30,7 @@ func TestTwoConcurrentTakersExactlyOneWins(t *testing.T) {
 			c := claims()
 			c.Run = "run-" + name + "-" + string(rune('a'+round))
 			tok := e.mint(t, c, t0)
-			if err := token.PutObject(ctx, b, c.Slug, c.Run, tok); err != nil {
+			if err := token.PutObject(ctx, b, c.Slug, c.Run, tok, nil); err != nil {
 				t.Fatal(err)
 			}
 			const n = 8
@@ -42,7 +42,7 @@ func TestTwoConcurrentTakersExactlyOneWins(t *testing.T) {
 				go func() {
 					defer wg.Done()
 					<-start
-					got, err := token.TakeObject(ctx, b, c.Slug, c.Run)
+					got, err := token.TakeObject(ctx, b, c.Slug, c.Run, nil)
 					switch {
 					case err == nil && got == tok:
 						wins.Add(1)

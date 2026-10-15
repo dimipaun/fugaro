@@ -98,7 +98,7 @@ func (b *bk) mint(at time.Time) {
 	if err != nil {
 		b.tb.Fatal(err)
 	}
-	if err := token.PutObject(context.Background(), b.bucket, repoSlug, runID, tok); err != nil {
+	if err := token.PutObject(context.Background(), b.bucket, repoSlug, runID, tok, nil); err != nil {
 		b.tb.Fatal(err)
 	}
 }

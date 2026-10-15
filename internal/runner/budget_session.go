@@ -34,19 +34,25 @@ const (
 	// BudgetGraceEnv shortens the D14 grace (a Go duration, at least 5 s and
 	// at most the default 3 m): it exists for tests and can only tighten.
 	BudgetGraceEnv = "FUGARO_BUDGET_GRACE"
-	// BudgetTokenEnv is set to "1" in a job's environment by the launcher that
-	// minted this run's budget token, and by nothing else: whether a token was
-	// minted is a fact about one launch, so it travels as an execution
-	// override (backend.LaunchSpec.Env) and never through init --repo's
-	// deploy-time environment. It closes a fail-open the security review of
-	// PR #379 found: a run of the same repository can delete a queued run's
-	// token object, and a job whose own mode is off read that as "this project
-	// has published no policy" and ran with no session, no cap and no kill
-	// switch — while the launcher had minted a token precisely because a
-	// policy exists. With the marker set, a missing token is the refusal it
-	// is on a budget-on job, whatever the job's mode; a job with no marker
-	// (every install that never minted one, and every local run) keeps
-	// today's behaviour.
+	// BudgetTokenEnv is set in a job's environment by the launcher that minted
+	// this run's budget token, and by nothing else: whether a token was minted
+	// is a fact about one launch, so it travels as an execution override
+	// (backend.LaunchSpec.Env) and never through init --repo's deploy-time
+	// environment. It closes a fail-open the security review of PR #379 found:
+	// a run of the same repository can delete a queued run's token object, and
+	// a job whose own mode is off read that as "this project has published no
+	// policy" and ran with no session, no cap and no kill switch — while the
+	// launcher had minted a token precisely because a policy exists. With the
+	// marker set, a missing token is the refusal it is on a budget-on job,
+	// whatever the job's mode; a job with no marker (every install that never
+	// minted one, and every local run) keeps today's behaviour.
+	//
+	// Its *value* is "1" from a launcher that sealed nothing — every launch
+	// until the seal's second step lands (D19) — and, once the launcher seals,
+	// the launch's seal key as one unpadded base64url string (the marker stops
+	// being a one-bit marker and becomes the carrier of a per-execution key,
+	// D15). The parse is strict in both directions and never echoes the value:
+	// see BackendFromEnv.
 	BudgetTokenEnv = "FUGARO_BUDGET_TOKEN"
 )
 
@@ -62,6 +68,15 @@ type Backend struct {
 	// the token's absence from the runs bucket is a refusal and never "this
 	// project has published no policy" (see BudgetTokenEnv).
 	TokenMarked bool
+	// TokenKey is the launch's seal key, when the marker's value carried one
+	// (BackendFromEnv): the token object is then sealed under it and a
+	// plaintext object is refused rather than read. It is nil for a marker of
+	// "1", which is every launch until the launcher starts sealing, and the
+	// token object is then the plaintext one the launcher writes. The key is
+	// a secret: it is registered with the run's redactor as soon as the run
+	// starts (runner.go's addSealKey), and nothing that formats the marker's
+	// value or this field may print it.
+	TokenKey []byte
 	// MalformedEnv is set, beside BackendErr, when the job's environment
 	// carries the backend URL or the launcher's marker and the value could not
 	// be parsed: the fields above are then only as far as the parse got, and
@@ -114,15 +129,30 @@ func BackendFromEnv(lookup func(string) (string, bool), loopbackOK bool) (Backen
 		b.APIKey = key
 	}
 	if hasMarker {
-		// Only the launcher writes this, and it writes "1". Anything else is
-		// damage to the job's environment, which the runner reports as an
-		// infra_error rather than reading as "no marker": the marker is what
-		// makes a missing token fail closed, so a value nobody can interpret
-		// must not be the quiet one.
-		if marker != "1" {
-			return b, fmt.Errorf("%s %q: it must be 1, and only a launcher that minted this run's budget token sets it", BudgetTokenEnv, marker)
+		// Only the launcher writes this, and it writes "1" today, or — once it
+		// seals (D19) — the launch's seal key as one unpadded base64url string.
+		// Anything else is damage to the job's environment, which the runner
+		// reports as an infra_error rather than reading as "no marker": the
+		// marker is what makes a missing token fail closed, so a value nobody
+		// can interpret must not be the quiet one.
+		//
+		// The value is a secret once the launcher seals, and this parse runs
+		// before any redactor exists: internal/cli's runExec calls this at
+		// bootstrap, and the failure reaches the record only later, as the
+		// run's infra_error, when there is no redactor to have registered the
+		// key with. So neither error below carries the value — they name the
+		// variable and the shape it wants instead. The redactor is the second,
+		// weaker half and belongs to the runner (addSealKey).
+		switch {
+		case marker == "1":
+			b.TokenMarked = true
+		default:
+			key, err := token.ParseKey(marker)
+			if err != nil {
+				return b, fmt.Errorf("%s: it must be 1, or the launch's seal key as one unpadded base64url string decoding to %d bytes, and only a launcher that minted this run's budget token sets it", BudgetTokenEnv, token.KeySize)
+			}
+			b.TokenMarked, b.TokenKey = true, key
 		}
-		b.TokenMarked = true
 	}
 	if hasGrace {
 		d, err := time.ParseDuration(grace)
@@ -184,7 +214,7 @@ func (r *run) refuseStrayToken(ctx context.Context) error {
 	if r.d.Bucket == nil || budget.Key(slug) != slug || budget.Key(runID) != runID || slug == "" || runID == "" {
 		return nil
 	}
-	_, err := token.TakeObject(ctx, r.d.Bucket, slug, runID) // also deletes it
+	_, err := token.TakeObject(ctx, r.d.Bucket, slug, runID, r.d.Backend.TokenKey) // also deletes it
 	if errors.Is(err, token.ErrNoToken) {
 		return nil
 	}
