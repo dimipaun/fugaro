@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	batch "google.golang.org/api/batch/v1"
@@ -71,9 +72,9 @@ func (b *Backend) timeout(spec backend.LaunchSpec) (time.Duration, error) {
 }
 
 // jobDefinition is the Batch job of one run. Every field here is either a
-// fact about the run or one of the design's decisions; what it does not
-// carry is Task 7's (the socket mount, the env allowlist beyond these names,
-// the resource quantities).
+// fact about the run, a variable of the launch's own (spec.Env), or one of
+// the design's decisions; what it does not carry is Task 7's (the socket
+// mount, the env allowlist beyond these names, the resource quantities).
 func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeout time.Duration) (*batch.Job, error) {
 	labels, err := Labels(spec.Repo.Slug, spec.Workflow, spec.RunID)
 	if err != nil {
@@ -94,6 +95,23 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 		"FUGARO_PROJECT":     b.o.FugaroProject,
 		"FUGARO_GCP_PROJECT": b.o.GCPProject,
 		"FUGARO_REGION":      b.o.Region,
+	}
+	// The spec's own variables — the launcher's budget marker, which is a
+	// fact about this launch rather than about the deployed job
+	// (backend.LaunchSpec.Env) — are written into the same environment, and
+	// last, so they win over the job's own. Cloud Run reaches the same result
+	// by sending them as the run's override, which the API merges into the
+	// job's environment (gcp/run.go); on Batch the job definition is the only
+	// environment there is. Dropping them would launch a run with no
+	// FUGARO_BUDGET_TOKEN at all, and the runner reads an absent marker as
+	// "this project published no policy" — the fail-open the marker exists to
+	// close.
+	for _, kv := range spec.Env {
+		name, value, ok := strings.Cut(kv, "=")
+		if !ok || name == "" {
+			return nil, fmt.Errorf("launch env %q: it must be NAME=value", kv)
+		}
+		vars[name] = value
 	}
 	// The task runs for the workflow's total time plus the slack every other
 	// backend adds, so a run whose own watchdog is late is still bounded by
