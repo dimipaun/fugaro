@@ -370,7 +370,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		o.Secrets = doctorSecrets(cmd, lc)
 		token := oauthTokenOf(resolved)
 		if repo, err := originRepo(ctx); err == nil {
-			if c := claudeAccountsStoredCheck(lc, repo, o.Secrets); c != nil {
+			if c := claudeAccountsStoredCheck(lc, repo, o.Secrets, projSecrets, projOK); c != nil {
 				o.Checks = append(o.Checks, *c)
 			}
 			// The two per-repository project-secret checks need the
@@ -1027,16 +1027,30 @@ func projectSecretAccountOwners(lc *localcfg.Config) map[string]string {
 // excluded, since that is the repository's existing, unconditionally
 // required secret and already covered by doctor's other checks) should have
 // a stored token. It adds no Secret Manager call of its own: listed is
-// whatever doctorSecrets already fetched (metadata only, by label, never a
-// value), so an installation with no claude_accounts configured for repo
-// triggers no new read at all. listed == nil means that listing itself
-// could not be attempted or failed (no origin, no credentials, Secret
-// Manager unreachable): this is reported as a warning, never silence,
-// since otherwise an owner could not tell whether a configured account is
-// actually usable (fail closed). Every name or slug this check echoes is
-// bounded by pluginwire.Printable, since a repository's origin remote and
-// the owner's own local config are both outside this function's control.
-func claudeAccountsStoredCheck(lc *localcfg.Config, repo string, listed []secretEntry) *doctorCheck {
+// whatever doctorSecrets already fetched and project whatever
+// doctorProjectSecrets did (metadata only, by label, never a value), so an
+// installation with no claude_accounts configured for repo triggers no new
+// read at all.
+//
+// Both listings are read because D2 (plan Task 2.1) made the project copy
+// the default store for exactly these names: a named account's token is
+// project-wide-eligible when its own allow_data_to lists repositories, which
+// is the case every account here is in. Reading only the repository's own
+// containers made doctor call a token stored once for the project missing,
+// and its Fix -- `secrets set <secret> --repo <repo>` -- then stored a
+// repository copy that wins over the project copy forever (§5, the footgun
+// the project-secret checks already name). A missing token's Fix is
+// therefore the bare command, which stores it where D2's default puts it,
+// reaching exactly the repositories the account's allow_data_to lists.
+//
+// listed == nil or !projectOK means one of those listings could not be
+// attempted or failed (no origin, no credentials, Secret Manager
+// unreachable): this is reported as a warning, never silence, since
+// otherwise an owner could not tell whether a configured account is actually
+// usable (fail closed). Every name or slug this check echoes is bounded by
+// pluginwire.Printable, since a repository's origin remote and the owner's
+// own local config are both outside this function's control.
+func claudeAccountsStoredCheck(lc *localcfg.Config, repo string, listed []secretEntry, project []gcp.SecretInfo, projectOK bool) *doctorCheck {
 	var named []string
 	for _, n := range config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo) {
 		if n != config.DefaultClaudeAccount {
@@ -1051,15 +1065,24 @@ func claudeAccountsStoredCheck(lc *localcfg.Config, repo string, listed []secret
 		printableNamed[i] = pluginwire.Printable(n)
 	}
 	printableRepo := pluginwire.Printable(repo)
-	if listed == nil {
+	if listed == nil || !projectOK {
 		return &doctorCheck{ID: "claude-accounts-stored", Severity: "warning",
-			Problem: fmt.Sprintf("could not list %s's secrets, so whether its named Claude account(s) (%s) have a stored token could not be checked",
+			Problem: fmt.Sprintf("could not list %s's secrets (or the project's), so whether its named Claude account(s) (%s) have a stored token could not be checked",
 				printableRepo, strings.Join(printableNamed, ", ")),
-			Fix: "rerun doctor with Secret Manager reachable and your credentials available, or check by hand: " + selfCommand() + " secrets ls --repo " + quoteWord(repo)}
+			Fix: "rerun doctor with Secret Manager reachable and your credentials available, or check by hand: " + selfCommand() + " secrets ls --repo " + quoteWord(repo) + ", and " + selfCommand() + " secrets ls --project-wide"}
 	}
-	have := make(map[string]bool, len(listed))
-	for _, s := range listed {
-		have[s.Name] = true
+	// Either scope's container with an enabled version is a stored token: the
+	// repository's own copy wins where it exists (§5), and the project's is
+	// what the job mounts otherwise. Every name asked about here is one this
+	// repository may use project-wide (config.AllowedClaudeAccounts above is
+	// the account's own AllowsData, which is what
+	// infra.ProjectSecretCandidate reads for these names), so the project
+	// listing needs no per-name re-check.
+	have := projectSecretEnabledFromEntries(listed)
+	for name, enabled := range projectSecretEnabled(project) {
+		if enabled {
+			have[name] = true
+		}
 	}
 	var missing []string
 	var cmds []string
@@ -1067,7 +1090,7 @@ func claudeAccountsStoredCheck(lc *localcfg.Config, repo string, listed []secret
 		secret := config.ClaudeAccountSecret(n)
 		if !have[secret] {
 			missing = append(missing, pluginwire.Printable(n))
-			cmds = append(cmds, "claude setup-token", selfCommand()+" secrets set "+quoteWord(secret)+" --repo "+quoteWord(repo))
+			cmds = append(cmds, "claude setup-token", selfCommand()+" secrets set "+quoteWord(secret))
 		}
 	}
 	if len(missing) == 0 {

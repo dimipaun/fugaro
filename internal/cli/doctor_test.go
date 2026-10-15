@@ -796,8 +796,45 @@ func TestDoctorClaudeAccountsStoredMissing(t *testing.T) {
 	if !strings.Contains(c.Problem, "acme-personal") {
 		t.Fatalf("problem doesn't name the account: %q", c.Problem)
 	}
-	if !strings.Contains(c.Fix, "claude setup-token") || !strings.Contains(c.Fix, "secrets set claude-oauth-token-acme-personal --repo acme/app") {
+	// The fix stores the token where D2 (plan Task 2.1) puts this name: the
+	// project copy, which is the one the job mounts and the reach the
+	// account's own allow_data_to already decided. `--repo acme/app` would
+	// store a repository copy that then wins over the project copy forever
+	// (§5, the footgun the project-secret checks name).
+	if !strings.Contains(c.Fix, "claude setup-token") || !strings.Contains(c.Fix, "secrets set claude-oauth-token-acme-personal") {
 		t.Fatalf("fix doesn't name the exact commands: %q", c.Fix)
+	}
+	if strings.Contains(c.Fix, "--repo") {
+		t.Fatalf("the fix asks for a repository copy that would override the project's: %q", c.Fix)
+	}
+	if a := r.sm.Accessed(); len(a) != 0 {
+		t.Fatalf("doctor read a secret value: %v", a)
+	}
+}
+
+// TestDoctorClaudeAccountsStoredFromTheProject: a named account's token
+// stored once for the project is stored -- the job mounts the project copy --
+// so doctor must not call it missing, and must not hand the owner the
+// repository-copy command that would override it (code review, medium: the
+// check read only the repository's own containers).
+func TestDoctorClaudeAccountsStoredFromTheProject(t *testing.T) {
+	r := claudeAccountsRig(t)
+	const value = "fake-token-0123456789"
+	putProjectSecret(t, r.sm, "aurora", "claude-oauth-token-acme-personal", []byte(value))
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "claude-accounts-stored")
+	if !ok || !c.OK {
+		t.Fatalf("claude-accounts-stored = %+v", c)
+	}
+	if strings.Contains(out, value) {
+		t.Fatalf("the value leaked: %s", out)
 	}
 	if a := r.sm.Accessed(); len(a) != 0 {
 		t.Fatalf("doctor read a secret value: %v", a)
@@ -1007,7 +1044,7 @@ func TestDoctorClaudeAccountsStoredCheckEscapesHostileInput(t *testing.T) {
 	lc := &localcfg.Config{ClaudeAccounts: map[string]config.ClaudeAccount{
 		hostileAccount: {AllowDataTo: []string{hostileRepo}},
 	}}
-	c := claudeAccountsStoredCheck(lc, hostileRepo, []secretEntry{})
+	c := claudeAccountsStoredCheck(lc, hostileRepo, []secretEntry{}, nil, true)
 	if c == nil || c.OK {
 		t.Fatalf("claudeAccountsStoredCheck = %+v", c)
 	}
@@ -1026,7 +1063,7 @@ func TestDoctorClaudeAccountsStoredCheckEscapesHostileInput(t *testing.T) {
 	// The "could not list" warning branch (listed == nil) prints the repo and
 	// the names too: it must escape and bound them just the same (replacing
 	// printableRepo/printableNamed with the raw values there stayed green).
-	w := claudeAccountsStoredCheck(lc, hostileRepo, nil)
+	w := claudeAccountsStoredCheck(lc, hostileRepo, nil, nil, false)
 	if w == nil || w.OK {
 		t.Fatalf("claudeAccountsStoredCheck(listed=nil) = %+v, want a warning", w)
 	}
