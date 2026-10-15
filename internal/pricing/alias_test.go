@@ -19,6 +19,9 @@ func TestIsAlias(t *testing.T) {
 		// space, an empty model name or an over-length ID is not that shape.
 		"anthropic/*", "anthropic/", "anthropic/claude-opus-5-5:free", "anthropic/claude-opus-5-5[1m]",
 		"anthropic/Claude-Opus", "anthropic/claude opus", "anthropic/" + strings.Repeat("a", 120),
+		// A near-miss claim, padded: still an alias, and these two rows are
+		// what a TrimSpace or a "read what it probably meant" edit fails on.
+		"anthropic/claude-sonnet-5.5 ", "\tanthropic/claude-opus-5-5",
 	} {
 		if !IsAlias(s) {
 			t.Errorf("IsAlias(%q) = false, want true", s)

@@ -43,7 +43,9 @@ func IsProviderModelID(m string) bool { return providerIDRE.MatchString(m) }
 // may name, and who may route it is decided where the routes are
 // (internal/config.CheckProviderPolicy). A wildcard ("anthropic/*"), a
 // variant, a "[1m]" spelling or a name that is not a well-formed ID stays an
-// alias.
+// alias -- which is the last check's doing: providerIDRE is the whole of the
+// exception, so what it does not match is an alias without a branch of its
+// own saying so.
 func IsAlias(model string) bool {
 	if strings.HasSuffix(strings.ToLower(model), "[1m]") || strings.HasSuffix(model, "-latest") {
 		return true
@@ -51,11 +53,14 @@ func IsAlias(model string) bool {
 	if len(model) > maxIDLen {
 		return true
 	}
-	if strings.HasPrefix(model, "anthropic/") && !IsProviderModelID(model) {
-		return true
-	}
 	if strings.HasPrefix(model, "claude") && strings.Contains(model, "/") {
 		return true
 	}
+	// The fallback is also where "anthropic/<id>" is judged: for a model under
+	// that prefix, modelIDRE can never match, so this is exactly "not a
+	// provider model ID" -- the same predicate a branch of its own used to
+	// spell out twice (removed in the 2026-10-15 review). It is not a wall
+	// that could ever be a second one: if providerIDRE were widened to admit a
+	// wildcard, that branch and this check would widen together.
 	return !modelIDRE.MatchString(model) && !providerIDRE.MatchString(model)
 }

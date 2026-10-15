@@ -410,10 +410,14 @@ var ClaudePatterns = []string{"claude-*", "anthropic/*"}
 // rule a project layer's claim key is judged by (Task 7) are this function,
 // not a copy of it.
 func CheckClaudeClaim(m string) string {
-	// One explicit provider model ID under the prefix, and nothing else: the
-	// "*" case is belt and braces (a wildcard is no provider ID by the
-	// pricing grammar either) and keeps the rule readable as the two things
-	// the owner ruled out -- a class, and a spelling a pin could not name.
+	// One explicit provider model ID under the prefix, and nothing else. The
+	// "*" test is kept deliberately as a second wall: no wildcard is a
+	// provider model ID by the pricing grammar, so it is redundant today --
+	// but this function *is* the permission, and the grammar it asks is
+	// internal/pricing's to widen. A wildcard that ever passed that grammar
+	// must still not claim a class of Claude models. The rule also stays
+	// readable as the two things the owner ruled out: a class, and a spelling
+	// a pin could not name.
 	if strings.HasPrefix(m, "anthropic/") && !strings.Contains(m, "*") && pricing.IsProviderModelID(m) {
 		return ""
 	}
