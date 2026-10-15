@@ -1485,7 +1485,9 @@ names 45 as "the next free number" — true when that paragraph was written.
 Since then the numbers have been claimed by plans that have not landed here:
 **45 and 46 by the OpenRouter senior-reviewer plan (PR #359), 47 by the
 subscription-OAuth-token plan (PR #363, merged as `ba03ab5` — its row *is* in
-the table), and 48–56 by the project-centric plan (PR #366)**; a number reserved in a plan is reserved
+the table), and 48–56 by the project-centric plan (PR #366, merged as
+`c86eb92` — reserving them; the rows themselves are not written yet)**; a number
+reserved in a plan is reserved
 whether or not its row is written, which is why nothing sits between 47 and 57
 today. So this design claims **Check 57**, and its row and its reservation
 paragraph are additive. If those reservations turn out not to exist, the number
@@ -1650,6 +1652,38 @@ refused, which is the outcome expected of the baseline. `id` comes first in ever
 one of them because §2.2's uid question is open until then, and the gid on its
 own line because that is the number the (a) variant needs.
 
+**The remaining step-specific files are committed the same way** — each is
+`check57/job.json` with only the fields below changed, the paths naming where
+they go in that structure, and the setup block renders each into
+`/tmp/check57-<name>.json` in its loop:
+
+```jsonc
+// check57/job-streaming.json -- 57a-3(a): image streaming, §1.2's prerequisite.
+"taskGroups[0].taskSpec.runnables[0].container.enableImageStreaming": true
+
+// check57/job-teardown-fail.json -- 57a-8, the failure path.
+"taskGroups[0].taskSpec.runnables[0].container.commands": ["bash", "-lc", "echo chk57-teardown-fail; exit 3"]
+
+// check57/job-teardown-cancel.json -- 57a-8, the cancel path: long enough that
+// the cancel lands while it is still RUNNING.
+"taskGroups[0].taskSpec.runnables[0].container.commands": ["bash", "-lc", "echo chk57-teardown-cancel; sleep 600"]
+
+// check57/job-teardown-crash.json -- 57a-8, the crashed-runner path. SIGKILL to
+// the container's own process, which is a different exit than `exit 3`: this is
+// the one that asks whether Batch's teardown survives an abnormal death.
+"taskGroups[0].taskSpec.runnables[0].container.commands": ["bash", "-lc", "echo chk57-teardown-crash; sleep 2; kill -9 $$"]
+
+// check57/job-signal.json -- 57a-12: the same index/count claim in BOTH places
+// Batch documents environment, so the two are answered separately.
+"taskGroups[0].taskSpec.environment": {"variables": {"BATCH_TASK_INDEX": "99", "BATCH_TASK_COUNT": "99"}}
+"taskGroups[0].taskEnvironments": [{"variables": {"BATCH_TASK_INDEX": "99", "BATCH_TASK_COUNT": "99"}}]
+"taskGroups[0].taskSpec.runnables[0].container.commands": ["bash", "-lc", "echo \"IDX=${BATCH_TASK_INDEX:-unset} COUNT=${BATCH_TASK_COUNT:-unset}\"; curl -s -m 3 -H \"Metadata-Flavor: Google\" http://metadata.google.internal/computeMetadata/v1/instance/id || echo no-metadata"]
+
+// check57/job-quota.json -- 57a-11: raised until the sandbox's regional quota
+// cannot place it, which is the point of the step.
+"allocationPolicy.instances[0].policy.machineType": "c2-standard-60"
+```
+
 **Two things about that JSON are deliberate.** First, the runnable carries the **socket bind mount**
 (`volumes: ["/var/run/docker.sock:/var/run/docker.sock"]`) — Batch documents
 `volumes` as a bind mount from the host, and §1.1 needs it — because the base
@@ -1699,7 +1733,7 @@ IMG=                         # resolved below, from the installation's own confi
 # argument gcloud would resolve from its ambient configuration.
 [ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$SA" ] && [ -n "$J" ] && [ -n "$NET" ] \
   || { echo "Check 57 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L SA=$SA J=$J NET=$NET must not be empty)" >&2; exit 1; }
-DOCTOR=/tmp/check57-doctor.json
+DOCTOR=/tmp/chk57-doctor.json   # deliberately NOT check57*.json: the render check below globs those
 fugaro doctor --project fugaro --gcp-project "${P:?}" --json > "${DOCTOR}" || true   # a failing check still prints the object; the parses below are the guard
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); p=d.get("project") or {}; sys.exit(0 if p.get("name")=="fugaro" and p.get("gcp_project")=="fugaro-dev" else 1)' "${DOCTOR}" \
   || { echo "Check 57 stopped: this is not the fugaro-dev installation (fugaro doctor --json names project $(python3 -c 'import json,sys; p=json.load(open(sys.argv[1])).get("project") or {}; print(p.get("name"), p.get("gcp_project"))' "${DOCTOR}" 2>/dev/null), or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
@@ -1746,18 +1780,20 @@ render() { sed -e "s|__IMG__|${IMG:?}|g" \
               -e "s|__SA_EMAIL__|${SA_EMAIL:?}|g" \
               -e "s|__DOCKER_GID__|${DOCKER_GID}|g" \
               -e "s|global/networks/default|global/networks/${NET:?}|g" "$1"; }
-render check57/job.json                 > /tmp/check57.json
-render check57/job-docker.json          > /tmp/check57-docker.json
-render check57/job-socket-none.json     > /tmp/check57-socket-none.json
-render check57/job-socket-user0.json    > /tmp/check57-socket-user0.json
-render check57/job-socket-priv.json     > /tmp/check57-socket-priv.json
+render check57/job.json > /tmp/check57.json          # the probe's own template
+for F in docker streaming socket-none socket-user0 socket-priv \
+         teardown-fail teardown-cancel teardown-crash signal quota; do
+  render "check57/job-${F}.json" > "/tmp/check57-${F}.json"
+done
 # The (a) variant only exists once the gid is known; 57a-6 renders it there.
 [ -n "$DOCKER_GID" ] && render check57/job-socket-groupadd.json > /tmp/check57-socket-groupadd.json
-grep -lq __ /tmp/check57.json /tmp/check57-docker.json /tmp/check57-socket-*.json \
+grep -lq __ /tmp/check57*.json \
   && { echo "Check 57 stopped: a placeholder survived rendering (a __…__ field with no value). If it is __DOCKER_GID__, export DOCKER_GID=<gid> from 57a-6's baseline log and re-run this block" >&2; exit 1; }
-for F in /tmp/check57.json /tmp/check57-docker.json /tmp/check57-socket-none.json \
-         /tmp/check57-socket-user0.json /tmp/check57-socket-priv.json; do
-  [ -s "$F" ] || { echo "Check 57 stopped: rendering ${F##*/} failed (run this block from the sandbox checkout, where the committed check57/ files are)" >&2; exit 1; }
+for F in /tmp/check57.json /tmp/check57-docker.json /tmp/check57-streaming.json /tmp/check57-signal.json \
+         /tmp/check57-quota.json /tmp/check57-socket-none.json /tmp/check57-socket-user0.json \
+         /tmp/check57-socket-priv.json /tmp/check57-teardown-fail.json /tmp/check57-teardown-cancel.json \
+         /tmp/check57-teardown-crash.json; do
+  [ -s "$F" ] || { echo "Check 57 stopped: rendering ${F} failed (run this block from the sandbox checkout, where the committed check57/ files are)" >&2; exit 1; }
 done
 ```
 
@@ -1859,6 +1895,32 @@ leaked VM of *this check* is told from a real run's.
    before submitting, and remember it is the *project's* setting: revert it by
    hand, because the Restore below deletes only `${SA}-*` and would leave it on.
 
+0c. **Image streaming's prerequisite, before step 3a needs it.** Streaming is
+   not a Batch-side flag alone: it is served by the
+   **`containerfilesystem.googleapis.com`** API, which a project need not have
+   enabled (§1.2, §1.9's provisioning task). Without it step 3a's submission is
+   rejected, and the (a) half of the cold-start comparison — the half C4 prefers
+   — measures nothing. Enabled here, and *recorded* here, because whether this
+   check may turn it back off depends on whether the check turned it on:
+
+   ```bash
+   if gcloud services list --project="${P:?}" --enabled \
+        --filter='config.name=containerfilesystem.googleapis.com' --format='value(config.name)' | grep -q .; then
+     echo "57a-0c: containerfilesystem.googleapis.com was ALREADY enabled; this check leaves it on"
+     rm -f /tmp/chk57-api-enabled-by-check
+   else
+     gcloud services enable containerfilesystem.googleapis.com --project="${P:?}" || exit 1
+     touch /tmp/chk57-api-enabled-by-check   # Restore step 7 disables it only because of this file
+     echo "57a-0c: enabled containerfilesystem.googleapis.com; Restore step 7 disables it again"
+   fi
+   ```
+
+   The marker is a file, not a variable, because the setup block is re-run from a
+   fresh shell at every step: what happened in 57a-0c has to survive that.
+   **FACT:** whether the API was already enabled, and — if it was — that the
+   installation enables it deliberately (§1.2's prerequisite), because that is
+   the difference between a raw project and a provisioned one.
+
 1. **Baseline (Cloud Run).** On the sandbox, `fugaro run --project fugaro
    --gcp-project "${P:?}"` a no-change task and time launch-to-first-log-line
    (`fugaro logs RUN`, the first `started` line), five times. This is Check 41's
@@ -1871,10 +1933,12 @@ leaked VM of *this check* is told from a real run's.
    `SUCCEEDED` or `FAILED` (§2.3), so five samples are five jobs — not five
    submissions of one.
    **FACT:** the five times, the median, and the delta over step 1.
-3. **Cold start, the two alternatives.** (a) **Image streaming**: the same job
-   with `enableImageStreaming: true` on the runnable, the `containerfilesystem`
-   API enabled and the image in the job's own region (both prerequisites are on
-   the design's list, §1.2). (b) **The preloaded boot disk**: a boot image with
+3. **Cold start, the two alternatives.** (a) **Image streaming**: submit
+   `check57/job-streaming.json` — the committed JSON with `enableImageStreaming:
+   true` on the runnable, and nothing else — as
+   `--config /tmp/check57-streaming.json`; the `containerfilesystem` API is
+   enabled by 57a-0c and the image is in the job's own region (both prerequisites
+   are on the design's list, §1.2). (b) **The preloaded boot disk**: a boot image with
    `fugaro-base` already in the Docker data root, built by the check as
    `${SA:?}-preload` and deleted by the Restore. Five fresh jobs each, as in
    step 2. **FACT:** the five times, the median and the delta over steps 1 and 2
@@ -1957,11 +2021,20 @@ leaked VM of *this check* is told from a real run's.
    that exits non-zero); **cancel** (`gcloud batch jobs cancel "${NAME:?}"
    --project="${P:?}" --location="${L:?}"` — `jobs.cancel`, **not**
    `jobs.delete`: delete erases the job and its history, which is why §1.4 makes
-   cancel a `cancel` and the reaper a `delete`); and a crashed runner (kill the
-   container's process) — **a fresh job each, since one job runs once** — list
+   cancel a `cancel` and the reaper a `delete`); and a crashed runner (the
+   committed `check57/job-teardown-crash.json`, which SIGKILLs the container's own
+   process) — **a fresh job each, since one job runs once** — submit each, then list
    the surviving resources:
 
    ```bash
+   # Four fresh jobs, since one job runs once (§2.3): check57/job.json's own
+   # command is the success path and needs no variant file.
+   for V in "" fail cancel crash; do
+     gcloud batch jobs submit "${J:?}-teardown${V:+-$V}-$(date +%s)" --project="${P:?}" --location="${L:?}" \
+       --config "/tmp/check57${V:+-teardown-$V}.json"
+   done
+
+   # ... then, per path, the surviving resources:
    gcloud compute instances list --project="${P:?}" --filter='labels.fugaro_chk=57'
    gcloud batch jobs list --project="${P:?}" --location="${L:?}" --filter='labels.fugaro_chk=57'
    ```
@@ -2001,7 +2074,11 @@ leaked VM of *this check* is told from a real run's.
    # role/resource are not available and C22's "worth attempting" stays
    # UNVERIFIED. The binding is on the check's own account, and it is removed
    # before the step ends, so nothing of it survives into Restore.
-   COND='title=chk57-fugaro-jobs,expression=resource.name.startsWith("projects/${P:?}/locations/${L:?}/jobs/fugaro-")'
+   # Double quotes, NOT single: the expression has to carry this project's and
+   # this region's real ids, and a single-quoted string would hand gcloud the
+   # literal text `${P:?}` — a Condition that names a project nobody has, which
+   # would read as "accepted" and mean nothing (§9's citation of this step).
+   COND="title=chk57-fugaro-jobs,expression=resource.name.startsWith(\"projects/${P:?}/locations/${L:?}/jobs/fugaro-\")"
    gcloud projects add-iam-policy-binding "${P:?}" \
      --member="serviceAccount:${SA_EMAIL:?}" --role="roles/batch.jobsEditor" \
      --condition="${COND}" --quiet
@@ -2042,9 +2119,11 @@ leaked VM of *this check* is told from a real run's.
     generates"), and whether the **sink/exclusion arm** of §1.5 catches the
     entry — apply it if the owner wants the answer now, and revert it in the
     Restore if so.
-11. **(Optional, quota.) Queueing, and what a queued job does.** Submit one
-    `$J` job that asks for more vCPUs than the sandbox region's quota leaves
-    (or fill the quota with step-2 jobs) and watch it: the state should be
+11. **(Optional, quota.) Queueing, and what a queued job does.** Submit
+    `check57/job-quota.json` — the committed JSON with the machine type raised to
+    `c2-standard-60`, so it asks for more vCPUs than the sandbox region's quota
+    leaves — as `--config /tmp/check57-quota.json` (or fill the quota with
+    step-2 jobs) and watch it: the state should be
     `QUEUED`, and Batch holds a job in `QUEUED` for at most **2 days** before
     failing it (`cloud.google.com/batch/quotas`, §1.4). **FACT:** the state
     observed, how long it sat there, and what the API said. Batch has no
@@ -2056,9 +2135,9 @@ leaked VM of *this check* is told from a real run's.
     `BATCH_TASK_INDEX`/`BATCH_TASK_COUNT`, which Batch injects into every task.
     If a job's own environment can set or overwrite them, that signal is only
     as good as the launch path — still better than a Fugaro variable, but the
-    design has to say so. Submit one `$J` job whose job-level `environment`
-    *and* whose `taskEnvironments` both set `BATCH_TASK_INDEX=99` and
-    `BATCH_TASK_COUNT=99`, with the container command
+    design has to say so. Submit `check57/job-signal.json` — the committed JSON
+    whose job-level `environment` *and* whose `taskEnvironments` both set
+    `BATCH_TASK_INDEX=99` and `BATCH_TASK_COUNT=99`, and whose container command is
 
     ```bash
     bash -lc 'echo "IDX=${BATCH_TASK_INDEX:-unset} COUNT=${BATCH_TASK_COUNT:-unset}"; \
@@ -2066,7 +2145,8 @@ leaked VM of *this check* is told from a real run's.
                 http://metadata.google.internal/computeMetadata/v1/instance/id || echo "no-metadata"'
     ```
 
-    **FACT:** the values the container saw — the injected ones (index 0 of a
+    — as `--config /tmp/check57-signal.json`. **FACT:** the values the container
+    saw — the injected ones (index 0 of a
     one-task job, count 1), the job's `99`, or nothing (a var Batch strips) —
     for each of the two places separately; and whether the metadata server
     answered at all without an external IP, which is the fallback C12 names and
@@ -2225,6 +2305,17 @@ gcloud compute routers delete "${SA:?}-router" --project="${P:?}" --region="${L:
 # 6. The preloaded boot image, if 57a-3b built one (named after $SA).
 gcloud compute images list --project="${P:?}" --filter="name~^${SA}-preload" --format='value(name)' | \
   xargs -r -n1 gcloud compute images delete --project="${P:?}" --quiet
+
+# 7. The streaming API, ONLY if 57a-0c enabled it -- the marker file is what
+#    makes that conditional. A project that already had
+#    containerfilesystem.googleapis.com keeps it: disabling an API this check did
+#    not enable can break workloads the check never looked at.
+if [ -f /tmp/chk57-api-enabled-by-check ]; then
+  gcloud services disable containerfilesystem.googleapis.com --project="${P:?}" --force --quiet
+  rm -f /tmp/chk57-api-enabled-by-check
+else
+  echo "Restore: containerfilesystem.googleapis.com was not enabled by this check; leaving it as it was"
+fi
 ```
 
 The NAT/router/subnet note, if the check had to create egress of its own: it
@@ -2237,9 +2328,9 @@ arm, if 57a-10 applied it, is reverted with the Terraform apply that reverses it
 (`fugaro init` from the sandbox's config), and nothing else. Nothing in `belong`
 is touched at any step.
 
-**The restore's assertion — run it and paste the output; every line must be
-`0` (five zeroes; the lines are counts, and an empty-looking line would hide a
-`gcloud` that failed):**
+**The restore's assertion — run it and paste the output; every line must read
+`0`.** These are counts, so a line that looks empty is a `gcloud` that failed or
+a filter that matched nothing for the wrong reason, not a clean project:
 
 ```bash
 echo "jobs (57a): $(gcloud batch jobs list --project="${P:?}" --location="${L:?}" --filter='labels.fugaro_chk=57' --format='value(name)' | wc -l)"
