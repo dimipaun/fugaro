@@ -718,11 +718,12 @@ plan is the owner's (Global Constraints, "Every owner-run step … no agent perf
 the numbers above them are taken: **57 by PR #375**, the compute-instance backend, **merged** —
 `main` carries its summary row, and its 57a and 57b sections live in
 `docs/design/compute-backend.md` §7.2, which is a number taken even when the section is not in the
-checklist; **58 by PR #393**, the artifact-runs design, **merged**, whose §11 on `main` writes the
-reservation and records the duplicate's resolution; and **59 by PR #401**, the desktop-console
-design, **merged**, which takes 59 as **59a and 59b** — its own plan's table says why
-(`docs/plans/2026-10-15-desktop-console.md`: "#393 takes 58 and merges first; #393 does not use 59,
-which leaves 59 free for this plan") — so
+checklist; **58 by PR #393**, the artifact-runs design, **merged**, whose §11 writes the
+reservation and records the duplicate's resolution (`docs/design/artifact-runs.md`, **on `main`** —
+#393 and #401 are `main` PRs and this branch is `next`'s, so the two files are read there); and
+**59 by PR #401**, the desktop-console design, **merged**, which takes 59 as **59a and 59b** — its
+own plan's table says why (`docs/plans/2026-10-15-desktop-console.md`, on `main` too: "#393 takes 58
+and merges first; #393 does not use 59, which leaves 59 free for this plan") — so
 #401 is the later writer and renumbers itself off 58, which is the register's own rule (a number
 belongs to the check that first wrote a row, and a duplicate is fixed by the later writer — the rule
 the plan already states for #359's 45 and 46). Both of those PRs are merged and neither has written
@@ -758,8 +759,10 @@ untouched:
 2. **The object is worthless without the key.** With the owner's own credentials, read the token
    object out of the runs bucket: it is not a JWT, it does not parse as one, and it carries no
    readable claim. Record the object's size and the fact that `fs`/`fr` are not in it.
-3. **The key is not in the bucket, and not in the logs.** `fugaro env`-style reads of the job show no
-   key, and the run's own log carries none. **The execution's record is a FACT, not a fact to assume**
+3. **The key is not in the bucket, and not in the logs.** Reads of the job's own environment
+   (`gcloud run jobs describe`, the v1 path Check 52 step 1 uses) and of the execution's overrides
+   (`gcloud run jobs executions describe`, Check 52 step 3's own read) show no key, and neither does
+   the run's own log (`fugaro logs`). **The execution's record is a FACT, not a fact to assume**
    (Check 52 step 3, §3.1): U2 — the design's D10 option (b), whether the API serves an execution's
    own override back at all — is UNVERIFIED and unprobed, so this step **records what the execution
    record shows of the override and does not assert it**. **Two FACTs of U2 belong here**: whether an
