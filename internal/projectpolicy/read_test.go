@@ -184,6 +184,52 @@ func TestDecodeExposesUnknownTopLevelKeys(t *testing.T) {
 	}
 }
 
+// A routing block whose member this Fugaro cannot name is refused, not read as
+// an empty switch. `routing: {claud: ...}` is a misspelt claude and
+// `routing: {gemini: ...}` belongs to something this release does not route:
+// either would decode to a nil switch and leave every Claude call on the direct
+// route while the node says otherwise, silently, on the document a run is
+// routed by.
+func TestDecodeRefusesARoutingBlockThatNamesNoClaude(t *testing.T) {
+	for _, tc := range []struct{ name, raw, want string }{
+		{"a misspelt claude", `{"version": 1, "routing": {"claud": {"via": "direct"}}}`, `"claud"`},
+		{"a member this release does not route", `{"version": 1, "routing": {"gemini": {"via": "vertex"}}}`, `"gemini"`},
+		{"claude written with no switch", `{"version": 1, "routing": {"claude": null}}`, "routing.claude"},
+		{"a member beside a null claude", `{"version": 1, "routing": {"claude": null, "gemini": {"via": "vertex"}}}`, "routing.claude"},
+	} {
+		raw := []byte(tc.raw)
+		p, found, err := Decode(raw)
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode = (%v, %v, %v), want a refusal", tc.name, p, found, err)
+			continue
+		}
+		for _, want := range []string{tc.want, "claude"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: err = %v, want it to name %s", tc.name, err, want)
+			}
+		}
+	}
+
+	// The other side: a block this Fugaro *can* act on is read, whatever else it
+	// names — the switch is the member named claude, and a sibling a newer
+	// release added is not this Fugaro's to refuse.
+	raw := []byte(`{"version": 1, "providers": {"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["anthropic/claude-sonnet-5.5"], "allow_data_to": ["*"]}}, "routing": {"claude": {"via": "auto", "models": ["claude-sonnet-5-5"], "future_route": "x"}, "gemini": {"via": "vertex"}}}`)
+	p, found, err := Decode(raw)
+	if err != nil || !found || p == nil || p.Routing == nil || p.Routing.Claude == nil {
+		t.Fatalf("Decode = (%v, %v, %v), want the switch read", p, found, err)
+	}
+	if !p.Routing.Claude.Names("claude-sonnet-5-5") {
+		t.Errorf("the switch = %+v, want the model it names", p.Routing.Claude)
+	}
+
+	// An empty block names nothing, and a nil switch is what it says: the same
+	// state as an absent one (D1b), not the refusal above.
+	p, found, err = Decode([]byte(`{"version": 1, "routing": {}}`))
+	if err != nil || !found || p == nil || p.Routing != nil && p.Routing.Claude != nil {
+		t.Fatalf("an empty routing block = (%v, %v, %v), want it read as no switch", p, found, err)
+	}
+}
+
 // routing.claude.via is read in phase 1b, and must not accept garbage now.
 func TestDecodeRefusesAnUnknownVia(t *testing.T) {
 	for _, via := range []string{"", "Direct", "openrouter-api", "none"} {

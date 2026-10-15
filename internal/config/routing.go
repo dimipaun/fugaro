@@ -55,8 +55,8 @@ type RoutingClaude struct {
 	// Via is direct, openrouter or auto; empty means direct (D1b).
 	Via string `yaml:"via,omitempty" json:"via,omitempty"`
 	// Models are the canonical Claude IDs this switch opts in. An ID the list
-	// does not name goes direct, and openrouter with an empty list is refused:
-	// the opt-in is the list.
+	// does not name goes direct, and either open via with an empty list is
+	// refused: the opt-in is the list.
 	Models []string `yaml:"models,omitempty" json:"models,omitempty"`
 }
 
@@ -92,8 +92,8 @@ func (p ModelProvider) AllowDataToWritten() bool { return len(p.AllowDataTo) > 0
 //
 // An absent block, and via: direct, are valid and route nothing (D1b).
 // openrouter and auto are held to D1a and D1b between them: an explicit list of
-// canonical Claude IDs, never a pattern; a list that is not empty when via:
-// openrouter; and, for every ID the list names, a provider entry that claims
+// canonical Claude IDs, never a pattern; a list that is not empty under either
+// open via; and, for every ID the list names, a provider entry that claims
 // the route's own ID for it *and* has allow_data_to written.
 func CheckRouting(r *Routing, providers map[string]ModelProvider, path string) []Problem {
 	ps := CheckRoutingShape(r, path)
@@ -140,6 +140,11 @@ func claimNames(claims []routeClaim) string {
 // under via: direct is inert rather than refused: it names nothing that is
 // routed, and D1b's default is that the direct route is where an unwritten
 // switch leaves every call.
+//
+// The two open vias are the other way round: they must carry a list. An empty
+// one under either is refused, because "route every Claude model through this
+// provider" is the pattern D1a forbids, and an empty list is that pattern
+// written by default rather than by name.
 func CheckRoutingShape(r *Routing, path string) []Problem {
 	if r == nil || r.Claude == nil {
 		return nil
@@ -161,8 +166,8 @@ func CheckRoutingShape(r *Routing, path string) []Problem {
 	if c.Via == "" {
 		ps = append(ps, Problem{Path: path + ".claude.via", Message: fmt.Sprintf("is written with no value: name %s, %s or %s, or remove the block — an absent switch is %s (D1b)", RouteDirect, RouteOpenRouter, RouteAuto, RouteDirect)})
 	}
-	if via == RouteOpenRouter && len(c.Models) == 0 {
-		ps = append(ps, Problem{Path: path + ".claude.models", Message: "is empty, and an empty list with via: openrouter would opt every Claude model in: name the IDs this switch carries, one explicit Claude ID per entry, never a pattern (D1a, docs/design/mixed-credentials.md §4)"})
+	if (via == RouteOpenRouter || via == RouteAuto) && len(c.Models) == 0 {
+		ps = append(ps, Problem{Path: path + ".claude.models", Message: fmt.Sprintf("is empty, and an empty list with via: %s would opt every Claude model in: name the IDs this switch carries, one explicit Claude ID per entry, never a pattern (D1a, docs/design/mixed-credentials.md §4)", via)})
 	}
 	for i, m := range c.Models {
 		if msg := CheckRoutingModel(m); msg != "" {

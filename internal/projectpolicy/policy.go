@@ -66,9 +66,15 @@
 //     node an administrator can write by hand — and encoding/json's own
 //     matching, which folds case, is one way to misspell a name that the
 //     strictness above does not catch by itself. The tolerance that stays is at
-//     the top level and in `routing`, whose unknown keys cannot fail open:
-//     routing's values are checked by validRouting, which refuses a block this
-//     Fugaro cannot act on.
+//     the top level, where every unknown key is listed in Policy.UnknownKeys:
+//     each one is a section of its own, so tolerating it leaves the rest of the
+//     policy in force. Inside `routing` there is no such key to tolerate. The
+//     block has exactly one member that does anything — routing.claude — so a
+//     block naming no claude switch (a misspelt member, or a vendor this
+//     release does not route) would decode to a nil switch and leave every
+//     Claude call on the direct route while the node says otherwise: it is
+//     refused, see validRoutingMembers. The values of the switch itself are
+//     checked by validRouting, which refuses a block this Fugaro cannot act on.
 //
 // The readable node holds nothing personal and no secret values: every run
 // token can read it, and a prompt-injected agent can take the token through
@@ -344,6 +350,9 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		if err := json.Unmarshal(rraw, &p.Routing); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: routing: %w", err)
 		}
+		if err := validRoutingMembers(rraw, p.Routing); err != nil {
+			return nil, true, err
+		}
 		if err := validRouting(p.Routing, p.Providers); err != nil {
 			return nil, true, err
 		}
@@ -538,6 +547,53 @@ const (
 	// RouteAuto routes by the model list the route carries.
 	RouteAuto = config.RouteAuto
 )
+
+// validRoutingMembers refuses a written routing block that names no claude
+// switch this Fugaro can act on.
+//
+// An unknown key *inside* this block cannot get the tolerance an unknown
+// top-level key gets. Every other top-level key is a section of its own, so
+// tolerating one leaves the rest of the policy in force; `routing` has exactly
+// one member that does anything, and a block whose member is misspelt
+// (`routing: {claud: ...}`) or belongs to something this release does not route
+// (`routing: {gemini: ...}`) decodes to a nil switch — every Claude call stays
+// on the direct route, silently, on the one document a run is routed by. That
+// is the failure this package exists to prevent, read at P8's boundary: what an
+// older reader would drop here is not a newer release's extra tightening, it is
+// the switch itself.
+//
+// Nothing forward-compatible is lost: a routing block is only ever *delivered*
+// to a node by this Fugaro (internal/cli copies it out of the operator's config,
+// whose own decode refuses these blocks), so a node carrying one this cannot
+// name was hand-written or written by a release whose node also bumps Version,
+// which is what refuses a node this binary cannot read. The remedy is in the
+// message, because the node's writer is an administrator.
+//
+// `routing: {}` — a block with no members at all — is tolerated, exactly as an
+// absent one is: it names nothing, and a nil switch is what it says.
+func validRoutingMembers(raw json.RawMessage, r *Routing) error {
+	if r != nil && r.Claude != nil {
+		return nil
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &members); err != nil {
+		return fmt.Errorf("projectpolicy: routing: %w", err)
+	}
+	if len(members) == 0 {
+		return nil
+	}
+	named := make([]string, 0, len(members))
+	for name := range members {
+		named = append(named, fmt.Sprintf("%q", name))
+	}
+	sort.Strings(named)
+	if _, isClaude := members["claude"]; isClaude {
+		// claude is named, so the member name is not the problem: the value is
+		// (a null, or the switch decoded to nothing).
+		return fmt.Errorf("projectpolicy: routing.claude is written with no switch (the block names %s): write routing.claude as an object with the Claude IDs it routes, or remove the routing block — an absent one is direct (D1b)", strings.Join(named, ", "))
+	}
+	return fmt.Errorf("projectpolicy: routing names %s, and this Fugaro routes claude alone: a block that names no claude switch leaves every Claude call on the direct route while the node says otherwise. Write routing.claude, or remove the routing block — an absent one is direct (D1b)", strings.Join(named, ", "))
+}
 
 // validRouting checks the routing block against the providers block of the same
 // node, with the rules the operator's own config loader applies

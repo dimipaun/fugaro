@@ -77,14 +77,25 @@ func TestRoutingRefusesAGlob(t *testing.T) {
 			t.Errorf("%s (%q): problems = %q, want the path and %q", tc.name, tc.model, got, tc.want)
 		}
 	}
-	// An empty list with via: openrouter is the pattern-like opt-in D1a refuses:
-	// it would mean "every Claude model".
-	got := problemsText(CheckRouting(&Routing{Claude: &RoutingClaude{Via: RouteOpenRouter}}, routed, "routing"))
-	if !strings.Contains(got, "routing.claude.models") || !strings.Contains(got, "empty") {
-		t.Errorf("via: openrouter with no list: problems = %q, want a refusal naming the empty list", got)
+	// An empty list under either open via is the pattern-like opt-in D1a
+	// refuses: it would mean "every Claude model". auto is held to it too — a
+	// switch that names no model routes nothing, so a node carrying one reads
+	// as routed while every call goes direct (the same silent-inert state a
+	// misspelt routing member produces, projectpolicy's validRoutingMembers).
+	for _, via := range []string{RouteOpenRouter, RouteAuto} {
+		got := problemsText(CheckRouting(&Routing{Claude: &RoutingClaude{Via: via}}, routed, "routing"))
+		if !strings.Contains(got, "routing.claude.models") || !strings.Contains(got, "empty") || !strings.Contains(got, via) {
+			t.Errorf("via: %s with no list: problems = %q, want a refusal naming the empty list and the via", via, got)
+		}
+	}
+	// A list under via: direct stays inert rather than refused: it names
+	// nothing that is routed, and D1b's default is where an unwritten switch
+	// leaves every call.
+	if got := problemsText(CheckRouting(&Routing{Claude: &RoutingClaude{Via: RouteDirect, Models: []string{canonicalClaude}}}, routed, "routing")); got != "" {
+		t.Errorf("via: direct with a list: problems = %q, want none", got)
 	}
 	// A via this binary does not know is refused rather than guessed at.
-	got = problemsText(CheckRouting(&Routing{Claude: &RoutingClaude{Via: "elsewhere", Models: []string{canonicalClaude}}}, routed, "routing"))
+	got := problemsText(CheckRouting(&Routing{Claude: &RoutingClaude{Via: "elsewhere", Models: []string{canonicalClaude}}}, routed, "routing"))
 	if !strings.Contains(got, "routing.claude.via") {
 		t.Errorf("via: elsewhere: problems = %q, want a refusal naming routing.claude.via", got)
 	}
