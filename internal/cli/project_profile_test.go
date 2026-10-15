@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -72,6 +73,43 @@ func TestPublishWritesTheProfilesAndShowPrintsThemWithTheirJobs(t *testing.T) {
 	}
 	if !strings.Contains(out, "profile standard:") || !strings.Contains(out, "(standard, github, <account>)") {
 		t.Errorf("project show does not print the profiles and their jobs:\n%s", out)
+	}
+}
+
+// TestPublishWithoutProfilesDropsThemAndSaysSo: a publish is built from this
+// machine's config, so a config that sets no profiles: publishes no block —
+// the same rule providers, prices and the budget follow — and every workflow
+// that selected one is then refused at run start. The operator must read that
+// before it is written, not discover it one run at a time.
+func TestPublishWithoutProfilesDropsThemAndSaysSo(t *testing.T) {
+	f := newProjectFixture(t, projectProfilesYAML)
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if len(publishedPolicy(t, f).Profiles) == 0 {
+		t.Fatal("the first publish wrote no profiles")
+	}
+	// The same config, with the profiles: block taken back out.
+	raw, err := os.ReadFile(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	without := strings.Replace(string(raw), projectProfilesYAML, "", 1)
+	if without == string(raw) {
+		t.Fatal("the fixture config does not carry the profiles block this test removes")
+	}
+	if err := os.WriteFile(f.path, []byte(without), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := publishedPolicy(t, f).Profiles; len(got) != 0 {
+		t.Errorf("profiles = %v, want none: the config sets none", got)
+	}
+	if !strings.Contains(out, "- profile standard") {
+		t.Errorf("the publish does not say the profile is dropped:\n%s", out)
 	}
 }
 

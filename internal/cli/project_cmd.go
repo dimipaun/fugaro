@@ -456,6 +456,13 @@ func policyProviders(lc *localcfg.Config) map[string]projectpolicy.Provider {
 // profile's own provider. Refusing them here too would be a second copy of
 // those rules to drift from — and the operator reads the refusal with the
 // profile's name in it either way.
+//
+// A config that sets no profiles: publishes no block, and so drops the one
+// the node carried — the same rule the providers, the prices and the budget
+// follow (the file is what a publish is built from), and the reason
+// printPolicyDiff prints a line per profile: the operator reads the loss
+// before it is written, rather than discovering it when a repository's
+// workflow is refused at run start.
 func policyProfiles(lc *localcfg.Config) map[string]projectpolicy.Profile {
 	if len(lc.Profiles) == 0 {
 		return nil
