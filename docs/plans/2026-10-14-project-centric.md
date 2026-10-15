@@ -540,7 +540,7 @@ func Decode(raw []byte) (*Policy, bool, error)
 
 **Command:** `GOFLAGS=-p=2 go test ./internal/projectpolicy/... -count=1`. **Commit:** "projectpolicy: the policy object, its paths, its version and its matcher".
 
-**Red step — `Expected: FAIL` (finding 32, R2-16).** Write `TestDecodeAcceptsAPartialBudgetAndAnEmptyOne`, `TestDecodeRefusesABudgetWhoseKeysAllMiss`, `TestPathsEscapeASlug` first, with the change unimplemented: the symbols this task adds get their signatures and empty bodies in the same commit, so the first run **compiles and fails on behaviour**, not on an undefined name. Run the command above — `Expected: FAIL`. Then implement and re-run it — `Expected: PASS`. A first run that is green means the test does not exercise the change; a first run that does not compile means the sketch was skipped.
+**Red step — `Expected: FAIL` (finding 32, R2-16).** Write `TestPathsEscapeASlug`, `TestRulesMarkerPathIsUnderConfigLimits`, `TestDecodeAbsentIsNotFound` first, with the change unimplemented: the symbols this task adds get their signatures and empty bodies in the same commit, so the first run **compiles and fails on behaviour**, not on an undefined name. Run the command above — `Expected: FAIL`. Then implement and re-run it — `Expected: PASS`. A first run that is green means the test does not exercise the change; a first run that does not compile means the sketch was skipped.
 
 ### Task 1.2: the read rules — SECURITY-SENSITIVE, independent opus review
 
@@ -695,7 +695,7 @@ func providerForSlug(slug, repo string) (kind string, ok bool) {
 
 **Command:** `GOFLAGS=-p=2 go test ./internal/cli/... -count=1` and `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`.
 
-**Red step — `Expected: FAIL` (finding 32, R2-16).** Write `TestPolicyCarriesNoSecretValue`, `TestProjectPolicyPublishWritesTheNodeAndSeedsTheAllowList`, `TestProjectPolicyPublishDoesNotReseedARemovedRepo` first, with the change unimplemented: the symbols this task adds get their signatures and empty bodies in the same commit, so the first run **compiles and fails on behaviour**, not on an undefined name. Run the command above — `Expected: FAIL`. Then implement and re-run it — `Expected: PASS`. A first run that is green means the test does not exercise the change; a first run that does not compile means the sketch was skipped.
+**Red step — `Expected: FAIL` (finding 32, R2-16).** Write `TestProjectPolicyPublishWritesTheNodeAndSeedsTheAllowList`, `TestProjectPolicyPublishDoesNotReseedARemovedRepo`, `TestProjectPolicyPublishRefusesAVersionItCannotWrite` first, with the change unimplemented: the symbols this task adds get their signatures and empty bodies in the same commit, so the first run **compiles and fails on behaviour**, not on an undefined name. Run the command above — `Expected: FAIL`. Then implement and re-run it — `Expected: PASS`. A first run that is green means the test does not exercise the change; a first run that does not compile means the sketch was skipped.
 
 **Depends on:** Tasks 1.1, 1.2, 1.3 (the shape, the rules and the reader it writes for). **Commit:** "cli: fugaro project policy publish, show and project repos add; doctor and upgrade say what the policy changes".
 
@@ -743,7 +743,7 @@ The design's §6.2. **The gate is real and is not this phase's to control**: #35
 
 **Command:** `GOFLAGS=-p=2 go test ./internal/config/... ./internal/localcfg/... ./internal/projectpolicy/... -count=1`. **Commit:** "config: routing.claude, an explicit ID list, absent means direct".
 
-**Red step — `Expected: FAIL` (finding 32, R2-16).** Write `TestRepoCannotAddProvider`, `TestRoutingAbsentIsDirect`, `TestRoutingRefusesAGlob` first, with the change unimplemented: the symbols this task adds get their signatures and empty bodies in the same commit, so the first run **compiles and fails on behaviour**, not on an undefined name. Run the command above — `Expected: FAIL`. Then implement and re-run it — `Expected: PASS`. A first run that is green means the test does not exercise the change; a first run that does not compile means the sketch was skipped.
+**Red step — `Expected: FAIL` (finding 32, R2-16).** Write `TestRoutingAbsentIsDirect`, `TestRoutingRefusesAGlob`, `TestRoutingRefusesOpenrouterWithoutAllowDataTo` first, with the change unimplemented: the symbols this task adds get their signatures and empty bodies in the same commit, so the first run **compiles and fails on behaviour**, not on an undefined name. Run the command above — `Expected: FAIL`. Then implement and re-run it — `Expected: PASS`. A first run that is green means the test does not exercise the change; a first run that does not compile means the sketch was skipped.
 
 ### Task 1b.2: the canonical-to-route ID map
 
@@ -958,7 +958,7 @@ End with: "**Paste back:** every FACT line above, never a token, key or secret v
 
 **Command:** `GOFLAGS=-p=2 go test ./internal/runner/... ./internal/backend/... -count=1`. **Depends on:** 3.1, 3.2 (the job names it parses), 3.0 step 3. **Commit:** "runner: bind the slug to the job's own repository and admit the profile's repositories".
 
-**Red step — `Expected: FAIL` (finding 32, R2-16).** Write `TestPolicyCarriesNoSecretValue`, `TestJobIdentityMatchesAComputedProjectJobName`, `TestJobIdentityIsNotAParser` first, with the change unimplemented: the symbols this task adds get their signatures and empty bodies in the same commit, so the first run **compiles and fails on behaviour**, not on an undefined name. Run the command above — `Expected: FAIL`. Then implement and re-run it — `Expected: PASS`. A first run that is green means the test does not exercise the change; a first run that does not compile means the sketch was skipped.
+**Red step — `Expected: FAIL` (finding 32, R2-16).** Write `TestJobIdentityMatchesAComputedProjectJobName`, `TestJobIdentityIsNotAParser`, `TestJobIdentityRefusesAnUnknownProjectJob` first, with the change unimplemented: the symbols this task adds get their signatures and empty bodies in the same commit, so the first run **compiles and fails on behaviour**, not on an undefined name. Run the command above — `Expected: FAIL`. Then implement and re-run it — `Expected: PASS`. A first run that is green means the test does not exercise the change; a first run that does not compile means the sketch was skipped.
 
 ### Task 3.4: every job-naming caller
 
@@ -1141,7 +1141,7 @@ The design's §7. **What changes**: a Claude OAuth token stops being a repositor
 
 **Command:** `GOFLAGS=-p=2 go test ./internal/cli/... ./internal/projectpolicy/... ./internal/backend/... -count=1`. **Depends on:** 3.2 (a job per (profile, provider, account)), 1.6. **Commit:** "accounts: a person's OAuth token, referenced by the project".
 
-**Red step — `Expected: FAIL` (finding 32, R2-16).** Write `TestShareRecordCarriesNoIdentity`, `TestPersonSecretIDIsFlatAndPerAccount`, `TestOwnerCanRetireAReference` first, with the change unimplemented: the symbols this task adds get their signatures and empty bodies in the same commit, so the first run **compiles and fails on behaviour**, not on an undefined name. Run the command above — `Expected: FAIL`. Then implement and re-run it — `Expected: PASS`. A first run that is green means the test does not exercise the change; a first run that does not compile means the sketch was skipped.
+**Red step — `Expected: FAIL` (finding 32, R2-16).** Write `TestPersonSecretIDIsFlatAndPerAccount`, `TestShareRecordCarriesNoIdentity`, `TestOwnerCanRetireAReference` first, with the change unimplemented: the symbols this task adds get their signatures and empty bodies in the same commit, so the first run **compiles and fails on behaviour**, not on an undefined name. Run the command above — `Expected: FAIL`. Then implement and re-run it — `Expected: PASS`. A first run that is green means the test does not exercise the change; a first run that does not compile means the sketch was skipped.
 
 ### Task 5.2: one job per (profile, shared account)
 
