@@ -1031,3 +1031,69 @@ delivers value**.
 | C18 | When to build | After Check 57; the fake-conformance task (Task 2) may land before | Build before the measurement (risks building the wrong substrate) |
 | C19 | The preloaded image | A script in `fugaro init`'s Batch stage, one image per base version | Rely on image streaming alone (no image build, but depends on Artifact Registry + containerd) |
 | C20 | Phase order | Independent of the project-centric phases; profiles (§4.3) adopted when phase 3 lands | Wait for phase 3 (cleaner, but delays a capability the owner needs) |
+
+## 9. Verified and unverified
+
+**Verified** from Google's public documentation, read 2026-10-15 (each cited
+above where used):
+
+- Batch limits: task-group/task/VM counts, 1 MB job definition, the 2-day
+  `QUEUED` and 14-day `RUNNING` ceilings (`cloud.google.com/batch/quotas`).
+- Batch container runnables: `volumes` bind mounts, `options`, `imageUri`,
+  `blockExternalNetwork`, `enableImageStreaming`; and `enableImageStreaming`
+  switching the runtime to containerd with only four subfields honoured
+  (Batch REST reference; `cloud.google.com/batch/docs/use-image-streaming`).
+- Batch job fields used here: `logsPolicy.destination`, `allocationPolicy.
+  serviceAccount`, `maxRetryCount` (default 0), the State enum (`QUEUED`,
+  `SCHEDULED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `DELETION_IN_PROGRESS`), and
+  that labels apply to the job, its VMs and the log entries it generates
+  (Batch REST reference).
+- Batch logs reach Cloud Logging only when the destination is set, and the
+  monitored resource is `batch.googleapis.com/Job` with labels
+  `resource_container`/`location`/`job_id`
+  (`cloud.google.com/batch/docs/analyze-job-using-logs`;
+  `cloud.google.com/logging/docs/api/v2/resource-list`).
+- Container-Optimized OS ships Docker and containerd with no on-host setup,
+  and is locked down by default
+  (`cloud.google.com/container-optimized-os/docs/concepts/features-and-benefits`).
+- Compute Engine billing: a one-minute minimum, then per-second
+  (`cloud.google.com/compute/pricing`); Spot is up to 91% off, may be
+  preempted at any time, stops or deletes the VM, with a 30 s default
+  preemption notice (extendable to 120 s)
+  (`cloud.google.com/compute/docs/instances/spot`).
+- Compute Engine quota model: VM quotas are regional, the VM-instances quota
+  is auto-set to 10× the CPU quota, CPU quota is regional with a global
+  CPUs (All Regions) quota, and IP quotas are global
+  (`cloud.google.com/compute/docs/resource-quotas`).
+- Cloud NAT is the no-external-IP egress path
+  (`cloud.google.com/nat/docs/overview`).
+
+**Verified by reading the code (this repository):** the `Backend` interface
+and its Cloud-Run-shaped names (`internal/backend/backend.go`); the
+conformance suite (`internal/backend/backendtest`); the log sink filter
+(`deploy/terraform/gcp/modules/installation/logging.tf`); the runner's
+backend-agnosticism (`internal/runner`); the launch path
+(`internal/cli/run.go`, `launch_budget.go`); the naming/labels
+(`internal/backend/gcp/names.go`); the base image's CLI-only Docker and its
+3812 MB size (`images/base/Dockerfile`, base-image.md §9, §13).
+
+**Unverified, each with what settles it:**
+
+- Batch container runnables accepting `--privileged`, `--user` or
+  `--group-add` in `options` — Check 57 step 6.
+- Whether the base image's container user can open the COS docker socket, and
+  which permission path works — Check 57 step 6.
+- VM boot and Batch scheduling times, with and without a preloaded image —
+  Check 57 steps 2 and 3.
+- Whether Batch adds any billable line beyond the VMs — Check 57 step 5.
+- Whether Batch truly tears down every VM on `DELETION_IN_PROGRESS` and on a
+  crashed runnable — Check 57 step 8.
+- Whether image streaming works for a base image served through an Artifact
+  Registry **remote** repository — Check 57 step 3 (pairs with Check 43).
+- The project's own default quota numbers — Check 57 step 9.
+- Whether a workflow's Cloud Run `resources` values map cleanly onto a
+  Compute Engine machine type — a plan task (§4.4 item 3).
+- Cloud Run gen-2's inability to run Docker is the **owner's measurement**
+  (the premise of this design, restated in the generic-tool plan's 2026-10-14
+  ruling); it is not independently reproduced by this document, and it does
+  not need to be — the measurement is why the VM route exists.
