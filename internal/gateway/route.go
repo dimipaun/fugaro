@@ -16,8 +16,10 @@ import (
 
 // Route sends the models it claims to a non-Anthropic endpoint that
 // accepts Anthropic Messages requests (design m10-multi-model.md §3, §6).
-// Claude models are never routed: they go to Options.Upstream, so Claude's
-// prompt caching and the Anthropic key are untouched.
+// Claude models are never routed unless a route claims that exact ID (Phase 2
+// of the mixed-credentials opt-in: one explicit "anthropic/<id>", never a
+// pattern); everything else under the prefix goes to Options.Upstream, so
+// Claude's prompt caching and the Anthropic key are untouched.
 type Route struct {
 	// Name is the provider's name, for the log (never a credential).
 	Name string
@@ -43,7 +45,8 @@ type Route struct {
 	FeePct float64
 }
 
-// feePct is the fee of r, 0 for no route (a Claude call).
+// feePct is the fee of r, 0 for no route -- a Claude call only when a route
+// claims it.
 func (r *Route) feePct() float64 {
 	if r == nil {
 		return 0
@@ -149,8 +152,8 @@ func checkRouteBaseURL(s string) error {
 	return nil
 }
 
-// routeFor is the route that claims model, or nil: Claude and any model no
-// route claims go to Options.Upstream.
+// routeFor is the route that claims model, or nil: any model no route claims
+// goes to Options.Upstream (the direct Anthropic route); a CLAIMED Claude ID is not one of them: it matches its provider route first.
 func (s *Server) routeFor(model string) *Route {
 	for i := range s.o.Routes {
 		if s.o.Routes[i].matches(model) {

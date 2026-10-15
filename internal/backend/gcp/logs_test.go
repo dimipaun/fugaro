@@ -251,3 +251,26 @@ func TestReadLogsThroughView(t *testing.T) {
 		t.Fatalf("entries = %+v", got)
 	}
 }
+
+// TestCloudRunLogFilterIsUnchanged: Cloud Run's filter is the one every
+// installation's log view already reads a run through, and the second
+// backend (Cloud Batch, whose filter names the job's UID) must not reach it.
+// The string is written out here rather than derived, so that a change to
+// what `fugaro logs` sends Cloud Logging fails this test rather than
+// silently re-scoping every read (design compute-backend.md §2.3: the two
+// backends have one filter each, and neither hard-codes the other's).
+func TestCloudRunLogFilterIsUnchanged(t *testing.T) {
+	id := backend.ExecID{GCPProject: "proj-1234", Region: "us-east5", Job: "fugaro-acme-app-web", Name: "fugaro-acme-app-web-abc12"}
+	want := `resource.type="cloud_run_job" AND resource.labels.location="us-east5" AND resource.labels.job_name="fugaro-acme-app-web" AND labels."run.googleapis.com/execution_name"="fugaro-acme-app-web-abc12"`
+	if got := executionFilter(id); got != want {
+		t.Fatalf("executionFilter = %q\nwant               %q", got, want)
+	}
+	// A name that carries the other backend's markers -- a label predicate,
+	// a UID -- is still quoted into the same shape: the filter is built from
+	// the parsed execution, never from a string a caller passed through.
+	odd := backend.ExecID{GCPProject: "proj-1234", Region: "us-east5", Job: "fugaro-x", Name: `a" OR labels.job_uid="1`}
+	got := executionFilter(odd)
+	if strings.Count(got, `labels."run.googleapis.com/execution_name"=`) != 1 || strings.Contains(got, `labels.job_uid="1`) {
+		t.Fatalf("executionFilter injected a clause: %q", got)
+	}
+}
