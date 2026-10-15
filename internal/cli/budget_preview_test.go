@@ -565,6 +565,55 @@ func TestBudgetPreviewTypicalAppliesTheRecipeRoles(t *testing.T) {
 	}
 }
 
+// TestBudgetPreviewTypicalNeedsThePinnedModel: a kind the window holds no
+// cost for on the model the checkout pins has no figure of its own, and
+// another model's mean is not a stand-in: pricing the model the run will use
+// with what a cheaper one cost would understate the run, against the help's
+// own promise. The note names the model the window is short of.
+func TestBudgetPreviewTypicalNeedsThePinnedModel(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.SetCaps(100, 3, 20, 3)
+	f.SetSpentToday(0)
+	f.Checkout(t, "  models: { coder: fast-1, reviewer: smart-2 }\n  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
+	// Enough runs, all of the coder's stages on a model this checkout no
+	// longer pins: only the reviewer's stages match the pin.
+	f.SeedRuns(t, 0, 6, []previewStage{
+		{kind: "implement", model: "old-3", usd: 0.05},
+		{kind: "review_first", model: "old-3", usd: 0.01},
+		{kind: "fix", model: "old-3", usd: 0.02},
+		{kind: "review", model: "smart-2", usd: 1.00},
+	})
+	out, errOut, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "typical:") {
+		t.Errorf("the cheap model's mean priced the pinned one:\n%s", out)
+	}
+	const want = "no typical line: no implement stage of acme/app on fast-1 recorded a cost in the last 30 days"
+	if !strings.Contains(errOut, want) {
+		t.Errorf("the model the window is short of is not named:\n%s", errOut)
+	}
+	// The same window, with the coder's stages on the pinned model too: the
+	// figure is the pinned models' costs only, never the old model's.
+	f.SeedRuns(t, 6, 6, []previewStage{
+		{kind: "implement", model: "fast-1", usd: 0.60},
+		{kind: "review_first", model: "fast-1", usd: 0.10},
+		{kind: "fix", model: "fast-1", usd: 0.20},
+		{kind: "review", model: "smart-2", usd: 1.00},
+	})
+	out, errOut, err = execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "typical: $2.40 a run (7 stages, from 12 runs of the last 30 days)") {
+		t.Errorf("the pinned models' stages have no figure:\n%s", out)
+	}
+	if strings.Contains(errOut, "no typical line") {
+		t.Errorf("the missing model is still reported missing:\n%s", errOut)
+	}
+}
+
 // TestBudgetPreviewTypicalJSON: --json carries the history figure and what it
 // was taken from.
 func TestBudgetPreviewTypicalJSON(t *testing.T) {
@@ -887,9 +936,13 @@ func TestBudgetPreviewProjectRecipe(t *testing.T) {
 	}
 }
 
-// TestBudgetPreviewRepoRecipeSkipsTheBucket: a recipe the checkout already
-// holds is never looked for in the runs bucket, whose read is not every
-// Viewer's to do. The marker is gone, so the bucket could not be opened.
+// TestBudgetPreviewRepoRecipeSkipsTheBucket: a recipe the checkout holds is
+// resolved without the runs bucket, whose read is not every Viewer's to do
+// (init takes it away), so the preview still answers with the project marker
+// gone -- where a recipe the checkout does not hold needs the project's own
+// copy there and fails. The typical line's read of that same bucket is the
+// one thing the failure costs: it is a note, and the ceiling stands without
+// it.
 func TestBudgetPreviewRepoRecipeSkipsTheBucket(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.DefaultRunsBucket(t)
@@ -899,12 +952,20 @@ func TestBudgetPreviewRepoRecipeSkipsTheBucket(t *testing.T) {
 	f.DropMarker(t)
 	testutil.WriteFiles(t, ".", map[string]string{
 		".fugaro/recipes/mine.yaml": "version: 1\nname: mine\nsteps:\n  - review: {}\n"})
-	out, _, err := execute(t, "budget", "preview", "--recipe", "mine", "--runs", "1")
+	out, errOut, err := execute(t, "budget", "preview", "--recipe", "mine", "--runs", "1")
 	if err != nil {
-		t.Fatalf("the runs bucket was opened for a recipe the checkout holds: %v", err)
+		t.Fatalf("the recipe the checkout holds was looked for in the runs bucket: %v", err)
 	}
 	if !strings.Contains(out, "recipe mine (repo)") {
 		t.Fatalf("the repository's own recipe is not the one previewed:\n%s", out)
+	}
+	// The ceiling is stated all the same, and the bucket the typical line
+	// reads is named as the one thing that was lost.
+	if !strings.Contains(out, "rough worst case") {
+		t.Errorf("the ceiling is gone with the bucket:\n%s", out)
+	}
+	if !strings.Contains(errOut, "no typical line: ") || !strings.Contains(errOut, "no project name yet") {
+		t.Errorf("the typical line's own open failure is not said:\n%s", errOut)
 	}
 }
 

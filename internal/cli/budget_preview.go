@@ -76,12 +76,14 @@ func newBudgetPreviewCmd() *cobra.Command {
 			"a run applies it), at the recipe's typical stage count -- one round of\n" +
 			"each loop the recipe and its round knobs leave in, the two fix stages\n" +
 			"sharing one mean -- over the runs of the window, whatever they ended as:\n" +
-			"a stage counts once it recorded a cost. Runs the figure cannot use are\n" +
-			"said to be left out, never counted as runs that cost nothing: a run on a\n" +
-			"subscription (agent.auth oauth), whose model_usd is notional rather than\n" +
-			"charged, a result.json that is missing or unreadable, and a record with\n" +
-			"no per-stage cost at all (one from before the runner kept it, or stages\n" +
-			"that all cost nothing).\n\n" +
+			"a stage counts once it recorded a cost. A kind the window has no cost\n" +
+			"for on that model leaves the line out and names the model, rather than\n" +
+			"pricing the pinned model with what another one cost. Runs the figure\n" +
+			"cannot use are said to be left out, never counted as runs that cost\n" +
+			"nothing: a run on a subscription (agent.auth oauth), whose model_usd is\n" +
+			"notional rather than charged, a result.json that is missing or\n" +
+			"unreadable, and a record with no per-stage cost at all (one from before\n" +
+			"the runner kept it, or stages that all cost nothing).\n\n" +
 			"The recipe resolves as it does for a run: the repository's\n" +
 			".fugaro/recipes, the project's published recipes, then the catalog. The\n" +
 			"knobs come from the checkout's fugaro.yaml; without a checkout of the\n" +
@@ -405,9 +407,13 @@ func previewAddTypical(ctx context.Context, doc *previewDoc, env *cloudEnv, lc *
 		doc.Notes = append(doc.Notes, fmt.Sprintf("%d of the %d runs of %s in the last 30 days recorded no cost for any stage (a result.json from before the runner kept one, or stages that all cost nothing); they are not counted",
 			h.unpriced, total, repo))
 	}
-	usd, stages, missing := h.typical(rp, cfg)
+	usd, stages, missing, model := h.typical(rp, cfg)
 	if missing != "" {
-		doc.Notes = append(doc.Notes, fmt.Sprintf("no typical line: no %s stage of %s recorded a cost in the last 30 days", missing, repo))
+		on := ""
+		if model != "" {
+			on = " on " + model
+		}
+		doc.Notes = append(doc.Notes, fmt.Sprintf("no typical line: no %s stage of %s%s recorded a cost in the last 30 days", missing, repo, on))
 		return
 	}
 	if stages == 0 { // the design's "with fewer than 5 runs, the line is omitted"
@@ -517,20 +523,23 @@ func readPreviewHistory(ctx context.Context, b *blobx.Bucket, slug string, now t
 // would run at one round each (previewTypicalCounts), times the mean cost of
 // that kind's recorded stages on the model the checkout pins for it, with
 // the recipe's roles mapping applied as the runner applies it. A stages of 0
-// means there is no figure to
-// print; missing names the kind the window recorded no cost for, when there
-// is one, and is "" otherwise. A missing kind has no figure rather than a
-// cheaper one: leaving it out of the sum would understate a typical run. The
+// means there is no figure to print; missing names the kind whose stages the
+// window recorded no cost for on that model, and is "" otherwise.
+//
+// Only the pinned model's own stages are averaged: a kind the window holds no
+// cost for on that model has no figure rather than another model's mean,
+// which would price the model the run will use with what a cheaper one cost
+// (the help's promise, and the rule a missing kind already follows). The
 // design's "with fewer than 5 runs, the line is omitted" and a recipe that
 // runs no agent stage at all are silent: there is nothing to explain.
-func (h previewHistory) typical(rp *recipe.Recipe, cfg *config.Config) (usd float64, stages int, missing string) {
+func (h previewHistory) typical(rp *recipe.Recipe, cfg *config.Config) (usd float64, stages int, missing, model string) {
 	knobs := previewKnobsOf(cfg) // the same knobs the ceiling's stage bound uses
 	counts := previewTypicalCounts(rp, knobs.first, knobs.rounds)
 	for _, n := range counts {
 		stages += n
 	}
 	if h.runs < previewMinRuns || stages == 0 {
-		return 0, 0, ""
+		return 0, 0, "", ""
 	}
 	pinned := previewPinnedAgent(cfg, rp)
 	for _, kind := range previewStageKinds { // a fixed order, so the note names one kind
@@ -538,36 +547,14 @@ func (h previewHistory) typical(rp *recipe.Recipe, cfg *config.Config) (usd floa
 		if n == 0 {
 			continue
 		}
-		mean, found := h.meanFor(kind, previewPinnedModel(pinned, kind))
-		if !found {
-			return 0, 0, kind
+		model := previewPinnedModel(pinned, kind)
+		m, ok := h.means[previewKind{kind: kind, model: model}]
+		if !ok {
+			return 0, 0, kind, model
 		}
-		usd += mean * float64(n)
+		usd += m.mean() * float64(n)
 	}
-	return usd, stages, ""
-}
-
-// meanFor is the mean cost of one stage kind's recorded stages: the ones on
-// the model the config pins for the kind, when that model is known and the
-// window holds any of its stages, else every model of that kind together (a
-// repository that changed models mid-window still has a figure, from both).
-func (h previewHistory) meanFor(kind, model string) (float64, bool) {
-	if model != "" {
-		if m, ok := h.means[previewKind{kind: kind, model: model}]; ok {
-			return m.mean(), true
-		}
-	}
-	var total float64
-	var stages int
-	for k, m := range h.means {
-		if k.kind == kind {
-			total, stages = total+m.total, stages+m.stages
-		}
-	}
-	if stages == 0 {
-		return 0, false
-	}
-	return total / float64(stages), true
+	return usd, stages, "", ""
 }
 
 // previewPinnedAgent is the checkout's agent as the recipe leaves it: when
@@ -598,10 +585,12 @@ func previewPinnedModel(a *config.Agent, kind string) string {
 	return a.ModelFor(config.StageRole(kind))
 }
 
-// previewStageKinds is the order a run's stages are counted and named in:
-// the runner's own order, so an absent kind is always reported as the same
-// one.
-var previewStageKinds = [...]string{"implement", "review_first", "review", "fix"}
+// previewStageKinds is the order a run's stages are counted and named in: the
+// order the runner first records each kind in (implement, review_first, fix,
+// then the senior review, with another fix after it), held fixed so that a
+// note about a kind the window has no cost for always names the same one when
+// several are missing.
+var previewStageKinds = [...]string{"implement", "review_first", "fix", "review"}
 
 // previewTypicalCounts is the kind of every stage a run of rp records with
 // one round of each loop — the design's typical run, and the count the
