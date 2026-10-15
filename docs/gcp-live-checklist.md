@@ -322,7 +322,7 @@ table below.
 | 45 | A non-Claude senior reviewer through OpenRouter (design `mixed-credentials.md` §10 Phase 1): the placeholder `anthropic-api-key` the runner still demands with no Claude model pinned, a provider-served reviewer turning `first_line_review: auto` off for the derived `default` recipe while a recipe with its own `first_line` step keeps it, what a routed senior review costs, and whether the senior's reviews are better than the cheap loop's | See "Check 45" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, and no agent runs any step of it. | Four small sandbox runs, plus the OpenRouter credit the senior's reviews spend. **USER-RUN, NOT RUN.** |
 | 46 | A Claude senior through OpenRouter by the owner's opt-in (design `mixed-credentials.md` §4, §10 Phase 2): an unclaimed `anthropic/<id>` still refused at every surface, the claim accepted from the local config first and from the project layer once that slice ships (step 4), a claim never creatable by a repository, and `cache_read`/`cache_write_5m` on the reviewer's own calls against the same task run direct | See "Check 46" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, and no agent runs any step of it. | Two small sandbox runs per claim location, plus the route fee. **USER-RUN, NOT RUN.** |
 | 47 | The subscription OAuth token for the reviewer stage only (design `mixed-credentials.md` §5, Path B): the one permitted mix validating, the account's variant job and its token mount, the placeholder `anthropic-api-key` an api-key workflow still needs, a run whose coder stage goes through the gateway and whose reviewer stage does not, the stage recorded as notional with `credential: oauth`, the role-swap, launch and public-follow-up refusals with review mode left permitted, the same run with the budget off, and the dashboard's notional column | See "Check 47" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, and **you** type the token. | A few small sandbox runs and one stored secret. **USER-RUN, NOT RUN.** **HELD until phase 5 of `docs/design/project-centric.md` (D9, 2026-10-14) — do not run as written; steps 2 and 6 are rewritten against the person-owned OAuth pool.** |
-| 52 | The four UNVERIFIED probes phase 3 depends on, written and answered **before any phase 3 code** (design `project-centric.md` §13 and §4.5; plan `2026-10-14-project-centric.md` Task 3.0): **U2** whether a Cloud Run secret **reference** works inside a container env override (the API type has a `ValueSource`) and whether an execution's overrides are visible to the container; **U3** whether a Secret Manager IAM condition on a name prefix is honoured for `secretmanager.versions.access`; **U4** the sandbox project's service-account count against Google's default quota and the runs bucket's IAM policy binding count (the ceilings the design's §13 names); and **U1** whether a Bitbucket credential can be scoped to one project's repositories (D5: if it cannot, Bitbucket stays on the per-repository path and the owner is told before phase 3 starts) | See "Check 52" below; **you** run it, on installation `fugaro` (never `belong`) — every GCP-side step acts only on the sandbox's **own** job, service account, bucket and secrets in project `fugaro-dev`, and the credential- and repository-scope steps run only on scratch repositories created for this probe, in a dedicated scope holding no production repository, never anything under `edgeappinc`. | A few `gcloud` reads, one override execution on the sandbox job, one scratch Bitbucket project and project access token you create and revoke in Bitbucket's own UI, and three empty scratch repositories (`fugaro-probe-1` and `fugaro-probe-2` in the probe project, plus the out-of-scope `fugaro-probe-3` in another). **USER-RUN, NOT RUN.** |
+| 52 | The four UNVERIFIED probes phase 3 depends on, written and answered **before any phase 3 code** (design `project-centric.md` §13 and §4.5; plan `2026-10-14-project-centric.md` Task 3.0): **U2** whether a Cloud Run secret **reference** works inside a container env override (the API type has a `ValueSource`) and whether an execution's overrides are visible to the container; **U3** whether a Secret Manager IAM condition on a name prefix is honoured for `secretmanager.versions.access`; **U4** the sandbox project's service-account count against Google's default quota and the runs bucket's IAM policy binding count (the ceilings the design's §13 names); and **U1** whether a Bitbucket credential can be scoped to one project's repositories (D5: if it cannot, Bitbucket stays on the per-repository path and the owner is told before phase 3 starts) | See "Check 52" below; **you** run it, on installation `fugaro` (never `belong`) — every GCP-side step acts only on the sandbox's **own** job, service account, bucket and secrets in project `fugaro-dev`, and the credential- and repository-scope steps run only on scratch repositories created for this probe, in a dedicated scope holding no production repository, never anything under `edgeappinc`. | A few `gcloud` reads, two override executions on the sandbox job (the secret-reference call and the plain-literal comparison), the check's own probe service account `fugaro-chk52-probe` and its two throwaway secrets (`fugaro-probe-in`, inside the condition's prefix, and `fugaro-other-probe`, outside it), one scratch Bitbucket project and project access token you create and revoke in Bitbucket's own UI, and three empty scratch repositories (`fugaro-probe-1` and `fugaro-probe-2` in the probe project, plus the out-of-scope `fugaro-probe-3` in another). **USER-RUN, NOT RUN.** |
 | 57 | The compute-instance Docker backend (design `compute-backend.md` §7). **57a, the pre-build probe, needs no Fugaro change and is the go/no-go:** a Docker-capable run on Compute Engine VMs from a committed job JSON (`gcloud` only), the cold start with a plain pull, image streaming and a preloaded boot image, `docker run` and a small Postgres container inside a run, the cost of one run, the socket's permission path in four committed variants (no `options`, `--group-add <gid>`, `--user 0`, `--privileged`, each running `docker version` and a real container against the host socket), teardown on success/failure/cancel/a crashed runner, the raw IAM bindings, and the raw log entry's job label. **57b, the post-build acceptance run, needs the backend enabled:** `fugaro run`/`logs`/`cancel` on `cloud-batch`, the reaper, the recorded cost against the bill, and the fail-closed marker. | See "Check 57" in `docs/design/compute-backend.md` §7.2; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs a Check-43-shaped hard-coded project guard (`P` hard-coded, `${P:?}` on gcloud, `--project fugaro --gcp-project "$P"` on fugaro, `fugaro doctor` and the checkout's git origin as hard stops). Its Restore deletes only what the check created — the `fugaro-chk57` account (and its IAM bindings first, since deleting an account leaves them behind), the probe jobs carrying `fugaro_chk=57`, the 57b runs **by the job names 57b recorded** (a 57b job is created by the launcher and Batch v1 cannot add a label to it afterwards, and a filter on the installation's own labels would also match runs this check never started) **and their VMs by the `fugaro_run` label values it read back off those jobs** (a job's name never reaches its VMs, and the label value cannot be derived from the name), the preload image, the `${SA}-*` router and NAT it created only if the project had none **on the probe's own network and region covering the subnet** (a NAT on another network, one whose rules cannot be read, or one that lists its subnets by name, is not borrowed — the check makes its own pair instead of editing the project's), and the `containerfilesystem.googleapis.com` API only if it was this check that enabled it; never the installation's account — and ends in an assertion whose every line must read `0` (counts, not an empty-looking line, and the probe account's leftover IAM bindings are one of them, since deleting an account does not remove them). It is the successor of the dropped gen-2 Docker probe (generic-tool Task 26, which the plan numbered Check 31 — a number already taken by `fugaro upgrade` here). | A handful of sandbox Batch runs (minutes of VM time each), one small custom boot image, and a NAT/registry round trip. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
@@ -2069,11 +2069,11 @@ Design §13 lists what was never settled from the code, and this phase is the on
 
 **A step that creates a credential outside the scratch scope, or probes a repository this check did not create, stops the check and is reported to the owner** — not fixed in place. **A step that fails does not stop the phase silently**: it is reported to the owner and the affected task is re-scoped in the same PR, in writing.
 
-**Method.** All of it happens in the installation's own project (`fugaro-dev`) and the **sandbox** installation. **Never `belong`** (EdgeWeb's and EdgeServer's): nothing here creates, changes or deletes anything there, and no step of this check is run by an agent — you run every command. Every repository this check names is a scratch repository created for it.
+**Method.** All of it happens in the installation's own project (`fugaro-dev`) and the **sandbox** installation. **Never `belong`** (EdgeWeb's and EdgeServer's): nothing here creates, changes or deletes anything there, and no step of this check is run by an agent — you run every command. Every repository this check names is a scratch repository created for it. **Every block runs in `bash`** — keep them in one file with a `#!/usr/bin/env bash` line, or run each with `bash chk52.sh`: the prompts use `printf` + `read -rs`, which works in bash and zsh alike (a `read -p` prompt does not), and the lowercase comparison `${VAR,,}` in step 2 is bash syntax.
 
 ### 1. Setup and guard
 
-**Setup and guard** — Check 43's block verbatim (plan Task 0.4 step 1), plus the recorded state. **Re-run the whole block at the start of every step**: it is idempotent, and nothing below the three hard stops runs.
+**Setup and guard** — **adapted from Check 43's guard block (the same three stops, with `L` filled in for this installation)** — plus the check's own variables. **Re-run the whole guard block at the start of every step**: it is idempotent, and nothing below the three hard stops runs.
 
 ```bash
 # === Check 52: setup + guard. RE-RUN THE WHOLE BLOCK at the start of every
@@ -2092,32 +2092,64 @@ git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
 
 The three stops, and why each is an assertion rather than a print: **(1)** `P` is *exactly* `fugaro-dev` and every variable the check uses is non-empty — a skipped, partially pasted or hand-edited block stops there instead of reaching `gcloud` with an empty argument, which is the N1 trap (`gcloud` then falls back to the owner's ambient `*-prod` project); **(2)** `fugaro doctor --project fugaro` reports that project — the second stop is also the fourth, because `--project` disagreeing with the checkout's `project:` is **refused** (`internal/localcfg/select.go:163`), and a checkout that is not the sandbox cannot pass it; **(3)** the checkout's origin is `edgeappinc/fugarosandbox`, never EdgeWeb's or EdgeServer's. **Every `gcloud` command below gets `--project="${P:?}"`** (plus `${L:?}` where used), and every variable is `${VAR:?}` so an empty one stops the line rather than pointing the command at a default project.
 
-**Record the job before anything changes** — Restore diffs against this file — and set the step's own variables. `SANDBOX_JOB` is the sandbox installation's own job, `SANDBOX_JOB_SA` that job's service account, `SANDBOX_BUCKET` the runs bucket; all three are re-set with this block at every step (a fresh shell has none of them), and every one of them is `${VAR:?}`-guarded:
+**Find the sandbox's own three values once — read-only, project hard-coded — and keep them in the file you re-run.** The job is the sandbox repository's own job in the installation; the other two come off it and off the installation's config:
 
 ```bash
-SANDBOX_JOB=${SANDBOX_JOB:?the sandbox installation's own job name; re-set it with this block}
-SANDBOX_JOB_SA=${SANDBOX_JOB_SA:?the sandbox job's service account email; re-set it with this block}
-SANDBOX_BUCKET=${SANDBOX_BUCKET:?the installation's runs bucket name; re-set it with this block}
+# Read-only. The sandbox repository's job, its service account, and the runs bucket.
+gcloud run jobs list --project="${P:?}" --region="${L:?}" --format='value(name)'
+gcloud run jobs describe "<the sandbox repository's job from the list above>" \
+  --project="${P:?}" --region="${L:?}" --format='value(template.template.serviceAccountName)'
+gcloud storage buckets list --project="${P:?}" --format='value(name)'   # the runs bucket the local config names
+```
+
+**Then re-set the step's variables with this block at every step** (a fresh shell has none of them); fill the three `SANDBOX_*` values in once, from the read-only lines above, and every one of them is `${VAR:?}`-guarded so an empty one stops the step:
+
+```bash
+# === Check 52: the step's variables. RE-RUN at the start of every step. ===
+SANDBOX_JOB=${SANDBOX_JOB:?the sandbox repository's job name, from the run jobs list above}
+SANDBOX_JOB_SA=${SANDBOX_JOB_SA:?that job's service account, from the run jobs describe above}
+SANDBOX_BUCKET=${SANDBOX_BUCKET:?the installation's runs bucket, the one the local config names}
 NUMBER=$(gcloud projects describe "${P:?}" --format='value(projectNumber)')   # IAM conditions name Secret Manager resources by project NUMBER, never by ID
 PROBE_SA="fugaro-chk52-probe@${P:?}.iam.gserviceaccount.com"   # created below, deleted in Restore
 PROBE_IN=fugaro-probe-in          # INSIDE the condition's prefix; throwaway value, never a real secret
 PROBE_OUT=fugaro-other-probe      # OUTSIDE it; throwaway value, never a real secret
-PROBE_COND="expression=resource.name.startsWith('projects/${NUMBER:?}/secrets/fugaro-probe'),title=chk52-probe-prefix"
-gcloud run jobs describe "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --format=json > /tmp/chk52-job-before.json
+PROBE_COND="expression=resource.name.startsWith('projects/${NUMBER:?}/secrets/fugaro-probe') && resource.type == 'secretmanager.googleapis.com/Secret',title=chk52-probe-prefix"
+CHK52_TMP=/tmp/chk52              # the check's own scratch dir (mode 700), removed in Restore
+mkdir -p "$CHK52_TMP"; chmod 700 "$CHK52_TMP"
 ```
 
-**Create the check's own two throwaway secrets and its probe service account.** Every secret this check reads is **one it created**, holding a throwaway value the owner types (never a real secret, never a value any Fugaro job uses), and the reads below send the payload to `/dev/null` and record **only the exit status**:
+**And run this ONE-TIME block once, before anything changes** — it creates the check's own throwaway material and records the baseline Restore diffs against. It **never overwrites an existing baseline** (I-a: a re-run that did would make the Restore's diff prove nothing, since it would compare the job with itself):
 
 ```bash
-gcloud secrets describe "${PROBE_IN:?}" --project="${P:?}" >/dev/null 2>&1 || {
-  read -rs -p 'throwaway value for the two probe secrets (not echoed): ' THROWAWAY; echo
-  printf '%s' "${THROWAWAY:?}" | gcloud secrets create "${PROBE_IN:?}" --project="${P:?}" --data-file=-
+# === Check 52: ONE-TIME setup. Run ONCE, before anything changes. ===
+# The check's own two throwaway secrets (never real secrets, never values any
+# Fugaro job uses). BOTH are checked: if PROBE_OUT were missing, U3's outside
+# read would fail for the wrong reason and a false "honoured" would be recorded.
+NEED=
+gcloud secrets describe "${PROBE_IN:?}"  --project="${P:?}" >/dev/null 2>&1 || NEED=1
+gcloud secrets describe "${PROBE_OUT:?}" --project="${P:?}" >/dev/null 2>&1 || NEED=1
+if [ -n "$NEED" ]; then
+  printf 'throwaway value for the two probe secrets (not echoed): '
+  read -rs THROWAWAY; echo
+  : "${THROWAWAY:?a throwaway value you typed}"
+  printf '%s' "${THROWAWAY:?}" | gcloud secrets create "${PROBE_IN:?}"  --project="${P:?}" --data-file=-
   printf '%s' "${THROWAWAY:?}" | gcloud secrets create "${PROBE_OUT:?}" --project="${P:?}" --data-file=-
   unset THROWAWAY
-}
+fi
+gcloud secrets describe "${PROBE_IN:?}"  --project="${P:?}" >/dev/null   # both exist now
+gcloud secrets describe "${PROBE_OUT:?}" --project="${P:?}" >/dev/null
+# The probe service account and the API U3's two reads need. Restore does NOT
+# disable the API: another change on the installation may want it.
 gcloud iam service-accounts describe "${PROBE_SA:?}" --project="${P:?}" >/dev/null 2>&1 \
   || gcloud iam service-accounts create fugaro-chk52-probe --project="${P:?}" --display-name="Check 52 probe"
+gcloud services enable iamcredentials.googleapis.com --project="${P:?}"
+# The baseline. NEVER overwritten: Restore diffs the job against this file.
+[ -e "${CHK52_TMP:?}/job-before.json" ] \
+  && echo "Check 52: ${CHK52_TMP:?}/job-before.json already recorded, not overwriting" \
+  || gcloud run jobs describe "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --format=json > "${CHK52_TMP:?}/job-before.json"
 ```
+
+**`${CHK52_TMP}` is mode 700 and holds the job's own environment *values* in plain text** (`job-before.json`, `job-after.json` and U2's run responses): they are for your eyes only, never pasted back and never committed, and Restore deletes the whole directory.
 
 **FACT:** the recorded job env (names, never values), the service account, the bucket condition, **the kind of any credential the owner already holds** (named by kind only), and the project number.
 
@@ -2127,11 +2159,13 @@ The owner creates, **in Bitbucket's UI — no agent creates a credential** — a
 
 **Two owner decisions come before the token exists.** First, **Bitbucket project access tokens are a Premium feature** (Atlassian's own documentation says so, for project and workspace tokens alike), so a free scratch workspace answers "cannot be scoped" for a billing reason and nothing else: either the owner makes the scratch workspace Premium and runs the probe, or the owner answers **U1 "cannot be scoped"**, leaves Bitbucket on the per-repository path and re-decides D5 — the safe answer is available without any token. This check does **not** decide that for the owner. Second, and only if the workspace is Premium: the token is created in the project's own settings, and its scopes are whatever Bitbucket offers there (project access tokens are not scope-selectable in the way repository tokens are — record what Bitbucket's UI shows).
 
-**The scratch checkout is its own throwaway repository** (review I3), created here, never the sandbox's and never `belong`'s; it copies none of the sandbox's history and pushes only its own commit. Run the guard block first (it asserts the sandbox checkout), then leave it:
+**The scratch checkout is its own throwaway repository** (review I3), created here, never the sandbox's and never `belong`'s; it copies none of the sandbox's history and pushes only its own commit. Run the guard block first (it asserts the sandbox checkout), then leave it. **Every credential helper is disabled in it before any probe** (review K1): a helper runs *before* `GIT_ASKPASS`, this machine already stores a `bitbucket.org` credential (`osxkeychain` system-wide and in `~/.gitconfig`), and with it in play the out-of-scope read would be answered by the owner's own credential instead of being refused — a wrong FACT — and a successful push would have git *save* the probe token into the keychain:
 
 ```bash
 SCRATCH=$(mktemp -d); cd "$SCRATCH"
 git init -q
+git config --local --unset-all credential.helper 2>/dev/null || true
+git config --local credential.helper ''    # the empty value RESETS the helper list: no helper can answer or save (K1)
 git config user.email chk52@example.invalid; git config user.name "Check 52 probe"
 printf 'Check 52 probe scratch\n' > README.md
 git add README.md; git commit -qm "Check 52 probe: throwaway commit"
@@ -2141,44 +2175,64 @@ OUT_WS=${OUT_WS:?the workspace holding the out-of-scope project; must equal PROB
 OUT_PROJECT=${OUT_PROJECT:?the second project in PROBE_WS, holding fugaro-probe-3}
 ```
 
-**Two hard stops, on top of the three above** (review I2): the workspace must be a scratch workspace, and the out-of-scope project must be in that *same* workspace — a production workspace, `edgeappinc` in particular, stops the check before any token is used:
+**Two hard stops, on top of the three above** (review I2): the workspace must be a scratch workspace, and the out-of-scope project must be in that *same* workspace — a production workspace, `edgeappinc` in particular, stops the check before any token is used. The workspace comparison is **case-insensitive** (Bitbucket workspace IDs lower-case, and a hand-typed `EdgeAppInc` must not slip past):
 
 ```bash
-[ -n "${PROBE_WS:?}" ] && [ "$PROBE_WS" != edgeappinc ] && [ -n "${OUT_WS:?}" ] && [ "$OUT_WS" != edgeappinc ] && [ -n "${OUT_PROJECT:?}" ] \
-  || { echo "Check 52 stopped: PROBE_WS and OUT_WS must be non-empty scratch workspaces, never edgeappinc" >&2; exit 1; }
-[ "$OUT_WS" = "$PROBE_WS" ] \
+[ -n "${PROBE_WS:?}" ] && [ "${PROBE_WS,,}" != edgeappinc ] && [ -n "${OUT_WS:?}" ] && [ "${OUT_WS,,}" != edgeappinc ] && [ -n "${OUT_PROJECT:?}" ] \
+  || { echo "Check 52 stopped: PROBE_WS and OUT_WS must be non-empty scratch workspaces, never edgeappinc (compared case-insensitively)" >&2; exit 1; }
+[ "${OUT_WS,,}" = "${PROBE_WS,,}" ] \
   || { echo "Check 52 stopped: OUT_WS must be the same workspace as PROBE_WS — another workspace proves nothing about project scoping" >&2; exit 1; }
 ```
 
-**The token never touches the command line, a file, a URL or the shell history** (review I1): it is read with `read -rs` (no echo), exported only into the environment of a per-command `GIT_ASKPASS` helper script the check writes and removes, and the git URLs carry no credentials at all:
+**The token never touches the command line, a file, a URL or the shell history** (review I1): it is read without echo and exported only into the environment that a `GIT_ASKPASS` helper script reads — the helper holds a *reference* to the variable, never the token, and is removed at the end of the probe. The prompt is written so that it works in bash and zsh alike (`printf` then `read -rs`, never `read -p`; review I-b), and every use of the variable is `:?`-guarded:
 
 ```bash
-read -rs -p 'Bitbucket probe project access token (not echoed): ' PROBE_TOKEN; echo
-ASKPASS=$(mktemp)
+printf 'Bitbucket probe project access token (not echoed): '
+read -rs PROBE_TOKEN; echo
+: "${PROBE_TOKEN:?the probe project access token you typed}"
+ASKPASS=${CHK52_TMP:?}/askpass.sh
 cat > "$ASKPASS" <<'SH'
 #!/bin/sh
-case "$1" in *sername*) printf '%s\n' x-token-auth ;; *) printf '%s\n' "$PROBE_TOKEN" ;; esac
+case "$1" in *sername*) printf '%s\n' x-token-auth ;; *) printf '%s\n' "${PROBE_TOKEN:?}" ;; esac
 SH
 chmod 700 "$ASKPASS"
-export PROBE_TOKEN GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0
+export GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 PROBE_TOKEN
+```
 
+**Prove no helper can answer before the probe — without printing anything.** With the helper list emptied and the askpass helper not yet in play, `git credential fill` for `bitbucket.org` must not return a password. The value is never printed: only whether a `password` line came back at all:
+
+```bash
+if printf 'protocol=https\nhost=bitbucket.org\n\n' \
+   | GIT_ASKPASS= GIT_TERMINAL_PROMPT=0 git -c credential.helper= credential fill 2>/dev/null \
+   | grep -q '^password='; then
+  echo "Check 52 stopped: a credential helper still answers for bitbucket.org (your own credential). Disable it before probing; no value was printed." >&2; exit 1
+fi
+```
+
+**The probe itself** (review I-c: a fresh shell may still be standing in the sandbox checkout, so the block first proves where it is, and every git command disables the helper explicitly as well as in the repo's config):
+
+```bash
+[ "$(pwd -P)" = "$(cd "${SCRATCH:?}" && pwd -P)" ] && ! git remote get-url origin >/dev/null 2>&1 \
+  || { echo "Check 52 stopped: this block must run inside the scratch checkout, which has no origin — a fresh shell may still be in the sandbox checkout" >&2; exit 1; }
 git remote add probe1 "https://bitbucket.org/${PROBE_WS:?}/fugaro-probe-1.git"
 git remote add probe2 "https://bitbucket.org/${PROBE_WS:?}/fugaro-probe-2.git"
-git ls-remote probe1                                  # in the token's project: must succeed
-git push probe1 HEAD:probe-check                      # one push to a scratch branch: must succeed
-git ls-remote probe2                                  # the second repository of the same project: must succeed
-git push probe2 HEAD:probe-check                      # and a push to it (review I2): must succeed
-git ls-remote "https://bitbucket.org/${OUT_WS:?}/fugaro-probe-3.git"   # fugaro-probe-3 is the other project's: must be REFUSED
-unset PROBE_TOKEN; rm -f "$ASKPASS"
+git -c credential.helper= -c credential.useHttpPath=true ls-remote probe1                              # in the token's project: must succeed
+git -c credential.helper= -c credential.useHttpPath=true push probe1 HEAD:probe-check                   # one push to a scratch branch: must succeed
+git -c credential.helper= -c credential.useHttpPath=true ls-remote probe2                              # the second repository of the same project: must succeed
+git -c credential.helper= -c credential.useHttpPath=true push probe2 HEAD:probe-check                   # and a push to it (review I2): must succeed
+git -c credential.helper= -c credential.useHttpPath=true ls-remote "https://bitbucket.org/${OUT_WS:?}/fugaro-probe-3.git"   # the other project's: must be REFUSED
+unset PROBE_TOKEN; rm -f "${ASKPASS:?}"
 ```
 
 **The URLs carry the workspace and the repository slug only.** A Bitbucket Cloud clone URL is `https://bitbucket.org/<workspace>/<repo_slug>.git` — the project is metadata, never a path segment (the repository's own `clone` link, `internal/gitprov/bitbucket/recorded_test.go:317`, and this document's own `https://bitbucket.org/edgeappinc/fugarosandbox.git` above both show the two-segment form; a project's page is `https://bitbucket.org/<workspace>/workspace/projects/<KEY>`). `PROBE_PROJECT` and `OUT_PROJECT` therefore appear nowhere in a URL: they are the two projects' Bitbucket-side identifiers, used to *create* them and to *delete* them in Restore. What separates the out-of-scope repository is its **slug** — `fugaro-probe-3` — in the second project of the same workspace, which is exactly the fact the probe tests.
 
-**FACT:** whether the token reads and pushes to exactly the project's repositories (both of them), whether it is refused by the *other project of the same workspace*, and the token's own scopes as Bitbucket reports them. **If the scope cannot be a Bitbucket project's repositories, Bitbucket projects stay on the per-repository path** (design §4.5) — **the owner is told before phase 3 starts**, D5 is re-decided, and plan Tasks 3.1 to 3.7 proceed for GitHub only. The fallback the design names — a runtime fetch by secret-name prefix with an IAM condition — is itself probe U3 below and **reintroduces the shared-service-account exposure of §4.1**, so it is a decision, not a default.
+**Your own keychain, afterwards (owner action).** The probe token must not end up in your keychain. **Do not run `security find-internet-password -w …`** — `-w` prints the value. Look at the item's metadata only: `security find-internet-password -s bitbucket.org >/dev/null 2>&1; echo $?` (`0` means an item exists — yours may predate this check, so compare its `modified` attribute with the day you ran it; `44` means none). If an item was created or modified by this probe, delete it: `security delete-internet-password -s bitbucket.org`. With the helper disabled as above, nothing should have been saved, and this is the confirmation, not the fix.
+
+**FACT:** whether the token reads and pushes to exactly the project's repositories (both of them), whether it is refused by the *other project of the same workspace*, the token's own scopes as Bitbucket reports them, **that every probe git command ran with `credential.helper` disabled so no helper could answer or save the token**, and the keychain check above (that no `bitbucket.org` item was created or modified by the probe). **If the scope cannot be a Bitbucket project's repositories, Bitbucket projects stay on the per-repository path** (design §4.5) — **the owner is told before phase 3 starts**, D5 is re-decided, and plan Tasks 3.1 to 3.7 proceed for GitHub only. The fallback the design names — a runtime fetch by secret-name prefix with an IAM condition — is itself probe U3 below and **reintroduces the shared-service-account exposure of §4.1**, so it is a decision, not a default.
 
 ### 3. U2 — does a Cloud Run **secret reference** work inside a container env override?
 
-The API type has a `ValueSource`: `overrides.containerOverrides[].env[]` takes `{"name":…,"valueSource":{"secretKeyRef":{"secret":…,"version":…}}}` (the `EnvVar`/`SecretKeySelector` types). **`gcloud run jobs execute` has no `--overrides` flag** (checked against the GA and beta references — its container flags are `--args`/`--update-env-vars`, which is why the earlier draft's line could not run; review I4), so the execution-level override is made through the API's `jobs.run`. **The runtime grant must be in place first (review I5):** an execution that cannot read the referenced secret fails to *start*, and that IAM error would be mistaken for the API's answer to the reference — so the job's own service account is given `secretAccessor` on the check's throwaway secret before either run:
+The API type has a `ValueSource`: `overrides.containerOverrides[].env[]` takes `{"name":…,"valueSource":{"secretKeyRef":{"secret":…,"version":…}}}` (the `EnvVar`/`SecretKeySelector` types). **`gcloud run jobs execute` has no `--overrides` flag** (checked against the GA and beta references — its container flags are `--args`/`--update-env-vars`, which is why an earlier draft's line could not run; review I4), so the execution-level override is made through the API's `jobs.run`. **The runtime grant must be in place first (review I5):** an execution that cannot read the referenced secret fails to *start*, and that IAM error would be mistaken for the API's answer to the reference — so the job's own service account is given `secretAccessor` on the check's throwaway secret before either run:
 
 ```bash
 gcloud secrets add-iam-policy-binding "${PROBE_IN:?}" --project="${P:?}" \
@@ -2187,16 +2241,23 @@ gcloud secrets add-iam-policy-binding "${PROBE_IN:?}" --project="${P:?}" \
 
 **This step supersedes Check 34 for the live API surface.** Check 34 ("Cloud Run Jobs execution overrides cannot carry a secret reference") reads Google's published API reference and `gcloud run jobs execute --help` and never calls the API, so its "cannot" is a claim about the documentation and the vendored `run/v2` bindings, not about `run.googleapis.com` — and its step 2's premise (that the override would be a `gcloud` flag) is wrong: the override exists only on the API's `jobs.run` request body, which is what this step calls. Once this step has run, **its answer governs**: if (a) is accepted, Check 34's heading, its table row and `docs/design/named-oauth-tokens.md` §4/§7 are corrected in the same PR as this check's FACT lines; if it is refused, Check 34's title is confirmed and option D stays rejected. Neither check is run yet, so the two are not in conflict — they answer different questions about the same field.
 
-**(a) The execution-level override — the shape a launcher could write (D10).** `POST …/jobs/<JOB>:run`, whose `overrides` is merged into the execution's spec for that execution alone; the response is an **Operation**, so it is polled rather than waited on, and the access token is used from a command substitution (never printed, never stored). The `authorization` for this call is the `run.jobs.runWithOverrides` permission, which the owner's own account has on the sandbox job:
+**(a) The execution-level override — the shape a launcher could write (D10).** `POST …/jobs/<JOB>:run`, whose `overrides` is merged into the execution's spec for that execution alone; the response is an **Operation**, so it is polled rather than waited on, and the access token is used from a command substitution (never printed, never stored). The `authorization` for this call is the `run.jobs.runWithOverrides` permission, which the owner's own account has on the sandbox job. **The execution's name comes from the run's own response — the Operation's `metadata` — never from a `--limit=1` listing, which a concurrent run can race**; the runner reads exactly that field (`internal/backend/gcp/run.go:103-107`, `op.Metadata.Name`):
 
 ```bash
 curl -sS -X POST \
   "https://run.googleapis.com/v2/projects/${P:?}/locations/${L:?}/jobs/${SANDBOX_JOB:?}:run" \
   -H "Authorization: Bearer $(gcloud auth print-access-token)" \
   -H "Content-Type: application/json" \
-  -d '{"overrides":{"containerOverrides":[{"env":[{"name":"PROBE_REF","valueSource":{"secretKeyRef":{"secret":"'"${PROBE_IN:?}"'","version":"latest"}}}]}]}}'
-gcloud run jobs executions list --job="${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" \
-  --limit=1 --format='value(name)'      # the Operation's execution: record its name as EXEC
+  -d '{"overrides":{"containerOverrides":[{"env":[{"name":"PROBE_REF","valueSource":{"secretKeyRef":{"secret":"'"${PROBE_IN:?}"'","version":"latest"}}}]}]}}' \
+  -o "${CHK52_TMP:?}/run-a.json"
+OPERATION=$(jq -r '.name // empty' "${CHK52_TMP:?}/run-a.json")
+for i in $(seq 1 10); do
+  EXEC=$(curl -sS -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+    "https://run.googleapis.com/v2/${OPERATION:?the jobs.run operation's name}" | jq -r '.metadata.name // empty')
+  [ -n "$EXEC" ] && break
+  sleep 3
+done
+: "${EXEC:?the jobs.run operation reported no execution name}"
 ```
 
 **(b) The template-level reference.** `--set-secrets`/`--update-secrets` is the CLI's secret-reference flag; `--update-env-vars` is not one, and `sm://` is not Cloud Run syntax. **This changes the Terraform-managed job's template (review M6): it is drift until Restore, so do not run `fugaro init --repo` between here and Restore** — that would apply Terraform and revert the reference, or report it as a change, and either way the probe's own evidence would be destroyed:
@@ -2213,25 +2274,29 @@ curl -sS -X POST \
   "https://run.googleapis.com/v2/projects/${P:?}/locations/${L:?}/jobs/${SANDBOX_JOB:?}:run" \
   -H "Authorization: Bearer $(gcloud auth print-access-token)" \
   -H "Content-Type: application/json" \
-  -d '{"overrides":{"containerOverrides":[{"env":[{"name":"PROBE_REF","value":"plain-literal"}]}]}}'
+  -d '{"overrides":{"containerOverrides":[{"env":[{"name":"PROBE_REF","value":"plain-literal"}]}]}}' \
+  -o "${CHK52_TMP:?}/run-c.json"
 ```
 
-**How the two questions are observed.** Whether the override is *accepted* is the POST's operation status (an accepted run reaches a terminal `condition`, a refused one reports the API's own error). Whether the **value arrives** needs the container to speak, and it must never print the value: an `args` override can replace only the args of the image's own entrypoint, so read the container's `command` first and use the length-only line **only** when it names a shell (`args` added to a real entrypoint would not run it, and must not be sent):
+**How the two questions are observed.** Whether the override is *accepted* is the POST's operation status (an accepted run reaches a terminal `condition`, a refused one reports the API's own error). Whether the **value arrives** needs the container to speak, and it must never print the value: `args` **replaces** the image's own args, so it can only work when the container's `command` is a shell — read the command first, and send the length-only body **only** when it names one (adding `args` to a real entrypoint would not run it, and must not be sent):
 
 ```bash
 gcloud run jobs describe "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" \
   --format='value(template.template.containers[0].command)'
-# If that prints a shell, add to (a)'s body, beside "env":
-#   "args":["-c","printf 'PROBE_REF length=%s\n' \"${#PROBE_REF}\""],"clearArgs":true
-# and record the execution log line — the LENGTH only, never the value. If it
-# prints nothing (the image's entrypoint), record that the length could not be
-# read and say so in the FACT.
 ```
+
+If that prints a shell, send the same `jobs.run` call as (a) with this body — **no `clearArgs`**: providing `args` already replaces the list, and setting both asks for two contradictory things (`ContainerOverride.Args` "will replace existing args"; `ClearArgs` says "clear out existing args"):
+
+```json
+{"overrides":{"containerOverrides":[{"env":[{"name":"PROBE_REF","valueSource":{"secretKeyRef":{"secret":"<PROBE_IN>","version":"latest"}}}],"args":["-c","printf 'PROBE_REF length=%s\n' ${#PROBE_REF}"]}]}}
+```
+
+Replace `<PROBE_IN>` with that variable's value, and pass the body as a single-quoted `-d` argument exactly as (a) does — so your own shell leaves `${#PROBE_REF}` to the container's shell, and the execution's log carries the **length only, never the value**. If the command prints nothing (the image's own entrypoint), record that the length could not be read and say so in the FACT.
 
 Whether the **overrides are visible to the container** (the D10 counterpart) is read back from the execution's own template, which is the surface a runner reads — the CLI's own backend already parses that template for `FUGARO_RUN` in `toExecution` (`internal/backend/gcp/run.go:394-419`; the reading side is the backend that turns an execution into a `backend.Execution`, not the runner), and what is unverified is whether the *override* is what that template reports:
 
 ```bash
-gcloud run jobs executions describe "${EXEC:?the execution from (a), by name}" \
+gcloud run jobs executions describe "${EXEC:?the execution named by (a)'s operation metadata}" \
   --project="${P:?}" --region="${L:?}" --format=json | jq '.template.containers[0].env'
 ```
 
@@ -2241,10 +2306,10 @@ gcloud run jobs executions describe "${EXEC:?the execution from (a), by name}" \
 
 ### 4. U3 — Secret Manager IAM conditions on a name prefix
 
-Spelled out for the same reason as U2 (finding 30). **Two things make this probe correct that an earlier version got wrong (review C1, C2):** IAM conditions name Secret Manager resources with the **project number**, not the project ID (`projects/<NUMBER>/secrets/<id>`, the documented format for the `resource.name` attribute), so a condition written with `projects/fugaro-dev/...` would never match and the owner would record a false "not honoured"; and the condition is placed on the **project**, so the out-of-prefix read is actually a test of it — a condition on one secret only proves nothing about a read of another. The reads run **as a dedicated probe service account the check created**, never as the sandbox job's own account, and read **only the check's own two throwaway secrets**:
+Spelled out for the same reason as U2 (finding 30). **Two things make this probe correct that an earlier version got wrong (review C1, C2):** IAM conditions name Secret Manager resources with the **project number**, not the project ID (`projects/<NUMBER>/secrets/<id>`, the documented format for the `resource.name` attribute), so a condition written with `projects/fugaro-dev/...` would never match and the owner would record a false "not honoured"; and the condition is placed on the **project**, so the out-of-prefix read is actually a test of it — a condition on one secret only proves nothing about a read of another. The reads run **as a dedicated probe service account the check created**, never as the sandbox job's own account, and read **only the check's own two throwaway secrets**. The condition also carries the recommended `resource.type` term, so it can never match anything but a Secret. `iamcredentials.googleapis.com` is enabled in step 1's one-time block (Restore does not disable it).
 
 ```bash
-# (a) The project-level conditional grant: secretAccessor on every secret whose
+# (a) The project-level conditional grant: secretAccessor on every Secret whose
 # name starts with fugaro-probe, and nothing else.
 gcloud projects add-iam-policy-binding "${P:?}" \
   --member="serviceAccount:${PROBE_SA:?}" --role="roles/secretmanager.secretAccessor" \
@@ -2257,18 +2322,32 @@ gcloud iam service-accounts add-iam-policy-binding "${PROBE_SA:?}" --project="${
   --member="user:${OWNER:?your own Google account, the active one in gcloud auth list}" \
   --role="roles/iam.serviceAccountTokenCreator"
 
-# (c) The inside read, AS the probe account — must succeed (exit 0). The payload
-# goes to /dev/null; only the exit status is recorded, and the value is never
-# printed.
-gcloud secrets versions access latest --secret="${PROBE_IN:?}" --project="${P:?}" \
-  --impersonate-service-account="${PROBE_SA:?}" --out-file=/dev/null; echo "inside exit: $?"
+# (c) The inside read, AS the probe account — must SUCCEED. IAM grants and
+# conditions propagate asynchronously, so poll for up to about two minutes
+# (review I-d): only a read still denied after that window counts as "the
+# condition is not honoured". The payload goes to /dev/null and only the exit
+# status is recorded; the value is never printed.
+INSIDE=denied
+for i in $(seq 1 12); do
+  if gcloud secrets versions access latest --secret="${PROBE_IN:?}" --project="${P:?}" \
+       --impersonate-service-account="${PROBE_SA:?}" --out-file=/dev/null 2>/dev/null; then
+    INSIDE=ok; break
+  fi
+  echo "inside read not allowed yet (attempt $i/12); sleeping 10s for the grant to propagate"
+  sleep 10
+done
+echo "inside exit: $INSIDE"
 
 # (d) The outside read, AS the probe account — must be DENIED (nonzero exit).
-gcloud secrets versions access latest --secret="${PROBE_OUT:?}" --project="${P:?}" \
-  --impersonate-service-account="${PROBE_SA:?}" --out-file=/dev/null; echo "outside exit: $?"
+# Run it ONLY after the inside read has succeeded once: before that, a denial
+# proves nothing.
+if [ "$INSIDE" = ok ]; then
+  gcloud secrets versions access latest --secret="${PROBE_OUT:?}" --project="${P:?}" \
+    --impersonate-service-account="${PROBE_SA:?}" --out-file=/dev/null; echo "outside exit: $?"
+fi
 ```
 
-**FACT:** the two exit statuses; whether the condition is honoured for `secretmanager.versions.access`; and what the denial looks like (its message names the secret, never a value). If it works, it is a *possibility* for U1's fallback and for phase 5's per-person grants; if not, both designs say so.
+**FACT:** the two exit statuses (`inside` after the poll window, `outside` only once `inside` was `ok`); whether the condition is honoured for `secretmanager.versions.access`; and what the denial looks like (its message names the secret, never a value). If it works, it is a *possibility* for U1's fallback and for phase 5's per-person grants; if not, both designs say so.
 
 ### 5. U4 — the quota and bucket-policy ceilings (design §13)
 
@@ -2297,17 +2376,18 @@ gcloud storage buckets get-iam-policy "gs://${SANDBOX_BUCKET:?}" --project="${P:
 
 ### 6. Restore
 
-Everything this check created, removed in this order. **The job first** — diff it against step 1's file, drop the reference U2(b) put in its template, and check it is back to the file's contents:
+Everything this check created, removed in this order. **The job first** — diff it against step 1's baseline, drop the reference U2(b) put in its template, and check it is back to the file's contents. Re-run the guard block first (a fresh shell has no variables), and set the one path this block needs:
 
 ```bash
-gcloud run jobs describe "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --format=json > /tmp/chk52-job-after.json
-diff /tmp/chk52-job-before.json /tmp/chk52-job-after.json   # the drift U2(b) added — expected to print
+CHK52_TMP=${CHK52_TMP:-/tmp/chk52}    # step 1's mode-700 scratch dir, if this shell has not run step 1
+gcloud run jobs describe "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --format=json > "${CHK52_TMP:?}/job-after.json"
+diff "${CHK52_TMP:?}/job-before.json" "${CHK52_TMP:?}/job-after.json"   # the drift U2(b) added — expected to print
 gcloud run jobs update "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --remove-secrets=PROBE_REF
-gcloud run jobs describe "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --format=json > /tmp/chk52-job-after.json
-diff /tmp/chk52-job-before.json /tmp/chk52-job-after.json   # after the removal: nothing left to print
+gcloud run jobs describe "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --format=json > "${CHK52_TMP:?}/job-after.json"
+diff "${CHK52_TMP:?}/job-before.json" "${CHK52_TMP:?}/job-after.json"   # after the removal: nothing left to print
 ```
 
-The second `describe`+`diff` is the check the prose is about: the first pair can only show what U2(b) changed, and without the second the job is never compared with step 1's file again. **An empty second diff is the Restore's evidence that the template is back as step 1 recorded it** (a non-empty one is reported to the owner, not "fixed" here).
+The second `describe`+`diff` is the check the prose is about: the first pair can only show what U2(b) changed, and without the second the job is never compared with step 1's baseline again. **An empty second diff is the Restore's evidence that the template is back as step 1 recorded it** (a non-empty one is reported to the owner, not "fixed" here).
 
 **Then the GCP-side probe state**, each a command:
 
@@ -2325,6 +2405,7 @@ gcloud secrets delete "${PROBE_IN:?}" --project="${P:?}" --quiet      # never be
 gcloud secrets delete "${PROBE_OUT:?}" --project="${P:?}" --quiet
 gcloud iam service-accounts delete "${PROBE_SA:?}" --project="${P:?}" --quiet
 [ -n "${SCRATCH:-}" ] && rm -rf "$SCRATCH" || echo "no SCRATCH in this shell: remove the step-2 mktemp -d directory by hand"
+rm -rf "${CHK52_TMP:?}"   # the job JSONs (plain env values), U2's run responses and the askpass helper
 unset PROBE_TOKEN; rm -f "${ASKPASS:-/nonexistent}"
 ```
 
