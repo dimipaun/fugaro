@@ -194,14 +194,26 @@ func TestProviderModelNeedsEnforce(t *testing.T) {
 // A provider that reports more than 10% above the charge is logged once at
 // the end of the run (warn level, no key); a report below the charge is not.
 // The charge is compared without the route fee, which the provider doesn't
-// report: with a 10% fee the charge is 3300 and the bare price 3000.
+// report. The reported figures are relative to the charge the run's own table
+// makes for the usage, read from that table (Task 4: the catalog prices the
+// route's model, at a fraction of the placeholder row this test was written
+// against), so the case under test is the 10% threshold and not a number.
 func TestReportedAboveChargeWarnsOnce(t *testing.T) {
-	use := pricing.Usage{Input: 1000, Output: 500} // charged 3000 micros at the starter prices
+	use := pricing.Usage{Input: 1000, Output: 500}
+	g0 := providerRun(t, providerPinned(t), "enforce", "50", nil, "acme/app")
+	m, ok := g0.deps.Spend.Prices.Lookup(deepseek)
+	if !ok {
+		t.Fatal("the run's table has no row for the model it routed")
+	}
+	bare := m.Rates.Cost(use).USD()
 	for _, c := range []struct {
 		cost float64
 		fee  float64
 		warn int
-	}{{0.0100, 0, 1}, {0.0031, 0, 0}, {0.0010, 0, 0}, {0.0035, 10, 1}, {0.0032, 10, 0}} {
+	}{
+		{bare * 3, 0, 1}, {bare * 1.05, 0, 0}, {bare * 0.5, 0, 0},
+		{bare * 1.2, 10, 1}, {bare * 1.05, 10, 0},
+	} {
 		g := providerRun(t, providerPinned(t), "enforce", "50", []anthropicfake.Reply{anthropicfake.Compat{Cost: c.cost}.MessageOK(deepseek, use)}, "acme/app")
 		prov := g.deps.Providers["openrouter"]
 		prov.RouteFeePct = c.fee
@@ -274,9 +286,13 @@ func TestMissingProviderKeyIsInfraError(t *testing.T) {
 
 // TestHaltOnProviderRun: the cap holds a provider run as it does a Claude
 // one: a call whose reservation does not fit is refused at the gateway and
-// never forwarded, and the run halts.
+// never forwarded, and the run halts. The cap is small because the route's
+// model is priced by the built-in catalog at the zdr tier's minimum, a
+// fraction of the placeholder row it replaced (Task 4): the reservation for
+// a 1,000-token reply is a few hundred micro-dollars, so $0.00001 is under
+// it while staying above the smallest cap the budget takes.
 func TestHaltOnProviderRun(t *testing.T) {
-	g := providerRun(t, providerPinned(t), "enforce", "0.001", nil, "acme/app")
+	g := providerRun(t, providerPinned(t), "enforce", "0.00001", nil, "acme/app")
 	var status int
 	var body string
 	rec, err := g.run(t, callDeepseek(&status, &body, implement("feature")))

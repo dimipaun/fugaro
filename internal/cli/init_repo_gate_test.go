@@ -153,3 +153,45 @@ func TestHostileOriginIsTruncatedInDetail(t *testing.T) {
 		t.Errorf("%d bytes: %.80q", len(d), d)
 	}
 }
+
+// TestInitRepoRefusesCatalogSwitches (price-catalog plan Task 4 step 2): a
+// route that sets require_zdr or price_policy is refused by fugaro init
+// --repo before any cloud call, because the job it would deploy carries
+// FUGARO_MODEL_PROVIDERS with a key no release reads yet, and an older
+// runner fails the run at bootstrap on it. The same command with the switch
+// unset goes on to its own next refusal (this rig has no base image for the
+// workflow), which is what proves the gate is the new one and not something
+// earlier.
+func TestInitRepoRefusesCatalogSwitches(t *testing.T) {
+	init := func(t *testing.T, extra string) (*initRig, error, string, string) {
+		t.Helper()
+		r := newInitRig(t)
+		r.stateBucket()
+		// A repository the local config lists (acme/sandbox, provider
+		// bitbucket, workflow web), so the onboarding gate is not what
+		// refuses.
+		dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", strings.Replace(checkoutYAML("bitbucket", "api-key", "aurora", ""), "app:", "web:", 1))
+		r.appendConfig(t, validateProviderBlock+extra)
+		t.Chdir(t.TempDir())
+		out, errOut, err := executeStdin(t, "", "init", "--repo", "--yes", dir)
+		return r, err, out, errOut
+	}
+	r, err, out, errOut := init(t, "    require_zdr: false\n")
+	if err == nil {
+		t.Fatalf("a route with require_zdr set was deployed:\n%s%s", out, errOut)
+	}
+	noCloudTouched(t, r, "a route with require_zdr set")
+	for _, want := range []string{
+		"fugaro init --repo refuses to deploy acme/sandbox's provider openrouter",
+		"require_zdr or price_policy",
+		"fugaro " + catalogSince,
+		"model_prices",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	// Unset: the same command gets past this gate to its own next refusal.
+	_, err, _, _ = init(t, "")
+	pastGate(t, err)
+}

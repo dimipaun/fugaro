@@ -1893,6 +1893,13 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 			return err
 		}
 	}
+	// A route that sets require_zdr or price_policy lands in the job's
+	// FUGARO_MODEL_PROVIDERS, and an older runner refuses an unknown key
+	// there at bootstrap: refuse before any cloud effect (Task 4 step 2 of
+	// the price-catalog plan).
+	if err := r.gateCatalogSwitches(o, repo, lc); err != nil {
+		return err
+	}
 	if !o.forget {
 		w := r.w
 		if o.printVars {
@@ -2143,6 +2150,24 @@ func (o *initOptions) requireCheckoutProject(ctx context.Context, dir string) er
 // vertexBudgetRefusal is the refusal of a Vertex workflow under a budget
 // that enforces: the gateway can't yet be relied on to cap Vertex spend.
 const vertexBudgetRefusal = runner.VertexBudgetRefusal
+
+// gateCatalogSwitches is repoEngine's route-switch version gate (price-catalog
+// plan Task 4 step 2): refuseCatalogSwitches, unless there is nothing to
+// refuse it for — --forget tears the repository down, and --plan-only shows
+// the plan without applying it (the same escape planRepo's clone refusal
+// leaves). --print-vars is judged like a deploy would be, since the values it
+// prints are the ones a deploy would use, and its warnings go to stderr so
+// stdout stays the Terraform variables alone.
+func (r *initRun) gateCatalogSwitches(o *initOptions, repo string, lc *localcfg.Config) error {
+	if o.forget || o.planOnly {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseCatalogSwitches(repo, lc, w)
+}
 
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates
 // the agent through Vertex AI (agent.auth: vertex) under a project budget
