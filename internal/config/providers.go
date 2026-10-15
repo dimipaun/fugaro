@@ -28,6 +28,14 @@ const ModelProviderKind = "anthropic-compat"
 // MaxRouteFeePct bounds route_fee_pct; a larger fee is a typo.
 const MaxRouteFeePct = 50
 
+// The values price_policy accepts: which end of the selected tier's price
+// range a routed call is charged at (docs/design/provider-price-catalog.md
+// D3). An unset price_policy means PricePolicyCheapest.
+const (
+	PricePolicyCheapest = "cheapest"
+	PricePolicyHighest  = "highest"
+)
+
 // ModelProvider is one entry of the local config's providers block.
 type ModelProvider struct {
 	Kind string `yaml:"kind" json:"kind"`
@@ -41,6 +49,18 @@ type ModelProvider struct {
 	Secret string `yaml:"secret" json:"secret"`
 	// RouteFeePct is added to every charge on this provider; 0 is none.
 	RouteFeePct float64 `yaml:"route_fee_pct,omitempty" json:"route_fee_pct,omitempty"`
+	// RequireZDR prices the provider's models at the endpoints that hold no
+	// data (the built-in price catalog's zdr tier) rather than at every
+	// endpoint the model is served by. Unset means true: a route's safe end
+	// is the one the owner would have picked. It prices a tier; it does not
+	// enforce routing (see PricePolicy).
+	RequireZDR *bool `yaml:"require_zdr,omitempty" json:"require_zdr,omitempty"`
+	// PricePolicy is which end of the selected tier's price range is charged:
+	// "cheapest" or "highest"; unset means cheapest (PricePolicySet). It
+	// prices a tier; it does not choose the endpoint OpenRouter serves from,
+	// so a call may still be billed at the other end of the range (see
+	// docs/multi-model.md §2).
+	PricePolicy string `yaml:"price_policy,omitempty" json:"price_policy,omitempty"`
 	// Models are the model IDs the provider serves: exact IDs, or a prefix
 	// ending in "*" such as "deepseek/*". No two providers may overlap.
 	Models []string `yaml:"models" json:"models"`
@@ -118,6 +138,19 @@ var (
 // Matches reports whether the provider serves model.
 func (p ModelProvider) Matches(model string) bool {
 	return slices.ContainsFunc(p.Models, func(pat string) bool { return PatternMatches(pat, model) })
+}
+
+// RequireZDROn reports whether the route prices the ZDR-eligible endpoints
+// only: true unless require_zdr is false (the PRSettings.EarlyDraftOn shape).
+func (p ModelProvider) RequireZDROn() bool { return p.RequireZDR == nil || *p.RequireZDR }
+
+// PricePolicySet is the policy to apply, spelled out: cheapest when the field
+// is unset (the catalogue's own default, D3).
+func (p ModelProvider) PricePolicySet() string {
+	if p.PricePolicy == "" {
+		return PricePolicyCheapest
+	}
+	return p.PricePolicy
 }
 
 // AllowsData reports whether repo (owner/name) may send code to p: true for
@@ -272,6 +305,9 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 		}
 		if math.IsNaN(p.RouteFeePct) || p.RouteFeePct < 0 || p.RouteFeePct > MaxRouteFeePct {
 			add(at+".route_fee_pct", "must be between 0 and %d (a percentage added to every charge)", MaxRouteFeePct)
+		}
+		if p.PricePolicy != "" && p.PricePolicy != PricePolicyCheapest && p.PricePolicy != PricePolicyHighest {
+			add(at+".price_policy", "%q must be one of %s, %s (which end of the built-in price catalog's range to charge; unset means %s)", p.PricePolicy, PricePolicyCheapest, PricePolicyHighest, PricePolicyCheapest)
 		}
 		if len(p.Models) == 0 {
 			add(at+".models", "must list the model IDs the provider serves, such as deepseek/*")

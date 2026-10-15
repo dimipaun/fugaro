@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
@@ -355,9 +356,9 @@ func TestDecodeRequireZDRIsDefaultTrue(t *testing.T) {
 		want string // the key and value the marshalled entry must carry, "" for none of them
 	}{
 		"unset":   {Provider{}, ""},
-		"true":    {Provider{RequireZDR: &zdron}, `"require_zdr":true`},
-		"false":   {Provider{RequireZDR: &zdroff}, `"require_zdr":false`},
-		"highest": {Provider{PricePolicy: PricePolicyHighest}, `"price_policy":"highest"`},
+		"true":    {Provider{ModelProvider: config.ModelProvider{RequireZDR: &zdron}}, `"require_zdr":true`},
+		"false":   {Provider{ModelProvider: config.ModelProvider{RequireZDR: &zdroff}}, `"require_zdr":false`},
+		"highest": {Provider{ModelProvider: config.ModelProvider{PricePolicy: PricePolicyHighest}}, `"price_policy":"highest"`},
 	} {
 		got, err := json.Marshal(tc.p)
 		if err != nil {

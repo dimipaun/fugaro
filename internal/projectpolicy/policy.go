@@ -52,8 +52,9 @@
 //     https, a kind that is not anthropic-compat, an auth style that is not
 //     bearer or x-api-key, an ambiguous empty allow_data_to, a route_fee_pct
 //     over the cap or a models list two providers both claim is refused here
-//     rather than reaching a run; price_policy, which internal/config does not
-//     know yet, is checked against the catalogue's two values beside them.
+//     rather than reaching a run; price_policy is checked against the
+//     catalogue's two values beside them, and again by validPricePolicy below,
+//     because the node is read by a runner that never parses a config file.
 //     Unknown keys *inside* an entry stay ignored (P8) — which is safe only
 //     because every value is checked: a misspelt key leaves its field zero and
 //     is refused, so tolerance costs no silence.
@@ -133,49 +134,42 @@ type Budget struct {
 // drift no test can see, because each side would be self-consistent.
 //
 // RequireZDR and PricePolicy are the two price-catalogue switches
-// (docs/design/provider-price-catalog.md D3), which the catalogue design puts
-// on config.ModelProvider beside RouteFeePct; they are spelled here the way
-// that slice will spell them, and when it lands they move into the carrier
-// and this struct loses them.
+// (docs/design/provider-price-catalog.md D3). They live on the carrier
+// (config.ModelProvider, beside RouteFeePct) and are NOT respelled here: a
+// second declaration of the same key would be shadowed rather than merged,
+// and — because Provider embeds a carrier that has its own UnmarshalYAML —
+// a decode that went through the carrier would fill one declaration and
+// leave the other at zero, which is a switch silently dropped from a
+// published policy. One carrier, one declaration: a field copied out of the
+// operator's config by name (internal/cli's policyProviders) cannot lose
+// either switch, and neither can a decode.
 type Provider struct {
 	config.ModelProvider
-	// RequireZDR prices the route against the ZDR-eligible endpoints. Unset
-	// means true: nil is the default-true spelling the repository already
-	// uses for a switch (config.PRSettings.EarlyDraft), so an entry written
-	// before the field existed keeps the conservative price. What this is
-	// NOT: a routing guarantee — Fugaro cannot read the account's privacy
-	// setting (catalogue design §8).
-	RequireZDR *bool `json:"require_zdr,omitempty"`
-	// PricePolicy is which end of the catalogue's price range a routed call
-	// is charged at. Unset means PricePolicyCheapest, the default the
-	// catalogue design chose (D3); the empty string is written as an omission
-	// so a job written by a newer CLI stays readable by an older image (D11).
-	PricePolicy string `json:"price_policy,omitempty"`
 }
 
-// The values price_policy accepts (docs/design/provider-price-catalog.md D3).
+// The values price_policy accepts (docs/design/provider-price-catalog.md D3),
+// spelled here as the policy spells them. They are config's own values, kept
+// as constants of this package too so a reader of a policy need not import
+// internal/config to name one.
 const (
 	// PricePolicyCheapest charges the cheapest eligible endpoint's price, and
 	// is what an unset price_policy means (the catalogue's own default).
-	PricePolicyCheapest = "cheapest"
+	PricePolicyCheapest = config.PricePolicyCheapest
 	// PricePolicyHighest charges the dearest eligible endpoint's price.
-	PricePolicyHighest = "highest"
+	PricePolicyHighest = config.PricePolicyHighest
 )
 
 // RequireZDROn reports whether this route is priced as if only ZDR-eligible
-// endpoints may serve it: true unless require_zdr is explicitly false.
-func (p Provider) RequireZDROn() bool { return p.RequireZDR == nil || *p.RequireZDR }
+// endpoints may serve it: true unless require_zdr is explicitly false. It is
+// the carrier's own accessor (config.ModelProvider.RequireZDROn), named here
+// as a policy reader reads it.
+func (p Provider) RequireZDROn() bool { return p.ModelProvider.RequireZDROn() }
 
 // EffectivePricePolicy is the policy a route is priced under:
-// PricePolicyCheapest when the policy does not set one (D3). The plan for the
-// catalogue slice calls the same accessor PricePolicySet(); whichever name it
-// lands under in config.ModelProvider, the meaning is this one.
-func (p Provider) EffectivePricePolicy() string {
-	if p.PricePolicy == "" {
-		return PricePolicyCheapest
-	}
-	return p.PricePolicy
-}
+// PricePolicyCheapest when the policy does not set one (D3). It is the
+// carrier's own accessor (config.ModelProvider.PricePolicySet), under the
+// name this package's readers use.
+func (p Provider) EffectivePricePolicy() string { return p.ModelProvider.PricePolicySet() }
 
 // Price is one model's owner-set rates, spelled exactly as the price catalogue
 // spells model_prices (internal/pricing/overrides.go's wireRates, and
@@ -410,10 +404,12 @@ func validRouting(r *Routing) error {
 	return fmt.Errorf("projectpolicy: routing.claude.via %q must be %s, %s or %s", via, RouteDirect, RouteOpenRouter, RouteAuto)
 }
 
-// validPricePolicy checks the one provider field internal/config does not know
-// yet: the two switches are the price catalogue's (docs/design/
-// provider-price-catalog.md D3), and an unrecognised value would price a route
-// at the wrong end of the catalogue's range rather than fail.
+// validPricePolicy checks the one provider value the carrier's own validation
+// does not: an unrecognised price_policy would price a route at the wrong end
+// of the catalogue's range rather than fail. internal/config refuses it too
+// (ValidateModelProviders, the same two values); this is the check the *node*
+// is held to, because a policy is read by a runner that never parses the
+// operator's config.
 func validPricePolicy(name, policy string) error {
 	switch policy {
 	case "", PricePolicyCheapest, PricePolicyHighest:

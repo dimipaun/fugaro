@@ -1,6 +1,9 @@
 package projectpolicy
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Node paths of the project policy, relative to the database root, without a
 // leading slash and already key-escaped (the policy half of the paths
@@ -27,6 +30,15 @@ func PathShared() string { return pathShared }
 // PathRepo is one repository's policy child. Only the token whose slug is
 // $slug may read it, the way config/caps/repos/$slug works.
 func PathRepo(slug string) string { return pathRepos + seg("slug", slug) }
+
+// PathRepos is the parent of the per-repository children, without a trailing
+// slash. A read of it is what lists the slugs a policy has children for — a
+// read of the *parent* is denied by the rules (they are per child, and a read
+// grant cascades, so a read on the parent would expose every child), which is
+// why this is for the operator's own credentials (the CLI's
+// `policy publish --delete`, which removes the children it wrote) and not for
+// a run token.
+func PathRepos() string { return strings.TrimSuffix(pathRepos, "/") }
 
 // PathRulesMarker is the node recording which generation of the security
 // rules is deployed (RulesVersion). It sits beside the largest lease under
