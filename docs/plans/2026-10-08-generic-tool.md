@@ -1932,8 +1932,12 @@ That PR owns the edits the flip makes stale as well as the constant:
 `docs/checkout.md`'s "not shipped yet" notes (which
 `internal/cli/docs_checkout_test.go` holds to `cloneShipped`), this skill's
 topic 12 in `plugin/skills/setup/reference/decisions.md` and its one line in
-`plugin/skills/setup/SKILL.md`, and `docs/release.md`'s "Verify `cloneSince`"
-bullet (which now says the flip is not the release commit's edit).
+`plugin/skills/setup/SKILL.md`, `plugin/setup_skill_test.go`'s
+`TestSetupSkillOffersClone` (which asserts "not shipped", "leave the key out",
+`cloneShipped` and the gate's refusal in both files: rewriting topic 12 to say
+clone ships turns it red, so the flip PR rewrites those assertions with the
+text), and `docs/release.md`'s "Verify `cloneSince`" bullet (which now says
+the flip is not the release commit's edit).
 
 **Files:** `docs/gcp-live-checklist.md` (Check 38), `plugin/skills/setup/reference/decisions.md`, `plugin/skills/setup/SKILL.md` (one line), `plugin/setup_skill_test.go`.
 
