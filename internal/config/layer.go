@@ -118,6 +118,7 @@ type Profile struct {
 // through this method.
 func (p Profile) HasExecutable() bool {
 	return p.Commands.Build != "" || p.Commands.Test != "" || p.Commands.Lint != "" || p.Commands.Fix != "" ||
+		p.Commands.Render != "" || p.Commands.Probe != "" ||
 		p.Commands.RerunFailed != nil || len(p.Image.Apt) > 0 || len(p.Image.Setup) > 0 || len(p.Image.Tools) > 0
 }
 
