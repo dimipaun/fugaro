@@ -99,10 +99,15 @@ func (r *run) artifactMode(ctx context.Context) {
 	case r.haltValue() != nil:
 		// A halt that landed while the render ran: recorded by the stage's
 		// own machinery (the budget backend polls independently), and a halt
-		// decides the run whatever the render did.
+		// decides the run whatever the render did. Both of these end the run
+		// themselves — status, reason, skipPR and the report — so they return:
+		// falling through would store the report a second time, as
+		// reviewmode.go's equivalent branches do not.
 		r.endArtifactHalted(ctx, r.haltValue())
+		return
 	case r.isCancelled():
 		r.endArtifactCancelled(ctx, "cancelled during render")
+		return
 	default:
 		r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, r.redact(err.Error())
 		r.d.Log.Warn("the render step failed", "err", r.rec.Reason)
