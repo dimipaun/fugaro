@@ -1520,11 +1520,20 @@ func TestDoctorFlagsUnstoredProjectSecret(t *testing.T) {
 	if !strings.Contains(c.Problem, "github-app-key") {
 		t.Fatalf("problem doesn't name the secret: %q", c.Problem)
 	}
+	if !strings.Contains(c.Fix, "secrets set github-app-key") {
+		t.Fatalf("fix doesn't name the command: %q", c.Fix)
+	}
 	if !strings.Contains(c.Fix, "secrets set github-app-key --repo acme/app") {
 		t.Fatalf("fix doesn't name the repository command: %q", c.Fix)
 	}
-	if !strings.Contains(c.Fix, "secrets set github-app-key --project-wide") {
-		t.Fatalf("fix doesn't name the project-wide command: %q", c.Fix)
+	// The bare command leads (code review, low): it is D2's default store, so
+	// it is the command that puts the value where the repositories the owner
+	// allow-listed it for mount it. --repo first offered a repository copy --
+	// the one that wins over the project copy forever -- to a person whose
+	// repository may already mount the shared one. The sibling
+	// claude-accounts check leads the same way.
+	if first, _, _ := strings.Cut(c.Fix, ", or "); !strings.HasSuffix(first, "secrets set github-app-key") {
+		t.Fatalf("fix does not lead with the bare command: %q", c.Fix)
 	}
 }
 

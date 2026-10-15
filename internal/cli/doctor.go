@@ -815,8 +815,17 @@ func doctorProjectSecretStoredCheck(lc *localcfg.Config, facts doctorRepoSecrets
 			continue
 		}
 		missing = append(missing, pluginwire.Printable(name))
-		cmds = append(cmds, selfCommand()+" secrets set "+quoteWord(name)+" --repo "+quoteWord(facts.repo),
-			selfCommand()+" secrets set "+quoteWord(name)+" --project-wide")
+		// D2 (plan Task 2.1) made the project copy the default store for
+		// exactly these names, so the Fix leads with the bare command -- which
+		// stores the value where the default puts it, reaching exactly the
+		// repositories the owner allow-listed it for -- as the sibling
+		// claude-accounts check does (code review, low). Leading with
+		// --repo <repo> offered a repository copy first, and a repository copy
+		// wins over the project copy forever (§5, the footgun these checks
+		// exist to name), to a person whose repository may mount the shared
+		// one.
+		cmds = append(cmds, selfCommand()+" secrets set "+quoteWord(name),
+			selfCommand()+" secrets set "+quoteWord(name)+" --repo "+quoteWord(facts.repo))
 	}
 	if len(missing) == 0 {
 		return &doctorCheck{ID: "project-secret-stored", OK: true}
