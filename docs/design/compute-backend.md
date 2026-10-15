@@ -231,8 +231,9 @@ does not add a charge.
   rather than this document asserting it.
   Batch's own ceiling is generous: a job may wait 2 days in `QUEUED` and run
   14 days in `RUNNING` before automatic failure
-  (cloud.google.com/batch/quotas, checked 2026-10-15), so Fugaro's own timeouts (a workflow's
-  `timeouts.total` plus `backend.TaskTimeoutSlack`) bind long before Google's.
+  (cloud.google.com/batch/quotas, checked 2026-10-15), so Fugaro's own
+  timeouts (a workflow's `timeouts.total` plus `backend.TaskTimeoutSlack`)
+  bind long before Google's.
 - **A plain instance** cancels by `instances.delete`; the timeout is ours to
   enforce (a watchdog or the startup script's `timeout`), which is another
   small piece of machinery Batch already has.
@@ -355,7 +356,7 @@ Verified from Google's public documentation (checked 2026-10-15):
   static IP addresses consume **global** quotas; disks are regional. The
   *default numeric values* per project are not on that page and depend on the
   project's history — **UNVERIFIED here**; the owner reads the project's own
-  quota page (Check 57 step 8 records the FACT).
+  quota page (Check 57 step 9 records the FACT).
 
 What one run consumes: one VM, its vCPUs against the regional (and global)
 CPU quota and one instance against the instances quota, one boot disk, and —
@@ -488,7 +489,7 @@ Every method of `internal/backend.Backend` maps onto Batch:
 | Seam method | Batch | Notes |
 |---|---|---|
 | `Launch(LaunchSpec)` | `projects.locations.jobs.create` | One Batch job, one task group, one task. Name derived per run (§2.4). The `FUGARO_RUN` env and the timeout are set in the job definition, not in an override — Batch has no execution-override concept like Cloud Run's `Overrides`. Returns `ExecutionRef{Name, Job, LogURL}`. |
-| `Execution(name)` | `jobs.get` | Maps Batch's state enum to `backend.State`: `QUEUED`/`SCHEDULED` → `StatePending`, `RUNNING` → `StateRunning`, `SUCCEEDED` → `StateSucceeded`, `FAILED` → `StateFailed`, `DELETION_IN_PROGRESS` → `StateCancelled`. `Created`/`Started`/`Completed` from the job's times; `CPU`/`MemoryGiB` from the machine type; `Run` from the `FUGARO_RUN` the job was created with (Batch reports the job's `environmentVariables`, so unlike Cloud Run this one is always readable — still a hint, never evidence). |
+| `Execution(name)` | `jobs.get` | Maps Batch's state enum to `backend.State`: `QUEUED`/`SCHEDULED` → `StatePending`, `RUNNING` → `StateRunning`, `SUCCEEDED` → `StateSucceeded`, `FAILED` → `StateFailed`, `DELETION_IN_PROGRESS` → `StateCancelled`. `Created`/`Started`/`Completed` from the job's and its task's status times; `CPU`/`MemoryGiB` from the machine type; `Run` from the `FUGARO_RUN` the job was created with (Batch reports the job's `environmentVariables`, so unlike Cloud Run this one is always readable — still a hint, never evidence). |
 | `List(filter)` | `jobs.list` | Filter by the Fugaro labels and `CreateTime`; the `fugaro-` name prefix is replaced by the label predicate. |
 | `Logs(query, fn)` | Cloud Logging, through the same installation log view | Filter `resource.type="batch.googleapis.com/Job" AND labels."batch.googleapis.com/job_id"="<job id>"` (label names from cloud.google.com/logging/docs/api/v2/resource-list, checked 2026-10-15), pinned to the region like the Cloud Run filter is. |
 | `Cancel(name)` | `jobs.delete` | Tolerate `NOT_FOUND` and a job already terminal (the same race live check 5 already documents for Cloud Run). |
