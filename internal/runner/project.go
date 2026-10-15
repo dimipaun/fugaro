@@ -185,11 +185,12 @@ var remoteAnonymousUsers = map[string]bool{
 // addRemoteSecrets registers with the run's redactor every credential a remote
 // URL can carry: its userinfo — the password, and the username when there is
 // none, because https://<token>@host/repo.git is a shape the forges accept —
-// and the value of any query parameter named like one. A remote reaches error
-// text and result.json (git's own "unable to access ..." lines quote the URL
-// it was given), and remoteDisplay is what keeps it out of the refusals this
-// package writes, so this is the other half: what the run can recognise, it
-// redacts wherever it appears.
+// and the value of any credential-named parameter in its query and in its
+// fragment. Those three are the places remoteDisplay drops for the refusals
+// this package writes, and this is the other half: what the run can recognise,
+// it redacts wherever it appears, including git's own "unable to access ..."
+// lines, which quote the URL it was given verbatim (the fragment with them —
+// git is handed https://host/repo.git#access_token=SECRET and prints it).
 func (r *run) addRemoteSecrets(remote string) {
 	u, err := url.Parse(remote)
 	if err != nil {
@@ -204,11 +205,39 @@ func (r *run) addRemoteSecrets(remote string) {
 			r.addSecret(name)
 		}
 	}
-	for k, vs := range u.Query() {
-		if remoteSecretParams[strings.ToLower(k)] {
-			for _, v := range vs {
-				r.addSecret(v)
-			}
+	r.addRemoteSecretParams(u.RawQuery)
+	// A fragment carries no query of its own to Go: it is one opaque string
+	// here, so the same parameter parsing is applied to it, and to both
+	// spellings of it, because either can be the one git echoes back.
+	r.addRemoteSecretParams(u.RawFragment)
+	if u.RawFragment != u.Fragment {
+		r.addRemoteSecretParams(u.Fragment)
+	}
+}
+
+// addRemoteSecretParams registers the value of every parameter in raw — a
+// query or a fragment — whose name is one a forge writes a credential under,
+// in both spellings: the raw one and the percent-decoded one. Git echoes the
+// URL it was given, escapes and all (?access_token=S%20ECRET comes back
+// spelled exactly like that), so registering only the decoded value would
+// leave that echo unredacted; registering both costs one extra value in the
+// redactor and covers a remote written either way.
+func (r *run) addRemoteSecretParams(raw string) {
+	for _, field := range strings.Split(raw, "&") {
+		k, v, ok := strings.Cut(field, "=")
+		if !ok || v == "" {
+			continue
+		}
+		name := k
+		if decoded, err := url.QueryUnescape(k); err == nil {
+			name = decoded
+		}
+		if !remoteSecretParams[strings.ToLower(name)] {
+			continue
+		}
+		r.addSecret(v)
+		if decoded, err := url.QueryUnescape(v); err == nil && decoded != v {
+			r.addSecret(decoded)
 		}
 	}
 }
