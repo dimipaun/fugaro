@@ -220,7 +220,7 @@ The `routing` skill gains a section "Choosing a recipe" (G16). It does not get a
 **Recommendation (G17):**
 - **Plural nouns, as today.** `fugaro recipes ls` exists, and so do `secrets`, `budget` and `image`. Cobra aliases make `fugaro recipe ls` work too, at one line each (`Aliases: []string{"recipe"}`), so the spec's spelling works without a second command.
 - **`fugaro runs ls` replaces `fugaro ls`.** The noun is "run", not "job": in Fugaro a *job* is a workflow's Cloud Run job, and a *run* is one execution of a task (`fugaro run`, `RUN` arguments, `runs/` in the bucket). `fugaro job ls` would list the wrong thing. The alias `jobs` is not added, for the same reason.
-- **`fugaro ls` is removed, with a hidden tombstone in 0.7.0.** `fugaro ls` exits 1 (a user error, not the remote failure exit 2 of v1.md §9.1) with `fugaro ls was renamed in 0.7.0: use fugaro runs ls (same flags)`. The tombstone is deleted in 0.7.1, not 0.8.0: the owner's 2026-10-14 ruling moved the deletion there (plan Task 29, "it may ship in 0.7.1"), and it shipped — #350 removed it, so `ls` is an ordinary unknown command in 0.7.1. No working alias (the memory rule; the tombstone costs one function). Veto alternative: keep `ls` as a hidden working alias.
+- **`fugaro ls` is removed, with a hidden tombstone in 0.7.0.** `fugaro ls` exits 1 (a user error, not the remote failure exit 2 of v1.md §9.1) with `fugaro ls was renamed in 0.7.0: use fugaro runs ls (same flags)`. The tombstone is deleted in the next release, not 0.8.0: the owner's 2026-10-14 ruling moved the deletion there (plan Task 29, "it may ship in 0.7.1"; that release was later renamed 0.7.5, #370), and it shipped — #350 removed it, so `ls` is an ordinary unknown command in 0.7.5. No working alias (the memory rule; the tombstone costs one function). Veto alternative: keep `ls` as a hidden working alias.
 - **The verbs on one run stay top-level:** `run`, `logs`, `diagnose`, `cancel` and `watch`. They are the hot path, like `git log` and `docker logs`. Moving them under `runs` gains consistency and costs every skill, doc and muscle memory. Veto alternative: `fugaro runs logs|diagnose|cancel`, each with a tombstone.
 - `fugaro recipes ls --verbose` (§3.2).
 - Future nouns slot in the same way: `fugaro backends ls` when a second backend exists.
@@ -327,7 +327,7 @@ The defaults are flags, not config keys. Veto alternative: local-config keys `wa
 - Group D, provisioning: 4.
 - Group E, docs and skills: 2.
 
-Plus six tasks for 0.8.0 (plan Tasks 24 to 29), five of them still: the cost preview (Group F, moved from 0.7.0 by R4), the measurement and two blocked phases — Task 29, the tombstone's removal, was moved to 0.7.1 by the owner's 2026-10-14 ruling and shipped there (#350). Recipes are the largest risk: four of the runner changes sit in `agentLoop`, which every run executes.
+Plus six tasks for 0.8.0 (plan Tasks 24 to 29), five of them still: the cost preview (Group F, moved from 0.7.0 by R4), the measurement and two blocked phases — Task 29, the tombstone's removal, was moved to the next release by the owner's 2026-10-14 ruling and shipped there (#350, in 0.7.5). Recipes are the largest risk: four of the runner changes sit in `agentLoop`, which every run executes.
 
 ## 13. Verified and unverified
 
