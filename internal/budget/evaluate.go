@@ -115,12 +115,18 @@ type Decision struct {
 // over maxReserve (a missing limit refuses); and, only when caps.Mode is
 // "enforce" (anything else, absent included, is observe; the committed cap
 // also bites when w.CommittedEnforce), the run's lifetime
-// reservation (reserved - released) would pass min(repository per-run cap or
-// default, global per-run cap), the repository's day counter would pass its
-// cap (or default) or the committed daily cap, or the global day counter
-// would pass the global cap; a cap that is not set refuses with ReasonNoCap.
-// A cap equal to the new value passes. In observe the first such cap
-// refusal is returned as Decision.Advisory on an allowed decision.
+// reservation (reserved - released) would pass the per-run cap, which is the
+// smallest of the sides that are set -- the repository's own, else the
+// default for repositories without one, and the project's global one, a side
+// that is not set not bounding the run (D6) -- the repository's day counter
+// would pass its cap (its own or the default) or the committed daily cap, or
+// the global day counter would pass the global cap. A cap the rules compare
+// against that is not set at all refuses with ReasonNoCap: the per-run side
+// when none of the three is set, the repository's daily side when neither the
+// repository nor the defaults carries one, and the global daily side when the
+// project carries none. A cap equal to the new value passes. In observe the
+// first such cap refusal is returned as Decision.Advisory on an allowed
+// decision.
 //
 // A release is refused when the day is older than yesterday or in the future,
 // or the amount exceeds what the run holds unspent (reserved - released -
