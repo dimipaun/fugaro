@@ -66,7 +66,7 @@ func TestModelPricesKeysAreEscapedOnTheNode(t *testing.T) {
 
 // TestModelPricesKeysAreEscapedOnTheNodeChangesNothingElse is the other half:
 // the catalogue's own parser reads the decoded block, and it is what
-// internal/runner prices a run with (policyPrices), so the decoded map must be
+// internal/runner prices a run with (policyOverrides), so the decoded map must be
 // the document the operator wrote. CatalogJSON is that document.
 func TestModelPricesCatalogJSON(t *testing.T) {
 	const id = "deepseek/deepseek-v4-flash"
