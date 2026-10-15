@@ -118,6 +118,14 @@ func TestAddRemoteSecretsRegistersWhatARemoteCanCarryACredentialIn(t *testing.T)
 		{remote: "https://github.com/acme/app.git?a=1&access_token=ATBBsecret", want: []string{"ATBBsecret"}},
 		{remote: "https://github.com/%zz", absent: []string{"%zz"}},
 		{remote: "", absent: []string{}},
+		// A fragment or query that is a bare token, with no name in front of
+		// it: the shape remoteDisplay's test above takes for a credential, and
+		// the only thing there is to register is the token itself.
+		{remote: "https://github.com/acme/app.git#glpat-secret", want: []string{"glpat-secret"}},
+		{remote: "https://github.com/acme/app.git?glpat-secret", want: []string{"glpat-secret"}},
+		// And the floor below which nothing is registered, because redacting
+		// three characters out of everything the run writes is the larger harm.
+		{remote: "https://github.com/acme/app.git#v1", absent: []string{"v1"}},
 	} {
 		r := &run{}
 		r.addRemoteSecrets(tc.remote)

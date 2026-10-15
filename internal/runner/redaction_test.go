@@ -116,6 +116,11 @@ func TestGitsOwnCloneFailureIsRedacted(t *testing.T) {
 		// And the escaped spelling: git echoes the URL as written, so a
 		// redactor holding only the decoded value would miss it.
 		{"an escaped query parameter", srv.URL + "/remote.git?access_token=A%54BBsecret", []string{secret, "A%54BBsecret"}},
+		// A bare token: no parameter name in front of it — a fragment that is
+		// nothing but a value, which is the shape remoteDisplay's own test
+		// (project_internal_test.go) takes for a credential. There is no name
+		// to recognise, so the whole thing is what has to be registered.
+		{"a bare-token fragment", srv.URL + "/remote.git#" + secret, []string{secret}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, "", nil)

@@ -185,8 +185,10 @@ var remoteAnonymousUsers = map[string]bool{
 // addRemoteSecrets registers with the run's redactor every credential a remote
 // URL can carry: its userinfo — the password, and the username when there is
 // none, because https://<token>@host/repo.git is a shape the forges accept —
-// and the value of any credential-named parameter in its query and in its
-// fragment. Those three are the places remoteDisplay drops for the refusals
+// the value of any credential-named parameter in its query and in its
+// fragment, and a query or fragment that is a bare token with no name in front
+// of it (addBareRemoteSecret, whose doc has the argument and the one limit).
+// Those three are the places remoteDisplay drops for the refusals
 // this package writes, and this is the other half: what the run can recognise,
 // it redacts wherever it appears, including git's own "unable to access ..."
 // lines, which quote the URL it was given verbatim (the fragment with them —
@@ -222,10 +224,22 @@ func (r *run) addRemoteSecrets(remote string) {
 // spelled exactly like that), so registering only the decoded value would
 // leave that echo unredacted; registering both costs one extra value in the
 // redactor and covers a remote written either way.
+//
+// A field with no name in front of it — a bare token, ?glpat-secret or
+// #glpat-secret — has no name to be recognised by, so the whole field is
+// registered (addBareRemoteSecret). A fragment carries no meaning for git and
+// a query little more: git copies both into the URL it requests and echoes the
+// URL verbatim when it cannot reach it, so nothing a remote states that way is
+// worth leaving unredacted, and remoteDisplay's own test already takes
+// #glpat-secret for a credential.
 func (r *run) addRemoteSecretParams(raw string) {
 	for _, field := range strings.Split(raw, "&") {
 		k, v, ok := strings.Cut(field, "=")
-		if !ok || v == "" {
+		if !ok {
+			r.addBareRemoteSecret(field)
+			continue
+		}
+		if v == "" {
 			continue
 		}
 		name := k
@@ -239,6 +253,26 @@ func (r *run) addRemoteSecretParams(raw string) {
 		if decoded, err := url.QueryUnescape(v); err == nil && decoded != v {
 			r.addSecret(decoded)
 		}
+	}
+}
+
+// addBareRemoteSecret registers field — one &-separated part of a query or a
+// fragment with no "name=" in it — as a credential, in both spellings, for the
+// reason addRemoteSecretParams gives: there is no name to recognise it by, so
+// what is left is the value itself, and git echoes it back in the URL it was
+// given. minSecretLen is the floor, the same one addMountedSecrets applies:
+// below it a field is registered nowhere, because redacting three characters
+// out of everything the run writes costs more than the token they could be.
+// The floor is not a judgement about shape — a four-character bare fragment is
+// registered, and that is the cost of not being able to recognise one — only
+// about how much a mis-registration would take with it.
+func (r *run) addBareRemoteSecret(field string) {
+	if len(field) < minSecretLen {
+		return
+	}
+	r.addSecret(field)
+	if decoded, err := url.QueryUnescape(field); err == nil && decoded != field && len(decoded) >= minSecretLen {
+		r.addSecret(decoded)
 	}
 }
 
