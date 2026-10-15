@@ -56,10 +56,13 @@ boot image** — `fugaro-base` baked into the VM's Docker cache once per base
 version — rather than a 3.8 GB pull on every run; **Check 57a measured all
 three paths on 2026-10-15 (145 s plain pull, 97 s streamed, 66 s preloaded)
 and the preload is the recommendation (§1.2, C4)**, because image streaming
-makes Batch ignore the container's `options` field that a Docker run needs,
-and only the preload meets the budget the original design allowed the VM tier
+makes Batch ignore the container's `options` field that a Docker run's socket
+recipe needs (the baked-in-gid alternative is untested, §1.1), and only the
+preload meets the budget the original design allowed the VM tier
 — **120 s above the Cloud Run baseline** (generic-tool §1, G2), about 133 s
-against the 13.0 s baseline 57a-1 measured — on a run that has a socket. The cost is an
+against the 13.0 s baseline 57a-1 measured — on a run with a *measured* way to
+the socket: streaming clears the budget too, but on a socket path no run has
+exercised. The cost is an
 installation-level, one-time setup (`fugaro init` gains a
 Batch stage) and nothing per repository — so it composes with the
 project-centric goal of "no heavy per-repository setup" rather than fighting
@@ -133,18 +136,22 @@ that boot image) and runs a real container as uid 1000; `options: "--user 0"`
 records; `options: "--privileged"` alone **does not** work, exactly as §2.2
 predicted; and **with `enableImageStreaming` the `options` field is ignored
 altogether** (the container shows `groups=1000` only and cannot connect), so
-streaming and the socket are mutually exclusive in fact and not only in the
-five-subfield list (§1.2).
+**streaming drops the `options` route to the socket** — `--group-add` and
+`--user 0` are both unavailable with it (§1.2). The measurement says nothing
+about the *other* route: a streamed run whose image already carries the
+socket's gid (the fallback below, §2.2) is **unmeasured**, so "streaming cannot
+carry a socket" is not what 57a found and is not claimed here.
 
 **The recommendation, on those numbers: `options: "--group-add <socket gid>"`,
 with the gid read off the VM rather than hard-coded** — it is the least
 privilege of the paths that work, since the uid does not change. The
-fallbacks, in order, are: the gid **baked into the image** (the only one left
-with image streaming on, §1.2, and the one that needs no `options` at all),
-`--user 0` with §2.2's ownership consequence written into SECURITY.md, a
-systemd drop-in on the boot image that relaxes the socket's group, or a tiny
-socket-proxy sidecar. Because the socket needs `options`, **the Docker path
-runs with streaming off — i.e. on the preloaded boot image** (C4, §1.2).
+fallbacks, in order, are: the gid **baked into the image** — the only route
+left with image streaming on, §1.2, needing no `options` at all, and **not
+measured by any run** — then `--user 0` with §2.2's ownership consequence
+written into SECURITY.md, a systemd drop-in on the boot image that relaxes the
+socket's group, or a tiny socket-proxy sidecar. Because the socket needs
+`options`, **the Docker path runs with streaming off — i.e. on the preloaded
+boot image** (C4, §1.2).
 
 **Substrate verdict on this axis.** Cloud Batch and a plain instance are
 equivalent: both give the host daemon and the socket mount. A MIG is
@@ -232,18 +239,22 @@ What the numbers are:
      `volumes`, `enableImageStreaming`" — every other option is disregarded
      (same page). `options` is disregarded too, which is the field §1.1's
      `--group-add`/`--user` socket-permission path needs: **streaming and that
-     path are mutually exclusive**, so a streamed run has exactly one way left to
-     make the socket usable — the group baked into the image (§2.2); there is no
-     `options` to pass and no `--user` to set. **That inference is now a
+     `options` path are mutually exclusive** — which is not the same as saying
+     streaming and a usable socket are — so a streamed run has exactly one way
+     left to reach the socket, the group baked into the image (§2.2); there is
+     no `options` to pass and no `--user` to set. **That inference is now a
      measurement, not an inference**: with `--group-add 412` *and* streaming on,
      the container came up with `groups=1000` only and could not open the
      socket (Check 57a step 6, §7.2) — Batch ignored the `options` field
      entirely. **That is one submission — one variant, one job — and
-     re-confirming it is on §9's list of what to check again.** So streaming is
-     **not** the design's fast-start path: it cannot
-     serve the Docker case, which is the whole of this backend (C4). It stays
-     the right shape for a run that needs no socket, and the design does not
-     build that case.
+     re-confirming it is on §9's list of what to check again.** What it
+     measured is that streaming **drops `options`**; it did **not** measure the
+     other route to the socket, the gid baked into the image, which no run has
+     tried. So streaming is **not** the design's fast-start path: the socket
+     recipe this backend takes — `--group-add` through `options` — is
+     unavailable on it, and the one path it leaves is unmeasured — while a
+     usable socket is what this backend exists for (C4). It stays the right shape for a run that
+     needs no socket, and the design does not build that case.
   3. **The regional registry.** Serving the base from an in-region Artifact
      Registry (the registry-remote-repository work) removes the long haul from
      ghcr.io even when a plain pull happens. This is the cheapest mitigation
@@ -666,9 +677,9 @@ itself.
 | # | Decision | Recommendation | Veto alternative / trade-off |
 |---|---|---|---|
 | **C1** | Substrate | **Cloud Batch**, one job with one task per run, Container-Optimized OS boot disk, `fugaro-base` as a container runnable | **Plain Compute Engine instances** (full control of the startup script and the socket, no Batch container-runnable quirks; but Fugaro implements instance lifecycle, timeouts, log shipping and a reaper). **MIG**: rejected — homogeneous fleets, not per-run ephemeral VMs; you either pay for idle capacity or re-implement Batch. |
-| **C2** | Where Docker comes from | **The VM's host daemon, via the bind-mounted socket**, made usable with **`options: "--group-add <socket gid>"`** (the gid read off the VM) — measured, 57a-6. `--user 0` works too and is the fallback; `--privileged` alone does not. **Image streaming disregards `options`** (measured once — one variant, one job, §7.2/§9), so a streamed run has only the group baked into the image (§2.2) — and the design therefore does not stream a Docker run | **Rootless/Podman inside the container** or **privileged DinD**: same host-level power, more moving parts, doubles storage, needs an unverified `--privileged`/user-namespace path in a Batch runnable. |
+| **C2** | Where Docker comes from | **The VM's host daemon, via the bind-mounted socket**, made usable with **`options: "--group-add <socket gid>"`** (the gid read off the VM) — measured, 57a-6. `--user 0` works too and is the fallback; `--privileged` alone does not. **Image streaming disregards `options`** (measured once — one variant, one job, §7.2/§9), so a streamed run has only the group baked into the image (§2.2), a route no run has tested — and the design therefore does not stream a Docker run | **Rootless/Podman inside the container** or **privileged DinD**: same host-level power, more moving parts, doubles storage, needs an unverified `--privileged`/user-namespace path in a Batch runnable. |
 | **C3** | Isolation unit | **One VM per run; a VM is never reused** | Reuse a pool of warm VMs: rejected — two runs on one VM can read each other's secrets and Docker state, and Docker makes each root on the host. |
-| **C4** | Cold start | **The preloaded boot image** (measured 66 s median, 2026-10-15), with **image streaming rejected for a Docker run** (97 s measured, but it disregards `options` — one submission, §9 — so the socket cannot be made usable) and a plain pull as the floor (145 s measured, 12 s over the 120 s-above-baseline budget) | Image streaming as the primary choice: no custom image to maintain, and it meets the budget at 97 s — but a Batch job with streaming on cannot pass `--group-add` (measured on one submission; §9 has it for re-confirmation), so a Docker run on it has only the group baked into the image. The preload's own costs stand: Batch does not officially support custom images and a Batch image's supported lifetime can end **60 days** after its starting date, so it is an image to rebuild on Google's schedule as well as Fugaro's. **Check 57a steps 2 and 3 measured all three; this recommendation is the measurement's.** |
+| **C4** | Cold start | **The preloaded boot image** (measured 66 s median, 2026-10-15), with **image streaming rejected for a Docker run** (97 s measured, but it disregards `options` — one submission, §9 — so the design's `--group-add` route to the socket is closed, and the baked-in-gid route it leaves is untested) and a plain pull as the floor (145 s measured, 12 s over the 120 s-above-baseline budget) | Image streaming as the primary choice: no custom image to maintain, and it meets the budget at 97 s — but a Batch job with streaming on cannot pass `--group-add` (measured on one submission; §9 has it for re-confirmation), so a Docker run on it has only the group baked into the image — a route no run has tested. The preload's own costs stand: Batch does not officially support custom images and a Batch image's supported lifetime can end **60 days** after its starting date, so it is an image to rebuild on Google's schedule as well as Fugaro's. **Check 57a steps 2 and 3 measured all three; this recommendation is the measurement's.** |
 | **C5** | Spot | **Off by default**, opt-in per profile | Spot by default: up to 91% cheaper, but a preemption kills the stage mid-flight, the notice is **0 s by default** (120 s only if the job asks, and the shutdown after it is best effort, up to 30 s), so checkpointing has no room at all. |
 | **C6** | Service account | **One per run class (profile, account), reused from the project-centric model**; never the default Compute Engine SA | Default Compute Engine SA: project-wide and over-broad. |
 | **C7** | Egress | **No external IP; Cloud NAT** | Ephemeral external IP + deny-all ingress: simpler, cheaper per run, but "no inbound" then rests on a firewall list. |
@@ -835,7 +846,8 @@ choosing the socket. **The ordering 57a measured is therefore: (1) `--group-add
 least privilege, and because the Docker path does not stream (C4) there is
 nothing to drop it; (2) baking the socket's gid into the image and adding the
 container user to it, which is the only path left if a streamed run is ever
-wanted, and needs no `options`; (3) `--user 0`, which works, with the ownership
+wanted, needs no `options`, and is **untested** (no run has streamed with the
+gid baked in); (3) `--user 0`, which works, with the ownership
 consequence written into SECURITY.md; and `--privileged` alone, which does not
 work at all.** Whether the host's `docker` gid can be baked into the image
 without a rebuild on every COS change is still open, and it matters only on
@@ -1360,16 +1372,21 @@ What follows, plainly:
 `serviceAccountUser` scoped to the run-class accounts, and nothing else; if
 the project can carry it, put the launcher in its own account so "who can
 launch" and "who can cancel anything" stay distinguishable; and make the
-reaper a separate account.** **The narrowing Condition works, and the
-recommendation takes it (measured 2026-10-15, Check 57a step 9):** a
+reaper a separate account.** **The narrowing Condition is accepted, and the
+recommendation takes it (2026-10-15, Check 57a step 9):** a
 `roles/batch.jobsEditor` binding with the condition
 `resource.name.startsWith("projects/fugaro-dev/locations/us-east5/jobs/fugaro-")`
 was **accepted and read back as written** — so Task 6 should narrow the
 launcher's job-editing grant to Fugaro-shaped job names rather than leave it
-project-wide. **What that does and does not buy, stated plainly, because
-`resource.name` is a resource-name condition and not a content one:** it
-removes the power to *create, read, cancel or delete a job whose name is not
-Fugaro-shaped*, which is the arbitrary-`gcloud`-caller case; it does **not**
+project-wide. **What was measured is the binding's acceptance, not its reach**:
+57a-9's purpose was to read *what the sandbox's IAM actually allows*, and **no
+request was ever made under the binding**, so no allow and no deny was ever
+observed — the enforcement below is **inferred from `resource.name`'s
+semantics**, and §9 carries it as an open item. **What that does and does not
+buy, stated plainly, because `resource.name` is a resource-name condition and
+not a content one:** it removes the power to *create, read, cancel or delete a
+job whose name is not Fugaro-shaped*, which is the arbitrary-`gcloud`-caller
+case; it does **not**
 constrain what a Fugaro-shaped job may contain — the launcher can still create
 `fugaro-anything` with any image, command, `secretVariables` and
 `serviceAccount` it names — and it does **not** separate this repository's runs
@@ -1793,12 +1810,14 @@ constant, so the check takes the **repository out of `IMG`'s own path** and
 never names one itself.
 `infra.BaseRegistry = "fugaro-base"` (`internal/infra/tfvars.go`:23) is the
 **base repository the installation creates**, and `infra.LegacyRegistry`
-(`:24`) is the older single repository, named `fugaro`, that a pre-0.7.5
+(`:27`) is the older single repository, named `fugaro`, that a pre-0.7.5
 installation has and discovery adopts
 (`internal/infra/discover.go`:394-421) — a different repository name, and not a
 path this check pulls from. The third shape is the
 `fugaro-ghcr/dimipaun/fugaro-base` **remote**-repository path of
-`docs/design/registry-remote-repository.md`: that work is **PR #362, merged**
+`docs/design/registry-remote-repository.md` — `infra.GhcrRegistry =
+"fugaro-ghcr"` (`internal/infra/tfvars.go`:26), the remote (pull-through)
+repository over ghcr.io — and that work is **PR #362, merged**
 (commit `3f6099b`), so it is a path an installation's pin can name today, and
 on the 2026-10-15 run it is the one this installation's `IMG` named. Which
 one `IMG` carries decides nothing in the check beyond the reader grant, which
@@ -2579,7 +2598,9 @@ leaked VM of *this check* is told from a real run's.
    report (the design says `roles/batch.agentReporter` plus
    `roles/logging.logWriter`, §3.2); what the **reaper** needs to delete a job
    and an instance; and whether an IAM Condition narrowing `batch.jobsEditor`
-   to `fugaro-*` job names is **accepted at all** — this step settles it, and
+   to `fugaro-*` job names is **accepted at all** — this step settles that and
+   only that: **no request is made under the binding**, so its *reach* is not
+   what this step measures, and §3.7 marks it as inferred (§9) — and
    **57a-9 measured on 2026-10-15: accepted and read back as written** (§3.7,
    §9). **FACT:** each binding, verbatim, and whether the Condition was
    accepted. **What that buys is narrower than it looks** — the Condition
@@ -2768,29 +2789,42 @@ pre-check state. What is left behind is the interrupted cleanup's, not a
 finding about the check:
 
 - **A VM survived** — the **57a-12 signal job's** VM, `fugaro-chk57-signa-…-hwt4`,
-  still there when the cleanup stopped. It is **not a teardown finding**:
-  57a-8's VM lifetimes on the four exit paths it timed stand, and what left
-  this one behind is the interrupted cleanup — the reauthentication failure —
-  not Batch's teardown.
+  still there when the cleanup stopped. **Why it survived is not recorded**, and
+  the record must not settle it: 57a-8's times were measured on **four other
+  jobs**, so they do not vouch for this one, and since Batch's own teardown is
+  what normally deletes a run's VM (§3.4, §3.7), an interrupted *manual* sweep
+  does not by itself explain a VM that outlived it. Whether this is a Batch
+  teardown miss on the signal job or debris of the interrupted cleanup is an
+  **open teardown question for the re-run** (§9), in the same "the record does
+  not say" form as the two 57a-3a jobs that produced no first log line.
 - **Three APIs are still on.** The run started with
   **`compute.googleapis.com` and `batch.googleapis.com` off** and the check
-  **enabled them** — the run's own setup output says so (`57a-0a:
+  **enabled them** — the run's own setup output records it (`57a-0a:
   compute.googleapis.com enabled by this check`, and the same for Batch; it is
-  §1.7's setup finding, and it is why enabling Compute also created the default
-  network and the default Compute Engine account) — and 57a-0c enabled
+  §1.9's fresh-project finding, and it is why enabling Compute also created the
+  default network and the default Compute Engine account) — and 57a-0c enabled
   **`containerfilesystem.googleapis.com`** under its marker file. At cleanup
   the Restore logged that it **could not disable compute/batch/containerfilesystem
   (left on)** — the same reauthentication failure.
+  **Both of those quoted lines come from the script revision the owner ran,
+  which is not the block committed here** (see the note below): the committed
+  setup block has steps **0, 0b and 0c** — the account and its grant, egress,
+  and streaming's API — and **no step that enables Compute or Batch**, and the
+  committed Restore has only step 7 for the containerfilesystem API.
 
 **The committed Restore block is short of what this run turned on.** It
 disables **only** `containerfilesystem.googleapis.com` (step 7, gated on the
 marker file `57a-0c` writes); it has **no step that disables the Compute or
 Batch APIs**, so those two stay on when the block runs. That is an item for
-the **next revision of the check script**: the Restore has to disable the APIs
-the check enabled, which means the setup block must record *which* it turned on
-(the marker-file pattern step 7 already uses — the setup block as committed here
-has no step that enables them at all, only 0b's egress and 0c's streaming API)
-and the Restore has to read that record instead of assuming. The closing
+the **next revision of the check script**: it has to add the enable step (the
+run's `0a`) with the marker-file pattern step 7 already uses, and to make the
+Restore read that record instead of assuming. Until it does, the two APIs are
+turned off **by hand** (below). Note for whoever implements §8.1's task 10 —
+which is told to write the `## Check 57` section out of §7.2 — the labels
+`57a-0a` and the Restore's "could not disable …" line name things that
+**exist only in the owner's run**, not in this document's blocks; the section
+must be written from the blocks, and the revision is what makes the two agree.
+The closing
 assertion cannot stand in for it: it counts **resources** — jobs, VMs, an
 image, an account, its bindings — deliberately excluding APIs. So closing 57a
 takes **three** things: the Restore block re-run on its own (the owner's
@@ -2821,8 +2855,9 @@ Cloud Run baseline for the plain pull; 97 − 13 = **84 s** for streaming; 66 �
 = **53 s** for the preload. G2's budget is **120 s *above the baseline*** — an
 absolute ceiling of about **133 s** with 57a-1's 13.0 s — so, on the deltas:
 the preload meets it with about **67 s** of headroom (120 − 53), streaming
-meets it with about **36 s** (120 − 84) but is unavailable to a run that needs
-the socket (see below), and the plain pull **fails** it by **12 s** (132 − 120).
+meets it with about **36 s** (120 − 84) but cannot use the `--group-add` socket
+recipe — the one route it leaves, the gid baked into the image, is untested
+(§1.1) — and the plain pull **fails** it by **12 s** (132 − 120).
 
 **Setup findings the design did not know** (each is a Task 6 or Task 7 input,
 §8.1):
@@ -2830,10 +2865,11 @@ the socket (see below), and the plain pull **fails** it by **12 s** (132 − 120
 - **The Compute and Batch APIs are off by default** on the installation, and
   enabling Compute also **creates the default network and the default Compute
   Engine service account** — Task 6's stage has to expect both. The run itself
-  was no exception: it started with **both APIs off** and this check **enabled
-  them** (`57a-0a`), which is why the Restore note above has to carry three
-  leftovers. Provisioning that assumes the APIs are on, and a Restore that
-  assumes nothing enabled them, are both wrong on a fresh project.
+  was no exception: it started with **both APIs off** and the owner's script
+  enabled them (its step `57a-0a`, which **the committed setup block does not
+  have** — see the Restore note above), which is why the Restore has to carry
+  three leftovers. Provisioning that assumes the APIs are on, and a Restore
+  that assumes nothing enabled them, are both wrong on a fresh project.
 - **Batch refuses `noExternalIpAddress: true` unless *both* `network` and
   `subnetwork` are named explicitly** (`projects/<p>/global/networks/default`
   and `projects/<p>/regions/<r>/subnetworks/default`). The job JSON must carry
@@ -2915,14 +2951,24 @@ repeat: **streaming's disregard for `options`** rests on **one variant, one
 job** (§9's re-confirm row), which a later run repeating the combination
 settles.
 
+Three more items this run raised rather than settled: **whether the survived
+signal-job VM was a Batch teardown miss or cleanup debris** (§7.2's Restore
+note; 57a-8's teardown times cover four other jobs, not this one) — §9 lists it
+as an open teardown question; **whether the conditional `batch.jobsEditor`
+binding actually denies what its name prefix excludes** (§3.7) — 57a-9 measured
+acceptance and made no request under it, so its reach is inferred; and **a
+streamed run whose image carries the socket's gid**, the only socket path
+streaming leaves, which no run has tried (§1.1).
+
 **§9 after this run.** The rows this section settles move to §9's measured
 list — the container's uid (with `runAsNonRoot` unset); whether `options`
 carries `--group-add` and whether
 `--privileged` is accepted; the COS image's socket gid; which permission path
 works; the cold-start totals with and without a preload (the split of the 66 s
 is **not** settled); whether Batch
-accepts a custom boot image; teardown on the measured exit paths; the IAM
-Condition; the `resource.labels.job_id` question; and **both halves** of the
+accepts a custom boot image; teardown on the measured exit paths; the
+acceptance of the IAM Condition (its reach is not in this list); the
+`resource.labels.job_id` question; and **both halves** of the
 signal question — the job-level environment that cannot override the injected
 pair and the task-level one that can. The rows it does **not** settle stay in §9's unverified list,
 named individually.
@@ -3412,7 +3458,7 @@ senior reviewer before merge, not just the normal one.
     before it.
     **The next revision of the check script belongs here too**: the setup block
     must record which APIs it enables — Compute and Batch, which start **off**
-    on a fresh project (§1.7), using the marker-file pattern 0c already applies
+    on a fresh project (§1.9), using the marker-file pattern 0c already applies
     to `containerfilesystem.googleapis.com` — and the Restore must disable
     those, because the block committed here disables only the
     containerfilesystem one (§7.2, "Restore status"). Without that a 57b pass
@@ -3452,7 +3498,7 @@ reasoning lives; this table is the checklist.
 | C19 | The preloaded image | **Yes — C4's measurement says so (66 s against 97 s streamed and 145 s plain)**: a script in `fugaro init`'s Batch stage, one image per base version, **rebuilt on a schedule** (the 60-day supported-lifetime caveat), with the base family read from Google's `batch-custom-image` project and the AR reader granted on the repository the pin names | Rely on image streaming alone (no image build, but depends on Artifact Registry + containerd, and it cannot carry the socket) — the alternative C4's measurement rejected, and 57a-3b is the build that decided it |
 | C20 | Phase order | Independent of the project-centric phases; profiles (§4.3) adopted when phase 3 lands | Wait for phase 3 (cleaner, but delays a capability the owner needs) |
 | C21 | The service account's granularity | Keep the (`profile`, `account`) account and accept project-centric D4's cross-repository loss **unchanged** on the VM backend too (§3.1) | A per-repository account, expressible on Batch because every job names its own `allocationPolicy.serviceAccount`: it buys back 0.7.0's bucket and secret boundary for the repositories that opt in, at the per-repository weight project-centric removed, and it makes "which backend" a decision with a security consequence |
-| C22 | Launcher and reaper IAM | The launcher gets `batch.jobsEditor` **narrowed by an IAM Condition to Fugaro-shaped job names** (measured to be accepted and returned as written, 57a-9) plus `serviceAccountUser` on the run-class accounts and nothing else, in its own account if the project can carry one; the reaper gets a **separate** account with project-wide `batch.jobs.delete` and `compute.instances.delete` (§3.7) | One account for everything (simpler to provision, and it makes the reaper's destructive power ambient — rejected); a project-wide `batch.jobsEditor` for the launcher (simplest to provision, and it lets the launcher edit any job in the project — rejected now that the Condition is known to work) |
+| C22 | Launcher and reaper IAM | The launcher gets `batch.jobsEditor` **narrowed by an IAM Condition to Fugaro-shaped job names** (measured to be accepted and returned as written, 57a-9) plus `serviceAccountUser` on the run-class accounts and nothing else, in its own account if the project can carry one; the reaper gets a **separate** account with project-wide `batch.jobs.delete` and `compute.instances.delete` (§3.7) | One account for everything (simpler to provision, and it makes the reaper's destructive power ambient — rejected); a project-wide `batch.jobsEditor` for the launcher (simplest to provision, and it lets the launcher edit any job in the project — rejected now that the Condition is known to be accepted, 57a-9; its reach is inferred, §3.7/§9) |
 
 ## 9. Verified and unverified
 
@@ -3599,7 +3645,8 @@ cold-start medians, submit to first log line
 in this list); that Batch accepts a custom boot image; the
 teardown times (25/26/3/26 s) on `SUCCEEDED`, `FAILED`, `CANCELLED` and a
 crashed runner; that a conditional `batch.jobsEditor` binding is accepted and
-returned as written; that `labels.job_uid` equals the job's uid and
+returned as written — **its acceptance only: no request was made under it, so
+what it enforces stays inferred (§3.7, §9)**; that `labels.job_uid` equals the job's uid and
 `resource.labels.job_id` carries the uid-form id; that a job's own labels reach
 its task-log entries; that the job ran as `allocationPolicy.serviceAccount` and
 not the default Compute Engine account; and that the injected
@@ -3661,6 +3708,13 @@ not run at all are named together in §7.2 ("Still unmeasured after 57a"):
   26 s after a crashed runner's job** — so Batch's teardown is the main path
   and the reaper is a safety net (§3.4). `DELETION_IN_PROGRESS` itself was not
   driven directly (it is the reaper's state), which is the one corner left.
+  **Open from the run's end: why the 57a-12 signal job's VM
+  (`fugaro-chk57-signa-…-hwt4`) outlived the interrupted cleanup** — the four
+  times above were measured on other jobs, so they do not cover it, and since
+  Batch's own teardown is what normally deletes a run's VM, an unfinished
+  manual sweep does not by itself explain it. Whether it is a teardown miss on
+  that job or debris of the interrupted Restore is what the re-run answers
+  (§3.4, §7.2).
 - **[MEASURED ONCE — RE-CONFIRM, 57a-6]** Whether `enableImageStreaming` really
   makes Batch ignore the runnable's `options` field — the fact **C2 and C4 now
   rest on**. **One submission measured it**: the streaming-plus-`--group-add`
@@ -3670,6 +3724,13 @@ not run at all are named together in §7.2 ("Still unmeasured after 57a"):
   Repeating that combination in a later run is what re-confirms it before the
   backend depends on it; it is the one measurement in this list whose
   *repetition*, not its first result, is outstanding.
+- **Open: whether a streamed run can have a usable socket at all.** 57a
+  measured that streaming drops `options`, which closes the `--group-add` and
+  `--user 0` routes (§1.1) — it did **not** measure the route that needs no
+  `options`: an image with the socket's `docker` gid already on its container
+  user (§1.1(2), §2.2). No run has tried it, so "streaming cannot carry a
+  socket" is not a measured claim and no part of this design asserts it; a
+  streamed submission with the gid baked in is what settles it.
 - **[PARTLY ANSWERED, 57a-3a]** Whether image streaming works for a base image served
   through an Artifact Registry **remote** repository: on this installation the
   pin `IMG` named was the remote repository's path (`fugaro-ghcr`), and
@@ -3687,11 +3748,17 @@ not run at all are named together in §7.2 ("Still unmeasured after 57a"):
   is a Fugaro-side reaper action; and how long a job really sits in `QUEUED` —
   Check 57a step 11, **not run** (its machine type is discovered from the
   region rather than named).
-- **[ANSWERED, 57a-9]** Whether an IAM Condition narrowing `batch.jobsEditor`
-  to Fugaro-shaped job names is accepted. **Measured: yes** — the condition
+- **[PARTLY ANSWERED, 57a-9]** Whether an IAM Condition narrowing
+  `batch.jobsEditor` to Fugaro-shaped job names **is accepted, and whether it
+  enforces**. **Accepted: measured yes** — the condition
   `resource.name.startsWith("projects/fugaro-dev/locations/us-east5/jobs/fugaro-")`
   was accepted and returned as written, so the design takes the narrowing
-  (§3.7, C22).
+  (§3.7, C22). **Enforcement: not measured.** No request was ever made under
+  the binding, so neither an allow inside the prefix nor a deny outside it has
+  been observed; what §3.7 states about its reach is inferred from
+  `resource.name`'s semantics, and a check that acts as the bound account
+  (create/cancel outside the prefix → denied; inside → allowed) is what
+  settles it.
 - **[ANSWERED, 57a-12]** Whether a job's own environment can **override** the
   injected `BATCH_TASK_INDEX`/`BATCH_TASK_COUNT` (a signal the job can set is
   only as good as the launch path). **Measured, both places:** the **job-level**

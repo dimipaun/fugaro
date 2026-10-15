@@ -292,30 +292,37 @@ what the design now recommends are in the design's §7.2, under "RESULTS of the
 | 57a-4/6, the socket | no `options`: **refused**; `--group-add 412`: **works**; `--user 0`: **works**; `--privileged`: **does not** (uid stays 1000); `--group-add` **with streaming**: the group is **not applied**, so streaming makes Batch ignore `options` — **one variant, one job**, so it is the one 57a result to re-confirm (the design's §9) |
 | 57a-5, the cost of one run | a 143 s `e2-standard-4` window at 0.13402284 USD/h ≈ **$0.0053** (disk and NAT outside it; the bill was not read) |
 | 57a-8, teardown | VM gone 25 s after `SUCCEEDED`, 26 s after `FAILED`, 3 s after `jobs.cancel`, 26 s after a crashed runner |
-| 57a-9, the IAM Condition | a conditional `roles/batch.jobsEditor` with `resource.name.startsWith("projects/fugaro-dev/locations/us-east5/jobs/fugaro-")` was **accepted and read back as written** |
+| 57a-9, the IAM Condition | a conditional `roles/batch.jobsEditor` with `resource.name.startsWith("projects/fugaro-dev/locations/us-east5/jobs/fugaro-")` was **accepted and read back as written** — acceptance only: **no request was made under the binding**, so what it denies is inferred, not measured (design §3.7, §9) |
 | 57a-10, the log entry | `labels.job_uid` **equals the job's uid**; `resource.labels.job_id` holds the **uid-form id, not the job name**; the job's own `fugaro_chk=57` **is on the entries**; the job ran as the dedicated service account, not the default Compute account |
 | 57a-12, the signal | job-level (`taskSpec.environment`, both vars set to `99`): the container saw the injected **`IDX=0 COUNT=1`**, so it did **not** override. Task-level (`taskEnvironments[0].variables`, both `99`): the container saw **`IDX=99`** with `COUNT=1` — the task environment **does** reach the container |
 
 **Restore status — NOT FINISHED (owner note, 2026-10-15; the owner updates
 this).** The run's Restore did not complete: `gcloud` reauthentication failed
 part-way through the cleanup, so **a VM survived** — the 57a-12 signal job's
-VM, `fugaro-chk57-signa-…-hwt4`, still there when the cleanup stopped (not a
-teardown finding: what left it behind is the reauthentication failure, and
-57a-8's times stand). The run started with
-**`compute.googleapis.com` and `batch.googleapis.com` off** and the check
-**enabled them** (`57a-0a`, and the same for Batch — the design's §1.7 setup
-finding), and 57a-0c enabled `containerfilesystem.googleapis.com` under its
-marker file; at cleanup the Restore logged it **could not disable
-compute/batch/containerfilesystem (left on)**, the same reauth failure. The
-committed Restore block disables **only** `containerfilesystem.googleapis.com`
-(step 7) and has **no step for the Compute or Batch APIs** — an item for the
-next revision of the check script (the setup block must record which APIs it
-turned on, as step 7's marker file does, and the Restore must read that record)
-— so closing 57a takes: the restore re-run on its own until its assertion reads
-`0` on every line, the survived VM deleted, and those APIs switched back off
-**by hand**, outside that assertion (`gcloud services list --enabled
---project=fugaro-dev`, the only way to see them). The design's §7.2, "Restore
-status", carries the full note.
+VM, `fugaro-chk57-signa-…-hwt4`, still there when the cleanup stopped. **Why it
+survived is not recorded** — 57a-8's times were measured on four other jobs and
+Batch's own teardown is what normally deletes a run's VM (design §3.4, §3.7) —
+so it is an **open teardown question for the re-run**, not a settled finding.
+The run started with **`compute.googleapis.com` and `batch.googleapis.com`
+off** and the check **enabled them**, and 57a-0c enabled
+`containerfilesystem.googleapis.com` under its marker file; at cleanup the
+Restore logged it **could not disable compute/batch/containerfilesystem (left
+on)**, the same reauth failure. **Those two lines are the owner's run output,
+not this file's blocks**: the committed setup block has steps 0, 0b and 0c and
+no enable step, and the committed Restore has only step 7 — the run's script
+numbered the enable step `57a-0a`, and the revision that adds it belongs to the
+design's §8.1 task 10 (design §7.2, "Restore status", carries the full note).
+The fresh-project finding behind it — the APIs off by default, and Compute's
+enable creating the default network and service account — is the design's
+**§1.9**. The committed Restore block disables **only**
+`containerfilesystem.googleapis.com` (step 7) and has **no step for the Compute
+or Batch APIs** — an item for that revision (the setup block must record which
+APIs it turned on, as step 7's marker file does, and the Restore must read that
+record) — so closing 57a takes: the restore re-run on its own until its
+assertion reads `0` on every line, the survived VM deleted, the teardown
+question the re-run answers, and those APIs switched back off **by hand**,
+outside that assertion (`gcloud services list --enabled --project=fugaro-dev`,
+the only way to see them).
 
 **Not run: 57b (all six steps), 57a step 7 (Spot preemption — a separate
 script is being written), 57a step 11 (quota/queueing), the billed amount,
