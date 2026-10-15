@@ -31,9 +31,17 @@ func (b *Backend) JobPath(slug, workflow string) string {
 	return b.location() + "/jobs/" + JobName(slug, workflow)
 }
 
-// nameRE is what every part of an execution name the backend follows must
-// look like: project IDs and numbers, regions, job and execution names.
+// nameRE is what every part of a name the backend follows must look like:
+// project IDs and numbers, regions, job and execution names. The execution
+// name's own parts are checked by the codec
+// (backend.CloudRunCodec().ValidateRun); this one covers the job names the
+// backend builds and reads itself.
 var nameRE = regexp.MustCompile(`^[a-z0-9-]+$`)
+
+// Codec is Cloud Run's name codec (design compute-backend.md §2.5): the
+// shape of an execution name, and the signal (CLOUD_RUN_EXECUTION) that
+// says a process is one of this backend's executions.
+func (b *Backend) Codec() backend.Codec { return backend.CloudRunCodec() }
 
 // canonical rebuilds an execution name with the backend's project ID, so a
 // project number the API sends never reaches a caller: the CLI and the
@@ -53,34 +61,10 @@ func (b *Backend) canonical(name string) (backend.ExecID, error) {
 	return id, nil
 }
 
-// parseInRegion parses name, and refuses it unless it is in region and
-// every part is [a-z0-9-].
+// parseInRegion parses name through the backend's codec, and refuses it
+// unless it is in region and every part is [a-z0-9-].
 func parseInRegion(name, region string) (backend.ExecID, error) {
-	id, ok := backend.ParseExecution(name)
-	if !ok {
-		return backend.ExecID{}, fmt.Errorf("%q is not a Cloud Run execution name (projects/<p>/locations/<r>/jobs/<j>/executions/<e>)", name)
-	}
-	for _, part := range []string{id.GCPProject, id.Region, id.Job, id.Name} {
-		if !nameRE.MatchString(part) {
-			return backend.ExecID{}, fmt.Errorf("execution name %q has a part that is not [a-z0-9-]", name)
-		}
-	}
-	if id.Region != region {
-		return backend.ExecID{}, &WrongRegionError{Name: name, Region: id.Region, Want: region}
-	}
-	return id, nil
-}
-
-// WrongRegionError is an execution name outside the backend's region.
-// Region has passed the [a-z0-9-] check, so it is safe to quote.
-type WrongRegionError struct {
-	Name   string // the execution
-	Region string // the execution's region
-	Want   string // the backend's region
-}
-
-func (e *WrongRegionError) Error() string {
-	return fmt.Sprintf("execution %s is in region %s, not %s", e.Name, e.Region, e.Want)
+	return backend.CloudRunCodec().ValidateRun(name, region, "")
 }
 
 // CheckRunExecution refuses name, an execution name read from a run's
@@ -90,14 +74,8 @@ func (e *WrongRegionError) Error() string {
 // a run could point the operator's cancel or logs at any job in the
 // project.
 func CheckRunExecution(name, region, slug, workflow string) error {
-	id, err := parseInRegion(name, region)
-	if err != nil {
-		return err
-	}
-	if want := JobName(slug, workflow); id.Job != want {
-		return fmt.Errorf("execution %s belongs to job %s, not the run's job %s", name, id.Job, want)
-	}
-	return nil
+	_, err := backend.CloudRunCodec().ValidateRun(name, region, JobName(slug, workflow))
+	return err
 }
 
 // Launch starts one execution of the workflow's job with FUGARO_RUN set.
@@ -219,7 +197,7 @@ func (b *Backend) list(ctx context.Context, parent string, onlyFugaro bool, f ba
 					return out, nil
 				}
 			}
-			if id, ok := backend.ParseExecution(e.Name); onlyFugaro && (!ok || !strings.HasPrefix(id.Job, "fugaro-")) {
+			if id, ok := b.Codec().Parse(e.Name); onlyFugaro && (!ok || !strings.HasPrefix(id.Job, "fugaro-")) {
 				continue
 			}
 			x, err := b.toExecution(e)

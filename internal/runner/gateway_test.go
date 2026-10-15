@@ -941,9 +941,10 @@ func TestManagedSettingsWrittenBeforeFirstStage(t *testing.T) {
 	}
 }
 
-func TestTestKnobIgnoredOnCloudRun(t *testing.T) {
+func TestTestKnobIgnoredInCloud(t *testing.T) {
 	g := newGWFiles(t, gwConfig(t, ""), "observe", "", map[string]string{".claude/settings.json": rerouting})
 	g.deps.GatewayUpstream = "" // as a local run against the real API would be
+	g.deps.InCloud = true       // the CLI's resolved platform for a Cloud Run execution
 	g.deps.Env = append(g.deps.Env, "FUGARO_TEST_ALLOW_ROUTING_SETTINGS=1", "CLOUD_RUN_EXECUTION=exec-1")
 	rec, err := g.run(t)
 	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "ANTHROPIC_BASE_URL") {

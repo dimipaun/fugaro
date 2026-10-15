@@ -409,7 +409,7 @@ func TestRetryBackfillsLaunchFromRecord(t *testing.T) {
 	// wrote result.json, with the name exactly as fugaro exec builds it from
 	// Cloud Run's environment.
 	job := gcp.JobName(appSlug, "web")
-	recorded, err := backend.ExecutionFromEnv(func(k string) string {
+	recorded, err := backend.CloudRunCodec().FromEnv(func(k string) string {
 		return map[string]string{"CLOUD_RUN_EXECUTION": job + "-x7k2p", "CLOUD_RUN_JOB": job, "FUGARO_GCP_PROJECT": "proj-1234", "FUGARO_PROJECT": "aurora", "FUGARO_REGION": "us-east5"}[k]
 	})
 	if err != nil {

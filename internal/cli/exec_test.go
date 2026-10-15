@@ -157,23 +157,36 @@ func TestExecRefusesHTTP2Debug(t *testing.T) {
 
 // On Cloud Run the runner prices compute with FUGARO_COMPUTE_PRICES when it
 // is set, so its PR report agrees with ls; a malformed value is a warning
-// and the list price. Local runs estimate no compute.
-func TestExecUsesPriceEnv(t *testing.T) {
+// and the list price.
+//
+// execPrices asks the platform, not FUGARO_BACKEND (design
+// compute-backend.md §5.2, site 3): the variable is the launcher's record
+// of the backend it chose, so a local run whose shell exports it acquires
+// no prices, and no other value can take a cloud run's away.
+func TestExecPricesAsksThePlatform(t *testing.T) {
 	list := gcp.ListPrices("us-east5")
+	cloud := backend.DetectPlatform(func(k string) string {
+		return map[string]string{"CLOUD_RUN_EXECUTION": "x"}[k]
+	})
 	for name, tc := range map[string]struct {
-		env  map[string]string
-		want *backend.Prices
-		warn bool
+		platform backend.Platform
+		env      map[string]string
+		want     *backend.Prices
+		warn     bool
 	}{
-		"override": {map[string]string{"FUGARO_BACKEND": backend.CloudRun, "FUGARO_REGION": "us-east5", "FUGARO_COMPUTE_PRICES": "0.00001,0.000001"},
+		"override": {cloud, map[string]string{"FUGARO_REGION": "us-east5", "FUGARO_COMPUTE_PRICES": "0.00001,0.000001"},
 			&backend.Prices{VCPUSecondUSD: 0.00001, GiBSecondUSD: 0.000001, Source: "local override"}, false},
-		"unset":     {map[string]string{"FUGARO_BACKEND": backend.CloudRun, "FUGARO_REGION": "us-east5"}, &list, false},
-		"malformed": {map[string]string{"FUGARO_BACKEND": backend.CloudRun, "FUGARO_REGION": "us-east5", "FUGARO_COMPUTE_PRICES": "cheap"}, &list, true},
-		"local":     {map[string]string{"FUGARO_COMPUTE_PRICES": "0.00001,0.000001"}, nil, false},
+		"unset":     {cloud, map[string]string{"FUGARO_REGION": "us-east5"}, &list, false},
+		"malformed": {cloud, map[string]string{"FUGARO_REGION": "us-east5", "FUGARO_COMPUTE_PRICES": "cheap"}, &list, true},
+		// A local invocation has no compute to estimate, whatever the
+		// owner's shell holds; a platform no backend claims has no price
+		// table either.
+		"local":     {backend.LocalPlatform(), map[string]string{"FUGARO_BACKEND": backend.CloudRun, "FUGARO_REGION": "us-east5", "FUGARO_COMPUTE_PRICES": "0.00001,0.000001"}, nil, false},
+		"unclaimed": {backend.DetectPlatform(func(string) string { return "" }), map[string]string{"FUGARO_BACKEND": backend.CloudRun, "FUGARO_REGION": "us-east5"}, nil, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var warned []string
-			got := execPrices(func(k string) string { return tc.env[k] }, func(m string) { warned = append(warned, m) })
+			got := execPrices(tc.platform, func(k string) string { return tc.env[k] }, func(m string) { warned = append(warned, m) })
 			if (got == nil) != (tc.want == nil) || got != nil && *got != *tc.want {
 				t.Fatalf("prices = %+v, want %+v", got, tc.want)
 			}
@@ -364,10 +377,15 @@ func localExecCfg(t *testing.T, edit func(string) string, env map[string]string,
 	}
 	t.Cleanup(func() { b.Close() })
 	store := runstore.Open(b, "acme-app", runID)
-	if err := store.WriteTask(context.Background(), &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "x"}); err != nil {
+	// `--task-file` is the CLI's one local invocation (design
+	// compute-backend.md §2.5): a local run is named by the invocation, so
+	// this is what makes the checks below treat the process as local.
+	taskFile := filepath.Join(t.TempDir(), "task.json")
+	spec := `{"version": 1, "run_id": "` + runID + `", "repo": "acme/app", "ref": "main", "task": "x"}`
+	if err := os.WriteFile(taskFile, []byte(spec), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	args := append([]string{"exec", "--bucket", "file://" + dir, "--run", "acme-app/" + runID, "--remote", remote,
+	args := append([]string{"exec", "--bucket", "file://" + dir, "--task-file", taskFile, "--remote", remote,
 		"--provider", "fake", "--provider-state", filepath.Join(t.TempDir(), "provider.json"),
 		"--workdir", filepath.Join(t.TempDir(), "work"), "--state-dir", filepath.Join(t.TempDir(), "state")}, flags...)
 	out, _, err := execute(t, args...)

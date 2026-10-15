@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"errors"
 	"math"
 	"strings"
 	"testing"
@@ -51,34 +52,152 @@ func TestParseExecution(t *testing.T) {
 	}
 }
 
+// The Cloud Run codec spells an execution exactly as the package always
+// has: the stored names in result.json and launch.json, and every name
+// CompareExecution is read against, must not change (design
+// compute-backend.md §8.1, Task 1).
+func TestCloudRunCodecNames(t *testing.T) {
+	const name = "projects/my-proj/locations/us-east5/jobs/fugaro-acme-app-web/executions/fugaro-acme-app-web-x7k2p"
+	c := CloudRunCodec()
+	if c.Backend() != CloudRun {
+		t.Fatalf("Backend = %q", c.Backend())
+	}
+	id, ok := c.Parse(name)
+	if !ok {
+		t.Fatalf("Parse(%q) failed", name)
+	}
+	if got := c.Format(id); got != name {
+		t.Fatalf("Format = %q, want %q", got, name)
+	}
+	// A project number the API sends names the same execution: the project
+	// is not part of the key, which is what lets the backend rewrite it to
+	// its own project ID (gcp's canonical).
+	num, ok := c.Parse("projects/123456789/locations/us-east5/jobs/fugaro-acme-app-web/executions/fugaro-acme-app-web-x7k2p")
+	if !ok || num.Key() != id.Key() || num.GCPProject != "123456789" {
+		t.Fatalf("a project number changed the identity: %+v, %v", num, ok)
+	}
+}
+
+// ValidateRun is the job-binding check the CLI's checkExecution relies on:
+// a name the run's own service account wrote must be an execution of the
+// run's own job, in the backend's region, and spelled [a-z0-9-].
+func TestCloudRunCodecValidateRun(t *testing.T) {
+	const job = "fugaro-acme-app-web"
+	in := "projects/my-proj/locations/us-east5/jobs/" + job + "/executions/" + job + "-x7k2p"
+	c := CloudRunCodec()
+	if id, err := c.ValidateRun(in, "us-east5", job); err != nil || id.Job != job {
+		t.Fatalf("ValidateRun = %+v, %v", id, err)
+	}
+	// An empty job binds no job: parseInRegion only needs a well-formed
+	// name in region.
+	if _, err := c.ValidateRun(in, "us-east5", ""); err != nil {
+		t.Fatalf("an unbound name was refused: %v", err)
+	}
+	other := "projects/my-proj/locations/us-east5/jobs/fugaro-other-web/executions/fugaro-other-web-x7k2p"
+	if _, err := c.ValidateRun(other, "us-east5", job); err == nil || !strings.Contains(err.Error(), "belongs to job") {
+		t.Fatalf("another job's execution: %v", err)
+	}
+	var wr *WrongRegionError
+	if _, err := c.ValidateRun(in, "europe-west1", job); !errors.As(err, &wr) || wr.Region != "us-east5" || wr.Want != "europe-west1" {
+		t.Fatalf("another region: %v", err)
+	}
+	for _, bad := range []string{
+		"projects/my-proj/locations/us-east5/jobs/" + job,                                   // a Batch-shaped name, not an execution
+		"projects/my-proj/locations/us-east5/jobs/" + job + "/executions/" + job + "-X7K2P", // not [a-z0-9-]
+		"projects/my-proj/locations/us-east5/jobs/" + job + "/executions/../../etc/passwd",
+	} {
+		if _, err := c.ValidateRun(bad, "us-east5", job); err == nil {
+			t.Errorf("ValidateRun(%q) accepted", bad)
+		}
+	}
+}
+
 func TestExecutionFromEnvReadsGCPProject(t *testing.T) {
+	c := CloudRunCodec()
 	env := map[string]string{"CLOUD_RUN_EXECUTION": "fugaro-acme-app-web-x7k2p", "CLOUD_RUN_JOB": "fugaro-acme-app-web", "FUGARO_GCP_PROJECT": "my-proj", "FUGARO_PROJECT": "aurora", "FUGARO_REGION": "us-east5"}
-	name, err := ExecutionFromEnv(func(k string) string { return env[k] })
+	name, err := c.FromEnv(func(k string) string { return env[k] })
 	if err != nil || name != "projects/my-proj/locations/us-east5/jobs/fugaro-acme-app-web/executions/fugaro-acme-app-web-x7k2p" {
 		t.Fatalf("name = %q, %v", name, err)
 	}
 	// The project name is never the GCP ID, and the GCP ID is read only
 	// from FUGARO_GCP_PROJECT.
 	delete(env, "FUGARO_GCP_PROJECT")
-	if _, err := ExecutionFromEnv(func(k string) string { return env[k] }); err == nil || !strings.Contains(err.Error(), "FUGARO_GCP_PROJECT") {
+	if _, err := c.FromEnv(func(k string) string { return env[k] }); err == nil || !strings.Contains(err.Error(), "FUGARO_GCP_PROJECT") {
 		t.Fatalf("a missing FUGARO_GCP_PROJECT on Cloud Run: %v", err)
 	}
-	if name, err := ExecutionFromEnv(func(string) string { return "" }); name != "" || err != nil {
+	if name, err := c.FromEnv(func(string) string { return "" }); name != "" || err != nil {
 		t.Fatalf("outside Cloud Run = %q, %v", name, err)
 	}
 }
 
-func TestOnCloudRunOneSignal(t *testing.T) {
+// The platform signal is the platform's own, and the "in the cloud" answer
+// fails closed (design compute-backend.md §2.5, C12).
+func TestPlatformSignalAndFailClosed(t *testing.T) {
 	get := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
-	if !OnCloudRun(get(map[string]string{"CLOUD_RUN_EXECUTION": "x"})) {
-		t.Error("CLOUD_RUN_EXECUTION is the signal")
+	// Cloud Run claims a process from CLOUD_RUN_EXECUTION alone.
+	onRun := DetectPlatform(get(map[string]string{"CLOUD_RUN_EXECUTION": "x"}))
+	if onRun.Backend() != CloudRun || !onRun.InCloud() || onRun.Local() {
+		t.Fatalf("a Cloud Run execution: %+v", onRun)
 	}
-	// Neither the job name nor the Fugaro variables say it.
-	if OnCloudRun(get(map[string]string{"CLOUD_RUN_JOB": "j", "FUGARO_BACKEND": "cloud-run", "FUGARO_GCP_PROJECT": "p"})) {
-		t.Error("only CLOUD_RUN_EXECUTION counts")
+	// Neither the job name nor a Fugaro variable is a platform signal. The
+	// answer is still "in the cloud", because everything that is not the
+	// local invocation is.
+	for _, env := range []map[string]string{
+		nil,
+		{"CLOUD_RUN_JOB": "j"},
+		{"FUGARO_BACKEND": CloudRun, "FUGARO_GCP_PROJECT": "p", "FUGARO_REGION": "us-east5", "FUGARO_RUN": "acme-app/20260926-221530-abcd"},
+		// A Batch task's own markers (design §2.5): the codec that answers
+		// them is Task 2's, so today the process is unclaimed -- and still
+		// in the cloud.
+		{"BATCH_TASK_INDEX": "0", "BATCH_TASK_COUNT": "1"},
+	} {
+		p := DetectPlatform(get(env))
+		if p.Backend() != "" || !p.InCloud() || p.Local() {
+			t.Errorf("%v: %+v", env, p)
+		}
+		if name, err := p.ExecutionFromEnv(get(env)); name != "" || err != nil {
+			t.Errorf("%v: an unclaimed process named itself %q, %v", env, name, err)
+		}
 	}
-	if OnCloudRun(get(nil)) {
-		t.Error("an empty environment is not Cloud Run")
+}
+
+// Local mode is the invocation's answer, and it is the only thing that is
+// not in the cloud.
+func TestLocalPlatform(t *testing.T) {
+	p := LocalPlatform()
+	if !p.Local() || p.InCloud() || p.Backend() != Local {
+		t.Fatalf("a local invocation: %+v", p)
+	}
+	// No environment can make a local invocation claim a platform, and a
+	// local run has no execution name whatever the job's variables say.
+	env := map[string]string{"CLOUD_RUN_EXECUTION": "x", "FUGARO_BACKEND": CloudRun, "BATCH_TASK_INDEX": "0"}
+	if name, err := p.ExecutionFromEnv(func(k string) string { return env[k] }); name != "" || err != nil {
+		t.Fatalf("a local run named itself %q, %v", name, err)
+	}
+	if _, err := p.Codec().ValidateRun("projects/p/locations/r/jobs/j/executions/e", "r", "j"); err == nil {
+		t.Fatal("the local codec accepted a run name")
+	}
+	if _, ok := p.Codec().Parse("projects/p/locations/r/jobs/j/executions/e"); ok {
+		t.Fatal("the local codec parsed a Cloud Run name")
+	}
+	if p.Codec().On(func(string) string { return "anything" }) {
+		t.Fatal("the local codec claimed a process")
+	}
+}
+
+// OnPlatform is the cosmetic question (the skill and update nudges): it
+// answers from the platform's own signal, and does not fail closed, so a
+// local `fugaro ls` keeps nudging.
+func TestOnPlatform(t *testing.T) {
+	get := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	if !OnPlatform(get(map[string]string{"CLOUD_RUN_EXECUTION": "x"})) {
+		t.Error("CLOUD_RUN_EXECUTION is the Cloud Run signal")
+	}
+	if OnPlatform(get(map[string]string{"CLOUD_RUN_JOB": "j", "FUGARO_BACKEND": CloudRun, "FUGARO_GCP_PROJECT": "p"})) {
+		t.Error("only a platform's own signal counts")
+	}
+	if OnPlatform(get(nil)) {
+		t.Error("an empty environment is not a platform's")
 	}
 }
 

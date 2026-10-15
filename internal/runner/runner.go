@@ -89,9 +89,13 @@ type Deps struct {
 	// Project is FUGARO_PROJECT: the Fugaro project this job belongs to.
 	// When set, fugaro.yaml on the base branch must name it.
 	Project string
-	// RequireProject (backend.OnCloudRun) makes a missing Project fail
-	// bootstrap; a local run without one skips the check.
-	RequireProject bool
+	// InCloud is where this process runs, as the CLI resolved it from the
+	// invocation and the platforms' own signals (backend.Platform.InCloud,
+	// design compute-backend.md §2.5). It makes a missing Project fail
+	// bootstrap and refuses the routing-refusal escape knob; a local run
+	// skips both. It fails closed: a platform no backend claims is in the
+	// cloud.
+	InCloud bool
 	// ManagedSettingsPath is where the managed Claude Code settings are
 	// written before each stage; empty means agent.ManagedSettingsPath.
 	ManagedSettingsPath string

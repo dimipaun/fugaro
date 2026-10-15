@@ -127,9 +127,9 @@ func TestProjectCheckFollowUpUsesBase(t *testing.T) {
 	}
 }
 
-func TestProjectCheckMissingEnvOnCloudRun(t *testing.T) {
+func TestProjectCheckMissingEnvInCloud(t *testing.T) {
 	h := projectHarness(t, "aurora")
-	h.deps.Project, h.deps.RequireProject = "", true
+	h.deps.Project, h.deps.InCloud = "", true
 	refused(t, h, "job environment lacks FUGARO_PROJECT", "fugaro init --repo")
 }
 
