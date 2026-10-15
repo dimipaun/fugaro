@@ -426,17 +426,18 @@ func TestDecodeRequireZDRIsDefaultTrue(t *testing.T) {
 // model listed twice is a mistake that would otherwise be enforced silently.
 func TestDecodeRefusesABadAllowedModel(t *testing.T) {
 	for name, list := range map[string]string{
-		"an alias":           `["sonnet"]`,
-		"the wildcard":       `["claude-*"]`,
-		"a -latest pointer":  `["deepseek/deepseek-v4-flash-latest"]`,
-		"a :variant":         `["deepseek/deepseek-v4-flash:free"]`,
-		"an anthropic alias": `["anthropic/claude-sonnet-5.5"]`,
-		"empty entry":        `[""]`,
-		"whitespace":         `["claude sonnet"]`,
-		"listed twice":       `["claude-sonnet-5-5", "claude-sonnet-5-5"]`,
-		"too long":           `["` + strings.Repeat("m", 101) + `"]`,
-		"null entry":         `[null]`,
-		"a number entry":     `[5]`,
+		"an alias":                 `["sonnet"]`,
+		"the wildcard":             `["claude-*"]`,
+		"a -latest pointer":        `["deepseek/deepseek-v4-flash-latest"]`,
+		"a :variant":               `["deepseek/deepseek-v4-flash:free"]`,
+		"an anthropic wildcard":    `["anthropic/*"]`,
+		"an anthropic claude glob": `["anthropic/claude-*"]`,
+		"empty entry":              `[""]`,
+		"whitespace":               `["claude sonnet"]`,
+		"listed twice":             `["claude-sonnet-5-5", "claude-sonnet-5-5"]`,
+		"too long":                 `["` + strings.Repeat("m", 101) + `"]`,
+		"null entry":               `[null]`,
+		"a number entry":           `[5]`,
 	} {
 		p, found, err := Decode([]byte(`{"version": 1, "budget": {"mode": "enforce", "allowed_models": ` + list + `}}`))
 		if err == nil || p != nil || !found {
@@ -446,6 +447,12 @@ func TestDecodeRefusesABadAllowedModel(t *testing.T) {
 	p, _, err := Decode([]byte(`{"version": 1, "budget": {"mode": "enforce", "allowed_models": ["claude-sonnet-5-5", "deepseek/deepseek-v4.1-flash"]}}`))
 	if err != nil {
 		t.Fatalf("two explicit model IDs must be valid: %v", err)
+	}
+	// An explicit anthropic/<id> is the claim form (P4: a price or an allowed
+	// model is not a permission): it is ACCEPTED where it is written and
+	// enables nothing; only the wildcard and glob spellings above are refused.
+	if _, _, err := Decode([]byte(`{"version": 1, "budget": {"mode": "enforce", "allowed_models": ["anthropic/claude-sonnet-5.5"]}}`)); err != nil {
+		t.Fatalf("an explicit anthropic/<id> allowed model must be accepted (a price is not a permission): %v", err)
 	}
 	if len(p.Budget.AllowedModels) != 2 {
 		t.Errorf("AllowedModels = %v, want both", p.Budget.AllowedModels)
@@ -541,7 +548,7 @@ func TestDecodeRefusesABadPrice(t *testing.T) {
 	for name, raw := range map[string]string{
 		"input_per_m missing":          `{"version": 1, "model_prices": {"claude-sonnet-5-5": {"output_per_m": 15}}}`,
 		"a camelCase rate":             `{"version": 1, "model_prices": {"claude-sonnet-5-5": {"input_per_m": 3, "output_per_m": 15, "cacheRead": 0.1}}}`,
-		"an alias key":                 `{"version": 1, "model_prices": {"anthropic/claude-sonnet-5.5": {"input_per_m": 3, "output_per_m": 15}}}`,
+		"an anthropic glob key":        `{"version": 1, "model_prices": {"anthropic/claude-*": {"input_per_m": 3, "output_per_m": 15}}}`,
 		"a negative rate":              `{"version": 1, "model_prices": {"claude-sonnet-5-5": {"input_per_m": -3, "output_per_m": 15}}}`,
 		"a bare number":                `{"version": 1, "model_prices": 5}`,
 		"a list":                       `{"version": 1, "model_prices": []}`,
@@ -551,6 +558,11 @@ func TestDecodeRefusesABadPrice(t *testing.T) {
 		if err == nil || p != nil || !found {
 			t.Errorf("%s: Decode(%s) = (%v, %v, %v), want an error", name, raw, p, found, err)
 		}
+	}
+	// An explicit anthropic/<id> key is a PRICE for the claim form (P4: a price
+	// is not a permission): accepted where it is written, enabling nothing.
+	if p, _, err := Decode([]byte(`{"version": 1, "model_prices": {"anthropic/claude-sonnet-5.5": {"input_per_m": 3, "output_per_m": 15}}}`)); err != nil || len(p.Prices) != 1 {
+		t.Errorf("an explicit anthropic/<id> price key must be accepted: err = %v", err)
 	}
 	// An empty block and an absent one are both "no overrides".
 	for _, raw := range []string{`{"version": 1}`, `{"version": 1, "model_prices": {}}`, `{"version": 1, "model_prices": null}`} {
