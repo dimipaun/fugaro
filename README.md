@@ -119,13 +119,52 @@ workflows:
     timeouts: { total: 90m, stage: 40m, verify: 30m, finalize_reserve: 5m }
 ```
 
-`agent.models` pins a model per role (coder, reviewer, background), and an optional `budget:` block can only tighten the owner's caps ([docs/gcp-setup.md](docs/gcp-setup.md#turning-the-model-budget-on)). **Other models (experimental):** the coder can be a non-Anthropic model through OpenRouter, while Claude Code stays the harness and Claude the reviewer; the project owner opts each repository in. See [docs/multi-model.md](docs/multi-model.md).
+`agent.models` pins a model per role (coder, reviewer, background), and an optional `budget:` block can only tighten the owner's caps ([docs/gcp-setup.md](docs/gcp-setup.md#turning-the-model-budget-on)). **Other models (experimental):** the coder can be a non-Anthropic model through OpenRouter, while Claude Code stays the harness and, by default, Claude the reviewer; the project owner opts each repository in. Setup: [Other models through OpenRouter](#other-models-through-openrouter); the full guide is [docs/multi-model.md](docs/multi-model.md).
 
 **Recipes:** pick the review loop per run (`fugaro run --recipe solo`) or per repository (`agent.recipe`); see [docs/recipes.md](docs/recipes.md).
 
 **Project layer:** a project can publish shared defaults and named workflow profiles that every anchored repository's minimal `fugaro.yaml` inherits; see [docs/project-layer.md](docs/project-layer.md).
 
 **Checkout:** by default a workflow runs a per-repository image with a clone baked into it (`checkout: baked`); a workflow can instead run the installation's base image and clone blobless at start (`checkout: clone`), for repositories that need no build; see [docs/checkout.md](docs/checkout.md).
+
+## Other models through OpenRouter
+
+A run's coder can be a non-Anthropic model served by OpenRouter — one key for models Claude Code cannot reach, with the gateway pricing every call — while Claude Code stays the harness. **Claude models never go through a provider**: `claude-*` and `anthropic/*` go direct to Anthropic. The **owner** sets this up in the project config, not a repository; [docs/multi-model.md](docs/multi-model.md) is the long guide.
+
+**First, before anything in Fugaro: the OpenRouter account itself.** The gateway never rewrites a request body, so what it cannot ask for per request has to be set there: a key for this project alone with a credit limit (the real backstop, since a compromised run can read the key out of `/proc`), provider fallbacks **off** (or OpenRouter may serve another model or provider than the one you priced), the account's data-collection and zero-data-retention policy, and the route fee you pay on top of the model price (it goes into `route_fee_pct` below). [docs/multi-model.md §1](docs/multi-model.md#1-on-the-openrouter-account-before-anything-in-fugaro) has each one and why it matters.
+
+1. **Decide whose code may leave.** An absent `allow_data_to` (or the explicit `["*"]`) means **every** repository of the project may send its code to the provider; a list written with no repositories in it (`[]`) is refused as ambiguous; a real list is the opt-in, and only the repositories it names may. So the owner, never the repository, decides which repositories may send code to OpenRouter.
+2. **Declare the provider** in the operator's project config, `~/.config/fugaro/projects/<project>.yaml` — a repository's `fugaro.yaml` cannot add a provider, a URL or a price:
+
+   ```yaml
+   providers:
+     openrouter:
+       kind: anthropic-compat          # the only kind
+       base_url: https://openrouter.ai/api
+       auth: bearer                    # bearer | x-api-key
+       secret: openrouter-api-key      # the secret's NAME, never the key
+       route_fee_pct: 5.5              # what your account pays on top, 0 to 50 (default 0)
+       models: ["deepseek/*"]          # exact IDs, or a prefix ending in *
+       allow_data_to: [<owner>/<repo>] # absent or ["*"] = every repository
+   budget:
+     mode: enforce                     # a provider model needs the gateway enforcing
+     per_run_usd: 2                    # enforce needs a per-run cap
+   ```
+
+3. **Store the key in your own terminal**: `fugaro secrets set openrouter-api-key`, run from a checkout of a listed repository, or `fugaro secrets set openrouter-api-key --repo <owner>/<repo>` from anywhere (`fugaro init --repo` prompts for it in its secrets stage too). The value is read only from stdin or a hidden prompt: **never put a key in a file, on a command line or in a chat**, and it is never printed. `fugaro secrets set openrouter-api-key --project-wide` stores it once for the whole project instead of per repository, reaches the same repositories `allow_data_to` already allows, and needs no checkout.
+4. **Pin the models in the repository's `fugaro.yaml`** — a repository can only name a model the owner already opened to it. The example below is the setup [docs/dogfooding.md](docs/dogfooding.md) runs: one cheap model for both roles, with the senior review kept **outside** the loop, because a cheap reviewer's own `ship` is a smoke check rather than independent review. The default shape instead keeps a Claude reviewer (`reviewer: claude-sonnet-5-5`), which goes direct to Anthropic and so also needs `fugaro secrets set anthropic-api-key`:
+
+   ```yaml
+   agent:
+     auth: api-key                     # oauth and vertex are refused with a provider model
+     models:
+       coder: deepseek/deepseek-v4.1-flash
+       reviewer: deepseek/deepseek-v4.1-flash
+   ```
+
+   `fugaro validate` checks each pin against the local config — when the checkout's `project:` is the local config's, and with a warning that `allow_data_to` was not checked when the checkout has no origin remote. A model no provider claims, or one whose provider's `allow_data_to` does not name this repository, is refused: *"… is served by provider openrouter, whose allow_data_to does not name `<owner>/<repo>`: the owner must list the repository in the project config before its code may be sent there"*.
+5. **Costs.** Provider calls are real dollars, priced from Fugaro's built-in catalog plus the route fee and bounded by the gateway like Claude's: the per-run cap (`budget.per_run_usd`), and with the shared budget on the daily caps (the repository's own `budget.per_day_usd` is a cap per **UTC day**, as are the database's). `fugaro budget preview --recipe standard --runs N` gives a batch's ceiling; `fugaro budget prices` prints the catalog offline. **The catalog covers OpenRouter's hosts and only five models**, so any other model is refused with *"has no price: add it under model_prices in the project config"* — a `model_prices` entry is how it gets priced, and it also replaces the catalog's row for a model the catalog mis-prices. `require_zdr` and `price_policy` ship at 0.7.5 and `fugaro init --repo` refuses a route that sets either until then, so leave both out of the block above. The route fee, the catalog's 30-day staleness rule and how far a cheap bound can undercharge: [docs/multi-model.md §2](docs/multi-model.md#2-the-project-config-owner-only).
+6. **Deploy.** `fugaro init --repo` in each listed repository carries the provider list into its jobs and mounts the key's secret; rerun it after any change to the project config's providers, prices or budget, since a version upgrade does not refresh deployed jobs. `fugaro doctor` reports providers left open to every repository, the price catalog's age, and that `require_zdr` prices a tier rather than enforcing zero-data-retention.
 
 ## Requirements
 
