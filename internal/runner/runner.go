@@ -301,7 +301,10 @@ const prAttempts = 3
 // nothing and returns a nil record. The error is non-nil for an
 // infra_error, for a cancellation seen during bootstrap (before any stage
 // or finalize runs, where the record's status is cancelled rather than
-// infra_error), or when writing the final record itself fails.
+// infra_error), or when writing the final record itself fails. Whatever error
+// it returns is redacted (redactedErr): the caller prints it — internal/cli's
+// exec hands it to the command's error and cmd/fugaro/main.go writes that to
+// the job's stderr — and a git failure quotes the remote it was given.
 func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 	if d.Now == nil {
 		d.Now = time.Now
@@ -329,6 +332,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 			// lock are not ours to touch.
 			d.Log.Error("not the run's owner; exiting without writing", "execution", d.Execution, "err", r.redact(err.Error()))
 			rec = nil
+			err = r.redactErr(err)
 			return
 		}
 		r.closeGateway()
@@ -372,6 +376,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 				err = fmt.Errorf("writing run record: %w", cerr)
 			}
 			rec = r.rec
+			err = r.redactErr(err)
 			return
 		}
 		wctx, cancelWrite := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
@@ -380,6 +385,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 			err = fmt.Errorf("writing run record: %w", werr)
 		}
 		rec = r.rec
+		err = r.redactErr(err)
 	}()
 
 	r.addMountedSecrets()
@@ -520,6 +526,33 @@ func (r *run) claimRecord(ctx context.Context) error {
 
 // redact removes every known secret value from s.
 func (r *run) redact(s string) string { return agent.Redact(s, r.secretList()) }
+
+// redactedErr is an error whose text is the redacted one: Error returns it,
+// Unwrap returns the error underneath, so errors.Is and errors.As still find
+// what the caller was matching on (Run's callers match ErrDuplicateExecution
+// and errOwnerUnknown that way, and internal/cli matches the run's own error
+// kinds through the layers above).
+type redactedErr struct {
+	err  error
+	text string
+}
+
+func (e redactedErr) Error() string { return e.text }
+func (e redactedErr) Unwrap() error { return e.err }
+
+// redactErr is the error Run returns: the same error with its text redacted.
+// The value Run returns is not only recorded — internal/cli/exec.go hands it to
+// the command's own error, which cmd/fugaro/main.go prints, so in a job it is
+// the process's stderr and then Cloud Logging. Git's own failures quote the
+// remote they were given (internal/gitops writes "git <args>" with the URL
+// among the args, and git's stderr quotes it too), so that text is redacted the
+// same way the record's reason is, not only where the run publishes it.
+func (r *run) redactErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	return redactedErr{err: err, text: r.redact(err.Error())}
+}
 
 // secretList is a snapshot of the secrets known now.
 func (r *run) secretList() []string {
