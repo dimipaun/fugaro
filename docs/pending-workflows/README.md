@@ -121,7 +121,7 @@ children assertion, signing by the digest handed to the step, the identity
 the verification demands, the `-pinned` tag written last and at that digest,
 the step order, the cosign-installer pin, the push-only gates, and
 `id-token: write` on `publish-base` alone. Its companion
-`TestSigningProblemsFindEveryMutation` feeds that checker fifteen weakenings
+`TestSigningProblemsFindEveryMutation` feeds that checker sixteen weakenings
 (a tag instead of the digest, `|| true`, `continue-on-error: true`, the sign
 step before the push, `-pinned` unconditional with the gate left in a
 comment, workflow-level `id-token: write`, a widened condition, and so on)
