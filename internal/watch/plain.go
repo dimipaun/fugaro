@@ -92,8 +92,10 @@ func RenderPlain(w io.Writer, project string, v View, ready []ReadyRow, o PlainO
 }
 
 // finishedOutcomeText is a finished run's status for the plain table: its
-// status word, plus the outcome when it is ready or a draft that passed
-// review (design generic-tool §10.1).
+// status word, plus the outcome when it is ready, a draft that passed
+// review, or an artifact run (whose deliverable is in the runs bucket and
+// which opens no pull request, so its bare stage word would mislead)
+// (design generic-tool §10.1, artifact-runs.md §3).
 func finishedOutcomeText(f RunRow) string {
 	word := strings.ToUpper(f.Stage)
 	switch f.Outcome {
@@ -101,6 +103,8 @@ func finishedOutcomeText(f RunRow) string {
 		word = "READY FOR REVIEW"
 	case "draft":
 		word += ", passed review"
+	case "artifacts":
+		word = "ARTIFACTS, NO PR"
 	}
 	return word
 }

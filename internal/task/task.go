@@ -86,6 +86,24 @@ type Spec struct {
 	// CLI checks the job's build record first, the same way it already
 	// does for ProjectLayer.
 	OAuthToken string `json:"oauth_token,omitempty"`
+	// Mode is the recipe's mode, written by the launcher from the recipe it
+	// resolved ("artifact" today; implement and review write nothing, so
+	// every existing spec is byte-identical to what the previous release
+	// wrote). The runner cannot read the recipe before it reads the
+	// configuration, so the spec is what selects the shape at bootstrap —
+	// exactly as ReviewPRs does for mode: review — and the resolved recipe
+	// is cross-checked against it afterwards, both ways.
+	//
+	// An EMPTY Mode is a real case and not a default to the implement
+	// path: the launcher leaves the recipe to the runner when it cannot
+	// resolve one (runnerChooses, internal/cli/run.go), so the spec carries
+	// no mode at all and the runner reads agent.recipe at the ref. The
+	// runner's rule is "this Mode when set, the resolved recipe's mode when
+	// not" — never "empty means implement". A runner before 0.8.0 refuses
+	// the field outright (Parse disallows unknown fields), so the
+	// launcher's own image gate refuses an artifact launch before this
+	// field is ever set at such a job.
+	Mode string `json:"mode,omitempty"`
 }
 
 // Recipe is the recipe the launching CLI resolved (docs/design/recipes.md §5).
@@ -275,6 +293,15 @@ func (s *Spec) Validate() error {
 		bad("task spec: oauth_token %q must be at most %d characters", s.OAuthToken, config.MaxClaudeAccountNameLen)
 	case !config.ClaudeAccountNameRE.MatchString(s.OAuthToken):
 		bad("task spec: oauth_token %q is not a Claude account name", s.OAuthToken)
+	}
+	// Mode is the recipe's mode, so the only values a spec may carry are
+	// the recipe modes; "" (the launcher could not resolve a recipe, or the
+	// recipe is implement or review) is legal and means "the runner reads
+	// it from the resolved recipe".
+	switch s.Mode {
+	case "", recipe.ModeImplement, recipe.ModeReview, recipe.ModeArtifact:
+	default:
+		bad("task spec: mode %q must be %s, %s, %s or empty", s.Mode, recipe.ModeImplement, recipe.ModeReview, recipe.ModeArtifact)
 	}
 	o := s.Overrides
 	if o.ReviewRounds != nil && (*o.ReviewRounds < 1 || *o.ReviewRounds > 10) {

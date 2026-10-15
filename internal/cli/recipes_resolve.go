@@ -71,6 +71,22 @@ func refuseFollowUpReviewMode(rcp *recipe.Recipe, name string) error {
 	return nil
 }
 
+// refuseFollowUpArtifactMode refuses rcp for a follow-up (fugaro run --pr N
+// continuing PR N): a mode: artifact recipe renders a deliverable into the
+// run's bucket and opens no pull request, so it has no pull request to
+// continue. The follow-up path exists to resolve a pull request's chain —
+// its branch, its previous run, its account, and the ref and workflow it
+// inherits — and an artifact run has none of that to resolve, so the
+// refusal is at the launch rather than a refusal to carry the mode. The
+// runner refuses the same mismatch again, at bootstrap, for a recipe this
+// never sees.
+func refuseFollowUpArtifactMode(rcp *recipe.Recipe, name string) error {
+	if rcp.Mode == recipe.ModeArtifact {
+		return userErr("recipe %s is mode: artifact, which renders a deliverable into the run's bucket and opens no pull request; it takes no --pr, and there is no pull request for it to continue", name)
+	}
+	return nil
+}
+
 // projectRecipesNote is why lc's project recipes are not read, or "": as
 // for the shared config, only the default runs bucket name is supported.
 func projectRecipesNote(lc *localcfg.Config) string {

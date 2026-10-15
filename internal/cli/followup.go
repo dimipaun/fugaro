@@ -497,6 +497,9 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		if err := refuseFollowUpReviewMode(rr.Recipe, rr.Name); err != nil {
 			return nil, err
 		}
+		if err := refuseFollowUpArtifactMode(rr.Recipe, rr.Name); err != nil {
+			return nil, err
+		}
 		printRecipeNote(warn, rr, true)
 		rcp = rr.taskRecipe()
 	} else if rcp == nil && c.Chosen != nil {
@@ -511,6 +514,9 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 			return nil, err
 		}
 		if err := refuseFollowUpReviewMode(inherited, rcp.Name); err != nil {
+			return nil, err
+		}
+		if err := refuseFollowUpArtifactMode(inherited, rcp.Name); err != nil {
 			return nil, err
 		}
 	}
@@ -573,6 +579,9 @@ func carryChosenRecipe(ctx context.Context, env *cloudEnv, repo string, c *prCha
 			return nil, wrap(err)
 		}
 		if err := refuseFollowUpReviewMode(rr.Recipe, rr.Name); err != nil {
+			return nil, wrap(err)
+		}
+		if err := refuseFollowUpArtifactMode(rr.Recipe, rr.Name); err != nil {
 			return nil, wrap(err)
 		}
 		printRecipeNote(warn, rr, true)

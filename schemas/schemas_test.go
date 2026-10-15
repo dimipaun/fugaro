@@ -377,6 +377,75 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	}
 }
 
+// TestResultSchemaAcceptsAnArtifactRunRecord: a mode: artifact run's record
+// validates in both of its shapes — the success (outcome artifacts, stage
+// render, a render object) and the failed render (outcome none, timed_out
+// true) — and the schema rejects a render object that is not one (a
+// command_sha256 that is not a hash, an unknown tree), and an outcome or a
+// stage the artifact mode never writes.
+//
+// Mutation (drop "artifacts" from the outcome enum, or the render property,
+// in schemas/result.schema.json): this test fails, the schema refusing the
+// success record it marshals.
+func TestResultSchemaAcceptsAnArtifactRunRecord(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 10, 15, 10, 0, 0, 0, time.UTC)
+	render := &runstore.RenderRecord{
+		Command: "sh render.sh", CommandSHA256: strings.Repeat("a", 64), Tree: "working",
+		ExitCode: 0, DurationS: 12.5, StartedAt: at.Format(time.RFC3339),
+	}
+	rec := runstore.Record{
+		Version: 1, RunID: "20261015-100000-abcd", Repo: "acme/app", Workflow: "app",
+		Status: runstore.StatusSucceeded, Stage: "render", Outcome: runstore.OutcomeArtifacts,
+		StartedAt: at, Render: render,
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a succeeded artifact run: %v\n%s", err, data)
+	}
+	timedOut := *render
+	timedOut.TimedOut, timedOut.ExitCode = true, -1
+	rec.Status, rec.Outcome, rec.Stage = runstore.StatusFailed, runstore.OutcomeNone, "render"
+	rec.Render = &timedOut
+	data, err = json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inst, err = jsonschema.UnmarshalJSON(bytes.NewReader(data)); err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a timed-out artifact run: %v\n%s", err, data)
+	}
+	// The render object is closed and its hash is a hash: a hand-edited
+	// result.json cannot smuggle a free-form command_sha256 into the one
+	// field a reviewer is meant to be able to recompute.
+	for _, tc := range []struct{ name, old, new string }{
+		{"bad hash", strings.Repeat("a", 64), "not-a-hash"},
+		{"bad tree", `"tree":"working"`, `"tree":"head"`},
+		{"unknown key", `"exit_code":-1`, `"exit_code":-1,"extra":1`},
+	} {
+		raw := strings.Replace(string(data), tc.old, tc.new, 1)
+		if raw == string(data) {
+			t.Fatalf("%s: fixture lacks %s", tc.name, tc.old)
+		}
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader([]byte(raw)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, raw)
+		}
+	}
+}
+
 // TestResultSchemaOAuthAccount: a record naming a Claude OAuth account
 // (docs/design/named-oauth-tokens.md) validates; a non-string value (what a
 // hand-edited or corrupt result.json could carry) does not. config.

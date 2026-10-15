@@ -455,8 +455,10 @@ func ended(ctx context.Context, env *cloudEnv, s *runstore.Store, slug, id, exec
 }
 
 // finalized is a finalized result, with rec's PR when it names one, and
-// NoPR when rec says definitively that none exists (outcome none): a clean
-// check gate, or a terminal state reached before any push.
+// NoPR when rec says definitively that none exists: outcome none (a clean
+// check gate, or a terminal state reached before any push) or outcome
+// artifacts (a mode: artifact run, whose deliverable is in the runs bucket
+// and which never opens a pull request).
 func finalized(ref string, marker bool, rec *runstore.Record) cancelResult {
 	r := cancelResult{Run: ref, Status: cancelFinalized, Marker: marker}
 	if rec == nil {
@@ -465,7 +467,7 @@ func finalized(ref string, marker bool, rec *runstore.Record) cancelResult {
 	if rec.PR != nil {
 		r.PR = rec.PR.URL
 	}
-	r.NoPR = rec.Outcome == runstore.OutcomeNone
+	r.NoPR = rec.Outcome == runstore.OutcomeNone || rec.Outcome == runstore.OutcomeArtifacts
 	return r
 }
 

@@ -35,6 +35,10 @@
       }
     },
     "requested_by": { "type": "string" },
+    "mode": {
+      "enum": ["implement", "review", "artifact"],
+      "description": "The resolved recipe's mode, written by the launching CLI (\"artifact\" today; an implement or review recipe writes nothing, so those specs are unchanged). The runner selects the run's shape from it at bootstrap, before the recipe is resolved, and cross-checks it against the resolved recipe afterwards. Needs a 0.8.0 runner, which is why an artifact launch at a job image older than that is refused at launch."
+    },
     "recipe": {
       "type": "object",
       "additionalProperties": false,
