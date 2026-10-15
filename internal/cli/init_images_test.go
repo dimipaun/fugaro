@@ -877,3 +877,102 @@ func TestRefuseANonGhcrSourceForABaseKind(t *testing.T) {
 		t.Fatalf("the history copy refused a foreign source: %v", err)
 	}
 }
+
+// A base kind is never copied, and the two halves of the confirmation say
+// different things about trust, so they are asserted apart: the base half
+// names the verified signature and says nothing is copied, the history half
+// keeps the copy sentence and its "not a signature" caveat (design §3.2).
+func TestImagesStageConfirmationSaysTheBaseIsNotCopied(t *testing.T) {
+	newImagesRig(t, "1.2.3")
+	out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes", "--base", "base")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"pins 1 base image(s) to this release's image at the digest its cosign signature was verified for",
+		"nothing is copied, and nothing is pushed into " + mirror.BaseRepository,
+		"copies 1 image(s)",
+		"not a signature",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the confirmation does not say %q:\n%s", want, out)
+		}
+	}
+	for _, bad := range []string{
+		// The base kind is pinned, never listed among the copies.
+		"copies 2 image(s)",
+		// And it is not an unpinned, trust-the-tag image.
+		"NOT pinned with --expect-digest: base",
+	} {
+		if strings.Contains(out, bad) {
+			t.Errorf("the confirmation still says %q:\n%s", bad, out)
+		}
+	}
+	// With no history image to copy, there is no copy sentence at all: a
+	// base-only run claims no copy anywhere.
+	newImagesRig(t, "1.2.3")
+	out, _, err = executeStdin(t, "us-east5\n", "init", "--yes", "--base", "base")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "pins 1 base image(s) to this release's image") {
+		t.Errorf("the base-only confirmation does not name the pin:\n%s", out)
+	}
+	for _, bad := range []string{"copies 0 image(s)", "not a signature"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("a base-only run still says %q:\n%s", bad, out)
+		}
+	}
+}
+
+// The preview line under the review screen lists what is unpinned, and a
+// base kind is never one of them: it is pinned to a digest whose signature
+// was verified, whether or not --expect-digest repeated the value.
+func TestImagesPreviewDoesNotListBaseAsUnpinned(t *testing.T) {
+	r := newInitRig(t)
+	e := rigEngine(t, r, &initOptions{baseKinds: []string{"base"}, firebase: fpID})
+	e.spec.History = &infra.HistorySpec{}
+	line := newImagesStage(e).sourceLine(context.Background())
+	if !strings.Contains(line, "signature-verified") || !strings.Contains(line, "base") {
+		t.Fatalf("the preview does not say the base image is signature-verified: %q", line)
+	}
+	if _, rest, ok := strings.Cut(line, "NOT pinned with --expect-digest: "); ok && strings.Contains(rest, "base") {
+		t.Errorf("the unpinned list names the base kind: %q", rest)
+	}
+	// With a history copy in the run too, the unpinned list is the copy's
+	// alone.
+	if !strings.Contains(line, "NOT pinned with --expect-digest: history") {
+		t.Errorf("the preview does not list the history copy as unpinned: %q", line)
+	}
+}
+
+// No user-facing text offers a command that no longer works for a base
+// kind: --replace-image refuses one (nothing is copied, so there is nothing
+// to replace), and --expect-digest is a cross-check of the verified digest,
+// never the way a base kind is trusted.
+func TestNoMessageOffersARemovedBaseCommand(t *testing.T) {
+	var all []string
+	for _, args := range [][]string{{"init", "--help"}, {"image", "refresh", "--help"}, {"upgrade", "--help"}} {
+		out, _, _ := executeStdin(t, "", args...)
+		all = append(all, out)
+	}
+	newImagesRig(t, "1.2.3")
+	out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes", "--base", "base")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	all = append(all, out)
+	for _, text := range all {
+		for _, bad := range []string{"--replace-image base", "--expect-digest base", "history or base"} {
+			if strings.Contains(text, bad) {
+				t.Errorf("a message still offers %q:\n%s", bad, text)
+			}
+		}
+	}
+	// The refusal for the flag itself names the working alternative.
+	newImagesRig(t, "1.2.3")
+	out, _, err = executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes", "--replace-image", "base")
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "--base-image base=IMAGE") || !strings.Contains(out, "there is nothing to replace") {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
+	}
+}

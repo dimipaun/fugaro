@@ -94,7 +94,7 @@ func TestCloudCheckReadsOnlyLocalFilesWhenAnchored(t *testing.T) {
 	noLayerBucketReads(t)
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", filepath.Join(t.TempDir(), "none.json"))
 	v := cloudCheck(t.Context(), r.root, cloudOptions{}, "")
-	if v.state != cloudStale || !strings.Contains(v.reason, "base: none recorded, this release's is "+managedRef("base", "0.5.1")) {
+	if v.state != cloudStale || !strings.Contains(v.reason, "base: none recorded; this release pins it by digest through "+initProject+"/fugaro-ghcr") {
 		t.Fatalf("%+v", v)
 	}
 	if calls := r.calls(t); len(calls) != 0 || len(r.ar.Requests()) != 0 {

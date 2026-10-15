@@ -646,7 +646,7 @@ func TestRefreshPreflightStopTexts(t *testing.T) {
 		useVersion(t, "dev")
 		newAnchorModeRig(t, refreshYAML, true)
 		_, _, err := executeStdin(t, "", "image", "refresh")
-		want := "fugaro image refresh copies this release's base images, and this is a development build (dev) with none published: use a release build, or build a base from a checkout and point at it with fugaro init --base-image KIND=<tag>"
+		want := "fugaro image refresh pins this release's base images through the remote repository, and this is a development build (dev) with none published: use a release build, or build a base from a checkout and point at it with fugaro init --base-image KIND=<tag>"
 		if ExitCode(err) != ExitUserError || err.Error() != want {
 			t.Fatalf("exit %d, err %q, want %q", ExitCode(err), err, want)
 		}

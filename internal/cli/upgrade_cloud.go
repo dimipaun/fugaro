@@ -486,7 +486,7 @@ func cloudStep(ctx context.Context, u *upgradeCtx) stepResult {
 		fmt.Fprintf(u.w, "note: %s\n", note)
 	}
 	if plan != nil && plan.current() {
-		return stepResult{state: stepCurrent, reason: "no base image to copy and no image to rebuild"}
+		return stepResult{state: stepCurrent, reason: "no base image to pin and no image to rebuild"}
 	}
 	return stepResult{state: stepDone, reason: "the repository is on this release's base image"}
 }

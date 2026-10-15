@@ -124,16 +124,20 @@ func isForbiddenRead(err error) bool {
 }
 
 // customBaseRefusal is decision D4's stop: the kinds whose base_images entry
-// is not a release image fugaro init copied, with the one fix.
+// is neither this release's pin through the remote repository nor a release
+// image an earlier fugaro copied, with the one fix. There is nothing to pin
+// over a hand-pushed image — the pin is a digest of the release's own image,
+// verified against its signature — so the entry has to go rather than be
+// refreshed.
 func customBaseRefusal(lc *localcfg.Config, lcPath string, kinds []string, again string) error {
 	if len(kinds) == 0 {
-		return userErr("no custom base image to refuse: every base_images entry of %s is a release image fugaro init copied", quoteWord(lcPath))
+		return userErr("no custom base image to refuse: every base_images entry of %s is this release's pin or a release image an earlier fugaro copied", quoteWord(lcPath))
 	}
 	var refs, keys []string
 	for _, k := range kinds {
 		refs = append(refs, fmt.Sprintf("base_images.%s is %s", k, pluginwire.Printable(lc.BaseImage(k))))
 		keys = append(keys, "base_images."+k)
 	}
-	return userErr("%s: not a release image fugaro init copied (a development or hand-pushed image), and fugaro image refresh never replaces one. To move to this release's base image: remove %s from %s (keep a backup), then rerun %s. To keep your own base image, rebuild from it with fugaro image build instead",
+	return userErr("%s: neither this release's pin through the remote repository nor a release image an earlier fugaro copied (a development or hand-pushed image), and fugaro image refresh never replaces one: it pins the release's own image, at the digest its signature was verified for, and there is nothing to pin over yours. To move to this release's base image: remove %s from %s (keep a backup), then rerun %s. To keep your own base image, rebuild from it with fugaro image build instead",
 		strings.Join(refs, "; "), strings.Join(keys, ", "), quoteWord(lcPath), again)
 }

@@ -756,7 +756,7 @@ func TestUpgradeRerunWhenCurrentIsNothingToDo(t *testing.T) {
 	out, _, err := executeStdin(t, "", "upgrade", "--yes")
 	if err != nil || upgradeRead(t, settings) != wiredAt("v0.5.1") ||
 		!strings.Contains(out, "pin: current: pinned to v0.5.1") ||
-		!strings.Contains(out, "cloud: current: no base image to copy and no image to rebuild") ||
+		!strings.Contains(out, "cloud: current: no base image to pin and no image to rebuild") ||
 		!strings.Contains(out, "nothing to do: "+root) {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -905,7 +905,7 @@ func TestUpgradeCheckCurrentCloudIsCurrent(t *testing.T) {
 // TestUpgradeSaysTheBaseMustMoveForACopiedEntryAtTheSameVersion is B3 on
 // fugaro upgrade's offline path: an installation whose entry is the copy an
 // earlier CLI made, at this very version, still needs the migration, so
-// --check must not answer "no base image to copy and no image to rebuild"
+// --check must not answer "no base image to pin and no image to rebuild"
 // and leave it unmigrated. The reason names the shape rather than a value
 // it does not have.
 func TestUpgradeSaysTheBaseMustMoveForACopiedEntryAtTheSameVersion(t *testing.T) {

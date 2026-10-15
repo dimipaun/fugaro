@@ -22,20 +22,31 @@ import (
 	"golang.org/x/oauth2/google"
 )
 
-// The images stage (stage 5, design m11-setup-and-skills.md §3.3) copies the
-// release's images into the project's own registry, as the person running
-// init: the history image (with --firebase, which is what deploys its job)
-// and the base kinds that are asked for (--base) or that the checkout's
-// fugaro.yaml names. The copy is internal/mirror's: digest-verified,
-// idempotent, source-allowlisted, no credential to the source.
+// The images stage (stage 5, design m11-setup-and-skills.md §3.3) puts this
+// release's images where the installation can read them, as the person
+// running init: the history image is COPIED into the project's own registry
+// (with --firebase, which is what deploys its job), and each base kind that
+// is asked for (--base) or that the checkout's fugaro.yaml names is PINNED
+// by digest through the project's remote (pull-through) repository, with
+// nothing copied (design registry-remote-repository.md §3.1-§3.2). The copy
+// is internal/mirror's: digest-verified, idempotent, source-allowlisted, no
+// credential to the source.
 //
-// ACCEPTED RISK (design §7, §12): the trust anchor is the release tag in
-// ghcr.io as it resolves now. Whoever can write ghcr.io/dimipaun/fugaro-*:X.Y.Z
-// can make the images this copies, and so the user's cloud, run their code.
-// Digest verification proves the copy equals what the registry served, not
-// that the registry served the release. --expect-digest pins a digest got
-// out of band; cosign verification and a signed digest list in the release
-// are the planned fix (plan, follow-up to T2), not in this change.
+// The two halves do not rest on the same anchor, and the difference is the
+// point (design registry-remote-repository.md §3.2, §7):
+//
+//   - a base kind is resolved at the release's "-pinned" tag, its cosign
+//     signature is verified against the release's own key, and the digest
+//     that signature covers is read back THROUGH the remote repository
+//     before it is recorded. The trust anchor is the signature, not the tag;
+//   - a history image is COPIED, and ACCEPTED RISK (design §7, §12) still
+//     applies to it: the trust anchor is the release tag in ghcr.io as it
+//     resolves now. Whoever can write ghcr.io/dimipaun/fugaro-history:X.Y.Z
+//     can make the image this copies, and so the user's cloud, run their
+//     code. Digest verification proves the copy equals what the registry
+//     served, not that the registry served the release. --expect-digest
+//     pins a digest got out of band; a signed digest list in the release is
+//     the planned fix (plan, follow-up to T2), not in this change.
 //
 // A kind whose base image the local config already points elsewhere (a dev
 // tag, a hand-pushed image, --base-image) is left alone: nothing is
@@ -58,7 +69,7 @@ const storagePerGBMonth = 0.10
 // for uploads (see internal/mirror); the live check covers both.
 var newMirror = func(ctx context.Context, lc *localcfg.Config, allow []string) (*mirror.Mirror, error) {
 	if lc.Endpoints.NoAuth {
-		return nil, userErr("endpoints: no_auth is set, and the images are copied from a real registry with real credentials: unset it or use --base-image")
+		return nil, userErr("endpoints: no_auth is set, and the images come from a real registry with real credentials: unset it or use --base-image")
 	}
 	ts, err := google.DefaultTokenSource(ctx, "https://www.googleapis.com/auth/cloud-platform")
 	if err != nil {
@@ -160,8 +171,9 @@ type imageItem struct {
 
 type imagesStage struct {
 	e *initEngine
-	// only, when non-nil, is every base kind the stage copies (fugaro image
-	// refresh's workflows'): --base and the checkout's kinds are not added.
+	// only, when non-nil, is every base kind the stage handles (fugaro
+	// image refresh's workflows'): --base and the checkout's kinds are not
+	// added.
 	// Nil means the default kinds; non-nil but empty means NO base kinds.
 	// It limits base kinds only: the history image (--firebase) is unaffected.
 	// Kinds are de-duplicated and unknown ones (not in config.Bases) dropped.
@@ -439,7 +451,7 @@ func (s *imagesStage) Check(ctx context.Context) (initflow.Status, error) {
 
 func unpinnedText(u []string) string {
 	if len(u) == 0 {
-		return "none (every image copied is pinned)"
+		return "none (every image this run copies is pinned with --expect-digest)"
 	}
 	return strings.Join(u, ", ")
 }
@@ -494,7 +506,7 @@ func (s *imagesStage) read(ctx context.Context, m *mirror.Mirror, items []imageI
 	}
 	for _, k := range slices.Sorted(maps.Keys(expect)) {
 		if !have[k] {
-			return nil, userErr("--expect-digest %s=... matches no image this run copies (it copies: %s): a pin that is not used would be a false assurance", k, strings.Join(slices.Sorted(maps.Keys(have)), ", "))
+			return nil, userErr("--expect-digest %s=... matches no image this run handles (it handles: %s): a pin that is not used would be a false assurance", k, strings.Join(slices.Sorted(maps.Keys(have)), ", "))
 		}
 	}
 	for _, k := range slices.Sorted(slices.Values(s.e.r.o.replaceImages)) {
@@ -690,7 +702,7 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 				notCovered = "it replaces a tag in your registry"
 			}
 		}
-		err := r.confirmOrdinary(s.confirmText(pl, n, bytes, unpinned), "nothing was copied", notCovered)
+		err := r.confirmOrdinary(s.confirmText(pl, n, bytes, unpinned), "nothing was copied and nothing was pinned", notCovered)
 		o.yes = yes
 		if err != nil {
 			return initflow.Outcome{}, err
@@ -751,7 +763,8 @@ func (s *imagesStage) confirmText(pl []planned, n int, bytes int64, unpinned []s
 // tag in the registry that names another image, a release tag or
 // history:latest. --replace-image KIND names the intent; the project's name
 // typed at a real terminal confirms it, and --yes, --non-interactive, --json,
-// a pipe and a coding agent never do. It is asked before anything is copied.
+// a pipe and a coding agent never do. It is asked before anything is copied
+// or pinned.
 func (s *imagesStage) confirmReplace(pl []planned) error {
 	var kinds, lines []string
 	for _, p := range pl {
@@ -782,7 +795,7 @@ func (s *imagesStage) confirmReplace(pl []planned) error {
 		return &initflow.NeedsYouError{Left: promptLeft(initflow.Images, "type the project's name to confirm replacing "+strings.Join(kinds, ", ")+" when asked, after running", args...)}
 	}
 	if !ok {
-		return userErr("not confirmed (the project's name was not typed); nothing was copied")
+		return userErr("not confirmed (the project's name was not typed); nothing was copied and nothing was pinned")
 	}
 	return nil
 }
@@ -855,7 +868,7 @@ func (s *imagesStage) record(ctx context.Context, pl []planned) error {
 // will copy and at what size, read now (read-only), else what it does in
 // general when the registries cannot be read yet.
 func (s *imagesStage) reviewLine(ctx context.Context) string {
-	general := "images:         copies the release images that are missing from your registry (sizes are shown when it copies)"
+	general := "images:         pins this release's base images by digest through the remote repository and copies the release images your registry lacks (sizes are shown when it copies)"
 	items, _, err := s.items(ctx)
 	if err != nil || len(items) == 0 || releaseVersion() == "" {
 		return general
