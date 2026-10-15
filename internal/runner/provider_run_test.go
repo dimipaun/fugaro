@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
@@ -106,6 +108,337 @@ func TestProviderRunEndsInPR(t *testing.T) {
 	if strings.Contains(g.logs.String(), providerKey) {
 		t.Fatal("the log has the provider key")
 	}
+}
+
+// callClaimed is callDeepseek for the claimed Claude ID: the review stage
+// makes one call on the route's claimed model, as Claude Code would, and
+// writes the body to its transcript.
+func callClaimed(status *int, body *string, inner step) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		*status, *body = post(t, req, claimedSenior, 4096)
+		fmt.Fprintf(req.Transcript, "{\"type\":\"user\",\"message\":%q}\n", *body)
+		return inner(t, ctx, req)
+	}
+}
+
+// TestClaimedClaudeSeniorEndToEnd is Task 6 step 1: the whole run, on a
+// provider whose models name the Claude ID explicitly and with the owner's
+// model_prices row for it in the ceiling. The coder is the route's deepseek
+// model and the reviewer is the claimed senior, and both stages make their
+// call through the gateway: the coder's on the provider's model and the
+// reviewer's on the claimed Claude one. Both calls reach the PROVIDER's fake
+// and Anthropic's sees none, each with the provider's key and never the
+// Anthropic one -- which is mounted, because this run's background pin is
+// still Claude's own haiku (NeedsAnthropicKey), so the two keys are both
+// there and the route still decides. The run ends in a PR.
+//
+// The claimed senior is a provider route in every respect (P10): its stage
+// pins the model as Claude Code's opus role and carries the provider route's
+// variable pair, in the process environment and in the managed settings file
+// -- the same treatment the coder's stage gets (TestProviderStageDisablesThinkingVars),
+// so nothing about the review stage says "direct Anthropic".
+func TestClaimedClaudeSeniorEndToEnd(t *testing.T) {
+	use := pricing.Usage{Input: 1000, Output: 500}
+	g := claimedRun(t, claimedPinned(t), "enforce", "50",
+		[]anthropicfake.Reply{
+			anthropicfake.Compat{}.MessageOK(deepseek, use),
+			anthropicfake.Compat{}.MessageOK(claimedSenior, use),
+		}, "acme/app")
+
+	var coderStatus, reviewStatus int
+	var coderBody, reviewBody string
+	var coderManaged, reviewerManaged map[string]string
+	rec, err := g.run(t,
+		readManagedDuring(g.harness, &coderManaged, callDeepseek(&coderStatus, &coderBody, implement("feature"))),
+		readManagedDuring(g.harness, &reviewerManaged, callClaimed(&reviewStatus, &reviewBody, review("ship", 0))))
+	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if coderStatus != 200 || reviewStatus != 200 {
+		t.Fatalf("statuses = %d, %d\ncoder: %s\nreviewer: %s", coderStatus, reviewStatus, coderBody, reviewBody)
+	}
+	onlyPR(t, g.provider)
+
+	// Both stages' calls went to the provider; Anthropic's fake saw nothing at
+	// all, so the claimed Claude call did not go direct.
+	if n := g.compat.Count(); n != 2 {
+		t.Fatalf("the provider saw %d calls, want the coder's and the reviewer's: %+v", n, g.compat.Seen())
+	}
+	if n := g.fake.Count(); n != 0 {
+		t.Fatalf("Anthropic saw %d calls of a run whose every pin it does not serve", n)
+	}
+	// The route carried the claimed model: the provider's second request is
+	// the reviewer's, on the claimed ID.
+	if body := string(g.compat.Body(1)); !strings.Contains(body, `"model":"`+claimedSenior+`"`) {
+		t.Fatalf("the provider's second call is not the claimed senior's: %s", body)
+	}
+	// The provider saw its own key and nothing of the Anthropic one.
+	for i := 0; i < 2; i++ {
+		if got := g.compat.Header(i, "Authorization"); got != "Bearer "+providerKey {
+			t.Errorf("provider call %d: Authorization = %q", i, got)
+		}
+		if got := g.compat.Header(i, "X-Api-Key"); got != "" {
+			t.Errorf("provider call %d: the Anthropic key's header is set: %q", i, got)
+		}
+		if strings.Contains(string(g.compat.Body(i)), plantedKey) {
+			t.Errorf("provider call %d: the body carries the Anthropic key", i)
+		}
+	}
+	// Neither key is in either stage's environment: the agent holds the
+	// gateway's own token and URL, whatever route its call takes.
+	for i, c := range g.agent.calls {
+		for _, kv := range c.Env {
+			if strings.Contains(kv, providerKey) || strings.Contains(kv, plantedKey) {
+				t.Errorf("stage %d: a real key is in the agent's env: %s", i, kv)
+			}
+		}
+	}
+
+	// The claimed senior's stage is a provider stage exactly like the coder's.
+	reviewer := g.agent.calls[1]
+	if got := envValue(reviewer.Env, "ANTHROPIC_DEFAULT_OPUS_MODEL"); got != claimedSenior {
+		t.Errorf("the review stage pins %q as its model, want the claimed ID", got)
+	}
+	for k, v := range map[string]string{"CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1", "MAX_THINKING_TOKENS": "0"} {
+		if got := envValue(reviewer.Env, k); got != v {
+			t.Errorf("review stage (claimed provider route), process env: %s = %q, want %q", k, got, v)
+		}
+		if got, ok := reviewerManaged[k]; !ok || got != v {
+			t.Errorf("review stage (claimed provider route), managed settings env: %s = %q (present %v), want %q", k, got, ok, v)
+		}
+	}
+	if got := envValue(g.agent.calls[0].Env, "ANTHROPIC_DEFAULT_OPUS_MODEL"); got != deepseek {
+		t.Errorf("the coder stage pins %q, want the route's coder model", got)
+	}
+	if strings.Contains(g.logs.String(), providerKey) {
+		t.Error("the log carries the provider key")
+	}
+}
+
+// TestClaimedClaudeSeniorCharge is Task 6 step 3: the claimed senior's call
+// is charged at the claimed model's own rates -- the owner's model_prices row
+// for `anthropic/claude-sonnet-5.5` -- with the route's fee on top, and no
+// direct-path Claude rate appears anywhere in the run's figures.
+//
+// The override's 3/15 is deliberately not the direct row's rates for the same
+// family (claude-sonnet-5-5 is $2/$10 per million tokens, internal/pricing/table.go),
+// so a run that charged the reviewer at the direct-path rate lands on a
+// different number and this test says so: the two charges are computed here
+// and asserted to differ before the one that must win is asserted.
+func TestClaimedClaudeSeniorCharge(t *testing.T) {
+	coderUse := pricing.Usage{Input: 1000, Output: 500}
+	reviewUse := pricing.Usage{Input: 2000, Output: 1000}
+	g := claimedRun(t, claimedPinned(t), "enforce", "50",
+		[]anthropicfake.Reply{
+			anthropicfake.Compat{}.MessageOK(deepseek, coderUse),
+			anthropicfake.Compat{}.MessageOK(claimedSenior, reviewUse),
+		}, "acme/app")
+	prov := g.deps.Providers["openrouter"]
+	prov.RouteFeePct = 10
+	g.deps.Providers["openrouter"] = prov
+
+	// The run's table prices the claimed ID from the owner's override, parsed
+	// by the shipped path: no catalog row prices the ID (P11), so the
+	// override is the only price it has, and the price table keys it whatever
+	// the routes say (P4).
+	ov, err := pricing.ParseOverrides(claimPricesJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimRates, ok := ov[claimedSenior]
+	if !ok {
+		t.Fatalf("the fixture's override has no row for %s: %v", claimedSenior, ov)
+	}
+	row, ok := g.deps.Spend.Prices.Lookup(claimedSenior)
+	if !ok || row.Rates != claimRates {
+		t.Fatalf("the run's table prices the claimed ID as %+v (found %v), want the owner's %+v", row.Rates, ok, claimRates)
+	}
+	direct, ok := pricing.Embedded().Lookup(sonnet)
+	if !ok {
+		t.Fatalf("the built-in table has no direct row for %s", sonnet)
+	}
+	if direct.Rates.Cost(reviewUse) == claimRates.Cost(reviewUse) {
+		t.Fatalf("the direct row and the override charge the same for %+v: this test proves nothing", reviewUse)
+	}
+
+	var coderStatus, reviewStatus int
+	var coderBody, reviewBody string
+	rec, err := g.run(t,
+		callDeepseek(&coderStatus, &coderBody, implement("feature")),
+		callClaimed(&reviewStatus, &reviewBody, review("ship", 0)))
+	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if coderStatus != 200 || reviewStatus != 200 {
+		t.Fatalf("statuses = %d, %d: %s %s", coderStatus, reviewStatus, coderBody, reviewBody)
+	}
+
+	// The claimed senior's charge is its own rates plus the route's fee, and
+	// it is not what the direct Claude row would have charged.
+	if rec.Cost == nil {
+		t.Fatalf("the run recorded no cost: %+v", rec)
+	}
+	wantReview := pricing.WithFee(claimRates.Cost(reviewUse), 10)
+	wantDirect := pricing.WithFee(direct.Rates.Cost(reviewUse), 10)
+	if wantReview == wantDirect {
+		t.Fatal("the fee makes the two charges coincide: this test proves nothing")
+	}
+	if got := micros(t, rec.Cost.ModelBy[claimedSenior]); got != wantReview {
+		t.Errorf("the claimed senior was charged %v µ$, want %v (the owner's rates plus the fee); the direct Claude rate would have charged %v",
+			got, wantReview, wantDirect)
+	}
+	// The coder's own row comes from the built-in catalog, read here from the
+	// table the run built rather than named, so what is under test is the
+	// claimed model's rate and not the catalog's.
+	coderRow, ok := g.deps.Spend.Prices.Lookup(deepseek)
+	if !ok {
+		t.Fatal("the run's table has no row for the coder's model")
+	}
+	wantCoder := pricing.WithFee(coderRow.Rates.Cost(coderUse), 10)
+	if got := micros(t, rec.Cost.ModelBy[deepseek]); got != wantCoder {
+		t.Errorf("the coder was charged %v µ$, want %v", got, wantCoder)
+	}
+	// The two models' charges are the run's whole model cost and the whole of
+	// the route's; nothing else was charged, so no direct-path Claude figure
+	// is hiding in the totals.
+	if len(rec.Cost.ModelBy) != 2 {
+		t.Errorf("the run's figures name %v, want exactly the coder's model and the claimed ID", chargedNames(rec.Cost))
+	}
+	if got := rec.Cost.ModelBy[sonnet]; got != 0 {
+		t.Errorf("a direct Claude rate is in the run's figures: %s = %v USD", sonnet, got)
+	}
+	if got := micros(t, rec.Cost.ModelBy[claimedSenior]); got != wantReview {
+		t.Errorf("model_by[%s] = %v µ$, want %v", claimedSenior, got, wantReview)
+	}
+	if got, want := micros(t, rec.Cost.RouteBy["openrouter"]), wantReview+wantCoder; got != want {
+		t.Errorf("route_by = %v µ$, want the coder's charge plus the claimed senior's (%v)", got, want)
+	}
+	if got := micros(t, rec.Cost.ModelUSD); got != wantReview+wantCoder {
+		t.Errorf("model_usd = %v µ$, want %v", got, wantReview+wantCoder)
+	}
+	if !near(rec.CostUSD, (wantReview + wantCoder).USD()) {
+		t.Errorf("cost_usd = %v, want %v", rec.CostUSD, (wantReview + wantCoder).USD())
+	}
+	// The stored record carries the same figures.
+	stored, err := g.store.ReadRecord(context.Background())
+	if err != nil || stored.Cost == nil || micros(t, stored.Cost.ModelBy[claimedSenior]) != wantReview || stored.Cost.ModelBy[sonnet] != 0 {
+		t.Fatalf("stored = %+v, %v", stored, err)
+	}
+}
+
+// callModel is a step that makes one call on model as Claude Code would, and
+// fails the test if the gateway did not serve it: the statuses are asserted
+// where a test needs them (callDeepseek, callClaimed), and a stage that only
+// has to spend does not.
+func callModel(model string, inner step) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if status, body := post(t, req, model, 4096); status != 200 {
+			t.Errorf("the call on %s got %d: %s", model, status, body)
+		}
+		return inner(t, ctx, req)
+	}
+}
+
+// TestClaimedClaudeSeniorRecipes is Task 6 step 4: it pins P9's second half by
+// naming the recipe. `auto` decides the derived recipe's first line, and a
+// claimed Claude senior turns it off -- FirstLineOn under auto asks for a coder
+// a provider serves *and a reviewer none does* -- so the derived recipe runs
+// implement, review. A recipe the catalog names itself is not derived, and its
+// own first_line step runs whatever auto would have said: the catalog's
+// `standard` runs implement, review_first, review, the cheap step on the
+// coder's model, and its `review: {bounce: first_line}` sends a rejection back
+// into that step. Both subtests use `first_line_review: auto`, so the recipe
+// name is the only difference between them.
+func TestClaimedClaudeSeniorRecipes(t *testing.T) {
+	use := pricing.Usage{Input: 1000, Output: 500}
+	// reply answers the nth call as the provider would: the coder's model for
+	// the implement, the fix and every first-line review, the claimed Claude ID
+	// for the senior ones.
+	reply := func(model string) anthropicfake.Reply {
+		return anthropicfake.Compat{}.MessageOK(model, use)
+	}
+
+	t.Run("the derived recipe runs no first line", func(t *testing.T) {
+		g := claimedRun(t, claimedRecipe(t, "  first_line_review: auto\n  recipe: "+recipe.DefaultName+"\n"),
+			"enforce", "50", []anthropicfake.Reply{reply(deepseek), reply(claimedSenior)}, "acme/app")
+		var coderStatus, reviewStatus int
+		var coderBody, reviewBody string
+		rec, err := g.run(t,
+			callDeepseek(&coderStatus, &coderBody, implement("feature")),
+			callClaimed(&reviewStatus, &reviewBody, review("ship", 0)))
+		if err != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+			t.Fatalf("rec = %+v, err = %v", rec, err)
+		}
+		if coderStatus != 200 || reviewStatus != 200 {
+			t.Fatalf("statuses = %d, %d: %s %s", coderStatus, reviewStatus, coderBody, reviewBody)
+		}
+		if got := stageNames(rec); !eq(got, "implement", "review") {
+			t.Fatalf("stages = %v, want no first-line step: auto is off once a provider serves the reviewer", got)
+		}
+		for _, r := range rec.Reviews {
+			if r.Tier == runstore.TierFirst {
+				t.Errorf("a first-line review ran under the derived recipe: %+v", r)
+			}
+		}
+		onlyPR(t, g.provider)
+	})
+
+	t.Run("a non-derived recipe keeps its own first line, and its bounce", func(t *testing.T) {
+		// The catalog's standard: first_line, then review: {bounce: first_line}.
+		g := claimedRun(t, claimedRecipe(t, "  first_line_review: auto\n  recipe: standard\n"),
+			"enforce", "50", []anthropicfake.Reply{
+				reply(deepseek),      // implement
+				reply(deepseek),      // review_first
+				reply(deepseek),      // fix
+				reply(claimedSenior), // review, round 1: a rejection
+				reply(deepseek),      // fix
+				reply(deepseek),      // review_first, the bounce
+				reply(claimedSenior), // review, round 2
+			}, "acme/app")
+		rec, err := g.run(t,
+			callModel(deepseek, implement("feature")),
+			callModel(deepseek, review("changes", 1)), // review_first round 1
+			callModel(deepseek, fixStep),
+			callModel(claimedSenior, review("changes", 1)), // review round 1
+			callModel(deepseek, fixStep),
+			callModel(deepseek, review("ship", 0)),      // review_first, the bounce
+			callModel(claimedSenior, review("ship", 0))) // review round 2
+		if err != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+			t.Fatalf("rec = %+v, err = %v", rec, err)
+		}
+		if got := stageNames(rec); !eq(got, "implement", "review_first", "fix", "review", "fix", "review_first", "review") {
+			t.Fatalf("stages = %v", got)
+		}
+		if got := tiers(rec); !eq(got, "first:changes", "senior:changes", "first:ship", "senior:ship") {
+			t.Fatalf("reviews = %v", got)
+		}
+		if rs := rec.Reviews; rs[2].Bounce != 1 || rs[2].Tier != runstore.TierFirst {
+			t.Fatalf("the bounced first-line review = %+v, want Bounce 1, Tier first", rs[2])
+		}
+		// The first-line step runs on the coder's model, the senior on the
+		// claimed ID: the recipe's step, not the reviewer's model.
+		wantModels := []string{deepseek, deepseek, deepseek, claimedSenior, deepseek, deepseek, claimedSenior}
+		for i, c := range g.agent.calls {
+			if c.Model != wantModels[i] {
+				t.Errorf("stage %d ran on %s, want %s", i, c.Model, wantModels[i])
+			}
+		}
+		// Every call went to the provider: the claimed senior's reviews too.
+		if n := g.compat.Count(); n != 7 {
+			t.Fatalf("the provider saw %d calls, want 7", n)
+		}
+		if n := g.fake.Count(); n != 0 {
+			t.Fatalf("Anthropic saw %d calls", n)
+		}
+		onlyPR(t, g.provider)
+	})
+}
+
+// chargedNames is the models the run's figures name, in a fixed order, for a
+// failure message (the map's order is not one).
+func chargedNames(c *runstore.Cost) []string {
+	out := slices.Sorted(maps.Keys(c.ModelBy))
+	return out
 }
 
 // readManagedDuring wraps a step to snapshot the managed settings file's
