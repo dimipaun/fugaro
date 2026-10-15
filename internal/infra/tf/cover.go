@@ -139,6 +139,18 @@ type Cover struct {
 	Registry, Region string
 	Buckets          []string
 	Billing          []string
+	// Ghcr is the remote (pull-through) repository's ID in this run's
+	// registry ("fugaro-ghcr") and Owner the GitHub owner a base pin through
+	// it is trusted for: the owner half of the local config's recorded
+	// image_source, which its caller reads from the config — never from the
+	// reference being covered, which would make the rule vacuous.
+	//
+	// The remote repository proxies all of ghcr.io, so a reference under its
+	// ID has to match the pin's closed shape rather than merely sit under
+	// this run's registry (baseImageOK). Both are parameters, and an empty
+	// Owner refuses every remote path, so a caller that forgets one cannot
+	// reopen the hole.
+	Ghcr, Owner string
 }
 
 // FugaroRoles are the custom role IDs the modules create; FugaroAccounts the
@@ -647,8 +659,9 @@ func (c Cover) attributes(rc ResourceChange, creates map[string]bool) string {
 					return "a container " + attr + " that is not known"
 				}
 			}
-			if img := str(m["image"]); c.Registry == "" || !strings.HasPrefix(img, c.Registry+"/"+proj+"/") {
-				return fmt.Sprintf("runs the image %q, outside this run's registry %s/%s/", img, c.Registry, proj)
+			if img := str(m["image"]); !c.baseImageOK(img, proj) {
+				return fmt.Sprintf("runs the image %q, which is outside this run's registry %s/%s/ or not a base image of it in the shape this installation pins (%s/%s/%s/<owner>/fugaro-<kind>:<version>@sha256:<digest>)",
+					img, c.Registry, proj, c.Registry, proj, c.Ghcr)
 			}
 			cmd, args := strList(m["command"]), strList(m["args"])
 			known := false
@@ -728,12 +741,65 @@ type checkSpec struct {
 // refs reach a Dockerfile FROM line and a build's arguments.
 var refChars = regexp.MustCompile(`^[A-Za-z0-9._:/@-]+$`)
 
+// pinNameRE, pinVersionRE and pinDigestRE are the pin's own parts, as
+// baseImageOK reads them: the image (fugaro-<kind>), the version tag it
+// keeps as the release marker, and the digest it must carry (design §3.6).
+var (
+	pinNameRE    = regexp.MustCompile(`^fugaro-[a-z0-9]+(?:-[a-z0-9]+)*$`)
+	pinVersionRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
+	pinDigestRE  = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+)
+
 // buildAccount: the spec's build_service_account is the email of a Fugaro job
 // account (fugaro-<readable>-<8 hex>) in one of this run's projects. The fixed
 // accounts (scheduler, history, token signer) are not build accounts.
 func (c Cover) buildAccount(email string) bool {
 	sm := saMember.FindStringSubmatch("serviceAccount:" + email)
 	return sm != nil && slices.Contains(c.Projects, sm[2]) && jobAccountID(sm[1])
+}
+
+// baseImageOK reports whether ref may appear as an image in a covered plan:
+// under this run's registry, then either outside the remote (pull-through)
+// repository's ID — the installation's own repositories, as before — or in
+// the base pin's closed shape (design registry-remote-repository.md §3.6):
+//
+//	<host>/<project>/<ghcr>/<owner>/fugaro-<kind>:<version>@sha256:<64 hex>
+//
+// The proxy serves ALL of ghcr.io, so "under <registry>/<project>/" stops
+// confining anything once that repository exists, and its upstream is not
+// ours to vouch for: everything under its ID must therefore name the
+// RECORDED owner (c.Owner), a fugaro-<kind> image, a version tag — the tag
+// is the version marker every reader of a pin works from — and a digest.
+// The owner and the repository ID are the caller's (c.Ghcr, c.Owner), and
+// an empty owner refuses every remote path. refChars and the ".." guard are
+// the ones this check has always had.
+//
+// What this closes is bounded, and the bound is design §10.7's: the owner
+// and the entry it is checked against can be published in the same shared
+// config, so against whoever writes that document this is a *consistency*
+// check, not a provenance guarantee. What it does close is real: a foreign
+// owner, a bare tag, a missing digest or any other shape in an entry whose
+// config records our owner — a hand-edited config, a stale entry, an
+// accidental paste.
+func (c Cover) baseImageOK(ref, proj string) bool {
+	prefix := c.Registry + "/" + proj + "/"
+	if c.Registry == "" || !strings.HasPrefix(ref, prefix) || len(ref) == len(prefix) || !refChars.MatchString(ref) ||
+		slices.Contains(strings.Split(ref, "/"), "..") {
+		return false
+	}
+	if c.Ghcr == "" || !strings.HasPrefix(ref, prefix+c.Ghcr+"/") {
+		return true
+	}
+	owner, rest, ok := strings.Cut(strings.TrimPrefix(ref, prefix+c.Ghcr+"/"), "/")
+	if !ok || c.Owner == "" || owner != c.Owner {
+		return false
+	}
+	name, tag, ok := strings.Cut(rest, ":")
+	if !ok || !pinNameRE.MatchString(name) {
+		return false
+	}
+	version, digest, ok := strings.Cut(tag, "@")
+	return ok && pinVersionRE.MatchString(version) && pinDigestRE.MatchString(digest)
 }
 
 // checkSpecs checks every FUGARO_CHECK_SPEC entry of a container's
@@ -746,12 +812,7 @@ func (c Cover) checkSpecs(m map[string]any, unk any, envPath []any, proj string)
 		return "an environment that is not known"
 	}
 	prefix := c.Registry + "/" + proj + "/"
-	inRegistry := func(ref string) bool {
-		if c.Registry == "" || !strings.HasPrefix(ref, prefix) || len(ref) == len(prefix) || !refChars.MatchString(ref) {
-			return false
-		}
-		return !slices.Contains(strings.Split(ref, "/"), "..")
-	}
+	inRegistry := c.baseImageOK
 	for j, e := range objects(m["env"]) {
 		ep := append(slices.Clone(envPath), j)
 		if unknownAt(unk, append(slices.Clone(ep), "name")...) {
@@ -767,7 +828,7 @@ func (c Cover) checkSpecs(m map[string]any, unk any, envPath []any, proj string)
 		if err := json.Unmarshal([]byte(str(e["value"])), &s); err != nil {
 			return "a check spec that is not the JSON the check job reads"
 		}
-		if !inRegistry(s.Registry) {
+		if !inRegistry(s.Registry, proj) {
 			return fmt.Sprintf("a check spec whose registry %q is outside this run's %s", s.Registry, prefix)
 		}
 		// The account the check's builds run as: one of this run's Fugaro job
@@ -776,7 +837,7 @@ func (c Cover) checkSpecs(m map[string]any, unk any, envPath []any, proj string)
 			return fmt.Sprintf("a check spec whose build service account is %q, not a Fugaro service account of this run", s.BuildServiceAccount)
 		}
 		for _, k := range slices.Sorted(maps.Keys(s.BaseImages)) {
-			if ref := s.BaseImages[k]; !inRegistry(ref) {
+			if ref := s.BaseImages[k]; !inRegistry(ref, proj) {
 				return fmt.Sprintf("a check spec whose base image %s is %q, outside this run's %s", k, ref, prefix)
 			}
 		}

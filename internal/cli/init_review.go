@@ -266,7 +266,8 @@ func (e *initEngine) projectAdmins(ctx context.Context) []string {
 // members and to Fugaro's own service accounts of the installation's project
 // and the Firebase project.
 func (e *initEngine) cover() tf.Cover {
-	c := tf.Cover{Projects: []string{e.r.gcpProject}, Region: e.lc.Region, Buckets: []string{e.spec.RunsBucket}}
+	c := tf.Cover{Projects: []string{e.r.gcpProject}, Region: e.lc.Region, Buckets: []string{e.spec.RunsBucket},
+		Ghcr: infra.GhcrRegistry, Owner: baseOwner(e.lc)}
 	if host, err := infra.RegistryHost(e.lc); err == nil {
 		c.Registry, _, _ = strings.Cut(host, "/")
 	}
