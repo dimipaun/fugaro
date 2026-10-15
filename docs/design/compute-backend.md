@@ -377,9 +377,10 @@ view (internal/backend/gcp/logs.go filters on
    can read them — a worse outcome than the Cloud Run path. This is an
    installation-level Terraform change (§8).
 
-   **Built** (Task 4): the sink and the exclusion each carry both arms,
-   parenthesized so the exclusion's `NOT` clauses hang off the pair and not
-   off the Batch arm alone (`AND` binds tighter than `OR`). The Cloud Run arm
+   **Built** (Task 4): the sink and the exclusion each carry both arms, as
+   one parenthesized group so the exclusion's `NOT` clauses hang off the pair
+   and not off the Batch arm alone (the query language binds `NOT` tighter
+   than `AND`, and `AND` tighter than `OR`). The Cloud Run arm
    is unchanged byte-for-byte, and the arm is additive and inert on a project
    with no Batch jobs. It reaches a project only when the installation's
    Terraform is applied there; it widens no reader: the view has no filter of

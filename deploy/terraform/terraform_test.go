@@ -606,11 +606,13 @@ func TestCheckJobPrefixMatchesGo(t *testing.T) {
 //     to route (or stop routing its own);
 //   - the Batch arm is exactly the documented one -- the resource type Batch
 //     gives a job's entries, pinned to the installation's own marker;
-//   - the arms are parenthesized and hung off the shared local. AND binds
-//     tighter than OR, so an unparenthesized exclusion would apply its NOT
-//     clauses to the Batch arm alone, and the check jobs' decision lines and
-//     the Cloud Run system log would start being excluded from _Default
-//     where the log-based alerts read them.
+//   - the arms are one parenthesized group, hung off the shared local. The
+//     query language binds NOT tighter than AND and AND tighter than OR, so
+//     an unparenthesized exclusion would read as "Cloud Run arm OR (Batch
+//     arm AND NOT ...)": its NOT clauses would apply to the Batch arm alone,
+//     and the check jobs' decision lines and the Cloud Run system log would
+//     start being excluded from _Default, where the log-based alerts read
+//     them.
 //
 // Who can read the lines does NOT change: the arm routes into the same
 // bucket, and the view's IAM member is pinned here to the launchers and
@@ -638,8 +640,8 @@ func TestLogSinkRoutesBothPlatforms(t *testing.T) {
 	if got, want := arm("fugaro_batch_logs"), `resource.type=\"batch.googleapis.com/Job\" AND labels.\"fugaro\"=\"managed\"`; got != want {
 		t.Errorf("the Batch arm = %s\nwant            %s", got, want)
 	}
-	if got, want := arm("fugaro_logs"), "(${local.fugaro_cloud_run_logs}) OR (${local.fugaro_batch_logs})"; got != want {
-		t.Errorf("the combined filter = %s\nwant                  %s\nboth arms must be parenthesized: AND binds tighter than OR", got, want)
+	if got, want := arm("fugaro_logs"), "(${local.fugaro_cloud_run_logs} OR ${local.fugaro_batch_logs})"; got != want {
+		t.Errorf("the combined filter = %s\nwant                  %s\nthe arms must be one parenthesized group: NOT binds tighter than AND, and AND than OR", got, want)
 	}
 	// Both the sink and the exclusion carry both arms; the view's IAM
 	// member still names only the launchers and operators.

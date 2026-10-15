@@ -664,7 +664,7 @@ run "log_isolation_on" {
     error_message = "the sink must carry its name and a unique writer identity"
   }
   assert {
-    condition     = google_logging_project_sink.fugaro[0].filter == "(resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\") OR (resource.type=\"batch.googleapis.com/Job\" AND labels.\"fugaro\"=\"managed\")"
+    condition     = google_logging_project_sink.fugaro[0].filter == "(resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\" OR resource.type=\"batch.googleapis.com/Job\" AND labels.\"fugaro\"=\"managed\")"
     error_message = "the sink must route every Fugaro-managed job's logs, on both platforms"
   }
   # The Batch arm is additive: an installation with no Batch jobs has no
@@ -686,11 +686,12 @@ run "log_isolation_on" {
   }
   # Log-based alerts must keep seeing the check's own decision lines and
   # the Cloud Run system log, so the exclusion leaves both in _Default. The
-  # NOT clauses hang off the parenthesized pair of arms: AND binds tighter
-  # than OR, so without those parentheses they would apply to the Batch arm
-  # alone and the two kinds of line above would start being excluded.
+  # pair of arms is parenthesized as one group and the NOT clauses hang off
+  # it: the query language binds NOT tighter than AND and AND tighter than
+  # OR, so unparenthesized they would apply to the Batch arm alone and the
+  # two kinds of line above would start being excluded.
   assert {
-    condition     = google_logging_project_exclusion.fugaro_from_default[0].filter == "(resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\") OR (resource.type=\"batch.googleapis.com/Job\" AND labels.\"fugaro\"=\"managed\") AND NOT (resource.labels.job_name=~\"^fugarochk-\" AND jsonPayload.event=\"image-check\") AND NOT logName:\"run.googleapis.com%2Fvarlog%2Fsystem\""
+    condition     = google_logging_project_exclusion.fugaro_from_default[0].filter == "(resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\" OR resource.type=\"batch.googleapis.com/Job\" AND labels.\"fugaro\"=\"managed\") AND NOT (resource.labels.job_name=~\"^fugarochk-\" AND jsonPayload.event=\"image-check\") AND NOT logName:\"run.googleapis.com%2Fvarlog%2Fsystem\""
     error_message = "the exclusion must leave the alerts' log lines in _Default, and only the check jobs' decision lines"
   }
   assert {

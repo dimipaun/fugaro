@@ -32,12 +32,16 @@ locals {
   # nothing.
   fugaro_batch_logs = "resource.type=\"batch.googleapis.com/Job\" AND labels.\"fugaro\"=\"managed\""
 
-  # Both arms. The parentheses are load-bearing in the exclusion below: AND
-  # binds tighter than OR, so without them that resource's NOT clauses would
-  # apply to the Batch arm alone and the check jobs' decision lines and the
+  # Both arms, as one parenthesized group. The parentheses are load-bearing
+  # in the exclusion below: the query language binds NOT tighter than AND,
+  # and AND tighter than OR, so "${arms} AND NOT ..." without them would be
+  # "cloud_run_job arm OR (batch arm AND NOT ...)" -- the NOT clauses would
+  # apply to the Batch arm alone, and the check jobs' decision lines and the
   # Cloud Run system log would start being excluded from _Default, which is
-  # where the log-based alerts read them.
-  fugaro_logs = "(${local.fugaro_cloud_run_logs}) OR (${local.fugaro_batch_logs})"
+  # where the log-based alerts read them. Parenthesized, both arms carry the
+  # NOT clauses, and the sink (which has none) routes the same lines either
+  # way.
+  fugaro_logs = "(${local.fugaro_cloud_run_logs} OR ${local.fugaro_batch_logs})"
 }
 
 resource "google_logging_project_bucket_config" "fugaro" {
