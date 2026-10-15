@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -1783,6 +1784,46 @@ func TestPlanRepoThreadsReadyToFirstBuild(t *testing.T) {
 	if fb.specs[0].GitSecretID != projectID {
 		t.Fatalf("the first build names %q, want the apply's own %s (the repository's copy %s was stored after it, so this is not a live resolve)",
 			fb.specs[0].GitSecretID, projectID, gcp.SecretID(p.spec.Slug, "bitbucket-token"))
+	}
+}
+
+// L2 of the PR #379 review, the second mutation no test caught: init --repo
+// must not pass on whether the project has published a policy. The CLI's side
+// of the Firebase gate (D11, plan task 1.4 step 2) is planRepo — it reads the
+// node with the operator's own credentials, which only this side holds, and
+// hands the answer to Readiness — so a published policy must really stop a
+// repository whose jobs cannot read one. A CLI that never filled
+// ex.PolicyExists, or that read a failed read as "no policy", deploys the job
+// here and this test fails.
+func TestPlanRepoGatesOnAPublishedPolicy(t *testing.T) {
+	db := gcpfake.NewRTDB(t)
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":1,"budget":{"mode":"enforce","per_run_usd":5}}`))
+	// The local config holds the database (so the policy can be read) but no
+	// web API key, so its jobs carry neither of what a run needs.
+	p := newRepoPlanRig(t, names(3), sandboxBaseRelease, "budget: { mode: off, rtdb_url: "+db.URL+" }\n", changedRepoBuild)
+	ready, missing, err := p.plan(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := ""
+	for _, m := range missing {
+		if m.Kind == infra.MissingFirebase {
+			gate = m.Reason
+		}
+	}
+	if gate == "" {
+		t.Fatalf("missing = %v, want the Firebase gate for a published policy", missing)
+	}
+	for _, want := range []string{projectpolicy.PathShared(), infra.RTDBURLEnv, infra.FirebaseAPIKeyEnv, "fugaro init --firebase", "init --repo"} {
+		if !strings.Contains(gate, want) {
+			t.Errorf("the gate does not say %q: %s", want, gate)
+		}
+	}
+	for name, ws := range ready.Workflows {
+		if ws.DeployJob {
+			t.Errorf("workflow %s is deployed though no run of it could read the published policy", name)
+		}
 	}
 }
 
