@@ -117,9 +117,9 @@ func (p *Policy) Admission(profile string) ([]string, error) {
 // refuses an undefined profile (ProfileFor, checkJobProfile) but holds a
 // repository to the project's allow_repos alone, because the job it is in does
 // not carry a selected profile yet (internal/runner/project.go,
-// internal/cli/run_allowlist.go). These are the gates Task 3.2's job layout
-// will be applied through — which is why a profile's list is validated strictly
-// here (validProfiles) rather than trusted to a caller that does not exist yet.
+// internal/cli/run_allowlist.go). These are the gates Task 3.3's admission
+// check applies — which is why a profile's list is validated strictly here
+// (validProfiles) rather than trusted to a caller that does not exist yet.
 func (p *Policy) Admits(profile, canonical string) (bool, error) {
 	pr, err := p.ProfileFor(profile)
 	if err != nil {
