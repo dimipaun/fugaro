@@ -134,6 +134,15 @@ type run struct {
 	spec *task.Spec
 	cfg  *config.Config
 	wf   config.Workflow
+	// providers are r.d.Providers with the project layer's claude_models
+	// merged in (config.ApplyClaudeClaims), set once in resolveConfig --
+	// the one place both entry points (bootstrap and readBaseConfig)
+	// resolve a config -- and read by every rule that asks which route
+	// serves a model, planOf's first-line decision included. It is never
+	// written into the environment: internal/infra/spec.go writes
+	// FUGARO_MODEL_PROVIDERS from the local config alone, so the claim
+	// travels with the layer, which is re-read on every launch.
+	providers map[string]config.ModelProvider
 	// plan is the loop after implement, from the recipe resolved at
 	// bootstrap (resolveRecipe) with its rounds decided (planOf); it always
 	// ends with a review step.
@@ -943,7 +952,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.rec.Recipe = &rrec
 	derived := rrec.Name == recipe.DefaultName && rrec.Source == string(recipe.SourceCatalog)
-	plan := planOf(rcp, derived, cfg.Agent, r.d.Providers, spec.Overrides.ReviewRounds)
+	plan := planOf(rcp, derived, cfg.Agent, r.modelProviders(), spec.Overrides.ReviewRounds)
 	if err := checkPlan(plan); err != nil {
 		return fmt.Errorf("recipe %s: %w", rrec.Name, err)
 	}
@@ -1263,8 +1272,36 @@ func (r *run) resolveConfig(data []byte) (*config.Config, error) {
 	if len(out.Problems) > 0 {
 		return nil, fmt.Errorf("fugaro.yaml is invalid: %s", problemsText(out.Problems))
 	}
+	// The layer's claims are merged here, before anything reads a route:
+	// bootstrap reaches this at runner.go's own first step and asks planOf
+	// about the reviewer (FirstLineOn) a moment later, well before
+	// checkBudget and the gateway's routes. A merge any later leaves a
+	// layer-only claimed senior looking unclaimed and the derived recipe
+	// keeps its cheap first line. An undefined provider name or an
+	// overlap fails bootstrap here, as a config error naming the key,
+	// before any call.
+	r.providers = r.d.Providers
+	if out.Applied {
+		merged, ps := config.ApplyClaudeClaims(r.d.Providers, out.Layer.ClaudeModels)
+		if len(ps) > 0 {
+			return nil, fmt.Errorf("the project layer's claude_models: %s", problemsText(ps))
+		}
+		r.providers = merged
+	}
 	r.rec.ConfigSHA256 = out.Res.ConfigSHA256
 	return out.Cfg, nil
+}
+
+// modelProviders are the providers this run routes by: Deps.Providers with
+// the project layer's claims merged in when one applied (resolveConfig).
+// The fallback is for a run that never resolved a config -- the unit tests
+// that build one directly -- which reads the providers the environment
+// carried, exactly as before.
+func (r *run) modelProviders() map[string]config.ModelProvider {
+	if r.providers != nil {
+		return r.providers
+	}
+	return r.d.Providers
 }
 
 // problemsText is problems as one line, "; "-separated.
