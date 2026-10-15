@@ -1,0 +1,229 @@
+# The console, v2: the later phases
+
+*Status: 2026-10-15. Design: [desktop-console-v2.md](../design/desktop-console-v2.md) (the reconciliation, decisions D21–D38, **none of them answered**). The plan this one follows: [2026-10-15-desktop-console.md](2026-10-15-desktop-console.md) (phases 0–5, phase 0 merged). Spec source: [desktop-console-spec-v2.md](../design/desktop-console-spec-v2.md).*
+
+**Spec:** [desktop-console-spec-v2.md](../design/desktop-console-spec-v2.md) (the owner's text, verbatim), reconciled by [desktop-console-v2.md](../design/desktop-console-v2.md), whose decisions **D21–D38** each gate a phase below. **Related:** the v1 plan [2026-10-15-desktop-console.md](2026-10-15-desktop-console.md), unchanged; the v1 design [desktop-console.md](../design/desktop-console.md), decisions D1–D20, unchanged; [2026-10-14-project-centric.md](2026-10-14-project-centric.md), the release train and the project record.
+
+## OWNER APPROVAL GATE
+
+**Nothing in v2 is approved or built, and no task in this plan may be started before the owner says so.**
+
+- **The design's decisions D21–D38 are unanswered.** Every row of §2's table has an empty answer column, and this plan is written so that a task's **first line names the decision it needs**. A task whose decision is unanswered is not "ready to pick up"; it is a question wearing a task's clothes.
+- **The v1 console plan's gate still stands and is unchanged.** Phases 0–5 of [2026-10-15-desktop-console.md](2026-10-15-desktop-console.md) are approved as they are, and nothing here reopens, reorders or re-scopes them.
+- **This plan is a proposal for later phases.** It exists so the owner can see what the second spec would cost, in tasks, before deciding. The one thing that is genuinely cheap and independent — the planning skill (phase V2.8) — is cheap *because* it is independent, not because it is approved.
+- **The three writes in phase V2.5 move the fence.** D2 (strictly read-only v1) and D14 (read-only enforced by an exact-argument allow-list alone) are the console's whole safety argument. Each write is a separate answer and a separate PR, and none of them may be bundled with a read.
+- **No agent-run step in this plan touches a secret, and none of them is a live action.** The sandbox installation is the only installation any of this runs against; **the `belong` installation is never touched** (`belong` holds `edgeappinc/edgeserver` and `edgeappinc/edgeweb`: no agent touches it, ever). Nothing here produces, stores, reads or transmits a credential.
+- **No file under `.github/workflows/` is added or edited by this plan.** If a phase ever needs one, it is staged under `docs/pending-workflows/` and applied by the owner, which is the rule the v1 console plan's phase 4 already follows for the signing workflow.
+
+## 1. What this plan is
+
+The second spec asks for six new things (design §1's findings F1–F33). Four of them need **reads that do not exist yet**, one is a **write path**, and one is a **skill upgrade**. This plan orders the work so that:
+
+1. **the reads come first** (phase V2.1), because a view built on an absent field is the one mistake this kind of work reliably makes;
+2. **the graph comes before anything that draws it** (V2.2 before V2.3, V2.6), because "ready", "blocked" and "scheduled earlier than its dependency" are all functions of the graph and of nothing else;
+3. **the writes come last and separately** (V2.5), because each one moves the fence D2 and D14 put up, and because by then the reads they act on are shipped and testable;
+4. **the skill is independent** (V2.8) and can land at any point, including before the console reads anything — its output is a file a person can read too.
+
+**Releases.** The console is its own artifact published from the CLI's own `vX.Y.Z` tag (design D11). **v2 adds no release and is not scheduled against one** (design D37): its first shippable version is whatever tag follows the release that carries the v1 console's phase 4. The release train this repository records is **R4 of [2026-10-14-project-centric.md](2026-10-14-project-centric.md)**: project-centric phase 0 on `main`, phases 1–6 on `next`, released together as **0.8.0**. The highest release in `docs/releases/` is `v0.7.5.md`.
+
+**Global constraints.** The v1 console plan's Global Constraints apply to every task here, verbatim and without restatement: no live action, no secret handled by an agent, the sandbox installation only, the `belong` installation never, no `.github/workflows/` edits, and the docs tests. Two more are v2's own:
+
+11. **A read may not become a write because it is convenient.** Every task below says which of the two it is, and the ones in phase V2.5 are the only writes.
+12. **Every cited symbol was checked against `origin/main`.** Where a task says "the field `x`", the field `x` exists at the commit the design cites; a task that finds it missing stops and says so rather than inventing it.
+
+## 2. The check number: 60
+
+The live checks live in [docs/gcp-live-checklist.md](../gcp-live-checklist.md), and a plan that writes one has to say which number is free — which is a fact about `origin/main`, not about this plan's wishes. **Read from `origin/main` at `a573870`:**
+
+| Number | State |
+|---|---|
+| **47** | the highest `## Check` section written in the file |
+| **48–56** | reserved in [2026-10-14-project-centric.md](2026-10-14-project-centric.md)'s phase table (56 is that plan's `fugaro project export`) |
+| **57** | written as a summary row; its section is elsewhere |
+| **58** | reserved by **PR #393** (open against `main`, not merged) — and [artifact-runs.md](../design/artifact-runs.md) §11 also writes a Check 58 for itself, which is the contention the console plan's register describes: **whichever of the two merges second renumbers** |
+| **59** | [2026-10-15-desktop-console.md](2026-10-15-desktop-console.md)'s, written as two sections, 59a and 59b |
+| **60** | **free on `origin/main`** — reserved by this plan, for the one owner-run check below |
+| **61, 62** | not reserved anywhere in `docs/` on `origin/main` |
+
+**The brief that carried the second spec said "the budget-token channel 60, the monorepo folder export 61". Neither reservation exists in this repository.** No `Check 60` and no `Check 61` appear anywhere under `docs/`; the token channel is **phase 3b** of the project-centric plan (a design task with no check number), and the nearest thing to a folder export is that plan's phase 6 `fugaro project export`, whose number is **56**. So this plan reserves **60** and applies the tree's own rule: **if the owner holds 60 or 61 for work not in this tree, v2's number moves to 62** — whichever PR merges second renumbers, and the renumber moves the summary row, the section heading and every reference together.
+
+**Before Check 60 is written, its task re-reads `origin/main`** with the three commands the v1 plan's register names (`git show origin/main:docs/gcp-live-checklist.md | grep -n '^## Check 4[5-9]'`, a grep of the summary rows, and a grep of `docs/plans/` and `docs/design/` for the number), because a reservation recorded in an unmerged PR is invisible to a grep of `main` and this table is a claim about `main` only.
+
+## 3. Phases and tasks
+
+Each task is independently mergeable: it lands with its own tests, and **nothing in phase *n* is required by phase *n-1*'s merge**. Tasks marked **SECURITY-SENSITIVE** get an independent review by a second opus agent before merge, in the v1 plan's sense — the reviewer's question is "what does this let the app do that it could not do before?", not "is this good code?".
+
+### Phase V2.0 — the gate, made checkable
+
+**V2.0.1 — the decisions, answered and pinned. (needs D21–D38; the owner's task, not an agent's)**
+The owner answers D21–D38 in [desktop-console-v2.md](../design/desktop-console-v2.md)'s tables. Then one task records the answers as a test, in the shape the v1 design's D-table already has: every row D21–D38 carries an answer, and the answer text names the task in this plan that implements it.
+*Files:* `docs/design/desktop-console-v2.md`; `internal/cli/docs_desktop_console_v2_test.go` (new).
+*Verification:* `GOFLAGS=-p=2 go test ./internal/cli -run 'DocsDesktopConsoleV2' -count=1` — green, and red if a row is deleted or its answer is blanked (the mutation is proven red in the PR that adds it, as this tree's docs tests do).
+*Independent merge:* yes — it touches one document and one test.
+
+**V2.0.2 — the check-number re-check. (needs nothing)**
+Re-read `origin/main` for `## Check` sections and summary rows and record the result in §2 of this plan before any task writes a number. If 60 is taken by then, this plan's check is 62 and this document says so.
+*Files:* `docs/plans/2026-10-15-desktop-console-v2.md`; `internal/cli/docs_desktop_console_v2_test.go`.
+*Verification:* `GOFLAGS=-p=2 go test ./internal/cli -run 'DocsDesktopConsoleV2' -count=1`.
+*Independent merge:* yes.
+
+### Phase V2.1 — the two reads everything else draws on
+
+**V2.1.1 — the installations, as a document. (needs D31) — SECURITY-SENSITIVE**
+Closes v1's gap 5, and the design's F1/F2 say exactly how much is already there. A read-only command enumerates the installations in the home config — `internal/localcfg/localcfg.go`'s `Projects(getenv)`, `ProjectsDir`, `ProjectPath`, `LoadProject` — and prints a document naming **only** the fields the console needs: the project name, the GCP project, the region, whether a shared config was merged, and when the shared copy was last checked (`internal/localcfg/shared.go`'s `SameInstallation`/`MergeShared`, `internal/localcfg/sharedcache.go`'s `SharedCacheEntry`, `SharedFreshFor`, `SharedOfflineFor`).
+*Why security-sensitive:* this is the document that decides **what the app is allowed to know about the operator's machine**. It must never be a marshalled `localcfg.Config` — that struct carries more than the console needs, and a field added to it later would silently join this document. The fields are named in the document type, and a test asserts that the document type is not `localcfg.Config` and that no field of the config outside the named set reaches the output.
+*Files:* `internal/cli/projects.go` (new), `internal/cli/root.go`, `internal/cli/docs_desktop_console_v2_test.go`, `console/docs/json-contract.md`, `docs/design/desktop-console.md` (gap 5's sentence corrected — a **new** sentence beside the old one, since v1 is merged).
+*Verification:* `GOFLAGS=-p=2 go test ./internal/cli -run 'Projects|DocsDesktopConsoleV2' -count=1`, plus the boundary test `go test ./internal/cli -run 'ConsoleBoundary' -count=1`.
+*Independent merge:* yes; it is one new command and one new document.
+
+**V2.1.2 — the files a run changed, recorded. (needs D27) — SECURITY-SENSITIVE**
+The design's F17: no document the console can read carries the changed-file set, and the only place it exists today is transient (`internal/followup/prompt.go`'s `PromptData.DiffStat`, clipped to `maxDiffStatBytes`, built in `internal/gitops/rejected.go`). The run records the **path set** in its own record — paths only, no contents, no diff, bounded, and with the truncation recorded as a fact rather than hidden — and a `--json` read exposes it (`internal/cli/runs.go`'s `lsDoc`).
+*Why security-sensitive:* a path can name a client, a person or a project, and this is the first time this repository stores one outside a prompt. The task must state the bound, state what is **not** stored (contents, diffs, commit messages), and prove the bound with a test that feeds it an oversized change and asserts the record says it was truncated.
+*Files:* `internal/runstore/runstore.go`, `internal/runner/` (the writer), `internal/runview/runview.go` (the row), `internal/cli/runs.go`, `console/docs/json-contract.md`, `docs/design/desktop-console-v2.md`.
+*Verification:* `GOFLAGS=-p=2 go test ./internal/runstore ./internal/runner ./internal/cli -run 'ChangedFiles|RunsLS' -count=1`.
+*Independent merge:* yes, and it is a **schema change**, so the version-skew handshake the v1 plan builds in phase 3 is what keeps an older console honest about a field it does not know.
+
+### Phase V2.2 — the graph
+
+**V2.2.1 — the graph document, its schema, and the read that prints it. (needs D25)**
+A plan-side artifact written beside the plan it describes (design F6/F33 and D25), and a read-only command that prints it — the console reads it the way it reads everything, over the allow-list, and never opens the file itself. The schema is small and it is written down in the design first: nodes (id, title, the run it belongs to if any, the task's target version, the footprint of V2.2.2's shape), edges (dependency, with the reason), the plan it came from, and a schema version so a console can refuse a graph it does not understand.
+*Files:* `internal/plan/` (new package: the document type, the parser, the validation), `internal/cli/plan.go` (new), `internal/cli/root.go`, `console/docs/json-contract.md`, `docs/design/desktop-console-v2.md`.
+*Verification:* `GOFLAGS=-p=2 go test ./internal/plan ./internal/cli -run 'Plan|DocsDesktopConsoleV2' -count=1` — including a fixture graph, a malformed graph, a graph from a future schema version, and a graph with a cycle (which is a **refusal**, not a render).
+*Independent merge:* yes.
+
+**V2.2.2 — the footprint. (needs D28)**
+The planner's expected footprint per task, in the shape D28 recommends: glob-shaped paths, advisory, and labelled as a prediction in the document itself. The matching used for display is this repository's own glob semantics (`internal/gitops`), not a second implementation.
+*Files:* `internal/plan/`, `internal/cli/plan.go`, `docs/design/desktop-console-v2.md`.
+*Verification:* `GOFLAGS=-p=2 go test ./internal/plan -run 'Footprint' -count=1`.
+
+**V2.2.3 — readiness, and the critical path. (needs D26)**
+`ready` and `blocked` computed **where the graph is read** (design F7), so two consoles cannot disagree; and the bottleneck ranking by critical path, with the raw downstream count as the fallback when no footprint carries a weight (D26).
+*Files:* `internal/plan/`, `internal/cli/plan.go`, `console/docs/json-contract.md`.
+*Verification:* `GOFLAGS=-p=2 go test ./internal/plan -run 'Ready|CriticalPath' -count=1` — table-driven, with a graph whose raw-count hub is *not* the critical-path bottleneck, since that is the case the feature exists for.
+*Independent merge:* yes; it depends on V2.2.1's schema and on nothing else.
+
+### Phase V2.3 — the graph on screen
+
+**V2.3.1 — the graph view, and the four colours. (needs V2.2.3; D30's answer for the roadmap, later)**
+The console renders the graph document: the four colours (done, running, ready, blocked), the bottleneck highlight, and the "what else can we start in parallel?" answer. Every colour is a field the document carries (design F4's rule) and "needs attention" is **not** a colour until it is a definition (F4, U6).
+*Files:* `console/` (the screen, its fixture, its test), `console/docs/json-contract.md` if a field is added.
+*Verification:* the console's own test command for the view, plus `GOFLAGS=-p=2 go test ./internal/cli -run 'ConsoleBoundary' -count=1` so the boundary still holds.
+*Independent merge:* yes.
+
+### Phase V2.4 — overlap
+
+**V2.4.1 — the comparison, in Go. (needs V2.1.2 and D27)**
+Two recorded sets (V2.1.2) compared against each other and against the graph's footprints (V2.2.2), with the **warning computed in the CLI** so two consoles cannot disagree about whether two branches overlap. Soft warnings only, never locks (design F21): `internal/lock` is a run's branch lock and is not the console's to take.
+*Files:* `internal/plan/` or `internal/runview/` (wherever the two sets meet), `internal/cli/plan.go`, `console/docs/json-contract.md`, `docs/design/desktop-console-v2.md`.
+*Verification:* `GOFLAGS=-p=2 go test ./internal/plan ./internal/runview -run 'Overlap' -count=1` — with a disjoint pair, an overlapping pair, a footprint-only prediction, and a truncated record (which must **not** be reported as "no overlap").
+*Independent merge:* yes.
+
+### Phase V2.5 — the writes (each gated separately, each last)
+
+**V2.5.1 — launching, through the CLI. (needs D22 and D23) — SECURITY-SENSITIVE**
+The console spawns `fugaro run` (with `--task-file` for a task handed over as a file) behind the CLI's own confirmation and the CLI's own budget check, and shows `already-launched` (`internal/cli/run.go`'s `launchResult.status`) as a fact rather than an error. The claim stays the CLI's (`internal/runstore/launch.go`'s `Claim`, `ClaimKey`, `ClaimTTL`).
+*Why security-sensitive:* **this is the decision that moves the fence.** The v1 design's §5.1 rule 3 (the exact-argument allow-list) and D14's answer ("every identity may be an admin, and read-only is enforced by an allow-list alone") were written for a read-only app; a launch is the first entry in the allow-list that changes the world. The reviewer's questions are: what is the new argument vector, exactly; can any field of any document reach it; and what does the app do when the CLI refuses.
+*Files:* `console/` (the spawn, the confirmation, the test), `docs/design/desktop-console.md` (a **new** decision row recording the fence's move — v1 is merged and is not edited), `docs/design/desktop-console-v2.md`.
+*Verification:* the console's own test command, plus a test that the argument vector is built from named fields and never from a document's free text, plus `GOFLAGS=-p=2 go test ./internal/cli -run 'ConsoleBoundary' -count=1`.
+*Independent merge:* yes, and it is the only task in the phase that may land before the others.
+
+**V2.5.2 — cancel and retry. (needs D34) — SECURITY-SENSITIVE**
+Spawns of `fugaro cancel RUN` and `fugaro run --retry RUN`, with the CLI's own confirmations, the argv shown to the operator, and the opt-in spawn log (v1 design D20) as the audit. No console-side cancel marker is ever written.
+*Files:* `console/`, `docs/design/desktop-console-v2.md`.
+*Verification:* the console's own test command, plus a negative test that no code path writes to the runs bucket.
+*Independent merge:* yes.
+
+**V2.5.3 — the roadmap's "copy the change". (needs D30) — SECURITY-SENSITIVE**
+The console shows the exact command that would change a task's target version; the operator runs it; the CLI confirms. The console does **not** edit the plan file in the operator's checkout.
+*Files:* `console/`, `docs/design/desktop-console-v2.md`.
+*Verification:* the console's own test command, plus a test that the app holds no path into the checkout.
+*Independent merge:* yes.
+
+### Phase V2.6 — the version roadmap
+
+**V2.6.1 — the version column. (needs D29)**
+The version lives in the graph document beside the task today (D29's recommendation), and moves into the project record when the project-centric plan's phase 6 (`fugaro project export`, Check 56) lands — with the console reading it through the CLI in both cases, so the view does not change when the source does.
+*Files:* `internal/plan/`, `console/`, `docs/design/desktop-console-v2.md`.
+*Verification:* `GOFLAGS=-p=2 go test ./internal/plan -run 'Version' -count=1`, plus the console's own test command.
+
+**V2.6.2 — the dependency-aware warning. (needs V2.2.1 and V2.6.1)**
+"Flags a task scheduled earlier than something it depends on, and offers to pull the dependency forward" — a pure function of the graph and the version column (design F24), computed where the graph is read. The "pull it forward" half is a **write** and is therefore V2.5.3's shape, not a new mechanism.
+*Files:* `internal/plan/`, `console/`, `console/docs/json-contract.md`.
+*Verification:* `GOFLAGS=-p=2 go test ./internal/plan -run 'Roadmap' -count=1`.
+
+### Phase V2.7 — the rest of the spec
+
+**V2.7.1 — the review inbox. (needs nothing beyond v1)**
+Finished jobs with their PR numbers and URLs **as text**, never as a link, until a document carries the repository's provider (v1 design §5.1 rule 2 and its gap 7). The row already exists in the feed (`internal/watch/json.go`'s `JSONFinished`, `internal/runview/runview.go`'s `Row`).
+*Files:* `console/`, `docs/design/desktop-console-v2.md`.
+*Verification:* the console's own test command, plus a test that no `pr_url` reaches `openExternal`.
+
+**V2.7.2 — cap alerts. (needs D35) — SECURITY-SENSITIVE (the threshold is a policy)**
+A read-side computation over figures the CLI already prints (`internal/cli/budget.go`'s `budgetShowDoc`; `internal/budget/model.go`'s `PathCapsRepo`, `PathSpendGlobal`, `PathSpendRepo`, `PathSpendRun`), with the threshold a **local setting of the app** and the existing rate alert (`internal/localcfg/localcfg.go`'s `BurnAlert()` into `internal/cli/watch.go`'s `watch.Config`) left exactly as it is.
+*Why security-sensitive:* an alert is a claim about money. It must say which installation it is about and how fresh the figure is (design D32), and it must never sum across installations.
+*Files:* `console/`, `docs/design/desktop-console-v2.md`.
+*Verification:* the console's own test command, plus a fixture with two installations whose figures must appear as two rows and never as one total.
+
+**V2.7.3 — desktop notifications. (needs D33) — SECURITY-SENSITIVE**
+Derived from the watch feed by the console's own long-lived reader, **off by default**, content limited to facts a document carries, and never a string from a hostile field (design F27, and the `pr_url` rule again). A notification renders outside the window and outside the CSP, which is why this is a security task and not a UI one.
+*Files:* `console/`, `docs/design/desktop-console-v2.md`.
+*Verification:* the console's own test command, plus a test that a hostile `pr_url`, a hostile repository name and a hostile branch name cannot reach a notification body.
+
+### Phase V2.8 — the independence-maximizing planning skill
+
+**V2.8.1 — upgrade `parallelism`, and give it the format. (needs D36)**
+`plugin/skills/parallelism/SKILL.md` is the skill that owns fan-out (design F31), and at 47 lines and 3245 bytes it has room: the lint budgets in `plugin/skills_lint_test.go` are `maxSkillLines` 400 / `maxSkillBytes` 24576 for a `SKILL.md` and `maxReferenceLines` 300 / `maxReferenceBytes` 16384 for a reference file, with frontmatter rules (`name`, a `description` containing "use when", 40–1024 characters). The task adds the **output format** for the graph and the per-task footprint (V2.2.1's schema, V2.2.2's shape) to the skill, in the skill's own words, and adds one reference file if the SKILL.md budget gets tight.
+*Files:* `plugin/skills/parallelism/SKILL.md`, `plugin/skills/parallelism/reference/` (new file, only if needed), `docs/design/desktop-console-v2.md`.
+*Verification:* `GOFLAGS=-p=2 go test ./internal/cli -run 'Lint|DocsDesktopConsoleV2' -count=1` — the skill lint is what decides new-file-versus-inline, so the test is the verification and not a formality.
+*Independent merge:* yes, and it is the **cheapest useful task in this plan**: its output is a file a person can read, so it pays for itself before any console reads it.
+
+## 4. The owner-run check: Check 60
+
+**Check 60 (OWNER-RUN, NOT RUN)**, in [docs/gcp-live-checklist.md](../gcp-live-checklist.md), on the **sandbox installation** (`fugaro`) and the sandbox repository only — **never the `belong` installation**. Written with FACT lines, a restore step, and **Check 43's full guard verbatim**: the three hard stops, `--project fugaro` on every `fugaro` command and `--project "${P:?}"` on every `gcloud` command, in a block re-run from a fresh shell before every step. That requirement is not optional — the future `TestChecklistChecksAreGuarded` (project-centric plan Task 6.3) asserts that every `## Check 48`-onward section carries Check 43's three hard stops and its project pinning, not merely a `:?` guard.
+
+**In outline**, and only for the phases that are built by then: with a plan whose graph has a ready task, a running task and a blocked task, and with two runs whose recorded path sets overlap —
+
+1. the installations document lists the sandbox installation and **does not** contain any field outside the named set (the negative half is the point);
+2. the graph reads back with the same nodes, edges, versions and footprints the plan file has, and a cycle in a scratch copy is refused rather than rendered;
+3. the overlap warning appears for the two runs that share a path and **not** for the two that do not, and a truncated record reports "unknown", not "no overlap";
+4. **if** V2.5.1 has landed: one launch, from the console, with the argv it built read back from the spawn log (`FUGARO_CONSOLE_SPAWN_LOG`, v1 design D20), the run appearing in `fugaro runs ls --json`, and the same task launched twice answering `already-launched` rather than starting a second container;
+5. the restore step removes every object and every local file the check created, and the check deletes the spawn log it asked for.
+
+**This check cannot be written until the tasks it exercises are approved and built** — which is what the owner approval gate at the top of this document means. Its number is reserved now so that the reservation is not a decision taken in a hurry later; §2 says what to do if the number turns out to be taken.
+
+## 5. PR groups
+
+The v1 plan groups its tasks so that each group is one reviewable pull request. The same shape here, in the order they may land:
+
+| Group | Tasks | One PR contains |
+|---|---|---|
+| **V-A** | V2.0.1, V2.0.2 | the answers to D21–D38, and the test that keeps them answered |
+| **V-B** | V2.1.1 | the installations document, and v1 gap 5's correction |
+| **V-C** | V2.1.2 | the changed-file record and the read that exposes it |
+| **V-D** | V2.2.1, V2.2.2, V2.2.3 | the graph package, its schema, its footprint, its ranking and its read |
+| **V-E** | V2.3.1, V2.4.1 | the graph view and the overlap comparison |
+| **V-F** | V2.6.1, V2.6.2 | the version column and the dependency-aware warning |
+| **V-G** | V2.7.1, V2.7.2, V2.7.3 | the review inbox, cap alerts and notifications |
+| **V-H** | V2.8.1 | the planning skill |
+| **V-I** | V2.5.1, V2.5.2, V2.5.3 | **one PR each** — three writes, three reviews, three answers |
+
+**V-H may land first and V-I last**, and neither ordering breaks anything: the skill's output is a file a person reads, and the writes act on reads that are already shipped by then.
+
+## 6. Cross-task dependencies
+
+Stated so a reviewer can check the claim that each task is independently mergeable:
+
+- **V2.1.2 → V2.4.1.** Overlap needs two recorded sets; without the record there is nothing to compare (design F17).
+- **V2.2.1 → V2.2.2 → V2.2.3.** The footprint and the ranking are properties of the graph's nodes; the schema comes first.
+- **V2.2.3 → V2.3.1, V2.6.2.** "Ready", "blocked" and "scheduled earlier than its dependency" are computed where the graph is read (design F7, F24).
+- **V2.1.1 → nothing.** The installations document is a read with no dependents in this plan; the sidebar consumes it, and the sidebar is v1's phase 2 work.
+- **V2.5.\* → V2.0.1 and its own decision.** No write lands before the owner answers the decision that governs it, and no write is bundled with another.
+- **V2.8.1 → nothing.** The skill writes a document; whether the console reads it is V2.2's business.
+- **Everything → the owner approval gate.** This is the dependency that matters, and it is the first one, not the last.
+
+## 7. What this plan does not do
+
+- **It does not reopen v1.** Phases 0–5 of [2026-10-15-desktop-console.md](2026-10-15-desktop-console.md) and decisions D1–D20 of [desktop-console.md](../design/desktop-console.md) stand as they are; where v2 corrects a sentence in a merged document (F2's gap 5, the fence's move in V2.5.1), it writes a **new** sentence beside the old one and says so.
+- **It does not schedule the command queue.** The design recommends against it in every slice (D21), and the plan contains no task for it. If the owner rules the other way, the queue is a design of its own: who may write it, what runs it, the claim, the ack, the replay and the kill switch (design F11) are six answers before it is one task.
+- **It does not touch a secret, run anything live, or go near the `belong` installation.** No agent-run step in any task here does any of those three things.
+- **It does not add a workflow file.** Any workflow a later phase needs is staged under `docs/pending-workflows/` and applied by the owner.
