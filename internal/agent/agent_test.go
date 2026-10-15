@@ -599,9 +599,20 @@ func TestBuildEnvGatewayDropsRealKey(t *testing.T) {
 	if !slices.Contains(secrets, realKey) {
 		t.Errorf("secrets = %v", secrets)
 	}
-	// The key is still required, so a misconfigured job fails as it did.
-	if _, _, err := BuildEnv([]string{"PATH=/bin"}, EnvSpec{Auth: "api-key", Gateway: gw}); err == nil {
-		t.Error("a missing real key was accepted")
+	// No key at all is accepted: a run whose models all route through
+	// providers has none, and the gateway refuses a call that needs
+	// Anthropic (internal/gateway, missingAnthropicKey).
+	env, secrets, err = BuildEnv([]string{"PATH=/bin"}, EnvSpec{Auth: "api-key", Gateway: gw})
+	if err != nil {
+		t.Fatalf("a run with no Anthropic key: %v", err)
+	}
+	if !slices.Contains(env, "ANTHROPIC_API_KEY=tok-abc") || len(secrets) != 0 {
+		t.Errorf("env = %v, secrets = %v, want the gateway token and nothing to redact", env, secrets)
+	}
+	// A key that is there but too short is still refused: it cannot be
+	// redacted safely.
+	if _, _, err := BuildEnv([]string{"PATH=/bin", "ANTHROPIC_API_KEY=abc"}, EnvSpec{Auth: "api-key", Gateway: gw}); err == nil {
+		t.Error("a 3-byte real key was accepted")
 	}
 	// Set and the parent can't override the routing.
 	env, _, err = BuildEnv(parent, EnvSpec{Auth: "api-key", Gateway: gw, Set: map[string]string{"ANTHROPIC_BASE_URL": "https://set.invalid"}})
@@ -761,5 +772,27 @@ func TestClaudeEnvHasNoPluginOrTrustVariables(t *testing.T) {
 				t.Errorf("%s: the agent's env has %s", auth, kv)
 			}
 		}
+	}
+}
+
+// TestBuildEnvNoGatekeeperNeedsTheKeyActionably (design project-centric §6.1,
+// review Medium 1): with no gateway every call goes direct to Anthropic, so
+// the key is not optional whatever the pins are -- and the refusal names the
+// fix, the same text the gateway refuses such a call with, instead of the
+// bare "is not set in the runner environment".
+func TestBuildEnvNoGatekeeperNeedsTheKeyActionably(t *testing.T) {
+	_, _, err := BuildEnv([]string{"PATH=/bin"}, EnvSpec{Auth: "api-key"})
+	if err == nil {
+		t.Fatal("api-key with no gateway and no key started")
+	}
+	for _, want := range []string{"ANTHROPIC_API_KEY", "fugaro secrets set anthropic-api-key", "fugaro init --repo", "route the model through a provider"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	// A declared secret that is missing keeps the plain message: only the
+	// Anthropic key has an action worth naming.
+	if _, _, err := BuildEnv([]string{"PATH=/bin", "ANTHROPIC_API_KEY=key-123"}, EnvSpec{Auth: "api-key", Secrets: []string{"MISSING"}}); err == nil || strings.Contains(err.Error(), "fugaro secrets set anthropic-api-key") {
+		t.Errorf("a missing declared secret err = %v, want the plain message", err)
 	}
 }
