@@ -42,16 +42,20 @@ import (
 // the launch claim: a refused launch leaves nothing behind at all — no task,
 // no token, no claim and no execution.
 func launchPolicyGates(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) error {
-	// A launch that cannot read the policy at all refuses here, before the
-	// read below answers "not found" for a node it never looked for
-	// (missingDatabaseRefusal, launch_budget.go). It is this gate's business
-	// and not the budget pre-check's: the pre-check is the operator's to skip
-	// (--no-budget-check) and skips itself when there is no backend, while the
-	// allow-list is not his to skip — the run is held to it whatever the mode
-	// is.
-	if err := missingDatabaseRefusal(env.lc); err != nil {
-		return err
-	}
+	// A config that names no database has no policy this launcher can see, and
+	// the read below answers "not found" without a call. That is not read as a
+	// refusal: nothing is blocked until a policy exists (internal/infra's
+	// readiness gate says the same at deploy time — a job whose mode is on and
+	// whose environment carries no backend is a note there, and becomes a gate
+	// the moment the project has published a policy this installation cannot
+	// read), and a mode that is on is not a policy. What refuses a launch is a
+	// policy the launcher *can* see and cannot honour: an allow-list that does
+	// not admit the repository (below), a node that cannot be read, a version it
+	// does not understand, a key the policy lists and this Fugaro does not know.
+	//
+	// The allow-list is still not the pre-check's to skip: the pre-check is the
+	// operator's (--no-budget-check) and skips itself when there is no backend,
+	// while this gate runs whatever the mode is.
 	p, found, err := env.policy.read(ctx, env.lc)
 	var ve *projectpolicy.VersionError
 	if errors.As(err, &ve) {

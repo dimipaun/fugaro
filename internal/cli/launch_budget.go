@@ -55,31 +55,6 @@ func budgetSignerOn(lc *localcfg.Config) error {
 	return nil
 }
 
-// missingDatabaseRefusal refuses a launch whose config names a budget mode but
-// no database: with budget.rtdb_url empty there is no policy this launcher can
-// read, so it can neither check the project's allow_repos nor give a run the
-// identity that reads the policy, and a launch that went ahead would run
-// outside the policy's reach while its config claimed otherwise.
-//
-// The mode is what decides, and it is the only half of that the launcher can
-// evaluate: whether the project's policy carries an allow-list is knowable
-// only through the database that is missing here (the node is not in the
-// config, and a project's policy is published by an operator, not by this
-// machine). Mode off is the operator saying this installation has no policy
-// bound to it — the legacy shape, which launches exactly as before — so only
-// any other mode is refused. The message names the setting, because the fix is
-// a config line, and says what the mode would otherwise mean, because the other
-// way out (turning the mode off) must be a deliberate choice rather than a
-// silent one.
-func missingDatabaseRefusal(lc *localcfg.Config) error {
-	mode := lc.BudgetMode()
-	if mode == localcfg.BudgetOff || (lc.Budget != nil && lc.Budget.RTDBURL != "") {
-		return nil
-	}
-	return userErr("budget.rtdb_url is not set in project %s's config, so this launcher cannot read the project's policy, and budget mode %s says the policy is what bounds a run: the policy's allow_repos is checked before any execution exists, and a run of a project-centric installation reads the policy through the budget identity this launcher mints from that database. Set budget.rtdb_url (an operator runs fugaro init --firebase <firebase-project-id> --name %s to write it), or set 'budget: { mode: off }' if no policy bounds this installation",
-		lc.Name, mode, lc.Name)
-}
-
 // budgetMintOn reports whether this launch must mint the run a budget
 // identity: Firebase is configured and either the project's budget mode is not
 // off or the project has published a policy. The mode decision follows the
@@ -90,20 +65,19 @@ func missingDatabaseRefusal(lc *localcfg.Config) error {
 // the local mode still decides is the job's FUGARO_BUDGET_MODE, which is the
 // fallback for the case the policy node is absent (P3).
 //
-// A mode that is not off and no database to read a policy from is refused
-// rather than answered "no token needed" (missingDatabaseRefusal): the "no
-// database, so no policy this CLI could see either" reading is only sound for
-// an installation whose mode is off, where the operator has said the same
-// thing about the policy.
+// A config that names no database has no policy this CLI can see, and says so
+// without a call, whatever the mode is: a mode that is on is not a policy, and
+// nothing is blocked until one exists (internal/infra's readiness gate blocks
+// the deploy — and this launcher's own gate refuses a launch — only for a
+// policy this side can actually see). A job of such an installation carries no
+// backend either, so the run reads no policy and the environment ceiling stands,
+// which is what the mode-off and never-configured shapes have always done.
 func (e *cloudEnv) budgetMintOn(ctx context.Context) (bool, error) {
 	if on, err := budgetBackendOn(e.lc); err != nil || on {
 		return on, err
 	}
-	if err := missingDatabaseRefusal(e.lc); err != nil {
-		return false, err
-	}
 	if e.lc.Budget == nil || e.lc.Budget.RTDBURL == "" {
-		return false, nil // mode off and no database: nothing to mint for
+		return false, nil // no database: no policy this CLI could see either
 	}
 	p, found, err := e.policy.read(ctx, e.lc)
 	if err != nil {

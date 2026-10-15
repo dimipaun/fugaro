@@ -281,7 +281,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 					projectpolicy.PathShared(), RTDBURLEnv, FirebaseAPIKeyEnv, spec.Name)})
 			} else if ws.Env[BudgetModeEnv] != "" {
 				missing = append(missing, Missing{Workflow: name, Kind: MissingNote, Reason: fmt.Sprintf(
-					"this job's budget is on (%s=%s) but it carries neither %s nor %s, so a run of it could not read a project policy: configure the project's Firebase backend (fugaro init --firebase <firebase-project-id>, then fugaro init --repo). Nothing is blocked until a policy exists; once one does, this job stops being deployable until it can read it",
+					"this job's budget is on (%s=%s) but it carries neither %s nor %s, so a run of it could not read a project policy: configure the project's Firebase backend (fugaro init --firebase <firebase-project-id>, then fugaro init --repo). Nothing is blocked until a policy exists; once one does, this job stops being deployable until it can read it. A launch is held to the same rule and no stricter one: it refuses a policy it can see and cannot honour, never a budget mode on its own",
 					BudgetModeEnv, ws.Env[BudgetModeEnv], RTDBURLEnv, FirebaseAPIKeyEnv)})
 			} else if ex.JobsFirebase[name] {
 				// The job has the backend today and this apply would take it
