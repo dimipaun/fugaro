@@ -224,7 +224,9 @@ func TestRunRefusesAPolicyNewerThanTheBinary(t *testing.T) {
 // node below what this Fugaro understands (a hand-written one, or one a release
 // before this shape wrote; version 0 decodes fine and is not the legacy path,
 // that is the marker's job) is refused by the same gate, and the remedy printed
-// is the operator's re-run of init — never `fugaro upgrade`, which is this
+// is the operator's delete-then-publish — the same remedy internal/cli's
+// publishedPolicyOf refuses an older node with, because this release's publish
+// will not overwrite one — and never `fugaro upgrade`, which is this
 // binary's own remedy for the opposite direction and does nothing here. The two
 // directions shared one sentence until this test: the binary looked newer than
 // the node in both, so an operator whose node was simply behind was told to
@@ -238,17 +240,19 @@ func TestRunRefusesAPolicyOlderThanTheBinary(t *testing.T) {
 	}
 	for _, want := range []string{
 		"the project policy is version 0", "this Fugaro understands version 1",
-		"re-run", "fugaro init --firebase", policySince,
+		"fugaro project policy publish --delete", "publish it again", policySince,
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
 	}
-	// The other direction's remedy, which is the wrong advice here: nothing on
-	// this machine is behind the node.
-	for _, bad := range []string{"upgrade Fugaro", "fugaro upgrade"} {
+	// Two remedies that are wrong advice here: the other direction's (nothing
+	// on this machine is behind the node) and init, which deploys the rules
+	// template and marker but writes no policy node — an operator sent to
+	// re-run it would meet this refusal again.
+	for _, bad := range []string{"upgrade Fugaro", "fugaro upgrade", "init --firebase"} {
 		if strings.Contains(err.Error(), bad) {
-			t.Errorf("the refusal tells the operator to %q, but this binary is the newer side: what is behind is the node, and the remedy is to re-run init: %v", bad, err)
+			t.Errorf("the refusal tells the operator to %q, but this binary is the newer side: what is behind is the node, and the remedy is the delete: %v", bad, err)
 		}
 	}
 	if n := len(f.run.Executions()); n != 0 {
@@ -273,13 +277,13 @@ func TestSkewSentencesSplitByDirection(t *testing.T) {
 	}{
 		{
 			name: "the node is older", ve: older,
-			want:    []string{"version 0", "version 1", "re-run", "fugaro init --firebase"},
-			notWant: []string{"upgrade Fugaro", "fugaro upgrade"},
+			want:    []string{"version 0", "version 1", "fugaro project policy publish --delete", "publish it again"},
+			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "init --firebase"},
 		},
 		{
 			name: "the node is newer", ve: newer,
 			want:    []string{"version 2", "version 1", "upgrade Fugaro"},
-			notWant: []string{"re-run", "init --firebase"},
+			notWant: []string{"publish --delete", "init --firebase"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -300,8 +304,8 @@ func TestSkewSentencesSplitByDirection(t *testing.T) {
 	// And the whole of the launch gate's refusal, which splices the sentence
 	// into its own release-marked text: the remedy must survive the splice.
 	gate := policySkewRefusal(older).Error()
-	if !strings.Contains(gate, "re-run") || strings.Contains(gate, "upgrade Fugaro") {
-		t.Errorf("policySkewRefusal(older) = %q, want the re-run remark and not the upgrade one", gate)
+	if !strings.Contains(gate, "publish --delete") || strings.Contains(gate, "upgrade Fugaro") {
+		t.Errorf("policySkewRefusal(older) = %q, want the delete remark and not the upgrade one", gate)
 	}
 	if !strings.Contains(policySkewRefusal(newer).Error(), "upgrade Fugaro") {
 		t.Errorf("policySkewRefusal(newer) = %q, want the upgrade remark", policySkewRefusal(newer))
@@ -309,8 +313,8 @@ func TestSkewSentencesSplitByDirection(t *testing.T) {
 
 	// The other caller, which reads the node for the budget decision: same
 	// sentence, one flat error.
-	if e := policyReadErr(older); !strings.Contains(e.Error(), "re-run") || strings.Contains(e.Error(), "upgrade Fugaro") {
-		t.Errorf("policyReadErr(older) = %v, want the re-run remark", e)
+	if e := policyReadErr(older); !strings.Contains(e.Error(), "publish --delete") || strings.Contains(e.Error(), "upgrade Fugaro") {
+		t.Errorf("policyReadErr(older) = %v, want the delete remark", e)
 	}
 	if e := policyReadErr(newer); !strings.Contains(e.Error(), "upgrade Fugaro") {
 		t.Errorf("policyReadErr(newer) = %v, want the upgrade remark", e)

@@ -32,8 +32,16 @@ func TestTheCLISkewRemediesStayApart(t *testing.T) {
 	if !strings.Contains(CLISkew, "upgrade Fugaro") {
 		t.Errorf("CLISkew = %q, want the upgrade remedy for the older binary", CLISkew)
 	}
-	if !strings.Contains(CLISkewNewer, "re-run") || !strings.Contains(CLISkewNewer, "init --firebase") {
-		t.Errorf("CLISkewNewer = %q, want the re-run init remedy for the older node", CLISkewNewer)
+	if !strings.Contains(CLISkewNewer, "fugaro project policy publish --delete") || !strings.Contains(CLISkewNewer, "publish it again") {
+		t.Errorf("CLISkewNewer = %q, want the delete-then-publish remedy for the older node", CLISkewNewer)
+	}
+	// And not the remedy that cannot be carried out: fugaro init --firebase
+	// deploys this release's rules template and marker and never writes
+	// config/policy/shared, while this release's publish refuses to overwrite
+	// a node of another version (internal/cli's publishedPolicyOf) — so an
+	// operator sent to re-run init arrives back at this same refusal.
+	if strings.Contains(CLISkewNewer, "init --firebase") {
+		t.Errorf("CLISkewNewer = %q: init --firebase writes no policy node, so it cannot be the remedy for a node that is behind", CLISkewNewer)
 	}
 	for name, msg := range map[string]string{"CLISkew": CLISkew, "CLISkewNewer": CLISkewNewer} {
 		if strings.Contains(msg, "%!") || strings.Count(msg, "%") != 2 {

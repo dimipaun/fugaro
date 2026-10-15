@@ -126,8 +126,11 @@ func policySkewRefusal(ve *projectpolicy.VersionError) error {
 // cliSkewSentence is the CLI's refusal of a policy node written in a version
 // this Fugaro does not read, remedy included, picked by the direction of the
 // skew: this Fugaro is the newer side (CLISkewNewer: the node is behind, and
-// the operator re-runs init to bring it up to this release) or the older one
-// (CLISkew: the node is ahead, so this binary must be upgraded). Found >
+// the operator removes it with `fugaro project policy publish --delete` before
+// publishing from this release, because this release's publish will not
+// overwrite a node of another version — what internal/cli's publishedPolicyOf
+// refuses with the same remedy) or the older one (CLISkew: the node is ahead,
+// so this binary must be upgraded). Found >
 // Understood is the latter — VersionError.Found is the version read from the
 // node and Understood is this binary's, so a Found above Understood is a
 // policy ahead of this Fugaro, which is the older-binary sentence.
