@@ -553,7 +553,7 @@ func TestReplaceImageIsNeverConfirmedByYes(t *testing.T) {
 			if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
 				t.Fatal(err)
 			}
-			puts := r.dst.puts // the converged run's own copy, not this one's
+			puts := r.dst.puts                    // the converged run's own copy, not this one's
 			canConfirmTyped = initflow.CanConfirm // the real rule
 			other := cdg([]byte("hand pushed"))
 			r.dst.mans[other], r.dst.types[other] = []byte("x"), "application/vnd.oci.image.manifest.v1+json"
