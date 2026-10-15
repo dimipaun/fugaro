@@ -422,6 +422,7 @@ func Decode(raw []byte) (*Policy, bool, error)
 2. Extend `TestRulesParity` (`internal/budget/rules/parity_test.go:175`): a run token can read `config/policy/shared`; it **can** read `config/policy/repos/<its own slug>`; it **cannot** read another slug's node; it **cannot** read `config/policy` (the parent); it cannot write any of them. Each of those is a case in the emulator test too (`internal/budget/rules/emulator_test.go`, tag `firebase`), because the parity test is a table over the generated JSON and the emulator is the real evaluator.
 3. Regenerate `testdata/rules.golden.json` in this commit, and add the assertion that the template's policy paths equal `projectpolicy.PathShared()`/`PathRepo("x")` — a task renaming a path updates both or fails.
 4. **The owner-run deploy of these rules is Task 1.7 step 2**, in the order the design fixes: **rules first, then the runner image, then `policy publish`** (§5). Until the owner deploys, the rules on the database deny the read, and the runner's Task 1.3 path never fires because no node exists yet — that is why the order is safe rather than merely conventional.
+5. **The run token is not only a reader** (12a item 12 — the design's §4.3 lists what a run token writes, and this change must not disturb it): it writes `runs/$slug/$run/...` (`:22-55`), `spend/$day/global/{counted,spent,notional}` (`:57-70`), `agents/$slug/$run` (`:145-172`) and `outcomes/$day/$slug/$run` (`:175-188`), the outcome node being write-once (`!data.exists()`). The policy edit is **additive and confined to `config`**, and `TestRulesParity` gains one row per existing write above asserting it is still granted — so a later edit to the `config` block cannot quietly take away a run's ability to record its own outcome or its own spend. No existing row is renumbered or removed.
 
 **Command:** `GOFLAGS=-p=2 go test ./internal/budget/... -count=1` then `go test -tags firebase ./internal/budget/rules/... -count=1`. **Commit:** "rules: config/policy is readable per child, config/admin is not readable by a run token".
 
@@ -609,7 +610,7 @@ The design's §6.3 and D2. **This phase changes a security default** and says so
 **Interfaces.** Consumes: #343's machinery unchanged (the containers, the precedence, `ResolvedSecretID`). Produces: a new default in `secretsOptions` (`scope` derived from the flags), and the same store/read paths.
 
 1. **Scope resolution becomes explicit and defaults to project.** `fugaro secrets set <name>` with neither flag stores the **project** copy; `--repo` (or `--repo <slug>`) stores the repository copy and is kept until phase 3, where a repository copy loses its job to mount it. `--project-wide` stays as an accepted synonym of the default so existing scripts and the skills do not break, and `--repo` + `--project-wide` stay mutually exclusive (`:87`).
-2. **The reserved names are swept in, the OAuth tokens are not** (D2): `anthropic-api-key`, the git credentials (`config.ReservedSecrets`' names except the Claude OAuth namespace) and provider keys are eligible project-wide **without the per-name `allow_data_to` list** — `projectSecretRefusal` no longer fires for them. `claude-oauth-token-*` keeps its refusal: it is person-owned and phase 5 replaces it (`claudeOAuthAccountRefusal`, `:200-204`).
+2. **The reserved names are swept in, the OAuth tokens are not** (D2): `anthropic-api-key`, the git credentials (`config.ReservedSecrets`' names except the Claude OAuth namespace) and provider keys are eligible project-wide **without the per-name `allow_data_to` list** — `projectSecretRefusal` no longer fires for them. `claude-oauth-token-*` keeps its refusal: it is person-owned and phase 5 replaces it (`claudeOAuthAccountRefusal`, `internal/cli/secrets.go:196`).
 3. What "reaches every enrolled repository" means is written in the code's message and in SECURITY.md, in one sentence: **inside a shared job a project secret has no IAM boundary between repositories — the profile is the boundary** (design §4.1, §6.3), and `workflows.<n>.secrets` cannot be shared across a job's mounts (they become named project secrets on a profile, or stay on the per-repository path).
 4. `init --repo`'s secrets stage (`internal/cli/initsecrets.go`): a name the project already covers stops being asked for, which extends #343's 40i to the new default. **The prompt text says the value will be stored project-wide** unless `--repo` is passed, because the prompt is where a person learns the blast radius.
 5. `SECURITY.md`: the D2 paragraph — the default, what it reverses, the profile as the boundary, and the data-policy gate's unchanged role.
@@ -866,7 +867,7 @@ The cross-cutting list of design §11, carried explicitly by this task as it is 
 
 **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1` and `fugaro verify test`. **Commit:** "docs, skills and checks: the project-centric path after phase 4".
 
-## Phase 5 — the OAuth pool (six tasks)
+## Phase 5 — the OAuth pool (five tasks)
 
 The design's §7. **What changes**: a Claude OAuth token stops being a repository's secret and becomes **a person's**, referenced by the project. Residual risks the design states and this phase's docs repeat: a project job that mounts several people's tokens widens the `/proc` and metadata-server exposure of `mixed-credentials.md` §6 to every repository sharing that job, and **OAuth spend is notional and no per-person budget exists** (`internal/runstore/cost.go:62-71`). **#363 is held until this phase** (D9) and is rebased in Task 5.4.
 
@@ -1011,3 +1012,129 @@ Append `## Check 56: the export, and what it does not contain (installation fuga
 7. Restore: none needed (the export writes outside the installation) — but confirm one ordinary sandbox task still runs and, if `--push` was used, that the backing repository's `main` is where the owner expects.
 
 **Paste back:** every FACT line, never a secret value. **Depends on:** 6.1 to 6.3.
+
+## Cross-task dependency audit
+
+The owner's first requirement is that **each phase, and where practical each task, merges alone and leaves `main` green**, with no task depending on a later one. This section is that check, done explicitly rather than assumed: every task's "Depends on" line from its own section, in one table, with the direction and the answer to "what if the dependency is not merged yet".
+
+**Direction.** Every edge below points **backwards** — to an earlier task in the same phase, to an earlier phase, or to an already-open PR. **There is no forward edge in this plan**, and no task is written as "do this after the next one": that is the property the table exists to demonstrate.
+
+| Task | Depends on | If it is not there yet |
+|---|---|---|
+| 0.1 | — | merges alone |
+| 0.2 | — | merges alone |
+| 0.3 (D6) | — | merges alone; the deploy is 0.4 |
+| 0.4 (Check 48) | 0.3 | the check deploys what 0.3 changed; nothing else in the plan reads it |
+| 1.1 | — | merges alone (a new package, no callers) |
+| 1.2 | 1.1 (the path literals it asserts parity with) | needs 1.1's exported paths; same phase, previous task |
+| 1.3 | 1.1, 1.2 | reads the policy 1.1 defines and 1.2 makes readable |
+| 1.4 (D11) | 1.1 (the URL constant only) | merges on its own; declared as "nothing from this phase but Task 1.1's path constant" |
+| 1.5 | 1.1, 1.3 | the allow-list check extends the reader 1.3 builds |
+| 1.6 | 1.1–1.3 | the CLI and doctor surface for what they built |
+| 1.7 (Check 49) | 1.2–1.6 | the phase's one owner-run step; nothing after it in phase 1 |
+| 1b.1 | 1.1, 1.6 **and** #359's phase 2 + the price catalog (#361) | the whole sub-phase is **deferrable**: it is gated on two other PRs by P7, and phase 2 does not need it |
+| 1b.2 | 1b.1 | same sub-phase |
+| 1b.3 | 1b.1, 1b.2 | same sub-phase |
+| 1b.4 (Check 50) | 1b.1–1b.3 | same sub-phase |
+| 2.1 (D2) | 1.1 (the project secret ID) | merges alone: the default changes, the machinery is #343's, already merged |
+| 2.2 | 2.1 | mounts what 2.1 stores at the new default |
+| 2.3 | 2.1 | documents it |
+| 2.4 (Check 51) | 2.1–2.3 | owner-run |
+| 3.0 (Check 52) | — | **runs first by design**, before any phase-3 code; a go/no-go, not a dependency on code |
+| 3.1 | 1.1, 1.6 | the policy shape and the CLI that publishes it |
+| 3.2 | 3.0, 3.1, 1.6 | a probe failure re-scopes it in the same PR, in writing |
+| 3.3 | 3.1, 3.2, 3.0 | the job names it parses come from 3.2 |
+| 3.4 | 3.2, 3.3 | renames the callers for the model 3.3 introduces |
+| 3.5 | 3.2, 3.3 (phase order; the grants and the naming it reads) | none of it is read by an earlier task |
+| 3.6 | **#360 / Check 38** (external, open) and 3.2–3.5 | `cloneShipped` is flipped only after Check 38's answer; until then the flag stays where it is |
+| 3.7 (Check 53) | 3.0–3.6 | owner-run |
+| 4.1 | 1.6, 3.3 | the seen-repositories read wants the project jobs to exist to be meaningful; the commands themselves need only 1.6, so it is the softest edge in the plan and the task says so |
+| 4.2 | **#365's core** (external, open) and 3.2 | the retirement engine is #365's; the job/SA/registry set it deletes is 3.2's |
+| 4.3 | 4.1, 4.2 | the allow-list write and the retirement path |
+| 4.4 | 4.2, 4.3 | the refusal lands after the paths it refuses |
+| 4.5 (Check 54) | 4.1–4.4, 3.7 | owner-run; the last task in the phase |
+| 4.6 | 4.1–4.5 | the phase's sweeping commit; nothing after it depends on it |
+| 5.1 | 3.2, 1.6 | a job per (profile, account) is what a person's secret is referenced by |
+| 5.2 | 5.1, 3.2 | the references it creates jobs for |
+| 5.3 | 5.1, 5.2 | the accounts it fails over between |
+| 5.4 (#363) | 5.3 | **a pointer with a rule**: it merges in its own PR, after this phase; nothing in phases 0–4 waits for it |
+| 5.5 (Check 55) | 5.1–5.3 | owner-run |
+| 6.1 | 1.6, 3.5 | the policy it exports and the job inventory it lists |
+| 6.2 | 6.1 | the export it pushes |
+| 6.3 | 6.1, 6.2 | documents them |
+| 6.4 (Check 56) | 6.1–6.3 | owner-run |
+
+**The cross-phase edges that are not just ordering**, spelled out because they are the ones a reviewer will question:
+
+1. **`#365` before 4.2, `#360` before 3.6, `#359`+`#361` before 1b, `#343` superseded by 4.3.** Four external edges, all open PRs, all backward — the plan builds on them or waits for them, and never the reverse. D9's `#363` is deliberately **after** phase 5, not before it.
+2. **Phase 1 without phase 2 or 3**: an installation that publishes a policy gets enforcement, and one that does not is untouched (P3), so phase 1 merges into a working system on its own.
+3. **Phase 2 without phase 3**: the default scope changes; a repository keeps its own job and mounts the project's secret on it (2.2), which is #343's supported path. Nothing needs a shared job.
+4. **Phase 3 without phase 4**: shared jobs work; a repository's root still exists and is simply unused for clone workflows. Nothing is deleted until 4.2, which is exactly why 4.2 is safe.
+5. **Phase 4 retires what phases 0–3 left behind, and nothing earlier depends on phase 4.** 4.2's refusal to retire a root whose resources another repository references is what makes it mergable into an installation that has not finished migrating.
+6. **Phases 5 and 6 are independent of each other** (5 needs 1.6 and 3.2; 6 needs 1.6 and 3.5), so either can ship first, and neither is needed by 0–4.
+
+**What each phase leaves on `main` when it lands**, which is the "system still works" half of the requirement: after 0, the rules and the messages are fixed and nothing else changed; after 1, an installation with no policy behaves exactly as before and one with a policy is enforced, with `fugaro run` still working in both; after 1b, routing is data and the unset case falls back to today's behaviour; after 2, `secrets set` stores project-wide and every existing path still mounts it; after 3, clone workflows run on shared jobs and per-repository jobs still exist for anyone not switched over; after 4, the old roots are retired one at a time, by the owner, each after its replacement is proven; after 5, OAuth accounts are people's, with the per-repository copies still readable until the repository path is gone; after 6, a record can be exported, and the installation is unaffected by the export having run.
+
+## The design's §12a items, by owning task
+
+| §12a item | Owning task | What carries it |
+|---|---|---|
+| 1. profile and account from `CLOUD_RUN_JOB`, not an overridable env var | 3.3 | the derivation is explicit (the runner reads it through `backend.ExecutionFromEnv`), and the corrector was in the drift table: the runner does not read `CLOUD_RUN_JOB` directly on this branch |
+| 2. no provider from an overridable env var; the job or the policy supplies it | 3.3 (binding), 1.5 (the first half) | the job's provider and the policy's canonical names |
+| 3. the interim path between phases 1 and 4 | 1.6 (the interim `--project-wide`, P-decisions), 4.1 (closes it) | a new repository is unenrolled between them, and the interim is one data write |
+| 4. seed `allow_repos` without one laptop, and no silent re-add | P4, 1.6 (the seed), 1.3 (the reader) | seeded once from every checkout the operator's machine knows; a later publish never re-adds a name the operator removed |
+| 5. matching includes the provider, canonical names | 1.1 (`Canonical`, `MatchRepo`), 1.5 | the glob rules are `provider/owner/name` |
+| 6. old baked images ignore a published policy | 1.6 | `doctor` and `upgrade` say so, and 12a item 6's message is in the drift note |
+| 7. `config/admin` is readable by launchers; no secret-adjacent data | 1.2 (rules), 1.1 (shape) | the section states it and the rules carry `.read: false` for a run token |
+| 8. profile admission is a phase 3 item | 3.3 | phase 1 enforces `allow_repos` only (P6) |
+| 9. the routing switch is an object, effective on publish | 1b.1 | an edit takes effect when an operator publishes |
+| 10. D2's reach on per-repository jobs still needs `init --repo` until phase 3 | 2.2, 2.4 step 2, 3.2 | stated as the phase's remaining Terraform step |
+| 11. who creates a person's secret | 5.1 | the person, with the operator accepting the reference |
+| 12. run-token writes include `outcomes/` and the global spend node | **1.2 step 5** | the policy edit is additive and confined to `config`, and the parity table gains a row per existing write |
+| 13. the RTDB policy replaces only the ceiling; `fugaro.yaml` still only tightens | 1.3 (the merge) | `policy.Merge`'s ceiling becomes the published policy, and the file layers keep their place |
+| 14. the cross-cutting list names `scripts/gen-golden-plans.sh`, `docs/multi-model.md`, `docs/checkout.md`, `docs/git-providers.md` | 3.2, 4.6, 5.5, 6.3 | each phase's sweeping task, named there |
+
+## The design's §13 UNVERIFIED items, by owning task
+
+| §13 item | Owning task | The probe, and what happens if it fails |
+|---|---|---|
+| Cloud Run secret reference inside an env override | 3.0 step 3 (Check 52) | if it works, it is a narrower option for the account mount; the design's option D stays rejected for the IAM reason the same step checks |
+| whether an execution's overrides are visible to the container | 3.0 step 3, then 1.5 step 3's SECURITY.md text | what SECURITY.md claims is limited to the answer |
+| Secret Manager IAM conditions on a name prefix | 3.0 step 4 | if honoured, it is a *possibility* for phase 5's per-person grants; if not, phase 5 uses one secret per person per account, as designed |
+| whether a repository module can reference a secret it does not create | **settled by reading, no probe**: `docs/design/project-secrets.md:18` (a `secret_id` IAM grant works identically whichever root created the secret), and Task 2.2's test | confirmed live in Check 51 step 2 (the sandbox job mounts the project secret ID) and Check 53 |
+| the project-wide Bitbucket token scope | 3.0 step 2 (Check 52), **a go/no-go** | Bitbucket projects stay on the per-repository path, the owner is told before phase 3 starts, D5 is re-decided, and 3.1–3.7 proceed for GitHub only |
+| whether the GitHub App can push to the backing repository | 6.2 (recorded as that phase's own probe when its check runs) | `--push` needs a deploy key or App token as a project secret, and 6.2 says which |
+| Claude Code's usage-limit text | 5.3 (the detector), 5.5 step 4 (the live answer) | a miss is the safe direction (no switch) and is what the skill already documents |
+| runs bucket IAM policy size and the service-account quota | 3.0 step 5 (Check 52), 3.2 step 6 (the golden test asserts the count is a function of profiles × accounts, not of repositories) | a sandbox with no headroom stops the phase and is reported |
+| how the Firestore database is created | **settled by reading, no probe**: `fugaro init --firebase`'s `firestoreStep`/`deployDatabase` (`internal/cli/init_firebase.go:549`, `:465`), with `firestore.googleapis.com` enabled by the Firebase root (`deploy/terraform/gcp/modules/firebase/apis.tf:15`) and the history account's `roles/datastore.user` (`.../modules/firebase/iam.tf:94`) | phase 6's export and the history job both assume it exists; the export reads it, never creates it |
+| whether `dimipaun/fugarosandbox` is usable as the GitHub sandbox | 4.5 step 4 (Check 54) and 3.7 step 2 (Check 53) | if not, a GitHub sandbox repository is created and the FACT line says which |
+| whether the launcher override gap is exploitable in practice | 3.0 step 3's D10 counterpart, with SECURITY.md written in 1.5 step 3 and 3.5 | the code says yes; a live check runs before SECURITY.md states it, and no phase claims to close it (D10 accepted) |
+
+## Security-sensitive tasks, for independent opus review
+
+Each of the owner's named areas maps to a task, and each of those tasks stands alone in its own PR group (the PR groups section) so a review sees exactly one of them:
+
+| Area the owner named | Task | Why it is security-sensitive |
+|---|---|---|
+| the RTDB rules and the policy node | 1.2, 0.3 (D6) | the rules decide who can read the policy and the kill switches; D6 changes the per-run cap's direction (a fail-open direction) |
+| the runner's slug binding, admission and fail-closed checks | 1.3 (fail closed), 1.5 (the binding's first half), 3.3 (the full binding and profile admission) | a wrong slug lets one repository's run act as another's; fail-open would let an unpublished policy be bypassed |
+| the shared-job IAM and bucket conditions | 3.2 | one job SA per (profile, account) broadens the bucket conditions — D4's accepted regression, stated in SECURITY.md |
+| project-scope keys | 2.1 | D2 reverses a default: a key reaches every enrolled repository unless `--repo` is passed |
+| the OAuth pool | 5.1 | a person's token, an operator's grant, and the widening the design accepts |
+| the export | 6.1 | a file tree that must contain no secret value and, by default, no person |
+| the launcher's override surface | 3.0 (the probe), SECURITY.md in 1.5/3.5 | the boundary is documented, not closed (D10); the probe decides what may be claimed |
+
+## Self-review
+
+Written last, against the owner's instructions, checking the plan rather than its prose:
+
+1. **Does every phase merge alone?** Yes — the audit above is that check, and it found one edge to soften and one item to add. Phase 1b is deferrable by P7 (it waits on two open PRs); 4.2 waits on #365's core; 3.6 waits on #360's Check 38. Nothing in the plan waits on a later task. Phase 0 to 6 each leave `main` green and the system working, as stated per phase in the audit's last paragraph.
+2. **Was every cited `file:line` re-verified?** Every one that the plan asserts, yes, against this branch (`fd86542`), and the drift table at the top records what moved, what the design names as a bare filename, and the three citations that could not be re-verified from the repository (the generated `run-gen.go`, the `requestedBy` symbol, and the "the runner already reads `CLOUD_RUN_JOB`" premise). Three corrections came out of writing the later phases and are in this commit rather than the drift table: `claudeOAuthAccountRefusal` is `internal/cli/secrets.go:196`, the spend and cap paths are `internal/budget/model.go:51-80` (not `:44`), and `internal/cli/project.go` already exists and holds the checkout/project helpers, so the enrollment commands get their own file. The `build.tf` range is `:5-93`; the other module ranges cited (`secrets.tf:4-42` with `prevent_destroy` at `:22`, `registry.tf:10-72` with `prevent_destroy` at `:59`, `check.tf:16-142`, `history.tf:174-253`) were read, not inferred.
+3. **Is every security-sensitive area flagged for opus review?** Yes — the five the owner named, plus D10's override surface and D6, in seven tasks, each with its own PR group.
+4. **Is every owner-run step marked, and none done by an agent?** Rules deploys (0.4, 1.7), Terraform applies (3.7, 4.5, 5.5), `init --repo` (4.5), secret entry (4.5, 5.5), and the live checks (48 to 56) — each marked **OWNER-RUN**, each with a guard, a hard-coded project, a restore, and a "paste back FACT lines only, never a value" line. **No step touches `belong`**, and three of them say so explicitly.
+5. **Are the Check numbers free?** 45 and 46 are claimed by open PR #359, 47 by #363 (read with `gh pr diff`), 44 by #361, 43 by #362, 38 by #360; `docs/gcp-live-checklist.md:242` says Check 45 is the next free number on `main`. This plan takes **48 to 56**, and says so at the top and in each phase's check task.
+6. **Is every §12a item and §13 item carried?** Yes — the two maps above. Writing them found one gap, 12a item 12 (the run token's non-read writes), which was added to Task 1.2 as step 5, and one item that was a probe in the design and is settled by reading here (how the Firestore database is created), now cited to `init_firebase.go:549`.
+7. **Is every cross-cutting item carried?** The §11 list — SECURITY.md, the user docs, the plugin skills, `fugaro doctor`, `upgrade`'s drift note, the dashboard, launcher grants, version skew, `validate` offline, `scripts/gen-golden-plans.sh`, `docs/multi-model.md`, `docs/checkout.md`, `docs/git-providers.md` — is carried by each phase's sweeping task (1.6, 1b.3, 2.3, 3.2/3.5/3.6, 4.6, 5.5, 6.3), and the phases that change nothing in one of them say so instead of dropping it silently.
+8. **What this plan does not do.** It does not implement anything (docs only), it does not decide D5, D3's deferred API alternative, D7's scheduled export or D9's rebase — each is marked where it would land and by whom. It does not claim the launcher override surface is closed, and it does not claim the export makes a project reconstructable end to end.
+9. **The weakest part of the plan**, said plainly so a reviewer can attack it: Task 4.1's dependency on 3.3 (the seen-repositories list is only meaningful once project jobs exist) and Task 3.0's go/no-go on the Bitbucket token, which can re-scope a whole phase for GitHub-only. Both are the honest place for those questions to sit, but both are places where a phase's shape is decided after the plan is written, and the plan says what happens then rather than leaving it open.
+
