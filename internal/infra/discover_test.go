@@ -936,9 +936,22 @@ func TestReadinessCloneDeploysWithoutAnImageBuild(t *testing.T) {
 		t.Errorf("web (checkout: clone) not ready: missing = %v", missing)
 	}
 	for _, m := range missing {
-		// A note gates nothing (MissingNote): it reports what the project
-		// will need one day, not something holding this job back.
-		if m.Workflow == "web" && m.Kind != MissingNote {
+		if m.Workflow != "web" {
+			continue
+		}
+		// web waits for no build of its own: its image is the installation's
+		// base. A note would not hold it back either (MissingNote gates
+		// nothing, readiness.go), and the one web could carry is D11's budget
+		// note -- its job's budget is on and it carries no Firebase backend,
+		// so a run could not read a project policy -- which is why it is
+		// named by its own constants here rather than tolerated as "any note"
+		// (code review, low). Every other kind, or a note about anything
+		// else, is a reason web is not deployable.
+		//
+		// This fixture's local config names no budget, so that note does not
+		// appear for web here today; the check is what keeps a note from
+		// passing as a reason if one ever does.
+		if m.Kind != MissingNote || !strings.Contains(m.Reason, BudgetModeEnv) || !strings.Contains(m.Reason, RTDBURLEnv) {
 			t.Errorf("web (checkout: clone) has a missing reason: %v", m)
 		}
 	}
