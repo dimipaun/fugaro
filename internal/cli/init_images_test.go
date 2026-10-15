@@ -39,6 +39,11 @@ type imagesRegistry struct {
 	puts   int // manifest and blob writes
 	onTag  func(repo, tag string)
 	onBlob func()
+	// proxy is the upstream this registry serves a manifest it does not
+	// hold from, by digest: what an Artifact Registry remote (pull-through)
+	// repository does for ghcr.io (design §3.1). A GET for a digest the
+	// proxy lacks is a 404, the shape a missing upstream version has.
+	proxy *imagesRegistry
 }
 
 func cdg(b []byte) string { h := sha256.Sum256(b); return "sha256:" + hex.EncodeToString(h[:]) }
@@ -124,11 +129,16 @@ func (r *imagesRegistry) handle(w http.ResponseWriter, q *http.Request) {
 			d = r.tags[repo+":"+ref]
 		}
 		b, ok := r.mans[d]
+		typ := r.types[d]
+		if !ok && r.proxy != nil { // a remote repository pulls from its upstream on demand
+			b, typ = r.proxy.mans[d], r.proxy.types[d]
+			_, ok = r.proxy.mans[d]
+		}
 		if !ok {
 			http.NotFound(w, q)
 			return
 		}
-		w.Header().Set("Content-Type", r.types[d])
+		w.Header().Set("Content-Type", typ)
 		w.Header().Set("Docker-Content-Digest", d)
 		if q.Method == "GET" {
 			_, _ = w.Write(b)
@@ -196,11 +206,11 @@ func newImagesRigFor(t *testing.T, version, fp string) *imagesRig {
 			},
 		}, nil
 	}
-	// The remote (pull-through) repository serves what its upstream has,
-	// looked up by digest: the read-back finds the base image's manifest
-	// whatever path it asks for.
+	// The destination registry is the remote (pull-through) repository:
+	// it serves what its upstream has, looked up by digest, whatever path
+	// the read-back asks for.
+	r.dst.proxy = r.src
 	r.basePin = r.src.tags["dimipaun/fugaro-base:1.2.3"]
-	r.dst.mans[r.basePin], r.dst.types[r.basePin] = r.src.mans[r.basePin], r.src.types[r.basePin]
 	// The nightly-immune "-pinned" tag a release publishes beside the plain
 	// version tag, naming the same image.
 	r.src.tags["dimipaun/fugaro-base:1.2.3-pinned"] = r.basePin
@@ -211,9 +221,11 @@ func newImagesRigFor(t *testing.T, version, fp string) *imagesRig {
 		if r.resolveErr != nil {
 			return "", r.resolveErr
 		}
-		// The fake models the real step's shape: read the "-pinned" tag,
-		// never the plain version tag a nightly rebuild moves.
-		d := r.src.tags["dimipaun/fugaro-"+kind+":"+version+"-pinned"]
+		// The fake models the real step's shape: read the "-pinned" tag of
+		// the allowed source's own owner, never the plain version tag a
+		// nightly rebuild moves.
+		_, owner, _ := strings.Cut(source, "/")
+		d := r.src.tags[owner+"/fugaro-"+kind+":"+version+"-pinned"]
 		if d == "" {
 			return "", fmt.Errorf("%s/fugaro-%s:%s-pinned does not exist: this release has no signed pinned image yet", source, kind, version)
 		}
@@ -305,53 +317,62 @@ func TestBaseImagesRecordedInConfig(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	bi := r.localConfig(t).BaseImages
-	want := "us-east5-docker.pkg.dev/" + initProject + "/fugaro-base/"
-	if bi["base"] != want+"fugaro-base:1.2.3" || len(bi) != 1 {
+	if bi["base"] != r.pinnedBase("base", "1.2.3") || len(bi) != 1 {
 		t.Errorf("base_images = %v", bi)
 	}
-	if r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] == "" {
-		t.Errorf("fugaro-base not copied: %v", r.dst.tags)
+	if r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] != "" {
+		t.Errorf("fugaro-base was copied: %v", r.dst.tags)
 	}
 	if r.dst.tags[initProject+"/fugaro-base/history:latest"] != "" {
 		t.Error("the history image is copied without --firebase")
 	}
-	// Idempotent: nothing is sent again.
-	puts := r.dst.puts
+	// Idempotent: the entry is already this release's pin, so the rerun
+	// resolves nothing and writes nothing.
+	resolves := r.resolveCalls
 	out, _, err = executeStdin(t, "", "init", "--yes", "--base", "base")
-	if err != nil || r.dst.puts != puts || !strings.Contains(out, "nothing to copy") {
-		t.Fatalf("rerun: %v, %d writes\n%s", err, r.dst.puts-puts, out)
+	if err != nil || r.resolveCalls != resolves || !strings.Contains(out, "already has") {
+		t.Fatalf("rerun: %v, %d resolve(s)\n%s", err, r.resolveCalls-resolves, out)
 	}
 }
 
-func TestBaseKindIsCopiedAsFugaroBase(t *testing.T) {
-	r := newImagesRig(t, "v1.2.3")
+// TestInitBasePinsTheRemoteRepositoryAtTheVerifiedDigest is the whole
+// design in one assertion: after --base base, the local config names the
+// remote-repository path (not a copy in fugaro-base), at the digest the
+// signature was verified for, with the release tag still present as the
+// version marker; and nothing was pushed anywhere.
+func TestInitBasePinsTheRemoteRepositoryAtTheVerifiedDigest(t *testing.T) {
+	r := newImagesRig(t, "1.2.3")
 	out, _, err := executeStdin(t, "", "init", "--yes", "--base", "base")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	want := "us-east5-docker.pkg.dev/" + initProject + "/fugaro-base/fugaro-base:1.2.3"
+	want := r.pinnedBase("base", "1.2.3")
 	if bi := r.localConfig(t).BaseImages; bi["base"] != want || len(bi) != 1 {
 		t.Errorf("base_images = %v, want base: %s", bi, want)
 	}
-	if r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] == "" {
-		t.Errorf("not copied: %v", r.dst.tags)
+	if r.dst.puts != 0 {
+		t.Errorf("the base kind must not push anything: %d write(s)", r.dst.puts)
+	}
+	if r.resolveCalls != 1 || r.arCalls != 1 {
+		t.Errorf("the pin was recorded without one resolve and one read-back (%d, %d)", r.resolveCalls, r.arCalls)
+	}
+	if !strings.Contains(out, "sha256:") || !strings.Contains(out, "nothing is copied") {
+		t.Errorf("the confirmation does not show the digest or say nothing is copied:\n%s", out)
 	}
 }
 
-// Today's installations have no fugaro-base image published yet (the base
-// image's own release and publish pipeline is a later task): fugaro init on
-// a checkout whose workflow has no base: (the implicit Fugaro base) must
-// refuse with a clear error naming the missing image and saying it has no
-// published image, write NOTHING to the local config, and copy nothing to
-// the project's registry.
+// A release with no signed "-pinned" tag published yet (#318's release
+// side, a later task): fugaro init on a checkout whose workflow has no
+// base: (the implicit Fugaro base) must refuse with a clear error naming
+// the missing image, write NOTHING to the local config, and pin nothing.
 //
-// Mutation (run, restore): publish "fugaro-base" on the fake source
-// registry (letting the copy proceed, as it would once the base image is
-// actually published), and this test's assertions fail: init succeeds,
-// writes base_images.base, and a manifest is copied to the registry.
+// Mutation (run, restore): publish the "-pinned" tag on the fake source
+// registry (letting the resolve-and-verify step succeed, as it would once
+// the release publishes one), and this test's assertions fail: init
+// succeeds, writes base_images.base, and records a pin.
 func TestInitRefusesWhenFugaroBaseIsNotPublished(t *testing.T) {
 	r := newImagesRig(t, "v1.2.3")
-	delete(r.src.tags, "dimipaun/fugaro-base:1.2.3")
+	delete(r.src.tags, "dimipaun/fugaro-base:1.2.3-pinned")
 	testutil.Git(t, ".", "init", "--quiet")
 	if err := os.WriteFile("fugaro.yaml", []byte("version: 1\nproject: "+initProjectName+"\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: make, test: make test } }\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -360,8 +381,8 @@ func TestInitRefusesWhenFugaroBaseIsNotPublished(t *testing.T) {
 	if ExitCode(err) != ExitRemoteError {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
-	if !strings.Contains(err.Error(), "fugaro-base") || !strings.Contains(err.Error(), "no published image") {
-		t.Fatalf("err = %v, want it to name the missing image and say it has no published image", err)
+	if !strings.Contains(err.Error(), "fugaro-base") || !strings.Contains(err.Error(), "no signed pinned image") {
+		t.Fatalf("err = %v, want it to name the missing image and say the release has no signed pinned one", err)
 	}
 	if bi := r.localConfig(t).BaseImages; len(bi) != 0 {
 		t.Errorf("base_images was written: %v", bi)
@@ -435,20 +456,21 @@ func TestImagesStageNeedsItsOwnConfirmation(t *testing.T) {
 	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "needs a real terminal: "+initflow.NoTerminalAdvice) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
-	if !strings.Contains(out, "adds sha256:") || r.dst.puts != 0 {
+	if !strings.Contains(out, "pin "+r.pinnedBase("base", "1.2.3")) || r.dst.puts != 0 {
 		t.Fatalf("%d writes\n%s", r.dst.puts, out)
 	}
 }
 
 // All blobs are at the destination but the tag is not (a run that died at
 // the manifest): the manifest is pushed, the stage reports the change, and
-// the config records the tag only once it exists.
+// the tag exists only afterwards. A base kind copies nothing any more, so
+// the copy path this covers is history's.
 func TestManifestOnlyCopyIsAChange(t *testing.T) {
 	r := newImagesRig(t, "1.2.3")
 	for d, b := range r.src.blobs {
 		r.dst.blobs[d] = b
 	}
-	out, _, err := executeStdin(t, "", "init", "--yes", "--base", "base", "--json")
+	out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes", "--json")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -456,42 +478,21 @@ func TestManifestOnlyCopyIsAChange(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &res); err != nil {
 		t.Fatalf("%v:\n%s", err, out)
 	}
-	if res.state("images") != "changed" || r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] == "" {
+	if res.state("images") != "changed" || r.dst.tags[initProject+"/fugaro-base/history:latest"] == "" {
 		t.Fatalf("images %s, tags %v", res.state("images"), r.dst.tags)
-	}
-	if !strings.HasSuffix(r.localConfig(t).BaseImages["base"], "fugaro-base:1.2.3") {
-		t.Errorf("base_images = %v", r.localConfig(t).BaseImages)
 	}
 }
 
-// A failed copy records nothing: base_images never names a tag that does
-// not exist.
-func TestFailedCopyRecordsNothing(t *testing.T) {
+// A failed resolve records nothing: base_images never names a digest that
+// was not verified.
+func TestFailedResolveRecordsNothing(t *testing.T) {
 	r := newImagesRig(t, "1.2.3")
-	delete(r.src.tags, "dimipaun/fugaro-base:1.2.3")
+	delete(r.src.tags, "dimipaun/fugaro-base:1.2.3-pinned")
 	if _, _, err := executeStdin(t, "", "init", "--yes", "--base", "base"); err == nil {
 		t.Fatal("a missing source succeeded")
 	}
 	if got := r.localConfig(t).BaseImages["base"]; got != "" {
-		t.Errorf("base_images.go = %s", got)
-	}
-}
-
-func TestReleaseTagIsNotMovedWithoutReplaceImage(t *testing.T) {
-	r := newImagesRig(t, "1.2.3")
-	other := cdg([]byte("hand pushed"))
-	r.dst.mans[other], r.dst.types[other] = []byte("hand pushed"), "application/vnd.oci.image.manifest.v1+json"
-	r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] = other
-	_, _, err := executeStdin(t, "", "init", "--yes", "--base", "base")
-	if err == nil || !strings.Contains(err.Error(), other) || !strings.Contains(err.Error(), "--replace-image") || strings.Contains(err.Error(), "\n") {
-		t.Fatalf("err = %v", err)
-	}
-	if r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] != other || r.dst.puts != 0 {
-		t.Fatal("the release tag moved")
-	}
-	// The flag names the kind; the project's name is typed to confirm it.
-	if _, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--base", "base", "--replace-image", "base"); err != nil || r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] == other {
-		t.Fatalf("with --replace-image go: %v", err)
+		t.Errorf("base_images.base = %s", got)
 	}
 }
 
@@ -523,7 +524,13 @@ func TestHistoryLatestNeedsReplaceImage(t *testing.T) {
 // confirmation (--yes, --non-interactive, --json, a pipe, a coding agent)
 // leaves the replacement to the user with the one-line typed route, and moves
 // nothing. The real rule is in force here.
+//
+// The kind it drives is history: a base kind is not copied anywhere any
+// more, so --replace-image names nothing for one (TestReplaceImageRefusesBase
+// is the refusal, and the base kind's own "never silently replaced" case is
+// gone with the copy).
 func TestReplaceImageIsNeverConfirmedByYes(t *testing.T) {
+	const history = initProject + "/fugaro-base/history:latest"
 	for name, tc := range map[string]struct {
 		args  []string
 		env   string
@@ -540,19 +547,23 @@ func TestReplaceImageIsNeverConfirmedByYes(t *testing.T) {
 			r.stateBucket()
 			r.script["plan"] = map[string]any{"exit": 0}
 			r.save(t)
-			if _, _, err := executeStdin(t, "", "init", "--yes"); err != nil { // the installation is converged
+			// The installation and the Firebase backend are converged first,
+			// so a subtest without --yes reaches the images stage instead of
+			// stopping at the backend's own typed confirmation.
+			if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
 				t.Fatal(err)
 			}
+			puts := r.dst.puts // the converged run's own copy, not this one's
 			canConfirmTyped = initflow.CanConfirm // the real rule
 			other := cdg([]byte("hand pushed"))
 			r.dst.mans[other], r.dst.types[other] = []byte("x"), "application/vnd.oci.image.manifest.v1+json"
-			r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] = other
+			r.dst.tags[history] = other
 			if tc.env != "" {
 				t.Setenv(tc.env, "1")
 			}
-			out, errOut, err := executeStdin(t, tc.stdin, append([]string{"init", "--base", "base", "--replace-image", "base"}, tc.args...)...)
+			out, errOut, err := executeStdin(t, tc.stdin, append([]string{"init", "--firebase", fpID, "--replace-image", "history"}, tc.args...)...)
 			out += errOut // --json sends the account to stderr
-			if r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] != other || r.dst.puts != 0 {
+			if r.dst.tags[history] != other || r.dst.puts != puts {
 				t.Fatalf("the tag moved: %v\n%s", err, out)
 			}
 			if err == nil && !strings.Contains(out, "needs-you") && !strings.Contains(out, "needs you") {
@@ -568,22 +579,41 @@ func TestReplaceImageIsNeverConfirmedByYes(t *testing.T) {
 	r.stateBucket()
 	r.script["plan"] = map[string]any{"exit": 0}
 	r.save(t)
-	if _, _, err := executeStdin(t, "", "init", "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
 		t.Fatal(err)
 	}
 	canConfirmTyped = initflow.CanConfirm
 	fakeTerminal(t)
 	other := cdg([]byte("hand pushed"))
 	r.dst.mans[other], r.dst.types[other] = []byte("x"), "application/vnd.oci.image.manifest.v1+json"
-	r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] = other
+	r.dst.tags[history] = other
 	// the replacement's confirmation and the copy's
-	if out, _, err := executeStdin(t, names(2), "init", "--base", "base", "--replace-image", "base"); err != nil || r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] == other {
+	if out, _, err := executeStdin(t, names(2), "init", "--firebase", fpID, "--replace-image", "history"); err != nil || r.dst.tags[history] == other {
 		t.Fatalf("typed at a terminal: %v\n%s", err, out)
 	}
 }
 
-// A pin that matches nothing is an error, and the confirmation says which
-// images are not pinned.
+// A base kind is not copied anywhere any more, so there is nothing to
+// replace: --replace-image base is a user error that names the removal and
+// the way to keep your own image instead (design §5.1), and it is refused
+// before anything is read or written.
+func TestReplaceImageRefusesBaseNamesTheRemoval(t *testing.T) {
+	r := newImagesRig(t, "1.2.3")
+	out, _, err := executeStdin(t, "", "init", "--yes", "--base", "base", "--replace-image", "base")
+	if ExitCode(err) != ExitUserError ||
+		!strings.Contains(err.Error(), "a base kind is not copied anywhere any more, so there is nothing to replace") ||
+		!strings.Contains(err.Error(), "--base-image base=IMAGE") {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
+	}
+	if r.dst.puts != 0 || len(r.localConfig(t).BaseImages) != 0 {
+		t.Fatalf("wrote something: %d write(s), base_images %v", r.dst.puts, r.localConfig(t).BaseImages)
+	}
+}
+
+// A pin that matches nothing is an error, and the confirmation never lists
+// a base kind as unpinned: after the pin is signature-verified and read
+// back (design §3.2), --expect-digest is no longer the only way a kind can
+// be pinned.
 func TestExpectDigestUnusedAndUnpinnedListed(t *testing.T) {
 	r := newImagesRig(t, "1.2.3")
 	good := r.src.tags["dimipaun/fugaro-base:1.2.3"]
@@ -593,53 +623,57 @@ func TestExpectDigestUnusedAndUnpinnedListed(t *testing.T) {
 	if r.dst.puts != 0 {
 		t.Fatal("copied with an unused pin")
 	}
-	out, _, err := executeStdin(t, "", "init", "--yes", "--base", "base")
-	if err != nil || !strings.Contains(out, "NOT pinned with --expect-digest: base") {
+	out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes", "--base", "base")
+	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
+	}
+	// The copy is the only image that can be unpinned; the base kind was
+	// verified and read back, so it is never in this list.
+	list := ""
+	for _, l := range strings.Split(out, "\n") {
+		if i := strings.Index(l, "NOT pinned with --expect-digest: "); i >= 0 {
+			// The list is the tail of the copy half of the confirmation,
+			// which the pin half follows after " — and it ".
+			list, _, _ = strings.Cut(l[i+len("NOT pinned with --expect-digest: "):], " — and it")
+		}
+	}
+	if list != "history" {
+		t.Errorf("the unpinned list is %q, want just the copy (history):\n%s", list, out)
 	}
 }
 
-// TestLaterKindTagMovedRecordsNothing: one init run still copies more than
-// one image (here, history and the base kind, since --firebase pulls in
-// history too), so the all-or-nothing rule survives the cut even with one
-// base kind: if the base's own release tag moves away after the first
-// image (history) is already written, nothing is recorded at all, not a
-// partial base_images.
-func TestLaterKindTagMovedRecordsNothing(t *testing.T) {
+// TestInitBaseRefusesWhenTheRemoteRepositoryCannotServeTheDigest: a failed
+// read-back writes nothing — no half-migrated config — and copies nothing,
+// even when the same run has a history image to copy. The read-back is what
+// proves the path the jobs pull by works, so a run that cannot complete it
+// must not record a pin.
+func TestInitBaseRefusesWhenTheRemoteRepositoryCannotServeTheDigest(t *testing.T) {
 	r := newImagesRig(t, "1.2.3")
-	oldHook := r.dst.onTag
-	moved := false
-	r.dst.onTag = func(repo, tag string) {
-		if !moved && repo == initProject+"/fugaro-base/history" && tag == "latest" {
-			moved = true
-			r.src.tags["dimipaun/fugaro-base:1.2.3"] = cdg([]byte("moved"))
-			r.src.mans[cdg([]byte("moved"))] = []byte("moved")
-			r.src.types[cdg([]byte("moved"))] = "application/vnd.oci.image.index.v1+json"
-		}
-		if oldHook != nil {
-			oldHook(repo, tag)
-		}
-	}
-	_, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes", "--base", "base")
-	if err == nil || !strings.Contains(err.Error(), "moved") {
-		t.Fatalf("err = %v", err)
+	delete(r.src.mans, r.basePin) // the upstream cannot serve the digest the tag names
+	out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes", "--base", "base")
+	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "cannot serve") {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	if bi := r.localConfig(t).BaseImages; len(bi) != 0 {
-		t.Errorf("base_images = %v", bi)
+		t.Errorf("base_images = %v, want nothing recorded", bi)
+	}
+	if r.dst.puts != 0 {
+		t.Errorf("something was copied before the read-back was checked: %d write(s)", r.dst.puts)
 	}
 }
 
 // The destination tag changing after the plan is refused at the stage too.
+// The copy path this covers is history's: a base kind copies nothing.
 func TestDestinationMovedAtStageLevel(t *testing.T) {
 	r := newImagesRig(t, "1.2.3")
 	other := cdg([]byte("someone else"))
 	r.dst.mans[other], r.dst.types[other] = []byte("x"), "application/vnd.oci.image.manifest.v1+json"
-	r.dst.onBlob = func() { r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] = other }
-	_, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--base", "base", "--replace-image", "base")
+	r.dst.onBlob = func() { r.dst.tags[initProject+"/fugaro-base/history:latest"] = other }
+	_, _, err := executeStdin(t, "us-east5\n"+names(2), "init", "--yes", "--firebase", fpID, "--replace-image", "history")
 	if err == nil || !strings.Contains(err.Error(), "changed while") {
 		t.Fatalf("err = %v", err)
 	}
-	if r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] != other || len(r.localConfig(t).BaseImages) != 0 {
+	if r.dst.tags[initProject+"/fugaro-base/history:latest"] != other || len(r.localConfig(t).BaseImages) != 0 {
 		t.Fatal("overwritten or recorded")
 	}
 }
@@ -648,7 +682,7 @@ func TestExpectDigestPinsTheRelease(t *testing.T) {
 	r := newImagesRig(t, "1.2.3")
 	good := r.src.tags["dimipaun/fugaro-base:1.2.3"]
 	bad := cdg([]byte("not the release"))
-	if _, _, err := executeStdin(t, "", "init", "--yes", "--base", "base", "--expect-digest", "base="+bad); err == nil || !strings.Contains(err.Error(), "digest mismatch") {
+	if _, _, err := executeStdin(t, "", "init", "--yes", "--base", "base", "--expect-digest", "base="+bad); err == nil || !strings.Contains(err.Error(), "never written against a value that disagrees") {
 		t.Fatalf("a wrong pin: %v", err)
 	}
 	if r.dst.puts != 0 {
@@ -664,14 +698,22 @@ func TestExpectDigestPinsTheRelease(t *testing.T) {
 	}
 }
 
-// An older CLI never downgrades a newer mirrored base image.
+// An older CLI never downgrades a newer managed base image, in either
+// shape: the copy an earlier CLI made, or a pin.
 func TestOlderCLIDoesNotDowngradeBase(t *testing.T) {
-	r := newImagesRig(t, "1.2.3")
-	newer := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:2.0.0"
-	r.appendConfig(t, "base_images: { base: \""+newer+"\" }\n")
-	out, _, err := executeStdin(t, "", "init", "--yes", "--base", "base")
-	if err != nil || r.dst.puts != 0 || r.localConfig(t).BaseImages["base"] != newer || !strings.Contains(out, "newer than this CLI's") {
-		t.Fatalf("%v, %d writes, base_images %v\n%s", err, r.dst.puts, r.localConfig(t).BaseImages, out)
+	for _, newer := range []string{
+		"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:2.0.0",
+		"us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-base:2.0.0@sha256:" + strings.Repeat("a", 64),
+	} {
+		r := newImagesRig(t, "1.2.3")
+		// The pin's shape is only recognised with a recorded image_source:
+		// the owner it is checked against comes from there (design §3.6),
+		// never from the reference.
+		r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: { base: \""+newer+"\" }\n")
+		out, _, err := executeStdin(t, "", "init", "--yes", "--base", "base")
+		if err != nil || r.dst.puts != 0 || r.localConfig(t).BaseImages["base"] != newer || !strings.Contains(out, "already has") {
+			t.Fatalf("%s: %v, %d writes, base_images %v\n%s", newer, err, r.dst.puts, r.localConfig(t).BaseImages, out)
+		}
 	}
 }
 
@@ -696,12 +738,19 @@ func TestImageSourceIsExplicit(t *testing.T) {
 			t.Errorf("--image-source %q accepted", bad)
 		}
 	}
+	// A fork's own release, pinned from its own "-pinned" tag and read back
+	// through the remote repository, which proxies all of ghcr.io.
 	r.src.publish("acme/fugaro-base", "1.2.3")
+	r.src.tags["acme/fugaro-base:1.2.3-pinned"] = r.src.tags["acme/fugaro-base:1.2.3"]
 	if _, _, err := executeStdin(t, "", "init", "--yes", "--base", "base", "--image-source", "ghcr.io/acme"); err != nil {
 		t.Fatal(err)
 	}
-	if r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] == "" {
-		t.Error("the fork's image was not copied")
+	got := r.localConfig(t).BaseImages["base"]
+	if want := "us-east5-docker.pkg.dev/" + initProject + "/fugaro-ghcr/acme/fugaro-base:1.2.3@" + r.src.tags["acme/fugaro-base:1.2.3"]; got != want {
+		t.Errorf("base_images.base = %q, want %q", got, want)
+	}
+	if r.localConfig(t).ImageSource != "ghcr.io/acme" {
+		t.Errorf("image_source = %q, want the fork's own source", r.localConfig(t).ImageSource)
 	}
 }
 
@@ -759,7 +808,7 @@ func TestInitBaseRepublishesSharedConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("not published: %v\n%s", err, out)
 	}
-	if lc, err := localcfg.Parse(data); err != nil || !strings.HasSuffix(lc.BaseImages["base"], "fugaro-base:1.2.3") {
+	if lc, err := localcfg.Parse(data); err != nil || !strings.Contains(lc.BaseImages["base"], "/fugaro-ghcr/dimipaun/fugaro-base:1.2.3@sha256:") || lc.ImageSource != "ghcr.io/dimipaun" {
 		t.Errorf("published %+v, %v:\n%s", lc, err, data)
 	}
 }

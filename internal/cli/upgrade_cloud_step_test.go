@@ -634,7 +634,7 @@ func TestUpgradeCheckSeesTheCloudWithoutTouchingIt(t *testing.T) {
 	noRecordReads(t)
 	ran := fakeSteps(t, "", nil)
 	out, _, err := executeStdin(t, "", "upgrade", "--check")
-	if ExitCode(err) != ExitUserError || !strings.Contains(out, "cloud: stale: base images to move: base: none recorded, this release's is "+managedRef("base", "0.5.1")) {
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "cloud: stale: base images to move: base: none recorded; this release pins it by digest through proj-1234/fugaro-ghcr") {
 		t.Fatalf("exit %d\n%s", ExitCode(err), out)
 	}
 	if len(*ran) != 0 || len(r.calls(t)) != 0 {
@@ -739,9 +739,12 @@ func TestUpgradeTeammateSkipsTheCloud(t *testing.T) {
 // settings write, and a cloud plan with no base to copy and no build.
 func TestUpgradeRerunWhenCurrentIsNothingToDo(t *testing.T) {
 	r, root := upgradeRig(t)
-	r.appendConfig(t, "base_images: {base: "+managedRef("base", "0.5.1")+"}\n")
-	putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.5.1"))
-	putWorkflowRecordFrom("api", "0.5.1", managedRef("base", "0.5.1"))
+	// This release's own pin, recorded with the owner it is checked
+	// against: the entry is current, so nothing is copied and nothing is
+	// rebuilt (design §3.6).
+	r.appendConfig(t, "image_source: ghcr.io/"+refreshOwner+"\nbase_images: {base: "+pinnedRef("base", "0.5.1")+"}\n")
+	putWorkflowRecordFrom("app", "0.5.1", pinnedRef("base", "0.5.1"))
+	putWorkflowRecordFrom("api", "0.5.1", pinnedRef("base", "0.5.1"))
 	settings := filepath.Join(root, ".claude", "settings.json")
 	if err := os.MkdirAll(filepath.Dir(settings), 0o755); err != nil {
 		t.Fatal(err)
@@ -883,15 +886,35 @@ func TestUpgradeCheckBlockedIsAFailureWithTheRerunLine(t *testing.T) {
 }
 
 // TestUpgradeCheckCurrentCloudIsCurrent: every kind on this release's base
-// is "current" under --check, not stale or skipped.
+// is "current" under --check, not stale or skipped. The entry has to be
+// this release's pin — the recorded owner and the digest through the remote
+// repository — and not the copy an earlier CLI made at the same version,
+// which is stale (B3, TestUpgradeSaysTheBaseMustMoveForACopiedEntryAtTheSameVersion).
 // Mutation (run, restore): return stepStale for cloudCurrent in the --check
 // switch.
 func TestUpgradeCheckCurrentCloudIsCurrent(t *testing.T) {
 	r, _ := upgradeRig(t)
-	r.appendConfig(t, "base_images: {base: "+managedRef("base", "0.5.1")+"}\n")
+	r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+pinnedRef("base", "0.5.1")+"}\n")
 	fakeSteps(t, "", nil)
 	out, _, err := executeStdin(t, "", "upgrade", "--check")
 	if !strings.Contains(out, "cloud: current:") {
 		t.Fatalf("%v\n%s", err, out)
+	}
+}
+
+// TestUpgradeSaysTheBaseMustMoveForACopiedEntryAtTheSameVersion is B3 on
+// fugaro upgrade's offline path: an installation whose entry is the copy an
+// earlier CLI made, at this very version, still needs the migration, so
+// --check must not answer "no base image to copy and no image to rebuild"
+// and leave it unmigrated. The reason names the shape rather than a value
+// it does not have.
+func TestUpgradeSaysTheBaseMustMoveForACopiedEntryAtTheSameVersion(t *testing.T) {
+	r, _ := upgradeRig(t)
+	r.appendConfig(t, "base_images: {base: "+managedRef("base", "0.5.1")+"}\n")
+	fakeSteps(t, "", nil)
+	out, _, err := executeStdin(t, "", "upgrade", "--check")
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "cloud: stale:") ||
+		!strings.Contains(out, "base: "+managedRef("base", "0.5.1")+"; this release pins it by digest through proj-1234/fugaro-ghcr") {
+		t.Fatalf("exit %d\n%s", ExitCode(err), out)
 	}
 }

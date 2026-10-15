@@ -225,10 +225,10 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 	case c.LogView != "" && !strings.HasPrefix(c.LogView, "projects/"+a.GCPProject+"/"):
 		return bad("log_view", "%q is not under projects/%s/", c.LogView, a.GCPProject)
 	}
-	baseRE := baseImageRE(c.RegistryHost)
 	for _, kind := range slices.Sorted(maps.Keys(c.BaseImages)) {
-		if ref := c.BaseImages[kind]; !baseRE.MatchString(ref) {
-			return bad("base_images."+kind, "%q is not an image of this project's base registry, %s/%s/<image>[:tag][@sha256:<digest>]", ref, c.RegistryHost, infra.BaseRegistry)
+		if ref := c.BaseImages[kind]; !baseImageRE(c.RegistryHost, kind).MatchString(ref) {
+			return bad("base_images."+kind, "%q is not an image of this project's base registry, %s/%s/<image>[:tag][@sha256:<digest>], nor a pin through the remote repository, %s/%s/<owner>/fugaro-%s:<version>@sha256:<digest>",
+				ref, c.RegistryHost, infra.BaseRegistry, c.RegistryHost, infra.GhcrRegistry, kind)
 		}
 	}
 	if c.Build.ServiceAccount != "" {
@@ -298,13 +298,28 @@ func dropLegacyBaseImages(data []byte) ([]byte, []string, error) {
 	return out, dropped, err
 }
 
-// baseImageRE matches an image of the installation's base registry under
-// host: <host>/fugaro-base/<path>, with an optional tag and digest; the
-// path's components can't be "." or "..", and there is no other "@".
-func baseImageRE(host string) *regexp.Regexp {
+// baseImageRE matches what this installation's base_images may name under
+// host, in either shape: the copy an earlier release made,
+// <host>/fugaro-base/<path> with an optional tag and digest, or this
+// installation's pin through the remote repository,
+//
+//	<host>/fugaro-ghcr/<owner>/fugaro-<kind>:<version>@sha256:<64 hex>
+//
+// whose digest is required — a bare tag through the proxy would be a shared
+// config naming whatever that tag points at, which is exactly what this
+// gate exists to stop. The path's components can't be "." or ".." (this
+// value reaches a Dockerfile FROM line), and there is no other "@". It is a
+// syntax gate only: which owner and which entry are trusted is
+// managedVersion's question (design §3.6), and the ID is taken from the
+// entry's own key rather than spelled out.
+func baseImageRE(host, kind string) *regexp.Regexp {
 	const component = `[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*`
+	const tag = `[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}`
+	const digest = `sha256:[0-9a-f]{64}`
 	return regexp.MustCompile(`^` + regexp.QuoteMeta(host+"/"+infra.BaseRegistry+"/") +
-		component + `(?:/` + component + `)*` + `(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?(?:@sha256:[0-9a-f]{64})?$`)
+		component + `(?:/` + component + `)*` + `(?::` + tag + `)?(?:@` + digest + `)?$` +
+		`|^` + regexp.QuoteMeta(host+"/"+infra.GhcrRegistry+"/") + component + `/fugaro-` + regexp.QuoteMeta(kind) +
+		`:` + tag + `@` + digest + `$`)
 }
 
 // sharedTopLevel checks the YAML's shape, which fugaro init's Marshal

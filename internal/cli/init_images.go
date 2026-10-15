@@ -274,7 +274,7 @@ func basePlanItem(cur, host, kind, owner, ver string) (note string, pin bool) {
 	case !isManaged(cur, host, kind, owner):
 		return fmt.Sprintf("base %s: the local config's base image %s is used; nothing mirrored (--base-image KIND=IMAGE changes it)", kind, pluginwire.Printable(cur)), false
 	case baseIsCurrent(cur, host, kind, owner, ver):
-		return fmt.Sprintf("base %s: the local config already has %s; nothing to do", kind, pluginwire.Printable(cur)), false
+		return fmt.Sprintf("base %s already has %s", kind, pluginwire.Printable(cur)), false
 	default:
 		return "", true
 	}
@@ -400,13 +400,15 @@ func (s *imagesStage) Check(ctx context.Context) (initflow.Status, error) {
 	case err != nil:
 		return initflow.Status{}, err
 	case len(items) == 0 && len(notes) > 0:
-		return initflow.Status{State: initflow.Skipped, Detail: strings.Join(notes, "; ")}, nil
+		// "No changes" is the stage's word for nothing to do (design
+		// image-refresh.md's step 2); the notes say which kind and why.
+		return initflow.Status{State: initflow.Skipped, Detail: "No changes: " + strings.Join(notes, "; ")}, nil
 	case len(items) == 0:
-		return initflow.Status{State: initflow.Skipped, Detail: "no image to copy: the history image goes with --firebase, a base image with --base KIND or a checkout whose fugaro.yaml names it"}, nil
+		return initflow.Status{State: initflow.Skipped, Detail: "no image to pin or copy: the history image goes with --firebase, a base image with --base KIND or a checkout whose fugaro.yaml names it"}, nil
 	case releaseVersion() == "":
-		return initflow.Status{State: initflow.Skipped, Detail: "development build, no published images to copy: build one from a checkout (sh images/build-base.sh <kind> <tag> and docker push <tag>), then fugaro init --base-image KIND=<tag>"}, nil
+		return initflow.Status{State: initflow.Skipped, Detail: "development build, no published images to pin or copy: build one from a checkout (sh images/build-base.sh <kind> <tag> and docker push <tag>), then fugaro init --base-image KIND=<tag>"}, nil
 	}
-	return initflow.Status{State: initflow.Todo, Detail: "copies the release images that are missing from your registry"}, nil
+	return initflow.Status{State: initflow.Todo, Detail: "pins this release's base images by digest and copies the release images your registry lacks"}, nil
 }
 
 func unpinnedText(u []string) string {
