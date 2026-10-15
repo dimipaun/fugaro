@@ -381,7 +381,7 @@ secrets stage is behind the same gate.`,
 	f.StringVar(&o.githubAppID, "github-app-id", "", "the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; init asks once at a terminal, and --non-interactive needs it)")
 	f.BoolVar(&o.noBuild, "no-build", false, "with --repo: don't offer the first image builds")
 	f.BoolVar(&o.allowJobDelete, "allow-job-delete", false, "with --repo: lower the jobs' deletion protection, for offboarding")
-	f.BoolVar(&o.retire, "retire", false, "with --repo: run the retirement this config change needs (a workflow or a named account removed, a secret no longer mounted): remove the protected addresses from Terraform's state (destroying nothing), apply, then delete the orphaned Cloud Run jobs through the API. The project's name is typed twice at a real terminal, and --yes, --non-interactive, --json, a pipe and a coding agent cover neither. Excludes --plan-only, which changes no state")
+	f.BoolVar(&o.retire, "retire", false, "with --repo: run the retirement this config change needs (a workflow or a named account removed, a secret no longer mounted): remove the protected addresses from Terraform's state (destroying nothing), apply, then delete the orphaned Cloud Run jobs through the API. The project's name is typed twice at a real terminal, and --yes, --non-interactive, --json, a pipe and a coding agent cover neither. Excludes --plan-only, --print-vars and --forget, which read or forget rather than apply")
 	return cmd
 }
 

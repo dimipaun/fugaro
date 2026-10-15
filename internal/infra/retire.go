@@ -74,6 +74,16 @@ const KeptSecret = "fugaro never deletes a secret or a secret version: this addr
 // KeptRegistry is the same promise for the repository's image registry: it
 // is the module's second prevent_destroy resource (registry.tf), and nothing
 // in a plan deletes an image.
+//
+// Reached only from a state that holds the registry under a root this
+// repository's modules do not use -- Addresses always produces
+// module.repo.google_artifact_registry_repository.images, so that address is
+// never in the set difference (review round 4). The row stays because the
+// alternative direction is the dangerous one: a registry address this
+// package cannot classify would be a retirement with no promise attached,
+// and "the images stay" is exactly what an operator has to be told before
+// anything leaves the state. TestRetirementsKeepsARegistryAddressUnderAnotherRoot
+// pins it.
 const KeptRegistry = "the registry and every image in it stay; Artifact Registry's own cleanup policy is the only thing that deletes one"
 
 // Retirements is the addresses the state manages that spec no longer
@@ -123,8 +133,13 @@ func retirement(addr string, spec RepoSpec) Retirement {
 		// here may be called "workflow job": that kind is what the Cloud Run
 		// API delete keys on (JobDeleteLabels), and the job of a workflow
 		// that is still deployed must never be a candidate for it (M3). It
-		// is a plain job, which no apply can delete and the API will not
-		// touch, so the run refuses rather than acting on it.
+		// is a plain job, and what finishes it is the ordinary path's: the
+		// API delete refuses this kind by rule, so a protected one leaves the
+		// state and nothing then deletes it -- Removals lists it, the plan
+		// cannot delete what is no longer in the state, and the summary names
+		// it under "Removed from Terraform's state, and never deleted" --
+		// while an unprotected one the plan deletes, which RetireAllowDelete
+		// allows because the address is in the set.
 		if r.Kind = workflowKind(typ); r.Kind == "workflow job" {
 			r.Kind = "job"
 			r.Cause = "the configuration no longer produces this job, though the workflow variant " + variant + " is still deployed"
@@ -157,6 +172,8 @@ func retirement(addr string, spec RepoSpec) Retirement {
 		if name != "images" {
 			return genericRetirement(r)
 		}
+		// Unreachable from RepoSpec.Addresses, which always produces this
+		// address under the repo root: see KeptRegistry.
 		r.Kind = "image registry"
 		r.Cause = "the repository's registry path changed"
 		r.Kept = KeptRegistry

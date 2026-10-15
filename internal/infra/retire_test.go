@@ -900,6 +900,39 @@ func TestRetirementsWorkflowOnlySecretCause(t *testing.T) {
 	}
 }
 
+// The registry's row is a safety net rather than a path this repository's
+// own layout takes: RepoSpec.Addresses always produces
+// module.repo.google_artifact_registry_repository.images, so the set
+// difference can only yield a registry address that the state holds under
+// another root -- a moved module, a hand-written or adopted state. It stays a
+// retirement then, protected and with the promise that no plan deletes an
+// image, which is the direction a destructive flow has to err towards
+// (design §2 row G; review round 4 asked what this row is for).
+func TestRetirementsKeepsARegistryAddressUnderAnotherRoot(t *testing.T) {
+	spec := originSpec(t, `agent: { auth: api-key }`)
+	const produced = "module.repo.google_artifact_registry_repository.images"
+	if !slices.Contains(spec.Addresses(), produced) {
+		t.Fatalf("fixture bug: the spec no longer produces %s, so Addresses is not what keeps this row out of the set", produced)
+	}
+	got := Retirements([]string{"google_artifact_registry_repository.images"}, spec)
+	if len(got) != 1 {
+		t.Fatalf("Retirements = %+v, want the registry retired", got)
+	}
+	if got[0].Kind != "image registry" {
+		t.Errorf("Kind = %q, want the registry's own kind", got[0].Kind)
+	}
+	if got[0].Kept != KeptRegistry {
+		t.Errorf("Kept = %q, want %q: the promise that the registry and its images stay", got[0].Kept, KeptRegistry)
+	}
+	// prevent_destroy is the module's, not an attribute of the state, so this
+	// is decided by the address alone -- and it has to be, or the removal set
+	// would release a resource no apply may then delete.
+	FillFromState(nil, got)
+	if !got[0].Protected {
+		t.Error("a registry address was left unprotected")
+	}
+}
+
 // The fixture state is a real `terraform show -json` shape: the fields this
 // package decodes are where Terraform puts them, and every address the
 // design enumerates is in it.
@@ -1740,9 +1773,15 @@ func TestRetireSetDeduplicatesAndPrefersTheLiveFields(t *testing.T) {
 	}
 }
 
-// A note is not a retirement, so nothing about it can make the summary
-// print, open the gate or suggest --retire: the union is what the gate and
-// the next command are decided on.
+// A note is not a retirement: the container an earlier run left behind is
+// still in Secret Manager with nothing managing it, which the run says in its
+// own line -- but it is not an address to remove, delete or confirm, so it
+// never reaches the set the gate, the summary and --retire are decided on.
+//
+// The set is non-empty here (the state's own row for a job) and Orphans'
+// two lists are checked against each other, so the assertion can fail: a set
+// that was empty, or a fixture with no retirements at all, would contain no
+// note whatever the code did (review round 4).
 func TestRetireSetNeverCountsANote(t *testing.T) {
 	f := newCloud(t)
 	spec := originSpec(t, `agent: { auth: api-key }`)
@@ -1754,7 +1793,25 @@ func TestRetireSetNeverCountsANote(t *testing.T) {
 	if len(notes) == 0 {
 		t.Fatal("fixture bug: the container must come back as a note")
 	}
-	if got := RetireSet(rets, nil); len(got) != 0 {
-		t.Errorf("RetireSet = %+v, want empty: Orphans' notes are not passed to it", got)
+	for _, n := range notes {
+		for _, r := range rets {
+			if r.Address == n.Address {
+				t.Errorf("%s is both a retirement and a note: %+v", n.Address, rets)
+			}
+		}
+	}
+
+	state := []Retirement{{
+		Address: workflowJobAddress("app"), Kind: "workflow job",
+		Job: "fugaro-acme-webapp-app-1", Region: "us-east5", Protected: true,
+	}}
+	got := RetireSet(rets, state)
+	if len(got) != 1 || got[0].Address != state[0].Address {
+		t.Fatalf("RetireSet = %+v, want the state's own retirement alone", got)
+	}
+	for _, n := range notes {
+		if slices.ContainsFunc(got, func(r Retirement) bool { return r.Address == n.Address }) {
+			t.Errorf("the note %s is in the retirement set: %+v", n.Address, got)
+		}
 	}
 }

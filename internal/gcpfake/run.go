@@ -85,6 +85,11 @@ type JobFaults struct {
 	// the delete's own, apart from the patch's Polls and OpError.
 	DeletePolls   int
 	DeleteOpError string
+	// OpStatus, when non-zero, makes operations get answer that HTTP
+	// status, changing nothing and leaving the operation pending. The read
+	// is the same one for a patch's operation and a delete's, so it covers
+	// both.
+	OpStatus int
 }
 
 type runOp struct {
@@ -744,9 +749,14 @@ func (f *Run) patchJob(w http.ResponseWriter, r *http.Request, p string, body []
 	writeJSON(w, http.StatusOK, opBody(opName, op))
 }
 
-// getOp is operations get of a patch's operation: not done for its polls,
-// then done, with its error if any.
+// getOp is operations get of a patch's or a delete's operation: not done for
+// its polls, then done, with its error if any. JobFaults.OpStatus fails the
+// read itself, leaving the operation pending.
 func (f *Run) getOp(w http.ResponseWriter, p string) {
+	if f.faults.OpStatus != 0 {
+		writeError(w, f.faults.OpStatus, http.StatusText(f.faults.OpStatus), "injected failure")
+		return
+	}
 	op := f.pending[p]
 	if op == nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "operation not found")

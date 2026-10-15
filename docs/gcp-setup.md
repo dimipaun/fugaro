@@ -463,7 +463,7 @@ The same transition has a one-command form since 0.7.5, and it is the one to rea
 Why: agent.auth no longer mounts claude-oauth-token-bmb; the named Claude account bmb is no longer a variant this repository deploys.
 
 Going away (2, predicted from the state and the labels) — 1 the plan will delete, 1 deleted through the Cloud Run API after it:
-  module.repo.module.workflow["app_bmb"].google_service_account.this       service account: the named Claude account bmb is no longer a variant this repository deploys
+  module.repo.module.workflow["app_bmb"].google_service_account.job        service account: the named Claude account bmb is no longer a variant this repository deploys
   module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0]   workflow job: the named Claude account bmb is no longer a variant this repository deploys
 
 Removed from Terraform's state, and never deleted (1):

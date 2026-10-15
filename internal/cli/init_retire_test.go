@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -32,7 +33,7 @@ const (
 	retireKeptName = "claude-oauth-token-bmb"
 
 	retireJobAddr  = `module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0]`
-	retireSvcAddr  = `module.repo.module.workflow["app_bmb"].google_service_account.this`
+	retireSvcAddr  = `module.repo.module.workflow["app_bmb"].google_service_account.job`
 	retireKeptAddr = `module.repo.google_secret_manager_secret.this["claude-oauth-token-bmb"]`
 	// The repository's registry: the configuration still produces it, so it
 	// is never a retirement, and its module declaration carries the second
@@ -102,6 +103,14 @@ type retireOpts struct {
 	// -detailed-exitcode's own "no changes") and the API delete is the only
 	// thing still owed (see noJobInState).
 	planClean bool
+	// deleteOpError is the delete's operation ending in error: the API
+	// accepted the delete, the operation finished badly, and the job is
+	// still there -- the run must not report it deleted.
+	deleteOpError string
+	// deletePolls holds the delete's operation open for that many reads of
+	// it, so the run's third outcome ("the job delete is still running") is
+	// reached end to end rather than only in deleteOrphanedJob's own test.
+	deletePolls int
 }
 
 // retireRig is an onboarded repository ready to plan, with the retirement's
@@ -170,6 +179,9 @@ func newRetireRig(t *testing.T, o retireOpts) *retireRig {
 	if o.deleteFails != 0 {
 		r.run.FailDeleteWith = o.deleteFails
 	}
+	if o.deleteOpError != "" || o.deletePolls != 0 {
+		r.run.SetJobFaults(gcpfake.JobFaults{DeletePolls: o.deletePolls, DeleteOpError: o.deleteOpError})
+	}
 	if o.keptAsNote {
 		// The container an earlier run released: out of the state, still in
 		// Secret Manager with its labels, which is the only record left.
@@ -208,7 +220,7 @@ func retireStateDoc(t *testing.T, o retireOpts) string {
 	t.Helper()
 	workflow := []any{}
 	if !o.stateEmpty {
-		workflow = append(workflow, map[string]any{"address": retireSvcAddr, "mode": "managed", "type": "google_service_account", "name": "this",
+		workflow = append(workflow, map[string]any{"address": retireSvcAddr, "mode": "managed", "type": "google_service_account", "name": "job",
 			"values": map[string]any{"account_id": retireJobName}})
 	}
 	if !o.noJobInState && !o.stateEmpty {
@@ -462,19 +474,62 @@ func TestInitRepoRetireConfirmationNamesEveryKeptSecret(t *testing.T) {
 // --yes, --non-interactive, --json, a coding agent's session and a stdin
 // that is a pipe rather than a terminal cover neither confirmation: each
 // refuses, and nothing leaves the state and nothing is deleted.
+//
+// The refusal's words are pinned per case (review round 4). The retirement's
+// confirmation is not the ordinary one and cannot be answered the ordinary
+// way: --yes covers ask() wherever it appears, but askTyped never shows a
+// prompt to anyone but a real terminal, so the generic notConfirmed would
+// tell a --yes run that "the project's name was not typed" -- which did not
+// happen -- and would send a piped run to --yes, the one flag design §4.2
+// forbids for a retirement. So the message must name the real terminal that
+// is missing, and never offer --yes.
 func TestInitRepoRetireTypedConfirmationsAreNotCoveredByAnythingElse(t *testing.T) {
 	for name, tc := range map[string]struct {
-		args   []string
-		agent  string
-		notTTY bool
+		args    []string
+		agent   string
+		notTTY  bool
+		want    []string
+		notWant []string
 	}{
-		"--yes":             {args: []string{"--yes"}},
-		"--non-interactive": {args: []string{"--yes", "--non-interactive"}},
-		"--json":            {args: []string{"--yes", "--json"}},
-		"a coding agent":    {args: []string{"--yes"}, agent: "CLAUDECODE"},
+		"--yes": {
+			args: []string{"--yes"},
+			want: []string{
+				"the typed confirmation of a retirement needs a real terminal",
+				"(--yes never confirms a retirement)",
+				"nothing was removed from Terraform's state and nothing was deleted",
+			},
+			notWant: []string{"was not typed", "pass --yes once you have read what it does"},
+		},
+		"--non-interactive": {
+			args:    []string{"--yes", "--non-interactive"},
+			want:    []string{"needs a real terminal", "(--yes and --non-interactive never confirm a retirement)"},
+			notWant: []string{"was not typed", "pass --yes once you have read what it does"},
+		},
+		"--json": {
+			args:    []string{"--yes", "--json"},
+			want:    []string{"needs a real terminal", "(--yes and --json never confirm a retirement)"},
+			notWant: []string{"was not typed", "pass --yes once you have read what it does"},
+		},
+		"a coding agent": {
+			args:  []string{"--yes"},
+			agent: "CLAUDECODE",
+			// The agent's own refusal, not a terminal one: there is a
+			// terminal here, and a person at it.
+			want:    []string{initflow.AgentRefusal("CLAUDECODE")},
+			notWant: []string{"was not typed", "pass --yes once you have read what it does"},
+		},
 		// A pipe: the answers are there to be read, but nobody is at a
-		// terminal to read them, so the confirmation is unreachable.
-		"a pipe, not a terminal": {notTTY: true},
+		// terminal to read them, so the confirmation is unreachable -- and
+		// since no flag of this run made it so, the refusal is the bare
+		// "needs a real terminal" and must not name --yes at all.
+		"a pipe, not a terminal": {
+			notTTY: true,
+			want: []string{
+				"the typed confirmation of a retirement needs a real terminal",
+				"nothing was removed from Terraform's state and nothing was deleted",
+			},
+			notWant: []string{"was not typed", "--yes"},
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newRetireRig(t, retireOpts{protection: true})
@@ -494,9 +549,16 @@ func TestInitRepoRetireTypedConfirmationsAreNotCoveredByAnythingElse(t *testing.
 			if s := out + errOut; !strings.Contains(s, "⚠ CONFIRM") {
 				t.Errorf("%s: the confirmation was not even shown:\n%s", name, s)
 			}
-			if tc.notTTY {
-				if s := err.Error(); !strings.Contains(s, "needs a real terminal") {
-					t.Errorf("the refusal does not say what is missing: %q", s)
+			refusal := err.Error()
+			for _, want := range tc.want {
+				if !strings.Contains(refusal, want) {
+					t.Errorf("%s: the refusal does not say %q: %q", name, want, refusal)
+				}
+			}
+			for _, notWant := range tc.notWant {
+				if strings.Contains(refusal, notWant) {
+					t.Errorf("%s: the refusal says %q, which is not what happened here and is not this flow's route: %q",
+						name, notWant, refusal)
 				}
 			}
 			if calls := r.ran(t, "state rm"); len(calls) != 0 {
@@ -1020,7 +1082,7 @@ func TestPreventDestroyAbortMatchesWrappedTerraformText(t *testing.T) {
 	// An ordinary address keeps the module advice: a service account, an IAM
 	// member, a bucket grant are all things an apply may destroy once the
 	// configuration stops producing them.
-	const plain = `module.repo.module.workflow["app"].google_service_account.this`
+	const plain = `module.repo.module.workflow["app"].google_service_account.job`
 	ordinary := retireAborted(nil, plain, "/wd")
 	if !strings.Contains(ordinary.Error(), "take the lifecycle.prevent_destroy block out of the module") {
 		t.Errorf("an ordinary address lost the module advice: %v", ordinary)
@@ -1180,6 +1242,87 @@ func TestDeleteOrphanedJobWaitsForItsOperationAndReportsATimeout(t *testing.T) {
 	}
 	if !r.run.HasJob(retireJobName) {
 		t.Error("a job whose operation is not done was reported gone")
+	}
+}
+
+// The operation's own failure (op.Error != nil) is the fourth outcome of the
+// wait: the API accepted the delete, the operation ended in error, and the
+// job is still there. Reporting it deleted would be §6's forbidden silent
+// disagreement -- a live job with nothing managing it and nothing said
+// (review round 4).
+func TestDeleteOrphanedJobReportsAnOperationThatFailed(t *testing.T) {
+	r := newInitRig(t)
+	c := retireClients(t, r)
+	spec := infra.RepoSpec{Label: "acme-sandbox", GCPProject: initProject, Region: "us-east5"}
+	want, _ := infra.JobDeleteLabels(spec, infra.Retirement{Address: retireJobAddr, Kind: "workflow job"})
+	r.run.SetJob(retireJobName, map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: spec.Label, gcp.LabelWorkflow: retireVariant,
+	}, "")
+	r.run.SetJobFaults(gcpfake.JobFaults{DeleteOpError: "the job is in use"})
+
+	err := deleteOrphanedJob(t.Context(), c, initProject, "us-east5", retireJobName, want)
+	if err == nil {
+		t.Fatal("a delete whose operation failed was reported as done")
+	}
+	var still *stillDeletingError
+	if errors.As(err, &still) {
+		t.Errorf("a failed operation was reported as still running: %v", err)
+	}
+	for _, w := range []string{"its operation", "failed", "the job is in use", gcloudJobDelete(initProject, "us-east5", retireJobName)} {
+		if !strings.Contains(err.Error(), w) {
+			t.Errorf("the failure does not say %q: %v", w, err)
+		}
+	}
+	if !r.run.HasJob(retireJobName) {
+		t.Error("a job whose operation failed is gone")
+	}
+}
+
+// Both of the delete's reads can fail, and each says which read it was and
+// how to finish by hand: run.jobs.get before anything is deleted, and the
+// operation's own run.operations.get while waiting. Neither is a delete
+// (review round 4).
+func TestDeleteOrphanedJobReportsItsFailingReads(t *testing.T) {
+	oldPolls, oldPoll := retireDeletePolls, retireDeletePoll
+	retireDeletePolls, retireDeletePoll = 3, time.Millisecond
+	t.Cleanup(func() { retireDeletePolls, retireDeletePoll = oldPolls, oldPoll })
+
+	r := newInitRig(t)
+	c := retireClients(t, r)
+	spec := infra.RepoSpec{Label: "acme-sandbox", GCPProject: initProject, Region: "us-east5"}
+	want, _ := infra.JobDeleteLabels(spec, infra.Retirement{Address: retireJobAddr, Kind: "workflow job"})
+	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: spec.Label, gcp.LabelWorkflow: retireVariant}
+
+	// run.jobs.get, the read that says what the job is before it is deleted.
+	r.run.SetJob(retireJobName, labels, "")
+	r.run.SetJobFaults(gcpfake.JobFaults{GetStatus: 500})
+	err := deleteOrphanedJob(t.Context(), c, initProject, "us-east5", retireJobName, want)
+	if err == nil {
+		t.Fatal("a job that could not be read was deleted")
+	}
+	for _, w := range []string{"reading it (run.jobs.get)", gcloudJobDelete(initProject, "us-east5", retireJobName)} {
+		if !strings.Contains(err.Error(), w) {
+			t.Errorf("the read failure does not say %q: %v", w, err)
+		}
+	}
+	if deletes := r.run.JobDeletes(); len(deletes) != 0 {
+		t.Errorf("a job whose labels could not be read was deleted: %v", deletes)
+	}
+
+	// run.operations.get, the read that says whether the delete finished.
+	r.run.SetJob(retireJobName, labels, "")
+	r.run.SetJobFaults(gcpfake.JobFaults{DeletePolls: 1000, OpStatus: 500})
+	err = deleteOrphanedJob(t.Context(), c, initProject, "us-east5", retireJobName, want)
+	if err == nil {
+		t.Fatal("a delete whose operation could not be read was reported as done")
+	}
+	for _, w := range []string{"run.operations.get", gcloudJobDelete(initProject, "us-east5", retireJobName)} {
+		if !strings.Contains(err.Error(), w) {
+			t.Errorf("the operation read failure does not say %q: %v", w, err)
+		}
+	}
+	if !r.run.HasJob(retireJobName) {
+		t.Error("a job whose operation could not be read was reported gone")
 	}
 }
 
@@ -1452,6 +1595,78 @@ func TestInitRepoRetireFailedDeleteStillWritesTheLocalConfig(t *testing.T) {
 	// The error is still the delete's: writing the config does not swallow it.
 	if !strings.Contains(runErr.Error(), "job delete failed") {
 		t.Errorf("the returned error is not the failed delete: %v", runErr)
+	}
+}
+
+// The other half of the half-failure: the apply succeeded, the API accepted
+// the delete, and the operation ended in error -- so the job is still alive
+// in GCP with nothing managing it. The run must say so, name the operation
+// and the gcloud command, and exit non-zero rather than report the job
+// deleted (design §6, review round 4).
+func TestInitRepoRetireReportsADeleteWhoseOperationFailed(t *testing.T) {
+	r := newRetireRig(t, retireOpts{protection: true, deleteOpError: "the job is in use"})
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v\n%s%s; want a failed operation to exit non-zero", ExitCode(err), err, out, errOut)
+	}
+	text := out + errOut
+	for _, want := range []string{
+		"apply ok, job delete failed",
+		"its operation",
+		"the job is in use",
+		"/locations/us-east5/operations/", // the operation is named
+		gcloudJobDelete(initProject, "us-east5", retireJobName),
+		"apply ok, and the job is out of Terraform's state and fugaro.yaml; " + retireNextCommand,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the failed delete does not say %q:\n%s", want, text)
+		}
+	}
+	if err.Error() == "" || !strings.Contains(err.Error(), "job delete failed for Cloud Run job "+retireJobName) {
+		t.Errorf("the returned error does not name the failed job: %v", err)
+	}
+	if !r.run.HasJob(retireJobName) {
+		t.Error("a job whose operation failed was reported gone")
+	}
+	if !strings.Contains(text, "wrote "+r.cfg) {
+		t.Errorf("the failed delete cost the run its local config (M4):\n%s", text)
+	}
+}
+
+// The run-level third outcome: the apply succeeded and the delete's operation
+// had not reached a terminal state when the wait ran out. Neither success nor
+// failure, said as such, with the job named and a rerun that re-attempts
+// (design §4.2c, review round 4).
+func TestInitRepoRetireReportsADeleteStillRunning(t *testing.T) {
+	oldPolls, oldPoll := retireDeletePolls, retireDeletePoll
+	retireDeletePolls, retireDeletePoll = 3, time.Millisecond
+	t.Cleanup(func() { retireDeletePolls, retireDeletePoll = oldPolls, oldPoll })
+
+	r := newRetireRig(t, retireOpts{protection: true, deletePolls: 1000})
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v\n%s%s; want a delete that did not finish to exit non-zero", ExitCode(err), err, out, errOut)
+	}
+	text := out + errOut
+	for _, want := range []string{
+		"apply ok, job delete still running",
+		"Cloud Run job " + retireJobName + " is still deleting: its operation",
+		"is not done after",
+		"/locations/us-east5/operations/",
+		"apply ok, and the job is out of Terraform's state and fugaro.yaml; " + retireNextCommand,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the still-running delete does not say %q:\n%s", want, text)
+		}
+	}
+	if !strings.Contains(err.Error(), "job delete still running for Cloud Run job "+retireJobName) {
+		t.Errorf("the returned error does not name the still-deleting job: %v", err)
+	}
+	if !r.run.HasJob(retireJobName) {
+		t.Error("a job whose operation is not done was reported gone")
+	}
+	if !strings.Contains(text, "wrote "+r.cfg) {
+		t.Errorf("the unfinished delete cost the run its local config (M4):\n%s", text)
 	}
 }
 

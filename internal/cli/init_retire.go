@@ -393,6 +393,11 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 		// that cannot ask it -- --yes, a pipe, an agent -- is refused, not
 		// silently obeyed).
 		fmt.Fprintf(r.w, "No changes: %s matches the plan.\n", spec.Name)
+		// The plan counted nothing, and --json says so the way the ordinary
+		// no-change path does (init.go's planRepo): a pointer to zero counts,
+		// not a nil that omits "changes" altogether and leaves the caller
+		// unable to tell "no changes" from "the plan never ran".
+		r.res.Changes = &infra.PlanCounts{}
 		// The confirmation's own banner says what remains, and here there is
 		// no apply left to do: the delete is all of it (I-C).
 		r.retireClean = true
@@ -538,6 +543,13 @@ func (r *initRun) retireLeftover(spec infra.RepoSpec, err error) error {
 // --yes could confirm is exactly what the design forbids. reachable=false
 // means the run cannot ask at all (--yes, --non-interactive, --json, a pipe,
 // a coding agent), and then nothing is removed and nothing is deleted.
+//
+// The refusal for that case is the retirement's own, not notConfirmed's
+// (review round 4): askTyped showed no prompt at all -- canConfirmTyped
+// refuses before typed runs -- so "the project's name was not typed" is not
+// what happened, and the ordinary refusal's ", or pass --yes once you have
+// read what it does" names the one flag design §4.2 forbids for a retirement,
+// which would send the reader straight back to the same refusal.
 func (r *initRun) retireConfirm(rets []infra.Retirement, spec infra.RepoSpec, undone string) error {
 	what := r.retireWhat(spec, rets)
 	confirmed, reachable, err := r.askTyped(what)
@@ -548,13 +560,36 @@ func (r *initRun) retireConfirm(rets []infra.Retirement, spec infra.RepoSpec, un
 		if m := agentMarker(os.Getenv); m != "" {
 			return &initflow.AgentError{Marker: m}
 		}
-		return r.notConfirmed(undone)
+		return userErr("%s; %s", retireUnaskable(r.conditions()), undone)
 	}
 	if !confirmed {
 		return r.notConfirmed(undone)
 	}
 	fmt.Fprintln(r.w, "  confirmed")
 	return nil
+}
+
+// retireUnaskable is why a retirement's typed confirmation could not be
+// asked: initflow's own "needs a real terminal" sentence, plus the flags of
+// this run that make it unreachable. It never offers --yes -- the design
+// forbids it for a retirement -- so the flag list is written as what those
+// flags do not do, not as a route to take.
+func retireUnaskable(c initflow.Conditions) string {
+	msg := initflow.NeedsTerminal("the typed confirmation of a retirement")
+	var flags []string
+	if c.Yes {
+		flags = append(flags, "--yes")
+	}
+	if c.NonInteractive {
+		flags = append(flags, "--non-interactive")
+	}
+	if c.JSON {
+		flags = append(flags, "--json")
+	}
+	if len(flags) > 0 {
+		msg += " (" + strings.Join(flags, " and ") + " " + plural(len(flags), "never confirms", "never confirm") + " a retirement)"
+	}
+	return msg
 }
 
 // retireWhat is the banner both confirmations print: the secrets that stay

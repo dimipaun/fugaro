@@ -6,7 +6,7 @@ warning: couldn't check origin/main's fugaro.yaml for project: aurora: <the fetc
 Why: agent.auth no longer mounts claude-oauth-token-bmb; the named Claude account bmb is no longer a variant this repository deploys.
 
 Going away (2, predicted from the state and the labels) — 1 the plan will delete, 1 deleted through the Cloud Run API after it:
-  module.repo.module.workflow["app_bmb"].google_service_account.this       service account: the named Claude account bmb is no longer a variant this repository deploys
+  module.repo.module.workflow["app_bmb"].google_service_account.job        service account: the named Claude account bmb is no longer a variant this repository deploys
   module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0]   workflow job: the named Claude account bmb is no longer a variant this repository deploys
 
 Removed from Terraform's state, and never deleted (1):
@@ -29,14 +29,14 @@ removed 2 addresses from Terraform's state; nothing was destroyed
 Plan: 0 to import, 1 to create, 1 to update, 0 to forget, 1 to delete.
 
 ⚠ Review these first:
-  ⚠ delete module.repo.module.workflow["app_bmb"].google_service_account.this
+  ⚠ delete module.repo.module.workflow["app_bmb"].google_service_account.job
 
 Other changes:
   update module.repo.module.workflow["app"].google_cloud_run_v2_job.this[0]
   create module.repo.google_artifact_registry_repository.images
 IAM: 0 bindings match the live ones (adopted), 3 new
 the plan above is the retirement's: 0 imports, 1 creates, 1 updates, 1 deletes, 0 replaces. Deleting:
-  delete module.repo.module.workflow["app_bmb"].google_service_account.this
+  delete module.repo.module.workflow["app_bmb"].google_service_account.job
 ⚠ CONFIRM (project aurora, GCP project proj-1234): retire 3 addresses of proj-1234: 2 addresses are already out of Terraform's state (destroying nothing), so what remains is the apply and the delete of 1 Cloud Run job through the API. Delete fugaro-acme-sandbox-app-bmb (us-east5, module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0]). Fugaro deletes no secret, so these leave Terraform's state and stay in Secret Manager if they are still there: claude-oauth-token-bmb (fugaro-acme-sandbox-claude-oauth-token-bmb-2dfc7765d8e5dd81), unmanaged.
 Type aurora to confirm:   confirmed
 Still missing for acme/sandbox:
