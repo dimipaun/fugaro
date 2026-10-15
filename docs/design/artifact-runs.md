@@ -63,7 +63,7 @@ gains it for free.
 
 **A recipe already knows two things this design needs.**
 
-- **`mode:`** is `implement | review` (`internal/recipe/recipe.go:37-40`,
+- **`mode:`** is `implement | review` (`internal/recipe/recipe.go:38-42`,
   parsed at `:356-362`, enum at `schemas/recipe.schema.json`), and `review` is
   **exactly the precedent**: a run whose outcome is not a Fugaro pull request
   and that **needs no git token** — *"It never pushes and never edits the PR.
@@ -84,11 +84,16 @@ gains it for free.
   `docs/design/generic-tool.md:356` (G10) rejects "commands in the recipe" in as many
   words: *bucket text would run code*).
 
-**A recipe may not name a command, and a check step may only come first.** In the
-two of `schemas/recipe.schema.json`'s **four** `steps` variants that have a check
-step at all, it is `prefixItems[0]` (`$defs.check`), and the other two variants
-begin with `first_line` — so a deterministic step *after* the agent has not been
-expressible at all, which is precisely what a render needs.
+**A recipe may not name a command, and a check step may only come first.** The
+schema has exactly **four** `steps` variants (`schemas/recipe.schema.json:25-30`),
+and every one of them is a fixed prefix list with `items: false`: a lone
+`reviewNoBounce`; `firstLine` then `reviewBounce`; `check` then `reviewNoBounce`;
+and `check`, `firstLine`, `reviewBounce`. So in the two variants that have a check
+step at all it is `prefixItems[0]` (`$defs.check`), and neither of the other two
+allows one anywhere — an `implement` recipe is the `firstLine`-then-`reviewBounce`
+variant, and a `mode: review` recipe is overridden to the lone `reviewModeReview`
+one (`:33-41`). A deterministic step *after* the agent has not been expressible at
+all, which is precisely what a render needs.
 
 **Timeouts are four numbers, and the run's clock is what really bounds it.**
 `timeouts: {total, stage, verify, finalize_reserve}` (`internal/config/config.go:423-428`);
@@ -108,7 +113,7 @@ The workflow's `resources: {cpu, memory}` defaults to `4` / `8Gi`
 (`internal/config/defaults.go:67-71`), reaches Terraform as the job's limits
 (`deploy/terraform/gcp/modules/workflow/job.tf:38-42`) and is checked by
 `CheckResources`: CPU must be **one of 1, 2, 4, 6, 8** and memory at most 32Gi,
-with a memory↔CPU ratio rule (`internal/backend/gcp/limits.go:22,36-38,55`;
+with a memory↔CPU ratio rule (`internal/backend/gcp/limits.go:25,36-46`;
 `limits_test.go:11` asserts `{8, "32Gi"}` passes and `limits_test.go:23` that
 `{8, "64Gi"}` fails). So **VERIFIED, in this repository's own code: an artifact
 render on today's substrate gets at most 8 vCPU and 32 GiB.**
@@ -138,7 +143,7 @@ Never capped"* (`docs/design/m9-budget-and-dashboard.md:798`). The estimate
 itself is real and shipped: `Prices.ComputeUSD(cpu, memGiB, d)`
 (`internal/backend/backend.go:292-296`), computed by the runner from the
 workflow's **requested** vCPU/memory and the elapsed run time
-(`internal/runner/cost.go:61`), recorded as `cost.compute_usd` +
+(`internal/runner/cost.go:63`), recorded as `cost.compute_usd` +
 `cost.compute_estimated` (`internal/runstore/cost.go:12-18`,
 `schemas/result.schema.json`), recomputed by the CLI from the backend's own
 limits (`internal/runview/runview.go:363-368`) and rolled into history
@@ -308,7 +313,11 @@ and what the check's fixture recipe uses**; a command that names a file is
 permitted, and documented for what it is. The runner cannot tell the two apart
 without a static analysis it should not do, so it does not try: it records
 `render.command` (redacted), `render.command_sha256` (the hash of the exact
-string it ran) and `render.tree: "working"`, which says the command's own file
+string it ran — the `commands.render` text as read from `fugaro.yaml`, **before
+the redactor**, which is what makes it recomputable by anyone holding the
+repository at the recorded ref; the recorded `command` is that string *with*
+the redactor applied, so the two are deliberately not a hash pair whenever
+redaction fires) and `render.tree: "working"`, which says the command's own file
 references were resolved in the checkout the plan stage also had.
 
 *The alternatives, and what each costs.* **(a) A pristine tree at the task's
@@ -394,9 +403,19 @@ repository.
 | `content_type` | Not declared: **recorded, from the file itself**, by extension with a sniffed fallback | §8: it is recorded, never trusted |
 
 **The probe is `commands.probe`, run once with the whole set in two
-environment variables** — `FUGARO_OUT_DIR` (the outputs directory's absolute
-path) and `FUGARO_ARTIFACTS_FILE` (the absolute path of a file the runner writes
-into the state directory, holding the sanitised relative names one per line).
+environment variables** — `FUGARO_OUT_DIR` (**the staging directory's absolute
+path**, `<StateDir>/artifacts/`: the directory that holds exactly the files
+that will be uploaded, one per line of `FUGARO_ARTIFACTS_FILE`, laid out flat
+under their sanitised names) and `FUGARO_ARTIFACTS_FILE` (the absolute path of a
+file the runner writes into the state directory, holding the sanitised relative
+names one per line). **Two names, one root, and the design states which:** a
+record's `<name>` is the match's path **relative to the deepest common root of
+the recipe's globs** (§8.2, and the same root `dockerfile:`-style escapes are
+measured against), so `$FUGARO_OUT_DIR/$name` is always the staged file — see
+the example below, where `out/*.mp4` yields names like `sizzle.mp4` and the
+staging directory holds them at its own top level. `FUGARO_OUT_DIR` is *not*
+the checkout's `out/`; it is the flat staging root, so a script never has to
+know the glob's shape.
 **A file, not a value**: a newline-separated list inside one environment
 variable cannot survive a name that itself holds a newline, and every shell
 reads a file with `while IFS= read -r` without quoting rules in play — the
@@ -452,8 +471,8 @@ format:
   launcher uploaded (§4). `schemas/task.schema.json` gets its properties.
 
 **Where the artifacts land: `runs/<slug>/<run>/artifacts/<name>`,** with
-`<name>` the file's path **relative to the outputs directory's own root**,
-sanitised (§8). That is the one place the run's own account may write
+`<name>` the file's path **relative to the deepest common root of the
+recipe's globs** (the "outputs root", §3), sanitised (§8). That is the one place the run's own account may write
 (`runs/<slug>/`, §1's verified condition), it expires with the run record
 (§7), and it needs no new IAM, no new lifecycle rule and no new prefix.
 
@@ -530,9 +549,16 @@ write:
    `[]byte`, and an attachment is the case the 1 MiB read cap and the streaming
    writer exist for.)
 2. **Check the caps before uploading anything**: `inputs.max_files` (proposed
-   16) and a total byte cap (`inputs.max_bytes`, proposed 256 MiB) — the
-   launcher refuses a set over the cap **before** the first byte is written,
-   and the workflow declares both (`workflows.<name>.inputs`).
+   16) and `inputs.max_bytes` (proposed 256 MiB) — the launcher refuses a set
+   over either **before** the first byte is written, and the workflow declares
+   both (`workflows.<name>.inputs`). **The two are not the same kind of
+   number, and the design says which is which because an implementer will
+   otherwise guess:** `max_files` counts *paths*, and **`max_bytes` is the
+   set's total, not a per-file limit** — it is the cap on what one launch may
+   push into `runs/`, and a set of ten 40 MiB screenshots is over it while
+   every member is comfortably under the number itself. So the check is the
+   count against the first and the **sum of the sizes about to be uploaded**
+   against the second, and the refusal names the total, the cap and the count.
 3. **Upload each file to `runs/<slug>/<run>/inputs/<name>`**, hashing it as it
    goes, recording `{name, bytes, sha256, content_type}` in the task spec.
    The launcher's own credentials suffice: a launcher holds `objectUser`
@@ -606,7 +632,7 @@ sizzle case is the plan stage alone.
 | The run's own wall clock | `finalizeAt = StartedAt + (total − finalize_reserve)` | `internal/runner/budget.go:22-34` |
 | The render's own deadline | new `timeouts.render`, also capped by `finalizeAt` | this design |
 | Cloud Run's task timeout | `total + 2m` as the launcher sends it; a task may run up to 24h; the CLI's `--total-timeout` cap is 24h | `docs/design/v1.md:370`, `docs/SPEC.md:30`, `internal/cli/run.go:976-991` |
-| Cloud Run job resources | 1, 2, 4, 6 or 8 vCPU; ≤ 32Gi with ratio rules | `internal/backend/gcp/limits.go:22,36-38,55` |
+| Cloud Run job resources | 1, 2, 4, 6 or 8 vCPU; ≤ 32Gi with ratio rules | `internal/backend/gcp/limits.go:25,36-46` |
 | The container's own disk | **It is memory, and this repository records nothing about it.** On Cloud Run's second-generation execution environment the container's filesystem is an in-memory filesystem with no volume mounts (platform documentation; **nothing in this repository states it**, U3), so the staging directory, the render's own temp files and the upload's reader are all charged to the job's **memory** limit — 32 GiB at most (`limits.go`'s `CheckResources`) | Check 58's step 7, in three halves: an over-*cap* set must refuse cleanly, an over-*memory* render must be **observed** (killed container or clean failure), and the run's own record must say which happened |
 | The artifact caps | `outputs.max_files`, `outputs.max_bytes` | this design |
 
@@ -648,7 +674,7 @@ and **the VM price table (Task 3, #389) merged** — `internal/backend/batch/`'s
 `prices.go` (`MachineType`, `MachineTypeOf`, `ForMachineType`) and
 `backend.Execution`'s `MachineType`/`BilledWindow`/`WindowNote`, which price a
 VM from its boot window with Compute Engine's one-minute minimum
-(`internal/backend/backend.go:97-103,141-147,149-199` — `MachineType`,
+(`internal/backend/backend.go:103,147,174-205` — `MachineType`,
 `VMMinimumBilled`, `BilledWindow`, `WindowNote`) — and it records the
 same `compute_usd` shape Cloud Run's does. What is *not* merged is the enable
 work: `backend: cloud-batch` is still refused by config validation
@@ -678,11 +704,15 @@ substrate has no GPU (its resource model is vCPU and memory,
 name. The checks that would settle it are (a) whether a Cloud Run job can
 request a GPU in the owner's project/region, (b) whether a Compute Engine GPU
 machine type is available in the sandbox's region and quota, and (c) whether
-`compute_usd`'s price table has a GPU rate (it has `VCPUSecondUSD`, `GiBSecondUSD`
-and a `Source` string naming where the figures came from, and nothing else —
-`internal/backend/backend.go:265-266,275-277` on `origin/main`; a VM run bills
-*the machine type's* quantities rather than the workflow's,
-`Prices.Quantities` at `:285-289`).
+`compute_usd`'s price table has a GPU rate (its fields are the two per-second
+rates `VCPUSecondUSD` and `GiBSecondUSD`, the two quantities `VCPU` and
+`MemoryGiB` a machine-type table bills instead of the job's own limits, and a
+`Source` string naming where the figures came from — `type Prices` at
+`internal/backend/backend.go:264-277` on `origin/main`; a GPU would need a third
+rate and a count field, and there is neither; a VM run bills *the machine type's*
+quantities rather than the workflow's, `Prices.Quantities` at `:285-289`, and the
+launcher's own table leaves those quantities zero,
+`internal/localcfg/localcfg.go:868-874`).
 **§13 carries this as a question for the owner, and no task in the plan may
 assume a GPU.**
 
@@ -694,7 +724,7 @@ gateway's ledger feeds them; compute is a **reported estimate, never capped**
 (`docs/design/m9-spec-v3-reconciliation.md:10`,
 `docs/design/m9-budget-and-dashboard.md:798`,
 `internal/budget/evaluate.go:190-204`). The estimate exists and is charged
-nowhere: `internal/runner/cost.go:61` prices the workflow's **requested**
+nowhere: `internal/runner/cost.go:63` prices the workflow's **requested**
 vCPU/memory over the run's elapsed wall clock.
 
 **So a runaway render's only cap is the clock (D4).** Say the number plainly:
@@ -719,7 +749,7 @@ decision about which caps count compute (all three?), a per-backend price table
 quantities a row bills is `backend.Prices.Quantities`'s business, not the
 caller's — that is where the display path already routes its rows,
 `internal/runview/runview.go:403-404`, while the runner's own estimate hands
-`ComputeUSD` the workflow's resources directly, `internal/runner/cost.go:61`),
+`ComputeUSD` the workflow's resources directly, `internal/runner/cost.go:63`),
 and an interaction
 with the reservation sweep. **It is a separate design, and this one does not
 pretend to have it.**
@@ -732,7 +762,7 @@ plan: a preview line that prices the *compute* ceiling the same shape
 `compute_usd` uses — the workflow's **requested vCPU/memory × `timeouts.total`**
 at the installation's compute prices, through `backend.Prices.ComputeUSD`
 (`internal/backend/backend.go:292-296`) exactly as the runner's own estimate
-calls it (`internal/runner/cost.go:61`) — clearly
+calls it (`internal/runner/cost.go:63`) — clearly
 labelled **"not capped"**, and with the "typical" line unchanged (it is
 model-only history, and that is what it should stay). **`Prices.Quantities` is
 deliberately not in that path**: it exists for a table that bills a *machine
@@ -809,9 +839,11 @@ produced (out), and files an operator handed to a model-driven job (in).
    executes or unpacks** what it writes; it writes to a path the user names and
    prints the recorded type, the size and the sha256.
 2. **Names are sanitised, and the runner computes every one of them.** The
-   upload name is the file's path **relative to the outputs directory**,
-   after a refusal list: no absolute path, no `..` element, no name that
-   escapes `outputs.globs`' common root, no duplicate after normalisation, and
+   upload name is the file's path **relative to the deepest common root of the
+   recipe's globs** — the one root `outputs.globs` are matched against, so the
+   rule "no name escapes it" is what the name is already measured from — after
+   a refusal list: no absolute path, no `..` element, no NUL or newline, no
+   duplicate after normalisation, no name beginning with a dot (see below), and
    an explicit length limit. The leaf is always
    `runs/<slug>/<run>/artifacts/<name>` — a **fixed** leaf under a **fixed**
    run prefix, so no artifact name (however crafted) can be made to write
@@ -1015,6 +1047,30 @@ produced (out), and files an operator handed to a model-driven job (in).
   escapes that root is refused — a checkout's `.git/hooks/`, `.claude/` or
   `.envrc` is what an untrusted record would otherwise be able to write (§8.2,
   §8.3).
+
+  **The two sides are one rule, and the design states it once so the upload
+  path cannot produce what the retrieval path refuses.** The upload sanitiser
+  refuses a name beginning with a dot for the same reason `get` does (§8.2), so
+  a run cannot record a `.hidden.mp4` that `get` will never hand back. That
+  refusal is load-bearing rather than cosmetic, because **Go's `filepath.Glob`
+  and `filepath.Match` match a leading dot** — unlike a POSIX shell — so
+  `out/*.mp4` in a recipe *does* select `out/.hidden.mp4`, and without the rule
+  the run would upload and record an artifact the retriever refuses. For a
+  record that carries such a name anyway (written before this rule, or by a
+  tamperer, whose names are untrusted text, §8.3), the behaviour is fixed and
+  fail-closed:
+
+  - `fugaro artifacts ls RUN` **lists it**, flagged as unretrievable, with the
+    reason — the record is shown as it is, never silently filtered;
+  - `fugaro artifacts get RUN` (no `NAME`) **refuses wholesale and names the
+    offending entry**, writing nothing: an "all artifacts" download that skips
+    one would tell the owner everything was retrieved when it was not;
+  - `fugaro artifacts get RUN <that name>` refuses it too, and prints the reason.
+
+  **No other name is affected**: a dot *inside* a name (`sizzle.v2.mp4`) and a
+  name in a dotted *directory* below the outputs root (`clips/a.mp4`) are both
+  fine — the refusal is only on a name whose first character is `.`, which is
+  how the retrieval path's own rule is worded.
 - **`fugaro runs ls`** gains a column (or a `--json` field) for the artifact
   count and total bytes, and **`fugaro diagnose`** names the artifacts beside
   `report.md` (the path shape it already prints,
@@ -1028,7 +1084,26 @@ produced (out), and files an operator handed to a model-driven job (in).
   successful artifact run as a draft pull request with an empty reason. The same
   value is read at `internal/cli/cancel.go:468` (`NoPR = Outcome == OutcomeNone`)
   and `internal/runner/halt.go:177` (the continuation advice), and both need the
-  arm as well — three sites, all in the plan's Task 2.
+  arm as well.
+- **`fugaro watch` reads the same value, and it is where an owner actually sees
+  a run end.** Two display switches read a *row's* outcome straight out of
+  `result.json`, and **neither has a `default:` arm**: `internal/watch/plain.go:99`
+  (`switch f.Outcome`, arms for `"ready"` and `"draft"` only, over
+  `word := strings.ToUpper(f.Stage)`) and `internal/watch/render.go:653` (the
+  same two arms, same fallback). The failure is quiet rather than loud — an
+  artifact run is drawn as its bare stage word and its outcome never appears —
+  which is worse for a reader than the report's wrong word, because nothing
+  looks amiss. **Both gain an `"artifacts"` arm**, printing a word no stage can
+  produce (`ARTIFACTS, NO PR` plain, `artifacts, no PR` in the dashboard, in the
+  success colour where `"ready"` prints `READY FOR REVIEW`), so that
+  `SUCCEEDED` is never the last word on a run that did not do what a
+  `SUCCEEDED` implement run does. **`ReadyForReview` (`internal/watch/filter.go:67`,
+  `r.Outcome == "ready"`) is deliberately unchanged** — an artifact run is not
+  ready for review and must not be listed under that heading — and the enum's own
+  documentation, `internal/watch/finished.go:17`'s `// ready, draft, none,
+  reviewed`, is updated with it. That is **five** call sites in all (the three
+  record-reading ones above and these two row-reading ones), all in the plan's
+  Task 2.
 - **A signed URL is not offered** (§8.7): the operator's own credentials are
   what the retrieval path uses.
 
@@ -1054,7 +1129,11 @@ cross-reference here and one there name the same task:
    deadline, its failure path, and the `render` record **with its own
    `runstore` types (`RenderRecord`, `OutcomeArtifacts`, `Record.Render`) and
    the `outcome` enum's new value**, because a task that records something must
-   own the type it records. Proven with an in-memory bucket and no cloud.
+   own the type it records — **and every place that reads the value**, which is
+   five sites and not one (§9): the report's `default:` arm, `cancel`'s `NoPR`,
+   `halt`'s continuation advice, and the two `fugaro watch` display switches
+   that would otherwise draw an artifact run as a bare stage word. Proven with
+   an in-memory bucket and no cloud.
 3. **Two streaming `blobx` methods**: `PutFile` and `GetFile` — the byte
    layer the rest needs, since every write today is a `[]byte` and every read
    is capped at 1 MiB (§3, V23).
@@ -1180,11 +1259,11 @@ line read for it — the plan's Review Focus repeats the important ones):
 | V2 | `blobx.Open` accepts `gs://` **and** `file://`, so an artifact path is testable with no cloud | `blobx.Open` call sites `internal/cli/exec.go:146,296`, its flag default `:59`, `internal/e2e/budget_test.go:129` |
 | V3 | The bucket deletes `runs/` objects at `runs_days` (default 90); `builds/` has no rule | `deploy/terraform/gcp/modules/installation/bucket.tf:16-24,63`, `variables.tf:109-121` |
 | V4 | A run's account is scoped to the **repository's** prefixes (`runs`, `cache`, `locks`), **not** to one run; a launcher reads the whole bucket and writes under `runs/`; an operator has `objectAdmin`; project Owners/Editors bypass it | `internal/backend/gcp/names.go:374,383-389`, `deploy/terraform/gcp/modules/workflow/sa.tf:24-33`, `docs/design/bucket-iam.md:88,126-128`, `SECURITY.md:36,62` |
-| V5 | `mode:` is `implement|review`; `review` is the no-git-token, no-PR precedent, with the outcome `reviewed` | `internal/recipe/recipe.go:37-40,356-362,634-638`, `docs/design/generic-tool.md:195-203`, `internal/runner/runner.go:635` |
+| V5 | `mode:` is `implement|review`; `review` is the no-git-token, no-PR precedent, with the outcome `reviewed` | `internal/recipe/recipe.go:38-42,356-362,632-639`, `docs/design/generic-tool.md:195-203`, `internal/runner/runner.go:635` |
 | V6 | The `check` step is deterministic, runs `verify.Run` in the checkout as the agent's user, may only come first, and may name only `commands.build|test|lint` | `internal/recipe/recipe.go:47-62`, `internal/runner/gate.go:61,125-132`, `internal/verify/verify.go:176,243`, `schemas/recipe.schema.json` |
 | V7 | A recipe names no command; bucket text would run code | `docs/design/generic-tool.md:356` (G10's row), `internal/runner/gate.go:125-127` |
 | V8 | Timeouts: `total 90m` / `stage min(40m,total)` by default; this repository's `fugaro.yaml` says `2h/90m/25m/5m`; `finalizeAt` is the real deadline; Cloud Run gets `total+2m`; a task may run 24h; the CLI caps `--total-timeout` at 24h | `internal/config/defaults.go:77-90`, `fugaro.yaml:54`, `internal/runner/budget.go:22-34`, `docs/design/v1.md:370`, `docs/SPEC.md:30`, `internal/cli/run.go:976-991` |
-| V9 | Cloud Run jobs take 1, 2, 4, 6 or 8 vCPU and at most 32Gi | `internal/backend/gcp/limits.go:22,36-38,55`, `limits_test.go:11,23` |
+| V9 | Cloud Run jobs take 1, 2, 4, 6 or 8 vCPU and at most 32Gi | `internal/backend/gcp/limits.go:25,36-46`, `limits_test.go:11,23` |
 | V10 | The caps count model dollars; compute is an estimate, reported and never capped; `compute_usd`/`compute_estimated` exist and are rolled into history | `docs/design/m9-spec-v3-reconciliation.md:10`, `docs/design/m9-budget-and-dashboard.md:798`, `internal/budget/evaluate.go:190-204`, `internal/runner/cost.go:62-64`, `internal/runstore/cost.go:12-18`, `internal/budget/rollup.go:296-303` |
 | V11 | `fugaro budget preview` has no compute notion | `internal/cli/budget_preview.go:26-28,489-538,697-731` |
 | V12 | mise is in the base image; ffmpeg is nowhere in the repository; `image.apt`, `image.setup`, `dockerfile:` and `image.tools`/`mise.toml` are the four ways to add a tool | `images/base/Dockerfile:39-41,154-168`, `images/derived/Dockerfile.tmpl:26-33`, `internal/image/render.go:92-117`, `docs/base-image.md:36-47,63` |
@@ -1193,9 +1272,9 @@ line read for it — the plan's Review Focus repeats the important ones):
 | V15 | `result.json`'s schema is `additionalProperties: false` and is validated **only by tests**, never at read time; readers use the Go struct | `schemas/result.schema.json`, `schemas/schemas_test.go:23`, `internal/runstore/runstore.go:532` |
 | V16 | `runs ls` and `diagnose` read named files, never enumerate the prefix | `internal/cli/runs.go:379-390`, `internal/cli/diagnose.go:158,177` |
 | V17 | The launcher mints the run id, writes `task.json`, then submits the execution — so `--attach` has a place to stand | `internal/cli/run.go:819,1147,1392`, `internal/runstore/runstore.go:502` |
-| V18 | The VM backend is a merged design (#375) with **Tasks 1–3 merged** (#380, #381, #389 — the price table included); `backend: cloud-batch` is refused by config validation, not by a flag; a VM run prices the machine type's quantities from its boot window | `internal/localcfg/localcfg.go:711-719`, `internal/backend/batch/prices.go` (`MachineType`, `MachineTypeOf`, `ForMachineType`), `internal/backend/backend.go:97-103,141-147,149-199,285-289,292-296` (`MachineType`, `VMMinimumBilled`, `BilledWindow`, `WindowNote`, `Prices.Quantities`, `Prices.ComputeUSD` — it is `backend.Prices.ComputeUSD`, there is no `pricing.ComputeUSD`), read at `origin/main` b9d5c5d |
+| V18 | The VM backend is a merged design (#375) with **Tasks 1–3 merged** (#380, #381, #389 — the price table included); `backend: cloud-batch` is refused by config validation, not by a flag; a VM run prices the machine type's quantities from its boot window | `internal/localcfg/localcfg.go:711-719`, `internal/backend/batch/prices.go` (`MachineType`, `MachineTypeOf`, `ForMachineType`), `internal/backend/backend.go:103,147,174-205,285-289,292-296` (`MachineType`, `VMMinimumBilled`, `BilledWindow`, `WindowNote`, `Prices.Quantities`, `Prices.ComputeUSD` — it is `backend.Prices.ComputeUSD`, there is no `pricing.ComputeUSD`), read at `origin/main` b9d5c5d |
 | V19 | GPUs are out of scope in the VM design, by name | `docs/design/compute-backend.md:1485` (§6.3) |
-| V20 | A repository-less run needs project-centric phase 3's project jobs, which are not shipped; `checkout: clone` is not shipped either | `docs/design/project-centric.md:15,66-68,109`, `internal/cli/recipes_skew.go:36`, `internal/cli/docs_checkout_test.go:123-132` |
+| V20 | A repository-less run needs project-centric phase 3's project jobs, which are not shipped; `checkout: clone` is not shipped either | `docs/design/project-centric.md:15,66-68,109`, `internal/cli/recipes_skew.go:51-58`, `internal/cli/docs_checkout_test.go:123-132` |
 | V21 | Check numbers: rows exist for 40–47 (`:317-324`) and 57 (`:325`); **48–56 are reserved by the project-centric plan** (PR #366) and 57 by the compute backend, so **58 is the next free number**; Check 43's guard block is at `:1437-1458` and "never `belong`" at `:1431` | `docs/gcp-live-checklist.md:250-257,317-325,1431,1437-1458` |
 | V24 | A repeated `--run-id` adopts a byte-identical stored task and refuses a different one, **after** `CreateTask` — so an upload ordered before it would rewrite a finished run's inputs | `createTask` `internal/cli/run.go:1146-1172`, `runstore.CreateTask`/`ErrExists`, `blobx.Create`'s `IfNotExist` `internal/blobx/blobx.go:107-127` |
 | V25 | An artifact run would checkpoint like an implement run unless it is stopped: the gate is `checkpointsOn()`, not the checkout arm | `internal/runner/checkpoint.go:65` (`r.follow == nil && r.baseSHA != "" && r.startSHA != "" && cfg.Git.PR.CheckpointsOn()`), `runner.go:1684` (`startCheckpoints` inside the stage runner) |
