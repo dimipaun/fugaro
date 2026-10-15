@@ -193,9 +193,20 @@ var remoteAnonymousUsers = map[string]bool{
 // it redacts wherever it appears, including git's own "unable to access ..."
 // lines, which quote the URL it was given verbatim (the fragment with them —
 // git is handed https://host/repo.git#access_token=SECRET and prints it).
+//
+// A remote url.Parse refuses is read off the string as written instead
+// (addRemoteSecretRaw): the parse is how this function finds the three places,
+// not a condition on registering them, and the shapes it refuses are exactly
+// the ones a forge-shaped credential hides in — an scp-like remote with a
+// query (git@github.com:acme/app.git?access_token=SECRET), a password holding a
+// "/" (https://user:tok/en@host/repo.git) or an escape url.Parse will not
+// decode (https://user:pa%zz@host/repo.git). Returning there would leave the
+// credential in no list at all while git is still handed the URL verbatim,
+// which is the one outcome this function's doc rules out.
 func (r *run) addRemoteSecrets(remote string) {
 	u, err := url.Parse(remote)
 	if err != nil {
+		r.addRemoteSecretRaw(remote)
 		return
 	}
 	if u.User != nil {
@@ -205,6 +216,12 @@ func (r *run) addRemoteSecrets(remote string) {
 			r.addSecret(u.User.String())
 		} else if name := u.User.Username(); name != "" && !remoteAnonymousUsers[strings.ToLower(name)] {
 			r.addSecret(name)
+			// And the spelling the URL was written with: git echoes the URL it
+			// was given, escapes and all, so https://ghp%40x@host/repo.git
+			// comes back exactly like that and a redactor holding only the
+			// decoded username would miss it — the reason
+			// addRemoteSecretParams registers both spellings too.
+			r.addSecret(u.User.String())
 		}
 	}
 	r.addRemoteSecretParams(u.RawQuery)
@@ -214,6 +231,55 @@ func (r *run) addRemoteSecrets(remote string) {
 	r.addRemoteSecretParams(u.RawFragment)
 	if u.RawFragment != u.Fragment {
 		r.addRemoteSecretParams(u.Fragment)
+	}
+}
+
+// addRemoteSecretRaw reads the three places off a remote url.Parse refuses, as
+// the string was written: the fragment, the query, and the userinfo ahead of
+// the first "@". The cuts are the ones a URL is written with — "?" opens the
+// query, "#" the fragment — and both parts are handed to the same parameter
+// parsing the parsed path uses, so a credential-named parameter and a bare
+// token are registered the same way either way.
+//
+// The userinfo is everything in front of the first "@" of the authority, with
+// the "//" of a scheme cut off when there is one; a remote with no "@" has no
+// userinfo to register. An unparseable remote may hold an "@" in its path as
+// well (https://host/acme@app.git), and that part is registered too: the
+// parse that would have told the two apart is the one that failed, and
+// registering a substring that was never a credential costs a redaction while
+// missing one costs the credential. An scp-like remote's "git@" is the
+// anonymous user every forge writes, and is skipped as it is on the parsed
+// path; a "name:value" userinfo registers the value and the pair, for the
+// reason the parsed path does.
+//
+// Only the spelling as written is registered here: this path exists because
+// url.Parse refused the string, so there is no decoded spelling to be had, and
+// the spelling git echoes back is the one the remote was written with.
+func (r *run) addRemoteSecretRaw(remote string) {
+	head, frag, hasFrag := strings.Cut(remote, "#")
+	head, query, hasQuery := strings.Cut(head, "?")
+	if hasQuery {
+		r.addRemoteSecretParams(query)
+	}
+	if hasFrag {
+		r.addRemoteSecretParams(frag)
+	}
+	authority := head
+	if i := strings.Index(authority, "//"); i >= 0 {
+		authority = authority[i+2:]
+	}
+	at := strings.Index(authority, "@")
+	if at < 0 {
+		return
+	}
+	userinfo := authority[:at]
+	if _, pw, ok := strings.Cut(userinfo, ":"); ok {
+		r.addSecret(pw)
+		r.addSecret(userinfo)
+		return
+	}
+	if userinfo != "" && !remoteAnonymousUsers[strings.ToLower(userinfo)] {
+		r.addSecret(userinfo)
 	}
 }
 

@@ -43,11 +43,27 @@ func (ps Prices) MarshalJSON() ([]byte, error) {
 	return json.Marshal(out)
 }
 
+// priceMembers and priceTierMembers are the member names a price entry and its
+// long_context tier are documented with, in the spelling their json tags write:
+// the names checkMemberNames holds a written entry to, beside the
+// DisallowUnknownFields decode, because that decoder refuses only the names no
+// field answers to at all — a rate written INPUT_PER_M answers to input_per_m
+// and would otherwise be priced by whichever spelling the document wrote last.
+var (
+	priceMembers     = []string{"cache_read", "cache_write_1h", "cache_write_5m", "input_per_m", "long_context", "output_per_m", "web_search_per_1k"}
+	priceTierMembers = []string{"input_per_m", "output_per_m"}
+)
+
 // UnmarshalJSON reads the block off a node: one member per model, unescaped
 // back into the model ID. Each entry is decoded with DisallowUnknownFields, as
 // the block always was — a misspelt rate is an error rather than a price that
 // quietly takes the list default — and the entry's model ID is in the message,
-// so a refusal names the model rather than only the field.
+// so a refusal names the model rather than only the field. The member *names*
+// are checked first (checkMemberNames, against priceMembers): the decoder
+// folds case, so "input_per_m" written twice, or "INPUT_PER_M" beside it,
+// is one field to it and the rate this run is priced by would depend on the
+// order the keys were written in. The long_context tier is held to the same
+// check, for the same reason.
 func (ps *Prices) UnmarshalJSON(raw []byte) error {
 	var entries map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &entries); err != nil {
@@ -59,6 +75,9 @@ func (ps *Prices) UnmarshalJSON(raw []byte) error {
 		if err != nil {
 			return fmt.Errorf("%q: %w", key, err)
 		}
+		if err := checkPriceMemberNames(entry); err != nil {
+			return fmt.Errorf("%q: %w", id, err)
+		}
 		dec := json.NewDecoder(bytes.NewReader(entry))
 		dec.DisallowUnknownFields()
 		var price Price
@@ -69,6 +88,31 @@ func (ps *Prices) UnmarshalJSON(raw []byte) error {
 	}
 	*ps = out
 	return nil
+}
+
+// checkPriceMemberNames applies checkMemberNames to one price entry and to its
+// long_context tier, which is an object of its own and reads the same way.
+func checkPriceMemberNames(entry json.RawMessage) error {
+	names, err := objectMemberNames(entry)
+	if err != nil {
+		return err
+	}
+	if err := checkMemberNames("model_prices", names, priceMembers); err != nil {
+		return err
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(entry, &members); err != nil {
+		return err
+	}
+	tier, ok := members["long_context"]
+	if !ok || isNull(tier) {
+		return nil
+	}
+	tnames, err := objectMemberNames(tier)
+	if err != nil {
+		return err
+	}
+	return checkMemberNames("model_prices.long_context", tnames, priceTierMembers)
 }
 
 // CatalogJSON renders the block under the catalogue's own spelling — the real

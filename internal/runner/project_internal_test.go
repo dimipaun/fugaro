@@ -110,6 +110,20 @@ func TestAddRemoteSecretsRegistersWhatARemoteCanCarryACredentialIn(t *testing.T)
 	}{
 		{remote: "https://x:glpat-secret@github.com/acme/app.git", want: []string{"glpat-secret", "x:glpat-secret"}, absent: []string{"x"}},
 		{remote: "https://ghp_0123456789@github.com/acme/app.git", want: []string{"ghp_0123456789"}},
+		// And the spelling the URL was written with: git echoes the URL it was
+		// given, escapes and all, so the encoded username is what a refusal
+		// would quote back.
+		{remote: "https://ghp%40x@github.com/acme/app.git", want: []string{"ghp@x", "ghp%40x"}},
+		// Remotes url.Parse refuses, which is not a reason to register
+		// nothing: git is handed these verbatim and echoes them back, so the
+		// three places are read off the string as written (addRemoteSecretRaw).
+		// An scp-like remote with a query (the parse fails on the colon of the
+		// path's first segment), a password holding a "/" ("invalid port") and
+		// an escape url.Parse will not decode ("invalid URL escape").
+		{remote: "git@github.com:acme/app.git?access_token=SECRET", want: []string{"SECRET"}, absent: []string{"git", "acme/app"}},
+		{remote: "git@github.com:acme/app.git#glpat-secret", want: []string{"glpat-secret"}, absent: []string{"git"}},
+		{remote: "https://user:ghp_a/b@github.com/acme/app.git", want: []string{"ghp_a/b", "user:ghp_a/b"}, absent: []string{"user"}},
+		{remote: "https://user:pa%zz@github.com/acme/app.git", want: []string{"pa%zz"}},
 		{remote: "https://git@github.com/acme/app.git", absent: []string{"git"}},
 		{remote: "https://x-access-token@bitbucket.org/acme/app.git", absent: []string{"x-access-token"}},
 		{remote: "git@github.com:acme/app.git", absent: []string{"git", "acme/app"}},

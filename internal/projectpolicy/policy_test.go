@@ -186,6 +186,37 @@ func TestDecodeRefusesABudgetWhoseKeysAllMiss(t *testing.T) {
 	}
 }
 
+// The strict decode above refuses a budget key no field answers to, and passes
+// one that answers to a field in another case: encoding/json matches a member
+// name case-insensitively, so {"mode": "enforce", "MODE": "off"} decodes to
+// Mode "off" with no error at all — the last key the document writes wins —
+// and {"mode": "enforce", "mode": "observe"} is the same document order
+// deciding the same way. The block is enforced, not advisory (validBudget), and
+// internal/config refuses the same spelling in fugaro.yaml, so the names are
+// held to the documented ones here too.
+func TestDecodeRefusesCaseFoldedBudgetMembers(t *testing.T) {
+	for name, raw := range map[string]string{
+		"a case-folded mode beside the real one": `{"version": 1, "budget": {"mode": "enforce", "MODE": "off"}}`,
+		"mode written twice":                     `{"version": 1, "budget": {"mode": "enforce", "mode": "observe"}}`,
+		"a case-folded allowed_models":           `{"version": 1, "budget": {"mode": "enforce", "ALLOWED_MODELS": ["claude-sonnet-5"]}}`,
+		"a case-folded per_run_usd":              `{"version": 1, "budget": {"mode": "enforce", "PER_RUN_USD": 5}}`,
+	} {
+		p, found, err := Decode([]byte(raw))
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode(%s) = (%v, %v, %v), want a refusal", name, raw, p, found, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), "budget") {
+			t.Errorf("%s: err = %v, want it to name the block", name, err)
+		}
+	}
+	// The documented spelling is read as before, values and all.
+	p, found, err := Decode([]byte(`{"version": 1, "budget": {"mode": "enforce", "per_run_usd": 12.5, "allowed_models": ["claude-sonnet-5"]}}`))
+	if err != nil || !found || p == nil || p.Budget.Mode != "enforce" || p.Budget.PerRunUSD != 12.5 {
+		t.Fatalf("a correctly spelled budget was refused: (%v, %v, %v)", p, found, err)
+	}
+}
+
 // TestDecodeRefusesABadBudgetValue: the values are enforced, not advisory, so
 // Decode checks them the way internal/config's validateBudget does. An
 // unrecognised mode is the dangerous one: policy.Merge treats it as unset, the

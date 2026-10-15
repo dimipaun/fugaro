@@ -116,6 +116,17 @@ func TestGitsOwnCloneFailureIsRedacted(t *testing.T) {
 		// And the escaped spelling: git echoes the URL as written, so a
 		// redactor holding only the decoded value would miss it.
 		{"an escaped query parameter", srv.URL + "/remote.git?access_token=A%54BBsecret", []string{secret, "A%54BBsecret"}},
+		// A remote net/url refuses and git still reads and echoes whole: the
+		// password holds a "/", which is "invalid port" to url.Parse, and git
+		// hands back the URL with the userinfo and the query in it. The
+		// fallback that reads the string as written (addRemoteSecretRaw) is
+		// what covers this one — the parse is how the three places are found,
+		// not a condition on registering them.
+		{
+			"an unparseable remote",
+			strings.Replace(srv.URL, "http://", "http://user:ghp_a/b@", 1) + "/remote.git?access_token=" + secret,
+			[]string{secret, "ghp_a/b", "user:ghp_a/b"},
+		},
 		// A bare token: no parameter name in front of it — a fragment that is
 		// nothing but a value, which is the shape remoteDisplay's own test
 		// (project_internal_test.go) takes for a credential. There is no name
