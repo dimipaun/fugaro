@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	terraform "github.com/dimipaun/fugaro/deploy/terraform"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 )
 
@@ -221,6 +222,48 @@ func TestNeedsBuild(t *testing.T) {
 	}
 }
 
+// A workflow is built even when the only secret without a version is the
+// optional Anthropic key (review fix): NeedsBuild is given the pre-readiness
+// spec, whose job still mounts that key, but Readiness drops the mount when no
+// version exists anywhere, so the job deploys without it and the image can be
+// built. Gating on it here left a keyless provider-only repository with no
+// build at all -- and so no job to ever deploy.
+//
+// Mutation (run, restore): drop `&& !OptionalSecret(l)` from the skip guard in
+// NeedsBuild and this test fails with no workflow to build.
+func TestNeedsBuildIgnoresTheOptionalAnthropicKey(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	in := sandboxInputs(t, m5Additions)
+	in.Cfg.Agent.Auth = "api-key"
+	spec, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if web := spec.Workflows["web"]; web.SecretEnv["ANTHROPIC_API_KEY"] != config.AnthropicSecret {
+		t.Fatalf("the fixture does not mount the Anthropic key: %v", web.SecretEnv)
+	}
+	f.gcs.AddBucket(spec.Installation.RunsBucket, testProjectNumber, managed)
+	versions := map[string]bool{}
+	for logical := range spec.Secrets {
+		versions[logical] = logical != config.AnthropicSecret
+	}
+	got, err := NeedsBuild(ctx, f.c, spec, versions)
+	if err != nil || !slices.Equal(got, []string{"web"}) {
+		t.Fatalf("got %q, %v, want [web]: an optional secret must not hold the build back", got, err)
+	}
+	// A secret the job cannot do without still holds it back.
+	for logical := range versions {
+		if logical != config.AnthropicSecret {
+			versions[logical] = false
+			break
+		}
+	}
+	if got, err := NeedsBuild(ctx, f.c, spec, versions); err != nil || len(got) != 0 {
+		t.Fatalf("a required secret without a version: %q, %v, want no build", got, err)
+	}
+}
+
 // A checkout: clone workflow never needs a build, with or without a build
 // record: it runs the installation's base image directly, so there is no
 // per-repository image to build or push.
@@ -298,7 +341,7 @@ func TestSecretCommands(t *testing.T) {
 		t.Fatalf("commands:\n%+v\nwant:\n%+v", got, want)
 	}
 	if got := SecretCommands(spec, map[string]bool{"bitbucket-token": true, "claude-oauth-token": true, "sandbox-probe": true}, "fugaro", func(s string) string { return s }); len(got) != 0 {
-		t.Fatalf("every secret stored, still: %q", got)
+		t.Fatalf("every secret stored, still: %+v", got)
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/basepin"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -339,7 +340,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		o.Checks = append(o.Checks, doctorGitHubApps(ctx, lc, cmd.ErrOrStderr())...)
 	}
 
-	o.Checks = append(o.Checks, doctorBaseImage(lc))
+	o.Checks = append(o.Checks, doctorBaseImage(lc), doctorCosign(lc))
 
 	// The installation's project-wide secret containers, listed once for
 	// doctor's three project-secret checks: the two per-repository ones
@@ -419,6 +420,33 @@ func doctorBaseImage(lc *localcfg.Config) doctorCheck {
 	return doctorCheck{ID: "base-image", OK: false, Severity: "warning",
 		Problem: "the local config has no base_images.base (" + config.MigrationDoc + ")",
 		Fix:     "fugaro image refresh   # in the repository's checkout"}
+}
+
+// doctorCosign reports the verifier a base pin needs: a release base image
+// is pinned at the digest its OCI-attached cosign signature was verified
+// for, and internal/basepin shells out to the `cosign` binary to verify it
+// (design registry-remote-repository.md §9 Decision 1, option (ii)) —
+// so every pin that already exists was verified when it was written, and
+// only the next one needs the binary.
+//
+// Informational, like doctorOpenProvidersCheck and the tool-availability
+// branches of doctorCLIVersion: an absent binary is not a wrong state and
+// not this repository's business to fail CI over (--strict is the GitHub
+// App's CI mode), and a repository whose base image is its own never calls
+// the verifier at all. What it must not do is stay silent — the pin
+// refuses without the binary, and this is where that is learned before
+// the project's name is typed.
+func doctorCosign(lc *localcfg.Config) doctorCheck {
+	const id = "cosign"
+	if basepin.CosignPath() != "" {
+		return doctorCheck{ID: id, OK: true}
+	}
+	problem := "cosign is not on PATH (looked for " + basepin.CosignBin + "): a base image is pinned at the digest its cosign signature was verified for, so fugaro init --base and fugaro image refresh refuse without it"
+	fix := "install cosign (https://docs.sigstore.dev/cosign/installation/), or name a base image explicitly with --base-image KIND=IMAGE"
+	if lc.BaseImage(config.BaseKind) == "" {
+		problem = "no Fugaro base is recorded, and cosign is not on PATH (looked for " + basepin.CosignBin + "): recording one with fugaro image refresh needs it"
+	}
+	return doctorCheck{ID: id, OK: false, Severity: "info", Problem: problem, Fix: fix}
 }
 
 // doctorGitHubApps is the GitHub App pre-check (githubapp.go), only behind

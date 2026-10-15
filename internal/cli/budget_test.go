@@ -140,13 +140,15 @@ func TestShowJSONProject(t *testing.T) {
 			HeadroomUSD *float64 `json:"headroom_usd"`
 		} `json:"global"`
 		Repos []struct {
-			Slug        string   `json:"slug"`
-			Repo        string   `json:"repo"`
-			CountedUSD  float64  `json:"counted_usd"`
-			DailyCapUSD *float64 `json:"daily_cap_usd"`
-			CapSource   string   `json:"daily_cap_source"`
-			HeadroomUSD *float64 `json:"headroom_usd"`
-			Kill        *struct {
+			Slug            string   `json:"slug"`
+			Repo            string   `json:"repo"`
+			CountedUSD      float64  `json:"counted_usd"`
+			DailyCapUSD     *float64 `json:"daily_cap_usd"`
+			CapSource       string   `json:"daily_cap_source"`
+			PerRunCapUSD    *float64 `json:"per_run_cap_usd"`
+			PerRunCapSource string   `json:"per_run_cap_source"`
+			HeadroomUSD     *float64 `json:"headroom_usd"`
+			Kill            *struct {
 				By     string `json:"by"`
 				Reason string `json:"reason"`
 			} `json:"kill"`
@@ -167,13 +169,86 @@ func TestShowJSONProject(t *testing.T) {
 	}
 	r := doc.Repos[0]
 	// The repository has no cap node of its own: the default applies, and the
-	// headroom is the smaller of 40-25 and 100-30.
+	// headroom is the smaller of 40-25 and 100-30. The per-run cap is the
+	// effective one (min(default 10, global 20)), from the default.
 	if r.Slug != appSlug || r.Repo != "acme/app" || r.CountedUSD != 25 || r.DailyCapUSD == nil || *r.DailyCapUSD != 40 ||
 		r.CapSource != "default" || r.HeadroomUSD == nil || *r.HeadroomUSD != 15 {
 		t.Errorf("repo = %+v", r)
 	}
+	if r.PerRunCapUSD == nil || *r.PerRunCapUSD != 10 || r.PerRunCapSource != "default" {
+		t.Errorf("per-run cap = %v (%s), want $10 from the default", r.PerRunCapUSD, r.PerRunCapSource)
+	}
 	if r.Kill == nil || r.Kill.By != "boss@example.com" || r.Kill.Reason != "runaway" {
 		t.Errorf("kill = %+v", r.Kill)
+	}
+}
+
+// TestShowPerRunCapIsTheEffectiveOne: show prints the cap a run is really
+// held to and the scope it comes from -- the repository's own node, the
+// default, or the project's global cap, which is the fallback of a repository
+// that has neither (D6).
+func TestShowPerRunCapIsTheEffectiveOne(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.db.Set("config/mode", "enforce")
+	seedCaps(f, 100, 20) // the global per-run cap: $20
+	f.db.Set(budget.PathSpendRepo(today(), appSlug), map[string]any{"counted": 5 * usd1})
+	type perRun struct {
+		Cap    *float64
+		Source string
+	}
+	repos := func(t *testing.T) perRun {
+		t.Helper()
+		out, _, err := execute(t, "budget", "show", "--json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			Repos []struct {
+				Slug   string   `json:"slug"`
+				Cap    *float64 `json:"per_run_cap_usd"`
+				Source string   `json:"per_run_cap_source"`
+			} `json:"repos"`
+		}
+		if err := json.Unmarshal([]byte(out), &doc); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		for _, r := range doc.Repos {
+			if r.Slug == appSlug {
+				return perRun{r.Cap, r.Source}
+			}
+		}
+		t.Fatalf("no row for %s in:\n%s", appSlug, out)
+		return perRun{}
+	}
+	// No cap of its own and no default: the global cap binds it.
+	if r := repos(t); r.Cap == nil || *r.Cap != 20 || r.Source != "global" {
+		t.Fatalf("per-run cap = %v (%s), want $20 from the global cap", r.Cap, r.Source)
+	}
+	// A default under the global cap is the one that binds.
+	f.db.Set(budget.PathCapsDefaults, map[string]any{"repoPerRunMicros": 8 * usd1})
+	if r := repos(t); r.Cap == nil || *r.Cap != 8 || r.Source != "default" {
+		t.Fatalf("per-run cap = %v (%s), want $8 from the default", r.Cap, r.Source)
+	}
+	// The repository's own node wins over the default, and the global cap
+	// still bounds it.
+	f.db.Set(budget.PathCapsRepo(appSlug), map[string]any{"repo": "acme/app", "perRunMicros": 30 * usd1})
+	if r := repos(t); r.Cap == nil || *r.Cap != 20 || r.Source != "global" {
+		t.Fatalf("per-run cap = %v (%s), want the global $20 under the repository's own $30", r.Cap, r.Source)
+	}
+	f.db.Set(budget.PathCapsRepo(appSlug), map[string]any{"repo": "acme/app", "perRunMicros": 12 * usd1})
+	if r := repos(t); r.Cap == nil || *r.Cap != 12 || r.Source != "repo" {
+		t.Fatalf("per-run cap = %v (%s), want the repository's own $12", r.Cap, r.Source)
+	}
+	// Nothing anywhere: no per-run cap, which a run in enforce halts on.
+	f.db.Set(budget.PathCapsRepo(appSlug), map[string]any{"repo": "acme/app"})
+	f.db.Set(budget.PathCapsDefaults, nil)
+	f.db.Set(nodeCG, map[string]any{"dailyMicros": 100 * usd1})
+	out, _, err := execute(t, "budget", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "per-run cap not set (no per-run cap anywhere)") {
+		t.Fatalf("show must say no per-run cap is set:\n%s", out)
 	}
 }
 
@@ -563,6 +638,49 @@ func TestSetClearRepoFallingBackToHigherDefaultConfirms(t *testing.T) {
 		t.Fatal(err)
 	}
 	if f.db.Value(budget.PathCapsRepo(appSlug)) != nil {
+		t.Fatal("not cleared")
+	}
+}
+
+func TestSetClearDefaultsPerRunFallingBackToGlobalConfirms(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.db.Set(budget.PathCapsGlobal, map[string]any{"perRunMicros": 20 * usd1})
+	f.db.Set(budget.PathCapsDefaults, map[string]any{"repoPerRunMicros": 5 * usd1})
+	// Clearing the defaults hands every repository without a node of its
+	// own to the $20 global cap: $5 -> $20 is a raise to confirm.
+	if _, _, err := execute(t, "budget", "set", "--defaults", "--clear"); err == nil || !strings.Contains(err.Error(), "confirmation") {
+		t.Fatalf("err = %v", err)
+	}
+	if f.db.Value(budget.PathCapsDefaults) == nil {
+		t.Fatal("the defaults were removed unconfirmed")
+	}
+	// A default above the global cap changes nothing effective ($20
+	// before and after): no confirmation.
+	f.db.Set(budget.PathCapsDefaults, map[string]any{"repoPerRunMicros": 50 * usd1})
+	if _, _, err := execute(t, "budget", "set", "--defaults", "--clear"); err != nil {
+		t.Fatal(err)
+	}
+	if f.db.Value(budget.PathCapsDefaults) != nil {
+		t.Fatal("not cleared")
+	}
+	// A daily-only default node leaves the per-run side unset before and
+	// after: clearing it tightens, and needs no confirmation.
+	f.db.Set(budget.PathCapsDefaults, map[string]any{"repoDailyMicros": 60 * usd1})
+	if _, _, err := execute(t, "budget", "set", "--defaults", "--clear"); err != nil {
+		t.Fatal(err)
+	}
+	// With no global cap the default is the only per-run cap there is:
+	// clearing it leaves every repository without one, which is confirmed
+	// too (as clearing a repository's own cap is).
+	f.db.Set(budget.PathCapsGlobal, nil)
+	f.db.Set(budget.PathCapsDefaults, map[string]any{"repoPerRunMicros": 5 * usd1})
+	if _, _, err := execute(t, "budget", "set", "--defaults", "--clear"); err == nil || !strings.Contains(err.Error(), "confirmation") {
+		t.Fatalf("clearing to no cap needed no confirmation: err = %v", err)
+	}
+	if _, _, err := execute(t, "budget", "set", "--defaults", "--clear", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if f.db.Value(budget.PathCapsDefaults) != nil {
 		t.Fatal("not cleared")
 	}
 }

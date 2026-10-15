@@ -254,9 +254,11 @@ func (o Options) validate() error {
 	}
 	switch u.Kind {
 	case "anthropic":
-		if u.APIKey == "" {
-			return errors.New("gateway: the anthropic upstream has no API key")
-		}
+		// The key is optional: a run whose models all route through
+		// providers has none, and a call that needs this upstream without
+		// a key is refused by name (missingAnthropicKey) rather than at
+		// startup. A stored key is mounted whenever the secret has a
+		// version, so this is a fact about data, not about routing.
 	case "vertex":
 		if u.Token == nil {
 			return errors.New("gateway: the vertex upstream has no token source")
@@ -408,13 +410,30 @@ func (s *Server) enterStage() *stageState {
 	return s.stage
 }
 
+// violationNow records what a stage asked for that isn't allowed, on the
+// running stage: for a path that has no stage handle of its own (the token
+// count, which takes none). No stage is running: nothing to record.
+func (s *Server) violationNow(v string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stage != nil {
+		s.violationLocked(s.stage, v)
+	}
+}
+
+// violationLocked is the append violationNow and violation share; the caller
+// holds s.mu.
+func (s *Server) violationLocked(st *stageState, v string) {
+	if !contains(st.rep.Violations, v) {
+		st.rep.Violations = append(st.rep.Violations, v)
+	}
+}
+
 // violation records what a stage asked for that isn't allowed.
 func (s *Server) violation(st *stageState, v string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !contains(st.rep.Violations, v) {
-		st.rep.Violations = append(st.rep.Violations, v)
-	}
+	s.violationLocked(st, v)
 }
 
 // Close cancels every upstream request in flight (each settles as its

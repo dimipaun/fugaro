@@ -339,7 +339,7 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 		if err != nil {
 			return err
 		}
-		build, why := refreshVerdict(rec, want, host, kind)
+		build, why := refreshVerdict(rec, want, p.ver, host, kind, baseOwner(t.lc))
 		fmt.Fprintf(r.w, "  %s: %s\n", wf, why)
 		if build {
 			todo = append(todo, wf)

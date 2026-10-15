@@ -326,7 +326,7 @@ func anchorProblemText(repo, wf, kind, lcPath string, reasons []string, customBa
 		steps = append(steps, fmt.Sprintf("remove base_images.%s from %s (keep a backup)", kind, where))
 	}
 	if kind != "" {
-		steps = append(steps, fmt.Sprintf("fugaro image refresh --repo %s --workflow %s in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it copies this release's %s base image, points the daily image check job at it and rebuilds the image)", repo, wf, kind))
+		steps = append(steps, fmt.Sprintf("fugaro image refresh --repo %s --workflow %s in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it verifies this release's %s base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image)", repo, wf, kind))
 	} else {
 		steps = append(steps, fmt.Sprintf("fugaro image build --repo %s --workflow %s", repo, wf))
 	}
@@ -456,7 +456,7 @@ func gcpProjectProblems(ctx context.Context, lc *localcfg.Config, lcPath, provid
 		if ref := lc.BaseImage(kind); kind != "" && ref != "" {
 			if herr != nil {
 				add(reasonRegistryHost(kind, herr))
-			} else if v, managed := managedVersion(ref, host, kind); !managed {
+			} else if v, managed := managedVersion(ref, host, kind, baseOwner(lc)); !managed {
 				add(reasonConfigBaseCustom(ref, kind))
 				customBase = true
 			} else if imagePredates(v, gcpProjectFieldSince) {

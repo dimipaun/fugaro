@@ -18,6 +18,11 @@ output "base_registry" {
   value       = google_artifact_registry_repository.base.repository_id
 }
 
+output "ghcr_registry" {
+  description = "The remote repository's ID: the ghcr.io images this installation's builds and jobs pull through it."
+  value       = google_artifact_registry_repository.ghcr.repository_id
+}
+
 output "legacy_registry" {
   description = "The adopted legacy registry's ID, or null when none was adopted."
   value       = var.adopt_legacy_registry ? google_artifact_registry_repository.legacy[0].repository_id : null
