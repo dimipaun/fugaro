@@ -285,21 +285,38 @@ func consoleBoundaryImports(t *testing.T, file, src string) ([]string, bool) {
 }
 
 // consoleBoundaryImportReachesConsole reports whether an import path reaches the
-// console directory. An import path is a module path, so the first two cases are
-// the boundary; the third covers a relative import, which cannot compile in a
-// module but is the same reference spelled differently -- the boundary is about
-// what a file says.
-func consoleBoundaryImportReachesConsole(imp, consolePkg string) bool {
+// module root's console directory. An import path is a module path, so the first
+// case is the boundary directly; the second covers a relative import, which
+// cannot compile in a module but is the same reference spelled differently --
+// the boundary is about what a file says. A relative path is resolved against
+// the importing file's own directory, so "../../console" from internal/cli
+// reaches the root console/ and is caught, while a path that lands on some other
+// directory named console is a different directory and is not this boundary.
+func consoleBoundaryImportReachesConsole(fileRel, imp, consolePkg string) bool {
 	switch {
 	case imp == consolePkg, strings.HasPrefix(imp, consolePkg+"/"):
 		return true
 	case strings.HasPrefix(imp, "./"), strings.HasPrefix(imp, "../"):
-		clean := path.Clean(imp)
-		return clean == consoleDirName || strings.HasPrefix(clean, consoleDirName+"/") ||
-			strings.Contains(clean, "/"+consoleDirName+"/")
+		return consoleBoundaryResolvedIntoConsole(fileRel, imp)
 	}
 	return false
 }
+
+// consoleBoundaryResolvedIntoConsole resolves a slash-separated path written
+// inside the file at fileRel (both relative to the module root) and reports
+// whether it lands in the root console/ directory. This is the one place the
+// "which console/ is this?" question is answered, so an import and an embed
+// pattern cannot disagree about it.
+func consoleBoundaryResolvedIntoConsole(fileRel, p string) bool {
+	resolved := path.Join(path.Dir(fileRel), path.Clean(p))
+	return resolved == consoleDirName || strings.HasPrefix(resolved, consoleDirName+"/")
+}
+
+// consoleRelativeImportRE finds a quoted relative import path, in the raw text
+// of a file the parser refuses. Such a file gives the import check no AST to
+// read, and "../../console" carries no "console/" substring for the mention
+// scan either, so this is the one shape that would otherwise slip past both.
+var consoleRelativeImportRE = regexp.MustCompile(`"(\.{1,2}/[^"]*)"`)
 
 // consoleBoundaryEmbedPatterns returns the patterns of every go:embed directive
 // in a file, read off the parsed comments so only a real directive counts; a
@@ -326,13 +343,17 @@ func consoleBoundaryEmbedPatterns(file, src string) []string {
 	return out
 }
 
-// consoleBoundaryEmbedPatternReachesConsole reports whether an embed pattern
-// names a file under console/. Patterns are slash-separated paths relative to
-// the package directory, so "../console/..." and "./console/..." reach it too.
-func consoleBoundaryEmbedPatternReachesConsole(pattern string) bool {
-	clean := path.Clean(pattern)
-	return clean == consoleDirName || strings.HasPrefix(clean, consoleDirName+"/") ||
-		strings.Contains(clean, "/"+consoleDirName+"/") || strings.HasSuffix(clean, "/"+consoleDirName)
+// consoleBoundaryEmbedPatternReachesConsole reports whether a go:embed pattern
+// names a file under the module root's console directory. A pattern is a
+// slash-separated path relative to the PACKAGE DIRECTORY, so the resolution is
+// what decides, exactly as it does for a relative import: "console/docs/x.md"
+// reaches the root console/ from the root package and from nowhere else,
+// "../../console/docs/x.md" reaches it from internal/cli, and another package's
+// "testdata/console/x.md" does not -- a nested "/console/" is a different
+// directory and is not this boundary. The all: prefix is Go's "walk this
+// directory too" marker rather than part of the path.
+func consoleBoundaryEmbedPatternReachesConsole(fileRel, pattern string) bool {
+	return consoleBoundaryResolvedIntoConsole(fileRel, strings.TrimPrefix(pattern, "all:"))
 }
 
 // consoleRequireLines returns every require line of a go.mod -- from both the
@@ -377,14 +398,21 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 			if !parsed {
 				// A file the parser refuses is not compiled either, so it
 				// cannot build against console/; it can still say so, and
-				// the text is what catches it.
+				// the text is what catches it -- both spellings, since a
+				// relative path reaching the root console/ has no
+				// "console/" substring for the mention scan either.
 				if strings.Contains(src, consolePkg) {
 					t.Errorf("%s names the import path %s and does not parse: the Go module and console/ never touch (design section 8.1 item 4)", rel, consolePkg)
+				}
+				for _, m := range consoleRelativeImportRE.FindAllStringSubmatch(src, -1) {
+					if consoleBoundaryImportReachesConsole(rel, m[1], consolePkg) {
+						t.Errorf("%s imports %q and does not parse: a relative import of %s/ is the same boundary (plan Task 0.3 a1)", rel, m[1], consoleDirName)
+					}
 				}
 				continue
 			}
 			for _, imp := range imports {
-				if consoleBoundaryImportReachesConsole(imp, consolePkg) {
+				if consoleBoundaryImportReachesConsole(rel, imp, consolePkg) {
 					t.Errorf("%s imports %q: no Go file in the module builds against a path under %s/ (design section 8.1 item 4, plan Task 0.3 a1)", rel, imp, consoleDirName)
 				}
 			}
@@ -438,17 +466,22 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 				mentioning = append(mentioning, rel)
 			}
 		}
-		// If nothing mentions a console/ path any more, the allow-list entry
-		// has gone stale and should be dropped deliberately rather than left
-		// as a permission nobody uses.
-		if len(mentioning) == 0 {
-			t.Errorf("no Go file in the module mentions a %s/ path: the allow-list entry %v is stale and should be removed deliberately (plan Task 0.3 a3)", consoleDirName, consoleBoundaryAllowList)
-		}
 		for _, rel := range mentioning {
 			if rel == consoleBoundarySelf || slices.Contains(consoleBoundaryAllowList, rel) {
 				continue
 			}
 			t.Errorf("%s mentions a %s/ path and is not on consoleBoundaryAllowList %v: the exception is a list in a test, not a habit, so a new reference is a deliberate edit with the case for it written down (plan Task 0.3 a3)", rel, consoleDirName, consoleBoundaryAllowList)
+		}
+		// The other direction, per entry: an entry exists because its file
+		// reads a console/ document, so an entry whose file no longer mentions
+		// one is stale and should be removed deliberately. It is checked per
+		// entry rather than as "does anything mention a console/ path", because
+		// this scanner mentions one by necessity and a module-wide count could
+		// therefore never fall to zero.
+		for _, rel := range consoleBoundaryAllowList {
+			if !slices.Contains(mentioning, rel) {
+				t.Errorf("%s is on consoleBoundaryAllowList but mentions no %s/ path any more: the exception has gone stale and should be removed deliberately, with the commit that stops the file reading the contract (plan Task 0.3 a3)", rel, consoleDirName)
+			}
 		}
 	})
 
@@ -461,12 +494,12 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 			src := consoleBoundaryDoc(t, rel)
 			imports, _ := consoleBoundaryImports(t, rel, src)
 			for _, imp := range imports {
-				if consoleBoundaryImportReachesConsole(imp, consolePkg) {
+				if consoleBoundaryImportReachesConsole(rel, imp, consolePkg) {
 					t.Errorf("%s is allow-listed to mention a %s/ path and not to import one: it imports %q (plan Task 0.3 a3)", rel, consoleDirName, imp)
 				}
 			}
 			for _, pattern := range consoleBoundaryEmbedPatterns(rel, src) {
-				if consoleBoundaryEmbedPatternReachesConsole(pattern) {
+				if consoleBoundaryEmbedPatternReachesConsole(rel, pattern) {
 					t.Errorf("%s is allow-listed to mention a %s/ path and not to embed one: it embeds %q, which puts a console/ file inside the test binary (plan Task 0.3 a3)", rel, consoleDirName, pattern)
 				}
 			}
@@ -548,7 +581,7 @@ func TestNoGoFileEmbedsFromConsole(t *testing.T) {
 	for _, rel := range consoleBoundaryGoFiles(t, root) {
 		for _, pattern := range consoleBoundaryEmbedPatterns(rel, consoleBoundaryDoc(t, rel)) {
 			directives++
-			if consoleBoundaryEmbedPatternReachesConsole(pattern) {
+			if consoleBoundaryEmbedPatternReachesConsole(rel, pattern) {
 				t.Errorf("%s embeds %q with a go:embed directive: no file, test or otherwise, embeds from %s/ (design section 8.1 item 4, plan Task 0.3 a2)", rel, pattern, consoleDirName)
 			}
 		}
