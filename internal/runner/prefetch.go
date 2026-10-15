@@ -1,6 +1,56 @@
 package runner
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/gitops"
+)
+
+// prefetchBound bounds each prefetch fetch, one at a time. The prefetch
+// runs at bootstrap, before any stage has recorded time, while the runner
+// still holds the run's git credentials; a promisor remote that accepts the
+// connection and then stalls — a blackholed network, a hung server, a
+// mirror that stopped answering — would otherwise hold the whole run at
+// bootstrap for as long as the run's own total timeout allows, hours away,
+// with nothing written and no stage ever started. The bound is per fetch,
+// not for all of them together: one head that stalls must not eat the other
+// heads' time (every head is attempted, below), and a blobless fetch that
+// is merely slow still gets the whole bound. A var so a test can shorten
+// it.
+var prefetchBound = 2 * time.Minute
+
+// The three fetches, named so the warning says which one failed.
+const (
+	prefetchDiff     = "the diff against the base"
+	prefetchCommits  = "the branch's own commits"
+	prefetchBaseDiff = "the diff against the base tip"
+)
+
+// prefetchFetch runs one of the three through the checkout's own git. It
+// applies no bound of its own — fetchWithin does, so the bound is one place
+// and every caller gets it — and it is a var so a test can put a stalled
+// fetch or a failing one in its place: neither is something the suite can
+// get out of a real git on demand.
+var prefetchFetch = func(repo *gitops.Repo, ctx context.Context, what, base, head string) error {
+	switch what {
+	case prefetchDiff:
+		return repo.PrefetchDiff(ctx, base, head)
+	case prefetchCommits:
+		return repo.PrefetchCommits(ctx, base, head)
+	case prefetchBaseDiff:
+		return repo.PrefetchBaseDiff(ctx, base, head)
+	}
+	return fmt.Errorf("unknown prefetch %q", what)
+}
+
+// fetchWithin runs one prefetch fetch under prefetchBound.
+func fetchWithin(ctx context.Context, fetch func(context.Context) error) error {
+	ctx, cancel := context.WithTimeout(ctx, prefetchBound)
+	defer cancel()
+	return fetch(ctx)
+}
 
 // prefetchObjects brings in the file contents the agent's own git reads,
 // using the runner's credentials, at the one moment they are available:
@@ -37,24 +87,22 @@ import "context"
 // and a run whose agent never reads them is not broken by a fill that could
 // not happen. Every head is attempted even so (review L2): a run reviewing
 // several pull requests gets each of them the same chance, and one head git
-// cannot fetch must not leave the rest unfetched.
+// cannot fetch must not leave the rest unfetched. Each fetch is cut off
+// after prefetchBound, so a remote that stops answering costs a warning and
+// a bounded delay rather than the run.
 func (r *run) prefetchObjects(ctx context.Context) {
 	if !r.cloneJob() || (r.follow == nil && !r.review) {
 		return
 	}
 	base := "origin/" + r.cfg.Git.BaseBranch
 	for _, head := range r.diffHeads() {
-		for _, want := range []struct {
-			what  string
-			fetch func() error
-		}{
-			{"the diff against the base", func() error { return r.repo.PrefetchDiff(ctx, base, head) }},
-			{"the branch's own commits", func() error { return r.repo.PrefetchCommits(ctx, base, head) }},
-			{"the diff against the base tip", func() error { return r.repo.PrefetchBaseDiff(ctx, base, head) }},
-		} {
-			if err := want.fetch(); err != nil {
+		for _, what := range []string{prefetchDiff, prefetchCommits, prefetchBaseDiff} {
+			err := fetchWithin(ctx, func(ctx context.Context) error {
+				return prefetchFetch(r.repo, ctx, what, base, head)
+			})
+			if err != nil {
 				r.d.Log.Warn("prefetching what the agent reads failed; the agent's own git may not be able to read it",
-					"what", want.what, "base", base, "head", head, "err", r.redact(err.Error()))
+					"what", what, "base", base, "head", head, "err", r.redact(err.Error()))
 			}
 		}
 	}

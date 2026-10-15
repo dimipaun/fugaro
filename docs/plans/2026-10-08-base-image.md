@@ -4926,7 +4926,7 @@ The cold-start check of design section 13. On the sandbox installation, with the
 1. Launch one run and note the time from `fugaro run` to the run's first runner log line (the `started` line `fugaro logs` shows).
 2. After the release and the sandbox's migration (Step 4), launch one more run of the same task and compare.
 
-The result goes into `docs/gcp-live-checklist.md` as a new check. If it is more than 30 seconds worse, the fallback (B16: gcloud to on-demand) becomes a 0.7.1 task.
+The result goes into `docs/gcp-live-checklist.md` as a new check. If it is more than 30 seconds worse, the fallback (B16: gcloud to on-demand) becomes a 0.7.5 task.
 
 - [ ] **Step 2: Write `docs/releases/v0.7.0.md`**
 

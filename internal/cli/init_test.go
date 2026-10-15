@@ -1751,7 +1751,7 @@ func changedRepoBuild(infra.RepoSpec) []planChange {
 
 // sandboxBaseRelease is a release base image of the sandbox fixture's base
 // kind, at or after gitSecretIDSince (B2's gate judges it).
-const sandboxBaseRelease = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.7.1"
+const sandboxBaseRelease = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.7.5"
 
 // B1 inside init's own flow: the spec planRepo returns is the one Readiness
 // resolved (not the pre-Readiness one its callers used to keep), and the
@@ -1929,4 +1929,30 @@ func projectLabelsSeed(t *testing.T, sm *gcpfake.Secrets, logical string, value 
 func grantBuildAccountFor(t *testing.T, sm *gcpfake.Secrets, secretID, email string) {
 	t.Helper()
 	sm.SetPolicy(secretID, []gcpfake.Binding{{Role: gcp.SecretAccessorRole, Members: []string{"serviceAccount:" + email}}})
+}
+
+// TestInitPrintVarsNotesProvidersOpenToEveryRepository: the converge path
+// (init without --repo) reaches init.go's own r.noteOpenProviders call, and
+// it must say there which providers every repository of the project may
+// use: their keys are mounted into every repository's job and every
+// repository may send them code. An operator who never wrote allow_data_to
+// would not learn that from the project config alone, so the note is the
+// one place they meet it. The --repo path has its own call and its own test
+// (TestInitRepoNotesProvidersOpenToEveryRepository); this pins the other.
+//
+// Mutation (run, restore): drop the r.noteOpenProviders(lc) call from
+// init's own run (init.go, just after setProject) — this test finds no note.
+func TestInitPrintVarsNotesProvidersOpenToEveryRepository(t *testing.T) {
+	r := newInitRig(t)
+	r.appendConfig(t, "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n"+
+		"    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n")
+	r.save(t)
+	_, errOut, err := executeStdin(t, "", "init", "--print-vars", "--no-log-isolation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "note: provider openrouter has no allow_data_to, so every repository of the project may mount its key and send it code"
+	if n := strings.Count(errOut, want); n != 1 {
+		t.Errorf("the note appears %d times, want once:\n%s", n, errOut)
+	}
 }
