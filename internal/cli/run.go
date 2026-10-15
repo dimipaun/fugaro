@@ -1248,6 +1248,12 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 	if err := check(rec.Execution); err != nil {
 		return nil, err
 	}
+	// TODO(compute-backend Task 8): the backend is written as Cloud Run's
+	// because it is the only one this build runs (localcfg refuses every
+	// other name), not because the record says so. A backfilled launch of a
+	// run that ran on another backend would be recorded as Cloud Run's; the
+	// enable task takes the name from the config (design
+	// compute-backend.md §8.1 Task 8).
 	l := &runstore.Launch{Version: 1, RunID: runID, Backend: backend.CloudRun, Execution: rec.Execution, LaunchedAt: rec.StartedAt}
 	if id, ok := backend.ParseExecution(rec.Execution); ok {
 		l.Job = id.Job
@@ -1406,6 +1412,9 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		return res, remote(fmt.Errorf("launching %s: the outcome is unknown (%w); don't relaunch before %s: fugaro run --retry %s then reports the execution if it started, or launches it",
 			res.Run, err, now.Add(claimTTL).UTC().Format(time.RFC3339), res.Run))
 	}
+	// TODO(compute-backend Task 8): as above, the backend is Cloud Run's
+	// because it is the only one this build runs; the enable task records the
+	// one the launch actually used.
 	l := &runstore.Launch{Version: 1, RunID: spec.RunID, Backend: backend.CloudRun, Execution: ref.Name, Job: ref.Job, LogURL: ref.LogURL, LaunchedBy: spec.RequestedBy, LaunchedAt: now.UTC()}
 	if err := s.WriteLaunch(hctx, l); errors.Is(err, runstore.ErrExists) {
 		theirs, rerr := s.ReadLaunch(hctx)

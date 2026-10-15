@@ -135,6 +135,19 @@ func Labels(slug, workflow, runID string) (map[string]string, error) {
 // RunLabelValue is the value of RunLabel for one run: "<slug>-<run id>",
 // sanitized to the label charset, and truncated to 63 characters with a
 // short hash of the pair when the two together are too long (design §2.4).
+//
+// Only the truncating arm hashes, so the other arm can in principle map two
+// pairs to one value: sanitizing folds case and every byte outside
+// [a-z0-9_-] to "_". No collision is reachable with the ids this build mints.
+// A run id is exactly 19 characters of [0-9a-f] and "-" (task's and
+// runstore's own runIDRE), none of which sanitizing touches, so a value's
+// last 19 characters are the run id and nothing else: two equal values carry
+// equal run ids and, before them, equal slug halves. And a slug is canonical
+// by construction -- lowercase [a-z0-9-] ending in the 16-hex hash
+// (task.Slug, infra's slugRE) -- so sanitizing it is the identity and equal
+// halves are equal slugs. The argument rests on those two shapes, not on the
+// value being hashed: a run id or a slug of any other shape could collide,
+// and then every value would need the hashed arm.
 func RunLabelValue(slug, runID string) (string, error) {
 	if slug == "" || runID == "" {
 		return "", fmt.Errorf("a run label needs both a slug and a run id (got %q, %q)", slug, runID)

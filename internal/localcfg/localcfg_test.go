@@ -418,6 +418,16 @@ func TestCloudBatchIsRefused(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), backend.CloudBatch) {
 		t.Fatalf("err = %v, want it to name %s", err, backend.CloudBatch)
 	}
+	// It is refused as a name this build knows and has not enabled, not as
+	// one it has never heard of: the two are different claims and only the
+	// first is true (design §8.1 Task 2).
+	if !strings.Contains(err.Error(), "not enabled yet") || strings.Contains(err.Error(), "not a known backend") {
+		t.Fatalf("err = %q, want the refusal of a known backend that is not enabled", err)
+	}
+	// A name this build does not know at all is refused as such.
+	if _, err := Parse([]byte(sample + "backend: ecs-fargate\n")); err == nil || !strings.Contains(err.Error(), "not a known backend") {
+		t.Fatalf("err = %v, want an unknown backend", err)
+	}
 	// The refusal names the only backend this build runs, so the fix is in
 	// the message; and nothing rewrites the name on the way out, so a caller
 	// that ignored the error still sees what the operator asked for rather

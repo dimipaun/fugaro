@@ -2877,6 +2877,15 @@ senior reviewer before merge, not just the normal one.
    task that makes root-on-a-VM real, hence the review.
 8. **Config, `validate`, `doctor`, `backends ls`** — the plumbing for §4, with
    `cloud-batch` still refused.
+   This task also owns the call sites that still reach for Cloud Run's own
+   codec rather than the seam's, so the enable task (Task 9) does not inherit
+   them: `internal/cli/cloud.go`'s `checkExecution` calls
+   `gcp.CheckRunExecution` directly instead of the selected backend's
+   `Codec.ValidateRun` (C12), and `internal/cli/run.go` writes
+   `Backend: backend.CloudRun` into two launch records — the one backfilled
+   from result.json and the one written after a fresh launch. Both are correct
+   only while Cloud Run is the only name that reaches them, and each carries a
+   `TODO(compute-backend Task 8)` at the site.
 9. **The enable task**: config validation starts **accepting**
    `backend: cloud-batch`, and `fugaro doctor` refuses the installation until
    the provisioning, IAM, logs, cost and reaper checks all pass (§4.4). This is
