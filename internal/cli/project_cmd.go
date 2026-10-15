@@ -1206,7 +1206,13 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 	if err != nil {
 		return err
 	}
-	before := nonNil(p.AllowRepos)
+	// before is the list as the node holds it, under its own allocation: allow
+	// is edited in place (slices.DeleteFunc shifts and clears the backing
+	// array; append and Sort write it), and nonNil hands back the argument
+	// itself, so the two would otherwise be one list and the diff line would
+	// print the post-edit list on both sides — on a command whose point is
+	// showing the operator what the edit removed.
+	before := append([]string{}, nonNil(p.AllowRepos)...)
 	allow := nonNil(p.AllowRepos)
 	have := slices.Contains(p.AllowRepos, canonical)
 	if remove && !have {

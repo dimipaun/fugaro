@@ -942,6 +942,26 @@ func TestProjectReposEditKeepsTheKeysItDoesNotKnow(t *testing.T) {
 	}
 }
 
+// allowRewritten is the one `allow_repos: A → B` line of a repos edit's
+// output, so a test can assert what it says exactly: the list as the node held
+// it on the left, the list that will be written on the right. Contains()
+// assertions cannot tell a right-hand list repeated on both sides from a real
+// diff, which is what an aliased `before` produces.
+func allowRewritten(t *testing.T, out string) string {
+	t.Helper()
+	// Not a line prefix: `rm` prints "Type <project> to confirm: " with no
+	// trailing newline before the diff, so the line can start mid-line.
+	const mark = "allow_repos: ["
+	if n := strings.Count(out, mark); n != 1 {
+		t.Fatalf("the output has %d allow_repos line(s), want exactly one:\n%s", n, out)
+	}
+	line := out[strings.Index(out, mark):]
+	if j := strings.IndexByte(line, '\n'); j >= 0 {
+		line = line[:j]
+	}
+	return line
+}
+
 // TestProjectReposEditOnlyTheAllowList: add and rm rewrite allow_repos and
 // nothing else, canonicalize the argument, print the change, and ask for the
 // project's name to remove an entry — --yes does not stand in for it while a
@@ -957,8 +977,11 @@ func TestProjectReposEditOnlyTheAllowList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "github/acme/new") {
-		t.Errorf("the diff does not name the canonical entry:\n%s", out)
+	// The exact line: the list of the node on the left, the list to be written
+	// on the right (a `before` aliased to the edited slice prints the new list
+	// twice).
+	if want, got := "allow_repos: [bitbucket/acme/other github/acme/app] → [bitbucket/acme/other github/acme/app github/acme/new]", allowRewritten(t, out); got != want {
+		t.Errorf("the add diff line is\n%q\nwant\n%q", got, want)
 	}
 	got := publishedPolicy(t, f)
 	if len(got.AllowRepos) != 3 || got.AllowRepos[2] != "github/acme/new" {
@@ -1009,8 +1032,11 @@ func TestProjectReposEditOnlyTheAllowList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "github/acme/new") {
-		t.Errorf("the diff does not name what it removed:\n%s", out)
+	// The exact line, and the removal is what is on the left: an aliased
+	// `before` prints the post-removal list (plus a zeroed trailing element)
+	// on both sides, which reads as though the entry were never there.
+	if want, got := "allow_repos: [bitbucket/acme/other github/acme/app github/acme/new] → [bitbucket/acme/other github/acme/app]", allowRewritten(t, out); got != want {
+		t.Errorf("the rm diff line is\n%q\nwant\n%q", got, want)
 	}
 	if got := publishedPolicy(t, f).AllowRepos; len(got) != 2 {
 		t.Fatalf("allow_repos = %v, want the entry removed", got)
