@@ -51,14 +51,23 @@ var (
 // the rows the state holds. It is read-only, so it runs under --plan-only
 // too, and it prints the summary whenever the set is non-empty.
 //
-// A state that cannot be read is an error, not an empty state: the
-// difference between "nothing retired" and "could not look" is the whole
-// point of the summary, and a run that guessed would silently skip a
-// transition (the same rule the Firebase flow's state read follows).
+// A state that cannot be read is a warning on a run without --retire, and a
+// failure with it. The ordinary run reads the state for one thing only -- to
+// explain a retirement it is predicting -- so a state it cannot read narrows
+// what it can see instead of stopping it, which is exactly the rule design
+// §3.1a gives the label calls: a false negative, never a false positive, and
+// never silent. The summary above all may not claim "nothing retired" when
+// the run could not look. --retire is the difference that matters: it removes
+// addresses from the state, so it must not guess at the set, and a state it
+// cannot read stops it. An abandoned run is not a degradation either.
 func (r *initRun) readRetirements(ctx context.Context, c *infra.Clients, t *tf.TF, spec infra.RepoSpec) ([]infra.Retirement, error) {
 	st, err := t.ShowState(ctx)
 	if err != nil {
-		return nil, remote(err)
+		if r.o.retire || ctx.Err() != nil {
+			return nil, remote(err)
+		}
+		r.warn(fmt.Sprintf("could not read %s's Terraform state (%v); a retirement cannot be predicted, so an address the state holds and the configuration no longer produces will not be named. Read it by hand with terraform show -json in the repository root's workdir", spec.Name, err))
+		st = nil
 	}
 	r.retireState = st.Addresses()
 	orphans, notes, warnings, err := infra.Orphans(ctx, c, spec, r.retireState)

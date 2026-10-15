@@ -40,6 +40,9 @@ type retireOpts struct {
 	// outside, when set, is an extra address the plan deletes that the
 	// retirement set does not name.
 	outside string
+	// stateUnreadable makes the repository root's state read fail, the way
+	// terraform fails when the backend holds no state it can read.
+	stateUnreadable bool
 }
 
 // retireRig is an onboarded repository ready to plan, with the retirement's
@@ -73,6 +76,9 @@ func newRetireRig(t *testing.T, o retireOpts) *retireRig {
 	// root terraform runs in -- so the plain "show" key keeps answering the
 	// installation root the way repoReady left it: a state, not a plan.
 	r.script["show -json@repo"] = map[string]any{"stdout": retireStateDoc(t, o)}
+	if o.stateUnreadable {
+		r.script["show -json@repo"] = map[string]any{"exit": 1, "stderr": "Failed to load state: no such file or directory"}
+	}
 	plan := []planChange{
 		retireChange(retireSvcAddr, "google_service_account", "delete"),
 		retireChange(`module.repo.module.workflow["app"].google_cloud_run_v2_job.this[0]`, "google_cloud_run_v2_job", "update"),
@@ -237,6 +243,49 @@ func TestInitRepoRetireGateReadsTheStateNotTheAddressList(t *testing.T) {
 	}
 	if deletes := r.run.JobDeletes(); len(deletes) != 0 {
 		t.Errorf("the ordinary path deleted a job: %v", deletes)
+	}
+}
+
+// A state the ordinary run cannot read narrows what it can see instead of
+// stopping it, which is the rule the label calls already follow (design
+// §3.1a): the run warns, says the retirement could not be predicted, and
+// reaches the ordinary plan with the exit status it always had -- the
+// summary is the run's explanation, not a precondition for its work.
+// --retire is the exception, and the second half pins it: it removes
+// addresses from that state, so a state it cannot read stops it before
+// anything is removed.
+func TestInitRepoUnreadableStateWarnsAndCarriesOn(t *testing.T) {
+	r := newRetireRig(t, retireOpts{protection: true, stateUnreadable: true})
+	out, errOut, err := executeStdin(t, "", "init", "--repo", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
+	if err != nil {
+		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
+	}
+	text := out + errOut
+	if !strings.Contains(text, "could not read") || !strings.Contains(text, "a retirement cannot be predicted") {
+		t.Errorf("the run did not warn that the state could not be read:\n%s", text)
+	}
+	if got := r.applies(t); len(got) != 1 {
+		t.Errorf("applies = %v, want the ordinary apply", got)
+	}
+	if calls := r.ran(t, "state rm"); len(calls) != 0 {
+		t.Errorf("the ordinary path removed state: %v", calls)
+	}
+	if deletes := r.run.JobDeletes(); len(deletes) != 0 {
+		t.Errorf("the ordinary path deleted a job: %v", deletes)
+	}
+	// The labelled orphan is still named: the labels are the second source
+	// of truth, and they need no state.
+	if !strings.Contains(text, retireJobAddr) {
+		t.Errorf("the labelled orphan is not named when the state cannot be read:\n%s", text)
+	}
+
+	r2 := newRetireRig(t, retireOpts{protection: true, stateUnreadable: true})
+	out, errOut, err = executeStdin(t, "", "init", "--repo", "--retire", "--no-build")
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, err %v\n%s%s; want the unreadable state to stop --retire", ExitCode(err), err, out, errOut)
+	}
+	if calls := r2.ran(t, "state rm"); len(calls) != 0 {
+		t.Errorf("--retire removed state it could not read: %v", calls)
 	}
 }
 
