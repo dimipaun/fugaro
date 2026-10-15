@@ -28,11 +28,23 @@ import (
 // refuses such a call, by name, when no key is stored).
 const anthropicKeyNeeded = "needs a stored Anthropic API key: a pinned model goes direct to Anthropic, and the job mounts the key whenever the anthropic-api-key secret has a version (store one with `fugaro secrets set anthropic-api-key` and rerun `fugaro init --repo` if none does), or route the model through a provider"
 
-// anthropicKeyNoGateway is the same note when the budget isn't enforcing:
-// there is no gateway at all, so every call goes direct to Anthropic whatever
-// the pins are (config.AnthropicKeyNeeded). The sharper fix, too: with no
-// gateway there is no route to prefer.
-const anthropicKeyNoGateway = "needs a stored Anthropic API key: the budget isn't enforcing, so there is no gateway and every call goes direct to Anthropic, whatever the pins are (store one with `fugaro secrets set anthropic-api-key` and rerun `fugaro init --repo`)"
+// anthropicKeyNoEnforce is the same note when the budget isn't enforcing.
+// Only enforce routes a call to a provider (config.CheckProviderGateway
+// refuses a provider model in any other mode), so every call goes to Anthropic
+// whatever the pins are (config.AnthropicKeyNeeded): under observe the gateway
+// exists and accounts for the spend but never routes to a provider, and under
+// off there is no gateway at all. The sharper fix, too: with no route to a
+// provider there is nothing to route around.
+const anthropicKeyNoEnforce = "needs a stored Anthropic API key: the budget isn't enforcing, so nothing routes a call to a provider (observing only accounts for the spend, and off has no gateway at all), and every call goes to Anthropic whatever the pins are (store one with `fugaro secrets set anthropic-api-key` and rerun `fugaro init --repo`)"
+
+// needsAnthropicKey is config.AnthropicKeyNeeded over the effective mode --
+// the project's ceiling merged with the file, exactly as the runner reads it.
+// The one place the CLI decides it, so init's hidden prompt, init --repo's
+// "still missing" list and validate's note cannot disagree.
+func needsAnthropicKey(lc *localcfg.Config, cfg *config.Config, repo string) bool {
+	mode := policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg)).Mode
+	return config.AnthropicKeyNeeded(cfg.Agent, lc.Providers, repo, mode)
+}
 
 // ceilingLayer is the owner's ceiling as the runner builds it from the job
 // environment init --repo sets from the project config: an "off" mode is no
@@ -219,10 +231,10 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 	agent.Models.Background = config.EffectiveBackground(agent, lc.Providers)
 	mode := policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg)).Mode
 	problems = append(problems, config.CheckProviderGateway(agent, agent.Models.Background, lc.Providers, mode)...)
-	// The run needs the Anthropic API key when a call goes direct to
-	// Anthropic: config.AnthropicKeyNeeded, the rule init asks too, over the
-	// same effective mode -- so a mode that isn't enforcing says so here as
-	// well, since without a gateway every call is direct. That the secret
+	// The run needs the Anthropic API key when a call goes to Anthropic:
+	// config.AnthropicKeyNeeded, the rule init asks too, over the same
+	// effective mode -- so a mode that isn't enforcing says so here as well,
+	// since only enforce routes a call to a provider. That the secret
 	// has a version is a fact only the cloud knows, and whether one is
 	// stored is another, so this is a note, never a warning or a refusal:
 	// the gateway refuses such a call by name when no key is stored (design
@@ -230,9 +242,9 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 	if config.AnthropicKeyNeeded(cfg.Agent, lc.Providers, repo, mode) {
 		msg := anthropicKeyNeeded
 		if mode != policy.ModeEnforce {
-			// The sharper reason, and the sharper fix: with no gateway there
-			// is nothing to route around.
-			msg = anthropicKeyNoGateway
+			// The sharper reason, and the sharper fix: with no route to a
+			// provider there is nothing to route around.
+			msg = anthropicKeyNoEnforce
 		}
 		notes = append(notes, config.Problem{Path: "agent.auth", Message: msg})
 	}

@@ -388,7 +388,8 @@ const AnthropicSecret = "anthropic-api-key"
 // MissingAnthropicKey is what a call that needs Anthropic gets when no key is
 // stored: the gateway refuses the call with it, and the agent's environment
 // refuses to start without one in the one case where the gateway can't say so
-// (no budget: there is no gateway, and every call goes direct). One text, so
+// (the budget is off: there is no gateway, and every call goes to Anthropic).
+// One text, so
 // the two cannot say different things, and both name the fix that actually
 // works: store a key and rerun `fugaro init --repo` (the mount is planned at
 // deploy), or route the model through a provider.

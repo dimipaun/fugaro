@@ -738,9 +738,9 @@ func TestValidateNotesAnthropicKeyNeededOffline(t *testing.T) {
 		// Without a gateway the key is needed whatever the pins are: every
 		// call goes direct to Anthropic (config.AnthropicKeyNeeded). The
 		// same rule init asks, so the two can't disagree.
-		{"a Claude pin, budget observe", observe, claudePins, "acme/sandbox", anthropicKeyNoGateway},
-		{"a Claude pin, budget off", "budget: { mode: off }\n", claudePins, "acme/sandbox", anthropicKeyNoGateway},
-		{"every pin served by a provider, budget observe", observe, allProvider, "acme/sandbox", anthropicKeyNoGateway},
+		{"a Claude pin, budget observe", observe, claudePins, "acme/sandbox", anthropicKeyNoEnforce},
+		{"a Claude pin, budget off", "budget: { mode: off }\n", claudePins, "acme/sandbox", anthropicKeyNoEnforce},
+		{"every pin served by a provider, budget observe", observe, allProvider, "acme/sandbox", anthropicKeyNoEnforce},
 		// oauth brings its own token: no key, no note, whatever the mode.
 		{"oauth, budget observe", observe, "  auth: oauth\n  model: claude-sonnet-5-5", "acme/sandbox", ""},
 	} {
@@ -773,7 +773,7 @@ func TestValidateJSONNotesTheAnthropicKey(t *testing.T) {
 	}
 	var note bool
 	for _, n := range got.Notes {
-		if n.Path == "agent.auth" && n.Message == anthropicKeyNoGateway {
+		if n.Path == "agent.auth" && n.Message == anthropicKeyNoEnforce {
 			note = true
 		}
 	}

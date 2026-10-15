@@ -23,8 +23,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
-	"github.com/dimipaun/fugaro/internal/policy"
-	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -297,11 +295,9 @@ func (s *secretsStage) resolve(ctx context.Context) {
 		// with the gateway on and every pin served by a provider the run never
 		// calls Anthropic, so init does not prompt for a value and does not
 		// store one (design docs/design/project-centric.md §6.1). The rule is
-		// config.AnthropicKeyNeeded, the one validate asks too, over the
-		// effective mode (the project's ceiling merged with this file, as the
-		// runner reads it).
-		mode := policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg)).Mode
-		needsAnthropicKey := config.AnthropicKeyNeeded(cfg.Agent, lc.Providers, repo, mode)
+		// needsAnthropicKey (config.AnthropicKeyNeeded over the effective
+		// mode), the one validate and init --repo ask too.
+		needsKey := needsAnthropicKey(lc, cfg, repo)
 		for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
 			// The default account only: Task 5 extends this to every name
 			// config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo) allows,
@@ -312,9 +308,9 @@ func (s *secretsStage) resolve(ctx context.Context) {
 				return
 			}
 			for _, m := range allowedClaudeOAuthMounts(lc.ClaudeAccounts, repo, mounts) {
-				if m.Logical == config.AnthropicSecret && !needsAnthropicKey {
-					// No pin goes direct to Anthropic, so there is nothing to
-					// ask for: the run never calls it (design
+				if m.Logical == config.AnthropicSecret && !needsKey {
+					// No call of this run goes to Anthropic, so there is
+					// nothing to ask for: the run never calls it (design
 					// docs/design/project-centric.md §6.1). The container is
 					// still planned, so the owner can store a key later with
 					// `fugaro secrets set`, and a run that needs one without
