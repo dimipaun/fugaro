@@ -310,7 +310,7 @@ func TestOrderWithChecksAndModes(t *testing.T) {
 		"mode: review\nsteps:\n  - review: { max_rounds: 2 }\n":                      "mode: review reviews once: max_rounds must be 1",
 		"mode: review\nroles: { coder: reviewer }\nsteps:\n  - review: {}\n":         "mode: review has no coder step to map roles onto",
 		"mode: review\nroles: { reviewer: coder }\nsteps:\n  - review: {}\n":         "mode: review has no coder step to map roles onto",
-		"mode: plan\nsteps:\n  - review: {}\n":                                       "must be implement or review",
+		"mode: plan\nsteps:\n  - review: {}\n":                                       "must be implement, review or artifact",
 		"use_when: " + strings.Repeat("x", 301) + "\nsteps:\n  - review: {}\n":       "must be at most 300 bytes",
 	} {
 		_, ps := Parse([]byte("version: 1\nname: x\n" + src))

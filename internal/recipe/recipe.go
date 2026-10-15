@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -35,11 +36,19 @@ const (
 	ObjectPrefix = "fugaro/recipes/"
 )
 
-// ModeImplement and ModeReview are the two values of Recipe.Mode.
+// The values of Recipe.Mode. ModeArtifact is 0.8.0's third mode: a run whose
+// deliverable is a file set rather than a pull request (design
+// artifact-runs.md §3), with no git token in the agent's environment, one
+// optional plan stage, one render step and a top-level outputs: block.
 const (
 	ModeImplement = "implement"
 	ModeReview    = "review"
+	ModeArtifact  = "artifact"
 )
+
+// modeMsg is the mode refusal. It names all three values, so a 0.7 recipe
+// that wrote one of the two it knew still gets a message it can act on.
+const modeMsg = "must be implement, review or artifact"
 
 // NameRE is a recipe name: the shape of a project name.
 var NameRE = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$`)
@@ -51,6 +60,13 @@ const (
 	StepFirstLine StepKind = "first_line"
 	StepReview    StepKind = "review"
 	StepCheck     StepKind = "check"
+	// StepPlan is the optional agent stage a mode: artifact recipe may begin
+	// with: it writes a render plan, and nothing else (design
+	// artifact-runs.md §6).
+	StepPlan StepKind = "plan"
+	// StepRender is the deterministic render: always the last step of a
+	// mode: artifact recipe, and never a step of the other two modes.
+	StepRender StepKind = "render"
 )
 
 // CheckCommand is the commands.* key a check step runs.
@@ -85,6 +101,83 @@ type Step struct {
 	Autofix bool
 }
 
+// The ceilings and defaults of a mode: artifact recipe's outputs: block
+// (design artifact-runs.md §5.2, P6). MaxFiles, MaxBytes (per artifact) and
+// MaxTotalBytes (the whole set) are what a recipe may ask for; the
+// defaults are what an absent key means, and Parse refuses a written cap
+// below 1 or above its ceiling rather than clamping it. The whole set is
+// the number that matters: on Cloud Run the container's filesystem is
+// memory, so the runner stages a second copy of the set beside the
+// render's originals and every upload reads from the staging directory.
+const (
+	MaxOutputFiles      = 32
+	MaxOutputBytes      = int64(2) << 30
+	MaxOutputTotalBytes = int64(16) << 30
+
+	DefaultOutputFiles      = 8
+	DefaultOutputBytes      = int64(256) << 20
+	DefaultOutputTotalBytes = int64(2) << 30
+)
+
+// Probe is a mode: artifact recipe's optional check on what it rendered:
+// outputs.probe names one of these.
+const (
+	// ProbeCommand is commands.probe, the workflow's own one command.
+	ProbeCommand = "probe"
+	// ProbeNone is the default: the render is uploaded unchecked.
+	ProbeNone = "none"
+)
+
+// Outputs is a mode: artifact recipe's declaration of what it delivers, from
+// the recipe's top-level outputs: block. Recipe.Outputs is non-nil exactly
+// when Recipe.Mode is ModeArtifact.
+type Outputs struct {
+	// Globs are the artifact paths to upload, relative to the checkout
+	// root: never absolute, never holding a ".." path element.
+	Globs []string
+	// MaxFiles, MaxBytes and MaxTotalBytes are the caps as written. 0 means
+	// the key was absent, and the accessors below then give the default:
+	// MaxBytes is one artifact's cap, MaxTotalBytes the whole set's.
+	MaxFiles      int
+	MaxBytes      int64
+	MaxTotalBytes int64
+	// Probe is "probe" or "none", never "": an absent key parses as
+	// ProbeNone, so a recipe never silently probes.
+	Probe string
+	// HasKeys records that the block was present at all, so UsesV08 can
+	// decide from presence rather than from a parsed value, the rule
+	// Recipe.newKeys already follows for 0.7.0's keys.
+	HasKeys bool
+}
+
+// FileCount is the most artifacts the run may upload: MaxFiles, or
+// DefaultOutputFiles when the block did not write it.
+func (o *Outputs) FileCount() int {
+	if o == nil || o.MaxFiles <= 0 {
+		return DefaultOutputFiles
+	}
+	return o.MaxFiles
+}
+
+// MaxFileBytes is the most one artifact may hold: MaxBytes, or
+// DefaultOutputBytes when the block did not write it.
+func (o *Outputs) MaxFileBytes() int64 {
+	if o == nil || o.MaxBytes <= 0 {
+		return DefaultOutputBytes
+	}
+	return o.MaxBytes
+}
+
+// MaxSetBytes is the most the whole set may hold: MaxTotalBytes, or
+// DefaultOutputTotalBytes when the block did not write it. This is the
+// number the memory rule doubles (gate.artifactGateProblems).
+func (o *Outputs) MaxSetBytes() int64 {
+	if o == nil || o.MaxTotalBytes <= 0 {
+		return DefaultOutputTotalBytes
+	}
+	return o.MaxTotalBytes
+}
+
 // Recipe is a parsed, valid recipe.
 type Recipe struct {
 	Version     int
@@ -97,9 +190,13 @@ type Recipe struct {
 	ReviewerIsCoder bool
 	// CoderIsReviewer is roles: {coder: reviewer}.
 	CoderIsReviewer bool
-	// Mode is ModeImplement or ModeReview, never "".
+	// Mode is ModeImplement, ModeReview or ModeArtifact, never "".
 	Mode  string
 	Steps []Step
+	// Outputs is the recipe's outputs: block, non-nil exactly when Mode is
+	// ModeArtifact (Parse refuses the block in the other two modes, and
+	// refuses a mode: artifact recipe without one).
+	Outputs *Outputs
 	// newKeys is set when the recipe text uses a key or construct added in
 	// 0.7.0 (use_when, mode, roles.coder, a check step, review.bounce),
 	// regardless of the value given: a 0.6 parser refuses every one of
@@ -107,6 +204,13 @@ type Recipe struct {
 	// value that looks like a no-op (mode: implement, use_when: ""), so
 	// UsesV07 must decide from presence, never from the parsed value.
 	newKeys bool
+	// newKeysV08 is the same rule for 0.8.0's constructs: mode: artifact,
+	// an outputs: block, a plan or render step. A 0.7 parser refuses all
+	// three (mode: "must be implement or review", outputs: "is not a
+	// recipe key", the step kinds "is not a step type"), so UsesV08 decides
+	// from presence too: the block holding nothing but its globs still
+	// counts.
+	newKeysV08 bool
 }
 
 // Renamed are catalog names removed in 0.7.0 and what replaced them.
@@ -311,6 +415,7 @@ func (p *parser) bool(path string, v *yaml.Node) (bool, bool) {
 func (p *parser) top(m *yaml.Node) *Recipe {
 	r := &Recipe{}
 	seen := map[string]bool{}
+	seenOutputs := false
 	var srcIdx []int
 	for i := 0; i+1 < len(m.Content); i += 2 {
 		k, v := m.Content[i], m.Content[i+1]
@@ -358,10 +463,16 @@ func (p *parser) top(m *yaml.Node) *Recipe {
 				r.Mode = s
 				switch s {
 				case ModeImplement, ModeReview:
+				case ModeArtifact:
+					r.newKeysV08 = true
 				default:
-					p.add("mode", v.Line, "must be implement or review")
+					p.add("mode", v.Line, "%s", modeMsg)
 				}
 			}
+		case "outputs":
+			seenOutputs = true
+			r.newKeysV08 = true
+			r.Outputs = p.outputs(v)
 		case "roles":
 			r.ReviewerIsCoder, r.CoderIsReviewer = p.roles(r, v)
 		case "steps":
@@ -377,6 +488,24 @@ func (p *parser) top(m *yaml.Node) *Recipe {
 	}
 	if r.Mode == "" {
 		r.Mode = ModeImplement
+	}
+	// The mode's own rules are checked here and not while its key is read:
+	// a recipe may write mode after the keys it governs (steps, roles,
+	// outputs), so at the end of the loop is the first point every one of
+	// them is known.
+	switch {
+	case r.Mode == ModeArtifact:
+		if !seenOutputs {
+			p.add("outputs", 0, "is required for mode: artifact")
+		}
+		// roles map the coder onto the reviewer and back; an artifact
+		// recipe has neither role. Checked here rather than in roles(),
+		// for the same reason as the step rules: mode may come after it.
+		if r.ReviewerIsCoder || r.CoderIsReviewer {
+			p.add("roles", 0, "mode: artifact has no agent steps to map roles onto: remove roles")
+		}
+	case seenOutputs:
+		p.add("outputs", 0, "is only for mode: artifact")
 	}
 	if seen["use_when"] || seen["mode"] {
 		r.newKeys = true
@@ -463,7 +592,7 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 	for i, item := range v.Content {
 		path := fmt.Sprintf("steps[%d]", i)
 		if item.Kind != yaml.MappingNode || len(item.Content) != 2 {
-			p.add(path, item.Line, "must be one step: first_line: {...}, check: {...} or review: {...}")
+			p.add(path, item.Line, "must be one step: first_line: {...}, check: {...}, review: {...}, plan: {...} or render: {...}")
 			continue
 		}
 		k, body := item.Content[0], item.Content[1]
@@ -477,6 +606,12 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 		case string(StepCheck):
 			kind = StepCheck
 			r.newKeys = true
+		case string(StepPlan):
+			kind = StepPlan
+			r.newKeysV08 = true
+		case string(StepRender):
+			kind = StepRender
+			r.newKeysV08 = true
 		case "checks":
 			p.add(kpath, k.Line, "the step type is check, not checks")
 			continue
@@ -484,13 +619,19 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 			if msg, ok := reserved[k.Value]; ok {
 				p.add(kpath, k.Line, "%s", msg)
 			} else {
-				p.add(kpath, k.Line, "is not a step type (version 1 has first_line, check and review)")
+				p.add(kpath, k.Line, "is not a step type (version 1 has first_line, check, review, plan and render)")
 			}
 			continue
 		}
 		s := Step{Kind: kind}
 		if kind == StepCheck {
 			p.checkBody(kpath, body, &s)
+			out = append(out, s)
+			idx = append(idx, i)
+			continue
+		}
+		if kind == StepPlan || kind == StepRender {
+			p.artifactStepBody(kpath, body)
 			out = append(out, s)
 			idx = append(idx, i)
 			continue
@@ -535,6 +676,163 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 		idx = append(idx, i)
 	}
 	return out, idx
+}
+
+// artifactStepBody parses a plan or render step's body: it holds nothing.
+// There is no max_rounds (neither step is a loop) and no bounce (there is
+// no review to bounce back to), so any key here is refused as an unknown
+// recipe key rather than silently ignored.
+func (p *parser) artifactStepBody(kpath string, body *yaml.Node) {
+	switch {
+	case body.Kind == yaml.ScalarNode && body.Tag == "!!null":
+	case body.Kind == yaml.MappingNode:
+		for j := 0; j+1 < len(body.Content); j += 2 {
+			p.key(kpath, body.Content[j])
+		}
+	default:
+		p.add(kpath, body.Line, "must be a mapping such as {}, or empty")
+	}
+}
+
+// outputs parses a mode: artifact recipe's top-level outputs: block. The
+// block must name at least one glob, and a cap it writes must be between 1
+// and its ceiling: 0 is not "the default" here, it is a cap no artifact can
+// satisfy, and the defaults apply only to a key the block leaves out.
+func (p *parser) outputs(v *yaml.Node) *Outputs {
+	out := &Outputs{HasKeys: true, Probe: ProbeNone}
+	if v.Kind != yaml.MappingNode {
+		p.add("outputs", v.Line, "must be a mapping such as {globs: [out/*.png]}")
+		return out
+	}
+	var sawGlobs, wroteFiles, wroteBytes, wroteTotal bool
+	for i := 0; i+1 < len(v.Content); i += 2 {
+		k, val := v.Content[i], v.Content[i+1]
+		switch k.Value {
+		case "globs":
+			sawGlobs = true
+			out.Globs = p.globs(val)
+		case "max_files":
+			wroteFiles = true
+			if n, ok := p.int("outputs.max_files", val); ok {
+				if n < 1 || n > MaxOutputFiles {
+					p.add("outputs.max_files", val.Line, "must be between 1 and %d", MaxOutputFiles)
+				} else {
+					out.MaxFiles = n
+				}
+			}
+		case "max_bytes":
+			wroteBytes = true
+			if n, ok := p.int64("outputs.max_bytes", val); ok {
+				if n < 1 || n > MaxOutputBytes {
+					p.add("outputs.max_bytes", val.Line, "must be between 1 and %d bytes (%s)", MaxOutputBytes, SizeText(MaxOutputBytes))
+				} else {
+					out.MaxBytes = n
+				}
+			}
+		case "max_total_bytes":
+			wroteTotal = true
+			if n, ok := p.int64("outputs.max_total_bytes", val); ok {
+				if n < 1 || n > MaxOutputTotalBytes {
+					p.add("outputs.max_total_bytes", val.Line, "must be between 1 and %d bytes (%s)", MaxOutputTotalBytes, SizeText(MaxOutputTotalBytes))
+				} else {
+					out.MaxTotalBytes = n
+				}
+			}
+		case "probe":
+			if s, ok := p.str("outputs.probe", val); ok {
+				switch s {
+				case ProbeCommand, ProbeNone:
+					out.Probe = s
+				default:
+					p.add("outputs.probe", val.Line, "must be %s or %s", ProbeCommand, ProbeNone)
+				}
+			}
+		default:
+			p.key("outputs", k)
+		}
+	}
+	if !sawGlobs {
+		p.add("outputs.globs", 0, "is required")
+	}
+	// A set cap below the per-artifact cap with room for only one artifact
+	// is a pair nobody can satisfy: that one legal artifact already breaks
+	// the set, and the smaller cap would silently govern. Only the two caps
+	// the block actually wrote are compared; a defaulted one is not a
+	// relation the author wrote, and with room for more than one artifact
+	// the pair is a set cap doing its job.
+	if wroteFiles && wroteBytes && wroteTotal && out.MaxFiles == 1 && out.MaxTotalBytes < out.MaxBytes {
+		p.add("outputs.max_total_bytes", 0, "must be at least outputs.max_bytes")
+	}
+	return out
+}
+
+// globs parses outputs.globs: the artifact paths to upload, relative to the
+// checkout root. An absolute glob or one with a ".." path element would let
+// a recipe name a file outside the run's own tree, which is exactly what an
+// artifact must never do, so both are refused rather than cleaned up.
+func (p *parser) globs(v *yaml.Node) []string {
+	if v.Kind != yaml.SequenceNode {
+		p.add("outputs.globs", v.Line, "must be a list of globs such as [\"out/*.png\"]")
+		return nil
+	}
+	if len(v.Content) == 0 {
+		p.add("outputs.globs", v.Line, "must name at least one glob")
+		return nil
+	}
+	out := make([]string, 0, len(v.Content))
+	for i, item := range v.Content {
+		path := fmt.Sprintf("outputs.globs[%d]", i)
+		s, ok := p.str(path, item)
+		if !ok {
+			continue
+		}
+		switch {
+		case s == "":
+			p.add(path, item.Line, "must not be empty")
+		case strings.HasPrefix(s, "/"):
+			p.add(path, item.Line, "must be relative to the checkout root")
+		case slices.Contains(strings.Split(s, "/"), ".."):
+			p.add(path, item.Line, "must not contain a .. path element")
+		default:
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// int64 is int, for a cap whose valid range does not fit an int32. The
+// value is parsed the same way (a plain YAML integer, never a float or a
+// string), so a cap of 2GiB+1 gets the same "must be a whole number"
+// refusal a bad max_rounds gets.
+func (p *parser) int64(path string, v *yaml.Node) (int64, bool) {
+	if v.Kind != yaml.ScalarNode || v.Tag != "!!int" {
+		p.add(path, v.Line, "must be a whole number")
+		return 0, false
+	}
+	n, err := strconv.ParseInt(v.Value, 10, 64)
+	if err != nil {
+		p.add(path, v.Line, "must be a whole number")
+		return 0, false
+	}
+	return n, true
+}
+
+// SizeText renders a byte count as GiB or MiB when it is a whole number of
+// them, so a message about a cap or a memory limit can be read without
+// arithmetic (the runner's memory rule and the inputs caps' refusals use
+// the same shape).
+func SizeText(n int64) string {
+	const (
+		gi = int64(1) << 30
+		mi = int64(1) << 20
+	)
+	switch {
+	case n >= gi && n%gi == 0:
+		return fmt.Sprintf("%d GiB", n/gi)
+	case n >= mi && n%mi == 0:
+		return fmt.Sprintf("%d MiB", n/mi)
+	}
+	return fmt.Sprintf("%d bytes", n)
 }
 
 // checkBody parses a check step's body: command (required: build, test or
@@ -583,6 +881,10 @@ func (p *parser) checkBody(kpath string, body *yaml.Node, s *Step) {
 // order checks the sequence of the valid steps; src[i] is steps[i]'s position
 // in the source list, so messages point at the line the author wrote.
 func (p *parser) order(r *Recipe, src []int) {
+	if r.Mode == ModeArtifact {
+		p.orderArtifact(r.Steps, src)
+		return
+	}
 	steps := r.Steps
 	checks, firsts, reviews := 0, 0, 0
 	sawOther, firstSeen := false, false
@@ -616,6 +918,10 @@ func (p *parser) order(r *Recipe, src []int) {
 			if s.Bounce && !firstSeen {
 				p.add(path, 0, "bounce: first_line needs a first_line step before the review")
 			}
+		case StepPlan, StepRender:
+			// Refused here rather than in steps(), which reads a step
+			// before the recipe's mode is necessarily known.
+			p.add(path, 0, "%s is only for mode: artifact", s.Kind)
 		}
 	}
 	switch {
@@ -638,4 +944,25 @@ func (p *parser) order(r *Recipe, src []int) {
 			p.add("steps", 0, "mode: review reviews once: max_rounds must be 1")
 		}
 	}
+}
+
+// orderArtifact checks a mode: artifact recipe's steps: exactly one render,
+// optionally led by one plan, and no agent step of the other two modes.
+func (p *parser) orderArtifact(steps []Step, src []int) {
+	for i, s := range steps {
+		path := fmt.Sprintf("steps[%d]", src[i])
+		switch s.Kind {
+		case StepCheck, StepFirstLine, StepReview:
+			// check included: an artifact recipe has no implement for a
+			// gate to judge, and no review to give a ship verdict.
+			p.add(path+"."+string(s.Kind), 0, "%s is not a step of mode: artifact", s.Kind)
+		}
+	}
+	if len(steps) == 1 && steps[0].Kind == StepRender {
+		return
+	}
+	if len(steps) == 2 && steps[0].Kind == StepPlan && steps[1].Kind == StepRender {
+		return
+	}
+	p.add("steps", 0, "mode: artifact takes one render step, optionally after one plan step")
 }

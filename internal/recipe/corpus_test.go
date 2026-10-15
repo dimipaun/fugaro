@@ -11,6 +11,7 @@ import (
 // so a file that is invalid for the wrong reason fails. Every file there must
 // be listed.
 var invalidWhy = map[string]string{
+	"artifact-no-render.yaml":      "one render step, optionally after one plan step",
 	"autofix-not-lint.yaml":        "autofix is only for command: lint",
 	"bounce-bad-value.yaml":        "bounce can only be first_line",
 	"bounce-no-first-line.yaml":    "bounce: first_line needs a first_line step before the review",
@@ -25,7 +26,7 @@ var invalidWhy = map[string]string{
 	"first-line-4.yaml":            "between 1 and 3",
 	"first-line-bounce.yaml":       "is not a recipe key",
 	"first-line-twice.yaml":        "first_line may appear at most once",
-	"mode-bad.yaml":                "must be implement or review",
+	"mode-bad.yaml":                "must be implement, review or artifact",
 	"mode-review-extra.yaml":       "mode: review allows exactly one review step and nothing else",
 	"mode-review-rounds.yaml":      "mode: review reviews once: max_rounds must be 1",
 	"model-key.yaml":               "a recipe never names a model",

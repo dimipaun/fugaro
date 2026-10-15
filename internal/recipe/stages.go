@@ -38,3 +38,16 @@ func StageBound(r *Recipe, f, n int) int {
 func UsesV07(r *Recipe) bool {
 	return r.newKeys
 }
+
+// UsesV08 reports whether r uses a construct added in 0.8.0 (the artifact
+// run's image gate): mode: artifact, an outputs: block, or a plan or render
+// step. It decides by presence (Recipe.newKeysV08), not by the parsed
+// value, for the same reason UsesV07 does: a 0.7 parser refuses all three
+// outright, so a mode: artifact recipe whose outputs block holds nothing
+// but its globs still needs a 0.8 runner. A recipe that uses a 0.8.0
+// construct always uses a 0.7.0 one too (mode is one), so UsesV08 implies
+// UsesV07; the two are separate gates because the images they need are
+// tagged separately (cli/recipes_skew.go).
+func UsesV08(r *Recipe) bool {
+	return r.newKeysV08
+}
