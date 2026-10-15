@@ -1,0 +1,488 @@
+# The Fugaro desktop console: implementation plan
+
+**Goal:** build the console the owner's spec asks for in its section 6 — a cross-platform Electron application that is a richer, graphical `fugaro watch`: live task monitoring, spending monitoring with graphs, and project-level views consistent with the project-centric model — **without a new backend, without the app ever holding a credential, and without the app ever writing anything**. The reconciled design is [docs/design/desktop-console.md](../design/desktop-console.md). **No code in this plan has been written or run; this is a design-to-code plan.** **This PR (the one that adds this plan) is docs-only: it touches exactly two files — this plan and the design — and nothing else at all**, not `docs/gcp-live-checklist.md` (the check number this plan reserves, 58, is *named* here and its row and section are written by Task 4.3 when the packaging phase ships), not `go.mod`, not any Go, Terraform or product-behavior file under the "Files" lists below. Tasks 0.1 onward are future work, gated on the owner approving the design and this plan.
+
+**Spec:** [docs/design/desktop-console.md](../design/desktop-console.md), written from the owner's verbatim draft [project-centric-spec-source.md](../design/project-centric-spec-source.md) §6 ("Forward-looking: Fugaro desktop console") and from `docs/design/project-centric.md` §9, which says of this work, correctly, "**No work in the plan.**" The design's decisions are **D1 to D12** (its §10), each with a recommendation; this plan defers to them and adds its own **C1 onward**, each independently vetoable before its phase starts.
+
+**Architecture — what the six phases build, in one paragraph.** Phase 0 pins the ground: it reads every `--json` document the console will consume and writes the contract down (`console/docs/json-contract.md`), establishes what `fugaro watch --json` guarantees to a long-lived child process, and puts the Go boundary in place so that a console under `console/` can never be imported by, or import, the Go module. Phase 1 builds the shell: a hardened Electron main process (contextIsolation, sandbox, no nodeIntegration, `connect-src 'none'`), a preload that exposes a frozen list of named operations rather than a bridge, and the one interface every screen talks to — `FugaroSource`, implemented in v1 by spawning the installed `fugaro` and reading its JSON, and implemented in tests by replaying recorded fixtures. Phase 2 draws the four screens: Live, Spend, Projects and Run detail. Phase 3 makes the console honest when things are missing — the availability states and gaps the design takes from tmog.org, the no-Firebase and CLI-absent modes, and the version-skew handshake that stops a console from misreporting spend it did not understand. Phase 4 packages it for macOS: the builder configuration and entitlements (agent-written), the signing and notarisation pipeline (staged under `docs/pending-workflows/` and applied by the owner), the auto-update feed, and **Check 58**, the owner's first signed-and-stapled build and its round trip. Phase 5 is the part this plan explicitly does not schedule: Windows and Linux packaging, and the three write actions of v1.1, each gated on an owner decision. **Nothing in phase *n* is required by phase *n-1*'s merge**: each phase is a working artifact, and the last section lists every cross-task dependency so a reviewer can check that claim.
+
+**Builds on merged code (what each phase stands on).** Verified on `origin/main` at **`b9d5c5d`**, which is also this plan's writing baseline (the branch this was written on was identical to it, working tree clean):
+
+| Phase | Merged work it builds on |
+|---|---|
+| 0 | `internal/watch/json.go` (`JSONDoc`, `JSONTotal`, `JSONRepo`, `JSONRun`, `JSONKill`, `JSONBurn`, `JSONConn`, `JSONFinished`, `BuildJSON`, `FilterRepo`), `internal/cli/watch.go` (`newWatchCmd`, the `--json`/`--plain`/`--once`/`--interval`/`--repo` flags), `internal/cli/{budget,report,runs,diagnose,logs}.go`, `internal/cli/json_everywhere_test.go`, the `docs_*_test.go` conventions |
+| 1 | `internal/cli/cloud.go` (`newBudgetClient`, `budgetScopes`), `internal/cli/watch_queued.go` (`openQueueBucket`), `internal/updatecheck/updatecheck.go`, the Node pinning precedent `internal/budget/rules/emulator/package.json` |
+| 2 | `internal/watch/state.go` (the pure model and its constants), `internal/watch/render.go` (`Render`, the width tiers), `internal/report/report.go` (`Build`), `deploy/terraform/gcp/modules/firebase/iam.tf` |
+| 3 | `internal/watch/source.go` (the degradation phases), `internal/cli/runs.go` (`lsDoc`), `docs/design/watch-queued.md` §6 |
+| 4 | `docs/release.md` (one tag releases everything; `scripts/release-gate.sh`; the cask), `.goreleaser.yaml`, `.github/workflows/{ci,images,release}.yml`, `docs/pending-workflows/README.md`, `.github/dependabot.yml` |
+| 5 | everything above |
+
+**Releases.** The console is **its own artifact published from the CLI's own `vX.Y.Z` tag** (design D11): one release train, one gate (`scripts/release-gate.sh`), one Highlights section — which is what `docs/release.md`'s "one tag releases everything" means once a second deliverable exists. Its first shippable version is whatever release carries phase 4. **This changes one thing in this repo's release path and the plan says it plainly: until now every signature here has been keyless cosign over GitHub OIDC, and the console's Apple signing would be the first private key the repo has ever held** (`docs/release.md`: the checksums are signed, the binaries are not Apple-signed, and the Homebrew cask papers over Gatekeeper with an `xattr -dr com.apple.quarantine` postflight hook). Every step that touches that key is owner-run (Task 4.3 and Check 58), and no agent-run step in this plan or any other produces, stores, reads or transmits it.
+
+## Phase summary
+
+| Phase | What ships | Owner-run steps | Depends on |
+|---|---|---|---|
+| **0. The ground** | the JSON contract written down and pinned (`console/docs/json-contract.md`); the child-process contract settled; the Go/`console` boundary with two tests holding it | nothing | nothing |
+| **1. The shell** | the hardened Electron main process, the frozen IPC allow-list, `FugaroSource` with its `cli` and `fixture` implementations, the recorder/redactor | nothing | phase 0 |
+| **2. The screens** | Live, Spend, Projects, Run detail — with the availability states and the replay buffer | nothing | phase 1 |
+| **3. When things are missing** | the no-Firebase and CLI-absent modes, the stale/gap rendering, the version-skew handshake | nothing | phase 2 |
+| **4. macOS packaging** | the builder config and entitlements; the staged signing/notarisation workflow; the update feed; **Check 58** | **all of it**: the certificate, the API key, the first signed build, the update round trip (Check 58) | phase 3 |
+| **5. Later, unscheduled** | Windows and Linux packaging; the v1.1 write actions | each, when the owner decides | phase 4 |
+
+**Nothing in this table depends on a later row.** Phase 5 is deliberately empty of work: it lists the two things a reader will otherwise wonder about, and each is gated on a decision this plan does not presume.
+
+## Check numbers this plan takes (58)
+
+`docs/gcp-live-checklist.md` on `main` (`b9d5c5d`) has its highest written `## Check N` section at **47**, and its summary table's highest rows at **47** and **57**. The numbers above 47 are spoken for:
+
+| Number | Claimed by | State |
+|---|---|---|
+| 42 | config-transitions design §6 and plan Task 8, merged as #344 | reserved row on `main`; written by that plan's own task |
+| 43 (43a-43f) | registry remote repository, merged as #353 | written on `main`, not run |
+| 44 | provider price catalog, merged as #354 | written on `main`, not run |
+| 45, 46 | **open PR #359** (senior reviewer, phases 1 and 2) | not merged — claimed only inside that PR |
+| 47 | OAuth reviewer stage, merged as #363 | written on `main`, not run |
+| **48-56** | **`docs/plans/2026-10-14-project-centric.md`**, §"Check numbers this plan takes (48 to 56)" | **reserved in that plan**, one number per phase, each written by its own phase's task |
+| 57 | **PR #375**, the compute-instance backend | not merged; separate work, a different execution backend |
+| **58** | **this plan, phase 4**: the console's first signed, notarised and stapled macOS build, and its update round trip | **reserved here** |
+
+**How 58 was chosen, stated so a later reader can re-check it.** The rule is "the next free number", and "free" cannot be read off `main` alone, because two plans and one open PR claim numbers that `main` does not yet carry. So, in this order: (1) the highest `## Check N` section actually written in `docs/gcp-live-checklist.md` is 47, and its table's last rows are 47 and 57; (2) `docs/plans/2026-10-14-project-centric.md` reserves **48 to 56** and says so in a table with a `State` column, writing each row with its own phase rather than up front; (3) **PR #375** claims 57 for the compute-instance backend; (4) greps for `Check 58`, `Check 59` and every higher number across `docs/` return **nothing outside this plan and the design it accompanies**. 48 through 57 are therefore taken and **58 is the next free number**. **This plan takes one number, not a range**, because it has exactly one owner-run live step. **Following the project-centric plan's convention, neither this PR nor any docs-only task here writes the row or the section**: Task 4.3 writes both when phase 4 ships, so exactly one writer owns the number and a rebase cannot produce two.
+
+**Check 58 is owner-run, on the sandbox installation and the sandbox repository only, and never touches the `belong` project** (`belong` holds `edgeappinc/edgeserver` and `edgeappinc/edgeweb`: no agent touches it, ever). It is written with FACT lines, a restore step, and **Check 43's full guard, verbatim** — the three hard stops, `--project fugaro` on every `fugaro` command and `--project "${P:?}"` on every `gcloud` command, in a block re-run from a fresh shell before every step (`docs/gcp-live-checklist.md`, Check 43's guard block, and the rule the project-centric plan spells once and requires of every check 48 onward). That requirement is not optional for a check that looks local: the future `TestChecklistChecksAreGuarded` (project-centric plan Task 6.3) asserts that **every `## Check 48`-onward section carries Check 43's three hard stops and its project pinning, not merely a `:?` guard**, and Check 58 is a `## Check 58` section. The console is *built* from this repository; every `fugaro` command it drives is run **with the sandbox checkout as the working directory**, under the guard.
+
+## Global Constraints
+
+These hold for every task below, and the plan's own review checks them:
+
+1. **No new backend, ever.** No service account, no RTDB node, no Firestore collection, no rules change, no Cloud Run service, no Terraform resource. The console reads what `fugaro watch` and the budget dashboard already read, through the CLI. If a screen needs a field no `--json` emits, the fix is a CLI task in a CLI plan, not a console reader.
+2. **No credential is ever read, held or stored by the app.** Not an OAuth token, not a service-account key, not a Firebase API key, not a copy of the operator's config. The app spawns `fugaro` and lets it resolve the operator's ambient identity exactly as a terminal does.
+3. **The app never writes.** The spawn allow-list is read-only commands only, and the mutation-proof test of Task 1.2 is what keeps it that way: adding a write subcommand must fail a test, not pass a review.
+4. **The renderer is untrusted by construction and gets no network.** `connect-src 'none'`, no remote content, no navigation, no permission, no `nodeIntegration`, no generic IPC.
+5. **Every number carries an availability state.** Measured, notional, estimated, unavailable or a gap — never an implicit zero. This is the design's first UI rule (its §6.1) and it is a review criterion, not a nicety.
+6. **`belong` is never touched** by any step, agent-run or owner-run, and no fixture is ever recorded from it.
+7. **Nothing under `.github/workflows/` is created or edited by an agent.** The console's workflow text is written as a **staged file under `docs/pending-workflows/`** for the owner to copy (Task 4.2), which is the mechanism this repo already uses (`docs/pending-workflows/README.md`) and names as an owner step in `docs/release.md`'s "Before you tag".
+8. **The Go module is untouched.** `console/` holds no Go package, `go.mod` and `go.sum` do not change, and no Go file references a path under `console/`. Task 0.3's test is what makes this a fact rather than an intention.
+9. **Security-sensitive tasks are flagged `SECURITY-SENSITIVE — independent opus review`** in their own heading and are not merged on a self-review. The tasks marked so below are 1.1, 1.2, 1.3, 2.1, 4.1, 4.2 and 4.3, plus 5.2 when it is scheduled.
+10. **Docs-only tasks keep the docs suite green**: every task that touches a `.md` file under `docs/` runs `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`, the command this repository's docs tests are reached by.
+
+## Review Focus
+
+What a reviewer of each phase should attack, in the design's own terms:
+
+- **Phase 0**: is the contract *read* or *assumed*? Every field in `console/docs/json-contract.md` must be traceable to a struct field or a `Encode` call on `origin/main` at the time of writing. A field invented from the design doc rather than read from the code is a defect.
+- **Phase 1**: the two hard questions — **can the renderer reach anything it should not** (a channel, a spawn, a file, a URL), and **can a job-written string become code** (an `innerHTML`, an unescaped attribute, a URL built from a title)? A reviewer should try to break both, not read for style.
+- **Phase 2**: does any screen ever draw a number it did not measure? Look for a `0` that should be `n/a`, a line that interpolates across a gap, and a `NOTIONAL~` summed into a real dollar total.
+- **Phase 3**: what happens at the boundary — the CLI is a version the console does not know, the CLI is absent, the stream stops. A crash is worse than a banner; a wrong number is worse than both.
+- **Phase 4**: the supply chain, and the key. Exact pins, a committed lockfile, `npm ci --ignore-scripts`, no workflow edited by an agent, no key anywhere an agent-run step can see it.
+- **Every phase**: the console adds no reader, the module does not grow, and `belong` is untouched.
+
+## File Structure
+
+Created by this plan (nothing here exists yet, and **none of it is created by this PR**):
+
+```
+console/
+  package.json                    # private, exact pins, engines.node, no ^ or ~
+  package-lock.json               # committed; npm ci --ignore-scripts in CI
+  tsconfig.json
+  README.md                       # how to run it, and what it may and may not do
+  docs/json-contract.md           # Task 0.1: every --json document, field by field
+  src/main/window.ts              # the BrowserWindow, its webPreferences, navigation denial
+  src/main/ipc.ts                 # the IPC allow-list and each handler's argument schema
+  src/main/spawn.ts               # the one child process, the read-only subcommand table
+  src/main/updates.ts             # Task 4.4: the update check and the signed feed
+  src/preload/index.ts            # the frozen, versioned object the renderer sees
+  src/renderer/index.html         # the bundled document, the CSP meta as belt-and-braces
+  src/renderer/app.ts
+  src/renderer/screens/{live,spend,projects,run}.ts
+  src/renderer/theme/tokens.css
+  src/source/source.ts            # the FugaroSource interface - the whole data plane
+  src/source/cli.ts               # v1: spawn the installed fugaro
+  src/source/fixture.ts           # tests: replay a recorded NDJSON feed
+  src/shared/{schema,availability,sanitize,version}.ts
+  test/unit/*.test.ts
+  test/e2e/*.spec.ts              # Playwright + Electron
+  test/e2e/__screenshots__/       # the golden frames
+  test/fixtures/*.ndjson          # recorded and redacted; never from belong
+  tools/record-fixture/{index,redact}.ts
+```
+
+Edited by this plan:
+
+```
+internal/cli/docs_desktop_console_test.go      # Task 0.1/2.4: the design's load-bearing strings
+internal/cli/docs_console_boundary_test.go     # Task 0.3: the Go/console boundary
+docs/pending-workflows/console.yml             # Tasks 1.4, 4.2: staged, never copied by an agent
+docs/gcp-live-checklist.md                     # Task 4.3 only: Check 58's row and section
+docs/design/desktop-console.md                 # Task 5.0 only, if the owner's decisions differ
+```
+
+## PR groups
+
+Each row is one mergeable PR, green on its own:
+
+| PR | Tasks | Flag |
+|---|---|---|
+| A | 0.1, 0.2, 0.3 | docs + Go tests only |
+| B | 1.0, 1.1, 1.2 | **SECURITY-SENSITIVE** |
+| C | 1.3, 1.4 | **SECURITY-SENSITIVE** (spawn and fixtures) |
+| D | 2.0 | **SECURITY-SENSITIVE** (the text path) |
+| E | 2.1, 2.2, 2.3 | |
+| F | 3.1, 3.2 | |
+| G | 4.1, 4.2, 4.4 | **SECURITY-SENSITIVE** (supply chain) |
+| H | 4.3 | **OWNER-RUN**, no agent performs any step |
+
+---
+
+## Phase 0 — The ground
+
+### Task 0.1: The JSON contract, pinned
+
+**Files:** `console/docs/json-contract.md`, `internal/cli/docs_desktop_console_test.go`
+
+**Steps.** Read, on `origin/main`, every document the console will consume, and write down each one's real shape: `internal/watch/json.go` (`JSONDoc`, `JSONConn`, `JSONTotal`, `JSONBurn`, `JSONKill`, `JSONRepo`, `JSONRun`, `JSONFinished`, `BuildJSON`, `jsonBurn`, `jsonKill`, `jsonFinished`, `usdPtr`) for `watch --json`; `budgetShowDoc` for `budget show --json`; `report.JSON` for `report --json`; `lsDoc` for `runs ls --json`; `cancelResult`; `logLine`; and whatever `diagnose --json` and `version` emit. For each: the field, its type, its unit (dollars as floats; micros as integers; day keys as UTC epoch days), whether it is `omitempty`, and **which of the design's five availability states it needs**. Record the flags each command actually has, from the cobra command rather than the docs. Note the two facts the console's rendering depends on and that nothing else records: `--json` is always unfiltered, and the document is emitted one per change, compact, on a 1-second gap.
+
+**Tests:** `TestDocsDesktopConsoleDesignCarriesTheDecisions` (a docs-presence test in the `readDoc(t, path)` convention) asserting the design holds the auth decision, the spawn allow-list, the five availability states, the security posture's hard rules and the owner-run table; plus a Go test asserting `console/docs/json-contract.md` names every field a curated list of `internal/watch/json.go`'s struct tags contains — so a later rename in `json.go` fails a test here rather than silently breaking a screen.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`
+
+**Depends on:** nothing.
+
+**Commit:** `console: pin the JSON contract the app reads, field by field`
+
+**Red step — `Expected: FAIL`** — the docs-presence test before the design's strings are added to it, and the field test before `console/docs/json-contract.md` exists.
+
+### Task 0.2: What `watch --json` guarantees a long-lived child process
+
+**Files:** `console/docs/json-contract.md`
+
+**Steps.** Settle the design's UNVERIFIED item 2 by reading, not assuming: what `watchStream` does when its reader is slow; whether a closed stdout ends the process; what happens after `connRefused`; whether the day streams re-open at UTC midnight in a way that produces a gap (they do: `streamPhase`/`rollDay`); and what `degradeSince`, `StaleAfter`, `SilentAfter` and `LostAfter` mean for a consumer that is not a terminal. Write the consumption contract into the same document: how many documents arrive per minute in each mode, what a gap looks like from outside, and whether Option A needs a supervisor process. This is the task that decides whether Task 1.3 spawns one child or supervises several.
+
+**Tests:** none of its own — it is a reading task, and its output is the document Task 1.3 is written against. The review criterion is that every sentence cites a symbol.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`
+
+**Depends on:** nothing.
+
+**Commit:** `console: what the watch feed guarantees to a child process`
+
+**Red step — `Expected: FAIL`** — the docs-presence test asserting the consumption contract's four settled facts.
+
+### Task 0.3: The boundary — `console/` and the Go module never touch
+
+**Files:** `internal/cli/docs_console_boundary_test.go`, `console/README.md`
+
+**Steps.** Create `console/` as a directory holding only its `README.md`, and write the two assertions that keep the design's §8.1 claim true a year later: (a) no Go file in the module references a path under `console/` (walk the tree, match the literal segment, and exclude comments that merely *name* it — the test's own doc comment says why); (b) `go.mod`'s require block is unchanged from a recorded baseline, so the console cannot smuggle a Go dependency in. The README states the module's rule in one line: nothing under `console/` is importable by, or imports, the Go module.
+
+**Tests:** `TestConsoleIsOutsideTheGoModule`, `TestGoModHasNoConsoleDependency`.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint|Console' -count=1`
+
+**Depends on:** nothing.
+
+**Commit:** `console: the directory, its rule, and the two tests that hold it`
+
+**Red step — `Expected: FAIL`** — `TestConsoleIsOutsideTheGoModule` against a planted `import` of a `console/` path, and `TestGoModHasNoConsoleDependency` against a planted require line. Both mutations are named in the PR body, as this repo does for a mutation-proven test.
+
+---
+
+## Phase 1 — The shell
+
+### Task 1.0: The toolchain, pinned
+
+**Files:** `console/package.json`, `console/package-lock.json`, `console/tsconfig.json`, `console/.npmrc`
+
+**Steps.** Exactly as `internal/budget/rules/emulator/package.json` does for `firebase-tools`, and at the scale the design's §5.2 argues for: `private: true`, `engines.node`, **exact** versions with no `^` or `~` anywhere, a committed lockfile, TypeScript and the test tooling as the only `devDependencies` beyond Electron, and the renderer bundling **no framework runtime and no charting library** (design D9) — charts are drawn on the platform. Record Electron's exact version in `console/README.md` together with the sentence that it is bumped on purpose, as the emulator's package description does for its own pin. Write the two scripts every later task's command uses: `test:unit` and `test:e2e`.
+
+**Tests:** a unit test that reads `package.json` and fails on any dependency specifier containing `^`, `~`, `*`, `latest` or a range — the pinning rule enforced, not documented; and one that asserts the lockfile exists and is in sync (`npm ci` in the command does this for the tree, the test does it for the file).
+
+**Command:** `npm ci --ignore-scripts --no-audit --no-fund && npm run test:unit`
+
+**Depends on:** Task 0.3.
+
+**Commit:** `console: the toolchain, pinned exactly, with the pinning rule as a test`
+
+**Red step — `Expected: FAIL`** — the specifier test against a `^` added to one dependency.
+
+### Task 1.1: The hardened window — SECURITY-SENSITIVE, independent opus review
+
+**Files:** `console/src/main/window.ts`, `console/src/renderer/index.html`, `console/test/unit/window.test.ts`, `console/test/e2e/security.spec.ts`
+
+**Steps.** Implement the design's §5.1 rules 1, 2, 3 and 7: `contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, `webviewTag: false`, `allowRunningInsecureContent: false`; a bundled `file://` document and nothing else; `will-navigate` and `setWindowOpenHandler` denying every navigation and every window, with one validated `https:`-only `openExternal` path behind an allow-list of hosts; the CSP from the design's §5.1 rule 3 delivered both as a header and as the document's `<meta>`, **including `connect-src 'none'`**; and `setPermissionRequestHandler` refusing every permission.
+
+**Tests:** unit — the window options object, the navigation handler's refusals, and the URL validator against `javascript:`, `file:`, `data:` and an off-allow-list host. E2E (Playwright + Electron) — a renderer-initiated request to a remote origin fails **twice over** (once by the CSP, once by a Playwright route handler that fails every request, so a CSP regression is still caught); `window.open` is refused; a `will-navigate` to a remote URL leaves the app on its own document.
+
+**Command:** `npm run test:unit && npm run test:e2e -- security`
+
+**Depends on:** Task 1.0.
+
+**Commit:** `console: the hardened window, and the tests that try to leave it`
+
+**Red step — `Expected: FAIL`** — `security.spec.ts`'s network assertion against a window with `connect-src 'self'`, and its navigation assertion against a handler that returns `{ action: 'allow' }`.
+
+### Task 1.2: The IPC allow-list — SECURITY-SENSITIVE, independent opus review
+
+**Files:** `console/src/main/ipc.ts`, `console/src/preload/index.ts`, `console/test/unit/ipc.test.ts`
+
+**Steps.** The design's §5.1 rule 4, built so it cannot be widened by accident: the preload exposes a **frozen, versioned object of named operations** — no `invoke(channel, …)`, no channel name from the renderer, no dynamic `require`. Each channel has a closed argument schema validated in the main process, takes no path, no command and no URL beyond the validated external-link one, and returns data that is already rendered. Then the mutation-proof half: a table of operations the console must **never** reach — every write subcommand, the `secrets` commands, the `init`, `upgrade` and `exec` verbs, and the hidden `budget history` job command — asserted unreachable by iterating the allow-list itself, so that adding one of them fails a test named for it. Freeze the exposed object and assert `Object.isFrozen`.
+
+**Tests:** `ipc.test.ts` — the allow-list's read-only invariant, the never-reachable table, the argument schemas against malformed input, `Object.isFrozen`, and the absence of a generic invoke.
+
+**Command:** `npm run test:unit`
+
+**Depends on:** Task 1.1.
+
+**Commit:** `console: an IPC allow-list, not a bridge, and the table of things it cannot reach`
+
+**Red step — `Expected: FAIL`** — the never-reachable test against `budget kill` added to the list.
+
+### Task 1.3: `FugaroSource`, and the one child process — SECURITY-SENSITIVE, independent opus review
+
+**Files:** `console/src/source/source.ts`, `console/src/source/cli.ts`, `console/src/main/spawn.ts`, `console/test/unit/spawn.test.ts`
+
+**Steps.** The interface every screen talks to, so that design D1's Option C can replace Option A without touching a screen: `FugaroSource` yields `JSONDoc`-shaped snapshots and emits change events and knows nothing about how they were produced. Then the v1 implementation: spawn the installed `fugaro` with the read-only subcommand table from Task 1.2, `shell: false`, arguments as an array, **never a command built from a job-written field**, the child inheriting the operator's environment unchanged — no injected credential, no token in argv, no secret written into an environment variable. Implement what Task 0.2 settled: restart behaviour, a closed-stdout exit, and the UTC-midnight day rollover.
+
+**Tests:** `spawn.test.ts` against a stub executable — argv is an array and never a shell string; a subcommand outside the table is refused before spawn; the environment is passed through with nothing added (asserted by diffing the keys the stub reports); a hostile string from the feed is never interpolated into argv; a child that dies is restarted with backoff and the UI is told.
+
+**Command:** `npm run test:unit`
+
+**Depends on:** Task 1.2, Task 0.2.
+
+**Commit:** `console: FugaroSource, and the one child process it is allowed to spawn`
+
+**Red step — `Expected: FAIL`** — the environment-diff test against a spawn that injects `GOOGLE_APPLICATION_CREDENTIALS`, and the argv test against a template-string command.
+
+### Task 1.4: Recorded, redacted fixtures, and the recorder
+
+**Files:** `console/src/source/fixture.ts`, `console/tools/record-fixture/{index,redact}.ts`, `console/test/fixtures/*.ndjson`, `console/test/unit/redact.test.ts`, `docs/pending-workflows/console.yml`
+
+**Steps.** The recorder spawns `fugaro watch --json` (from the sandbox checkout, **never `belong`**), captures the NDJSON, and redacts: `watch` already clips and redacts a run title, and the recorder applies the same treatment to repository names, PR URLs, requester addresses and anything else installation-specific. Import the fixture renderer that makes the recording usable: a `FugaroSource` implementation that replays a file, including its timestamps, so a gap in the recording is a gap in the test. Record the seven fixtures the design's §9.1 names — the normal run, the `silent`-then-`lost` run, the kill flipping mid-feed, the repository at its cap, the OAuth notional run, the absent field, the gap — plus a hostile title. **Stage the CI workflow here**, because the e2e tests of phase 2 need it: `docs/pending-workflows/console.yml`, with the two runners, the path filters and the node setup, for the owner to copy.
+
+**Tests:** `redact.test.ts` — a redactor that is *tested*, not trusted: it must remove a known address, a known repository name and a known PR URL from a recorded frame, must be idempotent, and must **fail closed** on a frame it cannot parse. Plus a test that every committed fixture passes the redactor unchanged (so a hand-edited fixture is caught).
+
+**Command:** `npm run test:unit`
+
+**Depends on:** Task 1.3.
+
+**Commit:** `console: recorded, redacted fixtures and the recorder that makes them`
+
+**Red step — `Expected: FAIL`** — the redaction test against a recorder that passes a title through untouched, and the fixtures-are-clean test against a fixture with a planted address.
+
+---
+
+## Phase 2 — The screens
+
+### Task 2.0: Availability, sanitization and the text path — SECURITY-SENSITIVE, independent opus review
+
+**Files:** `console/src/shared/{availability,sanitize,schema}.ts`, `console/src/renderer/app.ts`, `console/test/unit/{availability,sanitize}.test.ts`
+
+**Steps.** The design's first UI rule, made into code every screen must go through: one type carrying the five states (measured, notional, estimated, unavailable, gap), one renderer that turns each into its presentation, and no screen allowed to format a bare number. Then the design's §5.1 rule 5: the sanitization is **re-applied at the display layer** rather than trusted to have survived the subprocess boundary, and job-written text is rendered through text nodes — never `innerHTML`, never a `dangerouslySetInnerHTML`-equivalent, never a URL built from it.
+
+**Tests:** `availability.test.ts` — a missing field renders `n/a` and never `0`; a notional value renders with its marker; a gap breaks a series rather than interpolating. `sanitize.test.ts` — the hostile-title corpus (control characters, escape sequences, `<script>`, a `javascript:` URL, a very long line) renders as text; and a lint-style test that fails on `innerHTML` appearing anywhere under `console/src/renderer/`.
+
+**Command:** `npm run test:unit`
+
+**Depends on:** Task 1.4.
+
+**Commit:** `console: every number carries its state, every agent string stays a string`
+
+**Red step — `Expected: FAIL`** — the `innerHTML` test against a planted assignment, and the availability test against a formatter that returns `0` for a missing field.
+
+### Task 2.1: The Live screen
+
+**Files:** `console/src/renderer/screens/live.ts`, `console/test/unit/live.test.ts`, `console/test/e2e/live.spec.ts`, `console/test/e2e/__screenshots__/live-*.png`
+
+**Steps.** The design's §6.2 screen 1, drawn from `watch --json` alone: the project line with mode, day and the connection state; the global cap bar with `counted` and the cap; one row per repository with its bar, its 5-minute rolling burn sparkline and its kill banner (with by, at and reason); and under each repository its runs — stage, round, verify, models, recipe, auth, spend, age — flagged `silent` (>60 s), `lost` (>3 min) and amber past 80% of the stage deadline, with `queued`/`stuck` rows from the bucket side and an OAuth run's spend marked notional. The density rules are the design's §6.1 rules 2 and 3: ~24 px rows, tabular numerals, right-aligned figures, no decorative colour. The burn window must match `watch`'s own (`BurnWindow`, 5 minutes) **and a test asserts the two constants cannot drift**.
+
+**Tests:** `live.test.ts` — the row model from a fixture frame, each flag's boundary at exactly its threshold, the burn window against the constant. `live.spec.ts` — the screen renders the fixture, a killed repository shows its banner, a queued row is present; and a screenshot golden per theme.
+
+**Command:** `npm run test:unit && npm run test:e2e -- live`
+
+**Depends on:** Task 2.0.
+
+**Commit:** `console: the live screen, dense and honest`
+
+**Red step — `Expected: FAIL`** — the boundary test at exactly 60 s and 180 s.
+
+### Task 2.2: The Spend screen
+
+**Files:** `console/src/renderer/screens/spend.ts`, `console/test/unit/spend.test.ts`, `console/test/e2e/spend.spec.ts`
+
+**Steps.** The design's §6.2 screen 2, from `report --json`: a time series with `--since`/`--until` and a breakdown switch (`day`, `week`, `month`, `repo`, `model`, `person`), with the three accounts that must never be summed kept visibly apart — model spend, `NOTIONAL~`, and compute — following `docs/design/m9-budget-and-dashboard.md` §10's "one account of cost". Partial days (`final` false, or no document) draw hollow with a `(partial)` marker; a day beyond the retained window is a gap, not a zero. The caps panel shows global, defaults and per-repository overrides with **the binding scope named** for each effective per-run cap, from `budget show --json`. **The person breakdown is off by default** (design §2.3 and §6.2): the fixture still contains the data, and a test asserts it is not on screen until the operator turns it on.
+
+**Tests:** `spend.test.ts` — no screen ever adds a notional to a real total (asserted on the series model, mutation-proven by summing them); a partial day is hollow; the person view is hidden by default. `spend.spec.ts` — the three series render separately, the caps panel names a binding scope, and a golden.
+
+**Command:** `npm run test:unit && npm run test:e2e -- spend`
+
+**Depends on:** Task 2.1.
+
+**Commit:** `console: the spend screen, with the three accounts kept apart`
+
+**Red step — `Expected: FAIL`** — the notional-sum test against a model that adds them, and the person-view test against a default that shows it.
+
+### Task 2.3: The Projects and Run detail screens, and the replay buffer
+
+**Files:** `console/src/renderer/screens/{projects,run}.ts`, `console/src/shared/replay.ts`, `console/test/unit/{projects,replay}.test.ts`, `console/test/e2e/{projects,run}.spec.ts`
+
+**Steps.** The design's §6.2 screens 3 and 4. **Projects** renders what exists today — caps, kill state, the enrolled and the seen repositories, project jobs — and says plainly what is not built (`config/policy` is project-centric phase 1; the enrollment allow-list is phase 1 and 4), rather than drawing an empty box that looks like zero. The secrets and accounts inventory is **names, labels and version counts only**, never a value. **Run detail** shows the ledger, the stage timeline with deadlines, per-stage spend, the outcome, the PR link, the `logs` link, the `diagnose` view, and **the replay buffer** — the design's §6.1 rule 4, taken from tmog.org's Flight Recorder: a bounded in-memory ring of the last N minutes of the feed, scrubbable, exportable to a file, which is also the debugging aid for "the run was slow at 14:20".
+
+**Tests:** `projects.test.ts` — an unbuilt section renders as not-built and never as a zero; the inventory contains no value-shaped string. `replay.test.ts` — the ring's bound is enforced, an export round-trips through the fixture source, and scrubbing to a moment reproduces that moment's view. `projects.spec.ts`/`run.spec.ts` — goldens, and the log link is validated before it can be opened.
+
+**Command:** `npm run test:unit && npm run test:e2e`
+
+**Depends on:** Task 2.2.
+
+**Commit:** `console: projects, run detail, and the replay buffer`
+
+**Red step — `Expected: FAIL`** — the unbuilt-section test before the not-built state exists, and the ring-bound test before the bound is enforced.
+
+---
+
+## Phase 3 — When things are missing
+
+### Task 3.1: Degraded, stale and absent
+
+**Files:** `console/src/source/cli.ts`, `console/src/renderer/screens/*.ts`, `console/test/e2e/degraded.spec.ts`, `console/test/fixtures/degraded.ndjson`
+
+**Steps.** Implement the design's §6.3 table in full. **Stale**: no live event for 45 s (the design's threshold, matching `watch`'s `StaleAfter`) puts the banner up, breaks the graphs rather than interpolating, and keeps the last-known values with their timestamps. **No Firebase**: the CLI's own no-Firebase mode, which polls `ls` every 10 s with each run's cost from `result.json`, no caps and the kill keys disabled — the console shows caps as **unavailable** and hides the kill affordances, and never draws them as zero. **No `fugaro`**: one explanatory screen naming what is needed, the install command and a binary picker — not a partially drawn dashboard. **A refused read**: the CLI's own message verbatim, including the one-line remedy `report` prints (which names `roles/datastore.viewer` and `roles/serviceusage.serviceUsageConsumer`).
+
+**Tests:** `degraded.spec.ts` — each of the four conditions renders as designed; the caps are `n/a` and not `0`; a permission refusal shows the CLI's text unchanged; the binary-absent screen is reachable with no `fugaro` on `PATH`.
+
+**Command:** `npm run test:e2e -- degraded`
+
+**Depends on:** Task 2.3.
+
+**Commit:** `console: what it shows when a source is missing, and what it refuses to invent`
+
+**Red step — `Expected: FAIL`** — the caps-are-not-zero assertion against a renderer that defaults to `0`.
+
+### Task 3.2: The version skew handshake
+
+**Files:** `console/src/shared/version.ts`, `console/src/main/window.ts`, `console/test/unit/version.test.ts`, `console/test/e2e/skew.spec.ts`
+
+**Steps.** The design's §7.1 and D7: the console carries the CLI version it was built and tested against plus the previous minor as its supported range; at startup it runs `fugaro version` (the **subcommand** — the root command sets no cobra `Version` field, so `fugaro --version` fails) and either proceeds, proceeds in a reduced mode with a banner naming both versions, or — below a hard floor — refuses to draw a live dashboard rather than misreport spend. If `version` turns out to have no `--json` form, parse its human line and **pin that parse with a test against the real output**, which is why this task also settles the design's UNVERIFIED item 3.
+
+**Tests:** `version.test.ts` — the range check's boundaries (the built minor, the previous one, one below the floor, one above the ceiling), and the human-line parse against a captured `fugaro version` output. `skew.spec.ts` — the banner appears, the reduced mode hides the views it cannot support, and the below-floor case shows the refusal screen and no dashboard.
+
+**Command:** `npm run test:unit && npm run test:e2e -- skew`
+
+**Depends on:** Task 3.1.
+
+**Commit:** `console: the version skew handshake`
+
+**Red step — `Expected: FAIL`** — the below-floor test against a console that draws the dashboard anyway.
+
+---
+
+## Phase 4 — macOS packaging
+
+### Task 4.1: The builder configuration and the entitlements — SECURITY-SENSITIVE, independent opus review
+
+**Files:** `console/entitlements.mac.plist`, `console/package.json`, `console/test/unit/entitlements.test.ts`, `console/README.md`
+
+**Steps.** The packaging configuration for macOS: the app bundle, the `dmg` and `zip` targets, the hardened runtime, and **the minimum entitlements** — no `com.apple.security.cs.disable-library-validation` unless the pinned Electron genuinely requires it, and if it does, the reason is a comment in the plist itself; no `get-task-allow` outside a debug build; no entitlement the app does not demonstrably use. The signing identity is read from the environment and is **never** written into a file in this repository. Document, in the README, the exact commands the owner will run, so Task 4.3 has nothing to invent.
+
+**Tests:** `entitlements.test.ts` — parses the plist and asserts the minimum set exactly: any added entitlement fails a named test, and `get-task-allow` fails one on its own. This is the mutation-proof form: a widening must be a deliberate edit to a test, not a quiet addition to a plist.
+
+**Command:** `npm run test:unit`
+
+**Depends on:** Task 3.2.
+
+**Commit:** `console: the macOS bundle, with the entitlements it can justify and no more`
+
+**Red step — `Expected: FAIL`** — the minimum-set test against a planted `disable-library-validation`.
+
+### Task 4.2: The signing and notarisation pipeline, staged — SECURITY-SENSITIVE, independent opus review
+
+**Files:** `docs/pending-workflows/console.yml`, `docs/pending-workflows/README.md`, `console/README.md`
+
+**Steps.** Write the workflow's text as a **staged file** under `docs/pending-workflows/` — this repo's mechanism for a change only the owner may push (its README is the directory's only occupant today, and `docs/release.md`'s "Before you tag" names copying a staged workflow in as an owner step). It builds on the CLI's tag, runs the console's tests, signs with the hardened runtime, notarises with `xcrun notarytool submit --wait`, staples both the app and the dmg, verifies with `codesign --verify --deep --strict`, `spctl --assess --type execute` and `stapler validate`, and **records those verification outputs** the way the CLI's release records its checksums. Actions are pinned to full commit SHAs with `# vX.Y.Z` comments, as everywhere else in this repo, and the secrets it needs are named but never valued. Extend the directory's README with the console's row: what it is, why it is staged, and the one command that applies it.
+
+**Tests:** none executable here (the staged workflow has never run — the directory's README already carries a "Not verified" section and this adds its own). The review substitutes: a reviewer reads the pinned SHAs, the permission block, and the absence of any secret value; and an agent may not copy it into `.github/workflows/`, which this task's own description forbids.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`
+
+**Depends on:** Task 4.1.
+
+**Commit:** `console: the signing and notarisation pipeline, staged for the owner`
+
+**Red step — `Expected: FAIL`** — the docs test asserting the staged workflow and its README row exist.
+
+### Task 4.3: Check 58, the first signed build — OWNER-RUN, no agent performs any step
+
+**Files:** `docs/gcp-live-checklist.md`
+
+**Steps.** Write **Check 58** into the checklist, with its summary-table row, its FACT lines, its restore step and **Check 43's guard block verbatim** — the three hard stops, `--project fugaro` on every `fugaro` command, `--project "${P:?}"` on every `gcloud` command, re-run from a fresh shell before each step, and the sandbox checkout as the working directory for every `fugaro` command the console drives. The check is the owner's, and it asserts: (1) the certificate and the App Store Connect API key exist and are stored where only the owner can reach them; (2) a signed, notarised, stapled build is produced and **passes `spctl --assess` on a machine that has never seen it**; (3) the update round trip: an installed older build sees the new release and installs a bundle whose signature the OS verifies; (4) the safety assertion — with the console pointed at the **sandbox** installation, nothing it can reach belongs to `belong`, and the console's child process is the installed `fugaro` and nothing else. The FACT lines record what was observed, the restore step removes the installed build and the keychain item it was signed with, and the section says in its first line that no agent performs any step of it.
+
+**Tests:** the checklist's own docs tests, plus the guard test the project-centric plan schedules (Task 6.3's `TestChecklistChecksAreGuarded`), which Check 58 must satisfy.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`
+
+**Depends on:** Task 4.2.
+
+**Commit:** `checklist: Check 58, the console's first signed build`
+
+**Red step — `Expected: FAIL`** — the guard test against a Check 58 without the three hard stops.
+
+### Task 4.4: Auto-update — SECURITY-SENSITIVE, independent opus review
+
+**Files:** `console/src/main/updates.ts`, `console/test/unit/updates.test.ts`, `docs/pending-workflows/console.yml`
+
+**Steps.** The design's §7.3: the update check reads the same release metadata the CLI's `internal/updatecheck` reads and honours the same opt-out (`FUGARO_NO_UPDATE_CHECK=1`, a local `update_check: false`, never in CI), and the installation path is Squirrel.Mac over a **signed** feed — an update whose signature does not verify is refused, never installed. No telemetry of any kind: the only outbound requests are the CLI's own and this one update check (design §7.4). Default on, with the toggle visible (D5).
+
+**Tests:** `updates.test.ts` — the opt-out is honoured (all three ways); an unsigned or mis-signed bundle is refused; no identifier is sent (asserted on the request the fake feed receives); a downgrade is refused; the check never runs in CI.
+
+**Command:** `npm run test:unit`
+
+**Depends on:** Task 4.2.
+
+**Commit:** `console: the update check, with no telemetry and a verified feed`
+
+**Red step — `Expected: FAIL`** — the mis-signed-refusal test against an updater that installs anyway, and the no-identifier test against a request carrying a machine id.
+
+---
+
+## Phase 5 — Later, unscheduled
+
+### Task 5.0: The design follows the owner's decisions
+
+**Files:** `docs/design/desktop-console.md`
+
+**Steps.** If the owner rules against any recommendation in the design's §10 — the sidecar (D1), read-only v1 (D2), this repository (D3), direct-plus-cask (D4), updates on (D5), recorded fixtures (D6), warn-and-degrade (D7), information-design-only fidelity (D8), no framework (D9), macOS first (D10), its own artifact from the CLI's tag (D11) — this task rewrites the design to the ruled answer **before any code task starts** and records the ruling in the design's decisions table, as `docs/design/project-centric.md` §12 does. A docs-only task, and the only edit this plan makes to the design.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`
+
+**Depends on:** the owner's ruling.
+
+**Commit:** `console: the design, at the owner's decisions`
+
+**Red step — `Expected: FAIL`** — the docs-presence test before the ruled strings are in.
+
+### Task 5.1: Windows and Linux packaging (unscheduled)
+
+**Steps.** Two more signed deliverables (**D10**), each with its own identity and its own owner-run check (`windows-latest` signing via a code-signing certificate; Linux via the distro channels this repo would have to choose). **Not scheduled**: the design recommends later, the code stays cross-platform, and Task 1.4's staged workflow already runs the Linux e2e pass under `xvfb-run` so the platform does not rot.
+
+### Task 5.2: The v1.1 write actions — SECURITY-SENSITIVE, independent opus review (unscheduled)
+
+**Steps.** Kill, resume and cancel, if the owner says so (**D2**). Each is implemented **by invoking the CLI's own command**, never by writing to RTDB from the app: the typed confirmation, the admin check and the ETag compare-and-set stay in `internal/watch/keys.go` and `internal/cli/budget.go`, where they already are, and where a `budget kill` prints "you are not a budget admin" when the operator is not one. Rejected outright: any design in which the console writes.
+
+## Cross-task dependencies
+
+Every task's "Depends on" is a *build* dependency, and none of them is a merge dependency beyond its own phase: phases 1, 2 and 3 each leave a working artifact even if the next phase never ships, and phase 4 ships nothing by itself (its last task is the owner's). The two places a reader might expect a dependency that does not exist: **phase 2 does not depend on project-centric phases 1 or 4** — it renders what exists and says so when a section is not built (Task 2.3) — and **phase 4 does not depend on the CLI's release process being changed**; it adds an artifact to the existing tag, which is what D11 decided.
+
+## Decisions this plan defers to the owner
+
+Its own, continuing the design's D-series with **C1 onward**, each vetoable before its phase starts:
+
+| # | Question | Recommendation |
+|---|---|---|
+| **C1** | Is phase 0's boundary test (Task 0.3) enough to keep the Go module untouched, or does the owner want `console/` excluded from the module by a build constraint too? | **The test is enough.** `console/` holds no Go file, so `go build ./...`, `go vet ./...` and `gofmt -l .` never see it; a build constraint would add a mechanism where a test already gives the guarantee. |
+| **C2** | Does the console need its own `docs/release.md` section, or does it belong in the CLI's? | **Its own section in the existing file**, so the two artifacts' gates and Highlights are read in one place — `docs/release.md` is the single source of truth for the tag. |
+| **C3** | Who owns the recorded fixtures' refresh, and when? | **The owner, at each release that changes `watch --json`**, with the redactor failing closed (Task 1.4) so a stale fixture surfaces as a test failure rather than a plausible screen. |
+| **C4** | Does the console need a Homebrew cask of its own, and does it keep the CLI cask's `xattr -dr com.apple.quarantine` postflight? | **A cask of its own, and no quarantine hook**: the hook exists because the CLI's binaries are not notarised, and a notarised, stapled console does not need it. Removing the hook is the visible proof the notarisation works. |
+| **C5** | Does the console ship a `--json` mode of its own (a headless `console --json`) as the CLI does? | **No.** The CLI already has the machine view; a second one would be a second contract to version. The console is a renderer. |
+
+## OWNER APPROVAL GATE
+
+**No code before the owner approves the design and this plan.** Concretely: `docs/design/desktop-console.md` and this file are the deliverable of the PR that adds them; Tasks 0.1 onward are future work; and **no task in this plan starts until the owner has ruled on the design's D1 to D12** (its §10) and, if any recommendation is rejected, Task 5.0 has rewritten the design to the ruled answer. The three that gate the most: **D1** (the sidecar, which decides everything about the data plane), **D3** (this repository, which decides the CI and the module), and **D4** (Apple signing, which would be the first private key this repo's release path has ever held, and which every step of phase 4 and all of Check 58 is owner-run because of).
