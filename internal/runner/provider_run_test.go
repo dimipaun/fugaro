@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
@@ -316,13 +317,121 @@ func TestClaimedClaudeSeniorCharge(t *testing.T) {
 		t.Errorf("model_usd = %v µ$, want %v", got, wantReview+wantCoder)
 	}
 	if !near(rec.CostUSD, (wantReview + wantCoder).USD()) {
-		t.Errorf("cost_usd = %v, want %v", rec.CostUSD, (wantReview+wantCoder).USD())
+		t.Errorf("cost_usd = %v, want %v", rec.CostUSD, (wantReview + wantCoder).USD())
 	}
 	// The stored record carries the same figures.
 	stored, err := g.store.ReadRecord(context.Background())
 	if err != nil || stored.Cost == nil || micros(t, stored.Cost.ModelBy[claimedSenior]) != wantReview || stored.Cost.ModelBy[sonnet] != 0 {
 		t.Fatalf("stored = %+v, %v", stored, err)
 	}
+}
+
+// callModel is a step that makes one call on model as Claude Code would, and
+// fails the test if the gateway did not serve it: the statuses are asserted
+// where a test needs them (callDeepseek, callClaimed), and a stage that only
+// has to spend does not.
+func callModel(model string, inner step) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if status, body := post(t, req, model, 4096); status != 200 {
+			t.Errorf("the call on %s got %d: %s", model, status, body)
+		}
+		return inner(t, ctx, req)
+	}
+}
+
+// TestClaimedClaudeSeniorRecipes is Task 6 step 4: it pins P9's second half by
+// naming the recipe. `auto` decides the derived recipe's first line, and a
+// claimed Claude senior turns it off -- FirstLineOn under auto asks for a coder
+// a provider serves *and a reviewer none does* -- so the derived recipe runs
+// implement, review. A recipe the catalog names itself is not derived, and its
+// own first_line step runs whatever auto would have said: the catalog's
+// `standard` runs implement, review_first, review, the cheap step on the
+// coder's model, and its `review: {bounce: first_line}` sends a rejection back
+// into that step. Both subtests use `first_line_review: auto`, so the recipe
+// name is the only difference between them.
+func TestClaimedClaudeSeniorRecipes(t *testing.T) {
+	use := pricing.Usage{Input: 1000, Output: 500}
+	// reply answers the nth call as the provider would: the coder's model for
+	// the implement, the fix and every first-line review, the claimed Claude ID
+	// for the senior ones.
+	reply := func(model string) anthropicfake.Reply {
+		return anthropicfake.Compat{}.MessageOK(model, use)
+	}
+
+	t.Run("the derived recipe runs no first line", func(t *testing.T) {
+		g := claimedRun(t, claimedRecipe(t, "  first_line_review: auto\n  recipe: "+recipe.DefaultName+"\n"),
+			"enforce", "50", []anthropicfake.Reply{reply(deepseek), reply(claimedSenior)}, "acme/app")
+		var coderStatus, reviewStatus int
+		var coderBody, reviewBody string
+		rec, err := g.run(t,
+			callDeepseek(&coderStatus, &coderBody, implement("feature")),
+			callClaimed(&reviewStatus, &reviewBody, review("ship", 0)))
+		if err != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+			t.Fatalf("rec = %+v, err = %v", rec, err)
+		}
+		if coderStatus != 200 || reviewStatus != 200 {
+			t.Fatalf("statuses = %d, %d: %s %s", coderStatus, reviewStatus, coderBody, reviewBody)
+		}
+		if got := stageNames(rec); !eq(got, "implement", "review") {
+			t.Fatalf("stages = %v, want no first-line step: auto is off once a provider serves the reviewer", got)
+		}
+		for _, r := range rec.Reviews {
+			if r.Tier == runstore.TierFirst {
+				t.Errorf("a first-line review ran under the derived recipe: %+v", r)
+			}
+		}
+		onlyPR(t, g.provider)
+	})
+
+	t.Run("a non-derived recipe keeps its own first line, and its bounce", func(t *testing.T) {
+		// The catalog's standard: first_line, then review: {bounce: first_line}.
+		g := claimedRun(t, claimedRecipe(t, "  first_line_review: auto\n  recipe: standard\n"),
+			"enforce", "50", []anthropicfake.Reply{
+				reply(deepseek),      // implement
+				reply(deepseek),      // review_first
+				reply(deepseek),      // fix
+				reply(claimedSenior), // review, round 1: a rejection
+				reply(deepseek),      // fix
+				reply(deepseek),      // review_first, the bounce
+				reply(claimedSenior), // review, round 2
+			}, "acme/app")
+		rec, err := g.run(t,
+			callModel(deepseek, implement("feature")),
+			callModel(deepseek, review("changes", 1)), // review_first round 1
+			callModel(deepseek, fixStep),
+			callModel(claimedSenior, review("changes", 1)), // review round 1
+			callModel(deepseek, fixStep),
+			callModel(deepseek, review("ship", 0)),      // review_first, the bounce
+			callModel(claimedSenior, review("ship", 0))) // review round 2
+		if err != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+			t.Fatalf("rec = %+v, err = %v", rec, err)
+		}
+		if got := stageNames(rec); !eq(got, "implement", "review_first", "fix", "review", "fix", "review_first", "review") {
+			t.Fatalf("stages = %v", got)
+		}
+		if got := tiers(rec); !eq(got, "first:changes", "senior:changes", "first:ship", "senior:ship") {
+			t.Fatalf("reviews = %v", got)
+		}
+		if rs := rec.Reviews; rs[2].Bounce != 1 || rs[2].Tier != runstore.TierFirst {
+			t.Fatalf("the bounced first-line review = %+v, want Bounce 1, Tier first", rs[2])
+		}
+		// The first-line step runs on the coder's model, the senior on the
+		// claimed ID: the recipe's step, not the reviewer's model.
+		wantModels := []string{deepseek, deepseek, deepseek, claimedSenior, deepseek, deepseek, claimedSenior}
+		for i, c := range g.agent.calls {
+			if c.Model != wantModels[i] {
+				t.Errorf("stage %d ran on %s, want %s", i, c.Model, wantModels[i])
+			}
+		}
+		// Every call went to the provider: the claimed senior's reviews too.
+		if n := g.compat.Count(); n != 7 {
+			t.Fatalf("the provider saw %d calls, want 7", n)
+		}
+		if n := g.fake.Count(); n != 0 {
+			t.Fatalf("Anthropic saw %d calls", n)
+		}
+		onlyPR(t, g.provider)
+	})
 }
 
 // chargedNames is the models the run's figures name, in a fixed order, for a
