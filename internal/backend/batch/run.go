@@ -249,14 +249,35 @@ func (b *Backend) toExecution(j *batch.Job) (backend.Execution, error) {
 	// name (backend.Execution.Region): a caller that prices this execution
 	// uses it rather than parsing a Batch name's fields.
 	x.Region = b.o.Region
-	// MachineType is the backend's own configuration, which is what the job
-	// definition sent: it is what makes this a VM-backed execution, priced
-	// from the machine type's quantities rather than Cloud Run's job limits
-	// (backend.Execution.MachineType, design §5.2).
-	x.MachineType = b.o.MachineType
+	// MachineType is read off the job, not off this backend's configuration
+	// (jobMachineType): a machine type is a fact about the execution, and
+	// Options is a fact about today -- an operator who changes the profile's
+	// machine type must not silently re-price every run already recorded at
+	// the new type's quantities (design §5.2). The configuration is the
+	// fallback for a job that names none, which this backend's own jobs
+	// never do (checkVM requires one).
+	if x.MachineType = jobMachineType(j); x.MachineType == "" {
+		x.MachineType = b.o.MachineType
+	}
 	x.LogURL = b.logURL(id, j.Uid, x.Created)
 	x.Run = runEnv(j)
 	return x, nil
+}
+
+// jobMachineType is the machine type a job's VMs are, from the job itself:
+// allocationPolicy.instances[0].policy.machineType, the field jobDefinition
+// wrote. "" for a job that names none -- one this backend did not build, or
+// one built before the field was sent -- which is why the caller falls back
+// to its own configuration.
+func jobMachineType(j *batch.Job) string {
+	if j.AllocationPolicy == nil || len(j.AllocationPolicy.Instances) == 0 {
+		return ""
+	}
+	inst := j.AllocationPolicy.Instances[0]
+	if inst == nil || inst.Policy == nil {
+		return ""
+	}
+	return inst.Policy.MachineType
 }
 
 // runEnv is the FUGARO_RUN the job was created with, from the task's

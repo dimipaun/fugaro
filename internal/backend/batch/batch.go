@@ -14,19 +14,30 @@
 //
 // What is deliberately NOT here, and which task owns it:
 //
-//   - Task 3: the compute cost of a VM (the machine type's quantities, the
-//     one-minute billing floor, the boot window), which is why Started and
-//     Completed are left zero rather than guessed.
+//   - Task 3 (built): the compute cost of a VM -- the machine type's
+//     quantities, the one-minute billing floor and the boot window -- whose
+//     window this package reports a machine type for. Started and Completed
+//     are still left zero, because the job's status events are where they
+//     come from and their shape is UNVERIFIED (Check 57a steps 7 and 8): a
+//     finished job therefore has no window to price and reads "compute not
+//     estimated" rather than a figure that grows with the clock
+//     (backend.Execution.BilledWindow).
 //   - Task 4 (built): the installation's log sink arm for
 //     batch.googleapis.com/Job, the labels.job_uid filter `fugaro logs`
 //     reads a job's task logs by, and following a job's logs.
+//   - Task 5 (built): the reaper in reap.go.
 //   - Task 6: provisioning (the Batch API, the service accounts, IAM, the
-//     boot image, the NAT/router).
-//   - Task 7: the real job definition -- the socket mount, the env
-//     allowlist, the resource quantities -- and the IAM that lets a launcher
-//     create a job. This package builds the fields a fake-level test can
-//     hold it to, from Options.
-//   - Task 8: the config plumbing that fills Options in.
+//     boot image, the NAT/router) and the IAM that lets a launcher create a
+//     job.
+//   - Task 7 (built): the job definition -- the VM's machine type and
+//     preloaded boot disk, the network and subnetwork with no external IP,
+//     the task's own quantities, the Docker socket mount and the env that
+//     points at it, and the refusals -- plus Launch, Execution reading the
+//     job's own machine type back, and the SECURITY.md section for the
+//     backend's model.
+//   - Task 8: the config plumbing that fills Options in, including a
+//     workflow's `docker: true` reaching LaunchSpec.Docker and
+//     agent.EnvSpec.Docker.
 package batch
 
 import (

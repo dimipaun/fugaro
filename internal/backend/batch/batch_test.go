@@ -990,12 +990,11 @@ func TestExecutionRewritesTheProjectNumber(t *testing.T) {
 	if x.Region != testRegion {
 		t.Errorf("Execution region = %q, want the backend's own %q", x.Region, testRegion)
 	}
-	// The machine type is the installation's own (Task 7): without it a Batch
-	// execution would price at no machine type -- "compute not estimated" --
-	// and, since the VM's boot window and its one-minute floor are keyed on
-	// it, at no billed window either (design §5.2).
+	// The machine type is the job's own, read off the job rather than off the
+	// installation's configuration, so a profile whose machine type changes
+	// does not silently re-price every run already recorded (design §5.2).
 	if x.MachineType != testMachineType {
-		t.Errorf("Execution machine type = %q, want %q", x.MachineType, testMachineType)
+		t.Errorf("Execution machine type = %q, want the job's own %q", x.MachineType, testMachineType)
 	}
 	// The job's SCHEDULED time is still not read (design §2.3, §9), so the
 	// window falls back to the create time and says so -- a window that
@@ -1556,6 +1555,11 @@ func TestNewRefusesAnIncompleteVMConfiguration(t *testing.T) {
 			o.Subnetwork = "projects/" + testProject + "/regions/elsewhere/subnetworks/default"
 		}},
 		{"a socket gid that is not one", func(o *Options) { o.Docker = Docker{SocketGID: -1} }},
+		{"a socket path with no gid", func(o *Options) { o.Docker = Docker{SocketPath: "/run/docker.sock"} }},
+		{"a socket path that is not absolute", func(o *Options) {
+			o.Docker = Docker{SocketGID: testSocketGID, SocketPath: "run/docker.sock"}
+		}},
+		{"a negative boot disk size", func(o *Options) { o.BootDiskGB = -1 }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			o := testOptions(t)
@@ -1569,6 +1573,108 @@ func TestNewRefusesAnIncompleteVMConfiguration(t *testing.T) {
 	// its own field.
 	if _, err := New(context.Background(), testOptions(t)); err != nil {
 		t.Fatalf("New(refused a complete configuration): %v", err)
+	}
+}
+
+// TestTheVMDefaultsAreTheDesignsOwn: the two fields an installation may leave
+// unset are the design's own values -- the e2-standard-4 the design names as
+// the likely default, which every price and size in prices.go is carried for,
+// and the 50 GB disk Check 57a's jobs carried (design §1.3, §7.2) -- and they
+// are defaults, not silent zeros: a job whose computeResource and boot disk
+// were zero would be a VM of the wrong shape or no VM at all.
+func TestTheVMDefaultsAreTheDesignsOwn(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, func(o *Options) { o.MachineType, o.BootDiskGB = "", 0 })
+	if defaultMachineType != "e2-standard-4" {
+		t.Errorf("defaultMachineType = %q, want the design's e2-standard-4 (§1.3)", defaultMachineType)
+	}
+	if defaultBootDiskGB != 50 {
+		t.Errorf("defaultBootDiskGB = %d, want the 50 Check 57a's jobs carried (§7.2)", defaultBootDiskGB)
+	}
+	ref, err := b.Launch(ctx, spec())
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	policy := object(t, bf.Creates()[0].Job, "allocationPolicy", "instances", "0", "policy")
+	if policy["machineType"] != defaultMachineType {
+		t.Errorf("machineType = %v, want the default %s", policy["machineType"], defaultMachineType)
+	}
+	if got := object(t, policy, "bootDisk")["sizeGb"]; fmt.Sprint(got) != fmt.Sprint(defaultBootDiskGB) {
+		t.Errorf("bootDisk.sizeGb = %v, want the default %d", got, defaultBootDiskGB)
+	}
+	// The execution reports the same type, and it prices: the machine type's
+	// quantities are what a run of it is billed (design §5.2).
+	if x, err := b.Execution(ctx, ref.Name); err != nil {
+		t.Fatalf("Execution: %v", err)
+	} else if x.MachineType != defaultMachineType {
+		t.Errorf("Execution machine type = %q, want the default %s", x.MachineType, defaultMachineType)
+	}
+}
+
+// TestExecutionReportsTheJobsOwnMachineType: the machine type is a fact about
+// the execution, so it is read off the job that ran, not off the backend's
+// current Options. An operator who changes the profile's machine type -- a
+// bigger type for a heavier workflow, say -- must not silently re-price every
+// run already recorded at the new type's quantities (design §5.2), and a job's
+// record outlives the change by 60 days (§2.4).
+func TestExecutionReportsTheJobsOwnMachineType(t *testing.T) {
+	ctx := context.Background()
+	b, _, _, _ := newTestBackend(t, nil)
+	ref, err := b.Launch(ctx, spec())
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	// The profile changes under the recorded run.
+	b.o.MachineType = "c2-standard-8"
+	x, err := b.Execution(ctx, ref.Name)
+	if err != nil {
+		t.Fatalf("Execution: %v", err)
+	}
+	if x.MachineType != testMachineType {
+		t.Errorf("Execution machine type = %q after the profile changed, want the job's own %q", x.MachineType, testMachineType)
+	}
+}
+
+// TestAFinishedBatchRunHasNoWindowToPrice: a Batch job's record outlives the
+// run by 60 days (design §2.4) and this backend reads no completion time
+// (Started and Completed are left zero: the job's status events are
+// UNVERIFIED, §2.3). So a finished run's window must be unknown -- "compute
+// not estimated" -- and must not grow with every read, which is what pricing
+// it from `now` would do: one hour, one day and ten days after the same job
+// ended would be three different estimates for one finished run.
+func TestAFinishedBatchRunHasNoWindowToPrice(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, nil)
+	ref, err := b.Launch(ctx, spec())
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	bf.SetState(ref.Job, "SUCCEEDED")
+	x, err := b.Execution(ctx, ref.Name)
+	if err != nil {
+		t.Fatalf("Execution: %v", err)
+	}
+	if !x.State.Terminal() {
+		t.Fatalf("Execution state = %q, want a terminal one", x.State)
+	}
+	if x.MachineType == "" || x.Created.IsZero() {
+		t.Fatalf("Execution = %+v: the machine type and create time are what a window would be built from", x)
+	}
+	if !x.Completed.IsZero() {
+		t.Fatalf("Completed = %v, want the zero time (this backend reads none)", x.Completed)
+	}
+	for _, d := range []time.Duration{time.Hour, 24 * time.Hour, 240 * time.Hour} {
+		if got, ok := x.BilledWindow(x.Created.Add(d)); ok {
+			t.Errorf("%v after the job ended, BilledWindow = %v, true; want unknown, never a figure that grows", d, got)
+		}
+	}
+	// A running run is the opposite case and is priced: its VM really is
+	// billing, and the window says where it started (errs high).
+	bf.SetState(ref.Job, "RUNNING")
+	if y, err := b.Execution(ctx, ref.Name); err != nil {
+		t.Fatalf("Execution: %v", err)
+	} else if d, ok := y.BilledWindow(y.Created.Add(time.Hour)); !ok || d != time.Hour {
+		t.Errorf("a running job's window = %v, %v; want the hour since its creation, known", d, ok)
 	}
 }
 
