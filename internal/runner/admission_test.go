@@ -97,11 +97,11 @@ func mintUnder(t *testing.T, b *bk, slug string, at time.Time) {
 // refusedAdmission fails unless the run stopped at the admission check: an
 // infra error (so the process exits non-zero and the job shows failed), the
 // record kept as infra_error with outcome none, every want in the reason, no
-// stage run — and nothing changed anywhere (R2-12). No git credential was
-// requested of the provider, the branch lock was not taken, no lease was
-// reserved and no outcome and no spend were written: a run that is not admitted
-// for this repository leaves its own record — created by bootstrap's deferred
-// handler, so views see an infra_error rather than a run that never started —
+// stage run — and nothing written anywhere but its own record (R2-12). No git
+// credential was requested of the provider, the branch lock was not taken, no
+// lease was reserved and no outcome and no spend were written: a run that is
+// not admitted for this repository leaves its own record — created by the
+// claim, so views see an infra_error rather than a run that never started —
 // and nothing else at all.
 //
 // The credential count is what makes the placement of the check observable.
