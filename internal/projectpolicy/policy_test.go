@@ -102,52 +102,6 @@ func TestDecodeRefusesAMisspeltProviderKey(t *testing.T) {
 	}
 }
 
-// TestDecodeRefusesAProviderKeyOfAnotherCase: an entry's keys are compared
-// byte for byte against config.ModelProvider's own JSON names, not through
-// encoding/json's field matching, which is case-insensitive. That matching is
-// the hole this closes, and it is the same fail-open as a misspelling:
-// "ALLOW_DATA_TO": null decodes into AllowedDataTo as nothing at all (Go
-// matches the name whatever its case), and the explicit-null refusal below
-// looks the key up byte for byte, so it does not see it — the entry then holds
-// the nil slice that ModelProvider.AllowsData reads as "every repository" and
-// OpenToEveryRepo reports as true. A non-null case variant is not a fail-open
-// by itself (the list is applied), but it is a spelling this binary's document
-// does not define, and one document written by two spellings is how the two
-// sides drift: the same entry in fugaro.yaml is refused by the YAML decoder's
-// known-fields check either way.
-func TestDecodeRefusesAProviderKeyOfAnotherCase(t *testing.T) {
-	// The accepted spelling, first, so the refusals below are about the case.
-	p, found, err := Decode(providerPolicy(`{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["acme/app"]}`))
-	if err != nil || !found || p == nil {
-		t.Fatalf("the correctly spelled entry was refused: %v", err)
-	}
-	if got := p.Providers["openrouter"]; got.OpenToEveryRepo() || got.AllowsData("other/repo") {
-		t.Errorf("allow_data_to = %v, want acme/app only", got.AllowDataTo)
-	}
-
-	for _, tc := range []struct{ name, entry string }{
-		{"a case variant of allow_data_to, written null: the nil slice is every repository", `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "ALLOW_DATA_TO": null}`},
-		{"the same key in another case, written null", `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "Allow_Data_To": null}`},
-		{"a case variant of allow_data_to with a list", `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "ALLOW_DATA_TO": ["acme/app"]}`},
-		{"a case variant of route_fee_pct, which would drop the surcharge", `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "ROUTE_FEE_PCT": 3}`},
-		{"a case variant of price_policy", `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "PRICE_POLICY": "highest"}`},
-		{"a case variant of an ordinary key", `{"KIND": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			p, found, err := Decode(providerPolicy(tc.entry))
-			if err == nil {
-				t.Fatalf("Decode(%s) = (%v, nil), want a refusal: an entry's keys are the ones this Fugaro declares, in the case it declares them", tc.entry, p)
-			}
-			if !found {
-				t.Errorf("the node exists and cannot be used, so found must be true (fail closed): %v", err)
-			}
-			if !strings.Contains(err.Error(), "openrouter") {
-				t.Errorf("the refusal does not name the provider it is about: %v", err)
-			}
-		})
-	}
-}
-
 func TestDecodeRefusesBadVersion(t *testing.T) {
 	for name, raw := range map[string]string{
 		"no version":     `{"budget": {"mode": "observe"}}`,
@@ -364,24 +318,41 @@ func TestDecodeChecksAProviderSecretIsASecretName(t *testing.T) {
 // same values are refused here rather than decoded and enforced.
 func TestDecodeValidatesProviderEntriesLikeTheCarrier(t *testing.T) {
 	for name, entry := range map[string]string{
-		"no kind":             `{"base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
-		"an unknown kind":     `{"kind": "openai-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
-		"an http base URL":    `{"kind": "anthropic-compat", "base_url": "http://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
-		"no base URL":         `{"kind": "anthropic-compat", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
-		"a mistyped auth":     `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "Authorization", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
-		"no auth":             `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
-		"no models":           `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key"}`,
-		"an empty data list":  `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": []}`,
-		"a null data list":    `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": null}`,
-		"a bad data entry":    `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["acme"]}`,
-		"an absurd route fee": `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "route_fee_pct": 51}`,
-		"an alias pattern":    `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["claude-*"]}`,
-		"a misspelt policy":   `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "price_policy": "cheaper"}`,
+		"no kind":            `{"base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
+		"an unknown kind":    `{"kind": "openai-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
+		"an http base URL":   `{"kind": "anthropic-compat", "base_url": "http://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
+		"no base URL":        `{"kind": "anthropic-compat", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
+		"a mistyped auth":    `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "Authorization", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
+		"no auth":            `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
+		"no models":          `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key"}`,
+		"an empty data list": `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": []}`,
+		"a null data list":   `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": null}`,
+		// encoding/json matches a member to its field case-insensitively, so
+		// the two spellings below used to decode into the very fields the
+		// documented ones name — while the checks that read the raw document
+		// (validProviders' allow_data_to lookup) and the carrier's own
+		// fugaro.yaml rules (ModelProvider.UnmarshalYAML, exact names) do not
+		// see them. The null one published "every repository".
+		"a case-variant null data list": `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "Allow_Data_To": null}`,
+		"a case-variant member name":    `{"Kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
+		"a bad data entry":              `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["acme"]}`,
+		"an absurd route fee":           `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "route_fee_pct": 51}`,
+		"an alias pattern":              `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["claude-*"]}`,
+		"a misspelt policy":             `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "price_policy": "cheaper"}`,
 	} {
 		p, found, err := Decode(providerPolicy(entry))
 		if err == nil || p != nil || !found {
 			t.Errorf("%s: Decode(%s) = (%v, %v, %v), want a refusal on an existing node", name, entry, p, found, err)
 		}
+	}
+	// A case-variant member is refused by its spelling, and the refusal names
+	// the one to write: the point of the row above is that this spelling is a
+	// spelling of allow_data_to, and an operator who reads "unknown field
+	// Allow_Data_To" would be told the wrong thing about a key this Fugaro
+	// knows.
+	if _, _, err := Decode(providerPolicy(`{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "Allow_Data_To": null}`)); err == nil ||
+		!strings.Contains(err.Error(), "Allow_Data_To") || !strings.Contains(err.Error(), "allow_data_to") {
+		t.Errorf("the case-variant null list = %v, want a refusal naming both the spelling written and the one to write", err)
 	}
 	// Two providers may not claim the same model: the run would route to one of
 	// them arbitrarily, and the charge would be whichever one it was.

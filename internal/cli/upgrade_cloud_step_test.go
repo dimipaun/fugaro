@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -131,6 +132,52 @@ func TestUpgradeCloudReportsStaleJobConfigCopy(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output lacks %q:\n%s", want, out)
 		}
+	}
+}
+
+// TestUpgradeNoteSaysTheEnvCopyIsInert: once a policy is published, the
+// drift note stops sending the operator to init --repo for the keys the
+// policy governs — runs read those from the node, not from the job's
+// environment — and names what a job's environment still has to be
+// refreshed for (plan task 1.6 step 5).
+//
+// Mutation (verified, run and restored): drop the
+// `if p := jobConfigCopyPolicyNote(cctx, lc); p != ""` clause from
+// jobConfigCopyNote: this test fails, finding "use the old copy until you
+// run fugaro init --repo" where the policy clause belongs.
+func TestUpgradeNoteSaysTheEnvCopyIsInert(t *testing.T) {
+	r := upgradeRigWithGitHubAppID(t)
+	r.appendConfig(t, providersConfig)
+	db := gcpfake.NewRTDB(t)
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+	})
+	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, rtdb_url: "+db.URL+" }\n")
+	stubCurrentRefresh(t, r)
+	setJobConfigCopyEnv(t, r, "api", nil)
+	fakeSteps(t, "", nil)
+	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"the deployed job's copy of the local project config is STALE",
+		"the policy published at " + projectpolicy.PathShared() + " now governs",
+		"not a reason to re-run fugaro init --repo",
+		infra.RTDBURLEnv,
+		infra.FirebaseAPIKeyEnv,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the note lacks %q:\n%s", want, out)
+		}
+	}
+	// The whole-copy sentence is what the policy clause replaces: the drift the
+	// note just reported is exactly what the policy now governs.
+	if strings.Contains(out, "use the old copy until you run") {
+		t.Errorf("the note still sends the operator to init --repo for the whole copy:\n%s", out)
 	}
 }
 

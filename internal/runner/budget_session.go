@@ -209,17 +209,15 @@ func (r *run) bootstrapHalt(reason runstore.HaltReason, scope, detail string) er
 	return &HaltError{*r.haltValue()}
 }
 
-// errTokenWithoutBackend is the refusal for a job whose launcher minted it a
-// budget token — which the launcher does only when the repository has a shared
-// budget or the project has published a policy — but whose environment carries
-// no budget database, so the run cannot read the policy (M2). It is worded once
-// and returned from the two places the absent backend is met: budgetClient,
-// where the marked job's project policy read ends (admission, before the
-// provider is opened and before the clone), and startBudgetBackend, the
-// backstop for a run that reached the session without having read one. The two
-// used to carry copies of this sentence, which is how the read came to be the
-// one placement that did not fail closed.
-func errTokenWithoutBackend() error {
+// strayTokenNoBackend is M2's refusal for a job whose launcher minted a budget
+// token and whose environment carries no budget backend: the marker is written
+// only by a launcher that saw a shared budget or a published policy, so this
+// run has a ceiling it cannot read. It is worded once because it has two
+// readers and they must agree: budgetClient, which meets the state at the
+// policy read — before admissionCheck, before any git credential, before the
+// clone — and startBudgetBackend, which met it first and is where a run that
+// answered "no policy" earlier would otherwise stop.
+func strayTokenNoBackend() error {
 	return fmt.Errorf("this run was launched with a budget token, so this repository has a shared budget or a published policy, but its job carries no budget backend (%s is not set in the job's environment): run fugaro init --repo for this repository, then launch the run again", RTDBURLEnv)
 }
 
@@ -235,12 +233,9 @@ func (r *run) startBudgetBackend(ctx context.Context) error {
 	// and a run whose own mode is off would go on with the environment
 	// ceiling, no session and no kill switch (M2; refuseStrayToken below is
 	// the same refusal for a budget-on job, found by reading the bucket).
-	// The marker is proof enough: nothing else writes it. budgetClient returns
-	// the same value from the marked job's policy read, which is where the
-	// refusal lands before the provider is opened; this is the backstop for a
-	// run that reaches here without having read one.
+	// The marker is proof enough: nothing else writes it.
 	if r.d.Backend.TokenMarked && !r.d.Backend.On() {
-		return errTokenWithoutBackend()
+		return strayTokenNoBackend()
 	}
 	// A run whose budget is off ignores the budget's environment entirely.
 	if !r.spend.On() {

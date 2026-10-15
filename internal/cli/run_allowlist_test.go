@@ -141,6 +141,36 @@ func TestRunRefusesBeforeLaunch(t *testing.T) {
 	}
 }
 
+// A best-of-N batch is refused by the same gate, and before its first attempt:
+// runAttempts launches every attempt through launchAttempt, which in production
+// is finishLaunch, so the gate is not a single-run path. The tests that swap
+// that seam to fail an attempt replace the call the gate lives in, so none of
+// them reaches it — a gate moved into a branch the batch's own pre-checks take
+// (skipBudget, for one: the batch takes it) would leave every attempt of a
+// repository the policy does not admit to launch.
+//
+// Mutation (verified, run and restored): move launchPolicyGates inside the
+// `if !skipBudget` branch above it — this test fails, 2 executions created for a
+// batch the policy refuses.
+func TestRunAttemptsRefusesBeforeAnyLaunch(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	publishPolicy(t, f, `{"version":1,"allow_repos":["github/other/*"]}`)
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "Add a feature")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v (exit %d), want a user error from the policy gate", err, ExitCode(err))
+	}
+	for _, want := range []string{
+		"github/acme/app", "allow_repos", "github/other/*", "before any execution exists",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the batch's refusal does not say %q: %v", want, err)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions were created for a refused batch", n)
+	}
+}
+
 // The gate's one skew direction: a policy whose version is above what this
 // binary understands refuses the launch, before the execution is created, with
 // a message naming both versions, the release the policy model ships in

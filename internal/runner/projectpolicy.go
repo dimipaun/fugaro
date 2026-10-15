@@ -90,13 +90,14 @@ func (r *run) projectPolicy(ctx context.Context) (*projectpolicy.Policy, bool, e
 		// No database in the job's environment: no client, no marker, no node.
 		// This is the absence the readiness gate refuses (init --repo) once
 		// the project has published a policy; a run cannot invent the
-		// credential it would need to notice one. The other two are not that
-		// absence and go through budgetClient, which refuses them whatever the
-		// run's mode: an environment that named a backend it could not parse
-		// (L-b), and a job whose launcher minted a budget token (M2 — the
-		// marker is only ever written when the project has something
-		// published, so read as "no policy here" it would skip the allow-list
-		// and the run would open the provider and clone before the refusal).
+		// credential it would need to notice one. An environment that named a
+		// backend it could not parse is not that absence (L-b), and neither is
+		// one whose launcher minted a token (M2): both name something that only
+		// exists when a policy or a shared budget does, so both go through
+		// budgetClient, which refuses them whatever the run's mode. Answering
+		// "no policy" here for a marked job is the fail-open M2 closed one step
+		// too late: admissionCheck would never see the allow-list, and the
+		// clone would be made before startBudgetBackend refused.
 		return nil, false, nil
 	}
 	db, err := r.budgetClient(ctx)
@@ -267,17 +268,15 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 		return nil, c.err
 	}
 	if !r.d.Backend.On() {
-		// No database in the job's environment. For a job whose launcher
-		// minted a token that absence is not the mode-off path: the marker is
-		// proof that there is a policy to read (the launcher mints only when
-		// there is one), so this is the refusal and never "this project has
-		// published nothing" (M2). It is returned here rather than only from
-		// startBudgetBackend, which is where it used to be, because this read
-		// is what admission runs on: the run ends before the provider is
-		// opened and before the clone, with no git credential handed out, and
-		// it ends in the same sentence either way (errTokenWithoutBackend).
+		// A job with no database in its environment, and no launcher's marker
+		// either, has nothing to read (projectPolicy's early return does not
+		// send it here). A marked one is M2's state met at the policy read
+		// rather than at startBudgetBackend: the launcher minted a token, which
+		// it does only when the project has a shared budget or a published
+		// policy, so this run has a ceiling it cannot read and must stop before
+		// admission and before any git credential exists — not after the clone.
 		if r.d.Backend.TokenMarked {
-			c.err = errTokenWithoutBackend()
+			c.err = strayTokenNoBackend()
 			return nil, c.err
 		}
 		return nil, nil
