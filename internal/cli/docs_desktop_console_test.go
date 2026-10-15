@@ -17,7 +17,9 @@ package cli
 // test here instead of silently breaking a screen.
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"reflect"
 	"regexp"
 	"slices"
@@ -827,5 +829,329 @@ func TestDocsDesktopConsoleContractCreditsProjectCommandsToTheRightPhase(t *test
 		if !strings.Contains(row, "`"+verb+"`") && !strings.Contains(row, "repos "+verb) {
 			t.Errorf("%s's gap-3 row no longer names the verb %s among those that come later", path, verb)
 		}
+	}
+}
+
+// ---------------------------------------------------------------- Task 0.2
+
+// Task 0.2 of the plan (console/docs/json-contract.md section 10): what
+// `watch --json` guarantees to a long-lived child process. The plan's Tests
+// line for the task names one test, TestDocsDesktopConsoleContractSettlesTheFeed,
+// a presence test; the three behavioural tests after it are here because a
+// presence test cannot see what the section is actually about. They exercise
+// the real command -- `execute` runs NewRootCmd, the fixture is a fake
+// Realtime Database -- so the claims section 10 makes about the child's
+// lifecycle fail a test when the code changes, not only when the prose does.
+// They live in this file rather than a new one because the plan's Files line
+// for Task 0.2 is exactly console/docs/json-contract.md and this file.
+
+// TestDocsDesktopConsoleContractSettlesTheFeed pins the consumption contract
+// of `watch --json` -- plan Task 0.2, settling the design's section 12 item 2
+// by reading the CLI rather than assuming it. Each sub-assertion is a named
+// fact and carries the symbol that proves it, so dropping a fact from the
+// document fails a test named for it instead of quietly shrinking the
+// contract. The four the plan names by hand are the slow reader, the closed
+// stdout, the refusal and the UTC-midnight rollover; the rest are the same
+// task's steps, and each was read off the code (see section 10's own
+// citations).
+func TestDocsDesktopConsoleContractSettlesTheFeed(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	// Whitespace is normalised, as the sibling docs tests do: a sentence
+	// rewrapped by a later edit is the same sentence.
+	doc := strings.Join(strings.Fields(readDoc(t, path)), " ")
+	for _, c := range []struct {
+		fact string
+		want []string
+	}{
+		{
+			fact: "a slow reader blocks the child rather than dropping a document",
+			want: []string{
+				"A slow reader makes the child block; it never drops a document",
+				"json.NewEncoder(d.Out).Encode",
+				"Supervisor.emit",
+				"watch.Start",
+				"rtdb.Client.Stream",
+				"c.idle",
+				"backMin",
+				"backMax",
+				"a `put` of `\"/\"` holding the whole current value",
+			},
+		},
+		{
+			fact: "a closed stdout ends the child, on a write and by a signal",
+			want: []string{
+				"A closed stdout ends the child — on its next write, and by a signal",
+				"SIGPIPE",
+				"descriptors 1 and 2",
+				"the parent that spawned it sees **a signal, not an exit code**",
+				"141",
+				"An idle project emits no document",
+				"SIGPIPE is therefore not a shutdown mechanism",
+				"not wrapped with `remote()`",
+				"ExitUserError",
+			},
+		},
+		{
+			fact: "a refused read is terminal, and usually announces itself with no document",
+			want: []string{
+				"A refused read is terminal, and it usually announces itself with no document at all",
+				"checkDBProject",
+				"before it starts the supervisor",
+				"Zero documents is the shape of the ordinary refusal",
+				"State.conn",
+				"ConnRefused",
+				"refused",
+				"dbErr(d.LC, rtdb.ErrPermission, false)",
+				"phaseHalt",
+				"Restarting the child before the identity or the role changes refuses again",
+			},
+		},
+		{
+			fact: "UTC midnight is a gap, not a zero",
+			want: []string{
+				"UTC midnight is a gap, not a zero",
+				"budget.Day(s.now())",
+				"streamPhase",
+				"dayWG.Wait()",
+				"rollDay",
+				"openDay",
+				"UpdDay",
+				"SetDay",
+				"rtdb.Tree.Reset",
+				"BurnWarmup",
+				"a document that is not a measurement",
+			},
+		},
+		{
+			fact: "the emission rule, and that a document is a sampled whole",
+			want: []string{
+				"refused || (ready && dirty && (last.IsZero() || time.Since(last) >= gap))",
+				"watchJSONGap",
+				"A document is a sampled whole, not a delta",
+				"Silence means \"live and unchanged\", not \"the feed is dead\"",
+				"A connection-state change is announced",
+				"watch.StaleAfter",
+			},
+		},
+		{
+			fact: "the first document arrives within watchFirstFrame",
+			want: []string{
+				"The first document arrives within `watchFirstFrame`",
+				"seen == [4]bool{true, true, true, true}",
+				"watchFirstFrame",
+				"Supervisor.run",
+				"offline frame",
+				// `ready` is only re-evaluated on an update, and updates come
+				// from the tick: the arrival bound is the clock plus a tick.
+				"`watchFirstFrame` + `watch.Options.Tick`, about 6 s",
+			},
+		},
+		{
+			fact: "a dead or withdrawn stream is not an exit",
+			want: []string{
+				"A dead or withdrawn stream is not an exit",
+				"probe",
+				"pollPhase",
+				"phaseTrial",
+				"SSERetry",
+				"the child stays alive",
+				"`refused` is the one connection state that does *not* linger",
+			},
+		},
+		{
+			fact: "the degraded mode is a second shape and a line that is not JSON",
+			want: []string{
+				"watchDegradedDoc",
+				"degradedSince",
+				"watchPlainInterval",
+				"run records unavailable (retrying): %s",
+				"cmd.OutOrStdout()",
+				"skip any line that is not a JSON object",
+				"printProjectHeader",
+				"goes to stderr, which is not the document stream",
+			},
+		},
+		{
+			fact: "the thresholds a consumer that is not a terminal needs",
+			want: []string{
+				"watch.SilentAfter",
+				"watch.LostAfter",
+				"watch.BurnWindow",
+				"watch.Options.Tick",
+				"watch.Options.Interval",
+				"degradedSince",
+			},
+		},
+		{
+			fact: "how many documents arrive per minute in each mode",
+			want: []string{
+				"How many documents arrive per minute, in each mode",
+				"Live SSE (`watch --json`)",
+				"Polling (`--poll`, or after three same-cause stream errors)",
+				"two per poll",
+				"Degraded (no `budget.rtdb_url`)",
+				"exactly one, then exit",
+			},
+		},
+		{
+			fact: "option A needs a supervisor, and why",
+			want: []string{
+				"Does option A need a supervisor process? Yes",
+				"The child exits on a refusal",
+				"The child does not exit on a dead stream",
+				"A closed pipe does not end an idle child",
+				"one `watch --json` per selected installation",
+			},
+		},
+		{
+			fact: "how the child ends when the console asks it to",
+			want: []string{
+				"How the child ends when the console asks it to",
+				"signalContext",
+				"os.Interrupt, syscall.SIGTERM, syscall.SIGHUP",
+				"the child exits 0",
+				"context.AfterFunc",
+				"SIGKILL",
+				// The tick is not what notices the signal, and a child blocked
+				// writing to a stalled reader is why the SIGKILL exists.
+				"so a running child notices the cancellation the moment it fires",
+				"that is what the `SIGKILL` is for",
+			},
+		},
+		{
+			fact: "the reader rules, including the narrowed repo list",
+			want: []string{
+				"Split stdout on newlines and decode each line as one JSON object",
+				"A changed `day` is a break in the series, never a zero",
+				"A missing field is `unavailable`, never `0`",
+				"watch.FilterRepo",
+				"Never `--follow`",
+			},
+		},
+	} {
+		t.Run(c.fact, func(t *testing.T) {
+			for _, w := range c.want {
+				if !strings.Contains(doc, strings.Join(strings.Fields(w), " ")) {
+					t.Errorf("%s lacks %q (fact: %s)", path, w, c.fact)
+				}
+			}
+		})
+	}
+}
+
+// watchJSONLines returns the non-empty lines of a watch --json run's stdout,
+// which is the reader's own split: one document per line, and (in the
+// degraded mode) possibly a line that is not a document.
+func watchJSONLines(out string) []string {
+	var lines []string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	return lines
+}
+
+// TestWatchRefusalBeforeTheStreamExits1WithNoDocument: the ordinary refusal.
+// checkDBProject reads /fugaro/project before runWatch starts the supervisor,
+// so a database that refuses the read fails with exit 1 and the CLI's own
+// sentence on stderr -- and writes no document at all. Section 10.5's first
+// half, and the reason the console must not expect one document on a refusal.
+//
+// Mutation (run, restore): move the checkDBProject call in runWatch to after
+// watch.Start, and this test fails with the refused document on stdout.
+func TestWatchRefusalBeforeTheStreamExits1WithNoDocument(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.db.Refuse(401, "UNAUTHENTICATED", "", "expired")
+	out, _, err := execute(t, "watch", "--json")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("watch against a database that refuses the read = %v (exit %d), want a user error (exit %d)",
+			err, ExitCode(err), ExitUserError)
+	}
+	if out != "" {
+		t.Fatalf("watch wrote %q before refusing: the refusal is caught before watch.Start, so the ordinary refusal emits no document", out)
+	}
+	if !strings.Contains(err.Error(), "refused the read") {
+		t.Fatalf("err = %v, want the CLI's own refusal sentence (the one main prints to stderr)", err)
+	}
+}
+
+// TestWatchStreamRefusalEmitsOneDocumentThenExits1: the rarer refusal, one
+// that arrives during the stream. Only the agents path is refused, so the
+// database check passes and the stream starts; the permission error then
+// reaches State.conn as ConnRefused, watchStream emits that one document
+// before the ready/dirty/gap test and returns, and the child exits 1 rather
+// than halting. Section 10.5's second half and section 10.6's last
+// paragraph.
+//
+// Mutation (run, restore): delete the `if refused { return dbErr(...) }` in
+// watchStream, and this test hangs until its context times out instead of
+// returning one document and exit 1.
+func TestWatchStreamRefusalEmitsOneDocumentThenExits1(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.db.RefusePath("agents", 401, "UNAUTHENTICATED", "", "expired")
+	cmd := NewRootCmd()
+	out := &lockedBuf{}
+	cmd.SetOut(out)
+	cmd.SetErr(&lockedBuf{})
+	cmd.SetArgs([]string{"watch", "--json"})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	err := cmd.ExecuteContext(ctx)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("watch on a stream refusal = %v (exit %d), want a user error (exit %d)",
+			err, ExitCode(err), ExitUserError)
+	}
+	lines := watchJSONLines(out.String())
+	if len(lines) != 1 {
+		t.Fatalf("want exactly one document (the refusal, emitted before the ready test), got %d: %q", len(lines), out.String())
+	}
+	var doc struct {
+		Connection struct {
+			State string `json:"state"`
+		} `json:"connection"`
+	}
+	if err := json.Unmarshal([]byte(lines[0]), &doc); err != nil {
+		t.Fatalf("the one line is not a document: %q (%v)", lines[0], err)
+	}
+	if doc.Connection.State != "refused" {
+		t.Fatalf("the one document's connection.state = %q, want refused", doc.Connection.State)
+	}
+}
+
+// TestWatchCancelReturnsNilSoTheChildExitsZero: the in-process half of
+// section 10.12. main.go's signalContext cancels the command's context on
+// SIGINT, SIGTERM or SIGHUP, and main only calls os.Exit on a non-nil error,
+// so the cancelled watch must return nil for the child to exit 0 -- which is
+// what the console's SIGTERM shutdown relies on. (The signal itself is the
+// process-level test in watch_child_test.go; this is the half a
+// cancellation can show in-process.)
+func TestWatchCancelReturnsNilSoTheChildExitsZero(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedWatch(f, "streamed")
+	cmd := NewRootCmd()
+	out := &lockedBuf{}
+	cmd.SetOut(out)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"watch", "--json"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- cmd.ExecuteContext(ctx) }()
+	deadline := time.Now().Add(20 * time.Second)
+	for !strings.Contains(out.String(), "\n") && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !strings.Contains(out.String(), "\n") {
+		t.Fatal("the child wrote no document within 20 s")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("a cancelled watch returned %v, want nil: main exits 0 on SIGTERM only because it does", err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the cancelled watch did not return: SIGTERM would leave the child running")
 	}
 }
