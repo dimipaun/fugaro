@@ -10,6 +10,7 @@ import (
 	"io"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -44,8 +45,10 @@ import (
 //     3's broadened runs/ grant every run of a profile can write those
 //     prefixes, so a seed from there would let an enrolled repository enroll
 //     itself. `project show` and `project repos ls` print the repositories
-//     *seen* instead, where the operator reads them and adds a name on
-//     purpose (Task 4.1 is the fuller version of that question);
+//     *running now* instead — the registry's runs in flight, which is all the
+//     registry knows — where the operator reads them and adds a name on
+//     purpose (Task 4.1 is the fuller version of that question, from a
+//     durable source);
 //   - `sync` and the discovery surface stay in phase 4 (Task 4.1). `repos
 //     add` is here because between phases 1 and 4 a new repository would
 //     otherwise be unenrolled (P4, 12a item 3).
@@ -102,7 +105,10 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 			"launch mid-delete still sees the policy and keeps its tighter ceiling) and\n" +
 			"puts the project back on the ceiling its jobs' environments carry. It goes\n" +
 			"through the same rules-marker gate as a publish, refuses without --yes while\n" +
-			"runs are in flight, and asks you to type the project's name otherwise.",
+			"runs are in flight, and asks you to type the project's name otherwise. The\n" +
+			"config/policy/repos children are removed too, shared node or not: a delete\n" +
+			"that failed on the shared node leaves them behind, and this is what clears\n" +
+			"them.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runProjectPolicyPublish(cmd, &o) },
 	}
@@ -168,7 +174,7 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		if err != nil {
 			return err
 		}
-		pol, err := buildProjectPolicy(lc, allow)
+		pol, err := buildProjectPolicy(lc, allow, old)
 		if err != nil {
 			return err
 		}
@@ -264,7 +270,11 @@ func publishedPolicyOf(raw []byte, exists bool) (*projectpolicy.Policy, error) {
 		if ve.Found > ve.Understood {
 			return nil, userErr("%s", fmt.Sprintf(projectpolicy.CLISkew, ve.Found, ve.Understood))
 		}
-		return nil, userErr("the published policy is version %d and this Fugaro writes version %d: publishing again rewrites it in this Fugaro's shape", ve.Found, ve.Understood)
+		// An older version (a hand-written node, or one a release before this
+		// shape wrote). "Publish again" would be advice this very refusal
+		// makes impossible — the publish is what is being refused — so the
+		// remedy is the one that works: remove the node, then publish.
+		return nil, userErr("the published policy is version %d and this Fugaro writes version %d: publishing over it would rewrite it in this Fugaro's shape, and this command will not do that unasked; remove it with 'fugaro project policy publish --delete' and publish again, or correct its version by hand", ve.Found, ve.Understood)
 	case err != nil:
 		return nil, userErr("the published policy at %s cannot be read, so it cannot be replaced: %v; fix it by hand, or remove it with 'fugaro project policy publish --delete'", projectpolicy.PathShared(), err)
 	case !found:
@@ -365,17 +375,29 @@ func sharedRepos(ctx context.Context, lc *localcfg.Config) (map[string]localcfg.
 // main cannot read), and the budget block always names a mode — an empty mode
 // would take the mode from the job environment, which nobody reading the
 // policy can see (H1), and the decoder refuses such a node anyway.
-func buildProjectPolicy(lc *localcfg.Config, allow []string) (*projectpolicy.Policy, error) {
+//
+// The routing block is *kept* from the node being replaced, not dropped: this
+// Fugaro does not write routing (phase 1b does), so a publish that built the
+// policy without it would silently turn routing off — the same quiet loosening
+// `repos add|rm` refuses to make by rewriting the node from this binary's type
+// (patchPolicyJSON). A publish cannot choose a route; it can only refuse to
+// lose the one the node already carries, and printPolicyDiff says it is kept.
+// A node that never had routing stays without one, which is direct (D1b).
+func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.Policy) (*projectpolicy.Policy, error) {
 	if lc.Budget == nil || lc.Budget.Mode == "" {
 		return nil, userErr("this project's config sets no budget.mode, and a published policy's budget block must name one (off, observe or enforce): the mode decides whether the caps bite, and a block that leaves it out would take it from each job's environment, which nobody reading the policy can see; set budget: { mode: ... } in %s, or leave the policy unpublished", lc.Name)
 	}
-	return &projectpolicy.Policy{
+	pol := &projectpolicy.Policy{
 		Version:    projectpolicy.Version,
 		Budget:     projectpolicy.Budget{Mode: lc.Budget.Mode, PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
 		AllowRepos: nonNil(allow),
 		Providers:  policyProviders(lc),
 		Prices:     policyPrices(lc),
-	}, nil
+	}
+	if old != nil {
+		pol.Routing = old.Routing
+	}
+	return pol, nil
 }
 
 // policyProviders is the policy's providers block, built from the operator's
@@ -407,12 +429,15 @@ func policyProviders(lc *localcfg.Config) map[string]projectpolicy.Provider {
 
 // policyPrices is the operator's model_prices overrides, in the policy's own
 // spelling (the catalogue's: the optional rates stay pointers, so an omitted
-// one keeps the list default instead of being priced at zero).
-func policyPrices(lc *localcfg.Config) map[string]projectpolicy.Price {
+// one keeps the list default instead of being priced at zero). The keys are
+// the model IDs as the operator wrote them; projectpolicy.Prices escapes them
+// when the node is written, because an RTDB key cannot hold the "/" of
+// deepseek/deepseek-v4-flash or the "." of deepseek/deepseek-v4.1-flash.
+func policyPrices(lc *localcfg.Config) projectpolicy.Prices {
 	if len(lc.ModelPrices) == 0 {
 		return nil
 	}
-	out := make(map[string]projectpolicy.Price, len(lc.ModelPrices))
+	out := make(projectpolicy.Prices, len(lc.ModelPrices))
 	for id, p := range lc.ModelPrices {
 		price := projectpolicy.Price{
 			InputPerM: p.InputPerM, OutputPerM: p.OutputPerM,
@@ -536,9 +561,10 @@ func patchPolicyJSON(raw []byte, key string, val any) ([]byte, error) {
 }
 
 // printPolicyDiff shows what the write changes. An absent node is printed in
-// full; an existing one prints the lines that differ, then the provider
-// entries with their two price-catalogue switches, because those are the
-// values the operator is publishing about money and data sharing.
+// full; an existing one prints the lines that differ — the budget and the
+// allow-list, every field of every provider entry, and every price override —
+// so the operator reads the values about money and data sharing that this
+// publish replaces rather than a count of them.
 func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[string]string) {
 	if old == nil {
 		fmt.Fprintf(out, "%s: not published yet; writing version %d\n", projectpolicy.PathShared(), new.Version)
@@ -550,6 +576,37 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	if old != nil {
 		before = policyLines(old)
 	}
+	diffLines(out, before, now)
+	// The provider entries and the price overrides are named field by field:
+	// they are the values the operator is publishing about money and data
+	// sharing, and a line that only said "providers: openrouter" or
+	// "model_prices: 3" would hide a changed base_url, a widened models list,
+	// a data-sharing list that grew, a route fee or a rate (the review of
+	// PR #390). The secret is its NAME — the node carries no value, and
+	// TestPolicyCarriesNoSecretValue is the guard that it never does.
+	diffLines(out, providerLines(old), providerLines(new))
+	diffLines(out, priceLines(old), priceLines(new))
+	// The routing block is not this binary's to write (phase 1b's): a publish
+	// keeps whatever the node carries, and saying so is the difference between
+	// an operator reading "the route I set is still there" and wondering
+	// whether this publish just turned it off.
+	if new.Routing != nil {
+		fmt.Fprintf(out, "  routing kept: %s\n", routingText(new.Routing))
+	}
+	for _, r := range new.AllowRepos {
+		if src, ok := sources[r]; ok {
+			fmt.Fprintf(out, "  allow_repos %s (%s)\n", r, src)
+		} else {
+			fmt.Fprintf(out, "  allow_repos %s (kept from the published node)\n", r)
+		}
+	}
+}
+
+// diffLines prints what a write changes, one line per key: the keys the write
+// adds ("+"), the ones it changes ("~", with both values) and the ones it drops
+// ("-"). The keys are already spelled for a reader ("provider x.base_url",
+// "model_prices y"), so one function serves every part of the diff.
+func diffLines(out io.Writer, before, now map[string]string) {
 	for _, k := range slices.Sorted(maps.Keys(now)) {
 		was, had := before[k]
 		switch {
@@ -564,18 +621,77 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 			fmt.Fprintf(out, "  - %s: %s\n", k, before[k])
 		}
 	}
-	for _, name := range slices.Sorted(maps.Keys(new.Providers)) {
-		p := new.Providers[name]
-		fmt.Fprintf(out, "  provider %s: secret %s, require_zdr %v, price_policy %s\n",
-			name, p.Secret, p.RequireZDROn(), p.EffectivePricePolicy())
+}
+
+// providerLines is one line per value of every provider entry, for the diff. A
+// nil policy (no node published) has no entries.
+func providerLines(p *projectpolicy.Policy) map[string]string {
+	if p == nil {
+		return nil
 	}
-	for _, r := range new.AllowRepos {
-		if src, ok := sources[r]; ok {
-			fmt.Fprintf(out, "  allow_repos %s (%s)\n", r, src)
-		} else {
-			fmt.Fprintf(out, "  allow_repos %s (kept from the published node)\n", r)
-		}
+	out := map[string]string{}
+	for _, name := range slices.Sorted(maps.Keys(p.Providers)) {
+		pv := p.Providers[name]
+		pre := "provider " + name + "."
+		out[pre+"kind"] = pv.Kind
+		out[pre+"base_url"] = pv.BaseURL
+		out[pre+"auth"] = pv.Auth
+		out[pre+"secret"] = pv.Secret
+		out[pre+"models"] = fmt.Sprintf("%v", nonNil(pv.Models))
+		out[pre+"allow_data_to"] = allowDataToText(pv)
+		out[pre+"route_fee_pct"] = fmt.Sprintf("%g", pv.RouteFeePct)
+		out[pre+"require_zdr"] = fmt.Sprintf("%v", pv.RequireZDROn())
+		out[pre+"price_policy"] = pv.EffectivePricePolicy()
 	}
+	return out
+}
+
+// allowDataToText is a provider's allow_data_to for a line an operator reads:
+// an absent list is the deliberate "every repository" the node means by it, and
+// an empty line there would read as "nothing".
+func allowDataToText(p projectpolicy.Provider) string {
+	if len(p.AllowDataTo) == 0 {
+		return "every repository (the key is absent)"
+	}
+	return fmt.Sprintf("%v", p.AllowDataTo)
+}
+
+// priceLines is one line per model under model_prices, for the diff: a count
+// would hide a rate that changed, and which model it changed for.
+func priceLines(p *projectpolicy.Policy) map[string]string {
+	if p == nil {
+		return nil
+	}
+	out := map[string]string{}
+	for _, id := range slices.Sorted(maps.Keys(p.Prices)) {
+		out["model_prices "+id] = priceText(p.Prices[id])
+	}
+	return out
+}
+
+// priceText is one model's rates: every rate the entry sets, and "the list
+// default" for each optional one it leaves out (which is what the run prices
+// it at — internal/pricing's Default* multipliers — so a line that omitted it
+// would not be what the node does).
+func priceText(p projectpolicy.Price) string {
+	parts := []string{"input_per_m " + rateText(p.InputPerM), "output_per_m " + rateText(p.OutputPerM),
+		"cache_write_5m " + rateText(p.CacheWrite5m), "cache_write_1h " + rateText(p.CacheWrite1h),
+		"cache_read " + rateText(p.CacheRead), "web_search_per_1k " + rateText(p.WebSearchPer1k)}
+	if t := p.LongContext; t != nil {
+		parts = append(parts, fmt.Sprintf("long_context above_input_tokens %d: input_per_m %s, output_per_m %s",
+			t.AboveInputTokens, rateText(t.InputPerM), rateText(t.OutputPerM)))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// rateText is one per-million rate. It is the number the operator wrote, not a
+// dollar figure: a rate is dollars per million tokens, and rendering $0.28/M
+// as money would print it as zero.
+func rateText(v *float64) string {
+	if v == nil {
+		return "the list default"
+	}
+	return strconv.FormatFloat(*v, 'f', -1, 64)
 }
 
 // policyLines is one line per value the publisher sets, for the diff.
@@ -603,27 +719,41 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 // node last means a failure leaves a policy that still governs. Runs in
 // flight are what makes this ask: a repository that is mid-run keeps the
 // policy until it finishes.
+//
+// The children are removed whether or not the shared node is there: a delete
+// that failed on the shared node leaves them behind, and a later --delete that
+// answered "nothing to delete" on the strength of the absent shared node would
+// leave them forever (the review of PR #390). A governance node left under
+// config/policy/repos is policy text a later release may read.
 func deleteProjectPolicy(cmd *cobra.Command, lc *localcfg.Config, db *rtdb.Client, out io.Writer, exists bool, o *projectPolicyPublishOptions) error {
 	ctx := cmd.Context()
-	if !exists {
-		fmt.Fprintf(out, "%s is not published: nothing to delete\n", projectpolicy.PathShared())
-		return nil
-	}
-	inflight, err := runsInFlight(ctx, db, lc)
-	if err != nil {
-		return err
-	}
-	if inflight > 0 && !o.yes {
-		return userErr("%d run(s) are in flight: a run that is mid-flight keeps the policy until it finishes, so --delete is refused without --yes; wait for them (fugaro runs ls), or pass --yes once you have read what it does", inflight)
-	}
-	if err := confirmRemoval(cmd, lc, o.yes, "this removes the published policy: every run falls back to the ceiling its job's environment carries, and the project's allow-list stops being enforced"); err != nil {
-		return err
-	}
-	removed := []string{}
 	children, err := policyRepoChildren(ctx, db, lc)
 	if err != nil {
 		return err
 	}
+	if !exists {
+		// No policy is in force, so nothing has to be confirmed: what is left
+		// is the children an earlier half-finished delete left behind, and only
+		// that. With none, there is truly nothing to delete.
+		if len(children) == 0 {
+			fmt.Fprintf(out, "%s is not published and %s holds no children: nothing to delete\n", projectpolicy.PathShared(), projectpolicy.PathRepos())
+			return nil
+		}
+		fmt.Fprintf(out, "%s is not published, but %s holds %d child node(s) an earlier delete left behind\n",
+			projectpolicy.PathShared(), projectpolicy.PathRepos(), len(children))
+	} else {
+		inflight, err := runsInFlight(ctx, db, lc)
+		if err != nil {
+			return err
+		}
+		if inflight > 0 && !o.yes {
+			return userErr("%d run(s) are in flight: a run that is mid-flight keeps the policy until it finishes, so --delete is refused without --yes; wait for them (fugaro runs ls), or pass --yes once you have read what it does", inflight)
+		}
+		if err := confirmRemoval(cmd, lc, o.yes, "this removes the published policy: every run falls back to the ceiling its job's environment carries, and the project's allow-list stops being enforced"); err != nil {
+			return err
+		}
+	}
+	removed := []string{}
 	for _, key := range children {
 		path := projectpolicy.PathRepos() + "/" + key
 		etag, found, err := db.GetETag(ctx, path, nil)
@@ -651,7 +781,9 @@ func deleteProjectPolicy(cmd *cobra.Command, lc *localcfg.Config, db *rtdb.Clien
 	for _, p := range removed {
 		fmt.Fprintf(out, "removed %s\n", p)
 	}
-	fmt.Fprintln(out, "no policy is published: runs fall back to the ceiling their job's environment carries")
+	if exists {
+		fmt.Fprintln(out, "no policy is published: runs fall back to the ceiling their job's environment carries")
+	}
 	return nil
 }
 
@@ -719,23 +851,46 @@ type projectShowOptions struct {
 
 // projectShowDoc is `project show`'s JSON shape, for watch-style consumers.
 type projectShowDoc struct {
-	Project    string                `json:"project"`
-	GCPProject string                `json:"gcp_project"`
-	Mode       string                `json:"mode"`
-	Caps       showCaps              `json:"caps"`
-	Policy     *projectpolicy.Policy `json:"policy"`
-	AllowRepos []string              `json:"allow_repos"`
+	Project    string      `json:"project"`
+	GCPProject string      `json:"gcp_project"`
+	Mode       string      `json:"mode"`
+	Caps       showCaps    `json:"caps"`
+	Policy     *showPolicy `json:"policy"`
+	AllowRepos []string    `json:"allow_repos"`
 	// Enrolled maps each allow-list entry to where it came from: the
 	// operator's repos:, the shared config's list, or "" for one that is in
 	// neither (added on purpose, or a pattern).
 	Enrolled map[string]string `json:"enrolled"`
-	// Seen are the repositories that have run here, from the run registry.
-	Seen []string `json:"seen"`
-	// SeenNotEnrolled are the ones that have run here and that the published
-	// allow-list does not admit: their next run is refused. EnrolledNeverSeen
-	// is the other direction — allowed, and nothing here has run yet.
-	SeenNotEnrolled   []string `json:"seen_not_enrolled"`
-	EnrolledNeverSeen []string `json:"enrolled_never_seen"`
+	// Running are the repositories the run registry holds, which is the runs
+	// that are running now: an entry is written when a run starts and removed
+	// when it ends, so an empty registry is "nothing is running", never "no
+	// repository has ever run here".
+	Running []string `json:"running_now"`
+	// RunningNotEnrolled are the ones that are running and that the published
+	// allow-list does not admit: their next run is refused. EnrolledNotRunning
+	// is the other direction — allowed, and nothing of it is running now (or
+	// has ever run here: the registry cannot tell the two apart, and neither
+	// does this say).
+	RunningNotEnrolled []string `json:"running_not_enrolled"`
+	EnrolledNotRunning []string `json:"enrolled_not_running"`
+}
+
+// showPolicy is the published policy as this document renders it: the node's
+// own bytes spell model_prices' member names the way RTDB requires (escaped,
+// projectpolicy.Prices), and a consumer of this document is reading model IDs.
+// The embedded Policy's own model_prices is shadowed by the field below, which
+// is at a shallower depth and so is the one encoding/json writes.
+type showPolicy struct {
+	*projectpolicy.Policy
+	Prices map[string]projectpolicy.Price `json:"model_prices,omitempty"`
+}
+
+// showPolicyOf is the document's policy, or nil when none is published.
+func showPolicyOf(p *projectpolicy.Policy) *showPolicy {
+	if p == nil {
+		return nil
+	}
+	return &showPolicy{Policy: p, Prices: p.Prices}
 }
 
 // showCaps is the ceiling the installation's own nodes carry — the side of the
@@ -777,13 +932,15 @@ func newProjectShowCmd() *cobra.Command {
 	var o projectShowOptions
 	cmd := &cobra.Command{
 		Use:   "show [--json]",
-		Short: "Show the effective project: caps, policy, allow-list, repositories seen",
+		Short: "Show the effective project: caps, policy, allow-list, repositories running now",
 		Long: "Print the effective project: the caps the installation's nodes carry (global,\n" +
 			"defaults and per repository), the published policy, the allow-list with where\n" +
-			"each entry came from, and the repositories that have run here. The last pair is\n" +
-			"what an operator needs: repositories that are running and are not on the\n" +
-			"allow-list (their next run is refused until 'fugaro project repos add'), and\n" +
-			"allow-list entries nothing here has run yet.",
+			"each entry came from, and the repositories the run registry holds. The registry\n" +
+			"holds the runs in flight, so that list is what is running now — an empty one is\n" +
+			"nothing running, not nothing that has ever run. The last pair is what an\n" +
+			"operator needs: repositories that are running and are not on the allow-list\n" +
+			"(their next run is refused until 'fugaro project repos add'), and allow-list\n" +
+			"entries nothing is running now.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runProjectShow(cmd, &o, false) },
 	}
@@ -815,7 +972,7 @@ func runProjectShow(cmd *cobra.Command, o *projectShowOptions, policyOnly bool) 
 		if o.json {
 			doc := map[string]any{"project": lc.Name, "policy": nil}
 			if found {
-				doc["policy"] = p
+				doc["policy"] = showPolicyOf(p)
 			}
 			return writeJSON(out, doc)
 		}
@@ -831,14 +988,14 @@ func runProjectShow(cmd *cobra.Command, o *projectShowOptions, policyOnly bool) 
 	if err != nil {
 		return err
 	}
-	seen, err := seenRepos(ctx, db, lc)
+	running, err := runningRepos(ctx, db, lc)
 	if err != nil {
 		return err
 	}
 	doc := projectShowDoc{Project: lc.Name, GCPProject: lc.GCPProject, Mode: cfg.Mode, Caps: caps,
-		Enrolled: map[string]string{}, Seen: seen, SeenNotEnrolled: []string{}, EnrolledNeverSeen: []string{}}
+		Enrolled: map[string]string{}, Running: running, RunningNotEnrolled: []string{}, EnrolledNotRunning: []string{}}
 	if found {
-		doc.Policy = p
+		doc.Policy = showPolicyOf(p)
 		doc.AllowRepos = nonNil(p.AllowRepos)
 	}
 	// Enrolled is one key per allow-list entry, and only those: where the
@@ -852,17 +1009,17 @@ func runProjectShow(cmd *cobra.Command, o *projectShowOptions, policyOnly bool) 
 	for _, r := range doc.AllowRepos {
 		doc.Enrolled[r] = sources[r]
 	}
-	for _, r := range seen {
+	for _, r := range running {
 		if !found {
 			continue
 		}
 		if !projectpolicy.AdmitRepo(p.AllowRepos, r) {
-			doc.SeenNotEnrolled = append(doc.SeenNotEnrolled, r)
+			doc.RunningNotEnrolled = append(doc.RunningNotEnrolled, r)
 		}
 	}
 	for _, r := range doc.AllowRepos {
-		if !slices.Contains(seen, r) {
-			doc.EnrolledNeverSeen = append(doc.EnrolledNeverSeen, r)
+		if !slices.Contains(running, r) {
+			doc.EnrolledNotRunning = append(doc.EnrolledNotRunning, r)
 		}
 	}
 	if o.json {
@@ -886,19 +1043,19 @@ func runProjectShow(cmd *cobra.Command, o *projectShowOptions, policyOnly bool) 
 	for _, r := range doc.AllowRepos {
 		fmt.Fprintf(out, "  %s%s\n", r, sourceSuffix(doc.Enrolled[r]))
 	}
-	fmt.Fprintln(out, "repositories seen (from the run registry):")
-	if len(seen) == 0 {
+	fmt.Fprintln(out, "repositories running now (from the run registry, which holds the runs in flight):")
+	if len(running) == 0 {
 		fmt.Fprintln(out, "  (none)")
 	}
-	for _, r := range seen {
+	for _, r := range running {
 		mark := ""
-		if slices.Contains(doc.SeenNotEnrolled, r) {
+		if slices.Contains(doc.RunningNotEnrolled, r) {
 			mark = notAdmittedNote(r)
 		}
 		fmt.Fprintf(out, "  %s%s\n", r, mark)
 	}
-	for _, r := range doc.EnrolledNeverSeen {
-		fmt.Fprintf(out, "  %s is on the allow-list and has never run here\n", r)
+	for _, r := range doc.EnrolledNotRunning {
+		fmt.Fprintf(out, "  %s is on the allow-list and has no run in flight here\n", r)
 	}
 	return nil
 }
@@ -983,29 +1140,56 @@ func printPolicy(out io.Writer, p *projectpolicy.Policy) {
 		fmt.Fprintf(out, "  provider %s: %s %s, auth %s, secret %s, require_zdr %v, price_policy %s\n",
 			name, pv.Kind, pv.BaseURL, pv.Auth, pv.Secret, pv.RequireZDROn(), pv.EffectivePricePolicy())
 	}
+	// One line per model, under the ID the operator priced it by: the node
+	// stores them under an escaped key (an RTDB key cannot hold the "/" of
+	// deepseek/deepseek-v4-flash), and a reader of this command is reading
+	// model IDs.
+	for _, id := range slices.Sorted(maps.Keys(p.Prices)) {
+		fmt.Fprintf(out, "  model_prices %s: %s\n", id, priceText(p.Prices[id]))
+	}
+	if p.Routing != nil {
+		fmt.Fprintf(out, "  routing: %s\n", routingText(p.Routing))
+	}
 }
 
-// seenRepos is the repositories that have run here, from the run registry's
-// slugs. A slug is not invertible (task.Slug is a hash of the provider and
-// the canonical name), so each is matched against the repositories this
-// machine's config names and reported as a slug when none matches. The
-// bucket's runs/<slug>/ prefixes are the other durable source, and the fuller
-// answer is Task 4.1's.
-func seenRepos(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) ([]string, error) {
+// routingText is the policy's routing block as one line, for a command that
+// reads the node: this Fugaro does not write routing (phase 1b does) but it
+// reads and keeps it, and a node carrying one must not look like a node
+// without one in the output of `policy show`.
+func routingText(r *projectpolicy.Routing) string {
+	if r == nil || r.Claude == nil {
+		return "direct (no block)"
+	}
+	return fmt.Sprintf("claude via %s, models %v", r.Claude.Via, nonNil(r.Claude.Models))
+}
+
+// runningRepos is the repositories the run registry holds: the runs that are
+// running now. Its entries are written when a run starts and removed when it
+// ends (the same source `fugaro budget show` lists as running and
+// runsInFlight counts), so an empty registry means nothing is running — it is
+// not evidence that a repository has never run here, and no caller may say it
+// is. The bucket's runs/<slug>/ prefixes are the durable source (a run's
+// objects outlive it) and syncing from them is Task 4.1's.
+//
+// A registry key is a slug, not a repository name: task.Slug is a hash of the
+// provider and the canonical name, so it is not invertible. Each is matched
+// against the repositories this machine's config names and reported as a slug
+// when none matches.
+func runningRepos(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) ([]string, error) {
 	var agents map[string]map[string]json.RawMessage
 	if _, err := db.Get(ctx, "agents", &agents); err != nil {
 		return nil, dbErr(lc, err, false)
 	}
 	known := repoBySlug(lc)
-	seen := map[string]bool{}
+	running := map[string]bool{}
 	for k := range agents {
 		if c, ok := known[k]; ok {
-			seen[c] = true
+			running[c] = true
 			continue
 		}
-		seen[k] = true
+		running[k] = true
 	}
-	return slices.Sorted(maps.Keys(seen)), nil
+	return slices.Sorted(maps.Keys(running)), nil
 }
 
 // allowSources says where each entry of the published allow-list came from,
@@ -1090,7 +1274,7 @@ func newProjectReposLsCmd() *cobra.Command {
 	var o projectReposOptions
 	cmd := &cobra.Command{
 		Use:   "ls",
-		Short: "List the allow-list and the repositories seen",
+		Short: "List the allow-list and the repositories running now",
 		Args:  cobra.NoArgs,
 		RunE:  func(cmd *cobra.Command, _ []string) error { return runProjectReposLs(cmd, &o) },
 	}
@@ -1120,9 +1304,12 @@ func newProjectReposRmCmd() *cobra.Command {
 		Use:   "rm <provider/owner/name | owner/name>",
 		Short: "Un-enroll a repository: remove it from the allow-list",
 		Long: "Remove an entry from the published policy's allow_repos. Removing an allowed\n" +
-			"repository stops its runs: a run of a repository the list does not admit is\n" +
-			"refused before it mints a git token. So it asks you to type the project's\n" +
-			"name, and while a run is in flight --yes alone is not enough.",
+			"repository stops its runs — a run of a repository the list does not admit is\n" +
+			"refused before it mints a git token — unless another entry on the list still\n" +
+			"admits it, which is the case a pattern makes (github/acme/app stays admitted\n" +
+			"while github/acme/* is there); the confirmation says which of the two it is.\n" +
+			"So it asks you to type the project's name, and while a run is in flight --yes\n" +
+			"alone is not enough.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runProjectReposEdit(cmd, &o, args[0], true) },
 	}
@@ -1152,7 +1339,7 @@ func runProjectReposLs(cmd *cobra.Command, o *projectReposOptions) error {
 	if err != nil {
 		return err
 	}
-	seen, err := seenRepos(ctx, db, lc)
+	running, err := runningRepos(ctx, db, lc)
 	if err != nil {
 		return err
 	}
@@ -1163,11 +1350,11 @@ func runProjectReposLs(cmd *cobra.Command, o *projectReposOptions) error {
 	for _, r := range p.AllowRepos {
 		fmt.Fprintf(out, "  %s%s\n", r, sourceSuffix(sources[r]))
 	}
-	fmt.Fprintln(out, "repositories seen (runs in the registry):")
-	if len(seen) == 0 {
+	fmt.Fprintln(out, "repositories running now (from the run registry):")
+	if len(running) == 0 {
 		fmt.Fprintln(out, "  (none)")
 	}
-	for _, r := range seen {
+	for _, r := range running {
 		mark := ""
 		if !projectpolicy.AdmitRepo(p.AllowRepos, r) {
 			mark = notAdmittedNote(r)
@@ -1227,7 +1414,7 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 		if err != nil {
 			return err
 		}
-		what := "this removes " + canonical + " from the allow-list: its runs are refused from now on, and a run in flight keeps the policy until it finishes"
+		what := removalWarning(allow, canonical)
 		switch {
 		case inflight > 0:
 			// --yes was typed before the run started, so it is not the
@@ -1266,6 +1453,62 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 	}
 	fmt.Fprintf(out, "set %s\n", projectpolicy.PathShared())
 	return nil
+}
+
+// removalWarning is what `repos rm` asks the operator to confirm. Removing an
+// entry refuses the repository's runs — a run of a repository the list does not
+// admit is stopped before it mints a git token — but only if nothing else on
+// the list still admits it: `github/acme/*` admits `github/acme/app` whatever
+// happens to the concrete entry, and a confirmation that said "its runs are
+// refused from now on" would be telling the operator a removal stops runs it
+// does not stop. Admission is the list's own matcher (projectpolicy.AdmitRepo,
+// which the runner and the launcher use), so the sentence is what the next run
+// will actually do.
+func removalWarning(allow []string, canonical string) string {
+	if still, by := admittedBy(allow, canonical); still {
+		return "this removes " + canonical + " from the allow-list, but " + by + " still admits it: its runs are not refused, and a run in flight keeps the policy until it finishes"
+	}
+	return "this removes " + canonical + " from the allow-list: its runs are refused from now on, and a run in flight keeps the policy until it finishes"
+}
+
+// admittedBy is the entry of allow that still admits arg once arg's own entry
+// is gone — the list the removal leaves, read with the same matcher the runner
+// and the launcher use (projectpolicy.MatchRepo), so the sentence above is what
+// the next run will actually do.
+//
+// A concrete repository is admitted by any remaining entry that matches it: the
+// wildcard, or a pattern such as github/acme/*. A *pattern* being removed is a
+// different question — removing it is moot only if some remaining entry admits
+// everything it admitted — and the only entry that does is the bare wildcard
+// (two identical entries cannot both be on the list).
+//
+// An entry is a pattern when it carries a wildcard, not when ValidPattern
+// accepts it: ValidPattern accepts a concrete name too (a pattern with no "*"
+// matches exactly itself), so asking it would send every concrete removal down
+// the pattern branch — and github/acme/app removed while github/acme/* is on
+// the list would read "its runs are refused from now on", which is the one
+// thing the removal does not do.
+func admittedBy(allow []string, arg string) (bool, string) {
+	rest := make([]string, 0, len(allow))
+	for _, p := range allow {
+		if p != arg {
+			rest = append(rest, p)
+		}
+	}
+	if strings.Contains(arg, "*") {
+		for _, p := range rest {
+			if p == "*" {
+				return true, p
+			}
+		}
+		return false, ""
+	}
+	for _, p := range rest {
+		if projectpolicy.MatchRepo(p, arg) {
+			return true, p
+		}
+	}
+	return false, ""
 }
 
 // canonicalRepoArg is the operator's argument as a canonical allow-list

@@ -317,6 +317,86 @@ func TestProjectPolicyPublishCarriesThePriceCatalogueSwitches(t *testing.T) {
 	}
 }
 
+// TestProjectPolicyPublishModelPricesRoundTrip: the model IDs the documentation
+// uses carry a "/" (deepseek/deepseek-v4-flash, docs/multi-model.md) or a "."
+// (deepseek/deepseek-v4.1-flash), and an RTDB key may hold neither — the write
+// is refused whole, with a 400, and the fake emulates that (gcpfake.rtdb's
+// firstBadKey). So a publish of a documented price list has to store the block
+// under a key RTDB accepts and read it back as the model IDs the operator
+// wrote, which is what this walks end to end: publish, the node's own bytes,
+// the decoded policy, and both show commands.
+func TestProjectPolicyPublishModelPricesRoundTrip(t *testing.T) {
+	const slash, dot = "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4.1-flash"
+	f := newProjectFixture(t, "model_prices:\n"+
+		"  "+slash+": { input_per_m: 0.28, output_per_m: 0.42 }\n"+
+		"  "+dot+": { input_per_m: 1, output_per_m: 2, cache_read: 0.1 }\n")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatalf("publishing a documented model ID was refused: %v\n%s", err, out)
+	}
+
+	// The node's own bytes: every model_prices member name is one RTDB takes.
+	raw := nodeJSON(t, f, projectpolicy.PathShared())
+	var node struct {
+		Prices map[string]json.RawMessage `json:"model_prices"`
+	}
+	if err := json.Unmarshal([]byte(raw), &node); err != nil {
+		t.Fatalf("the published node is not JSON (%v):\n%s", err, raw)
+	}
+	if len(node.Prices) != 2 {
+		t.Fatalf("the node's model_prices has %d members, want 2:\n%s", len(node.Prices), raw)
+	}
+	for key := range node.Prices {
+		if strings.ContainsAny(key, ".$#[]/") {
+			t.Errorf("the node holds the key %q, which RTDB refuses (a key may not contain . $ # [ ] /):\n%s", key, raw)
+		}
+	}
+	if strings.Contains(raw, `"`+slash+`"`) {
+		t.Errorf("the node holds the model ID itself as a key:\n%s", raw)
+	}
+
+	// And it decodes back to the IDs the operator wrote.
+	p := publishedPolicy(t, f)
+	for _, id := range []string{slash, dot} {
+		if _, ok := p.Prices[id]; !ok {
+			t.Errorf("the decoded policy has no price for %q: %v", id, p.Prices)
+		}
+	}
+	if v := p.Prices[dot].CacheRead; v == nil || *v != 0.1 {
+		t.Errorf("the dot-carrying entry did not come back whole: %+v", p.Prices[dot])
+	}
+
+	// The diff names the model, and so do both show commands: an operator
+	// reads model IDs, not the node's escape.
+	if !strings.Contains(out, "model_prices "+slash) {
+		t.Errorf("the publish diff does not name the model it priced:\n%s", out)
+	}
+	for _, args := range [][]string{{"project", "show"}, {"project", "policy", "show"}} {
+		out, _, err := execute(t, args...)
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		if !strings.Contains(out, "model_prices "+slash) {
+			t.Errorf("%v does not print the model ID %q:\n%s", args, slash, out)
+		}
+	}
+	js, _, err := execute(t, "project", "show", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Policy struct {
+			Prices map[string]projectpolicy.Price `json:"model_prices"`
+		} `json:"policy"`
+	}
+	if err := json.Unmarshal([]byte(js), &doc); err != nil {
+		t.Fatalf("--json is not JSON (%v):\n%s", err, js)
+	}
+	if _, ok := doc.Policy.Prices[slash]; !ok {
+		t.Errorf("--json's policy.model_prices is not keyed by the model ID: %v", doc.Policy.Prices)
+	}
+}
+
 // TestProjectPolicyPublishNeverSeedsFromTheBucket is B3's regression test. The
 // bucket holds runs of repositories the operator's config does not name, at
 // the slugs task.Slug gives them; the seed must not turn those into
@@ -695,10 +775,12 @@ func TestProjectPolicyDeleteRefusesANewerPolicy(t *testing.T) {
 	}
 }
 
-// TestProjectShowPrintsEnrolledAndSeen: the pair an operator needs — a
-// repository that is running and is not enrolled, and an enrolled one nothing
-// here has run.
-func TestProjectShowPrintsEnrolledAndSeen(t *testing.T) {
+// TestProjectShowPrintsEnrolledAndRunning: the pair an operator needs — a
+// repository that is running now and is not enrolled, and an enrolled one that
+// is not running now. The registry holds the runs in flight, so "not running
+// now" is all either says: an enrolled repository that runs daily reads the
+// same as one that never has.
+func TestProjectShowPrintsEnrolledAndRunning(t *testing.T) {
 	f := newProjectFixture(t, "")
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 		t.Fatal(err)
@@ -721,14 +803,14 @@ func TestProjectShowPrintsEnrolledAndSeen(t *testing.T) {
 		"caps (the installation's ceiling", // step 3: the caps, global and defaults
 		"global: per-run",
 		"defaults: repo per-run",
-		"repositories seen",
-		stranger, // seen, and not invertible
+		"repositories running now",
+		stranger, // running now, and not invertible
 		"not admitted",
 		// The remedy is 'repos add', which takes a canonical name: a slug
 		// cannot be one, so the note asks the operator to name it instead of
 		// printing a command that would be refused.
 		"name it",
-		"bitbucket/acme/other is on the allow-list and has never run here",
+		"bitbucket/acme/other is on the allow-list and has no run in flight here",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("project show does not print %q:\n%s", want, out)
@@ -743,17 +825,17 @@ func TestProjectShowPrintsEnrolledAndSeen(t *testing.T) {
 		t.Fatal(err)
 	}
 	var doc struct {
-		AllowRepos        []string          `json:"allow_repos"`
-		Enrolled          map[string]string `json:"enrolled"`
-		Seen              []string          `json:"seen"`
-		SeenNotEnrolled   []string          `json:"seen_not_enrolled"`
-		EnrolledNeverSeen []string          `json:"enrolled_never_seen"`
+		AllowRepos         []string          `json:"allow_repos"`
+		Enrolled           map[string]string `json:"enrolled"`
+		Running            []string          `json:"running_now"`
+		RunningNotEnrolled []string          `json:"running_not_enrolled"`
+		EnrolledNotRunning []string          `json:"enrolled_not_running"`
 	}
 	if err := json.Unmarshal([]byte(js), &doc); err != nil {
 		t.Fatalf("--json is not JSON (%v):\n%s", err, js)
 	}
-	if len(doc.AllowRepos) != 2 || len(doc.Seen) != 2 {
-		t.Errorf("--json = %s, want two allow-list entries and two seen repositories", js)
+	if len(doc.AllowRepos) != 2 || len(doc.Running) != 2 {
+		t.Errorf("--json = %s, want two allow-list entries and two repositories running now", js)
 	}
 	// enrolled is the allow-list with a source each, and nothing else.
 	if len(doc.Enrolled) != len(doc.AllowRepos) {
@@ -764,11 +846,11 @@ func TestProjectShowPrintsEnrolledAndSeen(t *testing.T) {
 			t.Errorf("enrolled[%s] = %q, want %q", repo, doc.Enrolled[repo], want)
 		}
 	}
-	if len(doc.SeenNotEnrolled) != 1 || doc.SeenNotEnrolled[0] != stranger {
-		t.Errorf("seen_not_enrolled = %v, want [%s]", doc.SeenNotEnrolled, stranger)
+	if len(doc.RunningNotEnrolled) != 1 || doc.RunningNotEnrolled[0] != stranger {
+		t.Errorf("running_not_enrolled = %v, want [%s]", doc.RunningNotEnrolled, stranger)
 	}
-	if len(doc.EnrolledNeverSeen) != 1 || doc.EnrolledNeverSeen[0] != "bitbucket/acme/other" {
-		t.Errorf("enrolled_never_seen = %v, want [bitbucket/acme/other]", doc.EnrolledNeverSeen)
+	if len(doc.EnrolledNotRunning) != 1 || doc.EnrolledNotRunning[0] != "bitbucket/acme/other" {
+		t.Errorf("enrolled_not_running = %v, want [bitbucket/acme/other]", doc.EnrolledNotRunning)
 	}
 }
 
@@ -1151,5 +1233,290 @@ repos:
 	}
 	if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestRemovalWarningSaysWhatTheNextRunDoes: `repos rm`'s confirmation is read
+// by an operator about to stop a repository's runs, so it has to be what the
+// next run actually does. An entry that still admits the repository admits it
+// whatever happens to the concrete entry — github/acme/* admits
+// github/acme/app — and a removal that said "its runs are refused from now on"
+// would be claiming a stop it does not make (the review of PR #390). The
+// sentences are the runner's own matcher (projectpolicy.MatchRepo), so they are
+// about admission and not about string equality.
+func TestRemovalWarningSaysWhatTheNextRunDoes(t *testing.T) {
+	for name, tc := range map[string]struct {
+		allow     []string
+		arg       string
+		still     bool
+		admitting string
+	}{
+		"concrete, a pattern remains":   {[]string{"github/acme/*", "github/acme/app"}, "github/acme/app", true, "github/acme/*"},
+		"concrete, the wildcard":        {[]string{"*", "github/acme/app"}, "github/acme/app", true, "*"},
+		"concrete, nothing remains":     {[]string{"github/acme/app"}, "github/acme/app", false, ""},
+		"concrete, another repo only":   {[]string{"github/acme/app", "github/other/*"}, "github/acme/app", false, ""},
+		"pattern, the wildcard remains": {[]string{"*", "github/acme/*"}, "github/acme/*", true, "*"},
+		"pattern, nothing remains":      {[]string{"github/acme/*"}, "github/acme/*", false, ""},
+		"pattern, a narrower one only":  {[]string{"github/acme/*", "github/acme/app"}, "github/acme/*", false, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, by := admittedBy(tc.allow, tc.arg)
+			if got != tc.still || by != tc.admitting {
+				t.Fatalf("admittedBy(%v, %q) = (%v, %q), want (%v, %q)", tc.allow, tc.arg, got, by, tc.still, tc.admitting)
+			}
+			w := removalWarning(tc.allow, tc.arg)
+			if !strings.Contains(w, tc.arg) {
+				t.Errorf("the warning does not name the entry: %q", w)
+			}
+			switch {
+			case tc.still && !strings.Contains(w, "still admits it"):
+				t.Errorf("the warning = %q, want it to say something on the list still admits it", w)
+			case tc.still:
+				if !strings.Contains(w, tc.admitting) {
+					t.Errorf("the warning = %q, want it to name %q", w, tc.admitting)
+				}
+				if strings.Contains(w, "refused from now on") {
+					t.Errorf("the warning = %q: the runs are not refused, %s still admits it", w, tc.admitting)
+				}
+			case !tc.still && !strings.Contains(w, "refused from now on"):
+				t.Errorf("the warning = %q, want it to say the runs are refused from now on", w)
+			}
+		})
+	}
+}
+
+// TestProjectReposRmWithAPatternStillOnTheListSaysSo: the same sentence, end to
+// end. github/acme/* is added by hand, then github/acme/app is removed: the
+// repository's runs go on being admitted, and the operator has to be told that
+// rather than told its runs stop.
+func TestProjectReposRmWithAPatternStillOnTheListSaysSo(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "project", "repos", "add", "github/acme/*"); err != nil {
+		t.Fatal(err)
+	}
+	typed(t)
+	out, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", "github/acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "github/acme/* still admits it") {
+		t.Errorf("the confirmation does not name the entry that still admits it:\n%s", out)
+	}
+	if strings.Contains(out, "refused from now on") {
+		t.Errorf("the confirmation says the runs are refused though github/acme/* is on the list:\n%s", out)
+	}
+	if got := publishedPolicy(t, f).AllowRepos; len(got) != 2 || got[0] != "bitbucket/acme/other" || got[1] != "github/acme/*" {
+		t.Fatalf("allow_repos = %v, want github/acme/app gone and the pattern still there", got)
+	}
+	if !projectpolicy.AdmitRepo(publishedPolicy(t, f).AllowRepos, "github/acme/app") {
+		t.Error("the policy no longer admits the repository the confirmation said it still admits")
+	}
+}
+
+// TestProjectReposRmWithoutAnythingElseAdmittingSaysItStopsRuns: the other
+// side, so the sentence above is not the only one the command can produce.
+func TestProjectReposRmWithoutAnythingElseAdmittingSaysItStopsRuns(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	typed(t)
+	out, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", "github/acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "refused from now on") {
+		t.Errorf("the confirmation does not say the runs are refused:\n%s", out)
+	}
+	if strings.Contains(out, "still admits") {
+		t.Errorf("the confirmation claims another entry admits it, and none does:\n%s", out)
+	}
+	if projectpolicy.AdmitRepo(publishedPolicy(t, f).AllowRepos, "github/acme/app") {
+		t.Error("the policy still admits the repository the confirmation said it stops")
+	}
+}
+
+// TestProjectPolicyPublishDiffNamesProvidersAndRates: the diff is the only
+// place an operator reads what a publish replaces, so it prints every value
+// about money and data sharing field by field — a changed base_url, a widened
+// models list, a data-sharing list, a route fee, a rate — rather than a count
+// of them (the review of PR #390). The secret is its NAME: the node holds no
+// value, and TestPolicyCarriesNoSecretValue is the guard.
+func TestProjectPolicyPublishDiffNamesProvidersAndRates(t *testing.T) {
+	f := newProjectFixture(t, "model_prices:\n  deepseek/deepseek-v4-flash: { input_per_m: 1, output_per_m: 2 }\n")
+	first, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The first publish prints the whole block, every provider value included:
+	// an operator who is publishing a policy for the first time reads the data
+	// sharing and routing-fee values the node will carry.
+	for _, want := range []string{
+		"+ provider openrouter.models: [deepseek/*]",
+		"+ provider openrouter.allow_data_to: every repository (the key is absent)",
+		"+ provider openrouter.route_fee_pct: 0",
+		"+ provider openrouter.secret: openrouter-key",
+		"+ model_prices deepseek/deepseek-v4-flash: input_per_m 1",
+	} {
+		if !strings.Contains(first, want) {
+			t.Errorf("the first publish's diff does not print %q:\n%s", want, first)
+		}
+	}
+	// The operator changes a base URL, widens the models list, turns the
+	// switches on, adds a data-sharing list and a route fee, and reprices the
+	// model.
+	setConfig(t, f, func(s string) string {
+		s = strings.Replace(s, "base_url: https://openrouter.ai/api/v1", "base_url: https://openrouter.ai/api/v2", 1)
+		s = strings.Replace(s, `models: ["deepseek/*"]`, `models: ["deepseek/*", "qwen/*"]`, 1)
+		s = strings.Replace(s, "require_zdr: false", "require_zdr: true", 1)
+		s = strings.Replace(s, "price_policy: highest", "price_policy: cheapest", 1)
+		s = strings.Replace(s, "secret: openrouter-key", "secret: openrouter-key-2", 1)
+		s = strings.Replace(s, "    require_zdr:", "    allow_data_to: [\"acme/app\"]\n    route_fee_pct: 5\n    require_zdr:", 1)
+		s = strings.Replace(s, "input_per_m: 1, output_per_m: 2", "input_per_m: 3, output_per_m: 4", 1)
+		return s
+	})
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"~ provider openrouter.base_url: https://openrouter.ai/api/v1 → https://openrouter.ai/api/v2",
+		"provider openrouter.models",
+		"qwen/*",
+		"~ provider openrouter.require_zdr: false → true",
+		"~ provider openrouter.price_policy: highest → cheapest",
+		"~ provider openrouter.allow_data_to: every repository (the key is absent) → [acme/app]",
+		"~ provider openrouter.route_fee_pct: 0 → 5",
+		"~ model_prices deepseek/deepseek-v4-flash: input_per_m 1",
+		"input_per_m 3",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the diff does not print %q:\n%s", want, out)
+		}
+	}
+	// A changed secret is shown by NAME (which key the provider uses): the
+	// node holds the name, never a value, which is what
+	// TestPolicyCarriesNoSecretValue guards.
+	if !strings.Contains(out, "~ provider openrouter.secret: openrouter-key → openrouter-key-2") {
+		t.Errorf("the diff does not name the secret key that changed:\n%s", out)
+	}
+}
+
+// TestProjectPolicyPublishKeepsAnExistingRoutingBlock: this Fugaro does not
+// write routing (phase 1b does), so a publish that built the node from its own
+// type would silently turn routing off — a quiet loosening of a key the
+// operator cannot see in this binary. The node's block is kept, and the diff
+// says so rather than saying nothing.
+func TestProjectPolicyPublishKeepsAnExistingRoutingBlock(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	// A routing block, written the way a newer release (phase 1b) would.
+	node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
+	node["routing"] = map[string]any{"claude": map[string]any{"via": "openrouter"}}
+	f.db.Set(projectpolicy.PathShared(), node)
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := f.db.Value(projectpolicy.PathShared())
+	if v, ok := nodeAt(got, "routing", "claude", "via"); !ok || v != "openrouter" {
+		t.Errorf("the publish dropped or changed the routing block:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+	// The operator is told it is kept, not left to wonder.
+	if !strings.Contains(out, "routing kept: claude via openrouter") {
+		t.Errorf("the diff does not say the routing block is kept:\n%s", out)
+	}
+	// And `policy show` prints it: a node with a routing block must not look
+	// like a node without one.
+	shown, _, err := execute(t, "project", "policy", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(shown, "routing: claude via openrouter") {
+		t.Errorf("policy show does not print the routing block:\n%s", shown)
+	}
+}
+
+// TestProjectPolicyPublishRefusesAnOlderNodeWithAWorkingRemedy: a node this
+// binary cannot read as its own shape — hand-written with no version, or with
+// an older one — is refused rather than replaced, but the refusal must name a
+// remedy that works. "Publish again" is the one it cannot: the publish is what
+// is being refused. Removing the node is the path that does.
+func TestProjectPolicyPublishRefusesAnOlderNodeWithAWorkingRemedy(t *testing.T) {
+	for name, node := range map[string]map[string]any{
+		"no version":    {"budget": map[string]any{"mode": "enforce"}},
+		"version zero":  {"version": 0, "budget": map[string]any{"mode": "enforce"}},
+		"a later shape": {"version": projectpolicy.Version - 1, "budget": map[string]any{"mode": "enforce"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newProjectFixture(t, "")
+			f.db.Set(projectpolicy.PathShared(), node)
+			_, _, err := execute(t, "project", "policy", "publish")
+			if err == nil {
+				t.Fatal("publishing over an older node was allowed")
+			}
+			if !strings.Contains(err.Error(), "--delete") {
+				t.Errorf("the refusal names no remedy that works: %v", err)
+			}
+			if v := f.db.Value(projectpolicy.PathShared()); v == nil {
+				t.Fatal("the node was removed by a refused publish")
+			}
+			// And the remedy it names works.
+			if _, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes"); err != nil {
+				t.Fatalf("the remedy the refusal names does not work: %v", err)
+			}
+			if f.db.Value(projectpolicy.PathShared()) != nil {
+				t.Fatal("the remedy did not remove the node")
+			}
+			if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+				t.Fatalf("publishing after the remedy: %v", err)
+			}
+		})
+	}
+}
+
+// TestProjectPolicyDeleteRemovesOrphanChildrenWithoutASharedNode: a delete that
+// failed on the shared node leaves the children behind, and the next --delete
+// must still remove them: reporting "nothing to delete" on the strength of the
+// absent shared node would leave governance text under config/policy/repos
+// forever, which a later release may read (the review of PR #390).
+func TestProjectPolicyDeleteRemovesOrphanChildrenWithoutASharedNode(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	slug, err := task.Slug("github", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := projectpolicy.PathRepo(slug)
+	f.db.Set(child, map[string]any{"allow_repos": []string{"github/acme/app"}})
+	// The half-finished delete: the shared node is gone, the child is not.
+	f.db.Set(projectpolicy.PathShared(), nil)
+
+	out, _, err := execute(t, "project", "policy", "publish", "--delete")
+	if err != nil {
+		t.Fatalf("--delete refused to clean up after an earlier one: %v\n%s", err, out)
+	}
+	if f.db.Value(child) != nil {
+		t.Errorf("%s is still there: the orphan is what this delete is for", child)
+	}
+	if !strings.Contains(out, child) {
+		t.Errorf("the output does not name the node it removed:\n%s", out)
+	}
+	// Nothing is left, and a second --delete says so rather than claiming to
+	// have removed something.
+	out, _, err = execute(t, "project", "policy", "publish", "--delete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "nothing to delete") {
+		t.Errorf("a second --delete does not say there is nothing to delete:\n%s", out)
 	}
 }
