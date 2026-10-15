@@ -208,11 +208,13 @@ func TestAllowDataToRequired(t *testing.T) {
 	if !strings.Contains(got, "agent.models.coder") || !strings.Contains(got, "allow_data_to") || !strings.Contains(got, "edgeappinc/edgeweb") {
 		t.Errorf("problems = %q", got)
 	}
-	// Nothing lists the repository when the provider has no allow_data_to.
+	// An absent allow_data_to (the zero value) now means every repository
+	// (owner's final ruling, 2026-10-13, design §3a), so nothing is refused
+	// -- CheckProviderPolicy reads AllowsData, which changed.
 	p := okProvider()
 	p.AllowDataTo = nil
-	if got := CheckProviderPolicy(a, nil, "dimipaun/fugaro", map[string]ModelProvider{"openrouter": p}, prices); len(got) != 1 {
-		t.Errorf("empty allow_data_to: %v", got)
+	if got := CheckProviderPolicy(a, nil, "dimipaun/fugaro", map[string]ModelProvider{"openrouter": p}, prices); len(got) != 0 {
+		t.Errorf("absent allow_data_to: %v", got)
 	}
 }
 

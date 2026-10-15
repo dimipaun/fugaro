@@ -281,3 +281,10 @@ variable "history" {
     error_message = "history.deploy_job needs the Firebase root's firebase_project and rtdb_url (an https://<instance>.firebasedatabase.app or .firebaseio.com URL, without a path)."
   }
 }
+
+variable "project_secrets" {
+  description = "Project-wide secret containers: logical name -> secret ID (gcp.ProjectSecretID), fugaro init creates/adopts each; values are never set by Terraform."
+  type        = map(string)
+  default     = {}
+  nullable    = false
+}

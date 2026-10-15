@@ -54,6 +54,18 @@ func NewSecrets(ctx context.Context, o Options) (*Secrets, error) {
 	return &Secrets{svc: svc, project: o.GCPProject}, nil
 }
 
+// NewSecretManager connects to Secret Manager and returns the client
+// itself, for callers that read metadata through infra's own resolution
+// helpers (infra.ResolveSecretID, infra.GrantedSecretID) rather than
+// through Secrets' own methods.
+func NewSecretManager(ctx context.Context, o Options) (*secretmanager.Service, error) {
+	svc, err := secretmanager.NewService(ctx, o.client(o.Endpoints.SecretManager)...)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to Secret Manager: %w", err)
+	}
+	return svc, nil
+}
+
 // Access reads the value of secret id's latest version, with the caller's own
 // credentials. It exists for one purpose: the GitHub App pre-check of init and
 // doctor signs a JWT with the App's key, in memory, to ask GitHub what the
@@ -197,6 +209,38 @@ func (s *Secrets) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("deleting secret %s: %w", id, err)
 	}
 	return nil
+}
+
+// SecretAccessorRole is the role that lets a member read a secret's values,
+// the one Fugaro grants: a job's own service account for what it mounts, and
+// the build account for what its builds read.
+const SecretAccessorRole = "roles/secretmanager.secretAccessor"
+
+// SecretAccessors reads secret id's live IAM policy and returns the members
+// granted SecretAccessorRole, sorted and deduplicated. Metadata only: like
+// every other read here it never touches a version's value.
+//
+// A conditional binding of the same role counts: it is still a grant this
+// caller has to account for. The policy is read at version 3, so a
+// conditional binding is not silently dropped from the answer.
+func (s *Secrets) SecretAccessors(ctx context.Context, id string) ([]string, error) {
+	p, err := s.svc.Projects.Secrets.GetIamPolicy(s.name(id)).OptionsRequestedPolicyVersion(3).Context(ctx).Do()
+	if err != nil {
+		return nil, fmt.Errorf("reading the IAM policy of secret %s: %w", id, err)
+	}
+	var out []string
+	for _, b := range p.Bindings {
+		if b.Role != SecretAccessorRole {
+			continue
+		}
+		for _, m := range b.Members {
+			if !slices.Contains(out, m) {
+				out = append(out, m)
+			}
+		}
+	}
+	slices.Sort(out)
+	return out, nil
 }
 
 func (s *Secrets) name(id string) string { return "projects/" + s.project + "/secrets/" + id }

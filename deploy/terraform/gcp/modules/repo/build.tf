@@ -9,12 +9,14 @@ resource "google_service_account" "build" {
 }
 
 # The provider credential and the workflows' build secrets, each at the
-# secret level.
+# secret level. local.secrets, not google_secret_manager_secret.this, so a
+# name Readiness resolved to a project-wide container grants the build
+# account access to that same container (design §5).
 resource "google_secret_manager_secret_iam_member" "build" {
   for_each = toset(var.repo.build_secrets)
 
   project   = var.project
-  secret_id = google_secret_manager_secret.this[each.value].secret_id
+  secret_id = local.secrets[each.value]
   role      = "roles/secretmanager.secretAccessor"
   member    = google_service_account.build.member
 }

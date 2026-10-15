@@ -49,7 +49,7 @@ func TestCloudBuildSpecCarriesTheLayer(t *testing.T) {
 		t.Fatal(ps)
 	}
 	rs := infra.RepoSpec{Slug: "s", Provider: "github", Workflows: map[string]infra.WorkflowSpec{config.ImplicitWorkflow: {}}}
-	spec, err := cloudBuildSpec(rs, cfg, config.ImplicitWorkflow, release060, "E2_HIGHCPU_8", "gs://fugaro-runs-proj-1234")
+	spec, err := cloudBuildSpec(rs, cfg, config.ImplicitWorkflow, release060, "E2_HIGHCPU_8", "gs://fugaro-runs-proj-1234", "")
 	if err != nil || spec.ProjectLayerSHA256 != l.SHA256 {
 		t.Fatalf("spec %+v, %v", spec, err)
 	}
