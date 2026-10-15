@@ -371,6 +371,15 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 			case errors.Is(cerr, runstore.ErrExists):
 				d.Log.Error("another execution's run record is in place; not replacing it", "execution", d.Execution)
 				rec = nil
+				// The error is the run's own bootstrap failure — the one this
+				// execution met before it could claim anything — and the
+				// caller prints it, so it is redacted here like the ones
+				// above and below. It is the third of the not-the-owner
+				// returns: ErrDuplicateExecution and errOwnerUnknown come
+				// back earlier, and this is the execution whose bootstrap
+				// failed outright while another execution's record was
+				// already in the bucket.
+				err = r.redactErr(err)
 				return
 			case cerr != nil && err == nil:
 				err = fmt.Errorf("writing run record: %w", cerr)

@@ -3,9 +3,14 @@ package runner_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"gocloud.dev/blob"
 
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -214,4 +219,111 @@ func TestCancelBeforeBootstrapIsSeenAtOnce(t *testing.T) {
 	if len(h.provider.State.PRs) != 0 {
 		t.Fatal("a cancelled run opened a PR")
 	}
+}
+
+// The two not-the-owner returns carry text the run did not word, and both are
+// printed: internal/cli/exec.go hands Run's error to the command's error and
+// cmd/fugaro/main.go writes it to the job's stderr. The first return is the
+// claim's own outcome — ErrDuplicateExecution, or errOwnerUnknown, whose
+// message embeds what the store said while the first record's create failed
+// and the read came back empty — and the second is a duplicate whose bootstrap
+// failed outright before it could claim anything. redactErr is applied on both
+// (runner.go's deferred handler), and these two tests are what makes removing
+// either call visible.
+//
+// Mutation (run, restored): drop `err = r.redactErr(err)` from the
+// ErrDuplicateExecution/errOwnerUnknown return in Run's deferred handler.
+// TestOwnerUnknownErrorIsRedacted fails on the leaked secret and no other test
+// does. Mutation (run, restored): drop the same call from the ErrExists return
+// below it. TestDuplicateFailingAtBootstrapIsRedacted fails.
+func TestOwnerUnknownErrorIsRedacted(t *testing.T) {
+	h := newHarness(t, "", nil)
+	withBucket(h)
+	const secret = "ATBBsecret"
+	// The job's remote is where a credential a launcher set lives, and
+	// bootstrap registers it with the redactor before the claim.
+	h.deps.Remote = "https://example.invalid/acme/app.git?access_token=" + secret
+	h.deps.Execution = exec2
+	runner.SetCreateRecord(t, func(*runstore.Store, context.Context, *runstore.Record) error {
+		// The store refused, in the shape a backend error takes when it
+		// quotes the URL it was handed — and nothing can be read back, so
+		// ownership is unknown.
+		return errors.New("creating " + h.store.Prefix() + "result.json: the backend refused " + h.deps.Remote)
+	})
+	rec, err := h.run(t)
+	if err == nil {
+		t.Fatalf("rec = %+v, want the claim's failure", rec)
+	}
+	if !strings.Contains(err.Error(), "could not tell whether another execution owns this run") {
+		t.Fatalf("err = %v, want the ownership-unknown failure", err)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Errorf("the returned error quotes the remote's credential, and it is printed to the job's stderr: %v", err)
+	}
+	if !strings.Contains(err.Error(), "[REDACTED]") {
+		t.Errorf("nothing was redacted on this path, so the mutation that drops redactErr here would go unnoticed: %v", err)
+	}
+	if rec != nil {
+		t.Errorf("rec = %+v, want none: this execution does not own the run", rec)
+	}
+}
+
+// TestDuplicateFailingAtBootstrapIsRedacted is the other not-the-owner return:
+// an execution that is not the owner because its bootstrap failed before the
+// claim, landing on a record the owner already wrote. The error the run returns
+// is that bootstrap failure — the task read, the first thing bootstrap does —
+// and its text is the store's, here a bucket whose own path carries a value the
+// job mounted as a secret, which is what a backend's error looks like when it
+// quotes the URL it was opened with. addMountedSecrets is what registers that
+// value, before bootstrap runs, and this path is why it is registered that
+// early: nothing else has had a chance to.
+func TestDuplicateFailingAtBootstrapIsRedacted(t *testing.T) {
+	h := newHarness(t, "", nil)
+	const secret = "ATBBsecret"
+	// The value is one the job has mounted as a secret, which is what
+	// addMountedSecrets registers before bootstrap runs — the registration
+	// that covers exactly these first-moment failures. A remote's own
+	// credential would not do: addRemoteSecrets runs inside bootstrap, after
+	// the task read below has already failed.
+	h.deps.Env = append(h.deps.Env, runner.SecretEnvsVar+"=ACME_TOKEN", "ACME_TOKEN="+secret)
+	// A store of its own, opened on a bucket whose path carries the same
+	// value: its errors quote the path, so the failure text below contains a
+	// value the run has registered as a secret.
+	dir := filepath.Join(t.TempDir(), secret)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bucket, err := blob.OpenBucket(context.Background(), "file://"+dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { bucket.Close() })
+	h.deps.Store, h.store = runstore.Open(bucket, repoSlug, runID), runstore.Open(bucket, repoSlug, runID)
+	// The owner's record is in place, and this execution's task.json cannot
+	// be read: it fails reading the task, before the claim, and the record it
+	// then tries to create finds the owner's. The object is a symlink that
+	// points at itself, so the driver's error is not "not found" (which
+	// runstore words by itself, driver text and all dropped) but a failure
+	// that quotes the path it was handed — the path with the credential in
+	// it, which is the leak this test is about.
+	ownerRecord(t, h)
+	link := filepath.Join(dir, h.store.Prefix(), "task.json")
+	if err := os.Symlink("task.json", link); err != nil {
+		t.Fatal(err)
+	}
+	h.deps.Execution = exec2
+	rec, err := h.run(t)
+	if err == nil {
+		t.Fatalf("rec = %+v, want the bootstrap failure", rec)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Errorf("the returned error quotes the credential the store was handed, and it is printed to the job's stderr: %v", err)
+	}
+	if !strings.Contains(err.Error(), "[REDACTED]") {
+		t.Errorf("nothing was redacted on this path, so the mutation that drops redactErr here would go unnoticed: %v", err)
+	}
+	if rec != nil {
+		t.Errorf("rec = %+v, want none: this execution does not own the run", rec)
+	}
+	assertOwnerRecordIntact(t, h)
 }

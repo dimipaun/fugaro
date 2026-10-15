@@ -321,18 +321,23 @@ func TestRunnerRefusesAnUnreadablePolicyBeforeAnyCredential(t *testing.T) {
 	refusedAdmission(t, b, rec, err, "could not be read", projectpolicy.PathShared(), "older than the marker", "does not start on a ceiling the policy did not set")
 }
 
-// An installation that has published no policy has no allow-list, and inventing
-// "absent means deny" would refuse every run of every installation on upgrade.
-// The binding is still checked: it needs no policy, only the slug and the task.
-// The ordering the claim keeps: a duplicate execution is told it is a
-// duplicate whatever else about it would have been refused, because the claim
-// comes before the admission check (design §4.7). The owner's record is left
-// exactly as it was and this execution prints none (fugaro exec exits a
-// duplicate as a remote error, internal/cli's
-// TestExecDuplicateExecutionExitsRemoteError), so a run whose job was
-// re-executed — a retry, a second execution of one run — never gains a second
-// record of its own. Swapping the two calls fails here: the admission refusal
-// is what comes back, and the record is written over the owner's.
+// The other half of the ordering the claim keeps (the admissionCheck doc has
+// the whole argument): a duplicate execution is told it is a duplicate whatever
+// else about it would have been refused, because the claim comes before the
+// admission check. This fixture is a duplicate whose repository would have been
+// refused as well — the slug it was launched for is another project's — and the
+// claim is still what answers it, with the owner's record left exactly as it
+// was and no record of this execution's own anywhere: the claim's write is
+// create-only, so a second execution never replaces what is there.
+//
+// Swapping the two calls fails here: the admission refusal comes back (rec is
+// nil, err names the slug this execution was launched for) instead of
+// ErrDuplicateExecution, and fugaro exec exits a duplicate as a remote error
+// (internal/cli's TestExecDuplicateExecutionExitsRemoteError is the end-to-end
+// half), never as an admission refusal. The owner's record is not written over
+// in either order — nothing on this path may write it — so what the order
+// decides is which answer a duplicate gets, and a duplicate a policy does not
+// admit must still be told it is a duplicate.
 func TestRunnerTellsADuplicateApartBeforeAdmission(t *testing.T) {
 	b := admissionRun(t, "github", "acme/other", "off", "", "")
 	ownerRecord(t, b.harness)
@@ -346,6 +351,9 @@ func TestRunnerTellsADuplicateApartBeforeAdmission(t *testing.T) {
 	assertOwnerRecordIntact(t, b.harness)
 }
 
+// An installation that has published no policy has no allow-list, and inventing
+// "absent means deny" would refuse every run of every installation on upgrade.
+// The binding is still checked: it needs no policy, only the slug and the task.
 func TestRunnerWithoutAPolicyChecksOnlyTheBinding(t *testing.T) {
 	t.Run("no node under the marker", func(t *testing.T) {
 		b := admissionRun(t, "github", "acme/app", "off", "", "")
