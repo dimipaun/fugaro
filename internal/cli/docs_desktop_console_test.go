@@ -17,16 +17,21 @@ package cli
 // test here instead of silently breaking a screen.
 
 import (
+	"encoding/json"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/watch"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // TestDocsDesktopConsoleDesignCarriesTheDecisions asserts the design holds
@@ -48,17 +53,7 @@ func TestDocsDesktopConsoleDesignCarriesTheDecisions(t *testing.T) {
 		}},
 		{"the spawn allow-list, by exact argv", []string{
 			"The spawn allow-list is exact argv, not a command name",
-			"watch --json",
-			"budget show --json",
-			"report --json",
-			"runs ls --json",
-			"diagnose RUN --json",
-			"logs RUN --url",
-			"secrets ls --json",
-			"accounts ls --json",
-			"doctor --json",
 			"with no flags at all",
-			"doctor --check-github-app",
 		}},
 		{"the five availability states", []string{
 			"**measured**",
@@ -390,5 +385,340 @@ func TestDocsDesktopConsoleContractNamesTheFlagInventory(t *testing.T) {
 	}
 	if !strings.Contains(doc, "**no — it takes no flags at all**") {
 		t.Errorf("%s does not state that version takes no flags at all", path)
+	}
+}
+
+// consoleContractCommands is every cobra command console/docs/json-contract.md
+// documents, by the phrase the document uses for it. The new tests below read
+// the document's flags and its `mode` values back off these constructors, so a
+// flag or a value written into the document rather than read from the code
+// fails there.
+var consoleContractCommands = map[string]func() *cobra.Command{
+	"watch":       newWatchCmd,
+	"budget show": newBudgetShowCmd,
+	"report":      newReportCmd,
+	"runs ls":     newLsCmd,
+	"diagnose":    newDiagnoseCmd,
+	"logs":        newLogsCmd,
+	"cancel":      newCancelCmd,
+	"secrets ls":  newSecretsLsCmd,
+	"accounts ls": newAccountsLsCmd,
+	"doctor":      newDoctorCmd,
+	"version":     newVersionCmd,
+}
+
+// TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document
+// names must be one a real cobra command has, checked with its own
+// Flags().Lookup rather than against a list kept here. This is the check a
+// review found missing: the field-table test above reads only first-column key
+// tokens, so a flag invented in prose (the `--no-hours` a first revision put
+// on `report`, which has no such flag) went through it untouched.
+//
+// Two levels, because a union alone would let a flag of one command be written
+// under another's heading. First, every token anywhere in the document must
+// exist on at least one of the commands the document describes. Second, a line
+// that states a command's own flags ("**Flags** (`report.go:81`): ..." or
+// "Flags: `--json` ...") is checked against THAT section's command, resolved
+// from the heading above it.
+func TestDocsDesktopConsoleContractNamesOnlyRealFlags(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	doc := readDoc(t, path)
+
+	cmds := map[string]*cobra.Command{}
+	all := map[string]bool{}
+	for name, newCmd := range consoleContractCommands {
+		cmd := newCmd()
+		cmds[name] = cmd
+		cmd.Flags().VisitAll(func(f *pflag.Flag) { all[f.Name] = true })
+	}
+	// A documented negative: the document names --version in order to say the
+	// root command has no cobra Version field and `fugaro --version` fails
+	// (section 7), so it is checked for absence, the opposite of the rest.
+	documentedAbsent := map[string]bool{"version": true}
+
+	// (1) Every flag token in the document.
+	found := map[string]bool{}
+	for _, m := range flagTokenRE.FindAllStringSubmatch(doc, -1) {
+		name := strings.TrimRight(m[1], "-")
+		if name == "" {
+			continue
+		}
+		found[name] = true
+		switch {
+		case documentedAbsent[name] && all[name]:
+			t.Errorf("%s documents --%s as absent, but a command has it", path, name)
+		case !documentedAbsent[name] && !all[name]:
+			t.Errorf("%s names --%s, which is not a flag of any command it documents: a flag written rather than read", path, name)
+		}
+	}
+	if len(found) < 20 {
+		t.Errorf("%s: only %d distinct flags were found; the document's shape changed and this test stopped looking", path, len(found))
+	}
+
+	// (2) The lines that state a command's own flags, against that command.
+	sectionCommand := func(heading string) *cobra.Command {
+		best := ""
+		for phrase := range consoleContractCommands {
+			// The longest phrase wins, so `fugaro budget show` is not read as
+			// `fugaro budget` (nor `fugaro runs ls` as `fugaro runs`).
+			if strings.Contains(heading, "`fugaro "+phrase) && len(phrase) > len(best) {
+				best = phrase
+			}
+		}
+		if best == "" {
+			return nil
+		}
+		return cmds[best]
+	}
+	heading, checkedLines := "", 0
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "#") {
+			heading = line
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		if !flagsLineRE.MatchString(trimmed) {
+			continue
+		}
+		cmd := sectionCommand(heading)
+		if cmd == nil {
+			t.Errorf("%s: the flags line %q sits under a heading this test cannot resolve to a command: %q", path, trimmed, heading)
+			continue
+		}
+		checkedLines++
+		for _, m := range flagTokenRE.FindAllStringSubmatch(line, -1) {
+			name := strings.TrimRight(m[1], "-")
+			if name == "" || documentedAbsent[name] {
+				continue
+			}
+			if cmd.Flags().Lookup(name) == nil {
+				t.Errorf("%s: %q states --%s as this command's own flag, but its cobra command has no such flag", path, strings.TrimSpace(heading), name)
+			}
+		}
+	}
+	if checkedLines < 7 {
+		t.Errorf("%s: only %d per-command flags lines were checked; the document's shape changed and this test stopped looking", path, checkedLines)
+	}
+}
+
+// flagsLineRE finds a line of the document that states one command's own
+// flags. This document writes them three ways -- "**Flags** (`report.go:81`):",
+// "**Flags, read off the cobra command** (`budget.go:211`):" and, where the
+// sentence runs on, "... . Flags: `--repo`" -- so the mark is a "Flags" word
+// with a colon within a clause, not a fixed prefix.
+var flagsLineRE = regexp.MustCompile(`\bFlags\b[^:]{0,60}:`)
+
+// modeRowRE finds one row of the document's "`mode` per command" table: the
+// command in the first cell, the values it can carry in the second.
+var modeRowRE = regexp.MustCompile("^\\|\\s*`([^`]+)`\\s*\\|(.*)\\|\\s*$")
+
+// TestDocsDesktopConsoleContractPinsTheModeValuesPerCommand pins the one value
+// two documents share and disagree about: `mode`. The document states, per
+// command, which values it can carry, and that table is checked against the
+// code -- `watch.Build` actually run over each stored /config/mode, so the
+// watch half is the function's own answer rather than a reading of it, and the
+// two budget constants plus the normalisation `budget show` performs for the
+// other. A document that says `watch --json` can carry "" (as a first revision
+// did) fails here, since the feed never emits it.
+func TestDocsDesktopConsoleContractPinsTheModeValuesPerCommand(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	doc := readDoc(t, path)
+
+	// The code's two values, spelled as the document spells them.
+	if budget.ModeObserve != "observe" || budget.ModeEnforce != "enforce" {
+		t.Fatalf("the mode constants are %q/%q, not observe/enforce: the document's values have drifted from the code's",
+			budget.ModeObserve, budget.ModeEnforce)
+	}
+
+	// What watch --json emits, for every /config/mode an installation can hold:
+	// unset, either real value, and one the code does not know.
+	emitted := map[string]bool{}
+	for _, stored := range []string{"", budget.ModeObserve, budget.ModeEnforce, "audit"} {
+		s := watch.NewState()
+		if stored != "" {
+			data, err := json.Marshal(map[string]string{"mode": stored})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Config.Apply("/", data, false); err != nil {
+				t.Fatalf("seeding /config/mode = %q: %v", stored, err)
+			}
+		}
+		emitted[watch.Build(s, time.Now(), watch.Config{}).Mode] = true
+	}
+	if !emitted["observe"] || !emitted["enforce"] || len(emitted) != 2 {
+		t.Fatalf("watch.Build emits %v, want exactly observe and enforce", emitted)
+	}
+
+	// The document's table: command -> the values it says that command can carry.
+	start := strings.Index(doc, "**`mode` per command**")
+	if start < 0 {
+		t.Fatalf("%s no longer carries the \"`mode` per command\" table this test reads", path)
+	}
+	stated := map[string]map[string]bool{}
+	rows := 0
+	for _, line := range strings.Split(doc[start:], "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "|") {
+			if rows > 0 {
+				break // the table ended
+			}
+			continue
+		}
+		m := modeRowRE.FindStringSubmatch(strings.TrimSpace(line))
+		if m == nil {
+			continue // the header row and the rule
+		}
+		cmd := strings.TrimSuffix(m[1], " --json")
+		// The values are listed before the em dash that explains them: the
+		// rest of the cell backticks identifiers too (`Build`, `/config/mode`).
+		valuesText, _, _ := strings.Cut(m[2], "—")
+		values := map[string]bool{}
+		for _, tok := range regexp.MustCompile("`([^`]*)`").FindAllStringSubmatch(valuesText, -1) {
+			values[strings.Trim(tok[1], `"`)] = true
+		}
+		stated[cmd] = values
+		rows++
+	}
+	if rows == 0 {
+		t.Fatalf("%s's \"`mode` per command\" table has no rows", path)
+	}
+	if len(stated) != 2 {
+		t.Fatalf("%s's \"`mode` per command\" table names %d commands, want the two that carry mode: %v", path, len(stated), stated)
+	}
+	// watch --json: exactly what Build emitted.
+	if got := stated["watch"]; len(got) != 2 || !got["observe"] || !got["enforce"] {
+		t.Errorf("%s says watch --json's mode can be %v, but watch.Build emits %v", path, got, emitted)
+	}
+	// budget show --json: the two constants, plus "" -- the value its own
+	// normalisation produces for an unset or unknown /config/mode.
+	if got := stated["budget show"]; len(got) != 3 || !got["observe"] || !got["enforce"] || !got[""] {
+		t.Errorf("%s says budget show --json's mode can be %v, want observe, enforce and \"\" (budget.go:457)", path, got)
+	}
+
+	// And the prose rows agree with the table: the watch field row must not
+	// offer "", and the budget row must.
+	for _, row := range []string{
+		"| `mode` | string | — | no | **`observe` or `enforce`, never `\"\"`**",
+		"**This is the only document that can carry `\"\"`**",
+	} {
+		if !strings.Contains(doc, row) {
+			t.Errorf("%s no longer states %q: the per-command mode fact moved out of the field rows", path, row)
+		}
+	}
+}
+
+// docTableAfter finds the markdown table whose header line contains header and
+// returns its rows' cells, up to the first line that is not a table row.
+// Cells are the "|"-separated fields with the outer bars dropped and the
+// whitespace trimmed; the header row and the "|---|" rule are not included.
+func docTableAfter(t *testing.T, path, doc, header string) [][]string {
+	t.Helper()
+	start := strings.Index(doc, header)
+	if start < 0 {
+		t.Fatalf("%s has no table whose header names %q", path, header)
+	}
+	var rows [][]string
+	for _, line := range strings.Split(doc[start:], "\n")[1:] {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "|") {
+			if len(rows) > 0 {
+				break
+			}
+			continue
+		}
+		cells := strings.Split(strings.Trim(trimmed, "|"), "|")
+		for i := range cells {
+			cells[i] = strings.TrimSpace(cells[i])
+		}
+		if strings.Trim(cells[0], "-") == "" { // the |---|---| rule
+			continue
+		}
+		rows = append(rows, cells)
+	}
+	if len(rows) == 0 {
+		t.Fatalf("%s's table under %q has no rows", path, header)
+	}
+	return rows
+}
+
+// firstBacktick is the first `token` of a table cell -- the exact argv of an
+// allow-list row, which the row states before any parenthetical.
+func firstBacktick(cell string) string {
+	m := regexp.MustCompile("`([^`]+)`").FindStringSubmatch(cell)
+	if m == nil {
+		return ""
+	}
+	return m[1]
+}
+
+// TestDocsDesktopConsoleDesignAllowListIsExactArgv: the design's spawn
+// allow-list must be read as a table of exact argument vectors, not as prose
+// that happens to contain the command names. A presence test that looks for
+// the bare substring "watch --json" is satisfied by a sentence about it, which
+// is what a review of the first revision found here: the table could lose a
+// row -- or gain one -- and the test would still pass. This parses both tables
+// §5.1 rule 6 carries and compares their first cells exactly:
+// the allow-list is the eleven argvs and nothing else, and the "never" table
+// still names the two entries that make a name-based list a hole.
+func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
+	const path = "docs/design/desktop-console.md"
+	doc := readDoc(t, path)
+
+	want := []string{
+		"watch --json",
+		"budget show --json",
+		"report --json",
+		"runs ls --json",
+		"diagnose RUN --json",
+		"logs RUN --json",
+		"logs RUN --url",
+		"secrets ls --json",
+		"accounts ls --json",
+		"version",
+		"doctor --json",
+	}
+	rows := docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |")
+	got := map[string]bool{}
+	for _, cells := range rows {
+		argv := firstBacktick(cells[0])
+		if argv == "" {
+			t.Errorf("%s: the allow-list row %q states no exact argv in its first cell", path, cells[0])
+			continue
+		}
+		if strings.HasPrefix(cells[0], "`") && !strings.HasPrefix(cells[0], "`"+argv+"`") {
+			t.Errorf("%s: the allow-list row %q starts with more than its argv %q", path, cells[0], argv)
+		}
+		if got[argv] {
+			t.Errorf("%s: the allow-list carries %q twice", path, argv)
+		}
+		got[argv] = true
+	}
+	for _, argv := range want {
+		if !got[argv] {
+			t.Errorf("%s: the allow-list no longer carries the exact argv %q", path, argv)
+		}
+	}
+	for argv := range got {
+		if !slices.Contains(want, argv) {
+			t.Errorf("%s: the allow-list carries %q, which this test's exact list does not: a spawn contract that grew", path, argv)
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("%s: the allow-list carries %d argvs, want %d", path, len(got), len(want))
+	}
+
+	// The "never" table's first cells: the two entries that are the reason the
+	// list is argv-exact rather than name-based.
+	never := map[string]bool{}
+	for _, cells := range docTableAfter(t, path, doc, "| Never (the \"nothing else\" table) |") {
+		argv := firstBacktick(cells[0])
+		if argv != "" {
+			never[argv] = true
+		}
+	}
+	for _, argv := range []string{"doctor --check-github-app", "logs --follow"} {
+		if !never[argv] {
+			t.Errorf("%s: the never table no longer names %q", path, argv)
+		}
 	}
 }

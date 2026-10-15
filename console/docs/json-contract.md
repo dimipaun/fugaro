@@ -63,7 +63,7 @@ reads, the other being `logs RUN --json` (§6.2, §9).
 | Field | Type | Unit | omitempty | Availability state |
 |---|---|---|---|---|
 | `project` | string | — | no | measured (`d.LC.Name`) |
-| `mode` | string | — | no | `observe`, `enforce`, or `""` when `/config/mode` is unset (acts as observe) |
+| `mode` | string | — | no | **`observe` or `enforce`, never `""`** — `watch.Build` seeds `budget.ModeObserve` and switches only on `budget.ModeEnforce` (`internal/watch/build.go:256`), so an unset `/config/mode` reads `observe` here. `budget show --json` (§3) is the one document that can carry `""` |
 | `day` | string | `YYYY-MM-DD`, UTC | no | measured — `View.Day`; `""` before the first day is set (`internal/watch/build.go:165`) |
 | `now` | string | RFC 3339, UTC | no | measured |
 | `connection` | `JSONConn` | — | no | see below |
@@ -73,6 +73,19 @@ reads, the other being `logs RUN --json` (§6.2, §9).
 | `finished` | `[]JSONFinished` | — | no | `[]` when none; **always unfiltered** (`--all`/`--keep`/`--keep-count` bound only the plain and interactive views) |
 | `ready` | `[]JSONFinished` | — | no | `[]` when none; the finished runs whose `outcome` is `ready` (`ReadyRowsOf`), unfiltered |
 | `queued_note` | string | — | **yes** | absent when the runs bucket was read; present = the bucket could not be read for queued rows, already sanitized (`JSONDoc.QueuedNote`) |
+
+**`mode` per command**, because the two documents that carry it differ on
+exactly one input — an unset `/config/mode`. Both spell the code's own values
+(`budget.ModeObserve`, `budget.ModeEnforce`):
+
+| Command | Values `mode` can carry |
+|---|---|
+| `watch --json` | `observe`, `enforce` — `Build` seeds `observe` and switches only on `enforce`, so an unset `/config/mode` reads `observe` here (`internal/watch/build.go:256`) |
+| `budget show --json` | `observe`, `enforce`, `""` — an unset (or unrecognised) `/config/mode` reads `""` and appends a warning (`internal/cli/budget.go:457`) |
+
+A console that treated `watch --json`'s `mode` as possibly `""` would carry a
+comparison the feed never needs; a console that treated `budget show`'s as
+never `""` would miss the warning.
 
 ### `JSONConn` (`internal/watch/json.go:24`) — the connectivity state
 
@@ -232,7 +245,7 @@ spaces (`enc.SetIndent("", "  ")`, `budget.go:580`).
 |---|---|---|---|---|
 | `project` | string | — | no | the Fugaro project |
 | `gcp_project` | string | — | no | measured |
-| `mode` | string | — | no | `observe` / `enforce` / `""` when unset; `""` also appends a warning |
+| `mode` | string | — | no | `observe` / `enforce` / `""` when unset; `""` also appends a warning. **This is the only document that can carry `""`** — see §2's `mode`, where `watch --json` normalises an unset mode to `observe` |
 | `day` | string | `YYYY-MM-DD`, UTC | no | measured (`budget.DayDate`) |
 | `max_reserve_usd` | `*float64` | USD | no | **null = unavailable** |
 | `global` | `showGlobal` | — | no | below |
@@ -304,7 +317,15 @@ the exported writer, not a `cli`-side struct. Indented two spaces
 - **`compute_micros`/`compute_usd` are null unless `ComputeState ==
   ComputeKnown`**, and a present one is **estimated** (`compute_estimated`
   true). Null = *unavailable*, never `0`.
-- **`run_hours` is null likewise**, and absent when `--no-hours` was used.
+- **`run_hours` follows `compute_micros`** — set only when `ComputeState ==
+  ComputeKnown` (`jsonLine`, `render.go:214`), so it is null for the same rows.
+  The key carries **no `omitempty`**, so it is always present and **null**
+  rather than absent when the hours are not known: read it as
+  *unavailable*, never as a measured `0`. A degraded `report` is the whole
+  document's null case — `reportDegraded` builds on the run records and sets
+  `rep.NoHours = true` (`internal/cli/report.go:414`), and `source` says
+  `"run-records"`, so every row's `run_hours` is null (there is no flag for
+  this; the path is chosen by whether spend history is enabled).
 - **`tokens` is absent entirely when not tracked** (`TokensTracked`).
 - **`partial`** is the design's `(partial)` marker: the day has no final
   Firestore document. A day beyond the retained window is a **gap**, not a row
