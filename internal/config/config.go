@@ -379,6 +379,12 @@ type Secret struct {
 	Env  string `yaml:"env"`
 }
 
+// AnthropicSecret is the logical secret that holds the Anthropic API key. It
+// is the one secret a job may go without: it is mounted whenever the secret
+// has a version, and a run whose models all route through providers needs
+// none (design docs/design/project-centric.md §6.1).
+const AnthropicSecret = "anthropic-api-key"
+
 // ReservedSecrets are the logical secret names the platform itself mounts,
 // mapped to the variable each one becomes. A workflow's secrets may not
 // reuse them (design §5.1, §6.1).
@@ -386,7 +392,7 @@ var ReservedSecrets = map[string]string{
 	"bitbucket-token":    "FUGARO_BITBUCKET_TOKEN",
 	"github-app-key":     "FUGARO_GITHUB_APP_PRIVATE_KEY",
 	"claude-oauth-token": "CLAUDE_CODE_OAUTH_TOKEN",
-	"anthropic-api-key":  "ANTHROPIC_API_KEY",
+	AnthropicSecret:      "ANTHROPIC_API_KEY",
 }
 
 // Resources are the task resources for the workflow's job. The backend checks them against its own limits (Cloud Run: gcp.CheckResources).

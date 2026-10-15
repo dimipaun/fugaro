@@ -55,6 +55,29 @@ func (m Missing) String() string {
 // errFound stops a listing at its first match.
 var errFound = errors.New("found")
 
+// OptionalSecret reports whether a job may go without this logical secret.
+// Only one may: the Anthropic API key, mounted whenever the secret has a
+// version, because a run whose models all route through providers needs none
+// (design docs/design/project-centric.md §6.1). Everything else a job mounts
+// is required for the job to work at all.
+func OptionalSecret(logical string) bool { return logical == config.AnthropicSecret }
+
+// dropMount removes a logical secret from a job's mounts: the variable it
+// would become is deleted, so no secret_key_ref points at a secret with no
+// version (Cloud Run checks a job's secrets when it creates it), and the
+// runner's redaction list is rebuilt from the variables that are left.
+func dropMount(ws WorkflowSpec, logical string) {
+	for env, l := range ws.SecretEnv {
+		if l == logical {
+			delete(ws.SecretEnv, env)
+		}
+	}
+	delete(ws.SecretIDs, logical)
+	if ws.Env != nil {
+		ws.Env[runner.SecretEnvsVar] = strings.Join(slices.Sorted(maps.Keys(ws.SecretEnv)), ",")
+	}
+}
+
 // Readiness decides, from what exists, what the plan may deploy. It
 // returns a deep copy of spec with the gates applied (spec itself is not
 // changed, and shares no map or slice with the result) and what is still
@@ -146,6 +169,18 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 			if ok {
 				continue
 			}
+			if OptionalSecret(logical) {
+				// Mounted whenever the secret has a version, and a fact
+				// about data rather than about policy, so flipping a
+				// routing setting never needs Terraform (design
+				// project-centric §6.1). With no version anywhere the
+				// mount is dropped and the job deploys anyway: a run whose
+				// models all route through providers needs no such key,
+				// and a call that needs it is refused by the gateway by
+				// name, not blocked here.
+				dropMount(ws, logical)
+				continue
+			}
 			resolved, fix, err := resolveProject(logical)
 			if err != nil {
 				return RepoSpec{}, nil, err
@@ -162,18 +197,10 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 		// keeps the job's other properties updating; DeployJob is never set
 		// false for a job that already exists, since job.tf's count would
 		// destroy it outright. The Missing above is still reported.
-		if exists && len(unresolved) > 0 && ws.Env != nil {
+		if exists && len(unresolved) > 0 {
 			for _, logical := range unresolved {
-				for env, l := range ws.SecretEnv {
-					if l == logical {
-						delete(ws.SecretEnv, env)
-					}
-				}
-				delete(ws.SecretIDs, logical)
+				dropMount(ws, logical)
 			}
-			// The runner's own redaction list must name exactly the
-			// variables the job's environment still has.
-			ws.Env[runner.SecretEnvsVar] = strings.Join(slices.Sorted(maps.Keys(ws.SecretEnv)), ",")
 		}
 		var built bool
 		if ws.Checkout == config.CheckoutClone {

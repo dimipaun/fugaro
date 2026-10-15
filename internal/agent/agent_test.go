@@ -599,9 +599,20 @@ func TestBuildEnvGatewayDropsRealKey(t *testing.T) {
 	if !slices.Contains(secrets, realKey) {
 		t.Errorf("secrets = %v", secrets)
 	}
-	// The key is still required, so a misconfigured job fails as it did.
-	if _, _, err := BuildEnv([]string{"PATH=/bin"}, EnvSpec{Auth: "api-key", Gateway: gw}); err == nil {
-		t.Error("a missing real key was accepted")
+	// No key at all is accepted: a run whose models all route through
+	// providers has none, and the gateway refuses a call that needs
+	// Anthropic (internal/gateway, missingAnthropicKey).
+	env, secrets, err = BuildEnv([]string{"PATH=/bin"}, EnvSpec{Auth: "api-key", Gateway: gw})
+	if err != nil {
+		t.Fatalf("a run with no Anthropic key: %v", err)
+	}
+	if !slices.Contains(env, "ANTHROPIC_API_KEY=tok-abc") || len(secrets) != 0 {
+		t.Errorf("env = %v, secrets = %v, want the gateway token and nothing to redact", env, secrets)
+	}
+	// A key that is there but too short is still refused: it cannot be
+	// redacted safely.
+	if _, _, err := BuildEnv([]string{"PATH=/bin", "ANTHROPIC_API_KEY=abc"}, EnvSpec{Auth: "api-key", Gateway: gw}); err == nil {
+		t.Error("a 3-byte real key was accepted")
 	}
 	// Set and the parent can't override the routing.
 	env, _, err = BuildEnv(parent, EnvSpec{Auth: "api-key", Gateway: gw, Set: map[string]string{"ANTHROPIC_BASE_URL": "https://set.invalid"}})

@@ -88,6 +88,16 @@ func copyRoutes(rs []Route) []Route {
 	return out
 }
 
+// missingAnthropicKey is how a call that needs the Anthropic upstream is
+// refused when the run has no key stored (design project-centric §6.1): a
+// stored key is mounted whenever the secret has a version, so storing one and
+// re-running `fugaro init --repo` is the whole fix, and a run whose models all
+// route through providers never needs it.
+const missingAnthropicKey = "no Anthropic API key is stored, so this call cannot go to Anthropic: store one with `fugaro secrets set anthropic-api-key` and rerun fugaro init --repo, or route the model through a provider"
+
+// validateRoutes: routes need the Anthropic upstream's kind, never its key
+// (a run whose models are all routed has no key, and that is exactly when
+// they matter).
 func validateRoutes(u Upstream, routes []Route) error {
 	if len(routes) == 0 {
 		return nil

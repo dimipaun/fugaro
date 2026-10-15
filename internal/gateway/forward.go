@@ -540,6 +540,15 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, rt route
 		return
 	}
 	rt = s.withRoute(rt, p.model)
+	// A model no route claims goes to the Anthropic upstream, which needs a
+	// key. There may be none: the run is only required to have one when a
+	// call actually needs it (§6.1).
+	if rt.provider == nil && s.o.Upstream.Kind == "anthropic" && s.o.Upstream.APIKey == "" {
+		s.violation(st, missingAnthropicKey)
+		s.log.Warn("budget: request refused", "stage", st.st.Name, "violation", missingAnthropicKey)
+		refuse(http.StatusBadRequest, "invalid_request_error", "fugaro: "+missingAnthropicKey)
+		return
+	}
 	if rt.provider != nil {
 		cl.route = rt.provider.Name
 		if !known {
@@ -1067,6 +1076,13 @@ func (s *Server) forwardFree(w http.ResponseWriter, r *http.Request, rt route) {
 		// provider, so the agent estimates by itself.
 		writeError(w, http.StatusNotFound, "not_found_error", "fugaro: token counting isn't available for model "+logValue(m))
 		s.log.Info("token count", "stage", s.stageName(), "status", http.StatusNotFound, "request_bytes", len(body), "response_bytes", 0)
+		return
+	}
+	if s.o.Upstream.Kind == "anthropic" && s.o.Upstream.APIKey == "" {
+		// A count for a model no route claims goes to Anthropic, which needs
+		// the key the run may not have (§6.1).
+		writeError(w, http.StatusForbidden, "permission_error", "fugaro: "+missingAnthropicKey)
+		s.log.Info("token count", "stage", s.stageName(), "status", http.StatusForbidden, "request_bytes", len(body), "response_bytes", 0)
 		return
 	}
 	ctx, cancel := context.WithCancel(r.Context())
