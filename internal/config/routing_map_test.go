@@ -75,7 +75,7 @@ func TestRoutingResolutionHasOneSite(t *testing.T) {
 	// file, and the resolver's.
 	allowed := map[string]bool{
 		filepath.Join("..", "pricing", "canonical.go"): true,
-		"routing.go": true,
+		filepath.Join("..", "config", "routing.go"):    true,
 	}
 	var found []string
 	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {

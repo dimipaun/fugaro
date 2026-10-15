@@ -1,6 +1,9 @@
 package runner
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
@@ -17,38 +20,98 @@ import (
 // Review Focus 11's mutation is a second translation that disagrees with this
 // one.
 //
+// Resolving into the run's own config, rather than at each consumer, is what
+// makes the whole run agree. Every rule that judges a pin — the allow-list, the
+// provider's allow_data_to, the pin's price — reads the same Agent, and a
+// consumer that resolved on its own would leave those rules judging the
+// canonical ID while the gateway charged the route's: a routed call under an
+// allow-list that names no route would be allowed by a decision about a model
+// nobody sent.
+//
 // The resolution itself is config.RoutingClaudeFor, the one resolver, and the
 // ID it returns comes from the checked-in canonical map (pricing.ClaudeRoutes):
-// the run never derives a spelling, and a canonical ID the map does not map is
-// refused below rather than guessed.
+// the run never derives a spelling, so a route entry that spells the model its
+// own way is refused rather than trusted.
 //
-// A switch that names a pin which cannot be resolved — an ID with no map entry,
+// A switch that names a pin which cannot be resolved — an ID with no map row,
 // no route entry claiming it, a route whose allow_data_to is not written, or two
-// claiming it — halts the run. It never falls back to the direct route: D1b's
-// default is what an *absent* switch means, never what a written one means when
-// its route is gone, and a silent fall-through would charge the direct Claude
-// rate for a call the owner routed elsewhere.
+// claiming it — halts the run, naming the model and the reason. It never falls
+// back to the direct route: D1b's default is what an *absent* switch means,
+// never what a written one means when its route is gone, and the fall-through
+// would send the call to Anthropic and charge the direct Claude rate for a call
+// the owner routed elsewhere.
 //
 // via: auto is key-presence driven, as the design spells it: with an Anthropic
 // key in the job the direct route is taken (the pins are left alone), and with
 // none the provider route is taken. The line `fugaro validate` prints for the
 // same switch is Task 1b.3's.
 func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
+	if !found || pp == nil || pp.Routing == nil || pp.Routing.Claude == nil {
+		return nil // absent means direct (D1b)
+	}
+	block, sw := pp.Routing, pp.Routing.Claude
+	if sw.ViaValue() == config.RouteDirect {
+		return nil
+	}
+	// The block is judged against the routes this run has, exactly as the
+	// config loader and the policy reader judge it: the run must not act on a
+	// switch it cannot carry out.
+	if ps := config.CheckRouting(block, r.modelProviders(), "routing"); len(ps) > 0 {
+		msgs := make([]string, len(ps))
+		for i, p := range ps {
+			msgs[i] = p.String()
+		}
+		return fmt.Errorf("the project's routing switch is not usable: %s", strings.Join(msgs, "; "))
+	}
+	if sw.ViaValue() == config.RouteAuto && envLookup(r.d.Env, "ANTHROPIC_API_KEY") != "" {
+		// auto routes only when the call has nowhere else to go: a stored key
+		// is the direct path, and the pins stay as they are (D1b).
+		return nil
+	}
+	for _, p := range r.pinSlots() {
+		model := p.get()
+		if model == "" || !sw.Names(model) {
+			continue // the list is the opt-in: an ID it does not name is untouched
+		}
+		route, sent, ok := config.RoutingClaudeFor(sw, model, r.modelProviders())
+		if !ok || route == config.RouteDirect || sent == model {
+			// CheckRouting passed, so this is the belt to its braces: the
+			// switch asked for a route and there is none to take.
+			return fmt.Errorf("routing.claude names %s, and this run cannot resolve its route: the switch routes nothing rather than sending the call direct (D1b)", model)
+		}
+		p.set(sent)
+	}
 	return nil
 }
 
-// routedModel is the model a stage's pin resolves to, and whether the switch
-// routed it at all: the model itself when nothing is routed, so a caller that
-// only wants the answer cannot tell the difference from a direct run.
-func (r *run) routedModel(model string) (string, bool) {
-	return model, false
+// pinSlot is one of the run's three pins: the model the configuration answers
+// for it, and where that answer is written. A pin is set through the field its
+// effective model came from, so an agent that names only agent.model keeps its
+// coder pin there rather than gaining an explicit one (config.Agent.ModelFor).
+type pinSlot struct {
+	get func() string
+	set func(string)
 }
 
-// routingClaude is the run's switch: the project policy's block when the run
-// read one — the policy is the switch's only delivery path (D1a) — and nil
-// otherwise, which is D1b's absent switch (direct). A run therefore never reads
-// a routing block from its own fugaro.yaml, and the pins a repository writes
-// cannot carry one.
-func (r *run) routingClaude() *config.RoutingClaude {
-	return nil
+// pinSlots are the run's three pins, in PinnedModels' order: what the agent is
+// given as the coder, the reviewer and the background model.
+func (r *run) pinSlots() []pinSlot {
+	a := &r.cfg.Agent
+	// A role reads models.<role>, else agent.model: the rewrite goes back to
+	// whichever of the two answered, so the effective model moves and nothing
+	// else about the configuration does.
+	slot := func(role *string, roleModel config.Role) pinSlot {
+		return pinSlot{
+			get: func() string { return a.ModelFor(roleModel) },
+			set: func(m string) {
+				if *role == "" {
+					a.Model = m
+					return
+				}
+				*role = m
+			},
+		}
+	}
+	bg := pinSlot{get: func() string { return a.Models.Background }, set: func(m string) { a.Models.Background = m }}
+	return []pinSlot{slot(&a.Models.Coder, config.RoleCoder), slot(&a.Models.Reviewer, config.RoleReviewer), bg}
 }

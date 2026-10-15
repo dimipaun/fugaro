@@ -22,17 +22,31 @@ func routedRun(t *testing.T, sw *config.RoutingClaude, coder, reviewer string) *
 			Models: config.ModelRoles{Coder: coder, Reviewer: reviewer},
 		}},
 		spend: Spend{Mode: "enforce"},
-		d: Deps{Providers: map[string]config.ModelProvider{
-			"openrouter": {
-				Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
-				Secret: "openrouter-api-key", Models: []string{"anthropic/claude-sonnet-5.5"},
-				AllowDataTo: []string{"acme/site"}, RouteFeePct: 5,
+		// The route's key is mounted, as a job's environment has it: the
+		// placeholder is not a credential, and gatewayRoutes refuses to build a
+		// route without one.
+		d: Deps{
+			Env: []string{config.ProviderKeyEnv("openrouter-api-key") + "=" + routedProviderKey},
+			Providers: map[string]config.ModelProvider{
+				"openrouter": {
+					Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+					Secret: "openrouter-api-key",
+					// Two of the route's own Claude IDs, so a switch can name one
+					// this run does not pin and still be a switch that resolves.
+					Models:      []string{"anthropic/claude-sonnet-5.5", "anthropic/claude-fable-5.1"},
+					AllowDataTo: []string{"acme/site"}, RouteFeePct: 5,
+				},
 			},
-		}},
+		},
 	}
 	r.projPolicy = policyRead{done: true, found: sw != nil, policy: &projectpolicy.Policy{Routing: &config.Routing{Claude: sw}}}
 	return r
 }
+
+// routedProviderKey is the placeholder the route's key is mounted as. It is not
+// a credential and never was one: the runner refuses to build a route without a
+// value of the right shape, and nothing here talks to a provider.
+const routedProviderKey = "sk-or-v1-0123456789abcdef-not-a-real-key"
 
 // TestStagePinsUseTheRouteIDOnlyWhenOptedIn (plan Task 1b.2): a Claude pin the
 // switch names is rendered as the route's own ID, and with it the whole run —
@@ -46,6 +60,11 @@ func routedRun(t *testing.T, sw *config.RoutingClaude, coder, reviewer string) *
 func TestStagePinsUseTheRouteIDOnlyWhenOptedIn(t *testing.T) {
 	const canonical, routed = "claude-sonnet-5-5", "anthropic/claude-sonnet-5.5"
 	r := routedRun(t, &config.RoutingClaude{Via: config.RouteOpenRouter, Models: []string{canonical}}, canonical, "claude-opus-5")
+	// The background model is pinned to a Claude ID the switch does not name, so
+	// the reviewer's stage is about the reviewer alone: left empty it falls back
+	// to the coder (config.EffectiveBackground), which is the routed model, and
+	// that fallback is asserted on its own below.
+	r.cfg.Agent.Models.Background = "claude-opus-5"
 	if err := r.applyRouting(r.projPolicy.policy, true); err != nil {
 		t.Fatalf("applyRouting: %v", err)
 	}
@@ -78,6 +97,13 @@ func TestStagePinsUseTheRouteIDOnlyWhenOptedIn(t *testing.T) {
 	if len(routes) != 1 || routes[0].Name != "openrouter" || routes[0].FeePct != 5 {
 		t.Errorf("gatewayRoutes() = %+v, want the openrouter route with its fee", routes)
 	}
+	// An agent that pins no background model sends the coder's, and the coder's
+	// is now the route's: the fallback moves with the pin it falls back to, so a
+	// stage still sends a model the gateway routes and prices.
+	r.cfg.Agent.Models.Background = ""
+	if got := r.backgroundModel(); got != routed {
+		t.Errorf("backgroundModel() = %q, want the routed coder %q", got, routed)
+	}
 }
 
 // TestClaudePinWithoutOptInIsUnchanged: an absent switch, and a switch whose
@@ -90,9 +116,13 @@ func TestClaudePinWithoutOptInIsUnchanged(t *testing.T) {
 	}{
 		{"no switch at all", nil},
 		{"via: direct", &config.RoutingClaude{Via: config.RouteDirect, Models: []string{"claude-sonnet-5-5"}}},
-		{"another model opted in", &config.RoutingClaude{Via: config.RouteOpenRouter, Models: []string{"claude-opus-5-5"}}},
+		{"another model opted in", &config.RoutingClaude{Via: config.RouteOpenRouter, Models: []string{"claude-fable-5-1"}}},
 	} {
-		r := routedRun(t, tc.sw, "claude-sonnet-5-5", "claude-opus-5-5")
+		// Neither pin is one the switch names: the reviewer is a Claude ID no
+		// case opts in, so every case is about a switch that routes nothing
+		// this run pins. A switch that *does* name a pin with no route is
+		// TestRoutingRefusesAPinItCannotResolve's.
+		r := routedRun(t, tc.sw, "claude-sonnet-5-5", "claude-opus-5")
 		found := tc.sw != nil
 		if err := r.applyRouting(r.projPolicy.policy, found); err != nil {
 			t.Fatalf("%s: applyRouting: %v", tc.name, err)
@@ -202,7 +232,8 @@ func TestRoutingAutoFollowsTheAnthropicKey(t *testing.T) {
 		t.Errorf("auto without a key: pins = %+v, want the route's ID", pins)
 	}
 	r = routedRun(t, sw, canonical, canonical)
-	r.d.Env = []string{"ANTHROPIC_API_KEY=sk-ant-test"}
+	// A placeholder, not a key: the run only asks whether one is present.
+	r.d.Env = append(r.d.Env, "ANTHROPIC_API_KEY=not-a-real-anthropic-key")
 	if err := r.applyRouting(r.projPolicy.policy, true); err != nil {
 		t.Fatalf("auto with a key: %v", err)
 	}

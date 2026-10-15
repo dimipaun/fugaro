@@ -67,6 +67,15 @@ var ClaudeRoutes = []ClaudeRoute{
 // nowhere else: one place answers where a Claude call goes
 // (TestRoutingResolutionHasOneSite).
 func RouteIDFor(canonical, route string) (string, bool) {
+	for _, r := range ClaudeRoutes {
+		if r.Canonical != canonical || r.RouteID == "" {
+			continue
+		}
+		if route == "" || route == r.RouteID {
+			return r.RouteID, true
+		}
+		return "", false
+	}
 	return "", false
 }
 
@@ -75,6 +84,14 @@ func RouteIDFor(canonical, route string) (string, bool) {
 // keyed anthropic/claude-sonnet-5.5, a log line's serving_model) and must name
 // the model a person pinned.
 func CanonicalFor(route string) (string, bool) {
+	if route == "" {
+		return "", false
+	}
+	for _, r := range ClaudeRoutes {
+		if r.RouteID == route {
+			return r.Canonical, true
+		}
+	}
 	return "", false
 }
 
@@ -84,5 +101,10 @@ func CanonicalFor(route string) (string, bool) {
 // refusal can say what the map says instead of "no route", which reads as an
 // oversight rather than a decision.
 func UnmappedReason(canonical string) (string, bool) {
+	for _, r := range ClaudeRoutes {
+		if r.Canonical == canonical {
+			return r.Unmapped, r.Unmapped != ""
+		}
+	}
 	return "", false
 }

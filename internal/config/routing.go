@@ -113,9 +113,37 @@ func CheckRouting(r *Routing, providers map[string]ModelProvider, path string) [
 			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s is claimed by two provider entries, %s: two spellings of one model are one model, and a switch that resolved to whichever name sorts first would route by provider name. Leave the claim on one entry and remove it from the other", m, claimNames(claims))})
 		case !claims[0].p.AllowDataToWritten():
 			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s resolves to provider %s, whose allow_data_to is not written: name the repositories whose code may be sent there, or write [\"*\"] to mean every one of them on purpose (D1b; an absent allow_data_to already means every repository, which is why this one path requires it to be written)", m, claims[0].name)})
+		case !routeIDPair(m, claims[0].claim):
+			// The route entry claims a spelling of this model that the
+			// checked-in map does not pair with it: two spellings that look
+			// alike are two answers to where the call goes and what it costs,
+			// and the switch does not choose between them (Task 1b.2).
+			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s is claimed by provider %s as %s, which is not the route's own ID for it in the canonical-to-route map (internal/pricing, ClaudeRoutes): %s", m, claims[0].name, claims[0].claim, unmappedOrPair(m))})
 		}
 	}
 	return ps
+}
+
+// routeIDPair reports whether canonical and route are the pair the checked-in
+// map holds (pricing.RouteIDFor): the one translation from a pin's Claude ID to
+// what a route is sent and charged.
+func routeIDPair(canonical, route string) bool {
+	_, ok := pricing.RouteIDFor(canonical, route)
+	return ok
+}
+
+// unmappedOrPair is the clause a switch problem carries for a model whose claim
+// is not the map's pair: the map's own reason when it has one (a row that is
+// explicitly unmapped), else what the map does hold for it, so a typo in a route
+// entry reads as a typo.
+func unmappedOrPair(canonical string) string {
+	if why, ok := pricing.UnmappedReason(canonical); ok {
+		return why
+	}
+	if id, ok := pricing.RouteIDFor(canonical, ""); ok {
+		return fmt.Sprintf("the map pairs it with %s", id)
+	}
+	return "the map carries no row for it: add one, with the route's ID measured, before the switch may name this model"
 }
 
 // claimNames spells the entries claiming one model for a problem message:
@@ -216,7 +244,14 @@ func RoutingClaudeFor(c *RoutingClaude, model string, providers map[string]Model
 	if len(claims) != 1 || !claims[0].p.AllowDataToWritten() {
 		return "", "", false
 	}
-	return claims[0].name, claims[0].claim, true
+	// The route's own ID is the map's pair, never the spelling the entry
+	// happens to carry: two spellings that look alike are two routes and two
+	// prices (Task 1b.2).
+	sent, ok = pricing.RouteIDFor(model, claims[0].claim)
+	if !ok {
+		return "", "", false
+	}
+	return claims[0].name, sent, true
 }
 
 // routeClaim is one provider entry claiming a model's route ID: the entry's
