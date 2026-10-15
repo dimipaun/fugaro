@@ -1277,10 +1277,17 @@ func TestStateRmToleratesAnAddressThatWentAwayBetweenShowStateAndTheCall(t *test
 func TestRetireAllowDeleteNeverAllowsAnUnnamedAddress(t *testing.T) {
 	rets := originRetirements(t)
 	extra := "module.repo.google_service_account.build"
+	// The retirement-set rows this plan deletes are the ones a retirement
+	// really deletes: a grant and a service account of the variant that left
+	// the configuration. The containers are in the set too, and the point of
+	// this test is the addresses it does NOT name, so they are left out here
+	// (TestRetireAllowDeleteNeverAllowsAKeptRow is their own case).
+	svc := `module.repo.module.workflow["go_bmb"].google_service_account.job`
+	bucket := `module.repo.module.workflow["go_bmb"].google_storage_bucket_iam_member.job`
 	p := &tf.Plan{ResourceChanges: []tf.ResourceChange{
-		change(`module.repo.google_secret_manager_secret.this["claude-oauth-token"]`, "delete"),
+		change(svc, "delete"),
+		change(bucket, "delete"),
 		change(extra, "delete"),
-		change(`module.repo.google_secret_manager_secret.this["claude-oauth-token-bmb"]`, "delete"),
 		// Not deletes at all: an update, a create, a read, a no-op.
 		change(`module.repo.module.workflow["go"].google_cloud_run_v2_job.this[0]`, "update"),
 		change(`module.repo.google_secret_manager_secret.this["anthropic-api-key"]`, "create"),
@@ -1291,10 +1298,8 @@ func TestRetireAllowDeleteNeverAllowsAnUnnamedAddress(t *testing.T) {
 		change(`module.repo.google_secret_manager_secret.this["claude-oauth-token-bmbx"]`, "delete"),
 	}}
 	allow := RetireAllowDelete(p, rets)
-	want := []string{
-		`module.repo.google_secret_manager_secret.this["claude-oauth-token"]`,
-		`module.repo.google_secret_manager_secret.this["claude-oauth-token-bmb"]`,
-	}
+	want := []string{bucket, svc}
+	slices.Sort(want)
 	if !slices.Equal(allow, want) {
 		t.Fatalf("allow = %q\nwant %q", allow, want)
 	}
@@ -1308,6 +1313,54 @@ func TestRetireAllowDeleteNeverAllowsAnUnnamedAddress(t *testing.T) {
 	}
 	if got := RetireAllowDelete(nil, rets); len(got) != 0 {
 		t.Errorf("no plan: allow = %q", got)
+	}
+}
+
+// The third wall of "Fugaro never deletes a secret or a secret version"
+// (design §6): the rows a retirement keeps -- a secret container and the
+// registry, the two whose module declaration carries the
+// lifecycle.prevent_destroy that aborts a plan -- are never in the allow-list,
+// however the plan came by their delete. Terraform refuses such a plan before
+// the guard sees it, which is exactly why this is one line and not a
+// mechanism; it is pinned so no later widening of the allow-list can make
+// fugaro the thing that permits it.
+func TestRetireAllowDeleteNeverAllowsAKeptRow(t *testing.T) {
+	rets := originRetirements(t)
+	containers := []string{
+		`module.repo.google_secret_manager_secret.this["claude-oauth-token"]`,
+		`module.repo.google_secret_manager_secret.this["claude-oauth-token-bmb"]`,
+	}
+	registry := `module.repo.google_artifact_registry_repository.images`
+	svc := `module.repo.module.workflow["go_bmb"].google_service_account.job`
+	// Both containers are in the set and both are kept: the spec stopped
+	// mounting them and the state still has them.
+	for _, c := range containers {
+		if !slices.ContainsFunc(rets, func(r Retirement) bool { return r.Address == c && r.Kept == KeptSecret }) {
+			t.Fatalf("fixture bug: %s is not a kept secret container", c)
+		}
+	}
+	// A kept row the state-derived set does not carry -- the registry, which
+	// the configuration still produces -- is the same rule: Kept is what
+	// counts, not which of the two sources produced the row.
+	rets = append(rets, Retirement{Address: registry, Kind: "image registry", Kept: KeptRegistry})
+	p := &tf.Plan{ResourceChanges: []tf.ResourceChange{
+		change(containers[0], "delete"),
+		change(containers[1], "delete", "create"),
+		change(registry, "delete", "create"),
+		change(svc, "delete"),
+	}}
+	allow := RetireAllowDelete(p, rets)
+	if !slices.Equal(allow, []string{svc}) {
+		t.Fatalf("allow = %q, want only the variant's service account", allow)
+	}
+	err := tf.Guard(p, allow)
+	if err == nil {
+		t.Fatalf("the guard allowed the plan with no allow-list entry for the kept rows: %v", allow)
+	}
+	for _, kept := range append(containers, registry) {
+		if !strings.Contains(err.Error(), kept) {
+			t.Errorf("the guard's refusal does not name %s: %v", kept, err)
+		}
 	}
 }
 

@@ -523,12 +523,26 @@ func Removals(stateAddrs []string, rets []Retirement) []string {
 //
 // An address the retirement set does not name is never allowed, however the
 // plan came by it: the guard still refuses it (Review Focus 1).
+//
+// A kept row is never allowed either, and that is the third wall of
+// "Fugaro never deletes a secret or a secret version" (design §6): a secret
+// container and the registry are the two addresses whose module declaration
+// carries lifecycle.prevent_destroy, so no plan may delete them and this
+// allow-list may not be the thing that lets one try. Nothing reaches the
+// guard with such a delete today -- Terraform aborts the plan on the block
+// first -- which is exactly why the wall is one line here rather than a
+// mechanism: a plan that somehow carried the delete is refused, not applied.
+// The rows a retirement really deletes are the ones with no Kept text
+// (grants, jobs, service accounts), and they are unaffected.
 func RetireAllowDelete(p *tf.Plan, rets []Retirement) []string {
 	if p == nil {
 		return nil
 	}
 	inSet := make(map[string]bool, len(rets))
 	for _, r := range rets {
+		if r.Kept != "" {
+			continue
+		}
 		inSet[r.Address] = true
 	}
 	var out []string
