@@ -213,6 +213,15 @@ func TestSecretsAndCloudCommandsRefuseHTTP2Debug(t *testing.T) {
 			{"logs", "some-run"},
 			{"diagnose", "some-run"},
 			{"cancel", "some-run"},
+			// The four commands openProjectBudget backs. It is the one
+			// Cloud/ADC-opening path that does not go through openBudgetDB,
+			// so it carries openBudgetDB's refusal itself; `project show` and
+			// `project repos ls` take the other opener and were already here
+			// in spirit (they refuse through openBudget).
+			{"project", "policy", "publish"},
+			{"project", "policy", "publish", "--delete"},
+			{"project", "repos", "add", "github/acme/app"},
+			{"project", "repos", "rm", "github/acme/app"},
 		} {
 			_, errOut, err := executeStdin(t, tokenValue, args...)
 			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "http2debug") || strings.Contains(err.Error()+errOut, tokenValue) {

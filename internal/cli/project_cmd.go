@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -123,7 +124,16 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 // openProjectBudget is openBudget that keeps the selection: the publisher
 // reads the operator's own config file (its providers block), and the
 // selection is what names that file.
+//
+// It is the one Cloud/ADC-opening path that does not go through openBudget /
+// openBudgetDB, so it carries openBudgetDB's own refusal of GODEBUG=http2debug
+// itself: budgetDBFor reads ADC, and a Go runtime printing HTTP/2 request and
+// response headers to stderr would print the bearer token of every one of those
+// calls. Every other cloud-opening path in this package refuses the same way.
 func openProjectBudget(ctx context.Context, o cloudOptions) (*localcfg.Config, *rtdb.Client, error) {
+	if err := refuseHTTP2Debug(os.Getenv); err != nil {
+		return nil, nil, err
+	}
 	sel, lc, err := selectProject(ctx, o)
 	if err != nil {
 		return nil, nil, err
@@ -822,6 +832,17 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 	}
 }
 
+// deleteRaced is what a lost compare-and-set race means to `--delete`: someone
+// else wrote the very node this delete was about to remove, between the read
+// that produced its ETag and the write under it. That is the operator's own
+// race and not an outage, so it is a user error (exit 1) worded with the
+// remedy, rather than dbErr's fallback — remote(err), exit 2, an infrastructure
+// failure that did not happen and no hint at all, which is what a script
+// branching on the exit code would retry instead of re-running the command.
+func deleteRaced() error {
+	return userErr("the policy changed while this ran; nothing further was deleted, and whatever is still published keeps governing: run it again")
+}
+
 // deleteProjectPolicy removes the published policy (B5). The children go
 // first and the shared node last: the shared node's existence *is*
 // project-centric mode, so deleting it first and failing on a child would
@@ -835,8 +856,6 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 // answered "nothing to delete" on the strength of the absent shared node would
 // leave them forever (the review of PR #390). A governance node left under
 // config/policy/repos is policy text a later release may read.
-// deleteProjectPolicy removes the policy: the child nodes of config/policy/repos
-// first, the shared node last (B5).
 //
 // etag is the one readPolicyNode returned for that first read — the node
 // refuseNewerPolicy saw, the one the in-flight check and the confirmation were
@@ -846,6 +865,14 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 // carries a version this binary refuses to overwrite (P8), of a node it must
 // not delete at all. A failed precondition is therefore a refusal, not a retry:
 // a deletion is not repeated behind an operator's back.
+//
+// Every node here is deleted the way the publisher and `repos edit` write
+// theirs — read for its bytes and its ETag, checked with refuseNewerPolicy,
+// removed under that ETag — and the two consequences are the whole of this
+// function's error handling: a node written by a newer Fugaro is refused rather
+// than deleted (P8), and a node that changed between the read and the delete is
+// the operator's own race, an operator error with the remedy and not an outage
+// (see deleteRaced and dbErr's own "a refusal is a user error").
 func deleteProjectPolicy(cmd *cobra.Command, lc *localcfg.Config, db *rtdb.Client, out io.Writer, exists bool, etag string, o *projectPolicyPublishOptions) error {
 	ctx := cmd.Context()
 	children, err := policyRepoChildren(ctx, db, lc)
@@ -878,7 +905,12 @@ func deleteProjectPolicy(cmd *cobra.Command, lc *localcfg.Config, db *rtdb.Clien
 	// node must not leave the operator guessing which ones went.
 	for _, key := range children {
 		path := projectpolicy.PathRepos() + "/" + key
-		childEtag, found, err := db.GetETag(ctx, path, nil)
+		// The child is read with its bytes as well as its ETag: what this
+		// delete removes must be the node it is allowed to remove, so a child
+		// written by a newer Fugaro is refused here too (P8,
+		// refuseNewerPolicy), exactly as the shared node is by the caller.
+		var raw json.RawMessage
+		childEtag, found, err := db.GetETag(ctx, path, &raw)
 		if err != nil {
 			// A read, so the refusal names the read role: see dbErr's flag.
 			return dbErr(lc, err, false)
@@ -886,7 +918,16 @@ func deleteProjectPolicy(cmd *cobra.Command, lc *localcfg.Config, db *rtdb.Clien
 		if !found {
 			continue
 		}
+		if err := refuseNewerPolicy(raw); err != nil {
+			return err
+		}
 		if err := db.PutIfMatch(ctx, path, childEtag, nil); err != nil {
+			// The same race the shared node's delete answers for, with the
+			// same meaning: a publish that landed under this child is the
+			// operator's own race, not an outage.
+			if errors.Is(err, rtdb.ErrPrecondition) {
+				return deleteRaced()
+			}
 			return dbErr(lc, err, true)
 		}
 		fmt.Fprintf(out, "removed %s\n", path)
