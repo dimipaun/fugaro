@@ -26,8 +26,19 @@ const (
 // never leak into the next.
 type Factory func(t *testing.T) backend.Backend
 
+// spec is the launch every conformance run uses. It carries one per-execution
+// variable — the launcher's budget marker — because the launcher always sends
+// one (backend.LaunchSpec.Env), so a backend is held to the launch it is
+// really given rather than to one with an empty Env. Whether the variable
+// arrives is the backend's own test's business: the suite cannot read an
+// execution's environment back (only Cloud Batch reports one).
 func spec() backend.LaunchSpec {
-	return backend.LaunchSpec{Repo: backend.RepoRef{Repo: Repo, Slug: Slug}, Workflow: Workflow, RunID: "20260927-100000-abcd"}
+	return backend.LaunchSpec{
+		Repo:     backend.RepoRef{Repo: Repo, Slug: Slug},
+		Workflow: Workflow,
+		RunID:    "20260927-100000-abcd",
+		Env:      []string{"FUGARO_BUDGET_TOKEN=1"},
+	}
 }
 
 // Run exercises Launch, Execution, List, Logs, Cancel, LongestTaskTimeout
