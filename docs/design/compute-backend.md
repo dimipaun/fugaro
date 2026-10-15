@@ -411,3 +411,141 @@ itself.
 | **C9** | Logs | **`logsPolicy.destination=CLOUD_LOGGING`**, and extend the installation's sink/exclusion to `batch.googleapis.com/Job` | Leave logs in `_Default`: `fugaro logs` finds nothing and every viewer reads them. |
 | **C10** | Secrets | **The runner resolves named secrets from Secret Manager at start, as the VM's service account** | Bake values into the job definition: rejected — secret values would sit in a job object anyone with `batch.jobs.get` can read. |
 | **C11** | `fugaro init` weight | **One installation-level Batch stage; no per-repository resource** | Per-repository VM setup: rejected — reintroduces exactly the weight project-centric removes. |
+
+## 2. How a run executes there
+
+### 2.1 The same image and the same runner
+
+The guiding rule from generic-tool §1 and v1 §14 is kept literally: **the VM
+runs the same `fugaro-base` image and the same `fugaro exec`** that Cloud Run
+runs, so that the gateway, the budget session, the cache and `finalize` work
+unchanged.
+
+- The container image is `fugaro-base` at the installation's pinned version.
+  Its `ENTRYPOINT ["/usr/bin/tini","--"]` and `CMD ["fugaro","exec"]`
+  (`images/base/Dockerfile`) are exactly what a Batch container runnable uses
+  by default; the runner sets its own flags from the job env
+  (`internal/cli/exec.go`), so **no `entrypoint`/`commands` override is
+  needed** — the same default that the workflow job uses on Cloud Run.
+- The runner never imports a backend implementation (`internal/runner` uses
+  only `backend.OnCloudRun`, `backend.SameExecution`, `backend.Prices`,
+  `backend.MemoryGiB`, `backend.TaskTimeoutSlack`). The gateway
+  (`runner/gateway.go`), the budget session (`runner/budget_session.go`,
+  which is RTDB, not `internal/backend`), the cache
+  (`runner/lockcache.go`) and `finalize` (`runner/runner.go`) touch only the
+  process, the RTDB and the runs bucket — all of which behave identically on
+  a VM. **Nothing in those four paths changes.**
+- The job env is the same set `platformEnv`/`budgetEnv` already write
+  (`internal/infra/spec.go`): `FUGARO_GCP_PROJECT`, `FUGARO_REGION`,
+  `FUGARO_PROJECT`, `FUGARO_BACKEND`, `FUGARO_BUCKET`, `FUGARO_RUN`, the
+  state/checkout/remote variables, the budget variables and the model-provider
+  variable. On Batch they are written into the job's `environmentVariables`
+  instead of Cloud Run's `env`; the names and values are unchanged.
+
+What is genuinely new, and is the bulk of the work: the **Docker socket**
+(§2.2), the **secrets bootstrap** (§1.6), the **name/parse seam**
+(§2.5) and the **provisioning stage** (§4).
+
+### 2.2 Where Docker comes from, concretely
+
+The Batch container runnable carries one bind mount from the host:
+
+```
+"volumes": ["/var/run/docker.sock:/var/run/docker.sock"]
+```
+
+(from the container runnable's `volumes` field, "formatted to match
+`--volume` option for the `docker run` command", Batch REST reference, checked
+2026-10-15). The VM's Container-Optimized OS already runs Docker, so the
+socket exists before the runnable starts. The agent's environment then needs
+`DOCKER_HOST` (or the default socket path) — the one env-allowlist addition,
+reviewed as such (§4.3) — and the container user needs permission on the
+socket (`root:docker`, mode `0660` on COS).
+
+The three ways to get that permission are ordered in §1.1: run the container
+as root (Batch's default `runAsNonRoot` is false, Batch REST reference,
+checked 2026-10-15 — but that changes the runner's effective user from
+`fugaro` to root and must be checked against the base image's expectations);
+pass a supplementary group through the runnable's `options`
+(**UNVERIFIED**, documented only as "arbitrary additional options", e.g.
+`--network host`); or adjust the socket's group in the preloaded boot image.
+Check 57 step 6 records which works.
+
+Security consequence, repeated because it is the whole of §3: **a run that has
+this socket is root on the VM.** The mount is not a privilege boundary and is
+not treated as one.
+
+### 2.3 The backend interface, mapped
+
+Every method of `internal/backend.Backend` maps onto Batch:
+
+| Seam method | Batch | Notes |
+|---|---|---|
+| `Launch(LaunchSpec)` | `projects.locations.jobs.create` | One Batch job, one task group, one task. Name derived per run (§2.4). The `FUGARO_RUN` env and the timeout are set in the job definition, not in an override — Batch has no execution-override concept like Cloud Run's `Overrides`. Returns `ExecutionRef{Name, Job, LogURL}`. |
+| `Execution(name)` | `jobs.get` | Maps Batch's state enum to `backend.State`: `QUEUED`/`SCHEDULED` → `StatePending`, `RUNNING` → `StateRunning`, `SUCCEEDED` → `StateSucceeded`, `FAILED` → `StateFailed`, `DELETION_IN_PROGRESS` → `StateCancelled`. `Created`/`Started`/`Completed` from the job's times; `CPU`/`MemoryGiB` from the machine type; `Run` from the `FUGARO_RUN` the job was created with (Batch reports the job's `environmentVariables`, so unlike Cloud Run this one is always readable — still a hint, never evidence). |
+| `List(filter)` | `jobs.list` | Filter by the Fugaro labels and `CreateTime`; the `fugaro-` name prefix is replaced by the label predicate. |
+| `Logs(query, fn)` | Cloud Logging, through the same installation log view | Filter `resource.type="batch.googleapis.com/Job" AND labels."batch.googleapis.com/job_id"="<job id>"` (label names from cloud.google.com/logging/docs/api/v2/resource-list, checked 2026-10-15), pinned to the region like the Cloud Run filter is. |
+| `Cancel(name)` | `jobs.delete` | Tolerate `NOT_FOUND` and a job already terminal (the same race live check 5 already documents for Cloud Run). |
+| `LongestTaskTimeout()` | The longest configured workflow timeout | See §2.5: on Batch there is no deployed job to read it from. |
+| `TaskTimeout(slug, workflow)` | The workflow's configured timeout | Same: a config/policy read, `ErrNotFound` for an unknown workflow. |
+
+Two properties make this work: a Batch job is created **per run** (there is no
+reusable job definition to update), so `Launch` is a create rather than a
+`run`; and a Batch job is **single-use** — once it reaches `SUCCEEDED` or
+`FAILED` it cannot be run again — which matches Fugaro's "one execution per
+run" exactly. `maxRetryCount` stays **0** ("The default, 0, which means never
+retry", Batch REST reference, checked 2026-10-15): a Fugaro run is not
+idempotent, the same reason Cloud Run's job sets `max_retries = 0`.
+
+### 2.4 Naming, labels and adoption
+
+The naming and marking conventions are the same as every other Fugaro
+resource (`internal/backend/gcp/names.go`), so discovery and the guard keep
+working:
+
+- **Job id**: `fugaro-<slug>-<workflow>-<12 hex of the run id>`, built with
+  the existing `derive`/`JobName` scheme. It must be unique per
+  project+region, which the run id guarantees, and it is the identity the run
+  stores in `launch.json`/`result.json` and that `fugaro logs`, `cancel` and
+  `diagnose` follow.
+- **Labels** on the job (Batch applies job labels to its VMs and to the log
+  entries it generates, Batch REST reference, checked 2026-10-15):
+  `fugaro=managed`, `fugaro_repo=<slug>`, `fugaro_workflow=<variant>`, plus a
+  per-run label `fugaro_run=<slug>-<run id>` (sanitized to the label charset,
+  ≤63 chars). The per-run label is what lets the reaper and a human find a
+  leaked VM without reading every job. The Task-28 outline in the generic-tool
+  plan already names "the labels used for adoption"; these are them.
+- **Adoption** (`internal/infra/discover.go`, `ForeignError`) refuses to adopt
+  a resource whose labels do not match exactly; a VM backend brings the same
+  rule to Batch jobs and to any preloaded boot image (labelled
+  `fugaro=managed`, like the base-image registry resources).
+
+**C13 (naming)**: reuse the Fugaro label set verbatim, and add the per-run
+label. Veto alternative: mark only the job and rely on the job id's prefix,
+which is fragile for a VM that outlives its job.
+
+### 2.5 The seam's Cloud-Run-shaped names (a required change)
+
+`internal/backend` is not fully backend-neutral at its edges:
+`ParseExecution`, `SameExecution`, `ExecutionFromEnv` and
+`CheckRunExecution` all assume Cloud Run's
+`projects/<p>/locations/<r>/jobs/<j>/executions/<e>` shape, and `OnCloudRun`
+is literally "`CLOUD_RUN_EXECUTION` is set". A Batch job's resource name is
+`projects/<p>/locations/<r>/jobs/<j>` — six fields, not eight — so the two
+cannot share a parser, and on a Batch VM `CLOUD_RUN_EXECUTION` is absent, so
+`OnCloudRun` is false and the runner would treat itself as a local run.
+
+**Recommendation (C12): generalise the seam.** Move the name codec into each
+backend — a small interface (`Parse(name)`, `Format(id)`, `FromEnv(env)`,
+`IsOwn(name)/ValidateRun(name, slug, workflow)`) carried by the `Backend`,
+used by every caller instead of the package-level functions, and a
+backend-supplied "in the cloud" signal replacing `OnCloudRun`. The runner
+then asks its backend "am I on you?" rather than checking a Cloud-Run variable.
+Trade-off: it touches every caller (`cli/cancel.go`, `logs.go`, `diagnose.go`,
+`run.go`, `watch*`, and the runner's `SameExecution` uses) and is a change to
+the shared package, not a new sibling package — a bigger than average first
+task. Veto alternative: keep the Cloud-Run shape and encode a Batch job as a
+synthetic "execution" under it (`.../jobs/<fugaro job>/executions/<run id>`),
+which lies in the stored data model and would confuse `fugaro ls`, `cancel`
+and the sweeper the first time someone reads a raw name. **C12 is an owner
+decision by size, not by uncertainty.**
