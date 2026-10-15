@@ -131,6 +131,30 @@ func TestReadRefusesANonIntegerMarker(t *testing.T) {
 	}
 }
 
+// A negative marker is an integer, so the ordinary "< RulesVersion" test read
+// it as the pre-policy generation (P3) — and a hand-edited -1 therefore made a
+// project-centric installation silently legacy: every run of it would keep the
+// ceiling its job environment was deployed with, with the policy it was meant
+// to be bound by unread, and a launcher could publish one that never governs.
+// No deploy writes a negative generation, so the node is refused as the
+// MarkerError it is, exactly as a value that is not an integer at all is: the
+// caller must halt on a node a person edited, never guess what it meant.
+func TestReadRefusesANegativeMarker(t *testing.T) {
+	for _, gen := range []any{-1, -RulesVersion, -1000} {
+		f, db := readDB(t)
+		f.Set(PathRulesMarker(), gen)
+		f.Set(PathShared(), json.RawMessage(readPolicy))
+		p, found, err := Read(context.Background(), db)
+		if err == nil || p != nil || found {
+			t.Fatalf("marker %v: Read = (%v, %v, %v), want a refusal: a negative generation is not the legacy path", gen, p, found, err)
+		}
+		var me *MarkerError
+		if !errors.As(err, &me) || !strings.Contains(err.Error(), PathRulesMarker()) {
+			t.Errorf("marker %v: err = %v, want a MarkerError naming the node (a user error, not an outage)", gen, err)
+		}
+	}
+}
+
 // The keys this Fugaro does not know are tolerated and exposed (Decode's own
 // tolerance must not be silent): the runner logs them, the CLI refuses them.
 func TestDecodeExposesUnknownTopLevelKeys(t *testing.T) {
