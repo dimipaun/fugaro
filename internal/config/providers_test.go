@@ -284,6 +284,9 @@ func TestClaimMustBeExplicit(t *testing.T) {
 	for _, m := range []string{
 		"anthropic/*", "anthropic/claude-*", "claude-*", "claude-sonnet-5-5",
 		"anthropic/claude-sonnet-5.5:free", "anthropic/claude-sonnet-5.5[1m]",
+		// A padded route entry is refused too: the pattern rule and the claim
+		// rule read the same string the YAML carried, with nothing trimmed.
+		"anthropic/claude-sonnet-5.5 ", "anthropic\t/claude-sonnet-5.5",
 		// Over CheckModelPattern's own 100-character bound, which refuses it
 		// before the claim rule ever looks: pricing.IsProviderModelID is the
 		// grammar alone and carries no bound of its own (Task 4).
@@ -313,6 +316,15 @@ func TestCheckClaudeClaimIsOneShape(t *testing.T) {
 		"anthropic/*", "anthropic/claude-*", "claude-*", "claude-sonnet-5-5", "anthropic/",
 		"anthropic/claude-sonnet-5.5:free", "anthropic/claude-sonnet-5.5[1m]",
 		"anthropic/Claude-Opus", "deepseek/deepseek-v4-flash",
+		// Whitespace is not part of the grammar and is never trimmed away:
+		// the helper is the rule, and Task 7 calls it directly on a layer
+		// value, so a padded spelling is judged here and not by whoever
+		// parsed the YAML. A space, a tab, a newline and a zero-width space,
+		// on either side of an otherwise perfect claim.
+		"anthropic/claude-sonnet-5.5 ", " anthropic/claude-sonnet-5.5",
+		"\tanthropic/claude-sonnet-5.5", "anthropic/claude-sonnet-5.5\t",
+		"anthropic/claude-sonnet-5.5\n", "\nanthropic/claude-sonnet-5.5",
+		"anthropic/claude-sonnet-5.5\u200b",
 	} {
 		if msg := CheckClaudeClaim(m); msg == "" {
 			t.Errorf("CheckClaudeClaim(%q) = accepted, want refused", m)

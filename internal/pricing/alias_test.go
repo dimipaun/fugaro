@@ -50,6 +50,13 @@ func TestIsProviderModelID(t *testing.T) {
 	}
 	for _, s := range []string{
 		"anthropic/x[1m]", "anthropic/x:free", "anthropic/", "Anthropic/x", "anthropic/*",
+		// Whitespace is not part of the ID and is never trimmed: the grammar
+		// is anchored and holds no space, tab, newline or zero-width space,
+		// so a padded spelling is refused here rather than accepted after a
+		// TrimSpace (which would make "anthropic/x\n" a claim).
+		"anthropic/x ", " anthropic/x", "anthropic/x\t", "\tanthropic/x",
+		"anthropic/x\n", "\nanthropic/x", "anthropic/x\u200b", "\u200banthropic/x",
+		"deepseek/deepseek-v4-flash ",
 	} {
 		if IsProviderModelID(s) {
 			t.Errorf("IsProviderModelID(%q) = true, want false", s)
