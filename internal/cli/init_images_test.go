@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/mirror"
@@ -140,6 +141,31 @@ type imagesRig struct {
 	*fbRig
 	src, dst *imagesRegistry
 	built    int
+	// basePin is the digest the fake resolve-and-verify step returns: the
+	// base image the fake source publishes. The destination registry serves
+	// that manifest by digest, as the remote repository does, so the
+	// read-back through it succeeds.
+	basePin string
+	// resolveCalls counts the resolve-and-verify calls, and resolveErr is
+	// what they fail with when set (the "no signed -pinned image yet" and
+	// "the signature did not verify" cases).
+	resolveCalls int
+	resolveErr   error
+	// arCalls counts the read-backs through the remote repository.
+	arCalls int
+}
+
+// hostRewrite sends every request to the test server, whatever host the
+// caller named: the read-back asks for <region>-docker.pkg.dev and must
+// reach the fake.
+type hostRewrite struct{ to string }
+
+func (h hostRewrite) RoundTrip(req *http.Request) (*http.Response, error) {
+	u := *req.URL
+	u.Scheme, u.Host = "http", strings.TrimPrefix(h.to, "http://")
+	rq := req.Clone(req.Context())
+	rq.URL = &u
+	return http.DefaultTransport.RoundTrip(rq)
 }
 
 func newImagesRig(t *testing.T, version string) *imagesRig { return newImagesRigFor(t, version, fpID) }
@@ -170,8 +196,42 @@ func newImagesRigFor(t *testing.T, version, fp string) *imagesRig {
 			},
 		}, nil
 	}
-	t.Cleanup(func() { Version, newMirror = oldV, oldNew })
+	// The remote (pull-through) repository serves what its upstream has,
+	// looked up by digest: the read-back finds the base image's manifest
+	// whatever path it asks for.
+	r.basePin = r.src.tags["dimipaun/fugaro-base:1.2.3"]
+	r.dst.mans[r.basePin], r.dst.types[r.basePin] = r.src.mans[r.basePin], r.src.types[r.basePin]
+	// The nightly-immune "-pinned" tag a release publishes beside the plain
+	// version tag, naming the same image.
+	r.src.tags["dimipaun/fugaro-base:1.2.3-pinned"] = r.basePin
+
+	oldResolve, oldAR := resolvePinnedBase, newARClient
+	resolvePinnedBase = func(ctx context.Context, source, kind, version string) (string, error) {
+		r.resolveCalls++
+		if r.resolveErr != nil {
+			return "", r.resolveErr
+		}
+		// The fake models the real step's shape: read the "-pinned" tag,
+		// never the plain version tag a nightly rebuild moves.
+		d := r.src.tags["dimipaun/fugaro-"+kind+":"+version+"-pinned"]
+		if d == "" {
+			return "", fmt.Errorf("%s/fugaro-%s:%s-pinned does not exist: this release has no signed pinned image yet", source, kind, version)
+		}
+		return d, nil
+	}
+	newARClient = func(context.Context, *mirror.Mirror) (*http.Client, error) {
+		r.arCalls++
+		return &http.Client{Transport: hostRewrite{r.dst.srv.URL}}, nil
+	}
+	t.Cleanup(func() { Version, newMirror, resolvePinnedBase, newARClient = oldV, oldNew, oldResolve, oldAR })
 	return r
+}
+
+// pinnedBase is what the rig's fake pin records for kind at this release:
+// the remote repository's path, the default source's owner, the version as
+// a tag, and the digest the signature was verified for.
+func (r *imagesRig) pinnedBase(kind, ver string) string {
+	return "us-east5-docker.pkg.dev/" + initProject + "/" + infra.GhcrRegistry + "/dimipaun/fugaro-" + kind + ":" + ver + "@" + r.basePin
 }
 
 // A development build copies nothing and says what to do, and init

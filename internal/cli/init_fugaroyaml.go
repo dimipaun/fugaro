@@ -456,7 +456,7 @@ func gcpProjectProblems(ctx context.Context, lc *localcfg.Config, lcPath, provid
 		if ref := lc.BaseImage(kind); kind != "" && ref != "" {
 			if herr != nil {
 				add(reasonRegistryHost(kind, herr))
-			} else if v, managed := managedVersion(ref, host, kind); !managed {
+			} else if v, managed := managedVersion(ref, host, kind, baseOwner(lc)); !managed {
 				add(reasonConfigBaseCustom(ref, kind))
 				customBase = true
 			} else if imagePredates(v, gcpProjectFieldSince) {

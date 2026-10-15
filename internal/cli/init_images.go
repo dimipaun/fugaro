@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"net/http"
 	"os"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/basepin"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -65,11 +67,95 @@ var newMirror = func(ctx context.Context, lc *localcfg.Config, allow []string) (
 	return &mirror.Mirror{Token: oauth2.ReuseTokenSource(nil, ts), Allow: allow}, nil
 }
 
-// imageItem is one image to mirror.
+// resolvePinnedBase is the resolve-and-verify step of a base kind (design
+// §3.2 steps 1-2): it reads the release's "-pinned" tag at source, verifies
+// the cosign signature of the digest that tag names, and returns the bare
+// digest — never a value that was not verified, and never a fallback to the
+// plain version tag a nightly rebuild moves. Tests replace it; it is the
+// only thing that may produce a digest this stage pins.
+//
+// The "-pinned" tag and its signature come from #318's release side; until
+// a release publishes one, this refuses with the registry's own reason
+// (there is no such tag), which is the design's intended state (§8: the
+// live checks are unrunnable until such a release exists).
+var resolvePinnedBase = func(ctx context.Context, source, kind, version string) (string, error) {
+	ts, err := google.DefaultTokenSource(ctx, "https://www.googleapis.com/auth/cloud-platform")
+	if err != nil {
+		return "", userErr("no Google credentials to verify the base image: run gcloud auth application-default login (%v)", err)
+	}
+	owner, repo, err := basepinSource(source)
+	if err != nil {
+		return "", err
+	}
+	m := &mirror.Mirror{Token: oauth2.ReuseTokenSource(nil, ts), Allow: []string{source}}
+	ref, err := basepin.Resolve(ctx, basepin.MirrorResolver{M: m}, basepin.CosignVerifier{}, owner, repo, source, kind, version)
+	if err != nil {
+		return "", err
+	}
+	_, digest, _ := strings.Cut(ref, "@")
+	if digest == "" {
+		return "", userErr("verifying %s: no digest came back", ref)
+	}
+	return digest, nil
+}
+
+// basepinSource splits an allowed source prefix into the GitHub owner whose
+// images.yml is trusted and the repository name to expect. The owner is the
+// prefix's own second segment (never hard-coded), and the repository is
+// "fugaro" by the same convention the release uses.
+func basepinSource(source string) (owner, repo string, err error) {
+	if err := mirror.ValidSourcePrefix(source); err != nil {
+		return "", "", userErr("%v", err)
+	}
+	_, owner, _ = strings.Cut(source, "/")
+	return owner, "fugaro", nil
+}
+
+// newARClient is the client the read-back through the remote repository
+// uses: the person's Application Default Credentials, which carry their
+// reader grant on that repository (Task 1, design §5.3). It refuses a
+// redirect off the registry's own host, so the credential cannot be
+// carried somewhere else. Tests replace it.
+var newARClient = func(ctx context.Context, m *mirror.Mirror) (*http.Client, error) {
+	if m == nil || m.Token == nil {
+		return nil, userErr("no Google credentials to read the base image back through the registry")
+	}
+	c := oauth2.NewClient(ctx, m.Token)
+	c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) > 0 && req.URL.Host != via[0].URL.Host {
+			return fmt.Errorf("refusing a redirect to %s: the registry credential stays on the registry's own host", req.URL.Host)
+		}
+		return nil
+	}
+	return c, nil
+}
+
+// registryParts splits the installation's registry host
+// ("<region>-docker.pkg.dev/<project>", infra.RegistryHost) into the bare
+// host and the project, which the remote repository's path needs
+// separately.
+func registryParts(host string) (regHost, project string) {
+	regHost, project, _ = strings.Cut(host, "/")
+	return regHost, project
+}
+
+// imageItem is one image this run handles: a copy (history) or a pin (a
+// base kind).
 type imageItem struct {
-	label    string // history, or the base kind
-	kind     string // the base kind; "" for history
+	label string // history, or the base kind
+	kind  string // the base kind; "" for history
+	// src and dst are the copy's source and destination, for history. A
+	// base kind is not copied anywhere (design §3.1), so it has neither:
+	// what it carries instead is where the remote repository serves it.
 	src, dst mirror.Ref
+	// upstream is a base kind's path through the remote repository,
+	// "<owner>/fugaro-<kind>", built from the allowed source prefix rather
+	// than hard-coded so a fork's mirror keeps working.
+	upstream string
+	// version is a base kind's release version: the tag half of the pin,
+	// which managedVersion, baseRefReleaseRE and refreshVerdict's
+	// never-downgrade rule read.
+	version string
 }
 
 type imagesStage struct {
@@ -130,13 +216,80 @@ func (s *imagesStage) kinds(ctx context.Context) []string {
 	return slices.Sorted(maps.Keys(set))
 }
 
-// managedVersion is the release version of ref when it is a release image
-// an earlier run copied into this project's registry for kind (so a newer
-// CLI may move it on), as opposed to a dev tag or a hand-pushed image the
-// config points at.
-func managedVersion(ref, host, kind string) (string, bool) {
-	rest, ok := strings.CutPrefix(ref, host+"/"+mirror.BaseRepository+"/fugaro-"+kind+":")
-	return rest, ok && releaseRE.MatchString(rest)
+// baseOwner is the trusted owner a base pin under the remote repository is
+// checked against: the owner half of the local config's recorded
+// image_source (design §3.6). It is deliberately never derived from the
+// reference being checked — the pin is the value the rule tests, so taking
+// the owner out of it would accept any owner. "" means none is recorded,
+// and every remote-shaped entry then refuses.
+func baseOwner(lc *localcfg.Config) string {
+	_, owner, _ := strings.Cut(lc.ImageSource, "/")
+	return owner
+}
+
+// pinnedVersion is the release version of ref when ref is this
+// installation's base pin, and only in exactly this shape (design §3.6):
+//
+//	<host>/<fugaro-ghcr>/<owner>/fugaro-<kind>:<version>@sha256:<64 hex>
+//
+// The owner is the recorded one (another owner's image is not ours to
+// keep, and fails closed into customBaseRefusal's escape hatch), the tag
+// is a release version, and the digest is required — a remote-repository
+// reference without one is not this installation's pin.
+func pinnedVersion(ref, host, kind, owner string) (string, bool) {
+	if owner == "" {
+		return "", false
+	}
+	rest, ok := strings.CutPrefix(ref, host+"/"+infra.GhcrRegistry+"/"+owner+"/fugaro-"+kind+":")
+	if !ok {
+		return "", false
+	}
+	v, d, ok := strings.Cut(rest, "@")
+	return v, ok && releaseRE.MatchString(v) && expectRE.MatchString(d)
+}
+
+// baseIsCurrent reports whether ref — a base image this tool put in place
+// for kind — is already what this release's run would pin: this release's
+// own pin, or a NEWER pin an earlier, newer CLI made (never downgraded;
+// that is why the version tag stays in the reference at all, design §3.1).
+// A copy in the installation's own base registry is not: it is the
+// pre-migration shape, so it is stale and the run re-pins it (design §5.4's
+// B3).
+func baseIsCurrent(ref, host, kind, owner, ver string) bool {
+	if v, ok := pinnedVersion(ref, host, kind, owner); ok && !newer(ver, v) {
+		return true
+	}
+	return newer(curVersion(ref, host, kind, owner), ver)
+}
+
+// basePlanItem decides, offline, what this run does about one kind's
+// recorded base image: pin it (pin true, note ""), or leave it alone (pin
+// false, with the note the run prints). It never decides WHICH reference to
+// pin — that is a digest through the remote repository, and it cannot be
+// computed offline.
+func basePlanItem(cur, host, kind, owner, ver string) (note string, pin bool) {
+	switch {
+	case cur == "":
+		return "", true
+	case !isManaged(cur, host, kind, owner):
+		return fmt.Sprintf("base %s: the local config's base image %s is used; nothing mirrored (--base-image KIND=IMAGE changes it)", kind, pluginwire.Printable(cur)), false
+	case baseIsCurrent(cur, host, kind, owner, ver):
+		return fmt.Sprintf("base %s: the local config already has %s; nothing to do", kind, pluginwire.Printable(cur)), false
+	default:
+		return "", true
+	}
+}
+
+// managedVersion is the release version of ref when ref is a base image
+// this tool put in place for kind (so a newer CLI may move it on): a
+// release image an earlier run copied into the installation's own base
+// registry, or this release's pin through the remote repository. It is
+// not a dev tag, a hand-pushed image, or another owner's image.
+func managedVersion(ref, host, kind, owner string) (string, bool) {
+	if rest, ok := strings.CutPrefix(ref, host+"/"+mirror.BaseRepository+"/fugaro-"+kind+":"); ok && releaseRE.MatchString(rest) {
+		return rest, true
+	}
+	return pinnedVersion(ref, host, kind, owner)
 }
 
 // newer reports whether release version a is newer than b.
@@ -170,9 +323,15 @@ func parseExpectDigests(vs []string) (map[string]string, error) {
 
 var expectRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
-func isManaged(ref, host, kind string) bool { _, ok := managedVersion(ref, host, kind); return ok }
+func isManaged(ref, host, kind, owner string) bool {
+	_, ok := managedVersion(ref, host, kind, owner)
+	return ok
+}
 
-func curVersion(ref, host, kind string) string { v, _ := managedVersion(ref, host, kind); return v }
+func curVersion(ref, host, kind, owner string) string {
+	v, _ := managedVersion(ref, host, kind, owner)
+	return v
+}
 
 // items are the images this run mirrors, and the notes of kinds it leaves
 // alone. Nothing is read from the network.
@@ -188,8 +347,8 @@ func (s *imagesStage) items(ctx context.Context) (items []imageItem, notes []str
 		ver = "0.0.0" // refs are built only to name items; a dev build mirrors none
 	}
 	allow := s.allow()
-	mk := func(label, kind, name, dstName, dstTag string) error {
-		src, err := mirror.ParseSource(allow, allow[0]+"/"+name+":"+ver)
+	mk := func(label, kind, name, srcTag, dstName, dstTag string) error {
+		src, err := mirror.ParseSource(allow, allow[0]+"/"+name+":"+srcTag)
 		if err != nil {
 			return userErr("%v", err)
 		}
@@ -201,29 +360,36 @@ func (s *imagesStage) items(ctx context.Context) (items []imageItem, notes []str
 		return nil
 	}
 	if r.o.firebase != "" && s.e.spec.History != nil {
-		if err := mk("history", "", "fugaro-history", infra.HistoryImagePackage, "latest"); err != nil {
+		if err := mk("history", "", "fugaro-history", ver, infra.HistoryImagePackage, "latest"); err != nil {
 			return nil, nil, err
 		}
 	}
+	_, srcOwner, _ := strings.Cut(allow[0], "/")
 	named := map[string]bool{} // kinds --base-image points elsewhere this run
 	for _, v := range r.o.baseImages {
 		if k, _, err := localcfg.ParseBaseImageFlag(v); err == nil {
 			named[k] = true
 		}
 	}
+	owner := baseOwner(lc)
 	for _, k := range s.kinds(ctx) {
-		switch cur := lc.BaseImage(k); {
-		case named[k]:
+		if named[k] {
 			notes = append(notes, fmt.Sprintf("base %s: --base-image points it at its own image; nothing mirrored", k))
-		case cur != "" && !isManaged(cur, host, k):
-			notes = append(notes, fmt.Sprintf("base %s: the local config's base image %s is used; nothing mirrored (--base-image KIND=IMAGE changes it)", k, cur))
-		case isManaged(cur, host, k) && newer(curVersion(cur, host, k), ver):
-			notes = append(notes, fmt.Sprintf("base %s: the local config has %s, newer than this CLI's %s; kept (an older CLI does not downgrade it)", k, cur, ver))
-		default:
-			if err := mk("base "+k, k, "fugaro-"+k, "fugaro-"+k, ver); err != nil {
-				return nil, nil, err
-			}
+			continue
 		}
+		if note, pin := basePlanItem(lc.BaseImage(k), host, k, owner, ver); !pin {
+			notes = append(notes, note)
+			continue
+		}
+		// A base kind is pinned, not copied: the item names the path the
+		// remote repository serves it at, and the digest comes from the
+		// resolve-and-verify step in read().
+		items = append(items, imageItem{
+			label:    "base " + k,
+			kind:     k,
+			upstream: srcOwner + "/fugaro-" + k,
+			version:  ver,
+		})
 	}
 	return items, notes, nil
 }
@@ -250,10 +416,35 @@ func unpinnedText(u []string) string {
 	return strings.Join(u, ", ")
 }
 
-// planned is one image's read-only plan.
+// planned is one image's read-only plan: a copy's mirror.Plan for history,
+// or a base kind's pin — the reference to record and the digest the
+// signature was verified for, with no plan at all because there is nothing
+// to copy.
 type planned struct {
 	item imageItem
-	plan *mirror.Plan
+	plan *mirror.Plan // nil for a base kind
+	pin  string       // a base kind: what record() writes into base_images
+	// digest is a base kind's verified digest, and for a copy it is the
+	// plan's own; digestOf is the one reader.
+	digest string
+}
+
+func (p planned) digestOf() string {
+	if p.plan != nil {
+		return p.plan.Digest
+	}
+	return p.digest
+}
+
+// pins are the base kinds this run records a pin for.
+func pins(pl []planned) []planned {
+	var out []planned
+	for _, p := range pl {
+		if p.item.kind != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // key is what --expect-digest names the image by.
@@ -279,12 +470,23 @@ func (s *imagesStage) read(ctx context.Context, m *mirror.Mirror, items []imageI
 		}
 	}
 	for _, k := range slices.Sorted(slices.Values(s.e.r.o.replaceImages)) {
+		if slices.Contains(config.Bases, k) {
+			return nil, userErr("--replace-image %s: a base kind is not copied anywhere any more, so there is nothing to replace — it is pinned by digest through the remote repository (design registry-remote-repository.md §5.1). To use your own image for it, pass --base-image %s=IMAGE", k, k)
+		}
 		if !have[k] {
 			return nil, userErr("--replace-image %s matches no image this run copies (it copies: %s): an intent that is not used would read as done", k, strings.Join(slices.Sorted(maps.Keys(have)), ", "))
 		}
 	}
 	var out []planned
 	for _, it := range items {
+		if it.kind != "" {
+			p, err := s.readBase(ctx, m, it, expect)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, p)
+			continue
+		}
 		p, err := m.Plan(ctx, it.src, it.dst, expect[it.key()])
 		if err != nil {
 			return nil, remote(fmt.Errorf("%s: %w", it.label, err))
@@ -298,17 +500,48 @@ func (s *imagesStage) read(ctx context.Context, m *mirror.Mirror, items []imageI
 			return nil, userErr("%s: %s is %s in your registry and the release's image is %s: it is never replaced silently; pass --replace-image %s to replace it, and type the project's name at a real terminal to confirm (a base kind can instead be pointed at your own image with --base-image KIND=IMAGE)", it.label, it.dst, p.DestDigest, p.Digest, it.key())
 		}
 		p.AllowReplace = replace
-		out = append(out, planned{it, p})
+		out = append(out, planned{item: it, plan: p})
 	}
 	return out, nil
 }
 
-// pending is the plans that have something to do: the destination tag is
+// readBase is a base kind's read (design §3.2), in this order and no other:
+// resolve the release's "-pinned" tag and verify its signature, check
+// --expect-digest against that digest, then read the digest back THROUGH
+// the remote repository — which is what proves the path the jobs will pull
+// by works, with the operator's own reader grant on it. Any failure refuses
+// and nothing is written. What comes out is the reference to record, not a
+// copy: the proxy serves those bytes, and the pin names them by digest.
+func (s *imagesStage) readBase(ctx context.Context, m *mirror.Mirror, it imageItem, expect map[string]string) (planned, error) {
+	digest, err := resolvePinnedBase(ctx, s.allow()[0], it.kind, it.version)
+	if err != nil {
+		return planned{}, remote(fmt.Errorf("%s: %w", it.label, err))
+	}
+	if e := expect[it.key()]; e != "" && e != digest {
+		return planned{}, userErr("%s: --expect-digest says %s and the verified digest is %s: a pin is never written against a value that disagrees with the signature", it.label, e, digest)
+	}
+	host, err := infra.RegistryHost(s.e.lc)
+	if err != nil {
+		return planned{}, userErr("%v", err)
+	}
+	regHost, project := registryParts(host)
+	c, err := newARClient(ctx, m)
+	if err != nil {
+		return planned{}, err
+	}
+	if err := mirror.VerifyThroughRemote(ctx, c, regHost, project, infra.GhcrRegistry, it.upstream, digest); err != nil {
+		return planned{}, remote(fmt.Errorf("%s: %w", it.label, err))
+	}
+	return planned{item: it, pin: mirror.RemoteRef(regHost, project, infra.GhcrRegistry, it.upstream, it.version, digest), digest: digest}, nil
+}
+
+// pending is the copies that have something to do: the destination tag is
 // not yet the release image. Whether blobs are missing does not matter (a
-// copy may be the manifest alone).
+// copy may be the manifest alone). A base kind is never here: there is
+// nothing to copy, and whether it needs pinning is decided before this.
 func pending(pl []planned) (n int, bytes int64) {
 	for _, p := range pl {
-		if !p.plan.Present {
+		if p.plan != nil && !p.plan.Present {
 			n++
 			bytes += p.plan.TransferBytes
 		}
@@ -319,6 +552,10 @@ func pending(pl []planned) (n int, bytes int64) {
 func (s *imagesStage) show(pl []planned) {
 	w := s.e.r.w
 	for _, p := range pl {
+		if p.item.kind != "" {
+			fmt.Fprintf(w, "  %s: pin %s (this release's base image, its signature verified and read back through the remote repository: nothing is copied)\n", p.item.label, p.pin)
+			continue
+		}
 		d := p.item.dst
 		to := d.Host + "/" + d.Repo + ":" + d.Tag
 		switch {
@@ -364,10 +601,24 @@ func (s *imagesStage) Plan(ctx context.Context, env initflow.Env) (initflow.Plan
 	}
 	s.show(pl)
 	n, bytes := pending(pl)
-	if n == 0 {
+	base := pins(pl)
+	if n == 0 && len(base) == 0 {
 		return initflow.Plan{NothingToDo: true, Detail: "No changes"}, nil
 	}
-	return initflow.Plan{Detail: fmt.Sprintf("%d image(s) to copy, %.1f MB to send", n, float64(bytes)/1e6)}, nil
+	return initflow.Plan{Detail: changeDetail(n, bytes, len(base))}, nil
+}
+
+// changeDetail is one line saying what the stage will do: how many images it
+// copies and how many base kinds it pins.
+func changeDetail(n int, bytes int64, base int) string {
+	var parts []string
+	if n > 0 {
+		parts = append(parts, fmt.Sprintf("%d image(s) to copy, %.1f MB to send", n, float64(bytes)/1e6))
+	}
+	if base > 0 {
+		parts = append(parts, fmt.Sprintf("%d base image(s) to pin by digest", base))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
@@ -392,32 +643,38 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 	expect, _ := parseExpectDigests(r.o.expectDigests)
 	var unpinned []string
 	for _, p := range pl {
-		if !p.plan.Present && expect[p.item.key()] == "" {
+		if p.plan != nil && !p.plan.Present && expect[p.item.key()] == "" {
 			unpinned = append(unpinned, p.item.key())
 		}
 	}
 	if err := s.confirmReplace(pl); err != nil {
 		return initflow.Outcome{}, err
 	}
+	base := pins(pl)
 	var done []planned // the plans whose destination tag is, now, the release image
-	if n > 0 {
+	if n > 0 || len(base) > 0 {
 		o := r.o
 		yes := o.yes
 		o.yes = env.Yes
 		notCovered := ""
 		for _, p := range pl {
-			if !p.plan.Present && p.plan.DestDigest != "" {
+			if p.plan != nil && !p.plan.Present && p.plan.DestDigest != "" {
 				notCovered = "it replaces a tag in your registry"
 			}
 		}
-		err := r.confirmOrdinary(fmt.Sprintf("copies %d image(s), %.1f MB, from %s into your registry %s/%s/%s as you, exactly as listed above (about $%.2f a month of registry storage at $%.2f per GB). The digests above are what the release tags resolve to now, which is what the registry says, not a signature. NOT pinned with --expect-digest: %s",
-			n, float64(bytes)/1e6, s.allow()[0], pl[0].item.dst.Host, r.gcpProject, mirror.BaseRepository, float64(bytes)/1e9*storagePerGBMonth, storagePerGBMonth, unpinnedText(unpinned)), "nothing was copied", notCovered)
+		err := r.confirmOrdinary(s.confirmText(pl, n, bytes, unpinned), "nothing was copied", notCovered)
 		o.yes = yes
 		if err != nil {
 			return initflow.Outcome{}, err
 		}
 	}
 	for _, p := range pl {
+		if p.item.kind != "" {
+			// Nothing to copy: the remote repository serves the bytes, and
+			// the pin names them by digest.
+			done = append(done, p)
+			continue
+		}
 		if p.plan.Present {
 			done = append(done, p)
 			continue
@@ -433,10 +690,33 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 	if err := s.record(ctx, done); err != nil {
 		return initflow.Outcome{}, err
 	}
-	if !changed {
+	if !changed && len(base) == 0 {
 		return initflow.Outcome{Detail: "No changes"}, nil
 	}
-	return initflow.Outcome{Changed: true, Detail: "images copied and verified by digest"}, nil
+	return initflow.Outcome{Changed: true, Detail: "images copied and verified by digest; base images pinned by digest through the remote repository"}, nil
+}
+
+// confirmText is the stage's own confirmation: what it copies (and how big,
+// and how it is trusted) and what it pins. The two halves say different
+// things about trust, and the difference is the point — a copy's digest is
+// what the registry says, while a base pin's digest is what a signature
+// was verified for — so they are never merged into one claim.
+func (s *imagesStage) confirmText(pl []planned, n int, bytes int64, unpinned []string) string {
+	r := s.e.r
+	var parts []string
+	if n > 0 {
+		parts = append(parts, fmt.Sprintf("copies %d image(s), %.1f MB, from %s into your registry %s/%s/%s as you, exactly as listed above (about $%.2f a month of registry storage at $%.2f per GB). The digests above are what the release tags resolve to now, which is what the registry says, not a signature. NOT pinned with --expect-digest: %s",
+			n, float64(bytes)/1e6, s.allow()[0], pl[0].item.dst.Host, r.gcpProject, mirror.BaseRepository, float64(bytes)/1e9*storagePerGBMonth, storagePerGBMonth, unpinnedText(unpinned)))
+	}
+	if base := pins(pl); len(base) > 0 {
+		var refs []string
+		for _, p := range base {
+			refs = append(refs, fmt.Sprintf("base_images.%s = %s", p.item.kind, p.pin))
+		}
+		parts = append(parts, fmt.Sprintf("pins %d base image(s) to this release's image at the digest its cosign signature was verified for, read back through the remote repository %s/%s (nothing is copied, and nothing is pushed into %s): %s",
+			len(base), r.gcpProject, infra.GhcrRegistry, mirror.BaseRepository, strings.Join(refs, "; ")))
+	}
+	return strings.Join(parts, " — and it ") + " (as you, with your own credentials)"
 }
 
 // confirmReplace is the typed-only confirmation (initflow.Typed) of moving a
@@ -447,7 +727,7 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 func (s *imagesStage) confirmReplace(pl []planned) error {
 	var kinds, lines []string
 	for _, p := range pl {
-		if !p.plan.Present && p.plan.DestDigest != "" {
+		if p.plan != nil && !p.plan.Present && p.plan.DestDigest != "" {
 			kinds = append(kinds, p.item.key())
 			lines = append(lines, fmt.Sprintf("%s (%s) from %s to %s", p.item.dst, p.item.label, p.plan.DestDigest, p.plan.Digest))
 		}
@@ -512,21 +792,31 @@ func (s *imagesStage) record(ctx context.Context, pl []planned) error {
 	if err != nil {
 		return userErr("%v", err)
 	}
+	owner := baseOwner(s.e.lc)
 	for _, k := range slices.Sorted(maps.Keys(want)) {
 		p := want[k]
-		if c := next.BaseImages[k]; c != "" && !isManaged(c, host, k) {
+		if c := next.BaseImages[k]; c != "" && !isManaged(c, host, k, owner) {
 			continue // pointed elsewhere since: not ours to change
-		} else if c != "" && newer(curVersion(c, host, k), p.item.dst.Tag) {
+		} else if c != "" && newer(curVersion(c, host, k, owner), p.item.version) {
 			continue
 		}
-		next.BaseImages[k] = p.item.dst.String()
-		fmt.Fprintf(r.w, "  base_images.%s = %s (digest %s)\n", k, p.item.dst, p.plan.Digest)
+		next.BaseImages[k] = p.pin
+		fmt.Fprintf(r.w, "  base_images.%s = %s (digest %s)\n", k, p.pin, p.digest)
 	}
+	// The trusted owner the pin is checked against is recorded with the pin
+	// (design §3.6): --image-source sets it on the run that pins, and every
+	// later reader takes it from here rather than from the flag, which an
+	// init --repo run does not even accept.
+	next.ImageSource = s.allow()[0]
 	// The stage's own confirmation covered the copy; the config line it
 	// records is shown as a diff like every config write.
 	if err := r.writeLocalConfig(&next, s.e.path, old, true); err != nil {
 		return err
 	}
+	// The engine's own view of the local config follows the file it just
+	// wrote, so a rerun of this stage in the same process sees the pin and
+	// says No changes rather than resolving and confirming it again.
+	s.e.lc = &next
 	if !r.o.planOnly {
 		r.publishSharedConfig(ctx, &next)
 	}
@@ -551,33 +841,52 @@ func (s *imagesStage) reviewLine(ctx context.Context) string {
 		return general
 	}
 	n, bytes := pending(pl)
-	if n == 0 {
+	base := pins(pl)
+	if n == 0 && len(base) == 0 {
 		return "images:         nothing to copy (the release images are in your registry)"
 	}
 	var names []string
+	for _, p := range base {
+		names = append(names, p.item.kind+" (pinned by digest through the remote repository)")
+	}
 	for _, p := range pl {
-		if !p.plan.Present {
+		if p.plan != nil && !p.plan.Present {
 			names = append(names, strings.TrimPrefix(p.item.label, "base ")+" "+p.item.dst.Tag)
 		}
 	}
-	return fmt.Sprintf("images:         copy %s (%.1f MB, about $%.2f/month)", strings.Join(names, ", "), float64(bytes)/1e6, float64(bytes)/1e9*storagePerGBMonth)
+	if n == 0 {
+		return "images:         " + strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("images:         %s (%.1f MB, about $%.2f/month)", strings.Join(names, ", "), float64(bytes)/1e6, float64(bytes)/1e9*storagePerGBMonth)
 }
 
 // sourceLine is where the images come from and whether their digests are
-// pinned, for the review screen (before the typed name): the release tag in
-// the source registry is the trust anchor unless --expect-digest pins it.
+// pinned, for the review screen (before the typed name). Two trust anchors
+// are named separately, because they are not the same one: a base kind is
+// resolved at its release's "-pinned" tag and its cosign signature is
+// verified, while a copy's digest is what the source registry says unless
+// --expect-digest pins it.
 func (s *imagesStage) sourceLine(ctx context.Context) string {
 	items, _, err := s.items(ctx)
 	expect, _ := parseExpectDigests(s.e.r.o.expectDigests)
-	var unpinned []string
+	var unpinned, verified []string
 	for _, it := range items {
-		if expect[it.key()] == "" {
+		switch {
+		case it.kind != "":
+			verified = append(verified, it.kind)
+		case expect[it.key()] == "":
 			unpinned = append(unpinned, it.key())
 		}
 	}
 	src := pluginwire.Printable(s.allow()[0])
-	if err != nil || len(unpinned) > 0 {
-		return fmt.Sprintf("image source: %s, the release tag as it resolves now; NOT pinned with --expect-digest: %s", src, pluginwire.Printable(unpinnedText(unpinned)))
+	var parts []string
+	if len(verified) > 0 {
+		parts = append(parts, fmt.Sprintf("the base image(s) %s are signature-verified at %s's -pinned tag and pinned by digest through the remote repository", strings.Join(verified, ", "), src))
 	}
-	return "image source: " + src + "; every image is pinned with --expect-digest"
+	if err == nil && len(unpinned) == 0 {
+		parts = append(parts, "every image copied is pinned with --expect-digest")
+	} else {
+		parts = append(parts, "the release tag as it resolves now is the trust anchor for what is copied; NOT pinned with --expect-digest: "+pluginwire.Printable(unpinnedText(unpinned)))
+	}
+	return "image source: " + src + "; " + strings.Join(parts, "; ")
 }

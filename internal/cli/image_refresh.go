@@ -112,11 +112,18 @@ type refreshPlan struct {
 	lcOld            []byte
 	cfg              *config.Config
 	workflows, kinds []string
-	want             map[string]string
-	why              map[string]string
-	builds           []string
-	kept             map[string]bool // kinds whose newer managed copy is kept, not copied
-	yes              bool            // --yes: builds are confirmed without a prompt
+	// want[kind] is the reference the kind's builds move to, and is set
+	// only when that reference is already known offline: the entry the
+	// config records when it is already this release's pin or a newer one.
+	// A stale kind's pin is a digest through the remote repository, which
+	// cannot be computed offline, so want[kind] is "" and step 2 resolves
+	// and verifies it (design §5.4's B3).
+	want   map[string]string
+	atPin  map[string]bool // kinds whose recorded entry already is this release's pin (or a newer one)
+	why    map[string]string
+	builds []string
+	ver    string // the release version this run targets
+	yes    bool   // --yes: builds are confirmed without a prompt
 }
 
 // snapshot is the copy onPlan sees: every slice and map is cloned, and the
@@ -127,7 +134,7 @@ func (p *refreshPlan) snapshot() *refreshPlan {
 	c := *p
 	c.lcOld = slices.Clone(p.lcOld)
 	c.workflows, c.kinds, c.builds = slices.Clone(p.workflows), slices.Clone(p.kinds), slices.Clone(p.builds)
-	c.want, c.why, c.kept = maps.Clone(p.want), maps.Clone(p.why), maps.Clone(p.kept)
+	c.want, c.why, c.atPin = maps.Clone(p.want), maps.Clone(p.why), maps.Clone(p.atPin)
 	if p.lc != nil {
 		lc := *p.lc
 		lc.BaseImages = maps.Clone(p.lc.BaseImages)
@@ -234,7 +241,7 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 	}
 	var custom []string
 	for _, k := range kinds {
-		if cur := lc.BaseImage(k); cur != "" && !isManaged(cur, host, k) {
+		if cur := lc.BaseImage(k); cur != "" && !isManaged(cur, host, k, baseOwner(lc)) {
 			custom = append(custom, k)
 		}
 	}
@@ -246,13 +253,14 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 		return nil, userErr("%v", err)
 	}
 	p := &refreshPlan{root: root, repo: repo, slug: slug, lc: lc, lcPath: lcPath, lcOld: old, cfg: cfg,
-		workflows: wfs, kinds: kinds, want: map[string]string{}, why: map[string]string{}, kept: map[string]bool{}, yes: o.yes}
+		workflows: wfs, kinds: kinds, want: map[string]string{}, atPin: map[string]bool{}, why: map[string]string{}, ver: ver, yes: o.yes}
 	for _, k := range kinds {
-		if p.want[k], err = refreshBase(lc, k, ver); err != nil {
+		var ref string
+		if ref, p.atPin[k], err = refreshBase(lc, k, ver); err != nil {
 			return nil, err
 		}
-		if cur := lc.BaseImage(k); cur != "" && p.want[k] == cur && newer(curVersion(cur, host, k), ver) {
-			p.kept[k] = true
+		if p.atPin[k] {
+			p.want[k] = ref
 		}
 	}
 	for _, w := range wfs {
@@ -268,7 +276,7 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 		if err != nil {
 			return nil, err
 		}
-		build, why := refreshVerdict(rec, p.want[kind], host, kind)
+		build, why := refreshVerdict(rec, p.want[kind], p.ver, host, kind, baseOwner(lc))
 		p.why[w] = why
 		if build {
 			p.builds = append(p.builds, w)
@@ -283,11 +291,11 @@ func (p *refreshPlan) print(w io.Writer) {
 	fmt.Fprintf(w, "fugaro image refresh of %s (project %s, GCP project %s), workflows %s:\n", p.repo, p.lc.Name, p.lc.GCPProject, strings.Join(p.workflows, ", "))
 	fmt.Fprintln(w, "  1. preflight: done (nothing changed)")
 	for _, k := range p.kinds {
-		if p.kept[k] {
-			fmt.Fprintf(w, "  2. base %s: %s (a newer copy than this release's, kept as it is: nothing is copied)\n", k, p.want[k])
+		if p.atPin[k] {
+			fmt.Fprintf(w, "  2. base %s: %s (already this release's pin, or a newer one kept as it is: nothing is resolved and nothing is copied)\n", k, p.want[k])
 			continue
 		}
-		fmt.Fprintf(w, "  2. base %s: %s (copied into your registry if it lacks it, after its own confirmation)\n", k, p.want[k])
+		fmt.Fprintf(w, "  2. base %s: this release's base image is resolved at its -pinned tag, its signature is verified, and base_images.%s is pinned to the digest the remote repository serves (nothing is copied; step 2 prints the reference and confirms it)\n", k, k)
 	}
 	fmt.Fprintln(w, "  3. the daily image check job: its image and FUGARO_CHECK_SPEC's base images follow the local config's, through the Cloud Run Admin API after its own confirmation (no Terraform; No changes when current)")
 	how := "confirmed by typing the project's name"
@@ -309,7 +317,7 @@ func (p *refreshPlan) current() bool {
 		return false
 	}
 	for _, k := range p.kinds {
-		if p.lc.BaseImage(k) != p.want[k] {
+		if !p.atPin[k] {
 			return false
 		}
 	}

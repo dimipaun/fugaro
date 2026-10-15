@@ -11,59 +11,81 @@ import (
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
-	"github.com/dimipaun/fugaro/internal/mirror"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"google.golang.org/api/googleapi"
 )
 
-// refreshBase is the base image kind's builds start from once the base step
-// has run: this release's copy in the project's registry, or a newer copy an
-// earlier, newer CLI made (never downgraded), exactly what the images stage
-// records.
+// refreshBase answers one question, offline: is this kind's recorded base
+// image already this release's pin?
+//
+// It cannot answer "what should it be" any more. The pin is a digest through
+// the remote repository, and a digest cannot be computed offline — it comes
+// from resolving the release's "-pinned" tag and verifying its signature, so
+// the caller does that (init_images.go's readBase) and this only decides
+// whether it has to.
+//
+// current is true in exactly two cases, and both leave the entry alone:
+// the entry is this release's pin, or it is a NEWER managed base an earlier,
+// newer CLI pinned (never downgraded — the reason the version tag stays in
+// the reference at all, design §3.1). Everything else is stale, including
+// the migration case: the right version in the OLD shape, a copy in the
+// installation's own base registry, which is not this release's pin. For a
+// stale kind there is no reference to return — ref is "" and the caller
+// must not print one.
 //
 // It is safe on its own: it refuses a version that is not a release (a
-// development build) and a current entry that is not a managed release copy.
-func refreshBase(lc *localcfg.Config, kind, ver string) (string, error) {
+// development build) and an entry that is not a managed base image.
+func refreshBase(lc *localcfg.Config, kind, ver string) (ref string, current bool, err error) {
 	if !releaseRE.MatchString(ver) {
-		return "", userErr("fugaro image refresh needs a release build of fugaro: %q is not a release version", ver)
+		return "", false, userErr("fugaro image refresh needs a release build of fugaro: %q is not a release version", ver)
 	}
 	host, err := infra.RegistryHost(lc)
 	if err != nil {
-		return "", userErr("%v", err)
+		return "", false, userErr("%v", err)
 	}
+	owner := baseOwner(lc)
 	cur := lc.BaseImage(kind)
-	if cur != "" && !isManaged(cur, host, kind) {
-		return "", userErr("base_images.%s is %s: not a release image fugaro init copied, and fugaro image refresh never replaces one", kind, pluginwire.Printable(cur))
+	if cur == "" {
+		return "", false, nil
 	}
-	if cur != "" && newer(curVersion(cur, host, kind), ver) {
-		return cur, nil
+	if !isManaged(cur, host, kind, owner) {
+		return "", false, userErr("base_images.%s is %s: not a release image fugaro init pinned, and fugaro image refresh never replaces one", kind, pluginwire.Printable(cur))
 	}
-	dst, err := mirror.Dest(host, lc.GCPProject, "fugaro-"+kind, ver)
-	if err != nil {
-		return "", userErr("%v", err)
+	if baseIsCurrent(cur, host, kind, owner, ver) {
+		return cur, true, nil
 	}
-	return dst.String(), nil
+	return "", false, nil
 }
 
 // refreshVerdict says whether a workflow's image is rebuilt (decision D8):
-// not when its record's base_ref is want, nor when it is a newer copy of
-// the same kind; otherwise yes. why is one line for the plan.
-func refreshVerdict(rec *imagecheck.Record, want, host, kind string) (build bool, why string) {
+// not when its record's base_ref is want, nor when it is built from a newer
+// managed base of the same kind; otherwise yes. why is one line for the plan.
+//
+// want is the reference the workflow should move to, and ver the release
+// version this run targets. want is "" for a kind whose pin this release
+// still has to resolve — it is a digest through the remote repository, and
+// there is no value to name offline — and then why says so instead of
+// printing a reference nobody has; ver is what the never-downgrade rule
+// compares against in that case, so a workflow already built from a newer
+// CLI's pin is still kept.
+func refreshVerdict(rec *imagecheck.Record, want, ver, host, kind, owner string) (build bool, why string) {
+	to := "this release's pinned image"
+	if want != "" {
+		to = want
+	}
 	switch {
 	case rec == nil:
-		return true, "no build record: built from " + want
-	case rec.BaseRef == want:
+		return true, "no build record: built from " + to
+	case want != "" && rec.BaseRef == want:
 		return false, "current: built from " + want
 	case rec.BaseRef == "":
-		return true, "its build record does not say which base image it was built from: rebuilt from " + want
+		return true, "its build record does not say which base image it was built from: rebuilt from " + to
 	}
 	got := pluginwire.Printable(rec.BaseRef)
-	if v, ok := managedVersion(rec.BaseRef, host, kind); ok {
-		if w, ok := managedVersion(want, host, kind); ok && newer(v, w) {
-			return false, fmt.Sprintf("kept: built from %s, newer than %s (an older CLI does not downgrade it)", got, want)
-		}
+	if v, ok := managedVersion(rec.BaseRef, host, kind, owner); ok && newer(v, ver) {
+		return false, fmt.Sprintf("kept: built from %s, newer than %s (an older CLI does not downgrade it)", got, ver)
 	}
-	return true, fmt.Sprintf("built from %s: rebuilt from %s", got, want)
+	return true, fmt.Sprintf("built from %s: rebuilt from %s", got, to)
 }
 
 // readRefreshRecord is workflow wf's build record: nil when there is none,

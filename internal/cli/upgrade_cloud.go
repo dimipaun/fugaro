@@ -117,20 +117,23 @@ func cloudCheck(ctx context.Context, root string, co cloudOptions, rerun string)
 	var custom, stale []string
 	for _, k := range slices.Sorted(maps.Keys(set)) {
 		cur := lc.BaseImage(k)
-		if cur != "" && !isManaged(cur, host, k) {
+		if cur != "" && !isManaged(cur, host, k, baseOwner(lc)) {
 			custom = append(custom, k)
 			continue
 		}
-		want, err := refreshBase(lc, k, ver)
-		if err != nil {
+		// currentness, not a value: the pin is a digest through the remote
+		// repository and cannot be computed offline (design §5.4's B3). An
+		// installation whose entry is the OLD shape at this very version —
+		// the copy an earlier CLI made — is stale, and must be, or the
+		// migration would silently never happen on the path most users take.
+		if _, current, err := refreshBase(lc, k, ver); err != nil {
 			return cloudVerdict{state: cloudFailed, repo: repo, reason: oneLine(err.Error())}
-		}
-		if cur != want {
+		} else if !current {
 			was := "none recorded"
 			if cur != "" {
 				was = pluginwire.Printable(cur)
 			}
-			stale = append(stale, fmt.Sprintf("%s: %s, this release's is %s", k, was, want))
+			stale = append(stale, fmt.Sprintf("%s: %s; this release pins it by digest through %s/%s", k, was, lc.GCPProject, infra.GhcrRegistry))
 		}
 	}
 	switch {
