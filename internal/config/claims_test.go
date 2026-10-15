@@ -49,6 +49,13 @@ func TestLayerClaimMustBeExplicit(t *testing.T) {
 // The key is top-level, and a repository cannot write it: Resolve decodes
 // the merged tree into Config with KnownFields, so the only place
 // claude_models can be written is the layer file.
+//
+// The repository file below is otherwise VALID — the assertion on the bare
+// base is what says so, so the refusal is the added key's and not something
+// else in the file. Mutation that makes this fail: add a
+// `ClaudeModels map[string][]string \`yaml:"claude_models"\“ field to
+// Config (the key becomes one Config knows, and a repository's fugaro.yaml
+// carrying it resolves clean).
 func TestLayerClaimIsATopLevelKey(t *testing.T) {
 	under := "version: 1\nproject: acme\ngcp_project: acme-fugaro\ndefaults:\n  claude_models:\n    openrouter: [\"anthropic/claude-sonnet-5.5\"]\n"
 	if _, ps := ParseProjectLayer([]byte(under), testAnchor); len(ps) == 0 {
@@ -56,9 +63,17 @@ func TestLayerClaimIsATopLevelKey(t *testing.T) {
 	} else if !strings.Contains(ps[0].Message, "is not a fugaro.yaml key the project layer knows") {
 		t.Fatalf("problems = %v", ps)
 	}
-	_, _, ps := Resolve([]byte("version: 1\nproject: acme\ngcp_project: acme-fugaro\nclaude_models:\n  openrouter: [\"anthropic/claude-sonnet-5.5\"]\nworkflows:\n  app: {}\n"), nil)
+	const base = "version: 1\nproject: acme\ngcp_project: acme-fugaro\ngit: { provider: github }\n" +
+		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	if _, _, ps := Resolve([]byte(base), nil); len(ps) > 0 {
+		t.Fatalf("the base file is not valid, so the refusal below says nothing about the key: %v", ps)
+	}
+	_, _, ps := Resolve([]byte(base+"claude_models:\n  openrouter: [\"anthropic/claude-sonnet-5.5\"]\n"), nil)
 	if len(ps) == 0 {
 		t.Fatal("a repository's fugaro.yaml with claude_models: was accepted")
+	}
+	if !strings.Contains(ps[0].Message, "claude_models") {
+		t.Fatalf("the refusal does not name the key: %v", ps)
 	}
 }
 
