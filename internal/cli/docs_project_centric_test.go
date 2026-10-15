@@ -20,10 +20,27 @@ func TestChecklistHasCheck52(t *testing.T) {
 		t.Fatal(err)
 	}
 	doc := string(data)
-	section := docSection(t, path, doc, "## Check 52")
-	for _, want := range []string{"NOT RUN", "run by you", "sandbox", "never belong"} {
-		if !strings.Contains(section, want) {
-			t.Errorf("the Check 52 section does not say %q", want)
+	// The heading itself carries the four markers the plan's Task 3.0 fixes
+	// ("installation fugaro, sandbox only, never belong; run by you; NOT
+	// RUN"), so it is asserted as a whole rather than as four substrings that
+	// would also pass on the heading alone.
+	const heading = "## Check 52: the four probes phase 3 depends on (installation fugaro, sandbox only, never belong; run by you; NOT RUN)"
+	section := docSection(t, path, doc, heading)
+	// The section's body, with the heading line stripped: the constraints must
+	// live in the sentences that carry them, not only in the title.
+	body := section
+	if i := strings.Index(body, "\n"); i != -1 {
+		body = body[i+1:]
+	}
+	for _, want := range []string{
+		"no agent creates a credential, no agent runs a live step",
+		"no step of this check creates a token for the `edgeappinc` workspace or probes any repository that is not a scratch repository created for the probe",
+		"you run every command",
+		"**Never `belong`**",
+		"Never run this against `belong`, never create a `edgeappinc` workspace token",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the Check 52 section's body does not say %q", want)
 		}
 	}
 	// Its row in the check list (the summary table), not only the section.
