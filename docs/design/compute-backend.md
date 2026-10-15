@@ -816,7 +816,7 @@ open when `OnCloudRun` is false.** Every caller, read on `main`:
 
 | Site | What it does | With `OnCloudRun` false (a Batch VM) |
 |---|---|---|
-| `internal/runner/gateway.go:288` (`routingKnob`) | refuses the routing-refusal escape knob (`FUGARO_ALLOW_ROUTING_SETTINGS`) on Cloud Run | **honoured**: a job env the launcher controls can switch the routing refusal off |
+| `internal/runner/gateway.go:288` (`routingKnob`) | refuses the routing-refusal escape knob (`FUGARO_TEST_ALLOW_ROUTING_SETTINGS`, `allowRoutingSettingsEnv`, `internal/runner/gateway.go:39`) on Cloud Run | **honoured**: a job env the launcher controls can switch the routing refusal off |
 | `internal/cli/exec.go:195` (`RequireProject`) | requires the job to name its Fugaro project | **not required**: a run with no `FUGARO_PROJECT` proceeds |
 | `internal/cli/exec.go:264` (`refuseOldJobEnv`) | refuses an old-style job env on Cloud Run | **skipped**: the old env is accepted |
 | `internal/cli/exec.go:102` (`runner.BackendFromEnv`) | forbids a local (loopback) budget backend in the cloud | **allowed**: a run may point the budget at a local database |
@@ -1002,9 +1002,22 @@ SECURITY.md says which granularity an installation has:
   field is therefore forbidden here: it would make every run, and every
   container a run starts, an Editor on the project.
 - **Which account, and its grants.** The job account of (`profile`,
-  `account`) — project-centric §4.1's granularity, and the one the runner
-  already binds to (`slug == task.Slug(...)`) — unless the owner takes C21's
-  per-repository alternative. Its grants:
+  `account`) — project-centric §4.1's granularity — unless the owner takes
+  C21's per-repository alternative. **That binding does not exist today, and
+  this design must not read as if it does.** The account is chosen by the
+  *deployment*: today that is one account per repository, and §6.2 says which
+  model applies before phase 3 and after it. And **nothing in the runner checks
+  that the slug a run works under equals `task.Slug(provider, spec.Repo)`** —
+  the run's slug comes from the `FUGARO_RUN` override, and a mismatch is caught
+  only because the per-repository job's bucket condition cannot read another
+  slug's `task.json` (`docs/design/project-centric.md` §2.2, which says so in
+  those words). The equality is the **slug binding** that project-centric phase
+  1's plan builds (`docs/plans/2026-10-14-project-centric.md` Task 1.5, "the
+  slug binding's first half"), and it is the precondition this design's account
+  choice rests on: a run whose slug and repository disagree would be bound to
+  the wrong (`profile`, `account`). Until it lands, the VM backend uses the
+  per-repository account (§6.2) and inherits today's behaviour rather than an
+  invariant. Its grants:
   - `objectUser` (with `objectViewer` where the launcher grants already exist,
     bucket-iam.md §11) conditioned by `gcp.BucketCondition` — on the
     **profile's** prefixes (`runs/`, `cache/`, `locks/` for the repositories it
@@ -1519,6 +1532,29 @@ installation and its sandbox repository, the same one Checks 40, 41, 43 and 44
 use. **NEVER the `belong` project.** **No agent runs any apply:** every
 `gcloud`/`fugaro` step is typed by the owner.
 
+**Where this text lives, and the guard every other row has.** Row 57 is in the
+checklist this design adds; its **body is here**, not in
+`docs/gcp-live-checklist.md`. That is deliberate while this is a design — the
+full plan is written only after the owner approves it and 57a answers (§8.1) —
+but it makes 57 **the one row in the file whose check has no `## Check 57`
+section**, so the convention that goes with the numbering does not hold for it
+yet. That convention, read off `main`: every check task writes **its row, its
+`## Check NN` section in the file** (the section, not the design, is what the
+owner runs from) and a **`TestChecklistHasCheckNN`** in the `docs_*_test.go`
+convention `TestChecklistHasCheck33` and `TestChecklistHasCheck40` follow — with
+**`TestChecklistChecksAreGuarded`** (project-centric Task 6.3,
+`internal/cli/docs_project_centric_test.go`) as the backstop that asserts
+Check 43's guard block inside **every `## Check 48`-onward section**, over
+checks 48–56 as a property no single section can state. **Nothing asserts 57's
+guard today** — the setup block below is what enforces it, and a test cannot see
+a block that is not in the file it reads. This design names that gap rather than
+papering over it, and its own task outline closes it: **Task 10 (§8.1) writes
+`## Check 57` into `docs/gcp-live-checklist.md` from this section**, 57a and 57b
+as they stand here, **keeps the row this PR adds**, adds **`TestChecklistHasCheck57`**
+(asserting the section, the row, and Check 43's guard block inside the section),
+and re-points the row at its own section instead of at this design. Until then
+57a is run **from here**, and the row's pointer to §7.2 is the honest one.
+
 **Two parts, and the first one gates the build.** A check whose own first steps
 need the thing it gates cannot gate it, so this one is split:
 
@@ -1873,17 +1909,34 @@ leaked VM of *this check* is told from a real run's.
    data. Private Google Access alone would reach Artifact Registry (a Google
    API), but not step 4's `docker.io` pull, which is not one; the check
    therefore needs NAT. Like the installation, which puts NAT at the
-   installation level (§1.7), it **borrows** a NAT that already exists and
-   creates one only when there is none — named `${SA}-*`, which is how the
-   Restore finds it and the reason it can never find the project's own:
+   installation level (§1.7), it **borrows** a NAT where one already exists and
+   creates its own only when there is none — named `${SA}-*`, which is how the
+   Restore finds it and the reason it can never find the project's own. It
+   borrows a NAT only when the NAT's own rules say it covers every subnet:
+   editing the project's router to add the subnet
+   (`gcloud compute routers nats update … --nat-custom-subnet-ip-ranges`) would
+   be a change to something the Restore may not undo, so an unreadable or
+   subnet-listing NAT sends the check to its own `${SA}-router`/`${SA}-nat`
+   instead:
 
    ```bash
    ROUTER=${SA}-router
    NAT=${SA}-nat
+   # A borrow is a borrow only when the NAT certainly covers ${NET}'s ${L}
+   # subnetwork: sourceSubnetworkIpRangesToNat ALL_SUBNETWORKS_ALL_IP_RANGES or
+   # ALL_SUBNETWORKS_ALL_PRIMARY_IP_RANGES (the VM's egress uses its primary
+   # address). A NAT that lists its subnets by name, or one whose rules cannot
+   # be read, is NOT borrowed -- editing the project's router is a change the
+   # Restore below cannot undo, so this check makes its own pair instead.
    if gcloud compute routers describe "${ROUTER}" --project="${P:?}" --region="${L:?}" >/dev/null 2>&1; then
      :                                 # an earlier run of this block created this pair
-   elif [ "$(gcloud compute routers nats list --project="${P:?}" --region="${L:?}" --format='value(name)' | grep -c .)" != 0 ]; then
-     echo "57a-0b: ${P}/${L} already has a NAT; borrowing it, creating none (this check deletes only ${SA}-*)"
+   elif gcloud compute routers nats list --project="${P:?}" --region="${L:?}" --format='value(name)' | grep -q . && \
+        gcloud compute routers list --project="${P:?}" --regions="${L:?}" --format='value(name)' | \
+          while read -r R; do
+            gcloud compute routers describe "${R}" --project="${P:?}" --region="${L:?}" \
+              --format='value(nats[].sourceSubnetworkIpRangesToNat)'
+          done | grep -Eq 'ALL_SUBNETWORKS_ALL_(IP|PRIMARY_IP)_RANGES'; then
+     echo "57a-0b: ${P}/${L} already has a NAT covering every subnet; borrowing it, creating none (this check deletes only ${SA}-*)"
    else
      gcloud compute routers create "${ROUTER}" --project="${P:?}" --region="${L:?}" --network="${NET:?}" || exit 1
      gcloud compute routers nats create "${NAT}" --project="${P:?}" --region="${L:?}" --router="${ROUTER}" \
@@ -1895,13 +1948,16 @@ leaked VM of *this check* is told from a real run's.
    create` takes labels in the pinned gcloud — the `${SA}-*` name is the marker,
    exactly as it is for `${SA}-preload` in the Restore below.)
 
-   **FACT:** which of the three branches ran, and — if a NAT already existed —
-   that its NAT rules cover `${NET}`'s `${L}` subnetwork. A NAT that exists but
-   does not cover it is still a setup failure: enable Private Google Access on
-   that subnet instead (`gcloud compute networks subnets update <subnet>
-   --region="${L:?}" --project="${P:?}" --enable-private-ip-google-access`)
-   before submitting, and remember it is the *project's* setting: revert it by
-   hand, because the Restore below deletes only `${SA}-*` and would leave it on.
+   **FACT:** which of the three branches ran, and — if it borrowed — the
+   `sourceSubnetworkIpRangesToNat` value it accepted. A NAT that exists but is
+   not a borrow candidate (its rules list subnets by name, or none can be read)
+   is **not** a setup failure and not a reason to touch the project: the check
+   falls to the third branch and creates its own `${SA}-router`/`${SA}-nat`,
+   which the Restore deletes. **Private Google Access is not the remedy** — it
+   reaches Google APIs only, so steps 4 and 6's `docker.io/library/postgres:17`
+   and `hello-world` pulls fail behind it and the go/no-go measures nothing —
+   and it is the *project's* subnet setting, which the Restore (deleting only
+   `${SA}-*`) must leave alone rather than turn back off by hand.
 
 0c. **Image streaming's prerequisite, before step 3a needs it.** Streaming is
    not a Batch-side flag alone: it is served by the
@@ -2380,8 +2436,10 @@ fi
 ```
 
 The NAT/router/subnet note, if the check had to create egress of its own: it
-**borrows** the installation's NAT where one exists (the design puts NAT at the
-installation level, §1.7, and 57a-0b prints which branch it took), and names
+**borrows** the installation's NAT where one exists **and its rules cover every
+subnet** (the design puts NAT at the installation level, §1.7, and 57a-0b prints
+which branch it took, creating its own pair rather than editing a NAT it cannot
+read or that names its subnets), and names
 anything it creates `${SA}-*` — step 5 above — so this restore never reaches
 resources the check did not create, and never by `fugaro=managed`, which is the
 installation's label and reaches resources this check never touched. The log sink
@@ -2515,7 +2573,19 @@ senior reviewer before merge, not just the normal one.
    3, 4, 5 and 6 — by construction, because `doctor` is what gates it.
 10. **Check 57b, the docs, the skills and the release bullet** — the last task,
     as in every other group: the post-build acceptance run on the real backend
-    (§7.2, 57b).
+    (§7.2, 57b). **It also owns where Check 57 is written down**, which is the
+    one thing Check 57 does not share with checks 48–56 today: it writes the
+    **`## Check 57` section into `docs/gcp-live-checklist.md`** from §7.2 — both
+    halves, with **Check 43's guard block verbatim**, the same block 57a's setup
+    block is built from — keeps the row this design adds and **re-points it at
+    that section** rather than at §7.2, and adds **`TestChecklistHasCheck57`**
+    (`internal/cli/docs_project_centric_test.go`, the `docs_*_test.go`
+    convention of `TestChecklistHasCheck33` and `TestChecklistHasCheck40`) so
+    that 57's guard is asserted the way every other check's is and the
+    project-centric plan's `TestChecklistChecksAreGuarded` backstop has a
+    section to hold it to (§7.2). Until this task lands, the body lives in the
+    design and the row says so; nothing else in the outline may run 57b's steps
+    before it.
 11. **The secrets fallback (only if needed).** The runner-side Secret Manager
     fetch for a secret whose name is known only at run time (§1.6). It is a
     task only if Task 7 finds such a case; otherwise it is dropped, not built.
