@@ -342,6 +342,15 @@ func TestBatchFakeListFiltersAndPages(t *testing.T) {
 	if page2["nextPageToken"] != nil {
 		t.Fatalf("the last page carried a next page: %v", page2)
 	}
+
+	// IgnoreFilter answers every job the fake holds whatever the filter said,
+	// as a server that does not honour a label filter would: the shape a
+	// caller's own client-side label check has to survive.
+	f.IgnoreFilter = true
+	code, ignored := batchCall(t, "GET", base+"/jobs?filter="+`labels.fugaro%20%3D%20%22managed%22`, "")
+	if code != http.StatusOK || len(batchNames(ignored)) != 3 {
+		t.Fatalf("with the filter ignored: status %d, %v, want all three jobs", code, ignored)
+	}
 }
 
 func batchNames(body map[string]any) []string {

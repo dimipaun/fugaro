@@ -68,6 +68,13 @@ type Batch struct {
 	// A caller that treats "the job is not in the listing" as "the job is not
 	// there" must notice it.
 	Unreachable []string
+	// IgnoreFilter makes jobs.list answer every job it holds whatever its
+	// filter was, as a server that does not honour a label filter would. It is
+	// how a caller's own client-side marker check is exercised: whether the
+	// API honours the filter or ignores it, the answer must be the same (the
+	// compute fake has the same knob, for the same reason). Unset, the fake
+	// applies the filter, as the API documents it.
+	IgnoreFilter bool
 	// CancelRace, keyed by job id, moves the job to that raw state as its
 	// :cancel arrives, before the cancel is answered: a job that started or
 	// finished between the listing that decided to cancel it and the call
@@ -570,6 +577,11 @@ func (f *Batch) list(w http.ResponseWriter, r *http.Request, parent string) {
 			return
 		}
 		wantKey, wantVal = m[1], m[2]
+	}
+	if f.IgnoreFilter {
+		// A server that did not honour the filter answers every job it holds:
+		// the shape a caller's own client-side check has to survive.
+		wantKey, wantVal = "", ""
 	}
 	var all []*batchJob
 	for _, k := range f.order {

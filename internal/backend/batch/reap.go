@@ -110,9 +110,11 @@ import (
 // longest task timeout, its slack and the queue deadline: the VM boot and
 // image pull the design budgets 120 s for (§1.2), Batch's own teardown after
 // a terminal state (Check 57a measured 3 to 26 s), and the settle window a
-// listing's own lag needs. A VM or a job younger than MaxAge is left alone
-// whatever else is true about it, because "young" is the one explanation the
-// reaper cannot tell apart from "Batch is still doing its job".
+// listing's own lag needs. A VM younger than MaxAge is left alone whatever
+// else is true about it, because "young" is the one explanation the reaper
+// cannot tell apart from "Batch is still doing its job". (MaxAge bounds
+// instances only: a job's deadlines are its time in the state it reports, see
+// ReaperOptions.MaxAge.)
 const ReapMargin = 15 * time.Minute
 
 // MaxDeadline is the longest deadline a caller may configure, for either of
@@ -210,19 +212,26 @@ type ReaperOptions struct {
 	// configured task timeout plus backend.TaskTimeoutSlack -- "the
 	// launcher's own task timeout", the design's natural default.
 	QueueDeadline time.Duration
-	// MaxAge is how old an instance must be before the reaper will delete it,
-	// and how long a job may be QUEUED before the deadline cancels it. Zero
-	// means the queue deadline, plus the longest task timeout and its slack,
-	// plus ReapMargin: nothing a Fugaro run can legitimately be doing takes
-	// longer than queueing, running and tearing down. The age filter exists
-	// because Batch's own teardown takes seconds, so a resource that is still
-	// there moments after its job ended is not yet evidence of a leak (§3.4).
+	// MaxAge is the age floor for an INSTANCE: how old an instance must be
+	// before the reaper will delete it. Zero means the queue deadline, plus
+	// the longest task timeout and its slack, plus ReapMargin: nothing a
+	// Fugaro run can legitimately be doing takes longer than queueing, running
+	// and tearing down. The age filter exists because Batch's own teardown
+	// takes seconds, so a VM that is still there moments after its job ended
+	// is not yet evidence of a leak (§3.4).
 	//
-	// It is NOT what a job's stuckness is judged on: a job is deleted for being
-	// stuck only by the time it has spent in the state it reports (stateSince),
-	// and never by its age since creation (see Reaper.RunBudget). A value that
-	// is negative, longer than MaxDeadline, or shorter than the queue wait plus
-	// a run it must contain is refused by NewReaper rather than obeyed.
+	// It bounds no job. A job's deadlines are separate and both about time
+	// spent, not age: a QUEUED job is cancelled when it has waited longer than
+	// QueueDeadline (§1.4, C8) and never when it reaches MaxAge, and a job in
+	// any other state is deleted only by the time it has spent in that state
+	// (stateSince, bounded by Reaper.RunBudget), never by its age since
+	// creation. Raising MaxAge buys an instance more time before the reaper
+	// touches it, and buys a queued job nothing -- QueueDeadline is the knob
+	// for that.
+	//
+	// A value that is negative, longer than MaxDeadline, or shorter than the
+	// queue wait plus a run it must contain is refused by NewReaper rather
+	// than obeyed.
 	MaxAge time.Duration
 	// DryRun makes Reap list what it would delete and touch nothing: no
 	// instance is deleted and no job is cancelled either.
@@ -337,9 +346,9 @@ func NewReaper(ctx context.Context, o ReaperOptions) (*Reaper, error) {
 // by, after the defaults above are applied. Exported for the caller that logs
 // the plan before a pass (and for tests that pin them).
 //
-// QueueDeadline bounds a QUEUED job's wait, MaxAge bounds an instance's age and
-// a job's time in the QUEUED state, and RunBudget bounds how long a job may be
-// in any one other state before the reaper calls it stuck.
+// QueueDeadline bounds a QUEUED job's wait, MaxAge bounds an instance's age
+// and no job at all, and RunBudget bounds how long a job may be in any one
+// state before the reaper calls it stuck.
 func (r *Reaper) QueueDeadline() time.Duration { return r.queueDeadline }
 func (r *Reaper) MaxAge() time.Duration        { return r.maxAge }
 func (r *Reaper) RunBudget() time.Duration     { return r.runBudget }
@@ -463,7 +472,15 @@ func (r *Reaper) reapJob(ctx context.Context, j *batch.Job, owned owners, rep *R
 		// the VM is owned. That includes a cancel the API refused because the
 		// job had finished on its own in the meantime: the job is left to the
 		// next pass, which will read it as finished and reap its VM then.
-		owned.own(run, "its job was QUEUED past the queue deadline and was cancelled, not deleted: Batch tears its VMs down from CANCELLATION_IN_PROGRESS")
+		//
+		// The tense follows the pass, as the delete path's does: a dry run
+		// cancels nothing, and a report that says a job "was cancelled" when
+		// it was not is a line an operator cannot act on.
+		cancelled := "its job was QUEUED past the queue deadline and was cancelled, not deleted: Batch tears its VMs down from CANCELLATION_IN_PROGRESS"
+		if r.o.DryRun {
+			cancelled = "its job is QUEUED past the queue deadline and this pass would cancel it, not delete it: Batch tears a cancelled job's VMs down from CANCELLATION_IN_PROGRESS"
+		}
+		owned.own(run, cancelled)
 		return r.cancelQueued(ctx, j, run, age, rep)
 	case "SCHEDULED", "RUNNING":
 		// Judged on the time spent IN THIS STATE, not on the job's age: a run
@@ -849,22 +866,35 @@ func jobRunLabels(j *batch.Job) []string {
 }
 
 // stateSince is how long a job has been in the state it reports now, which is
-// what the run-scoped deadline is measured against: the time of its latest
-// job-level status event, or -- for a RUNNING job, whose RunDuration is exactly
-// that -- the run duration Batch reports. It is deliberately NOT the job's age
-// since creation. A job's age says how long ago it was created, and a run may
-// spend longer in the queue than the queue deadline (the deadline is the
-// previous pass's, and a reaper that was not running enforces nothing), then
-// start and run legitimately: judged by its age, that run is "stuck" the second
-// it starts, and jobs.delete would kill a live run. A deletion is the same
-// story from the other end: Batch's own 60-day job delete (§9) puts a
+// what the run-scoped deadline is measured against. It is deliberately NOT the
+// job's age since creation. A job's age says how long ago it was created, and a
+// run may spend longer in the queue than the queue deadline (the deadline is
+// the previous pass's, and a reaper that was not running enforces nothing),
+// then start and run legitimately: judged by its age, that run is "stuck" the
+// second it starts, and jobs.delete would kill a live run. A deletion is the
+// same story from the other end: Batch's own 60-day job delete (§9) puts a
 // DELETION_IN_PROGRESS on a months-old job, and the state began moments ago.
 //
-// Task-level events (TaskState set) are skipped: those are emitted while the
-// job is in the same state, so they date a task, not the state. Taking the
-// latest job-level event can only make the time in state look SHORTER than it
-// is (an event the API emits mid-state), which errs towards leaving a job
-// alone -- the direction this file errs in everywhere.
+// Two measurements are read, and the SHORTER one wins:
+//
+//   - the latest job-level status event (TaskState unset -- a task-level event
+//     dates a task, not the job's state, so those are skipped);
+//   - for RUNNING, the runDuration Batch reports, which is exactly this
+//     quantity: "the duration of time that the Job spent in status RUNNING"
+//     (batch/v1.JobStatus).
+//
+// The shorter one, because the event list is not a per-state log: nothing in
+// the API reference says a job-level event is emitted on every transition
+// (UNVERIFIED -- Check 57a is where an installation could measure it), so the
+// latest job-level event a RUNNING job carries may be its QUEUED transition
+// hours ago. Read as the time in state that is a live run deleted, and
+// runDuration is the field that corrects it -- which is why RUNNING takes the
+// smaller, not the event alone. For the other states there is no second
+// measurement, and a stale event can only make a job look LONGER in its state
+// than it is: that errs towards deleting a job that is already being deleted
+// (DELETION_IN_PROGRESS) or one Batch has not yet started running, and the
+// caller sees it in the report. Being wrong the other way -- deleting a live
+// run -- is the failure this whole function exists to prevent.
 //
 // A job with no readable time in state is not stuck: the caller refuses it and
 // owns its VMs (refuseUnknownStateTime), because an unknown time never clears a
@@ -872,6 +902,13 @@ func jobRunLabels(j *batch.Job) []string {
 func stateSince(j *batch.Job, now time.Time) (time.Duration, bool) {
 	if j.Status == nil {
 		return 0, false
+	}
+	var run time.Duration
+	haveRun := false
+	if j.Status.State == "RUNNING" && j.Status.RunDuration != "" {
+		if d, err := time.ParseDuration(j.Status.RunDuration); err == nil && d >= 0 {
+			run, haveRun = d, true
+		}
 	}
 	latest := time.Time{}
 	for _, ev := range j.Status.StatusEvents {
@@ -887,22 +924,16 @@ func stateSince(j *batch.Job, now time.Time) (time.Duration, bool) {
 		}
 	}
 	if latest.IsZero() {
-		// RunDuration is Batch's own answer for the one state it defines it
-		// for: "the duration of time that the Job spent in status RUNNING"
-		// (batch/v1.JobStatus). It is the fallback, not the primary, because
-		// no other state has an equivalent field.
-		if j.Status.State == "RUNNING" && j.Status.RunDuration != "" {
-			if d, err := time.ParseDuration(j.Status.RunDuration); err == nil && d >= 0 {
-				return d, true
-			}
-		}
-		return 0, false
+		return run, haveRun
 	}
 	spent := now.Sub(latest)
 	if spent < 0 {
 		// A clock that disagrees with the API's: read the state as just
 		// entered rather than as one it has been in for a negative time.
 		spent = 0
+	}
+	if haveRun && run < spent {
+		return run, true
 	}
 	return spent, true
 }

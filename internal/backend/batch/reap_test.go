@@ -64,9 +64,19 @@ func (rt *reapTest) addJob(t *testing.T, runID, state string, age time.Duration)
 	return rt.addJobLabels(t, runID, state, age, nil)
 }
 
-// addJobLabels is addJob with extra labels merged in (a test that wants a
-// job this installation did not launch, say).
+// addJobLabels is addJob with extra labels merged into both label fields (a
+// test that wants a job this installation did not launch, say).
 func (rt *reapTest) addJobLabels(t *testing.T, runID, state string, age time.Duration, edit map[string]string) string {
+	t.Helper()
+	return rt.addJobLabelFields(t, runID, state, age, edit, edit)
+}
+
+// addJobLabelFields is addJobLabels with the two label fields edited
+// separately. A job whose Job.labels and AllocationPolicy.labels disagree is
+// what the reaper's own client-side marker check exists for (the API's filter
+// reads Job.labels only), and one map cannot build it: a key removed here must
+// stay there.
+func (rt *reapTest) addJobLabelFields(t *testing.T, runID, state string, age time.Duration, jobEdit, allocEdit map[string]string) string {
 	t.Helper()
 	id := JobID(backendtest.Slug, backendtest.Workflow, runID)
 	labels, err := Labels(backendtest.Slug, backendtest.Workflow, runID)
@@ -77,14 +87,17 @@ func (rt *reapTest) addJobLabels(t *testing.T, runID, state string, age time.Dur
 	for k, v := range labels {
 		jobLabels[k], allocLabels[k] = v, v
 	}
-	for k, v := range edit {
-		if v == "" {
-			delete(jobLabels, k)
-			delete(allocLabels, k)
-			continue
+	editField := func(field map[string]string, edit map[string]string) {
+		for k, v := range edit {
+			if v == "" {
+				delete(field, k)
+				continue
+			}
+			field[k] = v
 		}
-		jobLabels[k], allocLabels[k] = v, v
 	}
+	editField(jobLabels, jobEdit)
+	editField(allocLabels, allocEdit)
 	body := map[string]any{
 		"labels":           jobLabels,
 		"allocationPolicy": map[string]any{"labels": allocLabels},
@@ -627,6 +640,32 @@ func TestReaperJudgesStucknessByTimeInState(t *testing.T) {
 		}
 		_ = id
 	})
+	t.Run("a stale job-level event beside a fresh runDuration", func(t *testing.T) {
+		rt := newReaperTest(t, nil)
+		// The event list is not a per-state log: nothing in the API reference
+		// says a job-level event is emitted on every transition, so the latest
+		// one a RUNNING job carries can be its QUEUED transition ten hours
+		// ago. Read as the time in state, that is a live run deleted;
+		// runDuration is the second measurement of the same quantity, and the
+		// shorter of the two is what a deadline may act on.
+		id := rt.addJobStateAt(t, "20260927-100000-abcd", "RUNNING", 10*time.Hour, 10*time.Hour)
+		rt.bf.SetStatusEvents(id, map[string]any{
+			"type": "STATUS_CHANGED", "description": "Job state is QUEUED",
+			"state": "QUEUED", "eventTime": rt.now.Add(-10 * time.Hour).Format(time.RFC3339Nano),
+		})
+		rt.bf.SetRunDuration(id, "30s")
+		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+		rep := rt.reap(t)
+		if got := rt.bf.Deletes(); len(got) != 0 {
+			t.Fatalf("a job that started 30 seconds ago was deleted for a stale event: %v", got)
+		}
+		if got := rt.cf.Deletes(); len(got) != 0 {
+			t.Fatalf("the VM of a just-started run was deleted: %v", got)
+		}
+		if !refusedBecause(rep, "fake-region-a/vm-1", "its job is RUNNING, 0 minutes into the state") {
+			t.Fatalf("report = %v, want the young run's VM refused as a live job's", rep.Lines())
+		}
+	})
 	t.Run("a deletion just started on an old job", func(t *testing.T) {
 		rt := newReaperTest(t, nil)
 		// Batch's own 60-day job delete (design §9) puts an old job into
@@ -818,15 +857,30 @@ func TestReaperRefusesAJobItCannotAttribute(t *testing.T) {
 	})
 	t.Run("no marker in Job.labels", func(t *testing.T) {
 		rt := newReaperTest(t, nil)
-		// The marker only in AllocationPolicy.labels: the job would not be
-		// listed by the installation's own filter either, and it is refused.
-		rt.addJobLabels(t, "20260927-100000-abcd", "RUNNING", 10*time.Hour, map[string]string{labelManaged: ""})
+		// The marker only in AllocationPolicy.labels, and a server that
+		// ignores the filter (a fake told not to honour it, the shape a caller
+		// must survive either way). The API's own filter reads Job.labels, so
+		// a job like this should never have been returned -- and the reaper
+		// checks the marker itself on every job it decided from, which is what
+		// this reaches: listJobs drops it, so it is not listed, not judged and
+		// not acted on.
+		rt.bf.IgnoreFilter = true
+		unmarked := rt.addJobLabelFields(t, "20260927-100000-abcd", "RUNNING", 10*time.Hour, map[string]string{labelManaged: ""}, nil)
+		// A marked job in the same listing, which the pass must still act on:
+		// without it the test would pass on a pass that did nothing at all.
+		marked := rt.addJob(t, "20260927-100001-abcd", "RUNNING", 10*time.Hour)
 		rep := rt.reap(t)
-		if len(rt.bf.Deletes()) != 0 {
-			t.Fatalf("a job without the marker in Job.labels was deleted: %v", rep.Lines())
+		if got := rt.bf.Deletes(); len(got) != 1 || got[0] != marked {
+			t.Fatalf("jobs.delete = %v, want only the marked job %s (the unmarked one is not this installation's)", got, marked)
 		}
-		if len(rep.Actions) != 0 {
-			t.Fatalf("actions = %v, want none", rep.Lines())
+		if len(rep.Actions) != 1 || rep.Actions[0].Target != rt.name(marked) {
+			t.Fatalf("actions = %v, want only the marked job", rep.Lines())
+		}
+		if strings.Contains(strings.Join(rep.Lines(), "\n"), unmarked) {
+			t.Fatalf("report = %v, want no line about a job the marker check dropped", rep.Lines())
+		}
+		if st := rt.bf.State(unmarked); st != "RUNNING" {
+			t.Fatalf("the unmarked job's state is %q: it must not be touched", st)
 		}
 	})
 }
@@ -939,6 +993,10 @@ func TestReaperDryRunListsWhatItWouldDelete(t *testing.T) {
 	id := rt.addJob(t, "20260927-100000-abcd", "RUNNING", 10*time.Hour)
 	queued := rt.addJob(t, "20260927-100001-abcd", "QUEUED", 40*time.Minute)
 	rt.vm("vm-1", runLabels(t, "20260927-100002-abcd"), 10*time.Hour)
+	// A VM whose run is the queued job, so the refusal's wording for that job
+	// is in the report too: a dry run cancels nothing, and a line saying the
+	// job "was cancelled" would be a line an operator cannot act on.
+	rt.vm("vm-2", runLabels(t, "20260927-100001-abcd"), 10*time.Hour)
 	rep := rt.reap(t)
 	if !rep.DryRun {
 		t.Fatal("Report.DryRun is false")
@@ -950,8 +1008,15 @@ func TestReaperDryRunListsWhatItWouldDelete(t *testing.T) {
 	if len(rt.bf.Deletes()) != 0 || len(rt.bf.Cancels()) != 0 || len(rt.cf.Deletes()) != 0 {
 		t.Fatalf("dry-run touched something: jobs=%v cancels=%v instances=%v", rt.bf.Deletes(), rt.bf.Cancels(), rt.cf.Deletes())
 	}
-	if !strings.Contains(strings.Join(rep.Lines(), "\n"), "would delete job") {
+	lines := strings.Join(rep.Lines(), "\n")
+	if !strings.Contains(lines, "would delete job") {
 		t.Fatalf("dry-run lines do not say what they would do: %v", rep.Lines())
+	}
+	if !refusedBecause(rep, "fake-region-a/vm-2", "this pass would cancel it, not delete it") {
+		t.Fatalf("dry-run lines do not say what they would do about the queued job: %v", rep.Lines())
+	}
+	if strings.Contains(lines, "was cancelled") {
+		t.Fatalf("a dry run says a job was cancelled: %v", rep.Lines())
 	}
 	// The same project, really reaped afterwards: the same three actions,
 	// and this time they happen.
@@ -960,8 +1025,12 @@ func TestReaperDryRunListsWhatItWouldDelete(t *testing.T) {
 	if len(rep.Actions) != 3 || len(rt.bf.Deletes()) != 1 || len(rt.bf.Cancels()) != 1 || len(rt.cf.Deletes()) != 1 {
 		t.Fatalf("the real pass after a dry run did not do what the dry run listed: %v", rep.Lines())
 	}
-	if strings.Contains(strings.Join(rep.Lines(), "\n"), "would ") {
+	lines = strings.Join(rep.Lines(), "\n")
+	if strings.Contains(lines, "would ") {
 		t.Fatalf("a real pass's lines say they would: %v", rep.Lines())
+	}
+	if !refusedBecause(rep, "fake-region-a/vm-2", "was cancelled, not deleted") {
+		t.Fatalf("the real pass's line about the cancelled job does not say it was cancelled: %v", rep.Lines())
 	}
 }
 

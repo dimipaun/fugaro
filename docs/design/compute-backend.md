@@ -1190,11 +1190,17 @@ the teardown is assumed rather than read:
   end: Batch's own 60-day delete puts a 60-day-old job into
   `DELETION_IN_PROGRESS` moments before a pass reads it). `QUEUED` is the one
   state judged from the create time, because a job that has not started has
-  been waiting since it was created. The time in state is the job's latest
-  **job-level** status event (a task-level event dates a task, not the state),
-  with the `runDuration` a `RUNNING` job reports as the fallback; a job whose
-  time in state cannot be read is **refused**, with its VMs left alone, rather
-  than assumed stuck. A **finished job's record is never deleted** — it is
+  been waiting since it was created. The time in state is read from two
+  measurements — the job's latest **job-level** status event (a task-level
+  event dates a task, not the state) and, for `RUNNING`, the `runDuration`
+  Batch reports, which is exactly that quantity — and the **shorter** of the
+  two is what a deadline acts on: the event list is not a per-state log, since
+  nothing in the API reference says a job-level event is emitted on every
+  transition (**UNVERIFIED**; Check 57a is where an installation could measure
+  it), so the latest event a `RUNNING` job carries may be its `QUEUED`
+  transition hours ago, and read as the time in state that would delete a live
+  run. A job whose time in state cannot be read is **refused**, with its VMs
+  left alone, rather than assumed stuck. A **finished job's record is never deleted** — it is
   history, and §3.4's ordering rule is about the jobs the reaper has decided
   must go, so a terminal job whose VM leaked is handled by the instance pass,
   which deletes the VM and leaves the record. A job this pass deletes **owns
@@ -1237,7 +1243,9 @@ the teardown is assumed rather than read:
   error), and `DryRun` lists what a pass would delete and touches nothing,
   cancel included.
 
-  The age floor is the longest configured task timeout plus
+  The age floor is an **instance's** floor — it bounds no job, a job's
+  deadlines being its queue deadline and its time in state: the longest
+  configured task timeout plus
   `backend.TaskTimeoutSlack`, plus the queue deadline, plus a 15-minute margin
   (`ReapMargin`: the 120 s boot budget of §1.2, Batch's own teardown, and a
   listing's settle window); the queue deadline defaults to the longest task
