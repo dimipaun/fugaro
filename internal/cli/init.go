@@ -437,6 +437,7 @@ type initRun struct {
 	retired       bool     // the flow was entered (a later plan must not re-enter it)
 	retireApplied bool     // it applied: the jobs it removed from state still need deleting
 	retireRemoved []string // what the state removal took out: what a stop before the API delete owes (M-B)
+	retireClean   bool     // the resume's plan changed nothing: no apply is left, only the API delete
 }
 
 // initResult is what --json prints.

@@ -393,6 +393,9 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 		// that cannot ask it -- --yes, a pipe, an agent -- is refused, not
 		// silently obeyed).
 		fmt.Fprintf(r.w, "No changes: %s matches the plan.\n", spec.Name)
+		// The confirmation's own banner says what remains, and here there is
+		// no apply left to do: the delete is all of it (I-C).
+		r.retireClean = true
 		if err := r.retireConfirm(rets, spec, retireUndone("nothing was applied and no job was deleted", removed)); err != nil {
 			return leftover(err)
 		}
@@ -574,12 +577,26 @@ func (r *initRun) retireWhat(spec infra.RepoSpec, rets []infra.Retirement) strin
 	// and the API deletes -- and the count of what left the state is still
 	// named, as a fact rather than as a task. Both confirmations share this
 	// banner, and r.retireRemoved is what tells them apart.
-	if removed := len(r.retireRemoved); removed > 0 {
+	//
+	// The resume whose plan changes nothing is the third tense (I-C): there is
+	// no apply left either, so the delete is the whole of what remains and the
+	// banner names that and nothing more.
+	switch removed := len(r.retireRemoved); {
+	case r.retireClean:
+		left := "the plan changes nothing"
+		if removed > 0 {
+			left = fmt.Sprintf("the plan changes nothing and %d %s already out of Terraform's state (destroying nothing)",
+				removed, plural(removed, "address is", "addresses are"))
+		}
+		fmt.Fprintf(&b, "retire %d %s of %s: %s, so what remains is the delete of %d Cloud Run %s through the API.",
+			len(rets), plural(len(rets), "address", "addresses"), r.gcpProject, left,
+			len(api), plural(len(api), "job", "jobs"))
+	case removed > 0:
 		fmt.Fprintf(&b, "retire %d %s of %s: %d %s already out of Terraform's state (destroying nothing), so what remains is the apply and the delete of %d Cloud Run %s through the API.",
 			len(rets), plural(len(rets), "address", "addresses"), r.gcpProject,
 			removed, plural(removed, "address is", "addresses are"),
 			len(api), plural(len(api), "job", "jobs"))
-	} else {
+	default:
 		fmt.Fprintf(&b, "retire %d %s of %s: remove %d from Terraform's state (destroying nothing), then apply, then delete %d Cloud Run %s through the API.",
 			len(rets), plural(len(rets), "address", "addresses"), r.gcpProject,
 			len(infra.Removals(r.retireState, rets)), len(api), plural(len(api), "job", "jobs"))

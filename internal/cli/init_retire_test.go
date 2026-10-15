@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -96,6 +97,11 @@ type retireOpts struct {
 	// stateRmFails makes the state removal succeed for its first address and
 	// fail for its second: the midway failure M-D's naming rule is about.
 	stateRmFails bool
+	// planClean is the resume's own shape: an earlier run already removed the
+	// addresses and applied, so terraform's plan changes nothing (exit 0,
+	// -detailed-exitcode's own "no changes") and the API delete is the only
+	// thing still owed (see noJobInState).
+	planClean bool
 }
 
 // retireRig is an onboarded repository ready to plan, with the retirement's
@@ -146,6 +152,11 @@ func newRetireRig(t *testing.T, o retireOpts) *retireRig {
 	}
 	r.script["show@repo"] = map[string]any{"stdout": string(b)}
 	r.script["plan"] = map[string]any{"exit": 2} // the plan changes something
+	if o.planClean {
+		// -detailed-exitcode: 0 is "no changes", and a resume whose apply
+		// already happened is exactly that.
+		r.script["plan"] = map[string]any{"exit": 0}
+	}
 	if o.planAbort != "" {
 		r.script["plan"] = map[string]any{"exit": 1, "stderr": o.planAbort}
 	}
@@ -521,6 +532,132 @@ func TestInitRepoRetireShowsThePlanBeforeTheSecondConfirmation(t *testing.T) {
 	}
 	if counts > second || list > second {
 		t.Errorf("the plan is shown after the second confirmation (counts %d, list %d, prompt %d)", counts, list, second)
+	}
+}
+
+// I1: a declined second confirmation says what has already happened, not what
+// was predicted. The state removal runs before the prompt, so the message must
+// name the addresses that left the state, by address, and the command that
+// finishes the work -- "nothing was removed" would be false by then.
+func TestInitRepoRetireDeclinedSecondConfirmationNamesWhatLeftTheState(t *testing.T) {
+	r := newRetireRig(t, retireOpts{protection: true})
+	out, errOut, err := executeStdin(t, "aurora\nno\n", "init", "--repo", "--retire", "--no-build")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v\n%s%s; want the decline to stop the run", ExitCode(err), err, out, errOut)
+	}
+	text := out + errOut
+	if !strings.Contains(text, "removed 2 addresses from Terraform's state; nothing was destroyed") {
+		t.Errorf("the state removal is not reported before the prompt:\n%s", text)
+	}
+	if n := strings.Count(text, "⚠ CONFIRM"); n != 2 {
+		t.Errorf("%d confirmations, want the first and the second:\n%s", n, text)
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"not confirmed", "the plan was not applied and no job was deleted",
+		"2 addresses had already left Terraform's state", retireKeptAddr, retireJobAddr, retireNextCommand,
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the decline does not say %q in %q", want, msg)
+		}
+	}
+	if applies := r.applies(t); len(applies) != 0 {
+		t.Errorf("a declined confirmation applied: %v", applies)
+	}
+	if deletes := r.run.JobDeletes(); len(deletes) != 0 {
+		t.Errorf("a declined confirmation deleted %v", deletes)
+	}
+	if !r.run.HasJob(retireJobName) {
+		t.Error("the job is gone although the delete was declined")
+	}
+}
+
+// The no-change (resume) path owes the same second typed confirmation: the
+// plan changes nothing because an earlier run already removed the addresses
+// and applied, but the API job delete is still in front of the user, and no
+// plan shows it (design §4.2). Declining stops the run there, with nothing
+// deleted I-C.
+func TestInitRepoRetireResumeNoChangeAsksBeforeTheDeleteAndDecliningStopsIt(t *testing.T) {
+	r := newRetireRig(t, retireOpts{protection: true, noJobInState: true, planClean: true})
+	out, errOut, err := executeStdin(t, "aurora\nno\n", "init", "--repo", "--retire", "--no-build")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v\n%s%s; want the declined confirmation to stop the run", ExitCode(err), err, out, errOut)
+	}
+	text := out + errOut
+	if !strings.Contains(text, "No changes: ") {
+		t.Errorf("the clean plan is not reported:\n%s", text)
+	}
+	if n := strings.Count(text, "⚠ CONFIRM"); n != 2 {
+		t.Errorf("%d confirmations, want two: the resume owes the delete's own:\n%s", n, text)
+	}
+	// Both prompts are the typed route. ask is the one --yes covers, and
+	// retireConfirm uses askTyped precisely because this step is not one --yes
+	// may cover: the prompt text is what tells the two apart, and the
+	// --yes-coverable one here would let a --yes run delete a job.
+	if n := strings.Count(text, "Type "+initProjectName+" to confirm: "); n != 2 {
+		t.Errorf("%d typed prompts, want two: the delete's confirmation is not the --yes-coverable one:\n%s", n, text)
+	}
+	if deletes := r.run.JobDeletes(); len(deletes) != 0 {
+		t.Errorf("a declined confirmation still deleted %v", deletes)
+	}
+	if !r.run.HasJob(retireJobName) {
+		t.Error("the job is gone although the delete was declined")
+	}
+	msg := err.Error()
+	for _, want := range []string{"not confirmed", "nothing was applied and no job was deleted", "had already left Terraform's state", retireNextCommand} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the decline does not say %q in %q", want, msg)
+		}
+	}
+}
+
+// The same resume, confirmed: the delete runs and the apply does not -- a
+// clean plan is not applied again, and the confirmation's own banner says so
+// rather than naming an apply that is not coming.
+func TestInitRepoRetireResumeNoChangeDeletesAfterTheConfirmation(t *testing.T) {
+	r := newRetireRig(t, retireOpts{protection: true, noJobInState: true, planClean: true})
+	// The third answer is the local config's own confirmation: this run never
+	// applied, so that write is not covered by an apply's.
+	out, errOut, err := executeStdin(t, "aurora\naurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	if err != nil {
+		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
+	}
+	text := out + errOut
+	if !strings.Contains(text, "the plan changes nothing and 1 address is already out of Terraform's state (destroying nothing), so what remains is the delete of 1 Cloud Run job through the API") {
+		t.Errorf("the confirmation does not name what actually remains:\n%s", text)
+	}
+	if applies := r.applies(t); len(applies) != 0 {
+		t.Errorf("a clean plan was applied: %v", applies)
+	}
+	if deletes := r.run.JobDeletes(); len(deletes) != 1 || deletes[0] != retireJobName {
+		t.Errorf("JobDeletes = %v, want the orphan the labels named", deletes)
+	}
+	if !strings.Contains(text, "deleted the orphaned Cloud Run job "+retireJobName) {
+		t.Errorf("the API delete is not reported:\n%s", text)
+	}
+}
+
+// The other shape of the same resume: the state removal had nothing left to
+// take (every address the run knows is one the labels found), so the
+// confirmation names the delete alone -- no count of addresses that never left
+// the state.
+func TestInitRepoRetireResumeNoChangeNamesOnlyTheDelete(t *testing.T) {
+	r := newRetireRig(t, retireOpts{protection: true, noJobInState: true, keptAsNote: true, planClean: true})
+	out, errOut, err := executeStdin(t, "aurora\naurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	if err != nil {
+		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
+	}
+	text := out + errOut
+	// The confirmation's own banner, not the "removed 0" report below it.
+	clean := text[strings.Index(text, "the plan changes nothing"):]
+	if !strings.Contains(clean, "the plan changes nothing, so what remains is the delete of 1 Cloud Run job through the API") {
+		t.Errorf("the confirmation does not name the delete as what remains:\n%s", text)
+	}
+	if banner := clean[:strings.Index(clean, ". Delete ")]; strings.Contains(banner, "0 addresses") {
+		t.Errorf("the confirmation counts addresses that never left the state:\n%s", text)
+	}
+	if deletes := r.run.JobDeletes(); len(deletes) != 1 || deletes[0] != retireJobName {
+		t.Errorf("JobDeletes = %v, want the orphan the labels named", deletes)
 	}
 }
 
@@ -1276,6 +1413,45 @@ func TestInitRepoRetireReportsAnApplyThatSucceededAndADeleteThatFailed(t *testin
 		if !strings.Contains(text, want) {
 			t.Errorf("the failed delete does not say %q:\n%s", want, text)
 		}
+	}
+}
+
+// M4: a failed API delete does not cost the run its local config. The plan
+// did apply and the state did change, so the config file is the record of what
+// the deployment now is -- written before the delete's error is returned, and
+// the run still exits non-zero with the delete named.
+func TestInitRepoRetireFailedDeleteStillWritesTheLocalConfig(t *testing.T) {
+	r := newRetireRig(t, retireOpts{protection: true, deleteFails: 500})
+	before, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, runErr := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	if ExitCode(runErr) != ExitUserError {
+		t.Fatalf("exit %d, err %v\n%s%s; want the failed delete to exit non-zero", ExitCode(runErr), runErr, out, errOut)
+	}
+	text := out + errOut
+	after, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(before, after) {
+		t.Errorf("the local config was not written after the failed delete:\n%s", text)
+	}
+	if !strings.Contains(text, "wrote "+r.cfg) {
+		t.Errorf("the config write is not reported:\n%s", text)
+	}
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatalf("the written config does not load: %v", err)
+	}
+	if repo, ok := lc.Repos["acme/sandbox"]; !ok || repo.Provider != "bitbucket" || repo.BaseBranch != "master" ||
+		!slices.Equal(repo.Workflows, []string{"app"}) {
+		t.Errorf("the written config's repository entry = %+v, want the run's own", repo)
+	}
+	// The error is still the delete's: writing the config does not swallow it.
+	if !strings.Contains(runErr.Error(), "job delete failed") {
+		t.Errorf("the returned error is not the failed delete: %v", runErr)
 	}
 }
 
