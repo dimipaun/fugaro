@@ -200,16 +200,8 @@ func (p *policyReadOnce) exists(ctx context.Context, lc *localcfg.Config) (bool,
 // minted, and the run itself is held to every limit. Anyone who may launch
 // may use it (it loosens nothing the rules and the runner do not enforce
 // again); it says so on stderr.
-//
-// It runs whenever the launch is given a budget identity, which is
-// budgetMintOn's decision and not the operator's local mode: a project whose
-// policy is published and enforcing is metered whatever mode the job's
-// FUGARO_BUDGET_MODE was deployed with (plan task 1.3 step 2), and gating this
-// check on the local mode alone let such a launch mint a token and halt at
-// bootstrap — after an execution existed — on a limit this check could have
-// refused before anything was created (code review, low).
 func (e *cloudEnv) budgetPrecheck(ctx context.Context, slug string, spec *task.Spec, stderr io.Writer) error {
-	on, err := e.budgetMintOn(ctx)
+	on, err := budgetBackendOn(e.lc)
 	if err != nil || !on {
 		return err
 	}
@@ -248,13 +240,8 @@ func (e *cloudEnv) budgetPrecheck(ctx context.Context, slug string, spec *task.S
 // 2..n at their own pre-check. Its notes and the --no-budget-check warning
 // print once here, for the whole batch; each attempt's own finishLaunch
 // call then skips budgetPrecheck entirely (skipBudget).
-//
-// Its gate is budgetPrecheck's, budgetMintOn's decision, for the same reason:
-// a batch of a project whose policy is enforcing is metered whatever the local
-// mode is, and each of its runs would otherwise halt at its own bootstrap
-// after the whole batch had been launched (code review, low).
 func (e *cloudEnv) batchBudgetPrecheck(ctx context.Context, slug, repo string, n int, stderr io.Writer) error {
-	on, err := e.budgetMintOn(ctx)
+	on, err := budgetBackendOn(e.lc)
 	if err != nil || !on {
 		return err
 	}
