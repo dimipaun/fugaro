@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	terraform "github.com/dimipaun/fugaro/deploy/terraform"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -1975,6 +1977,86 @@ func TestRepoAddressesMatchTheVertexGolden(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("Addresses() differs from repo_root_vertex_addresses.golden:\nmissing: %v\nunexpected: %v",
 			missingFrom(want, got), missingFrom(got, want))
+	}
+}
+
+// moduleResources are the resource blocks the repository's own modules
+// declare, as "type.name", for the modules a repository root includes.
+//
+// The two tests above compare Addresses() with a golden, and a golden is a
+// snapshot a manual -tags terraform -update rewrites: a resource added to a
+// module -- #362's google_artifact_registry_repository_iam_member.build_ghcr,
+// say -- leaves both sides agreeing with each other and both wrong, and
+// every fugaro init --repo would then print a false "This change retires 1
+// address" pointing at a destructive command. This reads the modules
+// themselves, embedded in the binary, so the drift fails a test that CI runs
+// with no terraform, no network and no golden to maintain.
+var moduleResources = []string{"gcp/modules/repo", "gcp/modules/workflow"}
+
+// moduleResourceRE matches a resource declaration's type and name. The
+// instance key is not in the declaration: it is for_each's, at apply time.
+var moduleResourceRE = regexp.MustCompile(`(?m)^resource\s+"([^"]+)"\s+"([^"]+)"`)
+
+// conditionalResources are the declared resources Addresses() may legitimately
+// not produce for either fixture, each with the reason it is off. Every entry
+// is a hole in this guard, so it takes a reason: a resource that is merely
+// missing because nobody regenerated the golden does not belong here.
+var conditionalResources = map[string]string{}
+
+// TestAddressesCoversEveryModuleResource is the drift guard the goldens
+// cannot be: every resource the repo and workflow modules declare must show
+// up in the union of the two fixtures' Addresses(), or a retirement would be
+// predicted for something the plan really produces.
+func TestAddressesCoversEveryModuleResource(t *testing.T) {
+	var addrs []string
+	for _, agent := range repoRootFixtures {
+		addrs = append(addrs, repoRootSpec(t, agent).Addresses()...)
+	}
+	if len(addrs) == 0 {
+		t.Fatal("the fixtures produce no address")
+	}
+	// The address carries the instance key and its module prefix; what a
+	// declaration names is the type and the name inside it.
+	produced := func(typ, name string) bool {
+		re := regexp.MustCompile(`\.` + regexp.QuoteMeta(typ) + `\.` + regexp.QuoteMeta(name) + `(\[|$)`)
+		return slices.ContainsFunc(addrs, re.MatchString)
+	}
+	seen := 0
+	for _, dir := range moduleResources {
+		files, err := fs.Glob(terraform.FS, dir+"/*.tf")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(files) == 0 {
+			t.Fatalf("%s declares no .tf file: the guard is reading nothing", dir)
+		}
+		for _, file := range files {
+			b, err := fs.ReadFile(terraform.FS, file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, m := range moduleResourceRE.FindAllStringSubmatch(string(b), -1) {
+				typ, name := m[1], m[2]
+				seen++
+				if produced(typ, name) {
+					continue
+				}
+				if why, ok := conditionalResources[typ+"."+name]; ok {
+					t.Logf("%s.%s is declared but no fixture produces it: %s", typ, name, why)
+					continue
+				}
+				t.Errorf("%s declares %s.%s, and no fixture's Addresses() has an address for it.\n"+
+					"A retirement is computed as the state minus those addresses, so this resource would be\n"+
+					"retired -- printed as a change that removes it -- on every fugaro init --repo.\n"+
+					"Add it to Addresses() (internal/infra/spec.go), regenerate the goldens\n"+
+					"(go test -tags terraform ./internal/infra -run TestRealRepoRootAddresses -update),\n"+
+					"or list it in conditionalResources with the reason it is off in both fixtures.",
+					file, typ, name)
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no resource declaration was read: the guard is reading nothing")
 	}
 }
 
