@@ -2092,16 +2092,34 @@ git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
 
 The three stops, and why each is an assertion rather than a print: **(1)** `P` is *exactly* `fugaro-dev` and every variable the check uses is non-empty — a skipped, partially pasted or hand-edited block stops there instead of reaching `gcloud` with an empty argument, which is the N1 trap (`gcloud` then falls back to the owner's ambient `*-prod` project); **(2)** `fugaro doctor --project fugaro` reports that project — the second stop is also the fourth, because `--project` disagreeing with the checkout's `project:` is **refused** (`internal/localcfg/select.go:163`), and a checkout that is not the sandbox cannot pass it; **(3)** the checkout's origin is `edgeappinc/fugarosandbox`, never EdgeWeb's or EdgeServer's. **Every `gcloud` command below gets `--project="${P:?}"`** (plus `${L:?}` where used), and every variable is `${VAR:?}` so an empty one stops the line rather than pointing the command at a default project.
 
-**Record the state to restore** (step 6): the sandbox job's environment as `gcloud run jobs describe` reports it, its service account, its bucket condition, and **the kind of any credential the owner already holds** (named by kind only, never a value). Then set the step's own variables from what you recorded — `SANDBOX_JOB` (the sandbox installation's profile job), `SANDBOX_JOB_SA` (that job's service account), `SANDBOX_BUCKET` (the runs bucket), `SANDBOX_SECRET` (a secret **in project `fugaro-dev`** whose name begins with `fugaro-probe`, used only by this check):
+**Record the job before anything changes** — Restore diffs against this file — and set the step's own variables. `SANDBOX_JOB` is the sandbox installation's own job, `SANDBOX_JOB_SA` that job's service account, `SANDBOX_BUCKET` the runs bucket; all three are re-set with this block at every step (a fresh shell has none of them), and every one of them is `${VAR:?}`-guarded:
 
 ```bash
-SANDBOX_JOB=${SANDBOX_JOB:?the sandbox job's name, from the describe above}
-SANDBOX_JOB_SA=${SANDBOX_JOB_SA:?the sandbox job's service account email}
-SANDBOX_BUCKET=${SANDBOX_BUCKET:?the installation's runs bucket name}
-SANDBOX_SECRET=${SANDBOX_SECRET:?a fugaro-probe-prefixed secret in project fugaro-dev}
+SANDBOX_JOB=${SANDBOX_JOB:?the sandbox installation's own job name; re-set it with this block}
+SANDBOX_JOB_SA=${SANDBOX_JOB_SA:?the sandbox job's service account email; re-set it with this block}
+SANDBOX_BUCKET=${SANDBOX_BUCKET:?the installation's runs bucket name; re-set it with this block}
+NUMBER=$(gcloud projects describe "${P:?}" --format='value(projectNumber)')   # IAM conditions name Secret Manager resources by project NUMBER, never by ID
+PROBE_SA="fugaro-chk52-probe@${P:?}.iam.gserviceaccount.com"   # created below, deleted in Restore
+PROBE_IN=fugaro-probe-in          # INSIDE the condition's prefix; throwaway value, never a real secret
+PROBE_OUT=fugaro-other-probe      # OUTSIDE it; throwaway value, never a real secret
+PROBE_COND="expression=resource.name.startsWith('projects/${NUMBER:?}/secrets/fugaro-probe'),title=chk52-probe-prefix"
+gcloud run jobs describe "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --format=json > /tmp/chk52-job-before.json
 ```
 
-**FACT:** the recorded job env, the service account, the bucket condition and the credential kinds.
+**Create the check's own two throwaway secrets and its probe service account.** Every secret this check reads is **one it created**, holding a throwaway value the owner types (never a real secret, never a value any Fugaro job uses), and the reads below send the payload to `/dev/null` and record **only the exit status**:
+
+```bash
+gcloud secrets describe "${PROBE_IN:?}" --project="${P:?}" >/dev/null 2>&1 || {
+  read -rs -p 'throwaway value for the two probe secrets (not echoed): ' THROWAWAY; echo
+  printf '%s' "${THROWAWAY:?}" | gcloud secrets create "${PROBE_IN:?}" --project="${P:?}" --data-file=-
+  printf '%s' "${THROWAWAY:?}" | gcloud secrets create "${PROBE_OUT:?}" --project="${P:?}" --data-file=-
+  unset THROWAWAY
+}
+gcloud iam service-accounts describe "${PROBE_SA:?}" --project="${P:?}" >/dev/null 2>&1 \
+  || gcloud iam service-accounts create fugaro-chk52-probe --project="${P:?}" --display-name="Check 52 probe"
+```
+
+**FACT:** the recorded job env (names, never values), the service account, the bucket condition, **the kind of any credential the owner already holds** (named by kind only), and the project number.
 
 ### 2. U1 — can a Bitbucket credential be scoped to one project (design §4.5)?
 
@@ -2145,25 +2163,34 @@ gcloud run jobs execute "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" 
 
 ### 4. U3 — Secret Manager IAM conditions on a name prefix
 
-Spelled out for the same reason as U2 (finding 30):
+Spelled out for the same reason as U2 (finding 30). **Two things make this probe correct that an earlier version got wrong (review C1, C2):** IAM conditions name Secret Manager resources with the **project number**, not the project ID (`projects/<NUMBER>/secrets/<id>`, the documented format for the `resource.name` attribute), so a condition written with `projects/fugaro-dev/...` would never match and the owner would record a false "not honoured"; and the condition is placed on the **project**, so the out-of-prefix read is actually a test of it — a condition on one secret only proves nothing about a read of another. The reads run **as a dedicated probe service account the check created**, never as the sandbox job's own account, and read **only the check's own two throwaway secrets**:
 
 ```bash
-# (a) The condition, on a name prefix and nothing else.
-gcloud secrets add-iam-policy-binding "${SANDBOX_SECRET:?}" --project="${P:?}" \
-  --member="serviceAccount:${SANDBOX_JOB_SA:?}" --role="roles/secretmanager.secretAccessor" \
-  --condition="expression=resource.name.startsWith('projects/${P:?}/secrets/fugaro-probe'),title=probe-prefix"
+# (a) The project-level conditional grant: secretAccessor on every secret whose
+# name starts with fugaro-probe, and nothing else.
+gcloud projects add-iam-policy-binding "${P:?}" \
+  --member="serviceAccount:${PROBE_SA:?}" --role="roles/secretmanager.secretAccessor" \
+  --condition="${PROBE_COND:?}"
 
-# (b) The read AS the sandbox job's service account (the impersonation line is
-# part of the step, not implied) — must succeed for the in-prefix secret.
-gcloud secrets versions access latest --secret="${SANDBOX_SECRET:?}" --project="${P:?}" \
-  --impersonate-service-account="${SANDBOX_JOB_SA:?}"
+# (b) The impersonation grant the two reads need: the owner may act AS the probe
+# account only with TokenCreator on it (removed in Restore).
+OWNER=$(gcloud auth list --filter=status:ACTIVE --format='value(account)' | head -1)
+gcloud iam service-accounts add-iam-policy-binding "${PROBE_SA:?}" --project="${P:?}" \
+  --member="user:${OWNER:?your own Google account, from `gcloud auth list`}" \
+  --role="roles/iam.serviceAccountTokenCreator"
 
-# (c) The same read against a secret OUTSIDE the prefix — must be denied.
-gcloud secrets versions access latest --secret="${OUTSIDE_SECRET:?a fugaro-dev secret whose name does not start with fugaro-probe}" \
-  --project="${P:?}" --impersonate-service-account="${SANDBOX_JOB_SA:?}"
+# (c) The inside read, AS the probe account — must succeed (exit 0). The payload
+# goes to /dev/null; only the exit status is recorded, and the value is never
+# printed.
+gcloud secrets versions access latest --secret="${PROBE_IN:?}" --project="${P:?}" \
+  --impersonate-service-account="${PROBE_SA:?}" --out-file=/dev/null; echo "inside exit: $?"
+
+# (d) The outside read, AS the probe account — must be DENIED (nonzero exit).
+gcloud secrets versions access latest --secret="${PROBE_OUT:?}" --project="${P:?}" \
+  --impersonate-service-account="${PROBE_SA:?}" --out-file=/dev/null; echo "outside exit: $?"
 ```
 
-**FACT:** whether the condition is honoured for `secretmanager.versions.access` and what the denial looks like. If it works, it is a *possibility* for U1's fallback and for phase 5's per-person grants; if not, both designs say so.
+**FACT:** the two exit statuses; whether the condition is honoured for `secretmanager.versions.access`; and what the denial looks like (its message names the secret, never a value). If it works, it is a *possibility* for U1's fallback and for phase 5's per-person grants; if not, both designs say so.
 
 ### 5. U4 — the quota and bucket-policy ceilings (design §13)
 
