@@ -434,8 +434,8 @@ type initRun struct {
 	retireState   []string
 	retireSet     []infra.Retirement
 	retireNotes   []infra.Retirement
-	retired       bool // the flow was entered (a later plan must not re-enter it)
-	retireApplied bool // it applied: the jobs it removed from state still need deleting
+	retired       bool     // the flow was entered (a later plan must not re-enter it)
+	retireApplied bool     // it applied: the jobs it removed from state still need deleting
 	retireRemoved []string // what the state removal took out: what a stop before the API delete owes (M-B)
 }
 
