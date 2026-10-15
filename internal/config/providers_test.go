@@ -176,3 +176,28 @@ func TestValidateModelProvidersAcceptsWildcardEntry(t *testing.T) {
 		t.Fatalf("a mixed list with \"*\" was refused: %+v", ps)
 	}
 }
+
+// A `.secret` that holds an API key used to be accepted whenever the key was
+// spelled like a name (lower-case letters, digits and dashes), which is how
+// most providers' keys begin. Every one of them starts with "sk-", so a value
+// that does is refused as the key it is, not stored as the name of a secret.
+func TestValidateModelProvidersRefusesAKeyWhereItsNameBelongs(t *testing.T) {
+	for _, key := range []string{"sk-ant-abc123", "sk-proj-0123456789", "sk-or-v1-deadbeef"} {
+		p := okProvider()
+		p.Secret = key
+		ps := ValidateModelProviders(map[string]ModelProvider{"openrouter": p})
+		if len(ps) == 0 {
+			t.Fatalf("%q was accepted as a secret name", key)
+		}
+		if !strings.Contains(problemsText(ps), "beginning of an API key") {
+			t.Fatalf("problems = %q, want the key-pasted-here message", problemsText(ps))
+		}
+	}
+	// A name that merely contains the prefix is a name: only the beginning of
+	// the value is the key's.
+	p := okProvider()
+	p.Secret = "openrouter-sk-key"
+	if ps := ValidateModelProviders(map[string]ModelProvider{"openrouter": p}); len(ps) != 0 {
+		t.Fatalf("a name containing the prefix was refused: %+v", ps)
+	}
+}

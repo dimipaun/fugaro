@@ -216,6 +216,11 @@ func ProviderFor(providers map[string]ModelProvider, model string) (name string,
 	return "", ModelProvider{}, false
 }
 
+// keyPrefix is how every model provider's API key begins ("sk-ant-…",
+// "sk-proj-…", "sk-…"): a .secret value starting with it is a key pasted where
+// its name belongs, and is refused rather than stored as a name.
+const keyPrefix = "sk-"
+
 // ValidateModelProviders reports every rule the providers block breaks. Paths
 // are relative to the local config ("providers.<name>.<field>").
 func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
@@ -243,6 +248,14 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 		switch {
 		case !SecretNameRE.MatchString(p.Secret):
 			add(at+".secret", "must be a secret name (lower-case letters, digits and '-'), the name of the secret that holds the key, never the key")
+		case strings.HasPrefix(p.Secret, keyPrefix):
+			// A secret name may be spelled like one; a key that *is* one is
+			// another matter. Every provider's keys start with "sk-" (and
+			// the rest of a key is lower-case and dashes often enough to pass
+			// the name rule), so a pasted key would otherwise be accepted
+			// here, written into the config and stored as the name of a
+			// secret — the one thing .secret must never carry.
+			add(at+".secret", "%q starts with %q: that is the beginning of an API key, not a secret's name; .secret is the NAME of the secret in Secret Manager that holds the key", p.Secret, keyPrefix)
 		case reservedSecretName(p.Secret):
 			add(at+".secret", "%q is a secret Fugaro already uses: give the provider key its own name", p.Secret)
 		default:
