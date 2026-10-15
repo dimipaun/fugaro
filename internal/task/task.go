@@ -162,6 +162,12 @@ var (
 	providerRE   = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 )
 
+// ValidProvider reports whether kind is a git provider kind ("github",
+// "bitbucket", or "fake" in tests). It is the check Slug applies, exported so
+// that a caller outside this package (the policy's allow-list, P5) validates a
+// provider the same way instead of spelling the rule again.
+func ValidProvider(kind string) bool { return providerRE.MatchString(kind) }
+
 // Slug is a repository's storage prefix, the IAM boundary between
 // repositories in the bucket (runs/<slug>/, cache/<slug>/, locks/<slug>/).
 // It is the canonical path made readable ("acme/app" → "acme-app"),
@@ -177,7 +183,7 @@ var (
 // control against a chosen collision is the ownership check before an
 // existing job, service account or secret is reused.
 func Slug(provider, repo string) (string, error) {
-	if !providerRE.MatchString(provider) {
+	if !ValidProvider(provider) {
 		return "", fmt.Errorf("git provider %q is not a provider kind", provider)
 	}
 	c, err := CanonicalRepo(repo)
