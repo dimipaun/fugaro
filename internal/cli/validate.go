@@ -352,7 +352,14 @@ func newValidateCmd() *cobra.Command {
 			var warnings, notes []config.Problem
 			if cfg != nil {
 				problems = append(config.Check(cfg, filepath.Dir(path)), computeProblems(cfg)...)
-				lc := selectedProjectConfig(cmd.Context())
+				// The project config the runner would use: the owner's, with
+				// the checkout layer's claude_models merged into its routes
+				// (withLayerClaims), so a layer-claimed pin is judged by the
+				// table the run will have, not refused here. A merge the
+				// rules refuse is a problem of the layer's own, and the
+				// unmerged map is what the rules below see.
+				lc, lp := withLayerClaims(selectedProjectConfig(cmd.Context()), rf.Layer.Layer)
+				problems = append(problems, lp...)
 				rp, rw := recipeDirProblems(filepath.Dir(path), cfg)
 				problems = append(problems, rp...)
 				problems = append(problems, gateCheckProblems(filepath.Dir(path), cfg)...)

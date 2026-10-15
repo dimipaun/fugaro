@@ -298,6 +298,30 @@ func resolveFugaroYAML(ctx context.Context, data []byte, lc *localcfg.Config, o 
 	return resolvedFile{Cfg: cfg, Res: res, Layer: fl, Problems: ps}, nil
 }
 
+// withLayerClaims is lc with the checkout layer's claude_models merged into
+// its routes (config.ApplyClaudeClaims, design mixed-credentials.md §4 and
+// P8), for the in-checkout commands that judge a pin or a provider: they must
+// judge the same map the run will, or a pin the layer claims is refused here
+// as "no provider serves it" while the same run succeeds in the cloud (Task
+// 7 step 5). Never lc itself: the project config on disk carries no claim,
+// and the copy is what keeps it that way. A layer that did not apply (nil, or
+// no claim) returns lc unchanged, and so does a merge the rules refuse — an
+// undefined provider name, an empty list, a pattern collision — whose
+// problems are returned instead, because the run would not start either and
+// no rule may judge a route table that was refused.
+func withLayerClaims(lc *localcfg.Config, l *config.ProjectLayer) (*localcfg.Config, []config.Problem) {
+	if lc == nil || len(config.ClaudeClaimsOf(l)) == 0 {
+		return lc, nil
+	}
+	merged, ps := config.ApplyClaudeClaims(lc.Providers, l.ClaudeModels)
+	if len(ps) > 0 {
+		return lc, ps
+	}
+	cp := *lc
+	cp.Providers = merged
+	return &cp, nil
+}
+
 // parseCheckoutFugaroYAML is config.Parse for a checkout's fugaro.yaml over
 // its project layer, for the commands that want only the config and its
 // problems. A failure to read the layer is one problem.

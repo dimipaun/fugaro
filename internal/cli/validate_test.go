@@ -1061,3 +1061,41 @@ func TestValidateJudgesProvidersOnlyWithAMatchingLocalConfig(t *testing.T) {
 		t.Errorf("the pins half judged the alias under oauth: %q", out)
 	}
 }
+
+// The layer's claim reaches the checkout-resolving surfaces, not only the
+// run: `fugaro validate` judges the pins against the map the run will use,
+// so a pin the layer's claude_models claims passes here, and the very same
+// file without the claim is refused as it is today.
+func TestValidateSeesTheCheckoutLayer(t *testing.T) {
+	const id = "anthropic/claude-sonnet-5.5"
+	f := newCloudFixture(t)
+	isolateCache(t)
+	// The owner's route, and the claimed ID's price: the layer cannot carry
+	// a price (P11), so it is the operator's model_prices that has one.
+	f.appendConfig(t, "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n    allow_data_to: [\"acme/other\"]\n"+
+		"model_prices:\n  \""+id+"\": { input_per_m: 3, output_per_m: 15 }\n")
+	repo := "version: 1\nproject: aurora\ngcp_project: proj-1234\nbudget: { mode: enforce, per_run_usd: 2 }\n" +
+		"agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { reviewer: " + id + ", background: claude-haiku-4-5 }\n" +
+		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	layerCheckout(t, f, repo)
+	claim := "claude_models:\n  openrouter: [\"" + id + "\"]\n"
+	publishedLayer(t, f, testProjectLayer+claim)
+	if out, errOut, err := execute(t, "validate"); err != nil || !strings.Contains(out, "is valid") {
+		t.Fatalf("a layer-claimed pin was refused: %v\n%s%s", err, out, errOut)
+	}
+	// The same checkout, the claim dropped from the layer (the object
+	// republished without it): the refusal is back, before any run, naming
+	// the pin.
+	writeBucketFile(t, f, config.LayerKey, testProjectLayer)
+	out, _, err := execute(t, "validate")
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.models.reviewer") || !strings.Contains(out, "no provider serves it") {
+		t.Fatalf("without the claim: exit %d, out %q", ExitCode(err), out)
+	}
+	// A claim naming a route the project config does not define is the
+	// layer's own problem, reported as the key names it.
+	writeBucketFile(t, f, config.LayerKey, testProjectLayer+"claude_models:\n  nosuch: [\""+id+"\"]\n")
+	out, _, err = execute(t, "validate")
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "claude_models.nosuch") || !strings.Contains(out, "does not define") {
+		t.Fatalf("an unknown provider name: exit %d, out %q", ExitCode(err), out)
+	}
+}
