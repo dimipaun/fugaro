@@ -778,3 +778,236 @@ Append `## Check 53: a shared project job, end to end (installation fugaro and t
 8. Restore: the sandbox back to its per-repository path if the owner wants it (the per-repository root is still applied in phase 3), the launcher grants and bucket conditions as recorded, one ordinary sandbox task.
 
 **Paste back:** every FACT line, never a token or key. **Depends on:** 3.0 to 3.6.
+
+## Phase 4 — enrollment and migration (six tasks)
+
+The design's §4.3, §4.4 and D3. **This phase is where the owner's own installations move**, and where the two things the design says the plan must add on top of #344 land: the enrollment commands and **"retire a repository root"** (design §4.4: config-transitions' engine covers a changed `fugaro.yaml`, not the retirement of a whole repository root with `prevent_destroy` secret containers and a registry — its plan Tasks 1 to 5 do not cover full offboarding; D8 keeps that work to the core, which #365 implements).
+
+### Task 4.1: `project sync`, `add-repo`, `repos` — enrollment as data
+
+**Files:** `internal/cli/project_enroll.go` (new) + tests, `internal/cli/project.go` (the existing checkout/project helpers it sits beside, `checkoutProject` at `:26`), `internal/infra/discover*.go` (the App's installed repositories), `docs/project-layer.md`.
+
+**Interfaces.** Consumes: 1.6's `newProjectCmd()` and the published policy, the bucket's `runs/<slug>/` prefixes (`internal/backend/gcp/names.go:374`), Firestore's `spendDaily` (the durable sources the design names, §4.3), `internal/gitprov/github`'s App authentication. Produces: `sync`, `repos`, and the `add-repo`/`remove-repo` pair 1.6 already shipped.
+
+1. `project repos`: lists **enrolled** (the allow-list, from the policy) against **seen** (the bucket's `runs/<slug>/` prefixes and Firestore `spendDaily`), each with its canonical name and provider. **No registration record is written** (design §4.3): the set of repositories that have run is derivable, and the RTDB ledger is pruned after about 8 days, so the bucket and Firestore are the sources.
+2. `project sync`: lists the GitHub App's installed repositories (the App API, with the project's App credentials) and offers the ones the allow-list does not name, **one confirmed batch**, writing the allow-list through the CAS path 1.6 uses. It never removes anything.
+3. `project add-repo <provider>/<owner>/<name>` is a one-line data write (shipped in 1.6 for the interim path of 12a item 3) and `remove-repo` its inverse; both print the resulting allow-list.
+4. The interim path is closed: after this task a new repository needs **no Terraform** and no `init --repo` for a clone workflow, and `docs/project-layer.md` says the three things that tie a repository to a project (its `project:`, the allow-list, the App's installation) in one paragraph (design §4.3).
+
+**Tests:** `TestProjectReposListsEnrolledAndSeen` (the seen set from a bucket fake and a Firestore fake), `TestProjectSyncAddsOnlyTheMissingOnesAndConfirmsOnce`, `TestProjectRemoveRepoStopsAdmittingTheRepo` (the runner refuses on the next run, via the 1.5/3.3 check).
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/cli/... ./internal/infra/... -count=1`. **Depends on:** 1.6, 3.3. **Commit:** "project: enrollment as data, and the repositories the installation has seen".
+
+### Task 4.2: retire a repository root
+
+**Files:** `internal/cli/init_repo_stage.go`, `internal/cli/init.go` (+ tests), `internal/infra/forget.go`, `internal/infra/{repo.go,workdir.go}`, the config-transitions retirement engine (`internal/infra/retire*.go`, per #365's core), `docs/design/config-transitions.md` (a pointer), `docs/checkout.md`, `docs/bucket-iam.md`.
+
+**Verified today:** the repository root's state is `fugaro/repos/<slug>` (`internal/infra/workdir.go:19-23`, `internal/infra/repo.go:38-40`); what it owns is a secret container per logical secret with `prevent_destroy` and two operator grants (`deploy/terraform/gcp/modules/repo/secrets.tf:4-42`), an Artifact Registry repository (`.../repo/registry.tf:10-72`), a build service account (`.../repo/build.tf:5-91`), optionally a check job and scheduler (`.../repo/check.tf:16-142`), and per workflow variant a job service account, the Cloud Run job and its grants (`.../modules/workflow/{sa.tf,job.tf}`).
+
+1. A new command (`fugaro init --repo --retire`, following config-transitions' own Task 5 spelling) retires a repository **root**: it computes the retirement set from the state and the labels Fugaro writes (`gcp.LabelManaged`, `gcp.LabelRepo`), removes the module from the root's state, then deletes the labelled jobs, service accounts, IAM bindings and registries **through the API, not through a `destroy`** — because `prevent_destroy` on the secret containers means a destroy cannot run, and the design says plainly that **secret values cannot be carried over**: no person can read them (`.../repo/secrets.tf:31-42`), so a project-scope secret is re-entered (Task 4.5 step 3).
+2. **A safety property the plan adds**: the command refuses to retire a repository whose slugs another repository's resources still reference (a shared profile job, a launcher grant, an operator grant), and it prints the allow-list entry it would remove — **retiring a root never un-enrolls the repository by itself** (that is `remove-repo`, an explicit act). The ordering it enforces: un-enroll → retire the root → the repository's runs stop (design §4.4's "re-run init under the new model": deploy the project jobs, switch launches, then retire each repository's root).
+3. `internal/infra/forget.go`'s existing forget path is reused for the state half rather than duplicated; the labels half is the new code.
+4. `docs/checkout.md:81`'s inert per-repository registry paragraph is replaced by "a clone repository has no root at all" once 4.3 lands.
+5. **A test that no retirement deletes a resource another repository needs**: a golden-plan test over the retirement set, plus `TestRetireRefusesASharedProfileJob` and `TestForgetKeepsTheStateOfUnrelatedRepos`.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/cli/... ./internal/infra/... -count=1`. **Depends on:** #365's core (merged or merged into this branch first), 3.2. **Commit:** "init --repo --retire: retire a repository's whole root, state removal then labelled deletes".
+
+### Task 4.3: `init --repo` retired for clone repositories
+
+**Files:** `internal/cli/{init_repo_target.go,init.go,init_repo_stage.go}` (+ tests), `internal/infra/spec.go`, `docs/checkout.md`, `docs/project-layer.md`.
+
+1. For a `checkout: clone` repository, `init --repo` becomes: the local `repos:` entry (unchanged) **plus** an allow-list line — it applies **no Terraform** and asks **no confirmation** beyond the one write, which is the spec's "adding a repo must be lightweight: no Terraform, no confirmations" (spec §4.2). Where it used to create a registry, a build service account, secret containers and a job, it now does nothing of the kind.
+2. **This is where the design supersedes #343's repository-root grant wiring and the `ExtraSecrets` union** (design §10): with no repository root for a clone repository, a project secret's grant is an installation-root grant, and the union the repository root computed is no longer needed on this path. #343's machinery stays for the per-repository path (baked workflows, until 4.4) — the code is not deleted, the path is.
+3. `fugaro init --repo` on a **baked** workflow keeps today's behaviour until 4.4 (Task 4.4's ordering), and prints one line saying so.
+4. `docs/checkout.md`: a clone repository's onboarding is now "commit `project:` and `checkout: clone`, run `fugaro init --repo` once, run `fugaro project add-repo`" — with the note that only the App's installation remains as a provider-side step.
+
+**Tests:** `TestInitRepoCloneWritesNoTerraform` (the fake Terraform runner sees no apply and no plan), `TestInitRepoCloneAddsTheAllowListEntry`, `TestInitRepoBakedStillPlans`, plus the existing `init_repo_clone_test.go` gates.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/cli/... -count=1`. **Depends on:** 4.1, 4.2. **Commit:** "init --repo: a clone repository needs no Terraform at all".
+
+### Task 4.4: baked workflows, dropped after phase 4 (D3)
+
+**Files:** `internal/cli/{init_repo_stage.go,init.go}` (+ tests), `docs/checkout.md`, `docs/base-image.md`, `SECURITY.md` (a pointer), `plugin/skills/setup/**`.
+
+**The design's ruling:** "phases 3 and 4 support clone workflows only; baked workflows stay on the existing per-repository path, unchanged, until phase 4 ends, and are then **dropped** … or **re-implemented as per-repository jobs created through the Cloud Run API**, adopted by labels, with no Terraform (the `image refresh` precedent)" — owner decision **D3: dropped after phase 4**.
+
+1. `fugaro init --repo` refuses a baked workflow **with the way out in the message**: `checkout: clone` (measured at a 10.5 s median cold start, Check 41, design §4.4) or a recipe, since "the base image carries every runtime".
+2. `fugaro doctor`: a `baked-workflows` check that lists any workflow still baked in a repository the installation knows, as a `warning` naming the migration, so an owner finds them before a run fails.
+3. The per-repository code path stays in the tree but is unreachable for new deployments; **the API-created-job alternative is explicitly deferred, not built** — if an owner needs a baked workflow after this phase, that is a new design (§4.4's second option), and the plan says so rather than leaving it implied.
+4. `docs/base-image.md` and `docs/checkout.md`: what "baked" was, why it is gone, and what replaces it.
+
+**Tests:** `TestInitRepoRefusesABakedWorkflow` (message names `checkout: clone` and the base image), `TestDoctorListsBakedWorkflows`.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/cli/... -count=1`. **Depends on:** 4.2, 4.3. **Commit:** "baked workflows are dropped; clone and recipes are the way".
+
+### Task 4.5: the owner's migration of installation `fugaro` — OWNER-RUN, Check 54
+
+**Files:** `docs/gcp-live-checklist.md` (and, if the migration exposes a gap, a follow-up task in the same PR — never a silently-skipped step).
+
+Installation `fugaro` holds `dimipaun/fugaro` (GitHub, baked, with a check job), `edgeappinc/fugarosandbox` (Bitbucket, baked, no check job) and `dimipaun/fugarosandbox` (Bitbucket, listed in the local config with no workdir on this machine: stale or onboarded elsewhere, UNVERIFIED — design §4.4). **No agent touches `belong`** (which holds `edgeappinc/edgeserver` and `edgeappinc/edgeweb`): moving it is the owner's own work after the model is proven on `fugaro`.
+
+Append `## Check 54: migrate installation fugaro to project jobs (installation fugaro, sandbox first, never belong; run by you; NOT RUN)` and its row:
+
+1. Setup and guard; record **everything** to restore: the local config file, each repository's `fugaro.yaml`, the caps, the policy, the secrets' names and scopes (**never their values**), each job's env, and the project jobs' names.
+2. **Sandbox first**: `edgeappinc/fugarosandbox` converted to `checkout: clone` on a branch, `fugaro init --repo` run once, added to the allow-list, run once on a project job. **FACT:** the job it ran on, its profile, and the outcome.
+3. **Secrets are re-entered, not copied** (design §4.4): the owner types the project-scope values (nothing can read the old ones). **FACT:** the names and scopes only, that `fugaro secrets ls` shows a version, and that no value appears in any log, plan or state print — never a value.
+4. `dimipaun/fugarosandbox` (`UNVERIFIED`: stale or onboarded elsewhere): the owner decides from `fugaro project repos` — if it never ran, `remove-repo` and retire its root if one exists; if it is live elsewhere, it stays untouched and the FACT records the decision.
+5. `dimipaun/fugarosandbox`'s sibling, `dimipaun/fugaro`: `dimipaun/fugaro` is **baked**, so it is the phase's proof that D3's refusal is survivable: convert its workflow to `checkout: clone` (or a recipe), run it once on a project job. **FACT:** the workflow's before/after `checkout`, the run's outcome, and the cold-start time against Check 41's 10.5 s median. If a workflow genuinely cannot be converted, **stop and report** — that is the signal for §4.4's deferred API path, and it is the owner's decision, not the agent's.
+6. **Retire the roots** (OWNER-RUN Terraform, one at a time, sandbox first): `fugaro init --repo --retire`, then confirm no labelled job, service account, registry or secret container remains and that `gcp`'s service-account count dropped. **FACT:** the resource counts before and after, and that the runs bucket's objects were left alone.
+7. Restore: put back whatever was changed, run one ordinary task on the sandbox, and confirm `fugaro project repos`, `fugaro doctor` and `fugaro ls` agree with what is deployed. **`belong` is not touched at any step** — the check's last FACT line says so explicitly.
+
+**Paste back:** every FACT line, never a secret value. **Depends on:** 4.1 to 4.4, and 3.7 (the shared job proven first).
+
+### Task 4.6: the phase's cross-cutting sweep
+
+**Files:** `SECURITY.md`, `docs/{project-layer.md,checkout.md,git-providers.md,bucket-iam.md,multi-model.md}`, `plugin/skills/setup/**`, `plugin/skills/working/**`, `internal/cli/{doctor.go,upgrade_cloud.go}` (+ tests), `scripts/gen-golden-plans.sh`, `internal/infra/tf/testdata/golden/`.
+
+The cross-cutting list of design §11, carried explicitly by this task as it is by each phase's own last task: **SECURITY.md** (what a repository can now do without a root, and D4's regression restated), **user docs** (the five above), **the plugin skills** (setup asks the policy questions once per project now; working's layer section points at the policy), **`fugaro doctor`** (the checks added in 4.2 to 4.4), **`upgrade`'s drift note** (a re-run of `init --repo` is no longer how policy or enrollment changes; what remains is a mount, and after phase 3 nothing does), **the dashboard** (`watch`/`report` read a repository's job from `FUGARO_RUN`, not from the job name — Task 3.5's change, restated for the post-retirement state), **launcher grants** (the count, per Task 3.5), **version skew** (the policy version's messages, Task 1.6 step 4, and the job-image message of 12a item 6), **`fugaro validate` is offline** (its "unresolved offline" line, Task 1b.3), **`scripts/gen-golden-plans.sh` and the goldens** (regenerated for the retired roots), **`docs/multi-model.md`**, **`docs/checkout.md`** and **`docs/git-providers.md`**.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1` and `fugaro verify test`. **Commit:** "docs, skills and checks: the project-centric path after phase 4".
+
+## Phase 5 — the OAuth pool (six tasks)
+
+The design's §7. **What changes**: a Claude OAuth token stops being a repository's secret and becomes **a person's**, referenced by the project. Residual risks the design states and this phase's docs repeat: a project job that mounts several people's tokens widens the `/proc` and metadata-server exposure of `mixed-credentials.md` §6 to every repository sharing that job, and **OAuth spend is notional and no per-person budget exists** (`internal/runstore/cost.go:62-71`). **#363 is held until this phase** (D9) and is rebased in Task 5.4.
+
+### Task 5.1: person-owned secrets and their references — SECURITY-SENSITIVE, independent opus review
+
+**Files:** `internal/projectpolicy/policy.go` (+ tests, the `accounts` records), `internal/cli/accounts.go` (+ `accounts_test.go`), `internal/infra/{secretmounts_test.go,readiness.go}`, `internal/backend/gcp/names.go` (the per-person secret ID), `SECURITY.md`.
+
+**Verified today:** tokens are per (repository, account) — `internal/cli/accounts.go:60-94` lists them, `config.ClaudeAccountSecret` derives the ID (`internal/config/claude_accounts.go:80`), and `internal/infra/spec.go:589` mounts the (workflow, account) variant's secret; `claude-oauth-token-*` is refused project scope by `claudeOAuthAccountAllowed`/`claudeOAuthAccountRefusal` (`internal/cli/secrets.go:174-204`) and is **not** swept in by D2. A secret's ID is a flat, project-wide namespace and a `secret_id` IAM grant works identically whichever root created it (`docs/design/project-secrets.md:18`), which is what makes this task Go and IAM rather than a new resource type.
+
+1. **Storage**: one Secret Manager secret per **(person, account)** in the project's GCP project, with a new ID helper beside `gcp.SecretID`/`ProjectSecretID` (`internal/backend/gcp/names.go:143-158`) — flat IDs and per-secret grants work regardless of which root owns them (`docs/design/project-secrets.md:18`).
+2. **Who creates it**: **the person** (12a item 11), with `fugaro accounts add <account>` storing their own token at person scope; the operator accepts the reference. The owner of the secret is granted `secretVersionAdder` and `viewer` on that secret only, **never `setIamPolicy`** (design §7).
+3. **The grant is an operator step, and the plan says why**: granting the project's job service account `secretAccessor` on a person's secret needs `setIamPolicy`, so it happens when the reference is accepted — through the installation root (Task 5.2), not by the person.
+4. **Reference record** in `config/policy/shared`: `{account, secret ID, allowed profiles}` — **no value and no identity**; the owner's identity lives in the admin-only `config/admin` node and in the export (design §5(2), §7). `fugaro accounts share <name>` proposes it after the owner confirms; an operator accepts; the owner can retire it.
+5. `fugaro accounts ls` (and `--json`) shows, per account: the person, the reference's state, which profiles mount it, and — for the owner — whether their token is used by anyone else. **The run-readable node never carries an email**, and a test asserts the published `shared` node holds no `@` (Review Focus: the design's "nothing personal" rule, §5(2)).
+6. SECURITY.md: the per-person model, the operator's grant step, the widening risk in the design's own words, and the notional-spend caveat.
+
+**Tests:** `TestPersonSecretIDIsFlatAndPerAccount`; `TestShareRecordCarriesNoIdentity` (`@` scan of the published node); `TestOwnerCanRetireAReference`; `TestPersonCannotSetIamPolicy` (the CLI never calls it from a person's flow); `TestAccountsShareProposesBeforeWriting`.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/cli/... ./internal/projectpolicy/... ./internal/backend/... -count=1`. **Depends on:** 3.2 (a job per (profile, account)), 1.6. **Commit:** "accounts: a person's OAuth token, referenced by the project".
+
+### Task 5.2: one job per (profile, shared account)
+
+**Files:** `deploy/terraform/gcp/modules/project/*.tf`, `deploy/terraform/gcp/roots/installation/`, `internal/infra/tf/testdata/golden/project*.plan.json`, `scripts/gen-golden-plans.sh`, `internal/cli/project.go`.
+
+**Verified today:** a secret env var is fixed in the job definition, so a shared account means a job per profile (design §7, "Mounting"); the `image refresh` precedent patches a job rather than creating one (`internal/cli/image_refresh_steps.go:226-261`), which is why P9 picks Terraform.
+
+1. The phase-3 module already creates one job and one job SA per (profile, account): this task adds the **non-default accounts** — one job per profile for each shared account, whose service account alone may read that person's secret. The alternative the design rejects (one shared job SA fetching any token by name at boot) stays rejected for the §4.1 reason, and the code comment says so where someone would be tempted.
+2. `policy publish` writes the reference; the installation root's variables gain the accounts to create jobs for (the union of the policy's referenced accounts and the operator's own), so the order is: accept the reference → apply (OWNER-RUN) → the account's runs use its job.
+3. **A new shared account costs one apply per profile** — stated in the docs and in `doctor` (`oauth-pool-jobs` check: which referenced accounts have no job yet). The design's "no Terraform per addition" goal meets its one exception here, and the plan names it rather than hiding it.
+
+**Tests:** the golden plan's job count as a function of (profiles × accounts), and `TestDoctorNamesAccountsWithoutAJob`.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/infra/... ./internal/cli/... -count=1`. **Depends on:** 5.1, 3.2. **Commit:** "tf: one project job per profile for each shared OAuth account".
+
+### Task 5.3: failover moves from the skill into `fugaro run`
+
+**Files:** `internal/cli/{run.go,run_oauth*.go}` (+ tests), `internal/runner/` (the usage-limit detection point), `plugin/skills/working/reference/diagnose.md`, `internal/runstore/launch.go` (read-only), `docs/design/named-oauth-tokens.md` (a pointer).
+
+**Verified today:** failover exists only as prose in the skill (`plugin/skills/working/reference/diagnose.md:79-97`: a loose case-insensitive match of "usage limit" in `row.reason`/`log_tail`/`agent_message`, then steps to switch accounts); the launcher's identity is recorded (`internal/runstore/launch.go:12-21`, field `LaunchedBy` at `:19`); **the design's citation "`requestedBy`" is not a symbol** — `RequestedBy` is `internal/task/task.go:57`. Claude Code's usage-limit text is UNVERIFIED as an **expired/revoked** token (that is U4 of `named-oauth-tokens.md:113`) and separately as the **usage-limit** wording (that document's §12, `:150-163`), and the design's phrase "U4" refers to the second.
+
+1. `fugaro run` retries, on a usage limit, with the **next account**: the launcher's own accounts first, then the shared ones, with the tried-list the existing design names, and it records the switch in the run's record so `fugaro ls`/`report` show it.
+2. The detection reuses the skill's own rule (the loose "usage limit" match), **and the plan adds a live check for it** rather than trusting the prose: Check 55 step 4.
+3. `diagnose.md` becomes a pointer: the skill explains what a usage limit is and how to read the run's record, and says the switching is `fugaro run`'s (so the two cannot drift into two implementations).
+4. `agent.oauth_token` stays as a preference (design §7, "No repository level"): it can name an account, and the per-repository copies plus `secrets set claude-oauth-token-* --repo` go away with the per-repository path.
+
+**Tests:** `TestRunFailsOverToTheNextAccount`, `TestFailoverOrderIsLaunchersFirstThenShared`, `TestFailoverRecordsTheSwitch`, `TestNoFailoverWithoutAUsageLimit` (a failure that mentions a limit-shaped string in an unrelated place must not switch — the false-positive guard).
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/cli/... -count=1`. **Depends on:** 5.1, 5.2. **Commit:** "run: the OAuth failover moves out of the skill".
+
+### Task 5.4: #363 rebased (D9)
+
+**Files:** whatever the rebase touches; `docs/plans/2026-10-14-oauth-reviewer-stage.md` (#363's own plan, amended in that PR or in a follow-up — never silently).
+
+**#363 is held until this phase** (D9): the OAuth reviewer stage multiplies per-repository variant jobs, which phase 3 removes. The rebase is its own PR, after 5.1 to 5.3 land, and its plan's assumptions about per-repository variants are re-read against project jobs — the reviewer stage's own job is a (profile, account) job, and its Check 47 runs after this phase, not before. **This task is a pointer with a rule**: it does not merge #363's code into this phase, and nothing in phases 0 to 4 waits for it.
+
+**Depends on:** 5.3. **No test of its own** (the rebase carries its own).
+
+### Task 5.5: Check 55, and the phase's docs — OWNER-RUN for the check
+
+**Files:** `docs/gcp-live-checklist.md`, `SECURITY.md`, `docs/multi-model.md`, `plugin/skills/setup/**`, `internal/cli/{doctor.go,report.go}`, `internal/watch/*`.
+
+Append `## Check 55: the OAuth pool (installation fugaro and the sandbox only, never belong; run by you; NOT RUN)` and its row:
+
+1. Setup and guard; record the state (the accounts, their secrets' scopes, the runs' `credential`, the chosen workflow).
+2. **The owner types their own token** (`fugaro accounts add`); no agent sees it. **FACT:** the secret's ID and that a version exists — never the value.
+3. Reference and grant: `fugaro accounts share`, the operator's acceptance, the apply, then one sandbox run using the shared account. **FACT:** the job it ran on, the profile, that the job's SA read only that person's secret (the IAM policy read back, secret IDs only), and the run's outcome.
+4. **The failover, for real**: a run whose account hits a usage limit. **FACT:** the detector's own line (what matched), the account it switched to, and whether the second account's run succeeded — the design's U4 question, answered.
+5. The notional caveat: the run's `cost` record for an OAuth stage. **FACT:** that the spend is recorded as notional with `credential: oauth` and that no per-person budget exists.
+6. Restore: the reference retired (the owner's choice), the account's token left in place or disabled by the owner, one ordinary sandbox task.
+
+**Paste back:** every FACT line, never a token. Plus the phase's docs sweep, as Task 4.6's list, with SECURITY.md's OAuth section and the dashboard's notional column.
+
+**Depends on:** 5.1 to 5.3.
+
+## Phase 6 — the backing Git repository (four tasks)
+
+The design's §8. **`fugaro project export` writes a record, not a unit of execution**: the backing repository is never enrolled and never runs. What it lets one reconstruct is the project's configuration and policy and an account of spend over time — **not** the project end to end: secret values must be re-entered, and Firestore history, run records, the GitHub App and the Firebase project itself are not in it (design §8, stated in the doc and in `doctor`).
+
+### Task 6.1: `fugaro project export` — SECURITY-SENSITIVE, independent opus review
+
+**Files:** `internal/cli/project_export.go` (new) + tests, `internal/cli/project.go`, `internal/report/report.go` (read-only reuse), `internal/watch/json.go` (a reader), `internal/budget/model.go` (the paths it reads), `docs/project-layer.md`.
+
+**Verified today:** `report.Build` is `internal/report/report.go:159` and is called from `internal/cli/report.go:170,393`; the `watch` JSON document is `internal/watch/json.go:148` (`BuildJSON`); the RTDB cap and spend paths are `internal/budget/model.go:51-80` (`PathCapsRepo`, `PathSpendGlobal`, `PathSpendRepo`, `PathSpendRun`); the shared bucket config is read through `internal/blobx`/`internal/cli/sharedcfg.go`.
+
+**Interfaces.** Consumes: the policy (1.1), the caps' paths, the bucket's `fugaro/` objects, Secret Manager's metadata list, `report.Build`, the local operator config. Produces: a directory tree and a `--push`-able commit.
+
+```go
+// Layout (design §8). Nothing here holds a secret value (P10).
+policy/          config/* as JSON: caps (global, defaults, per-repo), mode, limits, kill switches with when and why
+policy/shared.json  the policy object, admin nodes included only under --with-admin
+config/          the bucket's shared config, project layer and recipes, verbatim bytes
+config/operator.yaml  the operator's local config without identity and endpoints; secrets by NAME only
+inventory/       secrets metadata (names, scopes, versions' create times), enrolled repositories, project jobs
+spend/           Firestore spendDaily (final days only, so history is never rewritten) and per-run CSVs from result.json
+```
+
+1. **Final days only** for `spendDaily` (design §8): the current day is still being written, so an export never rewrites a number that later changes.
+2. **People are omitted by default** (P10): no `byPerson` spend, no kill-switch author. `--with-people` includes them and its help text says they are committed to a Git repository.
+3. **No value, ever**: the secret inventory reads metadata only (`secretmanager.secrets.list`/`versions.list` — the launchers already hold it, `deploy/terraform/gcp/modules/installation/iam.tf:15-19`), and `TestExportContainsNoSecretValue` scans every byte of the output for every value the fake Secret Manager holds plus the run's own token.
+4. `--json` prints the tree's manifest, so a caller can diff two exports without reading files; the human output prints per-file counts and the export's own `checked_at`.
+5. Idempotent and deterministic: same input → byte-identical output, including ordering (sorted keys and sorted rows), so a diff shows a policy change and not a map iteration.
+
+**Tests:** `TestExportContainsNoSecretValue`; `TestExportOmitsPeopleByDefault` and `TestExportWithPeopleIncludesThem`; `TestExportDeterministic` (two runs, byte compare); `TestExportSpendSkipsTheCurrentDay`; `TestExportOperatorYamlHasNoIdentityOrEndpoints`.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/cli/... -count=1`. **Depends on:** 1.6, 3.5 (the inventory's job list). **Commit:** "project export: the project's record, secrets excluded".
+
+### Task 6.2: `--push`, and the cadence the design defers
+
+**Files:** `internal/cli/project_export.go` (+ tests), `docs/project-layer.md`.
+
+1. `--push` commits to the backing repository the policy names (a new `backing_repo` policy field, written by the operator): a clone into a scratch dir, a commit whose message names the export's `checked_at`, and a push through the same credential path the runner's git secret uses. **It refuses to push a non-fast-forward** and reports the divergence rather than forcing anything.
+2. **The scheduled export and the `init`/`budget set` hooks are deferred** (D7: "manual first, scheduled later"). The design's later shape is recorded where the code will be: a history-job entry (`deploy/terraform/gcp/modules/installation/history.tf:174-253`, whose service account already has RTDB admin) needs a deploy key or App token as a project secret, and whether the existing App can push to the backing repository is **UNVERIFIED** (design §8) — a probe for that phase's own check, not this one.
+3. `docs/project-layer.md`: the manual cadence, what to put in the repository, and the sentence that the export does not make the project reconstructable end to end.
+
+**Tests:** `TestExportPushRefusesNonFastForward`, `TestExportPushUsesTheConfiguredBackingRepo`, `TestExportWithoutBackingRepoRefusesPush`.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/cli/... -count=1`. **Depends on:** 6.1. **Commit:** "project export --push: the manual cadence, and nothing scheduled yet".
+
+### Task 6.3: the docs, the skills and `doctor`
+
+**Files:** `docs/project-layer.md`, `docs/multi-model.md`, `plugin/skills/setup/**`, `internal/cli/doctor.go` (+ tests), `SECURITY.md`.
+
+1. The user-facing story: what a backing repository is for (history and audit; survival of the Firebase project), what it is not (a unit of execution, a backup of secrets), and how to read it.
+2. `doctor`: a `backing-repo` check (info/warning) — configured or not, whether the last export is stale against the policy's own `checked_at` (a `warning` past 30 days, the same threshold family the price catalog's P7 uses), and that a divergence on `--push` is reported rather than forced.
+3. The setup skill: the backing repository's one question, and the export command.
+4. SECURITY.md: the export's security posture in one paragraph — metadata only, no values, people's addresses are a deliberate opt-in.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1` and `GOFLAGS=-p=2 go test ./internal/cli/... -count=1`. **Commit:** "docs, skills and doctor: the backing repository".
+
+### Task 6.4: Check 56 — OWNER-RUN
+
+**Files:** `docs/gcp-live-checklist.md`.
+
+Append `## Check 56: the export, and what it does not contain (installation fugaro only, never belong; run by you; NOT RUN)` and its row:
+
+1. Setup and guard; record the project's caps, policy and the sandbox's state.
+2. `fugaro project export --out <dir>` on installation `fugaro`. **FACT:** the file tree with per-file byte counts, and the manifest's `checked_at`.
+3. **The scan that matters**: grep the whole export for a value the owner knows is in Secret Manager (the owner chooses one and greps for it **without pasting it**). **FACT:** zero matches, and the counts for the `inventory/` files that name the secret.
+4. **The people check**: `grep -r '@' <dir>` (before any `--with-people`). **FACT:** the count, and which files matched (a commit message or a URL is fine; a `byPerson` key is not).
+5. Determinism: export twice into two directories and `diff -r` them. **FACT:** empty diff (or the one field that legitimately differs, named).
+6. `--push` to the backing repository if one is configured: **FACT:** the commit's subject, the file count, that the divergence case was reported rather than forced (a second push attempt after an out-of-band commit), and that nothing in the pushed tree is a secret value.
+7. Restore: none needed (the export writes outside the installation) — but confirm one ordinary sandbox task still runs and, if `--push` was used, that the backing repository's `main` is where the owner expects.
+
+**Paste back:** every FACT line, never a secret value. **Depends on:** 6.1 to 6.3.
