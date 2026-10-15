@@ -148,8 +148,11 @@ func budgetProblems(cfg *config.Config, lc *localcfg.Config) (problems, warnings
 		}
 	}
 	if cfg.Agent.Auth == "api-key" && e.Mode == policy.ModeEnforce && e.PerRunUSD <= 0 {
+		// The database's caps are what the rules compare against (D6): a
+		// per-run cap set anywhere in it bounds the run, and only a
+		// database with none on any of the three sides halts it.
 		warnings = append(warnings, config.Problem{Path: "budget.per_run_usd",
-			Message: "the mode is enforce but no per-run cap is set in the project config or here; the run would halt (no_cap)"})
+			Message: "the mode is enforce but no per-run cap is set in the project config or here; the database's effective per-run cap still bounds the run when one is set anywhere (the repository's own, the default for repositories without one, or the project's global one), and the run halts (no_cap) only when all three are unset"})
 	}
 	return problems, warnings
 }
