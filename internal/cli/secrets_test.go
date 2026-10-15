@@ -1205,6 +1205,36 @@ func TestSecretsSetEmptyAllowListNamesTheRepoWayOut(t *testing.T) {
 	}
 }
 
+// The other eligibility refusal the note used to be printed over (code
+// review, low): a provider's key from a checkout the provider's allow_data_to
+// excludes is refused just below, and the note saying "this value goes to
+// <repo>'s own copy, which overrides the project copy for it" promises a store
+// that does not happen. The note is printed after the checks, so a refused
+// command carries none.
+func TestSecretsSetRefusedProviderKeyPrintsNoRepoCopyNote(t *testing.T) {
+	sm := secretsFixture(t)
+	projectSecretFixture(t, `providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["deepseek/*"]
+    allow_data_to: ["acme/other"]
+`)
+	appCheckout(t)
+	out, errOut, err := executeStdin(t, tokenValue, "secrets", "set", "openrouter-api-key")
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "allow_data_to") {
+		t.Fatalf("err = %v, want the allow_data_to refusal", err)
+	}
+	if strings.Contains(out+errOut, "own copy") {
+		t.Errorf("the refusal carries the note that promises a store: out %q errOut %q", out, errOut)
+	}
+	if sm.Latest(gcp.SecretID(appSlug, "openrouter-api-key")) != nil {
+		t.Error("a refused value was stored")
+	}
+}
+
 // TestSecretsSetBitbucketTokenStaysRepoScope: bitbucket-token is the one
 // reserved name with no project-wide default (config.PerRepositorySecret, the
 // owner's ruling of 2026-10-15): a repository access token is issued for one
@@ -1263,6 +1293,37 @@ func TestSecretsSetBitbucketTokenStaysRepoScope(t *testing.T) {
 	}
 	if got := string(sm.Latest(gcp.ProjectSecretID("aurora", config.BitbucketSecret))); got != tokenValue {
 		t.Fatalf("the allow-listed project copy = %q", got)
+	}
+}
+
+// TestBareRepoOptsAProjectScopeNameOutOfTheProjectDefault: `--repo` with no
+// value is the documented opt-out of the project-scope default (the checkout's
+// origin supplies the repository), and it is the one spelling that reaches the
+// `!cmd.Flags().Changed("repo")` branch with a name that HAS a project-wide
+// meaning. The valued form never gets there, and npm-token is repository-scoped
+// either way, so nothing else covers this: a bare `--repo` that fell through to
+// the default would store the project copy instead of the repository's own.
+func TestBareRepoOptsAProjectScopeNameOutOfTheProjectDefault(t *testing.T) {
+	sm := secretsFixture(t)
+	appCheckout(t)
+	const name = config.AnthropicSecret
+	out, errOut, err := executeStdin(t, tokenValue, "secrets", "set", name, "--repo")
+	if err != nil {
+		t.Fatalf("secrets set %s --repo: %v (%s)", name, err, errOut)
+	}
+	if got := string(sm.Latest(gcp.SecretID(appSlug, name))); got != tokenValue {
+		t.Fatalf("stored %q, want the repository copy %s", got, gcp.SecretID(appSlug, name))
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", name)) != nil {
+		t.Error("the bare --repo stored the project copy of a name it opted out of")
+	}
+	if !strings.Contains(out, gcp.SecretID(appSlug, name)) || strings.Contains(out+errOut, tokenValue) {
+		t.Fatalf("out %q errOut %q", out, errOut)
+	}
+	// An explicit request for this repository's own copy needs no note about
+	// the project copy it is opting out of.
+	if strings.Contains(errOut, "is stored project-wide") {
+		t.Errorf("the bare --repo printed the project-scope note: %q", errOut)
 	}
 }
 

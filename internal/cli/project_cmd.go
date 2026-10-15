@@ -1483,8 +1483,11 @@ func removalWarning(allow []string, canonical string) string {
 // A concrete repository is admitted by any remaining entry that matches it: the
 // wildcard, or a pattern such as github/acme/*. A *pattern* being removed is a
 // different question — removing it is moot only if some remaining entry admits
-// everything it admitted — and the only entry that does is the bare wildcard
-// (two identical entries cannot both be on the list).
+// everything it admitted — and an entry can do that without being the bare
+// wildcard: */acme/* admits every repository github/acme/* admits, and it is a
+// legal entry (canonicalRepoArg accepts it) that MatchRepo resolves. Only a
+// remaining entry that is no broader can leave the removed one's repositories
+// refused, which is what subsumes decides.
 //
 // An entry is a pattern when it carries a wildcard, not when ValidPattern
 // accepts it: ValidPattern accepts a concrete name too (a pattern with no "*"
@@ -1501,7 +1504,7 @@ func admittedBy(allow []string, arg string) (bool, string) {
 	}
 	if strings.Contains(arg, "*") {
 		for _, p := range rest {
-			if p == "*" {
+			if subsumes(p, arg) {
 				return true, p
 			}
 		}
@@ -1513,6 +1516,34 @@ func admittedBy(allow []string, arg string) (bool, string) {
 		}
 	}
 	return false, ""
+}
+
+// subsumes reports whether the allow-list entry p admits every repository the
+// entry arg admits, once arg's own entry is gone.
+//
+// The bare wildcard admits everything (design's explicit ["*"] choice). Any
+// other entry is provider-qualified and matches segment against segment
+// (projectpolicy.MatchRepo), so a *pattern* p admits everything a pattern arg
+// admits exactly when each of p's three segments is the same segment or the
+// bare wildcard — a provider-wide */acme/* over github/acme/*, never a
+// narrower acme-only entry over it. A concrete arg never reaches here
+// (admittedBy sends it through MatchRepo instead), and a p that is concrete
+// therefore falls out on the segment comparison: it equals arg's segment in
+// the positions where arg is concrete and differs where arg has a wildcard.
+func subsumes(p, arg string) bool {
+	if p == "*" {
+		return true
+	}
+	ps, as := strings.Split(p, "/"), strings.Split(arg, "/")
+	if len(ps) != len(as) {
+		return false
+	}
+	for i := range ps {
+		if ps[i] != "*" && ps[i] != as[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // canonicalRepoArg is the operator's argument as a canonical allow-list

@@ -84,13 +84,17 @@ func (o *secretsOptions) addFlags(cmd *cobra.Command) {
 // after it) rewritten to --repo=, whose empty value resolveSecretRepo already
 // reads as "this checkout's origin".
 //
-// pflag cannot express the form itself: with a string flag's NoOptDefVal set,
-// parseLongArg stops consuming the token after the flag, so the documented
-// `--repo acme/app` -- the form every script and the skills write -- would
-// leave acme/app as a positional argument. Only the argv boundary can tell
-// the bare form from the space-separated one, so cmd/fugaro/main.go and the
-// tests' execute helpers call this before cobra parses anything. A token
-// after `--` is a positional argument, never a flag, and is left alone.
+// --repo takes an optional value, which pflag has no way to declare: the flag
+// is an ordinary string flag (no NoOptDefVal anywhere in this repository), so
+// cobra consumes the next token as its value whenever one is there. That is
+// what makes `--repo acme/app` -- the form every script and the skills write --
+// work, and it is also why the BARE form cannot be left to pflag: a trailing
+// `--repo`, or one followed by another flag such as `--json`, would be read as
+// "the flag's value is --json" or as a flag missing its value. Only the argv
+// boundary can tell the bare form from the space-separated one, so
+// cmd/fugaro/main.go and the tests' execute helpers call this before cobra
+// parses anything. A token after `--` is a positional argument, never a flag,
+// and is left alone.
 // It rewrites nothing outside `secrets set` and `secrets ls`: init's --repo
 // is a bool (the repository-scoped init), so `fugaro init --repo` must keep
 // parsing as the flag it is, and no other command's --repo takes an optional
@@ -309,17 +313,6 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 	if o.projectWide || (!cmd.Flags().Changed("repo") && projectScopeName(env.lc, name, repo)) {
 		return secretsSetProjectWide(cmd, env, o, name)
 	}
-	if repo != "" && projectScopeName(env.lc, name, "") {
-		// The name has a project-wide meaning that does not reach this
-		// repository, and the person typed no flag: the copy they are about to
-		// store is this repository's own, and saying which entry left them out
-		// is what tells them --project-wide is the other intent -- when the
-		// flag would in fact be accepted for it (projectWideHint; an entry that
-		// is present and empty is the one state where it would not).
-		fmt.Fprintf(cmd.ErrOrStderr(),
-			"note: %s is stored project-wide in this project, but not for %s: this value goes to %s's own copy, which overrides the project copy for it. %s\n",
-			pluginwire.Printable(name), pluginwire.Printable(repo), pluginwire.Printable(repo), projectWideHint(env.lc, name))
-	}
 	r, err := resolveSecretRepo(cmd, env, o.repo)
 	if err != nil {
 		return err
@@ -355,6 +348,23 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 		if !declares(cfg, name) {
 			return userErr("no workflow in this checkout's fugaro.yaml declares that secret NAME; add it under a workflow's secrets: first")
 		}
+	}
+	if repo != "" && projectScopeName(env.lc, name, "") {
+		// The name has a project-wide meaning that does not reach this
+		// repository, and the person typed no flag: the copy they are about to
+		// store is this repository's own, and saying which entry left them out
+		// is what tells them --project-wide is the other intent -- when the
+		// flag would in fact be accepted for it (projectWideHint; an entry that
+		// is present and empty is the one state where it would not).
+		//
+		// It is said here, after the eligibility checks just above and not
+		// before them (code review, low): the note promises a store, and a name
+		// whose provider's or named account's allow_data_to excludes this
+		// repository is refused there, so printing it first told the person
+		// their value was going somewhere and then failed the command.
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"note: %s is stored project-wide in this project, but not for %s: this value goes to %s's own copy, which overrides the project copy for it. %s\n",
+			pluginwire.Printable(name), pluginwire.Printable(repo), pluginwire.Printable(repo), projectWideHint(env.lc, name))
 	}
 	if repoMayUseProject(env.lc, name, r.repo) {
 		// §5's precedence has no override-the-override: a --repo copy of a

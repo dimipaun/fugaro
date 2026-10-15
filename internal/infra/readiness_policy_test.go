@@ -221,6 +221,39 @@ func TestReadinessWarnsWhenAnApplyWouldRemoveTheJobFirebaseBackend(t *testing.T)
 	}
 }
 
+// The same apply, met by a config that still names a budget mode (code review,
+// round 3, low): budgetEnv writes FUGARO_BUDGET_MODE independently of the
+// database address, so `budget: { mode: observe }` with no budget.rtdb_url
+// deploys a job that carries the mode and neither of the two variables — the
+// same removal the test above is about, reached through a branch that used to
+// win and say only "this job's budget is on but it carries neither". The
+// operator has to hear that the job carries both today and this apply takes
+// them away, so the cloud's own state is checked first.
+func TestReadinessWarnsAboutRemovalWhenTheConfigStillNamesAMode(t *testing.T) {
+	f := newCloud(t)
+	spec, err := Repo(budgetInputs(t, "budget: { mode: observe, per_run_usd: 5 }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readyJob(t, f, spec)
+	for _, ws := range spec.Workflows {
+		f.run.SetJob(ws.Job, ws.Labels, ws.Image)
+		f.run.SetJobEnv(ws.Job, map[string]string{
+			RTDBURLEnv:        "https://aurora-fp-default-rtdb.firebaseio.com",
+			FirebaseAPIKeyEnv: "AIzaSyFakeWebApiKeyForTests000000000",
+		})
+	}
+	_, missing := readinessPolicy(t, f, spec, false)
+	for name := range spec.Workflows {
+		if !slices.ContainsFunc(missing, func(m Missing) bool {
+			return m.Kind == MissingNote && strings.Contains(m.Reason, name) &&
+				strings.Contains(m.Reason, "would remove them") && strings.Contains(m.Reason, "budget.rtdb_url")
+		}) {
+			t.Errorf("no note tells workflow %s's owner that this apply removes the backend it carries: %v", name, missing)
+		}
+	}
+}
+
 // The same apply with no backend in the jobs is silent: a legacy installation
 // must not be warned about a model it never adopted.
 func TestReadinessSaysNothingAboutFirebaseWhenTheJobsHaveNone(t *testing.T) {

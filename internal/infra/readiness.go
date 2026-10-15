@@ -260,20 +260,15 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 		// off. An installation that leaves the budget off has chosen the
 		// per-repository path, permanently (design §5(1)), and its runs are
 		// told so by `fugaro doctor` — warning it about a model it is not
-		// adopting would be noise on every apply. The exception is the last
-		// branch below, which fires only for a job that HAS the backend in
-		// the cloud: there the local config is what changed, and the note is
-		// about damage this apply would do rather than about a model the
-		// owner has not adopted.
+		// adopting would be noise on every apply. The exception is the branch
+		// for a job that HAS the backend in the cloud: there the local config
+		// is what changed, and the note is about damage this apply would do
+		// rather than about a model the owner has not adopted.
 		if !carriesFirebase(ws) {
 			if ex.PolicyExists {
 				reasons = append(reasons, gate{MissingFirebase, fmt.Sprintf(
 					"the project has published a policy (%s), which only a job carrying %s and %s can read: set the project's Firebase backend (fugaro init --firebase <firebase-project-id>), then run fugaro init --repo for %s",
 					projectpolicy.PathShared(), RTDBURLEnv, FirebaseAPIKeyEnv, spec.Name)})
-			} else if ws.Env[BudgetModeEnv] != "" {
-				missing = append(missing, Missing{Workflow: name, Kind: MissingNote, Reason: fmt.Sprintf(
-					"this job's budget is on (%s=%s) but it carries neither %s nor %s, so a run of it could not read a project policy: configure the project's Firebase backend (fugaro init --firebase <firebase-project-id>, then fugaro init --repo). Nothing is blocked until a policy exists; once one does, this job stops being deployable until it can read it",
-					BudgetModeEnv, ws.Env[BudgetModeEnv], RTDBURLEnv, FirebaseAPIKeyEnv)})
 			} else if ex.JobsFirebase[name] {
 				// The job has the backend today and this apply would take it
 				// away: the local config names no database address (or no
@@ -285,9 +280,23 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 				// policy that exists. Loud, but not a gate: the harm is
 				// drift, and the fix is one command (L3 of the PR #379
 				// review).
+				//
+				// Checked before the mode branch below (code review, round
+				// 3, low): budgetEnv writes the mode independently of the
+				// database address, so a config that still names a mode and
+				// has lost its budget.rtdb_url reaches both branches, and
+				// the mode one used to win — telling the owner only that
+				// "this job's budget is on but it carries neither", never
+				// that the job carries both today and this apply takes them
+				// away. The removal is the more specific fact and the one
+				// the operator has to act on.
 				missing = append(missing, Missing{Workflow: name, Kind: MissingNote, Reason: fmt.Sprintf(
 					"workflow %s's job carries %s and %s today and this init --repo would remove them: the local config names no budget.rtdb_url (or no budget.firebase_api_key), so the job is deployed without the backend and every run of this repository stops reading the project's policy. Restore it with 'fugaro init --firebase <firebase-project-id>' (which writes budget.rtdb_url and budget.firebase_api_key), then run fugaro init --repo again",
 					name, RTDBURLEnv, FirebaseAPIKeyEnv)})
+			} else if ws.Env[BudgetModeEnv] != "" {
+				missing = append(missing, Missing{Workflow: name, Kind: MissingNote, Reason: fmt.Sprintf(
+					"this job's budget is on (%s=%s) but it carries neither %s nor %s, so a run of it could not read a project policy: configure the project's Firebase backend (fugaro init --firebase <firebase-project-id>, then fugaro init --repo). Nothing is blocked until a policy exists; once one does, this job stops being deployable until it can read it",
+					BudgetModeEnv, ws.Env[BudgetModeEnv], RTDBURLEnv, FirebaseAPIKeyEnv)})
 			}
 		}
 		current, exists := ex.Jobs[name]

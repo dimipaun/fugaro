@@ -1289,6 +1289,15 @@ func TestRemovalWarningSaysWhatTheNextRunDoes(t *testing.T) {
 		"pattern, the wildcard remains": {[]string{"*", "github/acme/*"}, "github/acme/*", true, "*"},
 		"pattern, nothing remains":      {[]string{"github/acme/*"}, "github/acme/*", false, ""},
 		"pattern, a narrower one only":  {[]string{"github/acme/*", "github/acme/app"}, "github/acme/*", false, ""},
+		// A broader pattern is not the bare wildcard and still admits every
+		// repository the removed one did (code review, medium): */acme/*
+		// matches github/acme/app, and canonicalRepoArg accepts the entry, so
+		// claiming the runs stop here would be a stop that does not happen.
+		"pattern, a broader pattern remains":   {[]string{"*/acme/*", "github/acme/*"}, "github/acme/*", true, "*/acme/*"},
+		"pattern, another provider's remains":  {[]string{"gitlab/acme/*", "github/acme/*"}, "github/acme/*", false, ""},
+		"pattern, the same width narrower":     {[]string{"github/acme/*", "github/*/*"}, "github/*/*", false, ""},
+		"pattern, its own repo entry remains":  {[]string{"github/acme/app", "github/acme/*"}, "github/acme/*", false, ""},
+		"pattern, a provider-wide one remains": {[]string{"github/*/*", "github/acme/*"}, "github/acme/*", true, "github/*/*"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, by := admittedBy(tc.allow, tc.arg)
