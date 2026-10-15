@@ -432,6 +432,20 @@ func TestDenialTable(t *testing.T) {
 		h.mustDeny(w.client(h), "18 + 3 > the global 20", leaseUpdates(w, 3*usd))
 		h.mustAllow(w.client(h), "18 + 2 == the global 20", leaseUpdates(w, 2*usd))
 	})
+	t.Run("row05c_reserve_past_the_default_below_the_global_cap", func(t *testing.T) {
+		// The repository has no per-run cap of its own, the default is $10
+		// and the global cap $20: the smaller side binds, so the default is
+		// the wall even though the global cap has room (D6).
+		h := newHarness(t)
+		w := leased(9 * usd)
+		w.caps.Defaults.RepoPerRunMicros = mp(10 * usd)
+		h.seed(w)
+		h.mustAllow(w.client(h), "9 + 1 == the default 10", leaseUpdates(w, usd))
+		w.st.Run, w.st.DayRun = budget.RunLedger{Reserved: 10 * usd}, budget.RunLedger{Reserved: 10 * usd}
+		w.st.Repo.Counted, w.st.Global.Counted = 10*usd, 10*usd
+		h.seed(w)
+		h.mustDeny(w.client(h), "10 + 1 > the default 10, although the global 20 has room", leaseUpdates(w, usd))
+	})
 	t.Run("row06_reserve_past_the_repository_daily_cap", func(t *testing.T) {
 		h := newHarness(t)
 		w := stdWorld()
@@ -723,6 +737,23 @@ func TestNullCapDenies(t *testing.T) {
 		w := stdWorld()
 		w.caps.Defaults.RepoPerRunMicros = nil // no per-run cap of its own, no default
 		w.caps.Repo = &budget.RepoCaps{DailyMicros: mp(60 * usd)}
+		w.st.Run, w.st.DayRun = budget.RunLedger{Reserved: 19 * usd}, budget.RunLedger{Reserved: 19 * usd}
+		w.st.Repo.Counted, w.st.Global.Counted = 19*usd, 19*usd
+		h.seed(w)
+		h.mustAllow(w.client(h), "19 + 1 <= the global 20", leaseUpdates(w, usd))
+		w.st.Run, w.st.DayRun = budget.RunLedger{Reserved: 20 * usd}, budget.RunLedger{Reserved: 20 * usd}
+		w.st.Repo.Counted, w.st.Global.Counted = 20*usd, 20*usd
+		h.seed(w)
+		h.mustDeny(w.client(h), "20 + 1 > the global 20", leaseUpdates(w, usd))
+	})
+	t.Run("only the global per-run cap is set", func(t *testing.T) {
+		// No repository node at all and no default per-run cap: the global
+		// cap alone bounds the run (D6). The daily caps stay: the
+		// repository's day cap is the default's.
+		h := newHarness(t)
+		w := stdWorld()
+		w.caps.Repo = nil
+		w.caps.Defaults.RepoPerRunMicros = nil
 		w.st.Run, w.st.DayRun = budget.RunLedger{Reserved: 19 * usd}, budget.RunLedger{Reserved: 19 * usd}
 		w.st.Repo.Counted, w.st.Global.Counted = 19*usd, 19*usd
 		h.seed(w)

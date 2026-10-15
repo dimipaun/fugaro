@@ -343,6 +343,10 @@ func fallback(own, def string) string {
 	return "(" + snap + ".exists() ? " + snap + ".val() : root.child('config/caps/defaults/" + def + "').val())"
 }
 
+// tern is the rules language's conditional: (cond ? a : b). The language has
+// no coalesce, so a fallback is written as one of these.
+func tern(cond, a, b string) string { return "(" + cond + " ? " + a + " : " + b + ")" }
+
 // perRunOK is the lease's per-run cap comparison, the rules' half of
 // Caps.PerRun (design D6): the effective cap is the smaller of the
 // repository's own cap -- its node, else the default -- and the project's
@@ -354,8 +358,6 @@ func fallback(own, def string) string {
 // It is one boolean, not two comparisons, because a comparison against an
 // unset side must not deny on its own: the global cap is the fallback of a
 // repository that has none, and the default is the fallback of a global one.
-// The rules language has no coalesce, so both fallbacks are the ternary
-// fallback uses.
 func perRunOK(depth int) (string, error) {
 	released, err := pathMacro("N", "runs/$slug/$run/released", depth)
 	if err != nil {
@@ -368,9 +370,17 @@ func perRunOK(depth int) (string, error) {
 	own := "root.child('config/caps/repos').child($slug).child('perRunMicros')"
 	def := "root.child('config/caps/defaults/repoPerRunMicros')"
 	global := "root.child('config/caps/global/perRunMicros')"
+	// within is one side's bound: the run's outstanding, against the cap
+	// that node holds.
 	within := func(snap string) string { return "(" + delta + " <= " + snap + ".val())" }
-	return "(" + own + ".exists() || " + def + ".exists()" +
-		" ? (" + own + ".exists() ? " + within(own) + " : " + within(def) + ")" +
-		" && (" + global + ".exists() ? " + within(global) + " : true)" +
-		" : (" + global + ".exists() ? " + within(global) + " : false))", nil
+	hasOwn, hasDef, hasGlobal := own+".exists()", def+".exists()", global+".exists()"
+	// The repository's side is its own cap, else the default; the global
+	// side, where it is set, must hold too. A side that is not set does not
+	// bound the run: the global one is the fallback of a repository whose
+	// own side is unset, and with nothing set anywhere the expression is
+	// false (deny).
+	repoSide := tern(hasOwn, within(own), within(def))
+	return tern(hasOwn+" || "+hasDef,
+		repoSide+" && "+tern(hasGlobal, within(global), "true"),
+		tern(hasGlobal, within(global), "false")), nil
 }

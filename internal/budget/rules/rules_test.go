@@ -264,12 +264,16 @@ func TestPerRunOK(t *testing.T) {
 	}
 }
 
-// TestGoMirrorOfThePerRunComparison: perRunOK's branches, written out in Go
-// and checked against budget.Caps.PerRun for every combination of the three
-// sides and a range of amounts. The emulator suite and the parity test prove
-// the rules agree with the client, but they need the Firebase emulator; this
-// runs everywhere and pins the intent of the expression.
-func TestGoMirrorOfThePerRunComparison(t *testing.T) {
+// TestGoMirrorOfThePerRunBranches: the intended branches of the per-run
+// comparison, written out in Go and checked against budget.Caps.PerRun for
+// every combination of the three sides and a range of amounts.
+//
+// It does not read the generated expression, so it does not prove the rules
+// agree with the client: TestPerRunOK pins the expression's shape, and the
+// emulator suite (TestRulesParity and the directed rows) proves the
+// agreement. This one runs everywhere, without the emulator, and makes a
+// change of intent visible.
+func TestGoMirrorOfThePerRunBranches(t *testing.T) {
 	m := func(v int64) *budget.Micros { x := budget.Micros(v); return &x }
 	// mirror is perRunOK read as prose: the repository's own cap, else the
 	// default, and the global one where it is set; with neither side set the
