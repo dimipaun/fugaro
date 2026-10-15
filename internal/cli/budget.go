@@ -268,17 +268,39 @@ type showDefaults struct {
 }
 
 type showRepo struct {
-	Slug         string    `json:"slug"`
-	Repo         string    `json:"repo,omitempty"`
-	DailyCapUSD  *float64  `json:"daily_cap_usd"`
-	CapSource    string    `json:"daily_cap_source"` // repo, default or none
-	PerRunCapUSD *float64  `json:"per_run_cap_usd"`
-	CountedUSD   float64   `json:"counted_usd"`
-	SpentUSD     float64   `json:"spent_usd"`
-	NotionalUSD  float64   `json:"notional_usd"`
-	HeadroomUSD  *float64  `json:"headroom_usd"`
-	Kill         *showKill `json:"kill"`
-	Running      []showRun `json:"running"`
+	Slug         string   `json:"slug"`
+	Repo         string   `json:"repo,omitempty"`
+	DailyCapUSD  *float64 `json:"daily_cap_usd"`
+	CapSource    string   `json:"daily_cap_source"` // repo, default or none
+	PerRunCapUSD *float64 `json:"per_run_cap_usd"`
+	// PerRunCapSource is where the effective per-run cap comes from: repo,
+	// default, global, or none when no per-run cap is set anywhere.
+	PerRunCapSource string    `json:"per_run_cap_source"`
+	CountedUSD      float64   `json:"counted_usd"`
+	SpentUSD        float64   `json:"spent_usd"`
+	NotionalUSD     float64   `json:"notional_usd"`
+	HeadroomUSD     *float64  `json:"headroom_usd"`
+	Kill            *showKill `json:"kill"`
+	Running         []showRun `json:"running"`
+}
+
+// perRunCapSource names the scope whose per-run cap binds a repository: the
+// smaller of the repository's side (its own node, else the default) and the
+// global one, which is the fallback where the repository's side is unset
+// (D6). "none" is no per-run cap anywhere: a run in enforce halts (no_cap).
+func perRunCapSource(c budget.Caps) string {
+	repo, repoOK := c.RepoPerRun()
+	global, globalOK := c.GlobalPerRun()
+	if repoOK && (!globalOK || repo <= global) {
+		if c.Repo != nil && c.Repo.PerRunMicros != nil {
+			return "repo"
+		}
+		return "default"
+	}
+	if globalOK {
+		return "global"
+	}
+	return "none"
 }
 
 // budgetShowDoc is show --json's document.
@@ -456,7 +478,7 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 		if c, ok := cfg.Caps.Repos[k]; ok {
 			rc.Repo = &c
 		}
-		rs := showRepo{Slug: slug, Running: []showRun{}, CapSource: "none"}
+		rs := showRepo{Slug: slug, Running: []showRun{}, CapSource: "none", PerRunCapSource: "none"}
 		rs.Repo = names[k]
 		if rc.Repo != nil && rc.Repo.Repo != "" {
 			rs.Repo = rc.Repo.Repo
@@ -468,10 +490,12 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 				rs.CapSource = "repo"
 			}
 		}
-		if rc.Repo != nil && rc.Repo.PerRunMicros != nil {
-			rs.PerRunCapUSD = usdPtr(rc.Repo.PerRunMicros)
-		} else if cfg.Caps.Defaults != nil {
-			rs.PerRunCapUSD = usdPtr(cfg.Caps.Defaults.RepoPerRunMicros)
+		// The per-run cap is the effective one: the repository's own or the
+		// default, and the global one where that side is unset (D6), so the
+		// source names the scope whose cap binds this repository.
+		if v, ok := rc.PerRun(); ok {
+			rs.PerRunCapUSD = usdPtr(&v)
+			rs.PerRunCapSource = perRunCapSource(rc)
 		}
 		sp := repoSpend[k]
 		rs.CountedUSD, rs.SpentUSD, rs.NotionalUSD = sp.Counted.USD(), sp.Spent.USD(), sp.Notional.USD()
@@ -620,7 +644,14 @@ func printShow(w io.Writer, d *budgetShowDoc) {
 		if r.CapSource != "none" {
 			src = " (" + r.CapSource + ")"
 		}
-		fmt.Fprintf(w, "  daily cap %s%s, per-run cap %s\n", usdText(r.DailyCapUSD), src, usdText(r.PerRunCapUSD))
+		// The per-run cap is the effective one, with the scope it comes from:
+		// a repository without a cap of its own is bounded by the project's
+		// global one (D6).
+		psrc := " (" + r.PerRunCapSource + ")"
+		if r.PerRunCapSource == "none" {
+			psrc = " (no per-run cap anywhere)"
+		}
+		fmt.Fprintf(w, "  daily cap %s%s, per-run cap %s%s\n", usdText(r.DailyCapUSD), src, usdText(r.PerRunCapUSD), psrc)
 		fmt.Fprintf(w, "  today: counted %s, spent %s, notional %s (subscription, not billed)\n", usdVal(r.CountedUSD), usdVal(r.SpentUSD), usdVal(r.NotionalUSD))
 		fmt.Fprintf(w, "  headroom: %s\n  kill switch: %s\n", usdText(r.HeadroomUSD), killText(r.Kill))
 		if len(r.Running) == 0 {

@@ -969,10 +969,11 @@ func TestBudgetPreviewRepoRecipeSkipsTheBucket(t *testing.T) {
 	}
 }
 
-// TestBudgetPreviewProjectCapOnly: an installation with only the global caps
-// has no repository headroom at all, and a global per-run cap alone bounds no
-// run (the rules need both sides), so the config's cap is what is left.
-func TestBudgetPreviewProjectCapOnly(t *testing.T) {
+// TestBudgetPreviewGlobalCapsOnly: an installation with only the global caps
+// has no repository headroom at all, and the global per-run cap alone bounds
+// every run that has no per-run cap of its own (D6), so the smaller of it and
+// the config's cap is the ceiling.
+func TestBudgetPreviewGlobalCapsOnly(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.SetGlobalCapsOnly(10, 3)
 	f.SetSpentToday(0)
@@ -982,8 +983,8 @@ func TestBudgetPreviewProjectCapOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"rough worst case: $5.00",
-		"per-run caps found: budget.per_run_usd $5.00; the smallest counts",
+		"rough worst case: $3.00",
+		"per-run caps found: budget.per_run_usd $5.00, the database's per-run cap $3.00; the smallest counts",
 		"headroom left today: repository not set, project $10.00",
 		"fits the project's daily cap ($10.00 left today)",
 	} {

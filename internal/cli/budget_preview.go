@@ -139,9 +139,10 @@ type previewHeadroom struct {
 // previewPerRun is the per-run cap a run launched from here would be held
 // to: $FUGARO_MAX_RUN_USD when it is set (the job's own cap, which
 // init --repo writes from the project config's budget.per_run_usd), else
-// that config value; and always the database's own per-run cap. ok is false
-// when neither side is set, and then only the per-stage cap bounds a run.
-// srcs names each one found, with its value.
+// that config value; and always the database's effective per-run cap (the
+// repository's own or the default, and the global one where that side is
+// unset, D6). ok is false when neither side is set, and then only the
+// per-stage cap bounds a run. srcs names each one found, with its value.
 //
 // The two owner-side values are alternatives, not a min: a stale
 // $FUGARO_MAX_RUN_USD tells the runner to ignore the config, so taking the
