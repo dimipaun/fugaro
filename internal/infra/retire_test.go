@@ -1489,6 +1489,10 @@ func TestOrphansWorkflowJobRuleIgnoresAFugaroRole(t *testing.T) {
 // A container the current retirement releases still has its address in the
 // state, so it is a retirement with the plain-words promise: the design's
 // KEPT block.
+//
+// The spec here is the one the caller read, not the one Readiness handed the
+// plan: the CLI passes the unioned spec, and the union produces the address,
+// which is the case the test below composes. This one is the floor under it.
 func TestOrphansReturnsALabelledContainerNoLongerMounted(t *testing.T) {
 	f := newCloud(t)
 	spec := originSpec(t, `agent: { auth: api-key }`)
@@ -1511,6 +1515,43 @@ func TestOrphansReturnsALabelledContainerNoLongerMounted(t *testing.T) {
 	}
 	if r.Kept != KeptSecret || !r.Protected {
 		t.Errorf("%+v: want the promise and prevent_destroy's protection", r)
+	}
+}
+
+// The same container, with the spec Readiness actually hands the plan: the
+// union has put the logical name back into spec.Secrets (N4), so
+// spec.Addresses() produces the container's address, DiscoverRepo writes an
+// import for it and the plan re-creates it. It is adopted, not released --
+// design §3.2's "with the union there is no KEPT block in this case" -- and
+// nothing may hand its address to the state removal, because that would leave
+// a live container unmanaged if the run stopped before the apply (§1: "the
+// containers are not removed from anything").
+//
+// This is the composition of the two tests around it: the state-side
+// TestRetirementsOriginTransitionWithTheUnion says a unioned container is
+// adopted, and the test above says the label side returns it. Readiness does
+// both, and the answer is a note.
+func TestOrphansAdoptedContainerIsANoteNotARetirement(t *testing.T) {
+	f := newCloud(t)
+	spec := originSpec(t, `agent: { auth: api-key }`)
+	// What Readiness does with Existing.ExtraSecrets: a live, correctly
+	// labelled container is a key of the map the module's for_each reads.
+	spec.Secrets["claude-oauth-token"] = "fugaro-aurora-claude-oauth-token"
+	liveContainer(f, spec, "claude-oauth-token", "claude-oauth-token")
+
+	state := []string{secretContainerAddress("claude-oauth-token")}
+	rets, notes, _, err := Orphans(context.Background(), f.c, spec, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rets) != 0 {
+		t.Errorf("Orphans = %+v, want none: the union makes the plan produce the address", rets)
+	}
+	if len(notes) != 1 || notes[0].Logical != "claude-oauth-token" {
+		t.Fatalf("notes = %+v, want the container as a note", notes)
+	}
+	if n := len(Removals(state, rets)); n != 0 {
+		t.Errorf("Removals = %d addresses, want none: an adopted container is not removed from the state", n)
 	}
 }
 
@@ -1555,8 +1596,15 @@ func TestOrphansKeptContainerAloneIsANoteNotARetirement(t *testing.T) {
 //
 // What the mounts answer is the question §3.1a asks: does any job of the
 // configuration still mount this name? A container nothing mounts is what
-// the user has to be told about, once and without a retirement: a note while
-// the state does not hold it, and a retirement while it does.
+// the user has to be told about, once and without a retirement.
+//
+// The union's other half is why the state cannot turn one of these into a
+// retirement (review round 7): the same rule that puts the logical name back
+// into spec.Secrets puts the address back into spec.Addresses(), so the plan
+// re-produces the container and adopts it. The state's own copy of the row
+// is the resource the plan keeps, not a leftover, and removing it from the
+// state would leave a live container unmanaged. Every container the labels
+// find is therefore a note, whether the state holds it or not.
 func TestOrphansAsksTheMountsNotTheUnionedSecretsMap(t *testing.T) {
 	f := newCloud(t)
 	spec := originSpec(t, `agent: { auth: api-key }`)
@@ -1595,24 +1643,26 @@ func TestOrphansAsksTheMountsNotTheUnionedSecretsMap(t *testing.T) {
 			t.Errorf("%+v: a note still carries the promise and the ID the run prints", n)
 		}
 	}
-	// The state is the only thing that tells the two groups apart: the same
-	// container, held by the state, is a retirement.
-	rets, notes, _, err = Orphans(context.Background(), f.c, spec, []string{secretContainerAddress("claude-oauth-token-bmb")})
+	// The state does not turn it into a retirement: the union produced its
+	// address, so the same run's plan adopts the container it would have
+	// removed from the state.
+	held := []string{secretContainerAddress("claude-oauth-token-bmb")}
+	rets, notes, _, err = Orphans(context.Background(), f.c, spec, held)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rets) != 1 || rets[0].Logical != "claude-oauth-token-bmb" {
-		t.Errorf("rets = %+v, want the state-held container as a retirement", rets)
+	if len(rets) != 0 {
+		t.Errorf("rets = %+v, want none: the state-held container is adopted by the union, not released", rets)
 	}
-	if got := []string{}; len(notes) != 1 {
-		t.Errorf("notes = %+v, want only the one the state does not hold", notes)
-	} else {
-		for _, n := range notes {
-			got = append(got, n.Logical)
-		}
-		if !slices.Equal(got, []string{"released-token"}) {
-			t.Errorf("notes = %q, want only the unheld one", got)
-		}
+	if n := len(Removals(held, rets)); n != 0 {
+		t.Errorf("Removals = %d addresses, want none: nothing label-found is removed from the state", n)
+	}
+	got = got[:0]
+	for _, n := range notes {
+		got = append(got, n.Logical)
+	}
+	if !slices.Equal(got, []string{"claude-oauth-token-bmb", "released-token"}) {
+		t.Errorf("notes = %q, want the same two: the state does not change what a note is", got)
 	}
 }
 

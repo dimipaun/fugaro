@@ -86,6 +86,11 @@ type retireOpts struct {
 	// container is no longer in the state, and the label list is the only
 	// thing that still knows about it.
 	keptAsNote bool
+	// keptLive is the union's own case (N4): the kept container is live in
+	// Secret Manager carrying this repository's labels AND still in the
+	// state, so Readiness unions it back into RepoSpec.Secrets, the plan
+	// re-produces its address and adopts it. It is not a retirement.
+	keptLive bool
 	// jobNoName is a job the state holds whose own `name` attribute could
 	// not be read: Protected keeps it in the removal set (the conservative
 	// direction) and the API delete has no name to call.
@@ -182,19 +187,21 @@ func newRetireRig(t *testing.T, o retireOpts) *retireRig {
 	if o.deleteOpError != "" || o.deletePolls != 0 {
 		r.run.SetJobFaults(gcpfake.JobFaults{DeletePolls: o.deletePolls, DeleteOpError: o.deleteOpError})
 	}
-	if o.keptAsNote {
-		// The container an earlier run released: out of the state, still in
-		// Secret Manager with its labels, which is the only record left.
+	if o.keptAsNote || o.keptLive {
+		// The container an earlier run released: out of the state (keptAsNote)
+		// or still in it (keptLive), in both cases live in Secret Manager with
+		// its labels, which is the only record left.
 		r.sm.Seed(retireKeptSecretID(t), map[string]string{
 			gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelSecret: retireKeptName,
 		}, []byte("v"))
 	}
 
 	// The cloud: the orphaned job carrying this variant's labels. The kept
-	// container is deliberately NOT in it -- discovery would adopt a live
-	// labelled container back into the spec (the project's own layer), so
-	// the case the design names is one the cloud no longer holds: the state
-	// still manages it and fugaro.yaml no longer mounts it.
+	// container is deliberately NOT in it unless keptLive asks for the
+	// union's case -- discovery adopts a live labelled container back into
+	// the spec (the project's own layer), so the plain retirement is one the
+	// cloud no longer holds: the state still manages it and fugaro.yaml no
+	// longer mounts it.
 	if !o.noOrphanJob {
 		r.run.SetJob(retireJobName, map[string]string{
 			gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelWorkflow: retireVariant,
@@ -693,6 +700,68 @@ func TestInitRepoRetireResumeNoChangeDeletesAfterTheConfirmation(t *testing.T) {
 	}
 	if deletes := r.run.JobDeletes(); len(deletes) != 1 || deletes[0] != retireJobName {
 		t.Errorf("JobDeletes = %v, want the orphan the labels named", deletes)
+	}
+	if !strings.Contains(text, "deleted the orphaned Cloud Run job "+retireJobName) {
+		t.Errorf("the API delete is not reported:\n%s", text)
+	}
+}
+
+// The union's own case, end to end (N4, review round 7): the OAuth container
+// is live in Secret Manager carrying this repository's labels AND still in
+// Terraform's state, while no job of the configuration mounts it any more.
+// Readiness unions it back into RepoSpec.Secrets, so the same run's plan
+// re-produces its address and adopts it: it is not a retirement, it is not
+// kept, it is not handed to `terraform state rm`, and the summary says
+// nothing about it.
+//
+// The two halves of this were pinned apart and never composed: the state-side
+// test asserts a unioned container is adopted rather than released, the label
+// side asserts Orphans returns the container, and the rig's plain retirement
+// deliberately leaves the cloud without it -- so the composition, which is
+// what a real run does, was the untested path.
+func TestInitRepoRetireAdoptsALiveLabelledContainerInTheState(t *testing.T) {
+	r := newRetireRig(t, retireOpts{protection: true, keptLive: true})
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	if err != nil {
+		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
+	}
+	text := out + errOut
+
+	// The union is what makes it adopted: the run reports the import the
+	// plan needs to take the live container back, which is the mechanism the
+	// retirement must not fight.
+	if !strings.Contains(text, retireKeptName) {
+		t.Errorf("the run does not mention the adopted container at all:\n%s", text)
+	}
+	// The retirement set is the two addresses the configuration really no
+	// longer produces: the variant's service account and its job.
+	if !strings.Contains(text, "⚠ This change retires 2 addresses") {
+		t.Errorf("the retirement set is not the two state-derived addresses:\n%s", text)
+	}
+	for _, notWant := range []string{
+		// The KEPT block and the removal list are the two false claims: the
+		// first says the container leaves the state, the second does it.
+		"KEPT — Fugaro never deletes a secret or a secret version",
+		"Removed from Terraform's state, and never deleted",
+	} {
+		if strings.Contains(text, notWant) {
+			t.Errorf("the summary says %q about a container the same run adopts:\n%s", notWant, text)
+		}
+	}
+	// Nothing may hand its address to the state removal: the containers are
+	// not removed from anything (design §1, §3.2, §4.2a).
+	for _, c := range r.ran(t, "state rm") {
+		if call := strings.Join(c, " "); strings.Contains(call, retireKeptAddr) {
+			t.Errorf("the state removal names the adopted container: %s", call)
+		}
+	}
+	if d, x := r.sm.Deleted(), r.sm.Destroyed(); len(d) != 0 || len(x) != 0 {
+		t.Errorf("the adopted container was deleted (%v) or destroyed (%v)", d, x)
+	}
+	// The retirement itself still runs: the plan deletes the service account
+	// and the API deletes the orphaned job.
+	if deletes := r.run.JobDeletes(); len(deletes) != 1 || deletes[0] != retireJobName {
+		t.Errorf("JobDeletes = %v, want the orphaned job", deletes)
 	}
 	if !strings.Contains(text, "deleted the orphaned Cloud Run job "+retireJobName) {
 		t.Errorf("the API delete is not reported:\n%s", text)

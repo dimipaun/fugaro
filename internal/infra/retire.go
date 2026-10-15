@@ -770,13 +770,30 @@ func mountedSecrets(spec RepoSpec) map[string]bool {
 // project-secrets rule that a config edit may never shrink the module's
 // for_each), so a container the labels find is always a key of that map, and
 // a test against the map would skip every one of them. A container the state
-// still holds is the current retirement's (the KEPT promise), and one it no
-// longer holds is a note: a secret an earlier retirement already released,
+// no longer holds is a note: a secret an earlier retirement already released,
 // which is what makes a rerun name it instead of forgetting it.
+//
+// The union has a second consequence, and it is what keeps the released group
+// to what the design says it is. The same union that puts the logical name
+// back into spec.Secrets puts the address back into spec.Addresses(), so
+// DiscoverRepo writes an import for the container and the plan re-produces
+// it: the run that would call it a retirement is the run that adopts it, and
+// removing it from the state would leave it unmanaged if the run stopped
+// before the apply. Only a container whose address the spec does not produce
+// can be released -- design §3.2's KEPT case, "a container the label list did
+// not find, or did not find correctly labelled" -- so this branch is the
+// conservative floor for a caller whose spec has not been through Readiness
+// rather than a path the CLI's own run takes. The note branch below is
+// unaffected either way: a note is informational, and it names a container
+// the same run does adopt.
 func orphanContainers(ctx context.Context, c *Clients, spec RepoSpec, stateAddrs []string) (rets, notes []Retirement, warn string, err error) {
 	inState := make(map[string]bool, len(stateAddrs))
 	for _, a := range stateAddrs {
 		inState[a] = true
+	}
+	produced := make(map[string]bool)
+	for _, a := range spec.Addresses() {
+		produced[a] = true
 	}
 	mounted := mountedSecrets(spec)
 	err = c.Secrets.Projects.Secrets.List("projects/"+spec.GCPProject).
@@ -794,7 +811,12 @@ func orphanContainers(ctx context.Context, c *Clients, spec RepoSpec, stateAddrs
 					Address: secretContainerAddress(logical), Kind: "secret container", Cause: secretCause(logical),
 					Kept: KeptSecret, Logical: logical, SecretID: lastSegment(s.Name), Protected: true,
 				}
-				if inState[r.Address] {
+				// Produced means adopted: the union put the logical name
+				// back into spec.Secrets, so the plan re-produces this
+				// address and the state row belongs to the resource the
+				// plan keeps. Nothing is released and nothing leaves the
+				// state, so it is a note, not a retirement.
+				if inState[r.Address] && !produced[r.Address] {
 					rets = append(rets, r)
 					continue
 				}
