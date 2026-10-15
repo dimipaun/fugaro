@@ -115,7 +115,20 @@ func TestChecklistHasCheck52(t *testing.T) {
 		"### 2. U1 — answered by the owner's ruling; no probe",
 		"**OWNER RULING, 2026-10-15 — \"probe U1: cannot be scoped\".**",
 		"Bitbucket stays on the per-repository path",
-		"**D5 stays exactly as the design already has it**",
+		// The ruling's consequences, which the plan carries in the same words
+		// (Task 3.0 step 2, the §13 map and "Accepted as deferred"): Bitbucket
+		// has no project-wide credential, so a shared job has nothing to hold
+		// for it, the phase's shared jobs are GitHub's, and the one step the
+		// ruling lands in is Task 3.7's live check. The section used to say
+		// "D5 stays exactly as the design already has it" while the design's
+		// D5 row still read "First-class in phase 3, via a project-wide
+		// Bitbucket access token" — the opposite of the ruling, and the reason
+		// the plan's design-amendments list now owes a D5 amendment.
+		"**Phase 3's shared project jobs serve GitHub repositories.**",
+		"plan Tasks 3.1 to 3.7 proceed as written",
+		"Check 53 runs the GitHub path and its FACT says so",
+		"**D5 no longer reads \"first-class in phase 3\", and the design is amended to record that.**",
+		"the plan carries the amendment that puts the ruling in both",
 		"**This step has no commands, and it creates and probes nothing.**",
 		"**FACT:** the ruling in the owner's own words, with its date",
 		"no credential, project or repository was created for U1",
@@ -131,6 +144,10 @@ func TestChecklistHasCheck52(t *testing.T) {
 		"PROBE_WS", "OUT_WS", "PROBE_PROJECT", "OUT_PROJECT", // the scratch scope's variables
 		"PROBE_TOKEN", "GIT_ASKPASS", "credential.helper", // the credential path
 		"bitbucket.org", "git remote", "ls-remote", "security find-internet-password",
+		// The claim that the design needs no amendment, which is false while
+		// its D5 row reads "First-class in phase 3, via a project-wide
+		// Bitbucket access token": the plan owes a D5 amendment (Task 0.5).
+		"D5 stays exactly as the design already has it",
 	} {
 		if strings.Contains(u1, dead) {
 			t.Errorf("the Check 52 U1 step still carries the dead probe (%q): it is a record of the ruling, with no commands", dead)
@@ -165,6 +182,24 @@ func TestChecklistHasCheck52(t *testing.T) {
 	})
 	if strings.Contains(section, "read -p ") {
 		t.Error("the Check 52 section prompts with read -p, which is bash-only (zsh: no coprocess)")
+	}
+
+	// Each throwaway secret is created only if it is the one that is gone
+	// (review 5): the NEED test above it decides whether to *prompt*, and a
+	// re-run after a partial cleanup — a failed or interrupted run leaves one
+	// of the two deleted and the other in place — would stop with
+	// ALREADY_EXISTS on the survivor and never reach step 1. So every create
+	// is introduced by its own describe and `||`.
+	chk52MustContain(t, section, "section", []string{
+		`gcloud secrets describe "${PROBE_IN:?}" --project="${P:?}" >/dev/null 2>&1 \`,
+		`gcloud secrets describe "${PROBE_OUT:?}" --project="${P:?}" >/dev/null 2>&1 \`,
+		`|| printf '%s' "${THROWAWAY:?}" | gcloud secrets create "${PROBE_IN:?}"  --project="${P:?}" --data-file=-`,
+		`|| printf '%s' "${THROWAWAY:?}" | gcloud secrets create "${PROBE_OUT:?}" --project="${P:?}" --data-file=-`,
+	})
+	for _, line := range strings.Split(section, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), `printf '%s' "${THROWAWAY:?}" | gcloud secrets create`) {
+			t.Errorf("the Check 52 section creates a probe secret unconditionally, so a re-run after a partial cleanup stops on ALREADY_EXISTS: %q", strings.TrimSpace(line))
+		}
 	}
 
 	// I-a: the baseline is recorded once and never overwritten, or Restore's
@@ -314,6 +349,21 @@ func TestChecklistHasCheck52(t *testing.T) {
 	if strings.Contains(section, `: "${EXEC:?`) {
 		t.Error("the Check 52 section aborts when (a)'s operation reports no execution name: a refused override is the likely answer, and its error is the FACT, not a stop")
 	}
+	// (a)'s poll is guarded on the operation name (review 5): a response that
+	// is neither an error body nor an operation — a curl that never reached the
+	// API, a body jq cannot parse — leaves OPERATION empty, and `${OPERATION:?}`
+	// in the poll would stop the whole shell, so (b), (c), U3 and U4 would
+	// never run and the FACT would be missing most of its steps. The test used
+	// to pin only the `${EXEC:?}` sibling, which is why the gap survived: what
+	// has to come first is the empty test, then the poll.
+	if i, j := strings.Index(section, `if [ -z "$OPERATION" ]; then`), strings.Index(section, "${OPERATION:?"); i == -1 || j == -1 || i > j {
+		t.Error("the Check 52 section polls with ${OPERATION:?...} without first testing the operation name for empty: a transport or parse failure would abort the shell and (b), (c), U3 and U4 would never run")
+	}
+	chk52MustContain(t, section, "section", []string{
+		`if [ -z "$OPERATION" ]; then`,
+		`echo "U2(a): the response carried no operation name — a transport or parse failure, not the API's answer. Record what came back, and go on:"`,
+		`head -c 400 "${CHK52_TMP:?}/run-a.json"; echo`,
+	})
 
 	// The three read-backs are v1 JSON paths, because `gcloud run jobs describe`
 	// and `gcloud run jobs executions describe` force the v1 API
