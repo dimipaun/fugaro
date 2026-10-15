@@ -2211,7 +2211,7 @@ Add to the operator steps, after the base-image upgrade order:
 
 Starts right after 0.7.0 is released. **No task below is in any 0.7.0 group or in the 0.7.0 release notes.**
 
-**Owner ruling, 2026-10-14: Tasks 26, 27 and 28 are dropped.** Cloud Run gen-2 does not support Docker, so the Check 31 measurement and the Docker-on-gen-2 backend are pointless, and Task 28 (a Cloud Batch backend) was conditional on Check 31, so it is not scheduled either (a Docker-capable backend can be designed again if real demand appears). Tasks 24, 25 and 29 may ship in 0.7.1.
+**Owner ruling, 2026-10-14: Tasks 26, 27 and 28 are dropped.** Cloud Run gen-2 does not support Docker, so the Check 31 measurement and the Docker-on-gen-2 backend are pointless, and Task 28 (a Cloud Batch backend) was conditional on Check 31, so it is not scheduled either (a Docker-capable backend can be designed again if real demand appears). Tasks 24, 25 and 29 may ship in 0.7.5.
 
 ## Group F: cost preview (branch `gt-cost`)
 
@@ -2317,7 +2317,7 @@ Outline only, about 12 tasks:
 
 ### Task 29: Delete the `fugaro ls` tombstone (P3)
 
-One function and its test. Owner ruling 2026-10-14: it may ship in 0.7.1.
+One function and its test. Owner ruling 2026-10-14: it may ship in 0.7.5.
 
 ---
 

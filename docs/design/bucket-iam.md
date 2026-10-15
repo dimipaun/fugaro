@@ -370,7 +370,7 @@ An operator's own coding agent with the operator's ADC can also write `fugaro/` 
 | H8 | Refusal | `blobx.ErrForbidden` plus one operator-role message, exit 1, no pre-check | pre-flight `testIamPermissions` |
 | H9 | Detection | doctor `runs-bucket-iam`: the policy when readable, else the caller's own test; warnings, never errors | policy only (no self test) |
 | H10 | Rollback | no toggle; a documented `gcloud ... add-iam-policy-binding` | `terraform.launcher_bucket_access: full` |
-| H11 | Rollout | in 0.7.0; one operator's `fugaro init` as the last step of the 0.7.0 notes | a separate 0.7.1 |
+| H11 | Rollout | in 0.7.0; one operator's `fugaro init` as the last step of the 0.7.0 notes | a separate 0.7.5 |
 | H12 | Project-level writers | documented and reported by doctor, not changed | remove the `projectEditor:` convenience binding |
 | H13 | Audit trail | documented optional `DATA_WRITE` audit logs | Terraform-managed audit config |
 | H14 | Live check | user-run Check 32 on the `fugaro` installation (the sandbox repository lives there since 2026-10-13), the owner's go-ahead for that apply; never `belong` | a throwaway installation |

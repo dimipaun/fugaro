@@ -41,7 +41,7 @@ const layeredSince = "0.6.0"
 // one). Once Task 17 ships, this constant's job becomes the same as the
 // others': docs/release.md's ("Before you tag") checklist verifies it
 // equals the release that ships it.
-const cloneSince = "0.7.1"
+const cloneSince = "0.7.5"
 
 // cloneShipped is false until the release named by cloneSince is actually
 // tagged: Task 17's runner side (the runner's own FUGARO_CHECKOUT support,
@@ -91,7 +91,7 @@ const recipesV07Since = "0.7.0"
 // but against ready.Check.Image, the check job's own base ref, in planRepo --
 // see the gate there. docs/release.md ("Before you tag") has the checklist
 // verify it equals the release that ships the field.
-const gitSecretIDSince = "0.7.1"
+const gitSecretIDSince = "0.7.5"
 
 // namedTokensSince is the first fugaro release whose runner reads a task's
 // oauth_token field (docs/design/named-oauth-tokens.md); an older runner

@@ -260,7 +260,7 @@ type Workflow struct {
 	// Task 17, in the tree but in no tagged release) is what actually reads
 	// FUGARO_CHECKOUT and makes the
 	// blobless clone, so a checkout: clone launch is refused at launch
-	// until fugaro 0.7.1 (internal/cli/recipes_skew.go's cloneSince) ships
+	// until fugaro 0.7.5 (internal/cli/recipes_skew.go's cloneSince) ships
 	// it, whether or not the installation's own base image (fugaro-base)
 	// has been published — a separate, person-run step this plan does not
 	// do. Use checkout: baked to run a workflow today.

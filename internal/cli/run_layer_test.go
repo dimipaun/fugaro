@@ -162,7 +162,7 @@ func TestRunClonedWorkflowWithProjectLayerLaunchesWithNoBuildRecord(t *testing.T
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
-	f.appendConfig(t, "base_images: {base: ghcr.io/dimipaun/fugaro-base:0.7.1}\n")
+	f.appendConfig(t, "base_images: {base: ghcr.io/dimipaun/fugaro-base:0.7.5}\n")
 	testutil.IsolateGit(t)
 	other := mustSlug("github", "acme/other")
 	f.run.AddJob(gcp.JobName(other, "svc"), "2", "4Gi")

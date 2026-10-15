@@ -1751,7 +1751,7 @@ func changedRepoBuild(infra.RepoSpec) []planChange {
 
 // sandboxBaseRelease is a release base image of the sandbox fixture's base
 // kind, at or after gitSecretIDSince (B2's gate judges it).
-const sandboxBaseRelease = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.7.1"
+const sandboxBaseRelease = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.7.5"
 
 // B1 inside init's own flow: the spec planRepo returns is the one Readiness
 // resolved (not the pre-Readiness one its callers used to keep), and the
