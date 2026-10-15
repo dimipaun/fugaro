@@ -97,18 +97,8 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	if spendErr == nil {
 		spendErr = provErr
 	}
-	// Where this process runs, resolved from the invocation and from the
-	// platforms' own signals (design compute-backend.md §2.5). Local is the
-	// invocation's answer, never a missing marker: `exec --task-file` is
-	// the CLI's one local invocation, and only where no platform claims the
-	// process -- the same flag on a Cloud Run execution is refused below,
-	// because the two rules cannot both apply to one run. Everything else
-	// is in the cloud, so a platform no backend claims (or one whose marker
-	// was stripped) fails closed instead of open.
-	platform := backend.DetectPlatform(os.Getenv)
-	if o.taskFile != "" && platform.Backend() == "" {
-		platform = backend.LocalPlatform()
-	}
+	// Where this process runs, resolved once and read by every check below.
+	platform := execPlatform(o, os.Getenv)
 	// The budget backend (the project's Firebase database): a local run may
 	// point it at a loopback database, a cloud run never.
 	be, beErr := runner.BackendFromEnv(os.LookupEnv, platform.Local())
@@ -378,6 +368,26 @@ func readTaskFile(path string, stdin io.Reader) (*task.Spec, error) {
 		return nil, fmt.Errorf("task file: %w", err)
 	}
 	return &s, nil
+}
+
+// execPlatform is where this process runs, resolved from the invocation
+// first and from the platforms' own signals second (design
+// compute-backend.md §2.5, C12). Every check in runExec reads this one
+// value.
+//
+// Local is the invocation's own answer, never a missing marker: `exec
+// --task-file` is the CLI's one local invocation, and it names the local
+// case only where no platform claims the process -- the same flag on a
+// Cloud Run execution stays a contradiction, refused later, because the
+// two rules cannot both apply to one run. Everything else is in the cloud,
+// so a platform no backend claims (or one whose marker was stripped) fails
+// closed rather than open.
+func execPlatform(o execOptions, getenv func(string) string) backend.Platform {
+	platform := backend.DetectPlatform(getenv)
+	if o.taskFile != "" && platform.Backend() == "" {
+		return backend.LocalPlatform()
+	}
+	return platform
 }
 
 // execPrices are the prices the runner estimates compute with: on Cloud

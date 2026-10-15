@@ -155,6 +155,67 @@ func TestExecRefusesHTTP2Debug(t *testing.T) {
 	}
 }
 
+// execPlatform is the one resolved answer every check in runExec reads
+// (design compute-backend.md §2.5, C12): the invocation names local, the
+// platform's own signal names the backend, and everything else is in the
+// cloud.
+func TestExecPlatformResolution(t *testing.T) {
+	get := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	run := map[string]string{"CLOUD_RUN_EXECUTION": "fugaro-acme-app-app-aaaaa", "CLOUD_RUN_JOB": "fugaro-acme-app-app", "FUGARO_GCP_PROJECT": "proj-1234", "FUGARO_REGION": "us-east5"}
+	for name, tc := range map[string]struct {
+		o       execOptions
+		env     map[string]string
+		local   bool
+		backend string
+	}{
+		"a local task file": {execOptions{taskFile: "/tmp/task.json"}, nil, true, backend.Local},
+		"a local run is not a cloud run whatever the shell holds": {execOptions{taskFile: "/tmp/task.json"}, map[string]string{"FUGARO_BACKEND": backend.CloudRun, "FUGARO_RUN": "acme-app/20260926-221530-abcd"}, true, backend.Local},
+		"a task file on a Cloud Run execution stays a cloud run":  {execOptions{taskFile: "/tmp/task.json"}, run, false, backend.CloudRun},
+		"a Cloud Run execution":                                   {execOptions{run: "acme-app/20260926-221530-abcd"}, run, false, backend.CloudRun},
+		// No marker at all, or only Fugaro's own variables: in the cloud,
+		// and no backend claims it -- the fail-closed default.
+		"no marker": {execOptions{run: "acme-app/20260926-221530-abcd"}, nil, false, ""},
+		"a Fugaro variable is not a signal": {execOptions{run: "acme-app/20260926-221530-abcd"},
+			map[string]string{"FUGARO_BACKEND": backend.CloudRun, "FUGARO_GCP_PROJECT": "proj-1234", "FUGARO_REGION": "us-east5", "FUGARO_RUN": "acme-app/20260926-221530-abcd"}, false, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := execPlatform(tc.o, get(tc.env))
+			if p.Local() != tc.local || p.Backend() != tc.backend || p.InCloud() == tc.local {
+				t.Fatalf("platform = local %v, backend %q, in cloud %v; want local %v, backend %q", p.Local(), p.Backend(), p.InCloud(), tc.local, tc.backend)
+			}
+		})
+	}
+}
+
+// A process no platform claims is in the cloud, not local: `exec --run`
+// with no marker is refused for the missing job environment rather than
+// running as a local run with the cloud checks switched off (design
+// compute-backend.md §2.5, C12).
+func TestExecUnclaimedProcessIsInTheCloud(t *testing.T) {
+	t.Setenv("FUGARO_RUN", "")
+	t.Setenv("FUGARO_GIT_PROVIDER", "")
+	t.Setenv("FUGARO_PROJECT", "")
+	t.Setenv("FUGARO_GCP_PROJECT", "")
+	t.Setenv("CLOUD_RUN_EXECUTION", "")
+	dir := t.TempDir()
+	_, _, err := execute(t, "exec", "--bucket", "file://"+dir, "--run", "acme-app/20260926-221530-abcd",
+		"--workdir", filepath.Join(t.TempDir(), "work"), "--state-dir", filepath.Join(t.TempDir(), "state"))
+	if ExitCode(err) != ExitRemoteError || err == nil || !strings.Contains(err.Error(), "FUGARO_GCP_PROJECT") {
+		t.Fatalf("err = %v (exit %d)", err, ExitCode(err))
+	}
+	// The refusal is the cloud one, recorded as the run's infra_error the
+	// way a Cloud Run job without the variables is.
+	b, err := fileblob.OpenBucket(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	rec, rerr := runstore.Open(b, "acme-app", "20260926-221530-abcd").ReadRecord(context.Background())
+	if rerr != nil || rec.Status != runstore.StatusInfraError || rec.Stage != "bootstrap" || !strings.Contains(rec.Reason, "FUGARO_GCP_PROJECT") {
+		t.Fatalf("record = %+v, %v", rec, rerr)
+	}
+}
+
 // On Cloud Run the runner prices compute with FUGARO_COMPUTE_PRICES when it
 // is set, so its PR report agrees with ls; a malformed value is a warning
 // and the list price.
@@ -376,7 +437,13 @@ func localExecCfg(t *testing.T, edit func(string) string, env map[string]string,
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { b.Close() })
-	store := runstore.Open(b, "acme-app", runID)
+	// The provider kind is part of the slug, and `--task-file` derives it
+	// from --provider, as the CLI does for the task it writes.
+	slug, err := task.Slug("fake", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := runstore.Open(b, slug, runID)
 	// `--task-file` is the CLI's one local invocation (design
 	// compute-backend.md §2.5): a local run is named by the invocation, so
 	// this is what makes the checks below treat the process as local.
