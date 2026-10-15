@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -280,5 +281,103 @@ func TestRunFakeRefusesAForeignNameAndAnUpdateMask(t *testing.T) {
 	}
 	if code, _ := jobCall(t, f, http.MethodPatch, path, j); code != http.StatusOK || len(f.Patches()) != 1 {
 		t.Fatalf("the job's own name: %d", code)
+	}
+}
+
+// jobs.list carries each job's labels: they are what makes a job
+// discoverable as this repository's (infra.Orphans), and the real API lists
+// them. jobs.delete takes the job away when its operation is done, and a
+// job that is not there is 404 -- both recorded, so a test can tell a
+// delete that happened from one that was never attempted.
+func TestRunFakeListsJobLabelsAndDeletesAJob(t *testing.T) {
+	f := NewRun(t)
+	f.Project, f.Region = "proj-1", "r1"
+	f.SetJob("fugaro-x-web", map[string]string{"fugaro": "managed", "fugaro_repo": "x", "fugaro_workflow": "web"}, "img:1")
+	f.SetJob("someone-elses", map[string]string{"team": "other"}, "img:2")
+
+	code, list := jobCall(t, f, http.MethodGet, "/v2/projects/proj-1/locations/r1/jobs", nil)
+	jobs, _ := list["jobs"].([]any)
+	if code != http.StatusOK || len(jobs) != 2 {
+		t.Fatalf("jobs.list: %d %v", code, list)
+	}
+	first, _ := jobs[0].(map[string]any)
+	if first["name"] != "projects/proj-1/locations/r1/jobs/fugaro-x-web" {
+		t.Fatalf("jobs.list = %v", jobs)
+	}
+	labels, _ := first["labels"].(map[string]any)
+	if labels["fugaro"] != "managed" || labels["fugaro_workflow"] != "web" {
+		t.Fatalf("the job's labels are not listed: %v", first)
+	}
+	if second, _ := jobs[1].(map[string]any); second["labels"] == nil {
+		t.Fatalf("a foreign job's labels are not listed either: %v", second)
+	}
+
+	code, op := jobCall(t, f, http.MethodDelete, "/v2/projects/proj-1/locations/r1/jobs/fugaro-x-web", nil)
+	if code != http.StatusOK || op["done"] != true {
+		t.Fatalf("jobs.delete: %d %v", code, op)
+	}
+	if f.HasJob("fugaro-x-web") {
+		t.Fatal("the deleted job is still there")
+	}
+	if got := f.JobDeletes(); !slices.Equal(got, []string{"fugaro-x-web"}) {
+		t.Fatalf("JobDeletes = %q", got)
+	}
+
+	code, _ = jobCall(t, f, http.MethodDelete, "/v2/projects/proj-1/locations/r1/jobs/fugaro-x-web", nil)
+	if code != http.StatusNotFound {
+		t.Fatalf("deleting a job that is not there: %d, want 404", code)
+	}
+	if got := f.JobDeletes(); !slices.Equal(got, []string{"fugaro-x-web", "fugaro-x-web"}) {
+		t.Fatalf("JobDeletes = %q; a refused attempt is recorded too", got)
+	}
+}
+
+// A delete's operation is polled to a terminal state before the job is gone,
+// and it can fail or time out on its own: the three outcomes Task 5's flow
+// distinguishes.
+func TestRunFakeDeleteWaitsForItsOperationAndCanFail(t *testing.T) {
+	f := NewRun(t)
+	f.Project, f.Region = "proj-1", "r1"
+	const path = "/v2/projects/proj-1/locations/r1/jobs/fugaro-x-web"
+	f.SetJob("fugaro-x-web", map[string]string{"fugaro": "managed"}, "img:1")
+
+	f.SetJobFaults(JobFaults{DeletePolls: 2})
+	code, op := jobCall(t, f, http.MethodDelete, path, nil)
+	opPath, _ := op["name"].(string)
+	if code != http.StatusOK || opPath == "" || op["done"] == true {
+		t.Fatalf("a delete whose operation is not done yet: %d %v", code, op)
+	}
+	if !f.HasJob("fugaro-x-web") {
+		t.Fatal("the job went away before its operation was done")
+	}
+	for i, want := range []bool{false, false, true} {
+		_, o := jobCall(t, f, http.MethodGet, "/v2/"+opPath, nil)
+		if done, _ := o["done"].(bool); done != want {
+			t.Fatalf("poll %d: done = %v, want %v (%v)", i+1, done, want, o)
+		}
+	}
+	if f.HasJob("fugaro-x-web") {
+		t.Fatal("the job is still there after its operation was done")
+	}
+
+	f.SetJob("fugaro-x-web", map[string]string{"fugaro": "managed"}, "img:1")
+	f.SetJobFaults(JobFaults{DeleteOpError: "boom"})
+	_, op = jobCall(t, f, http.MethodDelete, path, nil)
+	if op["done"] != true || op["error"].(map[string]any)["message"] != "boom" {
+		t.Fatalf("a failed delete's operation: %v", op)
+	}
+	if !f.HasJob("fugaro-x-web") {
+		t.Fatal("a failed delete took the job anyway")
+	}
+
+	f.SetJobFaults(JobFaults{})
+	f.FailDeleteWith = http.StatusForbidden
+	if code, _ := jobCall(t, f, http.MethodDelete, path, nil); code != http.StatusForbidden {
+		t.Fatalf("a refused delete: %d, want 403", code)
+	}
+	f.FailDeleteWith = 0
+	f.FailListWith = http.StatusForbidden
+	if code, _ := jobCall(t, f, http.MethodGet, "/v2/projects/proj-1/locations/r1/jobs", nil); code != http.StatusForbidden {
+		t.Fatalf("a refused jobs.list: %d, want 403", code)
 	}
 }
