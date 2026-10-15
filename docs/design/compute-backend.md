@@ -60,9 +60,9 @@ Batch stage) and nothing per repository — so it composes with the
 project-centric goal of "no heavy per-repository setup" rather than fighting
 it.
 
-The decisions are C1 to C11 in §1.10, C12 to C17 inline in §2 to §5, and C18 to
-C20 in §8.2; §8.2's table collects all twenty, each with its recommendation and
-the trade-off of the alternative.
+The decisions are C1 to C11 in §1.10, C12 to C17 inline in §2 to §5, C18 to
+C20 in §8.2, and C21 and C22 inline in §3.1 and §3.7; §8.2's table collects all
+twenty-two, each with its recommendation and the trade-off of the alternative.
 
 ## 1. Choice of substrate
 
@@ -687,7 +687,8 @@ working:
   Compute Engine resources that both are created by this allocation policy and
   support labels" (Batch REST reference, checked 2026-10-15). A design that
   sets only `Job.labels` leaves every VM unlabelled — and then the reaper and
-  Check 57's `gcloud compute instances list --filter='labels.fugaro=managed'`
+  Check 57a step 8's
+  `gcloud compute instances list --filter='labels.fugaro=managed'`
   find nothing, which reads as "no survivors" precisely when a VM *has*
   leaked. So the Fugaro set goes in **both**: `fugaro=managed`,
   `fugaro_repo=<slug>`, `fugaro_workflow=<variant>`, plus the per-run
@@ -1097,10 +1098,15 @@ pre-phase-3 spelling of it.
 
 A project may run on the VM backend while most of its workflows do not need
 Docker, and — more importantly — a workflow that never needs Docker should not
-pay for a VM or expose the socket. generic-tool §1 already decided the shape
-for this: a workflow key `docker: true` (scopes: project via a profile, and
-repository). **Recommendation (C16): reuse `docker: true`**, because it names
-the capability rather than the mechanism, and it is already the decided name.
+pay for a VM or expose the socket. generic-tool §1 proposed the shape for this:
+a workflow key `docker: true` (scopes: project via a profile, and repository).
+It was a **conditional proposal, not a decision** — it sits under "**If gen-2
+is suitable**", whose branch the owner's measurement has since closed
+(generic-tool §1; Task 28's restore). So the name is this design's to choose,
+and **Recommendation (C16): adopt `docker: true` anyway**, because it names the
+capability rather than the mechanism, and because a second name for one idea
+(`runtime: docker`) is worse than a name inherited from a branch that did not
+happen.
 
 - On the VM backend, `docker: true` mounts the socket, adds `DOCKER_HOST` to
   the agent's environment allowlist (scoped so it appears **only** for such
@@ -1175,33 +1181,80 @@ precheck (`cli/launch_budget.go`) is likewise unchanged except that
 ### 5.2 Compute dollars: instances are billed differently
 
 `cost.compute_usd` is an estimate of the compute the run consumed (v1 §10.1:
-billed duration × (vCPU × price per vCPU-second + GiB × price per GiB-second)),
-produced by `backend.Prices` for the backend's region (`internal/backend/gcp/
-prices.go` is the Cloud Run table; a Batch backend ships its own). Two
-differences to model, both from cloud.google.com/compute/pricing (checked
-2026-10-15):
+billed duration × (vCPU × price per vCPU-second + GiB × price per GiB-second)).
+**The earlier draft described a single estimate computed from the workflow's
+requested resources; the code computes it in two places, and neither survives
+a VM unchanged:**
 
-1. **A one-minute minimum.** "All vCPUs, GPUs, and GB of memory are charged a
-   minimum of 1 minute." The backend's compute estimate must floor the billed
-   duration at 60 s, or every short run is under-reported. `Execution.Billed`
-   currently returns the raw duration; the VM backend applies the floor where
-   it computes `compute_usd` (not in `Billed`, which other callers use for
-   different purposes).
-2. **A different price table, plus extras.** Compute Engine vCPU/GiB list
-   prices per region differ from Cloud Run's, and a run may also consume a
-   boot disk and Cloud NAT. Recommendation (C17): `compute_usd` covers the
-   VM's vCPU/memory (the same shape as today, so `report`/history need no new
-   column), and the disk/NAT costs are **named as not in the figure** in the
-   report's source line — they are small but not zero, and pretending they are
-   in the per-run figure would be a worse lie than naming them out. The exact
-   list prices are UNVERIFIED here and belong in the backend's price table
-   with its own `Source` string and check date, the way Cloud Run's does.
+1. **In the runner, live** (`internal/runner/cost.go:55-66`): with a gateway
+   up, `r.d.Prices.ComputeUSD(r.wf.Resources.CPU, MemoryGiB(
+   r.wf.Resources.Memory), r.d.Now().Sub(r.rec.StartedAt))` — **the workflow's
+   requested** vCPU/memory, from the record's `StartedAt` (the runner's own
+   first line). The prices come from `FUGARO_COMPUTE_PRICES`
+   (`internal/runner/prices.go`), which the job env carries from the local
+   config's `compute_prices`, so the runner's figure matches `fugaro ls`'s.
+2. **In the CLI** (`internal/runview/runview.go:351-363`): when the backend
+   reports an execution, `prices(region).ComputeUSD(e.CPU, e.MemoryGiB,
+   e.Billed(now))`, where `region` is `backend.ParseExecution(e.Name)`'s — and
+   `e.CPU`/`e.MemoryGiB` are the **execution's own limits** as the backend
+   reports them.
+
+On a Batch VM both break, in three ways, not one:
+
+- **The region does not parse.** A Batch job name has six fields, so
+  `ParseExecution` returns `ok == false`, `region` stays `""` and the CLI
+  prices the run against whatever the empty-region table is. The fix belongs
+  with C12's codec: each backend resolves its own region, and `runview` asks
+  the backend rather than parsing the name.
+- **The billed window is wrong at the front.** A VM is billed from **boot**,
+  and boot, Batch's own setup and a possible 3.8 GB pull (§1.2) all happen
+  before the runner's first line and before the task's start time. Neither
+  estimate counts them, and on a slow cold start they can be most of a short
+  run's cost. The VM estimate therefore starts its window at the job's
+  `SCHEDULED` (or the VM's creation) time, not at `StartedAt`, and says so in
+  the source line.
+- **The quantities are the machine type's, not the workflow's.** Compute bills
+  the VM: an `e2-standard-4` is 4 vCPU / 16 GiB whatever `resources:` says. So
+  the runner-side estimate (which uses `wf.Resources`) is replaced on this
+  backend by the **machine type's** vCPU and memory — which is what
+  `Execution.CPU`/`MemoryGiB` already carry on the Cloud Run side, and what
+  Batch's `Execution` maps to (§2.3). The local config's `compute_prices`
+  (`FUGARO_COMPUTE_PRICES`) is then seeded from the **Batch price table** for
+  the installation's region, so the runner and the CLI still agree.
+
+So the estimate's shape is unchanged (duration × vCPU × price + duration × GiB
+× price), and what changes is which duration and which vCPU/GiB go into it.
+On top of that, two Compute Engine facts (cloud.google.com/compute/pricing,
+checked 2026-10-15):
+
+- **A one-minute minimum.** "All vCPUs, GPUs, and GB of memory are charged a
+  minimum of 1 minute." The estimate floors the billed duration at 60 s, or
+  every short run is under-reported. `Execution.Billed` keeps returning the raw
+  duration — other callers use it for other purposes — and the floor is
+  applied where the VM backend computes `compute_usd`.
+- **A different price table, plus extras.** Compute Engine vCPU/GiB list prices
+  differ from Cloud Run's per region, and a run also consumes a boot disk and
+  (with C7) Cloud NAT. Recommendation (C17): `compute_usd` covers the VM's
+  vCPU/memory — the same shape as today, so `report` and the history need no
+  new column — and the disk/NAT costs are **named as not in the figure** in
+  the report's source line, because pretending they are in the per-run figure
+  would be a worse lie than naming them out. The exact list prices are
+  UNVERIFIED here and belong in the backend's price table with its own
+  `Source` string and check date, the way Cloud Run's does. `Batch` itself
+  adds nothing (§1.3).
 
 **Compute stays reported, never capped** (m9 D7): the per-run and daily caps
 are model dollars only. This matters more on a VM, where a Docker-heavy run
-can be long and compute-heavy; the design keeps the m9 rule rather than
-inventing a compute cap. The daily history's `computeMicros` (m9 §549, §776)
-carries the VM estimate unchanged in shape.
+can be long and compute-heavy — and it matters twice as much because the
+estimate is now a *floor* on real spend (boot and pull are in the bill and,
+until the window is fixed above, not in the figure): the caps will not stop a
+run that is only burning VM time, and §3.5 says an agent can spend model money
+off the gateway entirely. The design keeps the m9 rule rather than inventing a
+compute cap, and says so in SECURITY.md. The daily history's `computeMicros`
+(m9 §549, §776) carries the VM estimate unchanged in shape.
+
+**Check 57b step 5 compares the estimate with the billing export** for one
+real run, which is the only thing that settles the three corrections above.
 
 ## 6. Migration and scope
 
@@ -1221,8 +1274,11 @@ carries the VM estimate unchanged in shape.
 
 A VM backend is **orthogonal to shared project jobs** (project-centric phase
 3). Shared jobs exist because Cloud Run cannot vary a job per execution; a VM
-backend creates a fresh job per run, so it never needs to share, and it
-*sidesteps* the isolation loss D4 accepted (§3.1). Consequences:
+backend creates a fresh job per run, so it never needs to share — but **it
+does not sidestep the isolation loss D4 accepted**: IAM isolation follows the
+service account, and C6's account is the profile's, so the loss applies on the
+VM backend exactly as it does on a shared job (§3.1, C21). What it removes is
+the *shared job*, and with it the reason Cloud Run had to share. Consequences:
 
 - **Before phase 3**, a VM backend uses the current model: a per-repository
   job service account and an installation-level Batch stage. It works, but it
@@ -1233,14 +1289,14 @@ backend creates a fresh job per run, so it never needs to share, and it
 - The **seam generalisation (C12)** is independent of both and can land first.
 - Recommendation: the plan's first cloud-free task is the conformance suite
   against a fake (§8.1, task 2), which needs neither phase 3 nor any cloud, and
-  the live measurement (Check 57) gates the rest.
+  the live measurement (Check 57a) gates the rest.
 
 ### 6.3 Out of scope
 
 - **Docker on Cloud Run** (gen-1 or gen-2): measured impossible by the owner;
   the gen-2 probe (Task 26) and Docker-on-gen-2 (Task 27) are dropped.
 - **Rootless Docker / Podman**: not the chosen mechanism (§1.1); revisitable
-  only if the socket path fails Check 57's permission step.
+  only if the socket path fails Check 57a's permission step.
 - **Windows VMs, GPUs, TPUs.**
 - **A compose/orchestration layer**: the agent brings its own
   `docker compose`; Fugaro gives it a daemon and nothing more.
@@ -1266,12 +1322,15 @@ of Checks 30 and 32.
 `docs/gcp-live-checklist.md` reserves a number once and never reuses it. On
 `main`, checks 1–44 have rows and the provider-price-catalog design's paragraph
 names 45 as "the next free number" — true when that paragraph was written.
-Since then, this design is told, the numbers **45–47 and 48–56 were claimed by
-other plans in flight**; their rows appear in the table when those plans land,
-which is why nothing sits between 44 and 57 today. So this design claims
-**Check 57**, and its row and its reservation paragraph are additive. If those
-reservations turn out not to exist, the number is still valid — the ruling is
-"never reuse or renumber", not "always use the lowest". The narrow escape is
+Since then the numbers have been claimed by plans that have not landed here:
+**45 and 46 by the OpenRouter senior-reviewer plan (PR #359), 47 by the
+subscription-OAuth-token plan (PR #363, merged as `ba03ab5` — its row *is* in
+the table), and 48–56 by the project-centric plan (PR #366)**; a number reserved in a plan is reserved
+whether or not its row is written, which is why nothing sits between 47 and 57
+today. So this design claims **Check 57**, and its row and its reservation
+paragraph are additive. If those reservations turn out not to exist, the number
+is still valid — the ruling is "never reuse or renumber", not "always use the
+lowest". The narrow escape is
 not repeated either: the plan this check comes from numbered the dropped probe
 Check 31, which the registry had already given to `fugaro upgrade`, so this one
 reads the registry first (§9).
@@ -1380,41 +1439,73 @@ touched at any step.
 ### 8.1 The tasks
 
 Not the full plan (that is written after the owner approves this design and
-Check 57 answers). Ordered so **each task merges alone** and the **first one
-delivers value**.
+the pre-build probe, Check 57a, answers). Ordered so **each task merges
+alone**, the **first one delivers value**, and — the ordering rule the earlier
+draft broke — **no task can be enabled before the machinery it needs exists**:
+`backend: cloud-batch` stays refused by config validation until the enable
+task, and the enable task is after logs, cost and the reaper, because a Batch
+run without log routing leaves its output in `_Default` where every project
+viewer reads it (§1.5), and a Batch run without a reaper leaks VMs (§3.4).
 
-1. **The seam's name codec (C12).** Move `ParseExecution`, `SameExecution`,
-   `ExecutionFromEnv`, `OnCloudRun`-as-cloud-detection and `CheckRunExecution`
-   behind a per-backend codec on `Backend`, with Cloud Run's behaviour
-   byte-for-byte unchanged. Merges alone; no new backend; every existing test
-   green. Value: the seam is honest about names before a second name shape
-   exists.
+**Task 0 is the owner's, and it is first: Check 57a** (§7.2). It needs no
+Fugaro change at all — committed job JSON and `gcloud` — and it is the
+go/no-go for the rest (G2's 120 s budget, the socket, the log filter, the
+teardown). Nothing below it should be planned past Task 2 before its FACT
+lines exist.
+
+Tasks marked **[review]** need a security-focused review by the owner or a
+senior reviewer before merge, not just the normal one.
+
+1. **The seam's name codec and cloud detection (C12).** **[review]** Move
+   `ParseExecution`, `SameExecution`, `ExecutionFromEnv`, `OnCloudRun` and the
+   job-binding check behind a per-backend codec, add the fail-closed "in the
+   cloud" marker, and keep Cloud Run's behaviour byte-for-byte unchanged
+   (§2.5). Merges alone; no new backend; every existing test green. Value: the
+   seam is honest about names before a second name shape exists, and the four
+   call sites that currently fail open on an unknown platform stop failing
+   open.
 2. **The Batch fake and the conformance suite, behind a flag.** Add a Batch
    fake to `internal/gcpfake` and an `internal/backend/batch` that passes
-   `backendtest.Run` against it, with `backend: cloud-batch` still **refused**
-   by config validation until Check 57 passes. This is the first task a
-   contributor can do and the first that proves the seam fits; it needs no
-   cloud and no owner step.
-3. **The Batch provisioning stage in `fugaro init`** (owner-run live step): the
-   Batch API, the service account (reused), the boot image or image streaming,
-   the NAT/router or the firewall, and the log sink/exclusion arm (§1.5).
-4. **The secrets bootstrap**: the runner (or a base-image entrypoint shim)
-   resolves the named secrets from Secret Manager as the VM's service account
-   before `fugaro exec`.
-5. **The Docker socket, the env allowlist and SECURITY.md** (§1.1, §3.6).
-6. **Config**: `backend:` and `docker:`, `fugaro validate`, `fugaro doctor`,
-   `fugaro backends ls` (§4).
-7. **Cost**: the VM price table, the one-minute floor and the report/history
-   source line (§5.2).
-8. **Logs**: the Cloud Logging filter for `batch.googleapis.com/Job` and
-   `fugaro logs` (§1.5, §2.3).
-9. **The reaper and the teardown paths** (§3.4).
-10. **Check 57, the docs, the skills and the release bullet** — the last task,
-    as in every other group.
+   `backendtest.Run` against it — including the cancel case, which is what
+   makes `jobs.cancel` rather than `jobs.delete` a tested requirement (§1.4) —
+   with `backend: cloud-batch` still **refused** everywhere. The first task a
+   contributor can do, needing no cloud and no owner step.
+3. **Cost**: the VM price table, the machine type's quantities, the boot-window
+   start, the one-minute floor and the report/history source line, plus the
+   `runview` region fix (§5.2). Independent of the backend being selectable.
+4. **Logs**: the `batch.googleapis.com/Job` arm of the sink and exclusion, and
+   the `labels.job_uid` filter for `fugaro logs` (§1.5, §2.3).
+5. **The reaper, the queue deadline and the teardown paths.** **[review]** The
+   job-first reaper, its dedicated project-wide account, and the queue deadline
+   (§1.4, §3.4). Destructive: the review is on the permissions and on what it
+   refuses to delete.
+6. **The Batch provisioning stage in `fugaro init`** (owner-run live step):
+   the Batch API, `containerfilesystem` if streaming is used, the service
+   accounts and the launcher/reaper IAM (§3.2, §3.7), the boot image or
+   streaming, the NAT/router, and the sink arm of Task 4. **[review]**
+7. **The job definition, `Launch` and the socket.** **[review]** The job JSON
+   (labels in both fields, `secretVariables`, `maxRetryCount: 0`,
+   `maxRunDuration`, `logsPolicy`, `blockProjectSshKeys`), the injectable
+   execution name (§2.5), the socket mount and the env allowlist' `DOCKER_HOST`
+   addition, and the SECURITY.md section (§1.1, §2.2–§2.4, §3.6). This is the
+   task that makes root-on-a-VM real, hence the review.
+8. **Config, `validate`, `doctor`, `backends ls`** — the plumbing for §4, with
+   `cloud-batch` still refused.
+9. **The enable task**: config validation starts **accepting**
+   `backend: cloud-batch`, and `fugaro doctor` refuses the installation until
+   the provisioning, IAM, logs, cost and reaper checks all pass (§4.4). This is
+   the only task that lifts the refusal of Tasks 2 and 8, and it comes after
+   3, 4, 5 and 6 — by construction, because `doctor` is what gates it.
+10. **Check 57b, the docs, the skills and the release bullet** — the last task,
+    as in every other group: the post-build acceptance run on the real backend
+    (§7.3).
+11. **The secrets fallback (only if needed).** The runner-side Secret Manager
+    fetch for a secret whose name is known only at run time (§1.6). It is a
+    task only if Task 7 finds such a case; otherwise it is dropped, not built.
 
 ### 8.2 Open decisions for the owner
 
-Every decision in this document, C1 to C20, in one place: the ones taken above
+Every decision in this document, C1 to C22, in one place: the ones taken above
 and the ones that were only ever recommendations (§2, §3, §4.3, §5.2), each
 with the alternative and what it costs. The sections above are where the
 reasoning lives; this table is the checklist.
@@ -1424,13 +1515,13 @@ reasoning lives; this table is the checklist.
 | C1 | Substrate | Cloud Batch, one job with one task per run | Plain Compute Engine instances (full control, but Fugaro owns lifecycle/timeouts/logs/reaper); MIG rejected |
 | C2 | Docker source | The host daemon via the socket | Rootless/DinD (same host power, more parts, needs an unverified `--privileged` path) |
 | C3 | Isolation unit | One VM per run, never reused | A warm pool (breaks run-to-run isolation) |
-| C4 | Cold start | Preloaded boot image; image streaming as the lighter option | Plain pull every run (simplest, slowest); settled by Check 57 |
+| C4 | Cold start | **Image streaming first** (in-region Artifact Registry, the `containerfilesystem` API, no custom image to maintain); a preloaded boot image as the fallback | Plain pull every run (simplest, slowest, no API to enable); the preload (a custom image Batch "might not support", with a Batch image's 60-day lifetime to rebuild against, and it costs the `options` field one socket-permission path needs). **Check 57a steps 2 and 3 measure all three and the recommendation follows the measurement** |
 | C5 | Spot | Off by default, opt-in per profile | Spot by default (up to 91% cheaper, kills a stage mid-flight) |
-| C6 | Service account | One per run class, never the default Compute Engine SA | The default SA (project-wide blast radius) |
+| C6 | Service account | One per run class — the (`profile`, `account`) job account, never the default Compute Engine SA | The default SA (project-wide blast radius, and Google's own docs call it Editor and "not recommended for production"); a per-repository account is **C21**'s question, not this one |
 | C7 | Egress | No external IP; Cloud NAT | An ephemeral IP + deny-all ingress (simpler, cheaper per run, "no inbound" rests on a firewall list) |
-| C8 | Timeouts and cancel | Batch `maxRunDuration` + `jobs.delete`, tolerating a cancel that races a finished job | Fugaro's own watchdog (needed only on plain instances) |
+| C8 | Timeouts and cancel | Batch `maxRunDuration` + **`jobs.cancel`** (not `jobs.delete`, which erases the record a cancel must still be readable from), plus a queue deadline for a job stuck in `QUEUED`; tolerate a cancel that races a finished job | Fugaro's own watchdog (needed only on plain instances); `jobs.delete` as the cancel (cheapest, and it fails the conformance suite's cancel case — §1.4) |
 | C9 | Logs | `logsPolicy.destination=CLOUD_LOGGING`, and extend the installation's sink/exclusion to `batch.googleapis.com/Job` | Leave logs in `_Default` (`fugaro logs` finds nothing, every viewer reads them) |
-| C10 | Secrets | The runner resolves named secrets from Secret Manager as the VM's service account | Bake values into the job definition (anyone with `batch.jobs.get` reads them) |
+| C10 | Secrets | **`Environment.secretVariables`** — names in the job, values resolved by the VM as the job's service account | Bake values into the job definition (anyone with `batch.jobs.get` reads them); a runner-side fetch is a fallback only for a secret name known only at run time (§1.6) |
 | C11 | `fugaro init` weight | One installation-level Batch stage, no per-repository resource | Per-repository VM setup (reintroduces the weight project-centric removes) |
 | C12 | The name seam | Generalise `Backend` (§2.5) | Encode a Batch job as a synthetic Cloud Run execution (lies in stored data) |
 | C13 | Naming | Reuse the Fugaro label set verbatim, plus a per-run label (§2.4) | Mark only the job and rely on the job-id prefix (fragile for a VM outliving its job) |
@@ -1438,9 +1529,11 @@ reasoning lives; this table is the checklist.
 | C15 | Where the backend is chosen | Per project (`backend:`), not per workflow | Per workflow (two platforms in one project); or per profile inside the policy (correct after phase 3) |
 | C16 | The Docker key | `docker: true` (generic-tool §1's name) | `runtime: docker` (a second name for the same thing); or no key (every workflow gets a socket) |
 | C17 | What `compute_usd` covers | The VM's vCPU/memory; disk and NAT named as excluded | Fold disk/NAT in (a bigger change to the report shape) |
-| C18 | When to build | After Check 57; the fake-conformance task (Task 2) may land before | Build before the measurement (risks building the wrong substrate) |
+| C18 | When to build | After the pre-build probe, **Check 57a** (which needs no Fugaro change); the fake-conformance task (Task 2) and the cost and log tasks may land before it answers, but the enable task is last (§8.1) | Build before the measurement (risks building the wrong substrate); or build the backend before logs, cost and the reaper exist (a run whose output lands in `_Default`, uncharted and unbilled — the ordering the first draft had) |
 | C19 | The preloaded image | A script in `fugaro init`'s Batch stage, one image per base version | Rely on image streaming alone (no image build, but depends on Artifact Registry + containerd) |
 | C20 | Phase order | Independent of the project-centric phases; profiles (§4.3) adopted when phase 3 lands | Wait for phase 3 (cleaner, but delays a capability the owner needs) |
+| C21 | The service account's granularity | Keep the (`profile`, `account`) account and accept project-centric D4's cross-repository loss **unchanged** on the VM backend too (§3.1) | A per-repository account, expressible on Batch because every job names its own `allocationPolicy.serviceAccount`: it buys back 0.7.0's bucket and secret boundary for the repositories that opt in, at the per-repository weight project-centric removed, and it makes "which backend" a decision with a security consequence |
+| C22 | Launcher and reaper IAM | The launcher gets `batch.jobsEditor` plus `serviceAccountUser` on the run-class accounts and nothing else, in its own account if the project can carry one; the reaper gets a **separate** account with project-wide `batch.jobs.delete` and `compute.instances.delete` (§3.7) | One account for everything (simpler to provision, and it makes the reaper's destructive power ambient — rejected); an IAM Condition narrowing `batch.jobsEditor` to Fugaro-shaped job names is worth attempting, but Conditions on Batch job names are **UNVERIFIED** (Check 57a step 9) |
 
 ## 9. Verified and unverified
 
