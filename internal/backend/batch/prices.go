@@ -8,10 +8,30 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 )
 
-// This file is the VM backend's compute price table (design
+// excludedNote is what the estimate's source line says the figure leaves
+// out (design C17). compute_usd is the VM's vCPU and memory and nothing
+// else: the boot disk is billed per GB-month prorated, an in-use external IP
+// is charged, and Cloud NAT is charged when it is used (§1.3, §1.7). Naming
+// them out is the honest form -- a per-run figure that pretended to include
+// them would be a worse lie than one that names them -- and it keeps
+// compute_usd the same shape as Cloud Run's, so the report and the daily
+// history need no new column.
+const excludedNote = "boot disk and Cloud NAT are not in this figure (design C17)"
+
+// MachineType is one Compute Engine machine type: its name and the
+// quantities a VM of it is billed for. The quantities are the machine
+// type's, never the workflow's: an e2-standard-4 is 4 vCPU / 16 GiB
+// whatever the workflow's resources: ask for (design §5.2).
+type MachineType struct {
+	Name      string
+	VCPU      float64
+	MemoryGiB float64
+}
+
+// The VM backend's compute price table (design
 // docs/design/compute-backend.md §5.2, C17): what a machine type costs, how
 // long a VM is billed for, and the source line the estimate is recorded
-// with. It is deliberately data plus two lookups, so that updating a price
+// with. It is deliberately data plus a few lookups, so that updating a price
 // is editing one line here and nothing else.
 //
 // Three things are true of every figure in it:
@@ -45,26 +65,6 @@ import (
 // on-demand rows and have not been confirmed against a bill. The one-minute
 // minimum is quoted verbatim in design §5.2 and is not in doubt; the prices
 // are.
-
-// excludedNote is what the estimate's source line says the figure leaves
-// out (design C17). compute_usd is the VM's vCPU and memory and nothing
-// else: the boot disk is billed per GB-month prorated, an in-use external IP
-// is charged, and Cloud NAT is charged when it is used (§1.3, §1.7). Naming
-// them out is the honest form -- a per-run figure that pretended to include
-// them would be a worse lie than one that names them -- and it keeps
-// compute_usd the same shape as Cloud Run's, so the report and the daily
-// history need no new column.
-const excludedNote = "boot disk and Cloud NAT are not in this figure (design C17)"
-
-// MachineType is one Compute Engine machine type: its name and the
-// quantities a VM of it is billed for. The quantities are the machine
-// type's, never the workflow's: an e2-standard-4 is 4 vCPU / 16 GiB
-// whatever the workflow's resources: ask for (design §5.2).
-type MachineType struct {
-	Name      string
-	VCPU      float64
-	MemoryGiB float64
-}
 
 // machineTypes are the machine types this table carries. It is the
 // families the design names -- e2-standard, whose e2-standard-4 is the
