@@ -1930,12 +1930,12 @@ const repoRootGoldenDir = "testdata"
 // writes it under -update), then on a machine with terraform run
 // `go test -tags terraform ./internal/infra -run TestRealRepoRootAddresses
 // -update` to write testdata/<name>_addresses.golden. CI (untagged) then
-// compares Addresses() against it on every run. The address the guard is
-// known to be missing is #362's
-// module.repo.google_artifact_registry_repository_iam_member.build_ghcr,
-// which is not on main; the golden of the day simply does not name it, so
-// the untagged comparisons stay honest and the tagged generator picks it up
-// the moment the module ships it.
+// compares Addresses() against it on every run. Every address the modules
+// declare is named by Addresses() and by both goldens: #362's
+// module.repo.google_artifact_registry_repository_iam_member.build_ghcr was
+// the last one the untagged guard caught as missing, and naming it in
+// Addresses() and regenerating the goldens from the real plan is what closed
+// that gap.
 var repoRootFixtures = map[string]string{"repo_root": repoRootOAuthAgent, "repo_root_vertex": repoRootVertexAgent}
 
 // TestRepoRootFixtureTfvars keeps the committed tfvars fixtures and the Go
