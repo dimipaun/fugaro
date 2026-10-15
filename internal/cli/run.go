@@ -428,17 +428,6 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 				}
 			}
 		}
-		// The project's policy, read with the operator's own credentials
-		// before anything of this launch is written (plan task 1.5 step 4):
-		// the repository must be admitted, and the policy must not be newer
-		// than this binary. Before createTask, the budget pre-check and the
-		// launch claim, so a refused launch leaves no task, no token and no
-		// execution behind; not inside the --no-budget-check branch, since
-		// neither check is a budget check and neither is an operator's to
-		// skip.
-		if err := launchPolicyGates(ctx, env, slug, spec); err != nil {
-			return launchResult{}, err
-		}
 		if err := checkMaxParallel(ctx, env); err != nil {
 			return launchResult{}, err
 		}
@@ -446,6 +435,19 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if err := env.budgetPrecheck(ctx, slug, spec, warn); err != nil {
 				return launchResult{}, err
 			}
+		}
+		// The project's policy, read with the operator's own credentials
+		// before anything of this launch is written (plan task 1.5 step 4):
+		// the repository must be admitted, and the policy must not be newer
+		// than this binary. Before createTask and before the launch claim, so
+		// a refused launch leaves no task, no token and no execution behind.
+		// Outside the --no-budget-check branch, which is deliberate: neither
+		// check is a budget check, so neither is an operator's to skip. After
+		// the budget pre-check, so an unreachable database is refused by the
+		// pre-check's own fail-closed message when that check runs; the gate
+		// refuses it itself, with the node named, when it does not.
+		if err := launchPolicyGates(ctx, env, slug, spec); err != nil {
+			return launchResult{}, err
 		}
 	}
 	if o.retry == "" {

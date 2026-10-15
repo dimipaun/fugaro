@@ -176,7 +176,11 @@ func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) 
 		return "budget: { mode: off, per_run_usd: 5, rtdb_url: " + f.db.URL + ", token_signer: " + testSigner +
 			", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n"
 	}
-	policy := `{"version":1,"budget":{"mode":"enforce","per_run_usd":5}}`
+	// The allow-list admits the fixture's repository: a published policy with
+	// an empty allow_repos is deny-all (plan task 1.5), so a policy that names
+	// no repository would refuse the launch before the mint decision these
+	// subtests are about.
+	policy := `{"version":1,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["github/acme/*"]}`
 
 	t.Run("no policy, no token", func(t *testing.T) {
 		f := newOffModeBudget(t, "")
@@ -574,12 +578,17 @@ func TestNoBudgetCheckSkipsOnlyPrecheck(t *testing.T) {
 	if !strings.Contains(errOut, "--no-budget-check") {
 		t.Fatalf("the skip is not announced: %q", errOut)
 	}
-	// The mint still happens, and no database read did.
+	// The mint still happens, and the pre-check's own reads did not: the only
+	// calls left are the policy read the launch makes for itself (its
+	// admission and skew gates, plan task 1.5 step 4), never a cap, a kill
+	// switch or a lease.
 	if len(f.iam.SignCalls()) != 1 || readToken(t, f.cloudFixture, budgetRun) == "" || !launchedAny(f) {
 		t.Fatal("the skip must still mint and launch")
 	}
-	if n := len(f.db.Requests()); n != 0 {
-		t.Fatalf("%d database requests with the pre-check skipped", n)
+	for _, r := range f.db.Requests() {
+		if r.Method != "GET" || !strings.Contains(r.Path, "config/policy/") && !strings.Contains(r.Path, "policyRules") {
+			t.Fatalf("--no-budget-check skipped the pre-check, but the launch made a budget read: %s %s", r.Method, r.Path)
+		}
 	}
 }
 
