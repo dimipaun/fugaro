@@ -865,15 +865,22 @@ func buildEdits(ctx context.Context, db *rtdb.Client, p *setPlan, slug string) (
 	var edits []*nodeEdit
 
 	if p.mode == budget.ModeEnforce {
-		// As init does: enforce with no global caps would halt every run
-		// (the rules read an absent cap as a refusal). Caps set by this same
+		// As init does: enforce needs the project-wide caps, and the two
+		// absences cost different things (D6). Caps set by this same
 		// invocation count.
 		var g budget.GlobalCaps
 		if _, err := db.Get(ctx, budget.PathCapsGlobal, &g); err != nil {
 			return nil, remote(err)
 		}
-		if (p.daily == nil && g.DailyMicros == nil) || (p.perRun == nil && g.PerRunMicros == nil) {
-			return nil, userErr("--mode enforce needs the database's global caps (%s: dailyMicros and perRunMicros), and some are missing: the rules read an absent cap as a refusal, so every run would halt. Set them first (or in this command) with fugaro budget set --global --daily <usd> --per-run <usd>", budget.PathCapsGlobal)
+		var missing []string
+		if p.daily == nil && g.DailyMicros == nil {
+			missing = append(missing, "  dailyMicros: the rules read an absent cap as a refusal, so every lease is refused and every run halts")
+		}
+		if p.perRun == nil && g.PerRunMicros == nil {
+			missing = append(missing, "  perRunMicros: a run whose repository has no per-run cap of its own and no default has none to compare against and halts (a repository with its own cap keeps it)")
+		}
+		if len(missing) > 0 {
+			return nil, userErr("--mode enforce needs the database's global caps (%s), and some are missing:\n%s\nSet them first (or in this command) with fugaro budget set --global --daily <usd> --per-run <usd>", budget.PathCapsGlobal, strings.Join(missing, "\n"))
 		}
 	}
 	if p.mode != "" {

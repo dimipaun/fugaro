@@ -269,7 +269,7 @@ Freeing *project* for the Fugaro project means renaming everything that means th
 | Cap | Set with | Bounds |
 |---|---|---|
 | `global.dailyUsd` | `fugaro budget set --global --daily` | The sum over all of the project's repositories of reserved minus released per UTC day |
-| `global.perRunUsd` | `--global --per-run` | Each run's lifetime reserved minus released, and **the fallback of every repository that has no per-run cap of its own** (D6, §6.4) |
+| `global.perRunUsd` | `--global --per-run` | Each run's lifetime reserved minus released, project-wide; and **the fallback of every repository that has no per-run cap of its own and no `defaults.repoPerRunUsd`** (D6, §6.4) |
 | `repos/<slug>.dailyUsd` | `--repo R --daily` | This repository per day. A repository without one uses `defaults.repoDailyUsd`. With neither, it has **no budget and halts** (fail closed) |
 | `repos/<slug>.perRunUsd` | `--repo R --per-run` | Per run. A repository without one uses `defaults.repoPerRunUsd`, and without that the global one. The effective cap is `min(repo or defaults, global)`, where **a side that is not set does not bound the run**; with no per-run cap on any of the three the rules deny every lease (**fail closed**) |
 | `limits.maxReserveMicros` | `--max-reserve` | The most one write may reserve (default $5). This bounds each step of a compromised token |
