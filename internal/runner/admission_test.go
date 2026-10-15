@@ -105,6 +105,10 @@ func mintUnder(t *testing.T, b *bk, slug string, at time.Time) {
 // halts on the same error after the clone), so the error, the reason and the
 // record alone cannot tell "refused before anything happened" from "refused
 // after the repository was cloned and a credential handed out".
+//
+// Mutation (run, restored): move the admissionCheck call in bootstrap below
+// the openProvider block. Every test that comes through here fails, on this
+// counter and on nothing else.
 func refusedAdmission(t *testing.T, b *bk, rec *runstore.Record, err error, want ...string) {
 	t.Helper()
 	if err == nil || rec == nil || rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone {
@@ -253,6 +257,10 @@ func TestRunnerChecksBeforeTheTokenAndTheLease(t *testing.T) {
 // went on: swallowed here, the same memoized error halts bootstrap a few lines
 // later, after the clone. What differs is that the credential was requested
 // first, so the counter is what this test rests on.
+//
+// Mutation (run, restored): swallow the read's error in admissionCheck
+// (`if false && err != nil`). This test fails on the counter — the run opens
+// its provider and only then halts — and no other test does.
 func TestRunnerRefusesAnUnreadablePolicyBeforeAnyCredential(t *testing.T) {
 	b := admissionRun(t, "github", "acme/app", "enforce", "50", `{"version":1,"allow_repos":["github/acme/*"]}`)
 	b.db.DenyRead(projectpolicy.PathShared())
