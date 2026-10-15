@@ -25,6 +25,8 @@ What credential the remote agent uses to call a model. It decides which secrets 
 | `api-key` | `anthropic-api-key` | the team pays per token and wants budget caps to apply |
 | `vertex` | none (the job's own account) | Claude on Vertex AI is verified usable in the installation's cloud project (below) |
 
+With `api-key` the Anthropic key is needed only when a pin actually goes direct to Anthropic (a model no provider allowed to see the repository serves, a Claude model above all): a run whose pins are all served by providers holds no Anthropic key at all, and the setup prompts for one only in the former case. A call that needs one without it is refused at run time, by name, with the one-line command that stores it, never silently sent elsewhere.
+
 **Verify before you recommend.** Nothing in `fugaro doctor --json` or any command you may run shows whether Claude on Vertex AI is enabled and has quota in the installation's project (the project name is in doctor's `project` field). So never mark `vertex` recommended on a guess: say you could not verify it, and offer it only as an option the user may confirm (the user checks it in their own cloud console). Recommend the credential the evidence supports: `oauth` when the user says they have a subscription (the evidence is their statement, so ask), `api-key` when the team wants pay-per-token dollar caps, and say which evidence led there. Remember that `vertex` supports `observe` only (topic 4).
 
 If `fugaro.yaml` exists, keep its value. If the project's other repositories already chose one, recommend the same.

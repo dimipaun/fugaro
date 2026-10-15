@@ -169,6 +169,16 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 			if ok {
 				continue
 			}
+			// The repository copy has no version: the project-wide one may
+			// still resolve it, optional secret or not, so this comes first
+			// (design docs/design/project-secrets.md §5).
+			resolved, fix, err := resolveProject(logical)
+			if err != nil {
+				return RepoSpec{}, nil, err
+			}
+			if resolved {
+				continue
+			}
 			if OptionalSecret(logical) {
 				// Mounted whenever the secret has a version, and a fact
 				// about data rather than about policy, so flipping a
@@ -179,13 +189,6 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 				// and a call that needs it is refused by the gateway by
 				// name, not blocked here.
 				dropMount(ws, logical)
-				continue
-			}
-			resolved, fix, err := resolveProject(logical)
-			if err != nil {
-				return RepoSpec{}, nil, err
-			}
-			if resolved {
 				continue
 			}
 			unresolved = append(unresolved, logical)

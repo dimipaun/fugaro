@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -296,9 +297,12 @@ func (s *secretsStage) resolve(ctx context.Context) {
 		// to Anthropic: with the gateway on and every pin served by a provider
 		// the run never calls Anthropic, so init does not prompt for a value
 		// and does not store one (design docs/design/project-centric.md §6.1).
-		// Any other case keeps the prompt: without enforce a provider model is
-		// refused and every call goes to Anthropic, so the key is needed.
-		needsAnthropicKey := cfg.Agent.Auth != "api-key" || cfg.Budget == nil || cfg.Budget.Mode != policy.ModeEnforce ||
+		// The mode is the effective one, the project's ceiling merged with this
+		// file, exactly as the runner and validate read it: without enforce a
+		// provider's model is refused (config.CheckProviderGateway) and every
+		// call goes to Anthropic, so the key is needed whatever the pins are.
+		mode := policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg)).Mode
+		needsAnthropicKey := cfg.Agent.Auth != "api-key" || mode != policy.ModeEnforce ||
 			config.NeedsAnthropicKey(cfg.Agent, lc.Providers, repo)
 		for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
 			// The default account only: Task 5 extends this to every name

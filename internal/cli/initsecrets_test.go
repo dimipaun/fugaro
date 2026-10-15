@@ -1026,18 +1026,34 @@ budget: { mode: enforce, per_run_usd: 5 }
 workflows:
   app: { commands: { build: sh build.sh, test: sh test.sh } }
 `
+	// No budget: block at all, so the project's own mode is the effective one.
+	const ceilingYAML = `version: 1
+project: aurora
+git: { provider: github }
+agent: { auth: api-key, model: deepseek/deepseek-v4-flash }
+workflows:
+  app: { commands: { build: sh build.sh, test: sh test.sh } }
+`
 	for _, tc := range []struct {
 		name, yaml string
-		want       bool
+		// enforce is the local config's own budget mode, for the file that
+		// leaves the mode to the project's ceiling.
+		enforce bool
+		want    bool
 	}{
-		{"every pin served by a provider", providerYAML, false},
-		{"a Claude pin goes direct", claudeYAML, true},
+		{"every pin served by a provider", providerYAML, false, false},
+		{"a Claude pin goes direct", claudeYAML, false, true},
+		{"every pin served by a provider, the project's ceiling enforcing", ceilingYAML, true, false},
+		{"the same file under a project whose ceiling is off", ceilingYAML, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newSecretsRig(t, githubOrigin, strings.NewReader(""))
 			r.e.lc.Providers = map[string]config.ModelProvider{
 				"openrouter": {Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
 					Secret: "openrouter-api-key", Models: []string{"deepseek/*"}, AllowDataTo: []string{"acme/app"}},
+			}
+			if tc.enforce {
+				r.e.lc.Budget = &localcfg.Budget{Mode: localcfg.BudgetEnforce}
 			}
 			r.writeConfig(t, tc.yaml)
 			res, err := r.run(t)

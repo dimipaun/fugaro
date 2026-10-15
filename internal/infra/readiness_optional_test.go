@@ -94,3 +94,60 @@ func TestOptionalSecretIsOnlyTheAnthropicKey(t *testing.T) {
 		}
 	}
 }
+
+// TestReadinessOptionalKeyResolvesProjectWide: the key is optional, not
+// unconditionally dropped. When the repository copy has no version but the
+// project-wide one does -- this repository may use it -- the mount stays and
+// the project copy resolves it, exactly as for any other secret
+// (docs/design/project-secrets.md §5).
+func TestReadinessOptionalKeyResolvesProjectWide(t *testing.T) {
+	in := sandboxInputs(t, m5Additions+`project_secrets:
+  anthropic-api-key: { allow_data_to: [acme/sandbox] }
+`)
+	in.Cfg.Agent.Auth = "api-key"
+	spec, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := spec.Workflows["web"]
+	if web.SecretEnv["ANTHROPIC_API_KEY"] != config.AnthropicSecret {
+		t.Fatalf("the fixture does not mount the Anthropic key: %v", web.SecretEnv)
+	}
+	if _, ok := spec.ProjectSecretCandidates[config.AnthropicSecret]; !ok {
+		t.Fatalf("the fixture has no project-wide candidate for the key: %v", spec.ProjectSecretCandidates)
+	}
+
+	f := newCloud(t)
+	f.gcs.AddBucket(spec.Installation.RunsBucket, testProjectNumber, managed)
+	for logical, id := range spec.Secrets {
+		if logical == config.AnthropicSecret {
+			continue // the repository copy has no version anywhere
+		}
+		f.sm.Seed(id, with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, logical), []byte("v"))
+	}
+	// Only the project-wide copy has a version.
+	projectID := f.seedProjectSecret(spec, config.AnthropicSecret)
+	f.ar.AddRepository("proj-1234", "us-east5", spec.Registry.RepositoryID, with(managed, gcp.LabelRepo, spec.Label))
+	f.ar.SetTag("proj-1234", "us-east5", spec.Registry.RepositoryID,
+		strings.TrimSuffix(strings.TrimPrefix(web.Image, spec.RegistryPath+"/"), ":latest"), "latest")
+
+	got, missing, _ := readinessOf(t, f, spec)
+	ws := got.Workflows["web"]
+	if !ws.DeployJob {
+		t.Errorf("the job is not deployed with the project-wide key: %v", missing)
+	}
+	if ws.SecretEnv["ANTHROPIC_API_KEY"] != config.AnthropicSecret {
+		t.Errorf("the mount was dropped though the project-wide copy has a version: %v", ws.SecretEnv)
+	}
+	if got.ProjectSecrets[config.AnthropicSecret] != projectID {
+		t.Errorf("ProjectSecrets = %v, want the key -> %s", got.ProjectSecrets, projectID)
+	}
+	if !strings.Contains(ws.Env[runner.SecretEnvsVar], "ANTHROPIC_API_KEY") {
+		t.Errorf("%s = %q, want the mounted key named", runner.SecretEnvsVar, ws.Env[runner.SecretEnvsVar])
+	}
+	for _, m := range missing {
+		if strings.Contains(m.Reason, config.AnthropicSecret) {
+			t.Errorf("the project-wide key is still reported missing: %v", m)
+		}
+	}
+}
