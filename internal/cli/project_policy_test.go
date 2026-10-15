@@ -578,6 +578,45 @@ func TestProjectPolicyDeleteRefusesWithoutYesWhileARunIsInFlight(t *testing.T) {
 	}
 }
 
+// TestProjectPolicyDeleteRefusesTheTypedNameWhileARunIsInFlight is the same
+// gate at a terminal, which is where it can actually be walked past: with a
+// terminal, typing the project's name is what every other confirmation here
+// accepts, and --delete must still refuse while a run is in flight — a run
+// mid-flight keeps the policy until it finishes (B5). The test above cannot
+// see this: with stdin that is not a terminal, confirmRemovalStrict refuses
+// for its own reason, so deleting the in-flight gate there would pass it.
+// --yes is the way through, because the gate is about the runs, not about
+// whether the operator was asked.
+func TestProjectPolicyDeleteRefusesTheTypedNameWhileARunIsInFlight(t *testing.T) {
+	f := newProjectFixture(t, "")
+	typed(t)
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	slug, err := task.Slug("github", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.db.Set(budget.PathAgent(slug, "20261015-120000-aaaa"), map[string]any{"run_id": "20261015-120000-aaaa"})
+
+	out, _, err := executeStdin(t, "aurora\n", "project", "policy", "publish", "--delete")
+	if err == nil {
+		t.Fatalf("--delete was allowed with the project's name typed while a run is in flight:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "--yes") {
+		t.Errorf("the refusal does not name --yes: %v", err)
+	}
+	if f.db.Value(projectpolicy.PathShared()) == nil {
+		t.Fatal("the policy was removed anyway")
+	}
+	if _, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes"); err != nil {
+		t.Fatalf("--yes must delete while a run is in flight: %v", err)
+	}
+	if f.db.Value(projectpolicy.PathShared()) != nil {
+		t.Fatal("--yes did not delete the policy")
+	}
+}
+
 // TestProjectPolicyDeleteRefusesANewerPolicy: P8 in the other direction — this
 // binary cannot say what a policy of a later shape means, so it must not
 // remove it either.
