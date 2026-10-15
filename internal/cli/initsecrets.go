@@ -372,6 +372,25 @@ func (s *secretsStage) authorize(env initflow.Env) error {
 	return nil
 }
 
+// projectScope is where this stage stores name: the project's own container
+// when the plan may mount a project copy for *this repository*, this
+// repository's own otherwise.
+//
+// It is infra.ProjectSecretCandidate, the one function that answers
+// eligibility, and the same answer find() reads to call a name covered -- so
+// the stage can never store a value somewhere the check above would not look
+// for it. The repository is the argument that matters (code review, high): a
+// repo-unaware test -- "project_secrets lists someone, so the name has a
+// project-wide meaning" -- called the name project-scope for a repository the
+// list does not name, and `init` on that repository then wrote its value over
+// the shared copy another repository mounts, a copy it may not mount itself,
+// and Verify failed. "Absent or empty means nobody" decides, and it decides
+// for the repository in hand.
+func (s *secretsStage) projectScope(name string) bool {
+	_, ok := infra.ProjectSecretCandidate(s.e.lc, name, s.tg.repo)
+	return ok
+}
+
 // find lists the repository's secrets (metadata only) and returns what its
 // jobs mount that has no value yet.
 //
@@ -501,12 +520,12 @@ func (s *secretsStage) Left() initflow.Left {
 	var cmds []string
 	for _, name := range needs {
 		// The scope the command stores to is the scope the prompt above
-		// stores to (secretsScope): a name with a project-wide meaning
-		// defaults to the project's own container, and the fix the user is
-		// handed must not quietly store a repository copy that would then
-		// override the project one forever.
+		// stores to (projectScope): a name this repository may mount
+		// project-wide defaults to the project's own container, and the fix
+		// the user is handed must not quietly store a repository copy that
+		// would then override the project one forever.
 		set := selfCommand() + " secrets set " + quoteWord(name)
-		if !projectScopeName(s.e.lc, name) {
+		if !s.projectScope(name) {
 			set += " --repo " + quoteWord(s.tg.repo)
 		}
 		switch {
@@ -606,10 +625,11 @@ func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w i
 		err   error
 	)
 	// The prompt is where a person learns the blast radius (plan Task 2.1
-	// step 4): a name with a project-wide meaning is stored project-wide --
-	// D2's default for `secrets set <name>` with no flag -- and the same
-	// command with --repo keeps the value to this repository instead.
-	if projectScopeName(s.e.lc, name) {
+	// step 4): a name this repository may mount project-wide is stored
+	// project-wide -- D2's default for `secrets set <name>` with no flag --
+	// and the same command with --repo keeps the value to this repository
+	// instead.
+	if s.projectScope(name) {
 		fmt.Fprintf(w, "%s for %s on %s (stored project-wide in project %s's Secret Manager, where every enrolled repository can mount it; pass --repo to keep it to this repository instead):\n",
 			name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject))
 	} else {
@@ -640,7 +660,7 @@ func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w i
 	// function, so the two cannot disagree.
 	id := gcp.SecretID(s.tg.slug, name)
 	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: s.tg.label, gcp.LabelSecret: name}
-	if projectScopeName(s.e.lc, name) {
+	if s.projectScope(name) {
 		id = gcp.ProjectSecretID(s.e.lc.Name, name)
 		labels = map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: s.e.lc.Name, gcp.LabelSecret: name}
 	}

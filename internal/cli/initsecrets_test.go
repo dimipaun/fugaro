@@ -378,6 +378,33 @@ func TestPrintedCommandsHaveNoValues(t *testing.T) {
 	}
 }
 
+// A repository the project's own allow_data_to does not name keeps
+// repository scope (code review, high): the scope decision is per repository
+// (infra.ProjectSecretCandidate, the same answer find() reads to call a name
+// covered), so project_secrets.bitbucket-token listing acme/other alone
+// leaves acme/app's own command naming acme/app's copy -- the container its
+// job will mount -- rather than the shared copy it may not mount. A
+// repo-unaware test called the name project-scope here, because the list is
+// non-empty, and the command it printed stored a value over acme/other's.
+func TestLeftKeepsRepoScopeForARepoTheListExcludes(t *testing.T) {
+	r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
+	r.e.lc.ProjectSecrets = map[string]config.ProjectSecret{
+		"bitbucket-token": {AllowDataTo: []string{"acme/other"}},
+	}
+	res, err := r.run(t)
+	if err != nil || len(res.Left) != 1 {
+		t.Fatalf("%v, left %v", err, res.Left)
+	}
+	want := []string{
+		"fugaro secrets set bitbucket-token --repo acme/app",
+		"claude setup-token",
+		"fugaro secrets set claude-oauth-token --repo acme/app",
+	}
+	if got := res.Left[0].Commands; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("commands %q, want %q", got, want)
+	}
+}
+
 func TestSelfCommandQuotesTheBinaryPath(t *testing.T) {
 	old := os.Args
 	t.Cleanup(func() { os.Args = old })
