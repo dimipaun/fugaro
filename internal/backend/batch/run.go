@@ -1,0 +1,310 @@
+package batch
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"time"
+
+	batch "google.golang.org/api/batch/v1"
+
+	"github.com/dimipaun/fugaro/internal/backend"
+)
+
+// Launch creates the run's Batch job. One Batch job is one run -- a job is
+// single-use and there is no reusable definition to run, so this is a create
+// rather than Cloud Run's jobs.run (design §2.3) -- and it returns as soon as
+// Batch has accepted it: a job sits QUEUED until the region has capacity for
+// its VMs, so Launch never waits for the run to start.
+//
+// A create that fails with a 4xx other than 408, 429 and 499 created
+// nothing, and the error says so (backend.ErrRejected). Anything else,
+// including a timeout, is ambiguous: the job may exist.
+func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.ExecutionRef, error) {
+	if spec.Repo.Slug == "" || spec.Workflow == "" || spec.RunID == "" {
+		return backend.ExecutionRef{}, fmt.Errorf("launching: a run needs a repository slug, a workflow and a run id (got %q, %q, %q)", spec.Repo.Slug, spec.Workflow, spec.RunID)
+	}
+	timeout, err := b.timeout(spec)
+	if err != nil {
+		return backend.ExecutionRef{}, err
+	}
+	id := JobID(spec.Repo.Slug, spec.Workflow, spec.RunID)
+	full := b.location() + "/jobs/" + id
+	job, err := b.jobDefinition(spec, id, full, timeout)
+	if err != nil {
+		return backend.ExecutionRef{}, err
+	}
+	created, err := b.batch.Projects.Locations.Jobs.Create(b.location(), job).JobId(id).Context(ctx).Do()
+	if err != nil {
+		return backend.ExecutionRef{}, launchError(full, err)
+	}
+	cid, err := b.canonical(created.Name)
+	if err != nil {
+		return backend.ExecutionRef{}, fmt.Errorf("Batch created %s but answered with %q: %w", full, created.Name, err)
+	}
+	created0, err := parseTime(created.CreateTime)
+	if err != nil {
+		b.o.Warn(fmt.Sprintf("job %s: createTime: %v", full, err))
+	}
+	return backend.ExecutionRef{Name: b.codec.Format(cid), Job: cid.Job, LogURL: b.logURL(cid, created.Uid, created0)}, nil
+}
+
+// timeout is the run's total time: the workflow's own when the caller has it
+// (LaunchSpec.Timeout), else what the workflow is configured with. On Batch
+// the job definition carries the timeout (there is no execution override),
+// so it must be known before the create.
+func (b *Backend) timeout(spec backend.LaunchSpec) (time.Duration, error) {
+	if spec.Timeout > 0 {
+		return spec.Timeout, nil
+	}
+	d, err := b.o.Timeouts.TaskTimeout(spec.Repo.Slug, spec.Workflow)
+	if err != nil {
+		return 0, fmt.Errorf("launching %s/%s: %w", spec.Repo.Slug, spec.Workflow, err)
+	}
+	if d <= 0 {
+		d = backend.DefaultTaskTimeout
+	}
+	return d, nil
+}
+
+// jobDefinition is the Batch job of one run. Every field here is either a
+// fact about the run or one of the design's decisions; what it does not
+// carry is Task 7's (the socket mount, the env allowlist beyond these names,
+// the resource quantities).
+func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeout time.Duration) (*batch.Job, error) {
+	labels, err := Labels(spec.Repo.Slug, spec.Workflow, spec.RunID)
+	if err != nil {
+		return nil, fmt.Errorf("launching %s: %w", full, err)
+	}
+	vars := map[string]string{
+		// The run's own record, which the backend reports back as
+		// Execution.Run (a hint: anyone who can create the job can set it).
+		"FUGARO_RUN": spec.Repo.Slug + "/" + spec.RunID,
+		// The launcher's record of which backend it chose, which launch.json
+		// and the prices path read (design §2.5).
+		"FUGARO_BACKEND": backend.CloudBatch,
+		// Batch injects BATCH_TASK_INDEX/BATCH_TASK_COUNT but nothing that
+		// names the job, so the launcher writes the job's own name in: the
+		// codec's FromEnv reads it back (design §2.5). Launcher-forgeable,
+		// like FUGARO_RUN.
+		backend.BatchJobEnv:  full,
+		"FUGARO_PROJECT":     b.o.FugaroProject,
+		"FUGARO_GCP_PROJECT": b.o.GCPProject,
+		"FUGARO_REGION":      b.o.Region,
+	}
+	// The task runs for the workflow's total time plus the slack every other
+	// backend adds, so a run whose own watchdog is late is still bounded by
+	// Batch. maxRunDuration bounds a task once it is running; nothing bounds
+	// the queue, which is the reaper's queue deadline (design §1.4).
+	env := &batch.Environment{Variables: vars}
+	if len(b.o.Secrets) > 0 {
+		// Names, never values: the VM reads the named secrets itself.
+		env.SecretVariables = b.o.Secrets
+	}
+	return &batch.Job{
+		// The labels go in both fields (C13): Job.labels reach the job and
+		// its LogEntries, AllocationPolicy.labels reach the VMs.
+		Labels: labels,
+		AllocationPolicy: &batch.AllocationPolicy{
+			Labels: labels,
+			Instances: []*batch.InstancePolicyOrTemplate{{
+				// Project-wide SSH keys must not open a VM that runs a
+				// Docker-capable agent (design §3.5).
+				BlockProjectSshKeys: true,
+			}},
+			// Never the default Compute Engine account: New refuses it.
+			ServiceAccount: &batch.ServiceAccount{Email: b.o.ServiceAccount},
+		},
+		// Without this the job's output never reaches Cloud Logging, and a
+		// run's logs land in the project's default logs (design §1.5, C9).
+		LogsPolicy: &batch.LogsPolicy{Destination: "CLOUD_LOGGING"},
+		TaskGroups: []*batch.TaskGroup{{
+			TaskCount:   1,
+			Parallelism: 1,
+			TaskSpec: &batch.TaskSpec{
+				// A Fugaro run is not idempotent: retrying it would repeat
+				// its side effects, the same reason Cloud Run's job sets
+				// max_retries = 0 (design §2.3). ForceSendFields is what
+				// keeps the 0 in the JSON: an int64 with omitempty drops it.
+				MaxRetryCount:   0,
+				ForceSendFields: []string{"MaxRetryCount"},
+				MaxRunDuration:  fmt.Sprintf("%ds", int((timeout+backend.TaskTimeoutSlack)/time.Second)),
+				Environment:     env,
+				Runnables: []*batch.Runnable{{
+					Container: &batch.Container{ImageUri: b.o.Image},
+				}},
+			},
+		}},
+	}, nil
+}
+
+// Execution reads one run by its full resource name.
+func (b *Backend) Execution(ctx context.Context, name string) (backend.Execution, error) {
+	id, err := b.canonical(name)
+	if err != nil {
+		return backend.Execution{}, err
+	}
+	full := b.codec.Format(id)
+	j, err := b.batch.Projects.Locations.Jobs.Get(full).Context(ctx).Do()
+	if err != nil {
+		return backend.Execution{}, apiError("reading job "+full, err)
+	}
+	return b.toExecution(j)
+}
+
+func (b *Backend) toExecution(j *batch.Job) (backend.Execution, error) {
+	id, err := b.canonical(j.Name)
+	if err != nil {
+		return backend.Execution{}, fmt.Errorf("Batch returned a job: %w", err)
+	}
+	name := b.codec.Format(id)
+	raw := ""
+	if j.Status != nil {
+		raw = j.Status.State
+	}
+	state, known := stateOf(raw)
+	if !known {
+		b.o.Warn(fmt.Sprintf("job %s: Batch state %q is not one this build knows: treating it as pending, never as finished", name, raw))
+	}
+	x := backend.Execution{Name: name, Job: id.Job, State: state}
+	if x.Created, err = parseTime(j.CreateTime); err != nil {
+		b.o.Warn(fmt.Sprintf("job %s: createTime: %v", name, err))
+	}
+	// Started and Completed are left zero. Design §2.3 reads them from the
+	// job's and its task's status events, whose shape -- which event types
+	// exist, and whether a transition always leaves one -- is UNVERIFIED:
+	// Check 57a steps 7 and 8 settle it (design §9). A guessed start time
+	// would become a wrong cost, and the billed window is Task 3's (§5.2),
+	// so nothing is inferred here: Billed is 0, which reads as "cost
+	// unknown", not as "free".
+	x.LogURL = b.logURL(id, j.Uid, x.Created)
+	x.Run = runEnv(j)
+	return x, nil
+}
+
+// runEnv is the FUGARO_RUN the job was created with, from the task's
+// environment variables. Batch reports them, so unlike Cloud Run this one is
+// always readable -- and it is still only a hint: whoever can create a job
+// can set it (design §2.3).
+func runEnv(j *batch.Job) string {
+	if len(j.TaskGroups) == 0 || j.TaskGroups[0] == nil || j.TaskGroups[0].TaskSpec == nil ||
+		j.TaskGroups[0].TaskSpec.Environment == nil {
+		return ""
+	}
+	return j.TaskGroups[0].TaskSpec.Environment.Variables["FUGARO_RUN"]
+}
+
+// fugaroLabelFilter is what jobs.list is asked for: the installation's own
+// jobs, by the marker every Fugaro resource carries (design §2.4). On Batch
+// the `fugaro-` name prefix Cloud Run's List filters on is not enough on its
+// own, because a job's label is also what reaches its log entries and its
+// VMs.
+//
+// The syntax is AIP-160, the form gcloud's own `--filter` uses
+// (`labels.fugaro_chk=57` in design §7.2's check commands), and it is not
+// among the facts design §9 verifies. List therefore checks the labels
+// client-side as well: whether the server honours the filter or ignores it,
+// the answer is the same.
+const fugaroLabelFilter = `labels.fugaro = "managed"`
+
+// List returns runs newest first: of every Fugaro job, or of f.Jobs.
+//
+// Batch's jobs.list is per region, with no per-job parent, and it keeps
+// returning a job for 60 days after it finished (design §2.4), so the state
+// and create-time filters are applied here rather than assumed from the
+// listing's contents.
+func (b *Backend) List(ctx context.Context, f backend.ListFilter) ([]backend.Execution, error) {
+	want := map[string]bool{}
+	for _, j := range f.Jobs {
+		want[j] = true
+	}
+	var out []backend.Execution
+	token := ""
+	for {
+		resp, err := b.batch.Projects.Locations.Jobs.List(b.location()).Filter(fugaroLabelFilter).
+			PageSize(b.listPageSize).PageToken(token).Context(ctx).Do()
+		if err != nil {
+			return nil, apiError("listing jobs in "+b.location(), err)
+		}
+		for _, j := range resp.Jobs {
+			id, ok := b.codec.Parse(j.Name)
+			if !ok || len(f.Jobs) > 0 && !want[id.Job] {
+				continue
+			}
+			if !managedJob(j) {
+				continue
+			}
+			x, err := b.toExecution(j)
+			if err != nil {
+				return nil, err
+			}
+			if !f.Since.IsZero() && x.Created.Before(f.Since) {
+				continue
+			}
+			if f.ActiveOnly && x.State.Terminal() {
+				continue
+			}
+			out = append(out, x)
+		}
+		if resp.NextPageToken == "" {
+			break
+		}
+		token = resp.NextPageToken
+	}
+	// The listing is newest first, but the API does not promise an order, so
+	// the sort is explicit rather than assumed.
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Created.After(out[j].Created) })
+	return out, nil
+}
+
+// managedJob reports whether a listed job carries the installation's own
+// marker in both label fields. The job's labels are the ones that matter for
+// adoption (design §2.4): a job without them is not ours to read, cancel or
+// delete, whatever its name looks like.
+func managedJob(j *batch.Job) bool {
+	if j.Labels[labelManaged] != managedValue {
+		return false
+	}
+	if j.AllocationPolicy == nil || j.AllocationPolicy.Labels[labelManaged] != managedValue {
+		return false
+	}
+	return true
+}
+
+// LongestTaskTimeout is the longest configured workflow timeout (design
+// §2.3): on Batch there is no deployed job to read it from, so it is a
+// config/policy read.
+func (b *Backend) LongestTaskTimeout(ctx context.Context) (time.Duration, error) {
+	return b.o.Timeouts.LongestTaskTimeout()
+}
+
+// TaskTimeout is the workflow's configured task timeout (design §2.3), an
+// error wrapping backend.ErrNotFound for a workflow that does not exist.
+func (b *Backend) TaskTimeout(ctx context.Context, slug, workflow string) (time.Duration, error) {
+	return b.o.Timeouts.TaskTimeout(slug, workflow)
+}
+
+// Cancel asks Batch to cancel the job: jobs.cancel, which leaves the job's
+// record readable -- fugaro ls, diagnose, watch and the sweeper all read it
+// back afterwards. jobs.delete erases the record, and belongs to the reaper
+// and the restore alone (design §1.4, C8).
+//
+// A job that finished between the caller's read and this call is not an
+// error: the caller asked for it to stop and it has. The API's answer for a
+// job that already finished is UNVERIFIED (design §9, Check 57a step 7), so
+// the race is tolerated by reading the job back rather than by trusting the
+// refusal's code.
+func (b *Backend) Cancel(ctx context.Context, name string) error {
+	id, err := b.canonical(name)
+	if err != nil {
+		return err
+	}
+	full := b.codec.Format(id)
+	if _, err := b.batch.Projects.Locations.Jobs.Cancel(full, &batch.CancelJobRequest{}).Context(ctx).Do(); err != nil {
+		if x, rerr := b.Execution(ctx, full); rerr == nil && x.State.Terminal() {
+			return nil
+		}
+		return apiError("cancelling job "+full, err)
+	}
+	return nil
+}
