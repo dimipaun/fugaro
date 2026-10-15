@@ -30,6 +30,7 @@ type RTDB struct {
 	denyNext  int
 	denyRules int
 	deny      []string
+	denyRead  []string
 	denyKeys  []string
 	clock     func() time.Time
 	creds     []string
@@ -119,6 +120,21 @@ func (f *RTDB) Deny(path string) {
 		return
 	}
 	f.deny = append(f.deny, strings.Join(split(path), "/"))
+}
+
+// DenyRead makes any *read* of path, or of a node above or below it, answer
+// 401, as a rule that does not grant the read would. Deny is the write-side
+// twin; an empty path lifts every DenyRead. It is how a test drives the one
+// case that must halt a run rather than fall back to a wider ceiling: a node
+// the rules no longer let it read.
+func (f *RTDB) DenyRead(path string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if path == "" {
+		f.denyRead = nil
+		return
+	}
+	f.denyRead = append(f.denyRead, strings.Join(split(path), "/"))
 }
 
 // DenyKeys makes any write whose value is an object carrying one of keys (at
@@ -269,6 +285,19 @@ func (f *RTDB) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 
 	switch r.Method {
 	case http.MethodGet:
+		f.mu.Lock()
+		denied := false
+		for _, d := range f.denyRead {
+			if touches(strings.Join(path, "/"), d) {
+				denied = true
+				break
+			}
+		}
+		f.mu.Unlock()
+		if denied {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "Permission denied"})
+			return
+		}
 		if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
 			f.serveStream(w, r, path)
 			return

@@ -103,6 +103,19 @@ func TestCheckAllowed(t *testing.T) {
 	if ps := CheckAllowed(a, e, all); len(ps) != 3 || !strings.Contains(ps[0].Message, "none") || !strings.Contains(ps[0].Message, "the project's allow-list: "+strings.Join(all, ", ")) {
 		t.Fatalf("deny-all: %v", ps)
 	}
+	// A list the published policy set is the ceiling itself (SourcePolicy):
+	// naming it again under the "project's allow-list" label would print the
+	// same node twice, in the wrong words.
+	e = policy.Merge(policy.Layer{AllowedModels: []string{"claude-haiku-4-5"}})
+	e.Sources[policy.KeyAllowedModels] = policy.SourcePolicy
+	ps = CheckAllowed(a, e, e.AllowedModels)
+	if paths(ps) != "agent.models.coder,agent.models.reviewer" {
+		t.Fatalf("policy-sourced list: %v", ps)
+	}
+	if m := ps[0].Message; !strings.Contains(m, "allowed_models from policy: claude-haiku-4-5") ||
+		strings.Contains(m, "the project's allow-list") {
+		t.Errorf("policy-sourced list message %q", m)
+	}
 	// A role with no model can't be shown to be on the list.
 	a.Models.Reviewer = ""
 	if ps := CheckAllowed(a, policy.Merge(policy.Layer{AllowedModels: all}), all); paths(ps) != "agent.models.reviewer" {

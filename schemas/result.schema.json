@@ -175,7 +175,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["effective"],
-      "description": "The budget and model policy the run ran under, merged from the owner's ceiling, the default branch's fugaro.yaml and the run's own. Absent when no layer set any.",
+      "description": "The budget and model policy the run ran under, merged from the project's published policy, the owner's ceiling, the default branch's fugaro.yaml and the run's own. Absent when no layer set any.",
       "properties": {
         "effective": {
           "type": "object",
@@ -198,8 +198,8 @@
         },
         "sources": {
           "type": "object",
-          "additionalProperties": { "enum": ["ceiling", "default-branch", "branch"] },
-          "description": "Policy key to the layer that set its effective value."
+          "additionalProperties": { "enum": ["ceiling", "default-branch", "branch", "policy"] },
+          "description": "Policy key to the layer that set its effective value: ceiling, policy (the project's published node, which replaces the ceiling key by key), default-branch or branch."
         },
         "ignored": {
           "type": "array",
@@ -212,7 +212,7 @@
               "key": { "type": "string" },
               "value": { "type": "string" },
               "effective": { "type": "string" },
-              "source": { "enum": ["ceiling", "default-branch", "branch"], "description": "The layer of the effective value." },
+              "source": { "enum": ["ceiling", "default-branch", "branch", "policy"], "description": "The layer of the effective value." },
               "from": { "enum": ["default-branch", "branch"], "description": "The layer that asked for the dropped value." }
             }
           }

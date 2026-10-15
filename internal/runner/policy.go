@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -10,6 +11,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -62,14 +64,30 @@ func (r *run) defaultBranchFile(ctx context.Context) ([]byte, string, error) {
 // project (a local run) the default branch is not read, as in checkProject.
 func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	c := r.d.Spend
-	// The ceiling sets no output limits (the project config has none).
-	ceiling := policy.Layer{MaxRunTokens: c.MaxRunTokens, AllowedModels: c.AllowedModels}
-	if c.Mode != "" && c.Mode != policy.ModeOff {
-		ceiling.Mode = c.Mode
+	// The ceiling is the job environment's copy of the owner's config, and
+	// sets no output limits (the project config has none).
+	ceiling := envCeiling(c)
+	// The project's own policy, when it has published one, *is* the ceiling
+	// for the keys it sets: the node is what the owner says now, where the
+	// copy is what he said when the job was deployed (design §5, plan task
+	// 1.3 step 3, 12a item 13). Every key the node is silent about stays the
+	// environment's — the node replaces the ceiling key by key, never whole
+	// (H1: a policy published for allow_repos alone used to drop the mode,
+	// the cap and the kill switches the environment carried).
+	//
+	// A read that fails is returned as it is: the run does not start rather
+	// than start on a ceiling the policy did not set.
+	pp, found, err := r.projectPolicy(ctx)
+	if err != nil {
+		return err
 	}
-	if c.Cap > 0 {
-		ceiling.PerRunUSD = c.Cap.USD()
+	var fromPolicy map[string]bool
+	if found {
+		if ceiling, c, fromPolicy, err = policyCeiling(pp, ceiling, c); err != nil {
+			return err
+		}
 	}
+	r.ceiling = ceiling
 
 	var def policy.Layer
 	if r.d.Project == "" {
@@ -88,6 +106,14 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	}
 
 	e := policy.Merge(ceiling, def, FileLayer(cfg))
+	if found {
+		// The merge names the first layer "ceiling": for the keys the node
+		// set, that layer is the node and not the job environment, and a
+		// run's result.json has to say which of the two each value was
+		// (H1: the keys the node is silent about are still the environment's,
+		// and saying "policy" for those would name the wrong owner).
+		policySources(&e, fromPolicy)
+	}
 	// Merge lists the default branch's ignored values before the branch's,
 	// so the number the first two layers drop says who asked for each.
 	nDef := len(policy.Merge(ceiling, def).Ignored)
@@ -96,7 +122,7 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 		s.Mode = policy.ModeOff
 	}
 	if e.PerRunUSD > 0 {
-		if e.Sources[policy.KeyPerRunUSD] == policy.SourceCeiling {
+		if src := e.Sources[policy.KeyPerRunUSD]; src == policy.SourceCeiling || src == policy.SourcePolicy {
 			s.Cap = c.Cap // exactly the owner's, not a float round trip
 		} else {
 			var err error
@@ -117,6 +143,112 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	r.spend, r.policy = s, e
 	r.rec.Policy = r.recordPolicy(nDef)
 	return nil
+}
+
+// envCeiling is the ceiling the job environment deploys: the owner's mode, cap,
+// token ceiling and allow-list as init --repo wrote them. The mode "off" is
+// unset — it is the absence of a mode, not a ceiling that says nothing may be
+// accounted — and a mode that is not one of the three is refused by
+// SpendFromEnv long before this.
+func envCeiling(c Spend) policy.Layer {
+	l := policy.Layer{MaxRunTokens: c.MaxRunTokens, AllowedModels: c.AllowedModels}
+	if c.Mode != "" && c.Mode != policy.ModeOff {
+		l.Mode = c.Mode
+	}
+	if c.Cap > 0 {
+		l.PerRunUSD = c.Cap.USD()
+	}
+	return l
+}
+
+// policyCeiling is the ceiling a published policy gives a run: the job
+// environment's ceiling with the keys the node sets replaced, and nothing else
+// touched. It returns the keys the node set as well, because the merge's first
+// layer is named "ceiling" and result.json has to say which of the two each
+// effective value actually was.
+//
+// The replacement is per key, not whole (H1, the security review of this PR).
+// A node published for allow_repos alone used to replace the ceiling whole —
+// mode, cap, token ceiling, allow-list, price table — so an installation that
+// enforces a $50 cap with its kill switches on ran with no session, no cap and
+// no switches at all, and nothing said so. The node is the owner's word about
+// the keys it names; about the keys it does not, the deployed ceiling is the
+// only thing that was ever said. The mode is the key this matters most for,
+// and it is why the decoder refuses a budget block that names no mode: a node
+// that meant to enforce cannot silently inherit the environment's "off".
+//
+// Spend.Cap carries the same ceiling in micro-dollars, kept exact rather than
+// through a float round trip, so it is replaced only by the node's own cap and
+// keeps the environment's when the node sets none.
+func policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend) (policy.Layer, Spend, map[string]bool, error) {
+	ceiling, set := env, map[string]bool{}
+	if m := pp.Budget.Mode; m != "" {
+		ceiling.Mode, set[policy.KeyMode] = m, true
+	}
+	if v := pp.Budget.PerRunUSD; v > 0 {
+		ceiling.PerRunUSD, set[policy.KeyPerRunUSD] = v, true
+		var err error
+		if c.Cap, err = pricing.FromUSD(v); err != nil || c.Cap < 1 {
+			return env, c, nil, fmt.Errorf("%s: budget.per_run_usd %v: not a usable cap: %v", projectpolicy.PathShared(), v, err)
+		}
+	}
+	if v := pp.Budget.MaxRunTokens; v > 0 {
+		ceiling.MaxRunTokens, set[policy.KeyMaxRunTokens] = v, true
+	}
+	if pp.Budget.AllowedModels != nil {
+		// A non-nil empty list is deny-all, which the decoder has already
+		// refused: ValidBudget holds a policy's list to at least one model.
+		ceiling.AllowedModels, set[policy.KeyAllowedModels] = pp.Budget.AllowedModels, true
+	}
+	if len(pp.Prices) > 0 {
+		prices, err := policyPrices(pp)
+		if err != nil {
+			return env, c, nil, fmt.Errorf("%s: model_prices: %w", projectpolicy.PathShared(), err)
+		}
+		c.Prices = prices
+	}
+	return ceiling, c, set, nil
+}
+
+// policyPrices is the owner's price overrides as the policy node carries them,
+// on the built-in table. The node spells model_prices exactly as the price
+// catalogue spells them (projectpolicy.Price), so the catalogue's own parser
+// reads them here too — the same one FUGARO_MODEL_PRICES goes through, which
+// this replaces: the policy is the owner's price list, whole.
+func policyPrices(pp *projectpolicy.Policy) (*pricing.Table, error) {
+	if len(pp.Prices) == 0 {
+		return pricing.Embedded(), nil
+	}
+	raw, err := json.Marshal(pp.Prices)
+	if err != nil {
+		return nil, err
+	}
+	o, err := pricing.ParseOverrides(string(raw))
+	if err != nil {
+		return nil, err
+	}
+	return pricing.Embedded().With(o)
+}
+
+// policySources renames the merge's first layer for the keys the project's
+// policy node set: result.json's policy.sources then says
+// "policy=<config/policy/shared>" for those keys, and the refusals and the
+// report can send the reader to the node rather than to a job environment that
+// no longer holds the value. The keys in fromPolicy are the node's; the rest
+// of the first layer is the job environment's and keeps the name "ceiling"
+// (H1). Nothing else changes: every later layer is still the same branch or
+// file, and still only tightens.
+func policySources(e *policy.Effective, fromPolicy map[string]bool) {
+	for k := range fromPolicy {
+		if e.Sources[k] == policy.SourceCeiling {
+			e.Sources[k] = policy.SourcePolicy
+		}
+	}
+	for i := range e.Ignored {
+		if e.Ignored[i].Source == policy.SourceCeiling && fromPolicy[e.Ignored[i].Key] {
+			e.Ignored[i].Source = policy.SourcePolicy
+		}
+	}
 }
 
 // FileLayer is what a fugaro.yaml says about policy: the run's own layer,

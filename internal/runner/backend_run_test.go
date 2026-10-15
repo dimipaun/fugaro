@@ -37,8 +37,13 @@ func TestBootstrapExchangesAndDeletesToken(t *testing.T) {
 	if !b.tokenObjectGone() {
 		t.Fatal("the token object is still in the bucket")
 	}
-	if b.itk.Exchanges() != 1 {
-		t.Fatalf("exchanges = %d, want 1", b.itk.Exchanges())
+	// Two: the run's own read of the project's policy (projectpolicy.go)
+	// exchanges the custom token the launcher left it, and budget.Open
+	// exchanges the same token again for the session. Both answers are the
+	// same identity — the same claims, the same hour — and the object is
+	// taken from the bucket once (TestTokenIsTakenOnce).
+	if b.itk.Exchanges() != 2 {
+		t.Fatalf("exchanges = %d, want 2", b.itk.Exchanges())
 	}
 	creds := b.db.Credentials()
 	if len(creds) == 0 {
@@ -426,6 +431,12 @@ func TestBackendFromEnv(t *testing.T) {
 		"empty url":       {runner.RTDBURLEnv: ""},
 		"empty key":       {runner.FirebaseAPIKeyEnv: ""},
 		"key with query":  {runner.FirebaseAPIKeyEnv: "k&x=1"},
+		// The launcher's marker: only "1" is it. Anything else is damage to
+		// the job's environment, and it must not be the quiet reading, because
+		// the marker is what makes a missing token fail closed (M2).
+		"marker not 1":  {runner.BudgetTokenEnv: "true"},
+		"marker empty":  {runner.BudgetTokenEnv: ""},
+		"marker quoted": {runner.BudgetTokenEnv: `"1"`},
 	} {
 		if _, err := runner.BackendFromEnv(get(m), false); err == nil {
 			t.Errorf("%s was accepted", name)
@@ -433,6 +444,35 @@ func TestBackendFromEnv(t *testing.T) {
 	}
 	if _, err := runner.BackendFromEnv(get(map[string]string{runner.RTDBURLEnv: "http://127.0.0.1:9000"}), true); err != nil {
 		t.Errorf("a local run against a loopback database was refused: %v", err)
+	}
+	// The marker alone is readable: it needs no backend, and reading it is
+	// what lets a run with no backend refuse a launch that minted a token.
+	marked, err := runner.BackendFromEnv(get(map[string]string{runner.BudgetTokenEnv: "1"}), false)
+	if err != nil || !marked.TokenMarked || marked.On() {
+		t.Fatalf("marker alone = %+v, %v, want TokenMarked with no backend", marked, err)
+	}
+	// L-b: the Backend returned beside an error says whether the environment
+	// named a backend it could not parse, because the runner must not read the
+	// zero value as "this job has no backend" — that is how the marker was
+	// lost. Only the URL and the marker count: a stray grace value describes no
+	// backend, and a budget-off run ignores it.
+	for name, tc := range map[string]struct {
+		env  map[string]string
+		want bool
+	}{
+		"a bad url":            {map[string]string{runner.RTDBURLEnv: "https://evil.example.invalid"}, true},
+		"a bad marker":         {map[string]string{runner.BudgetTokenEnv: "yes"}, true},
+		"a bad url, no marker": {map[string]string{runner.RTDBURLEnv: "not a url", runner.FirebaseAPIKeyEnv: "AIzaSyFakeWebApiKeyForTests000000000"}, true},
+		"a bad grace only":     {map[string]string{runner.BudgetGraceEnv: "1h"}, false},
+		"a bad key only":       {map[string]string{runner.FirebaseAPIKeyEnv: "k&x=1"}, false},
+	} {
+		be, err := runner.BackendFromEnv(get(tc.env), false)
+		if err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+		if be.MalformedEnv != tc.want {
+			t.Errorf("%s: MalformedEnv = %v, want %v (Backend=%+v, err=%v)", name, be.MalformedEnv, tc.want, be, err)
+		}
 	}
 }
 
@@ -468,6 +508,23 @@ func wrapTune(first, second func(*budget.Config)) func(*budget.Config) {
 
 func TestOffNeverTouchesBackend(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "off", "")
+	// The bucket holds no token, which is what the launcher leaves for a
+	// repository with no published policy and the mode off (internal/cli's
+	// mint decision: a token is minted whenever a policy exists, whatever the
+	// mode). The bucket's state is what makes this run the legacy one: this
+	// fixture mints a token for every run, and with the object left in place a
+	// mode-off job reads the project's policy like any other run does
+	// (TestRunnerReadsPolicyWhenTheNodeExists), so it is removed here.
+	//
+	// That is also why the assertion this test used to end on is gone (L1 of
+	// the PR #379 review): it checked that the object was absent after the
+	// test itself had removed it, and the form before that — the run must NOT
+	// have taken the token — describes a runner that does not read the policy
+	// at all. What remains is what the run must not do: read the database,
+	// exchange anything, or record a budget.
+	if err := token.DeleteObject(context.Background(), b.bucket, bkSlug, runID); err != nil {
+		t.Fatal(err)
+	}
 	b.db.Refuse(503, "UNAVAILABLE", "", "down")
 	rec, err := b.run(t, implement("feature"), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Budget != nil {
@@ -476,8 +533,8 @@ func TestOffNeverTouchesBackend(t *testing.T) {
 	if n := len(b.db.Credentials()); n != 0 {
 		t.Fatalf("a run with its budget off made %d database requests", n)
 	}
-	if b.itk.Exchanges() != 0 || b.tokenObjectGone() {
-		t.Fatal("a run with its budget off took its budget token")
+	if b.itk.Exchanges() != 0 {
+		t.Fatal("a run with its budget off exchanged a budget token")
 	}
 	if len(b.agent.calls) != 2 {
 		t.Fatalf("%d stages ran", len(b.agent.calls))
@@ -915,11 +972,20 @@ func TestTokenWithoutBackendIsInfraError(t *testing.T) {
 	}
 }
 
+// The job's environment says the budget is on but carries no key: the run
+// stops here, before the identity exchange, naming the variable the deploy is
+// missing. internal/budget's Exchange refuses an empty key as well, so this
+// assertion is what keeps the runner's own guard honest (mutation check 8 of
+// the security review of PR #379): dropping that guard alone still leaves the
+// run stopped — but by the exchange's opaque "the API key is not valid"
+// rather than by the damage to the job, and naming the wrong thing.
 func TestBackendWithoutAPIKeyIsInfraError(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "enforce", "")
 	b.deps.Backend.APIKey = ""
 	rec, err := b.run(t)
-	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, runner.FirebaseAPIKeyEnv) {
+	if err == nil || rec.Status != runstore.StatusInfraError ||
+		!strings.Contains(rec.Reason, runner.FirebaseAPIKeyEnv+" is not set") ||
+		!strings.Contains(rec.Reason, runner.RTDBURLEnv) {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 }
@@ -967,13 +1033,48 @@ func TestWrongDatabaseIsAnInfraError(t *testing.T) {
 	}
 }
 
-// M2: a run whose budget is off ignores the budget's environment, malformed
-// or not.
+// M2: a run whose budget is off ignores a malformed value in the backend's
+// environment when it describes no backend at all (a stray grace, an API key
+// with no URL): the value is not one the run would have used.
 func TestOffIgnoresMalformedBackendEnv(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "off", "")
-	b.deps.BackendErr = errors.New("FUGARO_RTDB_URL: not a database URL")
+	b.deps.Backend = runner.Backend{}
+	b.deps.BackendErr = errors.New("FUGARO_BUDGET_GRACE: it must be a duration between 5s and 3m")
 	rec, err := b.run(t, implement("feature"), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+}
+
+// L-b of the security review of PR #379: BackendFromEnv returns a zero Backend
+// with its error, so the launcher's marker was lost, and a budget-off run read
+// the environment it could not parse as "this job has no backend" — the state
+// in which it skips the read of the project's policy and runs on the
+// environment ceiling with no session, no cap and no kill switch. An
+// environment that carries the URL or the marker and cannot be parsed stops the
+// run whatever its mode, naming the variable that could not be read.
+func TestOffRefusesAMalformedBackendEnvThatCarriesTheBackend(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  string
+	}{
+		{"the marker", `FUGARO_BUDGET_TOKEN "yes": it must be 1, and only a launcher that minted this run's budget token sets it`},
+		{"the URL", "FUGARO_RTDB_URL: not a database URL"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := newBK(t, gwConfig(t, ""), "off", "")
+			b.deps.Backend = runner.Backend{MalformedEnv: true}
+			b.deps.BackendErr = errors.New(tc.err)
+			rec, err := b.run(t)
+			if err == nil || rec.Status != runstore.StatusInfraError {
+				t.Fatalf("rec = %+v, err = %v", rec, err)
+			}
+			if !strings.Contains(rec.Reason, tc.err) {
+				t.Errorf("reason %q does not name the value that could not be read", rec.Reason)
+			}
+			if len(b.agent.calls) != 0 || len(b.provider.State.PRs) != 0 {
+				t.Fatal("the run went on")
+			}
+		})
 	}
 }

@@ -872,10 +872,19 @@ func TestInitFirebasePrintVarsNoCalls(t *testing.T) {
 	}
 }
 
-// init --repo writes the backend's address and web key into the workflow
-// jobs of a repository whose budget is on, and nothing of it otherwise.
+// init --repo writes the backend's address and web key into the workflow jobs
+// whenever the installation has them, whatever its budget mode (D11, plan
+// task 1.4 step 1). The mode is the project's policy now, and a run reads that
+// policy with these two (the token exchange needs the key, not only the URL);
+// a job deployed with the mode off and nothing to read the policy with would
+// run on the environment ceiling with the policy unenforced. What the mode
+// still decides is FUGARO_BUDGET_MODE and the grace, which are the fallback
+// for an installation that has published no policy at all.
 func TestInitRepoPassesRTDBEnv(t *testing.T) {
-	for mode, want := range map[string]bool{"observe": true, "off": false} {
+	for mode, want := range map[string]map[string]bool{
+		"observe": {"FUGARO_RTDB_URL": true, "FUGARO_FIREBASE_API_KEY": true, "FUGARO_BUDGET_GRACE": true, "FUGARO_BUDGET_MODE": true},
+		"off":     {"FUGARO_RTDB_URL": true, "FUGARO_FIREBASE_API_KEY": true, "FUGARO_BUDGET_GRACE": false, "FUGARO_BUDGET_MODE": false},
+	} {
 		isolateProjects(t, t.TempDir())
 		path := writeProject(t, "aurora", "proj-1234")
 		data, err := os.ReadFile(path)
@@ -894,9 +903,9 @@ func TestInitRepoPassesRTDBEnv(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, key := range []string{"FUGARO_RTDB_URL", "FUGARO_FIREBASE_API_KEY", "FUGARO_BUDGET_GRACE"} {
-			if got := strings.Contains(out, key); got != want {
-				t.Errorf("mode %s: %s in the job's env = %v, want %v", mode, key, got, want)
+		for key, wantKey := range want {
+			if got := strings.Contains(out, key); got != wantKey {
+				t.Errorf("mode %s: %s in the job's env = %v, want %v", mode, key, got, wantKey)
 			}
 		}
 		for _, secretish := range []string{fpSigner, "aurora-fp\"", "token_signer"} {

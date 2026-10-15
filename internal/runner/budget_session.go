@@ -23,15 +23,31 @@ import (
 )
 
 // The job environment variables that point the runner at the project's
-// budget backend, set by fugaro init --firebase on every workflow job whose
-// budget is not off (plan R10). Without RTDBURLEnv the runner is M9a's: a
-// static cap in memory and no shared state.
+// budget backend, set by fugaro init --firebase on every workflow job
+// whenever the installation has a backend, whatever the job's mode (D11: the
+// mode is policy now, and a run needs the URL and the key to read it — only
+// the grace stays mode-gated, plan R10). Without RTDBURLEnv the runner is
+// M9a's: a static cap in memory and no shared state.
 const (
 	RTDBURLEnv        = "FUGARO_RTDB_URL"
 	FirebaseAPIKeyEnv = "FUGARO_FIREBASE_API_KEY"
 	// BudgetGraceEnv shortens the D14 grace (a Go duration, at least 5 s and
 	// at most the default 3 m): it exists for tests and can only tighten.
 	BudgetGraceEnv = "FUGARO_BUDGET_GRACE"
+	// BudgetTokenEnv is set to "1" in a job's environment by the launcher that
+	// minted this run's budget token, and by nothing else: whether a token was
+	// minted is a fact about one launch, so it travels as an execution
+	// override (backend.LaunchSpec.Env) and never through init --repo's
+	// deploy-time environment. It closes a fail-open the security review of
+	// PR #379 found: a run of the same repository can delete a queued run's
+	// token object, and a job whose own mode is off read that as "this project
+	// has published no policy" and ran with no session, no cap and no kill
+	// switch — while the launcher had minted a token precisely because a
+	// policy exists. With the marker set, a missing token is the refusal it
+	// is on a budget-on job, whatever the job's mode; a job with no marker
+	// (every install that never minted one, and every local run) keeps
+	// today's behaviour.
+	BudgetTokenEnv = "FUGARO_BUDGET_TOKEN"
 )
 
 // Backend is how the run reaches the project's budget database. The zero
@@ -41,6 +57,22 @@ type Backend struct {
 	APIKey  string
 	// Grace is the D14 window; zero is budget.DefaultGrace.
 	Grace time.Duration
+	// TokenMarked is true when the job's environment carries BudgetTokenEnv:
+	// the launcher that started this execution minted it a budget token, so
+	// the token's absence from the runs bucket is a refusal and never "this
+	// project has published no policy" (see BudgetTokenEnv).
+	TokenMarked bool
+	// MalformedEnv is set, beside BackendErr, when the job's environment
+	// carries the backend URL or the launcher's marker and the value could not
+	// be parsed: the fields above are then only as far as the parse got, and
+	// the run must not read the zero value as "this job has no backend" (L-b
+	// of the security review of PR #379). Losing the marker that way is what
+	// would let a budget-off job skip the read of the project's policy without
+	// a word, which is the one place the marker did not fail closed. A
+	// malformed value that describes no backend at all (a stray grace, an API
+	// key with no URL) leaves it false, and a budget-off run ignores it as it
+	// ignores the rest of the backend's environment.
+	MalformedEnv bool
 	// Tune, for tests only, adjusts the session's configuration (the fakes'
 	// URLs, short intervals).
 	Tune func(*budget.Config)
@@ -54,25 +86,48 @@ func (b Backend) On() bool { return b.RTDBURL != "" }
 // BackendFromEnv reads the backend from the job's environment. loopbackOK
 // admits a database on a loopback address (a local run against a fake or an
 // emulator). A malformed value is an error, which the runner reports as an
-// infra_error at bootstrap: never a silent "no backend".
+// infra_error at bootstrap: never a silent "no backend". The Backend it returns
+// beside an error carries MalformedEnv, which says whether the environment
+// named a backend it could not parse — the two variables that matter are the
+// URL and the launcher's token marker, so the variables are read first and
+// validated after, which is the only order that can report it.
 func BackendFromEnv(lookup func(string) (string, bool), loopbackOK bool) (Backend, error) {
 	var b Backend
-	if v, ok := lookup(RTDBURLEnv); ok {
-		if err := rtdb.ValidateURL(v, loopbackOK); err != nil {
-			return Backend{}, fmt.Errorf("%s: %v", RTDBURLEnv, err)
+	url, hasURL := lookup(RTDBURLEnv)
+	key, hasKey := lookup(FirebaseAPIKeyEnv)
+	marker, hasMarker := lookup(BudgetTokenEnv)
+	grace, hasGrace := lookup(BudgetGraceEnv)
+	// Everything but the two below describes no backend on its own: a stray
+	// grace or an API key with no URL is damage a budget-off run ignores, as it
+	// ignores the rest of the backend's environment.
+	b.MalformedEnv = hasURL || hasMarker
+	if hasURL {
+		if err := rtdb.ValidateURL(url, loopbackOK); err != nil {
+			return b, fmt.Errorf("%s: %v", RTDBURLEnv, err)
 		}
-		b.RTDBURL = v
+		b.RTDBURL = url
 	}
-	if v, ok := lookup(FirebaseAPIKeyEnv); ok {
-		if strings.TrimSpace(v) != v || v == "" || strings.ContainsAny(v, " \t\r\n&?#/") {
-			return Backend{}, fmt.Errorf("%s: it must be a Firebase web API key", FirebaseAPIKeyEnv)
+	if hasKey {
+		if strings.TrimSpace(key) != key || key == "" || strings.ContainsAny(key, " \t\r\n&?#/") {
+			return b, fmt.Errorf("%s: it must be a Firebase web API key", FirebaseAPIKeyEnv)
 		}
-		b.APIKey = v
+		b.APIKey = key
 	}
-	if v, ok := lookup(BudgetGraceEnv); ok {
-		d, err := time.ParseDuration(v)
+	if hasMarker {
+		// Only the launcher writes this, and it writes "1". Anything else is
+		// damage to the job's environment, which the runner reports as an
+		// infra_error rather than reading as "no marker": the marker is what
+		// makes a missing token fail closed, so a value nobody can interpret
+		// must not be the quiet one.
+		if marker != "1" {
+			return b, fmt.Errorf("%s %q: it must be 1, and only a launcher that minted this run's budget token sets it", BudgetTokenEnv, marker)
+		}
+		b.TokenMarked = true
+	}
+	if hasGrace {
+		d, err := time.ParseDuration(grace)
 		if err != nil || d < budget.MinGrace || d > budget.MaxGrace {
-			return Backend{}, fmt.Errorf("%s %q: it must be a duration between %s and %s", BudgetGraceEnv, v, budget.MinGrace, budget.MaxGrace)
+			return b, fmt.Errorf("%s %q: it must be a duration between %s and %s", BudgetGraceEnv, grace, budget.MinGrace, budget.MaxGrace)
 		}
 		b.Grace = d
 	}
@@ -160,60 +215,47 @@ func (r *run) bootstrapHalt(reason runstore.HaltReason, scope, detail string) er
 // creates the registry entry and starts the heartbeat and the kill watch.
 // A halt here has outcome none and exit 0: nothing was locked or pushed.
 func (r *run) startBudgetBackend(ctx context.Context) error {
+	// The launcher's marker says it minted this run a budget token, which it
+	// only does when the project has a shared budget or a published policy.
+	// A job with no backend in its environment then cannot read that policy,
+	// and a run whose own mode is off would go on with the environment
+	// ceiling, no session and no kill switch (M2; refuseStrayToken below is
+	// the same refusal for a budget-on job, found by reading the bucket).
+	// The marker is proof enough: nothing else writes it.
+	if r.d.Backend.TokenMarked && !r.d.Backend.On() {
+		return fmt.Errorf("this run was launched with a budget token, so this repository has a shared budget or a published policy, but its job carries no budget backend (%s is not set in the job's environment): run fugaro init --repo for this repository, then launch the run again", RTDBURLEnv)
+	}
 	// A run whose budget is off ignores the budget's environment entirely.
 	if !r.spend.On() {
 		return nil
 	}
-	if r.d.BackendErr != nil {
-		return fmt.Errorf("the budget backend in the job's environment: %w", r.d.BackendErr)
+	// The run's identity, taken out of the runs bucket exactly once and shared
+	// with the project policy's read (projectpolicy.go): a second take would
+	// find nothing, because TakeObject deletes the object as it reads it
+	// (finding 2). Its refusals are this function's own, shipped ones: a job
+	// whose backend is damaged, or whose budget is on with no token in the
+	// bucket, stops here (B1).
+	if _, err := r.budgetClient(ctx); err != nil {
+		return err
 	}
-	if !r.backendOn() {
+	ident := &r.ident
+	if ident.db == nil {
 		return r.refuseStrayToken(ctx)
 	}
-	b := r.d.Backend
-	if b.APIKey == "" {
-		return fmt.Errorf("the budget backend is configured (%s) but %s is not set", RTDBURLEnv, FirebaseAPIKeyEnv)
-	}
-	if r.d.Bucket == nil {
-		return errors.New("the budget token is delivered through the runs bucket, and this run has none")
-	}
-	slug, runID := r.d.Store.Slug(), r.d.Store.RunID()
-	if budget.Key(slug) != slug || budget.Key(runID) != runID || slug == "" || runID == "" {
-		return fmt.Errorf("the repository slug %q or run id %q cannot be used as keys of the budget database", slug, runID)
-	}
-	custom, err := token.TakeObject(ctx, r.d.Bucket, slug, runID)
-	switch {
-	case errors.Is(err, token.ErrNoToken):
-		return errors.New("the run's budget token is not in the runs bucket (already taken, or the run was not launched with one): launch the run again")
-	case err != nil:
-		return fmt.Errorf("taking the run's budget token: %s", r.redact(err.Error()))
-	}
-	// Registered before anything can print it.
-	r.addSecret(custom)
 
 	mode := r.spend.Mode
-	cfg := budget.Config{
-		RTDBURL: b.RTDBURL, APIKey: b.APIKey, HTTP: b.HTTP,
-		Slug: slug, Run: runID, Grace: b.Grace,
-		PolicyCap: r.spend.Cap, CommittedDaily: r.committedDaily(), LocalEnforce: mode == policyEnforce,
-		Now: r.d.Now, Register: r.addSecret, Log: slog.New(redactHandler{h: r.d.Log.Handler(), redact: r.redact}),
-		OnHalt: r.onBudgetHalt,
-	}
+	// The configuration the policy read already built and Tuned; only the
+	// fields that depend on the merged policy are set here.
+	cfg := ident.cfg
+	cfg.PolicyCap, cfg.CommittedDaily, cfg.LocalEnforce = r.spend.Cap, r.committedDaily(), mode == policyEnforce
 	if r.rec.Deadline != nil {
 		cfg.Deadline = *r.rec.Deadline
 	}
-	if b.Tune != nil {
-		b.Tune(&cfg)
-	}
-	sess, err := budget.Open(ctx, cfg, custom)
-	switch {
-	case errors.Is(err, token.ErrTokenExpired):
-		return r.bootstrapHalt(runstore.HaltBudgetTokenExpired, "run",
-			"the run's budget token was minted more than an hour ago, usually because the run queued for that long: launch it again")
-	case errors.Is(err, budget.ErrGraceExpired):
-		return r.bootstrapHalt(runstore.HaltBudgetUnavailable, "run", "the budget backend could not be reached before the run began: "+r.redact(err.Error()))
-	case err != nil:
-		return fmt.Errorf("the budget backend refused the run's identity: %s", r.redact(err.Error()))
+	sess, err := budget.Open(ctx, cfg, ident.custom)
+	if err != nil {
+		// The policy read classified the same failures; this is the one place
+		// the two classifications are written, so they cannot drift (R2-3).
+		return r.budgetIdentityError(err)
 	}
 	r.mu.Lock()
 	r.sess = sess

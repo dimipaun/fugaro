@@ -124,8 +124,8 @@ func TestDecodeReadsTheDocumentedSnakeCaseKeys(t *testing.T) {
 // ("a misspelt key is an error, never \"no policy\"").
 func TestDecodeRefusesABudgetWhoseKeysAllMiss(t *testing.T) {
 	for name, raw := range map[string]string{
-		"camelCase per_run_usd":    `{"version": 1, "budget": {"perRunUsd": 5}}`,
-		"camelCase max_run_tokens": `{"version": 1, "budget": {"MaxRunTokens": 1000}}`,
+		"camelCase per_run_usd":    `{"version": 1, "budget": {"mode": "enforce", "perRunUsd": 5}}`,
+		"camelCase max_run_tokens": `{"version": 1, "budget": {"mode": "enforce", "MaxRunTokens": 1000}}`,
 		"a mistyped mode":          `{"version": 1, "budget": {"mode": "observe", "perRunUsd": 5}}`,
 		"not an object":            `{"version": 1, "budget": 5}`,
 		"a list":                   `{"version": 1, "budget": []}`,
@@ -146,12 +146,22 @@ func TestDecodeRefusesABadBudgetValue(t *testing.T) {
 		"an unknown mode":       `{"version": 1, "budget": {"mode": "enforc"}}`,
 		"a Go-ish mode":         `{"version": 1, "budget": {"mode": "Enforce"}}`,
 		"a boolean mode":        `{"version": 1, "budget": {"mode": true}}`,
-		"a negative cap":        `{"version": 1, "budget": {"per_run_usd": -1}}`,
-		"an absurd cap":         `{"version": 1, "budget": {"per_run_usd": 1e9}}`,
-		"a cap rounding to 0":   `{"version": 1, "budget": {"per_run_usd": 0.0000001}}`,
-		"a negative token cap":  `{"version": 1, "budget": {"max_run_tokens": -1}}`,
-		"an empty allow-list":   `{"version": 1, "budget": {"allowed_models": []}}`,
-		"a token cap as string": `{"version": 1, "budget": {"max_run_tokens": "1000"}}`,
+		"a negative cap":        `{"version": 1, "budget": {"mode": "enforce", "per_run_usd": -1}}`,
+		"an absurd cap":         `{"version": 1, "budget": {"mode": "enforce", "per_run_usd": 1e9}}`,
+		"a cap rounding to 0":   `{"version": 1, "budget": {"mode": "enforce", "per_run_usd": 0.0000001}}`,
+		"a negative token cap":  `{"version": 1, "budget": {"mode": "enforce", "max_run_tokens": -1}}`,
+		"an empty allow-list":   `{"version": 1, "budget": {"mode": "enforce", "allowed_models": []}}`,
+		"a token cap as string": `{"version": 1, "budget": {"mode": "enforce", "max_run_tokens": "1000"}}`,
+		// H1 (security review of PR #379): a budget block is there and names
+		// no mode. The mode would otherwise come from the job environment,
+		// which the policy's own reader cannot see, so a node published for
+		// its caps would enforce whatever the deploy happened to say — the
+		// silent "enforcement never turned on" this strict decode exists to
+		// prevent. A policy that sets no budget key leaves the block out
+		// entirely.
+		"a cap with no mode":       `{"version": 1, "budget": {"per_run_usd": 0.000001}}`,
+		"an empty budget block":    `{"version": 1, "budget": {}}`,
+		"a token cap with no mode": `{"version": 1, "budget": {"max_run_tokens": 1000}}`,
 	} {
 		p, found, err := Decode([]byte(raw))
 		if err == nil || p != nil || !found {
@@ -161,7 +171,8 @@ func TestDecodeRefusesABadBudgetValue(t *testing.T) {
 	for _, raw := range []string{
 		`{"version": 1, "budget": {"mode": "off"}}`,
 		`{"version": 1, "budget": {"mode": "observe", "per_run_usd": 12.5, "max_run_tokens": 250000, "allowed_models": ["claude-sonnet-5"]}}`,
-		`{"version": 1, "budget": {"per_run_usd": 0.000001}}`,
+		`{"version": 1, "budget": {"mode": "enforce", "per_run_usd": 0.000001}}`,
+		`{"version": 1}`,
 	} {
 		if _, _, err := Decode([]byte(raw)); err != nil {
 			t.Errorf("Decode(%s) = %v, want a valid budget", raw, err)
@@ -169,23 +180,20 @@ func TestDecodeRefusesABadBudgetValue(t *testing.T) {
 	}
 }
 
-// TestDecodeAcceptsAPartialBudgetAndAnEmptyOne: a budget block that names some
-// of its keys leaves the rest at zero, exactly as fugaro.yaml's own budget:
-// block does; an empty block is the policy saying it sets no budget.
-func TestDecodeAcceptsAPartialBudgetAndAnEmptyOne(t *testing.T) {
+// TestDecodeAcceptsAPartialBudget: a budget block that names some of its keys
+// leaves the rest at zero, exactly as fugaro.yaml's own budget: block does —
+// the run keeps the job environment's value for each key the node is silent
+// about (H1) — and the block always names the mode, so a node published for
+// its caps cannot enforce a mode nobody can read out of it. A policy that sets
+// no budget key at all leaves the block out, which is the "sets no budget"
+// spelling the decoder accepts.
+func TestDecodeAcceptsAPartialBudget(t *testing.T) {
 	p, _, err := Decode([]byte(`{"version": 1, "budget": {"mode": "observe"}}`))
 	if err != nil {
 		t.Fatalf("a partial budget must be valid: %v", err)
 	}
 	if p.Budget.Mode != "observe" || p.Budget.PerRunUSD != 0 || p.Budget.MaxRunTokens != 0 {
 		t.Errorf("a partial budget = %+v, want observe with zero ceilings", p.Budget)
-	}
-	p, _, err = Decode([]byte(`{"version": 1, "budget": {}}`))
-	if err != nil {
-		t.Fatalf("an empty budget must be valid: %v", err)
-	}
-	if !reflect.DeepEqual(p.Budget, Budget{}) {
-		t.Errorf("an empty budget = %+v, want the zero Budget", p.Budget)
 	}
 	p, _, err = Decode([]byte(`{"version": 1}`))
 	if err != nil {
@@ -385,12 +393,12 @@ func TestDecodeRefusesABadAllowedModel(t *testing.T) {
 		"null entry":         `[null]`,
 		"a number entry":     `[5]`,
 	} {
-		p, found, err := Decode([]byte(`{"version": 1, "budget": {"allowed_models": ` + list + `}}`))
+		p, found, err := Decode([]byte(`{"version": 1, "budget": {"mode": "enforce", "allowed_models": ` + list + `}}`))
 		if err == nil || p != nil || !found {
 			t.Errorf("%s: Decode(allowed_models %s) = (%v, %v, %v), want a refusal", name, list, p, found, err)
 		}
 	}
-	p, _, err := Decode([]byte(`{"version": 1, "budget": {"allowed_models": ["claude-sonnet-5-5", "deepseek/deepseek-v4.1-flash"]}}`))
+	p, _, err := Decode([]byte(`{"version": 1, "budget": {"mode": "enforce", "allowed_models": ["claude-sonnet-5-5", "deepseek/deepseek-v4.1-flash"]}}`))
 	if err != nil {
 		t.Fatalf("two explicit model IDs must be valid: %v", err)
 	}

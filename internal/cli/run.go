@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -1383,7 +1384,17 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		return res, userErr("workflow %s is not a plain workflow name, so it can't be combined with Claude account %s; nothing started", oneLineCLI(spec.Workflow), pluginwire.Printable(spec.OAuthToken))
 	}
 	lctx, cancel := context.WithTimeout(hctx, launchTimeout)
-	ref, err := env.be.Launch(lctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: spec.Repo, Slug: slug}, Workflow: variant, RunID: spec.RunID, Timeout: launchTimeoutOf(spec)})
+	lspec := backend.LaunchSpec{Repo: backend.RepoRef{Repo: spec.Repo, Slug: slug}, Workflow: variant, RunID: spec.RunID, Timeout: launchTimeoutOf(spec)}
+	if minted {
+		// This execution carries a budget token, so the runner must never read
+		// the token's absence as "this project has published no policy": with
+		// the marker set, a missing token stops the run whatever the job's own
+		// mode (internal/runner's BudgetTokenEnv, plan R2-8(a)). It is an
+		// execution override — minting is a fact about this launch, not about
+		// the job's deploy-time environment.
+		lspec.Env = []string{runner.BudgetTokenEnv + "=1"}
+	}
+	ref, err := env.be.Launch(lctx, lspec)
 	cancel()
 	if err != nil {
 		if errors.Is(err, backend.ErrRejected) {

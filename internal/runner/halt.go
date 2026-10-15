@@ -7,6 +7,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -215,6 +216,8 @@ func raiseAdvice(rec *runstore.Record, key, name string) string {
 	switch src {
 	case policy.SourceCeiling:
 		return fmt.Sprintf("raise %s in the project config and run `fugaro init --repo` (a raise in any fugaro.yaml is ignored: it can only tighten the ceiling)", name)
+	case policy.SourcePolicy:
+		return fmt.Sprintf("raise %s in the project's policy at %s (a raise in any fugaro.yaml is ignored: it can only tighten the ceiling)", name, projectpolicy.PathShared())
 	case policy.SourceDefaultBranch:
 		return fmt.Sprintf("merge a change to %s in `fugaro.yaml` on the default branch (a raise on the run's own branch is ignored)", name)
 	case policy.SourceBranch:

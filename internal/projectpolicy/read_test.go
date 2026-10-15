@@ -1,0 +1,168 @@
+package projectpolicy
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/rtdb"
+)
+
+// readDB is a database acting as an operator: the reads Read makes are the
+// operator's own, with no run token involved.
+func readDB(t *testing.T) (*gcpfake.RTDB, *rtdb.Client) {
+	t.Helper()
+	f := gcpfake.NewRTDB(t)
+	c, err := rtdb.New(f.URL, rtdb.Auth{IDToken: func() string { return "operator-id-token" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f, c
+}
+
+const readPolicy = `{"version": 1, "budget": {"mode": "observe", "per_run_usd": 5}, "allow_repos": ["github/acme/*"]}`
+
+// The marker is what decides whether this installation can have a policy at
+// all (task 1.3 step 1): absent, or below RulesVersion, the policy nodes are
+// the previous generation's, and a read that is refused there is not an error.
+func TestReadWithoutTheMarkerIsLegacy(t *testing.T) {
+	for name, seed := range map[string]func(*gcpfake.RTDB){
+		"no marker and no node": func(*gcpfake.RTDB) {},
+		"no marker and a node":  func(f *gcpfake.RTDB) { f.Set(PathShared(), json.RawMessage(readPolicy)) },
+		"no marker and a refused read": func(f *gcpfake.RTDB) {
+			f.Set(PathShared(), json.RawMessage(readPolicy))
+			f.DenyRead(PathShared())
+		},
+		"a marker below this generation": func(f *gcpfake.RTDB) {
+			f.Set(PathRulesMarker(), RulesVersion-1)
+			f.Set(PathShared(), json.RawMessage(readPolicy))
+			f.DenyRead(PathShared())
+		},
+	} {
+		f, db := readDB(t)
+		seed(f)
+		p, found, err := Read(context.Background(), db)
+		if p != nil || found || err != nil {
+			t.Errorf("%s: Read = (%v, %v, %v), want (nil, false, nil): the owner's rules deploy has not happened yet, and nothing may halt on that", name, p, found, err)
+		}
+	}
+}
+
+// With the marker deployed the node's own state decides: absent is today's
+// behaviour, present and readable is the policy.
+func TestReadWithTheMarker(t *testing.T) {
+	f, db := readDB(t)
+	f.Set(PathRulesMarker(), RulesVersion)
+	p, found, err := Read(context.Background(), db)
+	if p != nil || found || err != nil {
+		t.Fatalf("an absent node = (%v, %v, %v), want (nil, false, nil): installed, not adopted", p, found, err)
+	}
+
+	f.Set(PathShared(), json.RawMessage(readPolicy))
+	if p, found, err = Read(context.Background(), db); err != nil || !found || p == nil {
+		t.Fatalf("Read = (%v, %v, %v), want the policy", p, found, err)
+	}
+	if p.Budget.Mode != "observe" || p.Budget.PerRunUSD != 5 {
+		t.Errorf("policy = %+v", p)
+	}
+
+	// A null body is an absent node, not a policy.
+	f.Set(PathShared(), nil)
+	if p, found, err = Read(context.Background(), db); p != nil || found || err != nil {
+		t.Errorf("a null node = (%v, %v, %v), want (nil, false, nil)", p, found, err)
+	}
+}
+
+// A denial with the marker deployed is the case that must not fall back to a
+// wider ceiling: the rules were changed out from under a published policy.
+func TestReadRefusesADeniedNode(t *testing.T) {
+	f, db := readDB(t)
+	f.Set(PathRulesMarker(), RulesVersion)
+	f.Set(PathShared(), json.RawMessage(readPolicy))
+	f.DenyRead(PathShared())
+	p, found, err := Read(context.Background(), db)
+	if err == nil || p != nil {
+		t.Fatalf("Read = (%v, %v, %v), want a refusal", p, found, err)
+	}
+	if !errors.Is(err, rtdb.ErrPermission) || !strings.Contains(err.Error(), PathShared()) {
+		t.Errorf("err = %v, want it to name the node and the denial", err)
+	}
+}
+
+// An unreadable or unusable node is an error too: the caller must halt, never
+// read it as an empty ceiling.
+func TestReadRefusesAnUnusableNode(t *testing.T) {
+	for name, body := range map[string]string{
+		"not an object":                     `[1, 2, 3]`,
+		"no version":                        `{"budget": {"mode": "observe"}}`,
+		"a version this code does not know": `{"version": 99}`,
+		"a misspelt budget key":             `{"version": 1, "budget": {"per_run_usdc": 5}}`,
+		"a bad mode":                        `{"version": 1, "budget": {"mode": "enforc"}}`,
+	} {
+		f, db := readDB(t)
+		f.Set(PathRulesMarker(), RulesVersion)
+		f.Set(PathShared(), json.RawMessage(body))
+		p, found, err := Read(context.Background(), db)
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Read = (%v, %v, %v), want a refusal", name, p, found, err)
+		}
+	}
+}
+
+// The marker is a node a person can edit by hand: a value that is not an
+// integer is a user error naming it, never a silent "no policy" (and never a
+// zero that reads as legacy).
+func TestReadRefusesANonIntegerMarker(t *testing.T) {
+	for _, v := range []any{"1", []any{1}, map[string]any{"gen": 1}, 1.5, true} {
+		f, db := readDB(t)
+		f.Set(PathRulesMarker(), v)
+		f.Set(PathShared(), json.RawMessage(readPolicy))
+		p, found, err := Read(context.Background(), db)
+		if err == nil || p != nil || found {
+			t.Fatalf("marker %#v: Read = (%v, %v, %v), want a refusal", v, p, found, err)
+		}
+		var me *MarkerError
+		if !errors.As(err, &me) || !strings.Contains(err.Error(), PathRulesMarker()) {
+			t.Errorf("marker %#v: err = %v, want a MarkerError naming the node (a user error, not an outage)", v, err)
+		}
+	}
+}
+
+// The keys this Fugaro does not know are tolerated and exposed (Decode's own
+// tolerance must not be silent): the runner logs them, the CLI refuses them.
+func TestDecodeExposesUnknownTopLevelKeys(t *testing.T) {
+	p, found, err := Decode([]byte(`{"version": 1, "budget": {"mode": "observe"}, "future_key": 1, "another": {"a": 1}}`))
+	if err != nil || !found || p == nil {
+		t.Fatalf("Decode = (%v, %v, %v), want a policy", p, found, err)
+	}
+	if got := strings.Join(p.UnknownKeys, ","); got != "another,future_key" {
+		t.Errorf("UnknownKeys = %q, want another,future_key (sorted)", got)
+	}
+	if p, found, err := Decode(json.RawMessage(readPolicy)); err != nil || !found {
+		t.Errorf("the fixture policy = (%v, %v, %v)", p, found, err)
+	} else if len(p.UnknownKeys) != 0 {
+		t.Errorf("a policy with only known keys has UnknownKeys = %v", p.UnknownKeys)
+	}
+}
+
+// routing.claude.via is read in phase 1b, and must not accept garbage now.
+func TestDecodeRefusesAnUnknownVia(t *testing.T) {
+	for _, via := range []string{"", "Direct", "openrouter-api", "none"} {
+		raw := []byte(`{"version": 1, "routing": {"claude": {"via": "` + via + `", "models": ["claude-sonnet-5"]}}}`)
+		p, found, err := Decode(raw)
+		if err == nil || p != nil || !found {
+			t.Errorf("via %q: Decode = (%v, %v, %v), want a refusal", via, p, found, err)
+		} else if !strings.Contains(err.Error(), "routing.claude.via") {
+			t.Errorf("via %q: err = %v, want it to name the key", via, err)
+		}
+	}
+	for _, via := range []string{RouteDirect, RouteOpenRouter, RouteAuto} {
+		raw := []byte(`{"version": 1, "routing": {"claude": {"via": "` + via + `", "models": ["claude-sonnet-5"]}}}`)
+		if p, found, err := Decode(raw); err != nil || !found || p == nil || p.Routing.Claude.Via != via {
+			t.Errorf("via %q: Decode = (%v, %v, %v), want it accepted", via, p, found, err)
+		}
+	}
+}
