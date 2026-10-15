@@ -1675,3 +1675,75 @@ func TestBaseImageWarningsAcceptTheRemoteRepository(t *testing.T) {
 		t.Errorf("the warning does not name the remote repository: %q", ws[0])
 	}
 }
+
+func TestRepoNeverPrunesSecretsButGainsCandidates(t *testing.T) {
+	before, err := Repo(sandboxInputs(t, m5Additions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before.ProjectSecretCandidates) != 0 {
+		t.Fatalf("ProjectSecretCandidates = %+v, want none with no project_secrets configured", before.ProjectSecretCandidates)
+	}
+	// bitbucket-token is the sandbox's git credential, mounted by every
+	// workflow (SecretMounts's unconditional first entry) -- allow-listing
+	// it project-wide here is the design's own worked example (§6).
+	after, err := Repo(sandboxInputs(t, m5Additions+"project_secrets:\n  bitbucket-token:\n    allow_data_to: [\"acme/sandbox\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// (a) P2's golden property: the key SET (and every ID) is identical,
+	// unaffected by project_secrets existing at all.
+	if !maps.Equal(before.Secrets, after.Secrets) {
+		t.Fatalf("rs.Secrets changed:\nbefore: %+v\nafter:  %+v", before.Secrets, after.Secrets)
+	}
+	// (b) ProjectSecretCandidates gains EXACTLY the expected new entry.
+	want := map[string]string{"bitbucket-token": gcp.ProjectSecretID("aurora", "bitbucket-token")}
+	if !maps.Equal(after.ProjectSecretCandidates, want) {
+		t.Fatalf("ProjectSecretCandidates = %+v, want %+v", after.ProjectSecretCandidates, want)
+	}
+}
+
+// The containers the installation root plans (design §4, installation
+// secrets.tf): §3a's rule is that every provider gets one whether or not its
+// allow_data_to exists -- an absent list is a valid "every repository" state,
+// not a reason to skip the container -- while a project_secrets or
+// claude_accounts entry needs a non-empty list, an empty one meaning nobody.
+// A mutation that drops the unconditional provider branch, or that lets an
+// empty-list entry through, leaves the rest of the spec identical, so nothing
+// else fails.
+func TestProjectSecretContainers(t *testing.T) {
+	const accounts = `claude_accounts:
+  acme-personal:
+    allow_data_to: [acme/sandbox]
+  acme-nobody:
+    allow_data_to: []
+`
+	tests := []struct {
+		name string
+		lc   string
+		want []string
+	}{
+		{"nothing configured", "", nil},
+		{"project_secrets entry with a list", projectSecretLC, []string{"bitbucket-token"}},
+		{"project_secrets entry with an empty list", "project_secrets:\n  bitbucket-token: { allow_data_to: [] }\n", nil},
+		{"provider with no list", noListProviderLC, []string{"no-list-key"}},
+		{"provider with a list", providerLC, []string{"openrouter-api-key", "other-key"}},
+		{"named account with a list", accounts, []string{"claude-oauth-token-acme-personal"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lc := parseLC(t, m4LocalConfig+m5Additions+tt.lc)
+			spec, err := Installation(lc, InstallOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := map[string]string{}
+			for _, logical := range tt.want {
+				want[logical] = gcp.ProjectSecretID(lc.Name, logical)
+			}
+			if !maps.Equal(spec.ProjectSecrets, want) {
+				t.Errorf("ProjectSecrets = %+v, want %+v", spec.ProjectSecrets, want)
+			}
+		})
+	}
+}

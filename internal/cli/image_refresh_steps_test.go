@@ -701,7 +701,7 @@ func TestRefreshRefusesCloneJobMove(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "fugaro image refresh refuses to move acme/app workflow app") {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
-	for _, want := range []string{"checkout: clone's own runner side is not released yet", "generic-tool plan Task 17", "checkout: baked", "fugaro 0.7.1"} {
+	for _, want := range []string{"checkout: clone's own runner side is not released yet", "generic-tool plan Task 17", "checkout: baked", "fugaro 0.7.5"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("%v lacks %q", err, want)
 		}

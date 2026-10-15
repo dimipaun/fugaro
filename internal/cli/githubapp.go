@@ -11,6 +11,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -77,6 +78,23 @@ type appKeySource struct {
 	Notice   io.Writer
 }
 
+// projectCoveredNote is what checkGitHubApp appends to its two "store the
+// App's .pem again" fixes when this repository may use the project-wide
+// github-app-key (small item 5, second half). Both fixes name the
+// repository-scoped command, and a repository copy wins over the project
+// copy from then on with nothing to undo it (design
+// docs/design/project-secrets.md §5): the person following the fix would
+// silently move this repository off the project-wide key forever. "" when
+// no project-wide copy covers this repository, where the suggested command
+// is the only one that makes sense.
+func projectCoveredNote(lc *localcfg.Config, repo string) string {
+	if _, ok := infra.ProjectSecretCandidate(lc, "github-app-key", repo); !ok {
+		return ""
+	}
+	return "; note: this repository may use the project-wide github-app-key, and a --repo copy would override it here from then on, so " +
+		selfCommand() + " secrets set github-app-key --project-wide (which every repository the project allows reads) is the alternative if the key itself is wrong"
+}
+
 // appVerdict is how the check ended.
 type appVerdict int
 
@@ -128,10 +146,18 @@ func checkGitHubApp(ctx context.Context, lc *localcfg.Config, repo, appID string
 	}
 	key, err := github.ParsePrivateKey(pem)
 	clear(pem)
+	// Both "store it again" fixes below suggest the repository-scoped
+	// command, which is the right one only when this repository is not
+	// covered by a project-wide copy: a --repo copy wins over the project
+	// copy forever (design docs/design/project-secrets.md §5, "repo
+	// overrides project" has no override-the-override), the identical
+	// footgun N2 closes for the secrets stage's own prompt. note says so,
+	// and names --project-wide, when it applies.
+	note := projectCoveredNote(lc, repo)
 	if err != nil {
 		// The message of a parse error never holds key material.
 		return appCheck{Verdict: appFailed, Problem: "the private key stored for the GitHub App is not a PEM RSA private key (" + oneLineCLI(err.Error()) + ")",
-			Fix: "store the App's .pem again: " + selfCommand() + " secrets set github-app-key --repo " + quoteWord(repo) + " < PATH-TO-THE-PEM-FILE"}
+			Fix: "store the App's .pem again: " + selfCommand() + " secrets set github-app-key --repo " + quoteWord(repo) + " < PATH-TO-THE-PEM-FILE" + note}
 	}
 	rep, err := github.CheckInstallation(ctx, github.Options{Owner: owner, Repo: name, AppID: appID, PrivateKey: key, BaseURL: githubAPIURL, HTTP: githubAPIClient})
 	var ni *github.NotInstalledError
@@ -140,7 +166,7 @@ func checkGitHubApp(ctx context.Context, lc *localcfg.Config, repo, appID string
 	case errors.As(err, &ni):
 		return appCheck{Verdict: appFailed, Problem: ni.Problem(), Fix: ni.Fix()}
 	case errors.As(err, &bad):
-		return appCheck{Verdict: appFailed, Problem: bad.Error(), Fix: "store the right App's .pem: " + selfCommand() + " secrets set github-app-key --repo " + quoteWord(repo) + " < PATH-TO-THE-PEM-FILE"}
+		return appCheck{Verdict: appFailed, Problem: bad.Error(), Fix: "store the right App's .pem: " + selfCommand() + " secrets set github-app-key --repo " + quoteWord(repo) + " < PATH-TO-THE-PEM-FILE" + note}
 	case err != nil:
 		return appCheck{Verdict: appUnknown, Problem: "the GitHub App's installation on " + repo + " was not checked (GitHub could not be asked: " + oneLineCLI(err.Error()) + "); this does not say the App is fine"}
 	}

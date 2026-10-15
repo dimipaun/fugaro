@@ -14,6 +14,9 @@ import (
 
 	"github.com/creack/pty"
 	"golang.org/x/sys/unix"
+
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/initflow"
 )
 
 // ttyFixture is a pseudo-terminal: tty is what fugaro reads as stdin, and
@@ -191,5 +194,44 @@ func TestReadSecretHiddenPromptRefusesMultiline(t *testing.T) {
 	}
 	if !f.echo(t) {
 		t.Fatal("ECHO turned off")
+	}
+}
+
+// The hidden prompt itself is never entered for a name the project copy
+// already covers: at a real terminal, with a line already waiting in stdin,
+// the run finishes done without taking it, storing anything, or printing a
+// prompt. (TestInitSecretsDoesNotPromptForProjectCoveredName asserts the same
+// run's outcome at a faked terminal; this one is what rules out the read
+// happening at all.) If the fix regressed, the line is read: the name is
+// prompted for, validated and stored, so the test fails rather than blocking.
+func TestInitSecretsNeverReadsStdinForProjectCoveredName(t *testing.T) {
+	tty := newTTY(t)
+	r := newSecretsRig(t, bitbucketOrigin, tty.tty)
+	r.e.lc.ProjectSecrets = map[string]config.ProjectSecret{
+		"bitbucket-token":    {AllowDataTo: []string{"acme/app"}},
+		"claude-oauth-token": {AllowDataTo: []string{"acme/app"}},
+	}
+	for _, name := range []string{"bitbucket-token", "claude-oauth-token"} {
+		r.store.seedProject(r.e.lc.Name, name, tokenValue)
+	}
+	// Lines are waiting: a prompt that were reached reads them (and, if the
+	// fix regressed, stores them) instead of blocking, so a regression fails
+	// this test rather than hanging it. More lines than names, since a
+	// regression is free to prompt for more of them than this test knows.
+	if _, err := tty.master.WriteString(strings.Repeat(tokenValue+"\n", 8)); err != nil {
+		t.Fatal(err)
+	}
+	res, err := r.run(t)
+	if err != nil {
+		t.Fatalf("%v (prompts %q)", err, r.errOut.String())
+	}
+	if got := stateOf(res, initflow.Secrets); got != initflow.Done {
+		t.Fatalf("state = %q, want done", got)
+	}
+	if n := r.store.setCalls(); n != 0 {
+		t.Fatalf("%d value(s) stored: the prompt was reached", n)
+	}
+	if s := r.errOut.String(); strings.Contains(s, "Paste the value") {
+		t.Fatalf("a prompt was printed: %q", s)
 	}
 }

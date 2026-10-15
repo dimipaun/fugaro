@@ -447,7 +447,99 @@ func DiscoverInstallation(ctx context.Context, c *Clients, spec InstallationSpec
 	if err := d.installationSingletons(spec); err != nil {
 		return Imports{}, err
 	}
+	if err := d.projectSecrets(spec); err != nil {
+		return Imports{}, err
+	}
 	return d.result()
+}
+
+// projectSecrets adopts the installation module's project-wide secret
+// containers that exist and are ours, and unions every correctly-labelled
+// one that exists live into the map the root plans, so a name the current
+// config no longer makes eligible is never dropped from for_each --
+// prevent_destroy turns that into a hard terraform plan failure, before
+// tf.Guard or any Fugaro code runs (N3, P2 extended from the repo module).
+//
+// The per-name Get is what an S2 pre-apply store needs: a value set with
+// --project-wide before the installation root's first apply is adopted, not
+// conflicted with. The List is what N3 needs: a second operator whose own
+// local config lacks the entry (project_secrets/providers/claude_accounts
+// are each operator-local) still plans the container the first operator
+// created.
+func (d *discovery) projectSecrets(spec InstallationSpec) error {
+	out := maps.Clone(spec.ProjectSecrets)
+	if out == nil {
+		out = map[string]string{}
+	}
+	for _, logical := range slices.Sorted(maps.Keys(spec.ProjectSecrets)) {
+		id := spec.ProjectSecrets[logical]
+		s, err := d.c.Secrets.Projects.Secrets.Get("projects/" + d.project + "/secrets/" + id).Context(d.ctx).Do()
+		switch {
+		case d.absent(err, serviceSecretManager):
+			continue
+		case err != nil:
+			return fmt.Errorf("reading project secret %s: %w", id, err)
+		}
+		want := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: spec.FugaroProject, gcp.LabelSecret: logical}
+		if !hasMarks(s.Labels, want) {
+			d.foreign("project secret "+id, s.Labels, want)
+			continue
+		}
+		d.add(importProjectSecret, spec.Region, logical, id)
+	}
+	live, err := d.liveProjectSecrets(spec)
+	if err != nil {
+		return err
+	}
+	for _, logical := range slices.Sorted(maps.Keys(live)) {
+		if _, known := out[logical]; known {
+			continue
+		}
+		out[logical] = live[logical]
+		d.add(importProjectSecret, spec.Region, logical, live[logical])
+	}
+	d.im.ProjectSecrets = out
+	return nil
+}
+
+// liveProjectSecrets lists the project-wide containers that already exist
+// and are ours (label fugaro=managed AND fugaro_project=<installation>), by
+// logical name. A listed secret whose ID is not the one ProjectSecretID
+// derives for its logical name cannot be the resource the plan manages, so
+// it is left alone with a note rather than unioned in: adopting it is
+// impossible and deleting it is not ours to do.
+func (d *discovery) liveProjectSecrets(spec InstallationSpec) (map[string]string, error) {
+	out := map[string]string{}
+	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: spec.FugaroProject}
+	var filter []string
+	for _, k := range slices.Sorted(maps.Keys(labels)) {
+		filter = append(filter, "labels."+k+"="+labels[k])
+	}
+	err := d.c.Secrets.Projects.Secrets.List("projects/"+d.project).Filter(strings.Join(filter, " AND ")).Pages(d.ctx, func(p *secretmanager.ListSecretsResponse) error {
+		for _, sec := range p.Secrets {
+			logical := sec.Labels[gcp.LabelSecret]
+			if logical == "" {
+				continue
+			}
+			name := sec.Name[strings.LastIndex(sec.Name, "/")+1:]
+			if want := gcp.ProjectSecretID(spec.FugaroProject, logical); name != want {
+				d.im.Notes = append(d.im.Notes, fmt.Sprintf("project secret %s carries this installation's labels but is not the derived %s, so the plan neither adopts nor deletes it; remove it by hand, or rename it to %s, if it is not in use",
+					name, want, want))
+				continue
+			}
+			out[logical] = name
+		}
+		return nil
+	})
+	switch {
+	// A disabled Secret Manager API means nothing is there to union, the
+	// same answer every other read in this file gives it.
+	case d.absent(err, serviceSecretManager):
+		return out, nil
+	case err != nil:
+		return nil, fmt.Errorf("listing the project's secrets: %w", err)
+	}
+	return out, nil
 }
 
 // installationSingletons adopts the custom roles, the scheduler account
@@ -532,6 +624,19 @@ type Existing struct {
 	DisplayNames map[string]string
 	// CheckJob says the repository's check job exists (and is ours).
 	CheckJob bool
+	// ExtraSecrets are the correctly-labelled repo secrets that exist live
+	// but that the current config no longer computes (logical name → ID),
+	// e.g. a provider that was eligible everywhere under §3a's no-list rule
+	// and is now excluded by a newly added list. Readiness unions them into
+	// the tfvars-reaching Secrets map, so a config edit can never shrink
+	// rs.Secrets's for_each and trip prevent_destroy (P2 extended, N4).
+	ExtraSecrets map[string]string
+	// ProjectSecretsOK are the project-wide candidates whose live secret at
+	// gcp.ProjectSecretID carries this installation's own labels, by logical
+	// name. A candidate whose secret does not exist yet is simply absent;
+	// one that exists with the wrong labels is refused outright (an
+	// accident/drift guard, not a squatting defense -- SF7).
+	ProjectSecretsOK map[string]bool
 	// ProjectNumber is the project's number, which the readiness gates
 	// match a SERVICE_DISABLED answer's consumer against (0: unknown).
 	ProjectNumber uint64
@@ -540,6 +645,42 @@ type Existing struct {
 // uniqueSecrets are the logical secrets ws mounts, sorted.
 func uniqueSecrets(ws WorkflowSpec) []string {
 	return slices.Compact(slices.Sorted(maps.Values(ws.SecretEnv)))
+}
+
+// extraSecrets lists the repository's own secrets (label fugaro_repo) and
+// reports, in out, every logical name that is not already a key of
+// spec.Secrets: one the current config no longer computes, but that exists
+// and is ours. The caller unions these into the plan's Secrets map so a
+// config edit can never shrink it (N4). Listing by label is the same
+// metadata-only call the repository's own secrets loop already makes.
+func (d *discovery) extraSecrets(spec RepoSpec, out map[string]string) error {
+	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: spec.Label}
+	var filter []string
+	for _, k := range slices.Sorted(maps.Keys(labels)) {
+		filter = append(filter, "labels."+k+"="+labels[k])
+	}
+	err := d.c.Secrets.Projects.Secrets.List("projects/"+d.project).Filter(strings.Join(filter, " AND ")).Pages(d.ctx, func(p *secretmanager.ListSecretsResponse) error {
+		for _, sec := range p.Secrets {
+			logical := sec.Labels[gcp.LabelSecret]
+			if logical == "" {
+				continue
+			}
+			if _, known := spec.Secrets[logical]; known {
+				continue
+			}
+			out[logical] = sec.Name[strings.LastIndex(sec.Name, "/")+1:]
+		}
+		return nil
+	})
+	switch {
+	// A disabled Secret Manager API means nothing is there to union, the
+	// same answer every other read in this file gives it.
+	case d.absent(err, serviceSecretManager):
+		return nil
+	case err != nil:
+		return fmt.Errorf("listing the repository's secrets: %w", err)
+	}
+	return nil
 }
 
 // DiscoverRepo finds the repository's resources that exist and checks
@@ -554,7 +695,7 @@ func uniqueSecrets(ws WorkflowSpec) []string {
 // *BindingError: the plan would add a second grant next to it.
 func DiscoverRepo(ctx context.Context, c *Clients, spec RepoSpec) (Imports, Existing, error) {
 	d := &discovery{ctx: ctx, c: c, project: spec.GCPProject}
-	ex := Existing{Jobs: map[string]string{}, DisplayNames: map[string]string{}}
+	ex := Existing{Jobs: map[string]string{}, DisplayNames: map[string]string{}, ExtraSecrets: map[string]string{}, ProjectSecretsOK: map[string]bool{}}
 	b, err := d.bucket(spec.Installation.RunsBucket, spec.Installation.ProjectName)
 	if err != nil {
 		return Imports{}, Existing{}, err
@@ -578,11 +719,58 @@ func DiscoverRepo(ctx context.Context, c *Clients, spec RepoSpec) (Imports, Exis
 			continue
 		}
 		d.add(importSecret, spec.Region, logical, id)
-		p, err := c.Secrets.Projects.Secrets.GetIamPolicy(name).OptionsRequestedPolicyVersion(3).Context(ctx).Do()
+		p, err := secretPolicy(ctx, c.Secrets, spec.GCPProject, id)
 		if err != nil {
-			return Imports{}, Existing{}, fmt.Errorf("reading the IAM policy of secret %s: %w", id, err)
+			return Imports{}, Existing{}, err
 		}
 		secretPolicies[logical] = p
+	}
+
+	// Secrets the current config no longer computes but that still exist and
+	// are ours (N4): a List under this repository's own label, so a name a
+	// narrowed config dropped is unioned back into the plan rather than
+	// deleted. Only the label set is trusted here; the ID is whatever the
+	// live secret carries, so a name that was ours stays ours.
+	if err := d.extraSecrets(spec, ex.ExtraSecrets); err != nil {
+		return Imports{}, Existing{}, err
+	}
+	// Readiness unions these into the plan's Secrets too (N4), so each one
+	// is a container Terraform plans just as the loop above plans the ones
+	// the config still computes -- and gets the same two things that loop
+	// gives them (plan follow-up 3): the import, without which the next
+	// apply tries to create a container that already exists (a 409), and the
+	// live policy, without which the grant checks and the extra-accessors
+	// note below see nothing at all for that name.
+	for _, logical := range slices.Sorted(maps.Keys(ex.ExtraSecrets)) {
+		id := ex.ExtraSecrets[logical]
+		d.add(importSecret, spec.Region, logical, id)
+		p, err := secretPolicy(ctx, c.Secrets, spec.GCPProject, id)
+		if err != nil {
+			return Imports{}, Existing{}, err
+		}
+		secretPolicies[logical] = p
+	}
+
+	// The project-wide candidates: does a secret already exist at the
+	// computed ID, and is it ours? A mismatch is refused (d.foreign), the
+	// same path an unmarked repo secret already takes; an absent one is
+	// simply not in the map yet.
+	for _, logical := range slices.Sorted(maps.Keys(spec.ProjectSecretCandidates)) {
+		id := spec.ProjectSecretCandidates[logical]
+		name := "projects/" + spec.GCPProject + "/secrets/" + id
+		s, err := c.Secrets.Projects.Secrets.Get(name).Context(ctx).Do()
+		switch {
+		case d.absent(err, serviceSecretManager):
+			continue
+		case err != nil:
+			return Imports{}, Existing{}, fmt.Errorf("reading project secret %s: %w", id, err)
+		}
+		want := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: spec.Installation.ProjectName, gcp.LabelSecret: logical}
+		if !hasMarks(s.Labels, want) {
+			d.foreign("project secret "+id, s.Labels, want)
+			continue
+		}
+		ex.ProjectSecretsOK[logical] = true
 	}
 
 	// The repository's image registry.
@@ -676,7 +864,7 @@ func DiscoverRepo(ctx context.Context, c *Clients, spec RepoSpec) (Imports, Exis
 			}
 		}
 	}
-	d.noteExtraAccessors(spec, secretPolicies)
+	d.noteExtraAccessors(spec, ex.ExtraSecrets, secretPolicies)
 
 	im, err := d.result()
 	if err != nil {
@@ -824,7 +1012,10 @@ func (d *discovery) checkGrants(spec RepoSpec, ws WorkflowSpec, b *storage.Bucke
 
 // noteExtraAccessors notes the accessors of each existing secret that the
 // spec doesn't plan: the plan leaves them, since it grants only members.
-func (d *discovery) noteExtraAccessors(spec RepoSpec, secretPolicies map[string]*secretmanager.Policy) {
+// extras carries the live IDs of the secrets the current config no longer
+// computes (Existing.ExtraSecrets) -- their names are in this map's keys
+// but not in spec.Secrets, which Readiness's own union fills in later.
+func (d *discovery) noteExtraAccessors(spec RepoSpec, extras map[string]string, secretPolicies map[string]*secretmanager.Policy) {
 	planned := map[string]map[string]bool{}
 	plan := func(logical, email string) {
 		if planned[logical] == nil {
@@ -854,8 +1045,12 @@ func (d *discovery) noteExtraAccessors(spec RepoSpec, secretPolicies map[string]
 		}
 		if len(extra) > 0 {
 			slices.Sort(extra)
+			id := spec.Secrets[logical]
+			if id == "" {
+				id = extras[logical]
+			}
 			d.im.Notes = append(d.im.Notes, fmt.Sprintf("secret %s can also be read by %s, which the plan neither grants nor removes; remove the grant by hand once nothing needs it",
-				spec.Secrets[logical], strings.Join(extra, ", ")))
+				id, strings.Join(extra, ", ")))
 		}
 	}
 }

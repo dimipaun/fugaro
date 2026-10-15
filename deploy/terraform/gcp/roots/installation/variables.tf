@@ -144,3 +144,13 @@ variable "history" {
   })
   default = null
 }
+
+variable "project_secrets" {
+  type = map(string)
+  # The project-wide secret containers (logical name -> secret ID) the
+  # installation module creates or adopts; empty for an installation with
+  # none, which is every installation until fugaro secrets set
+  # NAME --project-wide has something to store.
+  default  = {}
+  nullable = false
+}

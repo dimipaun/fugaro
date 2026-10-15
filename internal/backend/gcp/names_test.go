@@ -810,3 +810,23 @@ func TestJobSADisplayNameMaxLengthIsPinned(t *testing.T) {
 		t.Fatalf("JobSADisplayName(max slug, max variant) = %q, want the pinned %q (discover.go compares it exactly)", got, want)
 	}
 }
+
+func TestProjectSecretIDDistinctFromRepoSecretID(t *testing.T) {
+	a := ProjectSecretID("acme", "anthropic-api-key")
+	b := SecretID("some-repo-slug-0123456789abcdef", "anthropic-api-key")
+	if a == b {
+		t.Fatal("a project secret ID collided with a repo secret ID")
+	}
+	if ProjectSecretID("acme", "anthropic-api-key") != ProjectSecretID("acme", "anthropic-api-key") {
+		t.Fatal("ProjectSecretID is not pure")
+	}
+	if ProjectSecretID("acme", "x") == ProjectSecretID("acme2", "x") {
+		t.Fatal("two different projects collided")
+	}
+	// A Fugaro project name that happens to equal some repository's own
+	// slug must not make the two functions collide on the same byte string
+	// (the domain separation this function's own comment names).
+	if ProjectSecretID("acme/app", "x") == SecretID("acme/app", "x") {
+		t.Fatal("ProjectSecretID collided with SecretID for a slug-shaped project name")
+	}
+}

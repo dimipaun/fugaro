@@ -90,6 +90,11 @@ variable "repo" {
     slug     = string
     label    = string
     secrets  = map(string) # logical name → secret ID
+    # The names Readiness resolved to a project-wide container, by logical
+    # name (design docs/design/project-secrets.md §5): each ID is an
+    # already-existing secret of the installation root, never one this module
+    # creates. Local configs without a project copy of anything send none.
+    project_secrets = optional(map(string), {})
     registry = object({
       repository_id   = string
       cleanup_dry_run = bool
@@ -154,11 +159,17 @@ variable "repo" {
 
   validation {
     condition = alltrue(concat(
-      [for s in var.repo.build_secrets : contains(keys(var.repo.secrets), s)],
-      [for s in values(try(var.repo.check.secret_env, {})) : contains(keys(var.repo.secrets), s)],
-      flatten([for w in values(var.repo.workflows) : [for s in values(w.secret_env) : contains(keys(var.repo.secrets), s)]]),
+      [for s in var.repo.build_secrets : contains(keys(var.repo.secrets), s) || contains(keys(var.repo.project_secrets), s)],
+      [for s in values(try(var.repo.check.secret_env, {})) : contains(keys(var.repo.secrets), s) || contains(keys(var.repo.project_secrets), s)],
+      flatten([for w in values(var.repo.workflows) : [for s in values(w.secret_env) : contains(keys(var.repo.secrets), s) || contains(keys(var.repo.project_secrets), s)]]),
     ))
-    error_message = "every secret that build_secrets, check.secret_env and the workflows' secret_env name must be one of repo.secrets."
+    error_message = "every secret that build_secrets, check.secret_env and the workflows' secret_env name must be one of repo.secrets or repo.project_secrets."
+  }
+
+  validation {
+    condition = alltrue([for k, id in var.repo.project_secrets :
+    can(regex("^[a-z0-9_-]{1,63}$", k)) && can(regex("^[A-Za-z0-9_-]{1,255}$", id))])
+    error_message = "repo.project_secrets must map logical names (label values) to secret IDs (1-255 characters of letters, digits, _ and -)."
   }
 
   validation {

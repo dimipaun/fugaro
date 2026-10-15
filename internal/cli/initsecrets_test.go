@@ -108,6 +108,17 @@ func (m *memStore) Set(_ context.Context, id string, value []byte, labels map[st
 	return fmt.Sprint(len(s.versions)), nil
 }
 
+// seedProject stores a project-wide copy: the labels fugaro secrets set
+// --project-wide writes and every project-wide listing reads (design §4),
+// under the installation's own ID (gcp.ProjectSecretID), not a repository's.
+func (m *memStore) seedProject(project, name, value string) {
+	s := &memSecret{labels: map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: project, gcp.LabelSecret: name}}
+	if value != "" {
+		s.versions = append(s.versions, []byte(value))
+	}
+	m.secrets[gcp.ProjectSecretID(project, name)] = s
+}
+
 func (m *memStore) latest(slug, name string) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -675,6 +686,240 @@ func TestSecretsBeforeFirstBuild(t *testing.T) {
 	res, err = initflow.Run(context.Background(), []initflow.Stage{repo, r.stage}, r.e.options())
 	if err != nil || !repo.applied || stateOf(res, "secrets") != initflow.Done {
 		t.Fatalf("%v, %+v", err, res.Stages)
+	}
+}
+
+// projectSharedForApp is the local config shape Task 9 exists for: the names
+// every kind of secret may be stored project-wide under, all allowed for
+// acme/app -- the reserved ones (the git credential, the default Claude
+// account's bare name) through project_secrets, a model provider's key
+// through its own allow_data_to.
+func projectSharedForApp(r *secretsRig, repo string) {
+	r.e.lc.ProjectSecrets = map[string]config.ProjectSecret{
+		"bitbucket-token":    {AllowDataTo: []string{repo}},
+		"claude-oauth-token": {AllowDataTo: []string{repo}},
+	}
+	r.e.lc.Providers = map[string]config.ModelProvider{
+		"openrouter": {Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+			Secret: "openrouter-api-key", Models: []string{"deepseek/*"}, AllowDataTo: []string{repo}},
+	}
+}
+
+// A name that may be stored project-wide is not missing when the
+// installation's copy has a version and the repository's own copy has none.
+// Before this, find() looked only at the repository's ID: at a terminal init
+// prompted for a value the project already holds (and storing it into the
+// repository's own copy would then win forever, a silent precedence flip --
+// exactly the re-entry project-wide secrets exist to remove), and without a
+// terminal it returned NeedsYou and blocked the init.
+func TestInitSecretsFindSkipsNameWithProjectVersion(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("project_secrets: the git credential and the Claude account", func(t *testing.T) {
+		r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
+		projectSharedForApp(r, "acme/app")
+		r.stage.resolve(ctx)
+		want := []string{"bitbucket-token", "claude-oauth-token"}
+		before, err := r.stage.find(ctx, r.store)
+		if err != nil || !slices.Equal(before, want) {
+			t.Fatalf("with nothing stored: find = %v, %v; want %v", before, err, want)
+		}
+		for _, name := range want {
+			if _, ok := infra.ProjectSecretCandidate(r.e.lc, name, "acme/app"); !ok {
+				t.Fatalf("%s is not a project candidate here: the test would prove nothing", name)
+			}
+			r.store.seedProject(r.e.lc.Name, name, tokenValue)
+		}
+		after, err := r.stage.find(ctx, r.store)
+		if err != nil || len(after) != 0 {
+			t.Fatalf("with the project copy stored: find = %v, %v; want nothing missing", after, err)
+		}
+	})
+
+	t.Run("a model provider's key", func(t *testing.T) {
+		r := newSecretsRig(t, githubOrigin, strings.NewReader(""))
+		projectSharedForApp(r, "acme/app")
+		r.writeConfig(t, checkoutYAML("github", "api-key", "aurora", "")) // when a provider is mounted at all
+		r.stage.resolve(ctx)
+		slug := mustSlug("github", "acme/app")
+		r.store.seed(slug, "github-app-key", tokenValue)
+		r.store.seed(slug, "anthropic-api-key", tokenValue)
+		if got, err := r.stage.find(ctx, r.store); err != nil || !slices.Equal(got, []string{"openrouter-api-key"}) {
+			t.Fatalf("find = %v, %v; want only the provider's key missing", got, err)
+		}
+		if _, ok := infra.ProjectSecretCandidate(r.e.lc, "openrouter-api-key", "acme/app"); !ok {
+			t.Fatal("the provider's key is not a project candidate here: the test would prove nothing")
+		}
+		r.store.seedProject(r.e.lc.Name, "openrouter-api-key", tokenValue)
+		if got, err := r.stage.find(ctx, r.store); err != nil || len(got) != 0 {
+			t.Fatalf("find = %v, %v; want nothing missing", got, err)
+		}
+	})
+
+	// The other half of the same rule: a project copy this repository may not
+	// use is not a value it has -- dropping the candidate check would make
+	// init skip a name that would then have nothing to mount.
+	t.Run("a project copy this repository may not use", func(t *testing.T) {
+		r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
+		r.e.lc.ProjectSecrets = map[string]config.ProjectSecret{
+			"bitbucket-token": {AllowDataTo: []string{"acme/other"}},
+		}
+		r.stage.resolve(ctx)
+		r.store.seedProject(r.e.lc.Name, "bitbucket-token", tokenValue)
+		if _, ok := infra.ProjectSecretCandidate(r.e.lc, "bitbucket-token", "acme/app"); ok {
+			t.Fatal("a project copy acme/app may not use was treated as a candidate")
+		}
+		got, err := r.stage.find(ctx, r.store)
+		if err != nil || !slices.Contains(got, "bitbucket-token") {
+			t.Fatalf("find = %v, %v; want the git credential still missing", got, err)
+		}
+	})
+}
+
+// End to end at a terminal: the stage never reaches the prompt for a name the
+// project copy already covers. It is not merely told the names exist -- the
+// stage is Done, so nothing it would print or store is anywhere, and no
+// command is left for the user either (before the fix this run ended
+// NeedsYou with "fugaro secrets set bitbucket-token --repo acme/app").
+func TestInitSecretsDoesNotPromptForProjectCoveredName(t *testing.T) {
+	r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
+	projectSharedForApp(r, "acme/app")
+	fakeTerminal(t) // canPrompt() is true: a name wrongly called missing would be prompted for
+	covered := []string{"bitbucket-token", "claude-oauth-token"}
+	for _, name := range covered {
+		r.store.seedProject(r.e.lc.Name, name, tokenValue)
+	}
+	res, err := r.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stateOf(res, initflow.Secrets); got != initflow.Done {
+		t.Fatalf("state = %q, want done (out %q, errOut %q)", got, r.out.String(), r.errOut.String())
+	}
+	if n := r.store.setCalls(); n != 0 {
+		t.Fatalf("%d value(s) stored: a project-covered name was prompted for", n)
+	}
+	text := r.out.String() + r.errOut.String()
+	for _, want := range []string{"secrets set", "Paste the value for"} {
+		if strings.Contains(text, want) {
+			t.Fatalf("%q reached the output: a project-covered name was asked for", want)
+		}
+	}
+	for _, l := range res.Left {
+		if strings.Contains(strings.Join(l.Commands, "\n"), "secrets set") {
+			t.Fatalf("a project-covered name was left as a command: %v", l.Commands)
+		}
+	}
+	noLeak(t, tokenValue, text)
+}
+
+// The regression guard: a repository whose own copy has a version is not
+// missing, with or without a project copy as well (today's rule, unchanged by
+// the project-copy read above -- the fix must not make the project copy look
+// like the preferred one).
+func TestInitSecretsPrecedenceUnchangedWhenRepoAlreadyStored(t *testing.T) {
+	ctx := context.Background()
+	slug := mustSlug("bitbucket", "acme/app")
+	for _, tc := range []struct {
+		name    string
+		project bool
+	}{
+		{"the repository's own copy only", false},
+		{"the repository's copy and a project copy", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
+			projectSharedForApp(r, "acme/app")
+			r.stage.resolve(ctx)
+			for _, name := range []string{"bitbucket-token", "claude-oauth-token"} {
+				r.store.seed(slug, name, tokenValue)
+				if tc.project {
+					r.store.seedProject(r.e.lc.Name, name, tokenValue)
+				}
+			}
+			if got, err := r.stage.find(ctx, r.store); err != nil || len(got) != 0 {
+				t.Fatalf("find = %v, %v; want nothing missing", got, err)
+			}
+		})
+	}
+}
+
+// §3a: a provider configured with no allow_data_to may be used by every
+// repository, so a project-wide copy of its key covers each repository's init
+// -- not only one some list happens to name.
+func TestInitSecretsProviderNoListNeverPromptsAnyRepo(t *testing.T) {
+	for _, repo := range []string{"acme/app", "acme/other"} {
+		t.Run(repo, func(t *testing.T) {
+			ctx := context.Background()
+			r := newSecretsRig(t, "https://github.com/"+repo+".git", strings.NewReader(""))
+			r.e.lc.Repos = map[string]localcfg.Repo{repo: {Provider: "github"}}
+			r.e.lc.Providers = map[string]config.ModelProvider{
+				"openrouter": {Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+					Secret: "openrouter-api-key", Models: []string{"deepseek/*"}}, // no allow_data_to at all
+			}
+			r.writeConfig(t, checkoutYAML("github", "api-key", "aurora", ""))
+			slug := mustSlug("github", repo)
+			r.store.seed(slug, "github-app-key", tokenValue)
+			r.store.seed(slug, "anthropic-api-key", tokenValue)
+			r.store.seedProject(r.e.lc.Name, "openrouter-api-key", tokenValue)
+			if _, ok := infra.ProjectSecretCandidate(r.e.lc, "openrouter-api-key", repo); !ok {
+				t.Fatalf("the provider's key is not a project candidate for %s: the test would prove nothing", repo)
+			}
+			r.stage.resolve(ctx)
+			if got, err := r.stage.find(ctx, r.store); err != nil || len(got) != 0 {
+				t.Fatalf("find = %v, %v; want nothing missing for %s", got, err, repo)
+			}
+			res, err := r.run(t)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := stateOf(res, initflow.Secrets); got != initflow.Done {
+				t.Fatalf("state = %q, want done (out %q)", got, r.out.String())
+			}
+			for _, l := range res.Left {
+				if strings.Contains(strings.Join(l.Commands, "\n"), "secrets set") {
+					t.Fatalf("a project-covered provider key was left as a command: %v", l.Commands)
+				}
+			}
+		})
+	}
+}
+
+// The legitimate bootstrap case: neither the repository nor the project has a
+// version. find()'s answer and canPrompt()/set()'s behavior are byte-for-byte
+// what they were -- the name is still missing, and at a terminal the stage
+// still asks for it and leaves the one-line command.
+func TestInitSecretsStillPromptsWhenNothingStoredAnywhere(t *testing.T) {
+	r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
+	projectSharedForApp(r, "acme/app")
+	fakeTerminal(t)
+	ctx := context.Background()
+	r.stage.resolve(ctx)
+	want := []string{"bitbucket-token", "claude-oauth-token"}
+	if got, err := r.stage.find(ctx, r.store); err != nil || !slices.Equal(got, want) {
+		t.Fatalf("find = %v, %v; want %v", got, err, want)
+	}
+	res, err := r.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stateOf(res, initflow.Secrets); got != initflow.NeedsYou {
+		t.Fatalf("state = %q, want needs-you (the values are the user's to type)", got)
+	}
+	cmds := ""
+	for _, l := range res.Left {
+		cmds += strings.Join(l.Commands, "\n") + "\n"
+	}
+	for _, want := range []string{
+		"fugaro secrets set bitbucket-token --repo acme/app",
+		"fugaro secrets set claude-oauth-token --repo acme/app",
+	} {
+		if !strings.Contains(cmds, want) {
+			t.Errorf("missing %q in %q", want, cmds)
+		}
+	}
+	if r.store.setCalls() != 0 {
+		t.Fatal("a value was stored with none to store from")
 	}
 }
 

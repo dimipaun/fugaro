@@ -2,10 +2,17 @@ package runner_test
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/gitops"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -165,4 +172,85 @@ func TestCloneFollowUpPrefetchesTheDiff(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustReady(t, rec, err)
+}
+
+// TestCloneReviewPrefetchIsBounded: a prefetch fetch that never answers is
+// cut off at prefetchBound and reported as a warning, never as a bootstrap
+// failure: the run goes on, reviews, and succeeds. Without a bound, a
+// promisor remote that accepts the connection and then stalls would hold
+// the run at bootstrap until its own total timeout, with no stage started
+// and nothing written.
+//
+// Mutation (run, restore): make fetchWithin call fetch(ctx) without the
+// WithTimeout — this test then blocks in the stub until the run's own
+// context ends, and times out instead of finding its three warnings.
+func TestCloneReviewPrefetchIsBounded(t *testing.T) {
+	h := newHarness(t, cloneYAML, reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	h.cloneJob(t)
+	pushReviewBranch(t, h, "someone-elses-change", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"README.md": "their change\n"})
+	})
+	addPR(h, 7, "someone-elses-change", "")
+	logs := &lockedBuf{}
+	h.deps.Log = slog.New(slog.NewTextHandler(logs, nil))
+	runner.SetPrefetchBound(t, 50*time.Millisecond)
+	runner.SetPrefetchFetch(t, func(_ *gitops.Repo, ctx context.Context, _, _, _ string) error {
+		<-ctx.Done() // a blackholed remote: the request is never answered
+		return ctx.Err()
+	})
+	rec, err := h.run(t, review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReviewed {
+		t.Fatalf("rec = %+v, err = %v: a stuck prefetch must not fail the run", rec, err)
+	}
+	if n := strings.Count(logs.String(), "prefetching what the agent reads failed"); n != 3 {
+		t.Fatalf("%d prefetch warnings, want 3 (one per fetch, each cut off):\n%s", n, logs.String())
+	}
+	if s := logs.String(); !strings.Contains(s, "context deadline exceeded") {
+		t.Fatalf("the warnings do not say the fetch ran out of time:\n%s", s)
+	}
+}
+
+// TestCloneReviewPrefetchTriesEveryPR (review L2): a pick run reviews
+// several pull requests, and prefetchObjects fetches what each head's reads
+// need. A head whose fetch fails must not cost the later heads theirs: the
+// loop warns and carries on, so every head is attempted and each pull
+// request gets the same chance.
+//
+// Mutation (run, restore): break out of the per-head loop when a fetch
+// fails (or return from prefetchObjects) — the second head is never
+// attempted, and the count per head fails.
+func TestCloneReviewPrefetchTriesEveryPR(t *testing.T) {
+	h := newHarness(t, cloneYAML, reviewTaskSpec("pick", pickYAML, 7, 9))
+	h.cloneJob(t)
+	first := pushReviewBranch(t, h, "a", func(dir string) { testutil.WriteFiles(t, dir, map[string]string{"a.txt": "x\n"}) })
+	second := pushReviewBranch(t, h, "b", func(dir string) { testutil.WriteFiles(t, dir, map[string]string{"b.txt": "x\n"}) })
+	addPR(h, 7, "a", "")
+	addPR(h, 9, "b", "")
+	logs := &lockedBuf{}
+	h.deps.Log = slog.New(slog.NewTextHandler(logs, nil))
+	var mu sync.Mutex
+	heads := map[string]int{}
+	runner.SetPrefetchFetch(t, func(_ *gitops.Repo, _ context.Context, _, _, head string) error {
+		mu.Lock()
+		heads[head]++
+		mu.Unlock()
+		if head == first {
+			return errors.New("could not fetch from promisor remote")
+		}
+		return nil
+	})
+	rec, err := h.run(t, pickVerdict(9))
+	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReviewed {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	// Three fetches per head, the first head's all failing and the second
+	// head's running anyway.
+	if heads[first] != 3 || heads[second] != 3 {
+		t.Fatalf("fetches per head = %v, want 3 each (%s, %s)", heads, first, second)
+	}
+	if n := strings.Count(logs.String(), "prefetching what the agent reads failed"); n != 3 {
+		t.Fatalf("%d warnings, want the first head's three:\n%s", n, logs.String())
+	}
 }
