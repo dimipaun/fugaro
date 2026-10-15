@@ -41,7 +41,7 @@ const layeredSince = "0.6.0"
 // one). Once Task 17 ships, this constant's job becomes the same as the
 // others': docs/release.md's ("Before you tag") checklist verifies it
 // equals the release that ships it.
-const cloneSince = "0.7.1"
+const cloneSince = "0.7.5"
 
 // cloneShipped is false until the release named by cloneSince is actually
 // tagged: Task 17's runner side (the runner's own FUGARO_CHECKOUT support,
@@ -75,6 +75,23 @@ const cloneShipped = false
 // unknown (recipe.UsesV07). docs/release.md's checklist verifies it equals
 // the release that ships them.
 const recipesV07Since = "0.7.0"
+
+// gitSecretIDSince is the first fugaro release whose runner reads
+// CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image
+// check job's own rebuild names the secret ID Readiness resolved, so a
+// project-wide provider credential resolves for the rebuild exactly as it
+// does for the job's clone. A runner before it ignores the field (plain
+// json.Unmarshal) and falls back to the repository's own ID, which mounts a
+// secret with no version once that name has moved to project scope (design
+// docs/design/project-secrets.md §5, §6 step 4a).
+//
+// It is a genuine, narrow exception to P6's "no *Since constant per feature":
+// unlike every other gate here, it is not judged against a build record
+// (there is none to judge: the check job always runs the base image itself),
+// but against ready.Check.Image, the check job's own base ref, in planRepo --
+// see the gate there. docs/release.md ("Before you tag") has the checklist
+// verify it equals the release that ships the field.
+const gitSecretIDSince = "0.7.5"
 
 // namedTokensSince is the first fugaro release whose runner reads a task's
 // oauth_token field (docs/design/named-oauth-tokens.md); an older runner

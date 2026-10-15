@@ -46,4 +46,5 @@ module "installation" {
   log_isolation             = var.log_isolation
   enable_budget             = var.enable_budget
   history                   = var.history
+  project_secrets           = var.project_secrets
 }

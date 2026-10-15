@@ -2230,7 +2230,7 @@ Add to the operator steps, after the base-image upgrade order:
 
 Starts right after 0.7.0 is released. **No task below is in any 0.7.0 group or in the 0.7.0 release notes.**
 
-**Owner ruling, 2026-10-14: Tasks 26, 27 and 28 are dropped.** Cloud Run gen-2 does not support Docker, so the Check 31 measurement and the Docker-on-gen-2 backend are pointless, and Task 28 (a Cloud Batch backend) was conditional on Check 31, so it is not scheduled either (a Docker-capable backend can be designed again if real demand appears). Tasks 24, 25 and 29 may ship in 0.7.1.
+**Owner ruling, 2026-10-14: Tasks 26 and 27 are dropped, and Task 28 is RESTORED.** Cloud Run gen-2 does not support Docker, so the Check 31 gen-2 measurement (Task 26) and Docker on gen-2 (Task 27) are pointless. The Docker-capable backend itself is **not** dropped: the design (generic-tool section 1) was gen-2 first and a VM backend as the fallback, gen-2 failed, so **the compute-instance backend (Task 28) is now the way to run Docker workloads**. It is no longer conditional on Check 31. A correction: an earlier edit of this section wrongly dropped Task 28 together with Tasks 26 and 27. Task 28 starts with a design (`docs/design/compute-backend.md`) that compares Cloud Batch and plain Compute Engine instances; no task below is written in detail until the design is approved. Tasks 24, 25 and 29 may ship in 0.7.5.
 
 ## Group F: cost preview (branch `gt-cost`)
 
@@ -2324,9 +2324,9 @@ Outline only; the full tasks are written after the FACT lines:
 - the selftest checks the socket is user-owned;
 - SECURITY.md is updated.
 
-### Task 28 (DROPPED with Task 26: it was conditional on Check 31): a Cloud Batch backend, if only C passes
+### Task 28 (RESTORED, owner ruling 2026-10-14: the Docker-capable backend on compute instances; design first): a compute-instance backend
 
-Outline only, about 12 tasks:
+Outline only, about 12 tasks. The outline below assumes Cloud Batch (managed Compute Engine VMs); the design compares it with plain Compute Engine instances and may change it:
 - `internal/backend/batch` passes `backendtest.Run` on a new Batch fake in `internal/gcpfake`;
 - `backend: cloud-batch` in the project config;
 - `fugaro init`'s Batch stage (job template, service account reuse, log routing into the existing log bucket);
@@ -2336,7 +2336,7 @@ Outline only, about 12 tasks:
 
 ### Task 29: Delete the `fugaro ls` tombstone (P3)
 
-One function and its test. Owner ruling 2026-10-14: it may ship in 0.7.1.
+One function and its test. Owner ruling 2026-10-14: it may ship in 0.7.5.
 
 ---
 

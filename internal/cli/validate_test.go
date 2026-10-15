@@ -669,3 +669,45 @@ func TestValidateProviderModels(t *testing.T) {
 		t.Fatalf("exit %d: %s", ExitCode(err), out)
 	}
 }
+
+// TestValidateNotesProvidersOpenToEveryRepository: a provider with no
+// allow_data_to means every repository now (design §3a, the owner's ruling),
+// where it used to mean nobody, so validate names it -- from any checkout,
+// and whether the list was left out or written as ["*"]. It is a warning,
+// never a problem: the file is valid, and the note is there so the widening
+// is seen rather than inherited.
+func TestValidateNotesProvidersOpenToEveryRepository(t *testing.T) {
+	const budget = "budget: { mode: enforce, per_run_usd: 2 }\n"
+	const coder = "  auth: api-key\n  models: { coder: deepseek/deepseek-v4-flash, reviewer: claude-sonnet-5-5 }"
+	const listed = `    allow_data_to: ["acme/sandbox"]`
+	notes := map[string]struct {
+		block string
+		repo  string
+		want  string
+	}{
+		"absent":   {strings.Replace(validateProviderBlock, listed+"\n", "", 1), "acme/other", `providers.openrouter: has no allow_data_to, so every repository of the project may mount its key and send it code (write allow_data_to: ["*"] to mean that on purpose`},
+		"wildcard": {strings.Replace(validateProviderBlock, listed, `    allow_data_to: ["*"]`, 1), "acme/other", `providers.openrouter: has allow_data_to: ["*"]: every repository`},
+		"listed":   {validateProviderBlock, "acme/sandbox", ""},
+	}
+	for name, tc := range notes {
+		// The checkout of the open spellings is a repository on no
+		// allow-list: it is allowed, which is exactly the widening the note
+		// is about, and the note must not be reported from one repository's
+		// point of view only.
+		inCheckoutOf(t, tc.repo)
+		path := budgetProject(t, budget+tc.block, coder)
+		out, errOut, err := execute(t, "validate", path)
+		if err != nil || !strings.Contains(out, "is valid") {
+			t.Fatalf("%s: %v\nout: %s\nerr: %s", name, err, out, errOut)
+		}
+		if tc.want == "" {
+			if strings.Contains(errOut, "providers.openrouter") {
+				t.Fatalf("%s: noted though it lists its repositories: %s", name, errOut)
+			}
+			continue
+		}
+		if !strings.Contains(errOut, "warning: "+tc.want) {
+			t.Fatalf("%s: no note naming the provider: %s", name, errOut)
+		}
+	}
+}

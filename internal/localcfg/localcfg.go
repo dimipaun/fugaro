@@ -82,6 +82,14 @@ type Config struct {
 	// choose among by name (design docs/design/named-oauth-tokens.md).
 	// Only the owner sets them, here, never in fugaro.yaml.
 	ClaudeAccounts map[string]config.ClaudeAccount `yaml:"claude_accounts,omitempty"`
+	// ProjectSecrets are the reserved secret names (config.ReservedSecrets)
+	// the owner has opted into project-wide storage for, by allow-listed
+	// repository (design docs/design/project-secrets.md §3). Only the owner
+	// sets them, here, never in fugaro.yaml. A provider's or a named Claude
+	// account's own allow_data_to governs its own secret instead; neither
+	// can collide with a ReservedSecrets key in the first place, so
+	// ValidateProjectSecrets checks membership in ReservedSecrets only.
+	ProjectSecrets map[string]config.ProjectSecret `yaml:"project_secrets,omitempty"`
 	// Watch tunes fugaro watch.
 	Watch *Watch `yaml:"watch,omitempty"`
 	// UpdateCheck turns off the daily check for a newer fugaro release and
@@ -725,6 +733,9 @@ func (c *Config) validate() error {
 		bad("%s: %s", p.Path, p.Message)
 	}
 	for _, p := range config.ValidateClaudeAccounts(c.ClaudeAccounts) {
+		bad("%s: %s", p.Path, p.Message)
+	}
+	for _, p := range config.ValidateProjectSecrets(c.ProjectSecrets) {
 		bad("%s: %s", p.Path, p.Message)
 	}
 	if w := c.Watch; w != nil && w.BurnAlertUSDPerHour != nil {

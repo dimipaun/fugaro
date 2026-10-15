@@ -36,6 +36,7 @@ func (c *Config) Shared() *Config {
 	s.Registry = ""
 	s.Providers = nil
 	s.ClaudeAccounts = nil
+	s.ProjectSecrets = nil
 	s.UpdateCheck = nil
 	s.Build.ServiceAccount = ""
 	s.Repos = withoutBaseBranches(c.Repos)
