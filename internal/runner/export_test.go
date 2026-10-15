@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/cache"
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
@@ -195,4 +196,22 @@ func SetReviewStageDoneSeam(t *testing.T, f func()) {
 	prev := reviewStageDoneSeam
 	reviewStageDoneSeam = f
 	t.Cleanup(func() { reviewStageDoneSeam = prev })
+}
+
+// SetPrefetchBound makes each prefetch fetch time out after d, instead of
+// prefetchBound, for the rest of t.
+func SetPrefetchBound(t *testing.T, d time.Duration) {
+	prev := prefetchBound
+	prefetchBound = d
+	t.Cleanup(func() { prefetchBound = prev })
+}
+
+// SetPrefetchFetch replaces the fetch prefetchObjects makes through the
+// checkout's own git with f, for the rest of t. f gets the checkout, the
+// fetch's context (already bounded by prefetchBound), what is being
+// fetched, the base and the head.
+func SetPrefetchFetch(t *testing.T, f func(repo *gitops.Repo, ctx context.Context, what, base, head string) error) {
+	prev := prefetchFetch
+	prefetchFetch = f
+	t.Cleanup(func() { prefetchFetch = prev })
 }
