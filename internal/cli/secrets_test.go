@@ -1048,6 +1048,65 @@ func TestSecretsSetDefaultsToProjectScope(t *testing.T) {
 	}
 }
 
+// A project-wide store names the repositories whose own copy wins over it
+// (code review, medium): §5's precedence has no override-the-override, and
+// §6 step 4a is the state both existing installations are in, so a rotation
+// of the project copy reaches no repository that already has its own copy
+// with an enabled version -- and saying so is the difference between a
+// rotation that worked and one that only looked like it did. Names only,
+// never a value, and before the value is read.
+func TestSecretsSetProjectWideNamesTheRepoCopiesThatWin(t *testing.T) {
+	sm := secretsFixture(t)
+	label, err := gcp.RepoLabel(appSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// acme/app's own copy, with an enabled version: it wins over the project
+	// copy from now on.
+	sm.Seed(bitbucketSecret, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelSecret: "bitbucket-token"}, []byte("old-repo-token-EXAMPLE"))
+	out, errOut, err := executeStdin(t, tokenValue, "secrets", "set", "bitbucket-token")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, errOut)
+	}
+	if !strings.Contains(errOut, "acme/app") || !strings.Contains(errOut, "wins over the project copy") {
+		t.Errorf("stderr does not name the repository whose copy wins: %q", errOut)
+	}
+	// What the note says is what the store does: the project copy takes the
+	// new version, the repository copy keeps the old one.
+	if got := string(sm.Latest(gcp.ProjectSecretID("aurora", "bitbucket-token"))); got != tokenValue {
+		t.Errorf("the project copy = %q", got)
+	}
+	if got := string(sm.Latest(bitbucketSecret)); got != "old-repo-token-EXAMPLE" {
+		t.Errorf("the repository copy was overwritten: %q", got)
+	}
+	if strings.Contains(out+errOut, tokenValue) || strings.Contains(errOut, "old-repo-token-EXAMPLE") {
+		t.Fatalf("a value leaked: %q %q", out, errOut)
+	}
+}
+
+// The same store says nothing when no repository's copy wins: the note is
+// about a state, not about every project-wide store. A container with no
+// version is not that state -- §5 resolves to a repository copy only when it
+// has an enabled version.
+func TestSecretsSetProjectWideIsSilentWithoutARepoCopy(t *testing.T) {
+	sm := secretsFixture(t)
+	label, err := gcp.RepoLabel(appSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm.Seed(bitbucketSecret, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelSecret: "bitbucket-token"}, nil)
+	_, errOut, err := executeStdin(t, tokenValue, "secrets", "set", "bitbucket-token")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, errOut)
+	}
+	if strings.Contains(errOut, "wins over the project copy") {
+		t.Errorf("a versionless repository copy was called a winner: %q", errOut)
+	}
+	if got := string(sm.Latest(gcp.ProjectSecretID("aurora", "bitbucket-token"))); got != tokenValue {
+		t.Errorf("stored %q", got)
+	}
+}
+
 // TestSecretsSetRepoFlagStoresTheRepoCopy: --repo, with a slug or bare, is
 // the opt-out of the project default: one repository's own container, whose
 // version wins over the project copy from then on (design §5).

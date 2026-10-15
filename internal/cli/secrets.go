@@ -426,6 +426,22 @@ func secretsSetProjectWide(cmd *cobra.Command, env *cloudEnv, o secretsOptions, 
 		return userErr("%s has no project-wide meaning: only a reserved secret (%s), a model provider's key, or a named Claude account's token is stored project-wide",
 			pluginwire.Printable(name), strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", "))
 	}
+	// Design §5's precedence has no override-the-override, and §6 step 4a is
+	// the state both existing installations are in: a repository copy with an
+	// enabled version wins over the project copy, so storing a new version
+	// here is a no-op for every repository that has one -- the rotation
+	// "succeeds" while those runs keep the old value. Said before the value is
+	// read, so the person can stop, and on stderr, so --json's stdout stays
+	// the document alone. Names only, never a value: the check is a listing.
+	if repos, err := repoCopiesWithVersions(cmd.Context(), env, name); err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"note: whether a repository's own copy of %s wins over the project copy could not be read (%s), and a repository copy with an enabled version always wins\n",
+			pluginwire.Printable(name), oneLine(err.Error()))
+	} else if len(repos) > 0 {
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"note: %s already has its own copy with an enabled version in %s, and a repository copy wins over the project copy: those repositories keep the value their own copy holds until its last enabled version is disabled (`fugaro secrets ls --repo <repository>` names the secret), and this version reaches them only after that\n",
+			pluginwire.Printable(name), pluginwire.Printable(strings.Join(repos, ", ")))
+	}
 	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: env.lc.Name, gcp.LabelSecret: name}
 	if err := storeSecret(cmd, env, o, gcp.ProjectSecretID(env.lc.Name, name), labels, name); err != nil {
 		return err
@@ -443,6 +459,48 @@ func secretsSetProjectWide(cmd *cobra.Command, env *cloudEnv, o secretsOptions, 
 		"note: %s is stored project-wide for %s, where every enrolled repository can mount it -- every repository a published policy admits, or, with no policy published, every repository this local config knows. Inside a shared job there is no IAM boundary between repositories: the profile is the boundary. A workflow's own secret (workflows.<n>.secrets) cannot be shared this way and stays a repository copy.\n",
 		pluginwire.Printable(name), pluginwire.Printable(env.lc.Name))
 	return nil
+}
+
+// repoCopiesWithVersions are the local config's repositories whose own copy
+// of logical holds an enabled version: exactly the copies that win over the
+// project copy (design §5, "repo overrides project" has no
+// override-the-override), so a project-wide rotation does not reach them
+// until each one's last enabled version is disabled (design §6 step 4a).
+//
+// It is metadata only -- the listing counts enabled versions and reads no
+// value -- and it names repositories, never a container: a repository is
+// matched by the ID its own slug derives (gcp.SecretID), the one direction
+// that works, since a slug is lossy and cannot be turned back into an
+// owner/name. A copy belonging to a repository this local config does not
+// know is therefore not named; the local config is the operator's own view of
+// their project, which is also what "every enrolled repository" means before
+// a policy is published.
+func repoCopiesWithVersions(ctx context.Context, env *cloudEnv, logical string) ([]string, error) {
+	sm, err := gcp.NewSecrets(ctx, env.gcp)
+	if err != nil {
+		return nil, err
+	}
+	list, err := sm.List(ctx, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelSecret: logical})
+	if err != nil {
+		return nil, err
+	}
+	live := make(map[string]bool, len(list))
+	for _, s := range list {
+		if s.Latest != "" {
+			live[s.ID] = true
+		}
+	}
+	var out []string
+	for _, repo := range slices.Sorted(maps.Keys(env.lc.Repos)) {
+		slug, err := task.Slug(env.lc.Repos[repo].Provider, repo)
+		if err != nil {
+			continue // a repository name the local config holds but no slug can carry
+		}
+		if live[gcp.SecretID(slug, logical)] {
+			out = append(out, repo)
+		}
+	}
+	return out, nil
 }
 
 // storeSecret reads name's value (stdin, or a hidden prompt on a terminal)
