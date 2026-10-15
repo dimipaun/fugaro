@@ -246,6 +246,82 @@ func TestVerifyPublicRunsEvenWhenPublishBaseIsSkipped(t *testing.T) {
 	}
 }
 
+// TestPublishBaseSignsByOCIDigestOnPushOnly pins the signing shape (design
+// retire-image-mirror.md §2): publish-base gains id-token: write, a
+// cosign-installer step at the exact pin release.yml already uses, a
+// -pinned tag added only on a real tag push, and a cosign sign step gated
+// the same way. It also pins the least-privilege rule the signing step
+// needs and nothing else does: id-token: write on publish-base, and on no
+// other job in this workflow (package writes are
+// TestOnlyPublishJobsHoldPackagesWrite's).
+func TestPublishBaseSignsByOCIDigestOnPushOnly(t *testing.T) {
+	data := readImagesWorkflow(t)
+	var wf struct {
+		Jobs map[string]struct {
+			Permissions map[string]string `yaml:"permissions"`
+			Steps       []struct {
+				Uses string `yaml:"uses"`
+				If   string `yaml:"if"`
+				Run  string `yaml:"run"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &wf); err != nil {
+		t.Fatal(err)
+	}
+	const cosignPin = "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6"
+	for name, job := range wf.Jobs {
+		wantWrite := name == "publish-base"
+		if got := job.Permissions["id-token"] == "write"; got != wantWrite {
+			t.Errorf("job %q id-token permission = %q, want write only for publish-base (the keyless signing step)", name, job.Permissions["id-token"])
+		}
+	}
+	job, ok := wf.Jobs["publish-base"]
+	if !ok {
+		t.Fatal("no publish-base job")
+	}
+	if job.Permissions["id-token"] != "write" {
+		t.Errorf("permissions[id-token] = %q, want write", job.Permissions["id-token"])
+	}
+	var installed, taggedPinned, signed bool
+	var pinnedGuarded, signGuarded bool
+	for _, s := range job.Steps {
+		if strings.HasPrefix(s.Uses, cosignPin) {
+			installed = true
+		}
+		// The tag-creation step's own run script literally invokes
+		// "docker buildx imagetools create $tags" (the real command, with
+		// its real argument list); the sign step's run script only ever
+		// *mentions* imagetools create in a comment ("docker buildx
+		// imagetools create does not print...") and in a different
+		// subcommand, "imagetools inspect" — both of which also contain
+		// the bare substring "imagetools create" and "$VERSION-pinned".
+		// Matching on "imagetools create" alone (an earlier draft of this
+		// test's mistake) lets the sign step's own iteration overwrite
+		// pinnedGuarded with a false negative, since the sign step's
+		// guard is YAML-level (If), not this in-script check. Matching on
+		// the exact invocation instead is unambiguous between the two
+		// steps.
+		if strings.Contains(s.Run, "docker buildx imagetools create $tags") {
+			taggedPinned = strings.Contains(s.Run, "$VERSION-pinned")
+			pinnedGuarded = strings.Contains(s.Run, `"$GITHUB_EVENT_NAME" = push`)
+		}
+		if strings.Contains(s.Run, "cosign sign ") {
+			signed = true
+			signGuarded = strings.Contains(s.If, "github.event_name == 'push'")
+		}
+	}
+	if !installed || !taggedPinned || !signed {
+		t.Errorf("cosign-installer=%v, -pinned tag=%v, cosign sign=%v", installed, taggedPinned, signed)
+	}
+	if !pinnedGuarded {
+		t.Error("the -pinned tag addition must be guarded by $GITHUB_EVENT_NAME = push in its own shell script (a different gating mechanism from the sign step's YAML-level if:, since both live inside the same long-running script)")
+	}
+	if !signGuarded {
+		t.Error("the cosign sign step's if: must require github.event_name == 'push'")
+	}
+}
+
 var (
 	usesRE = regexp.MustCompile(`(?m)^\s*-?\s*uses:\s*([^@\s]+)@(\S+)`)
 	shaRE  = regexp.MustCompile(`^[0-9a-f]{40}$`)
