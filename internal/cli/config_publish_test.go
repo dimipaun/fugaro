@@ -121,6 +121,49 @@ func TestPublishRefusesAnInvalidLayer(t *testing.T) {
 	}
 }
 
+// A claim is judged here, against the installation config's whole route
+// table: a run cannot (it routes by its own repository's
+// FUGARO_MODEL_PROVIDERS, which holds only the providers that list that
+// repository, so an undefined name and one this repository may not use look
+// alike). A name nothing defines is refused here, before it reaches every
+// repository of the project.
+func TestPublishRefusesAClaimForAnUndefinedProvider(t *testing.T) {
+	const id = "anthropic/claude-sonnet-5.5"
+	const route = "  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n"
+	publish := func(t *testing.T, routes, claim string, extra ...string) (*cloudFixture, string, error) {
+		t.Helper()
+		f := newCloudFixture(t)
+		isolateCache(t)
+		publishedLayer(t, f, "")
+		noAgentSession(t)
+		f.appendConfig(t, "providers:\n"+routes)
+		args := append([]string{"config", "publish"}, extra...)
+		out, _, err := execute(t, append(args, layerFile(t, testProjectLayer+"claude_models:\n  "+claim))...)
+		return f, out, err
+	}
+
+	// A name the installation config does not define.
+	f, _, err := publish(t, route, `nosuch: ["`+id+`"]`+"\n")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "nothing was published") ||
+		!strings.Contains(err.Error(), "claude_models.nosuch") || !strings.Contains(err.Error(), "does not define") {
+		t.Fatalf("err = %v", err)
+	}
+	if bucketText(t, f, config.LayerKey) != "" {
+		t.Fatal("a claim for an undefined provider was published")
+	}
+	// The same claim against a route that is defined (and does not collide;
+	// an installation config whose own routes overlapped could not have been
+	// loaded at all — ValidateModelProviders refuses it first) publishes:
+	// the rule refuses the bad layer, not the feature.
+	f, out, err := publish(t, route, `openrouter: ["`+id+`"]`+"\n", "--executable-changes")
+	if err != nil || !strings.Contains(out, "published the project layer") {
+		t.Fatalf("a valid claim was refused: %v %s", err, out)
+	}
+	if !strings.Contains(bucketText(t, f, config.LayerKey), id) {
+		t.Fatal("the published layer does not carry the claim")
+	}
+}
+
 // A launcher's publish is refused with the operator-role text before any
 // write (stand-in for bucket-iam plan Task 6's own test on operator_write.go,
 // not yet merged; see operatorWriteErr in layer_copy.go).

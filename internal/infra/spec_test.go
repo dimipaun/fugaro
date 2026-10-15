@@ -1449,6 +1449,68 @@ func TestProvidersEnvInTheJobIsCutToTheRepo(t *testing.T) {
 	}
 }
 
+// The job's FUGARO_MODEL_PROVIDERS is written from the local config, which
+// cannot carry a claim at all: claude_models is a project-layer key and
+// localcfg.Config has no field for it. The claim reaches a run only when the
+// runner reads the layer itself and merges it for that run's route table
+// (resolveConfig), so the claim is never in the deployed job — the layer is
+// read at run time, per run. This pins the render path's input: every
+// workflow's variable is exactly runner.ProvidersEnv of the local config's own
+// providers, and the merged map a render path that took the layer's claims
+// would write is provably different. Mutation that makes this fail: render
+// runner.ProvidersEnv(merged, c.in.Repo) in spec.go instead of
+// runner.ProvidersEnv(lc.Providers, c.in.Repo).
+func TestTheJobProvidersEnvNeverCarriesALayerClaim(t *testing.T) {
+	in := sandboxInputs(t, m5Additions+providerLC)
+	in.Cfg.Agent.Auth = "api-key"
+	const id = "anthropic/claude-sonnet-5.5"
+	// The layer's own anchor: the sandbox file carries no gcp_project, so
+	// this is a fixed valid one, used for the text and the parse alike.
+	anchor := config.LayerAnchor{Project: in.Cfg.Project, GCPProject: "acme-fugaro"}
+	text := "version: 1\nproject: " + anchor.Project + "\ngcp_project: " + anchor.GCPProject +
+		"\nclaude_models:\n  openrouter: [\"" + id + "\"]\n"
+	l, ps := config.ParseProjectLayer([]byte(text), anchor)
+	if len(ps) > 0 {
+		t.Fatalf("this test's own layer is invalid: %v", ps)
+	}
+	if len(l.ClaudeModels["openrouter"]) != 1 {
+		t.Fatalf("the test's layer carries no claim: %+v", l.ClaudeModels)
+	}
+	// The map a render path that merged the layer would write, so the
+	// comparison below is against something that really differs.
+	merged, mps := config.ApplyClaudeClaims(in.LC.Providers, l.ClaudeModels)
+	if len(mps) > 0 {
+		t.Fatalf("the merge refused the claim: %v", mps)
+	}
+	mb, err := json.Marshal(merged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(mb), id) {
+		t.Fatalf("the merge did not add the claim: %s", mb)
+	}
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := runner.ProvidersEnv(in.LC.Providers, in.Repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want == "" {
+		t.Fatal("the fixture's repository is allowed no provider, so this test proves nothing")
+	}
+	for _, w := range rs.Workflows {
+		got, ok := w.Env[ModelProvidersEnv]
+		if !ok || got != want {
+			t.Errorf("%s: %s = %q, want the claim-blind %q", w.Name, ModelProvidersEnv, got, want)
+		}
+		if strings.Contains(got, "anthropic/") {
+			t.Errorf("%s: the job's providers carry a layer claim: %s", w.Name, got)
+		}
+	}
+}
+
 // A checked workflow without base: builds from base_images.base, and the
 // check job runs from it.
 func TestCheckJobOnTheBaseKind(t *testing.T) {

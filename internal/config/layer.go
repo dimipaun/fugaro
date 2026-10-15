@@ -54,6 +54,14 @@ type ProjectLayer struct {
 	Profiles       map[string]Profile `yaml:"profiles"`
 	DefaultProfile string             `yaml:"default_profile"`
 
+	// ClaudeModels are the Claude model IDs a project layer adds to the
+	// owner's routes: provider name -> explicit "anthropic/<id>" entries
+	// (config.ApplyClaudeClaims). A top-level key on purpose: it is a
+	// route entry, not a fugaro.yaml key, so a repository cannot write it
+	// (Resolve merges only defaults: into the repository's tree, with
+	// KnownFields).
+	ClaudeModels map[string][]string `yaml:"claude_models"`
+
 	// Raw is the exact text, SHA256 its hex sha256.
 	Raw    []byte `yaml:"-"`
 	SHA256 string `yaml:"-"`
@@ -128,7 +136,7 @@ func LayerSum(data []byte) string {
 	return hex.EncodeToString(s[:])
 }
 
-var layerTopKeys = []string{"version", "project", "gcp_project", "defaults", "profiles", "default_profile"}
+var layerTopKeys = []string{"version", "project", "gcp_project", "defaults", "profiles", "default_profile", "claude_models"}
 
 // layerReserved are keys a later release defines; this one refuses them
 // with a message saying so.
@@ -550,6 +558,38 @@ func validateLayer(l *ProjectLayer, a LayerAnchor) []Problem {
 			add(p, "a profile name must be 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
 		}
 		ps = append(ps, validateProfile(p, l.Profiles[name])...)
+	}
+	for _, name := range sortedKeys(l.ClaudeModels) {
+		p := "claude_models." + showKey(name)
+		if !providerNameRE.MatchString(name) {
+			add(p, "a provider name must match %s", providerNameRE)
+		}
+		ids := l.ClaudeModels[name]
+		if len(ids) == 0 {
+			add(p, "must list at least one Claude model ID (an explicit anthropic/<id>)")
+			continue
+		}
+		for i, m := range ids {
+			// Two rules, because a claim is appended to a route's own models
+			// (ApplyClaudeClaims) and the merged entry is judged by both:
+			// CheckClaudeClaim (a claim is one explicit anthropic/<id>, never
+			// a pattern, a bare claude-* spelling, a ":" or "[1m]" variant,
+			// or another provider's model) and CheckModelPattern, the rule a
+			// route entry is judged by -- which the gateway's routes apply
+			// again (CheckModelPattern's invariant: a config that validates
+			// here always starts there). The claim rule alone holds no
+			// length bound, so without the second check an over-long ID would
+			// be accepted here, merged into the route, and then refuse to
+			// start every run whose job carries that route.
+			at := fmt.Sprintf("%s[%d]", p, i)
+			if msg := CheckClaudeClaim(m); msg != "" {
+				add(at, "%s", msg)
+				continue
+			}
+			if msg := CheckModelPattern(m); msg != "" {
+				add(at, "%s", msg)
+			}
+		}
 	}
 	if l.DefaultProfile != "" {
 		if _, ok := l.Profiles[l.DefaultProfile]; !ok {

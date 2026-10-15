@@ -70,6 +70,106 @@ func globAll(t *testing.T, pattern string) []string {
 	return files
 }
 
+// fencedYAML are a markdown document's ```yaml blocks, in order.
+func fencedYAML(doc string) []string {
+	var out []string
+	lines := strings.Split(doc, "\n")
+	for i := 0; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != "```yaml" {
+			continue
+		}
+		for j := i + 1; j < len(lines); j++ {
+			if strings.TrimSpace(lines[j]) == "```" {
+				out = append(out, strings.Join(lines[i+1:j], "\n")+"\n")
+				i = j
+				break
+			}
+		}
+	}
+	return out
+}
+
+// TestProjectLayerDocsExample: the §6 example in docs/project-layer.md is a
+// project layer the authoring schema accepts *and* config.ParseProjectLayer
+// parses. It is the shape a reader copies, so a key the docs show can never be
+// one the schema (additionalProperties: false) or the parser refuses — which
+// is exactly the gap this closes: claude_models shipped in the parser, the CLI
+// and the docs example, and project-layer.schema.json had no property for it,
+// so every layer carrying a claim — the documented example included — was
+// rejected by the schema an editor validates against.
+func TestProjectLayerDocsExample(t *testing.T) {
+	data, err := os.ReadFile("../docs/project-layer.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var example string
+	for _, b := range fencedYAML(string(data)) {
+		if strings.Contains(b, "claude_models:") {
+			example = b
+			break
+		}
+	}
+	if example == "" {
+		t.Fatal("docs/project-layer.md has no ```yaml example carrying claude_models:")
+	}
+	if err := compile(t, "project-layer.schema.json").Validate(yamlInstance(t, []byte(example))); err != nil {
+		t.Errorf("project-layer.schema.json rejects docs/project-layer.md's own example: %v", err)
+	}
+	project, err := config.ProjectOf([]byte(example))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gcp, err := config.GCPProjectOf([]byte(example))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ps := config.ParseProjectLayer([]byte(example), config.LayerAnchor{Project: project, GCPProject: gcp}); len(ps) > 0 {
+		t.Errorf("config.ParseProjectLayer rejects docs/project-layer.md's own example: %v", ps)
+	}
+}
+
+// TestProjectLayerSchemaClaudeModels ties the schema's claude_models to the Go
+// rules it mirrors (config.providerNameRE for the name, config.CheckClaudeClaim
+// for the entry — the same rule a route entry is judged by): both are separate
+// copies, and the schema's additionalProperties: false means a schema stricter
+// than the parser refuses a layer the parser accepts. Every text below must
+// come out the same way in both, which a change to either Go rule breaks here.
+func TestProjectLayerSchemaClaudeModels(t *testing.T) {
+	sch := compile(t, "project-layer.schema.json")
+	const head = "version: 1\nproject: aurora\ngcp_project: proj-1234\n"
+	anchor := config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
+	for _, entry := range []string{
+		"claude_models:\n  openrouter: [\"anthropic/claude-sonnet-5.5\"]\n",
+		"claude_models:\n  openrouter: [\"anthropic/claude-sonnet-5.5\", \"anthropic/claude-opus-5.5\"]\n",
+		"claude_models:\n  openrouter: [\"anthropic/a\"]\n",
+		"claude_models:\n  openrouter: [\"anthropic/claude-3.5-sonnet\"]\n",
+		"claude_models:\n  openrouter: []\n",
+		"claude_models:\n  openrouter: \"anthropic/claude-sonnet-5.5\"\n",
+		"claude_models:\n  openrouter: [\"anthropic/*\"]\n",
+		"claude_models:\n  openrouter: [\"anthropic/\"]\n",
+		"claude_models:\n  openrouter: [\"claude-sonnet-5-5\"]\n",
+		"claude_models:\n  openrouter: [\"openai/gpt-5\"]\n",
+		"claude_models:\n  openrouter: [\"anthropic/Claude-Sonnet\"]\n",
+		"claude_models:\n  openrouter: [\"anthropic/claude-sonnet[1m]\"]\n",
+		"claude_models:\n  OpenRouter: [\"anthropic/claude-sonnet-5.5\"]\n",
+		"claude_models:\n  openrouter:\n    - anthropic/claude-sonnet-5.5\n",
+		"claude_models: []\n",
+		"claude_models: openrouter\n",
+		// 101 characters: the parser's route-entry rule (CheckModelPattern)
+		// bound, which the schema mirrors as the item's maxLength.
+		"claude_models:\n  openrouter: [\"anthropic/" + strings.Repeat("c", 91) + "\"]\n",
+		// 100 exactly: inside the bound in both.
+		"claude_models:\n  openrouter: [\"anthropic/" + strings.Repeat("c", 90) + "\"]\n",
+	} {
+		text := head + entry
+		schemaOK := sch.Validate(yamlInstance(t, []byte(text))) == nil
+		_, ps := config.ParseProjectLayer([]byte(text), anchor)
+		if schemaOK != (len(ps) == 0) {
+			t.Errorf("claude_models: %s: schema ok = %v, config.ParseProjectLayer problems = %v", entry, schemaOK, ps)
+		}
+	}
+}
+
 func TestFugaroSchemaCorpus(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	for _, f := range globAll(t, "../testdata/config/valid/*.yaml") {
