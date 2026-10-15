@@ -3,6 +3,7 @@ package rules
 import (
 	"bytes"
 	"encoding/json"
+	"math/rand"
 	"os"
 	"regexp"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 const goldenPath = "testdata/rules.golden.json"
@@ -252,6 +254,59 @@ func formatFloat(f float64) string {
 // suite (TestAllowedPaths, TestDenialTable, build tag firebase) proves the same
 // shape against the real evaluator.
 
+// slugForPath stands in for the template's $slug when a policy path is
+// compared with the generated rules (the template is JSON and holds the paths
+// as literals; the wildcard is the only difference). It, and policyPaths below,
+// live here rather than in rules.go: nothing outside these tests builds a
+// policy path, and production code that imported internal/projectpolicy only to
+// spell paths for a test pulled the policy package into the rules package.
+const slugForPath = "x"
+
+// policyPaths returns the policy's node paths as the template spells them, in
+// the Go the policy uses: the shared node, one repository's child (with
+// slugForPath in place of $slug) and the admin-only node. A rename in
+// internal/projectpolicy updates both or fails
+// TestTemplatePolicyPathsAgreeWithProjectpolicy (phase 1 task 1.2 step 3).
+func policyPaths() (shared, repo, admin string) {
+	return projectpolicy.PathShared(), projectpolicy.PathRepo(slugForPath), projectpolicy.PathAdmin()
+}
+
+// TestPolicyPathsEscapeASlugLikeBudgetKey: a slug is escaped exactly as
+// budget.Key escapes it, so config/policy/repos/$slug and the rules'
+// auth.token.fs claim agree — and it is compared with budget.Key itself, not
+// with a hand-written copy of its table, so the two cannot drift while the
+// copy stays green. The random strings exercise the escapes the table does not
+// name.
+func TestPolicyPathsEscapeASlugLikeBudgetKey(t *testing.T) {
+	for _, slug := range []string{
+		"acme-app-0123456789abcdef", "acme-app-0123", "a.b", "a$b", "a#b[c]d", "a/b", "100%", "\x01", "\x7f",
+	} {
+		if got, want := projectpolicy.PathRepo(slug), "config/policy/repos/"+budget.Key(slug); got != want {
+			t.Errorf("PathRepo(%q) = %q, want %q (budget.Key)", slug, got, want)
+		}
+	}
+	rng := rand.New(rand.NewSource(1))
+	for i := 0; i < 200; i++ {
+		b := make([]byte, rng.Intn(24))
+		for j := range b {
+			b[j] = byte(rng.Intn(256))
+		}
+		slug := string(b)
+		if slug == "" {
+			continue
+		}
+		if got, want := projectpolicy.PathRepo(slug), "config/policy/repos/"+budget.Key(slug); got != want {
+			t.Fatalf("PathRepo(%q) = %q, want %q (budget.Key)", slug, got, want)
+		}
+	}
+	if got, want := projectpolicy.PathRepo(slugForPath), "config/policy/repos/"+slugForPath; got != want {
+		t.Errorf("PathRepo(%q) = %q, want %q: the model slug the other tests compare with is its own key", slugForPath, got, want)
+	}
+	if projectpolicy.PathShared() != "config/policy/shared" || projectpolicy.PathAdmin() != "config/admin" {
+		t.Errorf("PathShared/PathAdmin = %q/%q", projectpolicy.PathShared(), projectpolicy.PathAdmin())
+	}
+}
+
 // generatedPaths renders every location of the generated rules as a
 // slash-separated path (attributes left out), with the template's $slug
 // replaced by slugForPath, so a path built by internal/projectpolicy can be
@@ -280,7 +335,7 @@ func generatedPaths(t *testing.T) map[string]map[string]any {
 // two cannot drift: a rename updates both or fails here (phase 1 task 1.2
 // step 3).
 func TestTemplatePolicyPathsAgreeWithProjectpolicy(t *testing.T) {
-	shared, repo, admin := PolicyPaths()
+	shared, repo, admin := policyPaths()
 	if shared != "config/policy/shared" || repo != "config/policy/repos/"+slugForPath || admin != "config/admin" {
 		t.Fatalf("PolicyPaths = (%q, %q, %q), want config/policy/shared, config/policy/repos/x, config/admin", shared, repo, admin)
 	}
@@ -298,7 +353,7 @@ func TestTemplatePolicyPathsAgreeWithProjectpolicy(t *testing.T) {
 // client entirely.
 func TestPolicyNodesAreReadPerChild(t *testing.T) {
 	paths := generatedPaths(t)
-	shared, repo, admin := PolicyPaths()
+	shared, repo, admin := policyPaths()
 
 	if attrs, ok := paths["config/policy"]; !ok {
 		t.Fatal("the template does not generate /config/policy")

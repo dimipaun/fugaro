@@ -14,26 +14,9 @@ func TestPaths(t *testing.T) {
 	}
 }
 
-// TestPathsEscapeASlug: a slug is escaped exactly as budget.Key escapes it, so
-// config/policy/repos/$slug and the rules' auth.token.fs claim agree. The
-// table is budget.Key's (internal/budget/model.go); a slug is [a-z0-9-]+ in
-// practice, so every entry here is defensive.
-func TestPathsEscapeASlug(t *testing.T) {
-	for _, tc := range []struct{ in, want string }{
-		{"acme-app-0123", "acme-app-0123"},
-		{"a.b", "a%2Eb"},
-		{"a$b", "a%24b"},
-		{"a#b[c]d", "a%23b%5Bc%5Dd"},
-		{"a/b", "a%2Fb"},
-		{"100%", "100%25"},
-		{"\x01", "%01"},
-		{"\x7f", "%7F"},
-	} {
-		if got := PathRepo(tc.in); got != "config/policy/repos/"+tc.want {
-			t.Errorf("PathRepo(%q) = %q, want config/policy/repos/%q", tc.in, got, tc.want)
-		}
-	}
-}
+// The escaping itself (that a slug is keyed exactly as budget.Key keys it) is
+// asserted in internal/budget/rules, against budget.Key, so this package does
+// not import internal/budget to check its own copy of it.
 
 func TestPathsPanicOnAnEmptySlug(t *testing.T) {
 	defer func() {

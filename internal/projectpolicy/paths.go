@@ -6,9 +6,11 @@ import "fmt"
 // leading slash and already key-escaped (the policy half of the paths
 // internal/budget/model.go holds for the caps). Callers pass the raw slug.
 //
-// The rules template spells the same paths as JSON literals; rules.go's
-// ProjectPolicyPaths and TestTemplatePolicyPathsAgreeWithProjectpolicy keep
-// the two from drifting.
+// The rules template spells the same paths as JSON literals; the test helpers
+// policyPaths and generatedPaths, and TestTemplatePolicyPathsAgreeWithProjectpolicy,
+// in internal/budget/rules keep the two from drifting. That is also where the
+// escaping is compared with budget.Key itself (TestPolicyPathsEscapeASlugLikeBudgetKey):
+// this package does not import internal/budget.
 const (
 	pathShared = "config/policy/shared"
 	pathRepos  = "config/policy/repos/"

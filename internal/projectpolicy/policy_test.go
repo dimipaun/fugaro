@@ -207,17 +207,63 @@ func TestDecodeRefusesBadAllowRepoPattern(t *testing.T) {
 	}
 }
 
-func TestDecodeRefusesAProviderWithASecretValue(t *testing.T) {
-	// The node is readable by every run token; a provider entry carries a
-	// secret NAME. Decode cannot tell a name from a value, but it must at
-	// least carry whatever it is given through unchanged, so the CLI (1.6)
-	// and the review can see it.
-	p, _, err := Decode([]byte(`{"version": 1, "providers": {"openrouter": {"secret": "projects/p/secrets/openrouter-key/versions/3"}}}`))
+// TestDecodeChecksAProviderSecretIsASecretName: the node is readable by every
+// run token, and a provider entry carries a secret NAME (§5), so the entry is
+// held to the repository's own secret-name rule (config.SecretNameRE, the rule
+// internal/config/providers.go applies to fugaro.yaml's providers block). A
+// resource path is a pointer into Secret Manager, not a name, and is refused;
+// a value that happens to be spelled like a name cannot be told apart here, so
+// only the CLI (task 1.6) and the review can catch that one.
+func TestDecodeChecksAProviderSecretIsASecretName(t *testing.T) {
+	for name, secret := range map[string]string{
+		"a resource path":  "projects/p/secrets/openrouter-key/versions/3",
+		"a path":           "openrouter/key",
+		"upper case":       "OpenRouter-Key",
+		"a space":          "openrouter key",
+		"a leading dash":   "-openrouter-key",
+		"an underscore":    "openrouter_key",
+		"a trailing colon": "openrouter-key:",
+		"an empty-ish dot": ".",
+		"too long":         "k" + strings.Repeat("e", 63) + "y",
+	} {
+		raw := []byte(`{"version": 1, "providers": {"openrouter": {"secret": "` + secret + `"}}}`)
+		p, found, err := Decode(raw)
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode(secret %q) = (%v, %v, %v), want a refusal: only a secret name may sit on the readable node", name, secret, p, found, err)
+		}
+	}
+	// The name itself is carried through unchanged, and an entry with no
+	// secret at all stays valid (a provider whose key lives in the job env).
+	p, _, err := Decode([]byte(`{"version": 1, "providers": {"openrouter": {"secret": "openrouter-key"}, "other": {"base_url": "https://other.invalid/v1"}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := p.Providers["openrouter"].Secret; got != "projects/p/secrets/openrouter-key/versions/3" {
+	if got := p.Providers["openrouter"].Secret; got != "openrouter-key" {
 		t.Errorf("Secret = %q, want the name unchanged", got)
+	}
+}
+
+// TestDecodeRefusesAnOversizedNode: the policy is policy text read by every
+// run, not a data store, so a node past MaxPolicyBytes is refused rather than
+// decoded.
+func TestDecodeRefusesAnOversizedNode(t *testing.T) {
+	pad := func(n int) []byte {
+		return []byte(`{"version": 1, "allow_repos": ["*"], "pad": "` + strings.Repeat("a", n) + `"}`)
+	}
+	small := pad(MaxPolicyBytes - 100)
+	if len(small) > MaxPolicyBytes {
+		t.Fatalf("the fixture is %d bytes, past the bound it is meant to sit under", len(small))
+	}
+	if _, _, err := Decode(small); err != nil {
+		t.Errorf("Decode(%d bytes) = %v, want a valid policy", len(small), err)
+	}
+	big := pad(MaxPolicyBytes)
+	if len(big) <= MaxPolicyBytes {
+		t.Fatalf("the fixture is %d bytes, not past MaxPolicyBytes (%d)", len(big), MaxPolicyBytes)
+	}
+	p, found, err := Decode(big)
+	if err == nil || p != nil || !found {
+		t.Errorf("Decode(%d bytes) = (%v, %v, %v), want a refusal on an existing node", len(big), p, found, err)
 	}
 }
 

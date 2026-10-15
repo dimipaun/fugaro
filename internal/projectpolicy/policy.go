@@ -6,7 +6,8 @@
 // Nothing reads this package yet. Phase 1 task 1.1 is the object, its paths,
 // its version and its matcher only: the runner's fail-closed read is task 1.3
 // and the CLI's is task 1.6, both held back until this shape is reviewed. It
-// imports internal/task, internal/policy and internal/pricing, and never
+// imports internal/task, internal/policy, internal/pricing and internal/config
+// (for the secret-name rule a provider entry is held to), and never
 // internal/budget, internal/runner or internal/cli, so a policy can be decoded
 // anywhere without a cycle.
 //
@@ -45,6 +46,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 )
@@ -126,6 +128,12 @@ type ClaudeRoute struct {
 	Models []string `json:"models"`
 }
 
+// MaxPolicyBytes bounds the policy node Decode accepts. The node is policy
+// text — rules, patterns, prices and names — read by every run, not a data
+// store, so an oversized node is refused rather than decoded (fail closed: the
+// runner must not read a node it cannot trust itself to have read whole).
+const MaxPolicyBytes = 64 << 10
+
 // Decode reads the shared node. It returns (p, found, err):
 //
 //   - found=false, err=nil: the node is absent or empty, which is today's
@@ -139,6 +147,9 @@ type ClaudeRoute struct {
 func Decode(raw []byte) (*Policy, bool, error) {
 	if isNull(raw) {
 		return nil, false, nil
+	}
+	if len(raw) > MaxPolicyBytes {
+		return nil, true, fmt.Errorf("projectpolicy: the policy node is %d bytes; at most %d are allowed", len(raw), MaxPolicyBytes)
 	}
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &doc); err != nil {
@@ -209,6 +220,19 @@ func Decode(raw []byte) (*Policy, bool, error) {
 			}
 		}
 	}
+	// A provider entry carries the secret's NAME, never a value (§5): the node
+	// is readable by every run token, a prompt-injected agent can take the
+	// token through /proc, and config refuses the same mistake in fugaro.yaml's
+	// providers block with the same rule (internal/config/providers.go). The
+	// name is checked, not merely carried: a value that happens to be a
+	// plausible name is indistinguishable here, but everything else — a
+	// resource path, a literal key, a name that is not a name — is refused
+	// rather than published to every run.
+	for _, name := range providerNames(p.Providers) {
+		if secret := p.Providers[name].Secret; secret != "" && !config.SecretNameRE.MatchString(secret) {
+			return nil, true, fmt.Errorf("projectpolicy: providers.%s.secret %q must be a secret name (lower-case letters, digits and '-'), the name of the secret that holds the key, never the key", name, secret)
+		}
+	}
 	return &p, true, nil
 }
 
@@ -239,6 +263,16 @@ func validBudget(b Budget) error {
 func isNull(raw []byte) bool {
 	t := bytes.TrimSpace(raw)
 	return len(t) == 0 || string(t) == "null"
+}
+
+// providerNames is a stable order for error messages (a map's range is random).
+func providerNames(m map[string]Provider) []string {
+	names := make([]string, 0, len(m))
+	for name := range m {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // sortedKeys is a stable order for error messages (a map's range is random).
