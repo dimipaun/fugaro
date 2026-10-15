@@ -1111,7 +1111,7 @@ Expect the four addresses under `module.firebase.`.
 
 Named Claude accounts (`docs/design/named-oauth-tokens.md` §4) are built on one job variant per allowed account (option B), rejecting option D — a single job whose per-execution override names which secret to mount — because nothing in this repository's code or its vendored `run/v2` client shows that Cloud Run execution overrides can carry a secret reference. That is evidence about the generated bindings, not about the live `run.googleapis.com` API surface, so the design calls it unverified (§7, U1).
 
-**This check reads documentation; Check 52's U2 supersedes it for the live API surface.** Check 52 step 3 (phase 3 of the project-centric plan) runs the *live* probe — a `gcloud run jobs execute --overrides` whose `ContainerOverride` env carries a `valueSource` `secretKeyRef` — on the sandbox job, which is the call this check deliberately does not make. Once Check 52 has run, **its answer governs** whether a Cloud Run execution override can carry a secret reference, and this check's heading, its table row and `docs/design/named-oauth-tokens.md` §4/§7 are corrected to match it (an accepted reference re-opens option D; a refusal confirms this check's title). Until then, this check's documented answer stands as the (not live) evidence, and the two checks are not in conflict: this one settles what the documentation says, Check 52 settles what the API does.
+**This check reads documentation; Check 52's U2 supersedes it for the live API surface.** Check 52 step 3 (phase 3 of the project-centric plan) runs the *live* probe — a `POST …/jobs/<JOB>:run` whose request body carries `overrides.containerOverrides[].env[]` with a `valueSource` `secretKeyRef` — on the sandbox job, which is the call this check deliberately does not make. (Check 52's U2 in an earlier revision named a `gcloud run jobs execute --overrides` flag; there is no such flag, which this check's step 2 can confirm from `--help`, and Check 52 now spells the API call instead.) Once Check 52 has run, **its answer governs** whether a Cloud Run execution override can carry a secret reference, and this check's heading, its table row and `docs/design/named-oauth-tokens.md` §4/§7 are corrected to match it (an accepted reference re-opens option D; a refusal confirms this check's title). Until then, this check's documented answer stands as the (not live) evidence, and the two checks are not in conflict: this one settles what the documentation says, Check 52 settles what the API does.
 
 1. Read the current `run.googleapis.com` v2 REST reference for `jobs.run`'s request body (`Overrides`, `ContainerOverride`) directly from Google's own published API documentation, not this repository's vendored client.
 2. Separately, run `gcloud run jobs execute --help` with any real `gcloud` installation (no project needed) and read its own description of the override flags.
@@ -2137,29 +2137,66 @@ git ls-remote "https://x-token-auth:${PROBE_TOKEN:?}@bitbucket.org/${OUT_WS}/fug
 
 ### 3. U2 — does a Cloud Run **secret reference** work inside a container env override?
 
-The API type has a `ValueSource`. One `gcloud run jobs execute --overrides` attempt on the sandbox job with a `ContainerOverride` env var whose value is a **secret reference**, one `gcloud run jobs update --update-secrets` attempt that sets the same reference in the job's template, and one plain run for comparison. The probe's lines are spelled here, not left to the implementer (finding 30 — a security-relevant probe whose command is "ask the API somehow" is not a check), and they name the *real* secret-reference surface (round-6 review: `--update-env-vars="PROBE_REF=sm://…"` creates no `ContainerOverride` at all and stores the literal string `sm://…` in the environment, which answers a question the phase does not ask):
-
-**This step supersedes Check 34 for the live API surface.** Check 34 ("Cloud Run Jobs execution overrides cannot carry a secret reference") reads Google's published API reference and `gcloud run jobs execute --help` and never calls the API, so its "cannot" is a claim about the documentation and the vendored `run/v2` bindings, not about `run.googleapis.com`. This step makes the call that settles the live surface, so **its answer governs**: if (a) is accepted, Check 34's heading, its table row and `docs/design/named-oauth-tokens.md` §4/§7 are corrected in the same PR as this check's FACT lines; if it is refused, Check 34's title is confirmed and option D stays rejected. Neither check is run yet, so the two are not in conflict — they answer different questions about the same field.
+The API type has a `ValueSource`: `overrides.containerOverrides[].env[]` takes `{"name":…,"valueSource":{"secretKeyRef":{"secret":…,"version":…}}}` (the `EnvVar`/`SecretKeySelector` types). **`gcloud run jobs execute` has no `--overrides` flag** (checked against the GA and beta references — its container flags are `--args`/`--update-env-vars`, which is why the earlier draft's line could not run; review I4), so the execution-level override is made through the API's `jobs.run`. **The runtime grant must be in place first (review I5):** an execution that cannot read the referenced secret fails to *start*, and that IAM error would be mistaken for the API's answer to the reference — so the job's own service account is given `secretAccessor` on the check's throwaway secret before either run:
 
 ```bash
-# (a) The execution-level override — the shape a launcher could write (D10).
-gcloud run jobs execute "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --wait \
-  --overrides='{"containerOverrides":[{"env":[{"name":"PROBE_REF","valueSource":{"secretKeyRef":{"secret":"'"${SANDBOX_SECRET:?}"'","version":"latest"}}}]}]}'
-
-# (b) The template-level reference. `--set-secrets`/`--update-secrets` is the
-# CLI's secret-reference flag; `--update-env-vars` is not one, and `sm://` is
-# not Cloud Run syntax.
-gcloud run jobs update "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" \
-  --update-secrets="PROBE_REF=${SANDBOX_SECRET:?}:latest"
-
-# (c) The comparison run: the same --overrides with a plain literal value
-# instead of a valueSource, so the probe also shows what the override looks
-# like when it carries a value rather than a reference.
-gcloud run jobs execute "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --wait \
-  --overrides='{"containerOverrides":[{"env":[{"name":"PROBE_REF","value":"plain-literal"}]}]}'
+gcloud secrets add-iam-policy-binding "${PROBE_IN:?}" --project="${P:?}" \
+  --member="serviceAccount:${SANDBOX_JOB_SA:?}" --role="roles/secretmanager.secretAccessor"
 ```
 
-**FACT:** whether the override is accepted and whether the value arrives; **and the D10 counterpart — whether an execution's own overrides are visible to the container** (the runner already reads its execution's template for `FUGARO_RUN`, `internal/backend/gcp/run.go:413-419`; what is unverified is whether the *override* is what the template reports). **This step's answer is what the *phase-3* text in `SECURITY.md`'s launcher-override paragraph is allowed to add, and nothing more** (the paragraph itself lands in phase 1, plan Task 1.5 step 5, from Check 49 step 6's evidence — finding 14): if the override is visible, the text says so; if it is not, the text says only that the API merges overrides and the runner cannot see them.
+**This step supersedes Check 34 for the live API surface.** Check 34 ("Cloud Run Jobs execution overrides cannot carry a secret reference") reads Google's published API reference and `gcloud run jobs execute --help` and never calls the API, so its "cannot" is a claim about the documentation and the vendored `run/v2` bindings, not about `run.googleapis.com` — and its step 2's premise (that the override would be a `gcloud` flag) is wrong: the override exists only on the API's `jobs.run` request body, which is what this step calls. Once this step has run, **its answer governs**: if (a) is accepted, Check 34's heading, its table row and `docs/design/named-oauth-tokens.md` §4/§7 are corrected in the same PR as this check's FACT lines; if it is refused, Check 34's title is confirmed and option D stays rejected. Neither check is run yet, so the two are not in conflict — they answer different questions about the same field.
+
+**(a) The execution-level override — the shape a launcher could write (D10).** `POST …/jobs/<JOB>:run`, whose `overrides` is merged into the execution's spec for that execution alone; the response is an **Operation**, so it is polled rather than waited on, and the access token is used from a command substitution (never printed, never stored). The `authorization` for this call is the `run.jobs.runWithOverrides` permission, which the owner's own account has on the sandbox job:
+
+```bash
+curl -sS -X POST \
+  "https://run.googleapis.com/v2/projects/${P:?}/locations/${L:?}/jobs/${SANDBOX_JOB:?}:run" \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" \
+  -d '{"overrides":{"containerOverrides":[{"env":[{"name":"PROBE_REF","valueSource":{"secretKeyRef":{"secret":"'"${PROBE_IN:?}"'","version":"latest"}}}]}]}}'
+gcloud run jobs executions list --job="${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" \
+  --limit=1 --format='value(name)'      # the Operation's execution: record its name as EXEC
+```
+
+**(b) The template-level reference.** `--set-secrets`/`--update-secrets` is the CLI's secret-reference flag; `--update-env-vars` is not one, and `sm://` is not Cloud Run syntax. **This changes the Terraform-managed job's template (review M6): it is drift until Restore, so do not run `fugaro init --repo` between here and Restore** — that would apply Terraform and revert the reference, or report it as a change, and either way the probe's own evidence would be destroyed:
+
+```bash
+gcloud run jobs update "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" \
+  --update-secrets="PROBE_REF=${PROBE_IN:?}:latest"
+```
+
+**(c) The comparison run: the same call with a plain literal `value` instead of a `valueSource`,** so the probe also shows what the override looks like when it carries a value rather than a reference:
+
+```bash
+curl -sS -X POST \
+  "https://run.googleapis.com/v2/projects/${P:?}/locations/${L:?}/jobs/${SANDBOX_JOB:?}:run" \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" \
+  -d '{"overrides":{"containerOverrides":[{"env":[{"name":"PROBE_REF","value":"plain-literal"}]}]}}'
+```
+
+**How the two questions are observed.** Whether the override is *accepted* is the POST's operation status (an accepted run reaches a terminal `condition`, a refused one reports the API's own error). Whether the **value arrives** needs the container to speak, and it must never print the value: an `args` override can replace only the args of the image's own entrypoint, so read the container's `command` first and use the length-only line **only** when it names a shell (`args` added to a real entrypoint would not run it, and must not be sent):
+
+```bash
+gcloud run jobs describe "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" \
+  --format='value(template.template.containers[0].command)'
+# If that prints a shell, add to (a)'s body, beside "env":
+#   "args":["-c","printf 'PROBE_REF length=%s\n' \"${#PROBE_REF}\""],"clearArgs":true
+# and record the execution log line — the LENGTH only, never the value. If it
+# prints nothing (the image's entrypoint), record that the length could not be
+# read and say so in the FACT.
+```
+
+Whether the **overrides are visible to the container** (the D10 counterpart) is read back from the execution's own template, which is the surface a runner reads — the CLI's own backend already parses that template for `FUGARO_RUN` in `toExecution` (`internal/backend/gcp/run.go:394-419`; the reading side is the backend that turns an execution into a `backend.Execution`, not the runner), and what is unverified is whether the *override* is what that template reports:
+
+```bash
+gcloud run jobs executions describe "${EXEC:?the execution from (a), by name}" \
+  --project="${P:?}" --region="${L:?}" --format=json | jq '.template.containers[0].env'
+```
+
+**One plain execution of the job with no overrides** (`gcloud run jobs execute "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --wait`, or an ordinary sandbox run) shows what a bare run does after (b): the template-level reference resolves for every run until Restore, which is exactly the drift M6 warns about.
+
+**FACT:** whether the execution-level override is accepted and whether the referenced value arrives (the length, never the value); whether the same reference works through `--update-secrets`; what the plain-literal comparison does; whether the execution's own template reports the override; and what a bare run of the job does. **This step's answer is what the *phase-3* text in `SECURITY.md`'s launcher-override paragraph is allowed to add, and nothing more** (the paragraph itself lands in phase 1, plan Task 1.5 step 5, from Check 49 step 6's evidence — finding 14): if the override is visible, the text says so; if it is not, the text says only that the API merges overrides and the runner cannot see them.
 
 ### 4. U3 — Secret Manager IAM conditions on a name prefix
 
@@ -2176,7 +2213,7 @@ gcloud projects add-iam-policy-binding "${P:?}" \
 # account only with TokenCreator on it (removed in Restore).
 OWNER=$(gcloud auth list --filter=status:ACTIVE --format='value(account)' | head -1)
 gcloud iam service-accounts add-iam-policy-binding "${PROBE_SA:?}" --project="${P:?}" \
-  --member="user:${OWNER:?your own Google account, from `gcloud auth list`}" \
+  --member="user:${OWNER:?your own Google account, the active one in gcloud auth list}" \
   --role="roles/iam.serviceAccountTokenCreator"
 
 # (c) The inside read, AS the probe account — must succeed (exit 0). The payload
