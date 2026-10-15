@@ -51,9 +51,11 @@ for exactly one run. Docker comes from the host daemon (the socket), not from
 a rootless daemon inside the container, because the base image ships only the
 CLI and because the security argument does not change either way — the agent
 is root on the VM in both cases, so the boundary people rely on must be the
-VM boundary, not the container one. Startup is bounded by a preloaded boot
-image (the base image baked into the VM's Docker cache or served by image
-streaming) rather than a 3.8 GB pull on every run, with a cold-start budget
+VM boundary, not the container one. Startup is bounded by image streaming
+or a preloaded boot image — the base image served from the in-region Artifact
+Registry, or baked into the VM's Docker cache — rather than a 3.8 GB pull on
+every run; **C4 makes streaming the recommendation and the preload its
+fallback, and Check 57a steps 2 and 3 decide between them**, with a cold-start budget
 of the same 120 s the original design allowed the VM tier (generic-tool §1,
 G2). The cost is an installation-level, one-time setup (`fugaro init` gains a
 Batch stage) and nothing per repository — so it composes with the
@@ -170,7 +172,7 @@ What the numbers are:
      is served from an in-region Artifact Registry remote repository
      ([registry-remote-repository.md](registry-remote-repository.md)) — and it
      requires the `containerfilesystem.googleapis.com` API enabled (same page;
-     §1.9, Task 3). **The catch is twofold.** It switches the container runtime
+     §1.9, the Batch provisioning task, 6). **The catch is twofold.** It switches the container runtime
      to **containerd, not Docker**, and with streaming "container runnables
      only support the following fields: `imageUri`, `commands`, `entrypoint`,
      `volumes`, `enableImageStreaming`" — every other option is disregarded
@@ -547,7 +549,7 @@ itself.
 | **C2** | Where Docker comes from | **The VM's host daemon, via the bind-mounted socket** — noting that **image streaming disregards `options`** (§1.2), so with streaming (C4) the socket must be made usable by the image-baked group or by running the container as root, not by `--group-add` | **Rootless/Podman inside the container** or **privileged DinD**: same host-level power, more moving parts, doubles storage, needs an unverified `--privileged`/user-namespace path in a Batch runnable. |
 | **C3** | Isolation unit | **One VM per run; a VM is never reused** | Reuse a pool of warm VMs: rejected — two runs on one VM can read each other's secrets and Docker state, and Docker makes each root on the host. |
 | **C4** | Cold start | **Image streaming first** (Artifact Registry in-region, the `containerfilesystem` API, no custom image to maintain), **preloaded boot image as the fallback** | The preload as the primary choice was this design's first draft; it is demoted because Batch does not officially support custom images and a Batch image's supported lifetime can end **60 days** after its starting date, so it is an image to rebuild on Google's schedule as well as Fugaro's, and it costs the `options` field that one socket-permission path needs. Plain pull every run is the cheapest and slowest. **Check 57a steps 2 and 3 measure all three, and the recommendation follows the measurement.** |
-| **C5** | Spot | **Off by default**, opt-in per profile | Spot by default: up to 91% cheaper, but a preemption kills the stage mid-flight and the 30 s notice makes checkpointing marginal. |
+| **C5** | Spot | **Off by default**, opt-in per profile | Spot by default: up to 91% cheaper, but a preemption kills the stage mid-flight, the notice is **0 s by default** (120 s only if the job asks, and the shutdown after it is best effort, up to 30 s), so checkpointing has no room at all. |
 | **C6** | Service account | **One per run class (profile, account), reused from the project-centric model**; never the default Compute Engine SA | Default Compute Engine SA: project-wide and over-broad. |
 | **C7** | Egress | **No external IP; Cloud NAT** | Ephemeral external IP + deny-all ingress: simpler, cheaper per run, but "no inbound" then rests on a firewall list. |
 | **C8** | Timeouts and cancel | **`jobs.cancel` for cancel** (the job ends `CANCELLED` and its record survives), **`maxRunDuration` for the running timeout**, and **a queue deadline** for a job stuck in `QUEUED` behind the CPU quota | `jobs.delete` as cancel: destructive, erases the history `ls`/`diagnose`/`watch` read, and fails the conformance suite's cancel case. Fugaro's own watchdog (needed only on plain instances). |
@@ -827,7 +829,8 @@ Trade-off: it touches every caller (`cli/cancel.go`, `logs.go`, `diagnose.go`,
 `run.go`, `watch*`, `exec.go`, and the runner's `SameExecution` uses) and is a
 change to the shared package, not a new sibling package — a bigger than
 average first task, and it must land **before** any Batch backend can run a
-container (Task 1 before Task 3, §8.1). Two corrections to the earlier draft
+container: Task 1 before the job-definition task (7) and the enable task (9),
+§8.1. Two corrections to the earlier draft
 of this section: `CheckRunExecution` lives in **`internal/backend/gcp`**
 (`run.go:92`), not in `internal/backend`, and it is called from
 `internal/cli/cloud.go`; and the runner holds the canonical name as a
@@ -1373,8 +1376,8 @@ the *shared job*, and with it the reason Cloud Run had to share. Consequences:
   end state.
 - The **seam generalisation (C12)** is independent of both and can land first.
 - Recommendation: the plan's first cloud-free task is the conformance suite
-  against a fake (§8.1, task 2), which needs neither phase 3 nor any cloud, and
-  the live measurement (Check 57a) gates the rest.
+  against a fake (§8.1, Task 2), which needs neither phase 3 nor any cloud,
+  while the live measurement (Check 57a, Task 0) gates the rest.
 
 ### 6.3 Out of scope
 
@@ -1600,6 +1603,16 @@ fugaro doctor --project fugaro --gcp-project "${P:?}" | grep -q '^project: .*(GC
 git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
   || { echo "Check 57 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
 
+# SLUG_LABEL is the sandbox repository's fugaro_repo label value -- the slug with
+# every character outside [a-z0-9_-] replaced by "_" (gcp.RepoLabel,
+# internal/backend/gcp/names.go:78). Read from a job the installation already
+# has, because the slug ends in a hash no shell can reproduce. It is what lets
+# Restore name the check's own 57b runs, which cannot carry fugaro_chk=57.
+SLUG_LABEL=$(gcloud run jobs list --project="${P:?}" --region="${L:?}" \
+  --filter='labels.fugaro=managed' --format='value(labels.fugaro_repo)' | sort -u)
+[ "$(printf '%s\n' "${SLUG_LABEL}" | grep -c .)" = 1 ] \
+  || { echo "Check 57 stopped: expected exactly one fugaro_repo label among ${P}'s Cloud Run jobs, got: ${SLUG_LABEL:-none}. If this project holds more than one Fugaro repository, copy the sandbox checkout's value out of 'gcloud run jobs list --project=${P} --region=${L} --format=value(name,labels.fugaro_repo)' into SLUG_LABEL by hand." >&2; exit 1; }
+
 # The committed JSON's two placeholders, resolved from the variables above; every
 # submission in 57a and 57b uses /tmp/check57.json, never check57/job.json.
 render() { sed -e "s|__IMG__|${IMG:?}|g" \
@@ -1761,12 +1774,40 @@ leaked VM of *this check* is told from a real run's.
    ```bash
    gcloud projects get-iam-policy "${P:?}" --format=json | \
      python3 -c 'import json,sys; [print(b["role"], b["members"]) for b in json.load(sys.stdin)["bindings"]]'
+
+   # C22's Condition question, asked for real: add a binding whose Condition
+   # narrows Batch job editing to Fugaro-shaped names, read it back, then remove
+   # it. An accepted-and-returned Condition is the answer this step exists for;
+   # a 400 or an error from add-iam-policy-binding means Conditions on this
+   # role/resource are not available and C22's "worth attempting" stays
+   # UNVERIFIED. The binding is on the check's own account, and it is removed
+   # before the step ends, so nothing of it survives into Restore.
+   COND='title=chk57-fugaro-jobs,expression=resource.name.startsWith("projects/${P:?}/locations/${L:?}/jobs/fugaro-")'
+   gcloud projects add-iam-policy-binding "${P:?}" \
+     --member="serviceAccount:${SA_EMAIL:?}" --role="roles/batch.jobsEditor" \
+     --condition="${COND}" --quiet
+   gcloud projects get-iam-policy "${P:?}" --format=json | \
+     python3 -c 'import json,sys; [print(b["role"], b.get("condition")) for b in json.load(sys.stdin)["bindings"] if "fugaro-chk57" in str(b["members"])]'
+   gcloud projects remove-iam-policy-binding "${P:?}" \
+     --member="serviceAccount:${SA_EMAIL:?}" --role="roles/batch.jobsEditor" \
+     --condition="${COND}" --quiet
    ```
-10. **The log filter, read raw.** Read one raw entry of a `$J` job and record
-    which label identifies the job:
+10. **The log filter, read raw.** Read one raw entry of a `$J` job — **filtered
+    to that job**, not to the whole project, so the entry this step records is
+    the check's own: the resource type alone returns whatever else the sandbox
+    logs, and `limit=1` would then read someone else's entry. Two reads, because
+    the step asks two questions: one by the job's UID (does `labels.job_uid`
+    exist and equal it), one by this check's label (do the job's own labels
+    reach the entry):
 
     ```bash
-    gcloud logging read 'resource.type="batch.googleapis.com/Job"' --project="${P:?}" --limit=1 --format=json
+    NAME=$(gcloud batch jobs list --project="${P:?}" --location="${L:?}" \
+      --filter="labels.fugaro_chk=57" --format='value(name)' --limit=1)
+    UID=$(gcloud batch jobs describe "${NAME:?}" --project="${P:?}" --location="${L:?}" --format='value(uid)')
+    gcloud logging read "resource.type=\"batch.googleapis.com/Job\" AND labels.\"job_uid\"=\"${UID:?}\"" \
+      --project="${P:?}" --limit=1 --format=json
+    gcloud logging read 'resource.type="batch.googleapis.com/Job" AND labels.fugaro_chk=57' \
+      --project="${P:?}" --limit=1 --format=json
     ```
 
     **FACT:** whether `labels.job_uid` is present and equals the job's UID
@@ -1818,6 +1859,16 @@ These six need `backend: cloud-batch` selectable, so they run **last**
 (§8.1's task 9 is the enable task and task 10 is this section's second half).
 They are the design's acceptance criteria, not its go/no-go.
 
+**These runs are the installation's jobs, and their labels are the
+installation's** — `fugaro=managed`, `fugaro_repo=<the sandbox repository>`,
+`fugaro_workflow=<variant>` (§2.4), written by the launcher when it creates the
+job. They **cannot** carry `fugaro_chk=57`: the check does not create these jobs,
+and Batch v1 has no method that adds a label to an existing job (create, get,
+list, cancel, delete — no patch). Restore therefore sweeps them by the
+repository label, not by the check's (its step 1), and the assertion counts them
+on their own line. Record each 57b run's job name in the FACT lines; if the
+sweep misses one, that name is what finds it.
+
 1. **A real run with Docker.** `fugaro run` on the sandbox with the backend
    set to `cloud-batch` and the workflow's `docker: true` (§4.2, C16), where the
    task's script runs a container. **FACT:** the run reached a terminal state,
@@ -1854,8 +1905,8 @@ date; the machine type and boot-image version; the median launch-to-first-line
 for 57a-1, -2 and -3; whether Docker worked and by which permission path; the
 billed cost of one run and the estimate; the final state and the survivor list
 for each 57a-8 and 57b-4 path; the IAM bindings of 57a-9; the raw log entry of
-57a-10; the injected-signal values and the metadata answer of 57a-12; and
-whether `fugaro logs` found the Batch run's lines.
+57a-10; the injected-signal values and the metadata answer of 57a-12; the job
+name of every 57b run; and whether `fugaro logs` found the Batch run's lines.
 
 **Paste back:** the FACT lines, verbatim, plus any correction the run found and
 **57a's go/no-go: build the VM backend only if 57a-2 or 57a-3's median is at
@@ -1874,12 +1925,41 @@ would otherwise interpolate an empty `$P`, `$L` or `$SA`, which is exactly how
 `gcloud` falls back to its ambient `*-prod` configuration.
 
 ```bash
-# 1. Every job the check submitted (57a-2, -3, -4, -7, -8, -11; 57b-1, -3, -4).
-#    jobs.delete -- not cancel: the check is finished with them. Filtered by the
-#    check's own label, never by name prefix alone.
-gcloud batch jobs list --project="${P:?}" --location="${L:?}" \
-  --filter='labels.fugaro_chk=57' --format='value(name)' | \
-  xargs -r -n1 gcloud batch jobs delete --project="${P:?}" --location="${L:?}" --quiet
+# 1. Every job the check submitted: 57a-2, -3, -4, -7, -8, -11 and -12 (the
+#    probe's, which carry this check's own label) and 57b-1, -3 and -4 (real
+#    runs). jobs.delete -- not cancel: the check is finished with them.
+#
+#    TWO FILTERS, because the two halves are labelled differently and cannot be
+#    made the same. 57a submits its own JSON, so it sets fugaro_chk=57 itself.
+#    57b's jobs are created by the *installation's* launcher, whose label set is
+#    fixed by the job definition (fugaro=managed, fugaro_repo, fugaro_workflow,
+#    §2.4) -- and Batch v1 has no way to add a label to a job afterwards: the
+#    REST methods are create, get, list, cancel and delete, with no patch
+#    (checked 2026-10-15). A 57b job therefore CANNOT carry fugaro_chk=57, and
+#    the build does not add a knob to let it; the second filter uses the
+#    installation's own repository label instead. It is not fugaro=managed alone:
+#    the sandbox project may hold other repositories' jobs, and this sweep must
+#    only ever delete the sandbox repository's (the one the guard checked out).
+for F in 'labels.fugaro_chk=57' \
+         "labels.fugaro=managed AND labels.fugaro_repo=${SLUG_LABEL:?}"; do
+  gcloud batch jobs list --project="${P:?}" --location="${L:?}" --filter="${F}" \
+    --format='value(name)' | \
+    xargs -r -n1 gcloud batch jobs delete --project="${P:?}" --location="${L:?}" --quiet
+done
+
+# 1b. jobs.delete is ASYNCHRONOUS: it returns while the job is still in
+#     DELETION_IN_PROGRESS and its VMs are still running. Step 2 must not race
+#     it -- a VM it deletes first is a VM whose job teardown then has nothing to
+#     do, and a VM it misses is the leak this sweep exists to catch. Wait for
+#     both listings to drain (five minutes is generous; a stuck job is a FACT).
+for _ in $(seq 1 60); do
+  LEFT=$(( $(gcloud batch jobs list --project="${P:?}" --location="${L:?}" --filter='labels.fugaro_chk=57' --format='value(name)' | wc -l) \
+          + $(gcloud batch jobs list --project="${P:?}" --location="${L:?}" --filter="labels.fugaro=managed AND labels.fugaro_repo=${SLUG_LABEL:?}" --format='value(name)' | wc -l) ))
+  [ "${LEFT:?}" = 0 ] && break
+  sleep 5
+done
+[ "${LEFT:?}" = 0 ] \
+  || { echo "Check 57 stopped: ${LEFT} job(s) still present after 5 minutes (DELETION_IN_PROGRESS). Record them as a FACT and re-run this block; do not delete their VMs." >&2; exit 1; }
 
 # 2. Any VM still running. Delete only instances carrying THIS check's label --
 #    and only after step 1, so a job that is still live cannot lose its VM.
@@ -1914,13 +1994,16 @@ and nothing else. Nothing in `belong` is touched at any step.
 **The restore's assertion — run it and paste the output; it must be empty:**
 
 ```bash
-echo "jobs:      $(gcloud batch jobs list --project="${P:?}" --location="${L:?}" --filter='labels.fugaro_chk=57' --format='value(name)' | wc -l)"
-echo "vms:       $(gcloud compute instances list --project="${P:?}" --filter='labels.fugaro_chk=57' --format='value(name)' | wc -l)"
-echo "image:     $(gcloud compute images list --project="${P:?}" --filter="name~^${SA}-preload" --format='value(name)' | wc -l)"
-echo "account:   $(gcloud iam service-accounts list --project="${P:?}" --filter="email~^${SA}@" --format='value(email)' | wc -l)"
+echo "jobs (57a): $(gcloud batch jobs list --project="${P:?}" --location="${L:?}" --filter='labels.fugaro_chk=57' --format='value(name)' | wc -l)"
+echo "jobs (57b): $(gcloud batch jobs list --project="${P:?}" --location="${L:?}" --filter="labels.fugaro=managed AND labels.fugaro_repo=${SLUG_LABEL:?}" --format='value(name)' | wc -l)"
+echo "vms:        $(gcloud compute instances list --project="${P:?}" --filter='labels.fugaro_chk=57' --format='value(name)' | wc -l)"
+echo "image:      $(gcloud compute images list --project="${P:?}" --filter="name~^${SA}-preload" --format='value(name)' | wc -l)"
+echo "account:    $(gcloud iam service-accounts list --project="${P:?}" --filter="email~^${SA}@" --format='value(email)' | wc -l)"
 ```
 
-Four zeroes and the check left nothing behind. A non-zero line names the
+**Five zeroes** — one per line above: the two job listings (57a's probe jobs and
+57b's real runs, which cannot share a filter, step 1), the VMs, the preload image
+and the account — and the check left nothing behind. A non-zero line names the
 resource still to delete, and **a surviving VM is the check's own finding**
 (§3.4): record it, do not quietly delete it and move on.
 
@@ -2052,7 +2135,7 @@ reasoning lives; this table is the checklist.
 | C16 | The Docker key | `docker: true` (generic-tool §1's name) | `runtime: docker` (a second name for the same thing); or no key (every workflow gets a socket) |
 | C17 | What `compute_usd` covers | The VM's vCPU/memory; disk and NAT named as excluded | Fold disk/NAT in (a bigger change to the report shape) |
 | C18 | When to build | After the pre-build probe, **Check 57a** (which needs no Fugaro change); the fake-conformance task (Task 2) and the cost and log tasks may land before it answers, but the enable task is last (§8.1) | Build before the measurement (risks building the wrong substrate); or build the backend before logs, cost and the reaper exist (a run whose output lands in `_Default`, uncharted and unbilled — the ordering the first draft had) |
-| C19 | The preloaded image | A script in `fugaro init`'s Batch stage, one image per base version | Rely on image streaming alone (no image build, but depends on Artifact Registry + containerd) |
+| C19 | The preloaded image | **Only if C4's measurement says so**: a script in `fugaro init`'s Batch stage, one image per base version | Rely on image streaming alone (no image build, but depends on Artifact Registry + containerd) — **C4's own recommendation, and the preload is what 57a-3b builds if streaming loses** |
 | C20 | Phase order | Independent of the project-centric phases; profiles (§4.3) adopted when phase 3 lands | Wait for phase 3 (cleaner, but delays a capability the owner needs) |
 | C21 | The service account's granularity | Keep the (`profile`, `account`) account and accept project-centric D4's cross-repository loss **unchanged** on the VM backend too (§3.1) | A per-repository account, expressible on Batch because every job names its own `allocationPolicy.serviceAccount`: it buys back 0.7.0's bucket and secret boundary for the repositories that opt in, at the per-repository weight project-centric removed, and it makes "which backend" a decision with a security consequence |
 | C22 | Launcher and reaper IAM | The launcher gets `batch.jobsEditor` plus `serviceAccountUser` on the run-class accounts and nothing else, in its own account if the project can carry one; the reaper gets a **separate** account with project-wide `batch.jobs.delete` and `compute.instances.delete` (§3.7) | One account for everything (simpler to provision, and it makes the reaper's destructive power ambient — rejected); an IAM Condition narrowing `batch.jobsEditor` to Fugaro-shaped job names is worth attempting, but Conditions on Batch job names are **UNVERIFIED** (Check 57a step 9) |
