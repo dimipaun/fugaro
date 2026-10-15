@@ -95,7 +95,18 @@ func TestLayerClaimIsATopLevelKey(t *testing.T) {
 
 func TestApplyClaudeClaims(t *testing.T) {
 	// P8: the named route gains the ID, everything else is untouched.
-	got, ps := ApplyClaudeClaims(claimProviders(), map[string][]string{"openrouter": {"anthropic/claude-sonnet-5.5"}})
+	//
+	// in is held so the "the input is never appended to" check below reads the
+	// value this call was handed, and not a second fixture rebuilt beside it.
+	// The named route's models are given room to spare (len 1, cap 4) because an
+	// append in place -- the mutation slices.Clone prevents -- leaves a
+	// one-element input slice still saying "deepseek/*": only the array past its
+	// length is written, so the check reads that far.
+	in := claimProviders()
+	p := in["openrouter"]
+	p.Models = append(make([]string, 0, 4), "deepseek/*")
+	in["openrouter"] = p
+	got, ps := ApplyClaudeClaims(in, map[string][]string{"openrouter": {"anthropic/claude-sonnet-5.5"}})
 	if len(ps) > 0 {
 		t.Fatalf("problems = %v", ps)
 	}
@@ -105,9 +116,13 @@ func TestApplyClaudeClaims(t *testing.T) {
 	if !slicesEqual(got["other"].Models, []string{"qwen/*"}) {
 		t.Fatalf("other = %v", got["other"].Models)
 	}
-	// The input is a copy's source, never appended to.
-	if !slicesEqual(claimProviders()["openrouter"].Models, []string{"deepseek/*"}) {
-		t.Fatal("the input's models were appended to")
+	// The input is a copy's source, never appended to: not its length (which an
+	// in-place append never changes) but its whole backing array.
+	if !slicesEqual(in["openrouter"].Models, []string{"deepseek/*"}) || in["openrouter"].Models[:cap(in["openrouter"].Models)][1] != "" {
+		t.Fatalf("the input's models were appended to: %q", in["openrouter"].Models[:cap(in["openrouter"].Models)])
+	}
+	if !slicesEqual(in["other"].Models, []string{"qwen/*"}) {
+		t.Fatalf("the input's other route was changed: %v", in["other"].Models)
 	}
 	if got["openrouter"].BaseURL != "https://openrouter.ai/api" || got["openrouter"].Secret != "openrouter-api-key" {
 		t.Fatal("the claim changed the route itself")
