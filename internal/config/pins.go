@@ -75,7 +75,9 @@ const CodeUnverifiedPrice = "unverified_price"
 // but empty denies everything, and a role that names no model is refused too,
 // because the model the agent would pick is not known to be on the list. Each
 // problem names the role, the model and the layer that set the list; when
-// that layer is not the ceiling and the ceiling has a list of its own
+// that layer is neither the ceiling nor the policy that replaced it
+// (policy.SourcePolicy: the ceiling *is* that list, so naming it twice would
+// print the same node under two labels) and the ceiling has a list of its own
 // (ceiling, nil when it has none), the message gives that list too, so an
 // empty intersection can be understood.
 func CheckAllowed(a Agent, e policy.Effective, ceiling []string) []Problem {
@@ -88,7 +90,7 @@ func CheckAllowed(a Agent, e policy.Effective, ceiling []string) []Problem {
 	}
 	src := e.Sources[policy.KeyAllowedModels]
 	where := "allowed_models from " + src + ": " + list
-	if src != policy.SourceCeiling && ceiling != nil {
+	if src != policy.SourceCeiling && src != policy.SourcePolicy && ceiling != nil {
 		where += "; the project's allow-list: " + strings.Join(ceiling, ", ")
 	}
 	var ps []Problem

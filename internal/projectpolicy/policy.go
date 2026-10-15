@@ -3,20 +3,26 @@
 // config/policy/shared, its per-repository children under
 // config/policy/repos/$slug, and the admin-only config/admin.
 //
-// Nothing reads a *policy* through this package yet. Phase 1 task 1.1 is the
-// object, its paths, its version and its matcher, and task 1.2 the nodes and
-// their rules: the runner's fail-closed read of the node is task 1.3 and the
-// CLI's is task 1.6, both held back until this shape is reviewed. Two callers
-// do use the package's paths today: internal/infra writes PathRulesMarker
-// after a rules deploy, and internal/budget/rules' tests hold the template's
-// paths in step with the Path* functions (TestTemplatePolicyPathsAgreeWith-
-// Projectpolicy, TestPolicyPathsEscapeASlugLikeBudgetKey — the drift guard
-// lives in that package because internal/projectpolicy must not import
-// internal/budget). It imports internal/task, internal/policy, internal/pricing
-// and internal/config (the carrier a provider entry is decoded and validated
-// as, and the rules the budget block is held to), and never internal/budget,
-// internal/runner or internal/cli, so a policy can be decoded anywhere without
-// a cycle.
+// Read is the package's entry point, and both sides of the model call it: the
+// runner reads the node at run start and fails closed — a node that exists and
+// cannot be read or decoded halts the run rather than falling back to the
+// ceiling the job's environment was deployed with (internal/runner's
+// projectPolicy, task 1.3) — and the launcher reads it before it decides
+// whether to mint a run's budget identity and whether a job may be deployed at
+// all (internal/cli's projectPolicyOf and init.go's policyReadOnce). Phase 1's
+// shape is task 1.1 (the object, its paths, its version and its matcher) and
+// task 1.2 (the nodes and their rules); the CLI's own `project policy publish`
+// is task 1.6 and is not part of this. Beyond those two readers, internal/infra
+// writes PathRulesMarker after a rules deploy, and internal/budget/rules' tests
+// hold the template's paths in step with the Path* functions
+// (TestTemplatePolicyPathsAgreeWithProjectpolicy,
+// TestPolicyPathsEscapeASlugLikeBudgetKey — the drift guard lives in that
+// package because internal/projectpolicy must not import internal/budget). It
+// imports internal/rtdb (the client Read takes), internal/task, internal/policy,
+// internal/pricing and internal/config (the carrier a provider entry is decoded
+// and validated as, and the rules the budget block is held to), and never
+// internal/budget, internal/runner or internal/cli, so a policy can be decoded
+// anywhere without a cycle.
 //
 // Decoding is tolerant in one direction and strict in the other. Unknown JSON
 // keys are ignored at the top level, so a policy a newer Fugaro wrote does not

@@ -64,7 +64,7 @@ type Layer struct {
 // Effective is the merged policy plus where each key came from.
 type Effective struct {
 	Layer
-	Sources map[string]string // key -> "ceiling" | "default-branch" | "branch"; only keys that are set
+	Sources map[string]string // key -> "ceiling" | "policy" | "default-branch" | "branch"; only keys that are set
 	Ignored []Ignored         // looser values dropped
 }
 
