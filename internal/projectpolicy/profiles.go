@@ -70,15 +70,27 @@ func (p *Policy) ProfileFor(name string) (Profile, error) {
 		name, strings.Join(defined, ", "), DefaultProfileName)
 }
 
-// Admission is the list a run of that profile is held to on top of the
-// project's: the profile's own allow_repos when it names any, the project's
-// otherwise. An empty result admits nothing — never everything — so a profile
-// that lists no repository and a project that lists none are both deny-all
-// (design §4.3).
+// ProfileAllowRepos is the profile's own allow_repos — the project's when the
+// profile names none — and **it is not a gate on its own**. A profile's list
+// may be wider than the project's spell for spell (the owner writes a `*` on
+// one profile and enrolls three repositories in the project), and the design's
+// rule is that such a list "enrolls nothing extra": the run is held to the
+// project's allow_repos *and* the profile's (§4.3, §4.1). Only Admits holds
+// both gates, and it is the only thing a caller deciding whether a repository
+// may run may use — reading this list alone would admit every repository the
+// project denies while the profile's own list is the wider of the two.
 //
-// It is the profile's list alone: a caller deciding whether a repository may
-// run uses Admits, which holds both gates (§4.3's enrollment and this one).
-func (p *Policy) Admission(profile string) ([]string, error) {
+// The name says what it returns for that reason: it used to be called
+// Admission, which read like "the admission this profile has" and was the
+// fail-open a review of this block found (Admits was right, the accessor under
+// that name was a trap for the next caller). An empty result admits nothing —
+// never everything — so a profile that lists no repository and a project that
+// lists none are both deny-all (design §4.3).
+//
+// It answers one question a caller may legitimately ask: what does this
+// profile name, for a message or a listing. Whether a repository is admitted
+// is Admits'.
+func (p *Policy) ProfileAllowRepos(profile string) ([]string, error) {
 	pr, err := p.ProfileFor(profile)
 	if err != nil {
 		return nil, err
@@ -113,7 +125,11 @@ func (p *Policy) Admission(profile string) ([]string, error) {
 // is not admitted to this profile, and a profile is one of several the same
 // repository may be run on.
 //
-// Admits and Admission have no caller outside tests in this release: the run
+// Admits is the only gate: ProfileAllowRepos answers "what does this profile
+// name", and reading it as the verdict admits every repository the project's
+// list denies while the profile's list is the wider one.
+//
+// Admits and ProfileAllowRepos have no caller outside tests in this release: the run
 // refuses an undefined profile (ProfileFor, checkJobProfile) but holds a
 // repository to the project's allow_repos alone, because the job it is in does
 // not carry a selected profile yet (internal/runner/project.go,

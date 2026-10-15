@@ -37,20 +37,20 @@ func TestPublishWritesTheProfilesAndShowPrintsThemWithTheirJobs(t *testing.T) {
 		t.Errorf("standard.allow_repos = %v, want none (the project's list applies)", standard.AllowRepos)
 	}
 	// An empty profile list falls back to the project's, never to everything.
-	adm, err := p.Admission("standard")
+	adm, err := p.ProfileAllowRepos("standard")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !projectpolicy.AdmitRepo(adm, "github/acme/app") || projectpolicy.AdmitRepo(adm, "github/acme/elsewhere") {
-		t.Errorf("standard's admission is %v, want the project's own list", adm)
+		t.Errorf("standard's own list is %v, want the project's own list", adm)
 	}
 	// The profile's own list is the one that applies where it has one.
-	adm, err = p.Admission("wide")
+	adm, err = p.ProfileAllowRepos("wide")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(adm) != 1 || adm[0] != "github/acme/*" {
-		t.Errorf("wide's admission = %v, want its own list", adm)
+		t.Errorf("wide's own list = %v, want its own list", adm)
 	}
 
 	out, _, err := execute(t, "project", "policy", "show")

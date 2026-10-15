@@ -475,7 +475,16 @@ func checkWrittenProfileFields(name string, raw json.RawMessage) error {
 			// is refused there. Kept so this function holds on its own too.
 			return fmt.Errorf("projectpolicy: profiles.%s: unknown field %q", name, member)
 		}
-		return fmt.Errorf("projectpolicy: profiles.%s.%s: a profile's members are spelled as fugaro.yaml spells them — write %s. A name that differs only in case is read by the decoder and not by this document's own checks, so an \"%s\": [] would fall back to the project's allow_repos instead of being refused", name, member, known, member)
+		// The consequence is named only where it is that member's: an
+		// "Allow_Repos" the check never saw is the silent fall-back to the
+		// project's list, and any other member is the same silence without
+		// that particular effect. A refusal that promised the fall-back for
+		// "Provider" would be describing something that cannot happen.
+		why := "so the decoder would read the entry this check never saw"
+		if known == "allow_repos" {
+			why = "so an \"" + member + "\": [] would fall back to the project's allow_repos instead of being refused"
+		}
+		return fmt.Errorf("projectpolicy: profiles.%s.%s: a profile's members are spelled as fugaro.yaml spells them — write %s. A name that differs only in case is read by the decoder and not by this document's own checks, %s", name, member, known, why)
 	}
 	v, ok := fields["allow_repos"]
 	if !ok {

@@ -67,12 +67,12 @@ func TestProfileForRefusesANamedProfileThatIsNotDefined(t *testing.T) {
 	}
 }
 
-// TestProfileAdmissionFallsBackToTheProjectList: design §4.1/step 3 — an empty
+// TestProfileAllowReposFallsBackToTheProjectList: design §4.1/step 3 — an empty
 // profile allow_repos means the project's list applies, never everything. The
 // mutation is a fallback to ["*"] (or to "admit anything when the list is
 // empty"), which would admit every repository to a profile whose owner wrote
 // nothing.
-func TestProfileAdmissionFallsBackToTheProjectList(t *testing.T) {
+func TestProfileAllowReposFallsBackToTheProjectList(t *testing.T) {
 	p, err := decodeProfiles(t, `{
 		"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","allow_repos":["github/acme/*"]},
 		"quiet":{"provider":"github","cpu":1,"memory":"1Gi","timeout_class":"1h"}
@@ -83,28 +83,28 @@ func TestProfileAdmissionFallsBackToTheProjectList(t *testing.T) {
 	p.AllowRepos = []string{"github/acme/app"}
 
 	// A profile with its own list uses it, and only it.
-	own, err := p.Admission("standard")
+	own, err := p.ProfileAllowRepos("standard")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(own) != 1 || own[0] != "github/acme/*" {
-		t.Errorf("Admission(standard) = %v, want the profile's own list", own)
+		t.Errorf("ProfileAllowRepos(standard) = %v, want the profile's own list", own)
 	}
 	// A profile without one falls back to the project's — and the project's is
 	// exactly one repository, so anything wider is a loosening.
-	fallback, err := p.Admission("quiet")
+	fallback, err := p.ProfileAllowRepos("quiet")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(fallback) != 1 || fallback[0] != "github/acme/app" {
-		t.Errorf("Admission(quiet) = %v, want the project's allow_repos", fallback)
+		t.Errorf("ProfileAllowRepos(quiet) = %v, want the project's allow_repos", fallback)
 	}
 	if AdmitRepo(fallback, "github/other/app") {
 		t.Error("the fallback admits a repository the project's list does not")
 	}
 	// An empty project list admits nothing: the fallback is not "everything".
 	p.AllowRepos = nil
-	none, err := p.Admission("quiet")
+	none, err := p.ProfileAllowRepos("quiet")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,8 +112,8 @@ func TestProfileAdmissionFallsBackToTheProjectList(t *testing.T) {
 		t.Error("an empty project allow_repos admitted a repository through the fallback")
 	}
 	// An undefined profile is a refusal here too, not an empty admission list.
-	if _, err := p.Admission("nope"); err == nil {
-		t.Error("Admission of an undefined profile succeeded")
+	if _, err := p.ProfileAllowRepos("nope"); err == nil {
+		t.Error("ProfileAllowRepos of an undefined profile succeeded")
 	}
 }
 
