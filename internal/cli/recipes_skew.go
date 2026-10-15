@@ -61,12 +61,19 @@ const cloneSince = "0.7.5"
 //     stale checkout, decides from the deployed job, never reaching that
 //     check at all).
 //
-// Flip this to true in the same commit that bumps cloneSince to the
-// release that actually ships Task 17: that one edit is what turns both
-// of the above back into their ordinary behavior (string equality against
-// cloneSince alone cannot tell "not released yet" from "this image or job
-// just predates a release that now exists"); update docs/release.md's
-// checklist line for cloneSince in that commit too.
+// Flip this to true in its own tiny PR — never in a release commit, and
+// never before live Check 38 (docs/gcp-live-checklist.md) has passed: the
+// check needs a build with this gate open, and no release may ship
+// checkout: clone before the check has run. That one edit is what turns
+// both of the above back into their ordinary behavior (string equality
+// against cloneSince alone cannot tell "not released yet" from "this image
+// or job just predates a release that now exists"); update docs/release.md's
+// "Verify cloneSince" bullet in that PR too, since that bullet is what says
+// the flip has not happened yet. Bump cloneSince in that same PR too, if
+// Check 38 found the runner side needs a fix: the release that fix ships in
+// is the release cloneSince then has to name. If the check needed no fix,
+// cloneSince stays as it is — it already names the release that ships
+// Task 17.
 const cloneShipped = false
 
 // recipesV07Since is the first fugaro release whose runner knows the 0.7.0
