@@ -610,8 +610,11 @@ func TestInitRepoRetireShowsThePlanBeforeTheSecondConfirmation(t *testing.T) {
 		t.Fatalf("counts at %d, the header at %d, the delete list at %d, the second prompt at %d:\n%s",
 			counts, header, list, second, text)
 	}
+	// Fatal, not Error: the block below is the slice between two of these
+	// offsets, so an ordering that puts the prompt first must fail here
+	// rather than panic in the slice.
 	if counts > second || header > second || list > second {
-		t.Errorf("the plan is shown after the second confirmation (counts %d, header %d, list %d, prompt %d)",
+		t.Fatalf("the plan is shown after the second confirmation (counts %d, header %d, list %d, prompt %d)",
 			counts, header, list, second)
 	}
 	if list < header {
