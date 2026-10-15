@@ -219,11 +219,15 @@ jobs:
           path: fugaro-base-${{ matrix.arch }}.tar.gz
           retention-days: 1
   # Pushes each architecture under <version>-<arch>, then the
-  # multi-platform index <version> (and <major> when it moves, and the
-  # nightly-immune <version>-pinned on a tag push) from the two pushed
-  # digests, and signs that index by digest. This job and publish are the
-  # only ones with packages: write; id-token: write is here alone, for the
-  # keyless (OIDC) signing step below and nothing else.
+  # multi-platform index <version> (and <major> when it moves) from the two
+  # pushed digests, and — on a real tag push — signs that index by the
+  # digest `imagetools create --metadata-file` reported, verifies its own
+  # signature, and only then points the nightly-immune <version>-pinned tag
+  # at the signed digest. The digest to sign is never learned by re-reading
+  # a tag: a tag can be moved by anyone who can write this repository's
+  # tags, and a signature must never cover a digest learned from one. This
+  # job and publish are the only ones with packages: write; id-token: write
+  # is here alone, for the keyless (OIDC) signing step and nothing else.
   publish-base:
     needs: [version, fugaro-base]
     if: needs.version.outputs.publish == 'true' && contains(needs.version.outputs.kinds, ',base,')
@@ -249,6 +253,7 @@ jobs:
           pattern: fugaro-base-*-image
           merge-multiple: true
       - name: Push per architecture and publish the index
+        id: index
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_ACTOR: ${{ github.actor }}
@@ -271,16 +276,38 @@ jobs:
           if [ "$MOVE_MAJOR" = true ]; then
             tags="$tags --tag $repo:$MAJOR"
           fi
-          # Nightly-immune: created only on a real tag push, in the SAME
-          # create call as :$VERSION/:$MAJOR above, so the nightly's own
-          # run of this same script never creates or moves it (design
-          # retire-image-mirror.md §2). A copy-time resolve reads this tag,
-          # never the plain one the nightly moves.
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
-            tags="$tags --tag $repo:$VERSION-pinned"
-          fi
+          # --metadata-file is where the index's own digest comes from: a
+          # later step signs exactly that digest, and nothing ever learns
+          # it by asking a tag what it resolves to. A tag is a second,
+          # movable registry answer, and a signature must not cover a
+          # digest learned from one. The pinned tag below is written only
+          # after the signature exists, for that same reason.
           # shellcheck disable=SC2086
-          docker buildx imagetools create $tags $digests
+          docker buildx imagetools create $tags $digests --metadata-file index.json
+          # The FILE's shape is the one docker's own docs show for
+          # "imagetools create --metadata-file": {"containerimage.descriptor":
+          # {"mediaType": ..., "digest": "sha256:...", "size": ...},
+          # "image.name": ...} — a "containerimage.digest" key is
+          # `buildx build`'s, not this command's (checked against
+          # docs.docker.com 2026-10-15). A missing or malformed digest
+          # fails the job rather than signing something unknown.
+          index=$(jq -r '."containerimage.descriptor".digest' index.json)
+          if ! printf '%s' "$index" | grep -qE '^sha256:[0-9a-f]{64}$'; then
+            echo "::error::docker buildx imagetools create --metadata-file reported no index digest (got '$index')" >&2
+            exit 1
+          fi
+          # The published index must be built from exactly the two child
+          # manifests THIS job pushed: an index whose children are anything
+          # else is not this job's build, whatever its digest says.
+          pushed=""
+          for d in $digests; do pushed="$pushed ${d##*@}"; done
+          published=$(docker buildx imagetools inspect --raw "$repo@$index" | jq -r '.manifests[]?.digest' | sort | tr '\n' ' ')
+          want=$(printf '%s\n' $pushed | sort | tr '\n' ' ')
+          if [ "$published" != "$want" ]; then
+            echo "::error::$repo@$index has child manifests '$published', not the digests this job pushed ('$want')" >&2
+            exit 1
+          fi
+          echo "digest=$index" >> "$GITHUB_OUTPUT"
           {
             echo '### fugaro-base'
             for arch in amd64 arm64; do
@@ -295,27 +322,66 @@ jobs:
       # the version job already picks "the latest release tag" for the
       # nightly and a dispatch alike, so there is no manual re-run of a tag
       # this guard would wrongly skip, and the nightly must never sign (it
-      # never writes -pinned either).
+      # never writes -pinned either). Both are exact conditions, not
+      # substrings: a widened one would sign on an event this release's
+      # identity does not cover.
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         if: github.event_name == 'push'
-      - name: Sign the base image
+      # Signing is by DIGEST, taken from the same job's own
+      # --metadata-file output above — never by re-reading a tag. Re-reading
+      # :$VERSION-pinned (or :$VERSION) would be a second registry answer
+      # that anyone who can write this repository's tags could change
+      # between the create and the read, putting this release's signing
+      # identity on THEIR image.
+      - name: Sign the published index
+        id: sign
         if: github.event_name == 'push'
         env:
           VERSION: ${{ needs.version.outputs.version }}
+          DIGEST: ${{ steps.index.outputs.digest }}
         run: |
           set -eu
           repo=ghcr.io/dimipaun/fugaro-base
-          # docker buildx imagetools create does not print the index's own
-          # digest: the only way to learn it is to ask the registry what
-          # the tag it just wrote now resolves to. Safe here (unlike
-          # resolving the plain tag days or weeks later): this runs
-          # immediately after the SAME job's own imagetools create call,
-          # under a concurrency group (images-publish-base,
-          # cancel-in-progress: false) that already serializes every run
-          # touching this image. Signing the digest, not the tag, is what
-          # makes a later tag move unable to change what was signed.
-          digest=$(docker buildx imagetools inspect "$repo:$VERSION-pinned" --format '{{.Manifest.Digest}}')
-          cosign sign --yes "$repo@$digest"
+          cosign sign --yes "$repo@$DIGEST"
+      # An independent read-back of what was actually attached, before
+      # anything points at the signed digest. The identity is THIS workflow
+      # on THIS tag push and nobody else's: cosign verify uses the
+      # transparency log and binds the artifact digest, so no
+      # --insecure-ignore-tlog and no "verify without an artifact" mode is
+      # used anywhere here or below.
+      - name: Verify the signature just attached
+        id: verify
+        if: github.event_name == 'push'
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          DIGEST: ${{ steps.index.outputs.digest }}
+        run: |
+          set -eu
+          repo=ghcr.io/dimipaun/fugaro-base
+          cosign verify \
+            --certificate-identity "https://github.com/dimipaun/fugaro/.github/workflows/images.yml@refs/tags/v$VERSION" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$repo@$DIGEST"
+      # Only now, with the signature made and verified, does anything name
+      # <version>-pinned: a copy-time resolve reads this tag, and this job
+      # never does. One source that is an index is a carbon copy (docker's
+      # own docs), so the tag names the very digest that was signed; the
+      # read-back below then proves it rather than trusting the create.
+      - name: Publish the -pinned tag at the signed digest
+        id: pinned
+        if: github.event_name == 'push'
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          DIGEST: ${{ steps.index.outputs.digest }}
+        run: |
+          set -eu
+          repo=ghcr.io/dimipaun/fugaro-base
+          docker buildx imagetools create --tag "$repo:$VERSION-pinned" "$repo@$DIGEST"
+          got=$(docker buildx imagetools inspect "$repo:$VERSION-pinned" --format '{{.Manifest.Digest}}')
+          if [ "$got" != "$DIGEST" ]; then
+            echo "::error::$repo:$VERSION-pinned resolves to $got, not the signed digest $DIGEST" >&2
+            exit 1
+          fi
   # This job and publish-base are the only ones that need packages: write,
   # and neither ever runs on pull_request: `version.outputs.publish` is
   # forced false there. After the 0.7.0 cut the only image left in this

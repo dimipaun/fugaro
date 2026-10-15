@@ -246,80 +246,379 @@ func TestVerifyPublicRunsEvenWhenPublishBaseIsSkipped(t *testing.T) {
 	}
 }
 
-// TestPublishBaseSignsByOCIDigestOnPushOnly pins the signing shape (design
-// retire-image-mirror.md §2): publish-base gains id-token: write, a
-// cosign-installer step at the exact pin release.yml already uses, a
-// -pinned tag added only on a real tag push, and a cosign sign step gated
-// the same way. It also pins the least-privilege rule the signing step
-// needs and nothing else does: id-token: write on publish-base, and on no
-// other job in this workflow (package writes are
-// TestOnlyPublishJobsHoldPackagesWrite's).
-func TestPublishBaseSignsByOCIDigestOnPushOnly(t *testing.T) {
-	data := readImagesWorkflow(t)
-	var wf struct {
-		Jobs map[string]struct {
-			Permissions map[string]string `yaml:"permissions"`
-			Steps       []struct {
-				Uses string `yaml:"uses"`
-				If   string `yaml:"if"`
-				Run  string `yaml:"run"`
-			} `yaml:"steps"`
-		} `yaml:"jobs"`
-	}
+// workflowStep and imagesWorkflow parse exactly the fields GitHub executes
+// (uses/if/env/run/continue-on-error, the job and workflow permissions, and
+// the order steps run in). Every signing check below reads this structure:
+// a guard that survives only in a comment, or a permission the parsed file
+// does not carry, is not seen as a guard or a permission.
+type workflowStep struct {
+	ID              string            `yaml:"id"`
+	Name            string            `yaml:"name"`
+	Uses            string            `yaml:"uses"`
+	If              string            `yaml:"if"`
+	Run             string            `yaml:"run"`
+	Env             map[string]string `yaml:"env"`
+	ContinueOnError any               `yaml:"continue-on-error"`
+}
+
+type workflowJob struct {
+	Permissions map[string]string `yaml:"permissions"`
+	Steps       []workflowStep    `yaml:"steps"`
+}
+
+type imagesWorkflow struct {
+	Permissions map[string]string      `yaml:"permissions"`
+	Jobs        map[string]workflowJob `yaml:"jobs"`
+}
+
+func parseImagesWorkflow(t *testing.T, data []byte) imagesWorkflow {
+	t.Helper()
+	var wf imagesWorkflow
 	if err := yaml.Unmarshal(data, &wf); err != nil {
 		t.Fatal(err)
 	}
-	const cosignPin = "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6"
+	return wf
+}
+
+// The four steps of publish-base's signing chain, by id, and the exact
+// values this repository's file must carry. They are constants so the
+// mutation test below can restate them without drifting from the checks.
+const (
+	signPushOnly   = "github.event_name == 'push'"
+	cosignPin      = "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6"
+	signIdentity   = "https://github.com/dimipaun/fugaro/.github/workflows/images.yml@refs/tags/v$VERSION"
+	signIssuer     = "https://token.actions.githubusercontent.com"
+	indexDigestRef = "${{ steps.index.outputs.digest }}" // the digest the sign step must use
+)
+
+func stepName(s workflowStep) string {
+	if s.Name != "" {
+		return s.Name
+	}
+	if s.Uses != "" {
+		return s.Uses
+	}
+	return s.ID
+}
+
+// signingProblems names every way the base image's signing chain can be
+// weakened (PR #377's supply-chain review): a digest learned from a tag
+// instead of from the create's own metadata, a signature that covers a tag
+// or a digest the job did not build, a failure swallowed instead of failing
+// the job, a gate widened past a tag push, a guard that is only a comment,
+// a permission handed to the whole workflow, or the -pinned tag written
+// before the signature exists.
+func signingProblems(wf imagesWorkflow) []string {
+	var out []string
+	bad := func(format string, a ...any) { out = append(out, fmt.Sprintf(format, a...)) }
+
+	// id-token is the keyless signing step's, on the one job that signs: a
+	// workflow-level grant would hand it to every job, including the ones
+	// that only build.
+	if v := wf.Permissions["id-token"]; v != "" {
+		bad("the workflow grants id-token: %q at the top level, so every job in it has one", v)
+	}
 	for name, job := range wf.Jobs {
-		wantWrite := name == "publish-base"
-		if got := job.Permissions["id-token"] == "write"; got != wantWrite {
-			t.Errorf("job %q id-token permission = %q, want write only for publish-base (the keyless signing step)", name, job.Permissions["id-token"])
+		want := name == "publish-base"
+		if (job.Permissions["id-token"] == "write") != want {
+			bad("job %q id-token permission = %q, want write only for publish-base", name, job.Permissions["id-token"])
 		}
 	}
 	job, ok := wf.Jobs["publish-base"]
 	if !ok {
-		t.Fatal("no publish-base job")
+		return append(out, "no publish-base job")
 	}
-	if job.Permissions["id-token"] != "write" {
-		t.Errorf("permissions[id-token] = %q, want write", job.Permissions["id-token"])
+	at, steps := map[string]int{}, map[string]workflowStep{}
+	for i, s := range job.Steps {
+		if s.ID != "" {
+			if _, dup := at[s.ID]; dup {
+				bad("two publish-base steps share the id %q, so a later one silently wins", s.ID)
+			}
+			at[s.ID], steps[s.ID] = i, s
+		}
+		if strings.HasPrefix(s.Uses, "sigstore/cosign-installer@") && s.Uses != cosignPin {
+			bad("cosign-installer is pinned as %q, want the full commit SHA %q", s.Uses, cosignPin)
+		}
+		// A failure anywhere in the chain must fail the job: `|| true` and
+		// continue-on-error both turn a failed signature into a green run.
+		if strings.Contains(s.Run, "|| true") {
+			bad("step %q swallows a failure with `|| true`", stepName(s))
+		}
+		if s.ContinueOnError != nil && s.ContinueOnError != false {
+			bad("step %q sets continue-on-error: %v, so its failure would not fail the job", stepName(s), s.ContinueOnError)
+		}
+		// No mode that skips the transparency log or the artifact binding.
+		if strings.Contains(s.Run, "insecure") {
+			bad("step %q runs cosign with an insecure option", stepName(s))
+		}
 	}
-	var installed, taggedPinned, signed bool
-	var pinnedGuarded, signGuarded bool
+	if _, ok := steps["index"]; !ok {
+		bad("publish-base has no index step (id \"index\")")
+	}
+	for _, id := range []string{"sign", "verify", "pinned"} {
+		if _, ok := steps[id]; !ok {
+			bad("publish-base has no %s step (id %q)", id, id)
+		}
+	}
+	if len(out) > 0 {
+		return out
+	}
+
+	// The index step: the digest it hands on comes from the create's own
+	// --metadata-file, and the index it published is built from the child
+	// manifests this job pushed.
+	idx := steps["index"]
+	if !strings.Contains(idx.Run, "--metadata-file") {
+		bad("the index step does not take the digest from --metadata-file, so the signed digest comes from somewhere else")
+	}
+	if strings.Contains(idx.Run, "Manifest.Digest") {
+		bad("the index step learns a digest by inspecting a tag: that is a movable second registry answer")
+	}
+	for _, want := range []string{"containerimage.descriptor", "$GITHUB_OUTPUT", `.manifests[]?.digest`, `"$published" != "$want"`} {
+		if !strings.Contains(idx.Run, want) {
+			bad("the index step does not check what it published (%q missing): the index's children must be the manifests this job pushed", want)
+		}
+	}
+
+	// The sign step: by digest, that digest, gated to a tag push.
+	sign := steps["sign"]
+	if strings.TrimSpace(sign.If) != signPushOnly {
+		bad("the sign step's if is %q, want exactly %q (a widened condition signs on an event this release's identity does not cover)", strings.TrimSpace(sign.If), signPushOnly)
+	}
+	if got := sign.Env["DIGEST"]; got != indexDigestRef {
+		bad("the sign step's DIGEST is %q, want %q: it must sign the digest the index step reported, not a version or a tag", got, indexDigestRef)
+	}
+	if !strings.Contains(sign.Run, `cosign sign --yes "$repo@$DIGEST"`) {
+		bad("the sign step does not run `cosign sign --yes \"$repo@$DIGEST\"`: signing a tag would sign whatever that tag names at that moment")
+	}
+	if strings.Contains(sign.Run, "$VERSION") || strings.Contains(sign.Run, "imagetools inspect") {
+		bad("the sign step reads a tag or a version instead of the digest handed to it")
+	}
+
+	// The verify step: this workflow's own identity on this tag push.
+	verify := steps["verify"]
+	if strings.TrimSpace(verify.If) != signPushOnly {
+		bad("the verify step's if is %q, want exactly %q", strings.TrimSpace(verify.If), signPushOnly)
+	}
+	if !strings.Contains(verify.Run, "cosign verify") || !strings.Contains(verify.Run, `"$repo@$DIGEST"`) {
+		bad("the verify step does not run `cosign verify` against the signed digest")
+	}
+	for _, want := range []string{signIdentity, signIssuer} {
+		if !strings.Contains(verify.Run, want) {
+			bad("the verify step does not require %q: a signature from another identity would pass", want)
+		}
+	}
+
+	// The -pinned tag: written last, at the signed digest, and proven.
+	pinned := steps["pinned"]
+	if strings.TrimSpace(pinned.If) != signPushOnly {
+		bad("the -pinned step's if is %q, want exactly %q: the nightly must never create or move that tag", strings.TrimSpace(pinned.If), signPushOnly)
+	}
+	for _, want := range []string{`--tag "$repo:$VERSION-pinned"`, `"$repo@$DIGEST"`, `"$got" != "$DIGEST"`} {
+		if !strings.Contains(pinned.Run, want) {
+			bad("the -pinned step does not %q: it must point the tag at the signed digest and assert that it landed there", want)
+		}
+	}
+	if at["index"] > at["sign"] {
+		bad("the sign step runs before the index step that produces the digest it signs")
+	}
+	if at["sign"] > at["verify"] {
+		bad("the verify step runs before the sign step")
+	}
+	if at["verify"] > at["pinned"] {
+		bad("the -pinned tag is written before the signature has been verified")
+	}
+	if installer, ok := installerIndex(job); !ok {
+		bad("publish-base has no cosign-installer step at all")
+	} else if installer > at["sign"] {
+		bad("cosign-installer runs after the sign step, so the sign step has no cosign")
+	}
+	return out
+}
+
+func installerIndex(job workflowJob) (int, bool) {
+	for i, s := range job.Steps {
+		if strings.HasPrefix(s.Uses, "sigstore/cosign-installer@") {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// TestPublishBaseSignsByOCIDigestOnPushOnly pins the whole signing chain
+// (design retire-image-mirror.md §2, plan Task 1, PR #377's review): the
+// digest that gets signed is the one the index step's own --metadata-file
+// reported, the signature is verified against this workflow's identity on a
+// tag push, and the nightly-immune -pinned tag is written only after that —
+// with id-token: write on publish-base alone.
+func TestPublishBaseSignsByOCIDigestOnPushOnly(t *testing.T) {
+	for _, p := range signingProblems(parseImagesWorkflow(t, readImagesWorkflow(t))) {
+		t.Error(p)
+	}
+}
+
+// TestSigningProblemsFindEveryMutation proves signingProblems itself, so a
+// check that quietly stopped matching cannot read as a passing guarantee:
+// each mutation below is one a review named (a tag instead of a digest, a
+// swallowed failure, a widened or commented-out gate, a workflow-wide
+// id-token, the wrong digest source, the wrong step order), and each must be
+// reported. The base is the real workflow.
+func TestSigningProblemsFindEveryMutation(t *testing.T) {
+	base := parseImagesWorkflow(t, readImagesWorkflow(t))
+	if got := signingProblems(base); len(got) != 0 {
+		t.Fatalf("the real workflow already reports problems: %q", got)
+	}
+	mutations := []struct {
+		what string
+		do   func(imagesWorkflow) imagesWorkflow
+	}{
+		{"the sign step signs a tag instead of the digest", func(wf imagesWorkflow) imagesWorkflow {
+			return wf.withStep("sign", func(s *workflowStep) { s.Run = "set -eu\ncosign sign --yes \"$repo:$VERSION\"" })
+		}},
+		{"the sign step swallows a failure with `|| true`", func(wf imagesWorkflow) imagesWorkflow {
+			return wf.withStep("sign", func(s *workflowStep) { s.Run += " || true" })
+		}},
+		{"the sign step sets continue-on-error: true", func(wf imagesWorkflow) imagesWorkflow {
+			return wf.withStep("sign", func(s *workflowStep) { s.ContinueOnError = true })
+		}},
+		{"the sign step is moved before the push it signs", func(wf imagesWorkflow) imagesWorkflow {
+			return moveStep(wf, "sign", 0)
+		}},
+		{"the -pinned tag is written unconditionally, with the guard only in a comment", func(wf imagesWorkflow) imagesWorkflow {
+			return wf.withStep("pinned", func(s *workflowStep) {
+				s.If = ""
+				s.Run = "# only ever on a tag push\n" + s.Run
+			})
+		}},
+		{"id-token: write is granted to the whole workflow", func(wf imagesWorkflow) imagesWorkflow {
+			wf.Permissions = map[string]string{"contents": "read", "id-token": "write"}
+			return wf
+		}},
+		{"the sign step's condition is widened to another event", func(wf imagesWorkflow) imagesWorkflow {
+			return wf.withStep("sign", func(s *workflowStep) { s.If = signPushOnly + " || github.event_name == 'workflow_dispatch'" })
+		}},
+		{"the sign step takes a version instead of the index step's digest", func(wf imagesWorkflow) imagesWorkflow {
+			return wf.withStep("sign", func(s *workflowStep) { s.Env["DIGEST"] = "${{ needs.version.outputs.version }}" })
+		}},
+		{"the index step learns the digest by inspecting the tag it just wrote", func(wf imagesWorkflow) imagesWorkflow {
+			return wf.withStep("index", func(s *workflowStep) {
+				s.Run = strings.Replace(s.Run, `--metadata-file index.json`, `--format '{{.Manifest.Digest}}'`, 1)
+			})
+		}},
+		{"the index step stops checking the children it published", func(wf imagesWorkflow) imagesWorkflow {
+			return wf.withStep("index", func(s *workflowStep) {
+				s.Run = strings.Replace(s.Run, `.manifests[]?.digest`, `.config.digest`, 1)
+			})
+		}},
+		{"the -pinned tag is written before the signature is verified", func(wf imagesWorkflow) imagesWorkflow {
+			return moveStep(wf, "pinned", 0)
+		}},
+		{"the verify step is dropped", func(wf imagesWorkflow) imagesWorkflow {
+			return withoutStep(wf, "verify")
+		}},
+		{"the sign step is dropped", func(wf imagesWorkflow) imagesWorkflow {
+			return withoutStep(wf, "sign")
+		}},
+		{"the -pinned step is dropped", func(wf imagesWorkflow) imagesWorkflow {
+			return withoutStep(wf, "pinned")
+		}},
+		{"cosign-installer is pinned to a tag", func(wf imagesWorkflow) imagesWorkflow {
+			job := wf.Jobs["publish-base"]
+			for i := range job.Steps {
+				if strings.HasPrefix(job.Steps[i].Uses, "sigstore/cosign-installer@") {
+					job.Steps[i].Uses = "sigstore/cosign-installer@v4.1.2"
+				}
+			}
+			wf.Jobs["publish-base"] = job
+			return wf
+		}},
+		{"the verification is told to skip the transparency log", func(wf imagesWorkflow) imagesWorkflow {
+			return wf.withStep("verify", func(s *workflowStep) { s.Run += " --insecure-ignore-tlog" })
+		}},
+	}
+	for _, m := range mutations {
+		got := signingProblems(m.do(cloneWorkflow(base)))
+		if len(got) == 0 {
+			t.Errorf("%s: signingProblems reported nothing", m.what)
+		}
+	}
+}
+
+// slice copy of the parsed workflow, so a mutation cannot reach through the
+// shared backing arrays into the next mutation's base.
+func cloneWorkflow(wf imagesWorkflow) imagesWorkflow {
+	out := imagesWorkflow{Permissions: cloneMap(wf.Permissions), Jobs: map[string]workflowJob{}}
+	for name, job := range wf.Jobs {
+		steps := make([]workflowStep, len(job.Steps))
+		for i, s := range job.Steps {
+			s.Env = cloneMap(s.Env)
+			steps[i] = s
+		}
+		out.Jobs[name] = workflowJob{Permissions: cloneMap(job.Permissions), Steps: steps}
+	}
+	return out
+}
+
+func cloneMap(m map[string]string) map[string]string {
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+// withStep applies f to the first step whose id is id, in a clone.
+func (wf imagesWorkflow) withStep(id string, f func(*workflowStep)) imagesWorkflow {
+	out := cloneWorkflow(wf)
+	job := out.Jobs["publish-base"]
+	for i := range job.Steps {
+		if job.Steps[i].ID == id {
+			f(&job.Steps[i])
+			break
+		}
+	}
+	out.Jobs["publish-base"] = job
+	return out
+}
+
+// withoutStep drops the step with id id, in a clone.
+func withoutStep(wf imagesWorkflow, id string) imagesWorkflow {
+	out := cloneWorkflow(wf)
+	job := out.Jobs["publish-base"]
+	var steps []workflowStep
 	for _, s := range job.Steps {
-		if strings.HasPrefix(s.Uses, cosignPin) {
-			installed = true
-		}
-		// The tag-creation step's own run script literally invokes
-		// "docker buildx imagetools create $tags" (the real command, with
-		// its real argument list); the sign step's run script only ever
-		// *mentions* imagetools create in a comment ("docker buildx
-		// imagetools create does not print...") and in a different
-		// subcommand, "imagetools inspect" — both of which also contain
-		// the bare substring "imagetools create" and "$VERSION-pinned".
-		// Matching on "imagetools create" alone (an earlier draft of this
-		// test's mistake) lets the sign step's own iteration overwrite
-		// pinnedGuarded with a false negative, since the sign step's
-		// guard is YAML-level (If), not this in-script check. Matching on
-		// the exact invocation instead is unambiguous between the two
-		// steps.
-		if strings.Contains(s.Run, "docker buildx imagetools create $tags") {
-			taggedPinned = strings.Contains(s.Run, "$VERSION-pinned")
-			pinnedGuarded = strings.Contains(s.Run, `"$GITHUB_EVENT_NAME" = push`)
-		}
-		if strings.Contains(s.Run, "cosign sign ") {
-			signed = true
-			signGuarded = strings.Contains(s.If, "github.event_name == 'push'")
+		if s.ID != id {
+			steps = append(steps, s)
 		}
 	}
-	if !installed || !taggedPinned || !signed {
-		t.Errorf("cosign-installer=%v, -pinned tag=%v, cosign sign=%v", installed, taggedPinned, signed)
+	job.Steps = steps
+	out.Jobs["publish-base"] = job
+	return out
+}
+
+// moveStep moves the step with id id to index to, shifting the others.
+func moveStep(wf imagesWorkflow, id string, to int) imagesWorkflow {
+	out := cloneWorkflow(wf)
+	job := out.Jobs["publish-base"]
+	var moved *workflowStep
+	var rest []workflowStep
+	for i := range job.Steps {
+		if job.Steps[i].ID == id {
+			s := job.Steps[i]
+			moved = &s
+			continue
+		}
+		rest = append(rest, job.Steps[i])
 	}
-	if !pinnedGuarded {
-		t.Error("the -pinned tag addition must be guarded by $GITHUB_EVENT_NAME = push in its own shell script (a different gating mechanism from the sign step's YAML-level if:, since both live inside the same long-running script)")
+	if moved == nil {
+		return out
 	}
-	if !signGuarded {
-		t.Error("the cosign sign step's if: must require github.event_name == 'push'")
-	}
+	steps := append([]workflowStep{}, rest[:to]...)
+	steps = append(steps, *moved)
+	steps = append(steps, rest[to:]...)
+	job.Steps = steps
+	out.Jobs["publish-base"] = job
+	return out
 }
 
 var (
