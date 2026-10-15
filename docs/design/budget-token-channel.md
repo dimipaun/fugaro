@@ -90,10 +90,13 @@ Task 3b.1's "What it must not do") and from the designs it builds on.
    and `run.jobs.runWithOverrides`
    (`deploy/terraform/gcp/modules/installation/iam.tf`, `google_project_iam_custom_role.job_runner`;
    `deploy/terraform/gcp/modules/workflow/job.tf`, `google_cloud_run_v2_job_iam_member.launcher`, whose
-   own comment is "Launchers start runs with overrides, on this job only"), and an account that may
-   only *read* an execution is a reader of its overrides too: the sweep's `fugaroHistory` holds
+   own comment is "Launchers start runs with overrides, on this job only"), and the accounts that may
+   only *read* an execution are the second audience: the sweep's `fugaroHistory` holds
    `run.executions.get` and `run.jobs.get` (`deploy/terraform/gcp/modules/installation/history.tf`),
-   as does the launchers' own `fugaroLauncher` role (`.../iam.tf`). Installations with
+   as does the launchers' own `fugaroLauncher` role (`.../iam.tf`). **Whether holding that
+   permission makes them readers of the override is the half U2 leaves open**, and it is priced that
+   way below and in §7.1; what is documented, by `m9-budget-and-dashboard.md` §6.4 and SECURITY.md,
+   is the audit log. Installations with
    `log_isolation` on (`deploy/terraform/gcp/modules/installation/logging.tf`) route a *job's own*
    container logs to a bucket only launchers and operators may view; that narrows the run log, not
    the audit log, and owners and editors read everything either way.
@@ -101,9 +104,11 @@ Task 3b.1's "What it must not do") and from the designs it builds on.
    The CLI reads a *job's* whole environment through that API (`internal/backend/gcp/run.go`,
    `JobFullEnv`), and whether an execution reports the override on top of the template is design
    §4.2's D10 option (b), marked UNVERIFIED there and settled by plan Task 3.0 step 3 — the U2 probe,
-   Check 52 step 3, which has not run. Nothing in this document depends on the answer (§7.1's
-   argument is the audit log and the execution record, both of which are stated by sources above),
-   and §7.1 says so where the seal's audience is priced.
+   Check 52 step 3, which has not run. **Until that probe reports, every sentence in this document
+   that would rest on the execution record or on an override view is a hypothesis, not a fact**, and
+   it is marked as one where it appears (§7.1, §7.2, and Check 60 step 3). The part that does not
+   depend on the answer is the audit log, which is stated by `m9-budget-and-dashboard.md` §6.4 and
+   SECURITY.md above; §7.1 says so where the seal's audience is priced.
 2. **Never widen a service account's grants beyond its prefix.** Every grant is a member resource,
    never a binding or a policy (`deploy/terraform/gcp/modules/installation/iam.tf` says so at the top
    of the file), and a job's is `roles/storage.objectUser` restricted by a condition that names its
@@ -292,11 +297,18 @@ nothing.
   is distinguishable and a plaintext object is distinguishable from a sealed one. The envelope is
   **`version byte || 12-byte nonce || ciphertext || 16-byte tag`**, and the object's own key —
   `token.ObjectKey(slug, run)`, the `tokens/…` form of §7.2 once the object has moved — is the GCM
-  **additional authenticated data**. That binding is what stops a sealed object from being replayed
-  sideways: copying one run's object onto another run's key is a write the peer's widened grant
-  already allows, and with the name in the AAD it fails the tag check and is refused, so the two
-  objects are not interchangeable even though both are sealed. The AAD follows the key string, so
-  the move in §7.2 changes it and has to land in the same change; D18 records that.
+  **additional authenticated data**. **What stops a sealed object from being replayed sideways is the
+  per-launch key, not the AAD**: copying one run's object onto another run's key is a write the peer's
+  widened grant already allows (`google_storage_bucket_iam_member.job`, whose condition covers the
+  bucket's declared prefixes), but the copy is sealed under the *other* run's key, so it fails to
+  unseal at the victim regardless of what the AAD says. The AAD's job is narrower and still worth its
+  line: it binds the ciphertext to the object's own name, so a blob sealed for one key string cannot
+  be read under another — the property §7.2 hinges on, because the move out of `runs/` changes the
+  key string and must therefore land in the same change as the seal (D18). **The AAD cannot be proved
+  by the end-to-end check**: every step of Check 60 that could exercise it already fails earlier, at
+  the unseal, because the keys differ. It needs a unit test in `internal/budget/token` that seals under
+  one key string and opens under another and asserts the tag check refuses — that test, not a check
+  step, is where this claim is held.
 - The key is **32 bytes from `crypto/rand`**, carried in the override as **unpadded base64url** (43
   characters), and the parse is strict, because the value decides whether the run unseals anything
   at all: a value that is not exactly one unpadded base64url string decoding to 32 bytes —
@@ -320,11 +332,16 @@ This is also where the design's tension is, and it should be named rather than b
 moves a secret into the one carrier constraint 1 distrusts. The answer is **not** "an override is
 readable only by launchers" — that claim is false, and this repository's own designs are where it
 was settled: the token itself does not travel this way *because* a `jobs.run` request body reaches
-audit logs that every project log viewer can read (`m9-budget-and-dashboard.md` §6.4), and the
-accounts that may read an execution (the sweep's `run.executions.get`, the launchers'
-`fugaroLauncher`) are its readers as well (§3.1). The honest answer is the audience itself: the
-carrier is readable by the project's *readers* — launchers, operators, and anyone the owner has
-given log or execution read — and it is **not** readable by a peer run of the shared job, which is
+audit logs that every project log viewer can read (`m9-budget-and-dashboard.md` §6.4). That half is
+documented and holds regardless of U2. The second half — the accounts that hold only
+`run.executions.get` (the sweep's `fugaroHistory`, the launchers' `fugaroLauncher`, §3.1) are
+readers of the override as well — **is the half U2 leaves open, and it is stated here as a
+hypothesis, not as a fact**: it is true only if the API serves an execution's override back, which
+is D10 option (b), UNVERIFIED in the design and unprobed (Check 52 step 3). If U2 reports "no", this
+paragraph loses nothing it needs — the audit-log half is the audience constraint 1 is about. The
+honest answer is the audience itself: the carrier is readable by the project's *readers* —
+launchers, operators, and anyone the owner has given log read, and, under U2, execution read — and
+it is **not** readable by a peer run of the shared job, which is
 the adversary §4 names and the only one whose reach phase 3 widens: a run of the job holds its
 bucket grant and nothing on the Cloud Run API (`deploy/terraform/gcp/modules/workflow/sa.tf`), so
 `run.jobs.get` and `run.executions.get` are closed to it, and the audit log is not a log it may
@@ -346,11 +363,28 @@ principal that holds *both* halves — an override view and the sealed object �
 because the seal has no third factor and the key is not secret from that principal by any mechanism
 this design adds. That principal exists today: the sealed object is readable by every run of the job
 (§2's reach) and by the operators, whose grant on the runs bucket is unconditional
-`roles/storage.objectAdmin` (`google_storage_bucket_iam_member.runs`, §7.2), while an override view
-is what a project log viewer and a `run.executions.get` holder have. The composition is therefore
-"an operator who reads the audit log", and the seal does nothing against them. It is not a new
-power and this document must not be read as claiming to remove one: an operator can already read
-every object in the bucket, and a launcher can already mint any repository's budget identity with
+`roles/storage.objectAdmin` (`google_storage_bucket_iam_member.runs`, the grant C3 names and prices),
+while the
+override half is what a project log viewer has — documented by `m9-budget-and-dashboard.md` §6.4 —
+and, **under U2**, what a `run.executions.get` holder has as well. Two compositions follow, and both
+are accepted rather than fixed:
+
+- **"an operator who reads the audit log"** — the operator's object grant is unconditional, so the
+  object half is theirs for the asking, and the audit-log half is documented. Nothing this design
+  adds takes either away, and the seal does nothing against them.
+- **"a project log viewer, plus any run that hands over the sealed object it can read."** This one
+  does not need U2 and it does not need an operator: §2's reach means every run of the job — the
+  peer §4 defines included — can *read* every other run's object, and a compromised or hostile run
+  can post those bytes anywhere the log viewer can see (a log line, a comment, a request out). The
+  log viewer then holds both halves, and the seal is defeated. It is not a new power either — a
+  compromised run can read the *token object itself* today, which is what the seal is a mitigation
+  for, and the unsealed objection is one an attacker who already runs code inside the job has
+  already answered — but it is the reason the seal's sentence below is "capability, not a boundary"
+  and not "readable by nobody but the execution".
+
+Neither composition is a new power, and this document must not be read as claiming to remove one: an
+operator can already read every object in the bucket, and a launcher can already mint any
+repository's budget identity with
 `signJwt` (SECURITY.md's own paragraph). What the seal removes is the *peer run's* theft — the
 exposure D13 accepted — and for every principal outside §4's adversary the honest description of it
 is the sentence §7.1 already ends on: a capability, not a boundary.
@@ -404,6 +438,19 @@ the second half of the recommendation moves the object:
   once; an untaken token still dies by the launcher's own `dropBudgetToken` and by the lifecycle
   rule above.
 
+  **The read-only take leaves the object in place, and that is a residue this section has to
+  state.** Under `tokens/` the take never deletes, so after the legitimate execution has read it the
+  sealed object stays in the bucket until the lifecycle rule above reaps it — up to a day. The
+  exposure is bounded by the token, not by the object: the token's own validity is what
+  `token.ExpiryFX` plus `Slack` buy (about an hour), so an object that survives its take is a token
+  that is dead or dying. What it is *not* is nothing: anyone who holds the object **and** that
+  execution's key can replay the unseal within that window and exchange the token while it is still
+  live — the same both-halves composition §7.1 prices, now with a day to notice it instead of a
+  single read. Consume-once under `tokens/` rests entirely on the key, which is delivered once, to
+  one execution, in an override no principal §4 names may read; the alternative — making the
+  read-only take delete — is not available, since the delete is exactly the write the job's grant
+  does not have (this section's second bullet, and D16).
+
 ### 7.3 What this does not change
 
 - D13's paragraph in SECURITY.md stays, narrowed to what it still describes: the *other* objects a
@@ -431,7 +478,8 @@ the second half of the recommendation moves the object:
 | the marker is present and unparsable | refuse as damaged (shipped: `MalformedEnv`), and the parse must stop echoing the value — see below |
 | the object is missing under a present marker | refuse (shipped, `TokenMarked`) |
 | the object is sealed and the tag does not verify | refuse: an unsealed or tampered object is never read as a token, not even during a mixed deployment |
-| the object was sealed for another name (the AAD is the key it was stored under, §7.1) | refuse: a sealed object copied onto another run's key does not unseal, which is what makes the sideways replay a peer's write grant allows worthless |
+| the object is sealed and no key is presented to this execution (the marker is absent or empty, or the run is not the one the object was sealed for) | refuse, and **never** fall back to reading the bytes as a token: a sealed object with no usable key is not "a plaintext token in a mixed deployment", it is the theft case, and treating it as readable would hand the peer's stolen copy straight back. It is the row that keeps a mixed deployment from becoming an unsealing one |
+| the object was sealed for another name (the AAD is the key it was stored under, §7.1) | refuse: a sealed object copied onto another run's key does not unseal. **The key, not the AAD, is what makes this refuse** — the copy is sealed under a different per-launch key — so this row's property is the per-launch key's; the AAD's own property (a blob sealed for one name cannot be opened under another) is held by the unit test §7.1 names, not by this row |
 | the object is plaintext and the seal is expected | refuse, for the same reason: a fallback to plaintext is the whole exposure coming back quietly |
 | the key is wrong because the execution is not the one the launcher minted for | the unseal fails and the run refuses; the take's `checkNames` still refuses a token whose own claims are not this run's |
 
@@ -439,9 +487,12 @@ One concrete requirement falls out of the second row and belongs in the later im
 `internal/runner/budget_session.go`'s `BackendFromEnv` currently words its marker error as
 `fmt.Errorf("%s %q: it must be 1, ...", BudgetTokenEnv, marker)` — it echoes the value. Harmless while
 the value is `"1"`; a leak of the run's own key into a bootstrap error, and from there into the run's
-log, once the value is a key. The parse must not print it, and the launcher must register the key
-with its redactor before anything can print it, the way `takeBudgetToken` already does for the token
-itself (`r.addSecret(custom)`).
+log, once the value is a key. The parse must not print it, and **the runner** must register the key
+with its own redactor before anything can print it, the way `takeBudgetToken` already does for the
+token itself (`internal/runner/runner.go`'s `r.addSecret`, called from
+`internal/runner/projectpolicy.go`). It is the runner, not the launcher: `addSecret` is a method on
+the run's redactor and is the only door into it, so the launcher has no way to register anything —
+whatever the launcher knows is redacted only once the runner's `takeBudgetToken` has said so.
 
 ### 7.5 What the later implementation would touch (not this task)
 
@@ -457,11 +508,27 @@ Task 3.2 creates, **the launchers' conditioned grant and its `precondition` in
 (§7.2), the lifecycle rule in `deploy/terraform/gcp/modules/installation/bucket.tf`, and the D13
 paragraph in SECURITY.md — which cannot move before the marker's own sentence does (D15).
 
+The condition the `precondition` pins is not the module's alone: four Go files read it, write it or
+re-check it, and a change that misses them leaves the tree inconsistent rather than merely
+undocumented:
+
+- `internal/backend/gcp/names.go` — `LauncherBucketCondition` and `LauncherBucketConditionTitle`
+  build the expression and the title the Terraform member's `precondition` pins; they are the source
+  of the string, so the widened form starts here.
+- `internal/infra/tfvars.go` — writes both into the generated tfvars, and reads them back.
+- `internal/infra/hardening.go` — the install guard that reports a bucket finding when the live
+  grant's condition does not match what the module expects, including the launcher condition.
+- `internal/infra/tf/cover.go` — the Terraform cover that asserts the created members' roles and
+  conditions, `runs_launcher` among them.
+
+The seal's own file (the second entry in the list above) is the only one of these that the *seal*
+touches; the four above belong to the move, and the split is D16's and D19's.
+
 ## The owner's open decisions
 
 These continue the numbering of the project-centric series — D1 to D12 in
 `docs/design/project-centric.md`, D13 in the plan. They are **this document's own D14 to D19** and
-are unrelated to the D14 to D18 of `docs/design/m9-budget-and-dashboard.md`, which governs the
+are unrelated to the D14 to D19 of `docs/design/m9-budget-and-dashboard.md`, which governs the
 budget's own behaviour and not this channel.
 
 **D14. Is the seal built at all, or is D13's documentation the permanent answer?** Phase 3b's
@@ -493,7 +560,7 @@ runner-semantics change at once. **Either answer changes the launchers' grant**,
 this document used to get wrong: their only write on the runs bucket is the `runs_launcher`
 condition pinned to `runs/` by a `precondition`, so `tokens/` needs a second conditioned member or a
 widened expression — a new title, the `precondition` that re-checks it and its tftest line (§7.2,
-Check 60 step 7). The job account's read on the prefix is the decision; the launchers' write is the
+Check 60 step 8). The job account's read on the prefix is the decision; the launchers' write is the
 consequence of the move itself.
 
 **D17. The seal's lifetime and the re-mint path.** A `--retry` re-mints and re-puts the object
@@ -530,7 +597,7 @@ is the one a reviewer should look at hardest.
 
 None of this is run by this task, and none of it may be run by an agent: every owner-run step in the
 plan is the owner's (Global Constraints, "Every owner-run step … no agent performs it"), and the
-`belong` installation is never touched. Checks 49 to 56 are already named by the plan's phases, and
+`belong` installation is never touched. Checks 48 to 56 are already named by the plan's phases, and
 the next three numbers are taken elsewhere: **57 by PR #375**, the compute-instance backend (the
 plan says so in its own words — "**#375 claims 57**"), **58 by #393** and **59 by #401**. This
 outline therefore proposes **Check 60** for the later implementation task, which is the task that
@@ -551,7 +618,9 @@ rather than a literal, which is not the recommendation because a shared job acco
 is C2's problem in another store — and whether an execution's own **overrides are visible to the
 container** (design §4.2's D10 option (b)). Neither changes the recommendation, and both bound what
 the later implementation may assert; Check 60 step 3 is where the owner records them again on the
-deployed shape.
+deployed shape. The audit-log half of the audience is *documented* rather than unverified, but it is
+not thereby measured, and Check 60 step 4 is where the owner records what the RunJob audit entry
+actually carries — the sentence constraint 1 rests on, checked rather than cited.
 
 What Check 60 would have to prove, in the sandbox installation only, with the `belong` installation
 untouched:
@@ -563,22 +632,33 @@ untouched:
    object out of the runs bucket: it is not a JWT, it does not parse as one, and it carries no
    readable claim. Record the object's size and the fact that `fs`/`fr` are not in it.
 3. **The key is not in the bucket, and not in the logs.** `fugaro env`-style reads of the job show no
-   key; the execution's own record shows the override, as D10 says it will, which is the honest limit
-   to record beside the fact. **Two FACTs of U2 belong here** (Check 52 step 3, §3.1): whether an
+   key, and the run's own log carries none. **The execution's record is a FACT, not a fact to assume**
+   (Check 52 step 3, §3.1): U2 — the design's D10 option (b), whether the API serves an execution's
+   own override back at all — is UNVERIFIED and unprobed, so this step **records what the execution
+   record shows of the override and does not assert it**. **Two FACTs of U2 belong here**: whether an
    execution's own overrides are visible back through the API at all, and what the execution record
-   shows of them — because both decide how the sentence after "the honest limit" is worded, and
-   neither is verified today.
-4. **A wrong key refuses.** Hand a second execution a different key (a sandbox-only override) and
+   shows of them. The sentence this step leaves behind is the answer as found, and §3.1 and §7.1 are
+   read as hypotheses until it is recorded.
+4. **What the audit log actually records.** The documented half of constraint 1 is that a `jobs.run`
+   request body reaches audit logs a project log viewer can read (`m9-budget-and-dashboard.md` §6.4).
+   This step is where that is confirmed on the deployed shape rather than cited: launch a sandbox run
+   with the marker set, read the **RunJob audit entry** for that launch, and record as a FACT whether
+   the entry carries the override's *value* — the key — verbatim, in a redacted form, or not at all,
+   and who can read that entry. The answer decides how §3.1's and §7.1's audience sentences are
+   worded, and it is the step that would show the key needs a redaction requirement of its own. It
+   does **not** decide whether the seal is right: the seal's subject is the object a peer can read,
+   and this step's subject is the carrier's audience.
+5. **A wrong key refuses.** Hand a second execution a different key (a sandbox-only override) and
    watch it refuse at bootstrap with the shipped refusal text, exit code and outcome; this is the
    `MalformedEnv`/unseal path of 7.4.
-5. **A plaintext object refuses.** Put a plaintext token object at the run's key and watch the run
+6. **A plaintext object refuses.** Put a plaintext token object at the run's key and watch the run
    refuse rather than read it — the mixed-deployment case of 7.4, and the mutation that proves the
    refusal is real.
-6. **A peer cannot delete a queued token.** With the `tokens/` grant read-only, have a run of the same
+7. **A peer cannot delete a queued token.** With the `tokens/` grant read-only, have a run of the same
    job attempt a delete of a queued peer's object: 403. Record it the way live check 7 records the
    listing denial, and record the two things it does *not* prove: the peer can still read the object,
    and the seal is why that read is worth nothing.
-7. **The grants the move changes, and the ones it does not.** The job's conditions on `runs/`,
+8. **The grants the move changes, and the ones it does not.** The job's conditions on `runs/`,
    `cache/` and `locks/` are byte-identical to what the bootstrap set. The launchers' grant is **not**
    unchanged, and this step records the change instead of asserting it away: read the plan's diff for
    `google_storage_bucket_iam_member.runs_launcher` and record the added or widened `tokens/`
@@ -586,10 +666,14 @@ untouched:
    the member's `precondition` in `deploy/terraform/gcp/modules/installation/iam.tf` must now match —
    beside the FACT that the job's three conditions are untouched in the same plan. Constraint 2 is
    read off the live plan, not by inspection of the module source.
-8. **The AAD binds the seal to the name.** Copy a sealed object from one run's key to another run's
-   key in the sandbox bucket and watch the second run refuse rather than unseal it; then put the bytes
-   back. This is the mutation that proves the additional authenticated data is real, and it is the
-   only step here that exercises §7.1's sideways-replay case.
+9. **A sideways replay refuses, and what that does and does not prove.** Copy a sealed object from one
+   run's key to another run's key in the sandbox bucket and watch the second run refuse rather than
+   unseal it; then put the bytes back. **This step proves the per-launch key, not the AAD.** The copy
+   is sealed under a different launch's key, so it fails at the unseal before the AAD is ever
+   consulted — the refusal would be identical if the AAD were the empty string. The AAD's own property
+   (a blob sealed for one name cannot be opened under another) is a unit test in `internal/budget/token`,
+   named in §7.1, because no live step can isolate it: every live path to it fails earlier for the
+   key's reason. Record that limit beside the FACT, the way step 7 records what its 403 does not prove.
 
 ## What this document does not decide
 
