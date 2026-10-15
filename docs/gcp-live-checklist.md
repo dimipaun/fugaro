@@ -288,13 +288,21 @@ what the design now recommends are in the design's §7.2, under "RESULTS of the
 | 57a-1, Cloud Run baseline | **median 13.0 s** over 5 runs (an earlier attempt: 12.0 s) |
 | 57a-2, cold start, plain pull | 154, 145, 137, 152, 135 s → **median 145 s** |
 | 57a-3a, `enableImageStreaming` | 98, 97, 96 s → **median 97 s**; **2 of the 5 jobs gave no first-line time and the record does not say whether they were refused, failed or simply not collected** — the step's "did streaming accept the job at all" question, left open |
-| 57a-3b, preloaded boot image | 69, 67, 66, 65, 63 s → **median 66 s**; inside the VM the pull was 9 s and the container ready 1 s later, so most of it is VM boot and Batch scheduling |
+| 57a-3b, preloaded boot image | 69, 67, 66, 65, 63 s → **median 66 s**, submit-to-first-log-line; Batch accepted the custom boot image and ran it. **The split of the 66 s is not measured** — the 9 s pull / 1 s to `pg_isready` recorded in the same run belong to 57a-6's timed submission, a small `postgres:17` container on a plain `batch-cos` VM, not the preloaded image |
 | 57a-4/6, the socket | no `options`: **refused**; `--group-add 412`: **works**; `--user 0`: **works**; `--privileged`: **does not** (uid stays 1000); `--group-add` **with streaming**: the group is **not applied**, so streaming makes Batch ignore `options` |
 | 57a-5, the cost of one run | a 143 s `e2-standard-4` window at 0.13402284 USD/h ≈ **$0.0053** (disk and NAT outside it; the bill was not read) |
 | 57a-8, teardown | VM gone 25 s after `SUCCEEDED`, 26 s after `FAILED`, 3 s after `jobs.cancel`, 26 s after a crashed runner |
 | 57a-9, the IAM Condition | a conditional `roles/batch.jobsEditor` with `resource.name.startsWith("projects/fugaro-dev/locations/us-east5/jobs/fugaro-")` was **accepted and read back as written** |
 | 57a-10, the log entry | `labels.job_uid` **equals the job's uid**; `resource.labels.job_id` holds the **uid-form id, not the job name**; the job's own `fugaro_chk=57` **is on the entries**; the job ran as the dedicated service account, not the default Compute account |
-| 57a-12, the signal | the job-level submission **succeeded** and the container saw its own task index and count |
+| 57a-12, the signal | job-level (`taskSpec.environment`, both vars set to `99`): the container saw the injected **`IDX=0 COUNT=1`**, so it did **not** override. Task-level (`taskEnvironments[0].variables`, both `99`): the container saw **`IDX=99`** with `COUNT=1` — the task environment **does** reach the container |
+
+**Restore status — NOT FINISHED (owner note, 2026-10-15; the owner updates
+this).** The run's Restore did not complete: a VM survived it and the Compute,
+Batch and `containerfilesystem.googleapis.com` APIs were left enabled on
+`fugaro-dev`, because `gcloud` reauthentication failed at the cleanup
+commands. The sandbox is not back to its pre-check state and 57a is not closed
+until the restore is re-run on its own and its assertion reads `0` on every
+line (the design's §7.2, "Restore status").
 
 **Not run: 57b (all six steps), 57a step 7 (Spot preemption — a separate
 script is being written), 57a step 11 (quota/queueing), the billed amount,

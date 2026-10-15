@@ -97,12 +97,15 @@ Two ways to give the run a daemon:
 - **A daemon inside the container (Docker-in-Docker).** Either a privileged
   `dockerd` inside the runner container, or rootless Docker/Podman. Rootless
   needs user namespaces and `newuidmap`/`newgidmap`; whether a Batch container
-  runnable can be privileged or can set those up is UNVERIFIED (the `options`
-  field documents "arbitrary additional options to include in the `docker
-  run` command", e.g. `--network host`, so `--privileged` and `--group-add`
-  are *plausible* but not documented; the check that settles it is Check 57a
-  step 6). Docker-in-Docker also doubles the storage (two Docker stores) on a
-  3.8 GB base.
+  runnable can be privileged or can set those up was the premise here, and
+  **57a-6 measured part of it on 2026-10-15: `options: "--privileged"` is
+  accepted and the container still comes up as uid 1000, so a privileged
+  runnable is expressible but the run showed it changing nothing** — it did
+  not get `dockerd` or user namespaces running, and nothing in this design
+  does. What is still open is the DinD half specifically (whether a
+  privileged container can start a `dockerd` or set up rootless user
+  namespaces), and the design does not take this alternative (C2). It also
+  doubles the storage (two Docker stores) on a 3.8 GB base.
 
 The decisive point is that **neither option changes the isolation story**:
 with the socket, the agent can `docker run -v /:/host --privileged` and be
@@ -158,11 +161,17 @@ What the numbers are:
 
 - **VM boot**: a Compute Engine VM starts in tens of seconds; Batch adds
   scheduling and agent setup before the first runnable starts. **Measured
-  2026-10-15**: with the preload, where the image is already local (a 9 s pull
-  inside the VM and 1 s to a ready container), the median total was still 66 s
-  — so roughly 56 s of it is VM boot, Batch scheduling and agent setup, not the
-  image at all (Check 57a steps 2 and 3, §7.2). That floor is why the plain
-  pull's 145 s is not the whole story of "the 3.8 GB pull".
+  2026-10-15**: with the preload the median total was still **66 s**, and
+  **how those 66 s split between VM boot, Batch scheduling, agent setup and the
+  image is *not* measured** — the run took no timing inside a preloaded VM. The
+  one pull-and-readiness timing it did take belongs to another submission: the
+  socket step's timed run pulls `docker.io/library/postgres:17` on a **plain
+  `batch-cos`** VM (9 s to pull, then 1 s from `docker run -d` to `pg_isready`),
+  which is a small container and not the 3.8 GB base, so nothing about it can
+  be subtracted from the 66 s (Check 57a steps 2, 3 and 6; §2.2, §7.2). The
+  boot-and-scheduling floor a preloaded VM pays is therefore still an estimate;
+  what is measured is the total, and the plain pull's 145 s is the same total
+  with the pull inside it.
 - **The image pull**: a 3.8 GB pull over the VM's network is the thing to
   avoid repeating. Three mitigations — **each measured on 2026-10-15
   (Check 57a steps 2 and 3), each with a caveat that undercuts it, and the
@@ -172,8 +181,10 @@ What the numbers are:
      image, and point Batch's `InstancePolicyOrTemplate` at it as the boot
      disk. The container runnable then starts with a local image and no pull.
      **Measured 2026-10-15: the strongest, and the one the design takes —
-     median 66 s submit-to-first-line** over 5 jobs (69, 67, 66, 65, 63), with
-     the pull down to 9 s and a ready container 1 s later. It is also the
+     median 66 s submit-to-first-line** over 5 jobs (69, 67, 66, 65, 63). The
+     9 s pull and the 1 s to `pg_isready` recorded in the same run are **not**
+     this path's: they are the socket step's small `postgres:17` container on a
+     plain `batch-cos` VM (§2.2, §7.2). It is also the
      **least supported**, which the same run confirmed only in the sense that
      matters: Batch **accepted** the custom boot image and ran it. The build
      that worked: boot a `batch-cos` VM, run `docker pull` of the pinned base
@@ -1007,13 +1018,17 @@ value is exactly `cloud-run`**, so a Batch VM carrying `FUGARO_BACKEND=cloud-bat
 would silently stop estimating compute — §5.2's third site, and a task of its
 own, not a consequence of the marker. And detection that a *job env can set* is
 not detection: on Cloud Run the launcher controls the job definition, so the
-value is only as trustworthy as the launch path. The platform-injected signal
-above is the one the VM cannot be confused about; `FUGARO_BACKEND` stays what
+value is only as trustworthy as the launch path. **The platform-injected pair
+above is better than that, and 57a-12 measured exactly how much better — a
+job's `taskSpec.environment` cannot touch it, while `taskEnvironments` can set
+the index** (§9), so its trust boundary is the job definition too, which for
+Fugaro is the launcher; `FUGARO_BACKEND` stays what
 it is — the launcher's record of *which* backend it chose, for pricing and for
 `launch.json` (`internal/backend/backend.go`:17-19). **Check 57a step 12** is
 what tests the remaining gap: whether a job's own environment can override
 `BATCH_TASK_INDEX`/`BATCH_TASK_COUNT`, i.e. whether the injected signal is
-itself forgeable by whoever can submit a job.
+itself forgeable by whoever can submit a job. **Both halves ran on
+2026-10-15; the results are in §7.2's 57a-12 row.**
 
 Trade-off: it touches every caller (`cli/cancel.go`, `logs.go`, `diagnose.go`,
 `run.go`, `watch*`, `exec.go`, and the runner's `SameExecution` uses) and is a
@@ -1750,7 +1765,7 @@ design's own text is the source; the plan task writes it to
       "blockProjectSshKeys": true
     }],
     "serviceAccount": {"email": "__SA_EMAIL__"},
-    "network": {"networkInterfaces": [{"network": "global/networks/default", "noExternalIpAddress": true}]},
+    "network": {"networkInterfaces": [{"network": "global/networks/default", "subnetwork": "regions/us-east5/subnetworks/default", "noExternalIpAddress": true}]},
     "labels": {"fugaro": "managed", "fugaro_chk": "57"}
   },
   "labels": {"fugaro": "managed", "fugaro_chk": "57"},
@@ -1807,12 +1822,18 @@ and each would otherwise take a default that contradicts the design.
   measured under it would not carry over to the job account the build uses.
   Step **57a-0** therefore creates `$SA` and grants it before the first job is
   submitted, and Restore deletes it; nothing below may run without it.
-- `network.networkInterfaces[0].noExternalIpAddress: true`. The documented
-  default is **false** (Batch REST reference, `NetworkInterface`), i.e. an
-  external IP, where §1.10's C7 has the run without one. The `network` block
-  names `global/networks/default` only because the sandbox is a bare project;
-  an installation with its own network sets the network and the subnetwork
-  here. **If the job cannot pull its image or write its logs with no external
+- `network.networkInterfaces[0].noExternalIpAddress: true`, **with the
+  interface naming *both* a `network` and a `subnetwork`** — `global/networks/
+  default` and `regions/us-east5/subnetworks/default` in the committed
+  template, which the setup block's `render` rewrites from `NET` and `SUBNET`
+  so an installation with its own network and subnet uses those instead. Both
+  fields are there because 57a found Batch **refuses the job** when only
+  `network` is set: "no external IP" is not expressible with the field alone
+  (§1.7's setup finding, §7.2). The documented default of
+  `noExternalIpAddress` is **false** (Batch REST reference, `NetworkInterface`),
+  i.e. an external IP, where §1.10's C7 has the run without one. The sandbox's
+  `default` values are named only because the sandbox is a bare project.
+  **If the job cannot pull its image or write its logs with no external
   IP, that is the finding**, not a reason to add one back: it means the Private
   Google Access or Cloud NAT §1.7 assumes is missing. Step 0b settles the route
   *before* the first submission, and step 2's first line is where a missing one
@@ -1958,14 +1979,15 @@ P=fugaro-dev                 # HARD-CODED sandbox project id; never belong, and 
 L=us-east5                   # the sandbox installation's region
 SA=fugaro-chk57              # the account THIS CHECK creates; NOT the installation's job account
 J=fugaro-chk57               # the job-name prefix THIS CHECK uses; not the `fugaro-<slug>-<workflow>` shape
-NET=default                  # the sandbox's network; a project with its own sets it here, with its subnetwork
+NET=default                  # the sandbox's network; a project with its own sets it here
+SUBNET=default               # and its subnetwork: Batch refuses noExternalIpAddress if either is unnamed
 SA_EMAIL=${SA}@${P}.iam.gserviceaccount.com   # what allocationPolicy.serviceAccount takes
 IMG=                         # resolved below, from the installation's own config: never a hand-written tag
 
 # ${VAR:?} everywhere: an empty variable is a hard error, never an empty
 # argument gcloud would resolve from its ambient configuration.
-[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$SA" ] && [ -n "$J" ] && [ -n "$NET" ] \
-  || { echo "Check 57 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L SA=$SA J=$J NET=$NET must not be empty)" >&2; exit 1; }
+[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$SA" ] && [ -n "$J" ] && [ -n "$NET" ] && [ -n "$SUBNET" ] \
+  || { echo "Check 57 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L SA=$SA J=$J NET=$NET SUBNET=$SUBNET must not be empty)" >&2; exit 1; }
 DOCTOR=/tmp/chk57-doctor.json   # deliberately NOT check57*.json: the render check below globs those
 fugaro doctor --project fugaro --gcp-project "${P:?}" --json > "${DOCTOR}" || true   # a failing check still prints the object; the parses below are the guard
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); p=d.get("project") or {}; sys.exit(0 if p.get("name")=="fugaro" and p.get("gcp_project")=="fugaro-dev" else 1)' "${DOCTOR}" \
@@ -2031,7 +2053,8 @@ render() { sed -e "s|__IMG__|${IMG:?}|g" \
               -e "s|__DOCKER_GID__|${DOCKER_GID}|g" \
               -e "s|__QUOTA_MT__|${QUOTA_MT:?}|g" \
               -e "s|__PRELOAD_IMG__|${PRELOAD_IMG:?}|g" \
-              -e "s|global/networks/default|global/networks/${NET:?}|g" "$1"; }
+              -e "s|global/networks/default|global/networks/${NET:?}|g" \
+              -e "s|regions/us-east5/subnetworks/default|regions/${L:?}/subnetworks/${SUBNET:?}|g" "$1"; }
 render check57/job.json > /tmp/check57.json          # the probe's own template
 for F in docker streaming preload socket-none socket-user0 socket-priv \
          teardown-fail teardown-cancel teardown-crash signal-job signal-task quota; do
@@ -2360,8 +2383,11 @@ leaked VM of *this check* is told from a real run's.
    succeeded, and the image's own id. Note what this step does **not** settle:
    neither job runs Docker, so streaming's compatibility with the socket path of
    step 6 is **not** measured here — step 6's combination submission is what
-   measures it, and §2.2's claim stays UNVERIFIED until it does. **The
-   recommendation for C4 follows these two numbers, not this document** (§1.2,
+   measures it, and **57a-6's combination ran on 2026-10-15 and answered it:
+   with `--group-add` set *and* streaming on, the container came up with
+   `groups=1000` only and could not connect**, so streaming does ignore
+   `options` (§2.2). **The recommendation for C4 follows these two numbers, not
+   this document** (§1.2,
    §1.9).
 4. **Docker inside a run.** Submit `check57/job-docker.json` — the committed
    JSON above with only `commands` replaced by the Docker chain quoted after
@@ -2465,9 +2491,14 @@ leaked VM of *this check* is told from a real run's.
    each `options` string at all — a rejected one fails at `jobs.submit` with a
    400 and never reaches a VM, which is itself the answer to "does `options`
    carry `--group-add`". And for the two built-here submissions: whether the
-   streaming combination ran a container (the answer to §2.2's streaming claim,
-   which is UNVERIFIED until this line exists), and the pull and `pg_isready`
-   times from the timing run. The go/no-go is: **at least one of (a) or (b)
+   streaming combination ran a container — **the answer to §2.2's streaming
+   claim, measured on 2026-10-15: the combination came up with `groups=1000`
+   only and could not connect, so streaming discards `options`** — and the pull
+   and `pg_isready` times from the timing run, which are **that timed
+   submission's own numbers: a small `postgres:17` container on a plain
+   `batch-cos` VM (9 s to pull, 1 s to `pg_isready`), not the preloaded base
+   image and nothing anyone may subtract from a cold start** (§1.2). The
+   go/no-go is: **at least one of (a) or (b)
    gives a running container via the host socket, or the socket design has no
    uid-preserving path** — and if only (b) works, §2.2's ordering drops to
    `--user 0` with the ownership consequence recorded; (c) is expected to be
@@ -2540,9 +2571,13 @@ leaked VM of *this check* is told from a real run's.
    report (the design says `roles/batch.agentReporter` plus
    `roles/logging.logWriter`, §3.2); what the **reaper** needs to delete a job
    and an instance; and whether an IAM Condition narrowing `batch.jobsEditor`
-   to `fugaro-*` job names is **accepted at all** — that is UNVERIFIED and this
-   step settles it. **FACT:** each binding, verbatim, and whether the Condition
-   was accepted.
+   to `fugaro-*` job names is **accepted at all** — this step settles it, and
+   **57a-9 measured on 2026-10-15: accepted and read back as written** (§3.7,
+   §9). **FACT:** each binding, verbatim, and whether the Condition was
+   accepted. **What that buys is narrower than it looks** — the Condition
+   narrows which job *resources* may be named, not what a job may contain
+   (§3.7) — so step 9 records the Condition verbatim rather than reading it as
+   the launcher's whole trust story.
 
    ```bash
    gcloud projects get-iam-policy "${P:?}" --format=json | \
@@ -2550,10 +2585,11 @@ leaked VM of *this check* is told from a real run's.
 
    # C22's Condition question, asked for real: add a binding whose Condition
    # narrows Batch job editing to Fugaro-shaped names, read it back, then remove
-   # it. An accepted-and-returned Condition is the answer this step exists for;
-   # a 400 or an error from add-iam-policy-binding means Conditions on this
-   # role/resource are not available and C22's "worth attempting" stays
-   # UNVERIFIED. The binding is on the check's own account, and it is removed
+   # it. An accepted-and-returned Condition is the answer this step exists for --
+   # and on 2026-10-15 it was accepted and returned as written (57a-9, §3.7); a
+   # 400 or an error from add-iam-policy-binding would have meant Conditions on
+   # this role/resource are not available. The binding is on the check's own
+   # account, and it is removed
    # before the step ends, so nothing of it survives into Restore.
    # Double quotes, NOT single: the expression has to carry this project's and
    # this region's real ids, and a single-quoted string would hand gcloud the
@@ -2618,11 +2654,12 @@ leaked VM of *this check* is told from a real run's.
     (`gcloud batch jobs describe … --format='value(uid)'`) — asked on
     `_Default` as well as in the bucket, because the label question is about the
     entry, not about where the sink put it, and the two scopes answer it
-    independently — whether `resource.labels.job_id` is present, and — the part
-    that is **UNVERIFIED** — whether that value is the job's *name* or its
-    *UID*; the resource list says only "The identifier of the Job" (checked
-    2026-10-15). The shipped filter is
-    the documented `labels.job_uid=… AND
+    independently — whether `resource.labels.job_id` is present, and whether
+    that value is the job's *name* or its *UID*; the resource list says only
+    "The identifier of the Job" (checked 2026-10-15). **Measured 2026-10-15
+    (57a-10): it is the uid-form id, not the name** — which does **not** buy the
+    cheaper filter, since the UID still has to be fetched first (§1.5, §9).
+    The shipped filter is the documented `labels.job_uid=… AND
     logName="projects/<p>/logs/batch_task_logs"` (§1.5); this step is what would
     allow the cheaper `resource.labels.job_id` form later. Also record whether
     the job's own `labels.fugaro_chk=57` reaches the `LogEntry` (it should:
@@ -2689,7 +2726,16 @@ leaked VM of *this check* is told from a real run's.
     `--config /tmp/check57-signal-task.json`, one at a time. **FACT:** the values
     the container saw — the injected ones (index 0 of a one-task job, count 1),
     the job's `99`, or nothing (a var Batch strips) — **named per place**, since
-    each submission answers for exactly one of them. The metadata line is
+    each submission answers for exactly one of them. **Measured 2026-10-15
+    (57a-12): the job-level `taskSpec.environment` did not override them — the
+    container saw `IDX=0 COUNT=1`, the injected pair — while the task-level
+    `taskEnvironments[0].variables` did reach the container: it saw
+    `IDX=99` (the job's value) with `COUNT=1` (the injected count, not the
+    `99` the same submission set).** So the pair is **not** un-overridable by a
+    job: whoever writes the job definition can set the index, which is exactly
+    the trust boundary C12 already rests on — the launcher — and the count's
+    behaviour is observed only in a one-task job, which is the one shape a
+    `99` could not show in. The metadata line is
     **not** a Private Google Access result: the metadata server is the link-local
     `169.254.169.254`, which no external IP, NAT or PGA setting affects (§3.3),
     so what it records is whether a job can read its own VM's identity from the
@@ -2707,18 +2753,29 @@ The probe's jobs carried `fugaro_chk=57` and ran as the check's own
 57a-0 exists for). **57b has not been run**: nothing here is a post-build
 result, and nothing here makes `backend: cloud-batch` selectable.
 
+**Restore status — NOT FINISHED (owner note, 2026-10-15; the owner updates
+this).** The run's Restore **did not complete**: a VM survived it and the
+Compute, Batch and `containerfilesystem.googleapis.com` APIs were left
+**enabled** on `fugaro-dev`, because `gcloud` reauthentication failed at the
+cleanup commands. The sandbox project is therefore **not** back to its
+pre-check state, a surviving VM bills until it goes, and **57a is not closed
+until the Restore block is re-run on its own** (the owner's `--restore-only`
+invocation, with the setup block re-run first as its own text requires) **and
+its closing assertion reads `0` on every line**. Nothing else in this section
+changes when that happens: it is a cleanup fact, not a measurement.
+
 | Step | What it measured | Result |
 |---|---|---|
 | 57a-1 | Cloud Run baseline, 5 runs | **median 13.0 s** (an earlier attempt recorded 12.0 s). The endpoint is this check's own — the run's first log line — so 13.0 s anchors the VM numbers below and is **not** subtracted from Check 41's published 10.5 s. |
 | 57a-2 | Cold start, plain pull, `e2-standard-4` | 154, 145, 137, 152, 135 s → **median 145 s** |
 | 57a-3a | Cold start, `enableImageStreaming: true` | 98, 97, 96 s → **median 97 s**. Only **3 of the 5** jobs yielded a first-line time; **2 produced none, and the record does not say whether Batch refused them, they failed, or the collection found nothing** — the step's own "did streaming accept the job at all" question, left open here and in §9. |
-| 57a-3b | Cold start, the preloaded boot image | 69, 67, 66, 65, 63 s → **median 66 s**. The image was built from `batch-cos` with the base image — `fugaro-base` **0.7.5**, by digest — already in the Docker data root; inside the VM the pull then took **9 s** and the container was ready **1 s** after it, so about 56 of the 66 s is **VM boot and Batch scheduling**, not the image. |
+| 57a-3b | Cold start, the preloaded boot image | 69, 67, 66, 65, 63 s → **median 66 s**, submit to first log line. The image was built from `batch-cos` with the base image — `fugaro-base` **0.7.5**, by digest — already in the Docker data root, and Batch accepted it and ran it. **How the 66 s splits is not measured**: the run took no timing inside a preloaded VM, and the 9 s pull / 1 s to `pg_isready` it did record belong to 57a-6's timed submission — a small `postgres:17` container on a **plain `batch-cos`** VM (§2.2's 57a-4/6 row, 57a-6's FACT list). |
 | 57a-4, 57a-6 | The socket, the baseline and the variants | **No `options`: refused** (`permission denied`). **`--group-add 412`: reaches the daemon and runs a real container.** **`--user 0`: works.** **`--privileged` alone: does not work** — the container's user stays 1000, as §2.2 predicted. **`--group-add 412` with `enableImageStreaming`: the extra group is not applied** (the container shows `groups=1000` only) and it cannot connect — so streaming makes Batch **ignore the container's `options` field**, which §1.2 argued from the five-subfield list and this measures. |
 | 57a-5 | The cost of one plain run | a **143 s** window on `e2-standard-4` at **0.13402284 USD/h** is about **$0.0053**. The 50 GB boot disk and Cloud NAT are outside that figure, and the **billed amount was not read** — the export must be read by hand for 57b-5. |
 | 57a-8 | Teardown, per exit path | the VM was gone **25 s** after `SUCCEEDED`, **26 s** after `FAILED`, **3 s** after `jobs.cancel` (`CANCELLED`), and **26 s** after the crashed runner's job failed. |
 | 57a-9 | IAM, read raw | a conditional `roles/batch.jobsEditor` binding, condition `resource.name.startsWith("projects/fugaro-dev/locations/us-east5/jobs/fugaro-")`, was **accepted and read back as written**. |
 | 57a-10 | The raw log entry | `logName` `projects/fugaro-dev/logs/batch_task_logs`, `resource.type` `batch.googleapis.com/Job`; **`labels.job_uid` is present and equals the job's uid**; `resource.labels.job_id` holds the **uid-form id, not the job name**; the job's own `labels.fugaro_chk=57` **is on the entries**. |
-| 57a-12 | The signal, and the second place | the **job-level** submission (`taskSpec.environment` setting `BATCH_TASK_INDEX`/`BATCH_TASK_COUNT` to `99`) **succeeded**, and the container saw its own **task index and count** — the job's `99` did not override them. |
+| 57a-12 | The signal, and the second place | the **job-level** submission (`taskSpec.environment` setting `BATCH_TASK_INDEX`/`BATCH_TASK_COUNT` to `99`) saw the **injected pair, `IDX=0 COUNT=1`** — the job's `99` did not reach the container. The **task-level** submission (`taskEnvironments[0].variables`, the same pair set to `99`) **did**: the container saw **`IDX=99`**, while `COUNT` stayed the injected **`1`**. |
 
 **The deltas, arithmetic on the numbers above:** 145 − 13 = **132 s** over the
 Cloud Run baseline for the plain pull; 97 − 13 = **84 s** for streaming; 66 − 13
@@ -2799,13 +2856,11 @@ estimate; the export was not read, and 57b-5 is what compares it), and the
 unproven live while its Terraform and its test are in the tree, and
 **`TaskGroup.runAsNonRoot: true`** — no submission set it, so only the unset
 branch is measured (§2.2, §9), which is why Task 7 leaves the field alone.
-Also unmeasured here: whether the second place Batch documents environment
-(`taskEnvironments`) is as safe as the job-level one step 12 tried, and — the
-one open item about streaming itself — **what became of the two 57a-3a jobs
-that produced no first log line** (§1.2, §9): the run's record does not say
-whether Batch refused them, they failed, or they started and the collection
-simply found no first line, which is the step's own "did streaming accept the
-job at all" question and is not settled by it. Streaming's *path* is not open:
+Also unmeasured here — the one open item about streaming itself — **what became
+of the two 57a-3a jobs that produced no first log line** (§1.2, §9): the
+record does not say whether Batch refused them, they failed, or they started
+and the collection simply found no first line, which is the step's own "did
+streaming accept the job at all" question and is not settled by it. Streaming's *path* is not open:
 this installation's pin (`IMG`) named the **remote** repository
 (`fugaro-ghcr`), as §1.2 and the setup comment record, and streaming served
 the image from it (§9, [ANSWERED, 57a-3a]); the **direct** repository's path
@@ -2815,10 +2870,12 @@ is what no run has exercised.
 list — the container's uid (with `runAsNonRoot` unset); whether `options`
 carries `--group-add` and whether
 `--privileged` is accepted; the COS image's socket gid; which permission path
-works; the boot/scheduling numbers with and without a preload; whether Batch
+works; the cold-start totals with and without a preload (the split of the 66 s
+is **not** settled); whether Batch
 accepts a custom boot image; teardown on the measured exit paths; the IAM
-Condition; the `resource.labels.job_id` question; and the job-level half of the
-signal question. The rows it does **not** settle stay in §9's unverified list,
+Condition; the `resource.labels.job_id` question; and **both halves** of the
+signal question — the job-level environment that cannot override the injected
+pair and the task-level one that can. The rows it does **not** settle stay in §9's unverified list,
 named individually.
 
 ### 57b. The post-build acceptance run (after the enable task)
@@ -3417,7 +3474,10 @@ above where used):
 - Batch injects `BATCH_TASK_INDEX` and `BATCH_TASK_COUNT` into every task, in
   addition to the job's own environment (`TaskGroup.taskEnvironments`, Batch
   REST reference, checked 2026-10-15), which is the platform signal C12's
-  detection uses (§2.5).
+  detection uses (§2.5). **Measured 2026-10-15 (57a-12): the *job-level*
+  environment cannot override the injected pair, but the *task-level*
+  (`taskEnvironments`) index does reach the container** — so the injection is
+  real and the task environment is the place to watch (§9).
 - Batch v1's job methods are `create`, `get`, `list`, `cancel` and `delete` —
   there is **no `patch`/`update`**, so a job's labels and environment are fixed
   at creation (`batch.googleapis.com/$discovery/rest?version=v1`, checked
@@ -3475,17 +3535,18 @@ the field's `true` branch is **not** in this list (§2.2); that
 reaches the runtime and works, that `--user 0` works, and that `--privileged`
 alone does not; that the socket's gid on the boot image was 412; that a
 container with `--group-add` **and** `enableImageStreaming` on comes up with the
-group missing, so streaming makes Batch ignore `options`; the cold-start medians
-(145 s plain, 97 s streamed, 66 s preloaded) and the 9 s pull / 1 s ready
-container inside the preloaded VM; that Batch accepts a custom boot image; the
+group missing, so streaming makes Batch ignore `options`; the cold-start medians, submit to first log line
+(145 s plain, 97 s streamed, 66 s preloaded; the split of the 66 s is **not**
+in this list); that Batch accepts a custom boot image; the
 teardown times (25/26/3/26 s) on `SUCCEEDED`, `FAILED`, `CANCELLED` and a
 crashed runner; that a conditional `batch.jobsEditor` binding is accepted and
 returned as written; that `labels.job_uid` equals the job's uid and
 `resource.labels.job_id` carries the uid-form id; that a job's own labels reach
 its task-log entries; that the job ran as `allocationPolicy.serviceAccount` and
-not the default Compute Engine account; and that a job-level
-`taskSpec.environment` cannot override the injected
-`BATCH_TASK_INDEX`/`BATCH_TASK_COUNT`.
+not the default Compute Engine account; and that the injected
+`BATCH_TASK_INDEX`/`BATCH_TASK_COUNT` survive a **job**-level
+`taskSpec.environment` but that the **task**-level `taskEnvironments` index
+does reach the container (`IDX=99`), with the count unchanged.
 
 **Unverified, each with what settles it.** Rows **Check 57a answered on
 2026-10-15** say so and give the answer inline (the full record is §7.2's
@@ -3522,10 +3583,15 @@ not run at all are named together in §7.2 ("Still unmeasured after 57a"):
   COS docker socket, and which permission path works. **Measured: not on its
   own (`permission denied`); `--group-add <gid>` and `--user 0` both work, and
   the design takes `--group-add`** (§1.1).
-- **[ANSWERED, 57a-2/3]** VM boot and Batch scheduling times, with and without
-  a preloaded image. **Measured medians: 145 s plain pull, 97 s streamed, 66 s
-  preloaded** — and inside the preloaded VM the pull was 9 s and the container
-  ready 1 s later, so about 56 s is boot and scheduling (§1.2).
+- **[PARTLY ANSWERED, 57a-2/3]** VM boot and Batch scheduling times, with and
+  without a preloaded image. **Measured medians, submit to first log line: 145 s
+  plain pull, 97 s streamed, 66 s preloaded.** **Not measured: the split of the
+  66 s.** The run took no timing inside a preloaded VM, so nothing separates boot,
+  scheduling and agent setup from the image there; the timing it did record —
+  9 s to pull `postgres:17` and 1 s from `docker run -d` to `pg_isready` — is
+  57a-6's timed submission on a **plain `batch-cos`** VM (§2.2), a small
+  container and not the base image, and it cannot be subtracted from the 66 s
+  (§1.2, §7.2).
 - Whether Batch adds any billable line beyond the VMs — Check 57a step 5,
   **which did not read the bill**: one run's figure ($0.0053 for a 143 s
   `e2-standard-4` window) is a hand estimate, and 57b-5 is what compares it
@@ -3558,13 +3624,17 @@ not run at all are named together in §7.2 ("Still unmeasured after 57a"):
   `resource.name.startsWith("projects/fugaro-dev/locations/us-east5/jobs/fugaro-")`
   was accepted and returned as written, so the design takes the narrowing
   (§3.7, C22).
-- **[PARTLY ANSWERED, 57a-12]** Whether a job's own environment can
-  **override** the injected `BATCH_TASK_INDEX`/`BATCH_TASK_COUNT` (a signal the
-  job can set is only as good as the launch path): the **job-level** submission
-  (`taskSpec.environment`) was run, succeeded, and **the container saw its own
-  task index and count — the job's `99` did not override them**. The second
-  place Batch documents environment (`taskEnvironments`) was **not** run, so
-  that half stays open.
+- **[ANSWERED, 57a-12]** Whether a job's own environment can **override** the
+  injected `BATCH_TASK_INDEX`/`BATCH_TASK_COUNT` (a signal the job can set is
+  only as good as the launch path). **Measured, both places:** the **job-level**
+  `taskSpec.environment` does **not** — the container saw `IDX=0 COUNT=1`, the
+  injected pair, with `99` set in both — while the **task-level**
+  `taskEnvironments[0].variables` **does reach the container**: it saw
+  **`IDX=99`** (the job's value) and `COUNT=1` (the injected count, not the
+  `99` set alongside it). So the index is overridable by whoever writes the job
+  definition — for Fugaro, the launcher, which is the trust boundary C12 already
+  names — and the count was not overridden in the one observation there is, a
+  one-task job, which is the shape a `99` could not show in (§2.5, §7.2).
 - **[ANSWERED, 57a-10]** Whether `resource.labels.job_id` on a
   `batch.googleapis.com/Job` entry is the job's **name** or its **UID** (the
   resource list says only "The identifier of the Job"). **Measured: it is the
