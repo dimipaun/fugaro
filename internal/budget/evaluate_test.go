@@ -143,6 +143,21 @@ func TestEvaluateTable(t *testing.T) {
 			c.Defaults.RepoPerRunMicros = nil
 			s.Run = RunLedger{Reserved: 2 * usd}
 		}, false, ReasonRunCap, ScopeRun, ""},
+		// The owner's ruling of 2026-10-15: a repository's own per-run cap
+		// with no global per-run cap is bounded by the repository's cap
+		// alone (the rules used to refuse this shape outright).
+		{"a repo per-run cap alone is affirmed at its edge", func(s *State, w *Write, c *Caps, _ *Kills) {
+			c.Global.PerRunMicros = nil
+			c.Repo = &RepoCaps{PerRunMicros: mp(10 * usd)}
+			s.Run = RunLedger{Reserved: 9 * usd}
+			w.Amount = usd
+		}, true, "", "", ""},
+		{"... and refused at its edge plus one", func(s *State, w *Write, c *Caps, _ *Kills) {
+			c.Global.PerRunMicros = nil
+			c.Repo = &RepoCaps{PerRunMicros: mp(10 * usd)}
+			s.Run = RunLedger{Reserved: 10 * usd}
+			w.Amount = usd
+		}, false, ReasonRunCap, ScopeRun, ""},
 		{"no per-run cap anywhere", func(_ *State, _ *Write, c *Caps, _ *Kills) {
 			c.Global.PerRunMicros, c.Defaults.RepoPerRunMicros = nil, nil
 		}, false, ReasonNoCap, ScopeGlobal, ""},

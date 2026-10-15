@@ -763,6 +763,25 @@ func TestNullCapDenies(t *testing.T) {
 		h.seed(w)
 		h.mustDeny(w.client(h), "20 + 1 > the global 20", leaseUpdates(w, usd))
 	})
+	t.Run("the repository's own cap alone, with no global per-run cap", func(t *testing.T) {
+		// The owner's ruling of 2026-10-15: a repository with its own
+		// per-run cap in a project with none is bounded by its own cap
+		// alone. The old rules refused every lease here (they compared
+		// against the global node whether or not it existed); this row is
+		// the one that pins the ruled behaviour.
+		h := newHarness(t)
+		w := stdWorld()
+		w.caps.Global.PerRunMicros = nil
+		w.caps.Repo = &budget.RepoCaps{PerRunMicros: mp(10 * usd)}
+		w.st.Run, w.st.DayRun = budget.RunLedger{Reserved: 9 * usd}, budget.RunLedger{Reserved: 9 * usd}
+		w.st.Repo.Counted, w.st.Global.Counted = 9*usd, 9*usd
+		h.seed(w)
+		h.mustAllow(w.client(h), "9 + 1 == its own 10", leaseUpdates(w, usd))
+		w.st.Run, w.st.DayRun = budget.RunLedger{Reserved: 10 * usd}, budget.RunLedger{Reserved: 10 * usd}
+		w.st.Repo.Counted, w.st.Global.Counted = 10*usd, 10*usd
+		h.seed(w)
+		h.mustDeny(w.client(h), "10 + 1 > its own 10", leaseUpdates(w, usd))
+	})
 	t.Run("the repository's own node beats the default, per field", func(t *testing.T) {
 		h := newHarness(t)
 		w := stdWorld()
