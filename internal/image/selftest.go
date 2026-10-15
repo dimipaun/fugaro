@@ -618,6 +618,12 @@ func dirWritableBy(fi os.FileInfo, st *syscall.Stat_t, uid, gid uint32) bool {
 // ships in the image.
 func checkMiseCacheDir(dir string, uid, gid uint32, add func(string, bool, string, ...any)) {
 	const name = "mise-cache-dir"
+	// Lstat, so only the last path component is judged. A symlinked
+	// *parent* — ~/.cache itself, say — is followed and never reported,
+	// which is harmless in the image: the base image lays the whole path
+	// down for real, and a build that pointed ~/.cache elsewhere would only
+	// move where the cache lives, while a symlinked mise directory itself
+	// can point anywhere (at /tmp, at another mount) and is refused.
 	fi, err := os.Lstat(dir)
 	switch {
 	case err != nil:
@@ -646,7 +652,7 @@ func checkMiseCacheDir(dir string, uid, gid uint32, add func(string, bool, strin
 	// every directory is writable, the owner, group and mode bits have to
 	// decide (see dirWritableBy).
 	if os.Geteuid() == int(uid) {
-		if err := probeDirWritable(dir); err != nil {
+		if err := miseCacheProbe(dir); err != nil {
 			add(name, false, "%s (owner %d:%d, mode %04o) is not writable by uid %d: creating and removing a file in it failed: %v", dir, st.Uid, st.Gid, fi.Mode().Perm(), uid, err)
 			return
 		}
@@ -656,6 +662,12 @@ func checkMiseCacheDir(dir string, uid, gid uint32, add func(string, bool, strin
 	}
 	add(name, true, "%s is a directory owned by uid %d and writable by it", dir, uid)
 }
+
+// miseCacheProbe is the writability probe checkMiseCacheDir makes when the
+// selftest runs as the user that must write. A var so a test can make the
+// probe fail without owning the directory: root ignores the mode bits, so
+// as root a read-only directory can't be made to fail the probe for real.
+var miseCacheProbe = probeDirWritable
 
 // probeDirWritable creates and removes a file in dir, which is what mise
 // does when it writes a cache entry there. The probe is removed even when
