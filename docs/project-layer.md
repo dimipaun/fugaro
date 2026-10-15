@@ -16,6 +16,8 @@ A published policy is read by the run itself, not by the launcher: it lives at `
 
 A workflow takes a profile only when it names one (`workflows.<name>.profile`), or when the file has no `workflows:` at all (then one workflow, `default`, takes `profile:` or the project's `default_profile`). A workflow that names no profile takes nothing from any profile.
 
+A workflow's **job profile** is a different selection on a different key: `workflows.<name>.job_profile` names a profile of the *published policy* (§5, phase 3 of [plans/2026-10-14-project-centric.md](plans/2026-10-14-project-centric.md)), which is the Cloud Run job's shape — its provider, cpu, memory, task timeout, secret mounts and admission list — and not the project layer's workflow template. It is `job_profile` and not `profile` because `profile` already names the layer's template above; a file may carry both. A workflow that names none runs on `standard`, which any policy carrying a `profiles` block must define, and a policy that does not define the one a workflow selected refuses the run rather than running it on another profile.
+
 ## 3. The minimal fugaro.yaml
 
 ```yaml
