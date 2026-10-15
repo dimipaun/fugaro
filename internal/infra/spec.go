@@ -127,6 +127,7 @@ type InstallationOutputs struct {
 	RunsBucket              string   `json:"runs_bucket"`
 	RegistryHost            string   `json:"registry_host"`
 	BaseRegistry            string   `json:"base_registry"`
+	GhcrRegistry            string   `json:"ghcr_registry"`
 	LegacyRegistry          string   `json:"legacy_registry"`
 	SchedulerServiceAccount string   `json:"scheduler_service_account"`
 	RoleIDs                 RoleIDs  `json:"role_ids"`
@@ -253,6 +254,7 @@ type RepoInstallation struct {
 	RunsBucket              string      `json:"runs_bucket"`
 	RegistryHost            string      `json:"registry_host"`
 	BaseRegistry            string      `json:"base_registry"`
+	GhcrRegistry            string      `json:"ghcr_registry"`
 	SchedulerServiceAccount string      `json:"scheduler_service_account"`
 	RoleIDs                 RepoRoleIDs `json:"role_ids"`
 	Launchers               []string    `json:"launchers"`
@@ -492,6 +494,7 @@ func withDefaults(o InstallationOutputs, lc *localcfg.Config, bucket string) Ins
 	def(&o.ProjectName, lc.Name)
 	def(&o.RunsBucket, bucket)
 	def(&o.BaseRegistry, BaseRegistry)
+	def(&o.GhcrRegistry, GhcrRegistry)
 	def(&o.SchedulerServiceAccount, serviceAccountEmail(SchedulerServiceAccountID, lc.GCPProject))
 	def(&o.RoleIDs.Launcher, role(RoleLauncher))
 	def(&o.RoleIDs.JobRunner, role(RoleJobRunner))
@@ -816,6 +819,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 			RunsBucket:              c.bucket,
 			RegistryHost:            c.registryHost,
 			BaseRegistry:            c.inst.BaseRegistry,
+			GhcrRegistry:            c.inst.GhcrRegistry,
 			SchedulerServiceAccount: c.inst.SchedulerServiceAccount,
 			RoleIDs:                 RepoRoleIDs{JobRunner: c.inst.RoleIDs.JobRunner, BuildSubmitter: c.inst.RoleIDs.BuildSubmitter, TagMover: c.inst.RoleIDs.TagMover},
 			Launchers:               c.inst.Launchers,
@@ -947,18 +951,26 @@ func (rs RepoSpec) UsesVertex() bool {
 }
 
 // BaseImageWarnings are the warnings for each of the local config's base
-// images (kind -> image) that isn't in the installation's base registry,
-// in kind order. The build accounts can read only that registry, so every
-// build from such an image would fail at its pull; the check job's own pull
-// would still work, which hides it until then.
+// images (kind -> image) that is in neither of the installation's own image
+// repositories, in kind order: the base registry (the copy an earlier
+// release made) or the remote (pull-through) repository over ghcr.io (this
+// release's pin). The build accounts can read those two, so a build from
+// anything else would fail at its pull; the check job's own pull would
+// still work, which hides it until then.
+//
+// It is deliberately not a gate: the build account can read both, so this
+// is a readability hint and a pointer at where a base image belongs, and
+// the gate is cover.go's shape test and managedVersion.
 func BaseImageWarnings(bases map[string]string, outs InstallationOutputs) []string {
-	registry := outs.RegistryHost + "/" + outs.BaseRegistry
+	registries := []string{outs.RegistryHost + "/" + outs.BaseRegistry, outs.RegistryHost + "/" + outs.GhcrRegistry}
 	var ws []string
 	for _, kind := range slices.Sorted(maps.Keys(bases)) {
-		if ref := bases[kind]; ref != "" && !strings.HasPrefix(ref, registry+"/") {
-			ws = append(ws, fmt.Sprintf("the local config's base_images.%s %s is not in the installation's base registry %s, the only one the build accounts can read, so the image builds would fail at its pull: push the base image to %s and set base_images.%s to it",
-				kind, ref, registry, registry, kind))
+		ref := bases[kind]
+		if ref == "" || slices.ContainsFunc(registries, func(r string) bool { return strings.HasPrefix(ref, r+"/") }) {
+			continue
 		}
+		ws = append(ws, fmt.Sprintf("the local config's base_images.%s %s is in neither of the installation's image repositories (%s), the only ones the build accounts can read, so the image builds would fail at its pull: push the base image to %s and set base_images.%s to it",
+			kind, ref, strings.Join(registries, ", "), registries[0], kind))
 	}
 	return ws
 }
@@ -1020,6 +1032,112 @@ func (c *repoCtx) check(rs RepoSpec, checked []string) (*CheckSpec, error) {
 		SecretEnv:       map[string]string{gitEnv: c.gitSecret},
 		Workflows:       checked,
 	}, nil
+}
+
+// Addresses are the Terraform addresses of every resource instance the
+// repository root (deploy/terraform/gcp/roots/repo -> modules/repo and
+// modules/workflow) declares for rs, sorted. It is deterministic from the
+// spec alone -- the same spec always yields the same set -- which is what
+// makes Retirements (retire.go) a set difference.
+//
+// It mirrors the modules' own for_each, count and deploy gates, not their
+// prose: a resource a module does not declare for this spec is not an
+// address here either, because an address claimed but not produced would
+// make Retirements call a live resource retired. In particular the jobs
+// (google_cloud_run_v2_job.this[0], the check job and the launcher grants)
+// exist only when the spec's DeployJob says so, exactly as
+// `count = var.workflow.deploy_job ? 1 : 0` and check.tf's
+// `local.deploy_check` do; Readiness never turns DeployJob off for a job
+// that already exists, so an address the state holds is never dropped this
+// way.
+//
+// Keys are quoted with strconv.Quote, as newImport does, and for the same
+// reason (config.SecretNameRE and config.WorkflowNameRE restrict every key
+// to [a-z0-9-], where strconv.Quote and HCL's quoting agree).
+//
+// It is a hand-maintained mirror, so it is pinned rather than trusted:
+// internal/infra/testdata/repo_root_addresses.golden holds the address list
+// of a real `terraform plan` of the real root, and
+// TestRepoAddressesMatchTheRealPlanGolden fails when a module gains a
+// resource this function does not name (Review Focus 8 of
+// docs/plans/2026-10-14-config-transitions.md).
+func (rs RepoSpec) Addresses() []string {
+	const root = "module.repo."
+	q := strconv.Quote
+	var out []string
+	add := func(s string) { out = append(out, s) }
+	operators := rs.Installation.Operators
+	// The roots read the tfvars' installation.launchers, which RepoVars
+	// writes as the launchers and the operators together (tfvars.go's
+	// launchersWithOperators): an operator launches too.
+	launchers := launchersWithOperators(rs.Installation.Launchers, operators)
+
+	// modules/repo/secrets.tf
+	for _, logical := range slices.Sorted(maps.Keys(rs.Secrets)) {
+		add(root + "google_secret_manager_secret.this[" + q(logical) + "]")
+	}
+	// The operator grants are for_each over setproduct(secret, operator),
+	// with the role appended to the key.
+	for _, logical := range slices.Sorted(maps.Keys(rs.Secrets)) {
+		for _, member := range operators {
+			add(root + "google_secret_manager_secret_iam_member.operator[" + q(logical+" "+member+" secretVersionAdder") + "]")
+			add(root + "google_secret_manager_secret_iam_member.operator[" + q(logical+" "+member+" viewer") + "]")
+		}
+	}
+	// modules/repo/registry.tf
+	add(root + "google_artifact_registry_repository.images")
+	for _, member := range operators {
+		add(root + "google_artifact_registry_repository_iam_member.operator_images[" + q(member) + "]")
+	}
+	// modules/repo/build.tf
+	add(root + "google_service_account.build")
+	for _, logical := range rs.BuildSecrets {
+		add(root + "google_secret_manager_secret_iam_member.build[" + q(logical) + "]")
+	}
+	add(root + "google_artifact_registry_repository_iam_member.build_images")
+	add(root + "google_artifact_registry_repository_iam_member.build_tag_mover")
+	add(root + "google_artifact_registry_repository_iam_member.build_base")
+	// #362's remote repository: the build's reader grant on the ghcr.io
+	// mirror, declared without a gate (build.tf), so it is an address of
+	// every repository root.
+	add(root + "google_artifact_registry_repository_iam_member.build_ghcr")
+	add(root + `google_project_iam_member.build["log_writer"]`)
+	add(root + `google_project_iam_member.build["build_submitter"]`)
+	add(root + "google_service_account_iam_member.build_self")
+	for _, member := range operators {
+		add(root + "google_service_account_iam_member.operator_build[" + q(member) + "]")
+	}
+	add(root + "google_storage_bucket_iam_member.build")
+	// modules/repo/check.tf
+	if rs.Check != nil && rs.Check.DeployJob {
+		add(root + "google_cloud_run_v2_job.check[0]")
+		add(root + "google_cloud_run_v2_job_iam_member.check_invoker[0]")
+		add(root + "google_cloud_scheduler_job.check[0]")
+	}
+	// modules/repo/workflows.tf -> modules/workflow
+	for _, key := range slices.Sorted(maps.Keys(rs.Workflows)) {
+		ws := rs.Workflows[key]
+		p := "module.repo.module.workflow[" + q(key) + "]."
+		add(p + "google_service_account.job")
+		for _, member := range operators {
+			add(p + "google_service_account_iam_member.operator[" + q(member) + "]")
+		}
+		add(p + "google_storage_bucket_iam_member.job")
+		for _, logical := range uniqueSecrets(ws) {
+			add(p + "google_secret_manager_secret_iam_member.job[" + q(logical) + "]")
+		}
+		if ws.Vertex {
+			add(p + "google_project_iam_member.vertex[0]")
+		}
+		if ws.DeployJob {
+			add(p + "google_cloud_run_v2_job.this[0]")
+			for _, member := range launchers {
+				add(p + "google_cloud_run_v2_job_iam_member.launcher[" + q(member) + "]")
+			}
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // Schedule is the check's daily cron schedule: a minute between 05:00 and

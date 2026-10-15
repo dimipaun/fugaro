@@ -30,7 +30,7 @@
           ".read": "RUN",
           "reserved": {
             ".write": "RUN && newData.exists()",
-            ".validate": "AMOUNT && NEW >= OLD && (NEW == OLD || (NEW - OLD <= MAXRES && KILLS_OFF && NEW - OLD == D(spend/TODAY/runs/$slug/$run/reserved) && (!ENFORCE || (NEW - N(runs/$slug/$run/released) <= REPOPERRUN && NEW - N(runs/$slug/$run/released) <= GLOBALPERRUN))))"
+            ".validate": "AMOUNT && NEW >= OLD && (NEW == OLD || (NEW - OLD <= MAXRES && KILLS_OFF && NEW - OLD == D(spend/TODAY/runs/$slug/$run/reserved) && (!ENFORCE || PERRUNOK)))"
           },
           "released": {
             ".write": "RUN && newData.exists()",

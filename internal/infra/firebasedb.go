@@ -70,9 +70,12 @@ func NewDB(c *rtdb.Client, project, gcpProject, mode string) *DB {
 }
 
 // RequireCapsForEnforce refuses mode enforce on a database without global
-// per-run and daily caps: the rules read an absent cap as a refusal, so
-// every run would halt. Enforce is for a database whose caps are set (first
-// init with observe, then fugaro budget set --global, then --mode enforce).
+// per-run and daily caps. An absent global daily cap is a refusal in the
+// rules, so every lease is refused and every run halts; without the global
+// per-run cap only the runs of repositories that have no per-run cap of
+// their own and no default halt (D6), which is why enforce still asks for
+// both. Enforce is for a database whose caps are set (first init with
+// observe, then fugaro budget set --global, then --mode enforce).
 // Other modes pass. A missing database counts as having no caps.
 func (d *DB) RequireCapsForEnforce(ctx context.Context) error {
 	if d.mode != budget.ModeEnforce {
@@ -93,7 +96,7 @@ func (d *DB) RequireCapsForEnforce(ctx context.Context) error {
 func NoCapsForEnforce() error { return noCapsErr() }
 
 func noCapsErr() error {
-	return userErr("--budget-mode enforce needs the database's global caps (%s: dailyMicros and perRunMicros), and there are none: the rules read an absent cap as a refusal, so every run would halt. Run init with --budget-mode observe first, set the caps with fugaro budget set --global --daily <usd> --per-run <usd>, then switch with fugaro budget set --global --mode enforce", budget.PathCapsGlobal)
+	return userErr("--budget-mode enforce needs the database's global caps (%s: dailyMicros and perRunMicros), and there are none: without dailyMicros the rules refuse every lease, so every run halts, and without perRunMicros a run whose repository has no per-run cap of its own and no default has none to compare against. Run init with --budget-mode observe first, set the caps with fugaro budget set --global --daily <usd> --per-run <usd>, then switch with fugaro budget set --global --mode enforce", budget.PathCapsGlobal)
 }
 
 // dbErr turns a refused or failed read into the operator's words.

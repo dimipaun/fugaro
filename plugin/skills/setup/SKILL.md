@@ -95,6 +95,7 @@ Ask the user, with your evidence and a recommended answer for each, **one topic 
 9. `agent.recipe`: its own question, after review rounds: which task loop runs after implement. Open with the 0.5.0 requirement: the key is refused by every CLI, CI pin and job image older than 0.5.0, so tell the user before it goes into the file. Then recommend `default` (leave the key out). Offer `standard` or `solo` only if the user asks for one or says what they want; never write `agent.recipe` without their explicit decision, and never guess a recipe from the repository's domain or language.
 10. `rebuild`: usually the defaults.
 11. Workflow names, when there are several, and anything the user wants kept off Fugaro.
+12. `checkout`: **it is not shipped yet**, so say so and leave the key out — `clone` is the value today's gate refuses, while `baked` is the default and is what every build runs, so leaving the key out loses nothing. What the topic is for the day it ships: the default is `baked`, or `clone` for a workflow that needs no per-repository image (no build and no daily check; a blobless clone and `mise install` at start-up), and only when the evidence rules out everything a build gives the workflow (the keys `fugaro validate` refuses under clone — `image.apt`, `image.setup`, `image.tools`, `image.skip_build_scripts`, `dockerfile:`; a service arrives through one of those). It is the user's decision (`reference/decisions.md`; [docs/checkout.md](https://github.com/dimipaun/fugaro/blob/main/docs/checkout.md)).
 
 ## 6. Show what will execute, then get the go-ahead
 
@@ -148,6 +149,14 @@ fugaro init --project <name>
 ```
 
 After that, suggest a first small `fugaro run` for the user to launch, and point to the `working` skill.
+
+## 10. Changing the auth, a workflow, a secret or a provider
+
+A `fugaro.yaml` edit that retires resources: see [reference/transitions.md](reference/transitions.md). The user runs this in their own terminal, not through the agent:
+
+```bash user-runs
+fugaro init --repo --retire
+```
 
 ## Dogfooding facts
 

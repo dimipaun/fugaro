@@ -175,8 +175,8 @@ func TestRunAgentRecipeTriggersImageCheck(t *testing.T) {
 // w.BaseKind(), not the raw (empty) w.Base field.
 //
 // Mutation (run, restore): change runRun's `kind = w.BaseKind()` back to
-// `kind = w.Base`, and this test fails: the refusal says "it copies this
-// release's base image" (the no-kind-known wording) instead of "it copies
+// `kind = w.Base`, and this test fails: the refusal says "it verifies this
+// release's base image" (the no-kind-known wording) instead of "it verifies
 // this release's base base image" (kind "base" named explicitly).
 func TestRunRecipeImageNamesTheImplicitBaseKind(t *testing.T) {
 	f := newCloudFixture(t)
@@ -190,7 +190,7 @@ func TestRunRecipeImageNamesTheImplicitBaseKind(t *testing.T) {
 	t.Chdir(dir)
 	other := mustSlug("github", "acme/other")
 	writeBuildRecord(t, f, other, "svc", "ghcr.io/dimipaun/fugaro-base:0.4.0")
-	wantRefused(t, f, "it copies this release's base base image", "run", "--run-id", "20261007-100000-abcd", "A task")
+	wantRefused(t, f, "it verifies this release's base base image", "run", "--run-id", "20261007-100000-abcd", "A task")
 }
 
 // TestRunClonedWorkflowWithRecipeLaunchesWithNoBuildRecord (review finding

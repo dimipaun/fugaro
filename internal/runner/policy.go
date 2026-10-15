@@ -133,9 +133,13 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	}
 	if s.On() && s.Prices == nil {
 		// The ceiling was off with no price overrides (they would have
-		// been loaded); a committed observe or enforce charges the
-		// built-in table.
-		s.Prices = pricing.Embedded()
+		// been loaded); a committed observe or enforce charges the same
+		// table, built with no overrides.
+		prices, err := r.priceTable(nil)
+		if err != nil {
+			return fmt.Errorf("pricing the models: %w", err)
+		}
+		s.Prices = prices
 	}
 	// The stages read their per-call output limits from the run's
 	// configuration: it carries the merged limits from here on.

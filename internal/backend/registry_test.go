@@ -29,8 +29,15 @@ func TestOpenUnknownBackendNamesChoices(t *testing.T) {
 	openers := map[string]Opener{
 		CloudRun: func(ctx context.Context) (Backend, error) { return nil, nil },
 	}
-	_, err := Open(context.Background(), "ecs-fargate", openers)
-	if err == nil || !strings.Contains(err.Error(), "ecs-fargate") || !strings.Contains(err.Error(), CloudRun) {
-		t.Fatalf("err = %v, want it to name ecs-fargate and %s", err, CloudRun)
+	// CloudBatch is a name this build knows -- internal/backend/batch speaks
+	// it -- but the CLI registers no opener for it until the enable task
+	// (design compute-backend.md §8.1). So a config that carried the name
+	// past validation still cannot reach it, and the error says which names
+	// this build does run.
+	for _, name := range []string{"ecs-fargate", CloudBatch} {
+		_, err := Open(context.Background(), name, openers)
+		if err == nil || !strings.Contains(err.Error(), name) || !strings.Contains(err.Error(), CloudRun) {
+			t.Fatalf("Open(%q): err = %v, want it to name %s and %s", name, err, name, CloudRun)
+		}
 	}
 }

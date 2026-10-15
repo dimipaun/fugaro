@@ -22,12 +22,14 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/basepin"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/preflight"
+	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/updatecheck"
 )
@@ -281,6 +283,12 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		return failed(err)
 	}
 	o.Checks = append(o.Checks, sharedConfigChecks(ctx, sel, lc, time.Now())...)
+	// Both sides' checks, in the order main has them: the catalog's age (P7),
+	// the ZDR note (P9), and the project-wide provider secrets' own checks.
+	o.Checks = append(o.Checks, doctorPriceCatalog(budgetNow()))
+	if c := doctorProviderZDR(lc); c != nil {
+		o.Checks = append(o.Checks, *c)
+	}
 	if c := doctorOpenProvidersCheck(lc); c != nil {
 		o.Checks = append(o.Checks, *c)
 	}
@@ -339,7 +347,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		o.Checks = append(o.Checks, doctorGitHubApps(ctx, lc, cmd.ErrOrStderr())...)
 	}
 
-	o.Checks = append(o.Checks, doctorBaseImage(lc))
+	o.Checks = append(o.Checks, doctorBaseImage(lc), doctorCosign(lc))
 
 	// The installation's project-wide secret containers, listed once for
 	// doctor's three project-secret checks: the two per-repository ones
@@ -419,6 +427,102 @@ func doctorBaseImage(lc *localcfg.Config) doctorCheck {
 	return doctorCheck{ID: "base-image", OK: false, Severity: "warning",
 		Problem: "the local config has no base_images.base (" + config.MigrationDoc + ")",
 		Fix:     "fugaro image refresh   # in the repository's checkout"}
+}
+
+// doctorPriceCatalog is the built-in provider price catalog's age (design
+// provider-price-catalog.md §7, plan Task 5 step 3): the day it was generated
+// and what it was generated from, and a warning once it is past the catalog's
+// own 30 days (catalog.StaleAfter, not the embedded Claude table's 90), the
+// same threshold the run measures its bound by. It is informational while
+// fresh — an owner reads the age here — and a warning past the threshold,
+// which fails doctor only under --strict.
+func doctorPriceCatalog(now time.Time) doctorCheck {
+	f, err := catalog.Load()
+	if err != nil {
+		return doctorCheck{ID: "provider-price-catalog",
+			Problem: err.Error(),
+			Fix:     "regenerate the file with scripts/gen-price-catalog.sh and rebuild fugaro"}
+	}
+	checked, err := time.Parse("2006-01-02", f.CheckedAt)
+	if err != nil {
+		return doctorCheck{ID: "provider-price-catalog",
+			Problem: "the built-in provider price catalog has no readable checked_at: " + f.CheckedAt,
+			Fix:     "regenerate the file with scripts/gen-price-catalog.sh and rebuild fugaro"}
+	}
+	source := ""
+	if len(f.Sources) > 0 {
+		source = f.Sources[0]
+	}
+	c := doctorCheck{ID: "provider-price-catalog", Severity: "info",
+		Problem: fmt.Sprintf("the built-in provider price catalog was generated from %s, checked %s (%s ago)", source, f.CheckedAt, ageDays(now.Sub(checked))),
+		Fix:     "regenerate it with scripts/gen-price-catalog.sh before it is 30 days old"}
+	if now.Sub(checked) > catalog.StaleAfter {
+		c.Severity = "warning"
+		c.Problem = fmt.Sprintf("the built-in provider price catalog was generated from %s, checked %s (%s ago): it is stale, so every model it prices is charged the dearest end of its tier's range, not the end price_policy asks for",
+			source, f.CheckedAt, ageDays(now.Sub(checked)))
+		c.Fix = "scripts/gen-price-catalog.sh   # regenerates internal/pricing/catalog/catalog.json; commit the result"
+	}
+	return c
+}
+
+// doctorProviderZDR is the honesty check design §8 calls for (P9): a route's
+// require_zdr (true unless it is set false) prices its models at the
+// ZDR-eligible endpoints of the built-in price catalog. It is a price, not
+// enforcement: OpenRouter's zero-data-retention policy is the account's own
+// privacy setting, which Fugaro can neither set (the gateway never rewrites a
+// request body and refuses the `provider` key) nor read (the key endpoint has
+// no data-policy field). Informational, so it never fails doctor, not even
+// under --strict: it is a warning to check the account, not a fault here.
+//
+// Only the routes the built-in catalog actually prices are named
+// (config.CatalogEligible): require_zdr on a vendor's own endpoint selects no
+// price — such a model is priced under model_prices — so the note would be
+// false about it, and it says nothing about an account setting there either.
+func doctorProviderZDR(lc *localcfg.Config) *doctorCheck {
+	if lc == nil {
+		return nil
+	}
+	var names []string
+	for name, p := range lc.Providers {
+		if p.RequireZDROn() && config.CatalogEligible(p.BaseURL) {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	slices.Sort(names)
+	return &doctorCheck{ID: "provider-zdr-unverified", Severity: "info",
+		Problem: "require_zdr is on for the provider route(s) " + strings.Join(names, ", ") + " (the default), so their models are priced at the ZDR-eligible endpoints: " +
+			"that is the conservative price, not enforcement. Whether calls are actually zero-data-retention is your OpenRouter account's privacy setting, and Fugaro cannot read it",
+		Fix: "confirm the account's data policy in the OpenRouter settings; require_zdr: false prices every endpoint the model is served by instead"}
+}
+
+// doctorCosign reports the verifier a base pin needs: a release base image
+// is pinned at the digest its OCI-attached cosign signature was verified
+// for, and internal/basepin shells out to the `cosign` binary to verify it
+// (design registry-remote-repository.md §9 Decision 1, option (ii)) —
+// so every pin that already exists was verified when it was written, and
+// only the next one needs the binary.
+//
+// Informational, like doctorOpenProvidersCheck and the tool-availability
+// branches of doctorCLIVersion: an absent binary is not a wrong state and
+// not this repository's business to fail CI over (--strict is the GitHub
+// App's CI mode), and a repository whose base image is its own never calls
+// the verifier at all. What it must not do is stay silent — the pin
+// refuses without the binary, and this is where that is learned before
+// the project's name is typed.
+func doctorCosign(lc *localcfg.Config) doctorCheck {
+	const id = "cosign"
+	if basepin.CosignPath() != "" {
+		return doctorCheck{ID: id, OK: true}
+	}
+	problem := "cosign is not on PATH (looked for " + basepin.CosignBin + "): a base image is pinned at the digest its cosign signature was verified for, so fugaro init --base and fugaro image refresh refuse without it"
+	fix := "install cosign (https://docs.sigstore.dev/cosign/installation/), or name a base image explicitly with --base-image KIND=IMAGE"
+	if lc.BaseImage(config.BaseKind) == "" {
+		problem = "no Fugaro base is recorded, and cosign is not on PATH (looked for " + basepin.CosignBin + "): recording one with fugaro image refresh needs it"
+	}
+	return doctorCheck{ID: id, OK: false, Severity: "info", Problem: problem, Fix: fix}
 }
 
 // doctorGitHubApps is the GitHub App pre-check (githubapp.go), only behind

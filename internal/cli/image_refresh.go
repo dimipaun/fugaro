@@ -112,11 +112,18 @@ type refreshPlan struct {
 	lcOld            []byte
 	cfg              *config.Config
 	workflows, kinds []string
-	want             map[string]string
-	why              map[string]string
-	builds           []string
-	kept             map[string]bool // kinds whose newer managed copy is kept, not copied
-	yes              bool            // --yes: builds are confirmed without a prompt
+	// want[kind] is the reference the kind's builds move to, and is set
+	// only when that reference is already known offline: the entry the
+	// config records when it is already this release's pin or a newer one.
+	// A stale kind's pin is a digest through the remote repository, which
+	// cannot be computed offline, so want[kind] is "" and step 2 resolves
+	// and verifies it (design §5.4's B3).
+	want   map[string]string
+	atPin  map[string]bool // kinds whose recorded entry already is this release's pin (or a newer one)
+	why    map[string]string
+	builds []string
+	ver    string // the release version this run targets
+	yes    bool   // --yes: builds are confirmed without a prompt
 }
 
 // snapshot is the copy onPlan sees: every slice and map is cloned, and the
@@ -127,7 +134,7 @@ func (p *refreshPlan) snapshot() *refreshPlan {
 	c := *p
 	c.lcOld = slices.Clone(p.lcOld)
 	c.workflows, c.kinds, c.builds = slices.Clone(p.workflows), slices.Clone(p.kinds), slices.Clone(p.builds)
-	c.want, c.why, c.kept = maps.Clone(p.want), maps.Clone(p.why), maps.Clone(p.kept)
+	c.want, c.why, c.atPin = maps.Clone(p.want), maps.Clone(p.why), maps.Clone(p.atPin)
 	if p.lc != nil {
 		lc := *p.lc
 		lc.BaseImages = maps.Clone(p.lc.BaseImages)
@@ -165,7 +172,7 @@ func (e *noCheckout) Unwrap() error { return e.err }
 func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions) (*refreshPlan, error) {
 	ver := releaseVersion()
 	if ver == "" {
-		return nil, &refusedAsIs{userErr("fugaro image refresh copies this release's base images, and this is a development build (%s) with none published: use a release build, or build a base from a checkout and point at it with fugaro init --base-image KIND=<tag>", Version)}
+		return nil, &refusedAsIs{userErr("fugaro image refresh pins this release's base images through the remote repository, and this is a development build (%s) with none published: use a release build, or build a base from a checkout and point at it with fugaro init --base-image KIND=<tag>", Version)}
 	}
 	if _, err := gitRead(ctx, o.checkoutDir(), "rev-parse", "--show-toplevel"); err != nil {
 		target := "the repository"
@@ -234,7 +241,7 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 	}
 	var custom []string
 	for _, k := range kinds {
-		if cur := lc.BaseImage(k); cur != "" && !isManaged(cur, host, k) {
+		if cur := lc.BaseImage(k); cur != "" && !isManaged(cur, host, k, baseOwner(lc)) {
 			custom = append(custom, k)
 		}
 	}
@@ -246,13 +253,14 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 		return nil, userErr("%v", err)
 	}
 	p := &refreshPlan{root: root, repo: repo, slug: slug, lc: lc, lcPath: lcPath, lcOld: old, cfg: cfg,
-		workflows: wfs, kinds: kinds, want: map[string]string{}, why: map[string]string{}, kept: map[string]bool{}, yes: o.yes}
+		workflows: wfs, kinds: kinds, want: map[string]string{}, atPin: map[string]bool{}, why: map[string]string{}, ver: ver, yes: o.yes}
 	for _, k := range kinds {
-		if p.want[k], err = refreshBase(lc, k, ver); err != nil {
+		var ref string
+		if ref, p.atPin[k], err = refreshBase(lc, k, ver); err != nil {
 			return nil, err
 		}
-		if cur := lc.BaseImage(k); cur != "" && p.want[k] == cur && newer(curVersion(cur, host, k), ver) {
-			p.kept[k] = true
+		if p.atPin[k] {
+			p.want[k] = ref
 		}
 	}
 	for _, w := range wfs {
@@ -268,7 +276,7 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 		if err != nil {
 			return nil, err
 		}
-		build, why := refreshVerdict(rec, p.want[kind], host, kind)
+		build, why := refreshVerdict(rec, p.want[kind], p.ver, host, kind, baseOwner(lc))
 		p.why[w] = why
 		if build {
 			p.builds = append(p.builds, w)
@@ -283,11 +291,11 @@ func (p *refreshPlan) print(w io.Writer) {
 	fmt.Fprintf(w, "fugaro image refresh of %s (project %s, GCP project %s), workflows %s:\n", p.repo, p.lc.Name, p.lc.GCPProject, strings.Join(p.workflows, ", "))
 	fmt.Fprintln(w, "  1. preflight: done (nothing changed)")
 	for _, k := range p.kinds {
-		if p.kept[k] {
-			fmt.Fprintf(w, "  2. base %s: %s (a newer copy than this release's, kept as it is: nothing is copied)\n", k, p.want[k])
+		if p.atPin[k] {
+			fmt.Fprintf(w, "  2. base %s: %s (already this release's pin, or a newer one kept as it is: nothing is resolved and nothing is copied)\n", k, p.want[k])
 			continue
 		}
-		fmt.Fprintf(w, "  2. base %s: %s (copied into your registry if it lacks it, after its own confirmation)\n", k, p.want[k])
+		fmt.Fprintf(w, "  2. base %s: this release's base image is resolved at its -pinned tag, its signature is verified, and base_images.%s is pinned to the digest the remote repository serves (nothing is copied; step 2 prints the reference and confirms it)\n", k, k)
 	}
 	fmt.Fprintln(w, "  3. the daily image check job: its image and FUGARO_CHECK_SPEC's base images follow the local config's, through the Cloud Run Admin API after its own confirmation (no Terraform; No changes when current)")
 	how := "confirmed by typing the project's name"
@@ -309,7 +317,7 @@ func (p *refreshPlan) current() bool {
 		return false
 	}
 	for _, k := range p.kinds {
-		if p.lc.BaseImage(k) != p.want[k] {
+		if !p.atPin[k] {
 			return false
 		}
 	}
@@ -320,20 +328,23 @@ func newImageRefreshCmd() *cobra.Command {
 	var o refreshOptions
 	cmd := &cobra.Command{
 		Use:   "refresh",
-		Short: "Move a repository onto this release's base image: copy it, point the daily image check job at it, rebuild what is stale",
+		Short: "Move a repository onto this release's base image: pin it, point the daily image check job at it, rebuild what is stale",
 		Long: "Run it in the checkout of an onboarded repository, in your own terminal window\n" +
 			"(or with --yes, unattended: see below).\n\n" +
 			"It prints the whole plan first, then, each step with its own confirmation:\n" +
-			"(2) copies this release's base image of each selected workflow's kind into\n" +
-			"your registry if it lacks it and records it, as fugaro init --base does;\n" +
+			"(2) resolves this release's base image of each selected workflow's kind at\n" +
+			"its -pinned tag, verifies its cosign signature, reads the digest back\n" +
+			"through the installation's remote repository and pins base_images.<kind> to\n" +
+			"it, as fugaro init --base does (nothing is copied);\n" +
 			"(3) points the repository's daily image check job at it (its image and\n" +
 			"FUGARO_CHECK_SPEC's base images) through the Cloud Run Admin API, with no\n" +
 			"Terraform; (4) rebuilds each selected workflow whose build record says it\n" +
 			"was built from another base, or that has no build record or one that\n" +
 			"cannot be read (billable: the project's name typed for each, or --yes);\n" +
 			"(5) names fugaro init --anchor when fugaro.yaml lacks gcp_project.\n\n" +
-			"A base_images entry that is not a release image fugaro init copied (a\n" +
-			"development or hand-pushed image) stops it before anything changes, with or\n" +
+			"A base_images entry that is neither this release's pin nor a release image\n" +
+			"an earlier fugaro copied (a development or hand-pushed image) stops it\n" +
+			"before anything changes, with or\n" +
 			"without --yes: remove the entry from the local config, then rerun. It never\n" +
 			"writes fugaro.yaml, never onboards a repository and never runs Terraform. A\n" +
 			"coding agent's session is refused, --yes included (there is still no --json\n" +
@@ -342,7 +353,7 @@ func newImageRefreshCmd() *cobra.Command {
 			"what is done. Exit codes: 0 done, 1 a refusal or a confirmation not given,\n" +
 			"2 a cloud failure.\n\n" +
 			"Unattended use: pass --yes to run it from CI or a script, with no terminal.\n" +
-			"It confirms every step, the base copy, the check-job update and EACH\n" +
+			"It confirms every step, the base pin, the check-job update and EACH\n" +
 			"billable build, with no cap on how many builds run: read the printed plan's\n" +
 			"build count first. --yes does not cover a coding agent's session (refused,\n" +
 			"same as without it) or a custom, dev or hand-pushed base image (still\n" +
@@ -353,8 +364,8 @@ func newImageRefreshCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&o.repo, "repo", "", "owner/name of the repository; it must be this checkout's origin (refresh reads fugaro.yaml from the checkout)")
 	f.StringArrayVar(&o.workflows, "workflow", nil, "a workflow to refresh (repeatable; default: every workflow in fugaro.yaml)")
-	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release base images are copied from, as for fugaro init (default ghcr.io/dimipaun)")
-	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "pin the digest of a base image copied, KIND=sha256:<hex>, as for fugaro init (repeatable)")
+	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release base images come from, as for fugaro init (default ghcr.io/dimipaun)")
+	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "cross-check the digest of a base image's release signature, KIND=sha256:<hex>, as for fugaro init (repeatable)")
 	f.BoolVar(&o.yes, "yes", false, "confirm every step without asking (the base copy, the check-job update and each billable build, with no cap on how many run), and without a terminal: for CI or a script. The plan is still printed first. Never confirmed in a coding agent's session (CLAUDECODE and the like): nothing is applied there, --yes included. Without --yes nothing changes: a real terminal and the typed confirmations are still required, as always")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd

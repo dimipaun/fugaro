@@ -49,7 +49,10 @@ const (
 )
 
 var (
-	// budgetNow is the clock of the budget commands; tests replace it.
+	// budgetNow is the clock of the budget commands and of every surface
+	// that prices a model from the catalog (validate, diagnose): tests
+	// replace it so a catalog's 30-day staleness is decided by the fixture
+	// and not by the day the test runs.
 	budgetNow = time.Now
 	// budgetTransport, when set, carries the database requests; tests wrap
 	// the fake's transport with it.
@@ -268,17 +271,39 @@ type showDefaults struct {
 }
 
 type showRepo struct {
-	Slug         string    `json:"slug"`
-	Repo         string    `json:"repo,omitempty"`
-	DailyCapUSD  *float64  `json:"daily_cap_usd"`
-	CapSource    string    `json:"daily_cap_source"` // repo, default or none
-	PerRunCapUSD *float64  `json:"per_run_cap_usd"`
-	CountedUSD   float64   `json:"counted_usd"`
-	SpentUSD     float64   `json:"spent_usd"`
-	NotionalUSD  float64   `json:"notional_usd"`
-	HeadroomUSD  *float64  `json:"headroom_usd"`
-	Kill         *showKill `json:"kill"`
-	Running      []showRun `json:"running"`
+	Slug         string   `json:"slug"`
+	Repo         string   `json:"repo,omitempty"`
+	DailyCapUSD  *float64 `json:"daily_cap_usd"`
+	CapSource    string   `json:"daily_cap_source"` // repo, default or none
+	PerRunCapUSD *float64 `json:"per_run_cap_usd"`
+	// PerRunCapSource is where the effective per-run cap comes from: repo,
+	// default, global, or none when no per-run cap is set anywhere.
+	PerRunCapSource string    `json:"per_run_cap_source"`
+	CountedUSD      float64   `json:"counted_usd"`
+	SpentUSD        float64   `json:"spent_usd"`
+	NotionalUSD     float64   `json:"notional_usd"`
+	HeadroomUSD     *float64  `json:"headroom_usd"`
+	Kill            *showKill `json:"kill"`
+	Running         []showRun `json:"running"`
+}
+
+// perRunCapSource names the scope whose per-run cap binds a repository: the
+// smaller of the repository's side (its own node, else the default) and the
+// global one, which is the fallback where the repository's side is unset
+// (D6). "none" is no per-run cap anywhere: a run in enforce halts (no_cap).
+func perRunCapSource(c budget.Caps) string {
+	repo, repoOK := c.RepoPerRun()
+	global, globalOK := c.GlobalPerRun()
+	if repoOK && (!globalOK || repo <= global) {
+		if c.Repo != nil && c.Repo.PerRunMicros != nil {
+			return "repo"
+		}
+		return "default"
+	}
+	if globalOK {
+		return "global"
+	}
+	return "none"
 }
 
 // budgetShowDoc is show --json's document.
@@ -456,7 +481,7 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 		if c, ok := cfg.Caps.Repos[k]; ok {
 			rc.Repo = &c
 		}
-		rs := showRepo{Slug: slug, Running: []showRun{}, CapSource: "none"}
+		rs := showRepo{Slug: slug, Running: []showRun{}, CapSource: "none", PerRunCapSource: "none"}
 		rs.Repo = names[k]
 		if rc.Repo != nil && rc.Repo.Repo != "" {
 			rs.Repo = rc.Repo.Repo
@@ -468,10 +493,12 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 				rs.CapSource = "repo"
 			}
 		}
-		if rc.Repo != nil && rc.Repo.PerRunMicros != nil {
-			rs.PerRunCapUSD = usdPtr(rc.Repo.PerRunMicros)
-		} else if cfg.Caps.Defaults != nil {
-			rs.PerRunCapUSD = usdPtr(cfg.Caps.Defaults.RepoPerRunMicros)
+		// The per-run cap is the effective one: the repository's own or the
+		// default, and the global one where that side is unset (D6), so the
+		// source names the scope whose cap binds this repository.
+		if v, ok := rc.PerRun(); ok {
+			rs.PerRunCapUSD = usdPtr(&v)
+			rs.PerRunCapSource = perRunCapSource(rc)
 		}
 		sp := repoSpend[k]
 		rs.CountedUSD, rs.SpentUSD, rs.NotionalUSD = sp.Counted.USD(), sp.Spent.USD(), sp.Notional.USD()
@@ -620,7 +647,14 @@ func printShow(w io.Writer, d *budgetShowDoc) {
 		if r.CapSource != "none" {
 			src = " (" + r.CapSource + ")"
 		}
-		fmt.Fprintf(w, "  daily cap %s%s, per-run cap %s\n", usdText(r.DailyCapUSD), src, usdText(r.PerRunCapUSD))
+		// The per-run cap is the effective one, with the scope it comes from:
+		// a repository without a cap of its own is bounded by the project's
+		// global one (D6).
+		psrc := " (" + r.PerRunCapSource + ")"
+		if r.PerRunCapSource == "none" {
+			psrc = " (no per-run cap anywhere)"
+		}
+		fmt.Fprintf(w, "  daily cap %s%s, per-run cap %s%s\n", usdText(r.DailyCapUSD), src, usdText(r.PerRunCapUSD), psrc)
 		fmt.Fprintf(w, "  today: counted %s, spent %s, notional %s (subscription, not billed)\n", usdVal(r.CountedUSD), usdVal(r.SpentUSD), usdVal(r.NotionalUSD))
 		fmt.Fprintf(w, "  headroom: %s\n  kill switch: %s\n", usdText(r.HeadroomUSD), killText(r.Kill))
 		if len(r.Running) == 0 {
@@ -834,15 +868,22 @@ func buildEdits(ctx context.Context, db *rtdb.Client, p *setPlan, slug string) (
 	var edits []*nodeEdit
 
 	if p.mode == budget.ModeEnforce {
-		// As init does: enforce with no global caps would halt every run
-		// (the rules read an absent cap as a refusal). Caps set by this same
+		// As init does: enforce needs the project-wide caps, and the two
+		// absences cost different things (D6). Caps set by this same
 		// invocation count.
 		var g budget.GlobalCaps
 		if _, err := db.Get(ctx, budget.PathCapsGlobal, &g); err != nil {
 			return nil, remote(err)
 		}
-		if (p.daily == nil && g.DailyMicros == nil) || (p.perRun == nil && g.PerRunMicros == nil) {
-			return nil, userErr("--mode enforce needs the database's global caps (%s: dailyMicros and perRunMicros), and some are missing: the rules read an absent cap as a refusal, so every run would halt. Set them first (or in this command) with fugaro budget set --global --daily <usd> --per-run <usd>", budget.PathCapsGlobal)
+		var missing []string
+		if p.daily == nil && g.DailyMicros == nil {
+			missing = append(missing, "  dailyMicros: the rules read an absent cap as a refusal, so every lease is refused and every run halts")
+		}
+		if p.perRun == nil && g.PerRunMicros == nil {
+			missing = append(missing, "  perRunMicros: a run whose repository has no per-run cap of its own and no default has none to compare against and halts (a repository with its own cap keeps it)")
+		}
+		if len(missing) > 0 {
+			return nil, userErr("--mode enforce needs the database's global caps (%s), and some are missing:\n%s\nSet them first (or in this command) with fugaro budget set --global --daily <usd> --per-run <usd>", budget.PathCapsGlobal, strings.Join(missing, "\n"))
 		}
 	}
 	if p.mode != "" {
@@ -899,6 +940,35 @@ func buildEdits(ctx context.Context, db *rtdb.Client, p *setPlan, slug string) (
 		if p.clear {
 			e.newVal = nil
 			e.noop = !found
+			if found && p.scope == "defaults" {
+				// Every repository without a node of its own falls back to
+				// the defaults; clearing them hands those repositories to
+				// the global per-run cap (D6), which is a loosening when
+				// that cap is higher, and ends every run there when there
+				// is none. Compare the effective per-run cap of such a
+				// repository before and after, as the repository's own
+				// clear does.
+				var g budget.GlobalCaps
+				if _, _, err := read(budget.PathCapsGlobal, &g); err != nil {
+					return nil, err
+				}
+				def := &budget.DefaultCaps{}
+				if raw, ok := old[pk]; ok {
+					m, err := microsOf(raw)
+					if err != nil {
+						e.raise = true // unreadable: be careful
+					} else {
+						def.RepoPerRunMicros = m
+					}
+				}
+				before, beforeOK := budget.Caps{Defaults: def, Global: &g}.PerRun()
+				after, afterOK := budget.Caps{Global: &g}.PerRun()
+				// before unset too: the per-run side is unchanged
+				// (clearing a daily-only default node only tightens).
+				if beforeOK && (!afterOK || after > before) {
+					e.raise = true
+				}
+			}
 			if found && p.scope == "repo" {
 				// The repository falls back to the defaults: a higher
 				// default, or none, is a loosening to confirm.
@@ -1153,7 +1223,10 @@ func newBudgetPricesCmd() *cobra.Command {
 		Long: "Show the model prices the budget accounts with: the table built into this\n" +
 			"fugaro, its source and the day it was last checked (a warning when that is over\n" +
 			"90 days ago), with the selected project config's model_prices applied and\n" +
-			"marked local. It never reaches the network.",
+			"marked local. A model a provider route claims is priced from the built-in\n" +
+			"provider price catalog instead: its CATALOG column says which tier and which\n" +
+			"end of that tier's range is charged, and the catalog has its own source, date\n" +
+			"and 30-day staleness warning. It never reaches the network.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runBudgetPrices(cmd, &o) },
 	}
@@ -1178,6 +1251,35 @@ type priceRow struct {
 	Unverified bool   `json:"unverified"`
 	Source     string `json:"source,omitempty"`
 	CheckedAt  string `json:"checked_at,omitempty"`
+	// Catalog is the provenance of a row the built-in provider price
+	// catalog priced — its own tier, the end of that tier's range charged
+	// and the endpoints behind it. nil on every other row: Source and
+	// CheckedAt above stay the Claude table's, and the catalog's are its
+	// own (design §7, plan Task 5 step 1).
+	Catalog *priceCatalog `json:"catalog,omitempty"`
+}
+
+// priceCatalog is a catalog-priced row's provenance, as `budget prices
+// --json` prints it.
+type priceCatalog struct {
+	Tier string `json:"tier"` // zdr | all
+	// Bound is the end of the tier's range charged: min (cheapest) or max
+	// (the dearest, whether price_policy asked for it or the catalog is
+	// stale).
+	Bound string `json:"bound"`
+	// Endpoints is every endpoint the model is served by; ZdrEndpoints is
+	// how many of them are ZDR-eligible (the zdr tier's own count).
+	Endpoints    int    `json:"endpoints"`
+	ZdrEndpoints int    `json:"zdr_endpoints"`
+	Source       string `json:"source"`
+	CheckedAt    string `json:"checked_at"`
+	Stale        bool   `json:"stale"`
+	// TierInputMaxPerM and TierOutputMaxPerM are the dearest input and
+	// output price per million tokens the tier prices: the top of the range
+	// the bound above was taken from, and so the most a call the provider
+	// serves from the dearest endpoint can be billed (design D6, P11).
+	TierInputMaxPerM  float64 `json:"tier_input_max_per_m"`
+	TierOutputMaxPerM float64 `json:"tier_output_max_per_m"`
 }
 
 type pricesDoc struct {
@@ -1186,29 +1288,46 @@ type pricesDoc struct {
 	AgeDays   int        `json:"age_days"`
 	Stale     bool       `json:"stale"`
 	Models    []priceRow `json:"models"`
+	// CatalogSource, CatalogCheckedAt, CatalogAgeDays and CatalogStale are
+	// the built-in provider price catalog's own provenance, kept apart from
+	// the embedded Claude table's above. Empty (and false) when no row is
+	// catalog-priced.
+	CatalogSource    string `json:"catalog_source,omitempty"`
+	CatalogCheckedAt string `json:"catalog_checked_at,omitempty"`
+	CatalogAgeDays   int    `json:"catalog_age_days,omitempty"`
+	CatalogStale     bool   `json:"catalog_stale,omitempty"`
+	// Refused is the models a provider route claims that the built-in
+	// provider price catalog cannot price, with the reason: they have no
+	// row above, and a run pinned to one is refused at bootstrap. Empty
+	// when every claimed model has a row.
+	Refused []priceRefused `json:"refused,omitempty"`
+}
+
+// priceRefused is one model with no row and the reason the catalog recorded:
+// a require_zdr route on a model with no ZDR-eligible endpoint, or a rate the
+// table cannot express.
+type priceRefused struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
 }
 
 func runBudgetPrices(cmd *cobra.Command, o *budgetPricesOptions) error {
 	errw := cmd.ErrOrStderr()
-	table := pricing.Embedded()
-	local := map[string]bool{}
-	// A project config, when one is selected, contributes its overrides. No
-	// config is fine (prices needs no cloud); a config that is selected and
-	// wrong is an error.
-	if lc, err := pricesConfig(cmd, o.cloud); err != nil {
+	// A project config, when one is selected, contributes its routes and its
+	// overrides. No config is fine (prices needs no cloud); a config that is
+	// selected and wrong is an error.
+	lc, err := pricesConfig(cmd, o.cloud)
+	if err != nil {
 		return err
-	} else if lc != nil {
-		ov, err := lc.Overrides()
-		if err != nil {
-			return userErr("%v", err)
-		}
-		if table, err = table.With(ov); err != nil {
-			return userErr("%v", err)
-		}
-		for k := range ov {
-			if m, ok := table.Lookup(k); ok {
-				local[m.ID] = true
-			}
+	}
+	table, ov, err := priceTable(lc, budgetNow())
+	if err != nil {
+		return userErr("%v", err)
+	}
+	local := map[string]bool{}
+	for k := range ov {
+		if m, ok := table.Lookup(k); ok {
+			local[m.ID] = true
 		}
 	}
 
@@ -1230,28 +1349,92 @@ func runBudgetPrices(cmd *cobra.Command, o *budgetPricesOptions) error {
 			CacheReadPerM: r.InputPerM * r.CacheRead, CacheWrite5mPerM: r.InputPerM * r.CacheWrite5m,
 			CacheWrite1hPerM: r.InputPerM * r.CacheWrite1h, WebSearchPer1k: r.WebSearchPer1k, Local: local[id],
 			Unverified: m.Unverified, Source: m.PriceSource, CheckedAt: m.PriceCheckedAt}
+		if c := m.Catalog; c != nil {
+			row.Catalog = &priceCatalog{Tier: c.Tier, Bound: c.Bound, Endpoints: c.Endpoints, ZdrEndpoints: c.ZdrEndpoints,
+				Source: c.Source, CheckedAt: c.CheckedAt, Stale: c.Stale,
+				TierInputMaxPerM: c.TierInputMax, TierOutputMaxPerM: c.TierOutputMax}
+			if doc.CatalogSource == "" {
+				doc.CatalogSource, doc.CatalogCheckedAt, doc.CatalogStale = c.Source, c.CheckedAt, c.Stale
+				if t, err := time.Parse("2006-01-02", c.CheckedAt); err == nil {
+					doc.CatalogAgeDays = int(budgetNow().Sub(t).Hours() / 24)
+				}
+			}
+		}
 		if r.LongContext != nil {
 			row.LongContext = fmt.Sprintf("above %d input tokens: $%g in / $%g out", r.LongContext.AboveInputTokens, r.LongContext.InputPerM, r.LongContext.OutputPerM)
 		}
 		doc.Models = append(doc.Models, row)
 	}
+	// A model a route claims that the catalog cannot price has no row: the
+	// owner is told which and why, rather than left with a model missing
+	// from the table. Nothing is refused here — the table is the run's, and
+	// a run that never names the model charges nothing — but a pin on one
+	// is refused at bootstrap (design D9, P8).
+	for _, r := range slices.Sorted(maps.Keys(table.Refused)) {
+		doc.Refused = append(doc.Refused, priceRefused{ID: r, Reason: table.Refused[r]})
+		fmt.Fprintf(errw, "warning: %s has no row: %s\n", oneLine(r), oneLine(table.Refused[r]))
+	}
 	if doc.Stale {
 		fmt.Fprintf(errw, "warning: the built-in price table was last checked %s, older than 90 days (%d days ago); check %s and set model_prices in the project config where it differs\n",
 			doc.CheckedAt, doc.AgeDays, doc.Source)
+	}
+	if doc.CatalogStale {
+		// The catalog's own threshold is 30 days, not the Claude table's 90
+		// (design D10): a marketplace price moves for reasons an age check
+		// cannot see, so a stale catalog charges every model it prices at
+		// the dearest end of its tier's range rather than under-pricing.
+		fmt.Fprintf(errw, "warning: the built-in provider price catalog (%s) was last checked %s, older than 30 days (%d days ago); regenerate it with scripts/gen-price-catalog.sh and commit the result (catalog-priced models are charged the dearest end of their tier's range until then)\n",
+			doc.CatalogSource, doc.CatalogCheckedAt, doc.CatalogAgeDays)
 	}
 	if o.json {
 		return writeJSON(cmd.OutOrStdout(), doc)
 	}
 	w := cmd.OutOrStdout()
 	fmt.Fprintf(w, "model prices, US dollars per million tokens (source %s, checked %s)\n", doc.Source, doc.CheckedAt)
+	if doc.CatalogCheckedAt != "" {
+		// The table holds two sources once a route is priced from the
+		// catalog: the embedded Claude table's own source and date are the
+		// header line above, and the catalog's are this one (design §7).
+		fmt.Fprintf(w, "provider price catalog: %s, checked %s (%d days ago)\n", doc.CatalogSource, doc.CatalogCheckedAt, doc.CatalogAgeDays)
+	}
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "MODEL\tINPUT\tOUTPUT\tCACHE READ\tCACHE WRITE 5M\tCACHE WRITE 1H\tWEB SEARCH/1K\tVERIFIED\tNOTES")
+	fmt.Fprintln(tw, "MODEL\tINPUT\tOUTPUT\tCACHE READ\tCACHE WRITE 5M\tCACHE WRITE 1H\tWEB SEARCH/1K\tVERIFIED\tCATALOG\tNOTES")
 	for _, r := range doc.Models {
 		var notes []string
-		verified := "yes"
+		verified, catalog := "yes", "—"
 		if r.Unverified {
 			verified = "NO"
 			notes = append(notes, "UNVERIFIED placeholder: "+r.Source+" ("+r.CheckedAt+")")
+		}
+		if c := r.Catalog; c != nil {
+			// Which tier and which end of that tier's range is charged;
+			// "highest" is the dearest end, whether price_policy asked for
+			// it or the catalog is stale (the bound is the compiled one).
+			bound := "cheapest"
+			if c.Bound == "max" {
+				bound = "highest"
+			}
+			catalog = c.Tier + "/" + bound
+			// The endpoints behind the row: the tier's own count, of every
+			// endpoint the model is served by. They differ only for a
+			// require_zdr route (the zdr tier).
+			note := fmt.Sprintf("catalog %s: %d endpoints, checked %s", c.Tier, c.Endpoints, c.CheckedAt)
+			if c.Tier == "zdr" {
+				note = fmt.Sprintf("catalog %s: %d/%d endpoints, checked %s", c.Tier, c.ZdrEndpoints, c.Endpoints, c.CheckedAt)
+			}
+			if c.Stale {
+				note += " (stale: charged the dearest end)"
+			}
+			// The numbers behind the range: what the dearest endpoint of
+			// the tier prices, which is the size of the undercharge the
+			// cheapest end leaves (design D6, P11). Rendered from the row
+			// itself, so this and the pin warning cannot drift.
+			if m, ok := table.Lookup(r.ID); ok {
+				if s := m.CatalogRange(); s != "" {
+					note += "; " + s
+				}
+			}
+			notes = append(notes, note)
 		}
 		if r.Local {
 			notes = append(notes, "local override")
@@ -1262,8 +1445,8 @@ func runBudgetPrices(cmd *cobra.Command, o *budgetPricesOptions) error {
 		if len(r.Aliases) > 0 {
 			notes = append(notes, "aliases "+strings.Join(r.Aliases, ", "))
 		}
-		fmt.Fprintf(tw, "%s\t$%g\t$%g\t$%g\t$%g\t$%g\t$%g\t%s\t%s\n", oneLine(r.ID), r.InputPerM, r.OutputPerM, r.CacheReadPerM,
-			r.CacheWrite5mPerM, r.CacheWrite1hPerM, r.WebSearchPer1k, verified, oneLine(strings.Join(notes, "; ")))
+		fmt.Fprintf(tw, "%s\t$%g\t$%g\t$%g\t$%g\t$%g\t$%g\t%s\t%s\t%s\n", oneLine(r.ID), r.InputPerM, r.OutputPerM, r.CacheReadPerM,
+			r.CacheWrite5mPerM, r.CacheWrite1hPerM, r.WebSearchPer1k, verified, catalog, oneLine(strings.Join(notes, "; ")))
 	}
 	return tw.Flush()
 }

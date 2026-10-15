@@ -555,8 +555,14 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, rt route
 		if !known {
 			// A provider's call is real money: with no price in the table
 			// it would be charged a guess, so it is not sent (CheckPins
-			// refuses such a pin at bootstrap; this is the backstop).
+			// refuses such a pin at bootstrap; this is the backstop). A
+			// model the catalog refused carries the catalog's own message,
+			// which names the switch and both ways out (P8); the generic
+			// one is for a model nothing prices at all.
 			v := fmt.Sprintf("model %s is routed to %s but has no price: set model_prices", logValue(p.model), rt.provider.Name)
+			if why := s.o.Prices.Refusal(p.model); why != "" {
+				v = why
+			}
 			s.violation(st, v)
 			s.log.Warn("budget: request refused", "stage", st.st.Name, "violation", v)
 			refuse(http.StatusBadRequest, "invalid_request_error", "fugaro: "+v)
