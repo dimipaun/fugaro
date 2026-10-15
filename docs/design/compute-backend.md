@@ -569,7 +569,8 @@ unchanged.
   needed** — the same default that the workflow job uses on Cloud Run.
 - The runner never imports a backend implementation (`internal/runner` uses
   only `backend.OnCloudRun`, `backend.SameExecution`, `backend.Prices`,
-  `backend.MemoryGiB`, `backend.TaskTimeoutSlack`). The gateway
+  `backend.MemoryGiB`, `backend.TaskTimeoutSlack` **and `backend.ExecID`** —
+  the last one at `runner.go:74`, which §2.5's codec has to keep working). The gateway
   (`runner/gateway.go`), the budget session (`runner/budget_session.go`,
   which is RTDB, not `internal/backend`), the cache
   (`runner/lockcache.go`) and `finalize` (`runner/runner.go`) touch only the
