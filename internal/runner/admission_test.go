@@ -3,6 +3,7 @@ package runner_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -95,10 +97,12 @@ func mintUnder(t *testing.T, b *bk, slug string, at time.Time) {
 // refusedAdmission fails unless the run stopped at the admission check: an
 // infra error (so the process exits non-zero and the job shows failed), the
 // record kept as infra_error with outcome none, every want in the reason, no
-// stage run — and nothing changed anywhere (R2-12). No git credential was
-// requested of the provider, the branch lock was not taken, no lease was
-// reserved and no outcome and no spend were written: a run that is not admitted
-// for this repository must be indistinguishable from one that never started.
+// stage run — and nothing written anywhere but its own record (R2-12). No git
+// credential was requested of the provider, the branch lock was not taken, no
+// lease was reserved and no outcome and no spend were written: a run that is
+// not admitted for this repository leaves its own record — created by the
+// claim, so views see an infra_error rather than a run that never started —
+// and nothing else at all.
 //
 // The credential count is what makes the placement of the check observable.
 // Every one of these refusals also happens further down bootstrap (the run
@@ -108,7 +112,12 @@ func mintUnder(t *testing.T, b *bk, slug string, at time.Time) {
 //
 // Mutation (run, restored): move the admissionCheck call in bootstrap below
 // the openProvider block. Every test that comes through here fails, on this
-// counter and on nothing else.
+// counter and on nothing else. Mutation (run, restored): move it above the
+// claim (claimRecord/save). These tests stay green — the record the store ends
+// up with is the refusal either way, because the claim is what creates it —
+// and what that ordering breaks is the duplicate's precedence
+// (TestRunnerTellsADuplicateApartBeforeAdmission) and, end to end, internal/cli's
+// TestExecDuplicateExecutionExitsRemoteError.
 func refusedAdmission(t *testing.T, b *bk, rec *runstore.Record, err error, want ...string) {
 	t.Helper()
 	if err == nil || rec == nil || rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone {
@@ -143,6 +152,15 @@ func refusedAdmission(t *testing.T, b *bk, rec *runstore.Record, err error, want
 	}
 	if v := b.db.Value(budget.PathOutcome(b.day(), slug, runID)); v != nil {
 		t.Errorf("the refused run wrote an outcome: %v", v)
+	}
+	// The one trace it does leave: its own record, claimed before this check
+	// and carrying the refusal — a run that is not admitted must be visible
+	// as refused rather than as one that never started — and nothing else
+	// under the run's prefix.
+	stored, rerr := b.harness.store.ReadRecord(context.Background())
+	if rerr != nil || stored.RunID != runID || stored.Execution != b.deps.Execution ||
+		stored.Status != runstore.StatusInfraError || stored.Reason != rec.Reason {
+		t.Errorf("stored = %+v, err = %v: want this execution's own refusal record and nothing else", stored, rerr)
 	}
 }
 
@@ -271,6 +289,28 @@ func TestRunnerRefusesAnUnreadablePolicyBeforeAnyCredential(t *testing.T) {
 // An installation that has published no policy has no allow-list, and inventing
 // "absent means deny" would refuse every run of every installation on upgrade.
 // The binding is still checked: it needs no policy, only the slug and the task.
+// The ordering the claim keeps: a duplicate execution is told it is a
+// duplicate whatever else about it would have been refused, because the claim
+// comes before the admission check (design §4.7). The owner's record is left
+// exactly as it was and this execution prints none (fugaro exec exits a
+// duplicate as a remote error, internal/cli's
+// TestExecDuplicateExecutionExitsRemoteError), so a run whose job was
+// re-executed — a retry, a second execution of one run — never gains a second
+// record of its own. Swapping the two calls fails here: the admission refusal
+// is what comes back, and the record is written over the owner's.
+func TestRunnerTellsADuplicateApartBeforeAdmission(t *testing.T) {
+	b := admissionRun(t, "github", "acme/other", "off", "", "")
+	ownerRecord(t, b.harness)
+	rec, err := b.run(t)
+	if !errors.Is(err, runner.ErrDuplicateExecution) {
+		t.Fatalf("rec = %+v, err = %v: want ErrDuplicateExecution", rec, err)
+	}
+	if rec != nil {
+		t.Errorf("rec = %+v, want none: this execution does not own the run", rec)
+	}
+	assertOwnerRecordIntact(t, b.harness)
+}
+
 func TestRunnerWithoutAPolicyChecksOnlyTheBinding(t *testing.T) {
 	t.Run("no node under the marker", func(t *testing.T) {
 		b := admissionRun(t, "github", "acme/app", "off", "", "")

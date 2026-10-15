@@ -20,7 +20,8 @@ const GitProviderEnv = "FUGARO_GIT_PROVIDER"
 
 // checkProject refuses a job whose repository belongs to another Fugaro
 // project than the job does (design §2.5). It runs before the lock, so a
-// refusal changes nothing remote. cfg is the configuration the run uses:
+// refusal takes no lease and writes nothing remote but the run's own record
+// (bootstrap's deferred handler). cfg is the configuration the run uses:
 // a first run's is the ref's, a follow-up's the base branch's.
 //
 // A first run reads project: leniently (a file that doesn't parse still
@@ -164,9 +165,13 @@ func remoteDisplay(remote string) string {
 // identity is what an admission rests on (R2-9).
 //
 // It runs after the project's policy has been read (Task 1.3) and before the
-// provider is opened, so no git credential exists yet and nothing has been
+// provider is opened, so no git credential is requested and nothing has been
 // cloned; and before the lock and the budget session, so a run that is not
-// admitted writes no lease. Its refusals are the run's own: the slug it was
+// admitted writes no lease, no outcome and no spend. The claim is the one
+// write that precedes it — it is what makes this execution the run's owner,
+// and a duplicate is turned away there, before any of this is read — so the
+// trace a refusal leaves is its own run record, carrying the refusal, and
+// nothing else anywhere. Its refusals are the run's own: the slug it was
 // given must be the slug of the repository task.json names; the provider kind
 // and the remote — the two environment values a launcher can set that would
 // say otherwise — may disagree with it only by refusing; and, when the project
