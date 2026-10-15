@@ -2237,8 +2237,9 @@ leaked VM of *this check* is told from a real run's.
    not a Batch-side flag alone: it is served by the
    **`containerfilesystem.googleapis.com`** API, which a project need not have
    enabled (§1.2, §1.9's provisioning task). Without it step 3a's submission is
-   rejected, and the (a) half of the cold-start comparison — the half C4 prefers
-   — measures nothing. Enabled here, and *recorded* here, because whether this
+   rejected, and the **streaming** arm of the cold-start comparison — the arm
+   C4 **rejects** for a Docker run (it discards `options`, §2.2) but still keeps
+   as a measured number (§1.2, §8.2 C4) — measures nothing. Enabled here, and *recorded* here, because whether this
    check may turn it back off depends on whether the check turned it on:
 
    ```bash
@@ -2754,15 +2755,23 @@ The probe's jobs carried `fugaro_chk=57` and ran as the check's own
 result, and nothing here makes `backend: cloud-batch` selectable.
 
 **Restore status — NOT FINISHED (owner note, 2026-10-15; the owner updates
-this).** The run's Restore **did not complete**: a VM survived it and the
-Compute, Batch and `containerfilesystem.googleapis.com` APIs were left
-**enabled** on `fugaro-dev`, because `gcloud` reauthentication failed at the
-cleanup commands. The sandbox project is therefore **not** back to its
-pre-check state, a surviving VM bills until it goes, and **57a is not closed
-until the Restore block is re-run on its own** (the owner's `--restore-only`
-invocation, with the setup block re-run first as its own text requires) **and
-its closing assertion reads `0` on every line**. Nothing else in this section
-changes when that happens: it is a cleanup fact, not a measurement.
+this).** The run's Restore **did not complete**: `gcloud` reauthentication
+failed part-way through the cleanup, so the sandbox is not back to its
+pre-check state — **a VM survived**, and **`containerfilesystem.googleapis.com`**
+(which 57a-0c enabled) is still on, because Restore step 7, the step that
+disables it, never ran. **The Compute and Batch APIs are a different case and
+are not in the Restore block at all**: nothing in this check enables or
+disables `compute.googleapis.com` or `batch.googleapis.com` — it assumes both,
+as 57a-0's setup finding records — and the closing assertion counts
+*resources*, deliberately excluding APIs. So closing 57a takes **two** things:
+the Restore block re-run on its own (the owner's `--restore-only` invocation,
+with the setup block first as its own text requires) until **its assertion
+reads `0` on every line**, **and, by hand outside that assertion,
+`compute.googleapis.com`, `batch.googleapis.com` and any other API the run
+turned on switched back off** — `gcloud services list --enabled
+--project=fugaro-dev` is how those leftovers are read, since no line of the
+assertion can see them. Nothing else in this section changes when that
+happens: it is a cleanup fact, not a measurement.
 
 | Step | What it measured | Result |
 |---|---|---|
@@ -2851,8 +2860,10 @@ named):
 **Still unmeasured after 57a**, each named where it lives: **step 7** (Spot
 preemption — a separate script is being written), **step 11** (quota and how
 long a job sits in `QUEUED`), the **billed amount** (step 5's figure is a hand
-estimate; the export was not read, and 57b-5 is what compares it), and the
-**sink/exclusion arm** — **not applied, by decision**, so §1.5's arm stays
+estimate; the export was not read, and 57b-5 is what compares it), the
+**metadata half of step 12** (the run's recorded result covers the environment
+variables only — §9 keeps it open), and the **sink/exclusion arm** — **not
+applied, by decision**, so §1.5's arm stays
 unproven live while its Terraform and its test are in the tree, and
 **`TaskGroup.runAsNonRoot: true`** — no submission set it, so only the unset
 branch is measured (§2.2, §9), which is why Task 7 leaves the field alone.
@@ -2860,7 +2871,8 @@ Also unmeasured here — the one open item about streaming itself — **what bec
 of the two 57a-3a jobs that produced no first log line** (§1.2, §9): the
 record does not say whether Batch refused them, they failed, or they started
 and the collection simply found no first line, which is the step's own "did
-streaming accept the job at all" question and is not settled by it. Streaming's *path* is not open:
+streaming accept the job at all" question and is not settled by it.
+Streaming's *path* is not open:
 this installation's pin (`IMG`) named the **remote** repository
 (`fugaro-ghcr`), as §1.2 and the setup comment record, and streaming served
 the image from it (§9, [ANSWERED, 57a-3a]); the **direct** repository's path

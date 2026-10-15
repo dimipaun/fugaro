@@ -297,17 +297,24 @@ what the design now recommends are in the design's §7.2, under "RESULTS of the
 | 57a-12, the signal | job-level (`taskSpec.environment`, both vars set to `99`): the container saw the injected **`IDX=0 COUNT=1`**, so it did **not** override. Task-level (`taskEnvironments[0].variables`, both `99`): the container saw **`IDX=99`** with `COUNT=1` — the task environment **does** reach the container |
 
 **Restore status — NOT FINISHED (owner note, 2026-10-15; the owner updates
-this).** The run's Restore did not complete: a VM survived it and the Compute,
-Batch and `containerfilesystem.googleapis.com` APIs were left enabled on
-`fugaro-dev`, because `gcloud` reauthentication failed at the cleanup
-commands. The sandbox is not back to its pre-check state and 57a is not closed
-until the restore is re-run on its own and its assertion reads `0` on every
-line (the design's §7.2, "Restore status").
+this).** The run's Restore did not complete: `gcloud` reauthentication failed
+part-way through the cleanup, so **a VM survived** and the
+`containerfilesystem.googleapis.com` API 57a-0c enabled is still on (Restore
+step 7, which disables it, never ran). The **Compute and Batch** APIs are not
+in the Restore block at all — nothing in the check enables or disables them,
+and its closing assertion counts resources, not APIs — so they are switched
+back off **by hand**, outside that assertion (`gcloud services list --enabled
+--project=fugaro-dev`). 57a is closed only when the restore has been re-run on
+its own and its assertion reads `0` on every line **and** those APIs are off
+(the design's §7.2, "Restore status").
 
 **Not run: 57b (all six steps), 57a step 7 (Spot preemption — a separate
 script is being written), 57a step 11 (quota/queueing), the billed amount,
-`TaskGroup.runAsNonRoot: true` (only the unset branch is measured), and the
-log sink arm, which was not applied by decision.** The design's own
+`TaskGroup.runAsNonRoot: true` (only the unset branch is measured), 57a step
+12's metadata half (the signal submission's recorded result covers the
+environment variables only, so whether a job can read its own VM's identity
+from the metadata server is still open — the design's §9), and the log sink
+arm, which was not applied by decision.** The design's own
 recommendation changes that follow — the preloaded boot image over image
 streaming, `--group-add <socket gid>` as the socket recipe, the explicit
 network+subnetwork in the job JSON, the provisioning wait for IAM propagation,
