@@ -294,23 +294,7 @@ func publishAllowRepos(ctx context.Context, lc *localcfg.Config, old *projectpol
 	if old != nil && !seed {
 		return nonNil(old.AllowRepos), nil, nil
 	}
-	allow, sources, noProvider, err := seedAllowRepos(ctx, lc)
-	if err != nil {
-		return nil, nil, err
-	}
-	if len(noProvider) > 0 {
-		// The writer's half of noProvider's rule (see seedAllowRepos): the seed
-		// *is* the allow-list this publish writes, so an entry it cannot turn
-		// into one is a repository the publish would leave un-enrolled without
-		// saying so — the un-enroll P4 exists to prevent. The readers ignore
-		// the same entries instead, because a config localcfg accepts must not
-		// make `project show` or `repos ls` fail.
-		if len(noProvider) == 1 {
-			return nil, nil, userErr("the local config's %s names no git provider, and every allow-list entry is canonical (provider/owner/name), so the seed cannot enroll it: add provider: github or provider: bitbucket there, or publish a policy whose allow_repos you write yourself", noProvider[0])
-		}
-		return nil, nil, userErr("the local config's %s name no git provider, and every allow-list entry is canonical (provider/owner/name), so the seed cannot enroll them: add provider: github or provider: bitbucket there, or publish a policy whose allow_repos you write yourself", strings.Join(noProvider, ", "))
-	}
-	return allow, sources, nil
+	return seedAllowRepos(ctx, lc)
 }
 
 // seedAllowRepos is the seed P4 names: the operator's own repos: map and the
@@ -321,35 +305,22 @@ func publishAllowRepos(ctx context.Context, lc *localcfg.Config, old *projectpol
 // seed from them would enroll a repository the operator never named.
 //
 // The second return is where each entry came from, for the printed list.
-//
-// The third is the local repos: entries that name no provider, as
-// "repos.<name>". That is a config localcfg accepts — provider is optional,
-// and an empty one is the checkout's own fugaro.yaml git.provider (Repo's
-// comment) — but such an entry cannot be turned into an allow-list entry here,
-// because this machine's config cannot read a checkout it does not have. So it
-// is *reported* rather than guessed at or refused, and the callers differ on
-// what it means: the publisher refuses (publishAllowRepos), a reader ignores it
-// (allowSources), and neither invents a canonical name for it. The shared
-// config's list is exempt for the same reason its own validation is: a shared
-// entry with no provider is left alone there too.
-func seedAllowRepos(ctx context.Context, lc *localcfg.Config) ([]string, map[string]string, []string, error) {
+func seedAllowRepos(ctx context.Context, lc *localcfg.Config) ([]string, map[string]string, error) {
 	sources := map[string]string{}
-	var noProvider []string
 	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
 		r := lc.Repos[name]
 		if r.Provider == "" {
-			noProvider = append(noProvider, "repos."+name)
-			continue
+			return nil, nil, userErr("the local config's repos.%s names no git provider: the allow-list is canonical (provider/owner/name), so add provider: github or provider: bitbucket there", name)
 		}
 		c, err := projectpolicy.Canonical(r.Provider, name)
 		if err != nil {
-			return nil, nil, nil, userErr("the local config's repos.%s: %v", name, err)
+			return nil, nil, userErr("the local config's repos.%s: %v", name, err)
 		}
 		sources[c] = "repos: " + name
 	}
 	shared, err := sharedRepos(ctx, lc)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	for _, name := range slices.Sorted(maps.Keys(shared)) {
 		r := shared[name]
@@ -364,7 +335,7 @@ func seedAllowRepos(ctx context.Context, lc *localcfg.Config) ([]string, map[str
 			sources[c] = "the shared config"
 		}
 	}
-	return slices.Sorted(maps.Keys(sources)), sources, noProvider, nil
+	return slices.Sorted(maps.Keys(sources)), sources, nil
 }
 
 // sharedRepos is the repository list of the config published to the runs
@@ -796,7 +767,7 @@ func deleteProjectPolicy(cmd *cobra.Command, lc *localcfg.Config, db *rtdb.Clien
 			continue
 		}
 		if err := db.PutIfMatch(ctx, path, etag, nil); err != nil {
-			return deleteWriteErr(lc, err)
+			return dbErr(lc, err, true)
 		}
 		removed = append(removed, path)
 	}
@@ -806,7 +777,7 @@ func deleteProjectPolicy(cmd *cobra.Command, lc *localcfg.Config, db *rtdb.Clien
 	}
 	if found {
 		if err := db.PutIfMatch(ctx, projectpolicy.PathShared(), etag, nil); err != nil {
-			return deleteWriteErr(lc, err)
+			return dbErr(lc, err, true)
 		}
 		removed = append(removed, projectpolicy.PathShared())
 	}
@@ -817,20 +788,6 @@ func deleteProjectPolicy(cmd *cobra.Command, lc *localcfg.Config, db *rtdb.Clien
 		fmt.Fprintln(out, "no policy is published: runs fall back to the ceiling their job's environment carries")
 	}
 	return nil
-}
-
-// deleteWriteErr is a conditional write of the delete: a lost ETag race — the
-// node moved between the read and the write — is the operator's to retry, so it
-// is a user error (exit 1), the code `policy publish` and `repos edit` give the
-// same race; dbErr's remote failure (exit 2) is for a database that failed, and
-// nothing about the database failed here. The delete may have removed children
-// before this write, which is why the sentence does not claim "nothing was
-// written" the way the single-node writers' does.
-func deleteWriteErr(lc *localcfg.Config, err error) error {
-	if errors.Is(err, rtdb.ErrPrecondition) {
-		return userErr("the policy changed while this ran (another publish or delete wrote it): this delete did not finish, so run it again to remove what is left")
-	}
-	return dbErr(lc, err, true)
 }
 
 // policyRepoChildren is the keys under config/policy/repos, as stored (the
@@ -1242,14 +1199,8 @@ func runningRepos(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) ([]
 // for `project show`. It is the same seed the publisher would compute, so an
 // entry that is not in it was added on purpose (`project repos add`) or is a
 // pattern.
-//
-// The seed's unusable entries (a repos: entry with no provider) are dropped
-// here rather than refused: this is a reader, an entry that cannot be canonical
-// cannot be an entry of the list it annotates, and `project show` and
-// `repos ls` must not fail on a config localcfg accepts (the publisher is where
-// the same entries are a refusal, publishAllowRepos).
 func allowSources(ctx context.Context, lc *localcfg.Config) (map[string]string, error) {
-	_, sources, _, err := seedAllowRepos(ctx, lc)
+	_, sources, err := seedAllowRepos(ctx, lc)
 	if err != nil {
 		return nil, err
 	}
@@ -1532,8 +1483,8 @@ func removalWarning(allow []string, canonical string) string {
 // A concrete repository is admitted by any remaining entry that matches it: the
 // wildcard, or a pattern such as github/acme/*. A *pattern* being removed is a
 // different question — removing it is moot only if some remaining entry admits
-// every repository it admitted — and projectpolicy.Subsumes is that question,
-// next to the matcher so both come from one implementation.
+// everything it admitted — and the only entry that does is the bare wildcard
+// (two identical entries cannot both be on the list).
 //
 // An entry is a pattern when it carries a wildcard, not when ValidPattern
 // accepts it: ValidPattern accepts a concrete name too (a pattern with no "*"
@@ -1550,7 +1501,7 @@ func admittedBy(allow []string, arg string) (bool, string) {
 	}
 	if strings.Contains(arg, "*") {
 		for _, p := range rest {
-			if projectpolicy.Subsumes(p, arg) {
+			if p == "*" {
 				return true, p
 			}
 		}
