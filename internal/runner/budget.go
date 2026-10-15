@@ -34,6 +34,25 @@ func (b Budget) StageContext(parent context.Context) (context.Context, context.C
 	return context.WithDeadline(parent, deadline)
 }
 
+// StepDeadline bounds one non-model step — the render, and the probe a later
+// release adds — by its own timeout d and by the run's finalize reserve, the
+// same two limits StageContext gives a stage: d from now, or the reserve's
+// deadline when that comes first. It is separate because such a step is not a
+// stage: no model call, no stage timeout, its own timeouts.render (design
+// artifact-runs.md §3, §6: the timeout is the compute cap).
+//
+// byReserve says which of the two bounds applied, so a step that ends at this
+// deadline can say which one cut it: the reserve holds whatever d asks for
+// (design §4.5), and reporting such a step as a timeout of d would blame a
+// bound that never fired (runRender).
+func (b Budget) StepDeadline(d time.Duration) (deadline time.Time, byReserve bool) {
+	deadline = b.Now().Add(d)
+	if f := b.finalizeAt(); f.Before(deadline) {
+		return f, true
+	}
+	return deadline, false
+}
+
 // WatchCancel returns a context cancelled with ErrCancelled once check
 // reports a cancel request. The returned stop function ends the watch.
 //

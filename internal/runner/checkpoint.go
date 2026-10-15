@@ -61,9 +61,13 @@ type checkpointState struct {
 
 // checkpointsOn reports whether this run checkpoints: a first run, with a
 // resolved base and start commits (bootstrap may have failed to read them),
-// whose fugaro.yaml leaves git.pr.checkpoints on.
+// whose fugaro.yaml leaves git.pr.checkpoints on. An artifact run never
+// does, whatever its fugaro.yaml says: it pushes no branch at all (design
+// artifact-runs.md §3), and this is the gate that makes that true — the
+// stage-boundary pushes and the mid-stage poll both start from here, so a
+// run that never checkpoints never has a tip pushed for it.
 func (r *run) checkpointsOn() bool {
-	return r.follow == nil && r.baseSHA != "" && r.startSHA != "" && r.cfg != nil && r.cfg.Git.PR.CheckpointsOn()
+	return r.follow == nil && !r.artifact && r.baseSHA != "" && r.startSHA != "" && r.cfg != nil && r.cfg.Git.PR.CheckpointsOn()
 }
 
 // startCheckpoints starts the stage's checkpoint goroutine on stageCtx and

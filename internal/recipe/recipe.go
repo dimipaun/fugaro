@@ -218,16 +218,13 @@ type Recipe struct {
 // 0.7.0 one too (mode is one), so UsesV08 implies UsesV07; the two are
 // separate gates because the images they need are tagged separately.
 //
-// Nothing reads it yet, deliberately: Task 1 of the artifact-runs plan
-// ships the format and the runner's fail-closed refusal, and the launch
-// gate that will read this -- P9's artifactsSince, chosen beside UsesV07 in
-// checkRecipeImage/checkCloneRecipeImage and passed to the launcher's own
-// spec-mode gate (internal/cli/run.go) -- is Task 2's, because it needs the
-// task field and the *Since constant that task adds. So today an artifact
-// recipe launched at a job image whose runner predates 0.8.0 is refused by
-// the runner's own mode cross-check ("which this runner does not
-// implement"), not by the image gate's "fugaro image refresh"; do not
-// mistake the refusal for that gate.
+// It is read by the launch gate P9 asks for (artifact-runs plan Task 2):
+// checkRecipeImage and checkCloneRecipeImage choose artifactsSince beside
+// UsesV07 (internal/cli/recipes_skew.go), and the launcher's own spec-mode
+// gate judges a task carrying mode at the same constant
+// (internal/cli/run.go). So an artifact recipe launched at a job image whose
+// runner predates 0.8.0 is refused before it starts, naming fugaro image
+// refresh, rather than reaching the runner's own mode cross-check.
 func UsesV08(r *Recipe) bool {
 	return r.newKeysV08
 }
