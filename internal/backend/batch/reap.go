@@ -511,9 +511,12 @@ func (r *Reaper) listInstances(ctx context.Context) ([]instance, error) {
 		if err != nil {
 			return nil, fmt.Errorf("listing the instances of project %s (the reaper needs compute.instances.list there): %w", r.o.GCPProject, err)
 		}
-		// The scopes are not ordered, so the instances are sorted by
-		// zone/name rather than left in a map's order: a report an operator
-		// reads twice must not reorder itself, and the tests read it.
+		// A page's scopes are a map, and a map is not ordered, so each page's
+		// scopes are sorted before it is read rather than left in Go's order: a
+		// report an operator reads twice must not reorder itself page by page,
+		// and the tests read it. (The API answers the scopes of a page in its
+		// own order, which is not defined either; this is what makes the report
+		// reproducible given the same page boundaries.)
 		scopes := make([]string, 0, len(resp.Items))
 		for scope := range resp.Items {
 			scopes = append(scopes, scope)
