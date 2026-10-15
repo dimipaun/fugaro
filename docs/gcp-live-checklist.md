@@ -2217,7 +2217,7 @@ fugaro project repos rm bitbucket/edgeappinc/fugarosandbox --project fugaro
 fugaro run --workflow <the sandbox's workflow> --ref main --project fugaro
 ```
 
-The launch refuses before it starts anything: **`The launch stops before any execution exists`** (`internal/cli/run_allowlist.go`, appended to the policy's own sentence). **FACT:** that message verbatim, naming `bitbucket/edgeappinc/fugarosandbox` and the allow-list it is not on, and the same sentence the run itself would print. Then re-enroll it — step 8's restore expects the list as step 1 recorded it:
+The launch refuses before it starts anything: **`The launch stops before any execution exists`** (`internal/cli/run_allowlist.go`, appended to the policy's own sentence). **FACT:** that message verbatim, naming `bitbucket/edgeappinc/fugarosandbox` and the allow-list it is not on. The sentence about what stops is the launcher's own: the run's own refusal ends `The run stops before any lease exists` instead, and step 6(b) is where that one is reached. Then re-enroll it — step 8's restore expects the list as step 1 recorded it:
 
 ```bash
 fugaro project repos add bitbucket/edgeappinc/fugarosandbox --project fugaro
@@ -2234,7 +2234,7 @@ gcloud logging read "resource.type=cloud_run_job AND resource.labels.job_name=${
 fugaro project repos add bitbucket/edgeappinc/fugarosandbox --project fugaro
 ```
 
-**FACT:** the refusal text verbatim, and **Record which layer refused**, because on a phase-1 job it is not this phase's binding (R2-10, deferrable). The override naming another slug fails at `ReadTask` (`internal/runner/runner.go:797-803`): the per-repository job's bucket condition denies another slug's `task.json`, so the run stops **before** `admissionCheck` ever runs — the step passes, but for the bucket condition's reason, not the binding's. So the FACT line names the refusal that appeared and, when it is the bucket's, says so. **FACT:** no lease was taken and no git token was minted — visible as the absence of a reserve for that slug in `fugaro budget show --project fugaro` (the admission check runs before the lock and the budget session, so a run it refuses writes no lease), and as the refusal being about the task rather than about a clone. When the binding is the layer that refuses — on a project job, which is where Check 53's job lives — its sentence is `The run stops before any lease exists` (`internal/runner/project.go:246`), appended to the policy's own text. **The live test of the binding itself belongs to Check 53 step 6**, where the job is a project job with no per-slug bucket condition and the admission check is the only thing that can refuse; until then the binding is covered by Task 1.5's unit tests, which is why this step does not claim to prove it.
+**FACT:** the refusal text verbatim, and **Record which layer refused**, because on a phase-1 job it is not this phase's binding (R2-10, deferrable). The override naming another slug fails at `ReadTask` (`internal/runner/runner.go:797-803`): the per-repository job's bucket condition denies another slug's `task.json`, so the run stops **before** `admissionCheck` ever runs — the step passes, but for the bucket condition's reason, not the binding's. So the FACT line names the refusal that appeared and, when it is the bucket's, says so. **FACT:** no lease was taken and no git token was minted. The lease is the observable one: `fugaro budget show --project fugaro` shows no new run in flight and no reserve for that slug (the admission check runs before the lock and the budget session, so a run it refuses writes no lease). The credential is not observable as a *line*, because the run refuses before `openProvider` is ever reached — there is no credential step to be absent from — so the FACT records what did refuse and where, rather than the absence of a line no step of the run emits. When the binding is the layer that refuses — on a project job, which is where Check 53's job lives — its sentence is `The run stops before any lease exists` (`internal/runner/project.go:246`), appended to the policy's own text. **The live test of the binding itself belongs to Check 53 step 6**, where the job is a project job with no per-slug bucket condition and the admission check is the only thing that can refuse; until then the binding is covered by Task 1.5's unit tests, which is why this step does not claim to prove it.
 
 ### 7. The CLI is advisory and says so
 
@@ -2253,9 +2253,9 @@ fugaro project repos add bitbucket/edgeappinc/fugarosandbox --project fugaro
 Re-run the block. Put the installation back to what step 1 recorded, and leave the model published only if you mean to keep it.
 
 ```bash
-# the sandbox's own file: revert any local edit made while running this check
-git diff --stat -- fugaro.yaml
-git checkout -- fugaro.yaml          # only if that diff is this check's edit
+# the sandbox's own file: this check makes no edit to it (step 6 says why it
+# cannot), so this is a confirmation that it is unchanged, not an undo
+git diff -- fugaro.yaml
 # the job environment: back to step 1's, through the only path that writes it
 fugaro init --repo . --project fugaro
 # the caps: back to the recorded node
