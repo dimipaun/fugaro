@@ -227,7 +227,32 @@ func (r *run) addRemoteSecrets(remote string) {
 // write that precedes it — it is what makes this execution the run's owner,
 // and a duplicate is turned away there, before any of this is read — so the
 // trace a refusal leaves is its own run record, carrying the refusal, and
-// nothing else anywhere. Its refusals are the run's own: the slug it was
+// nothing else anywhere.
+//
+// The claim stays above this check, and that order is a ruling, not an
+// accident (the owner delegated it to the analysis below, which this follows):
+//
+//   - The claim is create-only. It can never overwrite another execution's
+//     record — a second execution is refused by the store, not allowed to
+//     replace what is there — so claiming before admitting takes nothing away
+//     from any run and leaves a refused one exactly one trace, its own record.
+//   - A run that is not admitted takes no lock, no lease, no ledger entry and
+//     no outcome either way: the refusal is before all four, whichever side of
+//     the claim it lands on.
+//   - An admitted repository gains no hole from the claim. The claim is not
+//     what admits a run — this check is — so moving it below changes nothing
+//     about what may clone, push or spend, only about what a refusal looks
+//     like afterwards.
+//
+// What the other order would break is the shipped duplicate contract: two
+// executions of one run are told apart at the claim, and an execution that
+// another one owns has no record of its own to be refused into. Swapping the
+// two put the admission refusal in front of the duplicate check, and
+// TestRunnerTellsADuplicateApartBeforeAdmission (with internal/cli's
+// TestExecDuplicateExecutionExitsRemoteError as the end-to-end half) is what
+// failed on it.
+//
+// Its refusals are the run's own: the slug it was
 // given must be the slug of the repository task.json names; the provider kind
 // and the remote — the two environment values a launcher can set that would
 // say otherwise — may disagree with it only by refusing; and, when the project
