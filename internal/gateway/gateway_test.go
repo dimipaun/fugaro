@@ -355,15 +355,14 @@ func TestStartListensOnLoopbackOnly(t *testing.T) {
 func TestStartRejectsBadOptions(t *testing.T) {
 	ok := Options{Upstream: Upstream{Kind: "anthropic", APIKey: testKey}, Prices: pricing.Embedded(), Mode: Observe}
 	for name, edit := range map[string]func(*Options){
-		"no prices":             func(o *Options) { o.Prices = nil },
-		"no mode":               func(o *Options) { o.Mode = "" },
-		"unknown mode":          func(o *Options) { o.Mode = "off" },
-		"enforce without cap":   func(o *Options) { o.Mode = Enforce },
-		"negative cap":          func(o *Options) { o.Mode, o.Cap = Enforce, -1 },
-		"unknown upstream":      func(o *Options) { o.Upstream.Kind = "bedrock" },
-		"anthropic without key": func(o *Options) { o.Upstream.APIKey = "" },
-		"plain http elsewhere":  func(o *Options) { o.Upstream.BaseURL = "http://api.example.invalid" },
-		"base with a path":      func(o *Options) { o.Upstream.BaseURL = "https://api.example.invalid/proxy" },
+		"no prices":            func(o *Options) { o.Prices = nil },
+		"no mode":              func(o *Options) { o.Mode = "" },
+		"unknown mode":         func(o *Options) { o.Mode = "off" },
+		"enforce without cap":  func(o *Options) { o.Mode = Enforce },
+		"negative cap":         func(o *Options) { o.Mode, o.Cap = Enforce, -1 },
+		"unknown upstream":     func(o *Options) { o.Upstream.Kind = "bedrock" },
+		"plain http elsewhere": func(o *Options) { o.Upstream.BaseURL = "http://api.example.invalid" },
+		"base with a path":     func(o *Options) { o.Upstream.BaseURL = "https://api.example.invalid/proxy" },
 		"vertex without token": func(o *Options) {
 			o.Upstream = Upstream{Kind: "vertex", VertexProject: "proj-1234", VertexLocations: []string{"us-east5"}}
 		},
@@ -389,6 +388,16 @@ func TestStartRejectsBadOptions(t *testing.T) {
 		t.Fatalf("valid options: %v", err)
 	}
 	_ = gw.Close(context.Background())
+	// No key at all is valid: a run whose models all route through providers
+	// has none (design project-centric §6.1), and a call that needs Anthropic
+	// is refused by name instead (TestNoAnthropicKeyRefusesClaudeCall).
+	bare := ok
+	bare.Upstream.APIKey = ""
+	gw2, err := Start(context.Background(), bare)
+	if err != nil {
+		t.Fatalf("an anthropic upstream without a key: %v", err)
+	}
+	_ = gw2.Close(context.Background())
 }
 
 // --- pins ---

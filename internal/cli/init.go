@@ -2064,7 +2064,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 			// The first apply already made the repository's resources, so
 			// it joins the local config (and says what it still needs)
 			// before the build's failure ends the run.
-			r.printMissing(spec, versions, missing)
+			r.printMissing(spec, versions, missing, needsAnthropicKey(lc, cfg, spec.Name))
 			if cerr := r.writeRepoConfig(ctx, lc, spec, cfg, path, old); cerr != nil {
 				r.warn(fmt.Sprintf("the local config was not updated: %v", cerr))
 			}
@@ -2078,7 +2078,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	}
 
 	// 7. What is still missing.
-	r.printMissing(spec, versions, missing)
+	r.printMissing(spec, versions, missing, needsAnthropicKey(lc, cfg, spec.Name))
 	if o.planOnly {
 		return finish()
 	}
@@ -2594,8 +2594,16 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 // printMissing prints what the repository still needs: each secret's fugaro
 // secrets set command, as the bootstrap printed them, and each workflow's
 // other gates.
-func (r *initRun) printMissing(spec infra.RepoSpec, versions map[string]bool, missing []infra.Missing) {
+func (r *initRun) printMissing(spec infra.RepoSpec, versions map[string]bool, missing []infra.Missing, needKey bool) {
 	steps := infra.SecretCommands(spec, versions, selfCommand(), quoteWord)
+	if !needKey {
+		// This run never calls Anthropic, so the key is not missing: it gates
+		// nothing (infra.NeedsBuild skips it), the job deploys without it, and
+		// nothing about it may be listed as missing -- not here, and not in
+		// the --json result, which is the same list. The rule is the one
+		// init's own secrets stage asks (needsAnthropicKey).
+		steps = slices.DeleteFunc(steps, func(st infra.SecretStep) bool { return st.Optional })
+	}
 	var other []string
 	for _, m := range missing {
 		// Secrets are listed as commands below.

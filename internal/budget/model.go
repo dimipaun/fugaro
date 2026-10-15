@@ -206,23 +206,45 @@ func (c Caps) GlobalDaily() (Micros, bool) {
 	return 0, false
 }
 
+// RepoPerRun is the repository's own per-run cap, else the default for
+// repositories without one. ok is false when neither is set.
+func (c Caps) RepoPerRun() (Micros, bool) {
+	if c.Repo != nil && c.Repo.PerRunMicros != nil {
+		return *c.Repo.PerRunMicros, true
+	}
+	if c.Defaults != nil && c.Defaults.RepoPerRunMicros != nil {
+		return *c.Defaults.RepoPerRunMicros, true
+	}
+	return 0, false
+}
+
+// GlobalPerRun is the project's per-run cap, the fallback for every
+// repository that has none of its own.
+func (c Caps) GlobalPerRun() (Micros, bool) {
+	if c.Global != nil && c.Global.PerRunMicros != nil {
+		return *c.Global.PerRunMicros, true
+	}
+	return 0, false
+}
+
 // PerRun is the lifetime cap of a run: min(the repository's own per-run cap
-// or the default, the global per-run cap). ok is false when either side is
-// unset, because the rules deny when either comparison reads null.
+// or the default, the global per-run cap). A side that is not set does not
+// bound the run, so the global cap is the fallback of a repository that has
+// no cap of its own and the default is the fallback of the global one; ok is
+// false only when neither side is set anywhere, which the rules deny (a
+// missing node reads null and the comparison is false).
 func (c Caps) PerRun() (Micros, bool) {
-	var repo Micros
+	repo, repoOK := c.RepoPerRun()
+	global, globalOK := c.GlobalPerRun()
 	switch {
-	case c.Repo != nil && c.Repo.PerRunMicros != nil:
-		repo = *c.Repo.PerRunMicros
-	case c.Defaults != nil && c.Defaults.RepoPerRunMicros != nil:
-		repo = *c.Defaults.RepoPerRunMicros
-	default:
-		return 0, false
+	case repoOK && globalOK:
+		return min(repo, global), true
+	case repoOK:
+		return repo, true
+	case globalOK:
+		return global, true
 	}
-	if c.Global == nil || c.Global.PerRunMicros == nil {
-		return 0, false
-	}
-	return min(repo, *c.Global.PerRunMicros), true
+	return 0, false
 }
 
 // MaxReserve is the largest single lease.

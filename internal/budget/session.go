@@ -492,23 +492,26 @@ func (s *Session) Admit(ctx context.Context, o AdmitOptions) (*Halt, error) {
 		return nil, nil
 	}
 	if sn.Caps.Enforcing() {
-		// The rules compare all three caps on every lease.
+		// The rules compare all three caps on every lease. The per-run one is
+		// the repository's own or the default, and the global one where that
+		// side is unset, so only a database with no per-run cap at all halts.
 		if _, ok := sn.Caps.PerRun(); !ok {
-			d := noCap(sn.Caps, "per-run")
+			d := noCap("per-run")
 			return &Halt{Reason: ReasonNoCap, Scope: d.Scope, Detail: d.Detail}, nil
 		}
 		if _, ok := sn.Caps.RepoDaily(); !ok {
-			return &Halt{Reason: ReasonNoCap, Scope: ScopeRepo, Detail: "no daily cap is set for this repository and there is no default (fugaro budget set --defaults --repo-daily)"}, nil
+			d := noRepoDailyCap()
+			return &Halt{Reason: ReasonNoCap, Scope: d.Scope, Detail: d.Detail}, nil
 		}
 		if _, ok := sn.Caps.GlobalDaily(); !ok {
-			return &Halt{Reason: ReasonNoCap, Scope: ScopeGlobal, Detail: "no global daily cap is set (fugaro budget set --global --daily)"}, nil
+			return &Halt{Reason: ReasonNoCap, Scope: ScopeGlobal, Detail: "no global daily cap is set (" + globalDailyHint + ")"}, nil
 		}
 	} else if o.LocalEnforce {
 		// The database's caps are advisory, but this run enforces: it needs
 		// a per-run cap from somewhere.
 		if _, ok := sn.Caps.PerRun(); !ok && o.PolicyCap <= 0 {
 			return &Halt{Reason: ReasonNoCap, Scope: ScopeRun,
-				Detail: "budget.mode is enforce but no per-run cap is set (budget.per_run_usd, or fugaro budget set --defaults --repo-per-run and --global --per-run)"}, nil
+				Detail: "budget.mode is enforce but no per-run cap is set (budget.per_run_usd, or " + defaultsPerRunHint + " and " + globalPerRunHint + ")"}, nil
 		}
 	}
 	return nil, nil

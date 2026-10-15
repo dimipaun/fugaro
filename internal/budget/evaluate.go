@@ -30,8 +30,8 @@ const (
 	ReasonRunCap         Reason = "run_cap"
 	ReasonRepoDailyCap   Reason = "repo_daily_cap"
 	ReasonGlobalDailyCap Reason = "global_daily_cap"
-	// ReasonNoCap: a cap the rules compare against is not set, so the rules
-	// deny (a missing node reads null; N <= null is false).
+	// ReasonNoCap: every side of a cap the rules compare against is unset, so
+	// the rules deny (a missing node reads null; N <= null is false).
 	ReasonNoCap Reason = "no_cap"
 	// ReasonMaxReserve: the lease is over limits.maxReserveMicros, or that
 	// limit is not set.
@@ -115,12 +115,18 @@ type Decision struct {
 // over maxReserve (a missing limit refuses); and, only when caps.Mode is
 // "enforce" (anything else, absent included, is observe; the committed cap
 // also bites when w.CommittedEnforce), the run's lifetime
-// reservation (reserved - released) would pass min(repository per-run cap or
-// default, global per-run cap), the repository's day counter would pass its
-// cap (or default) or the committed daily cap, or the global day counter
-// would pass the global cap; a cap that is not set refuses with ReasonNoCap.
-// A cap equal to the new value passes. In observe the first such cap
-// refusal is returned as Decision.Advisory on an allowed decision.
+// reservation (reserved - released) would pass the per-run cap, which is the
+// smallest of the sides that are set -- the repository's own, else the
+// default for repositories without one, and the project's global one, a side
+// that is not set not bounding the run (D6) -- the repository's day counter
+// would pass its cap (its own or the default) or the committed daily cap, or
+// the global day counter would pass the global cap. A cap the rules compare
+// against that is not set at all refuses with ReasonNoCap: the per-run side
+// when none of the three is set, the repository's daily side when neither the
+// repository nor the defaults carries one, and the global daily side when the
+// project carries none. A cap equal to the new value passes. In observe the
+// first such cap refusal is returned as Decision.Advisory on an allowed
+// decision.
 //
 // A release is refused when the day is older than yesterday or in the future,
 // or the amount exceeds what the run holds unspent (reserved - released -
@@ -176,10 +182,12 @@ func Evaluate(st State, w Write, caps Caps, kills Kills, now time.Time) Decision
 		}
 	}
 	enforcing := caps.Enforcing()
-	// Per-run: the lifetime outstanding after the lease.
+	// Per-run: the lifetime outstanding after the lease. The cap is the
+	// repository's own or the default, and the global one where that side is
+	// unset; only a run with no per-run cap anywhere is refused here.
 	switch perRun, ok := caps.PerRun(); {
 	case !ok:
-		check(noCap(caps, "per-run"), enforcing)
+		check(noCap("per-run"), enforcing)
 	case add(st.Run.Outstanding(), w.Amount) > perRun:
 		check(deny(ReasonRunCap, ScopeRun, "run cap %s reached (%s held, %s needed)", dollars(perRun), dollars(st.Run.Outstanding()), dollars(w.Amount)), enforcing)
 	}
@@ -187,7 +195,7 @@ func Evaluate(st State, w Write, caps Caps, kills Kills, now time.Time) Decision
 	// committed one.
 	switch cap, ok := caps.RepoDaily(); {
 	case !ok:
-		check(Decision{Reason: ReasonNoCap, Scope: ScopeRepo, Detail: "no daily cap is set for this repository and there is no default (fugaro budget set --defaults --repo-daily)"}, enforcing)
+		check(noRepoDailyCap(), enforcing)
 	case add(st.Repo.Counted, w.Amount) > cap:
 		check(deny(ReasonRepoDailyCap, ScopeRepo, "this repository's daily cap %s reached (%s counted, %s needed)", dollars(cap), dollars(st.Repo.Counted), dollars(w.Amount)), enforcing)
 	}
@@ -196,7 +204,7 @@ func Evaluate(st State, w Write, caps Caps, kills Kills, now time.Time) Decision
 	}
 	switch cap, ok := caps.GlobalDaily(); {
 	case !ok:
-		check(Decision{Reason: ReasonNoCap, Scope: ScopeGlobal, Detail: "no global daily cap is set (fugaro budget set --global --daily)"}, enforcing)
+		check(Decision{Reason: ReasonNoCap, Scope: ScopeGlobal, Detail: "no global daily cap is set (" + globalDailyHint + ")"}, enforcing)
 	case add(st.Global.Counted, w.Amount) > cap:
 		check(deny(ReasonGlobalDailyCap, ScopeGlobal, "the project's daily cap %s reached (%s counted, %s needed)", dollars(cap), dollars(st.Global.Counted), dollars(w.Amount)), enforcing)
 	}
@@ -240,13 +248,34 @@ func negativeState(st State) (Decision, bool) {
 	return Decision{}, false
 }
 
-// noCap names which side of the per-run cap is missing.
-func noCap(c Caps, what string) Decision {
-	repoSide := (c.Repo != nil && c.Repo.PerRunMicros != nil) || (c.Defaults != nil && c.Defaults.RepoPerRunMicros != nil)
-	if !repoSide {
-		return Decision{Reason: ReasonNoCap, Scope: ScopeRepo, Detail: "no " + what + " cap is set for this repository and there is no default (fugaro budget set --defaults --repo-per-run)"}
-	}
-	return Decision{Reason: ReasonNoCap, Scope: ScopeGlobal, Detail: "no global " + what + " cap is set (fugaro budget set --global --per-run)"}
+// The hints a no_cap refusal prints, naming the flags `fugaro budget set`
+// really has: the repository defaults take --defaults with --daily or
+// --per-run, the project's own caps --global with the same two (cli/budget.go).
+// TestCapHintsNameRealFlags checks every flag these messages name against the
+// command itself.
+const (
+	defaultsDailyHint  = "fugaro budget set --defaults --daily <usd>"
+	defaultsPerRunHint = "fugaro budget set --defaults --per-run <usd>"
+	globalDailyHint    = "fugaro budget set --global --daily <usd>"
+	globalPerRunHint   = "fugaro budget set --global --per-run <usd>"
+)
+
+// noRepoDailyCap is the refusal when neither the repository nor the defaults
+// carry a daily cap.
+func noRepoDailyCap() Decision {
+	return Decision{Reason: ReasonNoCap, Scope: ScopeRepo,
+		Detail: "no daily cap is set for this repository and there is no default (" + defaultsDailyHint + ")"}
+}
+
+// noCap is the refusal for a run that no per-run cap bounds: neither the
+// repository's own cap, nor the default for repositories without one, nor the
+// project's global cap is set, so the rules read null on every side and deny
+// the lease (fail closed). The scope is the project's: the global cap is the
+// one that would bound every repository. It is the only per-run no_cap left:
+// a cap on any of the three sides bounds the run (D6).
+func noCap(what string) Decision {
+	return Decision{Reason: ReasonNoCap, Scope: ScopeGlobal,
+		Detail: "no " + what + " cap is set: not for this repository, no default for repositories without one, and none for the project (" + globalPerRunHint + ", or " + defaultsPerRunHint + ")"}
 }
 
 func deny(r Reason, s Scope, format string, args ...any) Decision {
