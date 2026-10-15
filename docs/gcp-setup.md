@@ -477,24 +477,18 @@ The same transition has a one-command form since 0.7.5, and it is the one to rea
 `fugaro init --repo` reads the repository's Terraform state and the labels on its jobs and secrets before it plans, and prints what the change retires:
 
 ```
-⚠ This change retires 3 addresses (project aurora, GCP project proj-1234, repository acme/sandbox).
-  2 go away; fugaro deletes no secret.
+note: claude-oauth-token-bmb (fugaro-acme-sandbox-claude-oauth-token-bmb-2dfc7765d8e5dd81) is no longer mounted by any job fugaro.yaml deploys; what is in Secret Manager stays there, and this is not a retirement: nothing is removed from Terraform's state and nothing is deleted
+⚠ This change retires 2 addresses (project aurora, GCP project proj-1234, repository acme/sandbox).
+  2 go away.
 
-Why: agent.auth no longer mounts claude-oauth-token-bmb; the named Claude account bmb is no longer a variant this repository deploys.
+Why: the named Claude account bmb is no longer a variant this repository deploys.
 
 Going away (2, predicted from the state and the labels) — 1 the plan will delete, 1 deleted through the Cloud Run API after it:
   module.repo.module.workflow["app_bmb"].google_service_account.job        service account: the named Claude account bmb is no longer a variant this repository deploys
   module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0]   workflow job: the named Claude account bmb is no longer a variant this repository deploys
 
-Removed from Terraform's state, and never deleted (1):
-  module.repo.google_secret_manager_secret.this["claude-oauth-token-bmb"]
-
-KEPT — Fugaro never deletes a secret or a secret version:
-  claude-oauth-token-bmb           leaves Terraform's state, unmanaged; Secret Manager is untouched
-  Nothing here deletes a container, so one that still exists keeps its value. A live container carrying this repository's labels is adopted back into the plan instead of being retired at all, so these are the ones the label list did not find: check them with `fugaro secrets ls`.
-
 Order of operations:
-  1. remove 2 addresses from Terraform's state without destroying them: the addresses no apply can delete (a secret container's prevent_destroy, a job whose deletion_protection the state says is on). Nothing in the cloud is deleted by this step.
+  1. remove 1 address from Terraform's state without destroying it: the addresses no apply can delete (a secret container's prevent_destroy, a job whose deletion_protection the state says is on). Nothing in the cloud is deleted by this step.
   2. plan, show the plan's own counts and its full delete list, and ask again — the project's name typed at a real terminal, never --yes.
   3. apply, then delete the 1 orphaned Cloud Run job through the API.
 
@@ -514,11 +508,11 @@ A retirement the run only *predicts* is a warning, not a refusal: an ordinary `f
 3. **Apply**, then **delete the orphaned Cloud Run jobs through the Cloud Run API** — and only jobs carrying this repository's own labels, of a variant the configuration no longer builds. A job that is not ours, or another variant's, is refused, with the `gcloud run jobs delete` command to run by hand.
 4. **Say what is left** if it stops in the middle: the addresses that left the state (alive in GCP, with nothing managing them until the delete runs) and the `gcloud` command that finishes it. Rerunning `fugaro init --repo --retire` is safe: an address the state no longer holds is not removed again, and the orphaned jobs are found by their labels.
 
-**Fugaro never deletes a secret or a secret version.** The container is taken out of Terraform's state and stays in Secret Manager with its value; `gcloud secrets delete` removes it if you want it gone. The container keeps its `fugaro` labels, so re-adding the mount later re-adopts it in the next plan. A container a previous retirement already released is reported as one informational line ("no longer mounted by fugaro.yaml and no longer in Terraform's state"), not as a retirement: nothing is left to do about it, and the summary, the gate and the `--retire` suggestion do not recur for it.
+**Fugaro never deletes a secret or a secret version.** When a retirement does release a container it is taken out of Terraform's state and stays in Secret Manager with its value; `gcloud secrets delete` removes it if you want it gone. The container keeps its `fugaro` labels, so re-adding the mount later re-adopts it in the next plan. A container the label list still finds is not released at all: Readiness puts it back into the plan, so the same run adopts it, and it is reported as one informational line ("no longer mounted by any job fugaro.yaml deploys") instead of a retirement — the `KEPT` group is the ones the label list did not find, or did not find correctly labelled. A container a previous retirement already released is reported the same way. Neither re-opens the gate: nothing is left to do about them, and the summary and the `--retire` suggestion do not recur.
 
 `--retire` excludes `--plan-only`, `--print-vars` and `--forget` (each is refused: they print or forget rather than apply). `--allow-delete <address>` may be passed with it and can only narrow what the guard allows: the retirement's own allow-list already covers exactly the addresses its summary named.
 
-**Worked example (2026-10-14).** A repository had deployed the named Claude account `bmb` as the variant `app_bmb`, and its owner moved back to the default account. `fugaro.yaml` lost the account; the state and the labels still held the variant's job, its service account and the `claude-oauth-token-bmb` container. In order: `agent.auth` back to `oauth` in the checkout, merge; `fugaro init --repo` (the summary above, and the refusal, because the state said `deletion_protection = true` on `app_bmb`'s job); `fugaro init --repo --retire`, confirming the project name twice. The run removed the container's address and the job's address from the state, planned and applied the service account's deletion, deleted the job through the API, and left the container and its token in Secret Manager, unmanaged.
+**Worked example (2026-10-14).** A repository had deployed the named Claude account `bmb` as the variant `app_bmb`, and its owner moved back to the default account. `fugaro.yaml` lost the account; the state and the labels still held the variant's job, its service account and the `claude-oauth-token-bmb` container. In order: `agent.auth` back to `oauth` in the checkout, merge; `fugaro init --repo` (the summary above, and the refusal, because the state said `deletion_protection = true` on `app_bmb`'s job); `fugaro init --repo --retire`, confirming the project name twice. The run reported the container as a note (the label list found it, so the same plan adopted it back), removed the job's address from the state, planned and applied the service account's deletion, deleted the job through the API, and left the container and its token in Secret Manager.
 
 **Binaries older than 0.7.5.** Do it by hand in the repository's working directory, and in this order:
 
