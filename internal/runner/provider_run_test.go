@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -211,6 +212,124 @@ func TestClaimedClaudeSeniorEndToEnd(t *testing.T) {
 	if strings.Contains(g.logs.String(), providerKey) {
 		t.Error("the log carries the provider key")
 	}
+}
+
+// TestClaimedClaudeSeniorCharge is Task 6 step 3: the claimed senior's call
+// is charged at the claimed model's own rates -- the owner's model_prices row
+// for `anthropic/claude-sonnet-5.5` -- with the route's fee on top, and no
+// direct-path Claude rate appears anywhere in the run's figures.
+//
+// The override's 3/15 is deliberately not the direct row's rates for the same
+// family (claude-sonnet-5-5 is $2/$10 per million tokens, internal/pricing/table.go),
+// so a run that charged the reviewer at the direct-path rate lands on a
+// different number and this test says so: the two charges are computed here
+// and asserted to differ before the one that must win is asserted.
+func TestClaimedClaudeSeniorCharge(t *testing.T) {
+	coderUse := pricing.Usage{Input: 1000, Output: 500}
+	reviewUse := pricing.Usage{Input: 2000, Output: 1000}
+	g := claimedRun(t, claimedPinned(t), "enforce", "50",
+		[]anthropicfake.Reply{
+			anthropicfake.Compat{}.MessageOK(deepseek, coderUse),
+			anthropicfake.Compat{}.MessageOK(claimedSenior, reviewUse),
+		}, "acme/app")
+	prov := g.deps.Providers["openrouter"]
+	prov.RouteFeePct = 10
+	g.deps.Providers["openrouter"] = prov
+
+	// The run's table prices the claimed ID from the owner's override, parsed
+	// by the shipped path: no catalog row prices the ID (P11), so the
+	// override is the only price it has, and the price table keys it whatever
+	// the routes say (P4).
+	ov, err := pricing.ParseOverrides(claimPricesJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimRates, ok := ov[claimedSenior]
+	if !ok {
+		t.Fatalf("the fixture's override has no row for %s: %v", claimedSenior, ov)
+	}
+	row, ok := g.deps.Spend.Prices.Lookup(claimedSenior)
+	if !ok || row.Rates != claimRates {
+		t.Fatalf("the run's table prices the claimed ID as %+v (found %v), want the owner's %+v", row.Rates, ok, claimRates)
+	}
+	direct, ok := pricing.Embedded().Lookup(sonnet)
+	if !ok {
+		t.Fatalf("the built-in table has no direct row for %s", sonnet)
+	}
+	if direct.Rates.Cost(reviewUse) == claimRates.Cost(reviewUse) {
+		t.Fatalf("the direct row and the override charge the same for %+v: this test proves nothing", reviewUse)
+	}
+
+	var coderStatus, reviewStatus int
+	var coderBody, reviewBody string
+	rec, err := g.run(t,
+		callDeepseek(&coderStatus, &coderBody, implement("feature")),
+		callClaimed(&reviewStatus, &reviewBody, review("ship", 0)))
+	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if coderStatus != 200 || reviewStatus != 200 {
+		t.Fatalf("statuses = %d, %d: %s %s", coderStatus, reviewStatus, coderBody, reviewBody)
+	}
+
+	// The claimed senior's charge is its own rates plus the route's fee, and
+	// it is not what the direct Claude row would have charged.
+	if rec.Cost == nil {
+		t.Fatalf("the run recorded no cost: %+v", rec)
+	}
+	wantReview := pricing.WithFee(claimRates.Cost(reviewUse), 10)
+	wantDirect := pricing.WithFee(direct.Rates.Cost(reviewUse), 10)
+	if wantReview == wantDirect {
+		t.Fatal("the fee makes the two charges coincide: this test proves nothing")
+	}
+	if got := micros(t, rec.Cost.ModelBy[claimedSenior]); got != wantReview {
+		t.Errorf("the claimed senior was charged %v µ$, want %v (the owner's rates plus the fee); the direct Claude rate would have charged %v",
+			got, wantReview, wantDirect)
+	}
+	// The coder's own row comes from the built-in catalog, read here from the
+	// table the run built rather than named, so what is under test is the
+	// claimed model's rate and not the catalog's.
+	coderRow, ok := g.deps.Spend.Prices.Lookup(deepseek)
+	if !ok {
+		t.Fatal("the run's table has no row for the coder's model")
+	}
+	wantCoder := pricing.WithFee(coderRow.Rates.Cost(coderUse), 10)
+	if got := micros(t, rec.Cost.ModelBy[deepseek]); got != wantCoder {
+		t.Errorf("the coder was charged %v µ$, want %v", got, wantCoder)
+	}
+	// The two models' charges are the run's whole model cost and the whole of
+	// the route's; nothing else was charged, so no direct-path Claude figure
+	// is hiding in the totals.
+	if len(rec.Cost.ModelBy) != 2 {
+		t.Errorf("the run's figures name %v, want exactly the coder's model and the claimed ID", chargedNames(rec.Cost))
+	}
+	if got := rec.Cost.ModelBy[sonnet]; got != 0 {
+		t.Errorf("a direct Claude rate is in the run's figures: %s = %v USD", sonnet, got)
+	}
+	if got := micros(t, rec.Cost.ModelBy[claimedSenior]); got != wantReview {
+		t.Errorf("model_by[%s] = %v µ$, want %v", claimedSenior, got, wantReview)
+	}
+	if got, want := micros(t, rec.Cost.RouteBy["openrouter"]), wantReview+wantCoder; got != want {
+		t.Errorf("route_by = %v µ$, want the coder's charge plus the claimed senior's (%v)", got, want)
+	}
+	if got := micros(t, rec.Cost.ModelUSD); got != wantReview+wantCoder {
+		t.Errorf("model_usd = %v µ$, want %v", got, wantReview+wantCoder)
+	}
+	if !near(rec.CostUSD, (wantReview + wantCoder).USD()) {
+		t.Errorf("cost_usd = %v, want %v", rec.CostUSD, (wantReview+wantCoder).USD())
+	}
+	// The stored record carries the same figures.
+	stored, err := g.store.ReadRecord(context.Background())
+	if err != nil || stored.Cost == nil || micros(t, stored.Cost.ModelBy[claimedSenior]) != wantReview || stored.Cost.ModelBy[sonnet] != 0 {
+		t.Fatalf("stored = %+v, %v", stored, err)
+	}
+}
+
+// chargedNames is the models the run's figures name, in a fixed order, for a
+// failure message (the map's order is not one).
+func chargedNames(c *runstore.Cost) []string {
+	out := slices.Sorted(maps.Keys(c.ModelBy))
+	return out
 }
 
 // readManagedDuring wraps a step to snapshot the managed settings file's
