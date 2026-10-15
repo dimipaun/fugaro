@@ -299,7 +299,9 @@ func TestApplyCatalogRefusalClearedByOverride(t *testing.T) {
 }
 
 // TestApplyCatalogSetsProvenance pins the row's provenance: the tier, the
-// bound, the endpoint counts, the catalog's own source and date.
+// bound, the endpoint counts, the catalog's own source and date, and the
+// tier's dearest prices, which are what the operator surfaces size the
+// undercharge with.
 func TestApplyCatalogSetsProvenance(t *testing.T) {
 	m, _ := compile(t, catalogFile("2026-10-14", entry()), route(true, "highest")).Lookup("vendor/model")
 	c := m.Catalog
@@ -307,9 +309,36 @@ func TestApplyCatalogSetsProvenance(t *testing.T) {
 		t.Fatal("no provenance")
 	}
 	want := CatalogPrice{Tier: "zdr", Bound: "max", Endpoints: 3, ZdrEndpoints: 2,
-		Source: "https://openrouter.ai/api/v1/models", CheckedAt: "2026-10-14"}
+		Source: "https://openrouter.ai/api/v1/models", CheckedAt: "2026-10-14",
+		TierInputMax: 4, TierOutputMax: 8}
 	if *c != want {
 		t.Errorf("provenance %+v, want %+v", *c, want)
+	}
+}
+
+// TestCatalogRangeSizesTheUndercharge pins the numbers the operator surfaces
+// print for a row charged at the cheapest end: what the dearest endpoint of
+// the tier prices and the multiple of the input price charged, so the size of
+// the undercharge is on the surface rather than only in a document (design
+// D6, P11). A row already at the dearest end has no undercharge to size.
+func TestCatalogRangeSizesTheUndercharge(t *testing.T) {
+	m, _ := compile(t, catalogFile("2026-10-14", entry()), route(true, "cheapest")).Lookup("vendor/model")
+	want := "a call served by the dearest endpoint of the tier can be billed $4/M in and $8/M out, 2x the input price charged"
+	if got := m.CatalogRange(); got != want {
+		t.Errorf("CatalogRange() = %q, want %q", got, want)
+	}
+	high, _ := compile(t, catalogFile("2026-10-14", entry()), route(true, "highest")).Lookup("vendor/model")
+	if got := high.CatalogRange(); got != "" {
+		t.Errorf("a row at the dearest bound sizes an undercharge: %q", got)
+	}
+	// A hand-priced row has no catalog provenance, and so no range: the
+	// owner's number is the price, not the tier's range.
+	ov, err := Embedded().With(Overrides{"vendor/model": {InputPerM: 7, OutputPerM: 9}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := ov.Lookup("vendor/model"); m.CatalogRange() != "" {
+		t.Errorf("an override kept the catalog's range: %q", m.CatalogRange())
 	}
 }
 

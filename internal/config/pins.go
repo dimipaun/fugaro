@@ -80,7 +80,7 @@ func PinWarnings(a Agent, prices *pricing.Table) []Problem {
 		if w := m.CacheWarning(); w != "" {
 			ps = append(ps, Problem{Path: r.path, Code: pricing.CodeCacheRateDefaulted, Message: w})
 		}
-		if w := catalogWarning(r.model, m.Catalog); w != "" {
+		if w := catalogWarning(r.model, m); w != "" {
 			ps = append(ps, Problem{Path: r.path, Code: CodeCatalogPrice, Message: w})
 		}
 	}
@@ -96,10 +96,12 @@ const CodeCatalogPrice = "catalog_price"
 
 // catalogWarning is the pin warning for a catalog-priced row: which tier and
 // how many endpoints it covers, which end of that tier's range is charged,
-// and the one switch that would charge the other end. One place, so
-// `validate`, `diagnose` and the runner's pin-warning log line say the same
-// thing. c is nil on every other row, and "" then.
-func catalogWarning(model string, c *pricing.CatalogPrice) string {
+// the numbers behind that range, and the one switch that would charge the
+// other end. One place, so `validate`, `diagnose` and the runner's
+// pin-warning log line say the same thing. m.Catalog is nil on every other
+// row, and "" then.
+func catalogWarning(model string, m pricing.Model) string {
+	c := m.Catalog
 	if c == nil {
 		return ""
 	}
@@ -110,7 +112,9 @@ func catalogWarning(model string, c *pricing.CatalogPrice) string {
 	// The bound the compiler charged, said in the owner's own words: the
 	// default (cheapest) charges the cheapest of the tier's endpoints, and
 	// a call may still be served by a dearer one (P11) — which is why the
-	// sentence below names the switch that moves it.
+	// sentence below names the switch that moves it, and why the numbers of
+	// the dearest end are here: the undercharge is dollars, not only
+	// accuracy (design D6).
 	end := "the dearest of those endpoints"
 	if c.Bound == "min" {
 		end = "the cheapest of those endpoints"
@@ -118,6 +122,9 @@ func catalogWarning(model string, c *pricing.CatalogPrice) string {
 	where := fmt.Sprintf("the %s tier of %d endpoint(s), checked %s, charged at %s", c.Tier, n, c.CheckedAt, end)
 	if c.Stale {
 		where = fmt.Sprintf("the %s tier of %d endpoint(s), and the catalog is stale (checked %s), so the dearest end is charged", c.Tier, n, c.CheckedAt)
+	}
+	if r := m.CatalogRange(); r != "" {
+		where += "; " + r
 	}
 	return fmt.Sprintf("%s is priced from the built-in provider price catalog: %s. require_zdr selects the tier and price_policy selects the end of its range: price_policy: highest charges the top of the range (an owner's model_prices replaces this row whole)",
 		model, where)

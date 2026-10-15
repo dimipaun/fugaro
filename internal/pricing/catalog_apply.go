@@ -190,14 +190,27 @@ func catalogModel(id string, r CatalogRoute, e catalog.Entry, source, checkedAt 
 	if err != nil {
 		return Model{}, err
 	}
+	inMax, outMax := tierMax(tier)
 	return Model{
 		ID: id, ContextTokens: e.ContextTokens, MaxOutputTokens: e.MaxOutputTokens,
 		Rates: rates,
 		Catalog: &CatalogPrice{
 			Tier: name, Bound: bound, Endpoints: e.Endpoints, ZdrEndpoints: e.ZDREndpoints,
 			Source: source, CheckedAt: checkedAt, Stale: stale,
+			TierInputMax: inMax, TierOutputMax: outMax,
 		},
 	}, nil
+}
+
+// tierMax is the dearest input and output price of a tier, for the provenance
+// the operator surfaces print: what the tier's range holds at its top, which
+// is the size of the undercharge the cheapest bound leaves (design D6, P11).
+// A tier that prices no input or output (never a valid file) leaves 0, and the
+// surfaces then say nothing about the range.
+func tierMax(tier map[string]catalog.Bound) (in, out float64) {
+	in, _ = strconv.ParseFloat(tier["input_per_m"].Max, 64)
+	out, _ = strconv.ParseFloat(tier["output_per_m"].Max, 64)
+	return in, out
 }
 
 // catalogRates is the tier's bound compiled into rates: input and output

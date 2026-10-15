@@ -1207,6 +1207,12 @@ type priceCatalog struct {
 	Source       string `json:"source"`
 	CheckedAt    string `json:"checked_at"`
 	Stale        bool   `json:"stale"`
+	// TierInputMaxPerM and TierOutputMaxPerM are the dearest input and
+	// output price per million tokens the tier prices: the top of the range
+	// the bound above was taken from, and so the most a call the provider
+	// serves from the dearest endpoint can be billed (design D6, P11).
+	TierInputMaxPerM  float64 `json:"tier_input_max_per_m"`
+	TierOutputMaxPerM float64 `json:"tier_output_max_per_m"`
 }
 
 type pricesDoc struct {
@@ -1278,7 +1284,8 @@ func runBudgetPrices(cmd *cobra.Command, o *budgetPricesOptions) error {
 			Unverified: m.Unverified, Source: m.PriceSource, CheckedAt: m.PriceCheckedAt}
 		if c := m.Catalog; c != nil {
 			row.Catalog = &priceCatalog{Tier: c.Tier, Bound: c.Bound, Endpoints: c.Endpoints, ZdrEndpoints: c.ZdrEndpoints,
-				Source: c.Source, CheckedAt: c.CheckedAt, Stale: c.Stale}
+				Source: c.Source, CheckedAt: c.CheckedAt, Stale: c.Stale,
+				TierInputMaxPerM: c.TierInputMax, TierOutputMaxPerM: c.TierOutputMax}
 			if doc.CatalogSource == "" {
 				doc.CatalogSource, doc.CatalogCheckedAt, doc.CatalogStale = c.Source, c.CheckedAt, c.Stale
 				if t, err := time.Parse("2006-01-02", c.CheckedAt); err == nil {
@@ -1350,6 +1357,15 @@ func runBudgetPrices(cmd *cobra.Command, o *budgetPricesOptions) error {
 			}
 			if c.Stale {
 				note += " (stale: charged the dearest end)"
+			}
+			// The numbers behind the range: what the dearest endpoint of
+			// the tier prices, which is the size of the undercharge the
+			// cheapest end leaves (design D6, P11). Rendered from the row
+			// itself, so this and the pin warning cannot drift.
+			if m, ok := table.Lookup(r.ID); ok {
+				if s := m.CatalogRange(); s != "" {
+					note += "; " + s
+				}
 			}
 			notes = append(notes, note)
 		}

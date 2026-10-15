@@ -91,6 +91,27 @@ type CatalogPrice struct {
 	Source       string // the catalog's own source URL
 	CheckedAt    string // the catalog's own YYYY-MM-DD
 	Stale        bool   // checked_at is past catalog.StaleAfter: the bound is forced to max
+	// TierInputMax and TierOutputMax are the dearest input and output price
+	// per million tokens the charged tier prices: what a call the provider
+	// serves from the dearest endpoint of that tier can be billed at, and so
+	// the size of the undercharge a cheapest bound leaves (design D6, P11).
+	// 0 on a tier that prices neither, which no valid file has.
+	TierInputMax  float64
+	TierOutputMax float64
+}
+
+// CatalogRange is the tier's own span in numbers, for the surfaces that show
+// a catalog-priced row: what the dearest endpoint of the tier prices, and how
+// many times the input price charged that is. It is "" on every other row, and
+// on a row already charged at the dearest end — the cheapest bound is the one
+// that leaves an undercharge to size (design D6, P11).
+func (m Model) CatalogRange() string {
+	c := m.Catalog
+	if c == nil || c.Bound != "min" || c.TierInputMax <= 0 || m.Rates.InputPerM <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("a call served by the dearest endpoint of the tier can be billed $%g/M in and $%g/M out, %gx the input price charged",
+		c.TierInputMax, c.TierOutputMax, c.TierInputMax/m.Rates.InputPerM)
 }
 
 // CodeCacheRateDefaulted marks the warning CacheWarning returns, for callers

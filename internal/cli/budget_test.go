@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -825,6 +826,15 @@ func TestBudgetPricesCatalogColumn(t *testing.T) {
 			t.Errorf("the catalog row lacks %q:\n%s", want, row)
 		}
 	}
+	// The numbers behind the range are on the surface as well: what the
+	// dearest endpoint of the tier prices and how many times the input price
+	// charged that is — the size of the undercharge a cheapest row leaves
+	// (design D6, P11). Read from the file, like the counts above.
+	inMax := zdrPrice(t, entry, "input_per_m")
+	outMax := zdrPrice(t, entry, "output_per_m")
+	if want := fmt.Sprintf("can be billed $%g/M in and $%g/M out", inMax, outMax); !strings.Contains(row, want) {
+		t.Errorf("the catalog row does not size the undercharge (%q):\n%s", want, row)
+	}
 	// A Claude row is not catalog-priced: the column says so with a dash,
 	// and the catalog's provenance is not on it.
 	for _, l := range strings.Split(out, "\n") {
@@ -843,11 +853,13 @@ func TestBudgetPricesCatalogColumn(t *testing.T) {
 		Models           []struct {
 			ID      string `json:"id"`
 			Catalog *struct {
-				Tier         string `json:"tier"`
-				Bound        string `json:"bound"`
-				Endpoints    int    `json:"endpoints"`
-				ZdrEndpoints int    `json:"zdr_endpoints"`
-				Stale        bool   `json:"stale"`
+				Tier              string  `json:"tier"`
+				Bound             string  `json:"bound"`
+				Endpoints         int     `json:"endpoints"`
+				ZdrEndpoints      int     `json:"zdr_endpoints"`
+				Stale             bool    `json:"stale"`
+				TierInputMaxPerM  float64 `json:"tier_input_max_per_m"`
+				TierOutputMaxPerM float64 `json:"tier_output_max_per_m"`
 			} `json:"catalog"`
 		} `json:"models"`
 	}
@@ -867,11 +879,27 @@ func TestBudgetPricesCatalogColumn(t *testing.T) {
 			if m.Catalog.Tier != "zdr" || m.Catalog.Bound != "min" || m.Catalog.Endpoints != entry.Endpoints || m.Catalog.ZdrEndpoints != entry.ZDREndpoints || m.Catalog.Stale {
 				t.Errorf("%s's catalog row is %+v", m.ID, m.Catalog)
 			}
+			if m.Catalog.TierInputMaxPerM != inMax || m.Catalog.TierOutputMaxPerM != outMax {
+				t.Errorf("%s's range is %v/%v, want the file's %v/%v", m.ID,
+					m.Catalog.TierInputMaxPerM, m.Catalog.TierOutputMaxPerM, inMax, outMax)
+			}
 		}
 	}
 	if !found {
 		t.Fatalf("no catalog-priced row in the JSON: %s", js)
 	}
+}
+
+// zdrPrice is one dimension's dearest price in the shipped entry's zdr tier,
+// as a number, so a test about the numbers reads them from the file rather
+// than writing them down.
+func zdrPrice(t *testing.T, e catalog.Entry, dim string) float64 {
+	t.Helper()
+	v, err := strconv.ParseFloat(e.ZDR[dim].Max, 64)
+	if err != nil {
+		t.Fatalf("the shipped file's zdr/%s max is not a number: %v", dim, err)
+	}
+	return v
 }
 
 // TestBudgetPricesStaleCatalogWarns: past the catalog's own 30 days the

@@ -84,6 +84,34 @@ func TestCatalogPriceWarns(t *testing.T) {
 	}
 }
 
+// TestCatalogPriceWarnsTheUndercharge pins that the warning carries the
+// numbers and not only the words: the dearest end of the tier and the multiple
+// of the input price charged, so an owner reading the pin sees the size of the
+// undercharge the cheapest end leaves (design D6, P11). The fixture's zdr tier
+// prices input 0.5..1 and output 1..2, so a cheapest row is 2x on input.
+func TestCatalogPriceWarnsTheUndercharge(t *testing.T) {
+	ws := PinWarnings(pinned(catModel), mustTable(t, providers(nil), nil, fixtureCatalog("2026-10-14")))
+	if len(ws) == 0 {
+		t.Fatal("no warning")
+	}
+	msg := ws[0].Message
+	for _, want := range []string{"can be billed $1/M in and $2/M out", "2x the input price charged"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the warning lacks %q: %s", want, msg)
+		}
+	}
+	// The dearest end leaves nothing to size, so the numbers are absent
+	// there: the row already charges what the dearest endpoint prices.
+	high := mustTable(t, providers(func(p *ModelProvider) { p.PricePolicy = PricePolicyHighest }), nil, fixtureCatalog("2026-10-14"))
+	ws = PinWarnings(pinned(catModel), high)
+	if len(ws) == 0 {
+		t.Fatal("no warning at the dearest bound")
+	}
+	if strings.Contains(ws[0].Message, "can be billed") {
+		t.Errorf("a row at the dearest bound sizes an undercharge: %s", ws[0].Message)
+	}
+}
+
 func TestCheckPinsPasses(t *testing.T) {
 	if ps := CheckPins(pinnedAgent(), pricing.Embedded()); len(ps) != 0 {
 		t.Fatalf("problems: %v", ps)
