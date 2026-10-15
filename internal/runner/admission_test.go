@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -127,4 +128,92 @@ func TestRunnerIgnoresAnOverriddenProviderEnvAmongAgreeingKinds(t *testing.T) {
 			t.Errorf("%d git credential requests were made before the refusal", *auths)
 		}
 	})
+}
+
+// The slug the run was launched for and the repository its task names must
+// agree: FUGARO_RUN is what keys the locks, the cache and the budget session,
+// and a job launched for one repository must not run another repository's
+// work. The policy admitted this repository, so the binding is what refused.
+func TestRunnerRefusesSlugMismatch(t *testing.T) {
+	b := admissionRun(t, "github", "acme/other", "off", "", `{"version":1,"allow_repos":["*"]}`)
+	auths := countAuths(b)
+	rec, err := b.run(t)
+	refusedAdmission(t, b, rec, err, b.deps.Store.Slug(), "acme/app", "provider kind")
+	if *auths != 0 {
+		t.Errorf("%d git credential requests were made before the refusal", *auths)
+	}
+}
+
+// A published policy that does not admit the run's repository stops the run:
+// the project's owner has said which repositories may run here.
+func TestRunnerRefusesSlugNotInAllowList(t *testing.T) {
+	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/other/*","bitbucket/acme/*"]}`)
+	auths := countAuths(b)
+	rec, err := b.run(t)
+	refusedAdmission(t, b, rec, err, "github/acme/app", "allow_repos", "github/other/*", "fugaro project repos add")
+	if *auths != 0 {
+		t.Errorf("%d git credential requests were made before the refusal", *auths)
+	}
+}
+
+// R2-12: a run that is not admitted changes nothing. The refusal lands before
+// the provider is opened (no git credential request), before the lock, and
+// before the budget session exists — so no lease is reserved and no spend is
+// accounted for a repository the project's policy does not admit.
+func TestRunnerChecksBeforeTheTokenAndTheLease(t *testing.T) {
+	b := admissionRun(t, "github", "acme/app", "enforce", "50", `{"version":1,"allow_repos":["github/other/*"]}`)
+	auths := countAuths(b)
+	rec, err := b.run(t)
+	refusedAdmission(t, b, rec, err, "github/acme/app", "fugaro project repos add")
+	slug := b.deps.Store.Slug()
+	if *auths != 0 {
+		t.Errorf("%d git credential requests were made before the refusal", *auths)
+	}
+	if v := b.db.Value(budget.PathRun(slug, runID) + "/reserved"); v != nil {
+		t.Errorf("the refused run reserved %v in its ledger", v)
+	}
+	if v := b.db.Value(budget.PathSpendRepo(b.day(), slug)); v != nil {
+		t.Errorf("the refused run accounted %v against its repository's day", v)
+	}
+	if ok, err := b.bucket.Exists(context.Background(), lock.Key(slug, "fugaro/"+runID)); err != nil || ok {
+		t.Errorf("the refused run took the branch lock (ok = %v, err = %v)", ok, err)
+	}
+	if v := b.db.Value(budget.PathOutcome(b.day(), slug, runID)); v != nil {
+		t.Errorf("the refused run wrote an outcome: %v", v)
+	}
+}
+
+// An installation that has published no policy has no allow-list, and inventing
+// "absent means deny" would refuse every run of every installation on upgrade.
+// The binding is still checked: it needs no policy, only the slug and the task.
+func TestRunnerWithoutAPolicyChecksOnlyTheBinding(t *testing.T) {
+	t.Run("no node under the marker", func(t *testing.T) {
+		b := admissionRun(t, "github", "acme/app", "off", "", "")
+		if rec, err := b.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
+			t.Fatalf("rec = %+v, err = %v: a run with no policy published must run as it always has", rec, err)
+		}
+	})
+	t.Run("no marker at all", func(t *testing.T) {
+		b := admissionRun(t, "github", "acme/app", "off", "", "")
+		b.db.Set(projectpolicy.PathRulesMarker(), nil)
+		b.db.DenyRead(projectpolicy.PathShared())
+		if rec, err := b.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
+			t.Fatalf("rec = %+v, err = %v: before the rules are deployed there is no policy to enforce", rec, err)
+		}
+	})
+	t.Run("the binding still refuses", func(t *testing.T) {
+		b := admissionRun(t, "github", "acme/other", "off", "", "")
+		rec, err := b.run(t)
+		refusedAdmission(t, b, rec, err, "acme/app", "provider kind")
+	})
+}
+
+// An allow-list inside a published policy is the owner's list, and empty means
+// deny-all: the owner published a policy, and it admits no repository. That is
+// not the same as an installation that has published nothing, which has no
+// list to be empty (the test above).
+func TestEmptyAllowListInAPublishedPolicyDeniesEverything(t *testing.T) {
+	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":[]}`)
+	rec, err := b.run(t)
+	refusedAdmission(t, b, rec, err, "github/acme/app", "empty", "admits no repository at all", "fugaro project repos add")
 }

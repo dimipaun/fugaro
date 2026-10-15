@@ -53,6 +53,20 @@ func MatchRepo(pattern, canonical string) bool {
 	return true
 }
 
+// AdmitRepo reports whether any entry of an allow_repos list admits a
+// canonical "<provider>/<owner>/<name>". An empty list admits nothing: a
+// policy that is published with an empty allow_repos is deny-all, which is a
+// different thing from an installation that has published no policy at all
+// (the caller decides which of the two it is holding).
+func AdmitRepo(patterns []string, canonical string) bool {
+	for _, p := range patterns {
+		if MatchRepo(p, canonical) {
+			return true
+		}
+	}
+	return false
+}
+
 const (
 	// maxPatternStars is the most wildcards one allow_repos entry may carry.
 	// The matcher is linear, so this is not about its cost: a pattern with a

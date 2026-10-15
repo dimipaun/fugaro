@@ -310,11 +310,11 @@ func TestExecPassesProject(t *testing.T) {
 	}
 	defer b.Close()
 	ctx := context.Background()
-	store := runstore.Open(b, "acme-app", runID)
+	store := runstore.Open(b, appSlug, runID)
 	if err := store.WriteTask(ctx, &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = execute(t, "exec", "--bucket", "file://"+dir, "--run", "acme-app/"+runID, "--remote", remote,
+	_, _, err = execute(t, "exec", "--bucket", "file://"+dir, "--run", appSlug+"/"+runID, "--remote", remote,
 		"--workdir", filepath.Join(t.TempDir(), "work"), "--state-dir", filepath.Join(t.TempDir(), "state"))
 	if ExitCode(err) != ExitRemoteError || err == nil ||
 		!strings.Contains(err.Error(), "project mismatch: fugaro.yaml on main names project borealis; this job belongs to project aurora") {

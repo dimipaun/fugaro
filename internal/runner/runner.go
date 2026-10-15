@@ -839,6 +839,16 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return err
 	}
 
+	// The run's admission, in the order the security property needs it:
+	// task.json has been read, the project's policy is read here (memoized;
+	// Task 1.3), and only then is the provider opened and the clone made. No
+	// git credential exists yet, nothing has been cloned and no lease has been
+	// written, so a run that is not admitted for this repository changes
+	// nothing anywhere.
+	if err := r.admissionCheck(ctx); err != nil {
+		return err
+	}
+
 	// The clone and fetch below may already need credentials, so the
 	// provider is opened now if anything but fugaro.yaml names it.
 	origin := r.originURL(ctx)

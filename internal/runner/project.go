@@ -3,8 +3,11 @@ package runner
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // GitProviderEnv is the job environment variable the --provider flag defaults
@@ -73,6 +76,18 @@ func (r *run) sameProject(branch, got string) error {
 // condition to bind to, and the binding below does not apply to it.
 var jobProviderKinds = []string{"github", "bitbucket"}
 
+// isJobProviderKind reports whether kind is one of the kinds a Cloud Run job's
+// slug is computed with, the only values the admission check compares an
+// environment's provider against.
+func isJobProviderKind(kind string) bool {
+	for _, k := range jobProviderKinds {
+		if k == kind {
+			return true
+		}
+	}
+	return false
+}
+
 // providerForSlug is the provider kind whose Slug of repo is slug. One job
 // serves one provider, and the slug is a hash of (kind, canonical repo)
 // (internal/task/task.go:187), so exactly one kind can match. It is derived,
@@ -80,7 +95,20 @@ var jobProviderKinds = []string{"github", "bitbucket"}
 // kind produces, and a slug two kinds produce, both return ok = false: the
 // run is not admitted on a guess.
 func providerForSlug(slug, repo string) (kind string, ok bool) {
-	return "", false
+	var found []string
+	for _, k := range jobProviderKinds {
+		if s, err := task.Slug(k, repo); err == nil && s == slug {
+			found = append(found, k)
+		}
+	}
+	// Exactly one, or nothing: a slug two kinds produce (a hash collision, or
+	// a kind added without the "\x00" domain separator task.Slug uses) is a
+	// programming error made visible, and returning no kind at all means a
+	// caller that forgot ok cannot act on the ambiguity either.
+	if len(found) != 1 {
+		return "", false
+	}
+	return found[0], true
 }
 
 // admissionCheck admits the repository this run was launched for, before any
@@ -100,5 +128,71 @@ func providerForSlug(slug, repo string) (kind string, ok bool) {
 // never read as "empty means deny": an installation that has not published a
 // policy admits exactly what it always did.
 func (r *run) admissionCheck(ctx context.Context) error {
+	if r.d.Execution == "" {
+		// No Cloud Run execution: no job identity to bind to, so no binding
+		// (R2-9). fugaro exec --provider fake, a local run and the end-to-end
+		// tests keep the path they have always had.
+		return nil
+	}
+	p, found, err := r.projectPolicy(ctx)
+	if err != nil {
+		return err
+	}
+	slug, repo := r.d.Store.Slug(), r.spec.Repo
+	kind, ok := providerForSlug(slug, repo)
+	if !ok {
+		// Zero matches: FUGARO_RUN and the task disagree. Two matches cannot
+		// happen through a launcher (task.Slug separates the kinds), and are
+		// refused the same way rather than resolved to one.
+		return fmt.Errorf("the run was launched for the slug %s, and that is not the slug of the repository this run's task names (%s) under any provider kind (%s): the slug and the task must name one repository. Nothing bound the two together before this check — a per-repository job's bucket condition was what stood in for it — so the run stops before any git credential is requested or anything is cloned",
+			slug, repo, strings.Join(jobProviderKinds, ", "))
+	}
+	if envKind := r.d.ProviderKind; envKind != "" && envKind != kind && isJobProviderKind(envKind) {
+		// The flag (or FUGARO_GIT_PROVIDER) is an environment value a launcher
+		// can set, so it may only tighten the admission and never change which
+		// repository this run is for (12a item 2). Naming another job provider
+		// kind is a claim that this run is for another repository's job, and it
+		// stops here.
+		//
+		// A kind outside jobProviderKinds is not that claim: "fake" is the
+		// file-backed test provider, and the repository's own end-to-end tests
+		// run a Cloud Run execution with it (internal/e2e's rig, and
+		// internal/cli's clone-job test). It cannot move the run to another
+		// repository — the slug and the remote do that — and it cannot widen
+		// the admission either, since the allow-list is matched against the
+		// kind derived from the slug and never against this value.
+		return fmt.Errorf("the git provider in the job's environment is %s (the --provider flag, or %s), and the run's slug %s is the slug of %s under %s: the flag may only tighten the run's admission, never change which repository it is for, so the run stops before any git credential is requested",
+			envKind, GitProviderEnv, slug, repo, kind)
+	}
+	if want, err := task.Slug(kind, repo); err != nil || want != slug {
+		// Implied by the derivation; re-checked so the two values the run
+		// actually uses (the slug under which it reads and writes the bucket,
+		// and the provider kind it opens) are the ones that were compared.
+		got := want
+		if err != nil {
+			got = err.Error()
+		}
+		return fmt.Errorf("the run's slug %s is not the slug task.Slug(%s, %s) computes (%s): the run stops before any git credential is requested", slug, kind, repo, got)
+	}
+	if !found {
+		// No policy published here: the binding is the whole check (Task 1.3
+		// step 1's absent case). Reading this as an empty allow-list would
+		// refuse every run of every installation that has published nothing.
+		return nil
+	}
+	canonical, err := projectpolicy.Canonical(kind, repo)
+	if err != nil {
+		return fmt.Errorf("the repository this run was launched for cannot be named in the project's allow-list: %w", err)
+	}
+	if !projectpolicy.AdmitRepo(p.AllowRepos, canonical) {
+		what := fmt.Sprintf("%q", p.AllowRepos)
+		if len(p.AllowRepos) == 0 {
+			// A published policy with an empty allow-list is deny-all (design
+			// §4.3): the owner published a policy, and it admits nothing.
+			what = "empty, and a published policy with an empty allow-list admits no repository at all"
+		}
+		return fmt.Errorf("the project's policy does not admit %s: allow_repos is %s. The run stops before any lease exists; the project's owner adds the repository with 'fugaro project repos add %s'",
+			canonical, what, canonical)
+	}
 	return nil
 }
