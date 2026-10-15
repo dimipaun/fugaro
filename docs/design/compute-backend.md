@@ -777,6 +777,7 @@ open when `OnCloudRun` is false.** Every caller, read on `main`:
 | `internal/cli/exec.go:264` (`refuseOldJobEnv`) | refuses an old-style job env on Cloud Run | **skipped**: the old env is accepted |
 | `internal/cli/exec.go:102` (`runner.BackendFromEnv`) | forbids a local (loopback) budget backend in the cloud | **allowed**: a run may point the budget at a local database |
 | `internal/cli/exec.go:134` (`ExecutionFromEnv`) | the canonical execution name | `""`, so the run has no name to record or to compare |
+| `internal/cli/exec.go:369-371` (`execPrices`) | the prices the run estimates compute with: `FUGARO_COMPUTE_PRICES`, else the region's list price | **nil**, so the run records no compute cost at all (`FUGARO_BACKEND` must equal `cloud-run` for prices to exist, and on a Batch VM it does not) |
 | `internal/cli/skillwarn.go:43`, `internal/cli/updatewarn.go:155,186,260` | quiet the skill/update nudges in the cloud | nudges appear (cosmetic) |
 | `internal/cli/imagecheck.go:548` | the image check's Cloud Run detection | already keyed on `CLOUD_RUN_JOB`/`CLOUD_RUN_EXECUTION`; needs the same treatment if the VM backend ever runs a check job |
 
@@ -784,17 +785,43 @@ open when `OnCloudRun` is false.** Every caller, read on `main`:
 closed.** Move the name codec into each backend — a small interface
 (`Parse(name)`, `Format(id)`, `FromEnv(env)`, `IsOwn(name)/ValidateRun(name,
 slug, workflow)`) carried by the `Backend`, used by every caller instead of
-the package-level functions — and replace `OnCloudRun` with a
-**backend-supplied marker the runner can trust**: the platform's own value,
-written by the launcher into the job definition (`FUGARO_BACKEND` already
-exists for this and is set by `platformEnv`, `internal/infra/spec.go`), never
-a variable a container can forge. `OnCloudRun` keeps its Cloud Run meaning for
+the package-level functions — and replace `OnCloudRun` with a question each
+backend answers from a **signal the platform injects, never one Fugaro sets**.
+`backend.go`:82-85 states the rule this follows, in `OnCloudRun`'s own doc: it
+is "the one signal for 'in the cloud'; callers use it, not the job name or a
+Fugaro variable". The Batch backend's signal is therefore
+**`BATCH_TASK_INDEX`/`BATCH_TASK_COUNT`**, which Batch injects into every task
+(Batch REST reference, `TaskGroup`, checked 2026-10-15), with a
+metadata-server probe (`http://metadata.google.internal/…` answering with
+`Metadata-Flavor: Google`) as the fallback for a VM whose vars were stripped;
+`OnCloudRun` keeps its Cloud Run meaning for
 the Cloud Run backend; the Batch backend answers "am I on you?" from its own
 marker; and the **default when neither matches is "in the cloud"**
 (`true`), so the four security checks above fail *closed* on an unrecognised
 platform instead of open. That last part is the point: today the function's
 name invites "am I on Cloud Run?" while every caller reads it as "am I
 somewhere a launcher controls?", and the two are not the same question.
+
+**`FUGARO_BACKEND` is not that signal, and must not become it** — an earlier
+form of this recommendation had it as the trusted marker, and three things
+break. It is a Fugaro variable: `internal/infra/spec.go`:88 defines it and
+`platformEnv` writes it into the job definition, so a local `fugaro exec` run
+inherits whatever the owner's shell holds and would be told it is a
+launcher-controlled job — the exact confusion `refuseOldJobEnv`
+(`cli/exec.go`:263) exists to prevent, and the opposite of what `backend.go`
+:82-85 asks callers to key on. It already means something else and something
+narrower: `execPrices` (`cli/exec.go`:369-371) returns **nil prices unless the
+value is exactly `cloud-run`**, so a Batch VM carrying `FUGARO_BACKEND=cloud-batch`
+would silently stop estimating compute — §5.2's third site, and a task of its
+own, not a consequence of the marker. And detection that a *job env can set* is
+not detection: on Cloud Run the launcher controls the job definition, so the
+value is only as trustworthy as the launch path. The platform-injected signal
+above is the one the VM cannot be confused about; `FUGARO_BACKEND` stays what
+it is — the launcher's record of *which* backend it chose, for pricing and for
+`launch.json` (`internal/backend/backend.go`:17-19). **Check 57a step 12** is
+what tests the remaining gap: whether a job's own environment can override
+`BATCH_TASK_INDEX`/`BATCH_TASK_COUNT`, i.e. whether the injected signal is
+itself forgeable by whoever can submit a job.
 
 Trade-off: it touches every caller (`cli/cancel.go`, `logs.go`, `diagnose.go`,
 `run.go`, `watch*`, `exec.go`, and the runner's `SameExecution` uses) and is a
@@ -1225,8 +1252,9 @@ precheck (`cli/launch_budget.go`) is likewise unchanged except that
 `cost.compute_usd` is an estimate of the compute the run consumed (v1 §10.1:
 billed duration × (vCPU × price per vCPU-second + GiB × price per GiB-second)).
 **The earlier draft described a single estimate computed from the workflow's
-requested resources; the code computes it in two places, and neither survives
-a VM unchanged:**
+requested resources; the code computes it in two places, a third site decides
+whether there are any prices to compute it with, and none of the three
+survives a VM unchanged:**
 
 1. **In the runner, live** (`internal/runner/cost.go:55-66`): with a gateway
    up, `r.d.Prices.ComputeUSD(r.wf.Resources.CPU, MemoryGiB(
@@ -1241,8 +1269,23 @@ a VM unchanged:**
    `e.CPU`/`e.MemoryGiB` are the **execution's own limits** as the backend
    reports them.
 
-On a Batch VM both break, in three ways, not one:
+3. **And a gate in front of both** (`internal/cli/exec.go`:369-371): the CLI
+   hands the runner its `Prices` only when `FUGARO_BACKEND` is exactly
+   `cloud-run`, and `nil` otherwise. A Batch VM that does not set that
+   variable — or sets it to `cloud-batch`, which nothing reads today — gets
+   **no prices at all**: `r.d.Prices` is nil, the runner-side estimate of site
+   1 does not run, and the run's record carries no compute cost even though
+   `runview`'s site 2 could still price the execution later. Today the gate is
+   harmless (only Cloud Run sets the variable); on a second cloud backend it is
+   the first thing to fix, and it is part of C12's task rather than a
+   consequence of it: `execPrices` must ask the *backend*, not a string the
+   job env happens to carry, and the Batch answer is the Batch price table.
 
+On a Batch VM all of it breaks, in four ways, not one:
+
+- **The prices may not exist at all.** Site 3 above. This is the one that
+  fails *quiet* rather than *open*: no error, no cost, and a `runview` line
+  that falls back to the empty-region table of the next bullet.
 - **The region does not parse.** A Batch job name has six fields, so
   `ParseExecution` returns `ok == false`, `region` stays `""` and the CLI
   prices the run against whatever the empty-region table is. The fix belongs
@@ -1402,7 +1445,7 @@ cancel` against the Batch backend and whose row nevertheless said it "gates the
 build" — a check that needs the thing it gates, written as the last task of the
 plan. It is split:
 
-- **57a — the pre-build probe.** Eleven steps, **`gcloud` and a committed job
+- **57a — the pre-build probe.** Thirteen steps, **`gcloud` and a committed job
   JSON, no Fugaro change whatsoever**, runnable today against the sandbox
   project (step 1 alone uses the *existing* Cloud Run backend, for the
   baseline the 120 s budget is measured against). It is the design's **go/no-go**, and the plan
@@ -1538,7 +1581,7 @@ resources**.
 
 ```bash
 # === Check 57: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
-# step (57a-1..57a-11, 57b-1..57b-6, Restore). It is idempotent, and nothing
+# step (57a-0..57a-12, 57b-1..57b-6, Restore). It is idempotent, and nothing
 # below the three hard stops runs unless all three pass. ===
 P=fugaro-dev                 # HARD-CODED sandbox project id; never belong, and never read from gcloud
 L=us-east5                   # the sandbox installation's region
@@ -1748,6 +1791,26 @@ leaked VM of *this check* is told from a real run's.
     queue-deadline *field* — the design's queue deadline (§1.4, C8) is a
     Fugaro-side reaper action, so this step measures the state it acts on, not
     a Google knob. Cancel it and continue.
+12. **Is the platform's own signal forgeable by a job?** C12's recommendation
+    (§2.5) makes the Batch backend answer "am I on you?" from
+    `BATCH_TASK_INDEX`/`BATCH_TASK_COUNT`, which Batch injects into every task.
+    If a job's own environment can set or overwrite them, that signal is only
+    as good as the launch path — still better than a Fugaro variable, but the
+    design has to say so. Submit one `$J` job whose job-level `environment`
+    *and* whose `taskEnvironments` both set `BATCH_TASK_INDEX=99` and
+    `BATCH_TASK_COUNT=99`, with the container command
+
+    ```bash
+    bash -lc 'echo "IDX=${BATCH_TASK_INDEX:-unset} COUNT=${BATCH_TASK_COUNT:-unset}"; \
+              curl -s -m 3 -H "Metadata-Flavor: Google" \
+                http://metadata.google.internal/computeMetadata/v1/instance/id || echo "no-metadata"'
+    ```
+
+    **FACT:** the values the container saw — the injected ones (index 0 of a
+    one-task job, count 1), the job's `99`, or nothing (a var Batch strips) —
+    for each of the two places separately; and whether the metadata server
+    answered at all without an external IP, which is the fallback C12 names and
+    §1.7's Private Google Access question in one line.
 
 ### 57b. The post-build acceptance run (after the enable task)
 
@@ -1778,9 +1841,11 @@ They are the design's acceptance criteria, not its go/no-go.
    code actually wrote). **FACT:** the estimate, the bill, and the difference —
    including whether the boot-and-pull window and the one-minute minimum were
    counted (§5.2, C17).
-6. **The fail-closed marker.** On a VM, an unmarked environment (no
-   `FUGARO_BACKEND`-style marker) must make the binary refuse rather than fall
-   open: the design's §2.5 fix exists because four call sites today read
+6. **The fail-closed marker.** On a VM, an environment with no
+   **platform-injected** marker (no `BATCH_TASK_INDEX`/`BATCH_TASK_COUNT`, and a
+   metadata server that does not answer) must make the binary refuse rather than
+   fall open — a `FUGARO_*` variable must **not** be able to stand in for it
+   (§2.5, and 57a-12 for whether the injected pair can be overwritten): the design's §2.5 fix exists because four call sites today read
    `OnCloudRun` and treat "not Cloud Run" as "not in the cloud". **FACT:**
    whether the run without the marker refused.
 
@@ -1789,7 +1854,8 @@ date; the machine type and boot-image version; the median launch-to-first-line
 for 57a-1, -2 and -3; whether Docker worked and by which permission path; the
 billed cost of one run and the estimate; the final state and the survivor list
 for each 57a-8 and 57b-4 path; the IAM bindings of 57a-9; the raw log entry of
-57a-10; and whether `fugaro logs` found the Batch run's lines.
+57a-10; the injected-signal values and the metadata answer of 57a-12; and
+whether `fugaro logs` found the Batch run's lines.
 
 **Paste back:** the FACT lines, verbatim, plus any correction the run found and
 **57a's go/no-go: build the VM backend only if 57a-2 or 57a-3's median is at
@@ -1913,8 +1979,10 @@ senior reviewer before merge, not just the normal one.
 1. **The seam's name codec and cloud detection (C12).** **[review]** Move
    `ParseExecution`, `SameExecution`, `ExecutionFromEnv`, `OnCloudRun` and the
    job-binding check behind a per-backend codec, add the fail-closed "in the
-   cloud" marker, and keep Cloud Run's behaviour byte-for-byte unchanged
-   (§2.5). Merges alone; no new backend; every existing test green. Value: the
+   cloud" answer keyed on the **platform's** signal (never a `FUGARO_*`
+   variable, §2.5), and keep Cloud Run's behaviour byte-for-byte unchanged
+   (§2.5). Fixing `execPrices`' `cloud-run`-only gate (§5.2's site 3) belongs
+   here too, since it is the same question asked by a different caller. Merges alone; no new backend; every existing test green. Value: the
    seam is honest about names before a second name shape exists, and the four
    call sites that currently fail open on an unknown platform stop failing
    open.
