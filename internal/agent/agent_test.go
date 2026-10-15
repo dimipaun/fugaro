@@ -472,6 +472,14 @@ func TestBuildEnvPassesNetworkAndImageVariables(t *testing.T) {
 		"HTTPS_PROXY=http://proxy.invalid:3128", "https_proxy=http://proxy.invalid:3128", "NO_PROXY=localhost",
 		"NODE_EXTRA_CA_CERTS=/etc/ssl/extra.pem", "SSL_CERT_FILE=/etc/ssl/extra.pem", "GIT_SSL_CAINFO=/etc/ssl/extra.pem",
 		"DISABLE_AUTOUPDATER=1", "COREPACK_ENABLE_DOWNLOAD_PROMPT=0", "PLAYWRIGHT_BROWSERS_PATH=/ms-playwright",
+		// The VM backend's one addition to the allowlist since M9 (design
+		// compute-backend.md §4.3): a run whose workflow asked for Docker
+		// reaches the VM's daemon through this. It is in the runner's
+		// environment only for such a run -- the job definition writes it
+		// there (internal/backend/batch) -- so a workflow that did not ask
+		// for Docker has nothing to pass, and a run whose container was never
+		// given the socket has no daemon to point at.
+		"DOCKER_HOST=unix:///var/run/docker.sock",
 	}
 	parent := append([]string{"ANTHROPIC_API_KEY=key-123", "VERTEX_REGION_CLAUDE_4_5_SONNET=europe-west1"}, pass...)
 	env, _, err := BuildEnv(parent, EnvSpec{Auth: "api-key"})

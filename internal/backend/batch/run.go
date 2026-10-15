@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -70,12 +71,18 @@ func (b *Backend) timeout(spec backend.LaunchSpec) (time.Duration, error) {
 	return d, nil
 }
 
-// jobDefinition is the Batch job of one run. Every field here is either a
-// fact about the run or one of the design's decisions; what it does not
-// carry is Task 7's (the socket mount, the env allowlist beyond these names,
-// the resource quantities).
+// jobDefinition is the Batch job of one run: a single-use job whose one task
+// is the run, on a VM of the installation's machine type booted from the
+// preloaded image, placed in the named network and subnetwork with no
+// external IP, running as the repository's dedicated service account, with
+// the VM's Docker socket mounted when the workflow asked for Docker (design
+// §2.2, §2.3, §2.4; §8.1 Task 7).
 func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeout time.Duration) (*batch.Job, error) {
 	labels, err := Labels(spec.Repo.Slug, spec.Workflow, spec.RunID)
+	if err != nil {
+		return nil, fmt.Errorf("launching %s: %w", full, err)
+	}
+	mt, err := MachineTypeOf(b.o.MachineType)
 	if err != nil {
 		return nil, fmt.Errorf("launching %s: %w", full, err)
 	}
@@ -95,6 +102,35 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 		"FUGARO_GCP_PROJECT": b.o.GCPProject,
 		"FUGARO_REGION":      b.o.Region,
 	}
+	// The socket recipe (design §2.2, C2). Both refusals are here rather
+	// than only in New because they are about a *run*: an installation may
+	// legitimately have no gid recorded and no streaming, and only a run
+	// that asked for Docker needs either answer.
+	container := &batch.Container{ImageUri: b.o.Image}
+	if spec.Docker {
+		d := b.o.Docker
+		if d.SocketGID == 0 {
+			return nil, errors.New("this run's workflow asks for docker: true, but this installation has no Docker socket gid recorded: read it off the boot image's VM with `stat -c %g /var/run/docker.sock` (design §2.2). Launching without it would mount a socket the run cannot open, so nothing was created")
+		}
+		if b.o.ImageStreaming {
+			return nil, errors.New("this run's workflow asks for docker: true, and image streaming is on: batch ignores a runnable's options field when streaming an image, so the container would come up without --group-add and could not open the socket (measured 2026-10-15; design §1.1, §1.2), so nothing was created")
+		}
+		// The host's socket, at the same path inside the container, plus the
+		// group join. The gid is numeric: --group-add resolves a name inside
+		// the container's own /etc/group, where the image has no docker
+		// group. --user 0 is not used and --privileged changes nothing for
+		// this process (both measured, §2.2); runAsNonRoot stays unset below.
+		p := d.path()
+		container.Volumes = []string{p + ":" + p}
+		container.Options = fmt.Sprintf("--group-add %d", d.SocketGID)
+		// The agent's own docker commands read this rather than a compiled-in
+		// default path (design §2.2, §4.3); it is allowlisted on the agent's
+		// side only for a run that has a socket.
+		vars["DOCKER_HOST"] = "unix://" + p
+	}
+	// The other fast start, and the one a Docker run cannot have: with
+	// streaming on Batch disregards container.options (design §1.2, §2.2).
+	container.EnableImageStreaming = b.o.ImageStreaming
 	// The task runs for the workflow's total time plus the slack every other
 	// backend adds, so a run whose own watchdog is late is still bounded by
 	// Batch. maxRunDuration bounds a task once it is running; nothing bounds
@@ -114,9 +150,32 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 				// Project-wide SSH keys must not open a VM that runs a
 				// Docker-capable agent (design §3.5).
 				BlockProjectSshKeys: true,
+				// The VM: the installation's machine type, from the
+				// preloaded image (design §1.2/§1.3). The image is what
+				// makes a Docker run's cold start fit the budget, and the
+				// disk size is what a disk created from it is grown to.
+				Policy: &batch.InstancePolicy{
+					MachineType: b.o.MachineType,
+					BootDisk: &batch.Disk{
+						Image:  b.o.BootImage,
+						SizeGb: b.o.BootDiskGB,
+					},
+				},
 			}},
 			// Never the default Compute Engine account: New refuses it.
 			ServiceAccount: &batch.ServiceAccount{Email: b.o.ServiceAccount},
+			// The VMs carry no external IP (design §1.7, C7). Both names are
+			// sent because Check 57a measured that Batch refuses
+			// noExternalIpAddress unless the network and the subnetwork are
+			// both named explicitly; the fields without the pair would be a
+			// VM with an external IP.
+			Network: &batch.NetworkPolicy{
+				NetworkInterfaces: []*batch.NetworkInterface{{
+					Network:             b.o.Network,
+					Subnetwork:          b.o.Subnetwork,
+					NoExternalIpAddress: true,
+				}},
+			},
 		},
 		// Without this the job's output never reaches Cloud Logging, and a
 		// run's logs land in the project's default logs (design §1.5, C9).
@@ -133,9 +192,15 @@ func (b *Backend) jobDefinition(spec backend.LaunchSpec, id, full string, timeou
 				ForceSendFields: []string{"MaxRetryCount"},
 				MaxRunDuration:  fmt.Sprintf("%ds", int((timeout+backend.TaskTimeoutSlack)/time.Second)),
 				Environment:     env,
-				Runnables: []*batch.Runnable{{
-					Container: &batch.Container{ImageUri: b.o.Image},
-				}},
+				// The task asks for the machine type's own quantities, not
+				// the workflow's resources: a VM is whatever its machine
+				// type is (design §5.2), and a computeResource larger than
+				// the VM would leave the task QUEUED forever.
+				ComputeResource: &batch.ComputeResource{
+					CpuMilli:  int64(mt.VCPU) * 1000,
+					MemoryMib: int64(mt.MemoryGiB) * 1024,
+				},
+				Runnables: []*batch.Runnable{{Container: container}},
 			},
 		}},
 	}, nil
@@ -184,11 +249,11 @@ func (b *Backend) toExecution(j *batch.Job) (backend.Execution, error) {
 	// name (backend.Execution.Region): a caller that prices this execution
 	// uses it rather than parsing a Batch name's fields.
 	x.Region = b.o.Region
-	// MachineType stays "": the job definition's machine type is Task 7's
-	// (§8.1), so this build has no verified source for it, and a guessed one
-	// would price a run at the wrong type's figures. Until it is set, a
-	// Batch execution prices at no machine type -- "compute not estimated",
-	// which is the truth -- rather than at Cloud Run's.
+	// MachineType is the backend's own configuration, which is what the job
+	// definition sent: it is what makes this a VM-backed execution, priced
+	// from the machine type's quantities rather than Cloud Run's job limits
+	// (backend.Execution.MachineType, design §5.2).
+	x.MachineType = b.o.MachineType
 	x.LogURL = b.logURL(id, j.Uid, x.Created)
 	x.Run = runEnv(j)
 	return x, nil

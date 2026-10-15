@@ -22,6 +22,14 @@ var baseEnv = []string{
 	"NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO",
 	// Set by the base images (images/*/Dockerfile) or a repository Dockerfile.
 	"DISABLE_AUTOUPDATER", "COREPACK_ENABLE_DOWNLOAD_PROMPT", "COREPACK_HOME", "PLAYWRIGHT_BROWSERS_PATH",
+	// DOCKER_HOST is where a workflow's `docker: true` reaches its daemon: a
+	// Batch run's job env carries unix:///var/run/docker.sock, the socket the
+	// VM mounts into the container (design compute-backend.md §2.2, §4.3).
+	// The runner's environment is the job's, so a run without docker: true
+	// has no DOCKER_HOST to pass through; an operator-set one in a runner
+	// started by hand is the operator's own shell, which is what every other
+	// allowlisted variable is too.
+	"DOCKER_HOST",
 }
 
 // vertexEnv is passed through with auth: vertex. CLOUD_ML_REGION and

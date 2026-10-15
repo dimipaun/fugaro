@@ -36,6 +36,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	batch "google.golang.org/api/batch/v1"
@@ -99,6 +100,53 @@ type Timeouts interface {
 	LongestTaskTimeout() (time.Duration, error)
 }
 
+// HostSocketPath is where Container-Optimized OS keeps its Docker socket,
+// on the VM and therefore inside the container the mount puts it in (design
+// §2.2). It is the default for Docker.SocketPath.
+const HostSocketPath = "/var/run/docker.sock"
+
+// defaultBootDiskGB is the boot disk a run's VM gets when Options.BootDiskGB
+// is unset: the 50 GB Check 57a's jobs carried (design §7.2), which a disk
+// created from the preloaded image is grown to.
+const defaultBootDiskGB = 50
+
+// defaultMachineType is the machine type a run's VM gets when
+// Options.MachineType is unset: the e2-standard-4 the design names as the
+// likely default and the one Check 57a measured on (design §1.3, §7.2).
+const defaultMachineType = "e2-standard-4"
+
+// Docker is the VM's Docker daemon as a run reaches it: the socket, mounted
+// from the host (design §2.2, C2). It is the installation's, not the run's --
+// the gid belongs to the boot image, so every run of an installation reads the
+// same one -- and a run asks for it with LaunchSpec.Docker.
+type Docker struct {
+	// SocketGID is the gid of the socket *on the VM*, read there rather than
+	// assumed: Check 57a step 6 read `stat -c %g /var/run/docker.sock` off the
+	// boot image it used and got 412, and a gid written into this package
+	// would be a guess about whatever boot image an installation runs. Task 6
+	// reads it off the VM it builds the preloaded image on and records it;
+	// nothing here carries a literal one. It must be a real gid, because the
+	// recipe is `--group-add <gid>`: the name form (`--group-add docker`) is
+	// resolved inside the container's own /etc/group, where the base image has
+	// no docker group, so it fails before the daemon is ever reached.
+	//
+	// Zero means this installation has no socket recorded: a run that asked
+	// for Docker is then refused (ErrRejected) rather than launched with a
+	// socket it cannot open.
+	SocketGID int
+	// SocketPath is the socket's path on the VM and, through the mount, in the
+	// container. Empty means HostSocketPath.
+	SocketPath string
+}
+
+// path is the socket's path, with the default filled in.
+func (d Docker) path() string {
+	if d.SocketPath == "" {
+		return HostSocketPath
+	}
+	return d.SocketPath
+}
+
 // Options configure a Backend.
 type Options struct {
 	GCPProject, Region string
@@ -123,6 +171,47 @@ type Options struct {
 	// so the values never enter the job definition, which anyone with read
 	// access to the job can read (design §1.6, C10).
 	Secrets map[string]string
+	// MachineType is the Compute Engine machine type a run's VM is (design
+	// §1.3, §4.3). It sets the job's computeResource and the machine type
+	// Execution reports, and its quantities are what the run's compute cost
+	// is priced from (design §5.2) -- so it must be one the price table
+	// carries (prices.go): a type whose figures are unknown can neither be
+	// priced nor reported honestly. Empty means e2-standard-4, the design's
+	// likely default.
+	MachineType string
+	// BootImage is the boot disk's image: the preloaded image Task 6 builds
+	// per base version, with fugaro-base already in its Docker data root
+	// (design §1.2, C4/C19). Required, and not an optimisation: a run that
+	// pulled the image instead cold-starts in about 145 s against the
+	// budget's 133 s ceiling, and the other fast path, image streaming,
+	// makes Batch ignore the options field a socket needs (§1.1/§1.2) -- so
+	// a Docker run's only fast start is this image.
+	BootImage string
+	// BootDiskGB is the VM's boot disk size in GB (Batch's Disk.sizeGb).
+	// Zero means defaultBootDiskGB, the 50 Check 57a's jobs carried.
+	BootDiskGB int64
+	// Network and Subnetwork are the interface a run's VMs are placed in, as
+	// full resource names: projects/<p>/global/networks/<n> and
+	// projects/<p>/regions/<region>/subnetworks/<s>. Both are required and
+	// both are sent, because a run's VMs carry no external IP (§1.7, C7) and
+	// Check 57a measured that Batch refuses such a job unless both are named
+	// explicitly -- noExternalIpAddress is not expressible with the field
+	// alone. The network may live in another project (a shared VPC); the
+	// subnetwork must be in the backend's own region, because that is where
+	// the job's VMs are.
+	Network, Subnetwork string
+	// Docker is how a run that asked for Docker reaches the VM's daemon
+	// (design §2.2). Its zero value means this installation has no socket
+	// recorded, and a run that asks for one is refused.
+	Docker Docker
+	// ImageStreaming turns on Batch's image streaming for a run's runnable
+	// (design §1.2). It is off by default and is refused for a Docker run,
+	// because with streaming on Batch disregards the runnable's options
+	// field -- measured on 2026-10-15 with `--group-add` and streaming
+	// together, one variant, one job -- so the socket recipe could not be
+	// passed and the container would come up unable to open the socket §2.2
+	// mounts. A run that needs no socket may stream.
+	ImageStreaming bool
 	// Timeouts is where the workflow timeouts come from. Required.
 	Timeouts  Timeouts
 	Endpoints Endpoints
@@ -171,6 +260,9 @@ func New(ctx context.Context, o Options) (*Backend, error) {
 	if err := checkServiceAccount(o.ServiceAccount); err != nil {
 		return nil, err
 	}
+	if err := checkVM(&o); err != nil {
+		return nil, err
+	}
 	if o.Warn == nil {
 		o.Warn = func(string) {}
 	}
@@ -202,6 +294,84 @@ func checkServiceAccount(email string) error {
 		return errors.New("the Batch backend needs the dedicated service account's email: left unset, Batch runs the job's VMs as the default Compute Engine service account, which is Editor on the project")
 	case defaultComputeServiceAccountRE.MatchString(email):
 		return fmt.Errorf("the Batch backend must not run a job's VMs as the default Compute Engine service account (%s): use the repository's dedicated account", email)
+	}
+	return nil
+}
+
+// checkVM validates and completes the VM half of a job definition (design
+// §1.2, §1.3, §1.7, §2.2), and fills the defaults in. Every field it refuses
+// would otherwise be a run that cold-starts too slowly, is placed nowhere, or
+// asks for a socket it cannot open -- each of which fails after the launcher
+// has told the operator the run started.
+func checkVM(o *Options) error {
+	if o.MachineType == "" {
+		o.MachineType = defaultMachineType
+	}
+	if _, err := MachineTypeOf(o.MachineType); err != nil {
+		return fmt.Errorf("the Batch backend's machine type: %w", err)
+	}
+	if o.BootImage == "" {
+		return errors.New("the Batch backend needs the preloaded boot image a run's VM boots from: a run that pulled the image instead cold-starts over the tier's budget, and image streaming cannot carry the Docker socket this backend exists for (design §1.2, C4)")
+	}
+	switch {
+	case o.BootDiskGB < 0:
+		return fmt.Errorf("the Batch backend's boot disk size %d is negative", o.BootDiskGB)
+	case o.BootDiskGB == 0:
+		o.BootDiskGB = defaultBootDiskGB
+	}
+	return checkNetwork(o)
+}
+
+// networkNameRE is the network part of a network interface: a global network's
+// full resource name. Anything shorter (a bare "default") is what gcloud fills
+// in from its ambient configuration, and a job sent with one is a job placed in
+// whatever project the caller's shell happened to name (the trap Check 57's
+// guard block is written around).
+var networkNameRE = regexp.MustCompile(`^projects/([a-z][a-z0-9-]{4,28}[a-z0-9])/global/networks/([a-z0-9-]{1,63})$`)
+
+// subnetworkNameRE is the subnetwork part of a network interface. The second
+// capture is its region, which checkNetwork compares with the backend's own:
+// the region is the one field of the name this backend acts on, so it parses
+// it out rather than trusting the caller to have matched them.
+var subnetworkNameRE = regexp.MustCompile(`^projects/([a-z][a-z0-9-]{4,28}[a-z0-9])/regions/([a-z][a-z0-9-]{0,62})/subnetworks/([a-z0-9-]{1,63})$`)
+
+// checkNetwork refuses a network interface Batch cannot place a VM in. Both
+// names are required: Check 57a measured that Batch refuses
+// noExternalIpAddress unless both the network and the subnetwork are named
+// explicitly (design §1.7), and a job with neither would take the project's
+// defaults and an external IP, which C7 has the run without.
+func checkNetwork(o *Options) error {
+	if o.Network == "" || o.Subnetwork == "" {
+		return errors.New("the Batch backend needs a network and a subnetwork for a run's VMs, both as full resource names (projects/<p>/global/networks/<n>, projects/<p>/regions/<r>/subnetworks/<s>): Batch refuses a no-external-IP job unless both are named explicitly (design §1.7)")
+	}
+	if !networkNameRE.MatchString(o.Network) {
+		return fmt.Errorf("the Batch backend's network %q is not a network's full resource name (projects/<p>/global/networks/<n>)", o.Network)
+	}
+	m := subnetworkNameRE.FindStringSubmatch(o.Subnetwork)
+	if m == nil {
+		return fmt.Errorf("the Batch backend's subnetwork %q is not a subnetwork's full resource name (projects/<p>/regions/<r>/subnetworks/<s>)", o.Subnetwork)
+	}
+	// A shared VPC's network may live in another project, but the subnetwork
+	// is where the VMs are: a job whose subnetwork is in a second region is a
+	// job whose VMs Batch places somewhere this backend's List, reaper and
+	// logs do not look.
+	if m[2] != o.Region {
+		return fmt.Errorf("the Batch backend's subnetwork %s is in region %s, not in the backend's own %s", o.Subnetwork, m[2], o.Region)
+	}
+	return checkDocker(o.Docker)
+}
+
+// checkDocker refuses a socket configuration that could not work. A gid is
+// read off the VM (design §2.2), so a negative one is a value no VM answered,
+// and a path is a path.
+func checkDocker(d Docker) error {
+	switch {
+	case d.SocketGID < 0:
+		return fmt.Errorf("the Docker socket's gid %d is not a gid: read it off the VM with `stat -c %%g %s` (design §2.2)", d.SocketGID, d.path())
+	case d.SocketGID == 0 && d.SocketPath != "":
+		return errors.New("the Docker socket has a path but no gid: without the gid a run that asks for Docker is refused, and a configured path alone cannot open the socket")
+	case !strings.HasPrefix(d.path(), "/"):
+		return fmt.Errorf("the Docker socket's path %q is not an absolute path on the VM", d.path())
 	}
 	return nil
 }

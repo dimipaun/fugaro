@@ -70,6 +70,15 @@ type LaunchSpec struct {
 	// Timeout is the workflow's total time for this run; zero means the job's own.
 	// The backend adds TaskTimeoutSlack to it.
 	Timeout time.Duration
+	// Docker is what the workflow asked for: `docker: true` (design
+	// compute-backend.md §4.2, C16), a real Docker daemon for the run's own
+	// containers. It is the workflow's ask and not a capability, so a backend
+	// that cannot give a run a daemon must refuse the launch rather than run
+	// the job without one: the agent's `docker` commands would fail one by
+	// one, in the middle of a stage, with no daemon to talk to. On Batch it
+	// mounts the VM's socket and puts DOCKER_HOST in the job env (§2.2,
+	// §4.3); Cloud Run has no daemon at all and refuses it.
+	Docker bool
 }
 
 // ExecID is a run's identity, parsed from its resource name by the

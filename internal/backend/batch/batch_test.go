@@ -28,7 +28,29 @@ const (
 	// testSecret is a Secret Manager secret *name*, never a value: the job
 	// definition carries names only.
 	testSecret = "projects/fake-project/secrets/fugaro-acme-app-anthropic-api-key"
+
+	// The VM the installation's runs get (Task 7): a machine type the price
+	// table carries, the preloaded boot image, and the two network names a
+	// run's VMs are placed in.
+	testMachineType = "e2-standard-4"
+	testBootImage   = "projects/fake-project/global/images/fugaro-base-0-7-5"
+
+	// testSocketGID is the gid the installation recorded after reading it off
+	// the VM's socket (`stat -c %g /var/run/docker.sock`, Check 57a step 6).
+	// It is deliberately NOT 412, which is what that one boot image answered
+	// on 2026-10-15: the backend must carry the gid it was given and never one
+	// of its own, so a test that passed by matching a hard-coded 412 would be
+	// testing the wrong thing.
+	testSocketGID = 998
 )
+
+// testNetwork is the network interface pair a run's VMs get. Both are named
+// because Batch refuses the no-external-IP field without both (design §1.7,
+// measured by Check 57a).
+func testNetwork() (network, subnetwork string) {
+	return "projects/" + testProject + "/global/networks/default",
+		"projects/" + testProject + "/regions/" + testRegion + "/subnetworks/default"
+}
 
 // testTimeouts is the config/policy read the backend asks for the workflow
 // timeouts (design §2.3). Task 8 wires the real one.
@@ -51,14 +73,23 @@ func (t testTimeouts) LongestTaskTimeout() (time.Duration, error) { return t.lon
 func testOptions(t *testing.T) Options {
 	t.Helper()
 	bf, lf := gcpfake.NewBatch(t), gcpfake.NewLogging(t)
+	network, subnetwork := testNetwork()
 	return Options{
 		GCPProject:     testProject,
 		Region:         testRegion,
 		FugaroProject:  "acme",
 		Image:          testImage,
 		ServiceAccount: testSA,
-		Timeouts:       testTimeouts{task: 30 * time.Minute, longest: time.Hour},
-		Endpoints:      Endpoints{Batch: bf.URL + "/", Logging: lf.URL + "/", NoAuth: true},
+		MachineType:    testMachineType,
+		BootImage:      testBootImage,
+		Network:        network,
+		Subnetwork:     subnetwork,
+		// The installation's socket: the gid the VM reported, and the path
+		// Batch mounts it at (design §2.2). A run asks for it with
+		// LaunchSpec.Docker.
+		Docker:    Docker{SocketGID: testSocketGID},
+		Timeouts:  testTimeouts{task: 30 * time.Minute, longest: time.Hour},
+		Endpoints: Endpoints{Batch: bf.URL + "/", Logging: lf.URL + "/", NoAuth: true},
 	}
 }
 
@@ -959,11 +990,21 @@ func TestExecutionRewritesTheProjectNumber(t *testing.T) {
 	if x.Region != testRegion {
 		t.Errorf("Execution region = %q, want the backend's own %q", x.Region, testRegion)
 	}
-	// And the machine type is left unset: the job definition's machine type
-	// is Task 7's, so a Batch execution prices at no machine type --
-	// "compute not estimated" -- rather than at a guessed one.
-	if x.MachineType != "" {
-		t.Errorf("Execution machine type = %q, want none (the type is Task 7's)", x.MachineType)
+	// The machine type is the installation's own (Task 7): without it a Batch
+	// execution would price at no machine type -- "compute not estimated" --
+	// and, since the VM's boot window and its one-minute floor are keyed on
+	// it, at no billed window either (design §5.2).
+	if x.MachineType != testMachineType {
+		t.Errorf("Execution machine type = %q, want %q", x.MachineType, testMachineType)
+	}
+	// The job's SCHEDULED time is still not read (design §2.3, §9), so the
+	// window falls back to the create time and says so -- a window that
+	// includes Batch's queue time, which errs high rather than low.
+	if x.Scheduled != (time.Time{}) {
+		t.Errorf("Execution scheduled = %v, want the zero time (Task 7 does not read it)", x.Scheduled)
+	}
+	if !strings.Contains(x.WindowNote(), "errs high") {
+		t.Errorf("WindowNote = %q, want the create-time fallback named", x.WindowNote())
 	}
 	// The number form is the same run, not a second one.
 	if x2, err := b.Execution(ctx, strings.Replace(want, "/projects/"+testProject+"/", "/projects/999/", 1)); err != nil || x2.Name != want {
@@ -1307,6 +1348,227 @@ func TestCodecIsTheBatchCodec(t *testing.T) {
 	}
 	if got := c.Format(id); got != ref.Name {
 		t.Fatalf("Codec().Format = %q, want %q", got, ref.Name)
+	}
+}
+
+// --- Task 7: the job definition, the socket and the VM --------------------
+
+// dockerSpec is the run every Task 7 test launches: the conformance suite's
+// run, with the workflow's `docker: true` ask (design §4.2, C16).
+func dockerSpec() backend.LaunchSpec {
+	s := spec()
+	s.Docker = true
+	return s
+}
+
+// TestJobDefinitionIsAVMWithTheDesignsNetwork is Task 7's job JSON, field by
+// field: a VM of the installation's machine type, booted from the preloaded
+// image (the only fast-start path a Docker run has, C4), placed in both the
+// named network and subnetwork with no external IP (C7 -- and both names are
+// required, which Check 57a measured), and asking for that machine type's
+// quantities.
+func TestJobDefinitionIsAVMWithTheDesignsNetwork(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, nil)
+	if _, err := b.Launch(ctx, spec()); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	call := bf.Creates()[0]
+
+	policy := object(t, call.Job, "allocationPolicy", "instances", "0", "policy")
+	// The machine type is the installation's, and the boot disk is the
+	// preloaded image: a run that pulled fugaro-base instead would spend about
+	// 145 s on a cold start against the budget's 133 s ceiling, and image
+	// streaming -- the other fast path -- cannot carry a socket (design §1.2).
+	if policy["machineType"] != testMachineType {
+		t.Errorf("machineType = %v, want %s", policy["machineType"], testMachineType)
+	}
+	boot := object(t, call.Job, "allocationPolicy", "instances", "0", "policy", "bootDisk")
+	if boot["image"] != testBootImage {
+		t.Errorf("bootDisk.image = %v, want the preloaded image %s", boot["image"], testBootImage)
+	}
+	if fmt.Sprint(boot["sizeGb"]) != "50" {
+		t.Errorf("bootDisk.sizeGb = %v, want 50 (the default Check 57a's jobs carried)", boot["sizeGb"])
+	}
+
+	// Both names, always, and the run's VMs carry no external IP: Batch
+	// refuses noExternalIpAddress without the pair, and the pair without the
+	// field is an external IP, which C7 has the run without.
+	network, subnetwork := testNetwork()
+	ni := object(t, call.Job, "allocationPolicy", "network", "networkInterfaces", "0")
+	if ni["network"] != network || ni["subnetwork"] != subnetwork {
+		t.Errorf("networkInterfaces[0] = network %v, subnetwork %v; want %s, %s", ni["network"], ni["subnetwork"], network, subnetwork)
+	}
+	if ni["noExternalIpAddress"] != true {
+		t.Errorf("noExternalIpAddress = %v, want true (C7)", ni["noExternalIpAddress"])
+	}
+
+	// The task asks for the machine type's quantities, not the workflow's
+	// resources: a VM is whatever the machine type is (design §5.2), and a
+	// task whose computeResource outgrew its VM would sit QUEUED.
+	cr := object(t, call.Job, "taskGroups", "0", "taskSpec", "computeResource")
+	if fmt.Sprint(cr["cpuMilli"]) != "4000" || fmt.Sprint(cr["memoryMib"]) != "16384" {
+		t.Errorf("computeResource = %v, want e2-standard-4's 4000m/16384MiB", cr)
+	}
+}
+
+// TestDockerRunMountsTheSocketAndJoinsItsGroup is the socket recipe C2 takes,
+// stated as the four things that make it work: the host's socket is mounted
+// into the container, the container joins the socket's group by the gid the
+// installation read off the VM (never a hard-coded one, and never the group's
+// name -- there is no docker group inside the image), the agent's environment
+// names it, and Batch's runAsNonRoot stays unset, because only that branch was
+// measured and setting it can move the uid the recipe works for (design §2.2).
+func TestDockerRunMountsTheSocketAndJoinsItsGroup(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, nil)
+	if _, err := b.Launch(ctx, dockerSpec()); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	container := object(t, bf.Creates()[0].Job, "taskGroups", "0", "taskSpec", "runnables", "0", "container")
+	if got := container["volumes"]; !equalJSON(got, []any{"/var/run/docker.sock:/var/run/docker.sock"}) {
+		t.Errorf("container.volumes = %v, want the socket bind mount", got)
+	}
+	if got := container["options"]; got != fmt.Sprintf("--group-add %d", testSocketGID) {
+		t.Errorf("container.options = %v, want \"--group-add %d\" (the gid read off the VM)", got, testSocketGID)
+	}
+	// --privileged is not the recipe (it changes nothing for a uid-1000
+	// process), and --user 0 is the fallback, not the choice: the uid must
+	// stay the image's own fugaro user.
+	if got := fmt.Sprint(container["options"]); strings.Contains(got, "--user") || strings.Contains(got, "--privileged") {
+		t.Errorf("container.options = %v, want the group join and nothing else", got)
+	}
+	// Streaming would drop the options field altogether (measured, 57a-6), so
+	// a Docker run must not turn it on.
+	if on, ok := container["enableImageStreaming"]; ok && on != false {
+		t.Errorf("container.enableImageStreaming = %v, want it off for a Docker run", on)
+	}
+	// The gid is numeric: --group-add docker would be resolved inside the
+	// container's own /etc/group, where no docker group exists (design §2.2).
+	if id, err := strconv.Atoi(strings.TrimPrefix(fmt.Sprint(container["options"]), "--group-add ")); err != nil || id != testSocketGID {
+		t.Errorf("the group is not the numeric gid: %v", container["options"])
+	}
+
+	vars := object(t, bf.Creates()[0].Job, "taskGroups", "0", "taskSpec", "environment", "variables")
+	if vars["DOCKER_HOST"] != "unix:///var/run/docker.sock" {
+		t.Errorf("DOCKER_HOST = %v, want the mounted socket's path", vars["DOCKER_HOST"])
+	}
+
+	// runAsNonRoot must stay unset: only that branch was measured, and Batch
+	// documents the true branch as running the runnables as an OS Login
+	// non-root user, which could move the container's uid (design §2.2, §9).
+	tg := object(t, bf.Creates()[0].Job, "taskGroups", "0")
+	if v, ok := tg["runAsNonRoot"]; ok {
+		t.Errorf("taskGroups[0].runAsNonRoot = %v, want the field absent", v)
+	}
+}
+
+// TestARunWithoutDockerGetsNoSocket scopes the socket to the workflows that
+// asked for it (design §4.2, §4.4's last check): a run whose workflow did not
+// ask for Docker gets no mount, no group and no DOCKER_HOST, while still
+// being a VM of the same shape.
+func TestARunWithoutDockerGetsNoSocket(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, nil)
+	if _, err := b.Launch(ctx, spec()); err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	job := bf.Creates()[0].Job
+	container := object(t, job, "taskGroups", "0", "taskSpec", "runnables", "0", "container")
+	if got, ok := container["volumes"]; ok {
+		t.Errorf("container.volumes = %v, want none without docker: true", got)
+	}
+	if got, ok := container["options"]; ok {
+		t.Errorf("container.options = %v, want none without docker: true", got)
+	}
+	vars := object(t, job, "taskGroups", "0", "taskSpec", "environment", "variables")
+	if got, ok := vars["DOCKER_HOST"]; ok {
+		t.Errorf("DOCKER_HOST = %v, want none without docker: true", got)
+	}
+	// The VM itself is unchanged: every run on this backend is a VM.
+	if got := object(t, job, "allocationPolicy", "instances", "0", "policy")["machineType"]; got != testMachineType {
+		t.Errorf("machineType = %v, want %s", got, testMachineType)
+	}
+}
+
+// TestLaunchRefusesDockerWithoutASocketGID: the gid is read off the VM, so an
+// installation that has not read it has nothing to join, and a run that asked
+// for Docker is refused before anything is created rather than launched with a
+// socket it cannot open (or with a guessed 412 that belongs to somebody else's
+// boot image).
+func TestLaunchRefusesDockerWithoutASocketGID(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, func(o *Options) { o.Docker = Docker{} })
+	_, err := b.Launch(ctx, dockerSpec())
+	if !errors.Is(err, backend.ErrRejected) {
+		t.Fatalf("Launch(docker without a gid) = %v, want ErrRejected", err)
+	}
+	if len(bf.Creates()) != 0 {
+		t.Fatalf("a refused launch still created %d job(s)", len(bf.Creates()))
+	}
+	// A run that did not ask for Docker is unaffected: the socket is what it
+	// needs the gid for.
+	if _, err := b.Launch(ctx, spec()); err != nil {
+		t.Fatalf("Launch(no docker): %v", err)
+	}
+}
+
+// TestLaunchRefusesDockerWithImageStreaming: streaming makes Batch ignore the
+// container's options field -- measured on 2026-10-15, and the fact C2 and C4
+// rest on -- so the two are mutually exclusive and the combination is refused
+// rather than launched with a socket that silently is not there (design §1.1,
+// §1.2, §8.1 Task 7).
+func TestLaunchRefusesDockerWithImageStreaming(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, func(o *Options) { o.ImageStreaming = true })
+	_, err := b.Launch(ctx, dockerSpec())
+	if !errors.Is(err, backend.ErrRejected) {
+		t.Fatalf("Launch(docker + streaming) = %v, want ErrRejected", err)
+	}
+	if len(bf.Creates()) != 0 {
+		t.Fatalf("a refused launch still created %d job(s)", len(bf.Creates()))
+	}
+	// A run without Docker may stream: it has no socket to lose.
+	if _, err := b.Launch(ctx, spec()); err != nil {
+		t.Fatalf("Launch(no docker, streaming): %v", err)
+	}
+	if got, ok := object(t, bf.Creates()[0].Job, "taskGroups", "0", "taskSpec", "runnables", "0", "container")["enableImageStreaming"]; !ok || got != true {
+		t.Errorf("enableImageStreaming = %v (present: %v), want true for a streamed run", got, ok)
+	}
+}
+
+// TestNewRefusesAnIncompleteVMConfiguration: every field Task 7's job JSON
+// needs is required rather than defaulted into something wrong -- a machine
+// type the price table cannot price, a boot image nobody built (the preload is
+// C4's decision, not an optimisation), a network the job cannot be placed in,
+// and a socket gid that is not one.
+func TestNewRefusesAnIncompleteVMConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		tweak func(*Options)
+	}{
+		{"an unknown machine type", func(o *Options) { o.MachineType = "n2-standard-96" }},
+		{"no boot image", func(o *Options) { o.BootImage = "" }},
+		{"no network", func(o *Options) { o.Network = "" }},
+		{"no subnetwork", func(o *Options) { o.Subnetwork = "" }},
+		{"a network that is not a network name", func(o *Options) { o.Network = "default" }},
+		{"a subnetwork in another region", func(o *Options) {
+			o.Subnetwork = "projects/" + testProject + "/regions/elsewhere/subnetworks/default"
+		}},
+		{"a socket gid that is not one", func(o *Options) { o.Docker = Docker{SocketGID: -1} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := testOptions(t)
+			tc.tweak(&o)
+			if _, err := New(context.Background(), o); err == nil {
+				t.Fatalf("New accepted %s", tc.name)
+			}
+		})
+	}
+	// The untweaked configuration is accepted, so each refusal above is about
+	// its own field.
+	if _, err := New(context.Background(), testOptions(t)); err != nil {
+		t.Fatalf("New(refused a complete configuration): %v", err)
 	}
 }
 
