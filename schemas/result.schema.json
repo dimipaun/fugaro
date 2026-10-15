@@ -81,6 +81,7 @@
         "model_usd": { "type": "number", "minimum": 0 },
         "compute_usd": { "type": "number", "minimum": 0, "description": "Meaningful only when compute_estimated is true; otherwise 0." },
         "compute_estimated": { "type": "boolean", "description": "True only when the backend's prices and the workflow's resources were known." },
+        "compute_source": { "type": "string", "description": "The price table compute_usd was priced from, in the table's own words, so a reader can tell an estimate priced from the Compute Engine VM table from one priced with Cloud Run's jobs list price. Absent for Cloud Run's list price (and for every record written before the field existed), which is why it is not required." },
         "total_usd": { "type": "number", "minimum": 0, "description": "Billed dollars only: excludes the model figure when model_basis is subscription." },
         "estimate": { "type": "boolean" },
         "model_basis": { "enum": ["api-list", "subscription"] },

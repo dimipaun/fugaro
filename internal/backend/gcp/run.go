@@ -388,7 +388,7 @@ func (b *Backend) toExecution(e *run.GoogleCloudRunV2Execution) (backend.Executi
 	if err != nil {
 		return backend.Execution{}, fmt.Errorf("Cloud Run returned an execution: %w", err)
 	}
-	x := backend.Execution{Name: id.String(), Job: id.Job, State: stateOf(e), LogURL: e.LogUri}
+	x := backend.Execution{Name: id.String(), Job: id.Job, State: stateOf(e), Region: id.Region, LogURL: e.LogUri}
 	// Anything but the name degrades: a bad time is zero, and bad limits
 	// make the cost unknown (0) rather than failing every listing.
 	for _, t := range []struct {

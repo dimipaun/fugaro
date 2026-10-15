@@ -124,7 +124,7 @@ var openQueueBucket = func(ctx context.Context, lc *localcfg.Config) (*blobx.Buc
 // noComputePrices is runview.Join's price book for queued-run detection,
 // which never reads an execution (so no compute cost is ever priced): the
 // cost in the row it builds is discarded.
-func noComputePrices(string) backend.Prices { return backend.Prices{} }
+func noComputePrices(*backend.Execution) backend.Prices { return backend.Prices{} }
 
 // launchedAt is when a run entered its claimed or launched state: the
 // claim's or launch.json's own timestamp, else the run id's mint time.

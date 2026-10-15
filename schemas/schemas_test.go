@@ -222,6 +222,10 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	at := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
 	deadline, finished := at.Add(time.Hour), at.Add(10*time.Minute)
 	cost := runstore.NewCost(4.12, 0.38, runstore.BasisAPIList)
+	// A VM-backed run's estimate carries the price table it was priced from,
+	// which a record has to be able to store (design compute-backend.md
+	// §5.2, C17).
+	cost.ComputeSource = "Compute Engine VM list price, e2-standard family, us-central1 (2026-10-15, UNVERIFIED); boot disk and Cloud NAT are not in this figure (design C17)"
 	rec := runstore.Record{
 		Version: 1, RunID: "20260927-100000-abcd", Repo: "acme/app", Workflow: "web",
 		Execution: "projects/p/locations/r/jobs/j/executions/e",
@@ -256,6 +260,20 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	}
 	if err := sch.Validate(bad); err == nil {
 		t.Fatal(`schema accepts "status": "done"`)
+	}
+	// The cost object is closed, so a compute_source that is not a string
+	// (what a hand-edited result.json could carry) is rejected rather than
+	// stored.
+	lit := []byte(`"compute_source":"` + cost.ComputeSource + `"`)
+	if !bytes.Contains(data, lit) {
+		t.Fatalf("fixture lacks the literal this test replaces: %s", data)
+	}
+	bad, err = jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, lit, []byte(`"compute_source":5`), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(bad); err == nil {
+		t.Fatal("schema accepts a numeric compute_source")
 	}
 }
 
