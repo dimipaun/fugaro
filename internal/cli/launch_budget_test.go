@@ -230,6 +230,25 @@ func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) 
 	})
 }
 
+// Carried review item (b), the CLI half: the decoder reports the top-level
+// keys nobody reads, the runner logs them and goes on (an image cannot be
+// upgraded mid-run), and the CLI — which the operator can upgrade — refuses
+// them, because a misspelt key is a policy the owner believes he set.
+func TestLaunchRefusesAPolicyKeyThisFugaroDoesNotKnow(t *testing.T) {
+	f := newOffModeBudget(t, "")
+	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
+	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":1,"allow_repo":["acme/*"]}`))
+	_, _, err := runBudget(t)
+	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "allow_repo") {
+		t.Fatalf("err = %v, want a refusal naming the unknown key", err)
+	}
+	if launchedAny(f) {
+		t.Fatal("the run was launched with a policy this Fugaro does not understand")
+	}
+}
+
 func TestMintedTokenNotInJobsRunRequest(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
 	var env map[string]string
