@@ -1945,8 +1945,11 @@ var retireTranscriptRE = []struct {
 	// on every machine.
 	{regexp.MustCompile(`warning: couldn't check origin/main's fugaro\.yaml[^\n]*`),
 		"warning: couldn't check origin/main's fugaro.yaml for project: aurora: <the fetch did not reach it>; runs read it from there"},
-	{regexp.MustCompile(`/tmp/go-build[0-9]+/b[0-9]+/cli\.test`), "fugaro"},
-	{regexp.MustCompile(regexp.QuoteMeta(os.TempDir()) + `/[^ "'\n)\]]*`), "<tmp>"},
+	// The test binary's path and the temp dir differ per machine: Linux's is
+	// /tmp, macOS's is /var/folders/.../T/ (a trailing slash that must not
+	// double up), so neither is spelled out.
+	{regexp.MustCompile(`[^ \n"']*/go-build[0-9]+/b[0-9]+/cli\.test`), "fugaro"},
+	{regexp.MustCompile(regexp.QuoteMeta(strings.TrimSuffix(os.TempDir(), "/")) + `/[^ "'\n)\]]*`), "<tmp>"},
 	{regexp.MustCompile(`127\.0\.0\.1:[0-9]+`), "127.0.0.1:<port>"},
 	{regexp.MustCompile(`[0-9]{8}T[0-9]{6}Z`), "<timestamp>"},
 }
@@ -1993,7 +1996,7 @@ func TestInitRepoRetireTranscriptGolden(t *testing.T) {
 	if string(want) != got {
 		t.Fatalf("the retirement transcript changed (go test -update-retire to accept):\n%s\nwant:\n%s", got, want)
 	}
-	for _, bad := range []string{"lifecycle.prevent_destroy", "/tmp/go-build", os.TempDir()} {
+	for _, bad := range []string{"lifecycle.prevent_destroy", "/go-build", strings.TrimSuffix(os.TempDir(), "/") + "/"} {
 		if strings.Contains(got, bad) {
 			t.Errorf("the golden carries %q", bad)
 		}
