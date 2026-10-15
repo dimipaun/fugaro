@@ -69,6 +69,18 @@ const cloneSince = "0.7.5"
 // checklist line for cloneSince in that commit too.
 const cloneShipped = false
 
+// policySince is the first fugaro release whose launcher and runner read the
+// project's policy (the release phase 1 of the project-centric model ships
+// in, R4), and the release named by the launch gate checkPolicySkew below: a
+// policy whose version is above what this binary understands is a policy
+// written by a newer Fugaro, and this release is what the message quotes
+// beside it. Like cloneSince and unlike the policy's own integer `version`
+// or the rules marker's RulesVersion, it is a *release*, and it is bumped by
+// the release that ships the model and by nothing else: docs/release.md's
+// ("Before you tag") checklist verifies it equals that release, the same way
+// it does for recipesSince, layeredSince and namedTokensSince.
+const policySince = "0.8.0"
+
 // recipesV07Since is the first fugaro release whose runner knows the 0.7.0
 // recipe format: use_when, mode, roles.coder, a check step and
 // review.bounce; a parser before it refuses every one of those keys as

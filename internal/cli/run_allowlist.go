@@ -1,0 +1,98 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/task"
+)
+
+// The launcher's pre-launch read of the project's policy (plan task 1.5
+// step 4). Two things are checked here, both before anything is created:
+//
+//   - the repository is admitted: the slug this launch stores its run under
+//     and the repository the task names must agree, and a published policy
+//     must have the repository on its allow_repos;
+//   - the policy is not newer than this binary (the policySince gate, plan
+//     finding 16/B5).
+//
+// Both are *advisory* and the docs say so (design §4.2/§4.3): a launcher can
+// call jobs.run directly, so the run's own admission check
+// (internal/runner's admissionCheck) is the one that counts. What this adds
+// is a refusal while the operator is still there to read it, before a job
+// exists to fail: the same message, from the same policy node, one step
+// earlier.
+//
+// The read is the operator's own (projectPolicyRead), which is what makes the
+// gate the launcher's and not the runner's (R2-8(a)): the runner on a
+// credential-less run has no way to read the node at all.
+
+// launchPolicyGates reads the project's policy and refuses a launch the run
+// it starts would refuse. Called only on the path that creates an execution
+// (finishLaunch's prior == nil block), before the task is stored and before
+// the launch claim: a refused launch leaves nothing behind at all — no task,
+// no token, no claim and no execution.
+func launchPolicyGates(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) error {
+	p, found, err := projectPolicyRead(ctx, env.lc)
+	var ve *projectpolicy.VersionError
+	if errors.As(err, &ve) {
+		// This is the one read whose version skew is worded here rather than
+		// by policyReadErr: the gate is the owner of the release a policy may
+		// name (plan task 1.5 step 4). The rules-version marker is
+		// deliberately not part of it: a marker absent or below
+		// RulesVersion is the legacy path (found = false, no policy read, no
+		// refusal), and an unmarked installation has no policy for this gate
+		// to compare (plan task 1.3 step 1, P3).
+		return policySkewRefusal(ve)
+	}
+	if err != nil {
+		return policyReadErr(err)
+	}
+	// The provider kind is derived from the pair the run itself trusts — the
+	// slug the run is stored under and the repository the task names — never
+	// from the local config's own provider, which is what chose the slug: a
+	// repository configured with a kind no Cloud Run job's slug can be
+	// computed with ("fake", say) is one the run refuses, so the launch is
+	// refused here instead.
+	kind, ok := runner.ProviderForSlug(slug, spec.Repo)
+	if !ok {
+		return userErr("the slug this launch stores its run under (%s) is not the slug of %s under any git provider kind (%s): the run this launch would start refuses it for that reason, so the launch is refused before any execution exists",
+			slug, spec.Repo, strings.Join(runner.ProviderKinds(), ", "))
+	}
+	if !found {
+		// No policy published here (no marker, or a marker and no node): there
+		// is no allow-list to check, and reading this as an empty one would
+		// refuse every launch of an installation that has published nothing.
+		return nil
+	}
+	return allowListRefusal(p, kind, spec.Repo)
+}
+
+// allowListRefusal is the launcher's twin of the run's allow-list refusal: the
+// same refusal, from the same policy, worded by projectpolicy.NotAdmitted.
+// provider must be the kind derived from the slug (launchPolicyGates'), never
+// a value this launcher chose.
+func allowListRefusal(p *projectpolicy.Policy, provider, repo string) error {
+	canonical, err := projectpolicy.Canonical(provider, repo)
+	if err != nil {
+		return userErr("the repository this launch is for cannot be named in the project's allow-list: %v; the run refuses it too, so the launch is refused before any execution exists", err)
+	}
+	if projectpolicy.AdmitRepo(p.AllowRepos, canonical) {
+		return nil
+	}
+	return userErr("%s. The launch stops before any execution exists", projectpolicy.NotAdmitted(p.AllowRepos, canonical))
+}
+
+// policySkewRefusal is the policySince gate's message (plan task 1.5 step 4):
+// the sentence the CLI already prints for a policy written by a newer Fugaro,
+// the release the policy model ships in quoted beside the policy's own
+// version, and the fix. launchPolicyGates refuses a launch with it before the
+// execution is created.
+func policySkewRefusal(ve *projectpolicy.VersionError) error {
+	return userErr("%s (the policy model is fugaro %s's): upgrade Fugaro (fugaro upgrade) to launch a run with this policy, or publish a policy of version %d",
+		fmt.Sprintf(projectpolicy.Skew, ve.Found, ve.Understood), policySince, ve.Understood)
+}

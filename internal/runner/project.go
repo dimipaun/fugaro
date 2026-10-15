@@ -88,6 +88,22 @@ func isJobProviderKind(kind string) bool {
 	return false
 }
 
+// ProviderForSlug is providerForSlug for the launcher's advisory twin
+// (internal/cli's pre-launch check, plan task 1.5 step 4): the launch refuses
+// a repository the run itself would refuse, and it must derive the provider
+// kind exactly as the run does — from the slug and the repository, never from
+// anything a launcher can set. One implementation, so the two cannot disagree
+// about which repository a job is for.
+func ProviderForSlug(slug, repo string) (kind string, ok bool) {
+	return providerForSlug(slug, repo)
+}
+
+// ProviderKinds is the kinds ProviderForSlug derives from, for a refusal that
+// names them (the same list the run's own messages name).
+func ProviderKinds() []string {
+	return append([]string(nil), jobProviderKinds...)
+}
+
 // providerForSlug is the provider kind whose Slug of repo is slug. One job
 // serves one provider, and the slug is a hash of (kind, canonical repo)
 // (internal/task/task.go:187), so exactly one kind can match. It is derived,
@@ -185,14 +201,10 @@ func (r *run) admissionCheck(ctx context.Context) error {
 		return fmt.Errorf("the repository this run was launched for cannot be named in the project's allow-list: %w", err)
 	}
 	if !projectpolicy.AdmitRepo(p.AllowRepos, canonical) {
-		what := fmt.Sprintf("%q", p.AllowRepos)
-		if len(p.AllowRepos) == 0 {
-			// A published policy with an empty allow-list is deny-all (design
-			// §4.3): the owner published a policy, and it admits nothing.
-			what = "empty, and a published policy with an empty allow-list admits no repository at all"
-		}
-		return fmt.Errorf("the project's policy does not admit %s: allow_repos is %s. The run stops before any lease exists; the project's owner adds the repository with 'fugaro project repos add %s'",
-			canonical, what, canonical)
+		// The refusal itself is projectpolicy's, so the launcher's advisory
+		// twin (internal/cli) refuses a launch with the same message; the
+		// sentence about what stops is this check's own.
+		return fmt.Errorf("%s. The run stops before any lease exists", projectpolicy.NotAdmitted(p.AllowRepos, canonical))
 	}
 	return nil
 }
