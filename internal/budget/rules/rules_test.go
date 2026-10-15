@@ -212,6 +212,58 @@ func TestWritesOnlyAtNumericLeaves(t *testing.T) {
 	})
 }
 
+// TestPerRunOK pins the lease's per-run comparison (design D6): one boolean
+// reading all three sides, so that a side that is not set does not bound the
+// run -- the global cap is the fallback of a repository that has none, the
+// default is the fallback of a global one -- and the both-unset branch is
+// false, so the rules deny (fail closed).
+func TestPerRunOK(t *testing.T) {
+	ok, err := perRunOK(4) // the depth of runs/$slug/$run/reserved
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ok, ": false)") {
+		t.Errorf("no false branch: with no per-run cap anywhere the rules must deny: %s", ok)
+	}
+	if !strings.Contains(ok, ": true)") {
+		t.Errorf("no true branch: a repository with a cap of its own and no global one must pass: %s", ok)
+	}
+	for _, side := range []string{
+		"root.child('config/caps/repos').child($slug).child('perRunMicros')",
+		"root.child('config/caps/defaults/repoPerRunMicros')",
+		"root.child('config/caps/global/perRunMicros')",
+	} {
+		if !strings.Contains(ok, side) {
+			t.Errorf("the comparison does not read %s: %s", side, ok)
+		}
+	}
+	if strings.Count(ok, "(") != strings.Count(ok, ")") || strings.Count(ok, "'")%2 != 0 {
+		t.Errorf("unbalanced parentheses or quotes: %s", ok)
+	}
+	if m := macroWord.FindString(ok); m != "" {
+		t.Errorf("the expansion still holds the macro %q: %s", m, ok)
+	}
+	twice, err := expand(ok, 4)
+	if err != nil || twice != ok {
+		t.Errorf("expanding the expansion changes it (%v):\n%s\n%s", err, ok, twice)
+	}
+
+	// It is the whole enforce branch of the lease's reserved validator: the
+	// rules compare the per-run caps nowhere else.
+	var validate string
+	walk(rulesTree(t), nil, func(path []string, attrs map[string]any) {
+		if strings.Join(path, "/") == "runs/$slug/$run/reserved" {
+			validate, _ = attrs[".validate"].(string)
+		}
+	})
+	if validate == "" {
+		t.Fatal("the lease's reserved validator was not found")
+	}
+	if !strings.Contains(validate, "(!(root.child('config/mode').val() == 'enforce') || "+ok+")") {
+		t.Errorf("the reserved validator's enforce branch is not perRunOK:\n%s", validate)
+	}
+}
+
 // TestGoMirrorOfTheDayKeys: the expression the rules use for TODAY is the same
 // arithmetic as budget.Day, checked with a Go mirror around the UTC midnight
 // (the emulator has no settable clock, so the boundary cannot be exercised

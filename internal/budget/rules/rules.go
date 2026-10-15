@@ -307,12 +307,10 @@ func wordMacro(m string, depth int) (string, error) {
 		return "(root.child('config/mode').val() == 'enforce')", nil
 	case "KILLS_OFF":
 		return "(root.child('config/kill/global/on').val() != true && root.child('config/kill/repos').child($slug).child('on').val() != true)", nil
-	case "REPOPERRUN":
-		return fallback("perRunMicros", "repoPerRunMicros"), nil
 	case "REPODAILY":
 		return fallback("dailyMicros", "repoDailyMicros"), nil
-	case "GLOBALPERRUN":
-		return "root.child('config/caps/global/perRunMicros').val()", nil
+	case "PERRUNOK":
+		return perRunOK(depth)
 	case "GLOBALDAILY":
 		return "root.child('config/caps/global/dailyMicros').val()", nil
 	case "RUNDELTA":
@@ -343,4 +341,36 @@ func wordMacro(m string, depth int) (string, error) {
 func fallback(own, def string) string {
 	snap := "root.child('config/caps/repos').child($slug).child('" + own + "')"
 	return "(" + snap + ".exists() ? " + snap + ".val() : root.child('config/caps/defaults/" + def + "').val())"
+}
+
+// perRunOK is the lease's per-run cap comparison, the rules' half of
+// Caps.PerRun (design D6): the effective cap is the smaller of the
+// repository's own cap -- its node, else the default -- and the project's
+// global one, and a side that is not set does not bound the run. With no
+// per-run cap set anywhere the expression is false and the rules deny the
+// lease (fail closed: a missing node reads null and every comparison against
+// it is false).
+//
+// It is one boolean, not two comparisons, because a comparison against an
+// unset side must not deny on its own: the global cap is the fallback of a
+// repository that has none, and the default is the fallback of a global one.
+// The rules language has no coalesce, so both fallbacks are the ternary
+// fallback uses.
+func perRunOK(depth int) (string, error) {
+	released, err := pathMacro("N", "runs/$slug/$run/released", depth)
+	if err != nil {
+		return "", err
+	}
+	// The run's lifetime outstanding after this write: the new reserved less
+	// what it released. Written out rather than as the NEW macro, so that
+	// expansion stays a single pass (a macro's expansion is never re-scanned).
+	delta := "(newData.val() - " + released + ")"
+	own := "root.child('config/caps/repos').child($slug).child('perRunMicros')"
+	def := "root.child('config/caps/defaults/repoPerRunMicros')"
+	global := "root.child('config/caps/global/perRunMicros')"
+	within := func(snap string) string { return "(" + delta + " <= " + snap + ".val())" }
+	return "(" + own + ".exists() || " + def + ".exists()" +
+		" ? (" + own + ".exists() ? " + within(own) + " : " + within(def) + ")" +
+		" && (" + global + ".exists() ? " + within(global) + " : true)" +
+		" : (" + global + ".exists() ? " + within(global) + " : false))", nil
 }
