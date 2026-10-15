@@ -316,24 +316,41 @@ func TestDecodeChecksAProviderSecretIsASecretName(t *testing.T) {
 // same values are refused here rather than decoded and enforced.
 func TestDecodeValidatesProviderEntriesLikeTheCarrier(t *testing.T) {
 	for name, entry := range map[string]string{
-		"no kind":             `{"base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
-		"an unknown kind":     `{"kind": "openai-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
-		"an http base URL":    `{"kind": "anthropic-compat", "base_url": "http://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
-		"no base URL":         `{"kind": "anthropic-compat", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
-		"a mistyped auth":     `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "Authorization", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
-		"no auth":             `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
-		"no models":           `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key"}`,
-		"an empty data list":  `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": []}`,
-		"a null data list":    `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": null}`,
-		"a bad data entry":    `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["acme"]}`,
-		"an absurd route fee": `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "route_fee_pct": 51}`,
-		"an alias pattern":    `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["claude-*"]}`,
-		"a misspelt policy":   `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "price_policy": "cheaper"}`,
+		"no kind":            `{"base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
+		"an unknown kind":    `{"kind": "openai-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
+		"an http base URL":   `{"kind": "anthropic-compat", "base_url": "http://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
+		"no base URL":        `{"kind": "anthropic-compat", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
+		"a mistyped auth":    `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "Authorization", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
+		"no auth":            `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
+		"no models":          `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key"}`,
+		"an empty data list": `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": []}`,
+		"a null data list":   `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": null}`,
+		// encoding/json matches a member to its field case-insensitively, so
+		// the two spellings below used to decode into the very fields the
+		// documented ones name — while the checks that read the raw document
+		// (validProviders' allow_data_to lookup) and the carrier's own
+		// fugaro.yaml rules (ModelProvider.UnmarshalYAML, exact names) do not
+		// see them. The null one published "every repository".
+		"a case-variant null data list": `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "Allow_Data_To": null}`,
+		"a case-variant member name":    `{"Kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
+		"a bad data entry":              `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["acme"]}`,
+		"an absurd route fee":           `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "route_fee_pct": 51}`,
+		"an alias pattern":              `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["claude-*"]}`,
+		"a misspelt policy":             `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "price_policy": "cheaper"}`,
 	} {
 		p, found, err := Decode(providerPolicy(entry))
 		if err == nil || p != nil || !found {
 			t.Errorf("%s: Decode(%s) = (%v, %v, %v), want a refusal on an existing node", name, entry, p, found, err)
 		}
+	}
+	// A case-variant member is refused by its spelling, and the refusal names
+	// the one to write: the point of the row above is that this spelling is a
+	// spelling of allow_data_to, and an operator who reads "unknown field
+	// Allow_Data_To" would be told the wrong thing about a key this Fugaro
+	// knows.
+	if _, _, err := Decode(providerPolicy(`{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "Allow_Data_To": null}`)); err == nil ||
+		!strings.Contains(err.Error(), "Allow_Data_To") || !strings.Contains(err.Error(), "allow_data_to") {
+		t.Errorf("the case-variant null list = %v, want a refusal naming both the spelling written and the one to write", err)
 	}
 	// Two providers may not claim the same model: the run would route to one of
 	// them arbitrarily, and the charge would be whichever one it was.
@@ -426,17 +443,18 @@ func TestDecodeRequireZDRIsDefaultTrue(t *testing.T) {
 // model listed twice is a mistake that would otherwise be enforced silently.
 func TestDecodeRefusesABadAllowedModel(t *testing.T) {
 	for name, list := range map[string]string{
-		"an alias":                   `["sonnet"]`,
-		"the wildcard":               `["claude-*"]`,
-		"a -latest pointer":          `["deepseek/deepseek-v4-flash-latest"]`,
-		"a :variant":                 `["deepseek/deepseek-v4-flash:free"]`,
-		"a variant under the prefix": `["anthropic/claude-sonnet-5.5:free"]`,
-		"empty entry":                `[""]`,
-		"whitespace":                 `["claude sonnet"]`,
-		"listed twice":               `["claude-sonnet-5-5", "claude-sonnet-5-5"]`,
-		"too long":                   `["` + strings.Repeat("m", 101) + `"]`,
-		"null entry":                 `[null]`,
-		"a number entry":             `[5]`,
+		"an alias":                 `["sonnet"]`,
+		"the wildcard":             `["claude-*"]`,
+		"a -latest pointer":        `["deepseek/deepseek-v4-flash-latest"]`,
+		"a :variant":               `["deepseek/deepseek-v4-flash:free"]`,
+		"an anthropic wildcard":    `["anthropic/*"]`,
+		"an anthropic claude glob": `["anthropic/claude-*"]`,
+		"empty entry":              `[""]`,
+		"whitespace":               `["claude sonnet"]`,
+		"listed twice":             `["claude-sonnet-5-5", "claude-sonnet-5-5"]`,
+		"too long":                 `["` + strings.Repeat("m", 101) + `"]`,
+		"null entry":               `[null]`,
+		"a number entry":           `[5]`,
 	} {
 		p, found, err := Decode([]byte(`{"version": 1, "budget": {"mode": "enforce", "allowed_models": ` + list + `}}`))
 		if err == nil || p != nil || !found {
@@ -447,14 +465,11 @@ func TestDecodeRefusesABadAllowedModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("two explicit model IDs must be valid: %v", err)
 	}
-	// And the one vendor-prefixed spelling that is a model ID: an explicit
-	// "anthropic/<id>" is the shape a provider route may claim
-	// (docs/design/mixed-credentials.md §4, config.CheckClaudeClaim), so
-	// pricing no longer calls it an alias. The list is judged here as it is
-	// written; whether a route claims the ID is a run-time question, and the
-	// node's own providers block is where the switch answers it.
+	// An explicit anthropic/<id> is the claim form (P4: a price or an allowed
+	// model is not a permission): it is ACCEPTED where it is written and
+	// enables nothing; only the wildcard and glob spellings above are refused.
 	if _, _, err := Decode([]byte(`{"version": 1, "budget": {"mode": "enforce", "allowed_models": ["anthropic/claude-sonnet-5.5"]}}`)); err != nil {
-		t.Fatalf("a claimed-shape anthropic/<id> in allowed_models was refused: %v", err)
+		t.Fatalf("an explicit anthropic/<id> allowed model must be accepted (a price is not a permission): %v", err)
 	}
 	if len(p.Budget.AllowedModels) != 2 {
 		t.Errorf("AllowedModels = %v, want both", p.Budget.AllowedModels)
@@ -548,26 +563,23 @@ func TestDecodeModelPricesAgreeWithTheCatalog(t *testing.T) {
 
 func TestDecodeRefusesABadPrice(t *testing.T) {
 	for name, raw := range map[string]string{
-		"input_per_m missing":                 `{"version": 1, "model_prices": {"claude-sonnet-5-5": {"output_per_m": 15}}}`,
-		"a camelCase rate":                    `{"version": 1, "model_prices": {"claude-sonnet-5-5": {"input_per_m": 3, "output_per_m": 15, "cacheRead": 0.1}}}`,
-		"a vendor prefix that is not a claim": `{"version": 1, "model_prices": {"Anthropic/claude-sonnet-5.5": {"input_per_m": 3, "output_per_m": 15}}}`,
-		"a negative rate":                     `{"version": 1, "model_prices": {"claude-sonnet-5-5": {"input_per_m": -3, "output_per_m": 15}}}`,
-		"a bare number":                       `{"version": 1, "model_prices": 5}`,
-		"a list":                              `{"version": 1, "model_prices": []}`,
-		"a long_context without rates":        `{"version": 1, "model_prices": {"claude-sonnet-5-5": {"input_per_m": 3, "output_per_m": 15, "long_context": {"above_input_tokens": 200000}}}}`,
+		"input_per_m missing":          `{"version": 1, "model_prices": {"claude-sonnet-5-5": {"output_per_m": 15}}}`,
+		"a camelCase rate":             `{"version": 1, "model_prices": {"claude-sonnet-5-5": {"input_per_m": 3, "output_per_m": 15, "cacheRead": 0.1}}}`,
+		"an anthropic glob key":        `{"version": 1, "model_prices": {"anthropic/claude-*": {"input_per_m": 3, "output_per_m": 15}}}`,
+		"a negative rate":              `{"version": 1, "model_prices": {"claude-sonnet-5-5": {"input_per_m": -3, "output_per_m": 15}}}`,
+		"a bare number":                `{"version": 1, "model_prices": 5}`,
+		"a list":                       `{"version": 1, "model_prices": []}`,
+		"a long_context without rates": `{"version": 1, "model_prices": {"claude-sonnet-5-5": {"input_per_m": 3, "output_per_m": 15, "long_context": {"above_input_tokens": 200000}}}}`,
 	} {
 		p, found, err := Decode([]byte(raw))
 		if err == nil || p != nil || !found {
 			t.Errorf("%s: Decode(%s) = (%v, %v, %v), want an error", name, raw, p, found, err)
 		}
 	}
-	// The claimed shape is a price key now: an explicit "anthropic/<id>" is a
-	// model ID (Task 4's IsAlias relaxation), which is what lets a claimed
-	// Claude route be priced before the catalogue carries its row (P11). The
-	// claim itself is not this block's business — a route the node does not
-	// carry is refused by the routing check, not by the price table.
-	if _, _, err := Decode([]byte(`{"version": 1, "model_prices": {"anthropic/claude-sonnet-5.5": {"input_per_m": 3, "output_per_m": 15}}}`)); err != nil {
-		t.Fatalf("a claimed-shape anthropic/<id> price key was refused: %v", err)
+	// An explicit anthropic/<id> key is a PRICE for the claim form (P4: a price
+	// is not a permission): accepted where it is written, enabling nothing.
+	if p, _, err := Decode([]byte(`{"version": 1, "model_prices": {"anthropic/claude-sonnet-5.5": {"input_per_m": 3, "output_per_m": 15}}}`)); err != nil || len(p.Prices) != 1 {
+		t.Errorf("an explicit anthropic/<id> price key must be accepted: err = %v", err)
 	}
 	// An empty block and an absent one are both "no overrides".
 	for _, raw := range []string{`{"version": 1}`, `{"version": 1, "model_prices": {}}`, `{"version": 1, "model_prices": null}`} {

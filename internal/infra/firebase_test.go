@@ -360,7 +360,7 @@ func TestDBDeploysAndThenChangesNothing(t *testing.T) {
 		t.Errorf("config/limits = %v, want the marker beside maxReserveMicros", lim)
 	}
 	want, _ := rules.Generate()
-	if !sameJSON(f.Rules(), want) {
+	if !SameJSON(f.Rules(), want) {
 		t.Error("the deployed rules are not the generated ones")
 	}
 	d2 := NewDB(d.c, "aurora", "proj-1234", "")

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/firestore"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/report"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -166,6 +168,13 @@ func runReport(cmd *cobra.Command, o *reportOptions) error {
 	}
 	if why != "" {
 		return reportDegraded(ctx, cmd, o, lc, dim, m, why, from, to)
+	}
+	// The history path knows a day's compute is an estimate (the records
+	// count the runs it was estimated for) but not the price table each came
+	// from: the daily rollup stores the figure, not its source (design C17),
+	// so the source is named no further than that here.
+	if daysWithCompute(recs) {
+		m.Warnings = append(m.Warnings, reportComputeEstimateNote)
 	}
 	return reportEmit(cmd, o, report.Build(recs, dim), m)
 }
@@ -382,19 +391,83 @@ func reportDegraded(ctx context.Context, cmd *cobra.Command, o *reportOptions, l
 	if dim == report.ByModel {
 		m.Warnings = append(m.Warnings, "run records do not carry a per-model split: --by model shows nothing here")
 	}
+	// Only the runs the report shows: a source line for a day outside --since
+	// and --until would name a table no figure in this report came from.
+	rows = slices.DeleteFunc(rows, func(r runview.Row) bool {
+		day := budget.Day(r.Created.UTC())
+		return day < from || day > to
+	})
 	var recs []report.Rec
 	for _, r := range rows {
-		day := budget.Day(r.Created.UTC())
-		if day < from || day > to {
-			continue
-		}
 		recs = append(recs, report.Rec{DayRecord: recordOfRun(r)})
+	}
+	// The compute figures above are estimates, and these rows carry the
+	// price table each came from. The report has no per-row column for it
+	// (design compute-backend.md §5.2, C17: the figure's shape is Cloud
+	// Run's, so the report and the history need no new column), so the
+	// source is said once here -- which is where a reader learns that a VM
+	// backend's estimate leaves the VM's boot disk and Cloud NAT out.
+	for _, src := range computeSources(rows) {
+		m.Warnings = append(m.Warnings, "compute_usd is an estimate priced from "+src)
 	}
 	rep := report.Build(recs, dim)
 	rep.NoHours = true
 	return reportEmit(cmd, o, rep, m)
 }
 
+// computeSources is the distinct price-table source lines the rows' compute
+// estimates were priced from, sorted, for the report's own source line. Rows
+// priced with a table that does not name itself (Cloud Run's list price, and
+// every run recorded before this existed) contribute nothing, so the report
+// of an installation that never ran on a VM reads exactly as it did.
+func computeSources(rows []runview.Row) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, r := range rows {
+		if src := r.Cost.ComputeSource; src != "" && !seen[src] {
+			seen[src] = true
+			out = append(out, src)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// reportComputeEstimateNote is the one line the history-backed report says
+// about its COMPUTE column. The history keeps the figure, not the table it
+// came from, so a reader of an installation that ran on a VM would otherwise
+// never learn that the column leaves the VM's boot disk and Cloud NAT out
+// (design compute-backend.md §5.2, C17) -- the run-record path below says the
+// same thing with the table it can name.
+const reportComputeEstimateNote = "COMPUTE $ is an estimate, priced from each run's own price table: a VM run's figure leaves the VM's boot disk and Cloud NAT out"
+
+// daysWithCompute reports whether any record in the report priced compute for
+// a run. An installation that never estimated compute gets no note, so its
+// report reads exactly as it did before this existed.
+func daysWithCompute(recs []report.Rec) bool {
+	for _, r := range recs {
+		if r.ComputeEstimatedRuns > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// costLines is the cost block diagnose prints: the cost line, and under it
+// the compute estimate's own source line when it has one (a VM run's price
+// table, design compute-backend.md §5.2). One line per line, since oneLine
+// would turn the break between them into a "?" and the two lines are not one
+// sentence.
+func costLines(c runstore.Cost) []string {
+	var out []string
+	for _, ln := range strings.Split(strings.ReplaceAll(runner.CostLine(c), "**", ""), "\n") {
+		out = append(out, oneLine(ln))
+	}
+	return out
+}
+
+// microsOfUSD converts a USD figure to the history's micro-dollars, treating
+// a figure that is not a positive number as zero.
 func microsOfUSD(v float64) budget.Micros {
 	if math.IsNaN(v) || math.IsInf(v, 0) || v <= 0 {
 		return 0

@@ -161,12 +161,14 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 	// enabled version, so resolved is true exactly when the project copy is
 	// the one that resolves; fix names the command that would change that.
 	resolveProject := func(logical string) (resolved bool, fix string, err error) {
-		fix = fmt.Sprintf("fugaro secrets set %s --repo %s", logical, spec.Name)
+		// The command that would store a copy, from the one place that
+		// decides where it belongs (SecretFix): --project-wide when this
+		// repository may use a project copy, --repo otherwise.
+		fix = SecretFix(spec, logical, "fugaro", func(s string) string { return s })
 		cand, isCandidate := spec.ProjectSecretCandidates[logical]
 		if !isCandidate {
 			return false, fix, nil
 		}
-		fix = fmt.Sprintf("fugaro secrets set %s --project-wide", logical)
 		if !ex.ProjectSecretsOK[logical] {
 			return false, fix, nil
 		}

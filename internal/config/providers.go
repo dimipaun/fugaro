@@ -359,12 +359,26 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 			}
 		}
 	}
+	ps = append(ps, providerOverlapProblems(providers)...)
+	return ps
+}
+
+// providerOverlapProblems reports every pair of model patterns that a model
+// could match in two providers: a model must belong to one provider
+// (ProviderFor returns the first match by name), so the overlap is refused.
+// It is the rule ValidateModelProviders applies to the local config and
+// ApplyClaudeClaims applies to the config a project layer's claims merged
+// into, so a claim that collides is refused at config time rather than by a
+// gateway that cannot start.
+func providerOverlapProblems(providers map[string]ModelProvider) []Problem {
+	var ps []Problem
+	names := sortedKeys(providers)
 	for i, a := range names {
 		for _, b := range names[i+1:] {
 			for _, pa := range providers[a].Models {
 				for _, pb := range providers[b].Models {
 					if PatternsOverlap(pa, pb) {
-						add("providers."+b+".models", "%q overlaps %q of provider %s: a model must belong to one provider", pb, pa, a)
+						ps = append(ps, Problem{Path: "providers." + b + ".models", Message: fmt.Sprintf("%q overlaps %q of provider %s: a model must belong to one provider", pb, pa, a)})
 					}
 				}
 			}
@@ -615,11 +629,12 @@ func CheckProviderPolicy(a Agent, allowed []string, repo string, providers map[s
 // shape) is told the truth about itself instead of being called "not a Claude
 // model": it is a Claude model, Claude models go direct to Anthropic, and
 // only the owner can change that, by naming that exact ID in a route's models
-// in the project config. Every other model keeps the original wording, whose
-// substring "no provider serves it" three tests read.
+// in the project config, or in the project layer's claude_models for a route
+// the project config already defines. Every other model keeps the original
+// wording, whose substring "no provider serves it" three tests read.
 func unclaimedModelRefusal(model string) string {
 	if CheckClaudeClaim(model) == "" {
-		return fmt.Sprintf("%s is a Claude model: Claude models go direct to Anthropic and no provider serves it. Only the owner can change that, by naming that exact ID in a route's models in the project config (never in fugaro.yaml)", CodeSpan(model))
+		return fmt.Sprintf("%s is a Claude model: Claude models go direct to Anthropic and no provider serves it. Only the owner can change that, by naming that exact ID in a route's models in the project config (or in the project layer's claude_models, for a route the project config already defines), never in fugaro.yaml", CodeSpan(model))
 	}
 	return fmt.Sprintf("%s is not a Claude model and no provider serves it: providers are set by the owner in the project config, never in fugaro.yaml", CodeSpan(model))
 }
