@@ -510,11 +510,18 @@ func TestOffNeverTouchesBackend(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "off", "")
 	// The bucket holds no token, which is what the launcher leaves for a
 	// repository with no published policy and the mode off (internal/cli's
-	// mint decision: a token is minted when the mode is on, or when a policy
-	// exists). A mode-off job that *does* carry a token is a project that has
-	// published a policy, and its run reads that policy
-	// (TestRunnerReadsPolicyWhenTheNodeExists); the launcher's answer for the
-	// repository this test describes is this empty bucket.
+	// mint decision: a token is minted whenever a policy exists, whatever the
+	// mode). The bucket's state is what makes this run the legacy one: this
+	// fixture mints a token for every run, and with the object left in place a
+	// mode-off job reads the project's policy like any other run does
+	// (TestRunnerReadsPolicyWhenTheNodeExists), so it is removed here.
+	//
+	// That is also why the assertion this test used to end on is gone (L1 of
+	// the PR #379 review): it checked that the object was absent after the
+	// test itself had removed it, and the form before that — the run must NOT
+	// have taken the token — describes a runner that does not read the policy
+	// at all. What remains is what the run must not do: read the database,
+	// exchange anything, or record a budget.
 	if err := token.DeleteObject(context.Background(), b.bucket, bkSlug, runID); err != nil {
 		t.Fatal(err)
 	}
@@ -528,9 +535,6 @@ func TestOffNeverTouchesBackend(t *testing.T) {
 	}
 	if b.itk.Exchanges() != 0 {
 		t.Fatal("a run with its budget off exchanged a budget token")
-	}
-	if !b.tokenObjectGone() {
-		t.Fatal("a run with its budget off left a budget token behind")
 	}
 	if len(b.agent.calls) != 2 {
 		t.Fatalf("%d stages ran", len(b.agent.calls))

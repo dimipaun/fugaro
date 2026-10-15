@@ -23,9 +23,11 @@ import (
 )
 
 // The job environment variables that point the runner at the project's
-// budget backend, set by fugaro init --firebase on every workflow job whose
-// budget is not off (plan R10). Without RTDBURLEnv the runner is M9a's: a
-// static cap in memory and no shared state.
+// budget backend, set by fugaro init --firebase on every workflow job
+// whenever the installation has a backend, whatever the job's mode (D11: the
+// mode is policy now, and a run needs the URL and the key to read it — only
+// the grace stays mode-gated, plan R10). Without RTDBURLEnv the runner is
+// M9a's: a static cap in memory and no shared state.
 const (
 	RTDBURLEnv        = "FUGARO_RTDB_URL"
 	FirebaseAPIKeyEnv = "FUGARO_FIREBASE_API_KEY"

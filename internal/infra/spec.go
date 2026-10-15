@@ -54,10 +54,12 @@ const (
 	// workflow job whatever the mode.
 	MaxRunTokensEnv  = runner.MaxRunTokensEnv
 	AllowedModelsEnv = runner.AllowedModelsEnv
-	// The budget backend (M9b R10), on every job whose budget is not off:
-	// the project's Realtime Database, the restricted web API key (not a
-	// secret) that signs a run's token in, and how long the backend may be
-	// unreachable before the run halts (set only when the config sets it).
+	// The budget backend (M9b R10): the project's Realtime Database and the
+	// restricted web API key (not a secret) that signs a run's token in go to
+	// every job whenever the installation has them, whatever the mode (D11,
+	// plan task 1.4 step 1); how long the backend may be unreachable before
+	// the run halts is set only when the config sets one, and only when the
+	// mode is not off.
 	RTDBURLEnv        = runner.RTDBURLEnv
 	FirebaseAPIKeyEnv = runner.FirebaseAPIKeyEnv
 	BudgetGraceEnv    = runner.BudgetGraceEnv

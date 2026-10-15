@@ -1239,7 +1239,7 @@ const backendBlock = `  firebase_project: aurora-fp
 
 func backendEnv(env map[string]string) map[string]string {
 	got := map[string]string{}
-	for _, k := range []string{RTDBURLEnv, FirebaseAPIKeyEnv, BudgetGraceEnv} {
+	for _, k := range []string{RTDBURLEnv, FirebaseAPIKeyEnv, BudgetGraceEnv, runner.BudgetTokenEnv} {
 		if v, ok := env[k]; ok {
 			got[k] = v
 		}
@@ -1247,10 +1247,11 @@ func backendEnv(env map[string]string) map[string]string {
 	return got
 }
 
-// Every workflow job whose budget is not off gets the backend's address and
-// its web key (R10), and the grace when the config sets one. The signer and
-// the Firebase project's ID stay out: a job never mints.
-func TestInitRepoPassesRTDBEnv(t *testing.T) {
+// Every workflow job gets the backend's address and its web key (R10)
+// whenever the installation has them, whatever the mode (D11, plan task 1.4
+// step 1), and the grace when the config sets one and the mode is not off.
+// The signer and the Firebase project's ID stay out: a job never mints.
+func TestInitRepoPassesTheBackendToEveryJob(t *testing.T) {
 	for _, mode := range []string{"observe", "enforce"} {
 		rs, err := Repo(budgetInputs(t, "budget:\n  mode: "+mode+"\n  per_run_usd: 5\n"+backendBlock+"  unreachable_grace: 90s\n"))
 		if err != nil {
@@ -1278,6 +1279,38 @@ func TestInitRepoPassesRTDBEnv(t *testing.T) {
 	for _, w := range rs.Workflows {
 		if _, ok := w.Env[BudgetGraceEnv]; ok {
 			t.Errorf("%s: a grace nobody set: %v", w.Name, w.Env)
+		}
+	}
+}
+
+// M2 of the PR #379 review: FUGARO_BUDGET_TOKEN says "the launch of this run
+// minted it a budget identity", which is a fact about one launch and nothing
+// a job is deployed with. It travels as an execution override
+// (backend.LaunchSpec.Env) and never through init --repo's deploy-time
+// environment; a job that carried it from the deploy would look to the
+// runner like a launch that had minted, whatever the launch did. Pinned here
+// because nothing else in this package reads the marker — a change that put
+// it into budgetEnv would otherwise pass the whole suite.
+func TestInitRepoNeverDeploysTheBudgetTokenMarker(t *testing.T) {
+	for _, mode := range []string{"off", "observe", "enforce"} {
+		rs, err := Repo(budgetInputs(t, "budget:\n  mode: "+mode+"\n  per_run_usd: 5\n"+backendBlock+"  unreachable_grace: 90s\n"))
+		if err != nil {
+			t.Fatal(mode, err)
+		}
+		if len(rs.Workflows) == 0 {
+			t.Fatal("no workflows")
+		}
+		envs := []map[string]string{}
+		for _, w := range rs.Workflows {
+			envs = append(envs, w.Env)
+		}
+		if rs.Check != nil {
+			envs = append(envs, rs.Check.Env)
+		}
+		for _, env := range envs {
+			if v, ok := env[runner.BudgetTokenEnv]; ok {
+				t.Errorf("mode %s: a job's deploy-time env carries %s=%q: the marker belongs to a launch, not to the deploy", mode, runner.BudgetTokenEnv, v)
+			}
 		}
 	}
 }
