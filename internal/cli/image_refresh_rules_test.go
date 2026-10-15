@@ -177,3 +177,75 @@ func TestCustomBaseRefusalNoKinds(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+// TestManagedVersionReadsTheRemotePathAndItsDigest: the shapes a release
+// base can have — the pre-migration copy and this installation's pin — each
+// with the digest where it belongs, and the four that must never be treated
+// as a release: a foreign owner through the proxy, the remote path with no
+// digest, a dev tag, and the remote path with no recorded image_source.
+//
+// The last three are the regression the proxy adds: every one of them sits
+// under a prefix validators used to trust, so "not managed" is what makes
+// refreshBase refuse them with customBaseRefusal's fix instead of the
+// never-downgrade rule keeping them forever (design §3.6). The owner comes
+// from the config's record, never from the reference under test, so an
+// installation recording none refuses rather than trusting the path.
+// Mutation (run, restore): return pinnedVersion(ref, host, kind, ref) from
+// managedVersion — the foreign-owner and no-record rows then read as
+// managed.
+func TestManagedVersionReadsTheRemotePathAndItsDigest(t *testing.T) {
+	const host = "us-east5-docker.pkg.dev/proj-1234"
+	d := strings.Repeat("a", 64)
+	pin := func(owner, v string) string {
+		return host + "/fugaro-ghcr/" + owner + "/fugaro-base:" + v + "@sha256:" + d
+	}
+	for name, tc := range map[string]struct {
+		ref, owner, ver string
+		managed         bool
+	}{
+		"the copy an earlier release made": {host + "/fugaro-base/fugaro-base:0.7.5", "dimipaun", "0.7.5", true},
+		"this installation's pin":          {pin("dimipaun", "0.7.5"), "dimipaun", "0.7.5", true},
+		"a foreign owner":                  {pin("evil", "9.9.9"), "dimipaun", "", false},
+		"the pin with no digest":           {host + "/fugaro-ghcr/dimipaun/fugaro-base:0.7.5", "dimipaun", "", false},
+		"no recorded image_source":         {pin("dimipaun", "0.7.5"), "", "", false},
+		"a dev tag through the proxy":      {pin("dimipaun", "dev-abc1234"), "dimipaun", "", false},
+		"a hand-pushed image":              {host + "/fugaro-base/nginx:1.2.3", "dimipaun", "", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			v, ok := managedVersion(tc.ref, host, "base", tc.owner)
+			// The version only matters when the entry IS managed: a version
+			// on a refused shape is what the never-downgrade rule would have
+			// kept, which is the bug this rule closes.
+			if ok != tc.managed || (ok && v != tc.ver) {
+				t.Fatalf("managedVersion(%q, owner %q) = %q, %v; want %q, %v", tc.ref, tc.owner, v, ok, tc.ver, tc.managed)
+			}
+			if isManaged(tc.ref, host, "base", tc.owner) != tc.managed {
+				t.Errorf("isManaged disagrees with managedVersion")
+			}
+		})
+	}
+
+	// The same fail-closed rule from the other side: a SHARED config that
+	// names a remote-shaped entry and records no owner is refused when it
+	// is read, so it never reaches managedVersion at all.
+	pub := &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", Region: "us-east5",
+		RunsBucket: "fugaro-runs-proj-1234", RegistryHost: host, BaseImages: map[string]string{"base": pin("dimipaun", "0.7.5")}}
+	data, err := pub.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := SharedAnchor{Name: "aurora", GCPProject: "proj-1234", Bucket: "fugaro-runs-proj-1234"}
+	if _, err := ParseShared(data, a); err == nil || !strings.Contains(err.Error(), "records none") {
+		t.Fatalf("a remote-shaped entry with no image_source: %v", err)
+	}
+	// With the owner recorded it is accepted, and the pin's own shape is
+	// what the entry is checked against.
+	a.ImageSource = "ghcr.io/dimipaun"
+	pub.ImageSource = a.ImageSource
+	if data, err = pub.Marshal(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseShared(data, a); err != nil {
+		t.Fatalf("a pin with the recorded owner: %v", err)
+	}
+}

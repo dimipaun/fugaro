@@ -177,6 +177,11 @@ func (s *imagesStage) Left() initflow.Left {
 	return promptLeft(initflow.Images, "type the project's name to copy the images", "init")
 }
 
+// baseSourceHost is the only host a base kind's source may be on: the
+// remote (pull-through) repository's own upstream is https://ghcr.io
+// (design §3.1), so a pin through it can only name an owner there.
+const baseSourceHost = "ghcr.io"
+
 // releaseVersion is the CLI's published version, "" for a development build.
 func releaseVersion() string {
 	v := strings.TrimPrefix(Version, "v")
@@ -186,9 +191,20 @@ func releaseVersion() string {
 	return ""
 }
 
+// allow is the source prefix this run's images come from: --image-source,
+// else the one the local config records, else the built-in default.
+//
+// The record is the fallback because the flag is installation-only (a
+// `fugaro init --repo` run refuses it, and every refresh runs without it):
+// with the flag alone, a fork's own recorded pin could not even be resolved
+// on the run that re-pins it, and every reader would fall back to the
+// default owner's images (design §3.6).
 func (s *imagesStage) allow() []string {
 	if p := s.e.r.o.imageSource; p != "" {
 		return []string{p}
+	}
+	if lc := s.e.lc; lc != nil && lc.ImageSource != "" {
+		return []string{lc.ImageSource}
 	}
 	return mirror.DefaultSources
 }
@@ -384,6 +400,16 @@ func (s *imagesStage) items(ctx context.Context) (items []imageItem, notes []str
 		// A base kind is pinned, not copied: the item names the path the
 		// remote repository serves it at, and the digest comes from the
 		// resolve-and-verify step in read().
+		//
+		// The pin is read through a repository whose upstream is
+		// https://ghcr.io (design §3.1), so a source on any other host
+		// could never be served: refused here, where the pin is formed,
+		// rather than on --image-source itself — the history image is a
+		// direct pull and keeps any host ValidSourcePrefix allows.
+		if srcHost, _, _ := strings.Cut(allow[0], "/"); srcHost != baseSourceHost {
+			return nil, nil, userErr("base %s is pinned through the remote repository, whose upstream is https://%s, so the base image's source must be %s/<owner>, and this run's is %s: pass --image-source %s/<owner>, or point the kind at your own image with --base-image %s=IMAGE",
+				k, baseSourceHost, baseSourceHost, allow[0], baseSourceHost, k)
+		}
 		items = append(items, imageItem{
 			label:    "base " + k,
 			kind:     k,

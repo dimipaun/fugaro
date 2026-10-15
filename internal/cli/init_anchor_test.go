@@ -597,6 +597,15 @@ func TestBaseRefReason(t *testing.T) {
 		{"ghcr.io/dimipaun/fugaro-base:0.10.0", "base", true},
 		{"ghcr.io/dimipaun/fugaro-base:v0.4.0", "base", true},
 		{"us-east5-docker.pkg.dev/p/fugaro-base/fugaro-base:0.4.0", "base", true},
+		// This release's pin through the remote repository: the version tag
+		// is kept as a marker beside the digest (design §3.6), and the
+		// release regex reads that shape already, so a build FROM the pin is
+		// judged on the release it names — the digest is not a refusal.
+		{"us-east5-docker.pkg.dev/p/fugaro-ghcr/dimipaun/fugaro-base:0.7.5@sha256:" + hex, "base", true},
+		{"us-east5-docker.pkg.dev/p/fugaro-ghcr/acme/fugaro-base:v0.7.5@sha256:" + hex, "base", true},
+		// Without the version marker it is not a release of a kind.
+		{"us-east5-docker.pkg.dev/p/fugaro-ghcr/dimipaun/fugaro-base@sha256:" + hex, "base", false},
+		{"us-east5-docker.pkg.dev/p/fugaro-ghcr/dimipaun/fugaro-base:0.7.5@sha256:abc", "base", false},
 		{"ghcr.io/dimipaun/fugaro-base:0.4.0", "", true},       // the workflow's kind not known
 		{"ghcr.io/dimipaun/fugaro-base:0.4.0", "other", false}, // a kind the ref does not match
 		{"ghcr.io/dimipaun/fugaro-base:0.4.0-rc1", "base", false},
@@ -681,6 +690,33 @@ func TestInitHelpAnchorFixIsImageRefresh(t *testing.T) {
 	for _, old := range []string{"fugaro init --base <kind> from outside the checkout", "fugaro init --repo in the checkout", "fugaro image build --repo"} {
 		if strings.Contains(long, old) {
 			t.Errorf("init help still lists the old step %q", old)
+		}
+	}
+}
+
+// The pinned remote path is a release base image everywhere the release
+// regexp is read — recipes_skew's skew gate, the layered-config gate
+// (image_layer.go) and imagePredates. A narrowed edit here would make every
+// migrated repository look like it predates the release, silently.
+func TestBaseRefReleaseREAcceptsThePinnedRemotePath(t *testing.T) {
+	hex := strings.Repeat("a", 64)
+	pin := "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-base:0.7.5@sha256:" + hex
+	m := baseRefReleaseRE.FindStringSubmatch(pin)
+	if m == nil || m[1] != "base" || m[2] != "0.7.5" {
+		t.Fatalf("baseRefReleaseRE(%q) = %q", pin, m)
+	}
+	if got := baseRefReason(pin, "base"); got != "" {
+		t.Errorf("baseRefReason(%q, base) = %q", pin, got)
+	}
+	// The version marker is what is read: a digest-only reference is not a
+	// release, and neither is one whose digest is malformed.
+	for _, ref := range []string{
+		"us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-base@sha256:" + hex,
+		"us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-base:0.7.5@sha256:" + strings.Repeat("A", 64),
+		"us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-base:0.7.5@sha256:abc",
+	} {
+		if baseRefReleaseRE.FindStringSubmatch(ref) != nil {
+			t.Errorf("baseRefReleaseRE(%q) matched", ref)
 		}
 	}
 }

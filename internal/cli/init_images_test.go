@@ -843,3 +843,37 @@ func TestImagesStageOnlyEmptyAndDuplicates(t *testing.T) {
 		t.Fatalf("duplicates and unknown: kinds %s, want base", got)
 	}
 }
+
+// The base pin is read through the remote repository, whose upstream is
+// https://ghcr.io (design §3.1), so a source on any other host could never
+// be served. It is refused where the pin is formed — the flag is not
+// refused on its own, because the history image is a direct pull and keeps
+// any registry ValidSourcePrefix allows.
+func TestRefuseANonGhcrSourceForABaseKind(t *testing.T) {
+	// On the flag.
+	r := newImagesRig(t, "1.2.3")
+	out, _, err := executeStdin(t, "", "init", "--yes", "--base", "base", "--image-source", "quay.io/acme")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "whose upstream is https://ghcr.io") ||
+		!strings.Contains(err.Error(), "--base-image base=IMAGE") {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
+	}
+	if r.dst.puts != 0 {
+		t.Fatal("copied something")
+	}
+	// And recorded: the same refusal, with no flag anywhere, which is the
+	// run a teammate's machine does.
+	r = newImagesRig(t, "1.2.3")
+	r.appendConfig(t, "image_source: quay.io/acme\n")
+	_, _, err = executeStdin(t, "", "init", "--yes", "--base", "base")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "whose upstream is https://ghcr.io") {
+		t.Fatalf("recorded: exit %d, err %v", ExitCode(err), err)
+	}
+	// The refusal is the base kind's: the history image is a direct pull, so
+	// a source on another host is not refused here, it is read (and fails
+	// only because the rig's registry has no such image).
+	r = newImagesRig(t, "1.2.3")
+	_, _, err = executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes", "--image-source", "quay.io/acme")
+	if err != nil && strings.Contains(err.Error(), "whose upstream is https://ghcr.io") {
+		t.Fatalf("the history copy refused a foreign source: %v", err)
+	}
+}

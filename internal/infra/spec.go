@@ -854,18 +854,26 @@ func (rs RepoSpec) UsesVertex() bool {
 }
 
 // BaseImageWarnings are the warnings for each of the local config's base
-// images (kind -> image) that isn't in the installation's base registry,
-// in kind order. The build accounts can read only that registry, so every
-// build from such an image would fail at its pull; the check job's own pull
-// would still work, which hides it until then.
+// images (kind -> image) that is in neither of the installation's own image
+// repositories, in kind order: the base registry (the copy an earlier
+// release made) or the remote (pull-through) repository over ghcr.io (this
+// release's pin). The build accounts can read those two, so a build from
+// anything else would fail at its pull; the check job's own pull would
+// still work, which hides it until then.
+//
+// It is deliberately not a gate: the build account can read both, so this
+// is a readability hint and a pointer at where a base image belongs, and
+// the gate is cover.go's shape test and managedVersion.
 func BaseImageWarnings(bases map[string]string, outs InstallationOutputs) []string {
-	registry := outs.RegistryHost + "/" + outs.BaseRegistry
+	registries := []string{outs.RegistryHost + "/" + outs.BaseRegistry, outs.RegistryHost + "/" + outs.GhcrRegistry}
 	var ws []string
 	for _, kind := range slices.Sorted(maps.Keys(bases)) {
-		if ref := bases[kind]; ref != "" && !strings.HasPrefix(ref, registry+"/") {
-			ws = append(ws, fmt.Sprintf("the local config's base_images.%s %s is not in the installation's base registry %s, the only one the build accounts can read, so the image builds would fail at its pull: push the base image to %s and set base_images.%s to it",
-				kind, ref, registry, registry, kind))
+		ref := bases[kind]
+		if ref == "" || slices.ContainsFunc(registries, func(r string) bool { return strings.HasPrefix(ref, r+"/") }) {
+			continue
 		}
+		ws = append(ws, fmt.Sprintf("the local config's base_images.%s %s is in neither of the installation's image repositories (%s), the only ones the build accounts can read, so the image builds would fail at its pull: push the base image to %s and set base_images.%s to it",
+			kind, ref, strings.Join(registries, ", "), registries[0], kind))
 	}
 	return ws
 }
