@@ -50,6 +50,8 @@ func TestDocsDesktopConsoleContractSettlesTheFeed(t *testing.T) {
 				"141",
 				"watchStream",
 				"ExitCode",
+				"not wrapped with `remote()`",
+				"ExitUserError",
 			},
 		},
 		{
@@ -84,7 +86,7 @@ func TestDocsDesktopConsoleContractSettlesTheFeed(t *testing.T) {
 		{
 			fact: "the emission rule, and that a document is a sampled whole",
 			want: []string{
-				"ready && dirty && (last.IsZero() || time.Since(last) >= gap)",
+				"refused || (ready && dirty && (last.IsZero() || time.Since(last) >= gap))",
 				"watchJSONGap",
 				"A document is a sampled whole, not a delta",
 				"Silence means \"live and unchanged\", not \"the feed is dead\"",

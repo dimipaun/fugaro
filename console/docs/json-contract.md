@@ -28,8 +28,10 @@ cites a symbol (plan, "Review Focus", phase 0).
 
 `WatchDeps.emit` (`internal/cli/watch.go`) writes one document per call —
 `json.NewEncoder(d.Out).Encode(watch.BuildJSON(d.LC.Name, v))` — and
-`watchStream` calls it only when `ready && dirty && (last.IsZero() ||
-time.Since(last) >= gap)`. Under `--json` the gap is `watchJSONGap`, one
+`watchStream` calls it when `refused || (ready && dirty && (last.IsZero() ||
+time.Since(last) >= gap))`. A refusal is the one case that bypasses the
+readiness, change and gap tests and is emitted unconditionally (§1.5); every
+other document waits for them. Under `--json` the gap is `watchJSONGap`, one
 second, whatever `--interval` says: `--interval` sets the supervisor's polling
 period (`watch.Options.Interval`), not the document rate.
 
@@ -94,9 +96,11 @@ descriptors 1 and 2: the default disposition kills the process, which exits
 with status 141 (`128 + 13`). So the child does not linger when the console
 goes away and does not need to be killed — the console still reaps it, and must
 not report 141 as a CLI error. If the write instead returns an error (a stdout
-that is not a pipe), `watchStream` returns it, `main` prints `fugaro: …` to
-stderr and exits through `ExitCode` — `ExitRemoteError` (2) for a transport
-failure, `ExitUserError` (1) for a permission error.
+that is not a pipe), `watchStream` returns that error as it came — it is not
+wrapped with `remote()` — and `ExitCode` maps an error that is not an
+`*ExitError` to `ExitUserError`: `main` prints `fugaro: …` to stderr and exits
+1. Exit 2 is not reachable from this path, so a console reading the status sees
+either 0, 1 or 141.
 
 ### 1.5 A refused read is terminal, and it is announced exactly once
 
