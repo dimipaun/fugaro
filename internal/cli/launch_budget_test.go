@@ -481,7 +481,17 @@ func TestBudgetOffSkipsEverything(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if env == nil || len(iam.SignCalls()) != 0 || len(db.Requests()) != 0 || readToken(t, f, budgetRun) != "" {
+			// A budget-off launch touches no part of the budget: no caps, no
+			// kill switch, no registry, no token. It does read whether the
+			// project has published a policy, with the operator's own
+			// credentials, because a published policy means the run needs an
+			// identity whatever the mode is (task 1.3 step 2).
+			for _, r := range db.Requests() {
+				if r.Method != "GET" || !strings.Contains(r.Path, "config/policy/") && !strings.Contains(r.Path, "policyRules") {
+					t.Fatalf("a budget-off launch made a database call it should not: %s %s", r.Method, r.Path)
+				}
+			}
+			if env == nil || len(iam.SignCalls()) != 0 || readToken(t, f, budgetRun) != "" {
 				t.Fatalf("a budget-off launch touched the backend (env %v)", env)
 			}
 			if strings.Contains(errOut, "budget") {
