@@ -238,9 +238,21 @@ func TestChecklistHasCheck52(t *testing.T) {
 	// PROBE_IN, PROBE_OUT, PROBE_COND and CHK52_TMP. Without re-running it the
 	// first command aborts on ${SANDBOX_JOB:?} and nothing is restored.
 	chk52MustContain(t, section, "section", []string{
-		"**Then re-run the guard block and the step's variables block, in that order**",
+		"**First re-run the guard block and the step's variables block, in that order**",
 		"the step's variables block defines `SANDBOX_JOB`, `SANDBOX_JOB_SA`, `SANDBOX_BUCKET`, `NUMBER`, `PROBE_SA`, `PROBE_IN`, `PROBE_OUT`, `PROBE_COND`, `PROBE_COND_NOTYPE` and `CHK52_TMP`",
+		"**Then the job**",
 	})
+	// The two blocks come before the job, not after it (review 4): the job's
+	// first command aborts on ${SANDBOX_JOB:?} until they have run, so a Restore
+	// that sends the reader to the job first restores nothing. The old order —
+	// "The job first ... Then re-run the guard block" — fails here.
+	if i, j := strings.Index(section, "**First re-run the guard block and the step's variables block, in that order**"),
+		strings.Index(section, "**Then the job**"); i == -1 || j == -1 || i > j {
+		t.Error("the Check 52 section's Restore names the job before the guard block and the step's variables block, which the job's first command needs: the job cannot come first")
+	}
+	if strings.Contains(section, "**The job first**") {
+		t.Error("the Check 52 section's Restore still puts the job before the blocks that define its variables")
+	}
 	// Restore runs from a fresh shell: OWNER is set in step 4's block only, so
 	// the removal of the token-creator grant must default it here too.
 	if !strings.Contains(section, `OWNER=${OWNER:-$(gcloud auth list`) {
@@ -277,7 +289,28 @@ func TestChecklistHasCheck52(t *testing.T) {
 		`if jq -e '.error' "${CHK52_TMP:?}/run-a.json" >/dev/null 2>&1; then`,
 		`echo "U2(a): the API REFUSED the secret-reference override. Record this error as the FACT and go on:"`,
 		`if [ -n "${EXEC:-}" ]; then`,
+		// The refusal's status is inside .error (review 4): the API's error body
+		// is {"error":{code,message,status}}, so a top-level `.status` prints
+		// null and the FACT would record `"status": null` as the API's answer.
+		`jq -c '{status: .error.status, code: .error.code, message: .error.message}' "${CHK52_TMP:?}/run-a.json"`,
+		// (c)'s own response is read and printed too, not merely written: the
+		// comparison's result — accepted or refused — was never shown, so the
+		// FACT's "what the plain-literal comparison does" had no input.
+		`if jq -e '.error' "${CHK52_TMP:?}/run-c.json" >/dev/null 2>&1; then`,
+		`echo "U2(c): the same call with a plain literal value was REFUSED — record this error:"`,
+		`jq -c '{status: .error.status, code: .error.code, message: .error.message}' "${CHK52_TMP:?}/run-c.json"`,
+		`jq -c '{name, done}' "${CHK52_TMP:?}/run-c.json"`,
+		// The executions these override calls start fail by design: the image's
+		// own CMD is `fugaro exec`, and the run it executes is named by
+		// FUGARO_RUN, which only the launcher's override sets. Without the
+		// sentence, a reader takes the failed execution for the probe's answer.
+		"An execution these override calls start is expected to end as a *failed* run, and that is not the probe's answer",
+		"the base image's `CMD [\"fugaro\", \"exec\"]` (`images/base/Dockerfile:293`)",
+		"the failure of these executions' own tasks recorded as the expected outcome, not as the answer",
 	})
+	if strings.Contains(section, `jq -c '{status, code:`) {
+		t.Error("the Check 52 section prints the refusal's status from the response's top level, where it is null: the API's error body carries it inside .error")
+	}
 	if strings.Contains(section, `: "${EXEC:?`) {
 		t.Error("the Check 52 section aborts when (a)'s operation reports no execution name: a refused override is the likely answer, and its error is the FACT, not a stop")
 	}
@@ -294,7 +327,22 @@ func TestChecklistHasCheck52(t *testing.T) {
 		`--format='value(spec.template.spec.template.spec.serviceAccountName)'`,
 		`--format='value(spec.template.spec.template.spec.containers[0].command)'`,
 		`--format=json | jq '.spec.template.spec.containers[0].env'`,
+		// And the read-back's argument is the bare execution ID (review 4):
+		// `gcloud run jobs executions describe` resolves it through the
+		// `run.namespaces.executions` concept spec, which parses a bare ID and
+		// never the full resource path EXEC holds, so the full name stops with
+		// "Cannot find execution [...]" before any request.
+		`gcloud run jobs executions describe "${EXEC##*/}" \`,
 	})
+	for _, full := range []string{
+		`executions describe "${EXEC:?`,
+		`executions describe "${EXEC}"`,
+		`executions describe "${EXEC:-}`,
+	} {
+		if strings.Contains(section, full) {
+			t.Errorf("the Check 52 section describes the execution by its full resource name (%q), which the v1 `executions describe` surface cannot parse: use ${EXEC##*/}", full)
+		}
+	}
 	for _, v2 := range []string{
 		`--format='value(template.template.serviceAccountName)'`,
 		`--format='value(template.template.containers[0].command)'`,

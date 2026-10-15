@@ -2195,7 +2195,10 @@ curl -sS -X POST \
 EXEC=
 if jq -e '.error' "${CHK52_TMP:?}/run-a.json" >/dev/null 2>&1; then
   echo "U2(a): the API REFUSED the secret-reference override. Record this error as the FACT and go on:"
-  jq -c '{status, code: .error.code, message: .error.message}' "${CHK52_TMP:?}/run-a.json"
+  # The API's error body is {"error":{"code":…,"message":…,"status":…}}: the
+  # status is *inside* the error object, and a top-level `.status` is null on an
+  # error response (review 4), so the FACT would have recorded `"status": null`.
+  jq -c '{status: .error.status, code: .error.code, message: .error.message}' "${CHK52_TMP:?}/run-a.json"
 else
   OPERATION=$(jq -r '.name // empty' "${CHK52_TMP:?}/run-a.json")
   for i in $(seq 1 10); do
@@ -2224,9 +2227,19 @@ curl -sS -X POST \
   -H "Content-Type: application/json" \
   -d '{"overrides":{"containerOverrides":[{"env":[{"name":"PROBE_REF","value":"plain-literal"}]}]}}' \
   -o "${CHK52_TMP:?}/run-c.json"
+# (c)'s own answer, printed the same way (a)'s is (review 4): the file was
+# written and never read, so the comparison's result — accepted or refused —
+# never reached the FACT. A refusal here is an answer too.
+if jq -e '.error' "${CHK52_TMP:?}/run-c.json" >/dev/null 2>&1; then
+  echo "U2(c): the same call with a plain literal value was REFUSED — record this error:"
+  jq -c '{status: .error.status, code: .error.code, message: .error.message}' "${CHK52_TMP:?}/run-c.json"
+else
+  echo "U2(c): the plain-literal override was accepted; its operation (poll it as (a)'s is polled):"
+  jq -c '{name, done}' "${CHK52_TMP:?}/run-c.json"
+fi
 ```
 
-**How the two questions are observed.** Whether the override is *accepted* is the POST's operation status: an accepted run reaches a terminal `condition`, and a refused one reports the API's own error — **and that refusal ends nothing: the error is pasted as the FACT and the steps below still run**, since (b), (c), U3 and U4 do not depend on (a) being accepted. When (a) is refused there is no execution, so the read-back of the override (below) has nothing to read, and the run says so instead of stopping. Whether the **value arrives** needs the container to speak, and it must never print the value: `args` **replaces** the image's own args, so it can only work when the container's `command` is a shell — read the command first, and send the length-only body **only** when it names one (adding `args` to a real entrypoint would not run it, and must not be sent):
+**How the two questions are observed.** Whether the override is *accepted* is the POST's operation status: an accepted run reaches a terminal `condition`, and a refused one reports the API's own error — **and that refusal ends nothing: the error is pasted as the FACT and the steps below still run**, since (b), (c), U3 and U4 do not depend on (a) being accepted. When (a) is refused there is no execution, so the read-back of the override (below) has nothing to read, and the run says so instead of stopping. **An execution these override calls start is expected to end as a *failed* run, and that is not the probe's answer (review 4).** The container runs the image's own `fugaro exec` — the base image's `CMD ["fugaro", "exec"]` (`images/base/Dockerfile:293`) — and the run it executes is named by `FUGARO_RUN`, which the launcher sets as a launch override and this check's bodies do not carry (`internal/backend/gcp/run.go:82-95`, the `FUGARO_RUN` override `Launch` sends; the bare `gcloud run jobs execute` carries no override either). With no run named, the container refuses and exits — `run "" must look like <repo-slug>/<run-id>` (`internal/cli/exec.go:60` defaults `--run` from `FUGARO_RUN`, `:171` hands it to `runstore.ParseRef`) — so the execution's *task* fails by design. What this step reads is the API's answer (the operation's acceptance or its error) and the execution's own template, never the execution's exit status: a failed execution beside an accepted operation is the expected pair, not a second answer about the reference. Whether the **value arrives** needs the container to speak, and it must never print the value: `args` **replaces** the image's own args, so it can only work when the container's `command` is a shell — read the command first, and send the length-only body **only** when it names one (adding `args` to a real entrypoint would not run it, and must not be sent):
 
 ```bash
 gcloud run jobs describe "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" \
@@ -2245,7 +2258,14 @@ Whether the **overrides are visible to the container** (the D10 counterpart) is 
 
 ```bash
 if [ -n "${EXEC:-}" ]; then
-  gcloud run jobs executions describe "${EXEC:?the execution named by (a)'s operation metadata}" \
+  # The bare execution ID, not the full name (review 4): EXEC is what (a)'s
+  # operation metadata reports — `projects/<P>/locations/<L>/jobs/<JOB>/
+  # executions/<EXEC>` — and `gcloud run jobs executions describe` resolves its
+  # argument through the `run.namespaces.executions` concept spec
+  # (command_lib/run/resource_args.py), which parses a bare ID, never that
+  # resource path: the full name stops with "Cannot find execution [...]"
+  # before any request. `${EXEC##*/}` takes the last path segment.
+  gcloud run jobs executions describe "${EXEC##*/}" \
     --project="${P:?}" --region="${L:?}" --format=json | jq '.spec.template.spec.containers[0].env'
 else
   echo "U2: (a) was refused, so there is no execution to read the override back from — the error above is the answer"
@@ -2254,7 +2274,7 @@ fi
 
 **One plain execution of the job with no overrides** (`gcloud run jobs execute "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --wait`, or an ordinary sandbox run) shows what a bare run does after (b): the template-level reference resolves for every run until Restore, which is exactly the drift M6 warns about.
 
-**FACT:** whether the execution-level override is accepted and whether the referenced value arrives (the length, never the value); whether the same reference works through `--update-secrets`; what the plain-literal comparison does; whether the execution's own template reports the override; and what a bare run of the job does. **If (a) is refused, the API's own error (its status, code and message) is the FACT** — and (b), (c), U3 and U4 are recorded all the same, because a refusal there answers U2 as completely as an acceptance does. **This step's answer is what the *phase-3* text in `SECURITY.md`'s launcher-override paragraph is allowed to add, and nothing more** (the paragraph itself lands in phase 1, plan Task 1.5 step 5, from Check 49 step 6's evidence — finding 14): if the override is visible, the text says so; if it is not, the text says only that the API merges overrides and the runner cannot see them.
+**FACT:** whether the execution-level override is accepted and whether the referenced value arrives (the length, never the value); whether the same reference works through `--update-secrets`; what the plain-literal comparison does (both printed above, `run-c.json`); whether the execution's own template reports the override; and what a bare run of the job does — **with the failure of these executions' own tasks recorded as the expected outcome, not as the answer: they carry no `FUGARO_RUN`, so the container has no run to execute.** **If (a) is refused, the API's own error (its status, code and message) is the FACT** — and (b), (c), U3 and U4 are recorded all the same, because a refusal there answers U2 as completely as an acceptance does. **This step's answer is what the *phase-3* text in `SECURITY.md`'s launcher-override paragraph is allowed to add, and nothing more** (the paragraph itself lands in phase 1, plan Task 1.5 step 5, from Check 49 step 6's evidence — finding 14): if the override is visible, the text says so; if it is not, the text says only that the API merges overrides and the runner cannot see them.
 
 ### 4. U3 — Secret Manager IAM conditions on a name prefix
 
@@ -2353,7 +2373,7 @@ gcloud storage buckets get-iam-policy "gs://${SANDBOX_BUCKET:?}" --project="${P:
 
 ### 6. Restore
 
-Everything this check created, removed in this order. **The job first** — diff it against step 1's baseline, drop the reference U2(b) put in its template, and check it is back to the file's contents. **Then re-run the guard block and the step's variables block, in that order** — a fresh shell has neither, and the guard block defines only `P` and `L`: the step's variables block defines `SANDBOX_JOB`, `SANDBOX_JOB_SA`, `SANDBOX_BUCKET`, `NUMBER`, `PROBE_SA`, `PROBE_IN`, `PROBE_OUT`, `PROBE_COND`, `PROBE_COND_NOTYPE` and `CHK52_TMP`, filling the three `SANDBOX_*` values from the notes you took in step 1. Without it the first command below aborts on `${SANDBOX_JOB:?}` and nothing is restored. Step 2 defines no variables at all: it is a record of the owner's ruling, with no commands (§2). If this shell has not run step 1, set the scratch path too:
+Everything this check created, removed in this order. **First re-run the guard block and the step's variables block, in that order** — a fresh shell has neither, and the guard block defines only `P` and `L`: the step's variables block defines `SANDBOX_JOB`, `SANDBOX_JOB_SA`, `SANDBOX_BUCKET`, `NUMBER`, `PROBE_SA`, `PROBE_IN`, `PROBE_OUT`, `PROBE_COND`, `PROBE_COND_NOTYPE` and `CHK52_TMP`, filling the three `SANDBOX_*` values from the notes you took in step 1. Without it the first command below aborts on `${SANDBOX_JOB:?}` and nothing is restored. Step 2 defines no variables at all: it is a record of the owner's ruling, with no commands (§2). If this shell has not run step 1, set the scratch path too:
 
 ```bash
 CHK52_TMP=${CHK52_TMP:-/tmp/chk52}    # step 1's mode-700 scratch dir, if this shell has not run step 1
@@ -2363,6 +2383,8 @@ gcloud run jobs update "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" -
 gcloud run jobs describe "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --format=json > "${CHK52_TMP:?}/job-after.json"
 diff <(jq -S '.spec.template' "${CHK52_TMP:?}/job-before.json") <(jq -S '.spec.template' "${CHK52_TMP:?}/job-after.json")   # after the removal: nothing left to print
 ```
+
+**Then the job** — diff it against step 1's baseline, drop the reference U2(b) put in its template, and check it is back to the file's contents (the block above, whose variables the two blocks just re-run have defined).
 
 Both diffs are over **`.spec.template`**, never the whole `describe` object: the two `gcloud run jobs update` calls bump `metadata.generation` (and `status.observedGeneration`, and the condition timestamps) even when the template is untouched, so a whole-object diff could never be empty and would always report false drift. `jq -S` sorts the keys so the two files are compared in the same order.
 
