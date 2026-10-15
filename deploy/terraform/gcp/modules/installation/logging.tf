@@ -4,12 +4,40 @@
 # can't take roles/logging.viewer away from anyone, so the same lines are
 # also kept out of _Default. Owners and editors still read everything.
 #
+# A job's platform decides its resource.type -- cloud_run_job on Cloud Run,
+# batch.googleapis.com/Job on Cloud Batch (the VM backend) -- so the filter
+# below has one arm per platform, and both are pinned by the same label.
+#
 # Cloud Build logs stay in _Default: they hold the repository's build
 # output, never a secret value.
 
 locals {
   log_bucket_path = "projects/${var.project}/locations/global/buckets/${var.names.log.bucket}"
-  fugaro_logs     = "resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\""
+
+  # The Cloud Run arm: every Fugaro-managed Cloud Run job's lines (the
+  # workflow jobs and the check jobs). It is byte-for-byte what it was before
+  # the Batch arm below existed -- an installation's sink and exclusion
+  # already filter on it, and an arm that drifted would move lines this
+  # installation never meant to route. A test pins it.
+  fugaro_cloud_run_logs = "resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\""
+
+  # The Batch arm (design docs/design/compute-backend.md §1.5, §8.1 task 4):
+  # a Batch job's lines carry resource.type="batch.googleapis.com/Job", and
+  # its Job.labels reach the entry it generates, so the installation's
+  # fugaro=managed marker selects them the same way. ADDITIVE and inert for a
+  # project with no Batch jobs: no Batch job means no entry with that
+  # resource type, so this arm matches nothing and moves nothing. Without it,
+  # a Batch run's lines would sit in _Default, where every project viewer
+  # reads them, while `fugaro logs` (which reads the view below) found
+  # nothing.
+  fugaro_batch_logs = "resource.type=\"batch.googleapis.com/Job\" AND labels.\"fugaro\"=\"managed\""
+
+  # Both arms. The parentheses are load-bearing in the exclusion below: AND
+  # binds tighter than OR, so without them that resource's NOT clauses would
+  # apply to the Batch arm alone and the check jobs' decision lines and the
+  # Cloud Run system log would start being excluded from _Default, which is
+  # where the log-based alerts read them.
+  fugaro_logs = "(${local.fugaro_cloud_run_logs}) OR (${local.fugaro_batch_logs})"
 }
 
 resource "google_logging_project_bucket_config" "fugaro" {

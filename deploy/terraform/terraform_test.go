@@ -591,6 +591,70 @@ func TestCheckJobPrefixMatchesGo(t *testing.T) {
 	}
 }
 
+// The installation's log sink and its _Default exclusion carry one arm per
+// platform a Fugaro-managed job's lines can come from (design
+// docs/design/compute-backend.md §1.5, §8.1 task 4): Cloud Run's
+// cloud_run_job, which every installation's sink and exclusion already
+// filter on, and Cloud Batch's batch.googleapis.com/Job, without which a
+// Batch run's lines sit in _Default where every project viewer reads them.
+//
+// Three things this pins, none of which a plan test can see as a string:
+//
+//   - the Cloud Run arm is byte-for-byte what it was before the Batch arm
+//     existed. An installation's live sink filters on that text, and an arm
+//     that drifted by a byte would move lines the installation never meant
+//     to route (or stop routing its own);
+//   - the Batch arm is exactly the documented one -- the resource type Batch
+//     gives a job's entries, pinned to the installation's own marker;
+//   - the arms are parenthesized and hung off the shared local. AND binds
+//     tighter than OR, so an unparenthesized exclusion would apply its NOT
+//     clauses to the Batch arm alone, and the check jobs' decision lines and
+//     the Cloud Run system log would start being excluded from _Default
+//     where the log-based alerts read them.
+//
+// Who can read the lines does NOT change: the arm routes into the same
+// bucket, and the view's IAM member is pinned here to the launchers and
+// operators it already named, so a second arm cannot widen the audience.
+func TestLogSinkRoutesBothPlatforms(t *testing.T) {
+	b, err := fs.ReadFile(FS, "gcp/modules/installation/logging.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	arm := func(name string) string {
+		t.Helper()
+		m := regexp.MustCompile(`(?m)^\s*` + name + `\s*=\s*"((?:[^"\\]|\\.)*)"\s*$`).FindStringSubmatch(src)
+		if m == nil {
+			t.Fatalf("logging.tf has no %s local", name)
+		}
+		return m[1]
+	}
+	// The Cloud Run arm, byte for byte. This string is the one every
+	// installation's sink and exclusion already carries; it is written out
+	// here rather than derived, so that a change to it fails this test.
+	if got, want := arm("fugaro_cloud_run_logs"), `resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\"`; got != want {
+		t.Errorf("the Cloud Run arm = %s\nwant                  %s\nthe Cloud Run arm must stay byte-for-byte unchanged", got, want)
+	}
+	if got, want := arm("fugaro_batch_logs"), `resource.type=\"batch.googleapis.com/Job\" AND labels.\"fugaro\"=\"managed\"`; got != want {
+		t.Errorf("the Batch arm = %s\nwant            %s", got, want)
+	}
+	if got, want := arm("fugaro_logs"), "(${local.fugaro_cloud_run_logs}) OR (${local.fugaro_batch_logs})"; got != want {
+		t.Errorf("the combined filter = %s\nwant                  %s\nboth arms must be parenthesized: AND binds tighter than OR", got, want)
+	}
+	// Both the sink and the exclusion carry both arms; the view's IAM
+	// member still names only the launchers and operators.
+	for _, want := range []string{
+		"filter                 = local.fugaro_logs",
+		"filter  = \"${local.fugaro_logs} AND NOT",
+		"for_each = var.log_isolation ? toset(concat(var.launchers, var.operators)) : toset([])",
+		"role     = \"roles/logging.viewAccessor\"",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("logging.tf does not contain %q", want)
+		}
+	}
+}
+
 // Cloud Monitoring refuses an alert policy with a log-match condition and
 // any other condition ("Alert policies with a log matching condition can
 // only have a single condition"), and a mock-provider plan can't see that.

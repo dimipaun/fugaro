@@ -664,8 +664,17 @@ run "log_isolation_on" {
     error_message = "the sink must carry its name and a unique writer identity"
   }
   assert {
-    condition     = google_logging_project_sink.fugaro[0].filter == "resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\""
-    error_message = "the sink must route every Fugaro-managed job's logs"
+    condition     = google_logging_project_sink.fugaro[0].filter == "(resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\") OR (resource.type=\"batch.googleapis.com/Job\" AND labels.\"fugaro\"=\"managed\")"
+    error_message = "the sink must route every Fugaro-managed job's logs, on both platforms"
+  }
+  # The Batch arm is additive: an installation with no Batch jobs has no
+  # entry with that resource type, so it moves nothing. What must NOT change
+  # is the Cloud Run arm every existing sink and exclusion already filters
+  # on, so it is pinned byte-for-byte inside both filters (design
+  # docs/design/compute-backend.md §1.5, §8.1 task 4).
+  assert {
+    condition     = strcontains(google_logging_project_sink.fugaro[0].filter, "resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\"") && strcontains(google_logging_project_exclusion.fugaro_from_default[0].filter, "resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\"")
+    error_message = "the Cloud Run arm must stay byte-for-byte what it was: every installation's sink and exclusion already filter on it"
   }
   assert {
     condition     = google_logging_project_sink.fugaro[0].destination == "logging.googleapis.com/projects/proj-1234/locations/global/buckets/fugaro"
@@ -676,9 +685,12 @@ run "log_isolation_on" {
     error_message = "the exclusion must carry its name"
   }
   # Log-based alerts must keep seeing the check's own decision lines and
-  # the Cloud Run system log, so the exclusion leaves both in _Default.
+  # the Cloud Run system log, so the exclusion leaves both in _Default. The
+  # NOT clauses hang off the parenthesized pair of arms: AND binds tighter
+  # than OR, so without those parentheses they would apply to the Batch arm
+  # alone and the two kinds of line above would start being excluded.
   assert {
-    condition     = google_logging_project_exclusion.fugaro_from_default[0].filter == "resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\" AND NOT (resource.labels.job_name=~\"^fugarochk-\" AND jsonPayload.event=\"image-check\") AND NOT logName:\"run.googleapis.com%2Fvarlog%2Fsystem\""
+    condition     = google_logging_project_exclusion.fugaro_from_default[0].filter == "(resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\") OR (resource.type=\"batch.googleapis.com/Job\" AND labels.\"fugaro\"=\"managed\") AND NOT (resource.labels.job_name=~\"^fugarochk-\" AND jsonPayload.event=\"image-check\") AND NOT logName:\"run.googleapis.com%2Fvarlog%2Fsystem\""
     error_message = "the exclusion must leave the alerts' log lines in _Default, and only the check jobs' decision lines"
   }
   assert {
