@@ -91,7 +91,39 @@ type Execution struct {
 	State                       State
 	Created, Started, Completed time.Time
 	CPU, MemoryGiB              float64 // the task's limits, for compute cost
-	LogURL                      string
+	// Region is the region the backend resolved this execution to: the
+	// backend's own answer, from its configuration or from its codec's
+	// parse of the name it returned. Callers that price an execution use
+	// it instead of parsing the name themselves, because a name's shape is
+	// the backend's business and a second platform's name need not have
+	// Cloud Run's fields (design compute-backend.md §5.2). "" when the
+	// backend does not report one; a caller that needs a region anyway
+	// falls back to its own default, which is a fact about the caller and
+	// not a second reading of the name.
+	Region string
+	// MachineType is the Compute Engine machine type backing this
+	// execution, "" when the backend does not run on VMs (Cloud Run's
+	// CPU/MemoryGiB are then the job's own limits, not a machine type's).
+	// Its presence is what makes a run a VM-backed one: a VM is billed for
+	// its machine type from its boot window, with a one-minute minimum
+	// (BilledWindow, design compute-backend.md §5.2).
+	MachineType string
+	// Scheduled is when the platform scheduled this execution for: the point
+	// at which Compute Engine starts provisioning the VM. On Batch that is
+	// the job's SCHEDULED transition, and it is what a VM is billed from --
+	// earlier than Started, because the VM boots, Batch sets the task up and
+	// the image may be streamed or pulled all before the runner's first line
+	// (design compute-backend.md §5.2). Zero when the backend does not report
+	// one; BilledWindow then falls back to Created and says so, because that
+	// window includes Batch's queue time -- the stretch before any VM exists
+	// -- and so errs high.
+	//
+	// The Batch backend leaves it zero today: the job's status events are
+	// where it would come from, and their shape is UNVERIFIED (Check 57a
+	// steps 7 and 8, design §9). Reading a guess into it would be a wrong
+	// cost, so nothing is inferred.
+	Scheduled time.Time
+	LogURL    string
 	// Run is "<slug>/<run id>", the FUGARO_RUN the execution was launched
 	// with, when the platform reports the execution's environment; empty
 	// when it does not (the sweeper then treats the execution as possibly
@@ -111,6 +143,72 @@ func (e Execution) Billed(now time.Time) time.Duration {
 		end = now
 	}
 	return max(0, end.Sub(e.Started))
+}
+
+// VMMinimumBilled is the shortest window Compute Engine bills: "All vCPUs,
+// GPUs, and GB of memory are charged a minimum of 1 minute", then per
+// second (cloud.google.com/compute/vm-instance-pricing, checked 2026-10-15,
+// quoted in docs/design/compute-backend.md §5.2). Cloud Run jobs have no
+// such floor, which is why the floor is applied here rather than in
+// Prices.ComputeUSD: it is a property of the platform, not of the prices.
+const VMMinimumBilled = time.Minute
+
+// BilledWindow is how long this execution has been billed, and whether that
+// is known at all (design compute-backend.md §5.2).
+//
+// For a VM-backed execution -- one whose MachineType is set -- it is the
+// boot window: from Scheduled, the time the platform began provisioning the
+// VM (design §5.2), to its completion or to now while it runs, floored at
+// VMMinimumBilled. The VM boots, Batch sets the task up and the image may be
+// streamed or pulled all before the runner's first line, and Compute Engine
+// bills every second of it, so a window that started at Started would
+// under-report exactly the runs whose cold start is most of their cost.
+//
+// When the backend reports no Scheduled time, the window starts at Created
+// and WindowNote says so: that window includes Batch's queue time, the
+// stretch before any VM exists, so it errs high -- which is the direction an
+// estimate should err, but a reader has to be able to tell the two apart.
+// The note travels to the estimate's source line with the figure.
+//
+// For every other execution it is Billed, unchanged: Cloud Run's own
+// billing has no floor and starts when the container does, and a caller
+// that priced it differently would change every Cloud Run estimate already
+// recorded.
+//
+// ok is false only for a VM-backed execution whose boot window the backend
+// has not reported (neither Scheduled nor Created is set, so nothing can be
+// priced). The estimate must then say "unknown", never "free".
+func (e Execution) BilledWindow(now time.Time) (time.Duration, bool) {
+	if e.MachineType == "" {
+		return e.Billed(now), true
+	}
+	start := e.Scheduled
+	if start.IsZero() {
+		start = e.Created
+	}
+	if start.IsZero() {
+		return 0, false
+	}
+	end := e.Completed
+	if end.IsZero() {
+		end = now
+	}
+	return max(VMMinimumBilled, end.Sub(start)), true
+}
+
+// WindowNote names the time a VM-backed execution's billed window started
+// from, for the estimate's source line (design §5.2): the scheduled time, or
+// the job's creation when the backend reported none, which includes Batch's
+// queue time and errs high. "" for an execution that is not VM-backed, whose
+// window is Cloud Run's own and whose rows carry no such line.
+func (e Execution) WindowNote() string {
+	if e.MachineType == "" {
+		return ""
+	}
+	if e.Scheduled.IsZero() {
+		return "window starts at job creation: includes queue time, errs high"
+	}
+	return "window starts at the job's scheduled time"
 }
 
 // ListFilter narrows List.
@@ -173,7 +271,29 @@ var ErrRejected = errors.New("rejected")
 type Prices struct {
 	VCPUSecondUSD float64
 	GiBSecondUSD  float64
-	Source        string // where the figures come from, for reports
+	// VCPU and MemoryGiB are the quantities these prices bill, for a
+	// platform whose unit is a machine type rather than the job's own
+	// limits: Compute Engine bills an e2-standard-4 as 4 vCPU / 16 GiB
+	// whatever the workflow asked for, so the machine type decides the
+	// figure and not the workflow (design compute-backend.md §5.2). Both
+	// zero means the platform bills whatever the execution's own
+	// CPU/MemoryGiB are -- Cloud Run's jobs, and every price table that is
+	// not a machine type's -- which is what Quantities then answers.
+	VCPU      float64
+	MemoryGiB float64
+	Source    string // where the figures come from, for reports
+}
+
+// Quantities are the vCPU and GiB these prices bill: the machine type's when
+// the table carries them (a VM backend), else the caller's own cpu and
+// memGiB. It is what keeps "the quantities are the machine type's, not the
+// workflow's" true by construction rather than by a backend remembering to
+// copy them onto the execution.
+func (p Prices) Quantities(cpu, memGiB float64) (float64, float64) {
+	if p.VCPU > 0 && p.MemoryGiB > 0 {
+		return p.VCPU, p.MemoryGiB
+	}
+	return cpu, memGiB
 }
 
 // ComputeUSD is the cost of cpu vCPUs and memGiB GiB for d.

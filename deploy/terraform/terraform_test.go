@@ -591,6 +591,194 @@ func TestCheckJobPrefixMatchesGo(t *testing.T) {
 	}
 }
 
+// The installation's log sink and its _Default exclusion carry one arm per
+// platform a Fugaro-managed job's lines can come from (design
+// docs/design/compute-backend.md §1.5, §8.1 task 4): Cloud Run's
+// cloud_run_job, which every installation's sink and exclusion already
+// filter on, and Cloud Batch's batch.googleapis.com/Job, without which a
+// Batch run's lines sit in _Default where every project viewer reads them.
+//
+// Four things this pins, none of which a plan test can see as a string:
+//
+//   - the Cloud Run arm is byte-for-byte what it was before the Batch arm
+//     existed. An installation's live sink filters on that text, and an arm
+//     that drifted by a byte would move lines the installation never meant
+//     to route (or stop routing its own);
+//   - the Batch arm is exactly the documented one -- the resource type Batch
+//     gives a job's entries, pinned to the installation's own marker;
+//   - the rendered sink and exclusion filters, exactly, parenthesis for
+//     parenthesis;
+//   - and that neither filter mixes AND with OR at one parenthesis level.
+//     Cloud Logging's query language does not group them the way most
+//     languages do -- NOT has the highest precedence, "followed by OR and
+//     AND in that order" (Logging query language, "Boolean operators"), so
+//     AND binds *loosest* -- and a filter that mixes them at one level then
+//     means something its author probably did not intend: `A1 AND A2 OR B1
+//     AND B2` is `A1 AND (A2 OR B1) AND B2`, which matches only the Cloud Run
+//     arm, so the Batch arm would route and exclude nothing and a Batch run's
+//     task lines would sit in _Default where every project viewer reads them.
+//     A filter where every level is all-AND or all-OR means the same thing
+//     under either precedence, which is the property pinned here.
+//
+// Who can read the lines does NOT change: the arm routes into the same
+// bucket, and the view's IAM member is pinned here to the launchers and
+// operators it already named, so a second arm cannot widen the audience.
+func TestLogSinkRoutesBothPlatforms(t *testing.T) {
+	b, err := fs.ReadFile(FS, "gcp/modules/installation/logging.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	arm := func(name string) string {
+		t.Helper()
+		m := regexp.MustCompile(`(?m)^\s*` + name + `\s*=\s*"((?:[^"\\]|\\.)*)"\s*$`).FindStringSubmatch(src)
+		if m == nil {
+			t.Fatalf("logging.tf has no %s local", name)
+		}
+		return m[1]
+	}
+	// The Cloud Run arm, byte for byte. This string is the one every
+	// installation's sink and exclusion already carries; it is written out
+	// here rather than derived, so that a change to it fails this test.
+	const cloudRunArm = `resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\"`
+	const batchArm = `resource.type=\"batch.googleapis.com/Job\" AND labels.\"fugaro\"=\"managed\"`
+	if got := arm("fugaro_cloud_run_logs"); got != cloudRunArm {
+		t.Errorf("the Cloud Run arm = %s\nwant                  %s\nthe Cloud Run arm must stay byte-for-byte unchanged", got, cloudRunArm)
+	}
+	if got := arm("fugaro_batch_logs"); got != batchArm {
+		t.Errorf("the Batch arm = %s\nwant            %s", got, batchArm)
+	}
+	// How the arms are joined, in the source.
+	if got, want := arm("fugaro_logs"), "((${local.fugaro_cloud_run_logs}) OR (${local.fugaro_batch_logs}))"; got != want {
+		t.Errorf("the combined filter = %s\nwant                  %s\nthe arms must be one group with each arm parenthesized: Cloud Logging binds AND loosest (NOT, then OR, then AND)", got, want)
+	}
+	// The two rendered filters, as Cloud Logging receives them: the local
+	// substituted in, and the HCL's \" unescaped back to the " the API sees.
+	// Written out rather than derived, so any change to either filter fails
+	// here.
+	unescape := func(s string) string { return strings.ReplaceAll(s, `\"`, `"`) }
+	render := func(s string) string {
+		s = strings.ReplaceAll(s, "${local.fugaro_cloud_run_logs}", cloudRunArm)
+		return strings.ReplaceAll(s, "${local.fugaro_batch_logs}", batchArm)
+	}
+	sinkFilter := unescape(render(arm("fugaro_logs")))
+	wantSink := "((" + unescape(cloudRunArm) + ") OR (" + unescape(batchArm) + "))"
+	if sinkFilter != wantSink {
+		t.Errorf("the sink's filter renders as %s\nwant                        %s", sinkFilter, wantSink)
+	}
+	// The exclusion's own literal, with the file's own combined local
+	// substituted in, so that a change to either (or to what hangs off the
+	// group) fails here too.
+	m := regexp.MustCompile(`(?m)^\s*filter\s*=\s*"((?:[^"\\]|\\.)*)"\s*$`).FindStringSubmatch(src)
+	if m == nil {
+		t.Fatal("logging.tf's exclusion has no quoted filter")
+	}
+	exclusionFilter := unescape(strings.ReplaceAll(m[1], "${local.fugaro_logs}", render(arm("fugaro_logs"))))
+	wantExclusion := wantSink + ` AND NOT (resource.labels.job_name=~"^fugarochk-" AND jsonPayload.event="image-check") AND NOT logName:"run.googleapis.com%2Fvarlog%2Fsystem"`
+	if exclusionFilter != wantExclusion {
+		t.Errorf("the exclusion's filter renders as %s\nwant                             %s", exclusionFilter, wantExclusion)
+	}
+	// And the grouping itself: no group may mix AND with OR, which is what
+	// makes the filter mean the same thing under Cloud Logging's precedence
+	// (NOT, then OR, then AND) and the usual one.
+	for _, c := range []struct{ what, filter string }{
+		{"the sink's filter", sinkFilter},
+		{"the exclusion's filter", exclusionFilter},
+	} {
+		if mixedAndOr(c.filter) {
+			t.Errorf("%s mixes AND with OR in one group: %s\nCloud Logging binds AND loosest, so this does not group the way it reads", c.what, c.filter)
+		}
+	}
+	// Both the sink and the exclusion carry both arms; the view's IAM
+	// member still names only the launchers and operators.
+	for _, want := range []string{
+		"filter                 = local.fugaro_logs",
+		"filter  = \"${local.fugaro_logs} AND NOT",
+		"for_each = var.log_isolation ? toset(concat(var.launchers, var.operators)) : toset([])",
+		"role     = \"roles/logging.viewAccessor\"",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("logging.tf does not contain %q", want)
+		}
+	}
+}
+
+// mixedAndOr reports whether filter uses AND and OR in the same group -- one
+// parenthesis span, or the whole expression -- outside quoted values. Cloud
+// Logging's query language is not the usual one (NOT, then OR, then AND, so
+// AND binds loosest), which makes a mixed group mean something other than
+// what it reads as: `A1 AND A2 OR B1 AND B2` is `A1 AND (A2 OR B1) AND B2`.
+// A filter with no mixed group means the same thing under either precedence.
+// Sibling groups do not count as one group: `(a OR b) AND NOT (c AND d)` has
+// an OR and an AND in different spans.
+func mixedAndOr(filter string) bool {
+	word := func(c byte) bool {
+		return c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+	}
+	stack := []int{0} // the innermost span is the current group; the whole expression is group 0
+	next := 1
+	and, or := map[int]bool{}, map[int]bool{}
+	for i := 0; i < len(filter); i++ {
+		switch c := filter[i]; {
+		case c == '"': // a value: operators inside it are text
+			for i++; i < len(filter) && filter[i] != '"'; i++ {
+				if filter[i] == '\\' {
+					i++
+				}
+			}
+		case c == '(':
+			stack = append(stack, next)
+			next++
+		case c == ')':
+			if len(stack) > 1 {
+				stack = stack[:len(stack)-1]
+			}
+		case word(c):
+			j := i
+			for j < len(filter) && word(filter[j]) {
+				j++
+			}
+			group := stack[len(stack)-1]
+			switch filter[i:j] {
+			case "AND":
+				and[group] = true
+			case "OR":
+				or[group] = true
+			}
+			i = j - 1
+		}
+	}
+	for g := range and {
+		if or[g] {
+			return true
+		}
+	}
+	return false
+}
+
+// TestMixedAndOr pins the check the sink test relies on, on the filter that
+// was actually written once (an unparenthesized pair of arms) and on the ones
+// that are correct, so that a checker that never fires cannot pass for a pin.
+func TestMixedAndOr(t *testing.T) {
+	for _, c := range []struct {
+		filter string
+		want   bool
+	}{
+		// The bug: the arms' AND clauses and the OR between them at one level.
+		{`resource.type="cloud_run_job" AND labels."fugaro"="managed" OR resource.type="batch.googleapis.com/Job" AND labels."fugaro"="managed"`, true},
+		{`a OR b AND c`, true},
+		{`(a AND b) OR (c AND d)`, false},
+		{`((a AND b) OR (c AND d)) AND NOT e`, false},
+		{`((a AND b) OR (c AND d)) AND NOT (e AND f) AND NOT g`, false},
+		{`resource.type="cloud_run_job" AND labels."fugaro"="managed"`, false},
+		{`textPayload:"AND OR" AND severity="INFO"`, false},
+	} {
+		if got := mixedAndOr(c.filter); got != c.want {
+			t.Errorf("mixedAndOr(%q) = %v, want %v", c.filter, got, c.want)
+		}
+	}
+}
+
 // Cloud Monitoring refuses an alert policy with a log-match condition and
 // any other condition ("Alert policies with a log matching condition can
 // only have a single condition"), and a mock-provider plan can't see that.

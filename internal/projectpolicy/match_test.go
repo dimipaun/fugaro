@@ -64,6 +64,71 @@ func TestMatchRepo(t *testing.T) {
 	}
 }
 
+// TestAdmitRepoAndNotAdmitted is the allow-list's own decision, tested where
+// it lives. Both readers of it reach it from other packages — the runner's
+// admission check, before any git credential exists, and the launcher's
+// advisory twin — so the two rules that are only this pair's to state have no
+// test of their own without this one: an empty list is deny-all (not "no
+// policy", which is its caller's distinction to make), and the refusal names
+// the list and the command that enrolls the repository. A change to either
+// would otherwise show up as a moved string in another package's test rather
+// than as a failure here.
+//
+// Mutation (verified, run and restored): admit everything from an empty list
+// (`if len(patterns) == 0 { return true }` in AdmitRepo) — the deny-all case
+// fails; and drop the empty-list branch from NotAdmitted so it prints the
+// literal `[]` — the wording case fails.
+func TestAdmitRepoAndNotAdmitted(t *testing.T) {
+	allow := []string{"github/acme/*", "bitbucket/other/app"}
+	for _, tc := range []struct {
+		repo string
+		want bool
+	}{
+		{"github/acme/app", true}, // through the pattern
+		{"github/acme/anything", true},
+		{"bitbucket/other/app", true}, // the concrete entry, another provider
+		{"github/other/app", false},   // another owner
+		{"bitbucket/other/other", false},
+		{"github/acme", false}, // not canonical
+		{"", false},
+	} {
+		if got := AdmitRepo(allow, tc.repo); got != tc.want {
+			t.Errorf("AdmitRepo(%v, %q) = %v, want %v", allow, tc.repo, got, tc.want)
+		}
+	}
+	// The wildcard is the design's explicit every-repository choice, so the
+	// deny-all rule below is about an EMPTY list and not about this one.
+	if !AdmitRepo([]string{"*"}, "github/acme/app") || !AdmitRepo([]string{"*"}, "bitbucket/other/app") {
+		t.Error("the wildcard entry did not admit a repository")
+	}
+	// A published policy with an empty allow-list admits nothing: deny-all, and
+	// the same for a list that is nil, which is what a node with no key decodes
+	// to.
+	for name, list := range map[string][]string{"nil": nil, "empty": {}} {
+		if AdmitRepo(list, "github/acme/app") || AdmitRepo(list, "") {
+			t.Errorf("%s: an empty allow-list admitted a repository: a published policy with an empty list is deny-all", name)
+		}
+		msg := NotAdmitted(list, "github/acme/app")
+		for _, want := range []string{
+			"empty, and a published policy with an empty allow-list admits no repository at all",
+			"fugaro project repos add github/acme/app",
+		} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("%s: the refusal does not say %q: %s", name, want, msg)
+			}
+		}
+	}
+	// With entries on the list the refusal prints them — the operator has to
+	// see what the list actually says to know how far off the name is.
+	msg := NotAdmitted(allow, "github/other/app")
+	if !strings.Contains(msg, `"github/acme/*"`) || !strings.Contains(msg, "bitbucket/other/app") {
+		t.Errorf("the refusal does not print the list: %s", msg)
+	}
+	if !strings.Contains(msg, "fugaro project repos add github/other/app") {
+		t.Errorf("the refusal does not name the repository to enroll in the command that enrolls it: %s", msg)
+	}
+}
+
 func TestMatchRepoWildcardSegmentsAreGreedy(t *testing.T) {
 	for _, tc := range []struct{ pattern, canonical string }{
 		{"github/*-web/*", "github/acme-web/app"}, // a wildcard before a literal inside a segment

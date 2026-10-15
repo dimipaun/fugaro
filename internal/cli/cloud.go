@@ -17,6 +17,7 @@ import (
 	"golang.org/x/oauth2/google"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/batch"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -112,15 +113,69 @@ func recordReadURL(lc *localcfg.Config) string {
 	return lc.RecordBucketURL()
 }
 
-// prices are the compute prices of a region, for cost estimates of cloud
-// runs (design §10.1): the local config's override, else the list price;
-// "" is the region the jobs run in, after --region.
-func (e *cloudEnv) prices() runview.PriceBook {
-	return func(region string) backend.Prices {
-		if region == "" {
-			region = e.lc.Region
+// prices are the compute prices one execution is priced with, for cost
+// estimates of cloud runs (design §10.1, compute-backend.md §5.2): the local
+// config's override, else the list price of the execution's own backend and
+// region. The execution tells us both — its Region is the backend's own
+// answer, not a parse of a name shape this package would have to know, and
+// its MachineType is what makes a run a VM-backed one, whose table is
+// Compute Engine's and not Cloud Run's.
+//
+// An execution no table prices — a machine type or a region the VM table
+// does not carry — gets the zero price book, so its row reads "compute not
+// estimated" rather than being priced with another platform's figures or
+// with $0.00. A nil execution (a run with no execution at all) prices in the
+// installation's own region.
+//
+// warn is how a refusal is said out loud, once per distinct reason: a listing
+// whose rows all read "compute not estimated" would otherwise leave the
+// operator with nothing to read, which is the quiet failure §5.2 warns about.
+// The rows are still listed — a price table's gap is not a reason to fail a
+// listing — and nil warn says nothing.
+func (e *cloudEnv) prices(warn func(string)) runview.PriceBook {
+	var (
+		mu   sync.Mutex
+		said = map[string]bool{}
+	)
+	refused := func(err error) {
+		if warn == nil {
+			return
 		}
+		mu.Lock()
+		defer mu.Unlock()
+		msg := err.Error()
+		if said[msg] {
+			return
+		}
+		said[msg] = true
+		warn("warning: compute is not estimated: " + oneLine(msg) + "\n")
+	}
+	return func(x *backend.Execution) backend.Prices {
+		region := e.lc.Region
+		if x != nil && x.Region != "" {
+			region = x.Region
+		}
+		vm := x != nil && x.MachineType != ""
 		if p, ok := e.lc.PriceOverride(region); ok {
+			if !vm {
+				return p
+			}
+			// The override's rates win, but a VM run is billed for its
+			// machine type's quantities and its line keeps the disk/NAT note
+			// (batch.ForMachineType, design §5.2, C17).
+			p, err := batch.ForMachineType(p, x.MachineType)
+			if err != nil {
+				refused(err)
+				return backend.Prices{}
+			}
+			return p
+		}
+		if vm {
+			p, err := batch.PricesFor(region, x.MachineType)
+			if err != nil {
+				refused(err)
+				return backend.Prices{}
+			}
 			return p
 		}
 		return gcp.ListPrices(region)

@@ -55,6 +55,18 @@ func newConfigPublishCmd() *cobra.Command {
 			if len(ps) > 0 {
 				return userErr("nothing was published: %s is invalid: %s", args[0], pluginwire.Printable(layerProblemsText(ps)))
 			}
+			// The claims are judged against the installation config, the
+			// whole route table — this is the one moment they can be: a run
+			// routes by its own repository's FUGARO_MODEL_PROVIDERS, so it
+			// cannot tell a provider this installation does not define from
+			// one this repository may not send code to (config.ClaimsOnRoutes
+			// drops both, deliberately). Publishing a claim nothing defines,
+			// or one colliding with another route's pattern (which would
+			// leave the gateway refusing to start), is refused here, before
+			// it reaches every repository of the project.
+			if _, cps := config.ApplyClaudeClaims(env.lc.Providers, l.ClaudeModels); len(cps) > 0 {
+				return userErr("nothing was published: %s is invalid: %s", args[0], pluginwire.Printable(layerProblemsText(cps)))
+			}
 			gen, err := publishLayer(ctx, cmd.ErrOrStderr(), env.bucket, l, executable)
 			if err != nil {
 				return err

@@ -143,12 +143,27 @@ func ForgetRepoState(ctx context.Context, c *Clients, stateBucket, slug string) 
 }
 
 // SecretVersions reports, for each of the repository's secrets by logical
-// name, whether it has an enabled version. A secret that doesn't exist has
-// none.
+// name, whether the repository's job is covered: the repository's own copy
+// has an enabled version, or -- when that copy has none -- a project-wide
+// copy this repository may use does (spec.ProjectSecretCandidates). A secret
+// that doesn't exist anywhere is covered by neither.
+//
+// It is the same question Readiness answers, through the same one helper
+// (resolveSecretID), because both feed the same run: NeedsBuild's gate on the
+// first image build and printMissing's "Still missing" steps read this map,
+// while Readiness's own missing list reads the helper directly. Answering it
+// repository-only here was Check 40 step 40i's bug: a project-covered name
+// was listed as missing (with a fugaro secrets set --repo command whose copy
+// would then win forever over the project's, the silent precedence flip
+// project-wide secrets exist to avoid) and left the repository's first build
+// unoffered, so a repository that was in fact ready ended as "left for you"
+// and exited non-zero.
 func SecretVersions(ctx context.Context, c *Clients, spec RepoSpec) (map[string]bool, error) {
+	tg := target{project: spec.GCPProject}
+	has := func(id string) (bool, error) { return hasEnabledVersion(ctx, c.Secrets, tg, id) }
 	out := make(map[string]bool, len(spec.Secrets))
 	for _, logical := range slices.Sorted(maps.Keys(spec.Secrets)) {
-		ok, err := hasEnabledVersion(ctx, c.Secrets, target{project: spec.GCPProject}, spec.Secrets[logical])
+		_, ok, err := resolveSecretID(has, spec.Secrets[logical], spec.ProjectSecretCandidates[logical])
 		if err != nil {
 			return nil, err
 		}
@@ -215,6 +230,23 @@ type SecretStep struct {
 	Commands []string
 }
 
+// SecretFix is the one place that says where a missing logical secret's copy
+// should be stored: project-wide when the installation's local config lets
+// this repository use one (spec.ProjectSecretCandidates, ProjectSecretCandidate's
+// own answer), because a repository copy would then win over it forever --
+// the silent precedence flip project-wide secrets exist to avoid (design
+// docs/design/project-secrets.md §5) -- and the repository's own copy
+// otherwise. Readiness prints it as a Missing's fix; SecretCommands prints it
+// as the command to type, and the two must not be able to disagree about the
+// same name. bin names the binary and quote makes one shell word of a name,
+// both as the caller prints commands.
+func SecretFix(spec RepoSpec, logical, bin string, quote func(string) string) string {
+	if _, ok := spec.ProjectSecretCandidates[logical]; ok {
+		return bin + " secrets set " + quote(logical) + " --project-wide"
+	}
+	return bin + " secrets set " + quote(logical) + " --repo " + quote(spec.Name)
+}
+
 // SecretCommands are the fugaro secrets set steps of the repository's
 // secrets that have no version, sorted by name: the value comes from stdin or
 // a hidden prompt, never argv, and the Claude token is made by the user, in
@@ -226,7 +258,7 @@ func SecretCommands(spec RepoSpec, versions map[string]bool, bin string, quote f
 		if versions[logical] {
 			continue
 		}
-		set := bin + " secrets set " + quote(logical) + " --repo " + quote(spec.Name)
+		set := SecretFix(spec, logical, bin, quote)
 		st := SecretStep{Name: logical, What: spec.Secrets[logical], Optional: OptionalSecret(logical)}
 		if logical == "claude-oauth-token" {
 			st.Commands = []string{"claude setup-token", set}

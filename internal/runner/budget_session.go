@@ -239,6 +239,18 @@ func (r *run) bootstrapHalt(reason runstore.HaltReason, scope, detail string) er
 	return &HaltError{*r.haltValue()}
 }
 
+// strayTokenNoBackend is M2's refusal for a job whose launcher minted a budget
+// token and whose environment carries no budget backend: the marker is written
+// only by a launcher that saw a shared budget or a published policy, so this
+// run has a ceiling it cannot read. It is worded once because it has two
+// readers and they must agree: budgetClient, which meets the state at the
+// policy read — before admissionCheck, before any git credential, before the
+// clone — and startBudgetBackend, which met it first and is where a run that
+// answered "no policy" earlier would otherwise stop.
+func strayTokenNoBackend() error {
+	return fmt.Errorf("this run was launched with a budget token, so this repository has a shared budget or a published policy, but its job carries no budget backend (%s is not set in the job's environment): run fugaro init --repo for this repository, then launch the run again", RTDBURLEnv)
+}
+
 // startBudgetBackend takes the run's Firebase identity and joins the shared
 // budget (plan T6): it reads and deletes the token object, exchanges it,
 // reads the caps and the kill switches, halts the run if it may not begin,
@@ -253,7 +265,7 @@ func (r *run) startBudgetBackend(ctx context.Context) error {
 	// the same refusal for a budget-on job, found by reading the bucket).
 	// The marker is proof enough: nothing else writes it.
 	if r.d.Backend.TokenMarked && !r.d.Backend.On() {
-		return fmt.Errorf("this run was launched with a budget token, so this repository has a shared budget or a published policy, but its job carries no budget backend (%s is not set in the job's environment): run fugaro init --repo for this repository, then launch the run again", RTDBURLEnv)
+		return strayTokenNoBackend()
 	}
 	// A run whose budget is off ignores the budget's environment entirely.
 	if !r.spend.On() {

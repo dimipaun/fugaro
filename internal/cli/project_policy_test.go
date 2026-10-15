@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -591,6 +592,101 @@ func TestProjectPolicyPublishRefusesAPastedKeyWithoutEchoingIt(t *testing.T) {
 	}
 	if f.db.Value(projectpolicy.PathShared()) != nil {
 		t.Error("a node was written anyway")
+	}
+}
+
+// TestReadOnlyCommandsSurviveARepoWithNoProvider: a `repos:` entry does not
+// have to name a provider — localcfg documents that the checkout's fugaro.yaml
+// decides it, and this file's own repoBySlug and shared-config branch skip such
+// an entry — so the commands that only *read* must not abort on one. The seed
+// the publisher computes is strict for a reason that belongs to the writer
+// alone: a canonical allow-list entry needs the provider, and seeding without a
+// repository that runs today un-enrolls it. `project show` (both output forms)
+// and `project repos ls` only label the allow-list's sources, so an entry they
+// cannot spell costs that label and nothing else.
+//
+// Mutation (verified, run and restored): make allowSources call the strict
+// seed again (seedAllowRepos, as before): all three commands fail with the
+// publish's refusal.
+func TestReadOnlyCommandsSurviveARepoWithNoProvider(t *testing.T) {
+	f := newProjectFixture(t, "  acme/noprov: { workflows: [web] }\n")
+	// Published by hand: with this config the publisher refuses (asserted
+	// below), and the readers only need a node to read.
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+	})
+	for _, args := range [][]string{
+		{"project", "show"},
+		{"project", "show", "--json"},
+		{"project", "repos", "ls"},
+	} {
+		if _, _, err := execute(t, args...); err != nil {
+			t.Errorf("%v failed on a config whose repos entry names no provider: %v", args, err)
+		}
+	}
+	// The writer keeps its refusal, at the one point it seeds: --seed-repos is
+	// where the allow-list is rebuilt from this config, and an entry the seed
+	// cannot spell is a repository that would silently drop out of it.
+	if _, _, err := execute(t, "project", "policy", "publish", "--seed-repos"); err == nil || !strings.Contains(err.Error(), "names no git provider") {
+		t.Errorf("the publish must keep refusing a repos entry with no provider, got %v", err)
+	}
+}
+
+// policyChangedDuringDelete plants another publish's node while a --delete is
+// being confirmed: the window between the node this command read and validated
+// (its ETag, the version refuseNewerPolicy checked) and the write that removes
+// it. It fires on the read of the child nodes, the first request after the
+// shared node was read.
+type policyChangedDuringDelete struct {
+	rt   http.RoundTripper
+	db   *gcpfake.RTDB
+	val  any
+	done bool
+}
+
+func (c *policyChangedDuringDelete) RoundTrip(r *http.Request) (*http.Response, error) {
+	if !c.done && r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/config/policy/repos.json") {
+		c.done = true
+		c.db.Set(projectpolicy.PathShared(), c.val)
+	}
+	return c.rt.RoundTrip(r)
+}
+
+// TestProjectPolicyDeleteDeletesUnderTheETagItValidated: --delete removes the
+// node it read, under the ETag it read it with — never "whatever is there when
+// the write happens". The in-flight check and the typed confirmation were made
+// about the node that was read, and a node rewritten to a version
+// refuseNewerPolicy refuses (P8) is exactly the one this binary must not delete
+// at all; reading the node again here would delete a publish nobody confirmed.
+//
+// Mutation (verified, run and restored): in deleteProjectPolicy, read the
+// shared node again with a fresh db.GetETag and delete under that one (the
+// shipped behaviour): this test fails, the node the other publish wrote is
+// gone.
+func TestProjectPolicyDeleteDeletesUnderTheETagItValidated(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	other := map[string]any{
+		"version":     projectpolicy.Version + 1,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 1},
+		"allow_repos": []string{"github/other/*"},
+	}
+	budgetTransport = &policyChangedDuringDelete{rt: http.DefaultTransport, db: f.db, val: other}
+	t.Cleanup(func() { budgetTransport = nil })
+
+	out, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	if err == nil {
+		t.Fatalf("a publish that landed while the deletion was being confirmed was deleted unconfirmed:\n%s", out)
+	}
+	if f.db.Value(projectpolicy.PathShared()) == nil {
+		t.Fatalf("the node another publish wrote was deleted, and its deletion was never confirmed:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), projectpolicy.PathShared()) {
+		t.Errorf("the refusal does not name the node: %v", err)
 	}
 }
 
@@ -1289,6 +1385,25 @@ func TestRemovalWarningSaysWhatTheNextRunDoes(t *testing.T) {
 		"pattern, the wildcard remains": {[]string{"*", "github/acme/*"}, "github/acme/*", true, "*"},
 		"pattern, nothing remains":      {[]string{"github/acme/*"}, "github/acme/*", false, ""},
 		"pattern, a narrower one only":  {[]string{"github/acme/*", "github/acme/app"}, "github/acme/*", false, ""},
+		// The broader pattern really does keep every repository the removed one
+		// admitted, so the runs are not refused (the review of PR #390).
+		"pattern, a broader pattern": {[]string{"github/*/*", "github/acme/*"}, "github/acme/*", true, "github/*/*"},
+		// A covering entry need not be written with bare "*" segments: github/ac*
+		// admits every owner whose name starts with "ac", which is every owner
+		// github/acme/* admitted, so the runs are not refused either. MatchRepo
+		// answers this — and coversRepo did not, which is why the sentence could
+		// claim a stop the removal does not make (the review of PR #402).
+		"pattern, a partial wildcard that covers it": {[]string{"github/ac*/*", "github/acme/*"}, "github/acme/*", true, "github/ac*/*"},
+		// The other direction: github/a*/app admits github/acme/app, but not
+		// github/acme/anything-else, which the removed pattern did admit — so the
+		// removal does refuse something and must say so.
+		"pattern, a partial wildcard that does not": {[]string{"github/a*/app", "github/acme/*"}, "github/acme/*", false, ""},
+		// Overlap is not coverage, in either direction. This one is not a comment
+		// about MatchRepo's arguments being patterns: they are not — MatchRepo
+		// reads its second argument as a repository, so MatchRepo("github/acme/*",
+		// "github/*/app") is false. It is that github/*/app admits
+		// github/other/app, which github/acme/* does not.
+		"pattern, one that only overlaps it": {[]string{"github/acme/*", "github/*/app"}, "github/*/app", false, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, by := admittedBy(tc.allow, tc.arg)
@@ -1347,6 +1462,52 @@ func TestProjectReposRmWithAPatternStillOnTheListSaysSo(t *testing.T) {
 	}
 }
 
+// TestProjectReposRmOfAPatternWithAPartialWildcardLeftSaysSo: the same
+// sentence, end to end, with the covering entry a partial wildcard.
+// github/ac*/* admits every repository github/acme/* admitted — github/ac* is
+// the owners whose name starts with "ac" — so removing github/acme/* refuses
+// nothing, and the confirmation has to say that rather than claim a stop it
+// does not make (the review of PR #402: coversRepo missed this, and the
+// sentence read "its runs are refused from now on" while github/ac*/* was on
+// the list).
+//
+// Mutation (verified, run and restored): put coversRepo back in admittedBy's
+// pattern branch: this test fails, reading "refused from now on" while
+// github/ac*/* still admits every repository the removed pattern admitted.
+func TestProjectReposRmOfAPatternWithAPartialWildcardLeftSaysSo(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"github/ac*/*", "github/acme/*"} {
+		if _, _, err := execute(t, "project", "repos", "add", p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	typed(t)
+	out, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", "github/acme/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "github/ac*/* still admits it") {
+		t.Errorf("the confirmation does not name the partial wildcard that still admits it:\n%s", out)
+	}
+	if strings.Contains(out, "refused from now on") {
+		t.Errorf("the confirmation says the runs are refused though github/ac*/* is on the list:\n%s", out)
+	}
+	allow := publishedPolicy(t, f).AllowRepos
+	if slices.Contains(allow, "github/acme/*") {
+		t.Errorf("allow_repos = %v, want the pattern removed", allow)
+	}
+	// The point of the sentence: every repository the removed pattern admitted
+	// is still admitted, by the entry the confirmation named.
+	for _, r := range []string{"github/acme/app", "github/acme/anything"} {
+		if !projectpolicy.AdmitRepo(allow, r) {
+			t.Errorf("allow_repos = %v no longer admits %s, which the confirmation said it keeps", allow, r)
+		}
+	}
+}
+
 // TestProjectReposRmWithoutAnythingElseAdmittingSaysItStopsRuns: the other
 // side, so the sentence above is not the only one the command can produce.
 func TestProjectReposRmWithoutAnythingElseAdmittingSaysItStopsRuns(t *testing.T) {
@@ -1367,6 +1528,70 @@ func TestProjectReposRmWithoutAnythingElseAdmittingSaysItStopsRuns(t *testing.T)
 	}
 	if projectpolicy.AdmitRepo(publishedPolicy(t, f).AllowRepos, "github/acme/app") {
 		t.Error("the policy still admits the repository the confirmation said it stops")
+	}
+}
+
+// TestProjectReposEditTheWildcard: "*" is an allow-list entry like any other —
+// the design's explicit every-repository choice (§4.3), which MatchRepo reads
+// as admitting anything, which ValidPattern accepts, and which the rules
+// template's own testdata writes — so both commands have to know it.
+// canonicalRepoArg split its argument on "/" and knew only the owner/name and
+// provider/owner/name forms, so "*" fell through to "write it as
+// provider/owner/name": an operator could not write the widest list with
+// `repos add`, and a list holding it could not be narrowed with `repos rm`
+// (it refused the argument before it looked it up), leaving a full republish as
+// the only way to take it off.
+//
+// Mutation (verified, run and restored): remove the "*" branch from
+// canonicalRepoArg — add fails with "not a repository: write it as
+// provider/owner/name" and rm with the same, nothing is written, and the list
+// still admits the repository the removal was meant to refuse.
+func TestProjectReposEditTheWildcard(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	// The list the fixture publishes names two repositories and not the
+	// wildcard: what the assertions below read is this command's own write.
+	if allow := publishedPolicy(t, f).AllowRepos; slices.Contains(allow, "*") {
+		t.Fatalf("the fixture's published list already holds the wildcard: %v", allow)
+	}
+	out, _, err := execute(t, "project", "repos", "add", "*")
+	if err != nil {
+		t.Fatalf("repos add '*' = %v", err)
+	}
+	if !strings.Contains(out, "allow_repos: ") || !strings.Contains(out, "*") {
+		t.Errorf("the diff does not print the entry it wrote:\n%s", out)
+	}
+	allow := publishedPolicy(t, f).AllowRepos
+	if !slices.Contains(allow, "*") {
+		t.Fatalf("the node holds %v, want the wildcard among them", allow)
+	}
+	// The entry admits what no other entry on the list does — which is what
+	// makes removing it the widening refusal `repos rm` asks about.
+	if !projectpolicy.AdmitRepo(allow, "github/anything/else") {
+		t.Error("the list does not admit a repository through the wildcard it holds")
+	}
+
+	// And it comes off the same way: with the project's name typed, since
+	// removing it refuses every repository the list does not otherwise admit.
+	typed(t)
+	out, _, err = executeStdin(t, "aurora\n", "project", "repos", "rm", "*")
+	if err != nil {
+		t.Fatalf("repos rm '*' = %v", err)
+	}
+	if !strings.Contains(out, `removes * from the allow-list`) || !strings.Contains(out, "refused from now on") {
+		t.Errorf("the confirmation does not say what removing the wildcard does:\n%s", out)
+	}
+	allow = publishedPolicy(t, f).AllowRepos
+	if slices.Contains(allow, "*") {
+		t.Errorf("the node still holds the wildcard: %v", allow)
+	}
+	if projectpolicy.AdmitRepo(allow, "github/anything/else") {
+		t.Error("the list still admits a repository only the wildcard admitted")
+	}
+	if !projectpolicy.AdmitRepo(allow, "github/acme/app") {
+		t.Error("removing the wildcard also dropped an entry that was on the list: the command must remove one entry and nothing else")
 	}
 }
 
@@ -1474,6 +1699,49 @@ func TestProjectPolicyPublishKeepsAnExistingRoutingBlock(t *testing.T) {
 	}
 }
 
+// TestProjectPolicyPublishKeepsTheRoutingKeysThisFugaroDoesNotModel: the
+// routing block is shared with releases that know keys this one does not
+// (phase 1b writes it, and a later one will write more of it), and a publish
+// that rebuilt the node from this Fugaro's own type would drop them — the
+// quiet loosening `repos add|rm` refuses to make by patching the document
+// (patchPolicyJSON) and buildProjectPolicy's comment promises cannot happen.
+// The diff tells the operator the routing block is kept, so it is kept whole,
+// including the members this binary cannot name.
+//
+// Mutation (verified, run and restored): in runProjectPolicyPublish, write the
+// marshalled typed policy (`json.Marshal(pol)`) instead of
+// keepOldRouting's bytes: this test fails, both unmodelled keys gone and
+// routing reduced to the one this Fugaro models.
+func TestProjectPolicyPublishKeepsTheRoutingKeysThisFugaroDoesNotModel(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	// A routing block written the way a release that knows more of it would:
+	// one unmodelled key beside a modelled one, and one unmodelled block.
+	node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
+	node["routing"] = map[string]any{
+		"claude": map[string]any{"via": "openrouter", "tier": "gold"},
+		"gemini": map[string]any{"via": "vertex"},
+	}
+	f.db.Set(projectpolicy.PathShared(), node)
+
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	got := f.db.Value(projectpolicy.PathShared())
+	for _, path := range [][]string{
+		{"routing", "claude", "via"},
+		{"routing", "claude", "tier"},
+		{"routing", "gemini", "via"},
+	} {
+		if _, ok := nodeAt(got, path...); !ok {
+			t.Errorf("the publish dropped %s, a member of the routing block it says it keeps:\n%s",
+				strings.Join(path, "."), nodeJSON(t, f, projectpolicy.PathShared()))
+		}
+	}
+}
+
 // TestProjectPolicyPublishRefusesAnOlderNodeWithAWorkingRemedy: a node this
 // binary cannot read as its own shape — hand-written with no version, or with
 // an older one — is refused rather than replaced, but the refusal must name a
@@ -1549,5 +1817,125 @@ func TestProjectPolicyDeleteRemovesOrphanChildrenWithoutASharedNode(t *testing.T
 	}
 	if !strings.Contains(out, "nothing to delete") {
 		t.Errorf("a second --delete does not say there is nothing to delete:\n%s", out)
+	}
+}
+
+// TestProjectReposRmOfAPatternWithABroaderPatternLeftSaysSo: removing a
+// pattern while a broader one remains refuses nothing — github/*/* admits
+// every repository github/acme/* admitted — so the confirmation must not
+// claim a stop it does not make (the review of PR #390).
+//
+// Mutation (verified, run and restored): restore admittedBy's old
+// `for _, p := range rest { if p == "*" }` branch for patterns: this test
+// fails, reading "its runs are refused from now on" while github/*/* still
+// admits every one of them.
+func TestProjectReposRmOfAPatternWithABroaderPatternLeftSaysSo(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"github/*/*", "github/acme/*"} {
+		if _, _, err := execute(t, "project", "repos", "add", p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	typed(t)
+	out, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", "github/acme/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "github/*/* still admits it") {
+		t.Errorf("the confirmation does not name the broader pattern that still admits it:\n%s", out)
+	}
+	if strings.Contains(out, "refused from now on") {
+		t.Errorf("the confirmation says the runs are refused though github/*/* is on the list:\n%s", out)
+	}
+	allow := publishedPolicy(t, f).AllowRepos
+	if slices.Contains(allow, "github/acme/*") {
+		t.Errorf("allow_repos = %v, want the pattern removed", allow)
+	}
+	// The point of the sentence: every repository the removed pattern admitted
+	// is still admitted, by the entry the confirmation named.
+	for _, r := range []string{"github/acme/app", "github/acme/anything", "github/other/thing"} {
+		if !projectpolicy.AdmitRepo(allow, r) {
+			t.Errorf("allow_repos = %v no longer admits %s, which the confirmation said it keeps", allow, r)
+		}
+	}
+}
+
+// TestProjectReposRmOfANameOnlyAPatternAdmitsSaysThePatternKeepsIt: the name
+// is not an entry, so nothing is removed — but a pattern on the list admits
+// it, so its runs keep running, and "nothing to remove" alone reads as if
+// they had stopped (the review of PR #390).
+//
+// Mutation (verified, run and restored): put back the plain
+// `userErr("%s is not on the allow-list ...: nothing to remove")` return in
+// runProjectReposEdit: this test fails, finding no mention of the pattern.
+func TestProjectReposRmOfANameOnlyAPatternAdmitsSaysThePatternKeepsIt(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "project", "repos", "add", "github/acme/*"); err != nil {
+		t.Fatal(err)
+	}
+	before := publishedPolicy(t, f).AllowRepos
+	_, _, err := execute(t, "project", "repos", "rm", "github/acme/extra")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	if !strings.Contains(err.Error(), "github/acme/* admits it") || !strings.Contains(err.Error(), "keep running") {
+		t.Errorf("the refusal does not say the pattern keeps admitting it: %v", err)
+	}
+	if strings.Contains(err.Error(), "nothing to remove") {
+		t.Errorf("the refusal says only that there is nothing to remove: %v", err)
+	}
+	if got := publishedPolicy(t, f).AllowRepos; !slices.Equal(got, before) {
+		t.Errorf("allow_repos = %v, want the list unchanged (%v)", got, before)
+	}
+}
+
+// TestProjectReposEditRefusesTheSharedConfig: repos add and rm write the
+// published policy, so they are writers like `policy publish` and take its
+// two refusals — the shared config is not an operator's own installation, and
+// the database must be this project's (the review of PR #390).
+//
+// Mutation (verified, run and restored): call openBudget instead of
+// openProjectBudget in runProjectReposEdit: this test fails, the command
+// reaching the network instead of refusing.
+func TestProjectReposEditRefusesTheSharedConfig(t *testing.T) {
+	f := sharedEnd2End(t)
+	t.Chdir(gitCheckout(t, filepath.Join(f.dir, "app"), "version: 1\nproject: aurora\ngcp_project: proj-1234\n"))
+	for _, args := range [][]string{
+		{"project", "repos", "add", "github/acme/app"},
+		{"project", "repos", "rm", "github/acme/app"},
+	} {
+		_, _, err := execute(t, args...)
+		if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), errSharedWrite) {
+			t.Errorf("%v: err = %v, want the shared-config refusal", args, err)
+		}
+	}
+}
+
+// TestProjectPolicyPublishDiffDoesNotPrintAModelPricesCount: the diff names
+// every price override by model (priceLines), so a summary line reading
+// "model_prices: 1" says nothing an operator can use and reads like a rate
+// (the review of PR #390: the line the block-level comment beside it already
+// called out as useless).
+//
+// Mutation (verified, run and restored): put back
+// `"model_prices": fmt.Sprintf("%d", len(p.Prices))` in policyLines: this
+// test fails, finding "model_prices: 1" in the diff.
+func TestProjectPolicyPublishDiffDoesNotPrintAModelPricesCount(t *testing.T) {
+	newProjectFixture(t, "model_prices:\n  deepseek/deepseek-v4-flash: { input_per_m: 1, output_per_m: 2 }\n")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "model_prices: ") {
+		t.Errorf("the diff prints a model_prices count line:\n%s", out)
+	}
+	if !strings.Contains(out, "+ model_prices deepseek/deepseek-v4-flash: input_per_m 1") {
+		t.Errorf("the diff no longer names the override it has:\n%s", out)
 	}
 }
