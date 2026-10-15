@@ -772,15 +772,21 @@ func TestForeignProjectClaimDenied(t *testing.T) {
 	h := newHarness(t)
 	w := leased(2 * usd)
 	h.seed(w)
+	// The policy nodes are read through the same TOKEN test as the caps and
+	// limits, so a token that is not this project's reads neither the shared
+	// policy nor its own repository's child — and the deadline is part of it:
+	// an expired token is no token, whichever node it asks for.
 	for name, c := range map[string]claims{
 		"another project's token": {slug: "aurora", run: "r1", fp: "other-fp"},
 		"a token without fp":      {slug: "aurora", run: "r1", fp: "-"},
+		"an expired token":        {slug: "aurora", run: "r1", fx: time.Now().Add(-time.Minute).UnixMilli()},
 	} {
 		cl := h.as(c)
 		h.mustDeny(cl, name+": lease", leaseUpdates(w, usd))
 		h.mustDeny(cl, name+": registry", map[string]any{budget.PathAgent("aurora", "r1"): map[string]any{"repo": "x", "requestedBy": "alice@example.invalid"}})
 		h.mustDeny(cl, name+": counters", map[string]any{budget.PathSpendGlobal(w.day) + "/notional": 1})
-		for _, p := range []string{budget.PathCapsGlobal, budget.PathLimits, budget.PathRun("aurora", "r1"), budget.PathSpendGlobal(w.day), budget.PathSpendRepo(w.day, "aurora")} {
+		for _, p := range []string{budget.PathCapsGlobal, budget.PathLimits, budget.PathRun("aurora", "r1"), budget.PathSpendGlobal(w.day), budget.PathSpendRepo(w.day, "aurora"),
+			projectpolicy.PathShared(), projectpolicy.PathRepo("aurora"), projectpolicy.PathAdmin()} {
 			h.mustReadDenied(cl, p)
 		}
 	}
@@ -792,10 +798,16 @@ func TestForeignProjectClaimDenied(t *testing.T) {
 	// A token with no claims at all (a plain Firebase user) is nothing.
 	plain := h.client(rtdb.Auth{IDToken: func() string { return unsignedToken(map[string]any{"uid": "someone"}) }})
 	h.mustDeny(plain, "a user without claims", leaseUpdates(w, usd))
-	h.mustReadDenied(plain, budget.PathLimits)
 	// No token at all.
 	anon := h.client(rtdb.Auth{IDToken: func() string { return "" }})
-	h.mustReadDenied(anon, budget.PathLimits)
+	for _, c := range map[string]*rtdb.Client{"a user without claims": plain, "no token at all": anon} {
+		for _, p := range []string{budget.PathLimits, budget.PathMode, projectpolicy.PathShared(), projectpolicy.PathRepo("aurora"), projectpolicy.PathAdmin()} {
+			h.mustReadDenied(c, p)
+		}
+		for _, p := range []string{projectpolicy.PathShared(), projectpolicy.PathRepo("aurora"), projectpolicy.PathAdmin()} {
+			h.mustDeny(c, "a write to "+p+" without a run token", map[string]any{p: map[string]any{"version": 1}})
+		}
+	}
 }
 
 func TestRbMismatchDenied(t *testing.T) {
