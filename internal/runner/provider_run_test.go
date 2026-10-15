@@ -460,3 +460,45 @@ func replies(n int) []anthropicfake.Reply {
 	}
 	return out
 }
+
+// TestProviderRunStartsWithNoAnthropicKey (design project-centric §6.1, review
+// Medium 1): a run whose coder is a provider's needs no Anthropic key at all.
+// The gateway starts without one, the agent's environment is built without
+// one, and the call reaches the provider with the provider's key -- the
+// counterpart of TestBuildEnvNoGatekeeperNeedsTheKeyActionably, which covers
+// the one case where the key is still not optional (no gateway).
+func TestProviderRunStartsWithNoAnthropicKey(t *testing.T) {
+	use := pricing.Usage{Input: 1000, Output: 500}
+	g := providerRun(t, providerPinned(t), "enforce", "50",
+		[]anthropicfake.Reply{anthropicfake.Compat{}.MessageOK(deepseek, use)}, "acme/app")
+	// No key stored anywhere: the env the job runs with has none.
+	g.deps.Env = filterEnv(g.deps.Env, "ANTHROPIC_API_KEY")
+
+	var status int
+	var body string
+	rec, err := g.run(t, callDeepseek(&status, &body, implement("feature")), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if status != 200 {
+		t.Fatalf("the provider call got %d: %s", status, body)
+	}
+	if n := g.compat.Count(); n != 1 {
+		t.Errorf("the provider saw %d calls", n)
+	}
+	if g.fake.Count() != 0 {
+		t.Errorf("Anthropic saw %d calls of a provider-only run with no key", g.fake.Count())
+	}
+	// The agent still gets an ANTHROPIC_API_KEY: the gateway's own token, the
+	// stand-in that keeps Claude Code pointed at the gateway with no stored
+	// key (and no provider key anywhere near it).
+	for i, c := range g.agent.calls {
+		v := envValue(c.Env, "ANTHROPIC_API_KEY")
+		if v == "" {
+			t.Errorf("call %d: the agent's ANTHROPIC_API_KEY is empty", i)
+		}
+		if strings.Contains(envValue(c.Env, "ANTHROPIC_BASE_URL"), "openrouter") || v == providerKey {
+			t.Errorf("call %d: the agent holds a real key or a direct provider URL: %v", i, c.Env)
+		}
+	}
+}

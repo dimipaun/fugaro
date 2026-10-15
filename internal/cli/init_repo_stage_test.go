@@ -537,6 +537,90 @@ func TestRepoEngineWritesTheProjectLayerCopyForItsFirstBuild(t *testing.T) {
 	}
 }
 
+// (code review, high + medium) A repository whose only pin is served by a
+// provider it may send code to needs no Anthropic key -- but the spec the
+// build gate reads is the pre-readiness one, whose job still mounts
+// ANTHROPIC_API_KEY (spec.go sets it for every api-key run). Gating the first
+// image build on that mount left such a repository with no build at all
+// (infra.NeedsBuild skipped it, so nothing was ever submitted and the job the
+// build is meant to deploy could never come), and the same key was listed
+// under "Still missing" with a fugaro secrets set command, and carried into
+// res.Missing and --json, for a run that never calls Anthropic.
+//
+// Mutation (run, restore): drop `&& !OptionalSecret(l)` from NeedsBuild's skip
+// guard and no spec is submitted here; drop the SecretStep.Optional filter in
+// printMissing and the key comes back into res.Missing.
+func TestRepoEngineBuildsKeylessProviderOnly(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	w, err := r.gcs.Bucket(t, initStateBucket).NewWriter(context.Background(), infra.StatePrefixInstallation+"/default.tfstate", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// The project config enforces, so the gateway exists: openrouter serves
+	// every pin this checkout commits, and the run never calls Anthropic.
+	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 2 }\n"+
+		"providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n"+
+		"    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n    allow_data_to: [acme/sandbox]\n"+
+		"base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.6.0}\n")
+	r.script["show"] = map[string]any{"stdout": `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"x"}]}}}`}
+	r.script["output"] = map[string]any{"stdout": outputsJSON(t)}
+	r.save(t)
+	isolateCache(t)
+	layerDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(layerDir, "fugaro"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(layerDir, "fugaro", "project-layer.yaml"), []byte(testProjectLayer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	openLayer := layerBucketOpener
+	t.Cleanup(func() { layerBucketOpener = openLayer })
+	layerBucketOpener = func(ctx context.Context, _ string) (*blobx.Bucket, error) { return blobx.Open(ctx, "file://"+layerDir) }
+	openRecords := openRecordBucket
+	t.Cleanup(func() { openRecordBucket = openRecords })
+	openRecordBucket = func(ctx context.Context, _ string) (*blobx.Bucket, error) {
+		return blobx.Open(ctx, "file://"+t.TempDir())
+	}
+	yaml := "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: bitbucket }\n" +
+		"agent: { auth: api-key, models: { coder: deepseek/deepseek-v4-flash, reviewer: deepseek/deepseek-v4-flash, background: deepseek/deepseek-v4-flash } }\n" +
+		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", yaml)
+	t.Chdir(dir)
+	slug := mustSlug("bitbucket", "acme/sandbox")
+	label, err := gcp.RepoLabel(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedLabels := func(name string) map[string]string {
+		return map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelSecret: name}
+	}
+	// Every mounted secret has a version -- but not the optional Anthropic
+	// key, which no call of this run needs.
+	r.sm.Seed(gcp.SecretID(slug, "bitbucket-token"), seedLabels("bitbucket-token"), []byte("tok"))
+	r.sm.Seed(gcp.SecretID(slug, "openrouter-api-key"), seedLabels("openrouter-api-key"), []byte("key"))
+	e := rigEngine(t, r, &initOptions{})
+	fb := useFakeBuilder(t)
+	out := atTerminal(t, e, strings.Repeat(initProjectName+"\n", 3))
+	if err := e.r.repoEngine(t.Context(), ".", "", true); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(fb.specs) != 1 || fb.specs[0].Workflow != "app" {
+		t.Fatalf("specs = %+v, want the app workflow's first build: the keyless run must not be stranded", fb.specs)
+	}
+	for _, m := range e.r.res.Missing {
+		if strings.Contains(m, config.AnthropicSecret) {
+			t.Errorf("the key is still listed as missing for a run that never calls Anthropic: %v", e.r.res.Missing)
+		}
+	}
+}
+
 // rigEngine is an engine over the rig's local config, as fugaro init builds
 // it: no new config to write (old is the file's content).
 func rigEngine(t *testing.T, r *initRig, o *initOptions) *initEngine {

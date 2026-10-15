@@ -67,13 +67,13 @@ func TestRefreshPreflightPlans(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Join(p.workflows, ",") != "api,app" || strings.Join(p.kinds, ",") != "base" ||
-		p.want["base"] != managedRef("base", "0.5.1") ||
+		p.want["base"] != "" || p.atPin["base"] ||
 		strings.Join(p.builds, ",") != "api,app" {
 		t.Fatalf("plan %+v", p)
 	}
 	var out bytes.Buffer
 	p.print(&out)
-	for _, want := range []string{"fugaro image refresh of acme/app (project aurora, GCP project proj-1234)", "2. base base: " + managedRef("base", "0.5.1"),
+	for _, want := range []string{"fugaro image refresh of acme/app (project aurora, GCP project proj-1234)", "2. base base: this release's base image is resolved at its -pinned tag",
 		"3. the daily image check job", "4. builds: 2 of 2 workflow(s)", "app: built from " + managedRef("base", "0.4.0"), "5. then"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("plan lacks %q:\n%s", want, out.String())
@@ -82,15 +82,29 @@ func TestRefreshPreflightPlans(t *testing.T) {
 	if calls := r.calls(t); len(calls) != 0 || len(r.ar.Requests()) != 0 {
 		t.Errorf("preflight ran terraform or touched the registry: %q", calls)
 	}
-	// One workflow, already current.
+	// A record that names the pre-migration copy at this very version is
+	// still stale (B3): the plan says the workflow is rebuilt, and does not
+	// name a reference it cannot compute offline.
 	putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.5.1"))
 	p, err = refreshPreflight(t.Context(), refreshOptions{workflows: []string{"app"}}, &initOptions{})
-	if err != nil || strings.Join(p.kinds, ",") != "base" || len(p.builds) != 0 || !strings.HasPrefix(p.why["app"], "current") {
-		t.Fatalf("current: %v %+v", err, p)
+	if err != nil || strings.Join(p.kinds, ",") != "base" || len(p.builds) != 1 || !strings.Contains(p.why["app"], "rebuilt from this release's pinned image") {
+		t.Fatalf("a copy at this release's version: %v %+v", err, p)
+	}
+	// One workflow, already this release's pin: current, nothing to do.
+	r2 := newAnchorModeRig(t, refreshYAML, true)
+	r2.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+pinnedRef("base", "0.5.1")+"}\n")
+	putWorkflowRecordFrom("app", "0.5.1", pinnedRef("base", "0.5.1"))
+	p, err = refreshPreflight(t.Context(), refreshOptions{workflows: []string{"app"}}, &initOptions{})
+	if err != nil || strings.Join(p.kinds, ",") != "base" || len(p.builds) != 0 ||
+		!p.atPin["base"] || p.want["base"] != pinnedRef("base", "0.5.1") || !strings.HasPrefix(p.why["app"], "current") {
+		t.Fatalf("this release's pin: %v %+v", err, p)
+	}
+	if !p.current() {
+		t.Error("a plan whose only kind is at its pin and which builds nothing is not current")
 	}
 }
 
-// TestRefreshClonePicksAndCopiesTheBaseKind (review finding 3, MED test
+// TestRefreshClonePicksAndPinsTheBaseKind (review finding 3, MED test
 // gap): a checkout: clone workflow's kind, for refresh's base step, is
 // always config.BaseKind ("base"), never the legacy kind a bare w.Base
 // (empty: a clone workflow sets no base:) would give.
@@ -98,9 +112,9 @@ func TestRefreshPreflightPlans(t *testing.T) {
 // Mutation (run, restore): in refreshPreflight's clone branch
 // (image_refresh.go, building set), change `set[config.BaseKind] = true`
 // to `set[cfg.Workflows[w].Base] = true` — this test then fails: p.kinds is
-// [""], not ["base"], and the base step copies no image at all (an empty
-// kind publishes nothing to mirror).
-func TestRefreshClonePicksAndCopiesTheBaseKind(t *testing.T) {
+// [""], not ["base"], and the base step pins no image at all (an empty
+// kind resolves nothing).
+func TestRefreshClonePicksAndPinsTheBaseKind(t *testing.T) {
 	r := newImagesRig(t, "1.2.3")
 	r.appendConfig(t, "  acme/app: { provider: github, workflows: [app] }\n")
 	t.Chdir(repoCheckout(t, githubOrigin, cloneRefreshYAML))
@@ -111,16 +125,19 @@ func TestRefreshClonePicksAndCopiesTheBaseKind(t *testing.T) {
 	if strings.Join(p.kinds, ",") != "base" {
 		t.Fatalf("kinds = %v, want [base]", p.kinds)
 	}
-	if want := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"; p.want["base"] != want {
-		t.Fatalf("want[base] = %q, want %q", p.want["base"], want)
+	if p.want["base"] != "" || p.atPin["base"] {
+		t.Fatalf("want[base] = %q, atPin %v; the pin is a digest, which preflight cannot compute offline", p.want["base"], p.atPin["base"])
 	}
 	e := rigEngine(t, r.initRig, &initOptions{})
 	out := atTerminal(t, e, initProjectName+"\n")
 	if err := e.r.refreshBase(t.Context(), e, p.kinds); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
-	if r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] == "" {
-		t.Fatalf("the base kind was not copied: %v", r.dst.tags)
+	if got := r.localConfig(t).BaseImages["base"]; got != r.pinnedBase("base", "1.2.3") {
+		t.Fatalf("the base kind was not pinned: %v", got)
+	}
+	if r.dst.puts != 0 {
+		t.Fatalf("the base kind was copied: %d write(s)", r.dst.puts)
 	}
 }
 
@@ -340,18 +357,25 @@ func TestRefreshDuplicateWorkflowsAreOne(t *testing.T) {
 func TestRefreshPlanSaysKeptForANewerCopy(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
-	r := newAnchorModeRig(t, refreshYAML, true)
-	r.appendConfig(t, "base_images: {base: "+managedRef("base", "0.6.0")+"}\n")
-	putWorkflowRecordFrom("app", "0.6.0", managedRef("base", "0.6.0"))
-	p, err := refreshPreflight(t.Context(), refreshOptions{}, &initOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var out bytes.Buffer
-	p.print(&out)
-	got := out.String()
-	if !strings.Contains(got, "base base: "+managedRef("base", "0.6.0")+" (a newer copy than this release's, kept") {
-		t.Errorf("plan:\n%s", got)
+	for name, entry := range map[string]string{
+		"the copy an earlier CLI made": managedRef("base", "0.6.0"),
+		"a pin":                        pinnedRef("base", "0.6.0"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newAnchorModeRig(t, refreshYAML, true)
+			r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+entry+"}\n")
+			putWorkflowRecordFrom("app", "0.6.0", entry)
+			p, err := refreshPreflight(t.Context(), refreshOptions{}, &initOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			p.print(&out)
+			got := out.String()
+			if !strings.Contains(got, "base base: "+entry+" (already this release's pin, or a newer one kept as it is") {
+				t.Errorf("plan:\n%s", got)
+			}
+		})
 	}
 }
 
@@ -508,7 +532,7 @@ func TestRefreshBaseAndReloadShareTheLocalConfigPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	want := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"
+	want := r.pinnedBase("base", "1.2.3")
 	if reloaded == nil || reloaded.lc.BaseImages["base"] != want {
 		t.Fatalf("refreshReload did not see the base step's write through the same local-config path: %+v", reloaded)
 	}
@@ -622,7 +646,7 @@ func TestRefreshPreflightStopTexts(t *testing.T) {
 		useVersion(t, "dev")
 		newAnchorModeRig(t, refreshYAML, true)
 		_, _, err := executeStdin(t, "", "image", "refresh")
-		want := "fugaro image refresh copies this release's base images, and this is a development build (dev) with none published: use a release build, or build a base from a checkout and point at it with fugaro init --base-image KIND=<tag>"
+		want := "fugaro image refresh pins this release's base images through the remote repository, and this is a development build (dev) with none published: use a release build, or build a base from a checkout and point at it with fugaro init --base-image KIND=<tag>"
 		if ExitCode(err) != ExitUserError || err.Error() != want {
 			t.Fatalf("exit %d, err %q, want %q", ExitCode(err), err, want)
 		}

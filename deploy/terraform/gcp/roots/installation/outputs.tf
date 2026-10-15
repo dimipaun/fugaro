@@ -17,6 +17,10 @@ output "base_registry" {
   value = module.installation.base_registry
 }
 
+output "ghcr_registry" {
+  value = module.installation.ghcr_registry
+}
+
 output "legacy_registry" {
   value = module.installation.legacy_registry
 }

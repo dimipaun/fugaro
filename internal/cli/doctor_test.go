@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/basepin"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -1778,5 +1779,51 @@ func TestDoctorProjectSecretExtraAccessorsReadsNoValue(t *testing.T) {
 		if req.Method != http.MethodGet {
 			t.Errorf("the project-wide accessor check made a non-read call: %s %s", req.Method, req.Path)
 		}
+	}
+}
+
+// The base pin's verifier: `cosign` must be on PATH for any base pin
+// (internal/basepin shells out to it, design registry-remote-repository.md
+// §9 Decision 1's option (ii)), and a missing binary refuses the pin rather
+// than warning past it — so doctor says so before the project's name is
+// typed. It is a warning, not a failure: a repository that only copies
+// history never needs it.
+func TestDoctorChecksTheCosignVerifier(t *testing.T) {
+	old := basepin.CosignBin
+	t.Cleanup(func() { basepin.CosignBin = old })
+	bin := filepath.Join(t.TempDir(), "cosign")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	check := func(t *testing.T, o doctorOutput) doctorCheck {
+		t.Helper()
+		for _, c := range o.Checks {
+			if c.ID == "cosign" {
+				return c
+			}
+		}
+		t.Fatalf("no cosign check in %+v", o.Checks)
+		return doctorCheck{}
+	}
+	run := func(t *testing.T) doctorOutput {
+		t.Helper()
+		newDoctorRig(t)
+		out, _, _ := execute(t, "doctor", "--json", "--dir", t.TempDir())
+		var o doctorOutput
+		if err := json.Unmarshal([]byte(out), &o); err != nil {
+			t.Fatalf("json: %v\n%s", err, out)
+		}
+		return o
+	}
+
+	basepin.CosignBin = bin
+	if c := check(t, run(t)); !c.OK || c.Problem != "" || c.Severity != "" {
+		t.Errorf("with cosign on PATH: %+v", c)
+	}
+
+	basepin.CosignBin = filepath.Join(t.TempDir(), "not-here")
+	c := check(t, run(t))
+	if c.OK || c.Severity != "info" || !strings.Contains(c.Problem, "cosign is not on PATH") || !strings.Contains(c.Fix, "install cosign") {
+		t.Errorf("with no cosign: %+v", c)
 	}
 }

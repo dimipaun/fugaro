@@ -160,6 +160,15 @@ func TestAllowedPaths(t *testing.T) {
 				w.st.Repo.Counted, w.st.Global.Counted = 18*usd, 18*usd
 				return 2 * usd
 			},
+			"per-run cap from the global fallback": func(w *world) budget.Micros {
+				// No per-run cap for this repository and no default: the
+				// global one bounds the run (design D6).
+				w.caps.Defaults.RepoPerRunMicros = nil
+				w.caps.Repo = &budget.RepoCaps{DailyMicros: mp(60 * usd)}
+				w.st.Run, w.st.DayRun = budget.RunLedger{Reserved: 18 * usd}, budget.RunLedger{Reserved: 18 * usd}
+				w.st.Repo.Counted, w.st.Global.Counted = 18*usd, 18*usd
+				return 2 * usd
+			},
 			"repository daily cap": func(w *world) budget.Micros { w.st.Repo.Counted = 58 * usd; return 2 * usd },
 			"global daily cap":     func(w *world) budget.Micros { w.st.Global.Counted = 148 * usd; return 2 * usd },
 		} {
@@ -412,6 +421,31 @@ func TestDenialTable(t *testing.T) {
 		h.seed(w2)
 		h.mustAllow(w2.client(h), "released money counts back", leaseUpdates(w2, 5*usd))
 	})
+	t.Run("row05b_reserve_past_the_global_per_run_cap", func(t *testing.T) {
+		// The repository has no per-run cap of its own and there is no
+		// default: the project's global cap is the one that binds (D6).
+		h := newHarness(t)
+		w := leased(18 * usd)
+		w.caps.Defaults.RepoPerRunMicros = nil
+		w.caps.Repo = &budget.RepoCaps{DailyMicros: mp(60 * usd)}
+		h.seed(w)
+		h.mustDeny(w.client(h), "18 + 3 > the global 20", leaseUpdates(w, 3*usd))
+		h.mustAllow(w.client(h), "18 + 2 == the global 20", leaseUpdates(w, 2*usd))
+	})
+	t.Run("row05c_reserve_past_the_default_below_the_global_cap", func(t *testing.T) {
+		// The repository has no per-run cap of its own, the default is $10
+		// and the global cap $20: the smaller side binds, so the default is
+		// the wall even though the global cap has room (D6).
+		h := newHarness(t)
+		w := leased(9 * usd)
+		w.caps.Defaults.RepoPerRunMicros = mp(10 * usd)
+		h.seed(w)
+		h.mustAllow(w.client(h), "9 + 1 == the default 10", leaseUpdates(w, usd))
+		w.st.Run, w.st.DayRun = budget.RunLedger{Reserved: 10 * usd}, budget.RunLedger{Reserved: 10 * usd}
+		w.st.Repo.Counted, w.st.Global.Counted = 10*usd, 10*usd
+		h.seed(w)
+		h.mustDeny(w.client(h), "10 + 1 > the default 10, although the global 20 has room", leaseUpdates(w, usd))
+	})
 	t.Run("row06_reserve_past_the_repository_daily_cap", func(t *testing.T) {
 		h := newHarness(t)
 		w := stdWorld()
@@ -663,12 +697,13 @@ func TestObserveLeniencyOnlyCaps(t *testing.T) {
 }
 
 func TestNullCapDenies(t *testing.T) {
+	// The per-run cap is the exception (design D6): a side that is not set
+	// does not bound the run, so it is not in this table -- see the fallback
+	// subtest below. Every other cap denies when the node it reads is absent.
 	cases := map[string]func(*world){
 		"no global daily cap":       func(w *world) { w.caps.Global.DailyMicros = nil },
-		"no global per-run cap":     func(w *world) { w.caps.Global.PerRunMicros = nil },
 		"no global caps node":       func(w *world) { w.caps.Global = nil },
 		"no repository daily cap":   func(w *world) { w.caps.Defaults.RepoDailyMicros = nil },
-		"no repository per-run cap": func(w *world) { w.caps.Defaults.RepoPerRunMicros = nil },
 		"no defaults node":          func(w *world) { w.caps.Defaults = nil },
 		"no maxReserve":             func(w *world) { w.caps.Limits = nil },
 		"limits without the field":  func(w *world) { w.caps.Limits = &budget.Limits{} },
@@ -687,7 +722,67 @@ func TestNullCapDenies(t *testing.T) {
 			h.mustDeny(w.client(h), name, leaseUpdates(w, usd))
 		})
 	}
-	t.Run("a repository's own node beats the default, per field", func(t *testing.T) {
+	t.Run("no per-run cap anywhere denies", func(t *testing.T) {
+		// Nothing is set on any of the three sides: the rules read null on
+		// all of them and deny (fail closed).
+		h := newHarness(t)
+		w := stdWorld()
+		w.caps.Global.PerRunMicros = nil
+		w.caps.Defaults.RepoPerRunMicros = nil
+		h.seed(w)
+		h.mustDeny(w.client(h), "no per-run cap at all", leaseUpdates(w, usd))
+	})
+	t.Run("the global per-run cap is the fallback", func(t *testing.T) {
+		h := newHarness(t)
+		w := stdWorld()
+		w.caps.Defaults.RepoPerRunMicros = nil // no per-run cap of its own, no default
+		w.caps.Repo = &budget.RepoCaps{DailyMicros: mp(60 * usd)}
+		w.st.Run, w.st.DayRun = budget.RunLedger{Reserved: 19 * usd}, budget.RunLedger{Reserved: 19 * usd}
+		w.st.Repo.Counted, w.st.Global.Counted = 19*usd, 19*usd
+		h.seed(w)
+		h.mustAllow(w.client(h), "19 + 1 <= the global 20", leaseUpdates(w, usd))
+		w.st.Run, w.st.DayRun = budget.RunLedger{Reserved: 20 * usd}, budget.RunLedger{Reserved: 20 * usd}
+		w.st.Repo.Counted, w.st.Global.Counted = 20*usd, 20*usd
+		h.seed(w)
+		h.mustDeny(w.client(h), "20 + 1 > the global 20", leaseUpdates(w, usd))
+	})
+	t.Run("only the global per-run cap is set", func(t *testing.T) {
+		// No repository node at all and no default per-run cap: the global
+		// cap alone bounds the run (D6). The daily caps stay: the
+		// repository's day cap is the default's.
+		h := newHarness(t)
+		w := stdWorld()
+		w.caps.Repo = nil
+		w.caps.Defaults.RepoPerRunMicros = nil
+		w.st.Run, w.st.DayRun = budget.RunLedger{Reserved: 19 * usd}, budget.RunLedger{Reserved: 19 * usd}
+		w.st.Repo.Counted, w.st.Global.Counted = 19*usd, 19*usd
+		h.seed(w)
+		h.mustAllow(w.client(h), "19 + 1 <= the global 20", leaseUpdates(w, usd))
+		w.st.Run, w.st.DayRun = budget.RunLedger{Reserved: 20 * usd}, budget.RunLedger{Reserved: 20 * usd}
+		w.st.Repo.Counted, w.st.Global.Counted = 20*usd, 20*usd
+		h.seed(w)
+		h.mustDeny(w.client(h), "20 + 1 > the global 20", leaseUpdates(w, usd))
+	})
+	t.Run("the repository's own cap alone, with no global per-run cap", func(t *testing.T) {
+		// The owner's ruling of 2026-10-15: a repository with its own
+		// per-run cap in a project with none is bounded by its own cap
+		// alone. The old rules refused every lease here (they compared
+		// against the global node whether or not it existed); this row is
+		// the one that pins the ruled behaviour.
+		h := newHarness(t)
+		w := stdWorld()
+		w.caps.Global.PerRunMicros = nil
+		w.caps.Repo = &budget.RepoCaps{PerRunMicros: mp(10 * usd)}
+		w.st.Run, w.st.DayRun = budget.RunLedger{Reserved: 9 * usd}, budget.RunLedger{Reserved: 9 * usd}
+		w.st.Repo.Counted, w.st.Global.Counted = 9*usd, 9*usd
+		h.seed(w)
+		h.mustAllow(w.client(h), "9 + 1 == its own 10", leaseUpdates(w, usd))
+		w.st.Run, w.st.DayRun = budget.RunLedger{Reserved: 10 * usd}, budget.RunLedger{Reserved: 10 * usd}
+		w.st.Repo.Counted, w.st.Global.Counted = 10*usd, 10*usd
+		h.seed(w)
+		h.mustDeny(w.client(h), "10 + 1 > its own 10", leaseUpdates(w, usd))
+	})
+	t.Run("the repository's own node beats the default, per field", func(t *testing.T) {
 		h := newHarness(t)
 		w := stdWorld()
 		w.caps.Repo = &budget.RepoCaps{DailyMicros: mp(10 * usd)} // no own per-run: the default applies

@@ -60,7 +60,7 @@ func TestCheckRecipeImage(t *testing.T) {
 	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.4.1")
 	err := checkRecipeImage(context.Background(), env, appSlug, spec, "", &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "fugaro.yaml's agent.recipe needs a job image") || strings.Contains(err.Error(), "--recipe default") ||
-		!strings.Contains(err.Error(), "it copies this release's base image, points") {
+		!strings.Contains(err.Error(), "it verifies this release's base image and pins it by digest through the installation's remote repository, points") {
 		t.Fatalf("agent.recipe: %v", err)
 	}
 }

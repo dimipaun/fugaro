@@ -334,6 +334,35 @@ func TestMalformedKillSwitchHalts(t *testing.T) {
 	}
 }
 
+// TestAdmitPerRunFallback: the global per-run cap is the fallback of a
+// repository that has no per-run cap of its own (design D6), so a database
+// with only the global one starts a run; with no per-run cap anywhere the
+// rules deny every lease and the run must not start (fail closed), and the
+// refusal names the global command.
+func TestAdmitPerRunFallback(t *testing.T) {
+	f := newFixture(t)
+	// The repository's own node keeps its daily cap but has no per-run cap,
+	// and there is no defaults node.
+	f.db.Set(budget.PathCapsRepo(slug), budget.RepoCaps{DailyMicros: ptr(60_000_000), Repo: "acme/app"})
+	s := f.open()
+	if h, err := s.Admit(context.Background(), budget.AdmitOptions{Gateway: true}); err != nil || h != nil {
+		t.Fatalf("halt = %+v, %v; the global per-run cap bounds this run", h, err)
+	}
+
+	// The daily caps exist and only the per-run side is missing everywhere.
+	f2 := newFixture(t)
+	f2.db.Set(budget.PathCapsRepo(slug), nil)
+	f2.db.Set(budget.PathCapsDefaults, budget.DefaultCaps{RepoDailyMicros: ptr(60_000_000)})
+	f2.db.Set(budget.PathCapsGlobal, budget.GlobalCaps{DailyMicros: ptr(150_000_000)})
+	h, err := f2.open().Admit(context.Background(), budget.AdmitOptions{Gateway: true})
+	if err != nil || h == nil || h.Reason != budget.ReasonNoCap || h.Scope != budget.ScopeGlobal {
+		t.Fatalf("halt = %+v, %v; want a no_cap halt with the global scope", h, err)
+	}
+	if !strings.Contains(h.Detail, "--global --per-run") {
+		t.Errorf("the refusal must name the global per-run cap: %s", h.Detail)
+	}
+}
+
 func TestAdmitKillAndNoCap(t *testing.T) {
 	cases := []struct {
 		name   string

@@ -51,6 +51,18 @@ resource "google_artifact_registry_repository_iam_member" "build_base" {
   member     = google_service_account.build.member
 }
 
+# The remote repository holds the ghcr.io images the derived build pulls
+# through it: its own step image and the FROM it builds on (design §6). It
+# is a reader there like it is on fugaro-base, which stays for custom
+# bases (design §5.2).
+resource "google_artifact_registry_repository_iam_member" "build_ghcr" {
+  project    = var.project
+  location   = var.region
+  repository = var.installation.ghcr_registry
+  role       = "roles/artifactregistry.reader"
+  member     = google_service_account.build.member
+}
+
 resource "google_project_iam_member" "build" {
   for_each = {
     log_writer      = "roles/logging.logWriter"

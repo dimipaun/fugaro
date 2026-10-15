@@ -27,6 +27,10 @@ var update = flag.Bool("update", false, "rewrite the golden tfvars under deploy/
 // contract with the Terraform modules.
 const goldenDir = "../../deploy/terraform/gcp/roots/repo/tests/testdata"
 
+// baseTestDigest is any well-formed sha256 digest: BaseImageWarnings reads
+// the reference's registry and path, never its digest.
+const baseTestDigest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+
 // m4LocalConfig is the local config the M4 job spec was captured with
 // (testdata/README.md).
 const m4LocalConfig = `version: 1
@@ -836,7 +840,7 @@ func TestInstallationSpec(t *testing.T) {
 		t.Fatal(err)
 	}
 	n := s.Names
-	if n.SchedulerServiceAccountID != "fugaro-scheduler" || n.BaseRegistry != "fugaro-base" || n.LegacyRegistry != "fugaro" ||
+	if n.SchedulerServiceAccountID != "fugaro-scheduler" || n.BaseRegistry != "fugaro-base" || n.GhcrRegistry != "fugaro-ghcr" || n.LegacyRegistry != "fugaro" ||
 		n.RoleIDs != (InstallationRoleIDs{Launcher: "fugaroLauncher", JobRunner: "fugaroJobRunner", BuildSubmitter: "fugaroBuildSubmitter", TagMover: "fugaroTagMover"}) ||
 		n.Log != (LogNames{Bucket: "fugaro", View: "fugaro-runs", Sink: "fugaro-jobs", Exclusion: "fugaro-jobs-from-default"}) {
 		t.Errorf("names = %+v", n)
@@ -918,19 +922,28 @@ func TestDefaultInstallationOutputs(t *testing.T) {
 	}
 }
 
-// The build account can read only the installation's base registry, so a
-// base image elsewhere (an M4 local config's, in the legacy registry)
-// would fail every build at its pull.
+// The build account can read only the installation's two image
+// repositories — the base registry (the copy an earlier release made) and
+// the remote (pull-through) repository over ghcr.io (this release's pin) —
+// so a base image elsewhere (an M4 local config's, in the legacy registry,
+// or ghcr.io itself, whose upstream the remote repository is) would fail
+// every build at its pull.
 func TestBaseImageWarnings(t *testing.T) {
-	outs := InstallationOutputs{RegistryHost: "us-east5-docker.pkg.dev/proj-1234", BaseRegistry: BaseRegistry}
+	outs := InstallationOutputs{RegistryHost: "us-east5-docker.pkg.dev/proj-1234", BaseRegistry: BaseRegistry, GhcrRegistry: GhcrRegistry}
 	if ws := BaseImageWarnings(nil, outs); len(ws) != 0 {
 		t.Errorf("no base images: %v", ws)
 	}
+	pin := "us-east5-docker.pkg.dev/proj-1234/" + GhcrRegistry + "/dimipaun/fugaro-base:0.7.5@" + baseTestDigest
 	for base, warn := range map[string]bool{
-		"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc":  false,
-		"us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro-base:dev-0123abc":       true,
-		"us-east5-docker.pkg.dev/proj-1234/fugaro-basex/fugaro-base:dev-0123abc": true,
-		"us-east5-docker.pkg.dev/other-proj/fugaro-base/fugaro-base:dev-0123abc": true,
+		"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc": false,
+		pin: false,
+		"us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro-base:dev-0123abc":                            true,
+		"us-east5-docker.pkg.dev/proj-1234/fugaro-basex/fugaro-base:dev-0123abc":                      true,
+		"us-east5-docker.pkg.dev/proj-1234/fugaro-ghcrx/dimipaun/fugaro-base:0.7.5@" + baseTestDigest: true,
+		"us-east5-docker.pkg.dev/other-proj/fugaro-base/fugaro-base:dev-0123abc":                      true,
+		// The remote repository's upstream is not the installation's own
+		// repository: a pull there is not one the build accounts can make.
+		"ghcr.io/dimipaun/fugaro-base:0.7.5": true,
 	} {
 		got := BaseImageWarnings(map[string]string{"base": base}, outs)
 		if (len(got) != 0) != warn {
@@ -948,6 +961,11 @@ func TestBaseImageWarnings(t *testing.T) {
 		"kind-a": "us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro-base:1",
 		"kind-z": "ghcr.io/dimipaun/fugaro-base:1",
 	}, outs)
+	// Both repositories named in the warning: the operator reading it needs
+	// to see where a base image may go, not only where it may not.
+	if len(got) != 2 || !strings.Contains(got[0], outs.RegistryHost+"/"+BaseRegistry) || !strings.Contains(got[0], outs.RegistryHost+"/"+GhcrRegistry) {
+		t.Errorf("the warnings %q don't name both repositories", got)
+	}
 	if len(got) != 2 || !strings.Contains(got[0], "base_images.kind-a") || !strings.Contains(got[1], "base_images.kind-z") {
 		t.Errorf("warnings = %q", got)
 	}
@@ -1637,6 +1655,24 @@ func TestRepoSpecSecretMountsOnlyTheVariantsOwnToken(t *testing.T) {
 		if want := []string{c.wantSecret}; !slices.Equal(slices.Sorted(slices.Values(claudeSecrets)), want) {
 			t.Errorf("%s: claude secrets mounted = %v, want exactly %v", c.variant, claudeSecrets, want)
 		}
+	}
+}
+
+// A migrated base_images.base is in the installation's own project, through
+// its remote repository, so nothing is warned about: the build account can
+// read it. The remote repository's own upstream on ghcr.io is not in the
+// installation's project and still warns — the pull there is not one the
+// build account can make.
+func TestBaseImageWarningsAcceptTheRemoteRepository(t *testing.T) {
+	outs := InstallationOutputs{RegistryHost: "us-east5-docker.pkg.dev/proj-1234", BaseRegistry: BaseRegistry, GhcrRegistry: GhcrRegistry}
+	pin := outs.RegistryHost + "/" + GhcrRegistry + "/dimipaun/fugaro-base:0.7.5@" + baseTestDigest
+	if ws := BaseImageWarnings(map[string]string{"base": pin}, outs); len(ws) != 0 {
+		t.Errorf("the pin: %v", ws)
+	}
+	if ws := BaseImageWarnings(map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.7.5"}, outs); len(ws) != 1 {
+		t.Errorf("the upstream itself: %v", ws)
+	} else if !strings.Contains(ws[0], outs.RegistryHost+"/"+GhcrRegistry) {
+		t.Errorf("the warning does not name the remote repository: %q", ws[0])
 	}
 }
 

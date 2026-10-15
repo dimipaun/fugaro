@@ -159,11 +159,42 @@ func TestInstallationSpecCarriesTheLauncherCondition(t *testing.T) {
 	}
 }
 
+// The remote repository's name travels to the installation root with the
+// other registry names: the module's own validation names it (variables.tf
+// lists each registry ID one by one, so a new one is unvalidated until it
+// is listed), and every reader of the pin reads it from the installation's
+// outputs (design §3.1, §5.3).
+func TestInstallationNamesCarryTheRemoteRepository(t *testing.T) {
+	spec := installationSpec(t)
+	if spec.Names.GhcrRegistry != GhcrRegistry {
+		t.Fatalf("names.ghcr_registry = %q, want %q", spec.Names.GhcrRegistry, GhcrRegistry)
+	}
+	if GhcrRegistry != "fugaro-ghcr" {
+		t.Errorf("GhcrRegistry = %q, want fugaro-ghcr: it must satisfy cover.go's repoID and be a registry ID the module validates", GhcrRegistry)
+	}
+	data, err := InstallationVars(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Names struct {
+			GhcrRegistry string `json:"ghcr_registry"`
+		} `json:"names"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Names.GhcrRegistry != GhcrRegistry {
+		t.Errorf("tfvars names.ghcr_registry = %q, want %q", doc.Names.GhcrRegistry, GhcrRegistry)
+	}
+}
+
 func TestDecodeOutputs(t *testing.T) {
 	raw := map[string]json.RawMessage{
 		"runs_bucket":               json.RawMessage(`"fugaro-runs-proj-1234"`),
 		"registry_host":             json.RawMessage(`"us-east5-docker.pkg.dev/proj-1234"`),
 		"base_registry":             json.RawMessage(`"fugaro-base"`),
+		"ghcr_registry":             json.RawMessage(`"fugaro-ghcr"`),
 		"legacy_registry":           json.RawMessage(`null`),
 		"scheduler_service_account": json.RawMessage(`"fugaro-scheduler@proj-1234.iam.gserviceaccount.com"`),
 		"role_ids":                  json.RawMessage(`{"launcher":"projects/proj-1234/roles/fugaroLauncher","job_runner":"projects/proj-1234/roles/fugaroJobRunner","build_submitter":"projects/proj-1234/roles/fugaroBuildSubmitter","tag_mover":"projects/proj-1234/roles/fugaroTagMover"}`),
@@ -177,6 +208,7 @@ func TestDecodeOutputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	if o.RunsBucket != "fugaro-runs-proj-1234" || o.LegacyRegistry != "" || o.RoleIDs.JobRunner != "projects/proj-1234/roles/fugaroJobRunner" ||
+		o.GhcrRegistry != GhcrRegistry ||
 		o.RoleIDs.TagMover != "projects/proj-1234/roles/fugaroTagMover" ||
 		!slices.Equal(o.Launchers, []string{"user:a@example.com"}) || o.LogView == "" || o.RegistryCleanupDryRun == nil || !*o.RegistryCleanupDryRun {
 		t.Fatalf("outputs = %+v", o)
