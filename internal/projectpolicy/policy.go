@@ -86,7 +86,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -355,14 +357,24 @@ func Decode(raw []byte) (*Policy, bool, error) {
 //
 // The tolerance an unknown key used to get here was justified by P8 (a field a
 // newer release adds must not brick an older runner), but it does not hold for
-// this block: two of its fields fail OPEN when a key that names them is
-// misspelt. A misspelt allow_data_to leaves the nil slice that means every
+// this block: three of its fields fail OPEN when a key that names them is not
+// matched. A misspelt allow_data_to leaves the nil slice that means every
 // repository — the widest data-sharing setting there is, and the value
 // ValidateModelProviders' ambiguity check is skipped for, because the check that
 // marks a written-but-empty list is set by the YAML unmarshaller and never by
-// JSON — and a misspelt route_fee_pct drops the owner's surcharge silently. A
-// newer release that adds a provider field bumps Version, which is what refuses
-// a node this binary cannot read, so nothing forward-compatible is lost.
+// JSON — a misspelt route_fee_pct drops the owner's surcharge silently, and a
+// misspelt price_policy prices at the cheapest end of the catalogue. A newer
+// release that adds a provider field bumps Version, which is what refuses a node
+// this binary cannot read, so nothing forward-compatible is lost.
+//
+// The keys are compared BYTE FOR BYTE against config.ModelProvider's own JSON
+// names (unknownProviderKeys), and not left to the decoder's DisallowUnknownFields
+// alone: encoding/json matches a field name case-insensitively, so that check
+// accepts "ALLOW_DATA_TO" as allow_data_to — which is the same fail-open in a
+// different spelling, and worse for the null case, because the explicit-null
+// refusal below (validProviders) looks the key up byte for byte and would not
+// see the variant at all. The strict decoder stays as the second net it is for
+// the value shapes, but the spelling is decided here.
 func decodeProviders(raw json.RawMessage) (map[string]Provider, error) {
 	var entries map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &entries); err != nil {
@@ -375,6 +387,14 @@ func decodeProviders(raw json.RawMessage) (map[string]Provider, error) {
 	}
 	sort.Strings(names)
 	for _, name := range names {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(entries[name], &fields); err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		if unknown := unknownProviderKeys(fields); len(unknown) > 0 {
+			return nil, fmt.Errorf("%s: unknown %s: an entry carries %s. A key of another case is not one of them either — the names are the ones this Fugaro declares — and for %s the value a key left unset is not the safe one, so the entry is refused here rather than published; the same entry in fugaro.yaml is refused the same way",
+				name, quoteKeys(unknown), strings.Join(providerEntryKeyNames(), ", "), strings.Join(typoUnsafeKeys, ", "))
+		}
 		dec := json.NewDecoder(bytes.NewReader(entries[name]))
 		dec.DisallowUnknownFields()
 		var pv Provider
@@ -384,6 +404,68 @@ func decodeProviders(raw json.RawMessage) (map[string]Provider, error) {
 		out[name] = pv
 	}
 	return out, nil
+}
+
+// typoUnsafeKeys are the provider keys whose zero value, left in place by a key
+// that does not match them, is not a refusal: allow_data_to's nil slice is
+// "every repository" (ModelProvider.AllowsData), route_fee_pct's 0 is "no fee
+// on this route", and price_policy's "" is the cheapest end of the catalogue's
+// range. They are named in the refusal unknownProviderKeys words, because they
+// are the reason an unknown key is an error here rather than a tolerated field.
+var typoUnsafeKeys = []string{"allow_data_to", "route_fee_pct", "price_policy"}
+
+// providerEntryKeys is the set of keys a providers entry may carry: exactly the
+// JSON names of config.ModelProvider's own fields. It is read off the type,
+// never respelled, so a field added to the carrier is known here the moment it
+// exists and the two cannot drift apart.
+var providerEntryKeys = providerKeysOf(reflect.TypeOf(config.ModelProvider{}))
+
+// providerKeysOf collects the JSON names of a struct's fields.
+func providerKeysOf(t reflect.Type) map[string]bool {
+	keys := make(map[string]bool, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		if name != "" && name != "-" {
+			keys[name] = true
+		}
+	}
+	return keys
+}
+
+// providerEntryKeyNames is the known keys, sorted, for the refusal to quote.
+func providerEntryKeyNames() []string {
+	names := make([]string, 0, len(providerEntryKeys))
+	for name := range providerEntryKeys {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// unknownProviderKeys is the keys of one entries[name] object that
+// config.ModelProvider does not declare, sorted. The comparison is
+// case-sensitive, which is the point: encoding/json's own field matching is not,
+// so a key of another case reaches a field through the decoder while being
+// invisible to every byte-exact lookup this package makes of the document (the
+// allow_data_to null check in validProviders).
+func unknownProviderKeys(fields map[string]json.RawMessage) []string {
+	var unknown []string
+	for key := range fields {
+		if !providerEntryKeys[key] {
+			unknown = append(unknown, key)
+		}
+	}
+	sort.Strings(unknown)
+	return unknown
+}
+
+// quoteKeys renders keys as a comma-separated list of quoted names.
+func quoteKeys(keys []string) string {
+	out := make([]string, len(keys))
+	for i, key := range keys {
+		out[i] = strconv.Quote(key)
+	}
+	return strings.Join(out, ", ")
 }
 
 // validProviders holds the providers block to the rules internal/config holds
@@ -397,6 +479,10 @@ func decodeProviders(raw json.RawMessage) (map[string]Provider, error) {
 // same ambiguity the YAML rule refuses — "shared with nobody" and "not decided
 // yet" would both be published as "every repository" — so it is refused here,
 // from the raw document.
+//
+// The lookup is byte for byte, so it is only sound because decodeProviders has
+// already refused every key of another case (encoding/json would have matched
+// "ALLOW_DATA_TO" to the field, and this map would not have seen it).
 func validProviders(raw json.RawMessage, providers map[string]Provider) error {
 	var entries map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &entries); err != nil {
