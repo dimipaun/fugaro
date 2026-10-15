@@ -607,12 +607,29 @@ socket (`root:docker`, mode `0660` on COS).
 
 The three ways to get that permission are ordered in §1.1: run the container
 as root (Batch's default `runAsNonRoot` is false, Batch REST reference,
-checked 2026-10-15 — but that changes the runner's effective user from
-`fugaro` to root and must be checked against the base image's expectations);
-pass a supplementary group through the runnable's `options`
-(**UNVERIFIED**, documented only as "arbitrary additional options", e.g.
-`--network host`); or adjust the socket's group in the preloaded boot image.
-Check 57a step 6 records which works.
+checked 2026-10-15); pass a supplementary group through the runnable's
+`options` (**UNVERIFIED**, documented only as "arbitrary additional options",
+e.g. `--network host` — and unavailable altogether if image streaming is used,
+§1.2); or adjust the socket's group in the boot image. Check 57a step 6
+records which works.
+
+**Running as root is not free, and the earlier draft waved at it.** The base
+image builds a `fugaro` user at **uid 1000** and runs as it
+(`images/base/Dockerfile`); on a VM whose container runs as root, every file
+the run creates in `/work/repo`, in the caches and in the mise store is owned
+by root instead of that user. That changes what a *follow-up* run can do in
+the same checkout, it makes the cache archives the runner uploads carry root
+ownership, and it is a direct conflict with generic-tool's **D1** ("no root at
+run time"). It is acceptable **only** because §3 already says the run is
+root-equivalent on its VM whatever the container's uid — the socket makes
+`--privileged` a single command away — so treating the uid as a boundary would
+be theatre; but it must be a **recorded** decision, not a side effect of
+choosing the socket. The cleanest ordering is therefore: (1) bake the socket's
+`docker` group id into the image and add the container user to it, so nothing
+else changes; (2) `--group-add` through `options` if Batch honours it; (3)
+root, with the ownership consequence written into SECURITY.md. Whether the
+`docker` gid on this backend's boot image matches anything the container can
+join is **UNVERIFIED** — Check 57a step 6 records it.
 
 Security consequence, repeated because it is the whole of §3: **a run that has
 this socket is root on the VM.** The mount is not a privilege boundary and is
@@ -694,7 +711,8 @@ working:
   retained record for a live job (it deletes the job and, only for a job with
   no live record, an orphaned instance — §3.4).
 
-**C13 (naming)**: reuse the Fugaro label set verbatim, and add the per-run
+**C13 (naming)**: reuse the Fugaro label set verbatim, in both label fields,
+and add the per-run
 label. Veto alternative: mark only the job and rely on the job id's prefix,
 which is fragile for a VM that outlives its job.
 
@@ -704,25 +722,67 @@ which is fragile for a VM that outlives its job.
 `ParseExecution`, `SameExecution`, `ExecutionFromEnv` and
 `CheckRunExecution` all assume Cloud Run's
 `projects/<p>/locations/<r>/jobs/<j>/executions/<e>` shape, and `OnCloudRun`
-is literally "`CLOUD_RUN_EXECUTION` is set". A Batch job's resource name is
+is literally "`CLOUD_RUN_EXECUTION` is set"
+(`internal/backend/backend.go:86`). A Batch job's resource name is
 `projects/<p>/locations/<r>/jobs/<j>` — six fields, not eight — so the two
 cannot share a parser, and on a Batch VM `CLOUD_RUN_EXECUTION` is absent, so
 `OnCloudRun` is false and the runner would treat itself as a local run.
 
-**Recommendation (C12): generalise the seam.** Move the name codec into each
-backend — a small interface (`Parse(name)`, `Format(id)`, `FromEnv(env)`,
-`IsOwn(name)/ValidateRun(name, slug, workflow)`) carried by the `Backend`,
-used by every caller instead of the package-level functions, and a
-backend-supplied "in the cloud" signal replacing `OnCloudRun`. The runner
-then asks its backend "am I on you?" rather than checking a Cloud-Run variable.
+**This is not cosmetic: four of those call sites are security checks that fail
+open when `OnCloudRun` is false.** Every caller, read on `main`:
+
+| Site | What it does | With `OnCloudRun` false (a Batch VM) |
+|---|---|---|
+| `internal/runner/gateway.go:288` (`routingKnob`) | refuses the routing-refusal escape knob (`FUGARO_ALLOW_ROUTING_SETTINGS`) on Cloud Run | **honoured**: a job env the launcher controls can switch the routing refusal off |
+| `internal/cli/exec.go:195` (`RequireProject`) | requires the job to name its Fugaro project | **not required**: a run with no `FUGARO_PROJECT` proceeds |
+| `internal/cli/exec.go:264` (`refuseOldJobEnv`) | refuses an old-style job env on Cloud Run | **skipped**: the old env is accepted |
+| `internal/cli/exec.go:102` (`runner.BackendFromEnv`) | forbids a local (loopback) budget backend in the cloud | **allowed**: a run may point the budget at a local database |
+| `internal/cli/exec.go:134` (`ExecutionFromEnv`) | the canonical execution name | `""`, so the run has no name to record or to compare |
+| `internal/cli/skillwarn.go:43`, `internal/cli/updatewarn.go:155,186,260` | quiet the skill/update nudges in the cloud | nudges appear (cosmetic) |
+| `internal/cli/imagecheck.go:548` | the image check's Cloud Run detection | already keyed on `CLOUD_RUN_JOB`/`CLOUD_RUN_EXECUTION`; needs the same treatment if the VM backend ever runs a check job |
+
+**Recommendation (C12): generalise the seam, and make "in the cloud" fail
+closed.** Move the name codec into each backend — a small interface
+(`Parse(name)`, `Format(id)`, `FromEnv(env)`, `IsOwn(name)/ValidateRun(name,
+slug, workflow)`) carried by the `Backend`, used by every caller instead of
+the package-level functions — and replace `OnCloudRun` with a
+**backend-supplied marker the runner can trust**: the platform's own value,
+written by the launcher into the job definition (`FUGARO_BACKEND` already
+exists for this and is set by `platformEnv`, `internal/infra/spec.go`), never
+a variable a container can forge. `OnCloudRun` keeps its Cloud Run meaning for
+the Cloud Run backend; the Batch backend answers "am I on you?" from its own
+marker; and the **default when neither matches is "in the cloud"**
+(`true`), so the four security checks above fail *closed* on an unrecognised
+platform instead of open. That last part is the point: today the function's
+name invites "am I on Cloud Run?" while every caller reads it as "am I
+somewhere a launcher controls?", and the two are not the same question.
+
 Trade-off: it touches every caller (`cli/cancel.go`, `logs.go`, `diagnose.go`,
-`run.go`, `watch*`, and the runner's `SameExecution` uses) and is a change to
-the shared package, not a new sibling package — a bigger than average first
-task. Veto alternative: keep the Cloud-Run shape and encode a Batch job as a
-synthetic "execution" under it (`.../jobs/<fugaro job>/executions/<run id>`),
-which lies in the stored data model and would confuse `fugaro ls`, `cancel`
-and the sweeper the first time someone reads a raw name. **C12 is an owner
-decision by size, not by uncertainty.**
+`run.go`, `watch*`, `exec.go`, and the runner's `SameExecution` uses) and is a
+change to the shared package, not a new sibling package — a bigger than
+average first task, and it must land **before** any Batch backend can run a
+container (Task 1 before Task 3, §8.1). Two corrections to the earlier draft
+of this section: `CheckRunExecution` lives in **`internal/backend/gcp`**
+(`run.go:92`), not in `internal/backend`, and it is called from
+`internal/cli/cloud.go`; and the runner also uses `backend.ExecID` directly
+(`internal/runner/runner.go:74`), which the codec has to keep working. Veto
+alternative: keep the Cloud-Run shape and encode a Batch job as a synthetic
+"execution" under it (`.../jobs/<fugaro job>/executions/<run id>`), which lies
+in the stored data model and would confuse `fugaro ls`, `cancel` and the
+sweeper the first time someone reads a raw name. **C12 is an owner decision by
+size, not by uncertainty.**
+
+**How the runner learns its own name on Batch (missing from the earlier
+draft).** Cloud Run injects `CLOUD_RUN_EXECUTION`/`CLOUD_RUN_JOB`;
+`FUGARO_GCP_PROJECT`/`FUGARO_REGION` come from the job definition. On Batch
+none of the first two exist, so `Launch` writes the job's own resource name
+into the job env (it is known before `jobs.create` returns, because Fugaro
+chooses the id, §2.4). That value is **launcher-forgeable**, exactly like
+`FUGARO_RUN`, so it is a hint — good enough to record, to show and to compare
+against the backend's own answer, never evidence to act on
+(`backend.Execution.Run`'s comment is the same rule). The backend's
+`Execution(name)` is what a caller with a name to check should trust, and
+`CheckRunExecution`'s job-binding rule carries over.
 
 ## 3. Security
 
@@ -738,44 +798,102 @@ project job, every run can read every secret the job mounts, and a run — an
 untrusted agent, unlike a launcher — could poison another repository's cache
 or locks, because the bucket condition narrows to one prefix.
 
-**A VM per run does not have that loss.** A shared project job brings the
-repo-to-repo regression only because Cloud Run cannot vary the image, service
-account, CPU or memory per execution, so it has to share one job across
-repositories. A VM backend does not share anything: each run gets its own VM,
-its own service account, its own process, its own Docker state, and its own
-kernel-level boundary from every other run. The bucket condition stays per
-slug — there is no reason to broaden it. So:
+**A VM per run does not, by itself, undo that loss — and an earlier draft of
+this section wrongly said it did.** What a VM adds over a shared job is
+*kernel and Docker-state* isolation: separate VM, separate kernel, separate
+containers, separate Docker store, no neighbour to reach at the OS level. What
+it does **not** change is **IAM isolation**, and IAM is what D4 is about. With
+C6's service account — the job account of (`profile`, `account`),
+project-centric §4.1's own granularity — every repository on the profile runs
+under the **same** account, so on the VM backend just as on a shared job a run
+can read every object and secret that account reaches, poison another
+repository's cache and forge its locks (project-centric §4.1: "Isolation
+granularity is the profile … no IAM boundary between repositories sharing a
+job"; the bucket condition collapses to "one condition on each prefix"). D4's
+loss therefore applies **unchanged** here. Consistent with that, §3.2's grants
+are the **profile's** prefixes, not `runs/<slug>/` alone.
 
-- **C3 restated as a security property:** the VM per run *restores*, relative
-  to a shared Cloud Run job, both the cross-repository bucket isolation of
-  0.7.0 (bucket-iam.md §3) and the secret isolation. The VM backend is the one
-  place in the project-centric redesign where D4's accepted loss does not
-  apply.
-- **But it removes a boundary Cloud Run had:** on Cloud Run the job is a
-  container with no daemon and no root. On a VM the run is root on the host
-  (§3.5). The isolation that people must rely on moves from "the container" to
-  "the VM", which is *stronger against other runs* and *weaker against the
-  host* than Cloud Run. Both directions are stated in SECURITY.md.
+**The real decision is the service account's granularity, and it is a new one
+this backend creates.** Cloud Run could not vary a job's identity per
+execution, which is *why* shared jobs exist; Batch can: every job names its own
+`allocationPolicy.serviceAccount` and its own `secretVariables`, so a
+**per-repository** service account is expressible on the VM backend — and
+would restore 0.7.0's cross-repository bucket and secret isolation
+(bucket-iam.md §3) for the projects that choose it.
 
-### 3.2 The instance service account
+- **Recommendation (C21): keep the per-(profile, account) account, and accept
+  D4 unchanged.** The per-repository account is the per-repository IAM weight
+  that project-centric exists to remove (one account, one set of grants, one
+  bucket condition per repository), and an installation that picks the VM
+  backend for one Docker-needing repository would pay that weight for every
+  repository on the profile.
+- **The alternative, and its cost:** a per-repository account **on the VM
+  backend only**, opted into per repository. It buys back the 0.7.0 boundary
+  for exactly the repositories that want it, at the price of a resource per
+  repository — which is the weight project-centric's D-series removed, and it
+  makes "which backend" a decision with a security consequence rather than a
+  pure infrastructure one. If the owner takes it, §3.2's grants narrow to
+  `runs/<slug>/`, `cache/<slug>/`, `locks/<slug>/` for that repository and the
+  rest of the policy is unchanged.
 
-- **One service account per run class, and never the default Compute Engine
-  service account.** Batch uses the default Compute Engine SA when
+Either way, **the document does not claim the VM backend sidesteps D4**, and
+SECURITY.md says which granularity an installation has:
+
+- **What a VM per run does give:** kernel and Docker-state isolation between
+  runs, and the disappearance of the *shared job* as a thing (nothing is
+  shared, so nothing has to be re-scoped). That is C3, and it is real — it is
+  just not IAM.
+- **And what it removes:** on Cloud Run the job is a container with no daemon
+  and no root. On a VM the run is root on the host (§3.5). The isolation
+  people must rely on moves from "the container" to "the VM", which is
+  *stronger against other runs* and *weaker against the host* than Cloud Run.
+  Both directions are stated in SECURITY.md.
+
+### 3.2 The VM's service account (the run's identity)
+
+- **Never the default Compute Engine service account.** Batch uses it when
   `allocationPolicy.serviceAccount` is omitted (Batch REST reference, checked
-  2026-10-15); the default is project-wide and broadly privileged, so omitting
-  it is forbidden. The VM backend names the job service account of
-  (`profile`, `account`), exactly the one project-centric §4.1 already defines
-  and the one the runner already binds to (`slug == task.Slug(...)`).
-- **Scope it to what the run needs and nothing more:** `objectUser`
-  conditioned to `runs/<slug>/`, `cache/<slug>/`, `locks/<slug>/`
-  (`gcp.BucketCondition`), `secretAccessor` on the mounted secrets only,
-  `logging.logWriter`, and `artifactregistry.reader` on the base image's
-  registry. No project-level grants beyond the Vertex `aiplatform.user` a
-  Vertex workflow already needs.
-- **The service account's power is the blast radius.** A run's SA can read
-  only its own slug's objects and its own secrets; that bound is what makes
-  the root-on-the-VM problem survivable. If the SA were project-wide, root on
-  any one VM would be root on the project's data.
+  2026-10-15), and Google's own guidance is blunt about what that means: the
+  default "is granted the Editor role (`roles/editor`) by default" and "using
+  the Editor role is **not recommended for production environments**"
+  (cloud.google.com/batch/docs/get-started, checked 2026-10-15). Omitting the
+  field is therefore forbidden here: it would make every run, and every
+  container a run starts, an Editor on the project.
+- **Which account, and its grants.** The job account of (`profile`,
+  `account`) — project-centric §4.1's granularity, and the one the runner
+  already binds to (`slug == task.Slug(...)`) — unless the owner takes C21's
+  per-repository alternative. Its grants:
+  - `objectUser` (with `objectViewer` where the launcher grants already exist,
+    bucket-iam.md §11) conditioned by `gcp.BucketCondition` — on the
+    **profile's** prefixes (`runs/`, `cache/`, `locks/` for the repositories it
+    serves), not on one slug, because C21's recommendation keeps the profile
+    account. §3.1 says exactly what that costs.
+  - `secretAccessor` on the secrets its `secretVariables` name, and no others.
+  - `logging.logWriter`, and **`batch.agentReporter`** — the role Batch's own
+    documentation requires of a job's service account: "Batch Agent Reporter
+    (`roles/batch.agentReporter`) on the project", alongside "Logs Writer
+    (`roles/logging.logWriter`) on the project"
+    (cloud.google.com/batch/docs/get-started, checked 2026-10-15). Without
+    `agentReporter` the VM cannot report task state and the job cannot reach a
+    terminal state, which would leave every run pending until the queue
+    deadline fires.
+  - `artifactregistry.reader` on the base image's registry (the same grant the
+    image build already needs), and no project-level grants beyond the Vertex
+    `aiplatform.user` a Vertex workflow already needs.
+- **The service account's power is the blast radius.** Root on a VM is
+  survivable only because the account under it is narrow: it can read its
+  profile's objects and its workflows' secrets and nothing else. That bound,
+  not the VM boundary, is the control that matters — which is why §3.1 refuses
+  to call the VM backend "more isolated" without saying at what granularity.
+- **One more Batch knob worth taking:** `allocationPolicy.instances[0]
+  .blockProjectSshKeys` ("Set this field to `true` if you want Batch to block
+  project-level SSH keys from accessing this job's VMs", Batch REST reference,
+  checked 2026-10-15). Nobody should SSH into a run's VM — the design is
+  API-only and the VMs have no external IP (§1.7) — so the project's SSH keys
+  are blocked from the fleet rather than left as a back door that bypasses
+  everything above. UNVERIFIED: whether Batch also leaves its own OS Login or
+  serial-console path open (Check 57a step 8 records what a VPC-SC-free
+  sandbox project shows).
 
 ### 3.3 The metadata server
 
@@ -818,19 +936,35 @@ the teardown is assumed rather than read:
 - **A hung job:** Batch itself fails a job that runs longer than 14 days
   (cloud.google.com/batch/quotas, checked 2026-10-15), but Fugaro's own
   `maxRunDuration` binds first and is far shorter.
+- **A job stuck in `QUEUED`:** the queue deadline of §1.4 cancels it, so it
+  does not sit against `max_parallel` for two days.
 - **The residual, and the reaper.** A stuck `DELETION_IN_PROGRESS`, an orphaned
   VM after a Batch-side fault, or (on the plain-instance alternative) a
   startup script that never ran: for these the design keeps **a reaper** — the
   existing scheduled sweeper pattern (project-centric §8, `history.tf`)
-  extended to list Batch jobs and Compute Engine instances labelled
-  `fugaro=managed` whose age exceeds the longest workflow timeout plus
-  `backend.TaskTimeoutSlack` plus a margin, and delete them, writing a FACT
-  line. Batch's optional Pub/Sub job-state notifications (Batch REST
-  reference, checked 2026-10-15) are a cheaper trigger than polling and are a
-  plan option. **C14**: keep a reaper even though Batch mostly self-cleans;
-  the veto alternative is to rely on Batch teardown alone and accept a rare
+  extended to Batch jobs and Compute Engine instances.
+
+  **Its order matters, and it is job-first.** The reaper deletes the *job*
+  (`jobs.delete`, which needs `batch.jobsEditor`/`batch.jobs.delete`, §3.7)
+  and only then looks for an instance with no live job behind it, because
+  deleting a Batch-created instance underneath its own job races Batch's
+  management: Batch is mid-teardown, sees an instance vanish, and reports the
+  task as failed for a reason that has nothing to do with the run — or, worse,
+  leaves the job in a state Fugaro then misreads as a real failure. The
+  instance sweep is the *second* pass, for an instance whose job is already
+  gone (a `fugaro=managed` VM with no `fugaro_run` job in `jobs.list`), and it
+  deletes that instance directly with `compute.instances.delete`
+  (`compute.instanceAdmin.v1`). Age is the other filter: older than the
+  longest workflow timeout plus `backend.TaskTimeoutSlack` plus a margin — and
+  on this backend also older than a plausible **queue** wait, or a job that is
+  legitimately still waiting gets deleted by its own reaper.
+  Batch's optional Pub/Sub job-state notifications (Batch REST reference,
+  checked 2026-10-15) are a cheaper trigger than polling and are a plan
+  option. **C14**: keep a reaper even though Batch mostly self-cleans; the
+  veto alternative is to rely on Batch teardown alone and accept a rare
   orphan, which the owner may prefer to save the machinery — the trade-off is
-  an occasional VM billing until someone notices.
+  an occasional VM billing until someone notices. What it costs is in §3.7:
+  project-wide `batch.jobs.delete` and `compute.instances.delete`.
 
 ### 3.5 What a Docker-capable agent can do to the host
 
@@ -838,16 +972,34 @@ Stated plainly, for SECURITY.md:
 
 - **Root on the VM.** Through the socket, `docker run --privileged -v /:/host`
   gives the agent the VM's filesystem, its SA token, and its network. It can
-  read the runner's own environment (the secrets the bootstrap exported) — but
-  it holds those secrets anyway, in-process, so this is not a new secret
-  exposure *within* the run.
-- **Not root on the project.** The SA's IAM (§3.2) is the wall: the agent
-  cannot read another repository's runs, another run's secrets, or (with the
-  log sink fixed, §1.5) another run's logs. It can, however, do anything the
-  run's SA can — so the SA's scope is the security control that matters, and
-  it must stay per-slug.
-- **Not the neighbouring run.** Separate VM, separate kernel, separate SA:
-  nothing in one run reaches another.
+  read the runner's own environment — including the secrets `secretVariables`
+  mounted and the model-provider keys — but it holds those anyway, in-process,
+  so this is not a new secret exposure *within* the run.
+- **It can outlive its own runner.** Root can stop or kill the Batch agent's
+  reporting on the VM, and the VM keeps billing until `maxRunDuration` or the
+  reaper ends it; it can also leave containers running that no Fugaro code
+  knows about. Both are reasons the VM is the unit that gets reaped, not the
+  runner process.
+- **It can spend money past the caps.** The gateway's per-run and daily caps
+  are enforced by `fugaro exec` in-process (m9 §4–§5) and count **model**
+  dollars; an agent that reads the provider key out of its own `/proc/<pid>/
+  environ` (or out of the environment `secretVariables` set) can call the
+  provider directly, off the gateway, and nothing halts it. SECURITY.md
+  already documents this residual ("What one run's agent can reach", "Money")
+  for the Cloud Run path; on a VM it is unchanged and no worse, except that
+  the VM's own compute keeps billing after the runner is gone.
+- **What it reaches, on this backend:** the run's service account (whatever
+  C21's granularity gives it, §3.1 — **not** necessarily one slug), the secrets
+  its workflow mounts, its own run's bucket objects, and (with the log sink
+  fixed, §1.5) no other run's logs. The SA's scope is the control that matters;
+  it is **not** per-slug unless the owner takes C21's alternative, and saying
+  "per-slug" here would contradict §3.1.
+- **Not the neighbouring run.** Separate VM, separate kernel, separate
+  process, separate Docker store: nothing in one run reaches another at the OS
+  level. IAM is the exception §3.1 states.
+- **Every container it starts can reach the metadata server** (§3.3) and,
+  through the host daemon, the host's own network namespace: `--network none`
+  is the agent's choice to make, not Fugaro's.
 - **Egress is open**, exactly as on Cloud Run (generic-tool §9): the agent can
   send whatever it can read to anywhere the network allows. Cloud NAT does not
   change this; it only removes inbound reachability.
@@ -855,13 +1007,66 @@ Stated plainly, for SECURITY.md:
 ### 3.6 SECURITY.md additions
 
 The VM backend adds a section to SECURITY.md stating: the run is root on its
-VM; the VM is the isolation unit and is never reused; the run's service
-account and its per-slug scope; the VM metadata server is reachable by the
-agent and by containers it starts; a leaked VM is reaped; and the egress
-posture is unchanged. Veto alternative: leave SECURITY.md and let the design
-document carry it — rejected, because a trust model an adopter cannot find in
-SECURITY.md is not a trust model (the same ruling the generic-tool work made,
-G21).
+VM; the VM is the isolation unit and is never reused; the run's service account,
+its granularity (C21: the profile's account unless the installation opts into
+per-repository ones) and what D4's accepted loss means here; that the metadata
+server is reachable by the agent and by every container it starts; that root
+can outlive the runner and keep spending; that the caps are model-only and
+bypassable by an agent that holds the provider key; that a leaked VM is reaped;
+and that the egress posture is unchanged. Veto alternative: leave SECURITY.md
+and let the design document carry it — rejected, because a trust model an
+adopter cannot find in SECURITY.md is not a trust model (the same ruling the
+generic-tool work made, G21).
+
+### 3.7 IAM: the launcher, the job and the reaper
+
+Batch's IAM model is **coarser than Cloud Run's** for the launching side, and
+that is a trust-model change worth stating rather than discovering in a
+provisioning PR. Google documents what a job creator needs: to create a job
+that names a custom service account, "Service Account User
+(`roles/iam.serviceAccountUser`)" **on that service account**, plus "Batch Job
+Editor (`roles/batch.jobsEditor`)" **on the project**
+(cloud.google.com/batch/docs/create-run-job-custom-service-account, checked
+2026-10-15); the job's account then needs `batch.agentReporter` and
+`logging.logWriter` (§3.2). The job-level roles are the same project-level
+roles a cancel needs ("Batch Job Editor (`roles/batch.jobsEditor`) on the
+project", cloud.google.com/batch/docs/cancel-job, checked 2026-10-15), and a
+delete needs them too (cloud.google.com/batch/docs/delete-job, checked
+2026-10-15).
+
+What follows, plainly:
+
+- **A launcher with `batch.jobsEditor` on the project can create a job with
+  any image, any command and any `secretVariables`** it can name, running as
+  the service account it has `serviceAccountUser` on. It is not confined to
+  Fugaro's repositories, workflows or images. Today's Cloud Run path is
+  narrower: the launcher calls `jobs.runWithOverrides` on **one named job**
+  per (repository, workflow), so the image, the command and the environment
+  are the job's, not the caller's.
+- **The same launcher can cancel or delete any Batch job in the project**,
+  including another launcher's, another repository's or a teammate's run.
+- So **the launcher is trusted to a greater degree than before**, which is a
+  different claim from project-centric D10's "launchers are trusted" — D10
+  trusted them with their own repositories' runs, and this trusts them with
+  everyone's plus arbitrary compute under a job account.
+- **The reaper's identity** needs project-wide `batch.jobs.delete` and
+  `compute.instances.delete` (`compute.instanceAdmin.v1`), i.e. the most
+  destructive grants in the whole design. It should be a **dedicated
+  service account** used only by the scheduled sweeper, not the launcher's and
+  not the job's.
+
+**Recommendation (C22): give the launcher `batch.jobsEditor`,
+`serviceAccountUser` scoped to the run-class accounts, and nothing else; if
+the project can carry it, put the launcher in its own account so "who can
+launch" and "who can cancel anything" stay distinguishable; and make the
+reaper a separate account.** The stronger alternative — an IAM Condition
+narrowing `batch.jobsEditor` to Fugaro-shaped job names, and a
+`serviceAccountUser` only on `fugaro-*` accounts — is worth attempting at
+provisioning time: Conditions on `batch.googleapis.com/Job` resource names
+are **UNVERIFIED** (Check 57a step 9 reads what the sandbox's IAM actually
+allows, and the plan task checks it before shipping). Veto alternative: one
+account for everything, simpler to provision and much harder to reason about —
+rejected, because it makes the reaper's power ambient.
 
 ## 4. Configuration
 
