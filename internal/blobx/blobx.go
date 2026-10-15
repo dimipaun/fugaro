@@ -155,6 +155,25 @@ func writeErr(err error, ifNotExist bool) error {
 	return err
 }
 
+// sourceReader tags every error its file produces, so PutFile can tell a
+// source that failed from a bucket that refused the write: both leave the
+// same io.Copy.
+type sourceReader struct{ r io.Reader }
+
+// sourceReadErr is a failure of the source file itself.
+type sourceReadErr struct{ err error }
+
+func (e sourceReadErr) Error() string { return e.err.Error() }
+func (e sourceReadErr) Unwrap() error { return e.err }
+
+func (s sourceReader) Read(p []byte) (int, error) {
+	n, err := s.r.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) {
+		err = sourceReadErr{err}
+	}
+	return n, err
+}
+
 // Create writes key only if it does not exist (ErrExists otherwise).
 func (b *Bucket) Create(ctx context.Context, key string, data []byte, contentType string) (int64, error) {
 	return b.write(ctx, key, data, contentType, true, nil)
@@ -360,6 +379,19 @@ func (b *Bucket) Put(ctx context.Context, key string, data []byte, contentType s
 // closes, returning the original error and not Close's. Without that rule a
 // failed upload would leave a truncated object at a key the caller recorded
 // (blob.go:436-456 is the same pattern in go-cloud's own MD5 path).
+//
+// A refused write is classified wherever it surfaces, and on real GCS that
+// is the copy loop: gcsblob starts the resumable insert on the first Write,
+// carrying IfNotExist as its precondition, and reports a 412 or a 403
+// through the writer's pipe — so a create that lost a race, or a write the
+// account may not make, arrives as the io.Copy error and not from NewWriter
+// or Close. The source is therefore read through a reader that tags its own
+// errors, which is what tells the two apart: a tagged error is the file,
+// anything else is the bucket, and the bucket's is classified with writeErr
+// exactly as WriteAll's is. (Failing the driver's Write is also the only way
+// to reach this path at all: gocloud buffers a non-file driver's bytes until
+// Close, so a test driver that fails there is how the classification is
+// pinned.)
 func (b *Bucket) PutFile(ctx context.Context, key, path, contentType string, ifNotExist bool) (size int64, sum string, err error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -377,13 +409,17 @@ func (b *Bucket) PutFile(ctx context.Context, key, path, contentType string, ifN
 		return 0, "", writeErr(err, ifNotExist)
 	}
 	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(w, h), f)
+	n, err := io.Copy(io.MultiWriter(w, h), sourceReader{f})
 	if err != nil {
-		// The abort rule: cancel, then close, and report the read error
-		// rather than whatever Close says about the aborted write.
+		// The abort rule: cancel, then close, and report the cause rather
+		// than whatever Close says about the aborted write.
 		cancel()
 		_ = w.Close()
-		return 0, "", fmt.Errorf("reading %s: %w", path, err)
+		var se sourceReadErr
+		if errors.As(err, &se) {
+			return 0, "", fmt.Errorf("reading %s: %w", path, se.err)
+		}
+		return 0, "", writeErr(err, ifNotExist)
 	}
 	if n != st.Size() {
 		cancel()

@@ -434,7 +434,9 @@ func TestTouchForbiddenIsClassified(t *testing.T) {
 //	TestPutFileWithoutIfNotExistOverwrites       the condition is forced create-only, so the second write is refused
 //	TestPutFileAbortsTheWriteBeforeClosingOnAFailedRead  the cancel before Close is removed
 //	TestPutFileAbortsOnAShortRead                the size-changed check is removed
-//	TestGetFileRefusesOverTheLimitAndLeavesNothing  the download caps are removed
+//	TestPutFileClassifiesARefusalFromTheWriter   every copy failure is reported as a source problem
+//	TestGetFileRefusesOverTheLimitAndLeavesNothing  both cap checks are removed — and this one alone is NOT enough to catch the post-copy one: every backend it uses reports an accurate Size(), so the pre-check fires first and the line below is the test that pins the other arm
+//	TestGetFileRefusesAnOverCapObjectTheReaderDoesNotAnnounce  the post-copy n > limit check is removed
 //	TestGetFileRefusesAMismatchAndLeavesNothing  the hash check is removed (and, separately, the temp file is left behind on failure)
 //	TestGetFileWithoutAnExpectedHashStillReturnsOne  the returned hash is of nothing
 //	TestGetFileClassifiesForbidden               strict mode folds a 403 into not-found
@@ -559,6 +561,7 @@ func TestPutFileWithoutIfNotExistOverwrites(t *testing.T) {
 type abortDriver struct {
 	driver.Bucket        // nil: only the methods below are reached
 	onWriter      func() // runs when a write starts (after PutFile's stat)
+	writeErr      error  // what every Write returns, the real GCS shape
 	closes        int    // driver writers closed
 	commits       int    // writes that committed
 	closeCtxErr   error  // the writer's context at Close time
@@ -566,13 +569,17 @@ type abortDriver struct {
 }
 
 var (
-	errAbortClose = errors.New("fake: close failed")
-	errNoObject   = errors.New("fake: no object")
+	errAbortClose       = errors.New("fake: close failed")
+	errNoObject         = errors.New("fake: no object")
+	errFakePrecondition = errors.New("fake: precondition failed")
 )
 
 func (d *abortDriver) ErrorCode(err error) gcerrors.ErrorCode {
-	if errors.Is(err, errNoObject) {
+	switch {
+	case errors.Is(err, errNoObject):
 		return gcerrors.NotFound
+	case errors.Is(err, errFakePrecondition):
+		return gcerrors.FailedPrecondition
 	}
 	return gcerrors.Unknown
 }
@@ -600,7 +607,12 @@ type abortWriter struct {
 	buf bytes.Buffer
 }
 
-func (w *abortWriter) Write(p []byte) (int, error) { return w.buf.Write(p) }
+func (w *abortWriter) Write(p []byte) (int, error) {
+	if w.d.writeErr != nil {
+		return 0, w.d.writeErr
+	}
+	return w.buf.Write(p)
+}
 
 // Close commits only what the driver would commit: nothing, once the context
 // has been cancelled. It always returns an error, so a PutFile that reported
@@ -682,6 +694,48 @@ func TestPutFileAbortsOnAShortRead(t *testing.T) {
 	}
 }
 
+// TestPutFileClassifiesARefusalFromTheWriter: on real GCS the refusal does
+// not come from NewWriter or from Close — gcsblob starts the resumable insert
+// carrying IfNotExist on the first Write and reports a 412 or a 403 through
+// the writer's pipe — so the copy loop's error is the one that has to be
+// classified, and a bucket that refused must not read as a bad source file.
+func TestPutFileClassifiesARefusalFromTheWriter(t *testing.T) {
+	ctx := context.Background()
+	src := writeSource(t, []byte("the bytes"))
+	for name, tc := range map[string]struct {
+		writeErr  error
+		notExist  bool
+		want      error
+		forbidden bool
+	}{
+		"a lost create-only race is ErrExists":             {errFakePrecondition, true, blobx.ErrExists, false},
+		"a lost race without the condition is ErrConflict": {errFakePrecondition, false, blobx.ErrConflict, false},
+		"a refused write is ErrForbidden":                  {&googleapi.Error{Code: http.StatusForbidden, Message: "denied"}, false, blobx.ErrForbidden, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			d := &abortDriver{writeErr: tc.writeErr}
+			b := blobx.Wrap(blob.NewBucket(d))
+			_, _, err := b.PutFile(ctx, "inputs/shot.png", src, "image/png", tc.notExist)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("PutFile = %v, want %v", err, tc.want)
+			}
+			var ae *googleapi.Error
+			if got := errors.As(err, &ae); got != tc.forbidden {
+				t.Fatalf("the 403 reachable through errors.As = %v, want %v (%v)", got, tc.forbidden, err)
+			}
+			if strings.Contains(err.Error(), "reading") {
+				t.Fatalf("a refused write was reported as a source problem: %v", err)
+			}
+			if d.commits != 0 || d.closes != 1 {
+				t.Fatalf("commits = %d, closes = %d, want 0 and 1", d.commits, d.closes)
+			}
+			if !errors.Is(d.closeCtxErr, context.Canceled) {
+				t.Fatalf("Close saw ctx.Err() = %v, want the cancel that stops the commit", d.closeCtxErr)
+			}
+		})
+	}
+}
+
 // TestGetFileRefusesOverTheLimitAndLeavesNothing: the cap refuses, it never
 // truncates, and the destination directory is left exactly as it was.
 func TestGetFileRefusesOverTheLimitAndLeavesNothing(t *testing.T) {
@@ -703,6 +757,66 @@ func TestGetFileRefusesOverTheLimitAndLeavesNothing(t *testing.T) {
 	got, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(got, data) {
 		t.Fatalf("GetFile at the cap wrote %d bytes, %v", len(got), err)
+	}
+}
+
+// sizedDriver serves one object whose reader reports a size the caller
+// chooses: a backend that tells the reader nothing (Size() == -1) or one
+// that understates the object. blob.Reader.Size is the driver's
+// Attributes().Size, so this is how GetFile's pre-check is made not to fire.
+type sizedDriver struct {
+	driver.Bucket
+	data []byte
+	size int64
+}
+
+func (d *sizedDriver) ErrorCode(error) gcerrors.ErrorCode { return gcerrors.Unknown }
+func (d *sizedDriver) As(any) bool                        { return false }
+func (d *sizedDriver) ErrorAs(error, any) bool            { return false }
+func (d *sizedDriver) Close() error                       { return nil }
+
+func (d *sizedDriver) NewRangeReader(context.Context, string, int64, int64, *driver.ReaderOptions) (driver.Reader, error) {
+	return &sizedReader{Reader: bytes.NewReader(d.data), size: d.size}, nil
+}
+
+type sizedReader struct {
+	*bytes.Reader
+	size int64
+}
+
+func (r *sizedReader) Close() error { return nil }
+func (r *sizedReader) Attributes() *driver.ReaderAttributes {
+	return &driver.ReaderAttributes{Size: r.size}
+}
+func (r *sizedReader) As(any) bool { return false }
+
+// TestGetFileRefusesAnOverCapObjectTheReaderDoesNotAnnounce: the cap is the
+// bytes read, not the size the backend claims. Every other backend in these
+// tests reports an accurate size, so only a reader with none — or a lying
+// one — reaches the post-copy check, and without it the object streams
+// straight past its cap into the destination.
+func TestGetFileRefusesAnOverCapObjectTheReaderDoesNotAnnounce(t *testing.T) {
+	ctx := context.Background()
+	data := bytes.Repeat([]byte("z"), 100)
+	for name, size := range map[string]int64{"no size": -1, "understated": 10} {
+		t.Run(name, func(t *testing.T) {
+			b := blobx.Wrap(blob.NewBucket(&sizedDriver{data: data, size: size}))
+			dir := t.TempDir()
+			path := filepath.Join(dir, "a.mp4")
+			if _, _, err := b.GetFile(ctx, "artifacts/a.mp4", path, "", 99, true); !errors.Is(err, blobx.ErrTooLarge) {
+				t.Fatalf("GetFile of an unannounced 100-byte object under a 99-byte cap = %v, want ErrTooLarge", err)
+			}
+			assertDirEmpty(t, dir)
+			// The same object under a cap that fits still arrives: the
+			// post-copy check must not refuse a legal download.
+			if _, _, err := b.GetFile(ctx, "artifacts/a.mp4", path, "", 100, true); err != nil {
+				t.Fatalf("GetFile at the cap = %v", err)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(got, data) {
+				t.Fatalf("GetFile at the cap wrote %d bytes, %v", len(got), err)
+			}
+		})
 	}
 }
 
