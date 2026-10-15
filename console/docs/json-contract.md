@@ -657,16 +657,23 @@ Three consequences a consumer must hold to:
   `v.Conn.Kind` differs from `lastConn`, which sets `dirty` and emits — so the
   console is *told* the data went `stale` or `offline` instead of inferring it.
 
-### 10.2 The first document arrives within `watchFirstFrame`
+### 10.2 The first document arrives within `watchFirstFrame` plus a tick
 
 `ready` is `seen == [4]bool{true, true, true, true} || time.Since(started) >=
 watchFirstFrame` (5 s): all four streams have delivered a `put` of `"/"`, or
 five seconds have passed. The supervisor's first update is `UpdDay`
 (`Supervisor.run`, `internal/watch/source.go`), which sets `dirty` immediately,
-so a child that can read nothing at all still writes one frame within about
-five seconds — the "offline frame" `watchFirstFrame`'s own comment names. The
-console may expect a first document within ~5 s of spawning and must not need
-one sooner.
+so a child that can read nothing at all still writes one frame — the "offline
+frame" `watchFirstFrame`'s own comment names.
+
+Those five seconds bound the clock, not the arrival. `ready` is evaluated only
+when an update arrives (`watchStream`'s loop body runs per update, not on a
+timer of its own), updates come from the supervisor's `Tick` — 1 s — while no
+stream says anything, and `started` is set in `watchStream` *after* `watch.Start`
+(`runWatch`), so the first tick that finds `time.Since(started)` past
+`watchFirstFrame` comes about a tick after that deadline. **The bound is
+`watchFirstFrame` + `watch.Options.Tick`, about 6 s**, and the console may
+expect a first document within that and must not need one sooner.
 
 ### 10.3 A slow reader makes the child block; it never drops a document
 
@@ -809,14 +816,14 @@ nag, error lines — goes to stderr, which is not the document stream.
 | Constant | Value | What it means to the console |
 |---|---|---|
 | `watchJSONGap` | 1 s | The floor between two documents. A ceiling on the feed's rate, never a promise of one. |
-| `watchFirstFrame` | 5 s | The longest wait for the four streams before the first document, readable or not (§10.2). |
+| `watchFirstFrame` | 5 s | The four streams' head start before the first document, readable or not. `ready` is re-evaluated only when an update arrives, so the document can be up to one `Tick` later: the bound is about 6 s (§10.2). |
 | `watchPlainInterval` | 10 s | The degraded mode's period, and the default `--interval` for plain frames. |
 | `watchDegradedDoc`'s window | 24 h | `degradedSince`: how far back the degraded document's run list reaches. Not a cap and not a total. |
 | `watch.StaleAfter` | 45 s | Per-stream silence, keep-alives counting as events, after which `connection.state` is `stale`. The console's own stale banner (design §6.3) is the same number, and the child announces the transition. |
 | `watch.SilentAfter` | 60 s | Per-run silence after which a run's `health` is `silent` (`internal/watch/build.go`). A property of the run, not of the connection. |
 | `watch.LostAfter` | 180 s | The same, for `lost`. |
 | `watch.BurnWindow` / `BurnWarmup` | 5 min / 60 s | The burn rate's window and the span it needs before `burn.known` is true. A restarted window — a reconnect, a rollover — reports `known: false`, not a rate of zero. |
-| `watch.Options.Tick` | 1 s | The supervisor's clock: how quickly a stale, offline or day-rolled view becomes visible, and the granularity at which the child notices a cancelled context (§10.12). |
+| `watch.Options.Tick` | 1 s | The supervisor's clock: how quickly a stale, offline or day-rolled view becomes visible, and how often the loop re-evaluates `ready` (§10.2). Not how quickly a cancellation is noticed — that is the loop's own `select` on `ctx.Done()`, which fires at once (§10.12). |
 | `watch.Options.Interval` | 5 s | The polling period, and `--interval` when given. |
 | `watch.Options.SSERetry` | 60 s | How often polling tries the stream again. |
 | `rtdb.Client` idle | 90 s | The SSE silence that ends a connection (§10.3). |
@@ -826,7 +833,7 @@ nag, error lines — goes to stderr, which is not the document stream.
 
 | Mode | Rate | Notes |
 |---|---|---|
-| Live SSE (`watch --json`) | at most 60/min, and as few as **0** | One per change, floored at 1 s. An idle, live project is silent; a connection-state change always emits (§10.1). The first document lands within ~5 s (§10.2). |
+| Live SSE (`watch --json`) | at most 60/min, and as few as **0** | One per change, floored at 1 s. An idle, live project is silent; a connection-state change always emits (§10.1). The first document lands within `watchFirstFrame` plus a tick, about 6 s (§10.2). |
 | Polling (`--poll`, or after three same-cause stream errors) | **two per poll**, so about 24/min at the 5 s default | `pollOnce` reads the four paths and delivers each as a `put` of `"/"`. All four land inside one 1-second window, so the first emits and the rest only re-set `dirty`; the next `Tick`, a second later, flushes that flag and emits the second. Two documents per poll, not one, and not one per read. |
 | Degraded (no `budget.rtdb_url`) | one per `watchPlainInterval`: 6/min at the 10 s default | Unconditional, changed or not, forever (§10.8). |
 | `--once` | exactly one, then exit | A bounded read by plain GETs (`watchOnce`), not a stream. |
@@ -869,10 +876,13 @@ then resets the handler, so a *second* signal gets the default action and the
 process dies by that signal instead. `SIGKILL` cannot be caught at all.
 
 So the console's shutdown is: close the pipe, send `SIGTERM`, and expect exit 0
-within a tick (`watch.Options.Tick`, 1 s, is the loop's granularity); send
-`SIGKILL` if it does not come. The exit code says nothing about why the feed
-ended — 0 is both "the console asked" and "`ctx` was cancelled for any other
-reason" — which is why the console's own record of the shutdown, not the
+promptly — not on a tick. `watchStream`'s loop blocks in a `select` whose other
+case is `<-ctx.Done(): return nil`, so a running child notices the cancellation
+the moment it fires. The one child that cannot is the stalled reader of §10.3,
+blocked inside `d.emit`'s `Encode` with a full pipe, where no tick would help
+it; that is what the `SIGKILL` is for. The exit code says nothing about why the
+feed ended — 0 is both "the console asked" and "`ctx` was cancelled for any
+other reason" — which is why the console's own record of the shutdown, not the
 child's status, is what it reports. (`SIGTERM` is also how Cloud Run asks a
 task to stop, which is what the function's comment says.)
 

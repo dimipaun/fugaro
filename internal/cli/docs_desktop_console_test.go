@@ -941,6 +941,9 @@ func TestDocsDesktopConsoleContractSettlesTheFeed(t *testing.T) {
 				"watchFirstFrame",
 				"Supervisor.run",
 				"offline frame",
+				// `ready` is only re-evaluated on an update, and updates come
+				// from the tick: the arrival bound is the clock plus a tick.
+				"`watchFirstFrame` + `watch.Options.Tick`, about 6 s",
 			},
 		},
 		{
@@ -1009,6 +1012,10 @@ func TestDocsDesktopConsoleContractSettlesTheFeed(t *testing.T) {
 				"the child exits 0",
 				"context.AfterFunc",
 				"SIGKILL",
+				// The tick is not what notices the signal, and a child blocked
+				// writing to a stalled reader is why the SIGKILL exists.
+				"so a running child notices the cancellation the moment it fires",
+				"that is what the `SIGKILL` is for",
 			},
 		},
 		{

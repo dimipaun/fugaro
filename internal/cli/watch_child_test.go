@@ -1,20 +1,26 @@
 package cli
 
-// The facts of console/docs/json-contract.md section 10 that only a real
-// process can show: what a closed stdout does to the child (section 10.4),
-// what SIGTERM does to it (section 10.12), and which stream the degraded
-// retry line goes to (section 10.8). All three live in the kernel, in
-// cmd/fugaro/main.go's signal handler, or behind the exec boundary, so a
-// docs-presence test -- and an in-process one -- cannot see them.
+// The facts of the feed contract's section 10 that only a real process can
+// show: what a closed stdout does to the child (section 10.4), what SIGTERM
+// does to it (section 10.12), and which stream the degraded retry line goes to
+// (section 10.8). All three live in the kernel, in cmd/fugaro/main.go's signal
+// handler, or behind the exec boundary, so a docs-presence test -- and an
+// in-process one -- cannot see them.
 //
 // They are in internal/cli because the plan's Task 0.2 puts its tests with the
 // CLI, and they spawn the real binary through internal/testutil.BuildFugaro,
 // the helper internal/e2e and internal/image already use for this. Task 0.2's
-// Files line names only console/docs/json-contract.md and
+// Files line names only the contract document and
 // docs_desktop_console_test.go, so this file is outside the plan's inventory:
 // it is here because a reviewer asked for behavioural coverage of the facts a
-// presence test cannot reach, and it adds no Go dependency, no product
-// behaviour and nothing under console/.
+// presence test cannot reach, and it adds no Go dependency and no product
+// behaviour.
+//
+// It names no path under the console app's own directory, on purpose: Task
+// 0.3's boundary test carries a one-entry allow-list of the Go files permitted
+// to mention one -- docs_desktop_console_test.go, which reads the contract as
+// bytes -- so a second mentioner here would fail it. The contract is referred
+// to by its section numbers instead.
 //
 // None of them touches a live installation: the database is
 // internal/gcpfake's Realtime Database fake on loopback, the config is a
