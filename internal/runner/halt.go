@@ -180,15 +180,12 @@ func haltLines(rec *runstore.Record) string {
 	}
 	switch h.Reason {
 	case runstore.HaltTokenCap:
-		// The token cap is the one key whose spelling differs by layer: the
-		// project config and the published policy spell it
-		// budget.max_run_tokens, fugaro.yaml spells it agent.max_run_tokens.
-		fmt.Fprintf(&b, "To continue: %s, then %s.\n\n", raiseAdvice(rec, policy.KeyMaxRunTokens, "`budget.max_run_tokens`", "`agent.max_run_tokens`"), again)
+		fmt.Fprintf(&b, "To continue: %s, then %s.\n\n", raiseAdvice(rec, policy.KeyMaxRunTokens, "`agent.max_run_tokens`"), again)
 	case runstore.HaltKillSwitch:
 		fmt.Fprintf(&b, "To continue: an admin turns the switch off with `fugaro budget resume`, then %s.\n\n", again)
 	case runstore.HaltRepoDailyCap, runstore.HaltGlobalDailyCap:
 		if strings.Contains(h.Detail, "fugaro.yaml") {
-			fmt.Fprintf(&b, "To continue: %s, then %s.\n\n", raiseAdvice(rec, policy.KeyPerDayUSD, "`budget.per_day_usd`", "`budget.per_day_usd`"), again)
+			fmt.Fprintf(&b, "To continue: %s, then %s.\n\n", raiseAdvice(rec, policy.KeyPerDayUSD, "`budget.per_day_usd`"), again)
 		} else {
 			fmt.Fprintf(&b, "To continue: an admin raises the cap with `fugaro budget set` (or wait for the next UTC day), then %s.\n\n", again)
 		}
@@ -201,7 +198,7 @@ func haltLines(rec *runstore.Record) string {
 			fmt.Fprintf(&b, "To continue: an admin sets the missing cap with `fugaro budget set`, then %s.\n\n", again)
 			break
 		}
-		fmt.Fprintf(&b, "To continue: %s, then %s.\n\n", raiseAdvice(rec, policy.KeyPerRunUSD, "`budget.per_run_usd`", "`budget.per_run_usd`"), again)
+		fmt.Fprintf(&b, "To continue: %s, then %s.\n\n", raiseAdvice(rec, policy.KeyPerRunUSD, "`budget.per_run_usd`"), again)
 	default:
 		fmt.Fprintf(&b, "To continue: once the limit that halted this run is lifted, %s.\n\n", again)
 	}
@@ -211,30 +208,23 @@ func haltLines(rec *runstore.Record) string {
 // raiseAdvice says where to raise a limit, by the layer that set it: a value
 // on the run's own branch can only tighten the ceiling and the default
 // branch's file, so raising it there changes nothing.
-//
-// policyName is the key's spelling in the two owner-set layers, the project
-// config and the published policy node; repoName is its spelling in
-// fugaro.yaml. They differ for the token cap alone -- budget.max_run_tokens
-// against agent.max_run_tokens, and `agent` is not a top-level key of the
-// node at all, so the wrong one there sends the owner to a key that changes
-// nothing and whose node the next publish refuses as unknown.
-func raiseAdvice(rec *runstore.Record, key, policyName, repoName string) string {
+func raiseAdvice(rec *runstore.Record, key, name string) string {
 	src := ""
 	if rec.Policy != nil {
 		src = rec.Policy.Sources[key]
 	}
 	switch src {
 	case policy.SourceCeiling:
-		return fmt.Sprintf("raise %s in the project config and run `fugaro init --repo` (a raise in any fugaro.yaml is ignored: it can only tighten the ceiling)", policyName)
+		return fmt.Sprintf("raise %s in the project config and run `fugaro init --repo` (a raise in any fugaro.yaml is ignored: it can only tighten the ceiling)", name)
 	case policy.SourcePolicy:
-		return fmt.Sprintf("raise %s in the project's policy at %s (a raise in any fugaro.yaml is ignored: it can only tighten the ceiling)", policyName, projectpolicy.PathShared())
+		return fmt.Sprintf("raise %s in the project's policy at %s (a raise in any fugaro.yaml is ignored: it can only tighten the ceiling)", name, projectpolicy.PathShared())
 	case policy.SourceDefaultBranch:
-		return fmt.Sprintf("merge a change to %s in `fugaro.yaml` on the default branch (a raise on the run's own branch is ignored)", repoName)
+		return fmt.Sprintf("merge a change to %s in `fugaro.yaml` on the default branch (a raise on the run's own branch is ignored)", name)
 	case policy.SourceBranch:
-		return fmt.Sprintf("raise %s in `fugaro.yaml` on this run's branch (it cannot exceed the project config's ceiling or the default branch's value)", repoName)
+		return fmt.Sprintf("raise %s in `fugaro.yaml` on this run's branch (it cannot exceed the project config's ceiling or the default branch's value)", name)
 	}
 	if key == policy.KeyPerRunUSD {
-		return fmt.Sprintf("raise %s in the project config and run `fugaro init --repo`", policyName)
+		return fmt.Sprintf("raise %s in the project config and run `fugaro init --repo`", name)
 	}
-	return fmt.Sprintf("raise %s in `fugaro.yaml`", repoName)
+	return fmt.Sprintf("raise %s in `fugaro.yaml`", name)
 }
