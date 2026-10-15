@@ -14,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gateway"
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/recipe"
@@ -53,7 +54,12 @@ const (
 	// being a one-bit marker and becomes the carrier of a per-execution key,
 	// D15). The parse is strict in both directions and never echoes the value:
 	// see BackendFromEnv.
-	BudgetTokenEnv = "FUGARO_BUDGET_TOKEN"
+	//
+	// The name itself is gitops.BudgetTokenEnv's, and this is an alias of it
+	// rather than a second spelling: internal/gitops strips the variable from
+	// every git call and cannot import this package (this package imports it),
+	// so the one definition lives there and the two cannot drift.
+	BudgetTokenEnv = gitops.BudgetTokenEnv
 )
 
 // Backend is how the run reaches the project's budget database. The zero

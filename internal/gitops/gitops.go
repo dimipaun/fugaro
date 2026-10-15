@@ -80,6 +80,14 @@ func IdentityEnv() []string {
 // run must never see the model credential.
 var ModelCredentialVars = []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"}
 
+// BudgetTokenEnv is internal/runner's BudgetTokenEnv: the marker the launcher
+// writes into a launch's environment, whose value is the launch's seal key
+// once the launcher seals (docs/design/budget-token-channel.md §7.1). It is
+// named here rather than imported because internal/runner imports this
+// package, so the runner's constant is an alias of this one and the two
+// cannot drift. See processEnv for why it is stripped.
+const BudgetTokenEnv = "FUGARO_BUDGET_TOKEN"
+
 // Repo is a git checkout. Env is added to the process environment for every git call.
 type Repo struct {
 	Dir string
@@ -190,11 +198,18 @@ func (r *Repo) Environ() []string { return r.processEnv() }
 
 func (r *Repo) processEnv() []string {
 	env := append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), r.Env...)
-	// A provider key (FUGARO_PROVIDER_KEY_*) is the gateway's alone: no git
-	// call, and nothing git runs, ever sees one, whatever StripEnv says.
+	// A provider key (FUGARO_PROVIDER_KEY_*) is the gateway's alone, and the
+	// budget marker is the run's alone: no git call, and nothing git runs,
+	// ever sees either, whatever StripEnv says. The marker is a secret as soon
+	// as the launcher seals — its value is the launch's seal key, and a run
+	// that read it could unseal the token of the launch it was copied from
+	// (docs/design/budget-token-channel.md §7.1) — and an agent-written
+	// .git/config (core.fsmonitor, a filter driver) is exactly a way to make
+	// git run a command of the agent's choosing, which is why the model
+	// credential is stripped the same way.
 	return slices.DeleteFunc(env, func(kv string) bool {
 		k, _, _ := strings.Cut(kv, "=")
-		return config.IsProviderKeyEnv(k) || slices.Contains(r.StripEnv, k)
+		return config.IsProviderKeyEnv(k) || k == BudgetTokenEnv || slices.Contains(r.StripEnv, k)
 	})
 }
 
