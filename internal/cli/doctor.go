@@ -1374,7 +1374,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck 
 		return append(checks, doctorCheck{ID: "policy-published", Severity: "info",
 			Problem: fmt.Sprintf("the project policy could not be read (%v), so whether one is published, and whether the runs are bounded by it, is unknown", err),
 			Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"})
-	case err == nil && !found:
+	case !found:
 		info := doctorCheck{ID: "policy-published", Severity: "info",
 			Problem: fmt.Sprintf("no policy is published at %s: runs take their ceiling from the job environment", shared),
 			Fix:     "fugaro project policy publish publishes the project's policy"}
