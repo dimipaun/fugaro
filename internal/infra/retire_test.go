@@ -634,6 +634,26 @@ func TestFillFromStateReadsTheProvidersOwnAttributes(t *testing.T) {
 	}
 }
 
+// A state that could not be read at all is the case the conservative default
+// is for: `terraform show` failed, or answered with no values, and the run
+// still has to treat every job as one an ordinary apply cannot delete.
+func TestFillFromStateProtectsJobsWhenTheStateSaysNothing(t *testing.T) {
+	for _, st := range []*tf.State{nil, {}} {
+		rets := []Retirement{
+			{Address: `module.repo.module.workflow["gone"].google_cloud_run_v2_job.this[0]`},
+			{Address: `module.repo.google_secret_manager_secret.this["x"]`},
+			{Address: `module.repo.module.workflow["gone"].google_storage_bucket_iam_member.job`},
+		}
+		FillFromState(st, rets)
+		if !rets[0].Protected || !rets[1].Protected {
+			t.Errorf("state %+v: %+v; want every job and container protected", st, rets)
+		}
+		if rets[2].Protected {
+			t.Errorf("state %+v: a grant is never protected: %+v", st, rets[2])
+		}
+	}
+}
+
 // protectedState is a three-job state: one whose protection is already
 // false, one whose state says true, and one that carries no
 // deletion_protection attribute at all (an older

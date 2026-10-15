@@ -13,7 +13,8 @@
 // "show -json" is `show -json` with no plan file -- the state a retirement
 // reads -- and "show" is `show -json <planfile>`, the plan: the two are
 // scripted apart. A script that names only "show" answers both, which is what
-// every script written before the state was read does.
+// every script written before the state was read does -- including a
+// root-scoped "show@firebase", which answers that root's state read too.
 //
 // A key's value may also be a list of steps, consumed in order: the first
 // invocation of that key prints the first step, the second the second, and the
@@ -127,12 +128,16 @@ func scriptKey(args []string) string {
 // stepFor is the step one invocation of key prints, and whether the script
 // named it at all. A step may be scripted for one root only:
 // "output@firebase" wins over "output" in a working directory named
-// firebase. A script that names only "show" answers the state too.
+// firebase. A script that names only "show" answers the state too, and the
+// fallback is tried root-scoped as well, so a rig that scripts a root's own
+// state read as "show@firebase" answers the state read and not only the plan.
 func stepFor(script map[string]json.RawMessage, key, dir string) (step, bool, error) {
-	for _, k := range []string{key + "@" + filepath.Base(dir), key, fallbackKey(key)} {
-		if k == "" {
-			continue
-		}
+	root := filepath.Base(dir)
+	keys := []string{key + "@" + root, key}
+	if fb := fallbackKey(key); fb != "" {
+		keys = append(keys, fb+"@"+root, fb)
+	}
+	for _, k := range keys {
 		raw, ok := script[k]
 		if !ok {
 			continue

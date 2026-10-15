@@ -76,6 +76,43 @@ func TestAScriptThatNamesOnlyShowAnswersBothForms(t *testing.T) {
 	}
 }
 
+// The state read is a fallback for a rig that names only "show", so the
+// fallback has to be tried root-scoped too: the CLI's init tests script
+// "show@firebase" for a root's plan and state, and a state read that reached
+// only the plain "show" would answer with the plan document instead.
+func TestAScriptNamingAShowsRootAnswersTheStateRead(t *testing.T) {
+	f := fakeRun(t, `{"show@firebase": {"stdout": "ROOT"}, "show": {"stdout": "PLAIN"}}`)
+	at(t, filepath.Join("firebase"))
+	if out, _, code := f("show", "-json"); out != "ROOT" || code != 0 {
+		t.Errorf("show -json printed %q (exit %d), want the root's own answer", out, code)
+	}
+	if out, _, _ := f("show", "-json", "/tmp/plan"); out != "ROOT" {
+		t.Errorf("show -json <plan> printed %q, want the root's own answer", out)
+	}
+}
+
+// at makes dir (under a fresh temporary directory) the working directory, so
+// a key's root variant can be scripted for it.
+func at(t *testing.T, dir string) {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(filepath.Join(root, dir)); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(old); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
 // A list of steps is consumed in order, and its last step repeats: that is
 // what lets one script answer the second `show -json` differently from the
 // first, or fail a `state rm` on one address and pass on the next.

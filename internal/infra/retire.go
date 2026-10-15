@@ -290,7 +290,13 @@ func FillFromState(st *tf.State, rets []Retirement) {
 			// The module's second prevent_destroy resource.
 			rets[i].Protected = true
 		case typ == "google_cloud_run_v2_job":
+			// A job counts as protected until the state's own
+			// deletion_protection says otherwise, and that default is set
+			// here, before the state is read: a state that is nil, has no
+			// values, or does not hold the job at all leaves it protected
+			// (see above).
 			kind[i] = "job"
+			rets[i].Protected = true
 		}
 	}
 	if st == nil || st.Values == nil {
@@ -300,9 +306,6 @@ func FillFromState(st *tf.State, rets []Retirement) {
 	for i, r := range rets {
 		at[r.Address] = i
 	}
-	// readProtection are the jobs whose state actually carried the
-	// attribute; every other job counts as protected (see above).
-	readProtection := make(map[int]bool)
 	var walk func(m tf.StateModule)
 	walk = func(m tf.StateModule) {
 		for _, raw := range m.Resources {
@@ -317,29 +320,22 @@ func FillFromState(st *tf.State, rets []Retirement) {
 			if !ok {
 				continue
 			}
-			if fillFromValues(&rets[i], kind[i], res.Values) {
-				readProtection[i] = true
-			}
+			fillFromValues(&rets[i], kind[i], res.Values)
 		}
 		for _, c := range m.ChildModules {
 			walk(c)
 		}
 	}
 	walk(st.Values.RootModule)
-	for i := range rets {
-		if kind[i] == "job" && !readProtection[i] {
-			rets[i].Protected = true
-		}
-	}
 }
 
 // fillFromValues reads one resource's own attributes: a job's name, location
 // and deletion_protection, and a container's secret_id. The names are the
-// provider schema's, and a value that is not there leaves its field empty.
-// It reports whether the state carried deletion_protection at all.
-func fillFromValues(r *Retirement, kind string, values json.RawMessage) (readProtection bool) {
+// provider schema's, and a value that is not there leaves its field empty --
+// a job's protection is left as the protective default it was given.
+func fillFromValues(r *Retirement, kind string, values json.RawMessage) {
 	if len(values) == 0 {
-		return false
+		return
 	}
 	var v struct {
 		Name               *string `json:"name"`
@@ -348,7 +344,7 @@ func fillFromValues(r *Retirement, kind string, values json.RawMessage) (readPro
 		DeletionProtection *bool   `json:"deletion_protection"`
 	}
 	if err := json.Unmarshal(values, &v); err != nil {
-		return false
+		return
 	}
 	switch kind {
 	case "job":
@@ -360,14 +356,12 @@ func fillFromValues(r *Retirement, kind string, values json.RawMessage) (readPro
 		}
 		if v.DeletionProtection != nil {
 			r.Protected = *v.DeletionProtection
-			return true
 		}
 	case "container":
 		if v.SecretID != nil {
 			r.SecretID = *v.SecretID
 		}
 	}
-	return false
 }
 
 // addressSegments splits a resource address at its top-level dots, so a
