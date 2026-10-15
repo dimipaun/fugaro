@@ -242,7 +242,35 @@ and its `## Check 44` section are already on `main`, written and not yet run,
 and it claims nothing past 44 — **Check 45 and Check 46 are the
 senior-reviewer plan's** (above), so the claim on those two numbers is
 readable in this file and in that plan, and not in the price catalog's PR
-#354, which claims only 44.
+#354, which claims only 44. **Past it, the register stands like this:** 45 and
+46 landed with their rows and their sections (PR #359, merged as `2be38e1`);
+47 is the subscription OAuth token for the reviewer stage (PR #363, merged as
+`ba03ab5` — its row **is** in the table below, between 44 and 57); **"the next
+free number above them is 48" above is out of date on that reading**, because
+**48–56 are reserved by the project-centric plan** (PR #366, merged as
+`c86eb92` — the reservation stands and its rows are not written yet, and this
+checklist does not name its sub-checks); and **57 is reserved by the
+compute-backend design** (`docs/design/compute-backend.md` §7, **PR #375** —
+the design that owns the number; the restore of generic-tool's Task 28 that
+this design's status line cites is a different pull request, **PR #374**,
+merged as `a1464c5`). The rows
+for a reservation appear when its plan lands, so the gap between 47 and 57 is
+deliberate, not a missing check.
+
+**That is the end of the register.** The paragraph below is not another
+reservation: it introduces the check that owns 57, whose row is in the table
+below.
+
+**Check 57 (PR #375) is the compute-instance Docker backend:** the Docker-capable
+Compute Engine VM backend, the successor of the dropped gen-2 Docker probe —
+generic-tool Task 26, which the plan numbered Check 31, a number this
+checklist had already given to `fugaro upgrade` (row 31 below); the probe is
+referred to by its task from here on. It takes 57 rather than 45 because 45
+was already reserved when this design read the register (§7.1). It is split
+into **57a, the pre-build probe** (no Fugaro change; committed job JSON and
+`gcloud`) and **57b, the post-build acceptance run** (after the backend can
+be enabled). Its full text lives in that design's §7.2 and its row is in the
+table below.
 
 | # | Check | Command | Expected |
 |---|---|---|---|
@@ -292,6 +320,7 @@ readable in this file and in that plan, and not in the price catalog's PR
 | 45 | A non-Claude senior reviewer through OpenRouter (design `mixed-credentials.md` §10 Phase 1): the placeholder `anthropic-api-key` the runner still demands with no Claude model pinned, a provider-served reviewer turning `first_line_review: auto` off for the derived `default` recipe while a recipe with its own `first_line` step keeps it, what a routed senior review costs, and whether the senior's reviews are better than the cheap loop's | See "Check 45" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, and no agent runs any step of it. | Four small sandbox runs, plus the OpenRouter credit the senior's reviews spend. **USER-RUN, NOT RUN.** |
 | 46 | A Claude senior through OpenRouter by the owner's opt-in (design `mixed-credentials.md` §4, §10 Phase 2): an unclaimed `anthropic/<id>` still refused at every surface, the claim accepted from the local config first and from the project layer once that slice ships (step 4), a claim never creatable by a repository, and `cache_read`/`cache_write_5m` on the reviewer's own calls against the same task run direct | See "Check 46" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, and no agent runs any step of it. | Two small sandbox runs per claim location, plus the route fee. **USER-RUN, NOT RUN.** |
 | 47 | The subscription OAuth token for the reviewer stage only (design `mixed-credentials.md` §5, Path B): the one permitted mix validating, the account's variant job and its token mount, the placeholder `anthropic-api-key` an api-key workflow still needs, a run whose coder stage goes through the gateway and whose reviewer stage does not, the stage recorded as notional with `credential: oauth`, the role-swap, launch and public-follow-up refusals with review mode left permitted, the same run with the budget off, and the dashboard's notional column | See "Check 47" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, and **you** type the token. | A few small sandbox runs and one stored secret. **USER-RUN, NOT RUN.** **HELD until phase 5 of `docs/design/project-centric.md` (D9, 2026-10-14) — do not run as written; steps 2 and 6 are rewritten against the person-owned OAuth pool.** |
+| 57 | The compute-instance Docker backend (design `compute-backend.md` §7). **57a, the pre-build probe, needs no Fugaro change and is the go/no-go:** a Docker-capable run on Compute Engine VMs from a committed job JSON (`gcloud` only), the cold start with a plain pull, image streaming and a preloaded boot image, `docker run` and a small Postgres container inside a run, the cost of one run, the socket's permission path in four committed variants (no `options`, `--group-add <gid>`, `--user 0`, `--privileged`, each running `docker version` and a real container against the host socket), teardown on success/failure/cancel/a crashed runner, the raw IAM bindings, and the raw log entry's job label. **57b, the post-build acceptance run, needs the backend enabled:** `fugaro run`/`logs`/`cancel` on `cloud-batch`, the reaper, the recorded cost against the bill, and the fail-closed marker. | See "Check 57" in `docs/design/compute-backend.md` §7.2; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only, from the sandbox checkout only — every step re-runs a Check-43-shaped hard-coded project guard (`P` hard-coded, `${P:?}` on gcloud, `--project fugaro --gcp-project "$P"` on fugaro, `fugaro doctor` and the checkout's git origin as hard stops). Its Restore deletes only what the check created — the `fugaro-chk57` account (and its IAM bindings first, since deleting an account leaves them behind), the probe jobs carrying `fugaro_chk=57`, the 57b runs **by the job names 57b recorded** (a 57b job is created by the launcher and Batch v1 cannot add a label to it afterwards, and a filter on the installation's own labels would also match runs this check never started) **and their VMs by the `fugaro_run` label values it read back off those jobs** (a job's name never reaches its VMs, and the label value cannot be derived from the name), the preload image, the `${SA}-*` router and NAT it created only if the project had none **on the probe's own network and region covering the subnet** (a NAT on another network, one whose rules cannot be read, or one that lists its subnets by name, is not borrowed — the check makes its own pair instead of editing the project's), and the `containerfilesystem.googleapis.com` API only if it was this check that enabled it; never the installation's account — and ends in an assertion whose every line must read `0` (counts, not an empty-looking line, and the probe account's leftover IAM bindings are one of them, since deleting an account does not remove them). It is the successor of the dropped gen-2 Docker probe (generic-tool Task 26, which the plan numbered Check 31 — a number already taken by `fugaro upgrade` here). | A handful of sandbox Batch runs (minutes of VM time each), one small custom boot image, and a NAT/registry round trip. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
