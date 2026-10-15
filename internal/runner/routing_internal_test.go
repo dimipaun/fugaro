@@ -137,6 +137,33 @@ func TestClaudePinWithoutOptInIsUnchanged(t *testing.T) {
 	}
 }
 
+// TestRoutingDoesNothingWithTheGatewayOff (plan Task 1b.2 step 3): routing
+// exists only with the gateway, so with the budget off nothing changes — not
+// for a switch that names a pin, and not for one this run could not resolve
+// either: the switch has nothing to act on. A pin reaches the agent as --model
+// on every stage, where a route's own ID is a model Anthropic does not serve,
+// so a budget-off run keeps the direct spelling and stagePins keeps returning
+// nil.
+//
+// Hand mutation this fails on: applying the switch before the gateway check,
+// which hands a mode-off run the route's ID — and halts it on a switch it has
+// nothing to route.
+func TestRoutingDoesNothingWithTheGatewayOff(t *testing.T) {
+	const canonical = "claude-sonnet-5-5"
+	r := routedRun(t, &config.RoutingClaude{Via: config.RouteOpenRouter, Models: []string{canonical}}, canonical, canonical)
+	r.spend = Spend{Mode: "off"}
+	r.d.Providers = map[string]config.ModelProvider{} // not even resolvable
+	if err := r.applyRouting(r.projPolicy.policy, true); err != nil {
+		t.Fatalf("a budget-off run was halted by the switch: %v", err)
+	}
+	if got := r.cfg.Agent.ModelFor(config.RoleCoder); got != canonical {
+		t.Errorf("the budget-off run's coder pin = %q, want %q: routing exists only with the gateway (D11)", got, canonical)
+	}
+	if pins := r.stagePins("implement"); pins != nil {
+		t.Errorf("stagePins = %+v with the gateway off, want none", pins)
+	}
+}
+
 // TestRoutedClaudeIsPricedFromTheRouteRowNotTheDirectRate: what a routed Claude
 // call is charged is the route's row — here model_prices, the catalog's Claude
 // rows not being shipped yet — and never the direct Anthropic row the canonical

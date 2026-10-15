@@ -118,14 +118,23 @@ func TestCanonicalMapIsExhaustive(t *testing.T) {
 		t.Fatalf("loading the shipped catalog: %v", err)
 	}
 	for id, e := range f.Models {
-		if e.CanonicalID != "" {
-			want = append(want, e.CanonicalID)
-			if !strings.HasPrefix(e.CanonicalID, "anthropic/") {
-				// The row's own key is the route's ID, so the canonical one
-				// must be the direct spelling: anything else is a row the map
-				// and the pins cannot agree on.
-				t.Errorf("%s: canonical_id %q is not the direct spelling", id, e.CanonicalID)
-			}
+		if e.CanonicalID == "" {
+			continue
+		}
+		want = append(want, e.CanonicalID)
+		// The row's key is the route's ID, so canonical_id is the direct
+		// spelling a pin carries (claude-sonnet-5-5) — the generator refuses a
+		// route ID there, and so does the loader: a row carrying one would be
+		// the pair written backwards.
+		if strings.HasPrefix(e.CanonicalID, "anthropic/") {
+			t.Errorf("%s: canonical_id %q is a route ID, not the direct spelling a pin carries", id, e.CanonicalID)
+		}
+		// And the two must be the map's own pair: the row's key is what the
+		// route is sent and charged, canonical_id is what a pin names, and a
+		// catalog row that pairs them differently from this map is a second
+		// answer to where the call goes and what it costs (Task 1b.2 step 2).
+		if _, ok := pricing.RouteIDFor(e.CanonicalID, id); !ok {
+			t.Errorf("%s: the catalog pairs it with canonical_id %q, and the canonical-to-route map does not: add the pair to pricing.ClaudeRoutes, with the route's ID measured", id, e.CanonicalID)
 		}
 	}
 	for _, id := range want {

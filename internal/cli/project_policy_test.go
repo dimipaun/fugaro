@@ -1570,6 +1570,57 @@ func TestProjectReposRmWithoutAnythingElseAdmittingSaysItStopsRuns(t *testing.T)
 	}
 }
 
+// TestProjectReposRmTheWildcardSaysWhatIsLeft: `repos rm '*'` refuses the
+// repositories nothing else admits — the command's own help states that rule —
+// so over a list that still holds github/acme/* the confirmation must not claim
+// every run stops. The wildcard is the one entry the "still admits it" sentence
+// does not fit, because admittedBy asks whether a *string* is admitted and no
+// pattern matches the string "*": without the branch that reads the rest of the
+// list, "*" fell through to the concrete sentence.
+//
+// Mutation (verified, run and restored): let the wildcard fall through to
+// removalWarning's last sentence: this test fails, reading "its runs are
+// refused from now on" while github/acme/* is on the list.
+func TestProjectReposRmTheWildcardSaysWhatIsLeft(t *testing.T) {
+	if got := removalWarning([]string{"*"}, "*"); !strings.Contains(got, "refused from now on") || !strings.Contains(got, "only entry") {
+		t.Errorf("removing the only entry = %q, want it to say every run is refused", got)
+	}
+	if got := removalWarning([]string{"*", "github/acme/*"}, "*"); strings.Contains(got, "refused from now on") {
+		t.Errorf("removing the wildcard with a pattern left = %q, want no claim that runs stop", got)
+	} else if !strings.Contains(got, "github/acme/*") {
+		t.Errorf("the confirmation does not name the entry that still admits its own: %q", got)
+	}
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"github/acme/*", "*"} {
+		if _, _, err := execute(t, "project", "repos", "add", p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	typed(t)
+	out, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", "*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "refused from now on") {
+		t.Errorf("the confirmation claims every run stops though github/acme/* is on the list:\n%s", out)
+	}
+	if !strings.Contains(out, "github/acme/*") {
+		t.Errorf("the confirmation does not name the entry that still admits its own:\n%s", out)
+	}
+	allow := publishedPolicy(t, f).AllowRepos
+	if slices.Contains(allow, "*") {
+		t.Errorf("allow_repos = %v, want the wildcard removed", allow)
+	}
+	// The point of the sentence: a repository the remaining entry covers is
+	// still admitted, which is why the runs are not refused.
+	if !projectpolicy.AdmitRepo(allow, "github/acme/app") {
+		t.Errorf("allow_repos = %v no longer admits github/acme/app, which the confirmation said it keeps", allow)
+	}
+}
+
 // TestProjectReposEditTheWildcard: "*" is an allow-list entry like any other —
 // the design's explicit every-repository choice (§4.3), which MatchRepo reads
 // as admitting anything, which ValidPattern accepts, and which the rules
@@ -1619,8 +1670,20 @@ func TestProjectReposEditTheWildcard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("repos rm '*' = %v", err)
 	}
-	if !strings.Contains(out, `removes * from the allow-list`) || !strings.Contains(out, "refused from now on") {
+	// What removing the wildcard does is a set, not one repository's end: the
+	// repositories the rest of the list still admits keep running, so the
+	// sentence is the help text's rule — "refuses every repository the rest of
+	// the list does not admit" — and it names the entries that stay (the review
+	// of PR #414's branch: this said "its runs are refused from now on" over a
+	// list that still admitted both of them).
+	if !strings.Contains(out, `removes * from the allow-list`) || !strings.Contains(out, "refused only if no other entry admits it") {
 		t.Errorf("the confirmation does not say what removing the wildcard does:\n%s", out)
+	}
+	if !strings.Contains(out, "bitbucket/acme/other") || !strings.Contains(out, "github/acme/app") {
+		t.Errorf("the confirmation does not name the entries that still admit their own:\n%s", out)
+	}
+	if strings.Contains(out, "refused from now on") {
+		t.Errorf("the confirmation claims every run stops though concrete entries remain:\n%s", out)
 	}
 	allow = publishedPolicy(t, f).AllowRepos
 	if slices.Contains(allow, "*") {

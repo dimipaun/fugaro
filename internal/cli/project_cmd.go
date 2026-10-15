@@ -1798,10 +1798,45 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 // which the runner and the launcher use), so the sentence is what the next run
 // will actually do.
 func removalWarning(allow []string, canonical string) string {
+	if canonical == wildcardEntry {
+		// The wildcard admits every repository, so what the removal refuses is
+		// a set — "every repository the rest of the list does not admit", the
+		// rule the command's own help states — and not one repository's runs.
+		// admittedBy cannot answer this one either: it asks whether a *string*
+		// is admitted, and no pattern matches the string "*". Saying "its runs
+		// are refused from now on" over a list that still holds github/acme/*
+		// would promise a stop the removal does not make.
+		rest := entriesExcept(allow, canonical)
+		if len(rest) == 0 {
+			return "this removes " + canonical + " from the allow-list: it was the only entry, so runs are refused from now on, and a run in flight keeps the policy until it finishes"
+		}
+		owns := "their own"
+		if len(rest) == 1 {
+			owns = "its own"
+		}
+		return "this removes " + canonical + " from the allow-list: a repository is refused only if no other entry admits it, and " + strings.Join(rest, ", ") + " still admits " + owns + ", and a run in flight keeps the policy until it finishes"
+	}
 	if still, by := admittedBy(allow, canonical); still {
 		return "this removes " + canonical + " from the allow-list, but " + by + " still admits it: its runs are not refused, and a run in flight keeps the policy until it finishes"
 	}
 	return "this removes " + canonical + " from the allow-list: its runs are refused from now on, and a run in flight keeps the policy until it finishes"
+}
+
+// wildcardEntry is the allow-list's own entry for every repository
+// (projectpolicy.ValidPattern has a branch for it, and it is the one entry that
+// is not a repository at all), so removing it is a question about the set the
+// rest of the list leaves rather than about one repository.
+const wildcardEntry = "*"
+
+// entriesExcept is allow without entry: the list a removal leaves.
+func entriesExcept(allow []string, entry string) []string {
+	rest := make([]string, 0, len(allow))
+	for _, p := range allow {
+		if p != entry {
+			rest = append(rest, p)
+		}
+	}
+	return rest
 }
 
 // admittedBy is the entry of allow that still admits arg once arg's own entry
@@ -1830,13 +1865,7 @@ func removalWarning(allow []string, canonical string) string {
 // matches exactly itself) — so github/acme/app removed while github/acme/* is on
 // the list reads "its runs are not refused", which is what the removal does.
 func admittedBy(allow []string, arg string) (bool, string) {
-	rest := make([]string, 0, len(allow))
-	for _, p := range allow {
-		if p != arg {
-			rest = append(rest, p)
-		}
-	}
-	for _, p := range rest {
+	for _, p := range entriesExcept(allow, arg) {
 		if projectpolicy.MatchRepo(p, arg) {
 			return true, p
 		}

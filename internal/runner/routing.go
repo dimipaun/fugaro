@@ -49,6 +49,16 @@ func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 	if !found || pp == nil || pp.Routing == nil || pp.Routing.Claude == nil {
 		return nil // absent means direct (D1b)
 	}
+	if !r.gatewayOn() {
+		// Routing exists only with the gateway (design §6.2, D11; plan Task
+		// 1b.2 step 3): the gateway is what routes a call to a provider and
+		// prices it, and with it off nothing changes — stagePins returns nil
+		// and the run's pins reach the agent as --model, where a route's own
+		// ID is a model Anthropic does not serve. A budget-off run therefore
+		// keeps the direct spelling, and a switch it cannot resolve does not
+		// halt it either: the switch has nothing to act on.
+		return nil
+	}
 	block, sw := pp.Routing, pp.Routing.Claude
 	if sw.ViaValue() == config.RouteDirect {
 		return nil
