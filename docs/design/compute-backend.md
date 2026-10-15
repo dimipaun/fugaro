@@ -854,9 +854,9 @@ backend creates a fresh job per run, so it never needs to share, and it
   (`profile`, `account`) and profiles select the VM class (§4.3) — the intended
   end state.
 - The **seam generalisation (C12)** is independent of both and can land first.
-- Recommendation: the plan's **first task is the conformance suite against a
-  fake** (§8.1, task 2), which needs neither phase 3 nor any cloud, and the live
-  measurement (Check 57) gates the rest.
+- Recommendation: the plan's first cloud-free task is the conformance suite
+  against a fake (§8.1, task 2), which needs neither phase 3 nor any cloud, and
+  the live measurement (Check 57) gates the rest.
 
 ### 6.3 Out of scope
 
@@ -898,7 +898,7 @@ use the lowest".
 USER-RUN, NOT RUN).**
 
 Nothing below has been run; nothing here is a claim that it works. It measures
-what §7.3 lists. **Sandbox installation only** — the owner's `fugaro`
+what the steps below measure. **Sandbox installation only** — the owner's `fugaro`
 installation and its sandbox repository, the same one Checks 40, 41, 43 and 44
 use. **NEVER the `belong` project.** **No agent runs any apply:** every
 `gcloud`/`fugaro` step is typed by the owner.
