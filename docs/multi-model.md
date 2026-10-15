@@ -158,6 +158,57 @@ sum(stages[].model_usd) + cost.model_by["unattributed"] == cost.model_usd
   **Open question for Check 25, not yet settled:** with both variables set, Claude Code's `messages` array can carry an item with `"role":"system"` (a mid-conversation system message, a Claude Code beta turned on by the `anthropic-beta` header above). The gateway does not validate a message's `role` at all, so it is forwarded unchanged (`TestRoutedAcceptsNoThinkingClaudeCodeShape`, `internal/gateway/route_test.go`) — this is not a gap being left open, it is simply untouched by this fix. Whether **OpenRouter's compatible endpoint** accepts a `role: "system"` message mid-conversation (rather than only as the top-level `system` field) is unverified: no live call has been made. Check 25 step 4 must record what the endpoint does with it; nothing here assumes an answer either way.
   - The two variables only reach Claude Code's environment and the managed settings file's `env`; they say nothing about a setting outside `env`, such as a repository's or the agent's own `.claude/settings.json` carrying `"alwaysThinkingEnabled": true`. Whether that setting overrides `MAX_THINKING_TOKENS=0` (or interacts with it some other way) was not measured. If it does turn thinking back on, the request grows `context_management` again, and the gateway's existing allowlist refuses it (above): the call fails with no spend, the same `field "context_management" is not allowed on a provider route` error as before this fix, not a silent bypass. This fails closed, not open; nobody has confirmed whether `alwaysThinkingEnabled` even survives next to a provider-model pin, since `checkSettingsRouting` (`internal/runner/agentenv.go`) does not refuse it (it is not a routing key).
 
+## The senior reviewer on a provider route
+
+The reviewer does not have to be Claude. Any model a route serves can be the senior — GPT, Gemini, a larger DeepSeek or Qwen — and that case needs no rule of its own: the route table, the pins, the prices and the gateway are the ones §2 and §3 describe, and a different family reviewing a DeepSeek diff is a better second opinion than the same family reviewing itself. **This is Phase 1 of the senior-reviewer work, and it ships no code**: the design recommends it as the first step, before any Claude senior ([design/mixed-credentials.md](design/mixed-credentials.md) §1), and the plan that carries it is [plans/2026-10-14-openrouter-senior-reviewer.md](plans/2026-10-14-openrouter-senior-reviewer.md). The other half — a **claimed Claude** senior, one exact `anthropic/<id>` in a route's `models` — is a little further down, in "Direct to the vendor".
+
+The recipe, in the two files it lives in:
+
+```yaml
+# ~/.config/fugaro/projects/<project>.yaml — the owner's local config (§2)
+providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    route_fee_pct: 5.5
+    models: ["deepseek/*", "openai/gpt-5*"]   # the senior's ID, exact or as a pattern
+    allow_data_to: [acme/app]                 # the repository whose code may go here
+model_prices:
+  openai/gpt-5.5:            # its list price, until the catalog prices it (§2)
+    input_per_m: 1.25
+    output_per_m: 10
+budget:
+  mode: enforce              # a provider model requires the gateway in enforce mode (§2)
+  per_run_usd: 2
+```
+
+```yaml
+# the repository's fugaro.yaml — the coder stays cheap, the reviewer is the senior
+agent:
+  auth: api-key
+  models:
+    coder: deepseek/deepseek-v4-flash
+    reviewer: openai/gpt-5.5
+```
+
+Then `fugaro init --repo` in the repository, as for any provider change (§2), and `fugaro validate` before the run: the provider rule, `allow_data_to`, `agent.auth` and the price are §5's, and none of them is different because the model is the reviewer rather than the coder.
+
+**A pattern is allowed for the senior, and only outside `anthropic/`.** `models: ["openai/gpt-5*"]` claims every GPT-5 ID that provider serves and the pin names the one you want; the `anthropic/` prefix is the only restricted spelling — there a route may list one exact ID, and no wildcard, prefix or family spelling ("Direct to the vendor"). Everything else about the route is §2's: no two providers may claim the same model, `allow_data_to` decides which repositories may send code to it, and every model the route claims must have a price — the catalog's row if it carries one (the five models it prices today are the DeepSeek ones, Moonshot's and Qwen's, so nothing the example above names), yours under `model_prices` if not.
+
+**`auto` is off here, and that is the whole of the first half.** `first_line_review: auto` is on only when a provider serves the coder **and none serves the reviewer** (`config.Agent.FirstLineOn`, `internal/config/config.go:173-181`): with the senior on a route, the derived recipe runs `implement` then `review`, with no `review_first` stage and no `tier: first` entry, so the work is reviewed once, by the senior. The one-line reason the default is what it is: the senior already reviews, and a first line by the coder's own model would add a round without adding a reviewer. `first_line_review: on` (with `first_line_rounds` bounding the rounds) turns it back on.
+
+**The second half: a recipe that names its own first line keeps it.** `auto` only ever governed the **derived** recipe — the catalog's `default`, and nothing else (`derived := rrec.Name == recipe.DefaultName && rrec.Source == string(recipe.SourceCatalog)`, `internal/runner/runner.go:940`; the skip is `internal/runner/plan.go:35`) — so a recipe carrying its own `first_line` step still runs it whatever `auto` says. The catalog's `standard` carries both `first_line: {}` and `review: {bounce: first_line}` (`internal/recipe/catalog/standard.yaml`), so `--recipe standard` keeps the cheap loop **and** its bounce-back with a provider-served senior, while `--recipe default` does not. Name the recipe when you compare the two, or the difference looks like a bug in one of them.
+
+**The background model is the coder's.** With `agent.models.background` unset, Claude Code's small background requests follow the **coder's** model (`config.EffectiveBackground`, `internal/config/providers.go:505`), which on this recipe is DeepSeek: the senior's stage makes its background calls on the coder's model through the same route, and only its review calls are the senior's own. Pin `agent.models.background` to change that. The background matters twice over: because it is routed, the senior's stage gets the provider's thinking variables even though the stage's own role model is routed anyway (`internal/runner/agentenv.go:54-66`, the decision at `:71-78`; §7 is the thinking side of the same rule), and every one of those background calls is charged at its own model's price rather than the senior's.
+
+**No Anthropic key is needed, asked for or mounted.** With `budget.mode: enforce` and every pin served by a provider the repository may send code to, no call of this run reaches Anthropic, so: the runtime **drops** the `anthropic-api-key` mount when the secret has no enabled version anywhere (`OptionalSecret` marks that one secret — and only it — optional, `internal/infra/readiness.go:74`; the drop at `:193`), the runner wants the variable only with the gateway **off** (`internal/agent/env.go:92-105`), and `fugaro init --repo` skips the prompt when `config.AnthropicKeyNeeded` (`internal/config/providers.go:642`, reached through `needsAnthropicKey`, `internal/cli/validate.go:43`) says no call goes to Anthropic (`internal/cli/initsecrets.go:311`). **Do not store a placeholder: nothing asks for one** (PR #371). Two things stay true. A key you *have* stored is never sent upstream while no Claude model is pinned — the gateway attaches a provider's key to a routed call and Anthropic's only to a direct one (`internal/gateway/forward.go:851,857-868`) — so the provider's own key (§3) is the only credential OpenRouter sees. And a key that is **present** and shorter than 4 bytes is still refused, because it cannot be redacted (`internal/agent/env.go:101-102`, gateway on) — a refusal a keyless installation never meets.
+
+**What it costs.** One key, one route, one gateway. The senior is charged the table price of its reported usage plus the route's `route_fee_pct`, which is added to **every** charge on that provider (`internal/config/providers.go:51`) — the senior's calls included, so the fee is not a coder-only line. It reads the diff (and the coder's work) at the provider's list price per million tokens, so the ceiling is `agent.review_rounds` × that diff at those rates, bounded by the `per_run_usd` cap exactly as the coder's calls are (§6 reads the result, and the §2 warning about a provider that under-reports its endpoint price applies to the senior's model as well). A call that reports no cache fields is charged at the full input rate (§6), so a senior that does not cache the diff it re-reads costs more than one that does — which is a price question here, not a correctness one. The account-side settings of §1 are the senior's too: with fallbacks off, the model you priced is the model that serves it, and the account's data policy is the decision about its code. Same account, same decision, one more model.
+
+**The live check is Check 45, and it has not run.** What these docs cannot settle — whether a provider-served senior's reviews are better than the cheap loop's own, and what a real routed review costs with the fee — is what Check 45 of [gcp-live-checklist.md](gcp-live-checklist.md) measures by hand, on a sandbox project and a sandbox repository, and no agent runs it. Until it does, the non-Claude senior's live behaviour is unmeasured: everything above is the config's, and §1's assumptions (that the endpoint exists at that path and answers the way the gateway reads it, and that the response carries usage, cache fields and a cost at all) hold for the senior exactly as they hold for the coder. Nothing in Phase 1 changes what is refused (§5), which is why it ships as documentation and two tests rather than as code.
+
 ## Direct to the vendor
 
 A model family does not have to go through OpenRouter. The same `providers:` block (§2) accepts a second entry pointed straight at the vendor's own Anthropic-compatible endpoint instead:
