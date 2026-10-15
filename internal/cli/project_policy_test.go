@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -41,6 +42,37 @@ const projectProvidersYAML = "providers:\n" +
 	"    price_policy: highest\n"
 
 func newProjectFixture(t *testing.T, extra string) *projectFixture {
+	return newProjectFixtureWith(t, projectProvidersYAML, extra)
+}
+
+// claudeRouteProvidersYAML is the operator's providers block with a route entry
+// that claims one Claude ID — the shape the routing switch resolves through
+// (docs/design/mixed-credentials.md §4: one explicit "anthropic/<id>", never a
+// pattern). The claim is a second provider entry, so the rest of the fixture's
+// providers are unchanged.
+const claudeRouteProvidersYAML = projectProvidersYAML +
+	"  openrouter-claude:\n" +
+	"    kind: anthropic-compat\n" +
+	"    base_url: https://openrouter.ai/api/v1\n" +
+	"    auth: bearer\n" +
+	"    secret: openrouter-claude-key\n" +
+	"    models: [\"anthropic/claude-sonnet-5.5\"]\n" +
+	"    allow_data_to: [\"*\"]\n"
+
+// twoClaudeModelsProvidersYAML is claudeRouteProvidersYAML with the route entry
+// claiming a second Claude ID. A node whose switch names that ID still decodes
+// (validRouting resolves every ID the list names), which is what lets a publish
+// replace a switch that was already there with the one the config writes.
+const twoClaudeModelsProvidersYAML = projectProvidersYAML +
+	"  openrouter-claude:\n" +
+	"    kind: anthropic-compat\n" +
+	"    base_url: https://openrouter.ai/api/v1\n" +
+	"    auth: bearer\n" +
+	"    secret: openrouter-claude-key\n" +
+	"    models: [\"anthropic/claude-sonnet-5.5\", \"anthropic/claude-opus-5.5\"]\n" +
+	"    allow_data_to: [\"*\"]\n"
+
+func newProjectFixtureWith(t *testing.T, providers, extra string) *projectFixture {
 	t.Helper()
 	dir := t.TempDir()
 	db := gcpfake.NewRTDB(t)
@@ -51,7 +83,7 @@ func newProjectFixture(t *testing.T, extra string) *projectFixture {
 		"user: someone@example.com\nmax_parallel: 2\n" +
 		"budget: { mode: enforce, per_run_usd: 5, rtdb_url: " + db.URL + " }\n" +
 		"endpoints: { no_auth: true }\n" +
-		projectProvidersYAML +
+		providers +
 		"repos:\n  acme/app: { provider: github, workflows: [web] }\n  acme/other: { provider: bitbucket, workflows: [web] }\n" +
 		extra
 	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
@@ -1047,13 +1079,17 @@ func nodeAt(v any, path ...string) (any, bool) {
 	return v, true
 }
 
-// someFuturePolicy is a node carrying a key this Fugaro does not know in
-// routing, which Decode reads tolerantly (its values are checked by
-// validRouting, which refuses a block this Fugaro cannot act on, so an unknown
-// key there cannot fail open). The budget block, model_prices and the inside of
-// a providers entry are strict — an unknown key there is refused rather than
-// ignored, because a misspelt provider field can fail open (a nil allow_data_to
-// means every repository) — so a key of theirs is not the case this is about.
+// someFuturePolicy is a node carrying a key this Fugaro does not know *inside* a
+// block that is otherwise this Fugaro's own: `routing.claude.future_route`. The
+// block is still one this Fugaro acts on — via: auto, a named Claude ID, and a
+// route entry that claims it with allow_data_to written — so Decode reads it and
+// the unknown key inside the switch survives. A routing block whose member this
+// Fugaro cannot name is refused instead (validRoutingMembers): a misspelt
+// `claude` there is the switch itself going missing, not a newer release's extra
+// tightening. The budget block, model_prices and the inside of a providers entry
+// are strict for the same reason — a misspelt provider field can fail open (a
+// nil allow_data_to means every repository) — so a key of theirs is not the case
+// this is about.
 func someFuturePolicy() map[string]any {
 	return map[string]any{
 		"version":     projectpolicy.Version,
@@ -1061,10 +1097,13 @@ func someFuturePolicy() map[string]any {
 		"allow_repos": []string{"github/acme/app"},
 		"providers": map[string]any{"openrouter": map[string]any{
 			"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer",
-			"secret": "openrouter-key", "models": []string{"deepseek/*"},
-			"require_zdr": false, "price_policy": "highest",
+			"secret": "openrouter-key", "models": []string{"deepseek/*", "anthropic/claude-sonnet-5.5"},
+			"allow_data_to": []string{"acme/app"},
+			"require_zdr":   false, "price_policy": "highest",
 		}},
-		"routing": map[string]any{"claude": map[string]any{"via": "auto", "future_route": "x"}},
+		"routing": map[string]any{"claude": map[string]any{
+			"via": "auto", "models": []string{"claude-sonnet-5-5"}, "future_route": "x",
+		}},
 	}
 }
 
@@ -1666,32 +1705,27 @@ func TestProjectPolicyPublishDiffNamesProvidersAndRates(t *testing.T) {
 	}
 }
 
-// TestProjectPolicyPublishKeepsAnExistingRoutingBlock: this Fugaro does not
-// write routing (phase 1b does), so a publish that built the node from its own
-// type would silently turn routing off — a quiet loosening of a key the
-// operator cannot see in this binary. The node's block is kept, and the diff
-// says so rather than saying nothing.
-func TestProjectPolicyPublishKeepsAnExistingRoutingBlock(t *testing.T) {
-	f := newProjectFixture(t, "")
-	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
-		t.Fatal(err)
-	}
-	// A routing block, written the way a newer release (phase 1b) would.
-	node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
-	node["routing"] = map[string]any{"claude": map[string]any{"via": "openrouter"}}
-	f.db.Set(projectpolicy.PathShared(), node)
-
+// TestProjectPolicyPublishCarriesTheRoutingSwitch: the routing switch belongs
+// to the operator's config (phase 1b, design §6.2), and a publish is where an
+// edit to it takes effect (the plan's item 9). So a publish writes the block
+// from the local config, the diff names the values that changed rather than
+// keeping quiet about them, `policy show` prints them, and a publish whose
+// config has no switch removes the route — printing that too, because a route
+// that disappears silently is a Claude call that stops being sent where the
+// owner put it.
+func TestProjectPolicyPublishCarriesTheRoutingSwitch(t *testing.T) {
+	f := newProjectFixture(t, "routing:\n  claude:\n    via: direct\n")
 	out, _, err := execute(t, "project", "policy", "publish")
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := f.db.Value(projectpolicy.PathShared())
-	if v, ok := nodeAt(got, "routing", "claude", "via"); !ok || v != "openrouter" {
-		t.Errorf("the publish dropped or changed the routing block:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
+	if v, ok := nodeAt(f.db.Value(projectpolicy.PathShared()), "routing", "claude", "via"); !ok || v != "direct" {
+		t.Errorf("the publish did not write the operator's routing block:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
 	}
-	// The operator is told it is kept, not left to wonder.
-	if !strings.Contains(out, "routing kept: claude via openrouter") {
-		t.Errorf("the diff does not say the routing block is kept:\n%s", out)
+	// The operator reads the values, not a count: the diff is where an added,
+	// changed or removed route is visible.
+	if !strings.Contains(out, "+ routing.claude.via: direct") {
+		t.Errorf("the diff does not print the routing block:\n%s", out)
 	}
 	// And `policy show` prints it: a node with a routing block must not look
 	// like a node without one.
@@ -1699,8 +1733,250 @@ func TestProjectPolicyPublishKeepsAnExistingRoutingBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(shown, "routing: claude via openrouter") {
+	if !strings.Contains(shown, "routing: claude via direct") {
 		t.Errorf("policy show does not print the routing block:\n%s", shown)
+	}
+	// `project show` prints the same policy, and the switch is part of the
+	// picture of where runs go.
+	full, _, err := execute(t, "project", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(full, "routing: claude via direct") {
+		t.Errorf("project show does not print the routing block:\n%s", full)
+	}
+
+	// A config with no switch does not erase one: the block the node carries is
+	// kept as it is (here it is inert — via: direct — and the active case is
+	// TestProjectPolicyPublishRefusesToDropARoutingBlock), and the publish
+	// prints no removal of a value it never held.
+	cfg, err := os.ReadFile(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	without := strings.Replace(string(cfg), "routing:\n  claude:\n    via: direct\n", "", 1)
+	if err := os.WriteFile(f.path, []byte(without), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err = execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "routing.claude") {
+		t.Errorf("a publish with no switch in the config printed a routing change:\n%s", out)
+	}
+	if v, ok := nodeAt(f.db.Value(projectpolicy.PathShared()), "routing", "claude", "via"); !ok || v != "direct" {
+		t.Errorf("the publish dropped the node's routing block:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+}
+
+// TestProjectPolicyPublishCarriesAnActiveRoute: the switch's whole point — an
+// operator names Claude IDs and the route that serves them, and a publish
+// delivers exactly that to the node every run reads. The route entry is in the
+// config's providers (one explicit anthropic/<id>, allow_data_to written), so
+// the node is self-consistent: the switch it carries is one the same node's
+// providers claim, which is what the decoder now requires (D1b) and what
+// publishedPolicy proves by decoding the node.
+func TestProjectPolicyPublishCarriesAnActiveRoute(t *testing.T) {
+	f := newProjectFixtureWith(t, claudeRouteProvidersYAML,
+		"routing:\n  claude:\n    via: openrouter\n    models: [claude-sonnet-5-5]\n")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"+ routing.claude.via: openrouter", "+ routing.claude.models: [claude-sonnet-5-5]"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the diff does not print %q:\n%s", want, out)
+		}
+	}
+	pol := publishedPolicy(t, f)
+	if pol.Routing == nil || pol.Routing.Claude == nil || pol.Routing.Claude.ViaValue() != config.RouteOpenRouter {
+		t.Fatalf("the published node carries routing %+v", pol.Routing)
+	}
+	if !pol.Routing.Claude.Names("claude-sonnet-5-5") {
+		t.Errorf("the node's switch does not name the model: %+v", pol.Routing.Claude)
+	}
+}
+
+// TestProjectPolicyPublishRefusesToDropARoutingBlock: the one key a publish
+// will not quietly rewrite. The node carries an active route, the config sets
+// no switch, and the publish is refused rather than publishing a node with the
+// route turned off — a route that goes away is a Claude call that stops being
+// sent where the owner put it, and this is the same quiet loosening
+// `repos add|rm` refuses to make (patchPolicyJSON). The remedy the refusal
+// names is real and is exercised here: writing the switch — inert, via: direct
+// — publishes it, which is how routing is turned off on purpose.
+func TestProjectPolicyPublishRefusesToDropARoutingBlock(t *testing.T) {
+	f := newProjectFixtureWith(t, claudeRouteProvidersYAML,
+		"routing:\n  claude:\n    via: openrouter\n    models: [claude-sonnet-5-5]\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	before := nodeJSON(t, f, projectpolicy.PathShared())
+
+	// The operator's config loses the switch: a publish must not turn the route
+	// off on its own.
+	rewriteRoutingBlock(t, f, "")
+
+	_, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("the publish went through and turned the route off:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+	for _, want := range []string{"routing", "cannot account for", "claude via openrouter", "via: direct"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if now := nodeJSON(t, f, projectpolicy.PathShared()); now != before {
+		t.Errorf("the refused publish changed the node:\n%s", now)
+	}
+
+	// The remedy: write the switch and publish. An inert block says the route
+	// is off on purpose.
+	rewriteRoutingBlock(t, f, "routing:\n  claude:\n    via: direct\n")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "~ routing.claude.via: openrouter → direct") {
+		t.Errorf("the diff does not print the switch the operator wrote:\n%s", out)
+	}
+	if pol := publishedPolicy(t, f); pol.Routing == nil || pol.Routing.Claude.ViaValue() != config.RouteDirect {
+		t.Errorf("the node still routes: %+v\n%s", pol.Routing, nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+}
+
+// rewriteRoutingBlock rewrites the fixture's project config with its routing:
+// block (from its key to the first line that is not indented under it) replaced
+// by block; "" drops it. The block the fixture wrote is the last thing in the
+// file, so "the end" is the end.
+func rewriteRoutingBlock(t *testing.T, f *projectFixture, block string) {
+	t.Helper()
+	cfg, err := os.ReadFile(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept := []string{}
+	skipping := false
+	for _, line := range strings.Split(string(cfg), "\n") {
+		if line == "routing:" {
+			skipping = true
+			continue
+		}
+		if skipping && (line == "" || strings.HasPrefix(line, " ")) {
+			continue
+		}
+		skipping = false
+		kept = append(kept, line)
+	}
+	body := strings.Join(kept, "\n")
+	if !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	if err := os.WriteFile(f.path, []byte(body+block), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestProjectPolicyPublishRefusesARoutingBlockThatSaysNothing: `routing: {}` and
+// `routing: {claude:}` both decode to a *non-nil* block with no Claude entry,
+// and neither is the operator saying the switch is off — they wrote a block with
+// nothing in it, not via: direct. A publish that read either as "off" would turn
+// an active route off and only print the removal afterwards, which is the one
+// thing this command refuses to do (the review of PR #414). The refusal names
+// the state, the block it would drop, and the flag that makes the removal
+// deliberate; that flag is then the remedy, and it does remove it.
+func TestProjectPolicyPublishRefusesARoutingBlockThatSaysNothing(t *testing.T) {
+	for _, c := range []struct{ name, routing string }{
+		{"an empty block", "routing: {}\n"},
+		{"a claude with no value", "routing:\n  claude:\n"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newProjectFixtureWith(t, claudeRouteProvidersYAML,
+				"routing:\n  claude:\n    via: openrouter\n    models: [claude-sonnet-5-5]\n")
+			if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+				t.Fatal(err)
+			}
+			before := nodeJSON(t, f, projectpolicy.PathShared())
+
+			rewriteRoutingBlock(t, f, c.routing)
+			_, _, err := execute(t, "project", "policy", "publish")
+			if err == nil {
+				t.Fatalf("the publish went through and turned the route off:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
+			}
+			for _, want := range []string{"names no Claude switch", "claude via openrouter", "--remove-routing"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not name %q: %v", want, err)
+				}
+			}
+			if now := nodeJSON(t, f, projectpolicy.PathShared()); now != before {
+				t.Errorf("the refused publish changed the node:\n%s", now)
+			}
+
+			// The remedy the refusal names: the block goes on purpose, and the
+			// diff prints the removal rather than doing it quietly.
+			out, _, err := execute(t, "project", "policy", "publish", "--remove-routing")
+			if err != nil {
+				t.Fatalf("the remedy the refusal names does not work: %v", err)
+			}
+			if !strings.Contains(out, "- routing.claude.via: openrouter") {
+				t.Errorf("the diff does not print the removal:\n%s", out)
+			}
+			if _, ok := nodeAt(f.db.Value(projectpolicy.PathShared()), "routing"); ok {
+				t.Errorf("the node still carries a routing block:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
+			}
+		})
+	}
+	// --remove-routing beside a config that writes the switch is two
+	// instructions that cannot both be followed, and neither is guessed at.
+	newProjectFixtureWith(t, claudeRouteProvidersYAML,
+		"routing:\n  claude:\n    via: openrouter\n    models: [claude-sonnet-5-5]\n")
+	_, _, err := execute(t, "project", "policy", "publish", "--remove-routing")
+	if err == nil {
+		t.Fatal("--remove-routing published over a config that writes the switch")
+	}
+	for _, want := range []string{"--remove-routing", "claude via openrouter"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+}
+
+// TestProjectPolicyPublishRemovesAnInertRoutingBlockWhenAsked: without an active
+// route there is nothing to refuse — the block routes nothing — but dropping it
+// is still a change the operator has to ask for, and the diff says so.
+func TestProjectPolicyPublishRemovesAnInertRoutingBlockWhenAsked(t *testing.T) {
+	f := newProjectFixtureWith(t, claudeRouteProvidersYAML,
+		"routing:\n  claude:\n    via: direct\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := nodeAt(f.db.Value(projectpolicy.PathShared()), "routing"); !ok {
+		t.Fatal("the publish did not write the inert block the config carries")
+	}
+	// The config says nothing about Claude now: the inert block is kept, not
+	// refused (nothing is routed by it) and not silently dropped.
+	rewriteRoutingBlock(t, f, "")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "routing.claude") {
+		t.Errorf("the publish rewrote an inert block it did not have to:\n%s", out)
+	}
+	if _, ok := nodeAt(f.db.Value(projectpolicy.PathShared()), "routing"); !ok {
+		t.Fatal("the publish dropped the inert block without being asked")
+	}
+	// Asked for: the block goes, and the diff prints it.
+	out, _, err = execute(t, "project", "policy", "publish", "--remove-routing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "- routing.claude.via: direct") {
+		t.Errorf("the diff does not print the removal:\n%s", out)
+	}
+	if _, ok := nodeAt(f.db.Value(projectpolicy.PathShared()), "routing"); ok {
+		t.Errorf("the node still carries a routing block:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
 	}
 }
 
@@ -1723,10 +1999,14 @@ func TestProjectPolicyPublishKeepsTheRoutingKeysThisFugaroDoesNotModel(t *testin
 		t.Fatal(err)
 	}
 	// A routing block written the way a release that knows more of it would:
-	// one unmodelled key beside a modelled one, and one unmodelled block.
+	// one unmodelled key beside a modelled one, and one unmodelled block. The
+	// modelled via is `direct` because an *active* route the config does not
+	// account for is refused (buildProjectPolicy), not carried: the property
+	// under test here is that the block survives whole, and a node that routes
+	// nothing is the one a publish from a config with no routing may keep.
 	node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
 	node["routing"] = map[string]any{
-		"claude": map[string]any{"via": "openrouter", "tier": "gold"},
+		"claude": map[string]any{"via": "direct", "tier": "gold"},
 		"gemini": map[string]any{"via": "vertex"},
 	}
 	f.db.Set(projectpolicy.PathShared(), node)
@@ -1744,6 +2024,102 @@ func TestProjectPolicyPublishKeepsTheRoutingKeysThisFugaroDoesNotModel(t *testin
 			t.Errorf("the publish dropped %s, a member of the routing block it says it keeps:\n%s",
 				strings.Join(path, "."), nodeJSON(t, f, projectpolicy.PathShared()))
 		}
+	}
+}
+
+// TestProjectPolicyPublishWritesTheSwitchAndKeepsTheRestOfRouting: the switch
+// the operator's config writes is this publish's to write — and the routing
+// block is *also* shared with releases that know members this one does not, so
+// writing one must not take the other with it. Rebuilding `routing` from the
+// decoded switch drops every member this Fugaro cannot name (a `tier` inside
+// claude, a whole `gemini` block beside it), with no refusal and no diff line,
+// on the one document those members exist in (the review of PR #414). So the
+// members the config owns — via, models — are patched into the node's own
+// `claude`, the list the config does not write is removed rather than left
+// stale, everything else is left as the node had it, and the change is in the
+// diff.
+//
+// Mutation (verified, run and restored): in mergeRoutingClaude, return
+// json.Marshal(c) for a member that is there as well (the old "replace the
+// member" behaviour): `routing.claude.tier` and `routing.gemini` are gone and
+// this test fails.
+func TestProjectPolicyPublishWritesTheSwitchAndKeepsTheRestOfRouting(t *testing.T) {
+	f := newProjectFixtureWith(t, twoClaudeModelsProvidersYAML,
+		"routing:\n  claude:\n    via: openrouter\n    models: [claude-sonnet-5-5]\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	// The node as a release that knows more of the block would have left it: a
+	// member inside claude this Fugaro does not model, a whole block beside it,
+	// and a switch naming the other Claude ID the route claims — so this
+	// publish has a switch to change as well as members to keep.
+	node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
+	node["routing"] = map[string]any{
+		"claude": map[string]any{"via": "openrouter", "models": []any{"claude-opus-5-5"}, "tier": "gold"},
+		"gemini": map[string]any{"via": "vertex"},
+	}
+	f.db.Set(projectpolicy.PathShared(), node)
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// What the config writes is what the node now says.
+	pol := publishedPolicy(t, f)
+	if pol.Routing == nil || pol.Routing.Claude == nil {
+		t.Fatalf("the publish wrote no switch: %s", nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+	if got := pol.Routing.Claude.ViaValue(); got != "openrouter" {
+		t.Errorf("routing.claude.via = %q, want openrouter", got)
+	}
+	if got := pol.Routing.Claude.Models; !slices.Equal(got, []string{"claude-sonnet-5-5"}) {
+		t.Errorf("routing.claude.models = %v, want the config's list (the node's stale one replaced)", got)
+	}
+
+	// What this Fugaro does not model is still there, inside claude and beside
+	// it.
+	got := f.db.Value(projectpolicy.PathShared())
+	for _, path := range [][]string{
+		{"routing", "claude", "tier"},
+		{"routing", "gemini", "via"},
+	} {
+		if _, ok := nodeAt(got, path...); !ok {
+			t.Errorf("the publish dropped %s, a member the config does not write:\n%s",
+				strings.Join(path, "."), nodeJSON(t, f, projectpolicy.PathShared()))
+		}
+	}
+	if v, _ := nodeAt(got, "routing", "claude", "tier"); v != "gold" {
+		t.Errorf("routing.claude.tier = %v, want the value the node held", v)
+	}
+
+	// And the diff says so.
+	if want := "~ routing.claude.models: [claude-opus-5-5] → [claude-sonnet-5-5]"; !strings.Contains(out, want) {
+		t.Errorf("the diff does not print the switch change (%q):\n%s", want, out)
+	}
+}
+
+// TestPolicyNodeBytesRefusesCaseFoldedRoutingMembers: the publish path's own gate
+// on the member names it is about to patch into. It is not reachable through the
+// command surface — Decode refuses such a node first (validRoutingMembers calls
+// the same check) — so it is exercised where it stands, and that is the point: a
+// writer must not depend on a reader having run, and a publish that patched an
+// exact `via` beside a `VIA` (jsonMember matches keys exactly) would leave a block
+// whose route encoding/json decides by the order the keys were written in.
+func TestPolicyNodeBytesRefusesCaseFoldedRoutingMembers(t *testing.T) {
+	pol := &projectpolicy.Policy{Version: projectpolicy.Version}
+	for name, old := range map[string]string{
+		"a case-folded via":    `{"version": 1, "routing": {"claude": {"via": "direct", "VIA": "openrouter"}}}`,
+		"models twice":         `{"version": 1, "routing": {"claude": {"via": "direct", "models": ["claude-sonnet-5-5"], "models": []}}}`,
+		"a case-folded claude": `{"version": 1, "routing": {"CLAUDE": {"via": "direct"}}}`,
+	} {
+		if _, err := policyNodeBytes(pol, []byte(old), true, true); err == nil || !strings.Contains(err.Error(), "routing block") {
+			t.Errorf("%s: policyNodeBytes = %v, want a refusal naming the block", name, err)
+		}
+	}
+	// The other side: a block this Fugaro reads as written is patched as before.
+	if _, err := policyNodeBytes(pol, []byte(`{"version": 1, "routing": {"claude": {"via": "direct"}}}`), true, true); err != nil {
+		t.Errorf("a well-spelled block: policyNodeBytes = %v, want it written", err)
 	}
 }
 

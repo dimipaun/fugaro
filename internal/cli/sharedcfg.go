@@ -163,8 +163,12 @@ type SharedAnchor struct {
 // with objectAdmin on the runs bucket (anyone who could write this file)
 // must never be able to inject or widen it by publishing one. update_check
 // is operator-only the same way: a machine's choice to silence the nag
-// must never be flippable by whoever can write the shared file.
-var sharedForbidden = []string{"terraform", "user", "endpoints", "bucket_url", "registry", "providers", "claude_accounts", "update_check"}
+// must never be flippable by whoever can write the shared file. routing is
+// the provider decision seen from the switch's side — the Claude IDs whose
+// prompts may leave for a third party — and it resolves through providers,
+// which are not published either, so a launcher writing this file must not be
+// able to route anyone's Claude calls by adding one.
+var sharedForbidden = []string{"terraform", "user", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "update_check"}
 
 // ParseShared validates a published shared config against its anchor and
 // returns it (docs/design/shared-config.md §5). Anyone holding objectAdmin
@@ -173,8 +177,8 @@ var sharedForbidden = []string{"terraform", "user", "endpoints", "bucket_url", "
 // anchor's GCP project: another name, GCP project or bucket, a registry,
 // base image or log view elsewhere, a budget block whose Firebase project
 // is not the anchor's GCP project or whose database or signer is not its
-// Firebase project's, a forbidden section (providers and claude_accounts
-// among them), an unknown key, YAML anchors, aliases, merge keys, explicit
+// Firebase project's, a forbidden section (providers, routing and
+// claude_accounts among them), an unknown key, YAML anchors, aliases, merge keys, explicit
 // tags, repeated keys or documents, and anything over
 // localcfg.SharedMaxBytes. Every refusal names the field and says to have
 // fugaro init run again.

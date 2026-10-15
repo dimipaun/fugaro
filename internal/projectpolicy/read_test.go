@@ -184,6 +184,91 @@ func TestDecodeExposesUnknownTopLevelKeys(t *testing.T) {
 	}
 }
 
+// A routing block whose member this Fugaro cannot name is refused, not read as
+// an empty switch. `routing: {claud: ...}` is a misspelt claude and
+// `routing: {gemini: ...}` belongs to something this release does not route:
+// either would decode to a nil switch and leave every Claude call on the direct
+// route while the node says otherwise, silently, on the document a run is
+// routed by.
+func TestDecodeRefusesARoutingBlockThatNamesNoClaude(t *testing.T) {
+	for _, tc := range []struct{ name, raw, want string }{
+		{"a misspelt claude", `{"version": 1, "routing": {"claud": {"via": "direct"}}}`, `"claud"`},
+		{"a member this release does not route", `{"version": 1, "routing": {"gemini": {"via": "vertex"}}}`, `"gemini"`},
+		{"claude written with no switch", `{"version": 1, "routing": {"claude": null}}`, "routing.claude"},
+		{"a member beside a null claude", `{"version": 1, "routing": {"claude": null, "gemini": {"via": "vertex"}}}`, "routing.claude"},
+	} {
+		raw := []byte(tc.raw)
+		p, found, err := Decode(raw)
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode = (%v, %v, %v), want a refusal", tc.name, p, found, err)
+			continue
+		}
+		for _, want := range []string{tc.want, "claude"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: err = %v, want it to name %s", tc.name, err, want)
+			}
+		}
+	}
+
+	// The other side: a block this Fugaro *can* act on is read, whatever else it
+	// names — the switch is the member named claude, and a sibling a newer
+	// release added is not this Fugaro's to refuse.
+	raw := []byte(`{"version": 1, "providers": {"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["anthropic/claude-sonnet-5.5"], "allow_data_to": ["*"]}}, "routing": {"claude": {"via": "auto", "models": ["claude-sonnet-5-5"], "future_route": "x"}, "gemini": {"via": "vertex"}}}`)
+	p, found, err := Decode(raw)
+	if err != nil || !found || p == nil || p.Routing == nil || p.Routing.Claude == nil {
+		t.Fatalf("Decode = (%v, %v, %v), want the switch read", p, found, err)
+	}
+	if !p.Routing.Claude.Names("claude-sonnet-5-5") {
+		t.Errorf("the switch = %+v, want the model it names", p.Routing.Claude)
+	}
+
+	// An empty block names nothing, and a nil switch is what it says: the same
+	// state as an absent one (D1b), not the refusal above.
+	p, found, err = Decode([]byte(`{"version": 1, "routing": {}}`))
+	if err != nil || !found || p == nil || p.Routing != nil && p.Routing.Claude != nil {
+		t.Fatalf("an empty routing block = (%v, %v, %v), want it read as no switch", p, found, err)
+	}
+}
+
+// Member names inside `routing` that encoding/json reads as another name are
+// refused, at both levels of the block. `{"claude": {"via": "direct", "VIA":
+// "openrouter"}}` is not a switch with a misspelt key in it: the decoder matches
+// a member name case-insensitively and keeps the last of two that fold to one
+// name, so the route this Fugaro took would depend on the order the keys were
+// written in — the same for `"via"` twice. And `{"CLAUDE": {...}}` alone is read
+// as the switch by that same case-insensitive match, which is why the names are
+// checked before the block is judged to name no claude at all.
+func TestDecodeRefusesDuplicateOrCaseFoldedRoutingMembers(t *testing.T) {
+	for _, tc := range []struct{ name, raw, want, why string }{
+		{"a case-folded via beside the real one", `{"version": 1, "routing": {"claude": {"via": "direct", "VIA": "openrouter"}}}`, "routing.claude", "reads as one member"},
+		{"via written twice", `{"version": 1, "routing": {"claude": {"via": "openrouter", "via": "direct"}}}`, "routing.claude", "keeps the last one it reads"},
+		{"models spelled in another case", `{"version": 1, "routing": {"claude": {"via": "direct", "MODELS": ["claude-sonnet-5-5"]}}}`, "routing.claude", "spells models as \"MODELS\""},
+		{"claude spelled in another case", `{"version": 1, "routing": {"CLAUDE": {"via": "direct"}}}`, "routing", "spells claude as \"CLAUDE\""},
+		{"a case-folded claude beside the real one", `{"version": 1, "routing": {"claude": {"via": "direct"}, "Claude": {"via": "openrouter"}}}`, "routing", "reads as one member"},
+	} {
+		p, found, err := Decode([]byte(tc.raw))
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode = (%v, %v, %v), want a refusal", tc.name, p, found, err)
+			continue
+		}
+		// The refusal names the block it is in and says what encoding/json would
+		// have done with the name — which is the reason the spelling matters here
+		// and does not for a member this Fugaro does not read.
+		for _, want := range []string{tc.want, tc.why} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: err = %v, want it to contain %q", tc.name, err, want)
+			}
+		}
+	}
+
+	// The other side: a member this Fugaro does not model, spelled once, is not a
+	// name read two ways — it stays tolerated, exactly as it is in the tests
+	// above.
+	if _, found, err := Decode([]byte(`{"version": 1, "routing": {"claude": {"via": "direct", "future_route": "x"}, "gemini": {"via": "vertex"}}}`)); err != nil || !found {
+		t.Errorf("an unmodelled sibling = (found=%v, err=%v), want it read", found, err)
+	}
+}
+
 // routing.claude.via is read in phase 1b, and must not accept garbage now.
 func TestDecodeRefusesAnUnknownVia(t *testing.T) {
 	for _, via := range []string{"", "Direct", "openrouter-api", "none"} {
@@ -195,8 +280,13 @@ func TestDecodeRefusesAnUnknownVia(t *testing.T) {
 			t.Errorf("via %q: err = %v, want it to name the key", via, err)
 		}
 	}
+	// The provider entry the routed via values resolve through: without it the
+	// switch names a route nothing in the node claims, which is refused on
+	// purpose (validRouting). A via this Fugaro cannot act on is still the
+	// refusal this test is about, so the block is carried in both loops where
+	// the via itself is the fault.
 	for _, via := range []string{RouteDirect, RouteOpenRouter, RouteAuto} {
-		raw := []byte(`{"version": 1, "routing": {"claude": {"via": "` + via + `", "models": ["claude-sonnet-5"]}}}`)
+		raw := []byte(`{"version": 1, "providers": {"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["anthropic/claude-sonnet-5.5"], "allow_data_to": ["*"]}}, "routing": {"claude": {"via": "` + via + `", "models": ["claude-sonnet-5-5"]}}}`)
 		if p, found, err := Decode(raw); err != nil || !found || p == nil || p.Routing.Claude.Via != via {
 			t.Errorf("via %q: Decode = (%v, %v, %v), want it accepted", via, p, found, err)
 		}
