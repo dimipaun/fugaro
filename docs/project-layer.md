@@ -106,6 +106,8 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `workflows.*.commands.test` | profile, repo |  |
 | `workflows.*.commands.lint` | profile, repo |  |
 | `workflows.*.commands.fix` | profile, repo |  |
+| `workflows.*.commands.render` | profile, repo |  |
+| `workflows.*.commands.probe` | profile, repo |  |
 | `workflows.*.commands.rerun_failed` | profile, repo |  |
 | `workflows.*.commands.reports` | profile, repo |  |
 | `workflows.*.cache` | profile, repo |  |
@@ -115,12 +117,16 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `workflows.*.timeouts.total` | profile, repo, override |  |
 | `workflows.*.timeouts.stage` | profile, repo |  |
 | `workflows.*.timeouts.verify` | profile, repo |  |
+| `workflows.*.timeouts.render` | profile, repo |  |
 | `workflows.*.timeouts.finalize_reserve` | profile, repo |  |
 | `workflows.*.rebuild.check` | profile, repo |  |
 | `workflows.*.rebuild.max_age` | profile, repo |  |
 | `workflows.*.rebuild.lockfiles` | profile, repo |  |
 | `workflows.*.rebuild.base` | profile, repo |  |
 | `workflows.*.rebuild.paths` | profile, repo |  |
+| `workflows.*.inputs.max_files` | profile, repo |  |
+| `workflows.*.inputs.max_bytes` | profile, repo |  |
+| `workflows.*.inputs.max_total_bytes` | profile, repo |  |
 | `followup.trusted` | repo | it decides whose comments steer a run with the repository's credentials |
 | `followup.allow_public` | repo | it decides whose comments steer a run with the repository's credentials |
 <!-- scope-table:end -->
@@ -200,6 +206,8 @@ Its shape is checked strictly, with the shared config's trust rules: one documen
 - `workflows.*.commands.test`
 - `workflows.*.commands.lint`
 - `workflows.*.commands.fix`
+- `workflows.*.commands.render`
+- `workflows.*.commands.probe`
 - `workflows.*.commands.rerun_failed`
 - `workflows.*.image.apt`
 - `workflows.*.image.setup`
@@ -207,7 +215,7 @@ Its shape is checked strictly, with the shared config's trust rules: one documen
 - `workflows.*.image.skip_build_scripts`
 <!-- executable-keys:end -->
 
-— values that run as shell, or (`image.skip_build_scripts`) control whether shell a profile already describes runs, in the job or in the image build. `commands.reports` is not gated: it only lists paths to collect, and runs nothing. `config publish` refuses a change to any of these keys, in either direction (`image.skip_build_scripts` going from `false` to `true` is reported too, not only the unsafe direction), unless `--executable-changes` is given, printing each one's before and after under an `EXECUTABLE CHANGES` banner first; changing `default_profile` itself is gated the same way, whenever either the old or the new default profile sets one of these keys.
+— values that run as shell, or (`image.skip_build_scripts`) control whether shell a profile already describes runs, in the job or in the image build. `commands.render` and `commands.probe` are gated like `commands.build`: an artifact recipe's render and probe steps run the workflow's own text as shell in the job. `commands.reports` is not gated: it only lists paths to collect, and runs nothing. `inputs.*` is not gated either: the caps are numbers, and they bound what a launcher may attach, not anything a profile runs. `config publish` refuses a change to any of these keys, in either direction (`image.skip_build_scripts` going from `false` to `true` is reported too, not only the unsafe direction), unless `--executable-changes` is given, printing each one's before and after under an `EXECUTABLE CHANGES` banner first; changing `default_profile` itself is gated the same way, whenever either the old or the new default profile sets one of these keys.
 
 **The write.** It is made under a generation precondition, so a concurrent publisher is refused rather than overwritten, and a diff against the previous object is shown first. The exact bytes are then copied to `builds/<slug>/project-layer.yaml` for each repository the installation config lists. `fugaro doctor` reports a repository whose copy differs from the published object.
 
@@ -216,7 +224,7 @@ Its shape is checked strictly, with the shared config's trust rules: one documen
 **The threat model (design §11):**
 
 - **Who can write.** Operators, since the 0.7.0 bucket IAM hardening. An installation whose operator has not yet run `fugaro init` to apply the 0.7.0 grants still has every launcher holding `roles/storage.objectAdmin` too (see the lead note above).
-- **What a hostile or careless layer could do.** Replace build or test commands for every repository that takes a profile: this already takes effect, through the embedded layer every launch carries, with no human reviewing the change first. Since Task 14 and Task 15 shipped, add `image.apt`, `image.setup` or `image.tools` (as dangerous as `image.setup`: it names tools installed into the image) or turn off `image.skip_build_scripts`, which then runs in Cloud Build, including on the nightly rebuild, with no human launching anything. `commands.lint` and `commands.fix` are executable keys too, like `commands.build` and `commands.test`. Also: raise `resources` or `timeouts`; change `agent.model`, `recipe` or `auth`; point `base` at another shipped kind; or hide any of this, since a plain bucket write leaves no review trail. And, since the claim shipped, add one explicit Claude model ID to a route the installation config already defines (`claude_models`, §6), which sends that route's model to the provider the owner set up under the owner's own terms — nothing more: the layer cannot create a route, change a route's `base_url`, `auth`, `secret` or `allow_data_to`, name a provider the operator did not define, claim a class of Claude models, or set a price.
+- **What a hostile or careless layer could do.** Replace build or test commands for every repository that takes a profile: this already takes effect, through the embedded layer every launch carries, with no human reviewing the change first. Since Task 14 and Task 15 shipped, add `image.apt`, `image.setup` or `image.tools` (as dangerous as `image.setup`: it names tools installed into the image) or turn off `image.skip_build_scripts`, which then runs in Cloud Build, including on the nightly rebuild, with no human launching anything. `commands.lint` and `commands.fix` are executable keys too, like `commands.build` and `commands.test`, and so are `commands.render` and `commands.probe` since 0.8.0. Also: raise `resources` or `timeouts`; change `agent.model`, `recipe` or `auth`; point `base` at another shipped kind; or hide any of this, since a plain bucket write leaves no review trail. And, since the claim shipped, add one explicit Claude model ID to a route the installation config already defines (`claude_models`, §6), which sends that route's model to the provider the owner set up under the owner's own terms — nothing more: the layer cannot create a route, change a route's `base_url`, `auth`, `secret` or `allow_data_to`, name a provider the operator did not define, claim a class of Claude models, or set a price.
 - **What already bounds it.** The project layer cannot hold policy keys, `secrets`, `followup.*`, `base_branch`, `reviewers`, `dockerfile` or `instructions` (§5); the policy ceiling (dollars, tokens, allowed models) still comes from the owner and only tightens; base images stay `config.Bases`; and every run records the layer's sha256 and generation, which `fugaro runs ls`, `diagnose` and `doctor` show. A `claude_models` claim (§6) is bounded by the route it names: the traffic still goes to a provider the owner defined, under that provider's `allow_data_to` (so a repository the owner did not list for it never gets that route in its job at all — the claim is dropped for that repository's run, and a pin on the claimed ID is refused as a model no provider serves, never sent), the claim is one explicit ID rather than a class, the run needs `agent.auth: api-key` and `budget.mode: enforce` like any other provider model, and the price is the owner's `model_prices`', never the layer's and never the built-in catalog's.
 - **The fix, shipped in 0.7.0.** [design/bucket-iam.md](design/bucket-iam.md) narrows the bucket grant so only operators (and, for its own copy, a repository's own build account) can write `fugaro/` and `builds/<slug>/`. Each installation's operator applies it by running `fugaro init`; until they do, the bucket stays writable by every launcher (see the lead note above).
 

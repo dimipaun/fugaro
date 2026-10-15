@@ -941,6 +941,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("recipe %s is not mode: review, but the task names pull requests to review", rrec.Name)
 	case !r.review && rcp.Mode == recipe.ModeReview:
 		return fmt.Errorf("recipe %s is mode: review, but the task names no pull request to review", rrec.Name)
+	case rcp.Mode == recipe.ModeArtifact:
+		// Fail closed until Task 2 of the artifact-runs plan lands the
+		// mode in the runner (the render step, the staging directory and
+		// the runstore types it writes). An artifact recipe parsed by this
+		// runner but not implemented by it is refused here, before any
+		// agent call, push or write: running it as an implement run would
+		// be the one outcome a task's own recipe must never get.
+		return fmt.Errorf("recipe %s is mode: artifact, which this runner does not implement", rrec.Name)
 	}
 	if lo, hi, ok := recipe.ReviewPRRange(rrec.Name); ok {
 		if n := len(spec.ReviewPRs); n < lo || n > hi {
@@ -958,7 +966,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.plan = plan
 	r.gateSteps = checkGateSteps(rcp)
-	if err := checkGateCommands(r.gateSteps, wf.Commands, spec.Ref); err != nil {
+	if err := checkGateCommands(rcp, wf, spec.Ref); err != nil {
 		return fmt.Errorf("recipe %s: %w", rrec.Name, err)
 	}
 	if rcp.ReviewerIsCoder && cfg.Agent.Models.Reviewer != "" {
