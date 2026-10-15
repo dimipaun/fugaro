@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -436,14 +437,101 @@ func checkPolicyWeWouldWrite(p *projectpolicy.Policy) error {
 	if err != nil {
 		return userErr("building the policy: %v", err)
 	}
+	return checkPolicyBytes(raw)
+}
+
+// checkPolicyBytes refuses bytes this Fugaro would write but cannot read back
+// as its own policy: the last thing between a mistake in what the node is
+// built from and a node the runs it bounds cannot use. Both writers go through
+// it — the publisher, on the policy it built, and `repos add|rm`, on the node
+// it patched — so neither can write something the other would refuse.
+func checkPolicyBytes(raw []byte) error {
 	p, found, err := projectpolicy.Decode(raw)
 	switch {
 	case err != nil:
-		return userErr("the policy this Fugaro would publish is one it cannot read back, so nothing was written (%v): check the values it is built from — the budget block, the providers' models, model_prices and the allow-list — with 'fugaro validate'", err)
+		return userErr("the policy this Fugaro would write is one it cannot read back, so nothing was written (%v): check the values it is built from — the budget block, the providers' models, model_prices and the allow-list — with 'fugaro validate'", err)
 	case !found || p == nil:
-		return userErr("the policy this Fugaro would publish is one it cannot read back, so nothing was written: check the values it is built from with 'fugaro validate'")
+		return userErr("the policy this Fugaro would write is one it cannot read back, so nothing was written: check the values it is built from with 'fugaro validate'")
 	}
 	return nil
+}
+
+// patchPolicyJSON is raw with the one top-level member key replaced by val, and
+// every other byte of the node left as it was.
+//
+// `project repos add|rm` changes one key of a document this Fugaro shares with
+// releases that know keys it does not: decoding the node into the typed Policy,
+// changing allow_repos and encoding that writes back only the keys this Fugaro
+// knows, so a key a newer release added *nested* inside providers.<name> or
+// routing is dropped — and a dropped tightening key is a quiet loosening, in
+// the one command whose help says only allow_repos changes. The top-level ones
+// are refused before this is called (Decode can list those); the nested ones
+// cannot be listed, which is exactly why the node is edited as the document it
+// is rather than as a value of this Fugaro's type.
+//
+// The members are streamed rather than decoded into a map: a map would sort the
+// keys and re-encode every nested value, where this keeps each value's own
+// bytes and the order they were read in.
+func patchPolicyJSON(raw []byte, key string, val any) ([]byte, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return nil, errors.New("the node is not a JSON object")
+	}
+	enc, err := json.Marshal(val)
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	set := false
+	for dec.More() {
+		kt, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		name, ok := kt.(string)
+		if !ok {
+			return nil, errors.New("the node has a member without a name")
+		}
+		var v json.RawMessage
+		if err := dec.Decode(&v); err != nil {
+			return nil, err
+		}
+		if name == key {
+			v, set = enc, true
+		}
+		k, err := json.Marshal(name)
+		if err != nil {
+			return nil, err
+		}
+		if buf.Len() > 1 {
+			buf.WriteByte(',')
+		}
+		buf.Write(k)
+		buf.WriteByte(':')
+		buf.Write(v)
+	}
+	if _, err := dec.Token(); err != nil { // the object's closing brace
+		return nil, err
+	}
+	if !set {
+		k, err := json.Marshal(key)
+		if err != nil {
+			return nil, err
+		}
+		if buf.Len() > 1 {
+			buf.WriteByte(',')
+		}
+		buf.Write(k)
+		buf.WriteByte(':')
+		buf.Write(enc)
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
 }
 
 // printPolicyDiff shows what the write changes. An absent node is printed in
@@ -1118,6 +1206,7 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 		return err
 	}
 	before := nonNil(p.AllowRepos)
+	allow := nonNil(p.AllowRepos)
 	have := slices.Contains(p.AllowRepos, canonical)
 	if remove && !have {
 		return userErr("%s is not on the allow-list of %s: nothing to remove", canonical, projectpolicy.PathShared())
@@ -1144,17 +1233,25 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 				return err
 			}
 		}
-		p.AllowRepos = slices.DeleteFunc(p.AllowRepos, func(r string) bool { return r == canonical })
+		allow = slices.DeleteFunc(allow, func(r string) bool { return r == canonical })
 	} else {
-		p.AllowRepos = append(p.AllowRepos, canonical)
-		slices.Sort(p.AllowRepos)
+		allow = append(allow, canonical)
+		slices.Sort(allow)
 	}
-	p.AllowRepos = nonNil(p.AllowRepos)
-	if err := checkPolicyWeWouldWrite(p); err != nil {
+	allow = nonNil(allow)
+	// The node is patched, not rewritten: only allow_repos changes, and every
+	// key this Fugaro does not know — a newer release's, nested inside
+	// providers.<name> or routing, where it cannot be listed — stays exactly
+	// as it was (patchPolicyJSON).
+	patched, err := patchPolicyJSON(raw, "allow_repos", allow)
+	if err != nil {
+		return userErr("editing %s: %v; nothing was written", projectpolicy.PathShared(), err)
+	}
+	if err := checkPolicyBytes(patched); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "allow_repos: %v → %v\n", before, p.AllowRepos)
-	if err := db.PutIfMatch(ctx, projectpolicy.PathShared(), etag, p); err != nil {
+	fmt.Fprintf(out, "allow_repos: %v → %v\n", before, allow)
+	if err := db.PutIfMatch(ctx, projectpolicy.PathShared(), etag, json.RawMessage(patched)); err != nil {
 		if errors.Is(err, rtdb.ErrPrecondition) {
 			return userErr("the policy changed while this ran; nothing was written: run it again")
 		}

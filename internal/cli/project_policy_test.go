@@ -741,6 +741,94 @@ func TestProjectShowRefusesAnUnknownPolicyKey(t *testing.T) {
 	}
 }
 
+// nodeAt walks a decoded node to the value at path, and says whether it is
+// there at all.
+func nodeAt(v any, path ...string) (any, bool) {
+	for _, k := range path {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		if v, ok = m[k]; !ok {
+			return nil, false
+		}
+	}
+	return v, true
+}
+
+// someFuturePolicy is a node carrying keys this Fugaro does not know, in the
+// two places Decode cannot list them: inside a providers entry and inside
+// routing, both of which it decodes tolerantly so that a node a newer release
+// wrote stays readable here (P8). The budget block and model_prices are strict
+// — an unknown key there is refused rather than ignored — so a key of theirs is
+// not the case this is about.
+func someFuturePolicy() map[string]any {
+	return map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+		"providers": map[string]any{"openrouter": map[string]any{
+			"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer",
+			"secret": "openrouter-key", "models": []string{"deepseek/*"},
+			"require_zdr": false, "price_policy": "highest", "future_zdr": true,
+		}},
+		"routing": map[string]any{"claude": map[string]any{"via": "auto", "future_route": "x"}},
+	}
+}
+
+// TestProjectReposEditKeepsTheKeysItDoesNotKnow: `repos add|rm` changes one key
+// of a document this Fugaro shares with releases that know more keys than it
+// does. Decode lists the *top-level* keys it does not know (the command refuses
+// those), but nothing can list the ones nested inside budget, providers.<name>
+// or routing — and writing the decoded policy back drops them, which for a
+// newer release's tightening key is a quiet loosening, in the one command whose
+// help says only allow_repos changes.
+func TestProjectReposEditKeepsTheKeysItDoesNotKnow(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), someFuturePolicy())
+
+	// The keys this Fugaro knows and the ones it does not, all of which must
+	// still be there after an edit.
+	keep := [][]string{
+		{"providers", "openrouter", "future_zdr"},
+		{"providers", "openrouter", "require_zdr"},
+		{"providers", "openrouter", "price_policy"},
+		{"routing", "claude", "future_route"},
+		{"routing", "claude", "via"},
+	}
+	check := func(what string) {
+		t.Helper()
+		node := f.db.Value(projectpolicy.PathShared())
+		for _, path := range keep {
+			if _, ok := nodeAt(node, path...); !ok {
+				t.Errorf("%s dropped %s from the node: %s", what, strings.Join(path, "."), nodeJSON(t, f, projectpolicy.PathShared()))
+			}
+		}
+	}
+	check("the fixture")
+
+	if _, _, err := execute(t, "project", "repos", "add", "github/acme/new"); err != nil {
+		t.Fatal(err)
+	}
+	check("repos add")
+	if got := publishedPolicy(t, f).AllowRepos; len(got) != 2 || got[1] != "github/acme/new" {
+		t.Fatalf("allow_repos = %v, want the new entry", got)
+	}
+
+	typed(t)
+	if _, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", "github/acme/new"); err != nil {
+		t.Fatal(err)
+	}
+	check("repos rm")
+	if got := publishedPolicy(t, f).AllowRepos; len(got) != 1 || got[0] != "github/acme/app" {
+		t.Fatalf("allow_repos = %v, want the new entry removed", got)
+	}
+	// The value of the unknown key is the one that was planted, not a zero.
+	if v, _ := nodeAt(f.db.Value(projectpolicy.PathShared()), "providers", "openrouter", "future_zdr"); v != true {
+		t.Errorf("the provider's unknown key is %v, want true", v)
+	}
+}
+
 // TestProjectReposEditOnlyTheAllowList: add and rm rewrite allow_repos and
 // nothing else, canonicalize the argument, print the change, and ask for the
 // project's name to remove an entry — --yes does not stand in for it while a
