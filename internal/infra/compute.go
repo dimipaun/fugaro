@@ -216,6 +216,8 @@ type ComputeOutputs struct {
 	ReaperRole       string `json:"reaper_role"`
 	PreloadAccount   string `json:"preload_account"`
 	PreloadScheduler string `json:"preload_scheduler_job"`
+	Router           string `json:"router"`
+	NAT              string `json:"nat"`
 	Network          string `json:"network"`
 	Subnetwork       string `json:"subnetwork"`
 }

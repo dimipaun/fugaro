@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -276,5 +278,60 @@ func TestJobRunAccountsReadsTheJobMark(t *testing.T) {
 	// neither of the things a run must.
 	if slices.ContainsFunc(got, func(s string) bool { return strings.Contains(s, ReaperAccountID) }) {
 		t.Errorf("the reaper's own account was returned as a run account: %q", got)
+	}
+}
+
+// REGRESSION (the outputs interface, the mirror of the tfvars one): every
+// output the compute root declares is one DecodeComputeOutputs reads, and
+// vice versa. An output added to the root and not to the struct is a name the
+// stage and a later doctor check would have to re-derive from the state, and
+// a field with no output behind it would read as empty forever.
+func TestComputeOutputsCoverTheRoot(t *testing.T) {
+	b, err := fs.ReadFile(terraform.FS, "gcp/modules/compute/outputs.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`(?m)^output "([a-z0-9_]+)"\s*\{`)
+	var declared []string
+	for _, m := range re.FindAllStringSubmatch(string(b), -1) {
+		declared = append(declared, m[1])
+	}
+	if len(declared) == 0 {
+		t.Fatal("the compute root declares no outputs")
+	}
+	var read []string
+	typ := reflect.TypeFor[ComputeOutputs]()
+	for i := range typ.NumField() {
+		read = append(read, typ.Field(i).Tag.Get("json"))
+	}
+	slices.Sort(declared)
+	slices.Sort(read)
+	if !slices.Equal(declared, read) {
+		t.Errorf("the compute root's outputs are %q, ComputeOutputs reads %q", declared, read)
+	}
+}
+
+// DecodeComputeOutputs reads the root's own names and is not confused by one
+// it does not know: terraform's `output -json` wraps each value, and a value
+// the struct has no field for is skipped rather than fatal.
+func TestDecodeComputeOutputs(t *testing.T) {
+	raw := map[string]json.RawMessage{
+		"preload_image": json.RawMessage(`"fugaro-preload-e3b0c442"`),
+		"nat":           json.RawMessage(`"fugaro-nat"`),
+		"some_future":   json.RawMessage(`{"nested":true}`),
+		"reaper_role":   json.RawMessage(`null`),
+	}
+	got, err := DecodeComputeOutputs(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PreloadImage != "fugaro-preload-e3b0c442" || got.NAT != "fugaro-nat" || got.ReaperRole != "" {
+		t.Errorf("DecodeComputeOutputs = %+v", got)
+	}
+	if _, err := DecodeComputeOutputs(nil); !errors.Is(err, ErrNoOutputs) {
+		t.Errorf("no outputs: err = %v, want ErrNoOutputs", err)
+	}
+	if _, err := DecodeComputeOutputs(map[string]json.RawMessage{"nat": json.RawMessage(`7`)}); err == nil {
+		t.Error("a number where a name belongs was accepted")
 	}
 }
