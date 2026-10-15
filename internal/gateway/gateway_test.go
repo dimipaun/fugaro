@@ -355,14 +355,14 @@ func TestStartListensOnLoopbackOnly(t *testing.T) {
 func TestStartRejectsBadOptions(t *testing.T) {
 	ok := Options{Upstream: Upstream{Kind: "anthropic", APIKey: testKey}, Prices: pricing.Embedded(), Mode: Observe}
 	for name, edit := range map[string]func(*Options){
-		"no prices":             func(o *Options) { o.Prices = nil },
-		"no mode":               func(o *Options) { o.Mode = "" },
-		"unknown mode":          func(o *Options) { o.Mode = "off" },
-		"enforce without cap":   func(o *Options) { o.Mode = Enforce },
-		"negative cap":          func(o *Options) { o.Mode, o.Cap = Enforce, -1 },
-		"unknown upstream":      func(o *Options) { o.Upstream.Kind = "bedrock" },
-		"plain http elsewhere":  func(o *Options) { o.Upstream.BaseURL = "http://api.example.invalid" },
-		"base with a path":      func(o *Options) { o.Upstream.BaseURL = "https://api.example.invalid/proxy" },
+		"no prices":            func(o *Options) { o.Prices = nil },
+		"no mode":              func(o *Options) { o.Mode = "" },
+		"unknown mode":         func(o *Options) { o.Mode = "off" },
+		"enforce without cap":  func(o *Options) { o.Mode = Enforce },
+		"negative cap":         func(o *Options) { o.Mode, o.Cap = Enforce, -1 },
+		"unknown upstream":     func(o *Options) { o.Upstream.Kind = "bedrock" },
+		"plain http elsewhere": func(o *Options) { o.Upstream.BaseURL = "http://api.example.invalid" },
+		"base with a path":     func(o *Options) { o.Upstream.BaseURL = "https://api.example.invalid/proxy" },
 		"vertex without token": func(o *Options) {
 			o.Upstream = Upstream{Kind: "vertex", VertexProject: "proj-1234", VertexLocations: []string{"us-east5"}}
 		},
