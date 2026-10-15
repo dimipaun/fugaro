@@ -84,6 +84,71 @@ func TestReadinessBlocksAJobThatCannotReadAPublishedPolicy(t *testing.T) {
 	}
 }
 
+// L3 of the PR #379 review: a local config without budget.rtdb_url deploys
+// jobs without the Firebase backend, and an apply that removes it from a job
+// that has it takes the project's policy away from every run of the repository
+// — with no other signal, because a CLI with no database address cannot see
+// whether a policy exists (PolicyExists is false either way). The apply is not
+// blocked (the harm is drift, and the owner may be decommissioning on purpose)
+// but it says so, names the key and gives the command that puts it back.
+func TestReadinessWarnsWhenAnApplyWouldRemoveTheJobFirebaseBackend(t *testing.T) {
+	f := newCloud(t)
+	spec, err := Repo(budgetInputs(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readyJob(t, f, spec)
+	// The deployed jobs carry what this config no longer names: the markup
+	// of an installation that ran init --firebase, met again by a config
+	// that has lost its budget.rtdb_url.
+	for _, ws := range spec.Workflows {
+		f.run.SetJob(ws.Job, ws.Labels, ws.Image)
+		f.run.SetJobEnv(ws.Job, map[string]string{
+			RTDBURLEnv:        "https://aurora-fp-default-rtdb.firebaseio.com",
+			FirebaseAPIKeyEnv: "AIzaSyFakeWebApiKeyForTests000000000",
+		})
+	}
+	got, missing := readinessPolicy(t, f, spec, false)
+	var notes []string
+	for _, m := range missing {
+		if m.Kind == MissingNote {
+			notes = append(notes, m.Reason)
+		}
+	}
+	for name, ws := range got.Workflows {
+		if !ws.DeployJob {
+			t.Errorf("workflow %s is not deployed: %v", name, missing)
+		}
+		if !slices.ContainsFunc(notes, func(r string) bool {
+			return strings.Contains(r, name) && strings.Contains(r, RTDBURLEnv) &&
+				strings.Contains(r, FirebaseAPIKeyEnv) && strings.Contains(r, "budget.rtdb_url") &&
+				strings.Contains(r, "fugaro init --firebase") && strings.Contains(r, "init --repo")
+		}) {
+			t.Errorf("no note tells workflow %s's owner that this apply removes the backend: %v", name, notes)
+		}
+	}
+}
+
+// The same apply with no backend in the jobs is silent: a legacy installation
+// must not be warned about a model it never adopted.
+func TestReadinessSaysNothingAboutFirebaseWhenTheJobsHaveNone(t *testing.T) {
+	f := newCloud(t)
+	spec, err := Repo(budgetInputs(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readyJob(t, f, spec)
+	for _, ws := range spec.Workflows {
+		f.run.SetJob(ws.Job, ws.Labels, ws.Image)
+	}
+	_, missing := readinessPolicy(t, f, spec, false)
+	if slices.ContainsFunc(missing, func(m Missing) bool {
+		return m.Kind == MissingNote && strings.Contains(m.Reason, "budget.rtdb_url")
+	}) {
+		t.Fatalf("missing = %v, want no Firebase note for a job that never had the backend", missing)
+	}
+}
+
 // Before a policy exists the same job is not blocked: an installation that has
 // not adopted the model keeps working exactly as it did, and the one that wants
 // the shared budget hears what adopting it will need.

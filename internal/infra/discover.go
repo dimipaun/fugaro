@@ -634,6 +634,15 @@ type Existing struct {
 	// fact that turns the Firebase requirement into a gate (D11, plan task
 	// 1.4 step 2).
 	PolicyExists bool
+	// JobsFirebase are the workflows whose existing job carries the
+	// Firebase backend in its container environment (RTDBURLEnv and
+	// FirebaseAPIKeyEnv, both). It is what Readiness compares against the
+	// job it is about to write: a local config that names no
+	// budget.rtdb_url deploys a job without the backend, and an update that
+	// removes these two from a job that has them takes the project's policy
+	// away from every run of the repository — silently, because a run with
+	// no backend cannot tell "no policy" from "no way to read one".
+	JobsFirebase map[string]bool
 }
 
 // uniqueSecrets are the logical secrets ws mounts, sorted.
@@ -853,6 +862,12 @@ func DiscoverRepo(ctx context.Context, c *Clients, spec RepoSpec) (Imports, Exis
 			if hasMarks(j.Labels, ws.Labels) {
 				d.add(importJob, spec.Region, name, ws.Job)
 				ex.Jobs[name] = jobImage(j)
+				if jobCarriesFirebase(j) {
+					if ex.JobsFirebase == nil {
+						ex.JobsFirebase = map[string]bool{}
+					}
+					ex.JobsFirebase[name] = true
+				}
 			} else {
 				d.foreign("Cloud Run job "+ws.Job, j.Labels, ws.Labels)
 			}
@@ -935,6 +950,29 @@ func jobImage(j *run.GoogleCloudRunV2Job) string {
 		return ""
 	}
 	return j.Template.Template.Containers[0].Image
+}
+
+// jobCarriesFirebase reports whether a job's container environment holds what
+// a run needs to read the project's policy: the database's address and the
+// Firebase web key. It is jobImage's sibling, reading the same Jobs.Get
+// answer, and it never reads a secret (both are plain values, the key being
+// public by design).
+func jobCarriesFirebase(j *run.GoogleCloudRunV2Job) bool {
+	if j.Template == nil || j.Template.Template == nil {
+		return false
+	}
+	var url, key bool
+	for _, c := range j.Template.Template.Containers {
+		for _, e := range c.Env {
+			switch e.Name {
+			case RTDBURLEnv:
+				url = e.Value != ""
+			case FirebaseAPIKeyEnv:
+				key = e.Value != ""
+			}
+		}
+	}
+	return url && key
 }
 
 // checkGrants compares the existing job account's live grants with the
