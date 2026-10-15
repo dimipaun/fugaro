@@ -195,7 +195,16 @@ func generate(o options) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return append(b, '\n'), nil
+	b = append(b, '\n')
+	// The reader's own rules judge the bytes before anything is written: a
+	// price the file cannot carry (an endpoint pricing "0", a max below its
+	// min, a dimension nobody priced) is this command's error, named here,
+	// rather than a file that fails a test run later or a released binary's
+	// Load. catalog.Parse is Load's body, so the two cannot disagree.
+	if _, err := catalog.Parse(b); err != nil {
+		return nil, fmt.Errorf("the generated file does not load: %w", err)
+	}
+	return b, nil
 }
 
 // readAllowlist reads the model IDs to include: one per line, blank lines
@@ -280,8 +289,17 @@ func (s source) endpoints(id string) ([]endpoint, error) {
 	return doc.Data.Endpoints, nil
 }
 
+// httpTimeout bounds one API read. The generator is a build-time command run
+// by hand: a connection that hangs must fail the run rather than hold a
+// release checklist open, and there is no retry to wait for.
+const httpTimeout = 30 * time.Second
+
+// httpClient is the one client every read goes through, so the timeout above
+// cannot be forgotten at a call site.
+var httpClient = &http.Client{Timeout: httpTimeout}
+
 func httpGet(url string) ([]byte, error) {
-	resp, err := http.Get(url)
+	resp, err := httpClient.Get(url)
 	if err != nil {
 		return nil, err
 	}

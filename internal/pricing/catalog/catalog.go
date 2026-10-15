@@ -48,10 +48,13 @@ var embedded []byte
 // Load decodes the embedded catalog strictly and validates it. A malformed
 // file is an error, never a partially applied table: the caller refuses the
 // run rather than pricing from half a catalog.
-func Load() (*File, error) { return parse(embedded) }
+func Load() (*File, error) { return Parse(embedded) }
 
-// parse is Load's body, exported to the tests through Load alone.
-func parse(raw []byte) (*File, error) {
+// Parse decodes raw strictly and validates it: Load's body, exported for the
+// generator, which must judge its own output by the reader's rules before it
+// writes a file (a free endpoint's "0", a max below its min) rather than
+// leaving it to fail in a test or, worse, in a released binary's Load.
+func Parse(raw []byte) (*File, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	var f File
@@ -119,16 +122,21 @@ func (f *File) validate() error {
 				if !ok {
 					continue
 				}
+				plain := true
 				for _, x := range []struct{ name, s string }{{"min", b.Min}, {"max", b.Max}} {
 					v, err := strconv.ParseFloat(x.s, 64)
 					switch {
 					case err != nil:
 						errs = append(errs, fmt.Errorf("%s %s/%s.%s: %q is not a number", id, tier.name, d, x.name, x.s))
+						plain = false
+					case !plainDecimal(x.s):
+						errs = append(errs, fmt.Errorf("%s %s/%s.%s: %q is not a plain decimal price (digits, optionally a point and digits): the max-below-min check compares the spellings, not floats, so an exponent like \"1e-5\" would be read as a different number than ParseFloat reads", id, tier.name, d, x.name, x.s))
+						plain = false
 					case !(v > 0) || v > maxPrice:
 						errs = append(errs, fmt.Errorf("%s %s/%s.%s: %v is not more than 0 and at most %d", id, tier.name, d, x.name, v, maxPrice))
 					}
 				}
-				if less(b.Max, b.Min) {
+				if plain && less(b.Max, b.Min) {
 					errs = append(errs, fmt.Errorf("%s %s/%s: max %s is below min %s", id, tier.name, d, b.Max, b.Min))
 				}
 				if b.MinOf == "" || b.MaxOf == "" {
@@ -138,6 +146,28 @@ func (f *File) validate() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// plainDecimal reports whether s is a spelling the file may carry for a
+// price: digits, optionally a point and more digits. Exponent spellings
+// ("1e-5"), signs, a bare point and anything else are refused. less compares
+// the spellings digit by digit, not the numbers, so a spelling it does not
+// understand is a price the loader would check against the wrong neighbour
+// while ParseFloat happily accepted it. Leading and trailing zeros stay
+// accepted: they compare correctly and a diff may carry them.
+func plainDecimal(s string) bool {
+	whole, frac, point := strings.Cut(s, ".")
+	if whole == "" || (point && (frac == "" || strings.Contains(frac, "."))) {
+		return false
+	}
+	for _, part := range []string{whole, frac} {
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // less compares two decimal price strings as numbers, without parsing them

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -491,6 +492,27 @@ func TestGeneratorRequiresDate(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "-date") {
 		t.Errorf("the error does not name the flag: %v", err)
+	}
+}
+
+// TestGeneratorRefusesAFileTheLoaderWouldRefuse pins that the generator judges
+// its own output by the reader's rules before anything is written: an endpoint
+// that prices a dimension at 0 — the API publishes free endpoints — would
+// otherwise become a file that fails only in a later test run, or in
+// catalog.Load of a released binary.
+func TestGeneratorRefusesAFileTheLoaderWouldRefuse(t *testing.T) {
+	s := newSnapshots(t, "vendor/model")
+	s.endpoints("vendor/model", endpointRow("p", "0", "0.000002", nil))
+	out := filepath.Join(s.dir, "out.json")
+	err := run(options{from: s.dir, allow: s.allow("vendor/model"), date: s.date, out: out}, io.Discard)
+	if err == nil {
+		t.Fatal("a free endpoint price was written out")
+	}
+	if !strings.Contains(err.Error(), "does not load") || !strings.Contains(err.Error(), "vendor/model") {
+		t.Errorf("the error does not say the file does not load, and which model: %v", err)
+	}
+	if _, serr := os.Stat(out); serr == nil {
+		t.Error("the file was written anyway")
 	}
 }
 

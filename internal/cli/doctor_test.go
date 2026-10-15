@@ -1308,15 +1308,20 @@ func TestDoctorPriceCatalogStaleIsWarning(t *testing.T) {
 // TestDoctorZDRCheckSaysUnverified: a route whose require_zdr is on (the
 // default) is priced at the ZDR-eligible endpoints, and doctor says plainly
 // that this is a price and not an enforcement Fugaro can make or read
-// (design §8, P9, Task 5 step 3).
+// (design §8, P9, Task 5 step 3). Only the routes the built-in catalog prices
+// are named: require_zdr on a vendor's own endpoint selects no price, so the
+// sentence would be false there.
 func TestDoctorZDRCheckSaysUnverified(t *testing.T) {
 	if c := doctorProviderZDR(&localcfg.Config{}); c != nil {
 		t.Errorf("no route, but %+v", c)
 	}
 	off := false
 	lc := &localcfg.Config{Providers: map[string]config.ModelProvider{
-		"quiet": {RequireZDR: &off},
-		"zdr":   {},
+		"quiet": {BaseURL: "https://openrouter.ai/api", RequireZDR: &off},
+		"zdr":   {BaseURL: "https://openrouter.ai/api"},
+		// A vendor's own endpoint: require_zdr selects no price there, so
+		// the note must not claim its models are priced from the catalog.
+		"vendor": {BaseURL: "https://api.deepseek.com/anthropic"},
 	}}
 	c := doctorProviderZDR(lc)
 	if c == nil {
@@ -1330,8 +1335,16 @@ func TestDoctorZDRCheckSaysUnverified(t *testing.T) {
 			t.Errorf("the check lacks %q: %s", want, c.Problem)
 		}
 	}
-	if strings.Contains(c.Problem, "quiet") || !strings.Contains(c.Problem, "zdr") {
+	if strings.Contains(c.Problem, "quiet") || strings.Contains(c.Problem, "vendor") || !strings.Contains(c.Problem, "zdr") {
 		t.Errorf("the check names the wrong routes: %s", c.Problem)
+	}
+	// A require_zdr route the catalog does not price is not this check's
+	// business at all: with no catalog-eligible route there is nothing to
+	// say, rather than a sentence that would be false.
+	if c := doctorProviderZDR(&localcfg.Config{Providers: map[string]config.ModelProvider{
+		"vendor": {BaseURL: "https://api.deepseek.com/anthropic"},
+	}}); c != nil {
+		t.Errorf("a route the catalog does not price is reported as catalog-priced: %+v", c)
 	}
 	if checksFail([]doctorCheck{*c}, true) {
 		t.Error("the informational ZDR check failed doctor under --strict")

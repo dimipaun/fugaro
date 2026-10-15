@@ -76,6 +76,34 @@ func TestLoadRejectsMalformedFile(t *testing.T) {
 		{"a price over the limit", func(t *testing.T) []byte {
 			return []byte(strings.Replace(string(marshal(t, valid(t))), `"max":"2"`, `"max":"100000"`, 1))
 		}, "at most"},
+		// ParseFloat reads "1e-5" as 0.00001, but less() compares the
+		// spellings, so a max written that way would be checked against the
+		// wrong neighbour. The file writes prices as plain decimals; anything
+		// else is refused rather than half-understood.
+		{"an exponent price", func(t *testing.T) []byte {
+			d := valid(t)
+			d["models"].(map[string]any)["vendor/model"].(map[string]any)["all"].(map[string]any)["input_per_m"] =
+				map[string]any{"min": "1e-5", "max": "1", "min_of": "a", "max_of": "a"}
+			return marshal(t, d)
+		}, "not a plain decimal price"},
+		{"a signed price", func(t *testing.T) []byte {
+			d := valid(t)
+			d["models"].(map[string]any)["vendor/model"].(map[string]any)["all"].(map[string]any)["input_per_m"] =
+				map[string]any{"min": "+1", "max": "2", "min_of": "a", "max_of": "b"}
+			return marshal(t, d)
+		}, "not a plain decimal price"},
+		{"a price with no digits before the point", func(t *testing.T) []byte {
+			d := valid(t)
+			d["models"].(map[string]any)["vendor/model"].(map[string]any)["all"].(map[string]any)["input_per_m"] =
+				map[string]any{"min": ".5", "max": "2", "min_of": "a", "max_of": "b"}
+			return marshal(t, d)
+		}, "not a plain decimal price"},
+		{"a price with two points", func(t *testing.T) []byte {
+			d := valid(t)
+			d["models"].(map[string]any)["vendor/model"].(map[string]any)["all"].(map[string]any)["input_per_m"] =
+				map[string]any{"min": "1.2.3", "max": "2", "min_of": "a", "max_of": "b"}
+			return marshal(t, d)
+		}, "is not a number"},
 		{"a max below its min", func(t *testing.T) []byte {
 			return []byte(strings.Replace(string(marshal(t, valid(t))), `"max":"2"`, `"max":"0.5"`, 1))
 		}, "below min"},
@@ -113,7 +141,7 @@ func TestLoadRejectsMalformedFile(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			f, err := parse(c.make(t))
+			f, err := Parse(c.make(t))
 			if err == nil {
 				t.Fatalf("accepted: %+v", f)
 			}
@@ -124,6 +152,33 @@ func TestLoadRejectsMalformedFile(t *testing.T) {
 				t.Errorf("the error does not say what is malformed: %v", err)
 			}
 		})
+	}
+}
+
+// TestLoadAcceptsPlainDecimalPrices is the other side of the spelling rule:
+// the loader must not refuse a price the generator can write. Leading and
+// trailing zeros compare correctly and a diff may carry them, so they stay.
+func TestLoadAcceptsPlainDecimalPrices(t *testing.T) {
+	for _, s := range []string{"1", "0.5", "0.50", "007", "0.01584", "1000", "12.0"} {
+		d := valid(t)
+		d["models"].(map[string]any)["vendor/model"].(map[string]any)["all"].(map[string]any)["input_per_m"] =
+			map[string]any{"min": s, "max": "1000", "min_of": "a", "max_of": "b"}
+		if _, err := Parse(marshal(t, d)); err != nil {
+			t.Errorf("%q was refused: %v", s, err)
+		}
+	}
+	// And the helper itself, so the rule is pinned where it lives.
+	for _, c := range []struct {
+		s    string
+		want bool
+	}{
+		{"1", true}, {"0.5", true}, {"0.50", true}, {"007", true}, {"0", true},
+		{"1e-5", false}, {"1E5", false}, {"-1", false}, {"+1", false}, {".5", false},
+		{"1.", false}, {"1.2.3", false}, {"", false}, {"cheap", false}, {" 1", false},
+	} {
+		if got := plainDecimal(c.s); got != c.want {
+			t.Errorf("plainDecimal(%q) = %v, want %v", c.s, got, c.want)
+		}
 	}
 }
 

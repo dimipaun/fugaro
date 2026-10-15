@@ -472,13 +472,18 @@ func doctorPriceCatalog(now time.Time) doctorCheck {
 // request body and refuses the `provider` key) nor read (the key endpoint has
 // no data-policy field). Informational, so it never fails doctor, not even
 // under --strict: it is a warning to check the account, not a fault here.
+//
+// Only the routes the built-in catalog actually prices are named
+// (config.CatalogEligible): require_zdr on a vendor's own endpoint selects no
+// price — such a model is priced under model_prices — so the note would be
+// false about it, and it says nothing about an account setting there either.
 func doctorProviderZDR(lc *localcfg.Config) *doctorCheck {
 	if lc == nil {
 		return nil
 	}
 	var names []string
 	for name, p := range lc.Providers {
-		if p.RequireZDROn() {
+		if p.RequireZDROn() && config.CatalogEligible(p.BaseURL) {
 			names = append(names, name)
 		}
 	}
