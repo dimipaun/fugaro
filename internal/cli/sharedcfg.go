@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -248,11 +249,18 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 		return bad("image_source", "%q is not %s, and this machine's local config does not record it: a base pin through the remote repository is checked against the owner recorded there, so record %s first (fugaro init --base base --image-source %s), then publish",
 			c.ImageSource, mirror.DefaultSources[0], c.ImageSource, c.ImageSource)
 	}
+	// The owner every remote-repository entry must name: the published
+	// image_source when it is one this machine accepts, else the default.
+	// A pin's owner is not a free choice — a reader who took another
+	// owner's path as its base image would run that owner's code — so the
+	// entries are held to it here, not only to image_source itself.
+	owner := cmp.Or(c.ImageSource, mirror.DefaultSources[0])
+	_, owner, _ = strings.Cut(owner, "/")
 	for _, kind := range slices.Sorted(maps.Keys(c.BaseImages)) {
 		ref := c.BaseImages[kind]
-		if !baseImageRE(c.RegistryHost, kind).MatchString(ref) {
-			return bad("base_images."+kind, "%q is not an image of this project's base registry, %s/%s/<image>[:tag][@sha256:<digest>], nor a pin through the remote repository, %s/%s/<owner>/fugaro-%s:<version>@sha256:<digest>",
-				ref, c.RegistryHost, infra.BaseRegistry, c.RegistryHost, infra.GhcrRegistry, kind)
+		if !baseImageRE(c.RegistryHost, kind, owner).MatchString(ref) {
+			return bad("base_images."+kind, "%q is not an image of this project's base registry, %s/%s/<image>[:tag][@sha256:<digest>], nor a pin through the remote repository, %s/%s/%s/fugaro-%s:<version>@sha256:<digest>",
+				ref, c.RegistryHost, infra.BaseRegistry, c.RegistryHost, infra.GhcrRegistry, owner, kind)
 		}
 		if c.ImageSource == "" && strings.HasPrefix(ref, c.RegistryHost+"/"+infra.GhcrRegistry+"/") {
 			return bad("base_images."+kind, "%q is a pin through the remote repository, which is checked against the owner image_source records, and this config records none: rerun fugaro init --base %s there to record one, or remove the entry", ref, kind)
@@ -334,19 +342,23 @@ func dropLegacyBaseImages(data []byte) ([]byte, []string, error) {
 //
 // whose digest is required — a bare tag through the proxy would be a shared
 // config naming whatever that tag points at, which is exactly what this
-// gate exists to stop. The path's components can't be "." or ".." (this
-// value reaches a Dockerfile FROM line), and there is no other "@". It is a
-// syntax gate only: which owner and which entry are trusted is
-// managedVersion's question (design §3.6), and the ID is taken from the
-// entry's own key rather than spelled out.
-func baseImageRE(host, kind string) *regexp.Regexp {
+// gate exists to stop — and whose owner and tag are the pin's own: exactly
+// the owner the config records (its image_source, else the default) and a
+// RELEASE version, the marker every reader of a pin works from. The remote
+// repository serves all of ghcr.io, so an entry under its ID that is not
+// this shape is not "some other base image" a reader may pull as its own —
+// it is a path whose owner the publisher chose, and managedVersion would
+// call it a custom base and use it. The path's components can't be "." or
+// ".." (this value reaches a Dockerfile FROM line), and there is no other
+// "@". The ID is taken from the entry's own key rather than spelled out.
+func baseImageRE(host, kind, owner string) *regexp.Regexp {
 	const component = `[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*`
 	const tag = `[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}`
 	const digest = `sha256:[0-9a-f]{64}`
 	return regexp.MustCompile(`^` + regexp.QuoteMeta(host+"/"+infra.BaseRegistry+"/") +
 		component + `(?:/` + component + `)*` + `(?::` + tag + `)?(?:@` + digest + `)?$` +
-		`|^` + regexp.QuoteMeta(host+"/"+infra.GhcrRegistry+"/") + component + `/fugaro-` + regexp.QuoteMeta(kind) +
-		`:` + tag + `@` + digest + `$`)
+		`|^` + regexp.QuoteMeta(host+"/"+infra.GhcrRegistry+"/"+owner+"/fugaro-"+kind) +
+		`:` + releaseVersionRE + `@` + digest + `$`)
 }
 
 // sharedTopLevel checks the YAML's shape, which fugaro init's Marshal

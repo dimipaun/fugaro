@@ -258,6 +258,67 @@ func TestSharedConfigRefusesAForeignPublishedOwner(t *testing.T) {
 	}
 }
 
+// The owner half of §10.7 is checked on the ENTRY, not only on
+// image_source: a publisher who leaves image_source at the default and
+// publishes a remote-repository path under another owner must not get away
+// with it. Such an entry is not "not managed" — it is not a base image the
+// reader may use at all (§3.6), and both `fugaro image build` and the
+// images stage would otherwise take it as the operator's own.
+func TestSharedConfigRefusesAForeignOwnerInAPin(t *testing.T) {
+	// published builds a shared config naming owner's entry, with the
+	// published image_source beside it when one is given (a config that
+	// records none cannot carry a pin at all, which the test above covers).
+	published := func(source, owner, tag, digest string) string {
+		ref := "us-east5-docker.pkg.dev/fugaro-belong/fugaro-ghcr/" + owner + "/fugaro-base:" + tag
+		if digest != "" {
+			ref += "@sha256:" + strings.Repeat("a", 64)
+		}
+		s := strings.Replace(validShared(), "base: us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-base:0.3.1", "base: "+ref, 1)
+		if source != "" {
+			s = strings.Replace(s, "base_images:\n", "image_source: "+source+"\nbase_images:\n", 1)
+		}
+		return s
+	}
+	fork := func() SharedAnchor { a := sharedAnchor; a.ImageSource = "ghcr.io/acme"; return a }
+	for _, tc := range []struct {
+		name   string
+		shared string
+		anchor SharedAnchor
+		want   string // the refusal must name this; "" means it is accepted
+	}{
+		{"a foreign owner under the default", published("", "evil", "9.9.9", "yes"), sharedAnchor, "evil"},
+		{"a foreign owner on a fork's machine", published("ghcr.io/acme", "evil", "9.9.9", "yes"), fork(), "evil"},
+		// The owner the config records is the one its entries must name,
+		// the default included.
+		{"the default owner", published("ghcr.io/dimipaun", "dimipaun", "0.7.5", "yes"), sharedAnchor, ""},
+		{"a fork's own entry", published("ghcr.io/acme", "acme", "0.7.5", "yes"), fork(), ""},
+		// The digest is required, and the tag is a release version: both
+		// are what makes the entry a pin rather than a path to whatever
+		// the tag points at now.
+		{"no digest", published("ghcr.io/dimipaun", "dimipaun", "0.7.5", ""), sharedAnchor, "0.7.5"},
+		{"a tag that is not a release version", published("ghcr.io/dimipaun", "dimipaun", "latest", "yes"), sharedAnchor, "latest"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := ParseShared([]byte(tc.shared), tc.anchor)
+			switch {
+			case tc.want == "":
+				if err != nil {
+					t.Fatalf("%v, want it accepted", err)
+				}
+				if c.BaseImages["base"] == "" || c.ImageSource == "" {
+					t.Errorf("image_source %q, base_images %v", c.ImageSource, c.BaseImages)
+				}
+			case err == nil:
+				t.Fatalf("base_images.base = %q, want a refusal naming %q", c.BaseImages["base"], tc.want)
+			case !strings.Contains(err.Error(), tc.want):
+				t.Errorf("err = %v, want it to name %q", err, tc.want)
+			case strings.ContainsAny(err.Error(), "\n\x1b\a"):
+				t.Errorf("the refusal is not one clean line: %q", err.Error())
+			}
+		})
+	}
+}
+
 // A published shared config written before the cut still lists the removed
 // kinds: they are dropped with a warning, never a refusal that would lock
 // every teammate out until an operator republishes.

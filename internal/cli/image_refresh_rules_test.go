@@ -249,3 +249,51 @@ func TestManagedVersionReadsTheRemotePathAndItsDigest(t *testing.T) {
 		t.Fatalf("a pin with the recorded owner: %v", err)
 	}
 }
+
+// TestBasePlanItemRefusesAForeignProxyPath: what this run does about a
+// kind's recorded base image, and the one case it does not go on with. A
+// reference under the installation's remote (pull-through) repository that
+// is not a pin this tool wrote is NOT a custom base image — the proxy
+// serves all of ghcr.io, so its owner is whoever wrote the entry, and a
+// run that used it would build and run their code. Only a reference
+// outside that repository (the operator's own fugaro-base, an --base-image
+// pasted in) is "used as it stands".
+//
+// Mutation (run, restore): drop the foreignProxyRef case from
+// basePlanItem, and the five refusal rows below turn into the "is used"
+// note.
+func TestBasePlanItemRefusesAForeignProxyPath(t *testing.T) {
+	const host, ver = "us-east5-docker.pkg.dev/proj-1234", "0.7.5"
+	d := strings.Repeat("a", 64)
+	pin := func(owner, v string) string {
+		return host + "/fugaro-ghcr/" + owner + "/fugaro-base:" + v + "@sha256:" + d
+	}
+	for name, tc := range map[string]struct {
+		cur, owner string
+		pin        bool
+		note, err  string // the note it prints, or the word its refusal must name
+	}{
+		"nothing recorded":       {"", "dimipaun", true, "", ""},
+		"an older pin":           {pin("dimipaun", "0.7.4"), "dimipaun", true, "", ""},
+		"this release's pin":     {pin("dimipaun", ver), "dimipaun", false, "already has", ""},
+		"a custom base of yours": {host + "/fugaro-base/nginx:1.2.3", "dimipaun", false, "is used", ""},
+		"a foreign owner":        {pin("evil", "9.9.9"), "dimipaun", false, "", "evil"},
+		"an unrecorded owner":    {pin("dimipaun", ver), "", false, "", "dimipaun"},
+		"the pin with no digest": {host + "/fugaro-ghcr/dimipaun/fugaro-base:" + ver, "dimipaun", false, "", "0.7.5"},
+		"a dev tag":              {pin("dimipaun", "dev-abc1234"), "dimipaun", false, "", "dev-abc1234"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			note, p, err := basePlanItem(tc.cur, host, "base", tc.owner, ver)
+			switch {
+			case tc.err != "":
+				if err == nil || p || !strings.Contains(err.Error(), tc.err) {
+					t.Fatalf("note %q, pin %v, err %v; want a refusal naming %q", note, p, err, tc.err)
+				}
+			case err != nil:
+				t.Fatalf("err %v", err)
+			case p != tc.pin || !strings.Contains(note, tc.note):
+				t.Fatalf("note %q, pin %v; want %q, %v", note, p, tc.note, tc.pin)
+			}
+		})
+	}
+}

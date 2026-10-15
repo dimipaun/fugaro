@@ -54,9 +54,16 @@ import (
 // is mirrored at all and the stage says what to do instead; there is no
 // fallback to some other version.
 
+// releaseVersionRE is a release version's own shape, unanchored: the
+// version marker a base pin keeps in its tag. Every reader of a pin works
+// from it, so a pin whose tag is not one — "latest", a dev sha — is not a
+// pin this tool wrote (cover.go's pinVersionRE is the same shape, on the
+// other side of the fence).
+const releaseVersionRE = `[0-9]+\.[0-9]+\.[0-9]+`
+
 // releaseRE is a published CLI version; anything else is a development
 // build.
-var releaseRE = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+var releaseRE = regexp.MustCompile(`^` + releaseVersionRE + `$`)
 
 // storagePerGBMonth is Artifact Registry's storage price (about; the first
 // 0.5 GB a month is free), for the cost line only.
@@ -290,21 +297,46 @@ func baseIsCurrent(ref, host, kind, owner, ver string) bool {
 	return newer(curVersion(ref, host, kind, owner), ver)
 }
 
+// foreignProxyRef is a base reference that lives under this installation's
+// remote (pull-through) repository without being a pin this tool wrote for
+// kind: a path whose owner is not the recorded one, or whose tag is not a
+// release version, or which carries no digest. The proxy serves all of
+// ghcr.io, so such a path is NOT "the operator's own base image" — its
+// owner is whoever wrote the entry, and a run that used it would build and
+// run their code. It is never used as a custom base: a custom base belongs
+// in the installation's own registry (fugaro-base) or in --base-image.
+func foreignProxyRef(ref, host, kind, owner string) bool {
+	return strings.HasPrefix(ref, host+"/"+infra.GhcrRegistry+"/") && !isManaged(ref, host, kind, owner)
+}
+
+// foreignProxyRefusal is that refusal, in one wording for every caller:
+// what the reference is, the shape that was wanted, and the two repairs.
+func foreignProxyRefusal(what, ref, host, kind, owner string) error {
+	return userErr("%s, %s, is under this installation's remote repository but is not a pin this tool wrote for it (want %s/%s/%s/fugaro-%s:<version>@sha256:<digest>): the proxy serves all of %s, so a path there is not your own image — every job would pull whatever its owner publishes. Remove the entry (fugaro init --base %s writes the pin), or point the kind at an image of your own with --base-image %s=IMAGE",
+		what, pluginwire.Printable(ref), host, infra.GhcrRegistry, owner, kind, baseSourceHost, kind, kind)
+}
+
 // basePlanItem decides, offline, what this run does about one kind's
 // recorded base image: pin it (pin true, note ""), or leave it alone (pin
 // false, with the note the run prints). It never decides WHICH reference to
 // pin — that is a digest through the remote repository, and it cannot be
 // computed offline.
-func basePlanItem(cur, host, kind, owner, ver string) (note string, pin bool) {
+//
+// err is a refusal, not a note: a foreign path under the remote
+// repository's ID (foreignProxyRef) is not a custom base and the run does
+// not go on with it.
+func basePlanItem(cur, host, kind, owner, ver string) (note string, pin bool, err error) {
 	switch {
 	case cur == "":
-		return "", true
+		return "", true, nil
+	case foreignProxyRef(cur, host, kind, owner):
+		return "", false, foreignProxyRefusal("the local config's base image for "+kind, cur, host, kind, owner)
 	case !isManaged(cur, host, kind, owner):
-		return fmt.Sprintf("base %s: the local config's base image %s is used; nothing mirrored (--base-image KIND=IMAGE changes it)", kind, pluginwire.Printable(cur)), false
+		return fmt.Sprintf("base %s: the local config's base image %s is used; nothing mirrored (--base-image KIND=IMAGE changes it)", kind, pluginwire.Printable(cur)), false, nil
 	case baseIsCurrent(cur, host, kind, owner, ver):
-		return fmt.Sprintf("base %s already has %s", kind, pluginwire.Printable(cur)), false
+		return fmt.Sprintf("base %s already has %s", kind, pluginwire.Printable(cur)), false, nil
 	default:
-		return "", true
+		return "", true, nil
 	}
 }
 
@@ -405,7 +437,11 @@ func (s *imagesStage) items(ctx context.Context) (items []imageItem, notes []str
 			notes = append(notes, fmt.Sprintf("base %s: --base-image points it at its own image; nothing mirrored", k))
 			continue
 		}
-		if note, pin := basePlanItem(lc.BaseImage(k), host, k, owner, ver); !pin {
+		note, pin, err := basePlanItem(lc.BaseImage(k), host, k, owner, ver)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !pin {
 			notes = append(notes, note)
 			continue
 		}
