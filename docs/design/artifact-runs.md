@@ -133,9 +133,9 @@ Compute is reported separately as `computeUsd` … never capped"*
 (`docs/design/m9-spec-v3-reconciliation.md:10`), *"Compute — an estimate …
 Never capped"* (`docs/design/m9-budget-and-dashboard.md:798`). The estimate
 itself is real and shipped: `Prices.ComputeUSD(cpu, memGiB, d)`
-(`internal/backend/backend.go:172-177`), computed by the runner from the
+(`internal/backend/backend.go:292-296`), computed by the runner from the
 workflow's **requested** vCPU/memory and the elapsed run time
-(`internal/runner/cost.go:62-64`), recorded as `cost.compute_usd` +
+(`internal/runner/cost.go:61`), recorded as `cost.compute_usd` +
 `cost.compute_estimated` (`internal/runstore/cost.go:12-18`,
 `schemas/result.schema.json`), recomputed by the CLI from the backend's own
 limits (`internal/runview/runview.go:363-368`) and rolled into history
@@ -178,7 +178,7 @@ brief asked to be verified, and two of its entries were wrong):
 | A sha256 of an output blob | **Nowhere.** Every existing sha256 is a naming hash, a cache key or a config/recipe digest; no blob is hashed. Content type **is** recorded, implicitly, as the object's own content type on write (`internal/blobx/blobx.go:111`), never in `result.json`. |
 | "the job's service account can write only its own run's prefix" | **Wrong as stated:** the condition is the **repository's** prefix (`runs/<slug>/`, plus `cache/`, `locks/`), shared by all of that repository's runs (`names.go:374,383-389`). |
 | "Cloud Run job CPU/memory limits (up to 8 vCPU and 32 GiB)" | **VERIFIED in this repository's code** (`internal/backend/gcp/limits.go:36-38,55` and its test). |
-| "the compute-instance backend … Tasks 1-3 implemented behind a flag" | **Partly wrong:** the design is merged (#375) and Tasks 1 and 2 are merged (#380, #381); **Task 3 (the VM price table) is not** (`internal/backend/batch/batch.go:19-21` says so at the site), and the gate is not a flag but a **config refusal** — `backend: cloud-batch` is refused by `internal/localcfg/localcfg.go:711-719`. |
+| "the compute-instance backend … Tasks 1-3 implemented behind a flag" | **Partly wrong, and less wrong than when this design was first written.** The design is merged (#375) and Tasks 1–3 are merged (#380, #381 and **#389**, the VM price table — `internal/backend/batch/prices.go`'s `MachineType`/`MachineTypeOf`/`ForMachineType` and `backend.Execution.MachineType`/`BilledWindow`, read at `origin/main` b9d5c5d); the gate is not a flag but a **config refusal** — `backend: cloud-batch` is refused by `internal/localcfg/localcfg.go:711-719`, and what remains unmerged is the backend's *enable* work, not its price table. **§5.3 and D3 are written against this and V18 carries the corrected citation.** |
 | "GPUs" | **UNVERIFIED, and promised by nothing.** `compute-backend.md` §6.3 lists *"Windows VMs, GPUs, TPUs"* as out of scope (`:1485`). See §5.4 and §13. |
 | "`mode: review` is the PRECEDENT of a run that needs no git token" | **VERIFIED** (`docs/design/generic-tool.md:198`, `internal/runner/runner.go:635`). |
 
@@ -255,23 +255,56 @@ same recipe with one step removed, so the first slice ships both and the design
 says which is which: `steps: [render: {}]` is legal and needs no agent, and
 `steps: [plan: {}, render: {}]` is the sizzle case.
 
-**The separation that keeps the safety rule intact: the agent writes *data*,
-the repository owns the *code*.** `commands.render` is repository text from
-`fugaro.yaml` at the task's ref — reviewed like code, never from the bucket,
-never from the recipe (the rule at `internal/runner/gate.go:125-127`) — and
-the agent's output is a **plan file** it consumes, e.g.
-`commands.render: "sh .fugaro/render.sh \"$FUGARO_RENDER_PLAN\""`. *The
-alternative, and what it costs:* let `commands.render` be whatever the agent
-wrote (`sh render.sh` from the working tree). It works, it is shorter, and it
-costs the property that makes the check gate safe — the text the runner
-executes would be agent-authored rather than repository-authored. It is not a
-privilege escalation (the agent already runs unconstrained commands in the same
-container, with the same environment, as the same user — `SECURITY.md:42-52`),
-but it is a new *mechanism* whose blast radius is "as trusted as the agent",
-and the runner executing agent text is a thing this design would rather not
-introduce for a plan file's worth of convenience. **Decision: the plan is data
-and the script is repository text; a repository may set `commands.render` to
-anything it likes, including `sh render.sh` of a file it owns.**
+**The separation, stated exactly: what the runner executes is repository text
+read once — and it is not a sandbox.** `commands.render` and `commands.probe`
+are repository text from `fugaro.yaml` at the task's ref, read by the runner at
+bootstrap into `verify.Settings` **before any stage runs** (`verify.WriteSettings`,
+written beside `build|test|lint`) and executed from there. Three things follow,
+and the design claims only these three:
+
+- **The recipe, the task spec and the bucket name no command.** This is the
+  format's own rule (`internal/runner/gate.go:125-127`, generic-tool G10) and it
+  is untouched: the only way a command enters a run is a `fugaro.yaml` a
+  reviewer read.
+- **The command *string* is fixed before the agent starts.** `Settings` is
+  written at bootstrap into the state directory, which is outside the checkout
+  (`stateDirOutsideCheckout`, `runner.go:834`), so nothing the plan stage writes
+  can change the string the record quotes — which is why the record can carry a
+  `command_sha256` of it and mean it.
+- **It is *not* a boundary against the agent.** The plan stage and the render
+  step are the same container, the same user and the same environment. An agent
+  that wanted to run code has already had every opportunity, and
+  `SECURITY.md:42-52` says the agent is unsandboxed by design. A command that
+  names a file in the checkout — `sh .fugaro/render.sh "$FUGARO_RENDER_PLAN"` —
+  executes **that file's working-tree bytes**, which the plan stage could have
+  rewritten, no more and no less than every other file in a checkout the agent
+  controls.
+
+**So the design states a rule instead of implying a property (D8): a
+`commands.render` that *is* the script** — the inline `|` block in `fugaro.yaml`,
+which is the same text the reviewer read and which the runner holds in
+`Settings` — **is what the docs and the skill recommend and what the check's
+fixture recipe uses**; a command that names a file is permitted, and documented
+for what it is. The runner cannot tell the two apart without a static analysis
+it should not do, so it does not try: it records `render.command` (redacted),
+`render.command_sha256` (the hash of the exact string it ran) and
+`render.tree: "working"`, which says the command's own file references were
+resolved in the checkout the plan stage also had.
+
+*The alternatives, and what each costs.* **(a) A pristine tree at the task's
+ref** (`git archive`, or a second worktree, so a named file's bytes are the
+commit's): it answers the *file* question and not the boundary question — the
+agent still shares the container, the user and the `PATH`, so the step is not
+made untouchable — and it costs a second copy of the tree on a memory-backed
+filesystem (§5.2) for a rule the docs can state for free. **(b) Operator config
+only** (`commands.render` from the project layer, never from the repository):
+genuinely narrower, and it takes the script away from the repository that owns
+the tool and the ffmpeg flags — for the sizzle case the script *is* that
+repository's artifact. **(c) Run it in the working tree and say so**: what this
+design does. **The line the design draws: the recipe, the bucket and the
+launcher cannot put a command into a run; the command string is provably the one
+the reviewer read; and nothing about the step is trusted against the agent —
+which is the trust the rest of the run already extends to it.**
 
 **The `render` step, precisely.**
 
@@ -320,18 +353,23 @@ anything it likes, including `sh render.sh` of a file it owns.**
 
 **The probe is `commands.probe`, run once with the whole set in two
 environment variables** — `FUGARO_OUT_DIR` (the outputs directory's absolute
-path) and `FUGARO_ARTIFACTS` (the newline-separated relative names, already
-sanitised). The owner writes the check they trust, for example:
+path) and `FUGARO_ARTIFACTS_FILE` (the absolute path of a file the runner writes
+into the state directory, holding the sanitised relative names one per line).
+**A file, not a value**: a newline-separated list inside one environment
+variable cannot survive a name that itself holds a newline, and every shell
+reads a file with `while IFS= read -r` without quoting rules in play — the
+vocabulary the first draft of this design got wrong. The owner writes the check
+they trust, for example:
 
 ```yaml
 commands:
   probe: |
     set -e
-    while read -r f; do
+    while IFS= read -r f; do
       d=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$FUGARO_OUT_DIR/$f")
       awk -v d="$d" 'BEGIN { exit !(d > 4.5) }'
       test -s "$FUGARO_OUT_DIR/$f"
-    done < "$FUGARO_ARTIFACTS"
+    done < "$FUGARO_ARTIFACTS_FILE"
 ```
 
 *Alternatives, and their costs:* (a) a per-file probe invocation
@@ -344,8 +382,9 @@ from a real one, and its "succeeded" is a claim about exit codes alone.
 **Decision: one `commands.probe`, whole-set, via the environment.**
 
 **The probe's result is recorded, not interpreted.** `result.json` gains a
-`render` object (`{command, exit_code, timed_out, duration_s, started_at}`) and
-an `artifacts` array (`[{name, bytes, sha256, content_type, probe}]`), each
+`render` object (`{command, command_sha256, tree, exit_code, timed_out,
+duration_s, started_at}`) and an `artifacts` array (`[{name, bytes, sha256,
+content_type, probe}]`), each
 **optional** so that every run written before this change still validates and
 every reader that has not heard of them ignores them. **The compatibility
 argument, in full**, because it is the one place this design touches a stored
@@ -404,8 +443,21 @@ already supports it: the launcher mints the run id
 (`backend.Launch`, `:1392`). `--attach` fills the gap between the mint and the
 write:
 
-1. **Resolve the run id first** (the existing `--run-id` flag makes this
-   explicit and repeatable-free).
+1. **Resolve the run id first**, and **establish that it is a new one before a
+   single byte is uploaded.** A repeated `--run-id` is not a new run: the
+   launcher adopts the stored task when it is byte-identical and refuses a
+   different one (`createTask`, `internal/cli/run.go:1146-1172`, over
+   `runstore.CreateTask`'s `ErrExists`) — and that check happens *after* an
+   upload would have. Uploading first would therefore **overwrite a finished
+   run's `inputs/` objects before the launcher ever looked at its task**, which
+   is the one ordering bug this section exists to avoid: with `--attach`, a run
+   id whose `task.json` already exists is refused **before the first byte is
+   written**, and the refusal names that run. (The upload itself is create-only
+   where the backend supports it — `Create`'s `IfNotExist`,
+   `internal/blobx/blobx.go:107-127` — so on GCS a second write to an existing
+   input object is a refusal too; on a `file://` bucket that condition is
+   ignored, which is why the launcher-side check, not the object layer, is the
+   guarantee.)
 2. **Check the caps before uploading anything**: `inputs.max_files` (proposed
    16) and a total byte cap (`inputs.max_bytes`, proposed 256 MiB) — the
    launcher refuses a set over the cap **before** the first byte is written,
@@ -484,18 +536,27 @@ sizzle case is the plan stage alone.
 | The render's own deadline | new `timeouts.render`, also capped by `finalizeAt` | this design |
 | Cloud Run's task timeout | `total + 2m` as the launcher sends it; a task may run up to 24h; the CLI's `--total-timeout` cap is 24h | `docs/design/v1.md:370`, `docs/SPEC.md:30`, `internal/cli/run.go:976-991` |
 | Cloud Run job resources | 1, 2, 4, 6 or 8 vCPU; ≤ 32Gi with ratio rules | `internal/backend/gcp/limits.go:22,36-38,55` |
-| The container's own disk | **UNVERIFIED** — the ephemeral disk a Cloud Run job gets (and how Cloud Run counts the render's temp files against it) is not stated anywhere in this repository | the check that settles it is Check 58's step 7 (a deliberate over-cap render must fail cleanly, not fill the container) |
+| The container's own disk | **It is memory, and this repository records nothing about it.** On Cloud Run's second-generation execution environment the container's filesystem is an in-memory filesystem with no volume mounts (platform documentation; **nothing in this repository states it**, U3), so the staging directory, the render's own temp files and the upload's reader are all charged to the job's **memory** limit — 32 GiB at most (`limits.go`'s `CheckResources`) | Check 58's step 7, in three halves: an over-*cap* set must refuse cleanly, an over-*memory* render must be **observed** (killed container or clean failure), and the run's own record must say which happened |
 | The artifact caps | `outputs.max_files`, `outputs.max_bytes` | this design |
 
 **A render that runs away is bounded by the clock, and only by the clock** —
-which is exactly what §6 is about.
+which is exactly what §6 is about. The *disk* is the other bound, and it is the
+memory one: on the second-generation execution environment the container's
+filesystem **is** memory (no volumes, U3, §8.4), so the staged artifacts sit
+inside the job's memory limit beside the render's own temp files and the
+upload's reader. Two consequences the plan carries: the caps' defaults must
+leave the staging well inside the memory the workflow asks for (8 × 256 MiB =
+2 GiB against a 32 GiB ceiling is fine; 32 × 2 GiB is not), and **an
+over-memory container is killed, not failed** — a killed container writes no
+`result.json`, so the run's record cannot say what happened, and Check 58's
+step 7 is the live witness that decides how that looks from outside.
 
 ### 5.3 Which substrate: Cloud Run now, the VM backend when it hurts
 
 **Recommendation: the Cloud Run job, unchanged, for the first slice (D3).**
 The reasons are all facts: it is the shipped substrate (a run *is* a Cloud Run
 job); the compute estimate already exists for it
-(`internal/backend/backend.go:172-177`); 8 vCPU / 32 GiB / a 24h-class task
+(`internal/backend/backend.go:292-296`); 8 vCPU / 32 GiB / a 24h-class task
 timeout is comfortably more than a sizzle video needs (three 320×240 PNGs into
 a 5-second 1080p clip is seconds of ffmpeg, not minutes); and the workflow's
 `resources` and `timeouts` are already per-workflow knobs, so an owner with one
@@ -503,10 +564,16 @@ heavy render gives *that workflow* 8 vCPU and a longer total without touching
 anything else.
 
 **The VM backend (compute-backend.md) is the answer to a specific failure, and
-it is not ready.** It exists as a design (#375) with the name seam (Task 1,
-#380) and the fake + conformance suite (Task 2, #381) merged; the VM price
-table (Task 3) is **not** (`internal/backend/batch/batch.go:19-21`), and
-`backend: cloud-batch` is refused by config validation until the enable task
+it is closer than this design first recorded.** It exists as a design (#375)
+with the name seam (Task 1, #380), the fake + conformance suite (Task 2, #381)
+and **the VM price table (Task 3, #389) merged** — `internal/backend/batch/`'s
+`prices.go` (`MachineType`, `MachineTypeOf`, `ForMachineType`) and
+`backend.Execution`'s `MachineType`/`BilledWindow`/`WindowNote`, which price a
+VM from its boot window with Compute Engine's one-minute minimum
+(`internal/backend/backend.go:97-103,141-147,149-199` — `MachineType`,
+`VMMinimumBilled`, `BilledWindow`, `WindowNote`) — and it records the
+same `compute_usd` shape Cloud Run's does. What is *not* merged is the enable
+work: `backend: cloud-batch` is still refused by config validation
 (`internal/localcfg/localcfg.go:711-719`). Its value for a render is real and
 narrow: **a Docker-capable VM** means the render can run in *any* container
 image rather than in the repository's own derived image, the 8-vCPU ceiling
@@ -516,8 +583,9 @@ design's own: one VM per run, the per-run service account, the reaper, the log
 routing, and an installation-level Batch stage — Tasks 3–9 of that design.
 **So the design's rule for the owner is: ship artifacts on Cloud Run; when a
 render hits the 8-vCPU/32-GiB ceiling or needs a container the derived image
-cannot carry, that is the trigger to finish the VM backend, and by then
-`compute_usd` needs the VM's price table to stay honest (D3).**
+cannot carry, that is the trigger to finish the VM backend** — whose price
+table is merged already, so `compute_usd` stays honest across the switch (D3) —
+**and whose effect on who can read an artifact is D11.**
 
 ### 5.4 GPUs: an open question, and nothing is promised
 
@@ -532,9 +600,11 @@ substrate has no GPU (its resource model is vCPU and memory,
 name. The checks that would settle it are (a) whether a Cloud Run job can
 request a GPU in the owner's project/region, (b) whether a Compute Engine GPU
 machine type is available in the sandbox's region and quota, and (c) whether
-`compute_usd`'s price table has a GPU rate (it has `VCPUSecondUSD` and
-`GiBSecondUSD`, `internal/backend/backend.go:167-168`, plus a `Source` string at
-`:169` naming where the figures came from, and nothing else).
+`compute_usd`'s price table has a GPU rate (it has `VCPUSecondUSD`, `GiBSecondUSD`
+and a `Source` string naming where the figures came from, and nothing else —
+`internal/backend/backend.go:265-266,275-277` on `origin/main`; a VM run bills
+*the machine type's* quantities rather than the workflow's,
+`Prices.Quantities` at `:285-289`).
 **§13 carries this as a question for the owner, and no task in the plan may
 assume a GPU.**
 
@@ -546,13 +616,14 @@ gateway's ledger feeds them; compute is a **reported estimate, never capped**
 (`docs/design/m9-spec-v3-reconciliation.md:10`,
 `docs/design/m9-budget-and-dashboard.md:798`,
 `internal/budget/evaluate.go:190-204`). The estimate exists and is charged
-nowhere: `internal/runner/cost.go:62-64` prices the workflow's **requested**
+nowhere: `internal/runner/cost.go:61` prices the workflow's **requested**
 vCPU/memory over the run's elapsed wall clock.
 
 **So a runaway render's only cap is the clock (D4).** Say the number plainly:
 8 vCPU and 32 GiB for two hours, at the installation's own compute prices
-(`FUGARO_COMPUTE_PRICES`, `internal/infra/spec.go:46`), is the worst case a
-*single* artifact run can bill — and because the caps do not look at it, the
+(`FUGARO_COMPUTE_PRICES`, `internal/infra/spec.go:44-46,682`; the launcher reads
+them through `localcfg.ComputePrices`, `internal/localcfg/localcfg.go:73-75`),
+is the worst case a *single* artifact run can bill — and because the caps do not look at it, the
 run can be at 2% of its model cap and 100% of its clock while it does it.
 That is not a hole this design can close cheaply, and it is not a hole this
 design creates: it is what "compute is not capped" means, and it is exactly
@@ -566,7 +637,9 @@ cap — is sketched in the spec (`docs/design/m9-spec-source-v3.md:493`: a
 60-second heartbeat that reserves `vcpu × vCPU-second price + GiB × GiB-second
 price` through the same lease flow) and its cost is real: a new halt reason, a
 decision about which caps count compute (all three?), a per-backend price table
-(the VM one does not exist yet — compute-backend Task 3), and an interaction
+(the VM one exists now — `internal/backend/batch/prices.go`, #389 — and which
+quantities a row bills is `backend.Prices.Quantities`'s business, not the
+caller's), and an interaction
 with the reservation sweep. **It is a separate design, and this one does not
 pretend to have it.**
 
@@ -575,10 +648,16 @@ ceiling built from model caps only (`internal/cli/budget_preview.go:26-28`) and
 a "typical" line from stage model spend (`:489-538`), so for an artifact run it
 **under-reports by the whole render**. The recommendation, as a task in the
 plan: a preview line that prices the *compute* ceiling the same shape
-`compute_usd` uses — `requested vCPU/memory × (timeouts.render +
-estimate of the model stages)` at the installation's compute prices — clearly
+`compute_usd` uses — `requested vCPU/memory × timeouts.total` at the
+installation's compute prices, through `backend.Prices.ComputeUSD` with
+`backend.Prices.Quantities` deciding the quantities — clearly
 labelled **"not capped"**, and with the "typical" line unchanged (it is
-model-only history, and that is what it should stay). Its cost: preview
+model-only history, and that is what it should stay). **The basis is
+`timeouts.total`, not `timeouts.render`**: the line is the worst case a run can
+*bill*, and a render that overruns its own step still burns the run's clock
+until the deadline. (The earlier draft of this section said
+`timeouts.render + estimate of the model stages`; the plan's Task 8 is the
+corrected basis, and this paragraph is the correction.) Its cost: preview
 becomes backend-aware and needs the workflow's resources in a place it does
 not currently read them.
 
@@ -661,20 +740,70 @@ produced (out), and files an operator handed to a model-driven job (in).
    repository A's other runs' artifacts — exactly as `SECURITY.md:62` already
    says for their records and caches. **This design does not narrow that;**
    nothing in it can, and claiming otherwise would be the lie a reader would
-   catch. What it does add is that an artifact now carries a **sha256 recorded
-   by its own run**, so tampering is *detectable* after the fact even where it
-   is not preventable: `fugaro artifacts get` verifies the hash and refuses a
-   mismatch (exit non-zero, nothing written).
+   catch. **What the recorded sha256 is, precisely — because the obvious
+   overclaim is one keystroke away:** it proves **integrity in transit**, that
+   the bytes `fugaro artifacts get` returns are the bytes the run uploaded and
+   that nothing truncated or swapped them on the way. It is **not tamper
+   evidence**, and no reader may treat it as such: the hash lives in
+   `result.json`, in the same repository-scoped prefix, written by an account
+   that can write both objects — so any principal who can overwrite an artifact
+   can rewrite the record beside it and leave the pair consistent. A sibling run
+   of the same repository, a launcher, an operator and (on a profile-wide
+   backend, D11) a run of *another* repository can all do it, and none of them
+   leaves a hash mismatch behind. Tamper *evidence* needs a key the rewriter does
+   not hold — a launcher-signed manifest, or a per-run key outside the run's
+   prefix — which is its own design and is **not** in this slice. `SECURITY.md`'s paragraph (§8.7) says this in the same words.
 4. **Caps stop the disk-filling loop, and they are enforced twice** — by the
    launcher (before the upload) and by the runner (before the download and
    before the upload), because the task spec is text the launcher wrote. An
    over-cap set is refused with a named reason; a glob that matches nothing is
    **not** an error by itself (the run may legitimately produce nothing) but it
    is reported, and the probe is what turns "nothing" into a failure if the
-   owner wants one. The container's own ephemeral disk is the limit behind
-   these; its exact size is **UNVERIFIED** (§5.2) and Check 58's step 7 is the
-   live witness.
-5. **Signed URLs are the launcher's, never the job's, and they are not in the
+   owner wants one. **The limit behind these is the container's memory, not a disk**: on the
+   second-generation execution environment the filesystem is in-memory and there
+   are no volumes (§5.2, U3), so a staged set is memory the render may also need
+   for its own temp files. **A cap that is too generous therefore does not
+   produce a clean refusal — it produces a killed container**, and a killed
+   container writes no `result.json`, so the run's record cannot say what
+   happened and the reader sees a run that stopped mid-render. That is why the
+   caps' defaults are conservative to the point of boring (8 × 256 MiB against a
+   32 GiB ceiling), why the docs tell an owner who raises them to raise
+   `resources.memory` past them, and why Check 58's step 7 has a third half that
+   deliberately drives the container over its memory rather than over a cap —
+   the design says the OOM direction is *observed, then written down*, not
+   assumed away.
+5. **Who can read an artifact, at each phase, and what that costs (D10).**
+   Today: **every launcher and every operator of the installation** (a launcher
+   holds `objectViewer` on the whole bucket, `docs/design/bucket-iam.md:126-128`;
+   an operator `objectAdmin`, `:88`), and **every run of the same repository**
+   (`runs/<slug>/` is the job account's condition, V4) — which for an artifact is
+   not a diff but a rendered file, so "the repository can see it" means "every
+   one of that repository's runs can replace it with a different video and a
+   consistent hash". **Two futures widen it, and both are decided elsewhere:**
+   project-centric **phase 3** and the **VM backend** give a run a grant that is
+   not per-repository (`docs/design/project-centric.md:15,66-68`; the VM design's
+   per-run account is not per-repository either), so "every run of this
+   repository" becomes "**every run on this profile**" — artifacts, inputs and
+   records alike. **D10 decides the first half of this; D11 decides what the phases do to
+   it.** **Recommendation: state it now, and make the narrowing a
+   precondition of the first of those that lands** — a per-run condition
+   (`runs/<slug>/<run>/`, or a per-run account) is not expressible in the
+   compiled-in `JobBucketPrefixes` grant today (`internal/backend/gcp/names.go:374,383-389`),
+   and it is exactly what those designs must add before an artifact-producing
+   run is enabled on them. This design adds the *warning* (the docs' and
+   SECURITY.md's wording) rather than the mechanism.
+6. **The render step's environment is the agent's, and that is deliberate.**
+   `commands.render` runs as the agent's user, with the agent's environment
+   (`r.env`), in the checkout — which means **the workflow's secrets are in its
+   environment**, unlike a review run's agent, which gets none of them
+   (`runner.go:1091-1099`, `!r.review`). That is the right answer for artifact
+   mode and it is a decision, not an oversight: an artifact run checks out the
+   repository's **own ref** (there is no pull request whose head is untrusted),
+   so it stands where an implement run stands, and a render that needs a token to
+   publish somewhere needs the same environment the agent had. **The design keeps
+   `!r.review` exactly as it is and says so**, so no reader infers a secret
+   boundary that is not there.
+7. **Signed URLs are the launcher's, never the job's, and they are not in the
    first slice (D7).** *The fact that decides it:* a V4 signed URL needs
    `iam.serviceAccounts.signBlob` (or a service-account key), and **no grant in
    this installation provides it** — the only signing permission in the tree is
@@ -689,12 +818,12 @@ produced (out), and files an operator handed to a model-driven job (in).
    construction the *job* needs no URL at all: it writes to its own prefix with
    its own account. **Decision: later, launcher-only, short-TTL, and as its
    own design — never as a way for a run to hand out access.**
-6. **Attachments are a prompt-injection surface in the ordinary sense.** A
+8. **Attachments are a prompt-injection surface in the ordinary sense.** A
    screenshot with text in it, a CSV with instructions, a filename that reads
    like a request: all of it reaches the agent. This is not new (the task text
    already does, `SECURITY.md:67`), and it must be said out loud in the docs:
    *attaching a file is writing part of the task.*
-7. **`SECURITY.md` must be extended, and this is the exact text this design
+9. **`SECURITY.md` must be extended, and this is the exact text this design
    commits to.** In **"### The assumption"** (`SECURITY.md:17-19`), the
    paragraph after the existing one:
 
@@ -715,7 +844,11 @@ produced (out), and files an operator handed to a model-driven job (in).
 > is deleted with the rest of the run's record after 90 days by default.
 > Nothing about an artifact is trusted: `fugaro artifacts get` verifies the
 > sha256 recorded by the run, refuses a mismatch, and never opens, executes or
-> unpacks what it writes.
+> unpacks what it writes. That hash is **integrity in transit, not tamper
+> evidence**: it and the artifact live in the same repository-scoped prefix, so
+> anything that can rewrite one can rewrite the other — including another run of
+> the same repository. Tampering is not detectable today; what is guaranteed is
+> that the bytes you receive are the bytes the run uploaded.
 
    And in **"Known limits"**, one bullet:
 
@@ -728,7 +861,7 @@ produced (out), and files an operator handed to a model-driven job (in).
 >   an artifact workflow 8 vCPU, a two-hour total, and a command that never
 >   finishes, you pay for two hours of 8 vCPU and the caps will not stop it.
 
-8. **What this design adds to the launcher's powers: nothing.** Attaching a
+10. **What this design adds to the launcher's powers: nothing.** Attaching a
    file uses a grant a launcher already holds; artifact reads use grants that
    already exist; no new role, no new permission and no new bucket. That is a
    deliberate property: the security-relevant new code is *refusals* (names,
@@ -768,13 +901,21 @@ cross-reference here and one there name the same task:
 
 1. **The format**: `mode: artifact`, `plan`/`render`, `outputs`, and the
    `commands.render`/`commands.probe` keys and `timeouts.render` — the recipe
-   schema, the parser, the validation refusals. Lands with nothing executing
-   it: an older binary refuses the recipe, and a newer binary refuses
-   `outputs:` on a `mode: implement` recipe.
+   schema, the parser, the validation refusals — **plus the two
+   `verify.Settings` fields the render and the probe read (`verify.WriteSettings`,
+   `runner.go:1075-1081`), because they are plumbing and every later task needs
+   them — plus the runner's own fail-closed refusal of a `mode: artifact` recipe
+   it does not implement** (§10's release note: without that arm the recipe
+   falls through to the implement path and opens a pull request). An older binary
+   refuses the recipe, a newer one refuses `outputs:` on a `mode: implement`
+   recipe, and a runner that knows the format but not the mode refuses to run
+   it.
 2. **`mode: artifact` in the runner, and the render step**: the bootstrap
    branch, the plan stage, deterministic execution of `commands.render`, its
-   deadline, its failure path and the `render` record. Proven with an
-   in-memory bucket and no cloud.
+   deadline, its failure path, and the `render` record **with its own
+   `runstore` types (`RenderRecord`, `OutcomeArtifacts`, `Record.Render`) and
+   the `outcome` enum's new value**, because a task that records something must
+   own the type it records. Proven with an in-memory bucket and no cloud.
 3. **Two streaming `blobx` methods**: `PutFile` and `GetFile` — the byte
    layer the rest needs, since every write today is a `[]byte` and every read
    is capped at 1 MiB (§3, V23).
@@ -788,7 +929,8 @@ cross-reference here and one there name the same task:
 7. **The CLI**: `fugaro artifacts ls|get` with hash verification, and the
    `runs ls`/`diagnose` display.
 8. **`budget preview`'s compute ceiling line** (§6), labelled "not capped".
-9. **The docs and the skills**: a new `docs/artifact-runs.md`, the sections
+9. **The docs and the skills**: a new `docs/artifact-runs.md` carrying **D8's
+   rule** (an inline `commands.render` is what to write, and why), the sections
    in `docs/recipes.md` and `docs/base-image.md` (ffmpeg via `image.apt`), the
    routing skill's "when to choose an artifact recipe", **the SECURITY.md text
    of §8.7 verbatim**, and **Check 58's row and section in the checklist** —
@@ -801,18 +943,34 @@ cross-reference here and one there name the same task:
 **compute-in-the-cap** (D4's alternative). Each is its own design, named here
 so this plan is not mistaken for the whole story.
 
+**Nothing above starts until the owner approves it.** Tasks 1–9 are gated on an
+explicit go-ahead (the plan's P12): the decisions in §13 and the plan's own P-list
+are answered by a yes or by a veto that rewrites the affected tasks, and **this
+design assumes none of them by itself**. In particular **Task 1 is not
+"approved by default"**: it is D5's answer in code.
+
 **Release placement.** Tasks 1–9 extend the recipe format, add a step kind, add
 one optional key to two stored schemas and add a CLI subcommand — all additive,
 and all shippable in **0.8.0**, one point release, with a new launch-time
 `*Since` constant (`artifactsSince`, through the existing `checkImageSince`
-seam, `internal/cli/recipes_skew.go:204-270`) so a recipe or an `--attach`
-using the new keys is refused against a job image whose runner predates them.
-Which of them could land in a
-*patch*: Task 1 (format only, nothing executes it), Task 2 (the step, unused by
-every existing recipe), Task 7 (`budget preview`, display only) and Task 8 (the
-docs) are each safe alone; Tasks 3–6 are the feature and belong in the point
-release. Nothing here needs the project-centric phases (D1), so it does not
-wait on them.
+seam, `internal/cli/recipes_skew.go:204-270`) so a recipe or an `--attach` using
+the new keys is refused against a job image whose runner predates them.
+
+**Which of them is safe *alone*, and the one that is not unless it is
+finished.** A `mode: artifact` recipe against a runner that has the format and
+not the mode would take the **implement** path — `runner.go`'s dispatch and its
+checkout arm key off the task spec, not the recipe, and a recipe the runner does
+not understand falls through to the default arm, where a PR is opened — so
+**Task 1 must carry its own fail-closed refusal in the runner** (a
+`mode: artifact` recipe that this runner does not implement is refused at
+bootstrap, with a test), and then Task 1, Task 8 (`budget preview`, display
+only) and Task 9 (the docs) are each safe as a patch on their own. **Task 2
+needs Task 1** — it *consumes* the two `verify.Settings` fields Task 1 writes
+(`Render`, `Probe`) and brings its own `runstore` types with it (`RenderRecord`,
+`OutcomeArtifacts`, `Record.Render`, the `outcome` value) rather than waiting
+for Task 4 — and Tasks 3–7 are the feature and belong in the point
+release. Nothing here needs the project-centric phases (D1), so it does not wait
+on them — and D10 and D11 say what happens the day those phases arrive.
 
 ## 11. Check 58, in outline
 
@@ -831,9 +989,12 @@ the absence of any push or pull request; (4) `ffprobe` verification through
 `commands.probe` **and** an independent local `ffprobe` of the downloaded
 file; (5) the recorded content type against the object's own (U5); (6) the
 artifact retrieved with a **sha256 match**, and the upload's wall clock
-against `finalize_reserve` (U6); (7) the failure direction, both halves — a
-probe that must fail the run and upload nothing, and an over-cap set that
-must refuse cleanly and leave the container alive (U3). Then the Restore.
+against `finalize_reserve` (U6); (7) the failure direction, in three
+halves — a probe that must fail the run and upload nothing; an over-*cap* set
+that must refuse cleanly and leave the container alive; and an over-*memory*
+render, which is the one that decides how a killed container looks from outside,
+because a killed container writes no `result.json` at all (U3, §5.2). Then the
+Restore.
 That list is what the section must keep asserting, in whatever wording the file
 has; **the checklist file stays the single source of the wording.** The plan's
 Task 9 writes the row and the section (its own assertions list is a checklist
@@ -842,11 +1003,17 @@ runs them without quoting them back — the rule
 `../plans/2026-10-14-openrouter-senior-reviewer.md:146` states, whose finding
 was that a plan repeating a check's steps is how the two drift.
 
-**The numbering is checked, not assumed.** On `main`, `docs/gcp-live-checklist.md`
-has rows for 40–47 (`:317-324`, 42–47 at `:319-324`) and **57** (the compute backend's, `:325`); **48–56 and 58
-are free** (no row, no heading), and 24, 25 and 39 are reserved with no row.
-So **58 is this design's**, and it is the next free number for a check with a
-section of its own.
+**The numbering is checked against the file's own register, not inferred from
+the gaps.** `docs/gcp-live-checklist.md` keeps the reservations in prose
+(`:250-257` on `origin/main`): **48–56 are reserved by the project-centric
+plan** (`docs/plans/*project-centric*`, PR #366, merged as `c86eb92` — reserved,
+with no rows written yet, and that plan's sub-checks are not named here), and
+**57 by the compute-backend design** (`docs/design/compute-backend.md` §7, PR
+#375, whose row is in the table at `:325`). Rows exist for 40–47 (`:317-324`).
+**So 58 is the next free number — the first one past every reservation — and it
+is this design's**, which is a different statement from the first draft's "48–56
+are free", and the right one: a reserved number belongs to the plan that
+reserved it even before its row is written.
 
 ## 12. Verified, and unverified
 
@@ -872,10 +1039,14 @@ line read for it — the plan's Review Focus repeats the important ones):
 | V15 | `result.json`'s schema is `additionalProperties: false` and is validated **only by tests**, never at read time; readers use the Go struct | `schemas/result.schema.json`, `schemas/schemas_test.go:23`, `internal/runstore/runstore.go:532` |
 | V16 | `runs ls` and `diagnose` read named files, never enumerate the prefix | `internal/cli/runs.go:379-390`, `internal/cli/diagnose.go:158,177` |
 | V17 | The launcher mints the run id, writes `task.json`, then submits the execution — so `--attach` has a place to stand | `internal/cli/run.go:819,1147,1392`, `internal/runstore/runstore.go:502` |
-| V18 | The VM backend is a merged design (#375) with Tasks 1–2 merged (#380, #381); Task 3 is not; `backend: cloud-batch` is refused by config validation, not by a flag | `internal/localcfg/localcfg.go:711-719`, `internal/backend/batch/batch.go:19-21`, `docs/design/compute-backend.md` §8 |
+| V18 | The VM backend is a merged design (#375) with **Tasks 1–3 merged** (#380, #381, #389 — the price table included); `backend: cloud-batch` is refused by config validation, not by a flag; a VM run prices the machine type's quantities from its boot window | `internal/localcfg/localcfg.go:711-719`, `internal/backend/batch/prices.go` (`MachineType`, `MachineTypeOf`, `ForMachineType`), `internal/backend/backend.go:97-103,141-147,149-199,285-289,292-296` (`MachineType`, `VMMinimumBilled`, `BilledWindow`, `WindowNote`, `Prices.Quantities`, `Prices.ComputeUSD` — it is `backend.Prices.ComputeUSD`, there is no `pricing.ComputeUSD`), read at `origin/main` b9d5c5d |
 | V19 | GPUs are out of scope in the VM design, by name | `docs/design/compute-backend.md:1485` (§6.3) |
 | V20 | A repository-less run needs project-centric phase 3's project jobs, which are not shipped; `checkout: clone` is not shipped either | `docs/design/project-centric.md:15,66-68,109`, `internal/cli/recipes_skew.go:36`, `internal/cli/docs_checkout_test.go:123-132` |
-| V21 | Check numbers: rows exist for 42–47 and 57; 48–56 and 58 are free; Check 43's guard block is at `:1437-1458` and "never `belong`" at `:1431` | `docs/gcp-live-checklist.md` |
+| V21 | Check numbers: rows exist for 40–47 (`:317-324`) and 57 (`:325`); **48–56 are reserved by the project-centric plan** (PR #366) and 57 by the compute backend, so **58 is the next free number**; Check 43's guard block is at `:1437-1458` and "never `belong`" at `:1431` | `docs/gcp-live-checklist.md:250-257,317-325,1431,1437-1458` |
+| V24 | A repeated `--run-id` adopts a byte-identical stored task and refuses a different one, **after** `CreateTask` — so an upload ordered before it would rewrite a finished run's inputs | `createTask` `internal/cli/run.go:1146-1172`, `runstore.CreateTask`/`ErrExists`, `blobx.Create`'s `IfNotExist` `internal/blobx/blobx.go:107-127` |
+| V25 | An artifact run would checkpoint like an implement run unless it is stopped: the gate is `checkpointsOn()`, not the checkout arm | `internal/runner/checkpoint.go:65` (`r.follow == nil && r.baseSHA != "" && r.startSHA != "" && cfg.Git.PR.CheckpointsOn()`), `runner.go:1684` (`startCheckpoints` inside the stage runner) |
+| V26 | The agent's git credentials enter its environment at **two** sites inside `bootstrap` (the repo env and the stage env map), and the workflow's secrets at a third (`!r.review`) | `internal/runner/runner.go:635`, `:1135`, `:1091-1099` |
+| V27 | `verify.Settings` is written at bootstrap, before any stage, from the workflow's commands | `verify.WriteSettings` call, `internal/runner/runner.go:1075-1081` |
 | V22 | The three PNGs the check generates are real PNGs: the generator the plan commits to (a `python3` one-liner over `zlib`/`struct`, in Check 58's section) was run in this session and produced three valid 320×240 8-bit RGB PNGs, 865 bytes each | run in this session; the command is in the plan, Check 58's step 2 |
 | V23 | `blobx` has no streaming write and no read above 1 MiB (`MaxReadBytes`), and no `Put`/`Create` variant that takes a path | `internal/blobx/blobx.go:51-54,109-138,148-198,314` |
 
@@ -885,7 +1056,7 @@ line read for it — the plan's Review Focus repeats the important ones):
 |---|---|---|
 | U1 | Whether a GPU can be attached to a Cloud Run job (or to a Batch VM) in the owner's project, and at what price | an owner-run probe in the sandbox (a job submitted with a GPU request) — **not** promised anywhere in this design (§5.4) |
 | U2 | Whether mise's registry can install `ffmpeg` (an asdf/community plugin, or a backend) | `mise ls-remote ffmpeg` on the base image; the design does not depend on it (`image.apt` is the recommendation) |
-| U3 | The container's own ephemeral disk: how Cloud Run sizes it, and how it counts a render's temp files | Check 58 step 7 (an over-cap render must fail cleanly) |
+| U3 | The container's own filesystem: the platform's model is an in-memory filesystem with no volumes (**not stated anywhere in this repository** — this design takes the platform's documented behaviour, not a repo fact), so what a render's temp files do to the job's memory, and **what an OOM kill looks like from outside** (a run with no `result.json`, or a recorded failure?) is unverified | Check 58 step 7's third half: a render driven past the container's memory, observed and written down |
 | U4 | Whether a Cloud Run job's `resources` may be raised on a *running* job's future executions without a new job (it cannot today: the resources are in the job spec) | an owner-run `gcloud run jobs update` on the sandbox; it affects only the docs' "raise the ceiling" advice |
 | U5 | Whether content-type sniffing is needed at all in practice (what the object store reports for a `.mp4` written by ffmpeg on the base image) | Check 58 step 5's recorded type |
 | U6 | The real wall-clock of the upload inside `finalize_reserve` for a file near `max_bytes` | Check 58 step 6, plus the cap's own default choice |
@@ -893,19 +1064,27 @@ line read for it — the plan's Review Focus repeats the important ones):
 ## 13. Open for the owner
 
 Each item is a decision the plan's tasks depend on, with the recommendation this
-document argues for and the cost of the alternative. **All of them can be
-vetoed one by one before any task starts, and none of them is settled by this
-pull request.**
+document argues for and the cost of the alternative. **D1–D7 answer the brief's
+own questions; D8–D11 are the ones this design found while writing it, and two of
+them (D8, D10) would have been silent overclaims if they had been left implicit.**
+**All of them are the owner's to answer — by a yes, or by a veto that rewrites
+the affected tasks — before any code is written** (the plan's P12): none of them
+is settled by this pull request, and approving the document is not approving the
+code.
 
 | # | Question | Recommendation | The alternative, and what it costs |
 |---|---|---|---|
 | **D1** | **Repo-bound or repository-less?** An artifact run needs a checkout for its recipe, its scripts and its `mise.toml`. | **Repo-bound: an "assets" repository** (the owner's existing one) holds the recipe and the render script. It keeps the format's safety rule (*a recipe names no command*, and nothing from the bucket is executed, V7), it versions and reviews the script, and it makes "the run proposes a PR for a script change" a *later* slice rather than a redesign. | **Repository-less runs under a profile.** They do not exist: they need project-centric phase 3's project jobs (V20), and a `checkout: none`; and their render script would have to come from the **bucket** — project recipes are bucket text, which the format deliberately refuses to execute (V7). Cost: the whole of phase 3, plus a new exception to the safety rule, for a case ("I have no repository at all") the owner does not have. |
 | **D2** | **Retention.** | **Under the run prefix, expiring with the record at `runs_days` (90 by default)** (V3), with `fugaro artifacts get` and `gcloud storage cp` documented as the way to keep one. | **An `artifacts/<slug>/…` prefix with its own `artifacts_days`.** Right for a deliverable that must outlive its run; costs a new lifecycle rule, a new variable, **a change to every job's IAM condition** (`JobBucketPrefixes` is compiled into each grant, V4) — a plan and apply per repository — and an unanswered question about which account writes there. Recommended as its own design **once artifacts are in use**, never a separate bucket. |
-| **D3** | **Where heavy renders run, and GPUs.** | **The Cloud Run job, as it is** (V8, V9): 8 vCPU / 32 GiB / a 24h-class task timeout, the existing `compute_usd` estimate, per-workflow `resources` and `timeouts` already there. **GPUs are promised by nothing** (§5.4, U1, V19). | **The VM backend** (Docker-capable VMs, no 8-vCPU ceiling). Costs the rest of compute-backend's tasks (Task 3's price table is not even merged, V18) and its per-run VM weight — worth it the day a render hits the ceiling or needs a container the derived image cannot carry, and that is the trigger to finish it. A **GPU** answer needs U1 first, in either substrate. |
+| **D3** | **Where heavy renders run, and GPUs.** | **The Cloud Run job, as it is** (V8, V9): 8 vCPU / 32 GiB / a 24h-class task timeout, the existing `compute_usd` estimate (`backend.Prices.ComputeUSD`, priced by `quantities` — the machine type's on a VM, the workflow's here), per-workflow `resources` and `timeouts` already there. **GPUs are promised by nothing** (§5.4, U1, V19). **The memory ceiling doubles as the staging ceiling** (§5.2): the container's filesystem is memory, so `outputs.max_bytes × max_files` must fit inside `resources.memory` with room for the render. | **The VM backend** (Docker-capable VMs, no 8-vCPU ceiling). Its price table is merged (V18, #389), so `compute_usd` survives the switch; what it costs is the backend's *enable* work (the per-run account, the reaper, the log routing, the installation-level Batch stage) and, per D11, a wider read/overwrite blast radius. Worth it the day a render hits the ceiling or needs a container the derived image cannot carry — that is the trigger. A **GPU** answer needs U1 first, in either substrate. |
 | **D4** | **The budget model: is the timeout the cap?** | **Yes, in the first slice**: compute is reported (`compute_usd`) and capped only by `timeouts.total`/`timeouts.render`/Cloud Run's task timeout (V10), and the docs, the report and `budget preview` all say **"not capped"** out loud. | **Compute inside the cap**: the spec sketches a 60-second heartbeat reserving vCPU/GiB-second cost through the lease flow (`docs/design/m9-spec-source-v3.md:493`). Costs a new halt reason, a decision about which caps count compute, a per-backend price table (the VM one does not exist, V18) and an interaction with the sweep. A separate design, recommended next. |
 | **D5** | **`mode: artifact`, or a general `outputs:` on any recipe?** | **`mode: artifact` with `outputs:` legal only there.** `mode: review` is the precedent for a run whose shape changes (V5), the mode is where "no PR, no git token, no implement" already lives, and the restriction keeps a new key off every existing recipe. | **`outputs:` on any recipe** (so an implement run could ship a PR *and* a file). It is the better end state and the natural second slice; it costs a decision this design does not need yet — what a run that is both a PR and an artifact means for readiness, the PR's draft state and the report — and it widens the surface of every recipe in the catalog. |
-| **D6** | **Attachments in the first slice, or a second one?** | **The same release, as its own commit (Task 5).** The owner's use case *needs* files in: artifacts out with nothing in is a demo, not the sizzle video. | **Outputs first.** A smaller review surface, and the same two schema changes (task spec + result) are needed either way — so it buys one commit's worth of review and costs the owner a whole release before their own use case works. |
+| **D6** | **Attachments in the first slice, or a second one?** | **The same release, as its own commit (the plan's Task 6).** The owner's use case *needs* files in: artifacts out with nothing in is a demo, not the sizzle video. | **Outputs first.** A smaller review surface, and the same two schema changes (task spec + result) are needed either way — so it buys one commit's worth of review and costs the owner a whole release before their own use case works. |
 | **D7** | **Signed URLs now, or later?** | **Later, and launcher-minted only.** No grant in this installation can sign (V14), no job needs one (it writes with its own account), and the launcher and operator can already read the bytes (V4) — so `fugaro artifacts get` + `gcloud storage cp` is the path today. | **Now, minted by the launcher with a hard TTL.** It is genuinely nicer for a browser (a video you can click); it costs a new IAM grant (`signBlob`), a TTL and audit story, and a bearer credential for bytes that may be a customer's screenshot — its own design, not this one's. |
+| **D8** | **Who authors the render command, and what the "no agent text" claim means.** | **Repository text from `fugaro.yaml`, read into `verify.Settings` at bootstrap (before any stage runs), with the design claiming exactly three things and no more** (§3): the recipe, the bucket and the launcher name no command; the command *string* is fixed before the agent starts, so `render.command_sha256` means something; and **the step is not a boundary against the agent** — same container, same user, same environment. **The rule the docs and the skill carry: make `commands.render` the script itself** (an inline `|` block), so nothing it runs comes from a file the plan stage could rewrite; a command naming a file is permitted, works, and is documented as executing the working tree's copy. | **A pristine tree at the ref for the render** (`git archive`/a second worktree), so a named file's bytes are the commit's. It answers the file question, not the boundary question (the agent still shares container, user and `PATH`), and it costs a second copy of the tree on a memory-backed filesystem (§5.2) — the right shape the day a render must be reproducible from the commit, not the right price for the property this design actually claims. **Operator-config-only** (`commands.render` from the project layer) is the other alternative, and it takes the script out of the repository that owns the tool. |
+| **D9** | **Attachments and the data policy: does a screenshot the owner hands to a run need `allow_data_to`?** | **State it, gate it with the same policy that already governs the repository, and do not invent a second one** (§8.8, §4): an attached file is *task text*, not repository data, so `allow_data_to` — which answers "may this repository's content reach this provider?" — does not literally cover it; but the *consequence* is the one the policy exists for, because the plan stage reads the file and the model sees what it holds. **Recommendation: `fugaro run --attach` prints one line naming the provider the workflow may route to, and the docs say plainly that attaching a file is sending it to that provider under the same policy the model already runs under** — no new key, no new gate, no new refusal; the run's record carries the inputs' names and hashes so "what did we send" has an answer. | **A hard refusal** — `--attach` refused unless every provider the workflow may route to is one the repository already allows: sound in principle and it needs a new cross-check between the launcher's attachment path and the routing config, plus a decision about the *local* case (a lapdog/local run sends nothing anywhere) and about a workflow whose route is chosen at run time. Bigger than this slice, and it is the natural follow-up to `provider-price-catalog`'s own gate. **The third option — say nothing** — is the one to reject outright: an owner leaking a customer's screenshot through a tool that never mentioned the provider is exactly the failure the docs exist to prevent. |
+| **D10** | **Who can read what a run produced, and what is in the render's environment?** | **The facts, stated rather than implied** (§8.3, §8.5, §8.6): an artifact and an input are readable by **every launcher and every operator of the installation** (`objectViewer` on the bucket, `objectAdmin` for an operator) and by **every run of the same repository** (the job grant is the repository's prefix) — and the render step runs with **the agent's own environment, including the workflow's secrets**, because an artifact run checks out the repository's own ref rather than an untrusted pull request's head. **Recommendation: keep all of it as it is and write all of it down** — the artifact ISV docs paragraph, SECURITY.md's, and the record's own `inputs`/`artifacts` lists. Nothing in the first slice narrows it, and the design says so instead of leaving a reader to assume a per-run boundary that does not exist (V4). | **Narrow it now** — a per-run condition or a per-run account for a run's own prefix. It is the right end state, it is not expressible in the compiled-in per-repository grant (`JobBucketPrefixes`, V4), and it would add an IAM plan-and-apply per repository to a slice that currently touches no Terraform at all. It belongs to the design that makes runs multi-repository (D11). |
+| **D11** | **What project-centric phase 3 and the VM backend do to this blast radius.** | **State the widening and make the narrowing a precondition of whichever lands first** (§8.5): phase 3's project jobs and the VM backend's accounts are not per-repository, so an artifact run on either makes its artifacts, inputs and records readable — and **overwritable** — by every run on the profile, not only by its own repository's. **Recommendation: an artifact-producing run stays on the plain Cloud Run backend until that narrowing exists** (per-run prefix condition, or a per-run account), and the trigger to revisit is the same one D3 names. | **Enable artifact runs on those backends as they are.** Cheapest today, and it turns "runs of one repository can see each other" (`SECURITY.md:62`) into "runs of every repository on the profile can see and replace each other's deliverables" — a blast radius nobody has reviewed, for a feature that does not need those backends yet. |
 
 ## 14. What this design deliberately does not do
 
@@ -917,3 +1096,6 @@ pull request.**
 - **No general `outputs:` on implement recipes** (D5's alternative), and no "the run opens a PR for the script change it used" — the latter is a natural third slice, and it needs the artifact run to be worth having first.
 - **No local-only artifact mode**: `fugaro exec` with a `file://` bucket gets the mechanism for free (V2), and the design does not add a second local path.
 - **No artifact registry, no manifest of many runs, no cross-run index.** One run, one artifact set, one record.
+- **No signed manifest, and therefore no tamper evidence** (§8.3): the recorded sha256 proves the bytes came back intact, not who wrote them, because the hash and the artifact live in the same repository-scoped prefix. A launcher-signed manifest (or a per-run key outside the run's prefix) is the mechanism that would change that, and it is its own design.
+- **No per-run IAM narrowing** (D10, D11): the grant an artifact run writes under is its repository's, not its own run's, and this slice touches no Terraform. The narrowing is a precondition of the backend that makes runs multi-repository, and it is named there rather than here.
+- **No pristine render tree** (D8's alternative): the render runs in the checkout the plan stage had, `render.tree` says so, and the docs carry the rule (an inline `commands.render`) that gets the strong property for free.

@@ -2,29 +2,40 @@
 
 **Goal:** a Fugaro run whose deliverable is a file in the runs bucket instead of a pull request — `fugaro run --recipe sizzle --attach shot1.png --attach shot2.png` renders a video in the cloud, checks it with an `ffprobe`-shaped command the repository owns, uploads it to `runs/<slug>/<run>/artifacts/`, records its size, sha256 and content type in `result.json`, and leaves `fugaro artifacts get` as the way to take it back. **This PR (the one that adds this plan and its design doc) is docs-only: no Go, Terraform, schema or `fugaro.yaml` file under any "Files" list below is touched by it.**
 
-**Spec:** [docs/design/artifact-runs.md](../design/artifact-runs.md). Its findings against the code (§1), its verified/unverified table (§12) and its seven decisions for the owner (D1–D7, §13) are settled there; this plan's own decisions continue as P1 onward, each independently vetoable, and **Tasks 1–2 are unblocked by every D**; Tasks 3–8 assume the recommendations the design argues for (D1 repo-bound, D2 under the run prefix, D3 Cloud Run, D5 `mode: artifact`, D6 attachments in this slice) and are rewritten, not patched, if the owner vetoes one. **D4 (the timeout is the cap) and D7 (no signed URLs yet) are visible in this plan only as text** — Tasks 8's preview line and Task 9's SECURITY.md paragraph — and neither adds a mechanism.
+**Spec:** [docs/design/artifact-runs.md](../design/artifact-runs.md). Its findings against the code (§1), its verified/unverified table (§12) and its **eleven** decisions for the owner (D1–D11, §13) are settled there; this plan's own decisions continue as P1 onward, each independently vetoable.
 
-**Depends on:** release 0.7.5 on `main` (the recipe gate `recipesV07Since`, `internal/cli/recipes_skew.go:123`, and `fugaro image build`/`image refresh` as they stand). Nothing here depends on [compute-backend.md](../design/compute-backend.md)'s unmerged tasks (its Task 3's price table is **not** on `main`; the substrate stays Cloud Run, D3) and nothing depends on project-centric phase 3 (D1). **Task 1 depends on no other task. Tasks 4 and 6 depend on Task 3's two methods** (`PutFile` for the upload, `GetFile` for the download and for `fugaro artifacts get`); **Task 7 depends on Task 4's record** (it lists and verifies what the record says) and on `GetFile`; Task 5 needs Task 4's staging directory.
+**Approval gate: nothing below is executed until the owner says yes.** The plan is a *proposal*: **no task starts on the strength of this document alone** (P12). Every decision — the design's D1–D11 and this plan's P1–P13 — is answered by a yes or by a veto that rewrites the tasks it touches, and **Task 1 is D5's answer in code, so it is not unblocked by default either**. Tasks 3–9 assume the recommendations the design argues for (D1 repo-bound, D2 under the run prefix, D3 Cloud Run, D5 `mode: artifact`, D6 attachments in this slice, D8 the command is repository text with an inline script recommended) and are rewritten, not patched, if the owner vetoes one. **D4 (the timeout is the cap), D7 (no signed URLs yet), D9 (attachments and the data policy), D10 (who can read an artifact) and D11 (the phases that widen it) are visible in this plan only as text** — the preview line (Task 8), SECURITY.md's paragraphs and the docs (Task 9), and the attach warning (Task 6) — and none of them adds a mechanism.
 
-**Checked before this plan was written:** every fact below was read from the code at this branch's base, and the design's §12 table carries the full list with its citations (V1–V23). The load-bearing ones for the edits here: the run prefix and the record names (`internal/runstore/runstore.go:386-387,492,502,547`); `blobx`'s write-all-bytes and `MaxReadBytes = 1<<20` (`internal/blobx/blobx.go:51-54,109-138,173-198,314`, V23); the recipe's mode and step kinds (`internal/recipe/recipe.go:37-62`), `checkGateSteps`/`checkGateCommands`/`gateCommand`/`verify.Run` and the "a check step only ever names a `commands.*` key" rule (`internal/runner/gate.go:47-62,100-127,132-175`, `internal/verify/verify.go:39-64,176-260`); the runner's mode branches, the git-token skip and the checkpoint gate (`internal/runner/runner.go:399-403,635,878-885,931-935,966-1000,1076-1080`, `internal/runner/gate.go:305-313`); the review mode's `skipPR` and `OutcomeReviewed` (`internal/runner/reviewmode.go:469-470,698`); `verify.Settings` and its writer (`internal/verify/verify.go:39-64`, `internal/runner/runner.go:1076-1080`); `task.Spec` and its strict decoder (`internal/task/task.go:46-89`); the launch order — mint, `CreateTask`, `Launch` (`internal/cli/run.go:819,1147,1392`); `checkImageSince` and the `*Since` constants (`internal/cli/recipes_skew.go:25-150,204-270`); the Cloud Run limits (`internal/backend/gcp/limits.go:22,36-38,55`); the caps and the uncapped compute estimate (`internal/budget/model.go:150-165`, `internal/budget/evaluate.go:190-209`, `internal/runner/cost.go:62-64`, `internal/cli/budget_preview.go:26-28,489-538`, `docs/design/m9-spec-v3-reconciliation.md:10`); the runner test harness's in-memory bucket (`internal/runner/runner_test.go:53-120`); and Check 43's guard block plus the numbers this plan's Check 58 had to avoid colliding with (`docs/gcp-live-checklist.md:319-324` for rows 42–47, `:325` for check 57, `:1427-1458` for Check 43's guard block). If the merged code differs when a task starts, that task's implementer adapts its edits to the then-current file, not the other way round (the rule `docs/plans/2026-10-08-upgrade.md` uses).
+**Depends on:** release 0.7.5 on `main` (the recipe gate `recipesV07Since`, `internal/cli/recipes_skew.go:123`, and `fugaro image build`/`image refresh` as they stand). The substrate stays Cloud Run (D3), so nothing here needs [compute-backend.md](../design/compute-backend.md)'s enable work — **its Task 3 (the VM price table) merged as #389, so the "unmerged" note this plan first carried is stale** — and nothing depends on project-centric phase 3 (D1, D11).
 
-## Decisions (veto any before execution starts)
+**Ordering, stated once and enforced by the tasks.** Task 1 is first and depends on nothing. Task 2 **needs Task 1**: it consumes the two `verify.Settings` fields Task 1 writes (`Render`, `Probe`) and the config keys behind them, and it brings its own `runstore` types with it (`RenderRecord`, `OutcomeArtifacts`, `Record.Render`, the `outcome` enum value) rather than waiting for Task 4. Task 4 (the outputs) needs Task 3's `PutFile`. Task 5 (the probe) needs Task 2's render step and Task 4's staging directory. Task 6 (files in) needs Task 3's `GetFile`, Task 1's `workflows.<name>.inputs`, and Task 2's `spec.Mode`; it owns `task.Spec.Inputs`, `FUGARO_INPUTS_DIR` and the download. Task 7 needs Task 4's record and Task 3's `GetFile`. Tasks 8 and 9 depend on the surfaces they document. **A task that needs a symbol from a later task is a bug in this list, not a licence to reach forward.**
+
+**Checked before this plan was written:** every fact below was read from the code **at `origin/main` (`b9d5c5d`), which is 0.7.5 plus the openrouter senior reviewer (#387) and the compute backend's Task 3 (#389)**, since the branch's base predates them; and the design's §12 table carries the full list with its citations (V1–V23). The load-bearing ones for the edits here: the run prefix and the record names (`internal/runstore/runstore.go:386-387,492,502,547`); `blobx`'s write-all-bytes and `MaxReadBytes = 1<<20` (`internal/blobx/blobx.go:51-54,109-138,173-198,314`, V23); the recipe's mode and step kinds (`internal/recipe/recipe.go:37-62`), `checkGateSteps`/`checkGateCommands`/`gateCommand`/`verify.Run` and the "a check step only ever names a `commands.*` key" rule (`internal/runner/gate.go:47-62,100-127,132-175`, `internal/verify/verify.go:39-64,176-260`); the runner's mode dispatch and its mode cross-check (`internal/runner/runner.go:399-403`, the recipe/spec cross-check at `:930-935`), the two places the agent's git credentials enter its environment (`:635`, `:1135`) and the secrets site (`:1091`); **the checkpoint gate is `checkpointsOn()` (`internal/runner/checkpoint.go:65`), not the checkout arm**, and it is `runner.go:1684` that starts it inside a stage; the review mode's `skipPR` and `OutcomeReviewed` (`internal/runner/reviewmode.go:469-470,698`); `verify.Settings` and its writer (`internal/verify/verify.go:39-64`, `internal/runner/runner.go:1075-1081`); `task.Spec` and its strict decoder (`internal/task/task.go:46-89`); the launch order — mint, `CreateTask`, `Launch` (`internal/cli/run.go:819,1146-1172,1392`), where a repeated `--run-id` **adopts a byte-identical stored task and refuses a different one**, after the task is written; `checkImageSince` and the `*Since` constants (`internal/cli/recipes_skew.go:25-150,204-270`); the Cloud Run limits by symbol (`internal/backend/gcp/limits.go`'s `cpuChoices`, `memNeedCPU`, `CheckResources` — 1/2/4/6/8 vCPU, ≤ 32Gi, the ratio rules); the caps and the uncapped compute estimate (`internal/budget/model.go:150-165`, `internal/budget/evaluate.go:190-209`, `internal/runner/cost.go:62-64`, `internal/cli/budget_preview.go:26-28,489-538`, `docs/design/m9-spec-v3-reconciliation.md:10`); the runner test harness's in-memory bucket (`internal/runner/runner_test.go:53-120`); and the checklist's **number register** — `docs/gcp-live-checklist.md:250-257`, where **48–56 are reserved by the project-centric plan (PR #366) and 57 by the compute backend (PR #375)**, which is why Check 58 is the next free number rather than a gap — plus rows 40–47 (`:317-324`) and Check 43's guard block (`:1437-1458`, "never `belong`" at `:1431`). If the merged code differs when a task starts, that task's implementer adapts its edits to the then-current file, not the other way round (the rule `docs/plans/2026-10-08-upgrade.md` uses).
+
+## Decisions (veto any before execution starts — and none is assumed)
+
+**P12 below is the gate: an explicit yes from the owner, and no task before it.**
 
 - **P1. Two new `blobx` methods carry the bytes, and nothing else in the object layer changes.** `PutFile` (streaming write, sha256 in the same pass) and `GetFile` (streaming read to a file, hash-verified, capped) are added to `internal/blobx`; `Create`/`ReplaceIf`/`Read`/`ReadMax` keep their signatures and their 1 MiB cap for locks, claims, `result.json` and `verify/*.json`. *Veto alternative:* put `[]byte` artifacts through the existing `Put` and raise a limit — rejected because `ReadMax`'s only consumer shape is "the whole object in memory" (`internal/blobx/blobx.go:173-198`) and an artifact is a video; the CLI would then need the artifact's size to fit RAM, and the runner would hold a second copy of a 256 MiB file to hash it. *Second alternative:* do the streaming in `internal/runner` with go-cloud's `blob.NewWriter` directly — rejected because the runner, the CLI and (later) any copy command would each grow their own write path with its own content-type and error-classification rules, which is exactly what `blobx` exists to prevent (`isForbidden`, `blobx.go:200`).
-- **P2. The agent writes a *plan*, the repository owns the *code*.** `commands.render` and `commands.probe` are repository text from `fugaro.yaml` at the task's ref, read by the runner out of `verify.Settings` exactly as `commands.build|test|lint` are (`internal/verify/verify.go:39-49`, written at `internal/runner/runner.go:1076-1080`), and the agent's plan file is *data* the command may read. **The runner never executes text the agent wrote.** *Veto alternative:* let `commands.render` be whatever the agent left in the working tree (`sh render.sh`). Shorter, and it costs the property that makes the gate safe — "a recipe never names a command", and the thing the runner runs is repository text reviewed like code (`docs/design/generic-tool.md:356`, `internal/runner/gate.go:125-127`). **This is P2 in the design's sense and it is not negotiable in this plan.**
+- **P2. The agent writes a *plan*; the command is repository text read once — and the step is not a sandbox (design §3, D8).** `commands.render` and `commands.probe` are repository text from `fugaro.yaml` at the task's ref, read by the runner into `verify.Settings` at bootstrap, **before any stage runs** (`verify.WriteSettings`, `internal/runner/runner.go:1075-1081`), exactly as `commands.build|test|lint` are; the agent's plan file is *data* that command may read. **The claim this plan makes is exactly three things and no more:** the recipe, the task spec and the bucket name no command; the command *string* is fixed before the agent starts, so `render.command_sha256` is meaningful; and **the render is not a boundary against the agent** — same container, same user, same environment. A `commands.render` that names a file (`sh .fugaro/render.sh …`) executes **the working tree's bytes**, which the plan stage could have rewritten, and the docs say so. **The rule the docs and the skill carry: write `commands.render` as the script itself**, an inline `|` block, so nothing it runs comes from a file the agent could touch. *Veto alternative:* a pristine `git archive` tree at the ref for the render — it makes a named file's bytes the commit's, and it does not make the step untouchable (shared container, user and `PATH`), for a second copy of the tree on a memory-backed filesystem. **P2 is not negotiable in this plan; the *claim* it used to make is, and it is now the design's D8.**
 - **P3. `render` is a new step kind and `plan` an explicit one; a check step is not reused.** `StepRender` runs last and its failure is the run's failure; `StepPlan` marks the optional agent stage a `mode: artifact` recipe may begin with (`steps: [plan, render]` is the sizzle case, `steps: [render]` alone is the zero-model case). *Veto alternative:* add `render` to `check.command`'s enum and let a check step be last in artifact mode — one concept fewer, and it makes a step kind whose meaning depends on its mode, which is the conditional the recipe format has avoided so far, and it would have to re-cut the ordering rule (`schemas/recipe.schema.json`'s `prefixItems`) and the failure path (`gateResult`, which feeds the implement prompt).
-- **P4. The render and the probe run as one command each, in the checkout, as the agent's user, through `procgroup`, with the repository's own environment** (`r.env`), exactly like `verify.Run` (`internal/verify/verify.go:238-242`) — no shell wrapper of the runner's own, no new executor. The probe is one invocation for the whole set, with `FUGARO_OUT_DIR` and `FUGARO_ARTIFACTS` in the environment. *Veto alternative:* one probe process per artifact with the path interpolated into a command line — rejected in the design (§3): it puts a runner-derived name inside a shell command.
-- **P5. Artifacts are staged locally, then hashed, then uploaded from the staging directory, and the object key is always `runs/<slug>/<run>/artifacts/<name>`.** The staging directory is `<StateDir>/artifacts/`, beside `verify/` (which is uploaded the same way, `internal/runner/runner.go:2192`), so the sanitiser has exactly one output path, the probe sees the same bytes that will be uploaded, and a name that escapes cannot reach a key. *Veto alternative:* upload the files in place from the checkout and record the paths — rejected: the checkout is agent-writable, so between hashing and uploading the bytes could change, and the name would then be a path into the repository rather than into a staging root.
+- **P4. The render and the probe run as one command each, in the checkout, as the agent's user, through `procgroup`, with the repository's own environment** (`r.env`), exactly like `verify.Run` (`internal/verify/verify.go:238-242`) — no shell wrapper of the runner's own, no new executor. The probe is one invocation for the whole set, with `FUGARO_OUT_DIR` and **`FUGARO_ARTIFACTS_FILE`** (the path of the file the runner writes the names into, not a newline-joined value) in the environment. *Veto alternative:* one probe process per artifact with the path interpolated into a command line — rejected in the design (§3): it puts a runner-derived name inside a shell command.
+- **P5. Artifacts are staged locally, then hashed, then uploaded from the staging directory, and the object key is always `runs/<slug>/<run>/artifacts/<name>`.** The staging directory is `<StateDir>/artifacts/`, beside `verify/` (which is uploaded the same way, `internal/runner/runner.go:2192`), so the sanitiser has exactly one output path, the probe sees the same bytes that will be uploaded, and a name that escapes cannot reach a key. **On Cloud Run that directory is memory** (§5.2, U3: the container's filesystem is an in-memory filesystem with no volumes), so `max_files × max_bytes` is a *memory* budget as much as a disk one — which is why the defaults are the boring 8 × 256 MiB and why the docs tell an owner who raises them to raise `resources.memory` with them. *Veto alternative:* upload the files in place from the checkout and record the paths — rejected: the checkout is agent-writable, so between hashing and uploading the bytes could change, and the name would then be a path into the repository rather than into a staging root.
 - **P6. The caps are defaults with hard ceilings, and they are checked twice.** `outputs.max_files` defaults to 8 and may not exceed 32; `outputs.max_bytes` defaults to 256 MiB and may not exceed 2 GiB; `inputs.max_files` defaults to 16/ceiling 64 and `inputs.max_bytes` to 256 MiB/ceiling 1 GiB. The launcher checks the attachments before the first byte goes up; the runner checks the task spec's claim *and* the files it actually found before uploading. A cap is a refusal with a named reason, never a truncation. *Veto alternative:* no caps on the first slice — rejected: bucket-iam §10's L6 ("fill `runs/` with junk") is already a known limit, and a glob that matches a directory of frames is the cheapest way to hit it.
-- **P7. `--attach` uploads between the run-id mint and `CreateTask`.** The launcher mints the id (`internal/cli/run.go:819`), uploads and hashes the files to `runs/<slug>/<run>/inputs/<name>`, writes the list into the task spec (`task.Spec.Inputs`), and only then writes `task.json` and launches. *Veto alternative:* upload after the launch — rejected: the run would have to poll for names it does not know, and a half-uploaded set is a race with no good resolution; the launcher's own `objectUser` under `runs/` is enough for the upload (`docs/design/bucket-iam.md:126-128`), so nothing is gained by waiting.
-- **P8. `budget preview` gains one line and one line only: the compute ceiling, labelled "not capped".** No cap is applied to compute (design §6, D4), and the line prices `vCPU`/`memory` × (`timeouts.render` + the model stages' expected time) at the installation's compute prices. *Veto alternative:* leave the preview alone until compute is inside the cap — rejected: the preview is where an owner decides whether to launch, and for an artifact run it currently under-reports by the whole render.
+- **P7. `--attach` uploads between the run-id mint and `CreateTask` — and only after the id is known to be new.** The launcher mints the id (`internal/cli/run.go:819`), **refuses a `--run-id` whose task already exists before writing a single byte** (a repeated `--run-id` is not a new run: `createTask`, `internal/cli/run.go:1146-1172`, adopts a byte-identical stored task and refuses a different one — and it runs *after* an upload would have, which is exactly how an attach could overwrite a finished run's `inputs/`), then uploads and hashes the files to `runs/<slug>/<run>/inputs/<name>` with the create-only condition where the backend supports it (`blobx.Create`'s `IfNotExist`, `internal/blobx/blobx.go:107-127`; GCS-only, so the launcher-side refusal is the guarantee), writes the list into the task spec (`task.Spec.Inputs`), and only then writes `task.json` and launches. *Veto alternative:* upload after the launch — rejected: the run would have to poll for names it does not know, and a half-uploaded set is a race with no good resolution; the launcher's own `objectUser` under `runs/` is enough for the upload (`docs/design/bucket-iam.md:126-128`), so nothing is gained by waiting.
+- **P8. `budget preview` gains one line and one line only: the compute ceiling, labelled "not capped".** No cap is applied to compute (design §6, D4), and the line prices `vCPU`/`memory` × (`timeouts.render` + the model stages' expected time) with **`backend.Prices.ComputeUSD`** (`internal/backend/backend.go:291-296` — the method the runner itself uses, `internal/runner/cost.go:60-66`), at the prices the launcher can already read (`localcfg.ComputePrices`, `internal/localcfg/localcfg.go:73-75`, over `FUGARO_COMPUTE_PRICES`, `internal/infra/spec.go:44-46`). *Veto alternative:* leave the preview alone until compute is inside the cap — rejected: the preview is where an owner decides whether to launch, and for an artifact run it currently under-reports by the whole render.
 - **P9. The new recipe keys are gated at launch by one `*Since` constant (`artifactsSince`), and the task spec's new field by the same one.** A `mode: artifact` recipe needs a runner that knows it, and `task.Spec` refuses unknown fields (`internal/task/task.go:46-89`), so `fugaro run --attach` must refuse against a job image whose runner predates the feature, through the existing `checkImageSince` seam (`internal/cli/recipes_skew.go:204-270`) with a message naming `fugaro image refresh`. *Veto alternative:* let the runner refuse after the launch — rejected: that is the skew the seam exists to catch, and it costs a launched run that fails on a field the launcher could have checked.
-- **P10. Release placement: one PR, Tasks 1–9, released as 0.8.0** (design §10). Tasks 1, 2, 8 and 9 are individually safe to ship in a patch; Tasks 3–7 are the feature and belong in the point release. Task 10 is the owner-run live check and is **not** part of the PR; Task 11 is the full suite. No Terraform, no IAM, no bucket lifecycle and no `.github/workflows/` file is touched by any task in this plan.
+- **P10. Release placement: one PR, Tasks 1–9, released as 0.8.0** (design §10). **Only Task 1 may be called patch-safe, and only because it carries the runner's own refusal**: a `mode: artifact` recipe against a runner that has the format and not the mode would otherwise take the **implement** path (`runner.go:399-403` dispatches on the spec, and the mode cross-check at `:930-935` has no artifact arm), so Task 1 ships the format *and* a fail-closed refusal that ends such a run at bootstrap. Tasks 8 (display only) and 9 (docs) are safe alone after it; Task 2 **needs Task 1** and is not safe alone; Tasks 3–7 are the feature and belong in the point release. Task 10 is the owner-run live check and is **not** part of the PR; Task 11 is the full suite. No Terraform, no IAM, no bucket lifecycle and no `.github/workflows/` file is touched by any task in this plan.
+- **P11. The recorded sha256 proves integrity, not authorship (design §8.3, D10).** Every doc, the report and the command's own help say **"the bytes you got are the bytes the run uploaded"** and never "tamper evidence": the hash, `result.json` and the artifact live in the same repository-scoped prefix, so anything that can rewrite one can rewrite the others consistently — a sibling run of the same repository, a launcher, an operator. A signed manifest is its own design and is **not** in this slice (design §14).
+- **P12. Nothing here is executed before the owner approves it.** This plan is a proposal, not a work order: Tasks 1–9 wait for an explicit yes, and a veto of any D or P rewrites the tasks it touches rather than being worked around. The plan's own "Depends on", "Ordering" and "File Structure" sections are the contract for *what* the tasks are; this line is the contract for *when*.
+- **P13. A task owns the types and settings it records with.** The two `verify.Settings` fields go to Task 1 (which owns the config keys behind them), the `render` record's `runstore` types and the `outcome` value to Task 2 (which writes them), `ArtifactFile` and `Record.Artifacts` to Task 4, `InputFile` and `Record.Inputs` to Task 6. A task never calls a symbol a later task introduces.
 
 ## Global Constraints
 
-- **Nothing the runner executes is new text.** Every command a run runs still comes from `verify.Settings`, written at bootstrap from the `fugaro.yaml` the run read at its ref (`internal/runner/runner.go:1076-1080`); `render` and `probe` join `build|test|lint` there and nowhere else. A recipe, a task spec and a bucket object still name no command.
-- **An artifact run never pushes and never opens a pull request.** `r.artifact` joins `r.review` at every site that decides "the runner fetches, the agent does not": the agent's git env (`runner.go:635`), the checkpoint gate and the base fetch (`:966-1000`), and finalize's PR path (`r.skipPR`, `internal/runner/gate.go:305-313`). It also never checkpoints, so a run that renders for an hour cannot push a tip.
+- **Nothing the runner executes is new text, and the claim stops exactly there.** Every command a run runs still comes from `verify.Settings`, written at bootstrap from the `fugaro.yaml` the run read at its ref (`internal/runner/runner.go:1075-1081`); `render` and `probe` join `build|test|lint` there and nowhere else, and a recipe, a task spec and a bucket object still name no command. **The settings are written before any stage runs, so the command *string* is fixed before the agent starts — and that is the whole of the property.** The render is not a boundary against the agent (same container, same user, same environment, P2/D8), and no doc, comment, report or test in this plan may say otherwise.
+- **An artifact run never pushes and never opens a pull request.** `r.artifact` joins `r.review` at the sites that decide it: the two places the agent's git credentials enter its environment (`runner.go:635`, `:1135`), **`checkpointsOn()` (`internal/runner/checkpoint.go:65`) — the real gate; `runner.go:966`'s base fetch is a read and stays** — and finalize's PR path (`r.skipPR`, `internal/runner/gate.go:305-313`). **It is the checkout arm that stays the implement one**: an artifact run checks the task's ref out on a local branch exactly as an implement run does (`runner.go:899-921`), because there is no pull request whose configuration could be untrusted, and `r.rec.Branch` is the branch lock's key rather than a ref anything pushes (review mode's own wording, `runner.go:878-887`).
+- **An artifact run keeps the workflow's secrets — deliberately.** `!r.review` at `runner.go:1091-1099` is left exactly as it is: the agent stage and the render step get the workflow's secret environment, because an artifact run stands where an implement run stands (its own ref, not an untrusted pull request's head). **No task narrows it, and Task 9's docs and SECURITY.md say it out loud** (design §8.6, D10).
+- **The staging set must fit the container's memory, and that is a *config* rule, not a hope.** On Cloud Run the filesystem is memory (§5.2, U3), so `outputs.max_files × outputs.max_bytes` is refused by `fugaro validate` and by the launch gate when it exceeds the workflow's `resources.memory` — a refusal with the two numbers in it, added in Task 1 beside the other `outputs` refusals, and the reason an owner who raises one must raise the other. **The render's own temp files are still outside this arithmetic** and are what Check 58's step 7 observes.
 - **No live cloud or network call in any automated test.** The runner tests use the harness's in-memory bucket (`internal/runner/runner_test.go:53-120`); `blobx` tests use `file://` buckets, which `blobx.Open` supports (`internal/cli/exec.go:59`); the CLI tests use the existing fakes. The one task that would touch a real cloud is Task 10, and it is the owner's, run by hand.
 - **A stored record stays readable by every version.** `result.json`'s new keys (`render`, `artifacts`, `inputs`) and `task.json`'s (`inputs`) are **optional**, none is added to `required`, and `schemas/result.schema.json`'s `additionalProperties: false` is satisfied by adding the properties. A reader that has not heard of them ignores them; a writer that predates them simply omits them. `schemas/schemas_test.go` is the only validator, and it grows with `runstore.Record` (`TestResultSchemaAcceptsRunnerRecords`) — a run record written before this change still validates, and that is a test, not a hope.
 - **Docs must match code.** `go test ./internal/cli -run 'Docs|Lint' -count=1 -timeout 9m` stays green throughout, and a proposed command or flag is never written into a lint-scanned doc as if it existed: `TestBaseImageDocCommandFlagsAreReal` (`docs_base_test.go:173`) resolves every `--flag` near a `trackedDocCommands` mention against the real cobra flag set, and the skill lint (`plugin/skills_lint_test.go`) resolves every `fugaro …` mention in `plugin/skills/` against the tree. Task 9's docs either land after the commands they name, or describe them in a form the lint does not resolve.
@@ -33,7 +44,7 @@
 
 ## Review Focus (mutation-proof notes)
 
-1. **The runner executes text the agent wrote.** Pinned by a test in which the agent stage creates `render.sh` in the checkout and the recipe's `commands.render` is `sh .fugaro/render.sh "$FUGARO_RENDER_PLAN"`: assert the command the runner ran came from settings (the fake records the argv), that a *different* `render.sh` planted in the working tree is not what ran, and that `commands.render: ""` refuses the run rather than running an empty `sh -c` and recording a bogus success — the same fail-closed shape `verify.Run` already has for an empty `commands.lint` (`internal/verify/verify.go:212-222`). Task 2.
+1. **The command the runner runs is not one the agent wrote — and nothing more than that is claimed.** Pinned by asserting (a) the argv the runner ran is the `commands.render` string from `Settings`, which the *recipe* cannot influence: a fixture recipe naming a `render:` step over a workflow with `commands.render: ""` is refused at launch, and the run fails closed rather than running an empty `sh -c` (the shape `verify.Run` already has for an empty `commands.lint`, `internal/verify/verify.go:212-222`); (b) `render.command_sha256` is the hash of the recorded string, so the record is self-consistent; and (c) **the agent's own file is explicitly not asserted against**: the test writes a `render.sh` into the checkout and says in a comment that the runner does not promise which copy runs, because it does not (P2/D8). Task 2.
 2. **An artifact run pushes something.** Pinned three ways: the harness's fake provider records zero pushes, `rec.Outcome` is `artifacts` and never `ready`/`draft`, and the agent's environment contains no git credential — asserted by the same shape `TestReviewModeAgentHasNoGitToken` uses (`internal/runner/reviewmode_test.go:969`, and its `envValue` helper at `internal/runner/runner_test.go:156`). Task 2.
 3. **A file escapes the run's prefix.** Pinned by a table test over the sanitiser: `../../etc/passwd`, `/etc/passwd`, `a/../../b`, `out/./x` normalising to a duplicate, a name with a NUL or a newline, an over-long name, and a symlink pointing outside the outputs root — each refused with a named reason, and the accepted ones all landing under `runs/acme-app/<run>/artifacts/` in the harness's bucket (assert the bucket's key set, not the returned slice). Task 4.
 4. **A cap is silently exceeded.** Pinned by four tests: a glob matching more files than `max_files`; one file larger than `max_bytes`; a task spec claiming fewer inputs than the bucket holds; and a set whose total is over the cap while every file is under it. Each must refuse with the cap named and upload **nothing** — assert the bucket has no `artifacts/` key at all, so a partial upload fails the test. Tasks 4 and 6.
@@ -42,20 +53,26 @@
 7. **A render that outlives its deadline.** Pinned by a test with a small `timeouts.render` and a `sleep`-shaped render command: the step ends as a timeout, the run is `failed`/`timed_out`, the record quotes it, and the run's own `finalizeAt` still holds (no stage may eat the reserve). Task 2.
 8. **The record breaks an old reader, or an old record breaks the new one.** Pinned by `TestResultSchemaAcceptsRunnerRecords` over a record with the new fields **and** by a test that unmarshals a fixture `result.json` written before this change (no `artifacts`, no `render`, no `inputs`) into `runstore.Record` and asserts every new field is nil/empty and nothing else changed — the compatibility claim in Global Constraints, as a test. Task 4.
 9. **`fugaro artifacts get` writes something it should not.** Pinned by tests: a mismatching sha256 writes **nothing** (assert the output directory is empty), an over-cap `Content-Length` refuses before the body is read, a name from the record that tries to escape is refused, `--force` is required to overwrite, and the command never opens what it wrote (no exec, no unpack — assert by making the artifact a shell script whose execution would create a second file, and asserting that file does not exist). Task 7.
-10. **The upload's memory.** Pinned by a test that streams an artifact larger than `blobx.MaxReadBytes` (say 8 MiB) through `PutFile` from a `file://` bucket and asserts the object's bytes and hash, plus a `runtime.ReadMemStats`-shaped guard is **not** the assertion (allocation is not a contract) — the assertion is that `PutFile` never calls `ReadAll`: `grep`-proof by construction because `PutFile` takes a path and `io.Copy`s it. Task 3.
+10. **`mode: artifact` silently runs as an implement run.** Pinned twice. **Before Task 2 exists**: a `mode: artifact` recipe launched against this runner ends `failed` at bootstrap with the refusal naming the mode — asserted by a test that would otherwise see a push (the harness's fake provider records pushes) and a `ready` outcome. **And after**: the recipe/spec cross-check at `runner.go:930-935` gets its artifact pair, asserted in both directions — a spec whose mode disagrees with the resolved recipe is refused, and an artifact recipe launched by a spec that does not claim it is refused too. Task 1 (the refusal) and Task 2 (the cross-check).
+11. **An attach overwrites a finished run's inputs.** Pinned by a test that seeds a run prefix with a `task.json` and an `inputs/` object, launches with `--attach --run-id <that run>`, and asserts **the object's bytes are unchanged**, no new object was written, and the exit is the "already holds a different task" refusal — the ordering P7 fixes, asserted from the bucket rather than from the call order. Task 6.
+12. **The staging set is bigger than the container's memory.** Pinned by a validation test: an `outputs` block whose `max_files × max_bytes` exceeds the workflow's `resources.memory` is refused by `fugaro validate` and by the launch gate, with both numbers in the message — the invariant that keeps the common case out of an OOM kill, which the design states is a killed container with no record rather than a clean failure (§5.2, U3). Task 1. **And the direction this test cannot pin** — a render's own temp files against the memory limit — is Check 58's step 7, observed rather than asserted.
+13. **The upload's memory.** Pinned by a test that streams an artifact larger than `blobx.MaxReadBytes` (say 8 MiB) through `PutFile` from a `file://` bucket and asserts the object's bytes and hash, plus a `runtime.ReadMemStats`-shaped guard is **not** the assertion (allocation is not a contract) — the assertion is that `PutFile` never calls `ReadAll`: `grep`-proof by construction because `PutFile` takes a path and `io.Copy`s it. Task 3.
 
 ## File Structure
 
 | Path | Responsibility | Task |
 |---|---|---|
 | `schemas/recipe.schema.json`, `internal/recipe/recipe.go`, `internal/recipe/recipe_test.go` | `ModeArtifact`, `StepPlan`/`StepRender`, the `outputs` block, the ordering and refusal rules, `UsesV08` (the new keys, for the launch gate) | 1 |
-| `schemas/fugaro.schema.json`, `internal/config/config.go`, `internal/config/defaults.go`, `internal/config/config_test.go`, `internal/cli/validate_recipes.go` | `commands.render`, `commands.probe`, `timeouts.render`, `workflows.<name>.inputs`, their defaults and their `validate` refusals | 1 |
-| `internal/runner/artifact.go` (new), `internal/runner/artifact_test.go` (new), `internal/runner/runner.go` (bootstrap's mode branch, the render step, the report section) | `r.artifact`, the plan stage, the render step's deadline and failure path, the `render` record, the report's Artifacts section | 2 |
+| `schemas/fugaro.schema.json`, `internal/config/config.go`, `internal/config/defaults.go`, `internal/config/config_test.go`, `internal/cli/validate_recipes.go` | `commands.render`, `commands.probe`, `timeouts.render`, `workflows.<name>.inputs`, their defaults and their `validate` refusals, **the `outputs`-fits-in-memory refusal** | 1 |
+| `internal/verify/verify.go` (the two `Settings` fields), `internal/runner/runner.go` (`verify.WriteSettings`'s call, and the fail-closed refusal of a `mode: artifact` recipe this runner does not implement) | `Settings.Render`, `Settings.Probe`, and the refusal that makes Task 1 safe alone (P10) | 1 |
+| `internal/runner/artifact.go` (new), `internal/runner/artifact_test.go` (new), `internal/runner/runner.go` (the dispatch, `r.artifact`, the two git-env sites, the mode cross-check), `internal/runner/checkpoint.go` (`checkpointsOn`) | `r.artifact`, the plan stage, the render step's deadline and failure path, the report's Artifacts section | 2 |
+| `internal/runstore/artifact.go` (new: `RenderRecord`, `OutcomeArtifacts`), `internal/runstore/runstore.go` (`Record.Render`), `schemas/result.schema.json` (the `render` property, `outcome`'s new value), `schemas/schemas_test.go`, `internal/task/task.go` + `schemas/task.schema.json` (`Spec.Mode`) | the types Task 2 writes with, owned by Task 2 (P13) | 2 |
 | `internal/blobx/blobx.go`, `internal/blobx/blobx_test.go` | `PutFile`, `GetFile` — streaming, hashing, capped, 403-classified | 3 |
-| `internal/runstore/artifact.go` (new), `internal/runstore/artifact_test.go` (new), `internal/runstore/runstore.go` (the `Record` fields), `schemas/result.schema.json`, `schemas/schemas_test.go` | `ArtifactFile`, `InputFile`, `RenderRecord`, the record's three optional fields, the schema properties, the round-trip tests | 4 |
+| `internal/runstore/artifact.go` (`ArtifactFile`), `internal/runstore/runstore.go` (`Record.Artifacts`), `schemas/result.schema.json` (the `artifacts` property), `schemas/schemas_test.go` | `ArtifactFile`, the record's `artifacts` field, the schema property, the round-trip tests (`RenderRecord` and `OutcomeArtifacts` are Task 2's) | 4 |
 | `internal/runner/artifact.go` (the selection, sanitiser, caps, upload), `internal/runner/artifact_test.go` | `artifactSet`, `sanitiseName`, `uploadArtifacts` | 4 |
-| `internal/verify/verify.go` (the two `Settings` fields), `internal/runner/artifact.go` (the probe), `internal/runner/artifact_test.go` | the probe's one invocation, its two environment variables, its record | 5 |
-| `internal/task/task.go`, `schemas/task.schema.json`, `internal/task/task_test.go`, `internal/cli/run.go` (the flags and the upload), `internal/cli/run_attach.go` (new), `internal/cli/run_attach_test.go` (new) | `task.Spec.Inputs`, `--attach`, the pre-mint upload, the caps, the image gate | 6 |
+| `internal/runner/artifact.go` (the probe), `internal/runner/artifact_test.go` | the probe's one invocation, `FUGARO_OUT_DIR`/`FUGARO_ARTIFACTS_FILE`, its record (the `Settings` fields are Task 1's) | 5 |
+| `internal/task/task.go` (its `Inputs`; `Mode` is Task 2's), `schemas/task.schema.json`, `internal/task/task_test.go`, `internal/cli/run.go` (the flags, the run-id freshness check, the upload), `internal/cli/run_attach.go` (new), `internal/cli/run_attach_test.go` (new) | `task.Spec.Inputs`, `--attach`, the upload **after** the freshness check, the caps, the image gate | 6 |
+| `internal/runstore/artifact.go` (`InputFile`), `internal/runstore/runstore.go` (`Record.Inputs`), `schemas/result.schema.json` (the `inputs` property) | the input record Task 6 writes with (P13) | 6 |
 | `internal/runner/artifact.go` (the download), `internal/runner/artifact_test.go` | the inputs' download, the hash check, the `inputs/` write and the git exclude | 6 |
 | `internal/cli/artifacts.go` (new), `internal/cli/artifacts_test.go` (new), `internal/cli/runs.go`, `internal/cli/diagnose.go`, `internal/cli/runview.go`, the corresponding tests | `fugaro artifacts ls\|get`, the display in `runs ls` and `diagnose` | 7 |
 | `internal/cli/budget_preview.go`, `internal/cli/budget_preview_test.go` | the compute-ceiling line, labelled "not capped" | 8 |
@@ -161,6 +178,33 @@ Defaults in `internal/config/defaults.go`: `timeouts.render = min(verify, total 
 
 `gateCheckProblems` (`internal/cli/validate_recipes.go:112-126`) — the function `fugaro validate` uses to report a recipe's gate refusals against every workflow — gains two more messages beside `RecipeGateProblems`'s (`internal/runner/gate.go:118-122`), whose shared list is `gateCommandProblems` (`internal/runner/gate.go:100-116`): an artifact recipe over a workflow with a blank `commands.render` is refused at launch **and** reported by validate, and `outputs.probe: probe` over a blank `commands.probe` likewise.
 
+**Two `verify.Settings` fields, because every later task reads them and the plumbing belongs here** (`internal/verify/verify.go:39-64`, written at `internal/runner/runner.go:1075-1081`):
+
+```go
+// package verify
+type Settings struct {
+    // … existing fields …
+    // Render is commands.render: repository text from the fugaro.yaml the
+    // run read at its ref, written at bootstrap BEFORE any stage runs, so
+    // the string is fixed before the agent starts (plan P2, design D8).
+    Render string `json:"render"`
+    // Probe is commands.probe; "" means an outputs.probe naming it must be
+    // refused rather than run as an empty command.
+    Probe string `json:"probe"`
+}
+```
+
+**And the refusal that makes Task 1 safe alone (P10).** The runner's recipe/spec mode cross-check (`internal/runner/runner.go:930-935`) gains one arm **here** and Task 2 replaces it with the real mode:
+
+```go
+case rcp.Mode == recipe.ModeArtifact:
+    return fmt.Errorf("recipe %s is mode: artifact, which this runner does not implement", rrec.Name)
+```
+
+Without it a `mode: artifact` recipe falls through to the implement path (`runner.go:399-403` dispatches on a flag the recipe never sets, and the checkout arm at `:899-921` is the implement one), so a patch release carrying the format alone would open a pull request for a recipe that asked for a file. **The refusal is three lines and a test; it is what makes "Task 1 is patch-safe" true rather than hopeful.**
+
+**And one config refusal the memory bound needs** (Global Constraints): `outputs.max_files × outputs.max_bytes` must not exceed the workflow's `resources.memory`, refused by `fugaro validate` and by the launch gate with both numbers in the message — the staging directory is memory on Cloud Run (§5.2, U3), so a set that cannot fit is a killed container rather than a clean failure.
+
 - [ ] **Step 1: Write the failing tests**
 
 ```go
@@ -176,8 +220,13 @@ func TestUsesV08IsPresenceNotValue(t *testing.T)             // mode: implement 
 // internal/config/config_test.go
 func TestRenderTimeoutDefaultsUnderTotal(t *testing.T)  // min(verify, total-finalize_reserve), and never above total
 func TestInputCapsHaveCeilings(t *testing.T)
+func TestOutputCapsMustFitTheWorkflowsMemory(t *testing.T) // Review Focus 12: both numbers named, validate and launch
 ```
-Run: `go test ./internal/recipe ./internal/config -run 'TestArtifact|TestOutputs|TestUsesV08|TestRenderTimeout|TestInputCaps' -count=1`
+```go
+// internal/runner/modeartifact_test.go (Task 2 folds this file into artifact_test.go)
+func TestAModeArtifactRecipeIsRefusedByARunnerThatDoesNotImplementIt(t *testing.T) // Review Focus 10: failed at bootstrap, zero pushes, outcome none
+```
+Run: `go test ./internal/recipe ./internal/config -run 'TestArtifact|TestOutputs|TestUsesV08|TestRenderTimeout|TestInputCaps|TestOutputCaps' -count=1` and `go test ./internal/runner -run 'TestAModeArtifactRecipe' -count=1`
 Expected: **FAIL** — `undefined: recipe.ModeArtifact` and the schema tests' first run against an unknown key.
 
 - [ ] **Step 2: Implement, then run again.** Expected: `ok`. The recipe schema's `steps` variants gain artifact's two shapes as their own `oneOf` entries (a new `$defs.artifactSteps` beside the existing `reviewModeReview`), and `schemas/recipe.schema.json`'s conditional gains "`mode: artifact` → exactly one render, optionally led by one plan".
@@ -191,33 +240,65 @@ Expected: **FAIL** — `undefined: recipe.ModeArtifact` and the schema tests' fi
 
 **Files:**
 - Create: `internal/runner/artifact.go`, `internal/runner/artifact_test.go`
-- Edit: `internal/runner/runner.go` (bootstrap's mode branch at `:878-935`, the mode switch at `:399-403`, the git-env skip at `:635`, the checkpoint gate at `:966`, `Run`'s finalize arm), `internal/runner/runner_test.go` (only if a harness helper is needed)
+- Edit: `internal/runner/runner.go` (the dispatch at `:399-403`, `r.artifact` beside `r.review` at `:831-833`, the two git-env sites at `:635` and `:1135`, the mode cross-check at `:930-935` — replacing Task 1's refusal arm), `internal/runner/checkpoint.go` (`checkpointsOn`, `:65`)
+- Edit: `internal/task/task.go` + `schemas/task.schema.json` + `internal/task/task_test.go` (`Spec.Mode`), `internal/cli/run.go` (the launcher writes it), `internal/cli/run_test.go`
+- Create: `internal/runstore/artifact.go` (this task's `RenderRecord` and `OutcomeArtifacts` only), `internal/runstore/artifact_test.go`
+- Edit: `internal/runstore/runstore.go` (`Record.Render`), `schemas/result.schema.json` (the `render` property and `outcome`'s new value), `schemas/schemas_test.go`
+- Delete: `internal/runner/modeartifact_test.go` (Task 1's file; its one case is folded in here)
 
 **Interfaces:**
 ```go
+// package task
+type Spec struct {
+    // … existing fields …
+    // Mode is the recipe's mode, written by the launcher from the recipe it
+    // resolved ("artifact" today). The runner cannot read the recipe before
+    // it reads the configuration, so the spec is what selects the shape at
+    // bootstrap — exactly as ReviewPRs does for mode: review — and the
+    // resolved recipe is cross-checked against it afterwards.
+    Mode string `json:"mode,omitempty"`
+}
+```
+```go
+// package runstore
+// OutcomeArtifacts is a run whose deliverable is in the bucket.
+const OutcomeArtifacts = "artifacts"
+
+// RenderRecord is what the render step did, recorded into result.json.
+// CommandSHA256 is the hash of Command as recorded (redacted), so a reader
+// can prove the string did not change afterwards without the record ever
+// holding a secret; Tree is always "working" today and exists because the
+// design's D8 is what decides it (plan P2).
+type RenderRecord struct {
+    Command       string  `json:"command"`
+    CommandSHA256 string  `json:"command_sha256"`
+    Tree          string  `json:"tree"`
+    ExitCode      int     `json:"exit_code"`
+    TimedOut      bool    `json:"timed_out,omitempty"`
+    DurationS     float64 `json:"duration_s"`
+    StartedAt     string  `json:"started_at"`
+}
+```
+```go
 // package runner
 // artifact is whether this run is a mode: artifact run (design
-// artifact-runs.md §3). Set at bootstrap from the resolved recipe's Mode,
-// beside r.review, and cross-checked against the task spec in exactly two
-// directions — never a third:
-//   - a spec that carries inputs but whose recipe is not mode: artifact is
-//     refused (nothing but an artifact run reads inputs/);
-//   - an artifact spec that names a branch, a PR or a previous run is
-//     refused (an artifact run has no branch of its own and continues
-//     nothing — the same refusal shape review mode's own cross-check has).
-// An artifact spec with NO inputs is legal and must stay legal: an
-// out-only run (steps: [render], or a plan stage that needs nothing
-// attached) carries an empty Inputs and is launched every day, so "the
-// reverse" of the first rule is not a rule.
+// artifact-runs.md §3). Set at bootstrap from the TASK SPEC's Mode, beside
+// r.review, because the recipe is not resolved until after the configuration
+// is read (runner.go:926): the spec selects the shape, and the resolved
+// recipe is cross-checked against it in exactly two directions — never a
+// third:
+//   - a spec whose Mode disagrees with the resolved recipe's mode is refused;
+//   - a resolved artifact recipe whose spec does not claim it is refused too.
+// An artifact spec with NO inputs is legal and must stay legal: an out-only
+// run (steps: [render], or a plan stage that needs nothing attached) carries
+// an empty Inputs and is launched every day, so "a spec with inputs is an
+// artifact run" is one direction of Task 6's cross-check and its converse is
+// not a rule.
 type run struct {
     // … existing fields …
-    artifact bool
-    out      *recipe.Outputs
-    // renderRec is what runRender produced, recorded into the run's
-    // result.json by finalize and printed by the report.
+    artifact  bool
+    out       *recipe.Outputs
     renderRec *runstore.RenderRecord
-    artifacts []runstore.ArtifactFile
-    inputs    []runstore.InputFile
 }
 
 // runArtifactMode runs an artifact run: the optional plan stage, then the
@@ -231,37 +312,45 @@ func (r *run) runArtifactMode(ctx context.Context)
 func (r *run) runRender(ctx context.Context) (runstore.RenderRecord, error)
 ```
 
-Bootstrap changes, each one line and each a mirror of the review-mode line beside it:
+**The seams, each with the site as it is on `origin/main` and why it is that site.** This table is the correction of this plan's own first draft, which put the mode on the recipe and the gate on the checkout arm:
 
-| Site | Change |
-|---|---|
-| `runner.go:399-403` | `case r.review: … case r.artifact: r.runArtifactMode(runCtx)` |
-| `runner.go:635` | `r.follow == nil && !r.review` → `&& !r.artifact` (no git credential in the agent's env) |
-| `runner.go:966` | the same condition → no `FetchBase`, no checkpoint push for an artifact run |
-| `runner.go:878-885` | a new arm: an artifact run checks the task's ref out (a local branch, exactly as the implement path does — `CheckoutNewBranch`, never pushed) and reads its configuration from the working tree at that ref, because there is no pull request whose `fugaro.yaml` could be untrusted (the reason review mode reads the base instead) |
-| `runner.go:931-935` | the mode cross-checks gain their artifact pair |
-| `finalize` | `r.skipPR` is already set by the artifact arm, so finalize writes the report and `result.json` and nothing else — the same mechanism review mode uses (`reviewmode.go:470,698`) |
+| Site | Change | Why there, and not where the first draft had it |
+|---|---|---|
+| `internal/runner/runner.go:831-833` | `if spec.Mode == recipe.ModeArtifact { r.artifact = true }`, beside `len(spec.ReviewPRs) > 0 → r.review` | **the ordering seam.** `resolveRecipe` runs at `:926`, *after* the configuration is read, and the checkout switch (`:868-921`) is decided before that — so nothing at the checkout can depend on the recipe's mode. Review mode solves it the same way: the spec carries the shape |
+| `internal/runner/runner.go:399-403` | the dispatch gains `case r.artifact: r.runArtifactMode(runCtx)` | one branch beside `case r.review:`; without it the artifact recipe takes `runAgentLoop` and opens a pull request |
+| `internal/runner/runner.go:635` **and** `:1135` | `!r.review` → `!r.review && !r.artifact` at **both** | the first draft named only `:635` (the repository's own env). The credentials that actually reach the agent's stage environment are built at `:1135`, in `bootstrap`'s env map, so a task that changes one and not the other leaves the git token in the agent's environment and fails its own test |
+| `internal/runner/runner.go:899-921` | **no change** — an artifact run takes the implement checkout arm (`CheckoutNewBranch`), and `r.rec.Branch` is the branch lock's key, never pushed (review mode's own wording, `:878-887`) | there is no pull request whose `fugaro.yaml` could be untrusted, so `readBaseConfig` is not needed; the draft's "bootstrap's mode branch at `:878`" was not expressible at all |
+| `internal/runner/checkpoint.go:65` | `checkpointsOn()` gains `&& !r.artifact` | **this is the real "never pushes" gate.** Checkpoints are started per stage at `runner.go:1684`, not at the checkout; the `!r.review` at `:966` guards `FetchBase` (a read) and the checkpoint *base SHA*, so changing it alone would still let a stage push a tip |
+| `internal/runner/runner.go:930-935` | the mode cross-check gains its artifact pair, and **Task 1's `case rcp.Mode == recipe.ModeArtifact` refusal is deleted here** | the recipe is known now, and the spec must agree with it both ways |
+| `internal/runner/runner.go:1091-1099` | **no change** — `!r.review` stays | deliberate: an artifact run keeps the workflow's secrets (Global Constraints, design §8.6/D10), and the test asserts they are present rather than absent so a later refactor cannot change it silently |
+| `internal/runner/gate.go:305-313` (`endWithoutPR`) | **no change** — the artifact arm sets `r.skipPR` itself | finalize's PR path is already keyed on it |
+| `internal/runner/runner.go:1075-1081` | **no change** — Task 1 already puts `Render`/`Probe` into `Settings` here | the plumbing is Task 1's, so this task consumes it instead of adding it |
 
-The plan stage: one agent stage named `plan`, its own stage timeout, its own `agent.max_budget_usd` (the existing stage machinery, unchanged), with the task text plus the recipe's `use_when` plus a line naming `FUGARO_INPUTS_DIR` (Task 6) and the render plan's expected path, `.fugaro/render-plan.json`. Its prompt is the *only* place the run describes the deliverable to the agent, so it is written to say: write a plan, do not render, the render is the runner's. Nothing about it is new code beyond the prompt and the stage's name.
+The plan stage: one agent stage named `plan`, its own stage timeout, its own `agent.max_budget_usd` (the existing stage machinery, unchanged), with the task text plus the recipe's `use_when` plus the render plan's expected path, `.fugaro/render-plan.json`. Its prompt is the *only* place the run describes the deliverable to the agent, so it is written to say: write a plan, do not render, the render is the runner's. **It does not name `FUGARO_INPUTS_DIR`**: that variable arrives with Task 6, which adds it beside `FUGARO_STATE_DIR` in the env map this task builds — and until then a plan stage cannot see an input, because nothing can attach one.
 
-The `render` record keeps the shape the design fixes: `{command, exit_code, timed_out, duration_s, started_at}`, where `command` is the **redacted** exact string (the redactor is already there) and `exit_code` a number. `OutcomeArtifacts` is a new value in `runstore` (`"artifacts"`), added to the schema's `outcome` enum in Task 4.
+The `render` record keeps the shape the design fixes, and the two fields the design's D8 added are why it is legible: `command` is the **redacted** exact string (the redactor is already there), `command_sha256` is the hash of that recorded string, and `tree` is `"working"` — the checkout the plan stage also had. `OutcomeArtifacts` is the new `runstore` value (`"artifacts"`), added to `schemas/result.schema.json`'s `outcome` enum **here**, because this task is what writes it (P13).
 
 - [ ] **Step 1: Write the failing tests**
 
 ```go
 // internal/runner/artifact_test.go
-func TestArtifactRunNeverPushesAndHasNoGitToken(t *testing.T) // Review Focus 2
+func TestArtifactRunNeverPushesAndHasNoGitToken(t *testing.T) // Review Focus 2: zero pushes, outcome artifacts, and no credential in the stage env
+func TestArtifactRunKeepsTheWorkflowsSecrets(t *testing.T)    // the deliberate non-change, asserted so it cannot drift
+func TestArtifactRunDoesNotCheckpoint(t *testing.T)          // checkpointsOn() false with CheckpointsOn() on and both SHAs set
 func TestArtifactRunOutcomeIsArtifacts(t *testing.T)
 func TestRenderFailureEndsTheRunFailedWithNoArtifacts(t *testing.T)
 func TestRenderTimeoutIsRecordedAndFailsTheRun(t *testing.T)  // Review Focus 7
-func TestRenderCommandComesFromSettingsNotTheWorkingTree(t *testing.T) // Review Focus 1
+func TestRenderCommandComesFromSettings(t *testing.T)         // Review Focus 1, with the assertion the plan can actually make
+func TestRenderCommandSHA256IsOfTheRecordedString(t *testing.T)
 func TestBlankRenderCommandRefusesTheRun(t *testing.T)        // Review Focus 1, fail closed
 func TestPlanStageIsOptional(t *testing.T)                    // steps: [render] runs with no agent call at all
 func TestArtifactRunRecordsNoBranchAndNoPR(t *testing.T)
+func TestAModeArtifactSpecThatDisagreesWithTheRecipeIsRefused(t *testing.T) // Review Focus 10
+func TestAModeArtifactRecipeWithNoSpecModeIsRefused(t *testing.T)          // Review Focus 10, the other direction
 ```
 The harness (`internal/runner/runner_test.go:53-120`) already provides the in-memory bucket, the fake provider and the scripted agent; the artifact tests use `newHarnessFiles` with a fixture recipe committed to the remote (`.fugaro/recipes/sizzle.yaml`) and a `fugaro.yaml` carrying `commands.render`, so no new fake is needed. **If the scripted agent cannot yet script "the agent writes a file", that is a two-line addition to the harness (a step that writes into `req.Dir`), and it belongs to this task.**
 
-Run: `go test ./internal/runner -run 'TestArtifact|TestRender|TestPlanStage' -count=1`
+Run: `go test ./internal/runner -run 'TestArtifact|TestRender|TestPlanStage|TestAModeArtifact' -count=1` and `go test ./internal/task ./internal/runstore ./schemas -count=1`
 Expected: **FAIL** — `undefined: runstore.OutcomeArtifacts`, and the run currently takes the implement path.
 
 - [ ] **Step 2: Implement, then run again.** Expected: `ok`.
@@ -322,7 +411,7 @@ Expected: **FAIL** — `b.PutFile undefined`.
 ### Task 4: The outputs — select, sanitise, cap, hash, upload, and record
 
 **Files:**
-- Create: `internal/runstore/artifact.go`, `internal/runstore/artifact_test.go`
+- Edit: `internal/runstore/artifact.go`, `internal/runstore/artifact_test.go` (both created by Task 2)
 - Edit: `internal/runstore/runstore.go` (the `Record` fields), `schemas/result.schema.json`, `schemas/schemas_test.go`
 - Edit: `internal/runner/artifact.go`, `internal/runner/artifact_test.go`
 
@@ -344,23 +433,12 @@ type ProbeResult struct {
     ExitCode int     `json:"exit_code"`
     Warning  string  `json:"warning,omitempty"` // "" when the probe passed
 }
-type InputFile struct {
-    Name   string `json:"name"`
-    Bytes  int64  `json:"bytes"`
-    SHA256 string `json:"sha256"`
-}
-type RenderRecord struct {
-    Command   string    `json:"command"`
-    ExitCode  int       `json:"exit_code"`
-    TimedOut  bool      `json:"timed_out"`
-    DurationS float64   `json:"duration_s"`
-    StartedAt time.Time `json:"started_at"`
-}
-// Record gains, all optional and all absent from required:
-//   Render    *RenderRecord  `json:"render,omitempty"`
+// RenderRecord, OutcomeArtifacts and InputFile are NOT here: the first two
+// are Task 2's and InputFile and Record.Inputs are Task 6's, in this same
+// file, because they are what write them (P13). This task adds to Record,
+// optional and absent from required:
 //   Artifacts []ArtifactFile `json:"artifacts,omitempty"`
-//   Inputs    []InputFile    `json:"inputs,omitempty"`
-// And Outcome gains OutcomeArtifacts = "artifacts".
+// (Record.Render and the outcome value are already there, added by Task 2.)
 ```
 
 ```go
@@ -383,7 +461,7 @@ The sanitiser is one function with one refusal list (design §8.2): the name is 
 
 The caps, and the order they are checked in: match count against `max_files`, then each match's size against `max_bytes`, then the set's total against `max_bytes × max_files` (the aggregate ceiling). Nothing is staged until every check passes — **so a refused set leaves the staging directory empty and the bucket untouched** (Review Focus 4).
 
-`schemas/result.schema.json` gains the three properties and the `artifacts` outcome, none of them required. `schemas/schemas_test.go`'s `TestResultSchemaAcceptsRunnerRecords` grows with the struct (it marshals a fully-populated `runstore.Record`, so it fails until the schema has the new properties — that is the test that keeps the two in step), and a new `TestResultSchemaAcceptsARecordWithoutArtifacts` unmarshals a pre-change fixture and asserts the new fields are empty (Review Focus 8).
+`schemas/result.schema.json` gains the `artifacts` property (the `render` property and the `artifacts` outcome are already there from Task 2, and `inputs` arrives with Task 6, which owns `Record.Inputs`), not required. `schemas/schemas_test.go`'s `TestResultSchemaAcceptsRunnerRecords` grows with the struct (it marshals a fully-populated `runstore.Record`, so it fails until the schema has the new properties — that is the test that keeps the two in step), and a new `TestResultSchemaAcceptsARecordWithoutArtifacts` unmarshals a pre-change fixture and asserts the new fields are empty (Review Focus 8).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -394,7 +472,7 @@ func TestStageArtifactsRefusesTheCaps(t *testing.T)           // Review Focus 4,
 func TestUploadArtifactsWritesUnderTheRunPrefix(t *testing.T) // assert the bucket's key set
 func TestArtifactHashMatchesTheUploadedBytes(t *testing.T)    // Review Focus 5
 func TestArtifactsAreUploadedInNameOrder(t *testing.T)
-func TestResultJSONCarriesRenderArtifactsAndInputs(t *testing.T)
+func TestResultJSONCarriesRenderAndArtifacts(t *testing.T) // inputs are Task 6's; that test grows then
 func TestArtifactNameCollisionAfterCleaningIsRefused(t *testing.T)
 func TestASymlinkOutOfTheOutputsRootIsRefusedNotFollowed(t *testing.T)
 ```
@@ -414,8 +492,8 @@ Expected: **FAIL**.
 ### Task 5: The probe
 
 **Files:**
-- Edit: `internal/verify/verify.go` (`Settings.Render`, `Settings.Probe`), `internal/runner/runner.go:1076-1080` (write both from `wf.Commands`)
 - Edit: `internal/runner/artifact.go`, `internal/runner/artifact_test.go`
+- **No edit to `internal/verify/verify.go` or the `verify.WriteSettings` call**: `Settings.Render` and `Settings.Probe` are Task 1's (`internal/runner/runner.go:1075-1081`); this task reads them (P13)
 
 **Interfaces:**
 ```go
@@ -423,14 +501,15 @@ Expected: **FAIL**.
 // runProbe runs commands.probe once, after the render and before the
 // upload, with the whole staged set named in the environment:
 //   FUGARO_OUT_DIR   the staging directory's absolute path
-//   FUGARO_ARTIFACTS the staged names, one per line, in upload order
+//   FUGARO_ARTIFACTS_FILE the path of the file holding the staged names,
+//   one per line, in upload order
 // A non-zero exit or a timeout fails the run and refuses the upload
 // (Review Focus 6): the probe is the only thing that can say a 0-byte
 // render is not a video, so it must be able to stop one.
 func (r *run) runProbe(ctx context.Context, set artifactSet) (runstore.ProbeResult, string, error)
 ```
 
-The probe runs through `procgroup.Run` with `Dir: s.RepoDir`, `Env: append(r.env, "FUGARO_OUT_DIR=…", "FUGARO_ARTIFACTS=…")` and `Grace: commandGrace` — the same call shape `verify.Run` uses (`internal/verify/verify.go:238-242`) — under `timeouts.verify`, since it is a check and not a render. Its output is captured as a redacted log tail (`logtail`, already imported by the gate) and quoted in the report when it fails.
+The probe runs through `procgroup.Run` with `Dir: s.RepoDir`, `Env: append(r.env, "FUGARO_OUT_DIR=…", "FUGARO_ARTIFACTS_FILE=…")` and `Grace: commandGrace` — the same call shape `verify.Run` uses (`internal/verify/verify.go:238-242`) — under `timeouts.verify`, since it is a check and not a render. Its output is captured as a redacted log tail (`logtail`, already imported by the gate) and quoted in the report when it fails.
 
 `outputs.probe: none` (or a blank `commands.probe`) means the probe is skipped and the record says `{ran: false}` (Review Focus 6's second half) — the design's §3 choice: the structural checks are still there, and the report says no probe ran.
 
@@ -456,9 +535,10 @@ Expected: **FAIL**.
 ### Task 6: Files in — `--attach`, the task spec, the download
 
 **Files:**
-- Edit: `internal/task/task.go` (the `Inputs` field), `schemas/task.schema.json`
+- Edit: `internal/task/task.go` (the `Inputs` field and `InputFile`), `schemas/task.schema.json`
 - Test: `internal/task/task_test.go`
-- Edit: `internal/cli/run.go` (the flag and the gate), Create: `internal/cli/run_attach.go`, `internal/cli/run_attach_test.go`
+- Edit: `internal/runstore/artifact.go` (`InputFile`), `internal/runstore/runstore.go` (`Record.Inputs`), `schemas/result.schema.json` (the `inputs` property), `schemas/schemas_test.go` — Task 6 owns these (P13)
+- Edit: `internal/cli/run.go` (the flag, the gate, and the ordering above), Create: `internal/cli/run_attach.go`, `internal/cli/run_attach_test.go`
 - Edit: `internal/runner/artifact.go` (the download), `internal/runner/artifact_test.go`
 
 **Interfaces:**
@@ -487,6 +567,15 @@ type InputFile struct {
 func attachInputs(ctx context.Context, b *blobx.Bucket, prefix string, paths []string, caps config.Inputs) ([]task.InputFile, error)
 ```
 
+**The order, which is the fix Review Focus 11 asked for: every refusal that can be made from what the launcher already has happens before the first byte leaves the machine.** `--attach --run-id <existing>` today would upload into that run's `inputs/` and only then reach `createTask`'s adoption-or-refusal logic (`internal/cli/run.go:1146-1172`), which sits *after* the task is written and after a launch could have happened — so the object's bytes would already be overwritten even though the run is refused. This task therefore:
+
+1. resolves the repo and the run id;
+2. **reads `runs/<slug>/<run>/task.json` first** (the same read `createTask` does, `internal/cli/run.go:1146-1162`). If it exists and is **not** byte-identical to the spec this launch would write, the launch is refused **here**, before any upload — the existing message and exit code are reused, not a new one; if it is byte-identical, the run is an adoption, and the inputs it already names are the ones this launch must upload the same bytes of: an attachment whose local hash differs from the stored `InputFile.SHA256` is refused the same way;
+3. checks the caps and the image gate (P9);
+4. uploads with `PutFile`, which is GCS-only `IfNotExist`-hardened (Task 3's `cmd`) so a race cannot silently replace an adopted run's input either.
+
+`TestAttachWithAnExistingRunIdRefusesBeforeUploading` asserts exactly this from the recorded call order (zero `PutFile` calls, and the object's bytes unchanged), and Review Focus 11 carries it. The write-once property is *only* for adoption; a fresh run id has an empty prefix and uploads normally.
+
 The `--attach` flag is repeatable (`StringArray`) and resolves its repository exactly as a plain launch does — `--repo`, else the checkout's origin (`internal/cli/run.go:155`, `:520-523`), so the goal's `fugaro run --recipe sizzle --attach shot1.png …` needs no `--repo` at all. It refuses more paths than the workflow's `inputs.max_files` **before** uploading anything. The name for each attachment is `filepath.Base(path)` after the same sanitiser shape Task 4 uses; two attachments with the same base name are refused rather than overwritten. The image gate (P9) runs with the rest of the launch's gates: `checkImageSince(..., artifactsSince, "--attach", …)` — the same message shape, naming `fugaro image refresh --repo %s --workflow %s`.
 
 The runner's side: before the first step, `downloadInputs` reads `spec.Inputs` and **re-applies both refusals the launcher applied** — the caps (a list longer or larger than the workflow's, re-checked from the spec) and **the name refusals**, with the same list Task 4's `sanitiseName` uses, because an input name becomes a filesystem path: a spec whose `inputs[].name` is `../../.git/hooks/pre-commit`, absolute, NUL-bearing or over-long is refused and **fails the run**, never cleaned into something plausible and never written outside `inputs/`. Each accepted name is then downloaded from `runs/<slug>/<run>/inputs/<name>` into `<RepoDir>/inputs/<name>` with `blobx.GetFile`, **passing the spec's `sha256` as the expected hash** so a mismatch leaves nothing at the destination. A file the bucket has but the spec does not is not downloaded at all (it cannot be named), which is the whole reason the list lives in the spec. `inputs/` is written into `.git/info/exclude` (appended once, idempotently) so an artifact run can never commit a screenshot, and `FUGARO_INPUTS_DIR` joins the agent's environment for the plan stage. The record's `inputs` are the spec's list, echoed, so a reader sees exactly what the run was given.
@@ -495,7 +584,8 @@ The runner's side: before the first step, `downloadInputs` reads `spec.Inputs` a
 
 ```go
 // internal/cli/run_attach_test.go
-func TestAttachUploadsBeforeTheTaskSpecIsWritten(t *testing.T) // Review Focus: the order, asserted from recorded calls
+func TestAttachUploadsBeforeTheTaskSpecIsWritten(t *testing.T) // the order, asserted from recorded calls
+func TestAttachWithAnExistingRunIdRefusesBeforeUploading(t *testing.T) // Review Focus 11: zero PutFile, object bytes unchanged
 func TestAttachRefusesMoreFilesThanTheCap(t *testing.T)
 func TestAttachRefusesDuplicateBaseNames(t *testing.T)
 func TestAttachNeedsAResolvableRepo(t *testing.T) // the origin is enough (P7); a checkout with neither is the only refusal
@@ -584,7 +674,7 @@ compute ceiling: 8 vCPU x 32 GiB x 2h0m0s = $X.XX at this installation's compute
                  (bounded by timeouts.total, not by budget.per_run_usd; see SECURITY.md)
 ```
 
-The arithmetic is `pricing.ComputeUSD(cpu, memGiB, total)` — the same function the runner's cost estimate uses (`internal/runner/cost.go:62-64`, `internal/backend/backend.go:172-177`) — with the workflow's `resources` and its `timeouts.total`, **not** `timeouts.render`: the line is the worst case a run can bill, and a render that overruns its own step still burns the run's clock until the deadline. Prices come from the same source the runner's do (the installation's `FUGARO_COMPUTE_PRICES`, `internal/infra/spec.go:46,682`); when they are unset the line is printed with the price source named and no dollars, rather than a wrong number.
+The arithmetic is `p.ComputeUSD(p.Quantities(cpu, memGiB))` on a `backend.Prices` value — `backend.Prices.ComputeUSD(cpu, memGiB, d)` (`internal/backend/backend.go:292-296`; there is no `pricing.ComputeUSD`, and the design's §5.3/V18 carry the same correction), the method the runner's own cost estimate calls (`internal/runner/cost.go:61`) — with the workflow's `resources` and its `timeouts.total`, **not** `timeouts.render`: the line is the worst case a run can bill, and a render that overruns its own step still burns the run's clock until the deadline. Prices come from the same source the runner's do (the installation's `FUGARO_COMPUTE_PRICES`, `internal/infra/spec.go:46,682`); when they are unset the line is printed with the price source named and no dollars, rather than a wrong number.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -610,14 +700,14 @@ Expected: **FAIL**.
 **Files:**
 - Create: `docs/artifact-runs.md` (the user-facing guide)
 - Edit: `docs/recipes.md` (the format table gains `mode: artifact`, `plan`, `render`, `outputs`), `docs/base-image.md` (ffmpeg through `image.apt`, as a worked example)
-- Edit: `SECURITY.md` — **the two paragraphs of design §8.7, verbatim**: the artifact paragraph in "### The assumption" and the "an artifact run's compute is not capped" bullet in "Known limits"
+- Edit: `SECURITY.md` — **the two paragraphs of design §8.7, verbatim**: the artifact paragraph in "### The assumption" (which says the render executes repository text read once and is **not** a boundary against the agent — the corrected wording, never "the runner never executes text the agent wrote") and the "an artifact run's compute is not capped" bullet in "Known limits"
 - Edit: `docs/gcp-live-checklist.md` — Check 58's row in the table and its section, below
 - Edit: `plugin/skills/routing/SKILL.md` — its "Choosing a recipe" section (`:47`) gains one paragraph on when an artifact recipe is the right answer, and the words "attach a file only if you would paste it into a pull request on a repository every launcher can read"
 - Edit: `docs/release.md` — one plan-shape bullet: the release note names the new recipe mode, the new CLI subcommand and the fact that the caps count model dollars only
 
 **Ordering constraint, as in every plan here:** the docs that name `--attach`, `fugaro artifacts ls|get` and the new keys land **after** Tasks 1–8, because the docs and skill lints resolve what they read (`docs_base_test.go:173`, `plugin/skills_lint_test.go`). `docs/artifact-runs.md` is not in `trackedDocCommands` until someone adds it; when it is added, every flag it names must exist.
 
-**The user guide is short and answers five things**, in this order: what an artifact run is (and that it has no pull request); the recipe (`mode: artifact`, `plan`, `render`, `outputs`) with the ffmpeg example; the attachments and **the warning of design §4 verbatim**; what the run records and how to read it back (`fugaro artifacts ls|get`, the sha256, the retention window); and what is not built (GPUs, signed URLs, compute inside the cap, repository-less runs) with a pointer to the design's §13.
+**The user guide is short and answers five things**, in this order: what an artifact run is (and that it has no pull request); the recipe (`mode: artifact`, `plan`, `render`, `outputs`) with the ffmpeg example, **carrying D8's rule in the guide's own words: write `commands.render` as the script itself (an inline `|` block), because a command that names a file runs the *working tree's* bytes, which the plan stage could have rewritten — the runner does not promise which copy runs, and the step is not a sandbox**; the attachments and **the warning of design §4 verbatim**; what the run records and how to read it back (`fugaro artifacts ls|get`, the sha256, the retention window); and what is not built (GPUs, signed URLs, compute inside the cap, repository-less runs) with a pointer to the design's §13.
 
 **Check 58's row goes in the table beside the others**, and its section is written in full: **seven numbered steps**, each preceded by a re-run of **Check 43's guard block** (`docs/gcp-live-checklist.md:1437-1458`) — that is the file's own shape, not a copy of it here.
 
@@ -630,7 +720,7 @@ Expected: **FAIL**.
 - **Step 4, the probe**, two halves: the record's `artifacts[].probe` (`ran: true`, exit 0) **and** an independent local `ffprobe` of the file `fugaro artifacts get` wrote — duration and resolution.
 - **Step 5, the recorded content type** against the object's own (U5).
 - **Step 6, retrieval**: the file comes back, `sha256sum` equals the record's `sha256`, and the **upload's wall clock** is measured against `timeouts.finalize_reserve` (U6). The row also records that the run's objects are inside `runs/` and expire with it.
-- **Step 7, the failure direction, both halves (U3)**: a probe that demands an impossible duration must end the run `failed`/`none` with **nothing under `artifacts/`**, and a set over `max_bytes` must refuse with the cap named, upload nothing, and leave the container alive.
+- **Step 7, the failure direction, three halves (U3)**: a probe that demands an impossible duration must end the run `failed`/`none` with **nothing under `artifacts/`**; a set over `max_bytes` must refuse with the cap named, upload nothing, and leave the **container alive**; and **a render whose own peak exceeds the job's memory** (the staging copy and the render's temp files are both on the memory-backed filesystem, §5.2/D3/U3), run under a deliberately small `resources.memory` — this half **states no expected outcome**, because the design does not know one: the FACT is what was observed (a container killed with **no `result.json` at all**, or a clean recorded `failed`), written down in the section so U3 stops being unverified. It is deliberately the one step whose assertion is "record what you saw".
 - **The Restore**, last: the run prefixes, the local PNGs and video, the `image.apt` revert (noting the derived image stays until the next refresh), and the fixture-recipe commit — and a sentence saying whether the check created anything in the installation's IAM, bucket, lifecycle or jobs (**it should not**).
 
 - [ ] **Step 1: Write the docs, SECURITY.md and the skill edits.**
@@ -673,8 +763,10 @@ What this plan knows it is unsure of, so the reviewer does not have to find it:
 1. **The `plan` step's name and its stage.** `plan` is a new step kind whose only content is "run one agent stage here". If the reviewer prefers the implement-analogue (the agent stage is implicit and `steps: [render]` always means plan-then-render with a separate key to opt out), the change is local to Task 1 and Task 2 and does not touch Tasks 3–8. **Decided as written (P3) because a zero-model artifact run is worth having and "no agent" must be spellable.**
 2. **`timeouts.render`'s default.** `min(verify, total − finalize_reserve)` is the shape the other three use, and it is the conservative side: on a repository that does not set it, a render gets the verify budget, not the whole run. An owner with a two-hour render sets `timeouts.total` and `timeouts.render` together, and the plan's docs say so. **If the owner would rather the default be `total − finalize_reserve`, that is one line in Task 1 and no other task changes.**
 3. **The caps' numbers** (8 files / 256 MiB out, 16 files / 256 MiB in). They are defaults with ceilings (P6); the task that could invalidate them is Task 10 step 6, which measures the upload's real wall clock against `finalize_reserve`.
-4. **The probe's environment variables are the interface.** `FUGARO_OUT_DIR` + `FUGARO_ARTIFACTS` (newline-separated) is the whole contract with a repository's script, and it is deliberately dumb (no JSON, no arguments). If a reviewer wants per-file arguments instead, that is P4 and Task 5 alone.
+4. **The probe's environment variables are the interface.** `FUGARO_OUT_DIR` + `FUGARO_ARTIFACTS_FILE` (a path to a one-name-per-line file, not a joined value) is the whole contract with a repository's script, and it is deliberately dumb (no JSON, no arguments). If a reviewer wants per-file arguments instead, that is P4 and Task 5 alone.
 5. **The staging directory's location** (`<StateDir>/artifacts/`) is chosen for parity with `verify/`; nothing else depends on it, and it is not uploaded itself — only the individual files are.
 6. **What this plan does not do, deliberately:** no GPU (D3, U1), no compute inside the cap (D4), no retention prefix (D2's alternative), no signed URLs (D7), no repository-less runs (D1's alternative), no general `outputs:` on implement recipes (D5's alternative), and no artifact registry or cross-run index. Each is named in the design's §13/§14 with its cost, so a reviewer can rule on it there rather than in a task.
 7. **The one claim in this plan that could not be verified offline** is whether `mise` can install `ffmpeg` (U2). The plan does not use it: the docs (Task 9) and the check (Task 10) use `image.apt`, which is a shipped mechanism (`images/derived/Dockerfile.tmpl:26-33`). Task 10's FACT line records the digest, which is what makes the ffmpeg claim true on a real image rather than plausible on a template.
-8. **The numbers in Check 58's name and its neighbours are checked, not assumed** (`docs/gcp-live-checklist.md`: rows 42–47 and 57 exist, 57 is the compute backend's, 48–56 and 58 are free). If a later plan takes 58 before this one lands, this plan's check renumbers and nothing else changes.
+8. **The numbers in Check 58's name and its neighbours are checked, not assumed** (`docs/gcp-live-checklist.md:250-257` is the register: **48–56 are reserved by the project-centric plan (PR #366, merged `c86eb92`) and 57 by the compute backend (PR #375)**; rows 40–47 are at `:317-324` and 57 at `:325`). **58 is therefore the next free number, and the section says so rather than leaving a reader to guess whether 55 was skipped by mistake.** If a later plan takes 58 before this one lands, this plan's check renumbers and nothing else changes.
+9. **The one seam this fix round moved, and why it is the right one.** The first draft put the mode on the recipe and the branch on the checkout arm. Neither is expressible: `resolveRecipe` runs at `runner.go:926`, after the configuration is read, while the checkout switch is decided at `:868-921`; and "never pushes" is really `checkpointsOn()` (`checkpoint.go:65`), started per stage at `:1684`, not the `!r.review` at `:966` (which guards `FetchBase` and the base SHA). The mode therefore travels in the **task spec** (`Spec.Mode`), beside `ReviewPRs`, and the resolved recipe is cross-checked against it in both directions. **If a reviewer prefers the recipe to be the only source, the change is Task 2's two directions and nothing else** — but then the bootstrap cannot know the shape at all.
+10. **The render's environment is not sanitised, deliberately.** An artifact run keeps the workflow's secrets (design §8.6/D10, the `!r.review` at `:1091-1099` unchanged), because the render is the same class of repository text as `commands.build`, and removing secrets would remove the ability to render from a private source. **The residual risk is stated, not hidden**: a plan-stage agent that can write the working tree shares the container with a render that has the secrets. The veto alternative is a render with the secrets stripped, and it is one line in Task 2's env construction. **The same shape covers D11**: an artifact is readable by every launcher of the installation, and the VM backend would widen overwrite from one repository to every repository on the profile.
