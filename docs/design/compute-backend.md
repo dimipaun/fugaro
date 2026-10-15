@@ -2431,8 +2431,25 @@ leaked VM of *this check* is told from a real run's.
     # this block is run (`bash check57.sh`), so `UID=$(...)` would end the check
     # on that line rather than measure anything.
     JOB_UID=$(gcloud batch jobs describe "${NAME:?}" --project="${P:?}" --location="${L:?}" --format='value(uid)')
+    # WHERE an entry is read from is half the answer, and this step is the one
+    # that can apply the §1.5 arm: `gcloud logging read` without --bucket reads
+    # _Default, and an entry the installation's sink has routed into its bucket
+    # is not there. The probe's own JSON carries the installation's label
+    # (`{"fugaro": "managed", "fugaro_chk": "57"}`, step 2), so from the moment
+    # the arm is applied every probe entry is in the bucket and _Default answers
+    # nothing -- which reads exactly like "the job's labels do not reach the
+    # entry" when the arm the owner just applied is the cause. The bucket and
+    # the view are the installation's own (names.log: `fugaro` and
+    # `fugaro-runs` by default; read the installation's tfvars for others).
+    LOG_BUCKET=fugaro
+    LOG_VIEW=fugaro-runs
     gcloud logging read "resource.type=\"batch.googleapis.com/Job\" AND labels.\"job_uid\"=\"${JOB_UID:?}\"" \
-      --project="${P:?}" --limit=1 --format=json
+      --project="${P:?}" --bucket="${LOG_BUCKET:?}" --location=global --view="${LOG_VIEW:?}" --limit=1 --format=json
+    gcloud logging read 'resource.type="batch.googleapis.com/Job" AND labels.fugaro_chk=57' \
+      --project="${P:?}" --bucket="${LOG_BUCKET:?}" --location=global --view="${LOG_VIEW:?}" --limit=1 --format=json
+    # And the same label filter on _Default, to record where the lines are NOT:
+    # the two reads together answer "where is it", which is what says whether
+    # the arm caught it, and the bucket read alone answers "does it exist".
     gcloud logging read 'resource.type="batch.googleapis.com/Job" AND labels.fugaro_chk=57' \
       --project="${P:?}" --limit=1 --format=json
     ```
@@ -2454,9 +2471,17 @@ leaked VM of *this check* is told from a real run's.
     that installation's own owner-run apply (`fugaro init` from the sandbox's
     config), never a filter hand-edited on the project, and nothing a run of
     this check can do for itself. An installation that has not applied it yet
-    routes only Cloud Run's lines; the check's own probe jobs carry
-    `fugaro_chk=57` and not the installation's `fugaro=managed`, so this arm
-    matches none of them either way.
+    routes only Cloud Run's lines. **The arm does match the probe's own
+    entries**: the committed JSON's `Job.labels` are
+    `{"fugaro": "managed", "fugaro_chk": "57"}` (step 2 above), so applying the
+    arm as this step offers moves every probe entry into the installation's
+    bucket and out of `_Default` — which is why the reads above name the bucket
+    and the view, and why the same label filter is read on `_Default` too. The
+    two together are the FACT: an entry in the bucket and absent from `_Default`
+    is the arm catching it, and an entry in neither is the answer this step is
+    after (the job's labels do not reach the entry). A read of `_Default` alone
+    after the arm is applied records the arm's own effect as the opposite
+    answer, and that answer is a go/no-go.
 11. **(Optional, quota.) Queueing, and what a queued job does.** Submit
     `check57/job-quota.json` — the committed JSON whose machine type is the
     largest vCPU count **the region's own zones offer** (`__QUOTA_MT__`, resolved
@@ -2753,8 +2778,13 @@ installation's label and reaches resources this check never touched. The log sin
 arm, if 57a-10 applied it, is reverted with the Terraform apply that reverses it
 (`fugaro init` from the sandbox's config), and nothing else: since Task 4 it is
 the installation's own Terraform, so it goes on and off with that apply alone
-(§1.5), and the check's own probe jobs — `fugaro_chk=57`, never
-`fugaro=managed` — are matched by it neither way. Nothing in `belong`
+(§1.5). While it is on, the check's own probe entries are in the installation's
+bucket and not in `_Default` — the probe carries the installation's label as
+well (`{"fugaro": "managed", "fugaro_chk": "57"}`, §7.2) — so a restore that
+reads `_Default` alone finds none of them and must not record that as "already
+gone": the revert is what puts them back, and nothing below counts log entries
+in any case (they are jobs, VMs, an image, an account, its bindings and a
+router, none of which the arm touches). Nothing in `belong`
 is touched at any step.
 
 **The restore's assertion — run it and paste the output; every line must read
