@@ -586,6 +586,15 @@ func TestInitRepoRetireTypedConfirmationsAreNotCoveredByAnythingElse(t *testing.
 
 // A retirement is not a way to apply an unread plan: the plan's own counts
 // and its full delete list are printed before the second confirmation.
+//
+// M-5 pins the list itself: it is the plan's deletes, not the summary's
+// prediction, and the fixture tells the two apart. The retirement set holds
+// three addresses -- the variant's service account the plan really deletes,
+// the orphaned job the removal takes out of the state before the plan, and
+// the container the plan still produces (adopted, kept) -- so a list built
+// from the prediction would name the job and the container, and no apply may
+// destroy either. Only `delete <the service account>` belongs in the block,
+// and it has to sit between the header and the prompt.
 func TestInitRepoRetireShowsThePlanBeforeTheSecondConfirmation(t *testing.T) {
 	newRetireRig(t, retireOpts{protection: true})
 	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
@@ -595,12 +604,40 @@ func TestInitRepoRetireShowsThePlanBeforeTheSecondConfirmation(t *testing.T) {
 	text := out + errOut
 	second := strings.LastIndex(text, "⚠ CONFIRM")
 	counts := strings.Index(text, "0 imports, 1 creates, 1 updates, 1 deletes")
-	list := strings.Index(text, "delete "+retireSvcAddr)
-	if counts == -1 || list == -1 || second == -1 {
-		t.Fatalf("counts at %d, the delete list at %d, the second prompt at %d:\n%s", counts, list, second, text)
+	header := strings.Index(text, "the plan above is the retirement's: 0 imports, 1 creates, 1 updates, 1 deletes, 0 replaces. Deleting:")
+	list := strings.Index(text, "\n  delete "+retireSvcAddr)
+	if counts == -1 || header == -1 || list == -1 || second == -1 {
+		t.Fatalf("counts at %d, the header at %d, the delete list at %d, the second prompt at %d:\n%s",
+			counts, header, list, second, text)
 	}
-	if counts > second || list > second {
-		t.Errorf("the plan is shown after the second confirmation (counts %d, list %d, prompt %d)", counts, list, second)
+	if counts > second || header > second || list > second {
+		t.Errorf("the plan is shown after the second confirmation (counts %d, header %d, list %d, prompt %d)",
+			counts, header, list, second)
+	}
+	if list < header {
+		t.Errorf("the delete list is printed before the line that introduces it (header %d, list %d)", header, list)
+	}
+	// The block is the plan's own list: exactly the deletes of this plan, one
+	// address a line, and nothing the prediction holds.
+	block := text[header:second]
+	var deletes []string
+	for _, line := range strings.Split(block, "\n") {
+		if strings.HasPrefix(line, "  delete ") {
+			deletes = append(deletes, strings.TrimPrefix(line, "  delete "))
+		}
+	}
+	if len(deletes) != 1 || deletes[0] != retireSvcAddr {
+		t.Errorf("the printed delete list is %q, want only the plan's own delete of %s:\n%s", deletes, retireSvcAddr, block)
+	}
+	for _, predicted := range []string{retireJobAddr, retireKeptAddr} {
+		if strings.Contains(block, predicted) {
+			t.Errorf("the printed list names %s, which is a retirement no plan of this run deletes:\n%s", predicted, block)
+		}
+	}
+	// And both of them are in the retirement set this run printed: the block
+	// above is what differs, not the summary.
+	if !strings.Contains(text, retireJobAddr) {
+		t.Errorf("fixture bug: the retirement set does not hold the job:\n%s", text)
 	}
 }
 
