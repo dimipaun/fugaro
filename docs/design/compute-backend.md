@@ -95,7 +95,7 @@ Two ways to give the run a daemon:
   runnable can be privileged or can set those up is UNVERIFIED (the `options`
   field documents "arbitrary additional options to include in the `docker
   run` command", e.g. `--network host`, so `--privileged` and `--group-add`
-  are *plausible* but not documented; the check that settles it is Check 57
+  are *plausible* but not documented; the check that settles it is Check 57a
   step 6). Docker-in-Docker also doubles the storage (two Docker stores) on a
   3.8 GB base.
 
@@ -802,10 +802,15 @@ finished or deleted job takes its VMs with it — but the design does not rely
 on that alone, because "most exit paths" is not "every exit path" and because
 the teardown is assumed rather than read:
 
-- **Success, failure, cancelled:** Batch job terminal states, with the VMs
-  expected to be torn down by the service, and `jobs.delete` (cancel) moving
-  the job to `DELETION_IN_PROGRESS` (Batch REST reference, checked 2026-10-15).
-  The teardown is assumed, not documented on the pages read, and Check 57
+- **Success, failure, cancelled:** Batch job terminal states. `SUCCEEDED` and
+  `FAILED` are the job's own; a **cancel** runs `jobs.cancel`, which takes the
+  job through `CANCELLATION_IN_PROGRESS` to `CANCELLED` (§1.4) and leaves its
+  record in place for 60 days, which is what `fugaro ls`, `diagnose` and
+  `watch` need. **Deleting a job erases its history**
+  (cloud.google.com/batch/docs/delete-job, checked 2026-10-15), so
+  `jobs.delete` appears here only as the reaper's and the restore's tool,
+  never as `Cancel`. The VMs are expected to be torn down by the service —
+  that teardown is assumed, not documented on the pages read, and Check 57a
   step 8 measures it.
 - **A crashed runner:** if `fugaro exec` exits non-zero or panics, the task
   fails, the job fails, the VMs go — provided `maxRetryCount` stays 0 (§2.3),
