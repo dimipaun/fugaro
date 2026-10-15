@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -123,7 +124,15 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 // openProjectBudget is openBudget that keeps the selection: the publisher
 // reads the operator's own config file (its providers block), and the
 // selection is what names that file.
+//
+// It is the one opening path that reaches the budget database without going
+// through openBudgetDB, so it carries openBudgetDB's own refusal of
+// GODEBUG=http2debug: budgetDBFor reads ADC, and a Go runtime printing HTTP/2
+// headers to stderr would print the bearer token of every one of those calls.
 func openProjectBudget(ctx context.Context, o cloudOptions) (*localcfg.Config, *rtdb.Client, error) {
+	if err := refuseHTTP2Debug(os.Getenv); err != nil {
+		return nil, nil, err
+	}
 	sel, lc, err := selectProject(ctx, o)
 	if err != nil {
 		return nil, nil, err
@@ -715,6 +724,17 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 	}
 }
 
+// deleteRaced is what a lost compare-and-set race means to `--delete`: someone
+// else wrote the very node this delete was about to remove, between the read
+// that produced its ETag and the write under it. It is the operator's own race,
+// not an outage, so it is a user error (exit 1) worded like the publisher's and
+// `repos edit`'s own refusals of the same sentinel — naming the retry — rather
+// than dbErr's fallback, which would report an infrastructure failure that did
+// not happen, at exit 2, with no hint at all.
+func deleteRaced() error {
+	return userErr("the policy changed while this ran; nothing further was deleted, and whatever is still published keeps governing: run it again")
+}
+
 // deleteProjectPolicy removes the published policy (B5). The children go
 // first and the shared node last: the shared node's existence *is*
 // project-centric mode, so deleting it first and failing on a child would
@@ -728,6 +748,15 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 // answered "nothing to delete" on the strength of the absent shared node would
 // leave them forever (the review of PR #390). A governance node left under
 // config/policy/repos is policy text a later release may read.
+//
+// Every node here is read with its bytes and deleted under the ETag that read
+// returned, the way the publisher and `repos edit` write theirs, and the two
+// consequences of that are the whole of this function's error handling: a node
+// written by a newer Fugaro is refused rather than deleted (P8,
+// refuseNewerPolicy — checked on the node this delete is actually about to
+// remove, not on the copy the caller read a moment earlier), and a node that
+// changed between the read and the delete is the operator's own race
+// (deleteRaced), never a remote failure.
 func deleteProjectPolicy(cmd *cobra.Command, lc *localcfg.Config, db *rtdb.Client, out io.Writer, exists bool, o *projectPolicyPublishOptions) error {
 	ctx := cmd.Context()
 	children, err := policyRepoChildren(ctx, db, lc)
@@ -759,24 +788,45 @@ func deleteProjectPolicy(cmd *cobra.Command, lc *localcfg.Config, db *rtdb.Clien
 	removed := []string{}
 	for _, key := range children {
 		path := projectpolicy.PathRepos() + "/" + key
-		etag, found, err := db.GetETag(ctx, path, nil)
+		// The node is read with its bytes as well as its ETag: what this
+		// delete removes must be the node it is allowed to remove, so a child
+		// written by a newer Fugaro is refused here too (P8, refuseNewerPolicy)
+		// and not only on the publish path.
+		var raw json.RawMessage
+		etag, found, err := db.GetETag(ctx, path, &raw)
 		if err != nil {
 			return dbErr(lc, err, true)
 		}
 		if !found {
 			continue
 		}
+		if err := refuseNewerPolicy(raw); err != nil {
+			return err
+		}
 		if err := db.PutIfMatch(ctx, path, etag, nil); err != nil {
+			if errors.Is(err, rtdb.ErrPrecondition) {
+				return deleteRaced()
+			}
 			return dbErr(lc, err, true)
 		}
 		removed = append(removed, path)
 	}
-	etag, found, err := db.GetETag(ctx, projectpolicy.PathShared(), nil)
+	// The shared node is read again, with its bytes: the version
+	// refuseNewerPolicy checked was the version of the node as the caller read
+	// it, and this is the node the delete is about to remove.
+	var shared json.RawMessage
+	etag, found, err := db.GetETag(ctx, projectpolicy.PathShared(), &shared)
 	if err != nil {
 		return dbErr(lc, err, true)
 	}
 	if found {
+		if err := refuseNewerPolicy(shared); err != nil {
+			return err
+		}
 		if err := db.PutIfMatch(ctx, projectpolicy.PathShared(), etag, nil); err != nil {
+			if errors.Is(err, rtdb.ErrPrecondition) {
+				return deleteRaced()
+			}
 			return dbErr(lc, err, true)
 		}
 		removed = append(removed, projectpolicy.PathShared())
@@ -1482,9 +1532,13 @@ func removalWarning(allow []string, canonical string) string {
 //
 // A concrete repository is admitted by any remaining entry that matches it: the
 // wildcard, or a pattern such as github/acme/*. A *pattern* being removed is a
-// different question — removing it is moot only if some remaining entry admits
-// everything it admitted — and the only entry that does is the bare wildcard
-// (two identical entries cannot both be on the list).
+// different question, and the same matcher answers it: what still admits every
+// repository the pattern admitted is a remaining entry that admits the pattern
+// itself — the bare "*", github/*/*, github/acme/* for itself. The test is
+// deliberately one-sided: it says "still admitted" only when a remaining entry
+// demonstrably covers the pattern, because the sentence it produces is the
+// milder one, and a removal whose effect cannot be decided is better described
+// as over-warning than as stopping runs that keep running.
 //
 // An entry is a pattern when it carries a wildcard, not when ValidPattern
 // accepts it: ValidPattern accepts a concrete name too (a pattern with no "*"
@@ -1500,8 +1554,14 @@ func admittedBy(allow []string, arg string) (bool, string) {
 		}
 	}
 	if strings.Contains(arg, "*") {
+		// A remaining entry that matches the pattern as a string admits at
+		// least every repository the pattern matched: the matcher compares
+		// segment by segment, and a "*" it is matching against is a segment
+		// like any other. github/acme/* removed with github/*/* left is the
+		// case the bare-"*"-only test got wrong ("its runs are refused from
+		// now on" for runs that keep being admitted).
 		for _, p := range rest {
-			if p == "*" {
+			if projectpolicy.MatchRepo(p, arg) {
 				return true, p
 			}
 		}
