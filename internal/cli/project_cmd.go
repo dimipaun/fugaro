@@ -200,9 +200,16 @@ func requirePolicyRules(ctx context.Context, db *rtdb.Client, lc *localcfg.Confi
 	if err != nil {
 		return dbErr(lc, err, false)
 	}
+	if !found {
+		// No marker at all is a different state from an old one, and it
+		// deserves its own sentence: there is nothing to be older than, and a
+		// message naming a node that does not exist sends the operator
+		// looking for it.
+		return userErr("the deployed rules carry no policy marker at %s, so they predate the policy model: a policy published now is one the runs it bounds cannot read; re-run 'fugaro init --firebase' with fugaro >= %s first",
+			projectpolicy.PathRulesMarker(), policySince)
+	}
 	var gen int
 	switch {
-	case !found:
 	case json.Unmarshal(raw, &gen) != nil:
 		return userErr("%v", &projectpolicy.MarkerError{Value: oneLine(string(raw))})
 	case gen >= projectpolicy.RulesVersion:
@@ -797,7 +804,7 @@ func runProjectShow(cmd *cobra.Command, o *projectShowOptions, policyOnly bool) 
 	for _, r := range seen {
 		mark := ""
 		if slices.Contains(doc.SeenNotEnrolled, r) {
-			mark = "  (not admitted: its next run is refused until 'fugaro project repos add " + r + "')"
+			mark = notAdmittedNote(r)
 		}
 		fmt.Fprintf(out, "  %s%s\n", r, mark)
 	}
@@ -940,6 +947,22 @@ func refuseUnknownPolicyKeys(p *projectpolicy.Policy) error {
 		projectpolicy.PathShared(), strings.Join(p.UnknownKeys, ", "))
 }
 
+// notAdmittedNote marks a repository that has run here and that the published
+// allow-list does not admit: its next run is refused until it is enrolled. The
+// remedy is 'fugaro project repos add', whose argument is a canonical name —
+// and a name this command would refuse is not a remedy. seenRepos reports what
+// the registry knows, which for a repository this machine's config does not
+// name is the slug alone, and a slug is a hash of the provider and the
+// canonical name (task.Slug): it cannot be turned back into one, so the
+// operator has to name the repository instead of being handed an argument that
+// fails.
+func notAdmittedNote(r string) string {
+	if projectpolicy.ValidPattern(r) != nil {
+		return "  (not admitted: its next run is refused until the allow-list admits it; this is a slug, a hash of the repository's name, so name it: 'fugaro project repos add provider/owner/name')"
+	}
+	return "  (not admitted: its next run is refused until 'fugaro project repos add " + r + "')"
+}
+
 func sourceSuffix(src string) string {
 	if src == "" {
 		return ""
@@ -1058,7 +1081,7 @@ func runProjectReposLs(cmd *cobra.Command, o *projectReposOptions) error {
 	for _, r := range seen {
 		mark := ""
 		if !projectpolicy.AdmitRepo(p.AllowRepos, r) {
-			mark = "  (not admitted: its next run is refused until 'fugaro project repos add " + r + "')"
+			mark = notAdmittedNote(r)
 		}
 		fmt.Fprintf(out, "  %s%s\n", r, mark)
 	}

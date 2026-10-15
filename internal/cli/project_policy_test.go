@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -124,6 +125,62 @@ func TestProjectPolicyPublishWritesTheNodeAndSeedsTheAllowList(t *testing.T) {
 		if !strings.Contains(out, r) {
 			t.Errorf("the seeded allow-list does not name %s:\n%s", r, out)
 		}
+	}
+}
+
+// policyConflictOnce changes the policy node in the fake just before the
+// publisher's first PUT reaches it: another operator's publish landing between
+// this one's read and its write. It is budget_test's conflictOnce for the
+// policy node.
+type policyConflictOnce struct {
+	rt   http.RoundTripper
+	db   *gcpfake.RTDB
+	val  any
+	done bool
+}
+
+func (c *policyConflictOnce) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Method == http.MethodPut && !c.done {
+		c.done = true
+		c.db.Set(projectpolicy.PathShared(), c.val)
+	}
+	return c.rt.RoundTrip(r)
+}
+
+// TestProjectPolicyPublishRetriesAnETagConflict: the write is a
+// compare-and-set, so a publish that lands in between is not overwritten with
+// the values this one read before it. The publisher re-reads the node, re-diffs
+// what it is about to replace, and writes again — the allow-list the other
+// publish left stays what it is, instead of being re-seeded from the values
+// read before the other publish existed.
+func TestProjectPolicyPublishRetriesAnETagConflict(t *testing.T) {
+	f := newProjectFixture(t, "")
+	c := &policyConflictOnce{rt: http.DefaultTransport, db: f.db, val: map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "observe", "per_run_usd": 9},
+		"allow_repos": []string{"github/acme/app"},
+	}}
+	budgetTransport = c
+	t.Cleanup(func() { budgetTransport = nil })
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.done {
+		t.Fatal("the conflict never happened: no write preceded the publisher's own")
+	}
+	// The retry's diff names the value it is actually replacing — the other
+	// publish's $9, not this machine's $5 — and says why it is writing twice.
+	if !strings.Contains(out, "changed by someone else meanwhile") || !strings.Contains(out, "$9") {
+		t.Fatalf("the retry's output does not show the policy it re-read:\n%s", out)
+	}
+	p := publishedPolicy(t, f)
+	if len(p.AllowRepos) != 1 || p.AllowRepos[0] != "github/acme/app" {
+		t.Errorf("allow_repos = %v, want the node the other publish left: the publisher wrote the seed it computed before that node existed", p.AllowRepos)
+	}
+	if p.Budget.Mode != "enforce" || p.Budget.PerRunUSD != 5 {
+		t.Errorf("budget = %+v, want this machine's config (the publisher's own keys are the ones it owns)", p.Budget)
 	}
 }
 
@@ -321,6 +378,29 @@ func TestProjectPolicyPublishRefusesWithoutTheRulesMarker(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "init --firebase") {
 		t.Errorf("the refusal does not name the fix: %v", err)
+	}
+	// An absent marker is not an old one: the refusal must not tell the
+	// operator a marker is older than itself when there is no marker.
+	if !strings.Contains(err.Error(), "carry no policy marker") || strings.Contains(err.Error(), "older than the marker") {
+		t.Errorf("the refusal for an absent marker does not say so: %v", err)
+	}
+	if f.db.Value(projectpolicy.PathShared()) != nil {
+		t.Error("a node was written anyway")
+	}
+}
+
+// TestProjectPolicyPublishRefusesOlderRules: the marker exists and is behind
+// this Fugaro's, which is the state an older CLI's init --firebase leaves
+// behind. The refusal is the other one, and names the marker it found.
+func TestProjectPolicyPublishRefusesOlderRules(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion-1)
+	_, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatal("a publish behind the deployed rules was allowed")
+	}
+	if !strings.Contains(err.Error(), "older than the marker") || !strings.Contains(err.Error(), "init --firebase") {
+		t.Errorf("the refusal does not say the rules are older: %v", err)
 	}
 	if f.db.Value(projectpolicy.PathShared()) != nil {
 		t.Error("a node was written anyway")
@@ -531,11 +611,18 @@ func TestProjectShowPrintsEnrolledAndSeen(t *testing.T) {
 		"repositories seen",
 		stranger, // seen, and not invertible
 		"not admitted",
+		// The remedy is 'repos add', which takes a canonical name: a slug
+		// cannot be one, so the note asks the operator to name it instead of
+		// printing a command that would be refused.
+		"name it",
 		"bitbucket/acme/other is on the allow-list and has never run here",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("project show does not print %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "repos add "+stranger) {
+		t.Errorf("project show tells the operator to run 'repos add %s', which the command refuses: a slug is not a canonical name:\n%s", stranger, out)
 	}
 	// --json is the same document, for watch-style consumers.
 	js, _, err := execute(t, "project", "show", "--json")
@@ -569,6 +656,25 @@ func TestProjectShowPrintsEnrolledAndSeen(t *testing.T) {
 	}
 	if len(doc.EnrolledNeverSeen) != 1 || doc.EnrolledNeverSeen[0] != "bitbucket/acme/other" {
 		t.Errorf("enrolled_never_seen = %v, want [bitbucket/acme/other]", doc.EnrolledNeverSeen)
+	}
+}
+
+// TestNotAdmittedNoteNamesARemedyThatWorks: 'fugaro project repos add' takes a
+// canonical name, and a repository the registry knows only as a slug has none —
+// task.Slug is a hash, so it cannot be turned back into one. The note that
+// tells the operator how to enroll such a repository must not hand the command
+// an argument the command refuses.
+func TestNotAdmittedNoteNamesARemedyThatWorks(t *testing.T) {
+	if got := notAdmittedNote("github/acme/app"); !strings.Contains(got, "fugaro project repos add github/acme/app") {
+		t.Errorf("the note for a canonical name = %q, want the command with that name", got)
+	}
+	const slug = "stranger-0123456789abcdef"
+	got := notAdmittedNote(slug)
+	if strings.Contains(got, "repos add "+slug) {
+		t.Errorf("the note = %q: 'repos add %s' is refused, so it is not a remedy", got, slug)
+	}
+	if !strings.Contains(got, "provider/owner/name") {
+		t.Errorf("the note = %q, want the shape the operator has to supply", got)
 	}
 }
 
