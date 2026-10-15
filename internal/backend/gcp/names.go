@@ -144,6 +144,17 @@ func SecretID(slug, logical string) string {
 	return derive(sanitize("fugaro-"+readableSlug(slug)+"-"+logical), slug, logical, maxSecretID, secretHashHex)
 }
 
+// ProjectSecretID is the Secret Manager secret holding a project-wide
+// logical secret (design docs/design/project-secrets.md §4), built like
+// SecretID but keyed by the Fugaro project name instead of a repository
+// slug. The hash input is domain-separated with a literal "project\x00"
+// prefix so a Fugaro project name that happened to equal some repository's
+// own slug could never make this collide with SecretID's hash of the
+// identical (name, logical) pair.
+func ProjectSecretID(fugaroProject, logical string) string {
+	return derive(sanitize("fugaro-project-"+fugaroProject+"-"+logical), "project\x00"+fugaroProject, logical, maxSecretID, secretHashHex)
+}
+
 // ImageName is the derived image of (slug, workflow) in registry, untagged,
 // built like JobName without the fugaro- prefix.
 func ImageName(registry, slug, workflow string) string {

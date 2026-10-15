@@ -1869,6 +1869,47 @@ Plus a case where there is no mise config: no `mise` call and no `provision` tim
 - (d) a clone-only repository still gets its own registry plus the build account's writer grants, even though it never builds anything (inert, but worth dropping).
 - (e) user docs for `checkout: clone` exist only in the schema, `docs/release.md` and this design — write them (a user-facing doc, not just internal comments) alongside this task.
 
+**Where these stand after Task 17's review round (2026-10-14):** (b) and (e) are
+closed. (a), (c) and (d) are **explicitly deferred**, not forgotten: all three
+are inert or unreachable while the `cloneShipped` gate is off, none of them
+changes a `baked` workflow, and each is now recorded in the user-facing doc
+(`docs/checkout.md`, "Known gaps") as an open gap rather than described as
+working. (a) — `fugaro run --repo` deciding from the local `fugaro.yaml` rather
+than from the deployed job — reopens when `cloneShipped` flips in Task 18 and is
+the first thing that round should pick up: the doc now says to run `fugaro run`
+in the repository's checkout until then. Closing (d) is a
+`deploy/terraform/gcp/modules/repo` change, and (c) needs the deployed job's
+image read in `checkCloneImageSince`'s callers.
+
+**A second review round (same day)** found one thing that is *not* deferred and
+had to be fixed here: in a blobless clone a follow-up's or a review run's agent
+cannot fetch on a private repository (its environment carries no credentials,
+by design), so the diff the review stage is told to run — `git diff
+origin/<base>...HEAD`, whose base side no checkout ever brought in — failed
+with `could not fetch <oid> from promisor remote`. The runner now fetches for
+it at bootstrap, with the run's credentials, before any stage starts
+(`internal/runner/prefetch.go`, `gitops.PrefetchDiff`), and `docs/checkout.md`
+states what is and is not in the checkout afterwards. Check 38 should still
+read that doc section before it runs its live check.
+
+**A third review round (same day)** widened that fix rather than reopening it:
+the same failure hit reads a reviewer does by habit, which a diff of the
+branch's two endpoints does not fetch — `git show <a commit of the branch>`,
+`git log -p origin/<base>..HEAD` (a two-commit pull request's earlier revision
+of a file a later commit changed again) and the two-dot `git diff
+origin/<base>` (the base tip's side, whenever the base has moved on since the
+merge base). The runner now prefetches those two sets as well
+(`gitops.PrefetchCommits`, `gitops.PrefetchBaseDiff`), and the prefetch runs
+for follow-ups and review runs only: a first run's agent gets the run's git
+credentials and fetches for itself, so prefetching there would pay the whole
+divergence at bootstrap for nothing (review L1). What is *still* not fetched is
+`git blame` and `git show <old-revision>:<path>` of a revision nobody fetched;
+`docs/checkout.md` now says exactly that. The live check below has to cover
+this properly: **Check 38 must run a follow-up and a review run on a private
+repository**, not only a first run on the base, or the credential boundary
+this whole fix is about goes unexercised.
+
+
 ### Task 18: Check 38 and the setup skill's offer
 
 **Numbering ruling (owner's assistant, 2026-10-13):** this task used to reserve
@@ -1895,6 +1936,8 @@ Check 38, "clone workflows (sandbox only, run by you; USER-RUN, NOT RUN)", in th
 - **step 1:** one run, which records the execution start, the `provision` stage's duration and the first stage's start;
 - **step 2:** the job's image as `gcloud run jobs describe` shows it;
 - **step 3:** whether the image pull needed a grant. If the execution fails with a pull permission error, record it, revert the branch, and hand the error to the bucket-IAM plan;
+- **step 4: the prefetch, on a private repository** (Task 17's third review round). A first run's agent has the run's git credentials, so it hides the whole question: run a **follow-up** and a **review run** on a pull request with at least two commits, whose base has moved on since the merge base, and check in the transcript that the agent's own reads succeed — `git diff origin/<base>...HEAD`, `git log -p origin/<base>..HEAD`, `git show HEAD~1`, `git diff origin/<base>`. `docs/checkout.md`'s "What is and is not in the checkout" says which of them the runner prefetches and which (`git blame`, `git show <old-revision>:<path>`) are still expected to fail with `could not fetch <oid> from promisor remote`;
+- **step 5: whether the provider honours the blobless filter.** Unverified here, and it differs by provider: GitHub serves a lazy fetch of a commit by SHA (reachable-SHA wants, `refs/pull`), while **Bitbucket Cloud may ignore `--filter`** — in which case git warns and makes a full `--no-checkout` clone, which is functionally correct and only gives up the start-up saving. Record what the provider actually did (the clone's stderr, `git config --get remote.origin.partialclonefilter`, and the size of `.git` in the job);
 - **FACT lines** to record, the **paste-back** list and the **restore** steps.
 
 Never run it against EdgeWeb or EdgeServer.
@@ -2168,7 +2211,7 @@ Add to the operator steps, after the base-image upgrade order:
 
 Starts right after 0.7.0 is released. **No task below is in any 0.7.0 group or in the 0.7.0 release notes.**
 
-**Owner ruling, 2026-10-14: Tasks 26, 27 and 28 are dropped.** Cloud Run gen-2 does not support Docker, so the Check 31 measurement and the Docker-on-gen-2 backend are pointless, and Task 28 (a Cloud Batch backend) was conditional on Check 31, so it is not scheduled either (a Docker-capable backend can be designed again if real demand appears). Tasks 24, 25 and 29 may ship in 0.7.1.
+**Owner ruling, 2026-10-14: Tasks 26 and 27 are dropped, and Task 28 is RESTORED.** Cloud Run gen-2 does not support Docker, so the Check 31 gen-2 measurement (Task 26) and Docker on gen-2 (Task 27) are pointless. The Docker-capable backend itself is **not** dropped: the design (generic-tool section 1) was gen-2 first and a VM backend as the fallback, gen-2 failed, so **the compute-instance backend (Task 28) is now the way to run Docker workloads**. It is no longer conditional on Check 31. A correction: an earlier edit of this section wrongly dropped Task 28 together with Tasks 26 and 27. Task 28 starts with a design (`docs/design/compute-backend.md`) that compares Cloud Batch and plain Compute Engine instances; no task below is written in detail until the design is approved. Tasks 24, 25 and 29 may ship in 0.7.5.
 
 ## Group F: cost preview (branch `gt-cost`)
 
@@ -2262,9 +2305,9 @@ Outline only; the full tasks are written after the FACT lines:
 - the selftest checks the socket is user-owned;
 - SECURITY.md is updated.
 
-### Task 28 (DROPPED with Task 26: it was conditional on Check 31): a Cloud Batch backend, if only C passes
+### Task 28 (RESTORED, owner ruling 2026-10-14: the Docker-capable backend on compute instances; design first): a compute-instance backend
 
-Outline only, about 12 tasks:
+Outline only, about 12 tasks. The outline below assumes Cloud Batch (managed Compute Engine VMs); the design compares it with plain Compute Engine instances and may change it:
 - `internal/backend/batch` passes `backendtest.Run` on a new Batch fake in `internal/gcpfake`;
 - `backend: cloud-batch` in the project config;
 - `fugaro init`'s Batch stage (job template, service account reuse, log routing into the existing log bucket);
@@ -2274,7 +2317,7 @@ Outline only, about 12 tasks:
 
 ### Task 29: Delete the `fugaro ls` tombstone (P3)
 
-One function and its test. Owner ruling 2026-10-14: it may ship in 0.7.1.
+One function and its test. Owner ruling 2026-10-14: it may ship in 0.7.5.
 
 ---
 

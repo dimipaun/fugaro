@@ -128,7 +128,7 @@ func TestCheckCloneImageSince(t *testing.T) {
 // refused on any image's release, including today's current release
 // (0.7.0), with guidance that says plainly the runner side is not released
 // yet and names checkout: baked as the way to run the workflow today; only
-// an image built from cloneSince itself (0.7.1, the release that will ship
+// an image built from cloneSince itself (0.7.5, the release that will ship
 // Task 17) passes.
 //
 // A non-release ref (dev, hand-pushed, --image-source) gets the same
@@ -149,7 +149,7 @@ func TestCheckCloneImageSinceRefusedUntilCloneSince(t *testing.T) {
 		t.Fatalf("0.7.0 (today's current release): err = %v, want refused", err)
 	}
 	for _, want := range []string{
-		"this checkout: clone workflow needs a job image whose runner knows how to provision a blobless clone (FUGARO_CHECKOUT) (fugaro 0.7.1 or later)",
+		"this checkout: clone workflow needs a job image whose runner knows how to provision a blobless clone (FUGARO_CHECKOUT) (fugaro 0.7.5 or later)",
 		"checkout: clone's own runner side is not released yet",
 		"generic-tool plan Task 17",
 		"acme/app workflow web",
@@ -183,10 +183,10 @@ func TestCheckCloneImageSinceRefusedUntilCloneSince(t *testing.T) {
 			t.Errorf("dev ref: %v lacks %q", err, want)
 		}
 	}
-	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:0.7.1"
+	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:0.7.5"
 	warn.Reset()
 	if err := checkCloneImageSince(&lc, spec, cloneSince, "this checkout: clone workflow", "how to provision a blobless clone (FUGARO_CHECKOUT)", "", &warn); err != nil {
-		t.Fatalf("0.7.1 (ships Task 17): %v", err)
+		t.Fatalf("0.7.5 (ships Task 17): %v", err)
 	}
 }
 

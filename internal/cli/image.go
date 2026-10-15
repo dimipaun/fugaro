@@ -235,7 +235,15 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	if note := buildRecordNote(lc); note != "" {
 		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", note)
 	}
-	spec, err := cloudBuildSpec(rs, cfg, name, base, lc.Build.MachineType, lc.RecordBucketURL())
+	// The provider credential's ID as live state resolves it, checked
+	// against what this repository's build account is actually granted
+	// (B1): a build submitted with an ID that account may not read fails
+	// its clone at the build's end, long after it was billed.
+	gitID, err := gitSecretID(ctx, lc, rs, "the image build of "+rs.Name)
+	if err != nil {
+		return err
+	}
+	spec, err := cloudBuildSpec(rs, cfg, name, base, lc.Build.MachineType, lc.RecordBucketURL(), gitID)
 	if err != nil {
 		return err
 	}
@@ -368,16 +376,18 @@ func buildRecordNote(lc *localcfg.Config) string {
 // cloudBuildSpec is the Cloud Build build of workflow name of the
 // repository rs, from base, recording to bucket (gs://…, the local
 // config's RecordBucketURL): the one spec fugaro image build, fugaro
-// init's first build and the daily image check submit.
-func cloudBuildSpec(rs infra.RepoSpec, cfg *config.Config, name, base, machineType, bucket string) (gcp.BuildSpec, error) {
-	ws, ok := rs.Workflows[name]
-	if !ok {
+// init's first build and the daily image check submit. gitSecretID is the
+// secret the build's clone reads (rs.Secrets[ws.GitSecret] would be the
+// repository's own copy, which Readiness may have resolved past: design
+// docs/design/project-secrets.md §5), never looked up here.
+func cloudBuildSpec(rs infra.RepoSpec, cfg *config.Config, name, base, machineType, bucket, gitSecretID string) (gcp.BuildSpec, error) {
+	if _, ok := rs.Workflows[name]; !ok {
 		return gcp.BuildSpec{}, userErr("fugaro.yaml has no workflow %q", name)
 	}
 	return gcp.BuildSpec{
 		Slug: rs.Slug, GitProvider: rs.Provider, RepoURL: rs.RepoURL, BaseBranch: cmp.Or(rs.BaseBranch, "main"), Workflow: name, Base: base,
 		Image:       gcp.ImageName(rs.RegistryPath, rs.Slug, name),
-		GitSecretID: rs.Secrets[ws.GitSecret], GitUser: rs.GitUser, GitHubAppID: rs.GitHubAppID,
+		GitSecretID: gitSecretID, GitUser: rs.GitUser, GitHubAppID: rs.GitHubAppID,
 		ServiceAccount: rs.BuildServiceAccountEmail, MachineType: machineType,
 		WorkflowSecrets:    cfg.Workflows[name].Secrets,
 		Bucket:             bucket,

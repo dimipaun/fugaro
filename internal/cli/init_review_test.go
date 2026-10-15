@@ -981,7 +981,7 @@ func TestSubmitAndWaitSpecCarriesMachineBucketBase(t *testing.T) {
 		t.Fatalf("err %v, specs %d", err, len(fb.specs))
 	}
 	got := fb.specs[0]
-	want, err := cloudBuildSpec(spec, cfg, "a", lc.BaseImages["base"], "E2_HIGHCPU_32", "gs://proj-runs")
+	want, err := cloudBuildSpec(spec, cfg, "a", lc.BaseImages["base"], "E2_HIGHCPU_32", "gs://proj-runs", appliedGitSecretID(spec))
 	if err != nil {
 		t.Fatal(err)
 	}

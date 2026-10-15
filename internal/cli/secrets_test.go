@@ -557,3 +557,444 @@ func TestSecretsSetProviderKey(t *testing.T) {
 		t.Fatalf("a provider the repository may not use: %v", err)
 	}
 }
+
+// appendConfig appends a block to the fixture's local config file (the
+// append-to-FUGARO_CONFIG pattern the provider and claude_accounts fixtures
+// above use).
+func appendConfig(t *testing.T, yaml string) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(yaml); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+}
+
+// projectSecretFixture makes NAME a project-wide secret the local config
+// allow-lists for acme/app.
+func projectSecretFixture(t *testing.T, yaml string) {
+	t.Helper()
+	appendConfig(t, yaml)
+}
+
+// noListProvider is a model provider with no allow_data_to at all: under
+// §3a's no-list rule its key is available to every repository, so storing it
+// is never refused, at project scope or repo scope.
+const noListProvider = `providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["deepseek/*"]
+`
+
+// listedProvider is the same provider, but allow-listed for acme/app only.
+const listedProvider = `providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["deepseek/*"]
+    allow_data_to: ["acme/app"]
+`
+
+// TestSecretsSetProjectWideRefusesEmptyAllowList: a reserved name with no
+// project_secrets entry that lists a repository is refused before the value
+// is ever read, and nothing is stored — unlike a provider's key, which the
+// next test pins as accepted in the identical state (§3a).
+func TestSecretsSetProjectWideRefusesEmptyAllowList(t *testing.T) {
+	sm := secretsFixture(t)
+	projectSecretFixture(t, "project_secrets:\n  bitbucket-token: { allow_data_to: [] }\n")
+	spy := &readerSpy{Reader: strings.NewReader(tokenValue)}
+	cmd := NewRootCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetIn(spy)
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"secrets", "set", "bitbucket-token", "--project-wide"})
+	err := cmd.Execute()
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "project_secrets") {
+		t.Fatalf("err = %v", err)
+	}
+	if spy.read {
+		t.Fatal("the value was read before the refusal")
+	}
+	if strings.Contains(out.String()+errOut.String()+err.Error(), tokenValue) {
+		t.Fatal("the value leaked")
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", "bitbucket-token")) != nil {
+		t.Fatal("a refused value was stored")
+	}
+
+	// A named Claude account whose own allow_data_to is empty is refused the
+	// same way.
+	secretsFixture(t)
+	claudeAccountFixture(t, "claude_accounts:\n  acme-personal: { allow_data_to: [] }\n")
+	spy = &readerSpy{Reader: strings.NewReader(tokenValue)}
+	cmd = NewRootCmd()
+	out.Reset()
+	errOut.Reset()
+	cmd.SetIn(spy)
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"secrets", "set", "claude-oauth-token-acme-personal", "--project-wide"})
+	if err := cmd.Execute(); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "claude_accounts") {
+		t.Fatalf("err = %v", err)
+	}
+	if spy.read {
+		t.Fatal("the value was read before the refusal")
+	}
+}
+
+// TestSecretsSetProjectWideAcceptsProviderSecret: a provider's key
+// allow-listed for a repository stores under gcp.ProjectSecretID, with the
+// installation's own labels, never the repository's.
+func TestSecretsSetProjectWideAcceptsProviderSecret(t *testing.T) {
+	sm := secretsFixture(t)
+	projectSecretFixture(t, listedProvider)
+	const key = "or-not-a-real-key-1234"
+	out, errOut, err := executeStdin(t, key, "secrets", "set", "openrouter-api-key", "--project-wide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := gcp.ProjectSecretID("aurora", "openrouter-api-key")
+	if got := string(sm.Latest(id)); got != key {
+		t.Fatalf("stored %q, want the project secret %s", got, id)
+	}
+	if !strings.Contains(out, id) || strings.Contains(out+errOut, key) {
+		t.Fatalf("out %q errOut %q", out, errOut)
+	}
+	var sec struct{ Labels map[string]string }
+	for _, r := range sm.Requests() {
+		if r.Method == "POST" && strings.HasSuffix(r.Path, "/secrets") {
+			_ = json.Unmarshal(r.Body, &sec)
+		}
+	}
+	if sec.Labels["fugaro"] != "managed" || sec.Labels["fugaro_project"] != "aurora" || sec.Labels["fugaro_secret"] != "openrouter-api-key" {
+		t.Fatalf("labels = %v", sec.Labels)
+	}
+}
+
+// TestSecretsSetProjectWideAcceptsProviderSecretWithNoList: §3a, the owner's
+// final ruling — a provider with NO allow_data_to at all is available to
+// every repository, so its key stores project-wide with no refusal. This is
+// the exact state TestSecretsSetProjectWideRefusesEmptyAllowList refuses for
+// a reserved name, and the two tests exist to pin that divergence.
+func TestSecretsSetProjectWideAcceptsProviderSecretWithNoList(t *testing.T) {
+	sm := secretsFixture(t)
+	projectSecretFixture(t, noListProvider)
+	const key = "or-not-a-real-key-1234"
+	if _, _, err := executeStdin(t, key, "secrets", "set", "openrouter-api-key", "--project-wide"); err != nil {
+		t.Fatalf("a provider with no allow_data_to: %v", err)
+	}
+	if got := string(sm.Latest(gcp.ProjectSecretID("aurora", "openrouter-api-key"))); got != key {
+		t.Fatalf("stored %q", got)
+	}
+}
+
+// TestSecretsSetRepoScopeAcceptsProviderSecretWithNoList: B5(a), the third
+// call site — the repo-scope branch, unchanged since Task 1, now accepts a
+// no-list provider for every repository (AllowsData reads an absent list as
+// "everyone"), where before it refused each one.
+func TestSecretsSetRepoScopeAcceptsProviderSecretWithNoList(t *testing.T) {
+	sm := secretsFixture(t)
+	projectSecretFixture(t, noListProvider)
+	const key = "or-not-a-real-key-1234"
+	if _, _, err := executeStdin(t, key, "secrets", "set", "openrouter-api-key", "--repo", "acme/app"); err != nil {
+		t.Fatalf("a no-list provider at repo scope: %v", err)
+	}
+	if got := string(sm.Latest(gcp.SecretID(appSlug, "openrouter-api-key"))); got != key {
+		t.Fatalf("stored %q", got)
+	}
+}
+
+// TestSecretsRepoAndProjectWideAreExclusive: --repo names one repository's
+// container and --project-wide works on the project's own, which no
+// repository owns. The project-wide path ignores --repo, so the pair used to
+// store and list a container the operator had not named; it is refused now,
+// before the value is read, and neither flag alone is affected.
+func TestSecretsRepoAndProjectWideAreExclusive(t *testing.T) {
+	sm := secretsFixture(t)
+	projectSecretFixture(t, "project_secrets:\n  bitbucket-token: { allow_data_to: [acme/app] }\n")
+	spy := &readerSpy{Reader: strings.NewReader(tokenValue)}
+	cmd := NewRootCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetIn(spy)
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"secrets", "set", "bitbucket-token", "--project-wide", "--repo", "acme/app"})
+	err := cmd.Execute()
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--repo and --project-wide") {
+		t.Fatalf("set: err = %v", err)
+	}
+	if spy.read {
+		t.Fatal("the value was read before the refusal")
+	}
+	if strings.Contains(out.String()+errOut.String()+err.Error(), tokenValue) {
+		t.Fatal("the value leaked")
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", "bitbucket-token")) != nil || sm.Latest(gcp.SecretID(appSlug, "bitbucket-token")) != nil {
+		t.Fatal("a refused value was stored")
+	}
+	if _, _, err := execute(t, "secrets", "ls", "--project-wide", "--repo", "acme/app"); ExitCode(err) != ExitUserError ||
+		!strings.Contains(err.Error(), "--repo and --project-wide") {
+		t.Fatalf("ls: err = %v", err)
+	}
+	// The flags on their own still work, project-wide first.
+	if _, errOut, err := execute(t, "secrets", "ls", "--project-wide"); err != nil {
+		t.Fatalf("--project-wide alone: %v (%s)", err, errOut)
+	}
+	if _, _, err := execute(t, "secrets", "ls", "--repo", "acme/app"); err != nil {
+		t.Fatalf("--repo alone: %v", err)
+	}
+}
+
+// TestSecretsSetRepoCopyNotesTheProjectWideOverride: a --repo copy of a name
+// the repository may already read project-wide wins from then on, and only
+// disabling the copy's last enabled version goes back (design §5), so the
+// hand-typed command says so once, on stderr. A repository's own secret,
+// which has no project-wide meaning, gets no note: the warning is about the
+// precedence, not about storing a value.
+func TestSecretsSetRepoCopyNotesTheProjectWideOverride(t *testing.T) {
+	secretsFixture(t)
+	projectSecretFixture(t, listedProvider)
+	if _, _, err := executeStdin(t, "or-not-a-real-key-1234", "secrets", "set", "openrouter-api-key", "--project-wide"); err != nil {
+		t.Fatal(err)
+	}
+	_, errOut, err := executeStdin(t, "or-not-a-real-key-5678", "secrets", "set", "openrouter-api-key", "--repo", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut, "note:") || !strings.Contains(errOut, "overrides the project copy") {
+		t.Errorf("stderr = %q, want the override note", errOut)
+	}
+	if strings.Contains(errOut, "or-not-a-real-key-5678") {
+		t.Error("the note quoted the value")
+	}
+	appCheckout(t)
+	if _, errOut, err := executeStdin(t, tokenValue, "secrets", "set", "npm-token", "--repo", "acme/app"); err != nil {
+		t.Fatal(err)
+	} else if strings.Contains(errOut, "note:") {
+		t.Errorf("stderr = %q, want no note for a repository's own secret", errOut)
+	}
+}
+
+// TestSecretsLsAddsScopeColumn: a name with both a repo-owned version and a
+// project copy the repository may use shows "project, repo override stored";
+// an allow-listed project secret with no repo-owned entry at all shows
+// "project". Both scopes appear, and neither reads a value.
+func TestSecretsLsAddsScopeColumn(t *testing.T) {
+	sm := secretsFixture(t)
+	projectSecretFixture(t, "project_secrets:\n  bitbucket-token: { allow_data_to: [acme/app] }\n"+listedProvider)
+	// A project copy for the allow-listed reserved name (no repo entry), and
+	// both copies of the provider's key.
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", "bitbucket-token", "--project-wide"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := executeStdin(t, "or-not-a-real-key-1234", "secrets", "set", "openrouter-api-key", "--project-wide"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := executeStdin(t, "or-not-a-real-key-5678", "secrets", "set", "openrouter-api-key", "--repo", "acme/app"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "secrets", "ls", "--repo", "acme/app", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list []struct {
+		Name, ID, Scope string
+	}
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		t.Fatalf("ls --json = %s, %v", out, err)
+	}
+	scopes := map[string]string{}
+	for _, s := range list {
+		scopes[s.Name] = s.Scope
+	}
+	if scopes["openrouter-api-key"] != "project, repo override stored" {
+		t.Errorf("openrouter-api-key scope = %q, want the override note (entries %+v)", scopes["openrouter-api-key"], list)
+	}
+	if scopes["bitbucket-token"] != "project" {
+		t.Errorf("bitbucket-token scope = %q, want project (entries %+v)", scopes["bitbucket-token"], list)
+	}
+	for _, r := range sm.Requests() {
+		if strings.Contains(r.Path, ":access") {
+			t.Fatalf("ls read a value: %s", r.Path)
+		}
+	}
+}
+
+// TestSecretsLsProjectWideShowsAnyRepository: a provider stored
+// project-wide with no allow_data_to is available to every repository
+// (design §3a), and the ALLOWED column is the operator's only view of who
+// may mount that key, so it says so in words instead of the "-" that reads
+// as nobody. The explicit ["*"] marker and a real list are left as written.
+func TestSecretsLsProjectWideShowsAnyRepository(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		block string
+		want  string
+	}{
+		{"no list", noListProvider, "any repository"},
+		{"wildcard", strings.Replace(listedProvider, `["acme/app"]`, `["*"]`, 1), "*"},
+		{"listed", listedProvider, "acme/app"},
+	} {
+		secretsFixture(t)
+		projectSecretFixture(t, tc.block)
+		if _, _, err := executeStdin(t, "or-not-a-real-key-1234", "secrets", "set", "openrouter-api-key", "--project-wide"); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		out, _, err := execute(t, "secrets", "ls", "--project-wide")
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if !strings.Contains(out, tc.want) {
+			t.Errorf("%s: ALLOWED does not say %q:\n%s", tc.name, tc.want, out)
+		}
+		out, _, err = execute(t, "secrets", "ls", "--project-wide", "--json")
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		var list []struct {
+			Name    string
+			Allowed []string
+		}
+		if err := json.Unmarshal([]byte(out), &list); err != nil {
+			t.Fatalf("%s: ls --json = %s, %v", tc.name, out, err)
+		}
+		if len(list) != 1 || list[0].Allowed == nil || strings.Join(list[0].Allowed, ",") != tc.want {
+			t.Errorf("%s: allowed = %+v, want [%s]", tc.name, list, tc.want)
+		}
+	}
+}
+
+// TestSecretsLsRepoScopeIgnoresProjectCopyItMayNotUse: a repository's
+// listing answers with the plan's own rule (infra.ProjectSecretCandidate),
+// not with "a project-wide copy exists". This repository is on no
+// allow_data_to, so its own container is all it has: the project-wide copy
+// of the same name must not appear, and must not turn the row into
+// "project" or the override note.
+func TestSecretsLsRepoScopeIgnoresProjectCopyItMayNotUse(t *testing.T) {
+	sm := secretsFixture(t)
+	// The other repository is a repo entry of the fixture's own repos block
+	// (--repo needs to know its git provider); the provider's allow_data_to
+	// is the fixture's ["acme/app"].
+	appendConfig(t, "  acme/other: { provider: github }\n")
+	projectSecretFixture(t, listedProvider)
+	if _, _, err := executeStdin(t, "or-not-a-real-key-1234", "secrets", "set", "openrouter-api-key", "--project-wide"); err != nil {
+		t.Fatal(err)
+	}
+	// No container of its own: nothing is listed at all.
+	out, _, err := execute(t, "secrets", "ls", "--repo", "acme/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "no secrets stored for acme/other") {
+		t.Fatalf("a project copy it may not use is listed:\n%s", out)
+	}
+	// With a container of its own (seeded: `secrets set --repo` refuses this
+	// repository, which is the rule being listed), the row is the
+	// repository's own.
+	other := mustSlug("github", "acme/other")
+	sm.Seed(gcp.SecretID(other, "openrouter-api-key"), map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, other), gcp.LabelSecret: "openrouter-api-key"},
+		[]byte("or-not-a-real-key-5678"))
+	out, _, err = execute(t, "secrets", "ls", "--repo", "acme/other", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list []struct {
+		Name, ID, Scope string
+	}
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		t.Fatalf("ls --json = %s, %v", out, err)
+	}
+	if len(list) != 1 || list[0].Scope != "repo" || list[0].ID != gcp.SecretID(other, "openrouter-api-key") {
+		t.Fatalf("entries = %+v, want the repository's own container alone", list)
+	}
+}
+
+// TestSecretsLsScopeIsProjectWhenTheRepoCopyHasNoVersion: §5's precedence is
+// a repository copy with an enabled version, not a container. A repository
+// container whose versions are all disabled resolves to the project-wide
+// copy -- the state §6 step 4a deliberately leaves behind while a name moves
+// project-wide -- so ls must say "project", not "project, repo override
+// stored" beside the "-" LATEST and 0 VERSIONS of the same row, which would
+// tell the operator the migration did not take.
+func TestSecretsLsScopeIsProjectWhenTheRepoCopyHasNoVersion(t *testing.T) {
+	sm := secretsFixture(t)
+	projectSecretFixture(t, listedProvider)
+	if _, _, err := executeStdin(t, "or-not-a-real-key-1234", "secrets", "set", "openrouter-api-key", "--project-wide"); err != nil {
+		t.Fatal(err)
+	}
+	// The repository's own container with every version disabled: what
+	// `fugaro secrets set ... --project-wide` leaves behind when a name
+	// moves, and what init --repo's own container looks like before a value
+	// is ever stored in it.
+	sm.Seed(gcp.SecretID(appSlug, "openrouter-api-key"), map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, appSlug), gcp.LabelSecret: "openrouter-api-key"}, nil)
+	out, _, err := execute(t, "secrets", "ls", "--repo", "acme/app", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list []struct {
+		Name, ID, Scope string
+	}
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		t.Fatalf("ls --json = %s, %v", out, err)
+	}
+	scopes := map[string]string{}
+	for _, s := range list {
+		scopes[s.Name] = s.Scope
+	}
+	if scopes["openrouter-api-key"] != "project" {
+		t.Errorf("openrouter-api-key scope = %q, want project: the repository copy holds no version to override with (entries %+v)",
+			scopes["openrouter-api-key"], list)
+	}
+	// The human table agrees, and the row is the project container's own.
+	text, _, err := execute(t, "secrets", "ls", "--repo", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(text, "repo override stored") || !strings.Contains(text, gcp.ProjectSecretID("aurora", "openrouter-api-key")) {
+		t.Fatalf("ls = %s", text)
+	}
+	for _, r := range sm.Requests() {
+		if strings.Contains(r.Path, ":access") {
+			t.Fatalf("ls read a value: %s", r.Path)
+		}
+	}
+}
+
+// TestSecretsLsProjectWideNeverPrintsValue: --project-wide lists by the
+// installation's own label, prints the allowed repositories from local
+// config, and never reads a value.
+func TestSecretsLsProjectWideNeverPrintsValue(t *testing.T) {
+	sm := secretsFixture(t)
+	projectSecretFixture(t, listedProvider)
+	if _, _, err := executeStdin(t, "or-not-a-real-key-1234", "secrets", "set", "openrouter-api-key", "--project-wide"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "secrets", "ls", "--project-wide")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := gcp.ProjectSecretID("aurora", "openrouter-api-key")
+	if !strings.Contains(out, id) || !strings.Contains(out, "openrouter-api-key") || !strings.Contains(out, "acme/app") {
+		t.Fatalf("ls --project-wide = %s", out)
+	}
+	if strings.Contains(out, "or-not-a-real-key-1234") {
+		t.Fatal("the value leaked")
+	}
+	for _, r := range sm.Requests() {
+		if strings.Contains(r.Path, ":access") {
+			t.Fatalf("ls --project-wide read a value: %s", r.Path)
+		}
+	}
+}

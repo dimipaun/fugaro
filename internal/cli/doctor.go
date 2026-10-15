@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,6 +48,29 @@ type doctorCheck struct {
 
 func fromPreflight(c preflight.Check) doctorCheck {
 	return doctorCheck{ID: c.ID, OK: c.OK, Problem: c.Problem, Fix: c.Fix}
+}
+
+// doctorOpenProvidersCheck is doctor's "provider-open-to-every-repository"
+// finding: every provider the local config leaves open to every repository
+// (an absent allow_data_to, or the explicit ["*"] marker -- design §3a),
+// named, with what that means. Informational, never red and never a
+// failure under --strict: the owner ruled the state valid, and this only
+// makes it visible, because before this design an absent list meant nobody
+// and a config carried over from then now mounts its key into every
+// repository's job. It reads the local config alone: no cloud call, no
+// value.
+func doctorOpenProvidersCheck(lc *localcfg.Config) *doctorCheck {
+	names := config.OpenProviders(lc.Providers)
+	if len(names) == 0 {
+		return nil
+	}
+	lines := make([]string, len(names))
+	for i, name := range names {
+		lines[i] = "provider " + pluginwire.Printable(name) + " " + lc.Providers[name].OpenToEveryRepoReason()
+	}
+	return &doctorCheck{ID: "provider-open-to-every-repository", Severity: "info",
+		Problem: strings.Join(lines, "; "),
+		Fix:     "to narrow it, list the repositories in that provider's allow_data_to and run " + selfCommand() + " init --repo in each one (a deployed job keeps the key's mount and the routes it was applied with until then)"}
 }
 
 // cliVersionCheck is doctor's "cli-version" check: whether this binary is
@@ -258,8 +282,13 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		return failed(err)
 	}
 	o.Checks = append(o.Checks, sharedConfigChecks(ctx, sel, lc, time.Now())...)
+	// Both sides' checks, in the order main has them: the catalog's age (P7),
+	// the ZDR note (P9), and the project-wide provider secrets' own checks.
 	o.Checks = append(o.Checks, doctorPriceCatalog(budgetNow()))
 	if c := doctorProviderZDR(lc); c != nil {
+		o.Checks = append(o.Checks, *c)
+	}
+	if c := doctorOpenProvidersCheck(lc); c != nil {
 		o.Checks = append(o.Checks, *c)
 	}
 	if co, err := checkoutProject(ctx, ""); err == nil && needsAnchorHint(ctx, co, lc) {
@@ -319,6 +348,12 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 
 	o.Checks = append(o.Checks, doctorBaseImage(lc))
 
+	// The installation's project-wide secret containers, listed once for
+	// doctor's three project-secret checks: the two per-repository ones
+	// below (inside the checkout) and the project-wide accessor one here.
+	projSM, projSecrets, projOK := doctorProjectSecrets(ctx, lc)
+	o.Checks = append(o.Checks, doctorProjectSecretAccessorChecks(ctx, lc, projSM, projSecrets)...)
+
 	o.Project = &doctorProject{Name: lc.Name, GCPProject: lc.GCPProject, Region: lc.Region, RegistryHost: lc.RegistryHost, BaseImages: lc.BaseImages}
 
 	if co, _ := checkoutProject(ctx, ""); co != nil {
@@ -336,6 +371,20 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		if repo, err := originRepo(ctx); err == nil {
 			if c := claudeAccountsStoredCheck(lc, repo, o.Secrets); c != nil {
 				o.Checks = append(o.Checks, *c)
+			}
+			// The two per-repository project-secret checks need the
+			// repository's own resolved fugaro.yaml (which logical names its
+			// jobs mount): an invalid one already failed its own check, so
+			// there is nothing to compute from.
+			if resolved != nil && resolved.Cfg != nil {
+				if facts, ok := doctorRepoSecretsOf(lc, resolved.Cfg, repo); ok {
+					if c := doctorProjectSecretStoredCheck(lc, facts, o.Secrets, projSecrets, projOK); c != nil {
+						o.Checks = append(o.Checks, *c)
+					}
+					if c := doctorProjectSecretScopeCheck(ctx, lc, facts, o.Secrets, projSecrets); c != nil {
+						o.Checks = append(o.Checks, *c)
+					}
+				}
 			}
 			if c := oauthTokenAllowedCheck(lc, repo, token, authOf(resolved)); c != nil {
 				o.Checks = append(o.Checks, *c)
@@ -467,8 +516,34 @@ func doctorGitHubApps(ctx context.Context, lc *localcfg.Config, notice io.Writer
 		if err != nil {
 			continue
 		}
-		c := checkGitHubApp(ctx, lc, repo, lc.Repos[repo].GitHubAppID, appKeySource{Read: true, SecretID: gcp.SecretID(slug, "github-app-key"), Notice: notice})
 		id := "github-app:" + repo
+		// The secret the check signs with is the one live state resolves for
+		// github-app-key, not the repository's own ID unconditionally: once
+		// that name moves to project scope the repository's own copy has no
+		// version at all, and the check would report "its private key is not
+		// stored yet" for a key that is stored, just project-wide. The
+		// resolution is compared with the build account's own live grant
+		// first (B1), the identical comparison fugaro image build makes: a
+		// grant naming a different ID means this check would read a key the
+		// build's clone would not, which makes the diagnostic misleading
+		// rather than wrong, so it is a warning with the apply that fixes it.
+		logical := "github-app-key"
+		projectID, _ := infra.ProjectSecretCandidate(lc, logical, repo)
+		buildSA := buildAccountMember(gcp.BuildServiceAccountID(slug) + "@" + lc.GCPProject + ".iam.gserviceaccount.com")
+		keyID, err := resolveGitSecretID(ctx, lc, lc.GCPProject, repo, logical, gcp.SecretID(slug, logical), projectID, buildSA, "the GitHub App check of "+repo)
+		if err != nil {
+			// A drift's own message does not fit this field: Printable cuts
+			// it, and the two IDs are what a reader needs from it (driftError.short).
+			problem := oneLineCLI(err.Error())
+			var drift *driftError
+			if errors.As(err, &drift) {
+				problem = drift.short()
+			}
+			out = append(out, doctorCheck{ID: id, OK: false, Severity: "warning", Problem: problem,
+				Fix: "run " + selfCommand() + " init --repo " + quoteWord(repo) + " in its checkout to reapply it, so the App's key this check reads and the one its builds read are the same secret"})
+			continue
+		}
+		c := checkGitHubApp(ctx, lc, repo, lc.Repos[repo].GitHubAppID, appKeySource{Read: true, SecretID: keyID, Notice: notice})
 		switch c.Verdict {
 		case appFine:
 			out = append(out, doctorCheck{ID: id, OK: true})
@@ -574,6 +649,343 @@ func doctorSecrets(cmd *cobra.Command, lc *localcfg.Config) []secretEntry {
 		return strings.Compare(a.Name+"\x00"+a.ID, b.Name+"\x00"+b.ID)
 	})
 	return entries
+}
+
+// doctorProjectSecrets lists the installation's project-wide secret
+// containers (the labels the project-wide stage writes: managed + project,
+// never a repository's), by ID and version state, never a value. ok is
+// false when the listing could not be made at all (no credentials, Secret
+// Manager unreachable, no secret_manager endpoint under no_auth), which its
+// callers tell apart from a real empty answer: an unreadable installation
+// must not be reported as one that stores nothing.
+func doctorProjectSecrets(ctx context.Context, lc *localcfg.Config) (sm *gcp.Secrets, all []gcp.SecretInfo, ok bool) {
+	if lc.Endpoints.NoAuth && lc.Endpoints.SecretManager == "" {
+		// Fakes only, and no fake for Secret Manager: an empty endpoint
+		// would send the call to Google. The same guard the other cloud
+		// reads behind doctor use.
+		return nil, nil, false
+	}
+	sm, err := gcp.NewSecrets(ctx, gcp.Options{GCPProject: lc.GCPProject, Region: lc.Region,
+		Endpoints: gcp.Endpoints{SecretManager: lc.Endpoints.SecretManager, NoAuth: lc.Endpoints.NoAuth}})
+	if err != nil {
+		return nil, nil, false
+	}
+	list, err := sm.List(ctx, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: lc.Name})
+	if err != nil {
+		return sm, nil, false
+	}
+	slices.SortFunc(list, func(a, b gcp.SecretInfo) int { return strings.Compare(a.ID, b.ID) })
+	return sm, list, true
+}
+
+// projectSecretEnabled is the logical names holding an enabled version, from
+// whichever listing: a project-wide container carries its logical name in
+// gcp.LabelSecret exactly as a repository's own does, and the caller has
+// already narrowed the listing to one scope.
+func projectSecretEnabled(list []gcp.SecretInfo) map[string]bool {
+	out := map[string]bool{}
+	for _, s := range list {
+		if s.Latest != "" {
+			out[s.Labels[gcp.LabelSecret]] = true
+		}
+	}
+	return out
+}
+
+// doctorRepoSecrets is what doctor's two per-repository project-secret
+// checks read off the checkout, computed through the same infra.Workflow the
+// rest of the CLI builds a job's spec with (jobConfigCopyNote,
+// internal/cli/upgrade_cloud.go): the logical names this repository's jobs
+// mount, the repository secret ID each of them is stored under, the
+// project-wide ID of every name the local config allow-lists it for, and
+// each workflow's default-account job name.
+//
+// infra.Repo would answer all of this in one call too, but it also builds
+// the daily image check's own spec, which refuses a local config with no
+// base_images entry for the workflow's base -- a repository doctor must
+// still be able to report on. A checkout: clone workflow has no derived
+// image, so it has no check spec either way.
+type doctorRepoSecrets struct {
+	repo       string
+	candidates map[string]string // logical -> the project-wide ID it resolves to
+	logical    map[string]string // a secret ID either scope stores this name under -> logical name
+	repoIDs    map[string]string // logical -> the repository's own secret ID
+	jobs       map[string]string // workflow name -> its default-account job
+}
+
+// doctorRepoSecretsOf computes doctorRepoSecrets for repo from cfg (the
+// checkout's resolved fugaro.yaml). ok is false when a workflow's own spec
+// cannot be computed (a bad resources block, a secret env collision, a
+// repository the local config does not record): the same edit already fails
+// another check, so the two below stay silent rather than report on a
+// repository whose jobs cannot be built at all.
+func doctorRepoSecretsOf(lc *localcfg.Config, cfg *config.Config, repo string) (doctorRepoSecrets, bool) {
+	facts := doctorRepoSecrets{repo: repo,
+		candidates: map[string]string{}, logical: map[string]string{}, repoIDs: map[string]string{}, jobs: map[string]string{}}
+	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
+		ws, err := infra.Workflow(infra.Inputs{LC: lc, Repo: repo, Cfg: cfg}, name)
+		if err != nil {
+			return doctorRepoSecrets{}, false
+		}
+		facts.jobs[name] = ws.Job
+		for logical, id := range ws.SecretIDs {
+			// ws.SecretIDs is the repository-scoped ID wherever the name is
+			// stored (infra.Workflow), so the reverse lookup has to hold
+			// the project-wide ID as well: a deployed job may mount either
+			// scope's container, and both directions are a scope the
+			// project-secret-scope-stale check exists to compare.
+			facts.logical[id] = logical
+			facts.repoIDs[logical] = id
+			if projectID, ok := infra.ProjectSecretCandidate(lc, logical, repo); ok {
+				facts.candidates[logical] = projectID
+				facts.logical[projectID] = logical
+			}
+		}
+	}
+	return facts, true
+}
+
+// doctorProjectSecretStoredCheck is doctor's "project-secret-stored" check:
+// every logical name this repository may use project-wide (facts.candidates:
+// the names its jobs mount that the owner's local config allow-lists it for)
+// must hold an enabled version somewhere -- its own container, or the
+// project's. Neither means no run of a workflow mounting it can start, which
+// is red, since only storing a value fixes it.
+//
+// It reads metadata only (two listings doctor already has) and never a
+// value, and it adds no check at all for an installation that opted no
+// secret into project-wide storage: there is nothing it could say.
+func doctorProjectSecretStoredCheck(lc *localcfg.Config, facts doctorRepoSecrets, listed []secretEntry, project []gcp.SecretInfo, projectOK bool) *doctorCheck {
+	names := slices.Sorted(maps.Keys(facts.candidates))
+	if len(names) == 0 {
+		return nil
+	}
+	printableRepo := pluginwire.Printable(facts.repo)
+	if listed == nil || !projectOK {
+		// Fail closed: an owner could not otherwise tell an installation
+		// that stores nothing from one whose secrets could not be read.
+		// A warning, since nothing here proves a value is missing.
+		return &doctorCheck{ID: "project-secret-stored", Severity: "warning",
+			Problem: fmt.Sprintf("could not list the secrets %s may use project-wide (%s), so whether they have a stored value could not be checked",
+				printableRepo, strings.Join(printableNames(names), ", ")),
+			Fix: "rerun doctor with Secret Manager reachable and your credentials available, or check by hand: " + selfCommand() + " secrets ls --repo " + quoteWord(facts.repo) + ", and " + selfCommand() + " secrets ls --project-wide"}
+	}
+	have := projectSecretEnabledFromEntries(listed)
+	for name, enabled := range projectSecretEnabled(project) {
+		if enabled {
+			have[name] = true
+		}
+	}
+	var missing, cmds []string
+	for _, name := range names {
+		if have[name] {
+			continue
+		}
+		missing = append(missing, pluginwire.Printable(name))
+		cmds = append(cmds, selfCommand()+" secrets set "+quoteWord(name)+" --repo "+quoteWord(facts.repo),
+			selfCommand()+" secrets set "+quoteWord(name)+" --project-wide")
+	}
+	if len(missing) == 0 {
+		return &doctorCheck{ID: "project-secret-stored", OK: true}
+	}
+	return &doctorCheck{ID: "project-secret-stored",
+		Problem: fmt.Sprintf("%s may use %s project-wide, and neither its own container nor the project's holds an enabled version: no run of a workflow mounting one can start",
+			printableRepo, strings.Join(missing, ", ")),
+		Fix: strings.Join(cmds, ", or ")}
+}
+
+// projectSecretEnabledFromEntries is projectSecretEnabled over doctor's own
+// already-fetched repository listing (doctorSecrets).
+func projectSecretEnabledFromEntries(listed []secretEntry) map[string]bool {
+	out := map[string]bool{}
+	for _, e := range listed {
+		if e.Latest != "" {
+			out[e.Name] = true
+		}
+	}
+	return out
+}
+
+// printableNames bounds a set of logical names for a message, the way every
+// other name doctor echoes is bounded.
+func printableNames(names []string) []string {
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = pluginwire.Printable(n)
+	}
+	return out
+}
+
+// doctorProjectSecretScopeCheck is doctor's "project-secret-scope-stale"
+// check: a deployed job of this repository still mounts a secret from one
+// scope while the copy Readiness resolves for it now is the other one --
+// typically the repository's own copy lost its last version after the job
+// was applied, or a repository copy was stored again after a project-shared
+// apply. The deployed job's own mounted references are read (metadata only),
+// never the secret's value.
+//
+// A warning (design §7's own reasoning): the next fugaro init --repo fixes
+// it, and a repository mid-move is the expected, transient case. Best
+// effort: a job that could not be read, a name that resolves to nothing, or
+// no Cloud Run endpoint at all says nothing.
+//
+// Only each workflow's default-account job is read, the same limitation
+// jobConfigCopyNote documents (internal/cli/upgrade_cloud.go): the one
+// fugaro init --repo that refreshes the default job refreshes every named
+// account's variant of it too, so a finding here is never the only one.
+func doctorProjectSecretScopeCheck(ctx context.Context, lc *localcfg.Config, facts doctorRepoSecrets, listed []secretEntry, project []gcp.SecretInfo) *doctorCheck {
+	if lc.Endpoints.NoAuth && lc.Endpoints.Run == "" {
+		// Fakes only, and no fake for Cloud Run: there is nothing to read,
+		// and an empty endpoint would send the call to Google.
+		return nil
+	}
+	be, err := gcp.New(ctx, gcp.Options{GCPProject: lc.GCPProject, Region: lc.Region, LogView: lc.LogView,
+		Endpoints: gcp.Endpoints{Run: lc.Endpoints.Run, NoAuth: lc.Endpoints.NoAuth}})
+	if err != nil {
+		return nil
+	}
+	repoEnabled := projectSecretEnabledFromEntries(listed)
+	projEnabled := projectSecretEnabled(project)
+	var stale []string
+	for _, key := range slices.Sorted(maps.Keys(facts.jobs)) {
+		refs, exists, err := be.JobSecretRefs(ctx, facts.jobs[key])
+		if err != nil || !exists {
+			continue
+		}
+		for _, env := range slices.Sorted(maps.Keys(refs)) {
+			id := refs[env]
+			name, known := facts.logical[id]
+			if !known {
+				continue // a name this repository does not compute (a stranger's, or a hand-written reference)
+			}
+			projectID, isCandidate := facts.candidates[name]
+			if !isCandidate {
+				continue // not a name this repository may use project-wide, so there is no other scope to move to
+			}
+			// What Readiness resolves for this name now, §5's precedence: a
+			// repository copy with an enabled version wins, else the
+			// project-wide copy. It is compared against the ID the job
+			// actually mounts, never against the repository-scoped ID: the
+			// warning has to fire whichever of the two scopes the job was
+			// applied with, so a job still mounting the project copy after
+			// this repository stored one of its own is caught too.
+			want := facts.repoIDs[name]
+			switch {
+			case repoEnabled[name]:
+				// The repository's own copy wins: want is repoIDs[name].
+			case projEnabled[name]:
+				want = projectID
+			default:
+				continue // nothing resolves to anything: project-secret-stored's own business
+			}
+			if want != id {
+				stale = append(stale, fmt.Sprintf("workflow %s's job mounts %s from %s, but the copy Fugaro resolves for it now is %s (%s)",
+					pluginwire.Printable(key), pluginwire.Printable(name), pluginwire.Printable(id), pluginwire.Printable(want), pluginwire.Printable(env)))
+			}
+		}
+	}
+	if len(stale) == 0 {
+		return nil
+	}
+	return &doctorCheck{ID: "project-secret-scope-stale", Severity: "warning",
+		Problem: strings.Join(stale, "; ") + ": the deployed job was applied before the secret's scope changed",
+		Fix:     "run " + selfCommand() + " init --repo " + quoteWord(facts.repo) + " in your own terminal to reapply the repository, so the next run mounts the copy Fugaro resolves"}
+}
+
+// doctorProjectSecretAccessorChecks is doctor's project-wide
+// "project-secret-extra-accessors" check (S3): for each project-wide
+// container, every live secretAccessor grant that belongs to one of the
+// installation's own service accounts, whose repository the name's own
+// eligibility rule no longer lists. Removing a repository from
+// project_secrets, from a provider's allow_data_to or from an account's
+// leaves its job's grant live until that one repository's own apply runs
+// again, and no repository's own fugaro init --repo has reason to look at
+// another repository's bindings -- noteExtraAccessors only ever compares one
+// repository's spec against its own secrets.
+//
+// A warning, never red (SF9): this is revocation lag, the expected case
+// between the owner's edit and the affected repository's next apply, and red
+// would fail every installation mid-revocation. Its fix is spelled out, so
+// the operator needs no cross-referencing.
+//
+// The repository a grant belongs to is computed forward, never decoded:
+// gcp.ServiceAccountID hashes a repository slug, so a hash cannot be
+// inverted. Every repository/workflow pair the local config records
+// contributes its job account, and every (repository, workflow, allowed
+// Claude account) pair that account's own variant, since a named account's
+// job runs under its own, variant-keyed service account.
+func doctorProjectSecretAccessorChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.Secrets, project []gcp.SecretInfo) []doctorCheck {
+	if sm == nil {
+		return nil
+	}
+	owners := projectSecretAccountOwners(lc)
+	var out []doctorCheck
+	for _, s := range project {
+		name := s.Labels[gcp.LabelSecret]
+		members, err := sm.SecretAccessors(ctx, s.ID)
+		if err != nil {
+			continue // best effort, like every other cloud read doctor degrades on
+		}
+		var extra []string
+		for _, m := range members {
+			repo, ours := owners[m]
+			if !ours {
+				continue // a person, a group, or an account of something that is not ours
+			}
+			if _, allowed := infra.ProjectSecretCandidate(lc, name, repo); allowed {
+				continue
+			}
+			if !slices.Contains(extra, repo) {
+				extra = append(extra, repo)
+			}
+		}
+		if len(extra) == 0 {
+			continue
+		}
+		slices.Sort(extra)
+		cmds := make([]string, len(extra))
+		for i, repo := range extra {
+			cmds[i] = "re-run " + selfCommand() + " init --repo " + quoteWord(repo) + " and pass --allow-delete"
+		}
+		out = append(out, doctorCheck{ID: "project-secret-extra-accessors", Severity: "warning",
+			Problem: fmt.Sprintf("project secret %s can still be read by %s, which its allow_data_to no longer lists: the grant stays live until each of those repositories is applied again",
+				pluginwire.Printable(name), strings.Join(printableNames(extra), ", ")),
+			Fix: strings.Join(cmds, ", ") + " for the address the plan's refusal names"})
+	}
+	return out
+}
+
+// projectSecretAccountOwners maps the IAM member string of every service
+// account the local config's own repositories are deployed under to that
+// repository: the build account, each workflow's job account, and each named
+// Claude account's own variant of each workflow. A repository whose provider
+// the local config does not record contributes nothing: its slug cannot be
+// computed, and a hash cannot be inverted.
+//
+// Every named account of claude_accounts is enumerated, not only the ones
+// AllowedClaudeAccounts lists for that repository today: the map answers
+// "which repository is this account", and the grant this check exists to
+// find is precisely one an account's allow_data_to no longer covers (the
+// variant job was deployed while it still did, design §7). Enumerating only
+// today's allow-list would leave that very grant unmatched.
+func projectSecretAccountOwners(lc *localcfg.Config) map[string]string {
+	out := map[string]string{}
+	email := func(id string) string { return id + "@" + lc.GCPProject + ".iam.gserviceaccount.com" }
+	accounts := slices.Sorted(maps.Keys(lc.ClaudeAccounts))
+	for _, repo := range slices.Sorted(maps.Keys(lc.Repos)) {
+		slug, err := task.Slug(lc.Repos[repo].Provider, repo)
+		if err != nil {
+			continue
+		}
+		out["serviceAccount:"+email(gcp.BuildServiceAccountID(slug))] = repo
+		for _, w := range lc.Repos[repo].Workflows {
+			out["serviceAccount:"+email(gcp.ServiceAccountID(slug, w))] = repo
+			for _, a := range accounts {
+				out["serviceAccount:"+email(gcp.ServiceAccountID(slug, gcp.WorkflowVariant(w, a)))] = repo
+			}
+		}
+	}
+	return out
 }
 
 // claudeAccountsStoredCheck is doctor's "claude-accounts-stored" check

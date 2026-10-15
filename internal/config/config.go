@@ -256,10 +256,11 @@ type Workflow struct {
 	// "" defaults to baked (design generic-tool.md §2, G3, G5). The build
 	// acts on it (generic-tool plan Task 16): a clone workflow's job image
 	// is base_images.base, with no per-repository image build or daily
-	// check. clone is not released yet: the runner side (plan Task 17, not
-	// merged) is what actually reads FUGARO_CHECKOUT and makes the
+	// check. clone is not released yet: the runner side (generic-tool plan
+	// Task 17, in the tree but in no tagged release) is what actually reads
+	// FUGARO_CHECKOUT and makes the
 	// blobless clone, so a checkout: clone launch is refused at launch
-	// until fugaro 0.7.1 (internal/cli/recipes_skew.go's cloneSince) ships
+	// until fugaro 0.7.5 (internal/cli/recipes_skew.go's cloneSince) ships
 	// it, whether or not the installation's own base image (fugaro-base)
 	// has been published — a separate, person-run step this plan does not
 	// do. Use checkout: baked to run a workflow today.

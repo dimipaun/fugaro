@@ -13,6 +13,9 @@ mock_provider "google" {}
 variables {
   bitbucket = jsondecode(file("tests/testdata/bitbucket-oauth.tfvars.json"))
   github    = jsondecode(file("tests/testdata/github-vertex.tfvars.json"))
+  # The same repository with one repo.project_secrets entry: a name Readiness
+  # resolved to a project-wide container. Hand-maintained; see testdata/README.md.
+  psec = jsondecode(file("tests/testdata/project-secrets.tfvars.json"))
 }
 
 run "root_bitbucket" {
@@ -447,6 +450,16 @@ run "secret_ref_short_form_job" {
     job_runner_role = var.bitbucket.installation.role_ids.job_runner
   }
 
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
   assert {
     condition = alltrue([for e in google_cloud_run_v2_job.this[0].template[0].template[0].containers[0].env :
       one(one(e.value_source).secret_key_ref).secret == var.bitbucket.repo.secrets[var.bitbucket.repo.workflows.web.secret_env[e.name]] &&
@@ -470,6 +483,60 @@ run "secret_ref_short_form_job" {
   assert {
     condition     = alltrue([for m in google_secret_manager_secret_iam_member.job : m.role == "roles/secretmanager.secretAccessor"])
     error_message = "the job account's secret grants must be secretAccessor"
+  }
+  assert {
+    condition = alltrue([for m in google_secret_manager_secret_iam_member.job :
+    m.member == "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"])
+    error_message = "the job account's secret grants must go to its own account, and no other"
+  }
+}
+
+# The github fixture's repository holds two secrets (github-app-key and
+# npm-token) and its "api" workflow mounts only the first, so this run
+# separates "the secrets the workflow mounts" from "the secrets the repository
+# has": grants widened to every secret in the map it was handed, or addressed
+# at any account but the job's own, fail here (the web workflow mounts both, so
+# a run against it cannot tell the two apart).
+run "job_grants_follow_the_workflow" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.github.project
+    fugaro_project  = var.github.fugaro_project
+    region          = var.github.region
+    name            = "api"
+    repo_label      = var.github.repo.label
+    workflow        = var.github.repo.workflows.api
+    secrets         = var.github.repo.secrets
+    runs_bucket     = var.github.installation.runs_bucket
+    job_runner_role = var.github.installation.role_ids.job_runner
+  }
+
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-acme-webapp-ap-7daad322@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-acme-webapp-ap-7daad322@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-acme-webapp-ap-7daad322@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition = tomap({ for k, m in google_secret_manager_secret_iam_member.job : k => m.secret_id }) == tomap({
+      github-app-key = "fugaro-acme-webapp-github-app-key-35b331db19bcc682"
+    })
+    error_message = "the job account must get accessor on the secrets its own workflow mounts, not on every secret in the repository"
+  }
+  assert {
+    condition = alltrue([for m in google_secret_manager_secret_iam_member.job :
+      m.role == "roles/secretmanager.secretAccessor" &&
+    m.member == "serviceAccount:fugaro-acme-webapp-ap-7daad322@proj-1234.iam.gserviceaccount.com"])
+    error_message = "the job account's secret grants must be secretAccessor to its own account, and no other"
   }
 }
 
@@ -641,6 +708,11 @@ run "build_iam" {
   assert {
     condition     = alltrue([for m in google_secret_manager_secret_iam_member.build : m.role == "roles/secretmanager.secretAccessor"])
     error_message = "the build account's secret grants must be secretAccessor"
+  }
+  assert {
+    condition = alltrue([for m in google_secret_manager_secret_iam_member.build :
+    m.member == "serviceAccount:fugaro-b-acme-webapp-5b8bba58@proj-1234.iam.gserviceaccount.com"])
+    error_message = "the build account's secret grants must go to its own account, and no other"
   }
   assert {
     condition = tomap({ for k, m in google_project_iam_member.build : k => m.role }) == tomap({
@@ -1144,4 +1216,81 @@ run "bad_fugaro_project" {
   }
 
   expect_failures = [var.fugaro_project]
+}
+
+# The resolved secret reaches every reader (design docs/design/project-secrets.md
+# §5, Task 5): the workflow module's job mount, the job account's accessor
+# grant, the build account's grant and the check job's secret_key_ref must all
+# name the IDENTICAL project-wide container for bitbucket-token, while a name
+# with no project copy (sandbox-probe) keeps the repository's own. A divergence
+# means one of the paths is still reading a stale, repo-only value.
+run "build_and_check_use_the_resolved_secret" {
+  command = plan
+
+  module {
+    source = "../../modules/repo"
+  }
+
+  variables {
+    project        = var.psec.project
+    fugaro_project = var.psec.fugaro_project
+    region         = var.psec.region
+    installation   = var.psec.installation
+    repo           = var.psec.repo
+  }
+
+  assert {
+    condition     = module.workflow["web"].secret_refs["FUGARO_BITBUCKET_TOKEN"] == var.psec.repo.project_secrets["bitbucket-token"]
+    error_message = "the job must mount bitbucket-token from the project-wide container"
+  }
+  assert {
+    condition     = module.workflow["web"].secret_refs["SANDBOX_PROBE"] == var.psec.repo.secrets["sandbox-probe"]
+    error_message = "a name with no project copy must keep the repository's own container"
+  }
+  assert {
+    condition = tomap({ for k, m in google_secret_manager_secret_iam_member.build : k => m.secret_id }) == tomap({
+      bitbucket-token = var.psec.repo.project_secrets["bitbucket-token"]
+      sandbox-probe   = var.psec.repo.secrets["sandbox-probe"]
+    })
+    error_message = "the build account's grant on a resolved name must be the project-wide container, and its other grants the repository's own"
+  }
+  assert {
+    condition = [for e in google_cloud_run_v2_job.check[0].template[0].template[0].containers[0].env :
+      one(one(e.value_source).secret_key_ref).secret
+    if length(e.value_source) > 0] == [var.psec.repo.project_secrets["bitbucket-token"]]
+    error_message = "the check job must mount bitbucket-token from the project-wide container"
+  }
+}
+
+# The workflow module grants its job account accessor on whatever map it is
+# handed, so the repo module's merged local is what decides which container
+# that is; this run pins that the merged map takes the project value for a
+# resolved name (the repo module run above cannot reach this resource).
+run "resolved_secret_job_grant" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.psec.project
+    fugaro_project  = var.psec.fugaro_project
+    region          = var.psec.region
+    name            = "web"
+    repo_label      = var.psec.repo.label
+    workflow        = var.psec.repo.workflows.web
+    secrets         = merge(var.psec.repo.secrets, var.psec.repo.project_secrets)
+    runs_bucket     = var.psec.installation.runs_bucket
+    job_runner_role = var.psec.installation.role_ids.job_runner
+  }
+
+  assert {
+    condition     = google_secret_manager_secret_iam_member.job["bitbucket-token"].secret_id == var.psec.repo.project_secrets["bitbucket-token"]
+    error_message = "the job account's accessor grant on a resolved name must be the project-wide container"
+  }
+  assert {
+    condition     = google_secret_manager_secret_iam_member.job["sandbox-probe"].secret_id == var.psec.repo.secrets["sandbox-probe"]
+    error_message = "the job account's accessor grant on an unresolved name must stay the repository's own container"
+  }
 }

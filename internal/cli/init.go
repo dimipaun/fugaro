@@ -402,6 +402,10 @@ type initRun struct {
 	historyNoted bool
 	printed      bool // the --json result has been printed
 	anchorNoted  bool // init --repo's pointer at --anchor has been said
+	// notedOpenProviders is the once-per-run guard on the note about the
+	// providers every repository may use: the converge's repository stage
+	// runs the repo engine too, and the note belongs once.
+	notedOpenProviders bool
 
 	// buildsLeft is the workflows whose first image build was not offered
 	// because this run cannot take a typed confirmation (--yes, --json, a pipe
@@ -502,6 +506,7 @@ func runInit(r *initRun) error {
 		return err
 	}
 	r.setProject(lc)
+	r.noteOpenProviders(lc)
 	if o.publishConfig {
 		if old == nil {
 			return userErr("--publish-config publishes an existing project config, and there is none: run fugaro init first")
@@ -1145,6 +1150,10 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		return outs, false, initErr(err)
 	}
 	spec.AdoptLegacyRegistry = im.AdoptLegacyRegistry
+	// The installation module's project-wide secret containers: the config's
+	// own eligible names unioned with every one discovery found live, so a
+	// config edit can never shrink the module's for_each (N3).
+	spec.ProjectSecrets = im.ProjectSecrets
 	for _, n := range im.Notes {
 		r.warn(n)
 	}
@@ -1564,6 +1573,26 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 	return nil
 }
 
+// noteOpenProviders says, once per run, which providers every repository of
+// the project may use (internal/config's rule): their keys are mounted into
+// every repository's job and every repository may send them code. Before
+// this design an absent allow_data_to meant nobody, so an operator who
+// never wrote the key is now at the widest setting; this says so at the one
+// command that acts on it. A note, not a warning: the owner ruled it valid.
+func (r *initRun) noteOpenProviders(lc *localcfg.Config) {
+	if r.notedOpenProviders || lc == nil {
+		return
+	}
+	r.notedOpenProviders = true
+	w := r.w
+	if r.o.printVars {
+		w = r.cmd.ErrOrStderr() // stdout stays the tfvars alone
+	}
+	for _, name := range config.OpenProviders(lc.Providers) {
+		fmt.Fprintf(w, "note: provider %s %s\n", name, lc.Providers[name].OpenToEveryRepoReason())
+	}
+}
+
 // noteSecondProject says, once a new project config is written beside
 // another, what that means for commands run outside a checkout.
 func (r *initRun) noteSecondProject() {
@@ -1882,6 +1911,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		return err
 	}
 	r.setProject(lc)
+	r.noteOpenProviders(lc)
 	r.res.Repo = repo
 	if !embedded && !o.planOnly && !o.forget && !o.printVars {
 		if err := r.gateRepo(ctx, root, lc); err != nil {
@@ -2004,8 +2034,11 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		return remote(err)
 	}
 
-	// 3–5. Discover, gate, plan, guard, confirm, apply.
-	missing, err := r.planRepo(ctx, c, t, wd, spec, rootOpts, true)
+	// 3–5. Discover, gate, plan, guard, confirm, apply. ready is what the
+	// apply just wrote, Readiness's own output: the first build below reads
+	// its resolved secret IDs back out of it instead of resolving them
+	// again (B1), since the grants the apply just made were fixed for them.
+	ready, missing, err := r.planRepo(ctx, c, t, wd, spec, rootOpts, true)
 	if err != nil {
 		return err
 	}
@@ -2031,7 +2064,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 				return err
 			}
 		}
-		built, err := r.offerBuilds(ctx, lc, buildCfg, spec, names)
+		built, err := r.offerBuilds(ctx, lc, buildCfg, ready, names)
 		if err != nil {
 			// The first apply already made the repository's resources, so
 			// it joins the local config (and says what it still needs)
@@ -2043,7 +2076,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 			return err
 		}
 		if built > 0 {
-			if missing, err = r.planRepo(ctx, c, t, wd, spec, rootOpts, false); err != nil {
+			if _, missing, err = r.planRepo(ctx, c, t, wd, spec, rootOpts, false); err != nil {
 				return err
 			}
 		}
@@ -2114,11 +2147,45 @@ func (r *initRun) offerBuilds(ctx context.Context, lc *localcfg.Config, cfg *con
 // each named with its fix. A check that could not be made (no key to read, no
 // access, GitHub unreachable) is a warning that does not claim the App is
 // fine, and the build is offered as before.
+//
+// The secret this check reads is the one live state resolves for
+// github-app-key, not the repository's own ID unconditionally (small item 5:
+// this is the fifth call site that named the repo-scoped ID, doctor's own
+// GitHub App check being the fourth). It is resolved live and compared with
+// the build account's own grant first (B1), the identical comparison a
+// standalone fugaro image build makes: a grant naming a different ID means
+// this check would sign with a key the build's clone would not, a misleading
+// diagnostic rather than an access error, and the build is left with that
+// reason instead of being offered on a wrong key.
+//
+// Only behind --check-github-app, though: that is the one path that reaches
+// Secret Manager at all (a key typed at this run's own secrets stage is
+// signed with from memory), so it is the only one a resolved ID decides
+// anything for.
 func (r *initRun) appPreCheck(ctx context.Context, lc *localcfg.Config, spec infra.RepoSpec) string {
 	if spec.Provider != gitprov.KindGitHub || spec.GitHubAppID == "" {
 		return ""
 	}
-	c := checkGitHubApp(ctx, lc, spec.Name, spec.GitHubAppID, appKeySource{Mem: r.appKeyMem, Read: r.o.checkApp, SecretID: spec.Secrets["github-app-key"], Notice: r.w})
+	keyID := spec.Secrets["github-app-key"]
+	if r.o.checkApp {
+		id, err := gitSecretID(ctx, lc, spec, "the GitHub App pre-check of "+spec.Name)
+		if err != nil {
+			// One line, and for a drift the short form of it: oneLineCLI
+			// prints through pluginwire.Printable, which would cut the
+			// granted ID out of the full refusal (driftError.short).
+			why := oneLineCLI(err.Error())
+			fix := ""
+			var drift *driftError
+			if errors.As(err, &drift) {
+				why = drift.short()
+				fix = "\n  fix: run " + selfCommand() + " init --repo " + spec.Name + " in its checkout, so the mounts and the grants agree again"
+			}
+			fmt.Fprintf(r.w, "GitHub App check for %s was not made: %s%s\n  The first image build is not offered until this is fixed (nothing was billed).\n", spec.Name, why, fix)
+			return why
+		}
+		keyID = id
+	}
+	c := checkGitHubApp(ctx, lc, spec.Name, spec.GitHubAppID, appKeySource{Mem: r.appKeyMem, Read: r.o.checkApp, SecretID: keyID, Notice: r.w})
 	for _, w := range c.Warnings {
 		r.warn(w)
 	}
@@ -2307,8 +2374,11 @@ func (r *initRun) installationOutputs(ctx context.Context, lc *localcfg.Config, 
 }
 
 // planRepo is one discover, gate, plan, guard, confirm and apply of the
-// repository root. It returns what the readiness gates found missing.
-// first says whether this is the run's first plan, whose notes are shown.
+// repository root. It returns the spec Readiness resolved (ready: what the
+// apply below just wrote, whose resolved secret IDs the caller's first
+// builds read back instead of resolving them again, B1) and what the
+// readiness gates found missing. first says whether this is the run's first
+// plan, whose notes are shown.
 //
 // Before any of that (review finding, 0.7.0 safety fix round 2): a
 // checkout: clone workflow's job must never come to exist while
@@ -2319,15 +2389,15 @@ func (r *initRun) installationOutputs(ctx context.Context, lc *localcfg.Config, 
 // checkoutConfig does not, once the job is already deployed). --plan-only
 // skips the refusal so the plan can still be shown; --print-vars never
 // reaches planRepo at all.
-func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, spec infra.RepoSpec, opts infra.RepoRootOptions, first bool) ([]infra.Missing, error) {
+func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, spec infra.RepoSpec, opts infra.RepoRootOptions, first bool) (infra.RepoSpec, []infra.Missing, error) {
 	if !r.o.planOnly {
 		if err := refuseClonesNotShipped(spec.Name, "fugaro init --repo", "deploy", cloneWorkflowNames(spec.Workflows)); err != nil {
-			return nil, err
+			return infra.RepoSpec{}, nil, err
 		}
 	}
 	im, ex, err := infra.DiscoverRepo(ctx, c, spec)
 	if err != nil {
-		return nil, initErr(err)
+		return infra.RepoSpec{}, nil, initErr(err)
 	}
 	if first {
 		for _, n := range im.Notes {
@@ -2336,30 +2406,33 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	}
 	ready, missing, err := infra.Readiness(ctx, c, spec, ex)
 	if err != nil {
-		return nil, initErr(err)
+		return infra.RepoSpec{}, nil, initErr(err)
+	}
+	if err := r.checkCheckImageKnowsGitSecretID(ready); err != nil {
+		return infra.RepoSpec{}, nil, err
 	}
 	vars, err := infra.RepoRootVars(ready, opts)
 	if err != nil {
-		return nil, err
+		return infra.RepoSpec{}, nil, err
 	}
 	if err := wd.WriteVars(vars); err != nil {
-		return nil, userErr("writing the tfvars: %v", err)
+		return infra.RepoSpec{}, nil, userErr("writing the tfvars: %v", err)
 	}
 	if err := infra.WriteImports(wd.Root, im); err != nil {
-		return nil, userErr("writing the imports: %v", err)
+		return infra.RepoSpec{}, nil, userErr("writing the imports: %v", err)
 	}
 	changed, err := t.Plan(ctx, infra.PlanFile)
 	if err != nil {
-		return nil, remote(err)
+		return infra.RepoSpec{}, nil, remote(err)
 	}
 	if !changed {
 		r.res.Changes = &infra.PlanCounts{}
 		fmt.Fprintf(r.w, "No changes: %s matches the plan.\n", spec.Name)
-		return missing, nil
+		return ready, missing, nil
 	}
 	plan, err := t.Show(ctx, infra.PlanFile)
 	if err != nil {
-		return nil, remote(err)
+		return infra.RepoSpec{}, nil, remote(err)
 	}
 	if opts.AllowJobDelete {
 		fmt.Fprintln(r.w, "⚠ --allow-job-delete: this plan lowers the deletion protection of "+spec.Name+"'s jobs, for offboarding")
@@ -2367,26 +2440,66 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	fmt.Fprint(r.w, tf.Summary(plan))
 	fmt.Fprintln(r.w, im.Bindings.String())
 	if err := guard(plan, r.o.allowDelete); err != nil {
-		return nil, err
+		return infra.RepoSpec{}, nil, err
 	}
 	counts := infra.CountPlan(plan)
 	r.res.Changes = &counts
 	if r.o.planOnly {
 		fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
-		return missing, nil
+		return ready, missing, nil
 	}
 	what := "applies " + counts.String() + " to " + spec.Name
 	if !first {
 		what += ", deploying the images just built"
 	}
 	if err := r.confirmOrdinary(what, "nothing was applied", r.notCovered(plan, im.Keys())); err != nil {
-		return nil, err
+		return infra.RepoSpec{}, nil, err
 	}
 	if err := t.Apply(ctx, infra.PlanFile); err != nil {
-		return nil, remote(err)
+		return infra.RepoSpec{}, nil, remote(err)
 	}
 	r.res.Applied = true
-	return missing, nil
+	return ready, missing, nil
+}
+
+// checkCheckImageKnowsGitSecretID is B2's gate: the daily image check job
+// reads its own spec's git_secret_id (infra.CheckJobSpec) to name the secret
+// its rebuild's clone reads, and a fugaro older than gitSecretIDSince
+// ignores that field and falls back to the repository's own ID -- which,
+// once the provider credential resolves from the project copy instead, is a
+// secret with no version at all, so every rebuild the check submits would
+// fail its clone.
+//
+// The judge is ready.Check.Image, the check job's own base ref: that job is
+// never built from a repository image, so unlike every other gate in
+// recipes_skew.go there is no build record to read (B2's own correction --
+// an earlier draft judged the record of the image the submitting CLI built,
+// which is a different, irrelevant version). It reuses baseRefReleaseRE and
+// imagePredates, the same pair baseRefReason already calls for
+// gcpProjectFieldSince.
+//
+// It fires only when the provider credential resolved to the project copy:
+// with the repository's own copy resolving, the in-job fallback names the
+// right secret anyway. A base ref that is not a release at all (a dev build,
+// a hand-pushed image, --image-source without a release tag) is a warning,
+// never a refusal: the version is genuinely unknown, the identical
+// distinction baseRefReason draws between reasonBaseRefOld and
+// reasonBaseRefDev.
+func (r *initRun) checkCheckImageKnowsGitSecretID(ready infra.RepoSpec) error {
+	logical, ok := infra.GitSecret(ready.Provider)
+	if !ok || ready.Check == nil || ready.ProjectSecrets[logical] == "" || ready.Check.Image == "" {
+		return nil
+	}
+	ref := ready.Check.Image
+	m := baseRefReleaseRE.FindStringSubmatch(ref)
+	switch {
+	case m == nil:
+		r.warn(fmt.Sprintf("the daily image check job of %s runs %s, which is not a release base image: whether its fugaro knows the resolved secret ID of %s (fugaro %s or later) is not checked, and an older one would rebuild with the repository's own %s, which has no version", ready.Name, oneLine(ref), logical, gitSecretIDSince, logical))
+	case imagePredates(m[2], gitSecretIDSince):
+		return userErr("the daily image check job of %s runs base image %s, release %s, whose fugaro predates %s's project-wide resolution (fugaro %s or later): its rebuilds would fall back to the repository's own %s, which has no version. Move the base image to a current release (set base_images.base in the local config, or fugaro init --base base), or re-enable a version of the repository's own %s (fugaro secrets set %s --repo %s) so the resolution falls back to it",
+			ready.Name, oneLine(ref), m[2], logical, gitSecretIDSince, logical, logical, logical, ready.Name)
+	}
+	return nil
 }
 
 // cloneWorkflowNames are the distinct workflow names among ws whose
@@ -2421,9 +2534,13 @@ var newCloudBuilder = func(ctx context.Context, lc *localcfg.Config) (cloudBuild
 
 // submitAndWait submits workflow name's Cloud Build from base and waits for
 // it: the one build fugaro init's first builds and fugaro image refresh run,
-// each after its caller's typed confirmation. It returns the build's ID, also when the wait fails after the submit.
-func (r *initRun) submitAndWait(ctx context.Context, b cloudBuilder, lc *localcfg.Config, cfg *config.Config, spec infra.RepoSpec, name, base string) (string, error) {
-	bs, err := cloudBuildSpec(spec, cfg, name, base, lc.Build.MachineType, lc.RecordBucketURL())
+// each after its caller's typed confirmation. gitSecretID is the provider
+// credential's ID the build's clone reads, which the caller decides: init's
+// first builds read it back out of the spec the apply just ran (B1), while a
+// standalone image refresh resolves it live and checks it against the build
+// account's own grant. It returns the build's ID, also when the wait fails after the submit.
+func (r *initRun) submitAndWait(ctx context.Context, b cloudBuilder, lc *localcfg.Config, cfg *config.Config, spec infra.RepoSpec, name, base, gitSecretID string) (string, error) {
+	bs, err := cloudBuildSpec(spec, cfg, name, base, lc.Build.MachineType, lc.RecordBucketURL(), gitSecretID)
 	if err != nil {
 		return "", err
 	}
@@ -2489,7 +2606,7 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 			r.warn(fmt.Sprintf("the first image build of %s/%s was not confirmed (the project's name was not typed), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks for the project's name too), then fugaro init --repo", spec.Name, name, spec.Name, name))
 			continue
 		}
-		if _, err := r.submitAndWait(ctx, b, lc, cfg, spec, name, base); err != nil {
+		if _, err := r.submitAndWait(ctx, b, lc, cfg, spec, name, base, appliedGitSecretID(spec)); err != nil {
 			return built, err
 		}
 		built++

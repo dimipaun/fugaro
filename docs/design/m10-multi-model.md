@@ -52,7 +52,7 @@ providers:
     secret: openrouter-api-key      # logical secret name (Secret Manager); never the value
     route_fee_pct: 5.5              # added to every charge on this provider; default 0
     models: ["deepseek/*", "qwen/*", "moonshotai/*"]   # IDs this provider serves; no overlap between providers
-    allow_data_to: [edgeappinc/fugarosandbox, dimipaun/fugaro]      # Fugaro-project/repository slugs allowed to send code here; absent = none
+    allow_data_to: [edgeappinc/fugarosandbox, dimipaun/fugaro]      # Fugaro-project/repository slugs allowed to send code here; every repository when absent or ["*"]
 model_prices:
   deepseek/deepseek-v4-flash: {input_per_m: 0.00, output_per_m: 0.00, cache_read: 0.1}   # owner fills real prices
 ```
@@ -129,13 +129,15 @@ model_prices:
 |---|---|
 | Key in the agent's environment | Removed (existing path, tested for every provider secret); gateway attaches it |
 | Repository points Claude Code at another host | Managed settings (A6) keep the gateway URL; a repository cannot add providers or base URLs |
-| Repository sends code to a provider the owner did not approve | `allow_data_to` ceiling; refused at bootstrap |
+| Repository sends code to a provider the owner did not approve | `allow_data_to` ceiling; refused at bootstrap (see the note under this table) |
 | SSRF through `base_url` | Owner-set only; https required; no redirects followed to another host (client `CheckRedirect` refuses cross-host) |
 | Header injection / key leak to the wrong upstream | The credential is attached per route; request headers from the agent (`x-api-key`, `authorization`) are dropped, so the gateway token never reaches an upstream and a key never reaches the agent |
 | Key in logs, errors, `result.json` | Redactor gets the value at start; upstream error bodies are passed to the agent as today but scanned for the key before logging (`TestUpstreamErrorEchoingKeyIsRedacted`) |
 | Cost bypass | Same D2 residual as today (runner holds the key; mitigation: provider-side credit limit per Fugaro project) |
 | Response-borne prompt injection / exotic stream | The gateway does not interpret content; usage parsing only |
 | Another run's lease/token confusion | Unchanged; per-run gateway token, loopback only |
+
+Updated 2026-10-13 (project-secrets, §3a): an absent or `["*"]` `allow_data_to` is now a deliberate exception to the "Repository sends code to a provider the owner did not approve" row, not a bootstrap refusal -- see `docs/design/project-secrets.md` §3a.
 
 ## 10. Testing without real spend
 
