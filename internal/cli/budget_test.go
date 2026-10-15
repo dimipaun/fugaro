@@ -642,6 +642,49 @@ func TestSetClearRepoFallingBackToHigherDefaultConfirms(t *testing.T) {
 	}
 }
 
+func TestSetClearDefaultsPerRunFallingBackToGlobalConfirms(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.db.Set(budget.PathCapsGlobal, map[string]any{"perRunMicros": 20 * usd1})
+	f.db.Set(budget.PathCapsDefaults, map[string]any{"repoPerRunMicros": 5 * usd1})
+	// Clearing the defaults hands every repository without a node of its
+	// own to the $20 global cap: $5 -> $20 is a raise to confirm.
+	if _, _, err := execute(t, "budget", "set", "--defaults", "--clear"); err == nil || !strings.Contains(err.Error(), "confirmation") {
+		t.Fatalf("err = %v", err)
+	}
+	if f.db.Value(budget.PathCapsDefaults) == nil {
+		t.Fatal("the defaults were removed unconfirmed")
+	}
+	// A default above the global cap changes nothing effective ($20
+	// before and after): no confirmation.
+	f.db.Set(budget.PathCapsDefaults, map[string]any{"repoPerRunMicros": 50 * usd1})
+	if _, _, err := execute(t, "budget", "set", "--defaults", "--clear"); err != nil {
+		t.Fatal(err)
+	}
+	if f.db.Value(budget.PathCapsDefaults) != nil {
+		t.Fatal("not cleared")
+	}
+	// A daily-only default node leaves the per-run side unset before and
+	// after: clearing it tightens, and needs no confirmation.
+	f.db.Set(budget.PathCapsDefaults, map[string]any{"repoDailyMicros": 60 * usd1})
+	if _, _, err := execute(t, "budget", "set", "--defaults", "--clear"); err != nil {
+		t.Fatal(err)
+	}
+	// With no global cap the default is the only per-run cap there is:
+	// clearing it leaves every repository without one, which is confirmed
+	// too (as clearing a repository's own cap is).
+	f.db.Set(budget.PathCapsGlobal, nil)
+	f.db.Set(budget.PathCapsDefaults, map[string]any{"repoPerRunMicros": 5 * usd1})
+	if _, _, err := execute(t, "budget", "set", "--defaults", "--clear"); err == nil || !strings.Contains(err.Error(), "confirmation") {
+		t.Fatalf("clearing to no cap needed no confirmation: err = %v", err)
+	}
+	if _, _, err := execute(t, "budget", "set", "--defaults", "--clear", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if f.db.Value(budget.PathCapsDefaults) != nil {
+		t.Fatal("not cleared")
+	}
+}
+
 func TestShowRefusesNonStringProjectMark(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.db.Set("fugaro/project", map[string]any{"name": "aurora"})

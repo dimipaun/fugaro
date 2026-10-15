@@ -930,6 +930,35 @@ func buildEdits(ctx context.Context, db *rtdb.Client, p *setPlan, slug string) (
 		if p.clear {
 			e.newVal = nil
 			e.noop = !found
+			if found && p.scope == "defaults" {
+				// Every repository without a node of its own falls back to
+				// the defaults; clearing them hands those repositories to
+				// the global per-run cap (D6), which is a loosening when
+				// that cap is higher, and ends every run there when there
+				// is none. Compare the effective per-run cap of such a
+				// repository before and after, as the repository's own
+				// clear does.
+				var g budget.GlobalCaps
+				if _, _, err := read(budget.PathCapsGlobal, &g); err != nil {
+					return nil, err
+				}
+				def := &budget.DefaultCaps{}
+				if raw, ok := old[pk]; ok {
+					m, err := microsOf(raw)
+					if err != nil {
+						e.raise = true // unreadable: be careful
+					} else {
+						def.RepoPerRunMicros = m
+					}
+				}
+				before, beforeOK := budget.Caps{Defaults: def, Global: &g}.PerRun()
+				after, afterOK := budget.Caps{Global: &g}.PerRun()
+				// before unset too: the per-run side is unchanged
+				// (clearing a daily-only default node only tightens).
+				if beforeOK && (!afterOK || after > before) {
+					e.raise = true
+				}
+			}
 			if found && p.scope == "repo" {
 				// The repository falls back to the defaults: a higher
 				// default, or none, is a loosening to confirm.
