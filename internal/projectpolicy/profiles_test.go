@@ -300,6 +300,43 @@ func TestDecodeRefusesAnExplicitlyEmptyProfileAllowRepos(t *testing.T) {
 	}
 }
 
+// TestDecodeRefusesACaseVariantProfileMember: encoding/json matches a member
+// to its field case-insensitively, so "Allow_Repos": [] decoded into AllowRepos
+// while the written-document check — which looks the name up as written, in
+// fields["allow_repos"] — never saw it, and the profile fell back to the
+// project's allow_repos instead of being refused. The guard is the one #402
+// added for provider entries (carrierMembers/spelledMember), applied to the
+// profile's members; the mutation is dropping it from checkWrittenProfileFields,
+// which lets the first two documents through.
+func TestDecodeRefusesACaseVariantProfileMember(t *testing.T) {
+	for _, tc := range []struct{ what, doc string }{
+		{"an empty allow_repos spelled Allow_Repos", `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","Allow_Repos":[]}}`},
+		{"a null allow_repos spelled ALLOW_REPOS", `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","ALLOW_REPOS":null}}`},
+		{"a provider spelled Provider", `{"standard":{"Provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}}`},
+		{"a timeout spelled Timeout_Class", `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","Timeout_Class":"6h"}}`},
+	} {
+		p, err := decodeProfiles(t, tc.doc)
+		if err == nil {
+			t.Errorf("%s was accepted: %+v", tc.what, p.Profiles["standard"])
+			continue
+		}
+		if !strings.Contains(err.Error(), "spelled as fugaro.yaml spells them") {
+			t.Errorf("the refusal for %s does not say the spelling is wrong: %v", tc.what, err)
+		}
+	}
+	// The refusal names the member the document should have written, so an
+	// operator reads the fix rather than the mistake.
+	_, err := decodeProfiles(t, `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","Allow_Repos":["github/acme/app"]}}`)
+	if err == nil || !strings.Contains(err.Error(), "allow_repos") {
+		t.Errorf("the refusal does not name the documented spelling: %v", err)
+	}
+	// And the documented spellings still decode, so the guard is not a blanket
+	// refusal of the block.
+	if _, err := decodeProfiles(t, `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","secrets":["deploy-key"],"allow_repos":["github/acme/*"]}}`); err != nil {
+		t.Errorf("a correctly spelled profile was refused: %v", err)
+	}
+}
+
 // TestProfileAdmitsAlsoRequiresTheProjectList: both gates, and the project's is
 // not optional. §4.3: "there is never a state in which a shared job serves a
 // repository that has not been allowed" — so a profile whose own list is wider
@@ -339,6 +376,60 @@ func TestProfileAdmitsAlsoRequiresTheProjectList(t *testing.T) {
 	// "not admitted": the two have different messages and different fixes.
 	if _, err := p.Admits("nope", "github/acme/app"); err == nil {
 		t.Error("Admits of an undefined profile returned a verdict")
+	}
+}
+
+// TestProfileAdmitsOnlyItsOwnProvider: one job serves one provider — the
+// provider is part of its slug and the git credential it holds — so a profile
+// never admits a repository of another provider, however the two lists are
+// spelled. The wildcard is the case that matters: `*` and `*/acme/*` admit
+// every provider's repositories by design, and a project's allow_repos may
+// enroll repositories of both providers, so without the provider gate a github
+// job would clone a bitbucket repository. The mutation is dropping the
+// providerOf check from Admits.
+func TestProfileAdmitsOnlyItsOwnProvider(t *testing.T) {
+	p, err := decodeProfiles(t, `{
+		"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","allow_repos":["*"]},
+		"bb":{"provider":"bitbucket","cpu":2,"memory":"4Gi","timeout_class":"6h","allow_repos":["*"]}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both providers' repositories are enrolled in the project, which is what
+	// the provider gate has to hold against: the project's list is the widest
+	// gate, and it is not the one that decides this.
+	p.AllowRepos = []string{"github/acme/app", "bitbucket/acme/app"}
+	for _, tc := range []struct {
+		profile, repo string
+		want          bool
+	}{
+		{"standard", "github/acme/app", true},
+		{"standard", "bitbucket/acme/app", false},
+		{"bb", "bitbucket/acme/app", true},
+		{"bb", "github/acme/app", false},
+	} {
+		ok, err := p.Admits(tc.profile, tc.repo)
+		if err != nil {
+			t.Fatalf("Admits(%s, %s) = %v", tc.profile, tc.repo, err)
+		}
+		if ok != tc.want {
+			t.Errorf("Admits(%s, %s) = %v, want %v", tc.profile, tc.repo, ok, tc.want)
+		}
+	}
+	// A profile that names its own list is held to the provider all the same:
+	// the gate is not the wildcard's, it is the profile's.
+	p, err = decodeProfiles(t, `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","allow_repos":["github/acme/*"]}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.AllowRepos = []string{"bitbucket/acme/app"}
+	if ok, err := p.Admits("standard", "bitbucket/acme/app"); err != nil || ok {
+		t.Errorf("Admits on a bitbucket repository = %v, %v; want false", ok, err)
+	}
+	// A repository that is not canonical names no provider, so it matches no
+	// profile: fail closed rather than read the whole string as one.
+	if ok, err := p.Admits("standard", "acme/app"); err != nil || ok {
+		t.Errorf("Admits on a non-canonical repository = %v, %v; want false", ok, err)
 	}
 }
 

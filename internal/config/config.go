@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -480,7 +481,11 @@ type Resources struct {
 // becomes the job's task timeout, so Cloud Run's 168h ceiling applies to it.
 // Secrets are logical secret NAMES the job mounts, never values — the policy
 // node is readable by every run token. AllowRepos is the profile's admission
-// list (design §4.1): empty means the project's allow_repos applies.
+// list (design §4.1): the key absent means the project's allow_repos applies,
+// and a key written with no repository under it is refused (localcfg, from
+// allowReposWritten) rather than read as the same statement — a blank list
+// would widen the profile to the project's enrollment, and admission is the one
+// thing a profile's list must never widen.
 //
 // The provider is not optional (finding 4): one job serves one provider,
 // because the provider is part of the slug, the job's identity and the git
@@ -492,7 +497,72 @@ type JobProfile struct {
 	TimeoutClass string   `yaml:"timeout_class" json:"timeout_class"`
 	Secrets      []string `yaml:"secrets,omitempty" json:"secrets,omitempty"`
 	AllowRepos   []string `yaml:"allow_repos,omitempty" json:"allow_repos,omitempty"`
+	// allowReposWritten records that the document gave allow_repos at all. It
+	// exists because a key written with nothing under it (`allow_repos:`, or
+	// `~`, with every entry commented out) decodes to the same nil slice as an
+	// absent key, and the two mean opposite things here: absent is "the
+	// project's allow_repos applies", written is a list the operator wrote and
+	// left empty. Only the mapping node can tell them apart (UnmarshalYAML),
+	// the way ModelProvider.allowDataToWritten does for allow_data_to.
+	allowReposWritten bool
 }
+
+// jobProfileType is JobProfile's own type name, for the unknown-field refusal
+// below: UnmarshalYAML has to build the message yaml.v3's strict mode would
+// have built, and that mode names the type it was decoding into.
+var jobProfileType = reflect.TypeOf(JobProfile{})
+
+// jobProfileKeys are the yaml keys a profiles entry accepts, read from the
+// struct's own tags so a new field is picked up without a second list (the
+// same thing providerKeys does for a providers entry).
+var jobProfileKeys = func() map[string]bool {
+	out := map[string]bool{}
+	t := reflect.TypeOf(JobProfile{})
+	for i := range t.NumField() {
+		if tag, _, _ := strings.Cut(t.Field(i).Tag.Get("yaml"), ","); tag != "" && tag != "-" {
+			out[tag] = true
+		}
+	}
+	return out
+}()
+
+// UnmarshalYAML decodes one profiles entry, and refuses a key it does not know.
+// That second job is normally the decoder's own (Decoder.KnownFields), but
+// known fields are a property of a Decoder while decoding through a Node — the
+// only way to see a key that was written with nothing under it — is always
+// lenient, so the check is repeated here, with the same message.
+func (p *JobProfile) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: a profile must be a mapping of field to value", node.Line)}}
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if k := node.Content[i]; !jobProfileKeys[k.Value] {
+			return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: field %s not found in type %s", k.Line, k.Value, jobProfileType)}}
+		}
+	}
+	type plain JobProfile // no methods: decodes the fields without recursing into this one
+	var v plain
+	if err := node.Decode(&v); err != nil {
+		return err
+	}
+	*p = JobProfile(v)
+	// A null value is short-circuited by yaml.v3 before any unmarshaler sees
+	// it, so the key's presence is read off the node itself: written with
+	// nothing under it is not the same state as absent.
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == "allow_repos" {
+			p.allowReposWritten = true
+			break
+		}
+	}
+	return nil
+}
+
+// AllowReposWritten reports whether the document gave allow_repos at all, so a
+// reader can refuse a written list with nothing in it instead of reading it as
+// the absent key (localcfg, and projectpolicy's node-side check for the same
+// value written as JSON).
+func (p JobProfile) AllowReposWritten() bool { return p.allowReposWritten }
 
 // Timeouts bound a run (design §4.5).
 type Timeouts struct {

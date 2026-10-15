@@ -718,17 +718,32 @@ func (c *Config) validate() error {
 	if c.RegistryHost != "" && !registryHostRE.MatchString(c.RegistryHost) {
 		bad("registry_host %q is not <region>-docker.pkg.dev/<project>", c.RegistryHost)
 	}
-	// Profile names only: what a profile holds is refused where it is used and
-	// published (projectpolicy.validProfiles, which `fugaro project policy
-	// publish` runs), so that a profile missing its provider is a publish
-	// refusal with the profile's name in it rather than a parse error here.
-	// The rule is config.ProjectNameRE, the same one projectpolicy's
+	// Profile names, and the one value rule only this document can apply: what
+	// a profile holds is otherwise refused where it is used and published
+	// (projectpolicy.validProfiles, which `fugaro project policy publish`
+	// runs), so that a profile missing its provider is a publish refusal with
+	// the profile's name in it rather than a parse error here.
+	//
+	// The name rule is config.ProjectNameRE, the same one projectpolicy's
 	// ValidProfileName applies to a policy's own profile names (that package
 	// is not imported here: it is the reader of the published node, and this
 	// is the file it is published from).
+	//
+	// The value rule is allow_repos written with nothing under it. The key
+	// absent means the project's allow_repos applies (§4.1), and a list written
+	// empty is refused there too (projectpolicy checkWrittenProfileFields), but
+	// the carrier's omitempty means a blank list never reaches the node: it
+	// arrives at the publisher as the nil slice that means the same thing as
+	// the absent key, and the profile silently widens to every repository the
+	// project enrolls — the one direction admission must never move. Only this
+	// document can tell the two spellings apart (config.JobProfile's
+	// allowReposWritten).
 	for _, name := range profileNames(c.Profiles) {
 		if !config.ProjectNameRE.MatchString(name) {
 			bad("profiles.%s: a profile name must be 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit", name)
+		}
+		if pr := c.Profiles[name]; pr.AllowReposWritten() && len(pr.AllowRepos) == 0 {
+			bad("profiles.%s.allow_repos: a written list with no repository in it is ambiguous: remove the key to fall back to the project's allow_repos, or write the repositories this profile admits (the project's allow_repos is still required, so a profile's list can only narrow it)", name)
 		}
 	}
 	if c.ImageSource != "" {

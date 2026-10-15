@@ -90,8 +90,15 @@ func (p *Policy) Admission(profile string) ([]string, error) {
 
 // Admits reports whether a canonical repository (Canonical) may run on that
 // profile, and is the check a runner makes before it clones or mints a token
-// (design §4.1). Two gates, both of which must open:
+// (design §4.1). Three gates, all of which must open:
 //
+//   - the profile's provider: one job serves one provider (the provider is part
+//     of the job's slug and the git credential it holds), so a repository of
+//     another provider is never admitted to it, however the lists below are
+//     spelled. Without this gate a "*/acme/*" pattern — which admits every
+//     provider's repositories by design — or a project allow_repos that
+//     enrolled a repository of another provider would let a github job clone a
+//     bitbucket repository;
 //   - the project's allow_repos: "there is never a state in which a shared job
 //     serves a repository that has not been allowed" (§4.3). A profile's list
 //     can only narrow the enrollment, never widen it, however it is spelled;
@@ -101,20 +108,37 @@ func (p *Policy) Admission(profile string) ([]string, error) {
 //
 // An undefined profile is an error, not a refusal: the caller reports it as
 // the fail-closed halt it is (ProfileFor), rather than as an unenrolled
-// repository.
+// repository. A repository of another provider is a refusal, not an error: it
+// is not admitted to this profile, and a profile is one of several the same
+// repository may be run on.
 //
 // As with ProfileFor, nothing outside tests calls it in this release: a run
 // checks the project's allow_repos (internal/runner/project.go,
 // internal/cli/run_allowlist.go) and no run has a selected profile to narrow
-// it with. This is the check that second gate will be applied through, not one
-// applied today — which is why the profile's list is validated strictly here
-// (validProfiles) rather than trusted to a caller that does not exist yet.
+// it with. This is the check the other two gates will be applied through, not
+// one applied today — which is why the profile's list is validated strictly
+// here (validProfiles) rather than trusted to a caller that does not exist yet.
 func (p *Policy) Admits(profile, canonical string) (bool, error) {
-	list, err := p.Admission(profile)
+	pr, err := p.ProfileFor(profile)
 	if err != nil {
 		return false, err
 	}
+	if providerOf(canonical) != pr.Provider {
+		return false, nil
+	}
+	list := p.AllowRepos
+	if len(pr.AllowRepos) > 0 {
+		list = pr.AllowRepos
+	}
 	return AdmitRepo(p.AllowRepos, canonical) && AdmitRepo(list, canonical), nil
+}
+
+// providerOf is the provider a canonical repository names: Canonical spells one
+// "github/owner/name", so the first segment is the provider ("", never a
+// provider a policy could name, when the string is not canonical at all).
+func providerOf(canonical string) string {
+	head, _, _ := strings.Cut(canonical, "/")
+	return head
 }
 
 // validProfiles checks the profiles block of a node, entry by entry: the

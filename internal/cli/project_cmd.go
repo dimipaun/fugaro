@@ -449,9 +449,16 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 			// never sees this one — the profile would silently fall back to
 			// the project's wider allow_repos, which is the one direction a
 			// profile's list must never move (docs/project-layer.md §5).
-			// It is refused here, where the file still says which it was.
-			if lc.Profiles[name].AllowRepos != nil && len(lc.Profiles[name].AllowRepos) == 0 {
-				return nil, userErr("this project's config sets profiles.%s.allow_repos to an empty list, which is ambiguous: remove the key to fall back to the project's allow_repos, or write the repositories this profile admits (the project's own allow_repos is still required, so a profile's list can only narrow it)", name)
+			// It is refused here, where the file still says which it was: a
+			// written empty list (`allow_repos: []`) and a written blank one
+			// (`allow_repos:` with nothing under it) both reach this function
+			// as an empty slice, and config.JobProfile's allowReposWritten is
+			// what tells them from the absent key. localcfg refuses both when
+			// the file is read (validate), so this is the second door on the
+			// same rule rather than the first: the file is the thing an
+			// operator edits, and this is the function that publishes it.
+			if pr := lc.Profiles[name]; pr.AllowReposWritten() && len(pr.AllowRepos) == 0 {
+				return nil, userErr("this project's config sets profiles.%s.allow_repos to a written list with nothing in it, which is ambiguous: remove the key to fall back to the project's allow_repos, or write the repositories this profile admits (the project's own allow_repos is still required, so a profile's list can only narrow it)", name)
 			}
 		}
 	}
