@@ -144,10 +144,6 @@ type Outputs struct {
 	// Probe is "probe" or "none", never "": an absent key parses as
 	// ProbeNone, so a recipe never silently probes.
 	Probe string
-	// HasKeys records that the block was present at all, so UsesV08 can
-	// decide from presence rather than from a parsed value, the rule
-	// Recipe.newKeys already follows for 0.7.0's keys.
-	HasKeys bool
 }
 
 // FileCount is the most artifacts the run may upload: MaxFiles, or
@@ -699,7 +695,7 @@ func (p *parser) artifactStepBody(kpath string, body *yaml.Node) {
 // and its ceiling: 0 is not "the default" here, it is a cap no artifact can
 // satisfy, and the defaults apply only to a key the block leaves out.
 func (p *parser) outputs(v *yaml.Node) *Outputs {
-	out := &Outputs{HasKeys: true, Probe: ProbeNone}
+	out := &Outputs{Probe: ProbeNone}
 	if v.Kind != yaml.MappingNode {
 		p.add("outputs", v.Line, "must be a mapping such as {globs: [out/*.png]}")
 		return out

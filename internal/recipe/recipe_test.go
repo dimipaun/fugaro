@@ -535,8 +535,8 @@ func TestArtifactOutputsParse(t *testing.T) {
 		"  max_bytes: 1048576\n  max_total_bytes: 4194304\n  probe: probe\n"+
 		"steps:\n  - plan: {}\n  - render: {}\n")
 	out := r.Outputs
-	if out == nil || !out.HasKeys {
-		t.Fatalf("outputs = %+v", out)
+	if out == nil {
+		t.Fatal("an artifact recipe's outputs block parsed to nothing")
 	}
 	if !slices.Equal(out.Globs, []string{"out/*.mp4", "out/*.png"}) || out.MaxFiles != 4 ||
 		out.MaxBytes != 1048576 || out.MaxTotalBytes != 4194304 || out.Probe != "probe" {
