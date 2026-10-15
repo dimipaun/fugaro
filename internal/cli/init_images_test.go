@@ -1079,18 +1079,18 @@ func TestNoMessageOffersARemovedBaseCommand(t *testing.T) {
 // first assertion.
 func TestNewARClientRefusesARedirectOffTheRegistryHost(t *testing.T) {
 	var elsewhere []string
-	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	other := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		elsewhere = append(elsewhere, r.Header.Get("Authorization"))
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer other.Close()
 	var atRegistry []string
-	reg := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	reg := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atRegistry = append(atRegistry, r.Header.Get("Authorization"))
 		http.Redirect(w, r, other.URL+r.URL.Path, http.StatusTemporaryRedirect)
 	}))
 	defer reg.Close()
-	c, err := newARClient(context.Background(), &mirror.Mirror{Token: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "user-token"})})
+	c, err := newARClient(context.WithValue(context.Background(), oauth2.HTTPClient, reg.Client()), &mirror.Mirror{Token: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "user-token"})})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1103,8 +1103,12 @@ func TestNewARClientRefusesARedirectOffTheRegistryHost(t *testing.T) {
 		resp.Body.Close()
 		t.Fatalf("the redirect to another host was followed: %d", resp.StatusCode)
 	}
-	if !strings.Contains(err.Error(), other.URL) {
-		t.Errorf("err = %v, want it to name the host it refused", err)
+	// Both servers are https, so the scheme check cannot be what refuses
+	// this: the HOST check is, and its own sentence is the proof (a test that
+	// only looked for the other host's URL passed with the host check gone,
+	// because the scheme check names it too).
+	if !strings.Contains(err.Error(), "registry's own host") {
+		t.Errorf("err = %v, want the host check's refusal (the credential stays on the registry's own host)", err)
 	}
 	if len(atRegistry) != 1 || atRegistry[0] != "Bearer user-token" {
 		t.Fatalf("the registry saw %v, want the credential (the test is vacuous otherwise)", atRegistry)
