@@ -1079,4 +1079,38 @@ func TestRoutingInTheLocalConfig(t *testing.T) {
 			t.Errorf("%s: err = %v, want a refusal naming %q", tc.name, err, tc.msg)
 		}
 	}
+
+	// The positive case, and the reason the refusals above mean anything: a
+	// config that *enables* the switch loads, from the file, and the one
+	// resolver takes the model to the route that claims it. Without this case a
+	// rule that refuses everything would pass, and "openrouter can never be
+	// turned on" would be true of this package by accident (the security review
+	// of this slice asked for exactly this test).
+	claim := "providers:\n" +
+		"  openrouter-claude:\n" +
+		"    kind: anthropic-compat\n" +
+		"    base_url: https://openrouter.ai/api/v1\n" +
+		"    auth: bearer\n" +
+		"    secret: openrouter-claude-key\n" +
+		"    models: [\"anthropic/claude-sonnet-5.5\"]\n" +
+		"    allow_data_to: [\"*\"]\n"
+	routed, err := Parse([]byte(sample + claim + "routing:\n  claude:\n    via: openrouter\n    models: [claude-sonnet-5-5]\n"))
+	if err != nil {
+		t.Fatalf("a config that enables the switch was refused: %v", err)
+	}
+	route, sent, resolved := config.RoutingClaudeFor(routed.Routing.Claude, "claude-sonnet-5-5", routed.Providers)
+	if !resolved || route != "openrouter-claude" || sent != "anthropic/claude-sonnet-5.5" {
+		t.Errorf("RoutingClaudeFor = (%q, %q, %v), want the route entry's name and its own ID", route, sent, resolved)
+	}
+	// The same config with the model left out of the list is direct: the list
+	// is the opt-in, not the route.
+	if route, sent, resolved := config.RoutingClaudeFor(routed.Routing.Claude, "claude-opus-5-5", routed.Providers); !resolved || route != config.RouteDirect || sent != "claude-opus-5-5" {
+		t.Errorf("an unlisted model = (%q, %q, %v), want the direct route", route, sent, resolved)
+	}
+	// And the claim without allow_data_to written is refused at load (D1b):
+	// the same file, minus the line that makes the route open to a repository.
+	bare := strings.Replace(claim, "    allow_data_to: [\"*\"]\n", "", 1)
+	if _, err := Parse([]byte(sample + bare + "routing:\n  claude:\n    via: openrouter\n    models: [claude-sonnet-5-5]\n")); err == nil || !strings.Contains(err.Error(), "allow_data_to") {
+		t.Errorf("a claim with no allow_data_to: err = %v, want a refusal naming allow_data_to", err)
+	}
 }

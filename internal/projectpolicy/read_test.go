@@ -159,8 +159,13 @@ func TestDecodeRefusesAnUnknownVia(t *testing.T) {
 			t.Errorf("via %q: err = %v, want it to name the key", via, err)
 		}
 	}
+	// The provider entry the routed via values resolve through: without it the
+	// switch names a route nothing in the node claims, which is refused on
+	// purpose (validRouting). A via this Fugaro cannot act on is still the
+	// refusal this test is about, so the block is carried in both loops where
+	// the via itself is the fault.
 	for _, via := range []string{RouteDirect, RouteOpenRouter, RouteAuto} {
-		raw := []byte(`{"version": 1, "routing": {"claude": {"via": "` + via + `", "models": ["claude-sonnet-5"]}}}`)
+		raw := []byte(`{"version": 1, "providers": {"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["anthropic/claude-sonnet-5.5"], "allow_data_to": ["*"]}}, "routing": {"claude": {"via": "` + via + `", "models": ["claude-sonnet-5-5"]}}}`)
 		if p, found, err := Decode(raw); err != nil || !found || p == nil || p.Routing.Claude.Via != via {
 			t.Errorf("via %q: Decode = (%v, %v, %v), want it accepted", via, p, found, err)
 		}

@@ -379,15 +379,29 @@ func sharedRepos(ctx context.Context, lc *localcfg.Config) (map[string]localcfg.
 // The routing block comes from the operator's config, and a publish is where an
 // edit to it takes effect (design §6.2 item 9): the switch is written in the
 // local config — validated there against the providers it resolves through,
-// config.CheckRouting — and only *delivered* to a run through this node. A
-// publish without one therefore writes no block, which is direct (D1b), and
-// printPolicyDiff says so rather than letting a route disappear quietly. A
-// repository cannot reach this key: its fugaro.yaml has no routing (D1a), and
-// `repos add|rm` edits the node as the document it is (patchPolicyJSON) so it
-// cannot drop what this publisher writes.
+// config.CheckRouting — and only *delivered* to a run through this node.
+//
+// It is also the one key this command refuses to *drop*. The switch has a
+// second definition site the local config is not the only writer of (D1a: the
+// project layer, whose slice does not ship yet), so a node carrying an active
+// route that this config cannot account for is a refusal, not a rewrite: a
+// route that goes away is a Claude call that stops being sent where the owner
+// put it, and printing the removal afterwards does not undo it. An inert block
+// (via: direct) is kept as the node carries it — nothing is routed by it, so
+// there is nothing to refuse and no reason to rewrite the node. Turning
+// routing off is therefore explicit: write routing: {claude: {via: direct}}
+// in the config and publish.
+//
+// A repository cannot reach this key either way: its fugaro.yaml has no routing
+// (D1a), and `repos add|rm` edits the node as the document it is
+// (patchPolicyJSON) so it cannot drop what this publisher writes.
 func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.Policy) (*projectpolicy.Policy, error) {
 	if lc.Budget == nil || lc.Budget.Mode == "" {
 		return nil, userErr("this project's config sets no budget.mode, and a published policy's budget block must name one (off, observe or enforce): the mode decides whether the caps bite, and a block that leaves it out would take it from each job's environment, which nobody reading the policy can see; set budget: { mode: ... } in %s, or leave the policy unpublished", lc.Name)
+	}
+	if lc.Routing == nil && nodeRoutesClaude(old) {
+		return nil, userErr("the policy published at %s carries a routing block this publish cannot account for (routing: %s), and your config sets no routing: publishing from here would turn that route off, and a route that goes away is a Claude call that stops being sent where it was put. Write the same switch under routing: in %s to publish it as yours, or write routing: {claude: {via: direct}} to say the switch is off on purpose",
+			projectpolicy.PathShared(), routingText(old.Routing), lc.Name)
 	}
 	pol := &projectpolicy.Policy{
 		Version:    projectpolicy.Version,
@@ -395,9 +409,24 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		AllowRepos: nonNil(allow),
 		Providers:  policyProviders(lc),
 		Prices:     policyPrices(lc),
-		Routing:    lc.Routing,
+	}
+	if lc.Routing != nil {
+		pol.Routing = lc.Routing
+	} else if old != nil {
+		// Inert (or absent): kept as it is, never invented and never written
+		// from a value this config does not hold.
+		pol.Routing = old.Routing
 	}
 	return pol, nil
+}
+
+// nodeRoutesClaude reports whether the node being replaced carries a routing
+// block that sends Claude calls somewhere: a via other than direct (D1b). An
+// absent block, and via: direct, route nothing and are safe to carry over or
+// leave behind.
+func nodeRoutesClaude(p *projectpolicy.Policy) bool {
+	return p != nil && p.Routing != nil && p.Routing.Claude != nil &&
+		p.Routing.Claude.ViaValue() != projectpolicy.RouteDirect
 }
 
 // policyProviders is the policy's providers block, built from the operator's
@@ -590,11 +619,12 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	diffLines(out, providerLines(old), providerLines(new))
 	diffLines(out, priceLines(old), priceLines(new))
 	// The routing switch moves with this publish: it comes from the operator's
-	// config, so a route that appeared, changed or went away is a line an
-	// operator reading money-and-data-sharing changes must see — a route
-	// dropped silently is a Claude prompt that stops being sent to a provider
-	// (or starts being sent to Anthropic), which is exactly what this diff is
-	// for.
+	// config, so a route that appeared or changed is a line an operator reading
+	// money-and-data-sharing changes must see — a route that quietly starts
+	// sending Claude prompts to a provider (or stops) is exactly what this diff
+	// is for. A route that *goes away* cannot reach here: buildProjectPolicy
+	// refuses a publish whose config sets no switch over a node that carries an
+	// active one.
 	diffLines(out, routingLines(old), routingLines(new))
 	for _, r := range new.AllowRepos {
 		if src, ok := sources[r]; ok {
@@ -1171,9 +1201,9 @@ func printPolicy(out io.Writer, p *projectpolicy.Policy) {
 }
 
 // routingText is the policy's routing block as one line, for a command that
-// reads the node: this Fugaro does not write routing (phase 1b does) but it
-// reads and keeps it, and a node carrying one must not look like a node
-// without one in the output of `policy show`.
+// reads the node — `policy show`, `project show`, and the refusal a publish
+// makes when its config does not account for the block the node carries. A node
+// with a switch must not look like a node without one.
 func routingText(r *projectpolicy.Routing) string {
 	if r == nil || r.Claude == nil {
 		return "direct (no block)"

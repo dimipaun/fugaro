@@ -319,14 +319,6 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		}
 	}
 
-	if rraw, ok := doc["routing"]; ok && !isNull(rraw) {
-		if err := json.Unmarshal(rraw, &p.Routing); err != nil {
-			return nil, true, fmt.Errorf("projectpolicy: routing: %w", err)
-		}
-		if err := validRouting(p.Routing); err != nil {
-			return nil, true, err
-		}
-	}
 	if praw, ok := doc["providers"]; ok && !isNull(praw) {
 		ps, err := decodeProviders(praw)
 		if err != nil {
@@ -334,6 +326,20 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		}
 		p.Providers = ps
 		if err := validProviders(praw, p.Providers); err != nil {
+			return nil, true, err
+		}
+	}
+	// Routing is judged *after* the providers block, and against it: D1b's
+	// safeguard (a route resolves to a provider only when that provider's
+	// allow_data_to is written) is a property of the two blocks together, and
+	// the node is the document a run is routed by. Decoding them in the other
+	// order would hold the switch to its shape alone and accept a node that
+	// names a route nothing in it claims.
+	if rraw, ok := doc["routing"]; ok && !isNull(rraw) {
+		if err := json.Unmarshal(rraw, &p.Routing); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: routing: %w", err)
+		}
+		if err := validRouting(p.Routing, p.Providers); err != nil {
 			return nil, true, err
 		}
 	}
@@ -396,7 +402,7 @@ func validProviders(raw json.RawMessage, providers map[string]Provider) error {
 	if err := json.Unmarshal(raw, &entries); err != nil {
 		return fmt.Errorf("projectpolicy: providers: %w", err)
 	}
-	carrier := make(map[string]config.ModelProvider, len(providers))
+	carrier := providerCarrier(providers)
 	for _, name := range providerNames(providers) {
 		p := providers[name]
 		if err := validPricePolicy(name, p.PricePolicy); err != nil {
@@ -410,7 +416,6 @@ func validProviders(raw json.RawMessage, providers map[string]Provider) error {
 				}
 			}
 		}
-		carrier[name] = p.ModelProvider
 	}
 	// config's own validation is the authority on this document, so a value it
 	// refuses in fugaro.yaml is refused on the readable node too: the node is
@@ -438,35 +443,39 @@ const (
 	RouteAuto = config.RouteAuto
 )
 
-// validRouting checks the routing block's values, with the rule the operator's
-// own config loader applies (config.CheckRoutingShape): a via this Fugaro does
-// not know, and a list that is not an explicit one (a pattern, an empty list
-// under via: openrouter). Routing is enforced, so an unrecognised value would
-// mean either "no route" — a silent bypass of what the owner asked for — or a
-// reader that guesses, and the pattern-like spellings are the ones D1a exists
-// to refuse.
+// validRouting checks the routing block against the providers block of the same
+// node, with the rules the operator's own config loader applies
+// (config.CheckRouting): the via, an explicit list of Claude IDs and never a
+// pattern (D1a), and — for every ID the switch names — a provider entry in
+// this node that claims it and has allow_data_to written (D1b).
 //
-// The half of D1b's safeguard that needs the *providers* (a route resolves only
-// to a provider whose allow_data_to is written) is not checked here: Decode
-// reads the routing block before the providers block, and the check that has to
-// hold on the node is the one this reader can apply whole. It is applied where
-// the node is written — `project policy publish` builds it from an operator's
-// config that config.CheckRouting has already judged — and the runner's own
-// route enforcement is what holds a hand-written node.
-func validRouting(r *Routing) error {
+// Both halves are applied here because the node is the artifact every run
+// reads: an operator's config is judged at load, but a hand-written node is
+// never loaded from a config at all. A node that names a route nothing claims,
+// or claims it without allow_data_to written, is refused rather than accepted
+// as "the switch is there but inert" — D1b's safeguard would otherwise be
+// nominal on the one document that decides where a Claude call goes, and
+// "inert" is a state nothing downstream would report.
+func validRouting(r *Routing, providers map[string]Provider) error {
 	if r == nil || r.Claude == nil {
 		return nil
 	}
-	via := r.Claude.Via
-	switch via {
-	case "", RouteDirect, RouteOpenRouter, RouteAuto:
-	default:
-		return fmt.Errorf("projectpolicy: routing.claude.via %q must be %s, %s or %s", via, RouteDirect, RouteOpenRouter, RouteAuto)
-	}
-	for _, p := range config.CheckRoutingShape(r, "routing") {
+	for _, p := range config.CheckRouting(r, providerCarrier(providers), "routing") {
 		return fmt.Errorf("projectpolicy: %s: %s", p.Path, p.Message)
 	}
 	return nil
+}
+
+// providerCarrier is the providers block in the carrier internal/config's rules
+// are written against (config.ModelProvider, which the policy's Provider
+// embeds). One map, built the same way for the providers' own validation and for
+// the routing check that reads them, so the two cannot judge different entries.
+func providerCarrier(providers map[string]Provider) map[string]config.ModelProvider {
+	out := make(map[string]config.ModelProvider, len(providers))
+	for _, name := range providerNames(providers) {
+		out[name] = providers[name].ModelProvider
+	}
+	return out
 }
 
 // validPricePolicy checks the one provider value the carrier's own validation

@@ -426,17 +426,17 @@ func TestDecodeRequireZDRIsDefaultTrue(t *testing.T) {
 // model listed twice is a mistake that would otherwise be enforced silently.
 func TestDecodeRefusesABadAllowedModel(t *testing.T) {
 	for name, list := range map[string]string{
-		"an alias":           `["sonnet"]`,
-		"the wildcard":       `["claude-*"]`,
-		"a -latest pointer":  `["deepseek/deepseek-v4-flash-latest"]`,
-		"a :variant":         `["deepseek/deepseek-v4-flash:free"]`,
-		"an anthropic alias": `["anthropic/claude-sonnet-5.5"]`,
-		"empty entry":        `[""]`,
-		"whitespace":         `["claude sonnet"]`,
-		"listed twice":       `["claude-sonnet-5-5", "claude-sonnet-5-5"]`,
-		"too long":           `["` + strings.Repeat("m", 101) + `"]`,
-		"null entry":         `[null]`,
-		"a number entry":     `[5]`,
+		"an alias":                   `["sonnet"]`,
+		"the wildcard":               `["claude-*"]`,
+		"a -latest pointer":          `["deepseek/deepseek-v4-flash-latest"]`,
+		"a :variant":                 `["deepseek/deepseek-v4-flash:free"]`,
+		"a variant under the prefix": `["anthropic/claude-sonnet-5.5:free"]`,
+		"empty entry":                `[""]`,
+		"whitespace":                 `["claude sonnet"]`,
+		"listed twice":               `["claude-sonnet-5-5", "claude-sonnet-5-5"]`,
+		"too long":                   `["` + strings.Repeat("m", 101) + `"]`,
+		"null entry":                 `[null]`,
+		"a number entry":             `[5]`,
 	} {
 		p, found, err := Decode([]byte(`{"version": 1, "budget": {"mode": "enforce", "allowed_models": ` + list + `}}`))
 		if err == nil || p != nil || !found {
@@ -446,6 +446,15 @@ func TestDecodeRefusesABadAllowedModel(t *testing.T) {
 	p, _, err := Decode([]byte(`{"version": 1, "budget": {"mode": "enforce", "allowed_models": ["claude-sonnet-5-5", "deepseek/deepseek-v4.1-flash"]}}`))
 	if err != nil {
 		t.Fatalf("two explicit model IDs must be valid: %v", err)
+	}
+	// And the one vendor-prefixed spelling that is a model ID: an explicit
+	// "anthropic/<id>" is the shape a provider route may claim
+	// (docs/design/mixed-credentials.md §4, config.CheckClaudeClaim), so
+	// pricing no longer calls it an alias. The list is judged here as it is
+	// written; whether a route claims the ID is a run-time question, and the
+	// node's own providers block is where the switch answers it.
+	if _, _, err := Decode([]byte(`{"version": 1, "budget": {"mode": "enforce", "allowed_models": ["anthropic/claude-sonnet-5.5"]}}`)); err != nil {
+		t.Fatalf("a claimed-shape anthropic/<id> in allowed_models was refused: %v", err)
 	}
 	if len(p.Budget.AllowedModels) != 2 {
 		t.Errorf("AllowedModels = %v, want both", p.Budget.AllowedModels)
@@ -539,18 +548,26 @@ func TestDecodeModelPricesAgreeWithTheCatalog(t *testing.T) {
 
 func TestDecodeRefusesABadPrice(t *testing.T) {
 	for name, raw := range map[string]string{
-		"input_per_m missing":          `{"version": 1, "model_prices": {"claude-sonnet-5-5": {"output_per_m": 15}}}`,
-		"a camelCase rate":             `{"version": 1, "model_prices": {"claude-sonnet-5-5": {"input_per_m": 3, "output_per_m": 15, "cacheRead": 0.1}}}`,
-		"an alias key":                 `{"version": 1, "model_prices": {"anthropic/claude-sonnet-5.5": {"input_per_m": 3, "output_per_m": 15}}}`,
-		"a negative rate":              `{"version": 1, "model_prices": {"claude-sonnet-5-5": {"input_per_m": -3, "output_per_m": 15}}}`,
-		"a bare number":                `{"version": 1, "model_prices": 5}`,
-		"a list":                       `{"version": 1, "model_prices": []}`,
-		"a long_context without rates": `{"version": 1, "model_prices": {"claude-sonnet-5-5": {"input_per_m": 3, "output_per_m": 15, "long_context": {"above_input_tokens": 200000}}}}`,
+		"input_per_m missing":                 `{"version": 1, "model_prices": {"claude-sonnet-5-5": {"output_per_m": 15}}}`,
+		"a camelCase rate":                    `{"version": 1, "model_prices": {"claude-sonnet-5-5": {"input_per_m": 3, "output_per_m": 15, "cacheRead": 0.1}}}`,
+		"a vendor prefix that is not a claim": `{"version": 1, "model_prices": {"Anthropic/claude-sonnet-5.5": {"input_per_m": 3, "output_per_m": 15}}}`,
+		"a negative rate":                     `{"version": 1, "model_prices": {"claude-sonnet-5-5": {"input_per_m": -3, "output_per_m": 15}}}`,
+		"a bare number":                       `{"version": 1, "model_prices": 5}`,
+		"a list":                              `{"version": 1, "model_prices": []}`,
+		"a long_context without rates":        `{"version": 1, "model_prices": {"claude-sonnet-5-5": {"input_per_m": 3, "output_per_m": 15, "long_context": {"above_input_tokens": 200000}}}}`,
 	} {
 		p, found, err := Decode([]byte(raw))
 		if err == nil || p != nil || !found {
 			t.Errorf("%s: Decode(%s) = (%v, %v, %v), want an error", name, raw, p, found, err)
 		}
+	}
+	// The claimed shape is a price key now: an explicit "anthropic/<id>" is a
+	// model ID (Task 4's IsAlias relaxation), which is what lets a claimed
+	// Claude route be priced before the catalogue carries its row (P11). The
+	// claim itself is not this block's business — a route the node does not
+	// carry is refused by the routing check, not by the price table.
+	if _, _, err := Decode([]byte(`{"version": 1, "model_prices": {"anthropic/claude-sonnet-5.5": {"input_per_m": 3, "output_per_m": 15}}}`)); err != nil {
+		t.Fatalf("a claimed-shape anthropic/<id> price key was refused: %v", err)
 	}
 	// An empty block and an absent one are both "no overrides".
 	for _, raw := range []string{`{"version": 1}`, `{"version": 1, "model_prices": {}}`, `{"version": 1, "model_prices": null}`} {
@@ -595,9 +612,18 @@ func TestVersionErrorCarriesBothVersions(t *testing.T) {
 // shape rule the operator's own config is: an explicit list of Claude IDs,
 // never a pattern (D1a). An absent block stays absent, which is direct (D1b).
 func TestPolicyCarriesRouting(t *testing.T) {
+	// The node carries the route entry the switch resolves through: one
+	// explicit "anthropic/<id>" per Claude ID, with allow_data_to written
+	// (D1b) — without them the switch names a route nothing claims, which the
+	// decoder refuses below.
 	pol := &Policy{
 		Version: Version,
 		Budget:  Budget{Mode: "enforce", PerRunUSD: 5},
+		Providers: map[string]Provider{"openrouter": {ModelProvider: config.ModelProvider{
+			Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api/v1", Auth: "bearer",
+			Secret: "openrouter-key", Models: []string{"anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5"},
+			AllowDataTo: []string{"*"}, PricePolicy: PricePolicyHighest,
+		}}},
 		Routing: &Routing{Claude: &ClaudeRoute{Via: RouteOpenRouter, Models: []string{"claude-sonnet-5-5", "claude-opus-5-5"}}},
 	}
 	// The delivery path: the CLI marshals the policy onto the node, exactly as
@@ -626,12 +652,31 @@ func TestPolicyCarriesRouting(t *testing.T) {
 	// And the shapes D1a refuses are refused on the node too, with the key
 	// named: a pattern, an empty list under via: openrouter, and a via this
 	// Fugaro cannot act on.
+	routes := `{"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["anthropic/claude-sonnet-5.5"], "allow_data_to": ["*"]}}`
 	for _, tc := range []struct{ name, routing, want string }{
 		{"a glob", `{"claude": {"via": "openrouter", "models": ["claude-*"]}}`, "explicit list"},
 		{"an empty list", `{"claude": {"via": "openrouter"}}`, "routing.claude.models"},
 		{"an empty via", `{"claude": {"via": ""}}`, "routing.claude.via"},
 	} {
-		raw := []byte(`{"version": 1, "routing": ` + tc.routing + `}`)
+		raw := []byte(`{"version": 1, "providers": ` + routes + `, "routing": ` + tc.routing + `}`)
+		p, found, err := Decode(raw)
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode = (%v, %v, %v), want a refusal", tc.name, p, found, err)
+		} else if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want it to name %q", tc.name, err, tc.want)
+		}
+	}
+	// D1b is D1b on the node too (the security review of this slice): a node
+	// that routes a Claude ID through a provider which does not claim it, or
+	// which claims it without allow_data_to written, is refused — the node is
+	// the artifact every run reads, and "the switch is there but inert" is not
+	// a state a run reports.
+	for _, tc := range []struct{ name, providers, want string }{
+		{"no provider claims the ID", `{"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["*"]}}`, "no provider entry claims it"},
+		{"the claim has no allow_data_to", `{"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["anthropic/claude-sonnet-5.5"]}}`, "allow_data_to"},
+		{"no providers block at all", `{}`, "no provider entry claims it"},
+	} {
+		raw := []byte(`{"version": 1, "providers": ` + tc.providers + `, "routing": {"claude": {"via": "openrouter", "models": ["claude-sonnet-5-5"]}}}`)
 		p, found, err := Decode(raw)
 		if err == nil || p != nil || !found {
 			t.Errorf("%s: Decode = (%v, %v, %v), want a refusal", tc.name, p, found, err)
