@@ -1071,11 +1071,17 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 			return err
 		}
 		what := "this removes " + canonical + " from the allow-list: its runs are refused from now on, and a run in flight keeps the policy until it finishes"
-		if inflight > 0 {
-			what = fmt.Sprintf("%s; %d run(s) are in flight", what, inflight)
-		}
-		if err := confirmRemoval(cmd, lc, inflight == 0, what); err != nil {
-			return err
+		switch {
+		case inflight > 0:
+			// --yes was typed before the run started, so it is not the
+			// confirmation here: the project's name is.
+			if err := confirmRemovalStrict(cmd, lc, fmt.Sprintf("%s; %d run(s) are in flight", what, inflight)); err != nil {
+				return err
+			}
+		default:
+			if err := confirmRemoval(cmd, lc, o.yes, what); err != nil {
+				return err
+			}
 		}
 		p.AllowRepos = slices.DeleteFunc(p.AllowRepos, func(r string) bool { return r == canonical })
 	} else {
