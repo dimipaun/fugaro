@@ -57,9 +57,23 @@ func TestReadinessOptionalAnthropicKey(t *testing.T) {
 	if names := ws.Env[runner.SecretEnvsVar]; strings.Contains(names, "ANTHROPIC_API_KEY") {
 		t.Errorf("%s = %q, want the variables that are left", runner.SecretEnvsVar, names)
 	}
+	// The deploy is right, but it is not silent: with a budget that isn't
+	// enforcing there is no gateway, so every call goes direct and the key
+	// is needed -- a note says so, and names the fix. It gates nothing.
+	note := ""
 	for _, m := range missing {
-		if strings.Contains(m.Reason, config.AnthropicSecret) && !m.Check {
+		if m.Kind == MissingNote && strings.Contains(m.Reason, config.AnthropicSecret) {
+			note = m.String()
+		} else if strings.Contains(m.Reason, config.AnthropicSecret) {
 			t.Errorf("the missing key is still a gate: %v", m)
+		}
+	}
+	if note == "" {
+		t.Fatalf("no note about the absent key: %v", missing)
+	}
+	for _, want := range []string{"deploys without it", "fugaro secrets set anthropic-api-key", "fugaro init --repo"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("the note does not say %q: %s", want, note)
 		}
 	}
 
@@ -149,5 +163,54 @@ func TestReadinessOptionalKeyResolvesProjectWide(t *testing.T) {
 		if strings.Contains(m.Reason, config.AnthropicSecret) {
 			t.Errorf("the project-wide key is still reported missing: %v", m)
 		}
+	}
+}
+
+// TestReadinessOptionalKeyNoteOnAnExistingJob (review Low 7): the P7a path
+// refactored dropMount too, so an existing job with no key must behave like a
+// new one: it stays deployed, the mount goes, and the note still says why.
+func TestReadinessOptionalKeyNoteOnAnExistingJob(t *testing.T) {
+	in := sandboxInputs(t, m5Additions)
+	in.Cfg.Agent.Auth = "api-key"
+	spec, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	web := spec.Workflows["web"]
+
+	f := newCloud(t)
+	f.gcs.AddBucket(spec.Installation.RunsBucket, testProjectNumber, managed)
+	for logical, id := range spec.Secrets {
+		if logical == config.AnthropicSecret {
+			continue
+		}
+		f.sm.Seed(id, with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, logical), []byte("v"))
+	}
+	f.ar.AddRepository("proj-1234", "us-east5", spec.Registry.RepositoryID, with(managed, gcp.LabelRepo, spec.Label))
+	f.ar.SetTag("proj-1234", "us-east5", spec.Registry.RepositoryID,
+		strings.TrimSuffix(strings.TrimPrefix(web.Image, spec.RegistryPath+"/"), ":latest"), "latest")
+	// The job already exists, with the key in its current environment: the
+	// update must take the mount out, never fail the whole job.
+	f.run.SetJob(web.Job, web.Labels, web.Image+":latest")
+
+	got, missing, _ := readinessOf(t, f, spec)
+	ws := got.Workflows["web"]
+	if !ws.DeployJob {
+		t.Fatalf("an existing job was not kept deployed: %v", missing)
+	}
+	if _, mounted := ws.SecretEnv["ANTHROPIC_API_KEY"]; mounted {
+		t.Errorf("the existing job still mounts the key: %v", ws.SecretEnv)
+	}
+	var note bool
+	for _, m := range missing {
+		if m.Kind == MissingNote && strings.Contains(m.Reason, config.AnthropicSecret) {
+			note = true
+		}
+		if m.Kind == MissingSecret && strings.Contains(m.Reason, config.AnthropicSecret) {
+			t.Errorf("the absent key still gates the existing job: %v", m)
+		}
+	}
+	if !note {
+		t.Errorf("no note about the absent key: %v", missing)
 	}
 }

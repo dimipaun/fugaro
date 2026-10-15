@@ -123,6 +123,13 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 		}
 		v := p[k]
 		if v == "" {
+			if k == "ANTHROPIC_API_KEY" {
+				// No gateway: every call goes direct, so the key is not
+				// optional here whatever the pins are, and "is not set" alone
+				// names no fix. Refuse with the gateway's own text, one text
+				// for both (internal/config.MissingAnthropicKey).
+				return nil, nil, fmt.Errorf("secret ANTHROPIC_API_KEY is not set in the runner environment: %s", config.MissingAnthropicKey)
+			}
 			return nil, nil, fmt.Errorf("secret %s is not set in the runner environment", k)
 		}
 		if len(v) < 4 {

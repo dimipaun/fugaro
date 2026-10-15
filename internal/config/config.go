@@ -385,6 +385,15 @@ type Secret struct {
 // none (design docs/design/project-centric.md §6.1).
 const AnthropicSecret = "anthropic-api-key"
 
+// MissingAnthropicKey is what a call that needs Anthropic gets when no key is
+// stored: the gateway refuses the call with it, and the agent's environment
+// refuses to start without one in the one case where the gateway can't say so
+// (no budget: there is no gateway, and every call goes direct). One text, so
+// the two cannot say different things, and both name the fix that actually
+// works: store a key and rerun `fugaro init --repo` (the mount is planned at
+// deploy), or route the model through a provider.
+const MissingAnthropicKey = "no Anthropic API key is stored, so this call cannot go to Anthropic: store one with `fugaro secrets set anthropic-api-key` and rerun fugaro init --repo, or route the model through a provider"
+
 // ReservedSecrets are the logical secret names the platform itself mounts,
 // mapped to the variable each one becomes. A workflow's secrets may not
 // reuse them (design §5.1, §6.1).

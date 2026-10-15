@@ -410,13 +410,30 @@ func (s *Server) enterStage() *stageState {
 	return s.stage
 }
 
+// violationNow records what a stage asked for that isn't allowed, on the
+// running stage: for a path that has no stage handle of its own (the token
+// count, which takes none). No stage is running: nothing to record.
+func (s *Server) violationNow(v string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stage != nil {
+		s.violationLocked(s.stage, v)
+	}
+}
+
+// violationLocked is the append violationNow and violation share; the caller
+// holds s.mu.
+func (s *Server) violationLocked(st *stageState, v string) {
+	if !contains(st.rep.Violations, v) {
+		st.rep.Violations = append(st.rep.Violations, v)
+	}
+}
+
 // violation records what a stage asked for that isn't allowed.
 func (s *Server) violation(st *stageState, v string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !contains(st.rep.Violations, v) {
-		st.rep.Violations = append(st.rep.Violations, v)
-	}
+	s.violationLocked(st, v)
 }
 
 // Close cancels every upstream request in flight (each settles as its

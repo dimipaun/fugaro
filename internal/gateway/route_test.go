@@ -1006,13 +1006,51 @@ func TestNoAnthropicKey(t *testing.T) {
 		t.Error("the refused call reached the Anthropic upstream")
 	}
 
-	// A token count for it cannot be served either: counting is Anthropic's.
-	if resp, b := h.post2("/v1/messages/count_tokens", msg(sonnet, 100)); resp.StatusCode != http.StatusForbidden || !strings.Contains(b, "anthropic-api-key") {
-		t.Errorf("count_tokens without a key: %d %s", resp.StatusCode, b)
+	// A streamed Claude call is refused the same way: the check runs before
+	// the streaming branch, so nothing reaches the upstream either.
+	resp, b = h.post(msg(sonnet, 100, `"stream":true`))
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(b, "fugaro secrets set anthropic-api-key") {
+		t.Errorf("a streamed Claude model without a key: %d %s", resp.StatusCode, b)
+	}
+	if h.fake.Count() != 0 {
+		t.Error("the refused streamed call reached the Anthropic upstream")
 	}
 
-	// The refusal is a violation the stage report carries, like the others.
+	// A token count for it cannot be served either: counting is Anthropic's.
+	// The same status and error type as the messages refusal, so one missing
+	// key reads the same on both paths.
+	resp, b = h.post2("/v1/messages/count_tokens", msg(sonnet, 100))
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(b, "anthropic-api-key") || !strings.Contains(b, "invalid_request_error") {
+		t.Errorf("count_tokens without a key: %d %s", resp.StatusCode, b)
+	}
+	if h.fake.Count() != 0 {
+		t.Error("the refused token count reached the Anthropic upstream")
+	}
+
+	// The refusal is a violation the stage report carries, like the others,
+	// from either path.
 	if rep := h.gw.EndStage(); !slices.Contains(rep.Violations, missingAnthropicKey) {
 		t.Errorf("stage report violations = %v, want the missing-key refusal", rep.Violations)
+	}
+}
+
+// TestUpstreamRequestNeverSendsAnEmptyKey (defense in depth, design
+// project-centric §8.2-ish hardening): the two callers refuse a keyless
+// Anthropic call with the actionable message before the request is built, but
+// the builder itself must never put an empty x-api-key on the wire. It
+// returns an error instead, so a future caller cannot send an unauthenticated
+// call under this run's own headers.
+func TestUpstreamRequestNeverSendsAnEmptyKey(t *testing.T) {
+	h := newHarnessWith(t, func(o *Options) { o.Upstream.APIKey = "" })
+	r := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(msg(sonnet, 10)))
+	up, sent, err := h.gw.upstreamRequest(t.Context(), r, route{upstream: h.up.URL + "/v1/messages"}, []byte(msg(sonnet, 10)))
+	if err == nil || !strings.Contains(err.Error(), "fugaro secrets set anthropic-api-key") {
+		t.Fatalf("upstreamRequest with no key: %v, want the actionable refusal", err)
+	}
+	if up != nil {
+		t.Errorf("a refused request was built: %v", up)
+	}
+	if sent != nil && sent.Load() {
+		t.Error("the refused request was marked as sent")
 	}
 }

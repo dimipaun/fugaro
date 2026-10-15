@@ -93,7 +93,7 @@ func copyRoutes(rs []Route) []Route {
 // stored key is mounted whenever the secret has a version, so storing one and
 // re-running `fugaro init --repo` is the whole fix, and a run whose models all
 // route through providers never needs it.
-const missingAnthropicKey = "no Anthropic API key is stored, so this call cannot go to Anthropic: store one with `fugaro secrets set anthropic-api-key` and rerun fugaro init --repo, or route the model through a provider"
+const missingAnthropicKey = config.MissingAnthropicKey
 
 // validateRoutes: routes need the Anthropic upstream's kind, never its key
 // (a run whose models are all routed has no key, and that is exactly when

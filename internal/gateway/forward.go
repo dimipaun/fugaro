@@ -20,6 +20,7 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
@@ -850,6 +851,14 @@ func (s *Server) upstreamRequest(ctx context.Context, r *http.Request, rt route,
 	s.scrubToken(up.Header)
 	switch s.o.Upstream.Kind {
 	case "anthropic":
+		if s.o.Upstream.APIKey == "" {
+			// Defense in depth: the callers refuse a keyless Anthropic call
+			// with the nicer, actionable message before they get here, but
+			// this request builder must never send an empty credential --
+			// x-api-key: "" is an unauthenticated call to Anthropic under
+			// this run's own headers.
+			return nil, nil, errors.New(config.MissingAnthropicKey)
+		}
 		up.Header.Set("x-api-key", s.o.Upstream.APIKey)
 	case "vertex":
 		tok, err := s.o.Upstream.Token.Token()
@@ -1080,9 +1089,12 @@ func (s *Server) forwardFree(w http.ResponseWriter, r *http.Request, rt route) {
 	}
 	if s.o.Upstream.Kind == "anthropic" && s.o.Upstream.APIKey == "" {
 		// A count for a model no route claims goes to Anthropic, which needs
-		// the key the run may not have (§6.1).
-		writeError(w, http.StatusForbidden, "permission_error", "fugaro: "+missingAnthropicKey)
-		s.log.Info("token count", "stage", s.stageName(), "status", http.StatusForbidden, "request_bytes", len(body), "response_bytes", 0)
+		// the key the run may not have (§6.1). The same refusal as a
+		// messages call's -- 400 invalid_request_error, recorded as a
+		// violation -- so the two paths of one missing key read alike.
+		s.violationNow(missingAnthropicKey)
+		writeError(w, http.StatusBadRequest, "invalid_request_error", "fugaro: "+missingAnthropicKey)
+		s.log.Warn("budget: request refused", "stage", s.stageName(), "violation", missingAnthropicKey)
 		return
 	}
 	ctx, cancel := context.WithCancel(r.Context())

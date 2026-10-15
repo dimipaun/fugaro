@@ -13,6 +13,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
 
@@ -25,6 +26,11 @@ const (
 	MissingSecret MissingKind = "secret"
 	// MissingImage is the job's image, not built yet.
 	MissingImage MissingKind = "image"
+	// MissingNote is not a gate at all: something the run will need in one
+	// case, reported so it is not a surprise later (the optional Anthropic
+	// key: the job deploys without it, and a call that goes direct to
+	// Anthropic is refused until a key is stored).
+	MissingNote MissingKind = "note"
 )
 
 // Missing is something a workflow's job needs that doesn't exist yet.
@@ -40,6 +46,11 @@ type Missing struct {
 }
 
 func (m Missing) String() string {
+	// A note gates nothing, and says only itself: no job is mentioned, so
+	// nobody reads it as one that didn't deploy.
+	if m.Kind == MissingNote {
+		return m.Reason
+	}
 	if m.Check {
 		if m.Deployed {
 			return "the daily image check (its job exists and stays deployed): " + m.Reason
@@ -188,7 +199,21 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 				// models all route through providers needs no such key,
 				// and a call that needs it is refused by the gateway by
 				// name, not blocked here.
+				//
+				// Not blocked here is the point, but silently was not: with
+				// the budget not enforcing there is no gateway, every call
+				// goes direct to Anthropic, and the run fails at agent
+				// start. Say so up front, without gating the job
+				// (MissingNote): the deploy is right, and the owner hears
+				// about the key here rather than from a failed run. The
+				// mode is the job's own, the local config's ceiling: a
+				// file that enforces under it only makes the note
+				// unnecessary, never wrong, since the note never blocks.
 				dropMount(ws, logical)
+				if ws.Env[BudgetModeEnv] != localcfg.BudgetEnforce {
+					missing = append(missing, Missing{Workflow: name, Kind: MissingNote, Reason: fmt.Sprintf(
+						"%s has no version: the job deploys without it, and a run that calls Anthropic directly is refused until a key is stored (%s, then rerun fugaro init --repo)", logical, fix)})
+				}
 				continue
 			}
 			unresolved = append(unresolved, logical)

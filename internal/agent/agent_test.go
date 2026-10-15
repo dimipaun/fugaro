@@ -774,3 +774,25 @@ func TestClaudeEnvHasNoPluginOrTrustVariables(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildEnvNoGatekeeperNeedsTheKeyActionably (design project-centric §6.1,
+// review Medium 1): with no gateway every call goes direct to Anthropic, so
+// the key is not optional whatever the pins are -- and the refusal names the
+// fix, the same text the gateway refuses such a call with, instead of the
+// bare "is not set in the runner environment".
+func TestBuildEnvNoGatekeeperNeedsTheKeyActionably(t *testing.T) {
+	_, _, err := BuildEnv([]string{"PATH=/bin"}, EnvSpec{Auth: "api-key"})
+	if err == nil {
+		t.Fatal("api-key with no gateway and no key started")
+	}
+	for _, want := range []string{"ANTHROPIC_API_KEY", "fugaro secrets set anthropic-api-key", "fugaro init --repo", "route the model through a provider"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	// A declared secret that is missing keeps the plain message: only the
+	// Anthropic key has an action worth naming.
+	if _, _, err := BuildEnv([]string{"PATH=/bin", "ANTHROPIC_API_KEY=key-123"}, EnvSpec{Auth: "api-key", Secrets: []string{"MISSING"}}); err == nil || strings.Contains(err.Error(), "fugaro secrets set anthropic-api-key") {
+		t.Errorf("a missing declared secret err = %v, want the plain message", err)
+	}
+}
