@@ -215,7 +215,7 @@ func TestPEMPasteSurvivesEscapeSequences(t *testing.T) {
 	if lr.err != nil || lr.res.Failed != nil {
 		t.Fatalf("%v, %+v", lr.err, lr.res)
 	}
-	if got := r.store.latest(mustSlug("github", "acme/app"), "github-app-key"); got != pemValue {
+	if got := r.store.latestProject("aurora", "github-app-key"); got != pemValue {
 		t.Fatalf("stored %q", got)
 	}
 }
@@ -329,7 +329,7 @@ func TestJSONNeverPrompts(t *testing.T) {
 	if err != nil || stateOf(res, "secrets") != initflow.NeedsYou || r.store.setCalls() != 0 || strings.Contains(r.errOut.String(), "hidden") {
 		t.Fatalf("%v, %+v, stderr %q", err, res, r.errOut.String())
 	}
-	if len(res.Left) != 1 || !strings.Contains(strings.Join(res.Left[0].Commands, "\n"), "secrets set bitbucket-token --repo acme/") {
+	if len(res.Left) != 1 || !strings.Contains(strings.Join(res.Left[0].Commands, "\n"), "secrets set bitbucket-token\n") {
 		t.Errorf("left = %+v", res.Left)
 	}
 	if after := queued(t, f); after != before || before == 0 {

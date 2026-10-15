@@ -342,16 +342,18 @@ func TestNonTTYNeverReadForValues(t *testing.T) {
 	})
 }
 
-// The commands left for the user are one line each, name the secret and the
-// repository, use the binary path the user ran (quoted as one word), and
-// hold no value, no continuation and no heredoc.
+// The commands left for the user are one line each, name the secret and --
+// for a name that keeps repository scope -- the repository, use the binary
+// path the user ran (quoted as one word), and hold no value, no continuation
+// and no heredoc. D2 stores a swept-in reserved name project-wide, where no
+// repository belongs in the command, so those lines carry no --repo.
 func TestPrintedCommandsHaveNoValues(t *testing.T) {
 	for _, tc := range []struct {
 		origin string
 		want   []string
 	}{
-		{githubOrigin, []string{"fugaro secrets set github-app-key --repo acme/app < PATH-TO-THE-KEY-FILE", "claude setup-token", "fugaro secrets set claude-oauth-token --repo acme/app"}},
-		{bitbucketOrigin, []string{"fugaro secrets set bitbucket-token --repo acme/app", "claude setup-token", "fugaro secrets set claude-oauth-token --repo acme/app"}},
+		{githubOrigin, []string{"fugaro secrets set github-app-key < PATH-TO-THE-KEY-FILE", "claude setup-token", "fugaro secrets set claude-oauth-token --repo acme/app"}},
+		{bitbucketOrigin, []string{"fugaro secrets set bitbucket-token", "claude setup-token", "fugaro secrets set claude-oauth-token --repo acme/app"}},
 	} {
 		r := newSecretsRig(t, tc.origin, strings.NewReader(""))
 		res, err := r.run(t)

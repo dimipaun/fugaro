@@ -15,13 +15,14 @@
 [secrets/no-checkout] command: in a checkout of the repository, in your own terminal window, run
     fugaro init
 [secrets/github] command: run these in your own terminal window, one line at a time, in this order
-    fugaro secrets set github-app-key --repo acme/app < PATH-TO-THE-KEY-FILE
+    fugaro secrets set github-app-key < PATH-TO-THE-KEY-FILE
     claude setup-token
     fugaro secrets set claude-oauth-token --repo acme/app
 [secrets/bitbucket] command: run these in your own terminal window, one line at a time, in this order
-    fugaro secrets set bitbucket-token --repo acme/app
+    fugaro secrets set bitbucket-token
 [secrets/odd-repo] command: run these in your own terminal window, one line at a time, in this order
-    fugaro secrets set bitbucket-token --repo 'ac me/ap'\''p'
+    claude setup-token
+    fugaro secrets set claude-oauth-token --repo 'ac me/ap'\''p'
 [plugin/update] command: fugaro update-skills
 [plugin/fork] command: fugaro update-skills --allow-fork
 [repository] prompt: in your own terminal window, not through a coding agent or a pipe, in the checkout, type the project's name at each apply after running

@@ -96,7 +96,10 @@ func TestSecretPromptHidden(t *testing.T) {
 	if lr.err != nil || lr.res.Failed != nil || stateOf(lr.res, "secrets") != initflow.Changed {
 		t.Fatalf("%v, %+v", lr.err, lr.res)
 	}
-	if got := r.store.latest(bitbucketSlug, "bitbucket-token"); got != "bb-secret-value-EXAMPLE" {
+	// D2: the git credential is a swept-in reserved name, so the prompt
+	// stores the project copy; claude-oauth-token is not swept in and keeps
+	// the repository copy with no project_secrets entry (see the next test).
+	if got := r.store.latestProject("aurora", "bitbucket-token"); got != "bb-secret-value-EXAMPLE" {
 		t.Errorf("bitbucket-token = %q", got)
 	}
 	if got := r.store.latest(bitbucketSlug, "claude-oauth-token"); got != tokenValue { // the default choice
@@ -133,7 +136,7 @@ func TestSecretPromptFollowsAgentAuth(t *testing.T) {
 	if lr.err != nil || lr.res.Failed != nil {
 		t.Fatalf("%v, %+v", lr.err, lr.res)
 	}
-	if r.store.latest(bitbucketSlug, "anthropic-api-key") != tokenValue || r.store.latest(bitbucketSlug, "claude-oauth-token") != "" {
+	if r.store.latestProject("aurora", "anthropic-api-key") != tokenValue || r.store.latest(bitbucketSlug, "claude-oauth-token") != "" {
 		t.Errorf("stored the wrong Claude credential")
 	}
 	if strings.Contains(r.errOut.String(), "Type 1 or 2") {
@@ -155,7 +158,7 @@ func TestMultilinePEMAccepted(t *testing.T) {
 			if lr.err != nil || lr.res.Failed != nil {
 				t.Fatalf("%v, %+v", lr.err, lr.res)
 			}
-			if got := r.store.latest(mustSlug("github", "acme/app"), "github-app-key"); got != pemValue {
+			if got := r.store.latestProject("aurora", "github-app-key"); got != pemValue {
 				t.Fatalf("stored %q", got)
 			}
 			// Typed in this run: the App pre-check may use it from memory.
@@ -288,7 +291,7 @@ func TestExistingSecretNotOverwritten(t *testing.T) {
 		done := r.start(context.Background())
 		r.answer(t, f, "bitbucket-token (input hidden)", 1, "bb-secret-value-EXAMPLE\n")
 		lr := waitLoop(t, done)
-		if lr.err != nil || r.store.latest(bitbucketSlug, "bitbucket-token") != "bb-secret-value-EXAMPLE" {
+		if lr.err != nil || r.store.latestProject("aurora", "bitbucket-token") != "bb-secret-value-EXAMPLE" {
 			t.Fatalf("%v, %+v", lr.err, lr.res)
 		}
 	})
@@ -473,7 +476,7 @@ func initOnTTY(t *testing.T, asJSON bool) {
 			t.Fatalf("%v:\n%s", jerr, out.String())
 		}
 		last := res.Left[len(res.Left)-1]
-		if last["stage"] != "secrets" || !strings.Contains(last["commands"], "secrets set bitbucket-token --repo acme/sandbox") {
+		if last["stage"] != "secrets" || !strings.Contains(last["commands"], "secrets set bitbucket-token") {
 			t.Fatalf("left %v", res.Left)
 		}
 		if strings.Contains(errOut.String(), "hidden") || queued(t, f) != before || before == 0 {
@@ -501,7 +504,9 @@ func initOnTTY(t *testing.T, asJSON bool) {
 		t.Fatalf("%v\n%s", err, errOut.String())
 	}
 	slug := mustSlug("bitbucket", "acme/sandbox")
-	if string(r.sm.Latest(gcp.SecretID(slug, "bitbucket-token"))) != val || string(r.sm.Latest(gcp.SecretID(slug, "claude-oauth-token"))) != tokenValue {
+	// D2: the git credential lands in the project's own container, the
+	// Claude token (not swept in) in the repository's.
+	if string(r.sm.Latest(gcp.ProjectSecretID("aurora", "bitbucket-token"))) != val || string(r.sm.Latest(gcp.SecretID(slug, "claude-oauth-token"))) != tokenValue {
 		t.Fatal("the values were not stored")
 	}
 	f.waitEcho(t, true)
