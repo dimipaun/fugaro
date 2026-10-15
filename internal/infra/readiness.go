@@ -13,6 +13,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
 
@@ -25,6 +26,11 @@ const (
 	MissingSecret MissingKind = "secret"
 	// MissingImage is the job's image, not built yet.
 	MissingImage MissingKind = "image"
+	// MissingNote is not a gate at all: something the run will need in one
+	// case, reported so it is not a surprise later (the optional Anthropic
+	// key: the job deploys without it, and a call that needs Anthropic is
+	// refused until a key is stored).
+	MissingNote MissingKind = "note"
 )
 
 // Missing is something a workflow's job needs that doesn't exist yet.
@@ -40,6 +46,11 @@ type Missing struct {
 }
 
 func (m Missing) String() string {
+	// A note gates nothing, and says only itself: no job is mentioned, so
+	// nobody reads it as one that didn't deploy.
+	if m.Kind == MissingNote {
+		return m.Reason
+	}
 	if m.Check {
 		if m.Deployed {
 			return "the daily image check (its job exists and stays deployed): " + m.Reason
@@ -54,6 +65,29 @@ func (m Missing) String() string {
 
 // errFound stops a listing at its first match.
 var errFound = errors.New("found")
+
+// OptionalSecret reports whether a job may go without this logical secret.
+// Only one may: the Anthropic API key, mounted whenever the secret has a
+// version, because a run whose models all route through providers needs none
+// (design docs/design/project-centric.md §6.1). Everything else a job mounts
+// is required for the job to work at all.
+func OptionalSecret(logical string) bool { return logical == config.AnthropicSecret }
+
+// dropMount removes a logical secret from a job's mounts: the variable it
+// would become is deleted, so no secret_key_ref points at a secret with no
+// version (Cloud Run checks a job's secrets when it creates it), and the
+// runner's redaction list is rebuilt from the variables that are left.
+func dropMount(ws WorkflowSpec, logical string) {
+	for env, l := range ws.SecretEnv {
+		if l == logical {
+			delete(ws.SecretEnv, env)
+		}
+	}
+	delete(ws.SecretIDs, logical)
+	if ws.Env != nil {
+		ws.Env[runner.SecretEnvsVar] = strings.Join(slices.Sorted(maps.Keys(ws.SecretEnv)), ",")
+	}
+}
 
 // Readiness decides, from what exists, what the plan may deploy. It
 // returns a deep copy of spec with the gates applied (spec itself is not
@@ -146,11 +180,41 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 			if ok {
 				continue
 			}
+			// The repository copy has no version: the project-wide one may
+			// still resolve it, optional secret or not, so this comes first
+			// (design docs/design/project-secrets.md §5).
 			resolved, fix, err := resolveProject(logical)
 			if err != nil {
 				return RepoSpec{}, nil, err
 			}
 			if resolved {
+				continue
+			}
+			if OptionalSecret(logical) {
+				// Mounted whenever the secret has a version, and a fact
+				// about data rather than about policy, so flipping a
+				// routing setting never needs Terraform (design
+				// project-centric §6.1). With no version anywhere the
+				// mount is dropped and the job deploys anyway: a run whose
+				// models all route through providers needs no such key,
+				// and a call that needs it is refused by the gateway by
+				// name, not blocked here.
+				//
+				// Not blocked here is the point, but silently was not: with
+				// the budget not enforcing nothing routes a call to a
+				// provider (config.CheckProviderGateway refuses a provider
+				// model in any other mode), so every call goes to Anthropic,
+				// and a keyless run fails at agent start. Say so up front,
+				// without gating the job (MissingNote): the deploy is right,
+				// and the owner hears about the key here rather than from a
+				// failed run. The mode is the job's own, the local config's
+				// ceiling: a file that enforces under it only makes the note
+				// unnecessary, never wrong, since the note never blocks.
+				dropMount(ws, logical)
+				if ws.Env[BudgetModeEnv] != localcfg.BudgetEnforce {
+					missing = append(missing, Missing{Workflow: name, Kind: MissingNote, Reason: fmt.Sprintf(
+						"%s has no version: the job deploys without it, and a run that calls Anthropic is refused until a key is stored (%s, then rerun fugaro init --repo)", logical, fix)})
+				}
 				continue
 			}
 			unresolved = append(unresolved, logical)
@@ -162,18 +226,10 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 		// keeps the job's other properties updating; DeployJob is never set
 		// false for a job that already exists, since job.tf's count would
 		// destroy it outright. The Missing above is still reported.
-		if exists && len(unresolved) > 0 && ws.Env != nil {
+		if exists && len(unresolved) > 0 {
 			for _, logical := range unresolved {
-				for env, l := range ws.SecretEnv {
-					if l == logical {
-						delete(ws.SecretEnv, env)
-					}
-				}
-				delete(ws.SecretIDs, logical)
+				dropMount(ws, logical)
 			}
-			// The runner's own redaction list must name exactly the
-			// variables the job's environment still has.
-			ws.Env[runner.SecretEnvsVar] = strings.Join(slices.Sorted(maps.Keys(ws.SecretEnv)), ",")
 		}
 		var built bool
 		if ws.Checkout == config.CheckoutClone {

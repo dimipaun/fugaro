@@ -229,7 +229,7 @@ func TestMissingAndRoleCommandsAreOneLine(t *testing.T) {
 	var buf bytes.Buffer
 	r := &initRun{w: &buf, o: &initOptions{}}
 	spec := infra.RepoSpec{Name: "acme/app", Secrets: map[string]string{"claude-oauth-token": "app-claude", "bitbucket-token": "app-bb"}}
-	r.printMissing(spec, map[string]bool{}, nil)
+	r.printMissing(spec, map[string]bool{}, nil, true)
 	for _, c := range printedMissingCommands(buf.String()) {
 		checkPrinted(t, "missing", c, "fugaro", "claude")
 	}

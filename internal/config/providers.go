@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"gopkg.in/yaml.v3"
 )
@@ -494,6 +495,42 @@ func CheckProviderPolicy(a Agent, allowed []string, repo string, providers map[s
 func claimed(providers map[string]ModelProvider, model string) bool {
 	_, _, ok := ProviderFor(providers, model)
 	return ok
+}
+
+// NeedsAnthropicKey reports whether a run on this configuration sends a call
+// to Anthropic, and so needs the Anthropic API key. The model ID alone decides
+// the route, exactly as the gateway decides it (internal/gateway/route.go): a
+// model no allowed provider claims goes direct. So a Claude pin, or a model no
+// route serves, needs the key, and a repository whose pins are all served by
+// providers it may send code to does not (design docs/design/project-centric.md
+// §6.1). repo "" is an unknown repository, which no provider may serve.
+//
+// Callers ask this only where the gateway is on and enforcing: without it a
+// provider model is refused (CheckProviderGateway) and every call would go to
+// Anthropic, which AnthropicKeyNeeded decides.
+func NeedsAnthropicKey(a Agent, providers map[string]ModelProvider, repo string) bool {
+	for _, model := range []string{a.ModelFor(RoleCoder), a.ModelFor(RoleReviewer), EffectiveBackground(a, providers)} {
+		if _, p, ok := ProviderFor(providers, model); !ok || !p.AllowsData(repo) {
+			return true
+		}
+	}
+	return false
+}
+
+// AnthropicKeyNeeded is the whole rule, and the one both callers ask: does a
+// run on this configuration need the Anthropic API key stored? Only an
+// api-key run ever does (oauth has its own token, Vertex the job's account),
+// and only when a call actually goes to Anthropic: only enforce routes a call
+// to a provider (CheckProviderGateway refuses a provider model in any other
+// mode), so under any other mode every call goes to Anthropic whatever the
+// pins are -- and under enforce it is the pins, exactly as NeedsAnthropicKey
+// reads them. mode is the effective one (the project's ceiling merged with the
+// file), the same value the runner and validate compute.
+func AnthropicKeyNeeded(a Agent, providers map[string]ModelProvider, repo, mode string) bool {
+	if a.Auth != "api-key" {
+		return false
+	}
+	return mode != policy.ModeEnforce || NeedsAnthropicKey(a, providers, repo)
 }
 
 // EffectiveBackground is the model of Claude Code's background (haiku-role)
