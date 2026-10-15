@@ -332,6 +332,51 @@ func TestStrictReadsReportAForbiddenObject(t *testing.T) {
 	check("ReadMaxStrict", err)
 }
 
+// TestStrictReadsAgreeWithGetFileOnForbidden: there is one answer for "this
+// read was refused", and every strict entry point gives it. ReadStrict,
+// ReadMaxStrict and GetFile with strict true all produce ErrForbidden, so a
+// caller separating an IAM problem from a missing object asks
+// errors.Is(err, blobx.ErrForbidden) once, and this is the answer it must be
+// able to rely on: it is the only driver-independent one, because on file://
+// or mem:// the same refusal arrives as fs.ErrPermission with no
+// googleapi.Error anywhere in the error to inspect. The non-strict entries
+// never produce the sentinel — they fold the 403 into ErrNotExist for the
+// runner's account, which holds objectUser under an object-name prefix,
+// cannot list, and so cannot tell the two apart (design artifact-runs.md §3).
+func TestStrictReadsAgreeWithGetFileOnForbidden(t *testing.T) {
+	ctx := context.Background()
+	b := forbiddenBucket(t)
+	dir := t.TempDir()
+	for name, err := range map[string]error{
+		"ReadStrict":     readErr(b.ReadStrict(ctx, "k")),
+		"ReadMaxStrict":  readErr(b.ReadMaxStrict(ctx, "k", 10)),
+		"strict GetFile": getFileErr(b.GetFile(ctx, "k", filepath.Join(dir, "k"), "", 1<<20, true)),
+	} {
+		if !errors.Is(err, blobx.ErrForbidden) {
+			t.Fatalf("%s of a 403 = %v, want ErrForbidden", name, err)
+		}
+	}
+	assertDirEmpty(t, dir)
+	for name, err := range map[string]error{
+		"Read":               readErr(b.Read(ctx, "k")),
+		"ReadMax":            readErr(b.ReadMax(ctx, "k", 10)),
+		"non-strict GetFile": getFileErr(b.GetFile(ctx, "k", filepath.Join(dir, "k"), "", 1<<20, false)),
+	} {
+		if errors.Is(err, blobx.ErrForbidden) {
+			t.Fatalf("%s of a 403 reported an IAM problem: %v", name, err)
+		}
+		if !errors.Is(err, blobx.ErrNotExist) {
+			t.Fatalf("%s of a 403 = %v, want ErrNotExist", name, err)
+		}
+	}
+	assertDirEmpty(t, dir)
+}
+
+// readErr drops the two values of a Read-family call, and getFileErr the same
+// for GetFile, so the entries above can be a map of name to error.
+func readErr(_ []byte, _ int64, err error) error    { return err }
+func getFileErr(_ int64, _ string, err error) error { return err }
+
 // TestStrictReadsKeepAbsentAndCap: strict variants differ only on 403.
 func TestStrictReadsKeepAbsentAndCap(t *testing.T) {
 	ctx := context.Background()
@@ -439,6 +484,11 @@ func TestTouchForbiddenIsClassified(t *testing.T) {
 //	TestGetFileRefusesAnOverCapObjectTheReaderDoesNotAnnounce  the post-copy n > limit check is removed
 //	TestGetFileRefusesAMismatchAndLeavesNothing  the hash check is removed (and, separately, the temp file is left behind on failure)
 //	TestGetFileWithoutAnExpectedHashStillReturnsOne  the returned hash is of nothing
+//	TestGetFileAcceptsAMatchingHash              the expected hash is never accepted (the check becomes "if want != \"\""); separately, EqualFold becomes ==, which fails the upper-case hash; separately, TrimSpace is dropped, which fails the padded one
+//	TestGetFileLeavesAPreExistingFileAloneWhenItRefuses  the temp file is dropped and the bytes are written straight to path, so the file that was already there is truncated and overwritten
+//	TestGetFileRefusesOverTheCapBeforeReadingTheBody  the r.Size() > limit pre-check is removed, so the body is read before the cap can refuse it (the post-copy check still returns ErrTooLarge — only the read count moves)
+//	TestPutFileReportsASourceFailureAsTheSource  the source stops being read through sourceReader, so its error is classified as the bucket's and the message stops naming the file
+//	TestStrictReadsAgreeWithGetFileOnForbidden   a strict read goes back to returning the bare 403 (read: strictReadErr -> err), so errors.Is(err, ErrForbidden) is false for callers that cannot inspect a googleapi.Error
 //	TestGetFileClassifiesForbidden               strict mode folds a 403 into not-found
 //	TestGetFileNonStrictFoldsForbiddenIntoNotExist  non-strict stops folding a 403 into not-found
 //	TestGetFileClassifiesMissingAsNotExist       a 404 is reported as an access problem
@@ -736,6 +786,37 @@ func TestPutFileClassifiesARefusalFromTheWriter(t *testing.T) {
 	}
 }
 
+// TestPutFileReportsASourceFailureAsTheSource: the two failures that reach the
+// copy loop are told apart by which side errored. A source that cannot be read
+// keeps reading like one — the message names the file the caller named, and no
+// bucket sentinel is set — which is what the tagging is for; without it every
+// copy failure is the bucket's, and TestPutFileClassifiesARefusalFromTheWriter
+// is the other half of the same rule.
+func TestPutFileReportsASourceFailureAsTheSource(t *testing.T) {
+	ctx := context.Background()
+	src := t.TempDir() // opens and stats fine; its first Read fails (EISDIR)
+	d := &abortDriver{}
+	b := blobx.Wrap(blob.NewBucket(d))
+	_, _, err := b.PutFile(ctx, "artifacts/x.mp4", src, "video/mp4", false)
+	if err == nil {
+		t.Fatal("PutFile of an unreadable source succeeded")
+	}
+	if !strings.Contains(err.Error(), "reading "+src) {
+		t.Fatalf("a source failure is not reported as a source problem: %v", err)
+	}
+	for _, sentinel := range []error{blobx.ErrExists, blobx.ErrConflict, blobx.ErrForbidden} {
+		if errors.Is(err, sentinel) {
+			t.Fatalf("a source failure was classified as a bucket one (%v): %v", sentinel, err)
+		}
+	}
+	if d.commits != 0 || d.closes != 1 {
+		t.Fatalf("commits = %d, closes = %d, want 0 and 1", d.commits, d.closes)
+	}
+	if !errors.Is(d.closeCtxErr, context.Canceled) {
+		t.Fatalf("Close saw ctx.Err() = %v, want the cancel that stops the commit", d.closeCtxErr)
+	}
+}
+
 // TestGetFileRefusesOverTheLimitAndLeavesNothing: the cap refuses, it never
 // truncates, and the destination directory is left exactly as it was.
 func TestGetFileRefusesOverTheLimitAndLeavesNothing(t *testing.T) {
@@ -760,14 +841,23 @@ func TestGetFileRefusesOverTheLimitAndLeavesNothing(t *testing.T) {
 	}
 }
 
+// errReadFailure is what a reader that breaks partway through an object
+// returns, the shape of a connection dropped mid-download.
+var errReadFailure = errors.New("fake: read failed")
+
 // sizedDriver serves one object whose reader reports a size the caller
 // chooses: a backend that tells the reader nothing (Size() == -1) or one
 // that understates the object. blob.Reader.Size is the driver's
 // Attributes().Size, so this is how GetFile's pre-check is made not to fire.
+// It also counts the reads of the body and can fail partway through it, so
+// "nothing was downloaded" and "the body was never touched" are assertable
+// rather than inferred from an error.
 type sizedDriver struct {
 	driver.Bucket
-	data []byte
-	size int64
+	data      []byte
+	size      int64 // what the reader announces
+	failAfter int   // bytes served before the read fails; 0 means never
+	reads     int   // Read calls on the body, of every reader it served
 }
 
 func (d *sizedDriver) ErrorCode(error) gcerrors.ErrorCode { return gcerrors.Unknown }
@@ -776,17 +866,28 @@ func (d *sizedDriver) ErrorAs(error, any) bool            { return false }
 func (d *sizedDriver) Close() error                       { return nil }
 
 func (d *sizedDriver) NewRangeReader(context.Context, string, int64, int64, *driver.ReaderOptions) (driver.Reader, error) {
-	return &sizedReader{Reader: bytes.NewReader(d.data), size: d.size}, nil
+	return &sizedReader{Reader: bytes.NewReader(d.data), d: d}, nil
 }
 
 type sizedReader struct {
 	*bytes.Reader
-	size int64
+	d      *sizedDriver
+	served int
+}
+
+func (r *sizedReader) Read(p []byte) (int, error) {
+	r.d.reads++
+	if r.d.failAfter > 0 && r.served >= r.d.failAfter {
+		return 0, errReadFailure
+	}
+	n, err := r.Reader.Read(p)
+	r.served += n
+	return n, err
 }
 
 func (r *sizedReader) Close() error { return nil }
 func (r *sizedReader) Attributes() *driver.ReaderAttributes {
-	return &driver.ReaderAttributes{Size: r.size}
+	return &driver.ReaderAttributes{Size: r.d.size}
 }
 func (r *sizedReader) As(any) bool { return false }
 
@@ -839,6 +940,116 @@ func TestGetFileRefusesAMismatchAndLeavesNothing(t *testing.T) {
 	}
 	if !errors.Is(err, blobx.ErrMismatch) || !strings.Contains(err.Error(), wrong) || !strings.Contains(err.Error(), sha256Hex(data)) {
 		t.Fatalf("the mismatch error names neither hash: %v", err)
+	}
+	assertDirEmpty(t, dir)
+}
+
+// TestGetFileAcceptsAMatchingHash: sum is the expected hash, and a matching one
+// is the ordinary case — both callers pass a real hash (the record's own, the
+// task spec's for an input), so the check has to accept it however it is
+// written. Every other GetFile test passes "" or a deliberately wrong hash, so
+// a check that refused every hash it was given, or compared the hex
+// case-sensitively, would fail every download in production with nothing here
+// to notice.
+func TestGetFileAcceptsAMatchingHash(t *testing.T) {
+	ctx := context.Background()
+	b := blobx.Wrap(memblob.OpenBucket(nil))
+	data := []byte("the render's bytes")
+	if err := b.WriteAll(ctx, "artifacts/a.mp4", data, nil); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256Hex(data)
+	for name, given := range map[string]string{
+		"lower case":        sum,
+		"upper case":        strings.ToUpper(sum),
+		"surrounding space": "  " + sum + "\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "a.mp4")
+			n, got, err := b.GetFile(ctx, "artifacts/a.mp4", path, given, 1<<20, true)
+			if err != nil || n != int64(len(data)) {
+				t.Fatalf("GetFile with the matching hash %q = %d, %v", given, n, err)
+			}
+			if got != sum {
+				t.Fatalf("GetFile returned %s, want the canonical lower-case %s", got, sum)
+			}
+			back, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(back, data) {
+				t.Fatalf("GetFile wrote %q, %v", back, err)
+			}
+		})
+	}
+}
+
+// TestGetFileLeavesAPreExistingFileAloneWhenItRefuses: the destination is
+// written by renaming the temporary only after the bytes are known good, so a
+// file already at path — a re-download over an earlier one, or the caller's
+// own file — survives every refusal byte for byte, and no temporary is left
+// beside it. Writing straight to path and renaming nothing would satisfy every
+// other test here, because they all start with an empty directory.
+func TestGetFileLeavesAPreExistingFileAloneWhenItRefuses(t *testing.T) {
+	ctx := context.Background()
+	old := []byte("the file that was already there")
+	data := bytes.Repeat([]byte("z"), 100)
+	for name, tc := range map[string]struct {
+		driver *sizedDriver
+		sum    string
+		limit  int64
+		want   error
+	}{
+		"a mismatch":                {&sizedDriver{data: data, size: int64(len(data))}, sha256Hex([]byte("something else")), 1 << 20, blobx.ErrMismatch},
+		"an unannounced cap":        {&sizedDriver{data: data, size: -1}, "", 99, blobx.ErrTooLarge},
+		"a read that fails partway": {&sizedDriver{data: data, size: int64(len(data)), failAfter: 10}, "", 1 << 20, errReadFailure},
+	} {
+		t.Run(name, func(t *testing.T) {
+			b := blobx.Wrap(blob.NewBucket(tc.driver))
+			dir := t.TempDir()
+			path := filepath.Join(dir, "a.mp4")
+			if err := os.WriteFile(path, old, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, _, err := b.GetFile(ctx, "artifacts/a.mp4", path, tc.sum, tc.limit, true)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("GetFile = %v, want %v", err, tc.want)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(got, old) {
+				t.Fatalf("the refused download changed the file: %q, %v", got, err)
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 1 || entries[0].Name() != "a.mp4" {
+				names := make([]string, 0, len(entries))
+				for _, e := range entries {
+					names = append(names, e.Name())
+				}
+				t.Fatalf("%s holds %v, want just the pre-existing a.mp4", dir, names)
+			}
+		})
+	}
+}
+
+// TestGetFileRefusesOverTheCapBeforeReadingTheBody: when the backend reports the
+// object's size the cap is enforced before a byte is transferred, which is the
+// point of a cap — an input over the limit must not have its first megabyte
+// downloaded, and the runner's fetch must not read what it will not use. The
+// post-copy check refuses the same object too, so this pins the early check
+// only by what it refuses to read.
+func TestGetFileRefusesOverTheCapBeforeReadingTheBody(t *testing.T) {
+	ctx := context.Background()
+	data := bytes.Repeat([]byte("z"), 100)
+	d := &sizedDriver{data: data, size: int64(len(data))}
+	b := blobx.Wrap(blob.NewBucket(d))
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.mp4")
+	if _, _, err := b.GetFile(ctx, "artifacts/a.mp4", path, "", 99, true); !errors.Is(err, blobx.ErrTooLarge) {
+		t.Fatalf("GetFile over the announced cap = %v, want ErrTooLarge", err)
+	}
+	if d.reads != 0 {
+		t.Fatalf("GetFile read the body %d times before the cap refused it", d.reads)
 	}
 	assertDirEmpty(t, dir)
 }

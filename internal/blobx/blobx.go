@@ -42,10 +42,13 @@ var (
 	ErrConflict = errors.New("the object changed")
 	// ErrExists means Create found the object already there.
 	ErrExists = errors.New("object already exists")
-	// ErrForbidden means GCS refused a write or delete for lack of
+	// ErrForbidden means GCS refused a read, write or delete for lack of
 	// permission (HTTP 403). gocloud reports a 403 as NotFound, so without
 	// it a refused write would read as a missing object
-	// (docs/design/bucket-iam.md §2.3).
+	// (docs/design/bucket-iam.md §2.3). It is produced by every write, by
+	// every delete and by every STRICT read (ReadStrict, ReadMaxStrict,
+	// GetFile with strict true) — never by a non-strict one, which folds a
+	// 403 into ErrNotExist on purpose (see Read and GetFile).
 	ErrForbidden = errors.New("permission denied")
 	// ErrNotExist means Read found no object.
 	ErrNotExist = errors.New("object does not exist")
@@ -195,12 +198,13 @@ func (b *Bucket) ReadMax(ctx context.Context, key string, limit int) ([]byte, in
 	return b.read(ctx, key, limit, false)
 }
 
-// ReadStrict is Read, except that an HTTP 403 is returned as an error
-// (the googleapi.Error stays reachable with errors.As), not as ErrNotExist.
-// Only the shared-config readers (internal/cli/sharedcfg.go) and fugaro image
-// refresh's record read may use the strict variants: they run as launchers or
-// operators holding unconditional objectAdmin (which includes list), for whom
-// a 403 means no access.
+// ReadStrict is Read, except that an HTTP 403 is ErrForbidden (with the
+// googleapi.Error still reachable through errors.As) rather than
+// ErrNotExist, and a 404 stays ErrNotExist. Only the shared-config readers
+// (internal/cli/sharedcfg.go) and fugaro image refresh's record read may use
+// the strict variants: they run as launchers or operators holding
+// unconditional objectAdmin (which includes list), for whom a 403 means no
+// access.
 func (b *Bucket) ReadStrict(ctx context.Context, key string) ([]byte, int64, error) {
 	return b.read(ctx, key, MaxReadBytes, true)
 }
@@ -210,13 +214,34 @@ func (b *Bucket) ReadMaxStrict(ctx context.Context, key string, limit int) ([]by
 	return b.read(ctx, key, limit, true)
 }
 
+// strictReadErr classifies the error from a failed open, and it is the one
+// place a strict read and a non-strict one differ: a strict caller is told
+// ErrForbidden for an HTTP 403 (the googleapi.Error stays reachable through
+// errors.As, for the callers that want the detail — internal/cli's
+// isAccessDenied is both shapes), a non-strict caller has already had that
+// 403 folded into ErrNotExist by the check above.
+//
+// ErrForbidden is the answer a caller must be able to ask for with
+// errors.Is, because it is the only driver-independent one: 403 is what GCS
+// says, and on file:// or mem:// the same refusal arrives as fs.ErrPermission
+// with no googleapi.Error anywhere in it. A caller deciding between "an IAM
+// problem" and "no such object" asks errors.Is(err, ErrForbidden) and falls
+// back to its own backend-specific check; every strict read produces the
+// sentinel, and no non-strict read ever does.
+func strictReadErr(err error, strict bool) error {
+	if strict && isForbidden(err) {
+		return fmt.Errorf("%w: %w", ErrForbidden, err)
+	}
+	return err
+}
+
 func (b *Bucket) read(ctx context.Context, key string, limit int, strict bool) ([]byte, int64, error) {
 	r, err := b.NewReader(ctx, key, nil)
 	if gcerrors.Code(err) == gcerrors.NotFound && !(strict && isForbidden(err)) {
 		return nil, 0, ErrNotExist
 	}
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, strictReadErr(err, strict)
 	}
 	defer r.Close()
 	if r.Size() > int64(limit) {
@@ -450,7 +475,8 @@ func (b *Bucket) PutFile(ctx context.Context, key, path, contentType string, ifN
 // back for the caller to record.
 //
 // strict decides how an HTTP 403 is classified, and the two callers need
-// opposite answers (design artifact-runs.md §3):
+// opposite answers (design artifact-runs.md §3). It is the same rule, through
+// the same helper, as ReadStrict's:
 //
 //   - strict (fugaro artifacts get): a 403 is ErrForbidden, with the
 //     googleapi.Error still reachable through errors.As, and a 404 stays
@@ -464,16 +490,30 @@ func (b *Bucket) PutFile(ctx context.Context, key, path, contentType string, ifN
 //     answers a GET of a missing object with 403, not 404 (blobx.go's Read).
 //     A strict caller here would report a missing input as an IAM problem
 //     and send the owner to change grants that are already correct.
+//
+// Two things this deliberately does not do, named for whoever picks them up:
+//
+//   - os.CreateTemp creates the temporary 0600, and the object's own mode is
+//     not carried onto it, so a downloaded artifact is not executable even if
+//     the one that was uploaded was. Nothing reads an artifact's mode today
+//     (result.json records name, size, sha256 and content type, §8.1); if a
+//     later slice does, this is the line that has to change.
+//   - the destination's base name is used as-is in the temporary's name, so a
+//     name already close to NAME_MAX can exceed it once the random suffix is
+//     appended, and the download fails with ENAMETOOLONG before anything is
+//     read. A name that long is a naming question, and naming is where the
+//     sanitiser lives (internal/runner/artifact.go's sanitiseName, the plan's
+//     Task 4). GetFile itself sanitises nothing: it is given a path by its
+//     caller, and refusing the names that must not be handed to it — a
+//     `../` out of the artifacts root above all — is fugaro artifacts get's
+//     job (the same design's §9, the plan's Task 7).
 func (b *Bucket) GetFile(ctx context.Context, key, path, sum string, limit int64, strict bool) (size int64, sha string, err error) {
 	r, err := b.NewReader(ctx, key, nil)
 	if gcerrors.Code(err) == gcerrors.NotFound && !(strict && isForbidden(err)) {
 		return 0, "", ErrNotExist
 	}
 	if err != nil {
-		if strict && isForbidden(err) {
-			return 0, "", fmt.Errorf("%w: %w", ErrForbidden, err)
-		}
-		return 0, "", err
+		return 0, "", strictReadErr(err, strict)
 	}
 	defer r.Close()
 	if r.Size() > limit {
