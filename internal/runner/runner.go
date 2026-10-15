@@ -817,6 +817,16 @@ func (r *run) bootstrap(ctx context.Context) error {
 	r.rec.RunID, r.rec.Repo = spec.RunID, spec.Repo
 	// Read before the sync below moves the checkout off the baked commit.
 	r.rec.Image = r.imageInfo(ctx)
+
+	// Every credential the run's two remotes can carry — the job's own
+	// FUGARO_REMOTE and the origin of a checkout already in the work
+	// directory — is in the redactor before anything can quote either of
+	// them: the run's own record, which the claim below is what writes, the
+	// admission refusal further down, git's messages about a remote it could
+	// not reach, and result.json.
+	r.addRemoteSecrets(r.d.Remote)
+	r.addRemoteSecrets(r.originURL(ctx))
+
 	if r.owned {
 		r.save(ctx)
 	} else if err := r.claimRecord(ctx); err != nil {

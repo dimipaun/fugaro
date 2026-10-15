@@ -221,19 +221,54 @@ func TestRunnerIgnoresAnOverriddenProviderEnvAmongAgreeingKinds(t *testing.T) {
 // remote is what refused, before any git credential was requested.
 func TestRunnerRefusesARemoteOnAnotherProvidersHost(t *testing.T) {
 	b := admissionRun(t, "bitbucket", "acme/app", "off", "", `{"version":1,"allow_repos":["bitbucket/acme/*"]}`)
+	guardProviderHost(t, "https://github.com/")
 	b.deps.Remote = "https://github.com/acme/app.git"
-	// Nothing here may reach github.com, not even if the check this test
-	// covers regresses: git rewrites the URL onto a path that does not exist,
-	// so a run that went on would fail its clone locally and offline
-	// (internal/cli's clone test rewrites the fixture's remote the same way,
-	// for the same reason).
+	rec, err := b.run(t)
+	refusedAdmission(t, b, rec, err, "https://github.com/acme/app.git", "github", "bitbucket", "FUGARO_REMOTE", "before any git credential")
+}
+
+// guardProviderHost rewrites every https://github.com/ URL to a path that does
+// not exist, so a run that went on would fail its clone locally and offline
+// (internal/cli's clone test rewrites the fixture's remote the same way, for the
+// same reason): nothing here may reach the forge, not even if the check the
+// test covers regresses.
+func guardProviderHost(t *testing.T, host string) {
+	t.Helper()
 	gitcfg := filepath.Join(t.TempDir(), "gitconfig")
-	if err := os.WriteFile(gitcfg, []byte("[url \"file:///nonexistent/fugaro-admission-guard\"]\n\tinsteadOf = https://github.com/\n"), 0o644); err != nil {
+	if err := os.WriteFile(gitcfg, []byte("[url \"file:///nonexistent/fugaro-admission-guard\"]\n\tinsteadOf = "+host+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("GIT_CONFIG_GLOBAL", gitcfg)
-	rec, err := b.run(t)
-	refusedAdmission(t, b, rec, err, "https://github.com/acme/app.git", "github", "bitbucket", "FUGARO_REMOTE", "before any git credential")
+}
+
+// The same refusal with the remote written the way a forge hands one out: a URL
+// whose credential is in a query parameter (?access_token=, Bitbucket's forge
+// shape) or in its userinfo. FUGARO_REMOTE is a launcher's, and the refusal
+// quotes the remote, so what it quotes must carry no credential — and neither
+// must anything else the run publishes: the record it leaves, and every object
+// in the bucket.
+func TestRunnerRefusesARemoteWithoutQuotingItsCredential(t *testing.T) {
+	for _, tc := range []struct {
+		name, remote, want string
+	}{
+		{"the credential in the query", "https://github.com/acme/app.git?access_token=ATBBsecret", "https://github.com/acme/app.git"},
+		{"the credential in the userinfo", "https://x:ATBBsecret@github.com/acme/app.git", "https://github.com/acme/app.git"},
+		{"in the query and a fragment", "https://github.com/acme/app.git?access_token=ATBBsecret#ATBBsecret", "https://github.com/acme/app.git"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := admissionRun(t, "bitbucket", "acme/app", "off", "", `{"version":1,"allow_repos":["bitbucket/acme/*"]}`)
+			guardProviderHost(t, "https://github.com/")
+			b.deps.Remote = tc.remote
+			rec, err := b.run(t)
+			refusedAdmission(t, b, rec, err, tc.want, "github", "bitbucket", "FUGARO_REMOTE")
+			if strings.Contains(err.Error(), "ATBBsecret") {
+				t.Errorf("the refusal quotes the remote's credential: %v", err)
+			}
+			if keys := objectsContaining(t, b.harness, "ATBBsecret"); len(keys) > 0 {
+				t.Errorf("the remote's credential is in %v", keys)
+			}
+		})
+	}
 }
 
 // The slug the run was launched for and the repository its task names must
