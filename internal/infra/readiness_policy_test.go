@@ -318,4 +318,62 @@ func TestReadinessWarnsBeforeAPolicyExists(t *testing.T) {
 	if slices.ContainsFunc(missing, func(m Missing) bool { return m.Kind == MissingFirebase }) {
 		t.Errorf("missing = %v, want no gate before a policy exists", missing)
 	}
+	// And the note states this shape's outcome exactly. This config names no
+	// budget.rtdb_url, which is the whole reason the gate above cannot fire
+	// for it: the node is read through this machine's own config, so a config
+	// with no address sees no policy however much the project has published,
+	// and the deploy goes ahead with a job that will read none. The owner
+	// accepted the gap; a note that promised a refusal once a policy exists
+	// would be wrong in the direction that costs something — an operator would
+	// wait for a block that never comes.
+	for _, want := range []string{"names no database address", "nothing refuses this deploy"} {
+		if !slices.ContainsFunc(missing, func(m Missing) bool {
+			return m.Kind == MissingNote && strings.Contains(m.Reason, want)
+		}) {
+			t.Errorf("missing = %v, want a note saying %q", missing, want)
+		}
+	}
+}
+
+// The gate's one reachable shape, apart from the tests that inject
+// PolicyExists into a spec with no backend at all (a combination the CLI
+// cannot produce: it reads the node through the operator's own config, so a
+// policy is only ever visible to a config that names budget.rtdb_url — the gap
+// docs/gcp-setup.md states and TestReadinessWarnsBeforeAPolicyExists pins). A
+// config that names the address and no budget.firebase_api_key deploys a job
+// that can see a policy and could not read one, and that config is where the
+// two halves of the gate both land: the note before a policy exists, the gate
+// itself once one does.
+func TestReadinessGatesTheKeylessBackendOnceAPolicyExists(t *testing.T) {
+	f := newCloud(t)
+	spec, err := Repo(budgetInputs(t, "budget:\n  mode: observe\n  rtdb_url: https://aurora-fp-default-rtdb.firebaseio.com\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readyJob(t, f, spec)
+	for _, ws := range spec.Workflows {
+		if ws.Env[RTDBURLEnv] == "" || ws.Env[FirebaseAPIKeyEnv] != "" {
+			t.Fatalf("workflow %s carries %v, want the address and no key", ws.Job, ws.Env)
+		}
+	}
+	got, missing := readinessPolicy(t, f, spec, false)
+	for name, ws := range got.Workflows {
+		if !ws.DeployJob {
+			t.Errorf("workflow %s is not deployed though no policy is published: %v", name, missing)
+		}
+	}
+	if !slices.ContainsFunc(missing, func(m Missing) bool {
+		return m.Kind == MissingNote && strings.Contains(m.Reason, "sees a published policy") && strings.Contains(m.Reason, "stops being deployable")
+	}) {
+		t.Errorf("missing = %v, want the note to say this job stops being deployable once a policy exists", missing)
+	}
+	if slices.ContainsFunc(missing, func(m Missing) bool { return m.Kind == MissingFirebase }) {
+		t.Errorf("missing = %v, want no gate before a policy exists", missing)
+	}
+	// The same spec, with a policy published: the gate holds the job back.
+	if _, pub := readinessPolicy(t, f, spec, true); !slices.ContainsFunc(pub, func(m Missing) bool {
+		return m.Kind == MissingFirebase && strings.Contains(m.Reason, FirebaseAPIKeyEnv)
+	}) {
+		t.Errorf("missing = %v, want the Firebase gate naming %s once a policy exists", pub, FirebaseAPIKeyEnv)
+	}
 }
