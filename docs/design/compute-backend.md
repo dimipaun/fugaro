@@ -681,3 +681,187 @@ posture is unchanged. Veto alternative: leave SECURITY.md and let the design
 document carry it — rejected, because a trust model an adopter cannot find in
 SECURITY.md is not a trust model (the same ruling the generic-tool work made,
 G21).
+
+## 4. Configuration
+
+### 4.1 Where the backend is chosen
+
+The seam already has the knob: a project config's `backend:` key names the
+backend, `cloud-run` is the default and today the only accepted value
+(`internal/localcfg/localcfg.go` validates the name; `backend.Open` picks from
+the openers map in `internal/cli/cloud.go`; generic-tool §5 already anticipates
+`fugaro backends ls` "when a second backend exists").
+
+**Recommendation (C15): the choice is per project (installation), not per
+workflow.** A backend is infrastructure — a service account, a quota, a log
+sink, a boot image — and a per-workflow backend would mean one project paying
+for and operating two compute platforms at once, plus a second set of
+provisioning and IAM for the same repository. It also fights the project-centric
+grain: policy is per project, and "which platform runs my jobs" is policy.
+Value: `backend: cloud-batch`. Trade-off: a repository that needs Docker in a
+project that otherwise runs on Cloud Run forces the whole project onto the VM
+backend. Veto alternative: a per-workflow `backend:` key (finer grained, at the
+cost of running two platforms and doubling provisioning); or a per-profile
+backend inside the project policy (project-centric §4.1), which is the same
+coarse grain as the recommendation but expressed in the new policy object —
+likely correct **after** phase 3, and this document's recommendation is the
+pre-phase-3 spelling of it.
+
+### 4.2 The per-workflow need for Docker
+
+A project may run on the VM backend while most of its workflows do not need
+Docker, and — more importantly — a workflow that never needs Docker should not
+pay for a VM or expose the socket. generic-tool §1 already decided the shape
+for this: a workflow key `docker: true` (scopes: project via a profile, and
+repository). **Recommendation (C16): reuse `docker: true`**, because it names
+the capability rather than the mechanism, and it is already the decided name.
+
+- On the VM backend, `docker: true` mounts the socket, adds `DOCKER_HOST` to
+  the agent's environment allowlist (scoped so it appears **only** for such
+  workflows) and requires the socket-permission path of §1.1.
+- On the Cloud Run backend, `docker: true` is **refused by `fugaro validate`**
+  with a message naming `backend: cloud-batch` (this is the eventual successor
+  of the 0.8.0 "Docker stays out" message).
+- Veto alternatives: `runtime: docker` (a second key meaning the same thing;
+  `runtime` invites a container-runtime reading it does not have); or no key at
+  all, with `backend: cloud-batch` implying Docker everywhere in the project
+  (simplest, but every workflow then gets a socket it may not need).
+
+### 4.3 Layered config and profiles
+
+- **Scopes** (layered-config's scope table): `backend:` is installation-level
+  (set by `fugaro init`, overridable by the project layer), not a repository
+  key — a repository cannot choose the platform. `docker:` follows
+  generic-tool §1: repository and project-via-profile.
+- **Profiles** (project-centric §4.1) are where the VM class lives: a profile
+  `{cpu, memory, task-timeout class, secrets, allow_repos}` gains the
+  Docker/VM attributes the VM backend needs (machine type / VM class, spot
+  on/off, preloaded-image version). A `docker: true` workflow selects a
+  Docker-capable profile; the profile is what the VM is sized and configured
+  from. Before phase 3 (no profiles yet), the same values come from the
+  existing `resources` and `timeouts` keys, extended with the VM class.
+- **The env allowlist** (`internal/agent/env.go`) gains `DOCKER_HOST` only for
+  `docker: true` workflows; the review standard for that addition is the one
+  generic-tool §1 sets ("the first addition to the env allowlist since M9").
+
+### 4.4 What `fugaro validate` checks
+
+Offline, following the existing model (`gcp.CheckResources` for Cloud Run):
+
+1. **The backend name is known** — a `backend.Open`-style lookup into the
+   known names, with the same "known backends: …" message.
+2. **`docker: true` requires a Docker-capable backend.** `docker: true` with
+   `backend: cloud-run` is an error naming `cloud-batch`.
+3. **Resources fit the VM backend.** Cloud Run's `cpuChoices`
+   (1/2/4/6/8) and memory/CPU coupling (`internal/backend/gcp/limits.go`) do
+   not apply on a VM: Compute Engine machine types are more varied, and a
+   custom machine type allows arbitrary vCPU/memory. The VM backend ships its
+   own `CheckResources` (generic-tool §2, v1 §3.4: "a Batch backend would
+   bring its own of each") that validates the machine type and the disk.
+4. **Timeouts fit.** A workflow timeout must be inside Batch's `maxRunDuration`
+   and well inside the 14-day RUNNING limit (cloud.google.com/batch/quotas,
+   checked 2026-10-15).
+5. **Spot is not combined with a workflow that must finalize.** If a profile
+   has spot on and the workflow's outcome rules require a finalize/PR, validate
+   warns (not errors): a preemption can drop the finalize (§1.3, §3.4).
+6. **The socket is not requested without Docker.** No `DOCKER_HOST` in the
+   allowlist, no socket mount, for a workflow without `docker: true`.
+
+`fugaro doctor` gains the same checks against the live project (the Batch API
+enabled, the SA's grants, the boot image present, the log sink arm) in the
+style of the existing provisioning checks, and `fugaro backends ls` lists
+`cloud-run` and `cloud-batch` with which one the project uses.
+
+## 5. The budget
+
+### 5.1 Gateway and caps: unchanged inside the VM
+
+The gateway is a `net/http` handler inside `fugaro exec` (`runner/gateway.go`),
+enforcing the per-run cap (the lowest positive of the committed policy,
+`FUGARO_MAX_RUN_USD` and the RTDB caps) and the daily caps through RTDB leases
+(m9-budget-and-dashboard.md §4–§5). None of it touches the compute platform:
+it is process-local plus RTDB. So **the gateway, the per-run cap, the daily
+caps, the kill switches, the `halted`/`result.json` path and the budget
+session all work identically on a VM**, with no change. The launcher-side
+precheck (`cli/launch_budget.go`) is likewise unchanged except that
+`TaskTimeout` is now resolved from config/policy (§2.5) to size the lease.
+
+### 5.2 Compute dollars: instances are billed differently
+
+`cost.compute_usd` is an estimate of the compute the run consumed (v1 §10.1:
+billed duration × (vCPU × price per vCPU-second + GiB × price per GiB-second)),
+produced by `backend.Prices` for the backend's region (`internal/backend/gcp/
+prices.go` is the Cloud Run table; a Batch backend ships its own). Two
+differences to model, both from cloud.google.com/compute/pricing (checked
+2026-10-15):
+
+1. **A one-minute minimum.** "All vCPUs, GPUs, and GB of memory are charged a
+   minimum of 1 minute." The backend's compute estimate must floor the billed
+   duration at 60 s, or every short run is under-reported. `Execution.Billed`
+   currently returns the raw duration; the VM backend applies the floor where
+   it computes `compute_usd` (not in `Billed`, which other callers use for
+   different purposes).
+2. **A different price table, plus extras.** Compute Engine vCPU/GiB list
+   prices per region differ from Cloud Run's, and a run may also consume a
+   boot disk and Cloud NAT. Recommendation (C17): `compute_usd` covers the
+   VM's vCPU/memory (the same shape as today, so `report`/history need no new
+   column), and the disk/NAT costs are **named as not in the figure** in the
+   report's source line — they are small but not zero, and pretending they are
+   in the per-run figure would be a worse lie than naming them out. The exact
+   list prices are UNVERIFIED here and belong in the backend's price table
+   with its own `Source` string and check date, the way Cloud Run's does.
+
+**Compute stays reported, never capped** (m9 D7): the per-run and daily caps
+are model dollars only. This matters more on a VM, where a Docker-heavy run
+can be long and compute-heavy; the design keeps the m9 rule rather than
+inventing a compute cap. The daily history's `computeMicros` (m9 §549, §776)
+carries the VM estimate unchanged in shape.
+
+## 6. Migration and scope
+
+### 6.1 Existing Cloud Run users: nothing changes
+
+- `backend:` defaults to `cloud-run`; an installation that never writes
+  `cloud-batch` is untouched. No new IAM, no new API, no new quota, no
+  Terraform diff for a Cloud-Run-only project.
+- The one shared change — the log sink/exclusion gaining a
+  `batch.googleapis.com/Job` arm (§1.5) — is additive and inert for a project
+  with no Batch jobs. It still needs an owner-run apply (the log bucket is
+  installation Terraform).
+- The seam generalisation (§2.5) is internal; it changes no stored data for
+  existing runs once it formats Cloud Run names exactly as today.
+
+### 6.2 Interplay with the 0.8.0 phases
+
+A VM backend is **orthogonal to shared project jobs** (project-centric phase
+3). Shared jobs exist because Cloud Run cannot vary a job per execution; a VM
+backend creates a fresh job per run, so it never needs to share, and it
+*sidesteps* the isolation loss D4 accepted (§3.1). Consequences:
+
+- **Before phase 3**, a VM backend uses the current model: a per-repository
+  job service account and an installation-level Batch stage. It works, but it
+  carries the per-repository SA weight project-centric is removing.
+- **After phase 3**, the same backend uses a project job service account per
+  (`profile`, `account`) and profiles select the VM class (§4.3) — the intended
+  end state.
+- The **seam generalisation (C12)** is independent of both and can land first.
+- Recommendation: the plan's **first task is the conformance suite against a
+  fake** (§8.1), which needs neither phase 3 nor any cloud, and the live
+  measurement (Check 57) gates the rest.
+
+### 6.3 Out of scope
+
+- **Docker on Cloud Run** (gen-1 or gen-2): measured impossible by the owner;
+  the gen-2 probe (Task 26) and Docker-on-gen-2 (Task 27) are dropped.
+- **Rootless Docker / Podman**: not the chosen mechanism (§1.1); revisitable
+  only if the socket path fails Check 57's permission step.
+- **Windows VMs, GPUs, TPUs.**
+- **A compose/orchestration layer**: the agent brings its own
+  `docker compose`; Fugaro gives it a daemon and nothing more.
+- **A multi-service "service mesh"** and any pre-warming pool of VMs.
+- **AWS/Azure backends** (v1 §3.4's seam leaves room; not designed).
+- **A production preloaded-image pipeline** (a task, not this design).
+- **Spot by default** and **a MIG**.
+- **Retiring `fugaro-services`.** The no-Docker path (base-image §5,
+  generic-tool §1's mitigation) stays the documented answer for services that
+  do not need a daemon; the VM backend is for the ones that do.
