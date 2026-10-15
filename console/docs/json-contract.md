@@ -388,7 +388,7 @@ reads:
 compute is unknown: their `compute_usd` 0 means "not estimated", so the sums
 are a lower bound** — the console renders that, it does not hide it).
 
-**Flags** (`runs.go:92`): `--repo`, `--all`, `--mine`, `--since`, `--batch`,
+**Flags** (`f := cmd.Flags()`, `runs.go:100`): `--repo`, `--all`, `--mine`, `--since`, `--batch`,
 `--pr`, `--watch`, `--interval` (hidden), `--json`, plus the cloud flags. The
 allow-list excludes `--watch` (it is `watch` under another name).
 
@@ -457,6 +457,14 @@ future v1.1 button would consume. `cancelResult` (`internal/cli/cancel.go:45`):
 `lock_held`° bool. Its status constants (`cancelFinalized`, `cancelCancelled`,
 `cancelNotLaunched`, `cancelLaunching`, `cancelUnfinalized`,
 `cancelAlreadyFinished`) are the file's own.
+
+**Its document is compact — one object per line**, the `logs RUN --json` shape
+(§6.2) rather than the indented one every command in the console's set emits:
+`printCancel` (`cancel.go:474`) marshals the struct with `json.Marshal` and
+writes it with a trailing newline. A v1.1 button that parsed it as an indented
+document would read nothing; `cancel` is one of the three commands this file
+describes that are line-delimited, and the only one outside the console's set
+(§9.2).
 
 ### 6.4 `fugaro doctor --json`
 
@@ -530,7 +538,7 @@ it.
 |---|---|---|---|
 | 1 | The degraded path prints a **plain sentence to stdout** on the same stream as the documents | `runWatchDegraded`, `internal/cli/watch.go` (`"%s\nrun records unavailable (retrying): %s\n"`) | Skip any line that is not a JSON object; show it as a header warning (§2, fact (iii)) |
 | 2 | `version` has **no `--json`** and no flags at all | `newVersionCmd`, `internal/cli/root.go` — `cobra.NoArgs`, no `Flags()` | Parse the human line, pinned by a test |
-| 3 | **`project show --json` does not exist on this tree** — there is no `fugaro project` command at all | no `newProjectCmd` in `internal/cli`; `docs/plans/2026-10-14-project-centric.md` phase 1 (PR #390) ships `project show`, `project policy publish` and `project repos ls\|add\|rm`, **and no `project ls`** | The Projects screen renders the caps, kill state and repositories it can see, and says the policy object is not readable yet |
+| 3 | **`project show --json` does not exist on this tree** — there is no `fugaro project` command at all | no `newProjectCmd` in `internal/cli`; `docs/plans/2026-10-14-project-centric.md` phase 1 (PR #390) ships `project show`, `project policy publish` and `project repos add` — and only that one verb of the `repos` group comes with phase 1: the plan's phase 4 (Enrollment and migration, Task 4.1) is where `project repos ls`, `rm` and `sync` ship — **and no `project ls`** | The Projects screen renders the caps, kill state and repositories it can see, and says the policy object is not readable yet |
 | 4 | **No schema version in the `watch --json` document** | `JSONDoc`, `internal/watch/json.go:97` — no version field | Infer from the CLI version and from which shape arrived (the `degraded` key) |
 | 5 | **Nothing enumerates installations** | `fugaro config` is `example\|show\|layer\|init\|publish` (`internal/cli/configcmd.go`); no `fugaro project` command exists; that phase's commands describe the *selected* project's policy and repositories, not the machine's installations | The operator adds each installation by hand (D13): binary picker, typed project name, optional checkout directory |
 | 6 | **No PR field on a run that has not finished** | `JSONRun` (`json.go:54`) carries `repo` and no `pr_url`/`pr_number`; they exist only on `JSONFinished` (`json.go:91-92`); `runview.Row` (`runview.go:57`) spells the pair `pr_url` + `pr` (`runview.go:109`) | A live row shows no link; the detail screen takes it from `diagnose RUN --json`'s `row` |
@@ -574,13 +582,21 @@ table against the live constructors.
 
 ## 9. What the console may do with all this
 
-1. **Every document here is read-only**, and the allow-list is by exact argv
-   (design §5.1 rule 6). Nothing in this file names a write.
-2. **Exactly two commands are line-delimited: `watch --json` and `logs RUN
-   --json`** (§2, §6.2 — the feed through `json.NewEncoder` with no
-   `SetIndent`, the log lines through `json.Marshal`). **Every other command
-   here is indented over several lines**, so a line-based parser is right for
-   those two and wrong everywhere else.
+1. **Every document in the console's set is read-only**, and the allow-list is
+   by exact argv (design §5.1 rule 6). The one command this file describes that
+   is a write is `fugaro cancel RUN --json` (§6.3), which is on the design's
+   "never" table and which no v1 console spawns; nothing else here names a
+   write.
+2. **Exactly two of the commands in the console's set are line-delimited:
+   `watch --json` and `logs RUN
+   --json`** (§2, §6.2 — the feed through
+   `json.NewEncoder` with no `SetIndent`, the log lines through
+   `json.Marshal`). **Every other command in that set is indented over several
+   lines** — `version` is the exception that is no document at all: it prints
+   one plain line (§6.7) — so a line-based parser is right for those two and
+   wrong for the rest of the set. The one command outside the set that is line-delimited too
+   is `fugaro cancel RUN --json` (§6.3, a write): compact, one object per line,
+   the same parser as `logs`.
 3. **A null, an absent key and an empty array are three different things**, and
    each maps to a different availability state (§1). A `0` is never a
    substitute for any of them.

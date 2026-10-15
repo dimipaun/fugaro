@@ -325,25 +325,51 @@ func TestDocsDesktopConsoleContractStatesTheThreeFeedFacts(t *testing.T) {
 	}
 }
 
-// TestDocsDesktopConsoleContractStatesWhichDocumentsAreLineDelimited: exactly
-// two of the commands the console reads emit one JSON object per line, and
-// they do it through two different code paths -- the watch feed through
-// json.NewEncoder with no SetIndent, the log lines through json.Marshal in
-// printLogEntry. A document that claims only the feed is line-delimited, or
-// that calls the log form indented, builds the log reader on the wrong parser,
-// which is what a review of the first revision found here.
+// TestDocsDesktopConsoleContractStatesWhichDocumentsAreLineDelimited: the
+// console's own set has exactly two line-delimited documents, and they do it
+// through two different code paths -- the watch feed through json.NewEncoder
+// with no SetIndent, the log lines through json.Marshal in printLogEntry. A
+// document that claims only the feed is line-delimited, or that calls the log
+// form indented, builds the log reader on the wrong parser, which is what a
+// review of the first revision found here.
+//
+// The claim is scoped to the console's set, and the third line-delimited
+// document this file describes -- `fugaro cancel RUN --json` (section 6.3),
+// which is a write the console never spawns -- is stated separately and
+// asserted here too. A second review found the document claiming "exactly two
+// commands" without that scope while describing cancel four hundred lines
+// earlier, so the absolute is pinned as scoped and cancel's compact form is
+// pinned by name.
 func TestDocsDesktopConsoleContractStatesWhichDocumentsAreLineDelimited(t *testing.T) {
 	const path = "console/docs/json-contract.md"
 	doc := readDoc(t, path)
-	for _, want := range []string{
-		"one compact `logLine` object per line",
-		"printLogEntry",
-		"json.Marshal",
-		"Exactly two commands are line-delimited",
-		"`watch --json` and `logs RUN\n   --json`",
+	for _, tc := range []struct {
+		what   string
+		quotes []string
+	}{
+		{"the two in the console's set are line-delimited", []string{
+			"one compact `logLine` object per line",
+			"printLogEntry",
+			"json.Marshal",
+			"Exactly two of the commands in the console's set are line-delimited",
+			"`watch --json` and `logs RUN\n   --json`",
+			"Every other command in that set is indented",
+		}},
+		{"cancel's document is compact, outside that set", []string{
+			"**Its document is compact — one object per line**",
+			"printCancel",
+			"cancel.go:474",
+			"the only one outside the console's set",
+		}},
+		{"every other document in the console's set is indented", []string{
+			"## 9. What the console may do with all this",
+			"Every document in the console's set is read-only",
+		}},
 	} {
-		if !strings.Contains(doc, want) {
-			t.Errorf("%s does not state which documents are line-delimited: it never says %q", path, want)
+		for _, want := range tc.quotes {
+			if !strings.Contains(doc, want) {
+				t.Errorf("%s does not state %s: it never says %q", path, tc.what, want)
+			}
 		}
 	}
 	if strings.Contains(doc, "one `logLine` object per entry, indented") {
@@ -719,6 +745,87 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 	for _, argv := range []string{"doctor --check-github-app", "logs --follow"} {
 		if !never[argv] {
 			t.Errorf("%s: the never table no longer names %q", path, argv)
+		}
+	}
+}
+
+// planPhaseRow returns the "What ships" cell of the project-centric plan's
+// phase table row whose Phase cell names phase (a substring of it), and the
+// row's own text, so a claim about which phase ships a command can be checked
+// against the phase it is actually in.
+func planPhaseRow(t *testing.T, plan, phase string) (whatShips, row string) {
+	t.Helper()
+	for _, cells := range docTableAfter(t, "docs/plans/2026-10-14-project-centric.md", plan, "| Phase | What ships |") {
+		if strings.Contains(cells[0], phase) {
+			return cells[1], strings.Join(cells, " | ")
+		}
+	}
+	t.Fatalf("docs/plans/2026-10-14-project-centric.md's phase table has no row naming %q", phase)
+	return "", ""
+}
+
+// TestDocsDesktopConsoleContractCreditsProjectCommandsToTheRightPhase: gap 3
+// credits the project-centric plan's phase 1 with shipping some `project ...`
+// commands. That credit must be the plan's own phase row, not a recollection
+// of it: a second review found the contract crediting `project repos ls` and
+// `rm` to phase 1, which the plan gives to phase 4 (Enrollment and migration,
+// Task 4.1). Every `project ...` command the contract's gap row states as
+// phase 1's must appear in phase 1's own "What ships" cell, and the verbs that
+// come later must appear in phase 4's -- so a command moved from one phase to
+// another in the plan, or miscredited in the contract, fails here.
+func TestDocsDesktopConsoleContractCreditsProjectCommandsToTheRightPhase(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	doc := readDoc(t, path)
+	plan := readDoc(t, "docs/plans/2026-10-14-project-centric.md")
+
+	phase1, _ := planPhaseRow(t, plan, "1. Policy as data")
+	phase4, _ := planPhaseRow(t, plan, "4. Enrollment and migration")
+
+	// The gap-3 row, and the segment of it that credits commands to phase 1.
+	var row string
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "| 3 |") && strings.Contains(line, "project show --json") {
+			row = line
+			break
+		}
+	}
+	if row == "" {
+		t.Fatalf("%s no longer carries gap 3's row about `project show --json`", path)
+	}
+	var credited string
+	for _, seg := range strings.Split(row, "—") {
+		if strings.Contains(seg, "ships") {
+			credited = seg
+		}
+	}
+	if credited == "" {
+		t.Fatalf("%s's gap-3 row no longer states which phase ships the project commands: %q", path, row)
+	}
+	projectRE := regexp.MustCompile("`(project [^`]+)`")
+	n := 0
+	for _, m := range projectRE.FindAllStringSubmatch(credited, -1) {
+		cmd := m[1]
+		n++
+		if !strings.Contains(phase1, cmd) {
+			t.Errorf("%s credits phase 1 with shipping %q, but the plan's phase 1 row (\"What ships\") does not name it", path, cmd)
+		}
+	}
+	if n == 0 {
+		t.Fatalf("%s's gap-3 row credits phase 1 with no command at all: %q", path, credited)
+	}
+	// And the verbs the contract says come later are in the later phase's row.
+	// The plan writes that group in its compressed form (`project repos
+	// ls/add/rm`/`sync`), so each verb is what is checked, not the spelling of
+	// the whole group.
+	for _, verb := range []string{"ls", "rm", "sync"} {
+		if !strings.Contains(phase4, verb) {
+			t.Errorf("the plan's phase 4 row no longer ships `project repos %s`, which %s's gap-3 row places there", verb, path)
+		}
+		if strings.Contains(phase1, "repos "+verb) || strings.Contains(phase1, "/"+verb) {
+			t.Errorf("the plan's phase 1 row now ships `project repos %s`, so %s's gap-3 row is wrong to place it in phase 4", verb, path)
+		}
+		if !strings.Contains(row, "`"+verb+"`") && !strings.Contains(row, "repos "+verb) {
+			t.Errorf("%s's gap-3 row no longer names the verb %s among those that come later", path, verb)
 		}
 	}
 }
