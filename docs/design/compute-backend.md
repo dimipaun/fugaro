@@ -78,8 +78,9 @@ Two ways to give the run a daemon:
 
 - **The host daemon through the socket.** The VM runs the OS's own Docker
   (Container-Optimized OS ships Docker and containerd preinstalled, "no
-  on-host setup required", cloud.google.com/container-optimized-os/docs/
-  concepts/features-and-benefits, checked 2026-10-15). The runner container is
+  on-host setup required";
+  cloud.google.com/container-optimized-os/docs/concepts/features-and-benefits,
+  checked 2026-10-15). The runner container is
   started with `/var/run/docker.sock` bind-mounted from the host; the agent's
   `docker` CLI talks to the host daemon. Batch supports exactly this: a
   container runnable's `volumes` field takes `--volume`-formatted bind mounts
@@ -229,8 +230,8 @@ does not add a charge.
   it is not spelled out on the pages read here, so Check 57 step 8 verifies it
   rather than this document asserting it.
   Batch's own ceiling is generous: a job may wait 2 days in `QUEUED` and run
-  14 days in `RUNNING` before automatic failure (cloud.google.com/batch/
-  quotas, checked 2026-10-15), so Fugaro's own timeouts (a workflow's
+  14 days in `RUNNING` before automatic failure
+  (cloud.google.com/batch/quotas, checked 2026-10-15), so Fugaro's own timeouts (a workflow's
   `timeouts.total` plus `backend.TaskTimeoutSlack`) bind long before Google's.
 - **A plain instance** cancels by `instances.delete`; the timeout is ours to
   enforce (a watchdog or the startup script's `timeout`), which is another
@@ -345,8 +346,9 @@ Verified from Google's public documentation (checked 2026-10-15):
   2,000 concurrent VMs per single-zone job (4,000 multi-zone); 1 MB job
   definition; 2 days `QUEUED` before automatic failure; 14 days `RUNNING`
   before automatic failure (7 days under `FLEX_START`).
-- **Compute Engine allocation quotas** (cloud.google.com/compute/docs/
-  resource-quotas): VM quotas are **regional**; the **VM instances** quota is
+- **Compute Engine allocation quotas**
+  (cloud.google.com/compute/docs/resource-quotas): VM quotas are
+  **regional**; the **VM instances** quota is
   regional and is automatically set to **ten times your regular CPU quota**;
   **CPU quota** is regional (with per-family pools such as `CPUS`/`E2`), and
   there is additionally a global **CPUs (All Regions)** quota; in-use and
@@ -955,11 +957,11 @@ accident, not to be clever.)
    whether any VM survived, and (if a reaper is built) what it deleted and
    when. This is the answer to "does the reaper delete the instance" for every
    way a run can end.
-9. **Quotas.** Read the sandbox project's regional CPU quota, CPUs (All
-   Regions), VM instances and in-use IP quotas (cloud.google.com/compute/docs/
-   resource-quotas is the map; the numbers are the project's own). **FACT:**
-   the four numbers and the largest number of concurrent Fugaro VMs they
-   allow at the chosen machine type.
+9. **Quotas.** Read the sandbox project's four numbers — regional CPU quota,
+   CPUs (All Regions), VM instances and in-use IP addresses — from the quota
+   page cloud.google.com/compute/docs/resource-quotas maps. They are the
+   project's own, not fixed values. **FACT:** the four numbers and the largest
+   number of concurrent Fugaro VMs they allow at the chosen machine type.
 10. **Logs.** `fugaro logs RUN` finds the run's lines through the Fugaro log
     view (which needs the sink arm of §1.5, applied as an owner step), and the
     same lines are absent from `_Default`. **FACT:** entries found, and the
