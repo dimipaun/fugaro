@@ -155,6 +155,82 @@ func TestCancelToleratesAFinishedJob(t *testing.T) {
 	}
 }
 
+// TestCancelErrorsAndRaces: Cancel is jobs.cancel plus a read-back, and every
+// way the two can disagree is a case a caller meets in the field. The error
+// path matters as much as the tolerance: a cancel of a job that is not there
+// is ErrNotFound, and swallowing it would report a run stopped that never
+// existed. (Making Cancel return nil unconditionally passes every other test
+// in this file, which is why this one exists.)
+func TestCancelErrorsAndRaces(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, nil)
+	if err := b.Cancel(ctx, "projects/"+testProject+"/locations/"+testRegion+"/jobs/fugaro-nope-web-0123456789ab"); !errors.Is(err, backend.ErrNotFound) {
+		t.Fatalf("Cancel of an unknown job = %v, want ErrNotFound", err)
+	}
+	if got := bf.Cancels(); len(got) != 0 {
+		t.Fatalf("the fake recorded a cancel of a job it does not have: %v", got)
+	}
+
+	ref, err := b.Launch(ctx, spec())
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	// Cancelling twice: the second call meets a job that is already
+	// CANCELLED, and stopping a run that has stopped is not a failure. The
+	// fake refuses the second (400 FAILED_PRECONDITION), so the tolerance is
+	// the read-back's, not the API's answer.
+	if err := b.Cancel(ctx, ref.Name); err != nil {
+		t.Fatalf("first Cancel: %v", err)
+	}
+	if err := b.Cancel(ctx, ref.Name); err != nil {
+		t.Fatalf("second Cancel: %v", err)
+	}
+	if got := bf.Cancels(); len(got) != 1 {
+		t.Fatalf("cancels recorded = %v, want one: the second is refused and tolerated", got)
+	}
+
+	// A job that finished between the caller's read and the cancel.
+	s := spec()
+	s.RunID = "20260927-120000-cafe"
+	done, err := b.Launch(ctx, s)
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	bf.SetState(done.Job, "SUCCEEDED")
+	if err := b.Cancel(ctx, done.Name); err != nil {
+		t.Fatalf("Cancel of a finished job: %v", err)
+	}
+	if got := bf.Cancels(); len(got) != 1 {
+		t.Fatalf("cancels recorded = %v, want the refusal not to be recorded", got)
+	}
+	// The same race with the fake told the API answers OK instead of
+	// FAILED_PRECONDITION (which of the two it really answers is UNVERIFIED,
+	// Check 57a step 7): the call succeeds either way.
+	bf.AllowCancelOfTerminal = true
+	if err := b.Cancel(ctx, done.Name); err != nil {
+		t.Fatalf("Cancel with AllowCancelOfTerminal: %v", err)
+	}
+	if got := bf.Cancels(); len(got) != 2 {
+		t.Fatalf("cancels recorded = %v, want the accepted one recorded", got)
+	}
+	if got := bf.State(done.Job); got != "SUCCEEDED" {
+		t.Fatalf("cancelling a finished job changed its state to %q", got)
+	}
+
+	// A job already on its way out: CANCELLATION_IN_PROGRESS is cancelled for
+	// the seam, so the refusal is tolerated the same way.
+	s = spec()
+	s.RunID = "20260927-120001-feed"
+	stopping, err := b.Launch(ctx, s)
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	bf.SetState(stopping.Job, "CANCELLATION_IN_PROGRESS")
+	if err := b.Cancel(ctx, stopping.Name); err != nil {
+		t.Fatalf("Cancel of a job that is already stopping: %v", err)
+	}
+}
+
 // TestCancelAndExecutionRefuseForeignNames: names reach these calls from
 // bucket objects a run's own service account can write, so one that is not a
 // job of this region must never reach a request path (design §2.5).
