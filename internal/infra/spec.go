@@ -1084,6 +1084,10 @@ func (rs RepoSpec) Addresses() []string {
 	add(root + "google_artifact_registry_repository_iam_member.build_images")
 	add(root + "google_artifact_registry_repository_iam_member.build_tag_mover")
 	add(root + "google_artifact_registry_repository_iam_member.build_base")
+	// #362's remote repository: the build's reader grant on the ghcr.io
+	// mirror, declared without a gate (build.tf), so it is an address of
+	// every repository root.
+	add(root + "google_artifact_registry_repository_iam_member.build_ghcr")
 	add(root + `google_project_iam_member.build["log_writer"]`)
 	add(root + `google_project_iam_member.build["build_submitter"]`)
 	add(root + "google_service_account_iam_member.build_self")

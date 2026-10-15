@@ -4,6 +4,7 @@
 # TestRepoAddressesMatchTheRealPlanGolden, untagged. Do not edit by hand.
 module.repo.google_artifact_registry_repository.images
 module.repo.google_artifact_registry_repository_iam_member.build_base
+module.repo.google_artifact_registry_repository_iam_member.build_ghcr
 module.repo.google_artifact_registry_repository_iam_member.build_images
 module.repo.google_artifact_registry_repository_iam_member.build_tag_mover
 module.repo.google_artifact_registry_repository_iam_member.operator_images["user:operator@example.com"]
