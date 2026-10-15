@@ -315,7 +315,7 @@ func TestRefusalMessagesNameRealFlags(t *testing.T) {
 **Interfaces.** Consumes: nothing new. Produces: `Caps.PerRun()`'s new contract (the global cap substitutes for an absent repository/default cap) and the same substitution inside the rules' `fallback()`.
 
 1. `internal/budget/model.go`: `PerRun()` returns `(*c.Global.PerRunMicros, true)` when neither the repository's own cap nor the defaults set one, and keeps `min(repo, *c.Global.PerRunMicros)` when they do. Rewrite the comment: it now says the global cap is the fallback by owner decision D6 and that the rules mirror it. **A repository cap and the defaults still only tighten** — the global cap is a floor of *applicability*, never a loosening: an absent global cap stays `ok == false`.
-2. `internal/budget/rules/rules.go:343`: `fallback(own, def)` gains the global cap as its last resort, emitted as the literal path to `config/caps/global/perRunMicros` and **guarded by a `.val()`-style existence check the rules language supports** — a null read must not make the comparison false-by-default the way it does today. The macro must remain *one* expression per site so `REPOPERRUN`/`GLOBALPERRUN` cannot drift apart; if the rules language cannot express an existence-guarded fallback in one expression, the fallback is emitted per comparison (that is a design change and the task **stops and reports** rather than emitting a rule that swallows the case).
+2. `internal/budget/rules/rules.go:343`: `fallback(own, def)` gains the global cap as its last resort, as one expression, because the rules language has no ternary. The shape the emulator must confirm: the *comparison* gains the fallback, `(X <= REPOPERRUN || (REPOPERRUN == null && X <= GLOBALPERRUN))`, where a null read compares false (so an absent global cap still denies) and `== null` is the existence test. Emit it from one helper used at both sites (`rules.json.tmpl:28`'s `reserved`, and the `released` validator at `:36`, which compares against `reserved` and so needs no change) so the two macros cannot drift apart. **If the emulator shows a null read comparing true or `== null` behaving otherwise, the task stops and reports** rather than emitting a rule that swallows the case: the whole point is that an absent cap still denies.
 3. `internal/budget/rules/rules.json.tmpl:28`: both macros keep their meaning (repository/default, then global); the `reserved` validator is otherwise unchanged. Regenerate `testdata/rules.golden.json` (`rules_test.go:15`) in this commit.
 4. `internal/budget/rules/parity_test.go` (`TestRulesParity`, `:175`): add the case that pins the new agreement — a project with a global per-run cap, no defaults cap and no repository node: `model.PerRun()` returns the global cap and the rules **allow** a reserve of exactly that size and **deny** one micro more.
 5. The emulator test (tag `firebase`, `internal/budget/rules/emulator_test.go`): a run token writes `reserved` for a slug with no `config/caps/repos/<slug>` and no defaults, and the write succeeds when `global/perRunMicros` is set — the fail-open direction, exercised against the real rules.
@@ -347,3 +347,187 @@ End with: "**Paste back:** every FACT line above, never a secret value and never
 **Tests:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`.
 
 **Depends on:** Task 0.3 (its own change is what this check deploys). Nothing else in the plan reads it.
+
+## Phase 1 — policy as data (seven tasks)
+
+The design's §5 and §4.3. **What this phase does and does not remove** (design §11): a change to a policy **value** (mode, per-run ceiling, allowed models, prices, `allow_repos`, and 1b's routing) stops needing `init --repo`; a change to what a job **mounts** (a secret, a provider key, a named account, a launcher or operator grant) still needs per-repository Terraform until phase 3. An installation that never publishes a policy is untouched, which is what makes this phase mergeable alone.
+
+### Task 1.1: the policy object, its paths and its version
+
+**Files:** `internal/projectpolicy/{policy.go,paths.go,match.go,version.go}` (new), `internal/projectpolicy/*_test.go` (new). Nothing reads it yet — this task is dead code plus tests, which is deliberate: it is the shape a reviewer vetoes cheapest before Task 1.2 changes the rules.
+
+**Interfaces.** Produces (consumed by Tasks 1.2, 1.3, 1.4, 1.5, 1.6, 1b.1, 3.1, 5.1, 6.1):
+
+```go
+package projectpolicy // imports internal/rtdb only, never internal/budget or internal/runner
+
+const Version = 1
+
+// Paths (P2; the caps' own helpers are internal/budget/model.go:44-80 and stay there)
+func PathShared() string            { return "config/policy/shared" }
+func PathRepo(slug string) string   { return "config/policy/repos/" + seg(slug) } // the $slug node
+func PathAdmin() string             { return "config/admin" }
+
+// Policy is the readable node, decoded tolerantly: an unknown key is ignored
+// (so a newer policy does not break an older runner on a field it does not
+// know) and Version is the only thing that can refuse it (P8).
+type Policy struct {
+	Version   int       `json:"version"`
+	Budget    Budget    `json:"budget"`
+	AllowRepos []string `json:"allow_repos"`
+	Providers map[string]Provider `json:"providers,omitempty"`
+	Prices    map[string]Price    `json:"prices,omitempty"`   // model_prices, the owner's overrides
+	Routing   *Routing  `json:"routing,omitempty"`            // phase 1b writes it; nil = direct (D1b)
+}
+type Budget struct { Mode string; PerRunUSD float64; AllowedModels []string; MaxRunTokens int64 }
+
+// MatchRepo matches a canonical "<provider>/<owner>/<name>" against an
+// allow-list pattern (P5). One implementation, used by the runner and the CLI.
+func MatchRepo(pattern, canonical string) bool
+func Canonical(provider, repo string) (string, error)
+
+// Decode returns (p, found, err): found=false is the absent node (today's
+// behaviour), err is a node that exists and cannot be used (fail closed).
+func Decode(raw []byte) (*Policy, bool, error)
+```
+
+1. `paths.go`: the three path helpers, with `seg`-style escaping copied from `internal/budget/model.go:44` (a slug is escaped the same way `/config/caps/repos/$slug` escapes it, so the two agree).
+2. `policy.go`: the type above plus `Decode`, which returns `found=false` for an empty body and an error for a body that does not parse, carries a non-integer or unknown `version`, or whose `allow_repos` holds a pattern `Canonical`/`MatchRepo` rejects. **Unknown JSON keys are ignored** (unlike the version-gated env vars the price catalog's P4 describes): a policy field a newer CLI writes must not brick an older runner mid-flight, and `version` is the one thing that may.
+3. `match.go`: `Canonical(provider, repo)` produces `"github/acme/app"` from a provider kind and an `owner/name`, and `MatchRepo` matches `*` within one segment only (`github/acme/*` matches `github/acme/app`, not `github/acme/a/b`; `*/acme/*` is legal, a bare `acme/*` is not — P5).
+4. `version.go`: `Version`, and the two skew messages as constants (the runner's refusal and the CLI's refusal), so Task 1.3 and Task 1.6 print the same text.
+
+**Tests:** `TestPathsEscapeASlug`; `TestDecodeAbsentIsNotFound`; `TestDecodeIgnoresUnknownKeys`; `TestDecodeRefusesBadVersion`; `TestDecodeRefusesBadAllowRepoPattern`; `TestMatchRepo` (a table: the wildcard cases, the cross-provider case, the two-`fugarosandbox` case of P5); `TestCanonical`.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/projectpolicy/... -count=1`. **Commit:** "projectpolicy: the policy object, its paths, its version and its matcher".
+
+### Task 1.2: the read rules — SECURITY-SENSITIVE, independent opus review
+
+**Files:** `internal/budget/rules/rules.json.tmpl`, `internal/budget/rules/rules.go`, `internal/budget/rules/testdata/rules.golden.json`, `internal/budget/rules/{rules_test.go,parity_test.go,emulator_test.go}`.
+
+**Verified today:** the template's `config` block is `internal/budget/rules/rules.json.tmpl:9-21` — `caps/global` and `caps/defaults` `.read: "TOKEN"`, `caps/repos/$slug` and `kill/repos/$slug` `.read: "TOKEN && auth.token.fs == $slug"`, and no `.write` anywhere under `config` (the root `.write` is `false`, `:3-4`; admin writes are IAM-only, `deploy/terraform/gcp/modules/firebase/iam.tf:52-58`). The `TOKEN` macro is `internal/budget/rules/rules.go:292-293`; the slug claim is `auth.token.fs`.
+
+**Interfaces.** Consumes: Task 1.1's paths (as literals in the template, and as a `rules.go` helper that **must agree with them** — the parity test asserts the template's paths equal `projectpolicy.PathShared()` etc., so the two cannot drift). Produces: `TestRulesParity`'s new cases and the generated rules.
+
+1. Add to `rules.json.tmpl`'s `config`, beside `caps`:
+
+```json
+"policy": {
+  "shared": { ".read": "TOKEN", ".write": false },
+  "repos": { "$slug": { ".read": "TOKEN && auth.token.fs == $slug", ".write": false } }
+},
+"admin": { ".read": false, ".write": false }
+```
+
+**Per child, never on `config/policy` itself** (design §5(2)): a `TOKEN` read on the parent cascades to every child and would make `repos/$slug` and the admin node readable by every run token. `config/admin` carries `.read: false` in the *rules*, and **the rules are not what keeps it private**: launchers hold `roles/firebasedatabase.viewer` (`deploy/terraform/gcp/modules/firebase/iam.tf:43-49`) and an IAM read bypasses the rules, so 12a item 7 applies — **no secret-adjacent value in `config/admin`**, ever, and the section says so.
+2. Extend `TestRulesParity` (`internal/budget/rules/parity_test.go:175`): a run token can read `config/policy/shared`; it **can** read `config/policy/repos/<its own slug>`; it **cannot** read another slug's node; it **cannot** read `config/policy` (the parent); it cannot write any of them. Each of those is a case in the emulator test too (`internal/budget/rules/emulator_test.go`, tag `firebase`), because the parity test is a table over the generated JSON and the emulator is the real evaluator.
+3. Regenerate `testdata/rules.golden.json` in this commit, and add the assertion that the template's policy paths equal `projectpolicy.PathShared()`/`PathRepo("x")` — a task renaming a path updates both or fails.
+4. **The owner-run deploy of these rules is Task 1.7 step 2**, in the order the design fixes: **rules first, then the runner image, then `policy publish`** (§5). Until the owner deploys, the rules on the database deny the read, and the runner's Task 1.3 path never fires because no node exists yet — that is why the order is safe rather than merely conventional.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/budget/... -count=1` then `go test -tags firebase ./internal/budget/rules/... -count=1`. **Commit:** "rules: config/policy is readable per child, config/admin is not readable by a run token".
+
+### Task 1.3: the runner reads the policy and fails closed
+
+**Files:** `internal/runner/projectpolicy.go` (new), `internal/runner/policy.go` (+ `policy_test.go`), `internal/runner/budget_session.go` if the read needs the client the session builds.
+
+**Verified today:** `internal/runner/policy.go:63-120` — `resolvePolicy` builds the ceiling from `r.d.Spend` (the job env), merges the default branch's file layer and the run's own, and **treats the ceiling as optional** (`:66-72`: `Mode` only when non-empty, `PerRunUSD` only when `> 0`); `:108-113` falls back to `pricing.Embedded()` when the mode is on and no prices were loaded. `internal/runner/budget_session.go:25-52` is where the RTDB URL and the Firebase key come from, and `:128`/`:180` are where the slug keys the session.
+
+**Interfaces.** Consumes: `projectpolicy.Decode`/`PathShared` (1.1), the RTDB URL the job env carries (1.4), the run's own token minted by the launcher. Produces: `Spend` and `policy.Effective` computed from the policy instead of the env when the node exists; `runstore.PolicyRecord.Sources` gains `policy` as a source name.
+
+1. `projectpolicy.go`: `func (r *run) projectPolicy(ctx context.Context) (*projectpolicy.Policy, bool, error)` — one `GET` of `config/policy/shared` through `internal/rtdb`, using the session's client when the mode is on and a client built from `FUGARO_RTDB_URL` + the run's token otherwise. `found == false` ⇔ the node is absent ⇔ today's behaviour (P3). Any other error, or a `Decode` error, **halts the run** with a message naming the node (`internal/projectpolicy`'s version.go text for the version case) — never a fall through to the env ceiling.
+2. `resolvePolicy`: when the policy exists, the **ceiling** is built from it instead of from `r.d.Spend`:
+
+```go
+ceiling := policy.Layer{MaxRunTokens: c.MaxRunTokens, AllowedModels: c.AllowedModels}
+if pp != nil {
+	ceiling = policy.Layer{Mode: pp.Budget.Mode, PerRunUSD: pp.Budget.PerRunUSD,
+		MaxRunTokens: pp.Budget.MaxRunTokens, AllowedModels: pp.Budget.AllowedModels}
+	c.Prices = pp.Prices          // the owner's overrides, replacing FUGARO_MODEL_PRICES
+	c.Cap = /* µ$ from PerRunUSD */
+}
+```
+   **Only the ceiling moves** (12a item 13): the default branch's `fugaro.yaml` layer and the run's own `cfg` are still merged at `:90` and can still only tighten. `s.Cap = c.Cap` at `:100` keeps working because the policy's cap becomes `c.Cap` too.
+3. `runtimeVersion` skew (P8): a policy whose `version` is not `projectpolicy.Version` halts with the shared message — the runner never guesses.
+4. The policy's `allow_repos` is stashed on the run for Task 1.5 (one read, one decode: `projectPolicy` is memoized like `defaultBranchFile` at `internal/runner/policy.go:30-51`).
+5. `recordPolicy` (`internal/runner/policy.go:167`) names the source: `policy.sources` carries `policy=config/policy/shared` for the moved keys, so a run's `result.json` says where its ceiling came from. `fugaro diagnose` and `report` read that field unchanged.
+
+**Tests:** `TestRunnerReadsPolicyWhenTheNodeExists`, `TestRunnerUsesEnvCeilingWhenTheNodeIsAbsent`, `TestPolicyReadErrorHaltsTheRun`, `TestPolicyParseErrorHaltsTheRun`, `TestPolicyVersionMismatchHaltsTheRun`, `TestPolicyCannotLoosenTheBranchLayer` (a branch `fugaro.yaml` asking for a *higher* cap is still ignored, `policy.Ignored` records it), `TestPolicyPricesReplaceTheEnvOverrides`. The runner's existing fakes serve the node (`internal/gcpfake` has no RTDB; the budget tests' `internal/rtdb` test server is the pattern to reuse — if it is not reachable from `internal/runner`'s tests, put the policy read behind a `Deps` field the test sets).
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/runner/... -count=1`. **Commit:** "runner: the project policy replaces the ceiling, and a policy that cannot be read halts the run".
+
+### Task 1.4: the RTDB URL reaches every job (D11)
+
+**Files:** `internal/infra/spec.go` (+ `spec_test.go`), `internal/infra/readiness.go` (the Firebase requirement's message).
+
+**Verified today:** `internal/infra/spec.go:755-768` — `FUGARO_RTDB_URL` and `FUGARO_BUDGET_MODE` are written **only when the deploy-time budget mode is not off**, and the mode is read from the operator's local config (so the design's warning is exact: a job deployed with the mode off can never read the policy).
+
+**Interfaces.** Consumes: the installation's Firebase endpoints (`lc.Endpoints`). Produces: a job env that carries `FUGARO_RTDB_URL` whenever Firebase is configured, whatever the mode.
+
+1. `budgetEnv` (`internal/infra/spec.go:732`): write `FUGARO_RTDB_URL` whenever the installation has a Firebase URL, and keep `FUGARO_BUDGET_MODE` conditional on the mode (the mode is no longer only the deploy-time mode once a policy exists, and Task 1.3 reads the policy's mode; the env stays as the fallback for the absent-node case, unchanged).
+2. The readiness gate (`internal/infra/readiness.go`): **Firebase becomes mandatory in project-centric mode** (D11). The finding is a `warning` until a policy exists (an installation that has not adopted the model is not blocked) and *blocking* once `config/policy/shared` exists — read through the operator's client at init time, so the message is "the project has a policy: this job must carry `FUGARO_RTDB_URL`, run `fugaro init --repo`". **The plan does not try to detect "project-centric mode" any other way**, and it does not lift the mode-off code path: an installation that wants the budget off stays on the per-repository path (design §5(1)), permanently, which `fugaro doctor` states.
+3. `docs/`: the mode-off caveat in `docs/multi-model.md` and `docs/project-layer.md` gains one sentence: the budget mode off is not available in project-centric mode.
+
+**Tests:** `TestBudgetEnvWritesRTDBURLWhenFirebaseIsConfigured` (mode off included), `TestBudgetEnvKeepsModeOff`, `TestReadinessBlocksAJobThatCannotReadAPublishedPolicy`.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/infra/... -count=1`. **Depends on:** nothing from this phase but Task 1.1's path constant (for the message); it is independently revertible. **Commit:** "spec: the job carries the RTDB URL whenever Firebase is configured".
+
+### Task 1.5: `allow_repos` and the slug binding's first half — SECURITY-SENSITIVE, independent opus review
+
+**Files:** `internal/runner/{runner.go,project.go}` (+ tests), `internal/cli/run.go` (+ `run_layer_test.go` or a new `run_allowlist_test.go`).
+
+**Verified today:** the runner's bootstrap clones at `internal/runner/runner.go:789-794` and reads `task.json` at `:797-803`; the git token is minted for `spec.Repo` at `internal/runner/runner.go:586` (`openProvider`); the slug comes from `FUGARO_RUN` (`internal/cli/exec.go:157`,`:168`, `runstore.ParseRef` at `internal/runstore/runstore.go:409`) and keys the locks (`internal/runner/lockcache.go:76`), the cache (`:188`) and the budget session (`internal/runner/budget_session.go:128`,`:180`); `task.Slug(provider, repo)` is `internal/task/task.go:179`. **Nothing checks that `task.Slug(provider, spec.Repo)` equals the slug** — today the per-repository job's bucket condition is what makes a mismatch fail (design §2.2), and the provider for the check cannot come from an overridable env var (12a item 2), so it comes from the job's own provider (`config.Git.Provider`) or the policy.
+
+**Interfaces.** Consumes: Task 1.1's `MatchRepo`/`Canonical`, Task 1.3's memoized policy. Produces: `func (r *run) admissionCheck(ctx context.Context) error`, and the CLI's advisory twin `func allowListRefusal(p *projectpolicy.Policy, provider, repo string) error` in `internal/cli`.
+
+1. In `bootstrap`, **before** `openProvider` mints a token (`internal/runner/runner.go:586`) and before the budget session takes a lease (`internal/runner/budget_session.go:180`), against the (provider, repository) `task.json` names and the job's own provider:
+   - `task.Slug(provider, spec.Repo) == <the slug FUGARO_RUN carries>` — refuse otherwise, naming both, with the sentence that the per-repository job's bucket condition used to be the only thing standing in for it.
+   - `MatchRepo(p.AllowRepos, Canonical(provider, spec.Repo))` — refuse otherwise, naming the pattern list and `fugaro project add-repo`.
+   - When the policy is **absent** (P3), only the slug binding is checked: an installation that has not published a policy has no allow-list, and inventing "empty means deny" there would break every installation on upgrade. **Empty `allow_repos` *inside* a published policy is deny-all**, and `policy publish` seeds it (P4), so the two cases cannot be confused.
+2. `fugaro run` (the CLI, `internal/cli/run.go`) checks the same thing before launching and refuses with the same message, reading the policy with the operator's credentials. **It is advisory and the docs say so** (design §4.2/§4.3): a launcher can call `jobs.run` directly, which is why the runner's check is the one that counts.
+3. `SECURITY.md`: the launcher-override boundary lands here (D10, accepted): one paragraph saying that a launcher can override a job's environment, that the budget token deliberately does not travel that way, and that after Task 3.0's probe the text says exactly what an execution's overrides expose — no more.
+
+**Tests:** `TestRunnerRefusesSlugMismatch`, `TestRunnerRefusesSlugNotInAllowList`, `TestRunnerChecksBeforeTheTokenAndTheLease` (the fake asserts no credential request and no reserve write), `TestRunnerWithoutAPolicyChecksOnlyTheBinding`, `TestEmptyAllowListInAPublishedPolicyDeniesEverything`, `TestRunRefusesBeforeLaunch` (CLI).
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/runner/... ./internal/cli/... -count=1`. **Commit:** "runner: bind the slug and admit the repository before a token or a lease".
+
+### Task 1.6: `fugaro project`, the doctor checks and the drift note
+
+**Files:** `internal/cli/project.go` (+ a new `project_policy_test.go`), `internal/cli/root.go`, `internal/cli/doctor.go` (+ tests), `internal/cli/upgrade_cloud.go` (+ tests), `plugin/skills/setup/**`, `plugin/skills/working/**`, `docs/project-layer.md`, `docs/multi-model.md`, `docs/checkout.md`, `SECURITY.md`.
+
+**Verified today:** **there is no `fugaro project` command group**; `internal/cli/project.go` is project *selection* (its header comment), and the root registers every command at `internal/cli/root.go:75-78`. `upgrade`'s drift note is `internal/cli/upgrade_cloud.go:162-177` (`jobConfigCopyNote`), and `doctor`'s severities are `internal/cli/doctor.go:39-46`.
+
+**Interfaces.** Consumes: Task 1.1's `Policy`/`Decode`/paths, the RTDB client `fugaro budget set` uses (`internal/cli/budget.go:953` `runBudgetSet`, `openBudget` at `:160`), the operator's local config (`providers`, `claude_accounts`, the budget ceiling and `model_prices`) and the bucket config reader. Produces: `newProjectCmd()` and three subcommands.
+
+1. `newProjectCmd()` (`Use: "project"`, registered in `internal/cli/root.go:75-78`): `policy publish`, `policy show`, `show`, `add-repo`, `remove-repo`. The plan puts `add-repo` here, in phase 1, not phase 4 (P4 and 12a item 3): between phases 1 and 4 a new repository would otherwise be unenrolled, and this one-liner is the interim path. **`sync`, `repos` and the discovery surface stay in phase 4** (Task 4.1).
+2. `policy publish`: builds the policy from the operator's file — the M9a budget (`mode`, `per_run_usd`, `allowed_models`, `max_run_tokens`), providers (name, base URL, auth style, **the secret's name, never a value**, models, `allow_data_to`, `route_fee_pct`, and from the price catalog `require_zdr`/`price_policy` when those have merged), `model_prices` overrides, `allow_repos`, and (1b.1) `routing` — writes it with `PutIfMatch` (the CAS `runBudgetSet` already uses, `internal/cli/budget.go:1011`) and refuses to write a `version` above its own (P8). It prints the diff and the seeded allow-list, and it **seeds only when the node is absent or `--seed-repos` is passed** (P4), seeding from the operator's `repos:` **and** the repositories the installation has seen (`runs/<slug>/` in the bucket), each converted with `Canonical`.
+3. `policy show` / `project show`: the effective project — caps (global, defaults, per-repository), the policy, the allow-list, the repositories seen, each with its source; `--json` for `watch`-style consumers. It prints the allow-list minus the seen repositories (unenrolled-but-running) and the reverse (allowed but never seen), which is the pair an operator needs.
+4. `fugaro doctor`: new checks — `policy-published` (info: whether a policy exists and its version), `policy-newer-than-binary` (warning, P8), `policy-vs-jobs` (warning when a policy is published and the installation's jobs still carry an old runner image: the trap of 12a item 6, detected with the image digests `image refresh` already compares), `allow-list-empty` (warning when a policy exists whose `allow_repos` is empty).
+5. `upgrade` (`internal/cli/upgrade_cloud.go:162-177`): the drift note gains the policy sentence — after a policy is published, `upgrade` says that a job's **env copy** of the ceiling is now inert for the keys the policy governs, so the drift it reports is no longer a reason to re-run `init --repo`, and what *does* still need one (mounts) is listed.
+6. The skills: `plugin/skills/setup/**` (the setup skill describes `init --repo`'s policy questions and must now say they are answered once per project) and `plugin/skills/working/**` (the working skill's `fugaro.yaml` policy section). Both keep their security text; `fugaro update-skills` distributes them.
+7. Docs: `docs/project-layer.md` (the layer is now what tightens the policy), `docs/multi-model.md` (the prices come from the policy when published), `docs/checkout.md` (unchanged, but the phase-3 note is added there in Task 3.6), and SECURITY.md's Task 1.5 paragraph.
+
+**Tests:** `TestProjectPolicyPublishWritesTheNodeAndSeedsTheAllowList`, `TestProjectPolicyPublishDoesNotReseedARemovedRepo`, `TestProjectPolicyPublishRefusesAVersionItCannotWrite`, `TestProjectShowPrintsEnrolledAndSeen`, `TestDoctorPolicyChecks` (all four, including the severity), `TestUpgradeNoteSaysTheEnvCopyIsInert`, and the docs tests for the skill and doc edits.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/cli/... -count=1` and `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`.
+
+**Depends on:** Tasks 1.1, 1.2, 1.3 (the shape, the rules and the reader it writes for). **Commit:** "cli: fugaro project policy publish, show and add-repo; doctor and upgrade say what the policy changes".
+
+### Task 1.7: Check 49, the rules deploy and the adoption order — OWNER-RUN
+
+**Files:** `docs/gcp-live-checklist.md`.
+
+Append `## Check 49: policy as data, end to end (installation fugaro only, never belong; run by you; NOT RUN)` and its row, with **the order the design fixes: rules deploy, runner rollout, `policy publish`** (design §5), and exactly these steps:
+
+1. **Setup and guard**, hard-coded `P=fugaro-dev` and the two-line guard of Check 48 (Task 0.4 step 1), run from a file. **Record the restore**: `fugaro budget show --json`, `fugaro project show --json` (before: nothing), and the sandbox's `fugaro.yaml` `project:` and pins.
+2. **The rules deploy.** `fugaro init --firebase` on installation `fugaro`. **FACT:** the rules byte count, that init read them back, and — the new part — that no `config/policy/shared` node exists yet (`fugaro project show` says "no policy").
+3. **The runner rollout.** Release a runner image that carries Task 1.3, then roll it onto the sandbox repository's jobs (`fugaro upgrade --cloud`, or `fugaro image refresh`). **FACT:** one ordinary sandbox run's `policy.sources` — with no policy published it must name the **ceiling from the env**, exactly as before, and the run must succeed. This is the "nothing changes until you publish" half of P3, and it is the step that fails if Task 1.4's `FUGARO_RTDB_URL` regressed the mode-off path.
+4. **Publish.** `fugaro project policy publish` on installation `fugaro`, with a per-run ceiling the sandbox run can notice (for instance `per_run_usd` different from the job env's). **FACT:** the printed diff, the seeded `allow_repos` (and that it names `edgeappinc/fugarosandbox`'s canonical form, not a bare name — P5), and the node's `version`.
+5. **The policy governs.** One sandbox run. **FACT:** `result.json`'s effective `policy` and its `sources` (they must name `config/policy/shared`), and the run's per-call charge agreeing with the published ceiling rather than the job env's — the mutation Task 1.3's unit test cannot see, because this is a real token against real rules.
+6. **It fails closed.** Point the sandbox's `fugaro.yaml` at a repository the allow-list does not name (a temporary edit on the sandbox branch, reverted in step 8), and run. **FACT:** the refusal verbatim, and that **no git token was minted and no lease was taken** — visible as the absence of a `credential` line and of a reserve in `fugaro budget show`. Then, on the same run, confirm the **slug-mismatch** refusal by launching with a `FUGARO_RUN` override naming another slug (a launcher can: `internal/backend/gcp/run.go:110`): the run must refuse rather than run.
+7. **The CLI is advisory and says so.** `fugaro run` on the same unenrolled repository prints its own refusal before launching; and the docs read (`SECURITY.md`, `docs/project-layer.md`) names the launcher-override boundary rather than claiming a fix.
+8. **Restore**: revert the sandbox `fugaro.yaml` edit, `fugaro budget set` with step 1's recorded values, confirm `fugaro project show --json`'s caps match, and run one ordinary sandbox task to confirm the sandbox still runs. **Leave the policy published only if the owner intends to keep the model**; otherwise `fugaro project policy publish --delete` (the removal path Task 1.6 must therefore ship) and re-run one task to confirm the env ceiling governs again.
+
+End with: "**Paste back:** every FACT line above, never a secret value and never a key value. Never run this against `belong`."
+
+**Tests:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`.
+
+**Depends on:** Tasks 1.2 (the rules it deploys), 1.3, 1.4, 1.5, 1.6. **Owns the phase's one owner-run step.**
