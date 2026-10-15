@@ -3,6 +3,7 @@ package runner
 import (
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
@@ -17,55 +18,95 @@ const slashPricedNode = `{"version":1,"budget":{"mode":"enforce","per_run_usd":5
 // slashModel is the model ID the node above prices, as an operator writes it.
 const slashModel = "deepseek/deepseek-v4.1-flash"
 
-// TestPolicyPricesReadsTheNodesEscapedKeys: a run prices a model with the
-// overrides the policy node carries, and the node's member names are escaped.
-// The table the run meters with must therefore be keyed by the model ID: a
-// table keyed by the node's escape would price a model nobody calls, and the
-// model the run does call would be priced by the built-in list instead — the
-// price the operator published, silently not applied.
-func TestPolicyPricesReadsTheNodesEscapedKeys(t *testing.T) {
+// routedProviders is the job's own providers block: one route claiming the
+// deepseek family, which is what the built-in catalog prices (the job carries
+// this as FUGARO_MODEL_PROVIDERS, Deps.Providers).
+func routedProviders() map[string]config.ModelProvider {
+	return map[string]config.ModelProvider{"openrouter": {
+		Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api/v1", Auth: "bearer",
+		Secret: "openrouter-key", Models: []string{"deepseek/*"},
+	}}
+}
+
+// catalogPriced is a model the catalog prices under routedProviders' route but
+// the node above does not mention: this is the row a route-less table drops.
+const catalogPriced = "deepseek/deepseek-v4-flash"
+
+// TestPolicyOverridesReadsTheNodesEscapedKeys: the owner's overrides are read
+// off the node under the escaped member names RTDB requires and come back keyed
+// by the model ID — the spelling pricing.ParseOverrides reads. A map keyed by
+// the node's escape would price a model nobody calls.
+func TestPolicyOverridesReadsTheNodesEscapedKeys(t *testing.T) {
 	pp, found, err := projectpolicy.Decode([]byte(slashPricedNode))
 	if err != nil || !found {
 		t.Fatalf("Decode = (found=%v, err=%v)", found, err)
 	}
-	if _, ok := pp.Prices[slashModel]; !ok {
-		t.Fatalf("the decoded policy is not keyed by the model ID: %v", pp.Prices)
-	}
-	table, err := policyPrices(pp)
+	o, err := policyOverrides(pp)
 	if err != nil {
-		t.Fatalf("pricing the node's overrides: %v", err)
+		t.Fatalf("reading the node's overrides: %v", err)
 	}
-	m, ok := table.Lookup(slashModel)
-	if !ok {
-		t.Fatalf("the table has no entry for %q: the node's key did not reach the catalogue as a model ID", slashModel)
+	if _, ok := o[slashModel]; !ok {
+		t.Fatalf("the overrides are not keyed by the model ID: %v", o)
 	}
-	if m.Rates.InputPerM != 1 || m.Rates.OutputPerM != 2 {
-		t.Errorf("the model's rates = %+v, want the node's override (1, 2)", m.Rates)
+	if _, ok := o["deepseek%2Fdeepseek-v4.1-flash"]; ok {
+		t.Error("the overrides are keyed by the node's escape, so a run would price a model nobody calls")
 	}
-	// And the escaped spelling is not a model: a table that has it is one the
-	// escape leaked into.
-	if _, ok := table.Lookup("deepseek%2Fdeepseek-v4.1-flash"); ok {
-		t.Error("the table is keyed by the node's escape, so a run would meter a model nobody calls")
+	if o[slashModel].InputPerM != 1 || o[slashModel].OutputPerM != 2 {
+		t.Errorf("the model's rates = %+v, want the node's override (1, 2)", o[slashModel])
+	}
+	// A node with no prices is no overrides at all, not an empty table.
+	if got, err := policyOverrides(&projectpolicy.Policy{}); err != nil || got != nil {
+		t.Errorf("policyOverrides(no prices) = (%v, %v), want (nil, nil)", got, err)
 	}
 }
 
-// TestPolicyCeilingPricesFromTheNode: the same read through the ceiling, which
-// is where the run takes its table from (resolvePolicy -> policyCeiling), so a
-// policy pricing a slash-carrying model leaves the run with a table carrying
-// it.
-func TestPolicyCeilingPricesFromTheNode(t *testing.T) {
+// TestPolicyCeilingKeepsTheJobsRoutesAndCatalog: the node replaces the owner's
+// price OVERRIDES, not the routes the job carries or the built-in catalog under
+// them. A table built as pricing.Embedded().With(the node's overrides) drops
+// every catalog row the job's providers contributed, so a run pinned to a
+// catalog-priced provider model is refused for "having no price under
+// model_prices" — while the same job with no policy published bootstraps fine —
+// and an override over a catalog row comes back materialized bare, with none of
+// the file's token limits (config.PriceTable's own comment: the row is
+// materialized for the limits before Table.With replaces the rates).
+func TestPolicyCeilingKeepsTheJobsRoutesAndCatalog(t *testing.T) {
 	pp, found, err := projectpolicy.Decode([]byte(slashPricedNode))
 	if err != nil || !found {
 		t.Fatalf("Decode = (found=%v, err=%v)", found, err)
 	}
-	_, spend, _, err := policyCeiling(pp, envCeiling(Spend{}), Spend{})
+	r := &run{d: Deps{Providers: routedProviders()}}
+	_, spend, _, err := r.policyCeiling(pp, envCeiling(Spend{}), Spend{})
 	if err != nil {
 		t.Fatalf("policyCeiling: %v", err)
 	}
 	if spend.Prices == nil {
 		t.Fatal("the ceiling carries no price table")
 	}
-	if _, ok := spend.Prices.Lookup(slashModel); !ok {
-		t.Errorf("the ceiling's table has no entry for %q", slashModel)
+	// The node's own override, by model ID.
+	if m, ok := spend.Prices.Lookup(slashModel); !ok || m.Rates.InputPerM != 1 {
+		t.Errorf("Lookup(%q) = (%+v, %v), want the node's override", slashModel, m, ok)
+	}
+	// And the row the route contributed: the model the workflow may pin.
+	if _, ok := spend.Prices.Lookup(catalogPriced); !ok {
+		t.Errorf("the policy's table has no price for %q: the job's routes and the built-in catalog are not the node's to replace, and a run pinned to it is refused", catalogPriced)
+	}
+	// The override over a catalog-priced model keeps that model's limits: an
+	// override replaces the rates, not the row the file materialized.
+	ovNode := []byte(`{"version":1,"budget":{"mode":"enforce","per_run_usd":5},` +
+		`"model_prices":{"deepseek%2Fdeepseek-v4-flash":{"input_per_m":9,"output_per_m":9}}}`)
+	p2, _, err := projectpolicy.Decode(ovNode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, spend2, _, err := r.policyCeiling(p2, envCeiling(Spend{}), Spend{})
+	if err != nil {
+		t.Fatalf("policyCeiling: %v", err)
+	}
+	m, ok := spend2.Prices.Lookup(catalogPriced)
+	if !ok || m.Rates.InputPerM != 9 {
+		t.Fatalf("Lookup(%q) = (%+v, %v), want the owner's override", catalogPriced, m, ok)
+	}
+	if m.MaxOutputTokens == 0 && m.ContextTokens == 0 {
+		t.Errorf("the overridden row lost the catalog's token limits: %+v", m)
 	}
 }

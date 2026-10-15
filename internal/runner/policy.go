@@ -82,7 +82,7 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	}
 	var fromPolicy map[string]bool
 	if found {
-		if ceiling, c, fromPolicy, err = policyCeiling(pp, ceiling, c); err != nil {
+		if ceiling, c, fromPolicy, err = r.policyCeiling(pp, ceiling, c); err != nil {
 			return err
 		}
 	}
@@ -183,7 +183,18 @@ func envCeiling(c Spend) policy.Layer {
 // Spend.Cap carries the same ceiling in micro-dollars, kept exact rather than
 // through a float round trip, so it is replaced only by the node's own cap and
 // keeps the environment's when the node sets none.
-func policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend) (policy.Layer, Spend, map[string]bool, error) {
+//
+// It is a method on the run because the price table it builds for the node's
+// model_prices is the run's own: r.priceTable is config.PriceTable over the
+// routes the job carries (FUGARO_MODEL_PROVIDERS) and the built-in catalog,
+// with the node's overrides applied on top. Building it as
+// pricing.Embedded().With(overrides) instead would drop every catalog row those
+// routes contributed, so a run pinned to a catalog-priced provider model would
+// be refused for "having no price" under a policy that priced some other model,
+// and an override over a catalog row would come back with no token limits. The
+// node replaces the owner's price OVERRIDES; the routes and the catalog
+// underneath them are the job's, exactly as they are with no node at all.
+func (r *run) policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend) (policy.Layer, Spend, map[string]bool, error) {
 	ceiling, set := env, map[string]bool{}
 	if m := pp.Budget.Mode; m != "" {
 		ceiling.Mode, set[policy.KeyMode] = m, true
@@ -204,7 +215,11 @@ func policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend) (policy.
 		ceiling.AllowedModels, set[policy.KeyAllowedModels] = pp.Budget.AllowedModels, true
 	}
 	if len(pp.Prices) > 0 {
-		prices, err := policyPrices(pp)
+		o, err := policyOverrides(pp)
+		if err != nil {
+			return env, c, nil, fmt.Errorf("%s: model_prices: %w", projectpolicy.PathShared(), err)
+		}
+		prices, err := r.priceTable(o)
 		if err != nil {
 			return env, c, nil, fmt.Errorf("%s: model_prices: %w", projectpolicy.PathShared(), err)
 		}
@@ -213,28 +228,26 @@ func policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend) (policy.
 	return ceiling, c, set, nil
 }
 
-// policyPrices is the owner's price overrides as the policy node carries them,
-// on the built-in table. The node spells model_prices exactly as the price
-// catalogue spells them (projectpolicy.Price), so the catalogue's own parser
-// reads them here too — the same one FUGARO_MODEL_PRICES goes through, which
-// this replaces: the policy is the owner's price list, whole.
+// policyOverrides is the owner's price overrides as the policy node carries
+// them. The node spells model_prices exactly as the price catalogue spells them
+// (projectpolicy.Price), so the catalogue's own parser reads them here too —
+// the same one FUGARO_MODEL_PRICES goes through, whose overrides these replace:
+// the policy is the owner's price OVERRIDES, whole.
 //
 // Prices.CatalogJSON is the spelling the parser reads: the node's own member
 // names escape what an RTDB key may not hold (the "/" and "." of a model ID),
-// and the decoded map this run prices with is keyed by the real ID.
-func policyPrices(pp *projectpolicy.Policy) (*pricing.Table, error) {
+// and the decoded map is keyed by the real ID. The table the run prices with is
+// the run's own (r.priceTable), because the routes the job carries and the
+// built-in catalog are not the node's to replace — see policyCeiling.
+func policyOverrides(pp *projectpolicy.Policy) (pricing.Overrides, error) {
 	if len(pp.Prices) == 0 {
-		return pricing.Embedded(), nil
+		return nil, nil
 	}
 	raw, err := pp.Prices.CatalogJSON()
 	if err != nil {
 		return nil, err
 	}
-	o, err := pricing.ParseOverrides(string(raw))
-	if err != nil {
-		return nil, err
-	}
-	return pricing.Embedded().With(o)
+	return pricing.ParseOverrides(string(raw))
 }
 
 // policySources renames the merge's first layer for the keys the project's

@@ -2,6 +2,7 @@ package runner_test
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -25,6 +26,18 @@ func providerGW(t *testing.T, cfg string, allow ...string) *gw {
 func providerRun(t *testing.T, cfg, mode, capUSD string, script []anthropicfake.Reply, allow ...string) *gw {
 	t.Helper()
 	g := newGW(t, cfg, mode, capUSD)
+	wireProviders(t, g, script, allow...)
+	return g
+}
+
+// wireProviders gives a harness the owner's provider: the route the job
+// carries (Deps.Providers and FUGARO_MODEL_PROVIDERS, which the run's price
+// table is built from), the key mounted as the job does it, and the fake
+// upstream the provider's calls reach. It is separate from providerRun because
+// a test may already have built its harness for another reason (the policy
+// node's, say) and still want the route.
+func wireProviders(t *testing.T, g *gw, script []anthropicfake.Reply, allow ...string) {
+	t.Helper()
 	compat, up := anthropicfake.New(t, script...)
 	g.compat = compat
 	providers := map[string]config.ModelProvider{"openrouter": {
@@ -41,7 +54,13 @@ func providerRun(t *testing.T, cfg, mode, capUSD string, script []anthropicfake.
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := map[string]string{runner.BudgetModeEnv: mode, runner.MaxRunUSDEnv: capUSD, runner.ModelProvidersEnv: string(raw)}
+	// The mode and the cap the harness already carries, read back off its
+	// Spend: the caller passed them to newGW, and this rebuild is about the
+	// routes.
+	env := map[string]string{runner.BudgetModeEnv: g.deps.Spend.Mode, runner.ModelProvidersEnv: string(raw)}
+	if g.deps.Spend.Cap > 0 {
+		env[runner.MaxRunUSDEnv] = strconv.FormatFloat(g.deps.Spend.Cap.USD(), 'f', -1, 64)
+	}
 	spend, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +76,6 @@ func providerRun(t *testing.T, cfg, mode, capUSD string, script []anthropicfake.
 	}
 	g.deps.Spend = spend
 	withProviderKey(g.harness)
-	return g
 }
 
 // providerPinned has the provider's model as the coder. Its first-line

@@ -10,6 +10,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
+	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -518,6 +519,30 @@ func TestPolicyPricesReplaceTheEnvOverrides(t *testing.T) {
 	}
 	if !near(rec.CostUSD, 0.04) {
 		t.Fatalf("cost = $%v, want $0.04: the environment's $100/M still applies", rec.CostUSD)
+	}
+}
+
+// TestPolicyPricesKeepTheJobsRoutes: the end-to-end half of the same rule. A
+// job whose FUGARO_MODEL_PROVIDERS claims the deepseek family, a workflow
+// pinned to one of its models, and a policy node that prices only some *other*
+// model (sonnet): the run must bootstrap and finish. A policy table built from
+// the node's overrides alone drops every row the job's routes contributed, so
+// this run is refused before it starts — "has no price: add it under
+// model_prices in the project config", which points the owner at the wrong
+// place, because the same job with no policy published boots fine.
+func TestPolicyPricesKeepTheJobsRoutes(t *testing.T) {
+	use := pricing.Usage{Input: 1000, Output: 500}
+	b := policyRun(t, providerPinned(t), "enforce", "50",
+		`{"version":1,"budget":{"mode":"enforce","per_run_usd":5},"model_prices":{"`+sonnet+`":{"input_per_m":1,"output_per_m":2}}}`)
+	wireProviders(t, b.gw, []anthropicfake.Reply{anthropicfake.Compat{}.MessageOK(deepseek, use)}, "acme/app")
+	var status int
+	var body string
+	rec, err := b.run(t, callDeepseek(&status, &body, implement("feature")), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v: a policy that prices another model must not drop the job's routes", rec, err)
+	}
+	if status != 200 {
+		t.Errorf("the provider call answered %d: %s", status, body)
 	}
 }
 
