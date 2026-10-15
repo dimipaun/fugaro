@@ -213,7 +213,11 @@ func TestLayerClaimIsNeverInTheEnvironment(t *testing.T) {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 	// The table the run started from — the toolchain's own environment,
-	// captured before the merge — has no claimed model in it.
+	// captured before the merge — has no claimed model in it. That the
+	// *deployed job's* FUGARO_MODEL_PROVIDERS carries none either is pinned
+	// where it is written:
+	// internal/infra's TestTheJobProvidersEnvNeverCarriesALayerClaim (this
+	// test cannot see that variable, only this fixture's deps).
 	raw, err := json.Marshal(g.deps.Providers)
 	if err != nil {
 		t.Fatal(err)
@@ -223,7 +227,7 @@ func TestLayerClaimIsNeverInTheEnvironment(t *testing.T) {
 	}
 	// And the merge is what the run routed with, so the claimed model did
 	// reach the provider.
-	merged, ps := config.ApplyClaudeClaims(g.deps.Providers, config.ClaudeClaimsOf(mustLayer(t, layerWithClaim("  openrouter: [\""+claimedClaude+"\"]\n"))))
+	merged, ps := config.ApplyClaudeClaims(g.deps.Providers, config.ClaimsOnRoutes(g.deps.Providers, config.ClaudeClaimsOf(mustLayer(t, layerWithClaim("  openrouter: [\""+claimedClaude+"\"]\n")))))
 	if len(ps) != 0 || len(merged["openrouter"].Models) != 2 {
 		t.Fatalf("the merged table = %v (problems %v)", merged["openrouter"].Models, ps)
 	}
