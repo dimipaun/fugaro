@@ -51,7 +51,8 @@ already has an obvious home — `runs/<slug>/<run>/` — and the only thing
 missing is that nothing ever *declares* which files are the deliverable.**
 
 **The object store is already an abstraction.** `blobx.Open` takes a `gs://`
-**or** `file://` URL (`internal/cli/exec.go:59`, `FUGARO_BUCKET`), which is how
+**or** `file://` URL (`blobx.Open`, called at `internal/cli/exec.go:146,296`;
+its default is the `--bucket` flag / `FUGARO_BUCKET`, `:59`), which is how
 the e2e suite runs a whole run against a directory
 (`internal/e2e/budget_test.go:129`). An artifact path built on `blobx` is
 therefore testable end to end with no cloud, and the local `fugaro exec` mode
@@ -77,13 +78,14 @@ gains it for free.
   (`gate.go:61`), and the reason is a safety rule this design must not break:
   *"Every command it runs comes from Settings … never from the task or the
   recipe (a check step only ever names a `commands.*` key)"* (`gate.go:125-127`;
-  `docs/design/generic-tool.md:357` rejects "commands in the recipe" in as many
+  `docs/design/generic-tool.md:356` (G10) rejects "commands in the recipe" in as many
   words: *bucket text would run code*).
 
-**A recipe may not name a command, and a check step may only come first.** The
-`check` step is `prefixItems[0]` in every variant of `schemas/recipe.schema.json`'s
-`steps` (`$defs.check`), so a deterministic step *after* the agent has not
-been expressible at all — which is precisely what a render needs.
+**A recipe may not name a command, and a check step may only come first.** In the
+two of `schemas/recipe.schema.json`'s **four** `steps` variants that have a check
+step at all, it is `prefixItems[0]` (`$defs.check`), and the other two variants
+begin with `first_line` — so a deterministic step *after* the agent has not been
+expressible at all, which is precisely what a render needs.
 
 **Timeouts are four numbers, and the run's clock is what really bounds it.**
 `timeouts: {total, stage, verify, finalize_reserve}` (`internal/config/config.go:423-428`);
@@ -137,7 +139,8 @@ workflow's **requested** vCPU/memory and the elapsed run time
 `cost.compute_estimated` (`internal/runstore/cost.go:12-18`,
 `schemas/result.schema.json`), recomputed by the CLI from the backend's own
 limits (`internal/runview/runview.go:363-368`) and rolled into history
-(`internal/budget/rollup.go:36-39`). **`fugaro budget preview` has no compute
+(`internal/budget/rollup.go:296-303`, which folds `ComputeUSD` into
+`ComputeMicros` only when `ComputeEstimated`). **`fugaro budget preview` has no compute
 notion at all**: it prints a ceiling of `N × min(per-run cap, stages ×
 agent.max_budget_usd)` (`internal/cli/budget_preview.go:26-28`) and a "typical"
 line read from `result.json` stages' **model** spend only (`:489-538`).
@@ -167,7 +170,7 @@ brief asked to be verified, and two of its entries were wrong):
 | Claim | Verdict |
 |---|---|
 | An artifact concept in the recipe format | **Does not exist.** No `outputs`, `artifacts` or glob key in `schemas/recipe.schema.json` (`additionalProperties: false`; the allowed keys are `version, name, description, use_when, mode, roles, steps`) or in `internal/recipe/recipe.go`. |
-| An artifact concept in `generic-tool.md`, `recipes.md` or `v1.md` | **Does not exist.** Zero hits for artifact/attachment/output-glob in `generic-tool.md` and `recipes.md`; `v1.md`'s 15 hits are all **Artifact Registry**, the GCP service. |
+| An artifact concept in `generic-tool.md`, `recipes.md` or `v1.md` | **Does not exist.** Zero hits for artifact/attachment/output-glob in `generic-tool.md` and `recipes.md`; `v1.md`'s 15 hits are **Artifact Registry**, the GCP service — with one exception that is not: `ARTIFACTORY_TOKEN` at `v1.md:542` is a JFrog Artifactory token, so "all" would be wrong. |
 | An artifact field in the run record | **Does not exist.** `schemas/result.schema.json` has none, and no package writes one. |
 | A `fugaro artifacts` command | **Does not exist.** No such subcommand anywhere in `internal/cli`. |
 | A signed URL anywhere | **Does not exist.** No `SignedURL`/`URLSigner`/`GenerateSigned` call in `internal/` or `cmd/`; the only signing is `iam.serviceAccounts.signJwt` for the budget identity's Firebase token (`deploy/terraform/gcp/modules/firebase/iam.tf:23`) — **`signBlob`, which a V4 signed URL needs, is granted nowhere.** |
@@ -278,7 +281,7 @@ anything it likes, including `sh render.sh` of a file it owns.**
   `prefixItems`), while a render is *the work*, comes last, and its failure
   is the run's failure. Reusing `check` would mean rebuilding its ordering
   rule, its failure path (which feeds the implement prompt,
-  `docs/design/generic-tool.md:204`) and its "gate" semantics for the
+  `docs/design/generic-tool.md:194`) and its "gate" semantics for the
   opposite purpose. *Alternative, and its cost:* add `render` to
   `check.command`'s enum and let a check step be last in artifact mode — one
   fewer concept, at the price of a step kind whose meaning depends on the
@@ -383,9 +386,10 @@ buffer). So the change needs **two new methods on the same type, and no new
 dependency**: a streaming write (`PutFile(ctx, key, path, contentType)` — a
 `NewWriter` plus `io.Copy` from the file, hashing with a `MultiWriter` in the
 same pass, so a 256 MiB render is never a 256 MiB slice in memory) and a
-streaming read for `fugaro artifacts get` (`GetFile(ctx, key, path, limit)` —
-a `NewReader`, an `io.LimitReader` at the object's recorded size plus one, and
-a sha256 checked before the temp file is renamed into place). Both are
+streaming read for `fugaro artifacts get` (`GetFile(ctx, key, path, sum, limit)`
+— a `NewReader`, an `io.LimitReader` at the object's recorded size plus one, and
+the **expected** sha256 as an argument, so a mismatch removes the temp file
+instead of renaming it and the destination is never touched). Both are
 testable against a `file://` bucket, and both preserve the properties the
 existing methods have: a content type recorded on write, a cap that refuses
 rather than truncates, and a classification of 403 as forbidden
@@ -414,8 +418,10 @@ write:
 4. **The runner downloads them before the first step**, into the checkout at
    `inputs/`, and **verifies every one against the sha256 the task spec
    recorded** — it does not trust the bucket's copy, and it enforces the same
-   caps again, because the task spec is text a launcher wrote: a spec that
-   claims 3 files cannot cause 300 downloads.
+   caps **and the same name refusals** again (§8.2), because the task spec is
+   text a launcher wrote: a spec that claims 3 files cannot cause 300
+   downloads, and a spec whose name is `../../.git/hooks/pre-commit` cannot
+   write one byte outside `inputs/`.
 5. **`inputs/` is excluded from git** — the runner writes it into
    `.git/info/exclude` — because an artifact run must never commit a
    screenshot. The plan step's prompt names it, and the environment gains
@@ -527,7 +533,8 @@ name. The checks that would settle it are (a) whether a Cloud Run job can
 request a GPU in the owner's project/region, (b) whether a Compute Engine GPU
 machine type is available in the sandbox's region and quota, and (c) whether
 `compute_usd`'s price table has a GPU rate (it has `VCPUSecondUSD` and
-`GiBSecondUSD`, `internal/backend/backend.go:167-171`, and nothing else).
+`GiBSecondUSD`, `internal/backend/backend.go:167-168`, plus a `Source` string at
+`:169` naming where the figures came from, and nothing else).
 **§13 carries this as a question for the owner, and no task in the plan may
 assume a GPU.**
 
@@ -636,6 +643,15 @@ produced (out), and files an operator handed to a model-driven job (in).
    outside the run's own prefix. On the way back, `fugaro artifacts get`
    sanitises the name from the record the same way, and writes only into the
    directory the user asked for (never a path the record supplies).
+   **The same refusals apply to an *input* name, and on the runner's side as
+   well as the launcher's**, because an input name becomes a filesystem path
+   (`<checkout>/inputs/<name>`) — and the task spec is text a launcher wrote,
+   which §4's own reasoning already treats as untrusted for the caps. A spec
+   whose `inputs[].name` is `../../.git/hooks/pre-commit` must be refused by
+   the runner, not sanitised into something plausible: the runner applies the
+   same list (no absolute path, no `..` element, no NUL or newline, a length
+   limit, no duplicate after cleaning) and **fails the run** with the name
+   quoted, rather than writing outside `inputs/`.
 3. **The job's own account cannot write outside its repository's prefixes**,
    and this is IAM, not code: `resource.name.startsWith("…/objects/runs/<slug>/")`
    (and `cache/`, `locks/`), `internal/backend/gcp/names.go:374,383-389`. **The
@@ -727,7 +743,7 @@ produced (out), and files an operator handed to a model-driven job (in).
   missing object is visible as "recorded but not present" only if it asks for
   a listing; the design's answer is: `ls` is the record, `get` is the object,
   and a `get` that finds no object says exactly that.
-- **`fugaro artifacts get RUN [NAME] [--out PATH] [--force]`** — downloads
+- **`fugaro artifacts get RUN [NAME] [--out DIR] [--force]`** — downloads
   one artifact (or all of them with no `NAME`, into `./` or `--out`), verifies
   the sha256 and the byte count against the record, refuses to overwrite
   without `--force`, and never opens what it writes. A mismatch is an error
@@ -747,36 +763,36 @@ produced (out), and files an operator handed to a model-driven job (in).
 ## 10. Task outline, and where it lands in the roadmap
 
 The full plan is [../plans/2026-10-15-artifact-runs.md](../plans/2026-10-15-artifact-runs.md).
-In outline, **eleven tasks**, ordered so each merges alone and the first
-delivers something an owner can use:
+**The outline is the plan's own task list, with the plan's numbers**, so a
+cross-reference here and one there name the same task:
 
-1. **The format: `mode: artifact`, the `render` step, `outputs:`, the
-   `commands.render`/`commands.probe` keys and `timeouts.render`** — the
-   recipe schema, the parser, the validation refusals, the docs table. Lands
-   with nothing executing it: an older binary refuses the recipe, and a newer
-   binary refuses `outputs:` on a `mode: implement` recipe.
-2. **The `render` step in the runner** — deterministic execution, the
-   deadline, the failure path, the `render` record. Proven with a
-   `file://` bucket and no cloud.
-3. **The outputs: selection, sanitisation, caps, hashing, upload** to
-   `runs/<slug>/<run>/artifacts/`, and the `result.json` + schema additions —
-   **on two new `blobx` methods** (`PutFile`, and `GetFile` for Task 6), since
-   every write today is a `[]byte` and every read is capped at 1 MiB (§3, V23).
-4. **The probe**: `commands.probe`, the two environment variables, the
+1. **The format**: `mode: artifact`, `plan`/`render`, `outputs`, and the
+   `commands.render`/`commands.probe` keys and `timeouts.render` — the recipe
+   schema, the parser, the validation refusals. Lands with nothing executing
+   it: an older binary refuses the recipe, and a newer binary refuses
+   `outputs:` on a `mode: implement` recipe.
+2. **`mode: artifact` in the runner, and the render step**: the bootstrap
+   branch, the plan stage, deterministic execution of `commands.render`, its
+   deadline, its failure path and the `render` record. Proven with an
+   in-memory bucket and no cloud.
+3. **Two streaming `blobx` methods**: `PutFile` and `GetFile` — the byte
+   layer the rest needs, since every write today is a `[]byte` and every read
+   is capped at 1 MiB (§3, V23).
+4. **The outputs**: selection, sanitisation, caps, hashing, upload to
+   `runs/<slug>/<run>/artifacts/`, and the `result.json` + schema additions.
+5. **The probe**: `commands.probe`, the two environment variables, the
    record.
-5. **The attachments: `--attach`, the task-spec list, the download, the
-   caps, the `.git/info/exclude` write.** (D6: same release as 1–4, separate
-   commit.)
-6. **The CLI: `fugaro artifacts ls|get`** with hash verification, and the
+6. **The attachments**: `--attach`, the task-spec list, the runner's
+   download (with its own name refusals and hash check), the caps, the
+   `.git/info/exclude` write. (D6: the same release, a separate commit.)
+7. **The CLI**: `fugaro artifacts ls|get` with hash verification, and the
    `runs ls`/`diagnose` display.
-7. **`budget preview`'s compute ceiling line** (§6), labelled "not capped".
-8. **The docs and the skills**: a new `docs/artifact-runs.md`, the sections
+8. **`budget preview`'s compute ceiling line** (§6), labelled "not capped".
+9. **The docs and the skills**: a new `docs/artifact-runs.md`, the sections
    in `docs/recipes.md` and `docs/base-image.md` (ffmpeg via `image.apt`), the
-   routing skill's "when to choose an artifact recipe", and **the SECURITY.md
-   text of §8.7 verbatim**.
-9. **The docs, the skills, SECURITY.md's two paragraphs (§8.7) and Check 58's
-   row and section** — written last in the plan, because the docs and skill
-   lints resolve the flags they name.
+   routing skill's "when to choose an artifact recipe", **the SECURITY.md text
+   of §8.7 verbatim**, and **Check 58's row and section in the checklist** —
+   written last, because the docs and skill lints resolve the flags they name.
 10. **Check 58** (owner-run, sandbox only) — §11. Not part of the pull request.
 11. **The full suite** and the `fugaro verify build`/`verify test` run.
 
@@ -818,12 +834,16 @@ artifact retrieved with a **sha256 match**, and the upload's wall clock
 against `finalize_reserve` (U6); (7) the failure direction, both halves — a
 probe that must fail the run and upload nothing, and an over-cap set that
 must refuse cleanly and leave the container alive (U3). Then the Restore.
-The seven steps are written out in the plan's Task 9 (the checklist text) and
-**run** in its Task 10, because a check's steps belong in the file that owns
-them (`../plans/2026-10-14-openrouter-senior-reviewer.md` Task 3's rule).
+That list is what the section must keep asserting, in whatever wording the file
+has; **the checklist file stays the single source of the wording.** The plan's
+Task 9 writes the row and the section (its own assertions list is a checklist
+of what they must pin, not a second copy of the steps), and the plan's Task 10
+runs them without quoting them back — the rule
+`../plans/2026-10-14-openrouter-senior-reviewer.md:146` states, whose finding
+was that a plan repeating a check's steps is how the two drift.
 
 **The numbering is checked, not assumed.** On `main`, `docs/gcp-live-checklist.md`
-has rows for 42–47 and **57** (the compute backend's, `:325`); **48–56 and 58
+has rows for 40–47 (`:317-324`, 42–47 at `:319-324`) and **57** (the compute backend's, `:325`); **48–56 and 58
 are free** (no row, no heading), and 24, 25 and 39 are reserved with no row.
 So **58 is this design's**, and it is the next free number for a check with a
 section of its own.
@@ -836,18 +856,18 @@ line read for it — the plan's Review Focus repeats the important ones):
 | # | Claim | Read from |
 |---|---|---|
 | V1 | The run prefix is `runs/<slug>/<run>/`, and the object names are `task.json`, `result.json`, `launch.json`, `cancel`, `report.md`, `transcripts/<stage>-<n>.jsonl`, `session/session.json`, `verify/<n>.json` | `internal/runstore/runstore.go:386-387,492,502,547`, `internal/runner/runner.go:1710,2132,2192`, `internal/runstore/session.go:39` |
-| V2 | `blobx.Open` accepts `gs://` **and** `file://`, so an artifact path is testable with no cloud | `internal/cli/exec.go:59`, `internal/e2e/budget_test.go:129` |
+| V2 | `blobx.Open` accepts `gs://` **and** `file://`, so an artifact path is testable with no cloud | `blobx.Open` call sites `internal/cli/exec.go:146,296`, its flag default `:59`, `internal/e2e/budget_test.go:129` |
 | V3 | The bucket deletes `runs/` objects at `runs_days` (default 90); `builds/` has no rule | `deploy/terraform/gcp/modules/installation/bucket.tf:16-24,63`, `variables.tf:109-121` |
 | V4 | A run's account is scoped to the **repository's** prefixes (`runs`, `cache`, `locks`), **not** to one run; a launcher reads the whole bucket and writes under `runs/`; an operator has `objectAdmin`; project Owners/Editors bypass it | `internal/backend/gcp/names.go:374,383-389`, `deploy/terraform/gcp/modules/workflow/sa.tf:24-33`, `docs/design/bucket-iam.md:88,126-128`, `SECURITY.md:36,62` |
 | V5 | `mode:` is `implement|review`; `review` is the no-git-token, no-PR precedent, with the outcome `reviewed` | `internal/recipe/recipe.go:37-40,356-362,634-638`, `docs/design/generic-tool.md:195-203`, `internal/runner/runner.go:635` |
 | V6 | The `check` step is deterministic, runs `verify.Run` in the checkout as the agent's user, may only come first, and may name only `commands.build|test|lint` | `internal/recipe/recipe.go:47-62`, `internal/runner/gate.go:61,125-132`, `internal/verify/verify.go:176,243`, `schemas/recipe.schema.json` |
-| V7 | A recipe names no command; bucket text would run code | `docs/design/generic-tool.md:357` |
+| V7 | A recipe names no command; bucket text would run code | `docs/design/generic-tool.md:356` (G10's row), `internal/runner/gate.go:125-127` |
 | V8 | Timeouts: `total 90m` / `stage min(40m,total)` by default; this repository's `fugaro.yaml` says `2h/90m/25m/5m`; `finalizeAt` is the real deadline; Cloud Run gets `total+2m`; a task may run 24h; the CLI caps `--total-timeout` at 24h | `internal/config/defaults.go:77-90`, `fugaro.yaml:54`, `internal/runner/budget.go:22-34`, `docs/design/v1.md:370`, `docs/SPEC.md:30`, `internal/cli/run.go:976-991` |
 | V9 | Cloud Run jobs take 1, 2, 4, 6 or 8 vCPU and at most 32Gi | `internal/backend/gcp/limits.go:22,36-38,55`, `limits_test.go:11,23` |
-| V10 | The caps count model dollars; compute is an estimate, reported and never capped; `compute_usd`/`compute_estimated` exist and are rolled into history | `docs/design/m9-spec-v3-reconciliation.md:10`, `docs/design/m9-budget-and-dashboard.md:798`, `internal/budget/evaluate.go:190-204`, `internal/runner/cost.go:62-64`, `internal/runstore/cost.go:12-18`, `internal/budget/rollup.go:36-39` |
+| V10 | The caps count model dollars; compute is an estimate, reported and never capped; `compute_usd`/`compute_estimated` exist and are rolled into history | `docs/design/m9-spec-v3-reconciliation.md:10`, `docs/design/m9-budget-and-dashboard.md:798`, `internal/budget/evaluate.go:190-204`, `internal/runner/cost.go:62-64`, `internal/runstore/cost.go:12-18`, `internal/budget/rollup.go:296-303` |
 | V11 | `fugaro budget preview` has no compute notion | `internal/cli/budget_preview.go:26-28,489-538,697-731` |
 | V12 | mise is in the base image; ffmpeg is nowhere in the repository; `image.apt`, `image.setup`, `dockerfile:` and `image.tools`/`mise.toml` are the four ways to add a tool | `images/base/Dockerfile:39-41,154-168`, `images/derived/Dockerfile.tmpl:26-33`, `internal/image/render.go:92-117`, `docs/base-image.md:36-47,63` |
-| V13 | No artifact/attachment/output concept in `generic-tool.md`, `recipes.md` or `v1.md` (v1's hits are all Artifact Registry) — and none in the schemas or the CLI | grep over the tree, `schemas/recipe.schema.json`, `schemas/result.schema.json`, `internal/cli` |
+| V13 | No artifact/attachment/output concept in `generic-tool.md`, `recipes.md` or `v1.md` — except that v1's 15 hits are Artifact Registry (the GCP service) but one is `ARTIFACTORY_TOKEN` (`v1.md:542`, a JFrog token) — and none in the schemas or the CLI | grep over the tree, `schemas/recipe.schema.json`, `schemas/result.schema.json`, `internal/cli` |
 | V14 | No signed URL and no `signBlob` grant anywhere; only `iam.serviceAccounts.signJwt` for the budget identity | grep over `internal/` and `cmd/`, `deploy/terraform/gcp/modules/firebase/iam.tf:23` |
 | V15 | `result.json`'s schema is `additionalProperties: false` and is validated **only by tests**, never at read time; readers use the Go struct | `schemas/result.schema.json`, `schemas/schemas_test.go:23`, `internal/runstore/runstore.go:532` |
 | V16 | `runs ls` and `diagnose` read named files, never enumerate the prefix | `internal/cli/runs.go:379-390`, `internal/cli/diagnose.go:158,177` |
@@ -856,7 +876,7 @@ line read for it — the plan's Review Focus repeats the important ones):
 | V19 | GPUs are out of scope in the VM design, by name | `docs/design/compute-backend.md:1485` (§6.3) |
 | V20 | A repository-less run needs project-centric phase 3's project jobs, which are not shipped; `checkout: clone` is not shipped either | `docs/design/project-centric.md:15,66-68,109`, `internal/cli/recipes_skew.go:36`, `internal/cli/docs_checkout_test.go:123-132` |
 | V21 | Check numbers: rows exist for 42–47 and 57; 48–56 and 58 are free; Check 43's guard block is at `:1437-1458` and "never `belong`" at `:1431` | `docs/gcp-live-checklist.md` |
-| V22 | The three PNGs Check 58's step 1 generates are real PNGs — the generator in the plan was run here and produced three valid 320×240 8-bit RGB PNGs | run in this session |
+| V22 | The three PNGs the check generates are real PNGs: the generator the plan commits to (a `python3` one-liner over `zlib`/`struct`, in Check 58's section) was run in this session and produced three valid 320×240 8-bit RGB PNGs, 865 bytes each | run in this session; the command is in the plan, Check 58's step 2 |
 | V23 | `blobx` has no streaming write and no read above 1 MiB (`MaxReadBytes`), and no `Put`/`Create` variant that takes a path | `internal/blobx/blobx.go:51-54,109-138,148-198,314` |
 
 **UNVERIFIED, with the check that would settle each:**
