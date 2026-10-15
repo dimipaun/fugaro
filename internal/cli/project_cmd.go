@@ -164,7 +164,9 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 			}
 		}
 		if o.delete {
-			return deleteProjectPolicy(cmd, lc, db, out, exists, o)
+			// The ETag and the version this read is what the deletion is made
+			// against: see deleteProjectPolicy.
+			return deleteProjectPolicy(cmd, lc, db, out, exists, etag, o)
 		}
 		old, err := publishedPolicyOf(raw, exists)
 		if err != nil {
@@ -178,11 +180,15 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		if err != nil {
 			return err
 		}
-		if err := checkPolicyWeWouldWrite(pol); err != nil {
+		body, err := policyNodeBytes(pol, raw, exists)
+		if err != nil {
+			return err
+		}
+		if err := checkPolicyBytes(body); err != nil {
 			return err
 		}
 		printPolicyDiff(out, old, pol, sources)
-		err = db.PutIfMatch(ctx, projectpolicy.PathShared(), etag, pol)
+		err = db.PutIfMatch(ctx, projectpolicy.PathShared(), etag, json.RawMessage(body))
 		switch {
 		case err == nil:
 			fmt.Fprintf(out, "set %s\n", projectpolicy.PathShared())
@@ -223,7 +229,17 @@ func requirePolicyRules(ctx context.Context, db *rtdb.Client, lc *localcfg.Confi
 	case gen >= projectpolicy.RulesVersion:
 		return nil
 	}
-	return userErr("the deployed rules are older than the marker %s: re-run 'fugaro init --firebase' with fugaro >= %s first; a policy published now is one the runs it bounds cannot read",
+	return userErr("%s", rulesSkewText())
+}
+
+// rulesSkewText is the one sentence for "the deployed rules are older than
+// the marker": `policy publish` refuses with it and doctor's
+// policy-rules-skew check prints it (plan task 1.6 step 4's fifth check),
+// so the state reads the same whether the operator met it as a refusal or
+// as a report. It is a plain sentence and not an error, because doctor has
+// no error to wrap it in.
+func rulesSkewText() string {
+	return fmt.Sprintf("the deployed rules are older than the marker %s: re-run 'fugaro init --firebase' with fugaro >= %s first; a policy published now is one the runs it bounds cannot read",
 		projectpolicy.PathRulesMarker(), policySince)
 }
 
@@ -306,21 +322,48 @@ func publishAllowRepos(ctx context.Context, lc *localcfg.Config, old *projectpol
 //
 // The second return is where each entry came from, for the printed list.
 func seedAllowRepos(ctx context.Context, lc *localcfg.Config) ([]string, map[string]string, error) {
+	sources, err := allowSourcesOf(ctx, lc, true)
+	if err != nil {
+		return nil, nil, err
+	}
+	return slices.Sorted(maps.Keys(sources)), sources, nil
+}
+
+// allowSourcesOf is the seed with the posture chosen: every repository this
+// machine's config names — its own repos: map, then the shared config's list —
+// as canonical entries, and where each came from.
+//
+// strict is the writer's: an entry it cannot spell as a canonical name is
+// refused, because a seed that quietly leaves one out is a publish that
+// un-enrolls a repository which runs today, and the operator asked for that
+// list to be written. The readers (`allowSources`, for `project show` and
+// `project repos ls`) skip such an entry instead: they only label where an
+// allow-list entry came from, a `repos:` entry need not name a provider at all
+// (localcfg: the checkout's fugaro.yaml decides it), and a read-only command
+// must not abort on a config the tool accepts — the same reason repoBySlug and
+// the shared-config branch below skip these.
+func allowSourcesOf(ctx context.Context, lc *localcfg.Config, strict bool) (map[string]string, error) {
 	sources := map[string]string{}
 	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
 		r := lc.Repos[name]
 		if r.Provider == "" {
-			return nil, nil, userErr("the local config's repos.%s names no git provider: the allow-list is canonical (provider/owner/name), so add provider: github or provider: bitbucket there", name)
+			if strict {
+				return nil, userErr("the local config's repos.%s names no git provider: the allow-list is canonical (provider/owner/name), so add provider: github or provider: bitbucket there", name)
+			}
+			continue
 		}
 		c, err := projectpolicy.Canonical(r.Provider, name)
 		if err != nil {
-			return nil, nil, userErr("the local config's repos.%s: %v", name, err)
+			if strict {
+				return nil, userErr("the local config's repos.%s: %v", name, err)
+			}
+			continue
 		}
 		sources[c] = "repos: " + name
 	}
 	shared, err := sharedRepos(ctx, lc)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	for _, name := range slices.Sorted(maps.Keys(shared)) {
 		r := shared[name]
@@ -335,7 +378,7 @@ func seedAllowRepos(ctx context.Context, lc *localcfg.Config) ([]string, map[str
 			sources[c] = "the shared config"
 		}
 	}
-	return slices.Sorted(maps.Keys(sources)), sources, nil
+	return sources, nil
 }
 
 // sharedRepos is the repository list of the config published to the runs
@@ -458,12 +501,77 @@ func policyPrices(lc *localcfg.Config) projectpolicy.Prices {
 // (a price_policy outside its two values, a misspelt model pattern, a
 // per_run_usd that rounds to nothing): either way nothing is written, and the
 // operator sees which value it was.
-func checkPolicyWeWouldWrite(p *projectpolicy.Policy) error {
-	raw, err := json.Marshal(p)
+// policyNodeBytes is the document a publish writes: the policy built from the
+// operator's config, with the `routing` member of the node being replaced
+// carried over byte for byte.
+//
+// The member and not the decoded value, because routing is shared with
+// releases that know more of it than this one does (phase 1b writes it, and a
+// later release writes more): a key inside `routing` that this Fugaro does not
+// model survives the decode — json.Unmarshal ignores it, and Decode cannot
+// list it the way it lists an unknown top-level key — so re-encoding the
+// decoded value would drop it. The publisher does not write routing at all
+// (buildProjectPolicy copies the old one), so "kept" has to mean kept whole:
+// this is the same quiet loosening `repos add|rm` refuses to make by patching
+// the document (patchPolicyJSON), and printPolicyDiff tells the operator the
+// block is kept.
+//
+// A node with no routing member is written without one, which is direct (D1b).
+func policyNodeBytes(pol *projectpolicy.Policy, oldRaw []byte, exists bool) ([]byte, error) {
+	node, err := json.Marshal(pol)
 	if err != nil {
-		return userErr("building the policy: %v", err)
+		return nil, userErr("building the policy: %v", err)
 	}
-	return checkPolicyBytes(raw)
+	if !exists {
+		return node, nil
+	}
+	routing, ok, err := jsonMember(oldRaw, "routing")
+	if err != nil {
+		// The node decoded as a policy a moment ago (publishedPolicyOf), so a
+		// member of it cannot be unreadable; refuse rather than write a node
+		// that silently lost the block.
+		return nil, userErr("%s cannot be read back as a document, so its routing block cannot be kept: %v; fix it by hand, or remove it with 'fugaro project policy publish --delete'", projectpolicy.PathShared(), err)
+	}
+	if !ok {
+		return node, nil
+	}
+	patched, err := patchPolicyJSON(node, "routing", routing)
+	if err != nil {
+		return nil, userErr("building the policy: %v", err)
+	}
+	return patched, nil
+}
+
+// jsonMember is the raw bytes of one member of a JSON object, and whether the
+// object has it. It is patchPolicyJSON's reader: the members are streamed, so
+// what comes back is the member's own bytes, not a re-encoding of its value.
+func jsonMember(raw []byte, key string) (json.RawMessage, bool, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, false, err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return nil, false, errors.New("the node is not a JSON object")
+	}
+	for dec.More() {
+		kt, err := dec.Token()
+		if err != nil {
+			return nil, false, err
+		}
+		name, ok := kt.(string)
+		if !ok {
+			return nil, false, errors.New("the node has a member without a name")
+		}
+		var v json.RawMessage
+		if err := dec.Decode(&v); err != nil {
+			return nil, false, err
+		}
+		if name == key {
+			return v, true, nil
+		}
+	}
+	return nil, false, nil
 }
 
 // checkPolicyBytes refuses bytes this Fugaro would write but cannot read back
@@ -711,7 +819,6 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 		"budget.max_run_tokens": fmt.Sprintf("%d", p.Budget.MaxRunTokens),
 		"allow_repos":           fmt.Sprintf("%v", nonNil(p.AllowRepos)),
 		"providers":             strings.Join(slices.Sorted(maps.Keys(p.Providers)), ", "),
-		"model_prices":          fmt.Sprintf("%d", len(p.Prices)),
 	}
 }
 
@@ -728,7 +835,18 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 // answered "nothing to delete" on the strength of the absent shared node would
 // leave them forever (the review of PR #390). A governance node left under
 // config/policy/repos is policy text a later release may read.
-func deleteProjectPolicy(cmd *cobra.Command, lc *localcfg.Config, db *rtdb.Client, out io.Writer, exists bool, o *projectPolicyPublishOptions) error {
+// deleteProjectPolicy removes the policy: the child nodes of config/policy/repos
+// first, the shared node last (B5).
+//
+// etag is the one readPolicyNode returned for that first read — the node
+// refuseNewerPolicy saw, the one the in-flight check and the confirmation were
+// made about — and the shared node is deleted against it, not against a fresh
+// read. Reading it again here would delete whatever a publish landing in that
+// window wrote: an unconfirmed deletion of a node nobody read, and, if it
+// carries a version this binary refuses to overwrite (P8), of a node it must
+// not delete at all. A failed precondition is therefore a refusal, not a retry:
+// a deletion is not repeated behind an operator's back.
+func deleteProjectPolicy(cmd *cobra.Command, lc *localcfg.Config, db *rtdb.Client, out io.Writer, exists bool, etag string, o *projectPolicyPublishOptions) error {
 	ctx := cmd.Context()
 	children, err := policyRepoChildren(ctx, db, lc)
 	if err != nil {
@@ -756,33 +874,32 @@ func deleteProjectPolicy(cmd *cobra.Command, lc *localcfg.Config, db *rtdb.Clien
 			return err
 		}
 	}
-	removed := []string{}
+	// Each removal is printed as it happens: a deletion that stops at the last
+	// node must not leave the operator guessing which ones went.
 	for _, key := range children {
 		path := projectpolicy.PathRepos() + "/" + key
-		etag, found, err := db.GetETag(ctx, path, nil)
+		childEtag, found, err := db.GetETag(ctx, path, nil)
 		if err != nil {
-			return dbErr(lc, err, true)
+			// A read, so the refusal names the read role: see dbErr's flag.
+			return dbErr(lc, err, false)
 		}
 		if !found {
 			continue
 		}
-		if err := db.PutIfMatch(ctx, path, etag, nil); err != nil {
+		if err := db.PutIfMatch(ctx, path, childEtag, nil); err != nil {
 			return dbErr(lc, err, true)
 		}
-		removed = append(removed, path)
+		fmt.Fprintf(out, "removed %s\n", path)
 	}
-	etag, found, err := db.GetETag(ctx, projectpolicy.PathShared(), nil)
-	if err != nil {
-		return dbErr(lc, err, true)
-	}
-	if found {
+	if exists {
 		if err := db.PutIfMatch(ctx, projectpolicy.PathShared(), etag, nil); err != nil {
+			if errors.Is(err, rtdb.ErrPrecondition) {
+				return userErr("the policy node at %s changed while this deletion was being confirmed (another publish landed meanwhile), so it was not removed: the child nodes under %s are deleted first and are gone; read what the node now holds with 'fugaro project policy show', then run 'fugaro project policy publish --delete' again",
+					projectpolicy.PathShared(), projectpolicy.PathRepos())
+			}
 			return dbErr(lc, err, true)
 		}
-		removed = append(removed, projectpolicy.PathShared())
-	}
-	for _, p := range removed {
-		fmt.Fprintf(out, "removed %s\n", p)
+		fmt.Fprintf(out, "removed %s\n", projectpolicy.PathShared())
 	}
 	if exists {
 		fmt.Fprintln(out, "no policy is published: runs fall back to the ceiling their job's environment carries")
@@ -1200,11 +1317,7 @@ func runningRepos(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) ([]
 // entry that is not in it was added on purpose (`project repos add`) or is a
 // pattern.
 func allowSources(ctx context.Context, lc *localcfg.Config) (map[string]string, error) {
-	_, sources, err := seedAllowRepos(ctx, lc)
-	if err != nil {
-		return nil, err
-	}
-	return sources, nil
+	return allowSourcesOf(ctx, lc, false)
 }
 
 // refuseUnknownPolicyKeys is what every CLI reader of the published node does
@@ -1288,12 +1401,13 @@ func newProjectReposLsCmd() *cobra.Command {
 func newProjectReposAddCmd() *cobra.Command {
 	var o projectReposOptions
 	cmd := &cobra.Command{
-		Use:   "add <provider/owner/name | owner/name>",
+		Use:   "add <provider/owner/name | owner/name | *>",
 		Short: "Enroll a repository: add it to the policy's allow-list",
 		Long: "Add a canonical repository (github/acme/app, bitbucket/acme/*) to the\n" +
 			"published policy's allow_repos, through the same ETag-guarded write the\n" +
 			"publisher uses, and print the change. A bare owner/name takes its provider\n" +
-			"from this machine's project config. Only allow_repos changes.",
+			"from this machine's project config, and * is the list's own entry for every\n" +
+			"repository: it is written as it is. Only allow_repos changes.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runProjectReposEdit(cmd, &o, args[0], false) },
 	}
@@ -1304,13 +1418,14 @@ func newProjectReposAddCmd() *cobra.Command {
 func newProjectReposRmCmd() *cobra.Command {
 	var o projectReposOptions
 	cmd := &cobra.Command{
-		Use:   "rm <provider/owner/name | owner/name>",
+		Use:   "rm <provider/owner/name | owner/name | *>",
 		Short: "Un-enroll a repository: remove it from the allow-list",
 		Long: "Remove an entry from the published policy's allow_repos. Removing an allowed\n" +
 			"repository stops its runs — a run of a repository the list does not admit is\n" +
 			"refused before it mints a git token — unless another entry on the list still\n" +
 			"admits it, which is the case a pattern makes (github/acme/app stays admitted\n" +
 			"while github/acme/* is there); the confirmation says which of the two it is.\n" +
+			"Removing * refuses every repository the rest of the list does not admit.\n" +
 			"So it asks you to type the project's name, and while a run is in flight --yes\n" +
 			"alone is not enough.",
 		Args: cobra.ExactArgs(1),
@@ -1373,7 +1488,12 @@ func runProjectReposLs(cmd *cobra.Command, o *projectReposOptions) error {
 // concurrent publisher is refused rather than overwritten.
 func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string, remove bool) error {
 	ctx := cmd.Context()
-	lc, db, err := openBudget(ctx, o.cloud)
+	// openProjectBudget, not openBudget: this writes the published policy node,
+	// so it is a writer like `policy publish` and takes the same two refusals —
+	// the shared config is not an operator's own installation (and its repos:
+	// map is not the one a bare owner/name resolves against), and the database
+	// must be this project's.
+	lc, db, err := openProjectBudget(ctx, o.cloud)
 	if err != nil {
 		return err
 	}
@@ -1406,6 +1526,16 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 	allow := nonNil(p.AllowRepos)
 	have := slices.Contains(p.AllowRepos, canonical)
 	if remove && !have {
+		// A name that is not an entry can still be admitted by a pattern on the
+		// list, and then the removal removes nothing and refuses nothing: saying
+		// only "nothing to remove" would read as if the repository had stopped
+		// running.
+		for _, pattern := range p.AllowRepos {
+			if projectpolicy.MatchRepo(pattern, canonical) {
+				return userErr("%s is not an entry of the allow-list of %s; the pattern %s admits it, so its runs keep running — remove that pattern to refuse them",
+					canonical, projectpolicy.PathShared(), pattern)
+			}
+		}
 		return userErr("%s is not on the allow-list of %s: nothing to remove", canonical, projectpolicy.PathShared())
 	}
 	if !remove && have {
@@ -1480,32 +1610,32 @@ func removalWarning(allow []string, canonical string) string {
 // and the launcher use (projectpolicy.MatchRepo), so the sentence above is what
 // the next run will actually do.
 //
-// A concrete repository is admitted by any remaining entry that matches it: the
-// wildcard, or a pattern such as github/acme/*. A *pattern* being removed is a
-// different question — removing it is moot only if some remaining entry admits
-// everything it admitted — and the only entry that does is the bare wildcard
-// (two identical entries cannot both be on the list).
+// One matcher answers both questions a removal raises. A concrete repository is
+// admitted by any remaining entry that matches it: the wildcard, or a pattern
+// such as github/acme/*. A *pattern* being removed is moot only if some
+// remaining entry admits every repository it admitted — and MatchRepo answers
+// that too, because it matches its second argument as a *repository*: an entry
+// that matches the string github/acme/* is one whose own segments match
+// "github", "acme" and "*", which is exactly what admitting github/acme/<any>
+// takes. github/*/* matches it, github/ac*/* matches it (github/ac* is every
+// owner whose name starts with "ac"), and github/*/app does not — its middle
+// segment would have to match the literal string "*". The reading is sound in
+// the direction that matters: a pattern that matches a string matches every
+// expansion of it, since a "*" stands for any run of characters within one
+// segment, so no entry can be reported as still admitting a repository the
+// removal really does refuse.
 //
-// An entry is a pattern when it carries a wildcard, not when ValidPattern
-// accepts it: ValidPattern accepts a concrete name too (a pattern with no "*"
-// matches exactly itself), so asking it would send every concrete removal down
-// the pattern branch — and github/acme/app removed while github/acme/* is on
-// the list would read "its runs are refused from now on", which is the one
-// thing the removal does not do.
+// An entry is a pattern when it carries a wildcard, and that is not a question
+// for this function: MatchRepo reads a concrete repository and a pattern alike,
+// because ValidPattern accepts a concrete name too (a pattern with no "*"
+// matches exactly itself) — so github/acme/app removed while github/acme/* is on
+// the list reads "its runs are not refused", which is what the removal does.
 func admittedBy(allow []string, arg string) (bool, string) {
 	rest := make([]string, 0, len(allow))
 	for _, p := range allow {
 		if p != arg {
 			rest = append(rest, p)
 		}
-	}
-	if strings.Contains(arg, "*") {
-		for _, p := range rest {
-			if p == "*" {
-				return true, p
-			}
-		}
-		return false, ""
 	}
 	for _, p := range rest {
 		if projectpolicy.MatchRepo(p, arg) {
@@ -1522,6 +1652,19 @@ func admittedBy(allow []string, arg string) (bool, string) {
 // only, and a concrete name goes through projectpolicy.Canonical — so the
 // entry written is one the runner's own canonical form could have produced.
 func canonicalRepoArg(lc *localcfg.Config, arg string) (string, error) {
+	if arg == "*" {
+		// The allow-list's own entry for every repository — the design's
+		// explicit choice (docs/design/project-centric.md §4.3), which
+		// MatchRepo reads as admitting anything. It is not a repository, so
+		// neither the config lookup below (there is no owner/name to resolve a
+		// provider from) nor projectpolicy.Canonical applies to it: it is
+		// taken as it is — projectpolicy.ValidPattern has a branch of its own
+		// for it, so there is nothing left to check here.
+		// Without this branch it fell through the split to "write it as
+		// provider/owner/name", so the widest list could not be written and a
+		// list holding it could not be narrowed without a full republish.
+		return arg, nil
+	}
 	parts := strings.Split(arg, "/")
 	if len(parts) == 2 {
 		r, ok := lc.Repos[arg]

@@ -287,6 +287,48 @@ func TestRunnerWithTheMarkerAndNoBackendRefuses(t *testing.T) {
 	}
 }
 
+// The same refusal, at the placement it has to have: the marker is proof that
+// a policy or a shared budget exists, and a job that carries no backend cannot
+// read either — so the run must stop at the *policy read*, before
+// admissionCheck and before the provider is opened. Stopping later (at
+// startBudgetBackend, which is where this state was first refused) is the
+// fail-open direction: the policy read answered "no policy", so the allow-list
+// was never consulted, a git credential was handed out and the repository was
+// cloned on a ceiling nobody had published, for a launch the launcher minted
+// precisely because something was published.
+//
+// The credential count is the observation: the fixture's provider counts the
+// git credentials it is asked for, and a refusal must be zero (admission_test's
+// refusedAdmission, whose comment says the same about the placement of the
+// admission check).
+//
+// Mutation (verified, run and restored): drop `!r.d.Backend.TokenMarked` from
+// projectPolicy's no-backend early return and the matching refusal from
+// budgetClient: this test fails on the credential count — "1 git credential
+// requests were made before the refusal" — and on nothing else.
+func TestRunnerWithTheMarkerAndNoBackendRefusesBeforeTheClone(t *testing.T) {
+	b := admissionRun(t, "github", "acme/app", "off", "", "")
+	b.deps.Backend = runner.Backend{TokenMarked: true}
+	rec, err := b.run(t, implement("feature"))
+	if err == nil {
+		t.Fatalf("a marked run with no backend in its job must stop: rec = %+v", rec)
+	}
+	for _, want := range []string{runner.RTDBURLEnv, "fugaro init --repo"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if b.auths == nil {
+		t.Fatal("the fixture is not counting git credential requests")
+	}
+	if *b.auths != 0 {
+		t.Errorf("%d git credential requests were made before the refusal: the run read its job's missing backend as this project having published nothing, skipped admission and cloned", *b.auths)
+	}
+	if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("a stage ran or an outcome was written: calls = %d, rec = %+v", len(b.agent.calls), rec)
+	}
+}
+
 // B1's regression test: the job's environment says the budget is on but carries
 // no FUGARO_FIREBASE_API_KEY. That is the shipped refusal — never the mode-off
 // path, and never "no policy here": the run must not proceed on the environment
