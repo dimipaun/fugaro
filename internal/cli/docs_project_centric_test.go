@@ -124,6 +124,35 @@ func TestChecklistHasCheck52(t *testing.T) {
 			t.Errorf("the Check 52 section's Restore is missing %q", restore)
 		}
 	}
+	// The Restore's job check happens twice: once against the drift U2(b)
+	// added, once after --remove-secrets. With only the first pair the job is
+	// never compared with step 1's file again, and "back to the file's
+	// contents" is a claim the section never tests.
+	if n := strings.Count(section, "diff /tmp/chk52-job-before.json /tmp/chk52-job-after.json"); n != 2 {
+		t.Errorf("the Check 52 section diffs the job against step 1's file %d times, want 2 (before and after --remove-secrets)", n)
+	}
+	// Restore runs from a fresh shell: OWNER is set in step 4's block only, so
+	// the removal of the token-creator grant must default it here too.
+	if !strings.Contains(section, `OWNER=${OWNER:-$(gcloud auth list`) {
+		t.Error("the Check 52 section's Restore does not default OWNER for a fresh shell")
+	}
+	// A Bitbucket Cloud clone URL is https://bitbucket.org/<workspace>/<slug>.git:
+	// the project is metadata, never a path segment. A URL that carries the
+	// project key addresses a path that does not exist, so the in-scope reads
+	// fail and the out-of-scope read is refused for the wrong reason.
+	for _, url := range []string{
+		`git remote add probe1 "https://bitbucket.org/${PROBE_WS:?}/fugaro-probe-1.git"`,
+		`git remote add probe2 "https://bitbucket.org/${PROBE_WS:?}/fugaro-probe-2.git"`,
+		`git ls-remote "https://bitbucket.org/${OUT_WS:?}/fugaro-probe-3.git"`,
+	} {
+		if !strings.Contains(section, url) {
+			t.Errorf("the Check 52 section is missing the Bitbucket URL %q", url)
+		}
+	}
+	if strings.Contains(section, "bitbucket.org/${PROBE_WS:?}/${PROBE_PROJECT:?}") ||
+		strings.Contains(section, "bitbucket.org/${OUT_WS:?}/${OUT_PROJECT:?}") {
+		t.Error("the Check 52 section builds a Bitbucket clone URL with the project as a path segment")
+	}
 	// The closing paragraph, which is what the owner reads last: its opening
 	// sentence is the instruction that keeps secrets out of the pull request.
 	for _, closing := range []string{

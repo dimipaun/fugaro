@@ -2162,15 +2162,17 @@ SH
 chmod 700 "$ASKPASS"
 export PROBE_TOKEN GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0
 
-git remote add probe1 "https://bitbucket.org/${PROBE_WS:?}/${PROBE_PROJECT:?}/fugaro-probe-1.git"
-git remote add probe2 "https://bitbucket.org/${PROBE_WS:?}/${PROBE_PROJECT:?}/fugaro-probe-2.git"
+git remote add probe1 "https://bitbucket.org/${PROBE_WS:?}/fugaro-probe-1.git"
+git remote add probe2 "https://bitbucket.org/${PROBE_WS:?}/fugaro-probe-2.git"
 git ls-remote probe1                                  # in the token's project: must succeed
 git push probe1 HEAD:probe-check                      # one push to a scratch branch: must succeed
 git ls-remote probe2                                  # the second repository of the same project: must succeed
 git push probe2 HEAD:probe-check                      # and a push to it (review I2): must succeed
-git ls-remote "https://bitbucket.org/${OUT_WS:?}/${OUT_PROJECT:?}/fugaro-probe-3.git"   # the out-of-scope project: must be REFUSED
+git ls-remote "https://bitbucket.org/${OUT_WS:?}/fugaro-probe-3.git"   # fugaro-probe-3 is the other project's: must be REFUSED
 unset PROBE_TOKEN; rm -f "$ASKPASS"
 ```
+
+**The URLs carry the workspace and the repository slug only.** A Bitbucket Cloud clone URL is `https://bitbucket.org/<workspace>/<repo_slug>.git` — the project is metadata, never a path segment (the repository's own `clone` link, `internal/gitprov/bitbucket/recorded_test.go:317`, and this document's own `https://bitbucket.org/edgeappinc/fugarosandbox.git` above both show the two-segment form; a project's page is `https://bitbucket.org/<workspace>/workspace/projects/<KEY>`). `PROBE_PROJECT` and `OUT_PROJECT` therefore appear nowhere in a URL: they are the two projects' Bitbucket-side identifiers, used to *create* them and to *delete* them in Restore. What separates the out-of-scope repository is its **slug** — `fugaro-probe-3` — in the second project of the same workspace, which is exactly the fact the probe tests.
 
 **FACT:** whether the token reads and pushes to exactly the project's repositories (both of them), whether it is refused by the *other project of the same workspace*, and the token's own scopes as Bitbucket reports them. **If the scope cannot be a Bitbucket project's repositories, Bitbucket projects stay on the per-repository path** (design §4.5) — **the owner is told before phase 3 starts**, D5 is re-decided, and plan Tasks 3.1 to 3.7 proceed for GitHub only. The fallback the design names — a runtime fetch by secret-name prefix with an IAM condition — is itself probe U3 below and **reintroduces the shared-service-account exposure of §4.1**, so it is a decision, not a default.
 
@@ -2299,13 +2301,20 @@ Everything this check created, removed in this order. **The job first** — diff
 
 ```bash
 gcloud run jobs describe "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --format=json > /tmp/chk52-job-after.json
-diff /tmp/chk52-job-before.json /tmp/chk52-job-after.json
+diff /tmp/chk52-job-before.json /tmp/chk52-job-after.json   # the drift U2(b) added — expected to print
 gcloud run jobs update "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --remove-secrets=PROBE_REF
+gcloud run jobs describe "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --format=json > /tmp/chk52-job-after.json
+diff /tmp/chk52-job-before.json /tmp/chk52-job-after.json   # after the removal: nothing left to print
 ```
+
+The second `describe`+`diff` is the check the prose is about: the first pair can only show what U2(b) changed, and without the second the job is never compared with step 1's file again. **An empty second diff is the Restore's evidence that the template is back as step 1 recorded it** (a non-empty one is reported to the owner, not "fixed" here).
 
 **Then the GCP-side probe state**, each a command:
 
 ```bash
+# OWNER is defaulted here: step 4's block set it, and a fresh shell (the
+# normal case for Restore) has not run step 4.
+OWNER=${OWNER:-$(gcloud auth list --filter=status:ACTIVE --format='value(account)' | head -1)}
 gcloud projects remove-iam-policy-binding "${P:?}" \
   --member="serviceAccount:${PROBE_SA:?}" --role="roles/secretmanager.secretAccessor" \
   --condition="${PROBE_COND:?}"
