@@ -17,6 +17,12 @@ import (
 // and the job's FUGARO_BACKEND.
 const CloudRun = "cloud-run"
 
+// CloudBatch is Cloud Batch's backend name. internal/backend/batch speaks
+// it, but nothing selects it yet: config validation refuses it everywhere
+// until the owner's Check 57a measurement says the platform behaves as
+// docs/design/compute-backend.md describes (design §9).
+const CloudBatch = "cloud-batch"
+
 // TaskTimeoutSlack is what the job's task timeout adds to the workflow's
 // timeouts.total (design §4.5): internal/infra hands it to Terraform, and
 // the runner's lock expiry and writeback window rely on it. It is the single source for both.

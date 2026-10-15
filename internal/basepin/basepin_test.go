@@ -43,6 +43,32 @@ func wantIdentity(owner, repoOnGitHub, version string) CertIdentity {
 	return Identity(owner, repoOnGitHub, version)
 }
 
+// TestIdentityIsTheLiteralTagPushIdentity pins the exact strings a release's
+// certificate must carry, written out rather than built by calling Identity
+// again. Every other test here (and the fakeVerifier's own expectation)
+// builds its want by calling Identity, so a change to the format — say
+// "@refs/heads/main", or another repository — would move both sides of those
+// comparisons together and pass; this test is the one that would not.
+func TestIdentityIsTheLiteralTagPushIdentity(t *testing.T) {
+	id := Identity("dimipaun", "fugaro", "0.7.5")
+	if got, want := id.WorkflowRef, "https://github.com/dimipaun/fugaro/.github/workflows/images.yml@refs/tags/v0.7.5"; got != want {
+		t.Errorf("WorkflowRef = %q, want %q (the tag push of this repository's images.yml)", got, want)
+	}
+	if got, want := id.Issuer, "https://token.actions.githubusercontent.com"; got != want {
+		t.Errorf("Issuer = %q, want %q", got, want)
+	}
+	// The workflow ref says which workflow ran against which ref; a
+	// workflow_dispatch run against the same tag ref carries the very same
+	// one. These two extensions are what say the run was a push of THIS
+	// repository, so they are pinned here just as literally.
+	if got, want := id.Trigger, "push"; got != want {
+		t.Errorf("Trigger = %q, want %q (the tag push; the nightly and a dispatch must not pass)", got, want)
+	}
+	if got, want := id.Repository, "dimipaun/fugaro"; got != want {
+		t.Errorf("Repository = %q, want %q", got, want)
+	}
+}
+
 func TestResolve(t *testing.T) {
 	tr := fakeResolver{digest: testDigest}
 	ref := "ghcr.io/dimipaun/fugaro-base@" + testDigest
@@ -130,8 +156,18 @@ func TestMirrorResolverRefusesASourceThatIsNotRegistryAndOwner(t *testing.T) {
 
 // TestCosignVerifierPinsTheDigestAndTheIdentity is the one that keeps the
 // shell-out honest: the reference must be a digest (cosign's own artifact
-// policy), and the identity and issuer must be the release workflow's tag
-// push — nothing looser, and no flag that would accept any signature.
+// policy), and all four claims must be the release workflow's tag push —
+// the identity and the issuer, and the trigger and repository extensions
+// that tell a tag push from a workflow_dispatch run against the same tag
+// ref or a run in another repository. Nothing looser, and no flag that
+// would accept any signature.
+//
+// The expected argv is written out literally rather than from the identity
+// the verifier is handed: a verifier that stopped passing either of the two
+// extension flags (or passed the wrong value) must fail here, and an
+// expectation built from the same struct could not see it. Mutation
+// (checked by hand): dropping either --certificate-github-workflow-* pair
+// from cosign.go fails this test.
 func TestCosignVerifierPinsTheDigestAndTheIdentity(t *testing.T) {
 	dir := t.TempDir()
 	args := filepath.Join(dir, "args")
@@ -154,7 +190,14 @@ func TestCosignVerifierPinsTheDigestAndTheIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.Split(strings.TrimSpace(string(b)), "\n")
-	want := []string{"verify", "--certificate-identity", id.WorkflowRef, "--certificate-oidc-issuer", id.Issuer, ref}
+	want := []string{
+		"verify",
+		"--certificate-identity", "https://github.com/dimipaun/fugaro/.github/workflows/images.yml@refs/tags/v0.7.1",
+		"--certificate-oidc-issuer", "https://token.actions.githubusercontent.com",
+		"--certificate-github-workflow-trigger", "push",
+		"--certificate-github-workflow-repository", "dimipaun/fugaro",
+		ref,
+	}
 	if len(got) != len(want) {
 		t.Fatalf("cosign argv = %q, want %q", got, want)
 	}
@@ -163,9 +206,15 @@ func TestCosignVerifierPinsTheDigestAndTheIdentity(t *testing.T) {
 			t.Fatalf("cosign argv = %q, want %q", got, want)
 		}
 	}
-	for _, a := range got {
+	for i, a := range got {
 		if a == "--insecure-ignore-tlog" || a == "--insecure-ignore-sct" || strings.Contains(a, "without") {
 			t.Errorf("argv carries a relaxing flag: %q", a)
+		}
+		// cosign reads an EMPTY value of any --certificate-* flag as "any
+		// certificate is valid" (the flag's own doc comment), so an empty
+		// one relaxes exactly what the flag is there to require.
+		if strings.HasPrefix(a, "--certificate-") && (i+1 >= len(got) || got[i+1] == "") {
+			t.Errorf("argv carries %s with no value, which cosign reads as any value: %q", a, got)
 		}
 	}
 }
@@ -187,7 +236,10 @@ func TestCosignVerifierRefusesWhenCosignRejects(t *testing.T) {
 	if err == nil {
 		t.Fatal("a rejecting cosign must refuse")
 	}
-	for _, want := range []string{ref, "no matching signatures", "images.yml"} {
+	// All four claims are named: what the digest is, which workflow and ref
+	// signed it, which issuer vouched for it, and that the run was a push of
+	// this repository.
+	for _, want := range []string{ref, "no matching signatures", "images.yml", "token.actions.githubusercontent.com", "push", "dimipaun/fugaro"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("refusal %q must name %q", err, want)
 		}

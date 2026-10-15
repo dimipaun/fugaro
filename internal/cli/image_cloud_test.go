@@ -341,6 +341,16 @@ func TestImageBuildCloudRefusesOtherProjectRegistry(t *testing.T) {
 // the reference reaches the build's FROM line as it stands, the proxy
 // serves all of ghcr.io, and such a path is whatever its owner publishes —
 // not "a custom base image" of the operator's (design §3.6, §10.7).
+//
+// The entries of base_images are checked one by one (runImageBuildCloud's
+// loop over lc.BaseImages), not only the one the build uses: an entry the
+// build does not use still goes into the repository's spec, and the check
+// job builds FROM it. Only "base" is a valid key — localcfg refuses any
+// other base_images key, as an unknown or 0.7.0-removed kind, before this
+// command runs at all — so the loop's reachable case is the built kind's
+// own entry sitting beside a --base that is clean. That case is the last
+// one below, and it is the one only the loop catches: the other three are
+// refused by the --base check as well.
 func TestImageBuildCloudRefusesAForeignProxyBase(t *testing.T) {
 	host := "us-east5-docker.pkg.dev/proj-1234/" + infra.GhcrRegistry + "/"
 	for _, tc := range []struct {
@@ -350,6 +360,10 @@ func TestImageBuildCloudRefusesAForeignProxyBase(t *testing.T) {
 		{"a tag that is not a release version", "image_source: ghcr.io/dimipaun\nbase_images: {base: " + host + "dimipaun/fugaro-base:latest@sha256:" + strings.Repeat("a", 64) + "}\n", "", "latest"},
 		{"no digest at all", "image_source: ghcr.io/dimipaun\nbase_images: {base: " + host + "dimipaun/fugaro-base:0.7.5}\n", "", "0.7.5"},
 		{"the flag, pasted in", "", host + "evil/fugaro-base:9.9.9@sha256:" + strings.Repeat("a", 64), "evil"},
+		// The entry survives into the spec beside the clean --base
+		// (cmp.Or keeps a non-empty entry), so a build that submitted would
+		// put the proxy path in the repository's own base_images.
+		{"the config's entry beside a clean --base", "image_source: ghcr.io/dimipaun\nbase_images: {base: " + host + "evil/fugaro-base:9.9.9@sha256:" + strings.Repeat("a", 64) + "}\n", "b:1", "evil"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fb, f := cloudBuildCheckout(t, false)

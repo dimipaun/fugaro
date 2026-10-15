@@ -45,7 +45,25 @@ func TestParseExecution(t *testing.T) {
 	if !SameExecution(id.String(), "projects/123456789/locations/us-east5/jobs/fugaro-acme-app-web/executions/fugaro-acme-app-web-x7k2p") {
 		t.Fatal("project ID vs number must not change identity")
 	}
-	for _, bad := range []string{"", "fugaro-acme-app-web-x7k2p", "projects/p/locations/r/jobs/j", "projects//locations/r/jobs/j/executions/e"} {
+	// The six-field name is a Batch job, and on Batch the job is the run, so
+	// the seam's Name slot stays empty (design compute-backend.md §2.5).
+	job, ok := ParseExecution("projects/my-proj/locations/us-east5/jobs/fugaro-acme-app-web")
+	if !ok || job.Job != "fugaro-acme-app-web" || job.Name != "" || job.Region != "us-east5" {
+		t.Fatalf("a Batch job: %+v, %v", job, ok)
+	}
+	if got := BatchCodec().Format(job); got != "projects/my-proj/locations/us-east5/jobs/fugaro-acme-app-web" {
+		t.Fatalf("BatchCodec().Format = %q", got)
+	}
+	for _, bad := range []string{
+		"",
+		"fugaro-acme-app-web-x7k2p",
+		"projects/p/locations/r/jobs", // five fields: neither shape
+		"projects/p/locations/r/jobs/j/executions",     // seven
+		"projects/p/locations/r/jobs/j/executions/e/f", // nine
+		"projects//locations/r/jobs/j/executions/e",    // an empty field
+		"projects/p/locations/r/jobs//executions/e",    // an empty field
+		"projects/p/locations/r/jobs/",                 // an empty job
+	} {
 		if _, ok := ParseExecution(bad); ok {
 			t.Errorf("ParseExecution(%q) accepted", bad)
 		}
@@ -136,6 +154,151 @@ func TestCloudRunCodecParseInRegion(t *testing.T) {
 	}
 }
 
+// The Batch codec is the second one the seam carries (design
+// compute-backend.md §2.5, §8.1 Task 2): on Batch one job is one task group
+// and one run, so the run's identity is the job's own resource name, and the
+// platform's signal is BATCH_TASK_INDEX/BATCH_TASK_COUNT.
+func TestBatchCodecNames(t *testing.T) {
+	const name = "projects/my-proj/locations/us-east5/jobs/fugaro-acme-app-web-0123456789ab"
+	c := BatchCodec()
+	if c.Backend() != CloudBatch {
+		t.Fatalf("Backend = %q", c.Backend())
+	}
+	id, ok := c.Parse(name)
+	if !ok || id.GCPProject != "my-proj" || id.Region != "us-east5" || id.Job != "fugaro-acme-app-web-0123456789ab" || id.Name != "" {
+		t.Fatalf("Parse = %+v, %v", id, ok)
+	}
+	if got := c.Format(id); got != name {
+		t.Fatalf("Format = %q, want %q", got, name)
+	}
+	// Format is the job's name, not ExecID.String: that one spells Cloud
+	// Run's eight fields and would invent an execution.
+	if got := id.String(); got == name {
+		t.Fatal("the seam's String must stay Cloud Run's shape; Batch names come from the codec")
+	}
+	// The project number the API may answer with names the same run.
+	num, ok := c.Parse("projects/123456789/locations/us-east5/jobs/fugaro-acme-app-web-0123456789ab")
+	if !ok || num.Key() != id.Key() || num.GCPProject != "123456789" {
+		t.Fatalf("a project number changed the identity: %+v, %v", num, ok)
+	}
+	// The two codecs' name shapes cannot be mistaken for each other.
+	if _, ok := c.Parse("projects/my-proj/locations/us-east5/jobs/fugaro-acme-app-web/executions/fugaro-acme-app-web-x7k2p"); ok {
+		t.Fatal("the Batch codec parsed a Cloud Run execution name")
+	}
+	for _, bad := range []string{"", "fugaro-acme-app-web-0123456789ab", "projects/my-proj/locations/us-east5/jobs", "projects/my-proj/locations/us-east5/jobs/"} {
+		if _, ok := c.Parse(bad); ok {
+			t.Errorf("Parse(%q) accepted", bad)
+		}
+	}
+}
+
+// ParseInRegion is what the backend's canonical uses to rewrite a name it
+// already knows, and it is the check that keeps a bucket object a run wrote
+// from pointing the operator's cancel or logs at another job.
+func TestBatchCodecParseInRegion(t *testing.T) {
+	const job = "fugaro-acme-app-web-0123456789ab"
+	in := "projects/my-proj/locations/us-east5/jobs/" + job
+	c := BatchCodec()
+	if id, err := c.ParseInRegion(in, "us-east5"); err != nil || id.Job != job || id.GCPProject != "my-proj" {
+		t.Fatalf("ParseInRegion = %+v, %v", id, err)
+	}
+	var wr *WrongRegionError
+	if _, err := c.ParseInRegion(in, "europe-west1"); !errors.As(err, &wr) || wr.Region != "us-east5" {
+		t.Fatalf("another region: %v", err)
+	}
+	for _, bad := range []string{
+		"",
+		"projects/my-proj/locations/us-east5/jobs/" + job + "/executions/" + job + "-x7k2p", // a Cloud Run execution
+		"projects/my-proj/locations/us-east5/jobs/Fugaro-Acme-App",                          // not [a-z0-9-]
+		"projects/my-proj/locations/us-east5/jobs/../../etc/passwd",
+	} {
+		if _, err := c.ParseInRegion(bad, "us-east5"); err == nil {
+			t.Errorf("ParseInRegion(%q) accepted", bad)
+		}
+	}
+}
+
+// ValidateRun binds a Batch name to the run's own job. On Batch the job id
+// is derived per run (design §2.4), so the caller passes the id it launched;
+// an empty one is refused rather than read as "skip the binding".
+func TestBatchCodecValidateRun(t *testing.T) {
+	const job = "fugaro-acme-app-web-0123456789ab"
+	in := "projects/my-proj/locations/us-east5/jobs/" + job
+	c := BatchCodec()
+	if id, err := c.ValidateRun(in, "us-east5", job); err != nil || id.Job != job {
+		t.Fatalf("ValidateRun = %+v, %v", id, err)
+	}
+	if id, err := c.ValidateRun(in, "us-east5", ""); err == nil || id.Job != "" {
+		t.Fatalf("an unbound name was accepted: %+v, %v", id, err)
+	}
+	other := "projects/my-proj/locations/us-east5/jobs/fugaro-other-web-0123456789ab"
+	if _, err := c.ValidateRun(other, "us-east5", job); err == nil || !strings.Contains(err.Error(), "not the run's job") {
+		t.Fatalf("another job's name: %v", err)
+	}
+	var wr *WrongRegionError
+	if _, err := c.ValidateRun(in, "europe-west1", job); !errors.As(err, &wr) || wr.Want != "europe-west1" {
+		t.Fatalf("another region: %v", err)
+	}
+}
+
+// On is the platform's own signal, and it needs both halves of it.
+func TestBatchCodecOn(t *testing.T) {
+	get := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	c := BatchCodec()
+	if !c.On(get(map[string]string{"BATCH_TASK_INDEX": "0", "BATCH_TASK_COUNT": "1"})) {
+		t.Error("both Batch task markers must claim the process")
+	}
+	for _, env := range []map[string]string{
+		nil,
+		{"BATCH_TASK_INDEX": "0"},
+		{"BATCH_TASK_COUNT": "1"},
+		// A job's own variables are the launcher's record, never a platform
+		// signal (design §2.5).
+		{"FUGARO_BACKEND": CloudBatch, BatchJobEnv: "projects/p/locations/r/jobs/j", "FUGARO_REGION": "r"},
+	} {
+		if c.On(get(env)) {
+			t.Errorf("%v claimed the process", env)
+		}
+	}
+}
+
+// FromEnv is the name the job definition carries, checked against the region
+// and the project the same definition carries: none of the three is evidence,
+// but a job whose environment was edited must not be able to name another
+// region's or another project's job.
+func TestBatchCodecFromEnv(t *testing.T) {
+	const name = "projects/my-proj/locations/us-east5/jobs/fugaro-acme-app-web-0123456789ab"
+	get := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	c := BatchCodec()
+	env := map[string]string{"BATCH_TASK_INDEX": "0", "BATCH_TASK_COUNT": "1", BatchJobEnv: name, "FUGARO_REGION": "us-east5", "FUGARO_GCP_PROJECT": "my-proj"}
+	got, err := c.FromEnv(get(env))
+	if err != nil || got != name {
+		t.Fatalf("FromEnv = %q, %v", got, err)
+	}
+	// Outside a Batch task the codec says nothing, whatever the job's own
+	// variables say.
+	if got, err := c.FromEnv(get(map[string]string{BatchJobEnv: name, "FUGARO_REGION": "us-east5"})); got != "" || err != nil {
+		t.Fatalf("outside Batch = %q, %v", got, err)
+	}
+	// On Batch without the name the job definition must carry, or with one
+	// naming another region or another project, the process cannot spell
+	// itself: the job's environment names the job the process is, so a
+	// FUGARO_GCP_PROJECT that disagrees with the name -- including an empty
+	// one -- is a job environment that was edited to name someone else's job.
+	for _, bad := range []map[string]string{
+		{"BATCH_TASK_INDEX": "0", "BATCH_TASK_COUNT": "1", "FUGARO_REGION": "us-east5"},
+		{"BATCH_TASK_INDEX": "0", "BATCH_TASK_COUNT": "1", BatchJobEnv: name},
+		{"BATCH_TASK_INDEX": "0", "BATCH_TASK_COUNT": "1", BatchJobEnv: name, "FUGARO_REGION": "europe-west1", "FUGARO_GCP_PROJECT": "my-proj"},
+		{"BATCH_TASK_INDEX": "0", "BATCH_TASK_COUNT": "1", BatchJobEnv: name, "FUGARO_REGION": "us-east5", "FUGARO_GCP_PROJECT": "other-proj"},
+		{"BATCH_TASK_INDEX": "0", "BATCH_TASK_COUNT": "1", BatchJobEnv: name, "FUGARO_REGION": "us-east5"},
+		{"BATCH_TASK_INDEX": "0", "BATCH_TASK_COUNT": "1", BatchJobEnv: "not-a-name", "FUGARO_REGION": "us-east5", "FUGARO_GCP_PROJECT": "my-proj"},
+	} {
+		if got, err := c.FromEnv(get(bad)); err == nil {
+			t.Errorf("%v named itself %q", bad, got)
+		}
+	}
+}
+
 func TestExecutionFromEnvReadsGCPProject(t *testing.T) {
 	c := CloudRunCodec()
 	env := map[string]string{"CLOUD_RUN_EXECUTION": "fugaro-acme-app-web-x7k2p", "CLOUD_RUN_JOB": "fugaro-acme-app-web", "FUGARO_GCP_PROJECT": "my-proj", "FUGARO_PROJECT": "aurora", "FUGARO_REGION": "us-east5"}
@@ -163,6 +326,18 @@ func TestPlatformSignalAndFailClosed(t *testing.T) {
 	if onRun.Backend() != CloudRun || !onRun.InCloud() || onRun.Local() {
 		t.Fatalf("a Cloud Run execution: %+v", onRun)
 	}
+	// A Batch task's own markers (design §2.5): Batch injects both into every
+	// task, and no other platform does, so they claim the process for the
+	// Batch codec -- which then needs the job's own name to spell the run.
+	onBatch := DetectPlatform(get(map[string]string{"BATCH_TASK_INDEX": "0", "BATCH_TASK_COUNT": "1"}))
+	if onBatch.Backend() != CloudBatch || !onBatch.InCloud() || onBatch.Local() {
+		t.Fatalf("a Batch task: %+v", onBatch)
+	}
+	// One marker alone is not the signal: a single stray variable must not
+	// claim a process for a backend it is not on.
+	if p := DetectPlatform(get(map[string]string{"BATCH_TASK_INDEX": "0"})); p.Backend() != "" || !p.InCloud() {
+		t.Fatalf("BATCH_TASK_INDEX alone: %+v", p)
+	}
 	// Neither the job name nor a Fugaro variable is a platform signal. The
 	// answer is still "in the cloud", because everything that is not the
 	// local invocation is.
@@ -170,10 +345,6 @@ func TestPlatformSignalAndFailClosed(t *testing.T) {
 		nil,
 		{"CLOUD_RUN_JOB": "j"},
 		{"FUGARO_BACKEND": CloudRun, "FUGARO_GCP_PROJECT": "p", "FUGARO_REGION": "us-east5", "FUGARO_RUN": "acme-app/20260926-221530-abcd"},
-		// A Batch task's own markers (design §2.5): the codec that answers
-		// them is Task 2's, so today the process is unclaimed -- and still
-		// in the cloud.
-		{"BATCH_TASK_INDEX": "0", "BATCH_TASK_COUNT": "1"},
 	} {
 		p := DetectPlatform(get(env))
 		if p.Backend() != "" || !p.InCloud() || p.Local() {

@@ -229,6 +229,33 @@ func TestDoctorNamesTheFixLine(t *testing.T) {
 	}
 }
 
+// TestDoctorRefusesCloudBatch: `backend: cloud-batch` is a name this build
+// knows but must not run on yet -- the seam and the fake exist, the tasks
+// that make a Batch run safe (the log sink, the cost of a VM, the reaper)
+// come after the owner's Check 57a measurement (design compute-backend.md
+// §8.1 Task 2, §9). doctor must say so rather than reporting the project
+// healthy and leaving the refusal to a launch.
+func TestDoctorRefusesCloudBatch(t *testing.T) {
+	r := newDoctorRig(t)
+	if err := os.WriteFile(r.cfgPath, []byte(r.cfg+"backend: cloud-batch\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "doctor", "--json", "--dir", t.TempDir())
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v, out %q", ExitCode(err), err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	// doctor cannot check a project whose config it cannot read, so the
+	// refusal is the run's error, and it names the backend that was refused
+	// and the one this build runs.
+	if !strings.Contains(o.Error, "cloud-batch") || !strings.Contains(o.Error, "cloud-run") {
+		t.Fatalf("error = %q, want it to name both backends", o.Error)
+	}
+}
+
 // TestDoctorStrictPlugin: a stale pin fails doctor only with --strict; a
 // current one never does.
 func TestDoctorStrictPlugin(t *testing.T) {

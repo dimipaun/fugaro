@@ -403,6 +403,40 @@ func TestBackendDefaultsToCloudRun(t *testing.T) {
 	}
 }
 
+// Cloud Batch is a backend this build can speak but must not select yet: the
+// seam and the fake exist (design compute-backend.md §8.1 Task 2), while the
+// tasks that make a Batch run safe -- the log sink, the cost of a VM and the
+// reaper that stops a leaked one -- come after the owner's Check 57a
+// measurement (design §9). So `backend: cloud-batch` stays refused, and this
+// is the single place that refuses it: every command that reads a project
+// config, `fugaro init` included, goes through Parse.
+func TestCloudBatchIsRefused(t *testing.T) {
+	if backend.CloudBatch != "cloud-batch" {
+		t.Fatalf("backend.CloudBatch = %q: the constant and the config value must not drift", backend.CloudBatch)
+	}
+	c, err := Parse([]byte(sample + "backend: " + backend.CloudBatch + "\n"))
+	if err == nil || !strings.Contains(err.Error(), backend.CloudBatch) {
+		t.Fatalf("err = %v, want it to name %s", err, backend.CloudBatch)
+	}
+	// It is refused as a name this build knows and has not enabled, not as
+	// one it has never heard of: the two are different claims and only the
+	// first is true (design §8.1 Task 2).
+	if !strings.Contains(err.Error(), "not enabled yet") || strings.Contains(err.Error(), "not a known backend") {
+		t.Fatalf("err = %q, want the refusal of a known backend that is not enabled", err)
+	}
+	// A name this build does not know at all is refused as such.
+	if _, err := Parse([]byte(sample + "backend: ecs-fargate\n")); err == nil || !strings.Contains(err.Error(), "not a known backend") {
+		t.Fatalf("err = %v, want an unknown backend", err)
+	}
+	// The refusal names the only backend this build runs, so the fix is in
+	// the message; and nothing rewrites the name on the way out, so a caller
+	// that ignored the error still sees what the operator asked for rather
+	// than a silent fallback to Cloud Run.
+	if c != nil && c.BackendName != backend.CloudBatch {
+		t.Fatalf("a refused config rewrote its backend to %q", c.BackendName)
+	}
+}
+
 // The other fields fugaro init records: each is checked for shape.
 func TestM5FieldsValidation(t *testing.T) {
 	const good = "terraform:\n  state_bucket: fugaro-tfstate-my-project\n  alert_email: ops@example.com\n" +
