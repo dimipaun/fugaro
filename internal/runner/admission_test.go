@@ -3,6 +3,8 @@ package runner_test
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -175,6 +177,41 @@ func TestRunnerIgnoresAnOverriddenProviderEnvAmongAgreeingKinds(t *testing.T) {
 		rec, err := b.run(t)
 		refusedAdmission(t, b, rec, err, "bitbucket", "github", "--provider", "may only tighten")
 	})
+	t.Run("a kind no job provider uses is refused too", func(t *testing.T) {
+		// The check has no exemption to hide a value behind. "fake" is not a
+		// value a real job carries (internal/cli's providerOptions maps
+		// --provider fake to an empty kind) and a local run has no execution
+		// to be checked at all, so this is a hand-set environment: it is
+		// refused like any other kind that disagrees with the slug.
+		b := admissionRun(t, "github", "acme/app", "off", "", policy)
+		b.deps.ProviderKind = "fake"
+		rec, err := b.run(t)
+		refusedAdmission(t, b, rec, err, "fake", "github", "may only tighten")
+	})
+}
+
+// The remote is where the clone comes from, and a launcher sets it: the job's
+// own environment (FUGARO_REMOTE, internal/infra's clone jobs), or the origin
+// of a checkout already in the work directory. A remote on another provider's
+// host is another repository — the same owner and name is the case worth
+// naming — and the run's slug, which keys its locks, its cache and its budget,
+// does not name it. The policy admits the repository the slug names, so the
+// remote is what refused, before any git credential was requested.
+func TestRunnerRefusesARemoteOnAnotherProvidersHost(t *testing.T) {
+	b := admissionRun(t, "bitbucket", "acme/app", "off", "", `{"version":1,"allow_repos":["bitbucket/acme/*"]}`)
+	b.deps.Remote = "https://github.com/acme/app.git"
+	// Nothing here may reach github.com, not even if the check this test
+	// covers regresses: git rewrites the URL onto a path that does not exist,
+	// so a run that went on would fail its clone locally and offline
+	// (internal/cli's clone test rewrites the fixture's remote the same way,
+	// for the same reason).
+	gitcfg := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(gitcfg, []byte("[url \"file:///nonexistent/fugaro-admission-guard\"]\n\tinsteadOf = https://github.com/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", gitcfg)
+	rec, err := b.run(t)
+	refusedAdmission(t, b, rec, err, "https://github.com/acme/app.git", "github", "bitbucket", "FUGARO_REMOTE", "before any git credential")
 }
 
 // The slug the run was launched for and the repository its task names must

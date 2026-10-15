@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/task"
@@ -32,6 +33,52 @@ func TestProviderForSlugDerivesEachKind(t *testing.T) {
 	// hash suffix: no kind produces it, so it is not admitted.
 	if got, ok := providerForSlug("acme-app", "acme/app"); ok {
 		t.Errorf("a slug no kind produces was admitted as %q", got)
+	}
+}
+
+// The remote the run clones from is a launcher's to set, so a remote on
+// another provider's host — the same owner and name is the interesting case —
+// is the one disagreement the run refuses. A remote that names no host this
+// Fugaro knows is not a disagreement: the end-to-end and unit test remotes are
+// local paths or an httptest URL, self-hosted installations are theirs, and
+// any of them is the derived kind's by the launcher's own refusals
+// (internal/infra's repoURL).
+func TestRemoteOfAnotherKind(t *testing.T) {
+	for _, tc := range []struct{ kind, remote, want string }{
+		{"bitbucket", "https://github.com/acme/app.git", "github"},
+		{"github", "https://bitbucket.org/acme/app.git", "bitbucket"},
+		{"github", "git@bitbucket.org:acme/app.git", "bitbucket"},
+		{"github", "https://github.com/acme/app.git", ""},
+		{"github", "git@github.com:acme/app.git", ""},
+		{"github", "/tmp/fixture.git", ""},
+		{"github", "/srv/git/acme/app", ""},
+		{"github", "http://127.0.0.1:8080/acme/app.git", ""},
+		{"github", "https://git.example.com/acme/app.git", ""},
+		{"github", "https://github.com.evil.example/acme/app.git", ""},
+	} {
+		if got := remoteOfAnotherKind(tc.kind, tc.remote); got != tc.want {
+			t.Errorf("remoteOfAnotherKind(%q, %q) = %q, want %q", tc.kind, tc.remote, got, tc.want)
+		}
+	}
+}
+
+// A refusal quotes the remote, and a remote URL is where a launcher may have
+// put a token: the run never registers that one as a secret, so the display
+// form drops the userinfo instead of relying on redaction later.
+func TestRemoteDisplayDropsUserinfo(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"https://github.com/acme/app.git", "https://github.com/acme/app.git"},
+		{"https://x:glpat-secret@github.com/acme/app.git", "https://github.com/acme/app.git"},
+		{"https://x-token-auth@bitbucket.org/acme/app.git", "https://bitbucket.org/acme/app.git"},
+		{"git@github.com:acme/app.git", "github.com"},
+		{"x-token-auth@bitbucket.org:acme/app.git", "bitbucket.org"},
+	} {
+		if got := remoteDisplay(tc.in); got != tc.want {
+			t.Errorf("remoteDisplay(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+		if strings.Contains(remoteDisplay(tc.in), "glpat-secret") {
+			t.Errorf("remoteDisplay(%q) quotes the userinfo", tc.in)
+		}
 	}
 }
 
