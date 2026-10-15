@@ -73,6 +73,12 @@ func ValidPattern(pattern string) error {
 		if s == "" {
 			return fmt.Errorf("pattern %q has an empty segment", pattern)
 		}
+		// A "." or ".." cannot match: task.CanonicalRepo refuses such a
+		// repository, so a pattern carrying one would silently enroll
+		// nothing (the failure this function exists to prevent).
+		if s == "." || s == ".." {
+			return fmt.Errorf("pattern %q: %q is not a repository segment", pattern, s)
+		}
 		for j := 0; j < len(s); j++ {
 			c := s[j]
 			if c == '*' || c == '.' || c == '_' || c == '-' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' {

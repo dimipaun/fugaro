@@ -1,26 +1,43 @@
 package projectpolicy
 
+import "fmt"
+
 // Version is the policy schema version this code understands. Version is the
 // only policy field that can refuse a node (P8): every other field is
 // tolerated, so a newer policy does not break an older runner on a key it does
-// not know, but a version this code does not understand is a node it must not
-// use (fail closed, §5(3)).
+// not know (a newer Fugaro that adds a budget key bumps Version), but a
+// version this code does not understand is a node it must not use (fail
+// closed, §5(3)).
 const Version = 1
 
-// The version-skew refusals. Both sides print the same sentence and name their
-// own remedy, so a run that halted and a CLI that refused read alike; the
-// runner (phase 1 task 1.3) and the CLI (task 1.6) use these constants rather
-// than spelling the message again.
+// VersionError is the refusal of a node written in a version this Fugaro does
+// not understand. It carries both versions, so each side prints its own
+// remedy without matching on the message:
+//
+//	var ve *projectpolicy.VersionError
+//	if errors.As(err, &ve) {
+//		msg = fmt.Sprintf(projectpolicy.RunnerSkew, ve.Found, ve.Understood) // the runner, task 1.3
+//		msg = fmt.Sprintf(projectpolicy.CLISkew, ve.Found, ve.Understood)   // the CLI, task 1.6
+//	}
+//
+// Error is the shared sentence, with no side's remedy.
+type VersionError struct {
+	Found      int // the version on the node
+	Understood int // the version this Fugaro understands
+}
+
+// Error is Skew: the runner's and the CLI's messages are the same sentence
+// plus their own remedy, so a caller that does not care which side it is on
+// still gets a message that names both versions.
+func (e *VersionError) Error() string { return fmt.Sprintf(Skew, e.Found, e.Understood) }
+
+// The version-skew messages. Skew is the sentence both sides print; RunnerSkew
+// is the runner's refusal (the image is older than the published policy) and
+// CLISkew the CLI's (this Fugaro is older than the node, so publishing from it
+// would write the policy backwards). Each takes the found version and the
+// understood one, in that order.
 const (
-	// Skew is the shared sentence: %d is the version found, %d the version
-	// this Fugaro understands.
-	Skew = "the project policy is version %d; this Fugaro understands version %d"
-
-	// RunnerSkew is the runner's refusal: the runner image is older than the
-	// policy the operator published.
+	Skew       = "the project policy is version %d; this Fugaro understands version %d"
 	RunnerSkew = Skew + "; refresh the runner image (fugaro upgrade), or publish a policy this runner understands"
-
-	// CLISkew is the CLI's refusal: this Fugaro is older than the policy on
-	// the database, so publishing from it would write it backwards.
-	CLISkew = Skew + "; upgrade Fugaro"
+	CLISkew    = Skew + "; upgrade Fugaro"
 )

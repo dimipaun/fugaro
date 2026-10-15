@@ -371,12 +371,17 @@ func TestPolicyNodesAreReadPerChild(t *testing.T) {
 
 // TestRunTokenWritesSurviveThePolicyEdit: the §5 edit is additive and confined
 // to the config block, and a run token is not only a reader (design §4.3, §12a
-// item 12). One row per location a run writes, asserting the grant is still
-// there, so a later edit to config cannot quietly take away a run's ability to
+// item 12). One row per location a run writes — the list below, checked to be
+// exhaustive against the generated rules, so a later edit that adds a
+// run-writable location has to add it here too — asserting the grant is still
+// there: a config-block edit must not quietly take away a run's ability to
 // record its own spend, its own outcome or its registry entry.
 func TestRunTokenWritesSurviveThePolicyEdit(t *testing.T) {
 	paths := generatedPaths(t)
-	for _, p := range []string{
+	// Every location the template grants a run token a write on, as it renders
+	// with $slug = slugForPath ($run and $day stay as the template spells them).
+	want := []string{
+		// runs/<slug>/<run>/ (the run's lifetime ledger)
 		"runs/" + slugForPath + "/$run/reserved",
 		"runs/" + slugForPath + "/$run/released",
 		"runs/" + slugForPath + "/$run/spent",
@@ -384,17 +389,31 @@ func TestRunTokenWritesSurviveThePolicyEdit(t *testing.T) {
 		"runs/" + slugForPath + "/$run/overrun",
 		"runs/" + slugForPath + "/$run/tokens",
 		"runs/" + slugForPath + "/$run/exp",
+		// spend/<day>/global/ (the counted, spent, notional and call counters)
 		"spend/$day/global/counted",
 		"spend/$day/global/spent",
 		"spend/$day/global/notional",
 		"spend/$day/global/calls",
+		// spend/<day>/repos/<slug>/ (the same, per repository)
 		"spend/$day/repos/" + slugForPath + "/counted",
 		"spend/$day/repos/" + slugForPath + "/spent",
 		"spend/$day/repos/" + slugForPath + "/notional",
 		"spend/$day/repos/" + slugForPath + "/calls",
+		// spend/<day>/repos/<slug>/byModel/<model>/ (the per-model counters)
+		"spend/$day/repos/" + slugForPath + "/byModel/$model/micros",
+		"spend/$day/repos/" + slugForPath + "/byModel/$model/in",
+		"spend/$day/repos/" + slugForPath + "/byModel/$model/out",
+		"spend/$day/repos/" + slugForPath + "/byModel/$model/cr",
+		"spend/$day/repos/" + slugForPath + "/byModel/$model/cw",
+		// spend/<day>/runs/<slug>/<run>/ (the run's share of the day)
+		"spend/$day/runs/" + slugForPath + "/$run/reserved",
+		"spend/$day/runs/" + slugForPath + "/$run/released",
+		"spend/$day/runs/" + slugForPath + "/$run/spent",
+		// agents/<slug>/<run> (the registry entry) and its outcome
 		"agents/" + slugForPath + "/$run",
 		"outcomes/$day/" + slugForPath + "/$run",
-	} {
+	}
+	for _, p := range want {
 		attrs, ok := paths[p]
 		if !ok {
 			t.Errorf("/%s: the rules no longer generate this location", p)
@@ -403,6 +422,29 @@ func TestRunTokenWritesSurviveThePolicyEdit(t *testing.T) {
 		w, ok := attrs[".write"].(string)
 		if !ok || !strings.Contains(w, "auth.token") {
 			t.Errorf("/%s .write = %v: a run token's write is not granted any more", p, attrs[".write"])
+		}
+	}
+
+	// The list is exhaustive: every location under the run-token trees whose
+	// .write is a granted expression is one of the rows above. A later edit
+	// that adds a run-writable location fails here until it is listed.
+	inList := map[string]bool{}
+	for _, p := range want {
+		inList[p] = true
+	}
+	for p, attrs := range paths {
+		if _, ok := attrs[".write"].(string); !ok {
+			continue
+		}
+		root := p
+		if i := strings.IndexByte(p, '/'); i >= 0 {
+			root = p[:i]
+		}
+		switch root {
+		case "runs", "spend", "agents", "outcomes":
+			if !inList[p] {
+				t.Errorf("/%s is writable by a run token but is not one of this test's rows: add it", p)
+			}
 		}
 	}
 }

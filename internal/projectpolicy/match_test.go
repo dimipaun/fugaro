@@ -83,7 +83,8 @@ func TestValidPattern(t *testing.T) {
 			t.Errorf("ValidPattern(%q) = %v, want nil", ok, err)
 		}
 	}
-	for _, bad := range []string{"", "acme/*", "github", "github/acme", "GitHub/acme/app", "github/acme/app.git", "github/acme/a b", "github//app", "github/acme/"} {
+	for _, bad := range []string{"", "acme/*", "github", "github/acme", "GitHub/acme/app", "github/acme/app.git", "github/acme/a b", "github//app", "github/acme/",
+		"github/../app", "github/./app", "github/acme/..", "github/acme/."} {
 		if err := ValidPattern(bad); err == nil {
 			t.Errorf("ValidPattern(%q) = nil, want an error", bad)
 		}
