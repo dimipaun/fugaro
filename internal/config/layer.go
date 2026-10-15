@@ -111,6 +111,10 @@ type Profile struct {
 	Resources   Resources    `yaml:"resources"`
 	Timeouts    Timeouts     `yaml:"timeouts"`
 	Rebuild     Rebuild      `yaml:"rebuild"`
+	// Inputs is workflows.*.inputs through this profile (scope
+	// InProfile|InRepo): the caps a launcher may attach to a run of the
+	// workflows that start from it.
+	Inputs Inputs `yaml:"inputs"`
 	// Checkout is workflows.*.checkout's value through this profile; "" sets
 	// none (a workflow or the Fugaro default decides).
 	Checkout string `yaml:"checkout,omitempty"`
@@ -647,11 +651,12 @@ func validateProfile(p string, pr Profile) []Problem {
 	for _, d := range []struct {
 		name string
 		v    Duration
-	}{{"total", t.Total}, {"stage", t.Stage}, {"verify", t.Verify}, {"finalize_reserve", t.FinalizeReserve}} {
+	}{{"total", t.Total}, {"stage", t.Stage}, {"verify", t.Verify}, {"render", t.Render}, {"finalize_reserve", t.FinalizeReserve}} {
 		if d.v.Set && d.v.Duration <= 0 {
 			add(p+".timeouts."+d.name, "must be positive")
 		}
 	}
+	ps = append(ps, validateInputs(p+".inputs", pr.Inputs)...)
 	r := pr.Rebuild
 	if r.Check == "" {
 		r.Check = "daily"

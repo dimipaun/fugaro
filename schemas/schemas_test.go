@@ -1029,6 +1029,95 @@ func TestProjectLayerSchemaCommandsLintFix(t *testing.T) {
 	}
 }
 
+// TestProjectLayerSchemaArtifactKeys keeps the profile schema's 0.8.0 keys
+// (commands.render, commands.probe, timeouts.render, inputs) in step with the
+// Go parser the way TestProjectLayerSchemaClaudeModels keeps claude_models:
+// each snippet must be accepted or refused by both. Without the properties a
+// profile carrying any of them was refused by the schema an editor validates
+// against while config.ParseProjectLayer accepted it (additionalProperties:
+// false), which is the gap that made the docs example carrying claude_models
+// fail before that property existed. The bounds are deliberately narrower
+// here too: the schema's minimum 0 / maximum ceilings are the ones
+// config.validateInputs applies (config.MaxInputFiles and friends), pinned
+// against the Go constants by TestInputCapCeilingsAgreeWithGo.
+func TestProjectLayerSchemaArtifactKeys(t *testing.T) {
+	sch := compile(t, "project-layer.schema.json")
+	head := "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  p:\n"
+	anchor := config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
+	for _, entry := range []string{
+		"    commands: { render: make shots, probe: make check }\n",
+		"    commands: { render: make shots }\n",
+		"    commands: { shots: make shots }\n",
+		"    timeouts: { render: 30m }\n",
+		"    timeouts: { render: soon }\n",
+		"    inputs: { max_files: 4, max_bytes: 1048576, max_total_bytes: 4194304 }\n",
+		"    inputs: {}\n",
+		"    inputs: { max_files: 65 }\n",
+		"    inputs: { max_bytes: -1 }\n",
+		"    inputs: { max_total_bytes: 4294967297 }\n",
+		"    inputs: { globs: ['out/*.png'] }\n",
+	} {
+		text := head + entry
+		schemaOK := sch.Validate(yamlInstance(t, []byte(text))) == nil
+		_, ps := config.ParseProjectLayer([]byte(text), anchor)
+		if schemaOK != (len(ps) == 0) {
+			t.Errorf("%s: schema ok = %v, config.ParseProjectLayer problems = %v", entry, schemaOK, ps)
+		}
+	}
+}
+
+// TestInputCapCeilingsAgreeWithGo ties both schemas' inputs bounds to the Go
+// ceilings they mirror (config.MaxInputFiles, MaxInputBytes and
+// MaxInputTotalBytes, applied by validateInputs): the numbers are separate
+// copies in each schema, so a raised ceiling in Go would otherwise leave the
+// schema silently stricter — an editor refusing a cap fugaro accepts — with
+// no test to notice.
+func TestInputCapCeilingsAgreeWithGo(t *testing.T) {
+	for _, tc := range []struct{ file, root string }{
+		{"fugaro.schema.json", "workflow"},
+		{"project-layer.schema.json", "profile"},
+	} {
+		data, err := os.ReadFile(tc.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(data, &doc); err != nil {
+			t.Fatal(err)
+		}
+		at := func(v any, path ...string) any {
+			for _, k := range path {
+				m, ok := v.(map[string]any)
+				if !ok {
+					t.Fatalf("%s: no %v", tc.file, path)
+				}
+				v = m[k]
+			}
+			return v
+		}
+		in := at(doc, "$defs", tc.root, "properties", "inputs", "properties")
+		for _, c := range []struct {
+			name string
+			want int64
+		}{
+			{"max_files", config.MaxInputFiles},
+			{"max_bytes", config.MaxInputBytes},
+			{"max_total_bytes", config.MaxInputTotalBytes},
+		} {
+			p, ok := in.(map[string]any)[c.name].(map[string]any)
+			if !ok {
+				t.Fatalf("%s: inputs.%s is not an object", tc.file, c.name)
+			}
+			if got, ok := p["maximum"].(float64); !ok || int64(got) != c.want {
+				t.Errorf("%s: inputs.%s maximum = %v, config has %d", tc.file, c.name, p["maximum"], c.want)
+			}
+			if got, ok := p["minimum"].(float64); !ok || got != 0 {
+				t.Errorf("%s: inputs.%s minimum = %v, want 0", tc.file, c.name, p["minimum"])
+			}
+		}
+	}
+}
+
 func TestFugaroSchemaLayeredCorpus(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	for _, f := range globAll(t, "../testdata/config/layered/valid/*.yaml") {
