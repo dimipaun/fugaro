@@ -685,14 +685,14 @@ func TestChecklistHasCheck49(t *testing.T) {
 	// un-enrolled state is made with the allow-list, and the refusal it
 	// produces is the launcher's; the run-side half is a direct launch.
 	chk49MustContain(t, section, "section", []string{
-		"fugaro.yaml has no key that names a repository",
+		"has no key that names a repository",
 		"fugaro project repos rm bitbucket/edgeappinc/fugarosandbox --project fugaro",
 		"The launch stops before any execution exists",
 		"FUGARO_RUN",
-		"the run stops before any lease exists",
+		"The run stops before any lease exists",
 		"Record which layer refused",
 		"Check 53 step 6",
-		"the live test of the binding itself belongs to Check 53 step 6",
+		"live test of the binding itself belongs to Check 53 step 6",
 	})
 	if strings.Contains(section, "Point the sandbox's `fugaro.yaml` at a repository") {
 		t.Error("the Check 49 section still points fugaro.yaml at a repository: no key of fugaro.yaml names one, so that edit cannot change which repository a run is for")
