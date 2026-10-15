@@ -1148,16 +1148,37 @@ func TestPreventDestroyAbortMatchesWrappedTerraformText(t *testing.T) {
 			t.Errorf("the abort for a resource fugaro never destroys does not say %q: %v", want, notRead)
 		}
 	}
-	// An ordinary address keeps the module advice: a service account, an IAM
-	// member, a bucket grant are all things an apply may destroy once the
-	// configuration stops producing them.
+	// An ordinary address is not given the module advice, and is given the
+	// state removal instead (M-1): the repo root's only two
+	// lifecycle.prevent_destroy declarations are the container and the
+	// registry, and the embedded workdir is rewritten every run, so "take the
+	// block out of the module" could not be followed even if it were safe.
+	// A service account, an IAM member and a bucket grant are all things an
+	// apply may destroy once the configuration stops producing them.
 	const plain = `module.repo.module.workflow["app"].google_service_account.job`
 	ordinary := retireAborted(nil, plain, "/wd")
-	if !strings.Contains(ordinary.Error(), "take the lifecycle.prevent_destroy block out of the module") {
-		t.Errorf("an ordinary address lost the module advice: %v", ordinary)
+	if strings.Contains(ordinary.Error(), "take the lifecycle.prevent_destroy block out of the module") {
+		t.Errorf("an ordinary address is still told to edit the module: %v", ordinary)
 	}
-	if strings.Contains(ordinary.Error(), "terraform state rm") {
-		t.Errorf("an ordinary address is given the never-destroyed advice: %v", ordinary)
+	for _, want := range []string{"terraform state rm '" + plain + "'", "/wd", "revert the configuration change"} {
+		if !strings.Contains(ordinary.Error(), want) {
+			t.Errorf("the abort for an ordinary address does not say %q: %v", want, ordinary)
+		}
+	}
+	// And when Terraform's text does not yield the address, the removal is
+	// asked for by the address Terraform named, not by an empty pair of
+	// quotes -- which is the same wording the reader needs either way.
+	unreadable := retireAborted(nil, "", "/wd")
+	for _, want := range []string{"the address named in Terraform's error", "/wd", "revert the configuration change"} {
+		if !strings.Contains(unreadable.Error(), want) {
+			t.Errorf("the abort with no address does not say %q: %v", want, unreadable)
+		}
+	}
+	if strings.Contains(unreadable.Error(), "state rm ''") {
+		t.Errorf("the abort with no address asks to remove the empty address: %v", unreadable)
+	}
+	if !strings.Contains(unreadable.Error(), "a resource carries") {
+		t.Errorf("the abort with no address does not read as a sentence: %v", unreadable)
 	}
 	read := retireAborted([]infra.Retirement{{Address: retireKeptAddr, Kept: infra.KeptSecret}}, retireKeptAddr, "/wd")
 	if !strings.Contains(read.Error(), retireNextCommand) {

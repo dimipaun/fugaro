@@ -748,20 +748,26 @@ func collapseSpace(s string) string { return strings.Join(strings.Fields(s), " "
 // --retire is named only when the aborting address is one of the retirements
 // this run read: for any other address the state removal would not touch it,
 // the same plan would abort in the same place, and pointing at --retire would
-// be advice that cannot work. The configuration is what holds that
-// prevent_destroy, so for most addresses the two ways out are named instead:
-// take the block out of the module, or put back the configuration change that
-// made Terraform want to destroy the resource (M5).
+// be advice that cannot work. For any other address the two ways out are
+// named instead (M-1): revert the configuration change that asked for the
+// destruction, or take the address out of Terraform's state.
 //
-// Two addresses are not given the first of those (review round 2, I-B): the
-// secret container and the registry are the resources whose module
-// declaration carries prevent_destroy (modules/repo/secrets.tf:22,
-// registry.tf:59), the block IS fugaro's promise that it never deletes a
-// secret or a secret version, and the advice could not be followed anyway --
-// the modules are embedded in the binary, and PrepareWorkdir rewrites the
-// workdir on the next run. Their safe route is the state removal the docs
-// give for an older binary instead: the resource leaves Terraform's state,
-// which destroys nothing, and stays in GCP with its value.
+// The state removal is the only way fugaro offers for anything it does not
+// retire, and it is the same route the two protected addresses get (review
+// round 2, I-B; below). "Take the lifecycle.prevent_destroy block out of the
+// module" used to be named here and is not advice a reader can follow: the
+// repo root's only two declarations of the block are the secret container and
+// the registry (modules/repo/secrets.tf:22, registry.tf:59) -- the block IS
+// fugaro's promise that it never deletes a secret or a secret version -- and
+// the modules are embedded in the binary, so PrepareWorkdir rewrites the
+// workdir on the next run and an edit to it would be gone before the rerun.
+// Where the address cannot be read out of Terraform's text at all, the
+// removal is asked for by the address Terraform itself named.
+//
+// The secret container and the registry are told which of the two sides they
+// are on: their state removal destroys nothing and leaves the value or the
+// images in GCP, and fugaro never destroys them, so they are never told to
+// revert a configuration change that asked for their destruction.
 func retireAborted(rets []infra.Retirement, addr, workdir string) error {
 	where := ""
 	if addr != "" {
@@ -773,7 +779,11 @@ func retireAborted(rets []infra.Retirement, addr, workdir string) error {
 	if keeps, never := neverDestroyed(addr); never {
 		return userErr("the plan was refused: %s carries lifecycle.prevent_destroy, so Terraform will not plan its destruction.%s\nfugaro read no retirement for this address, so --retire would remove nothing here and the same plan would abort in the same place. Fugaro never destroys this resource -- the block is that promise, not a line to delete -- so only you can say which side is wrong:\n  - Terraform is holding a resource that should go: leave it in GCP and take it out of Terraform's state: `terraform state rm '%s'` in %s destroys nothing and keeps %s; then rerun `fugaro init --repo`.\n  - the resource should stay: revert the configuration change that asked for its destruction, then rerun.", nonEmpty(addr, "a resource"), where, addr, workdir, keeps)
 	}
-	return userErr("the plan was refused: %s carries lifecycle.prevent_destroy, so Terraform will not plan its destruction.%s\nfugaro read no retirement for this address, so --retire would remove nothing here and the same plan would abort in the same place. The block is in the configuration, and only you can say which side is wrong:\n  - Terraform is holding a resource that should go: take the lifecycle.prevent_destroy block out of the module for that address (or restore the configuration that used to produce it), then rerun.\n  - the resource should stay: revert the configuration change that asked for its destruction, then rerun.", nonEmpty(addr, "a resource"), where)
+	rm := "the address named in Terraform's error"
+	if addr != "" {
+		rm = "'" + addr + "'"
+	}
+	return userErr("the plan was refused: %s carries lifecycle.prevent_destroy, so Terraform will not plan its destruction.%s\nfugaro read no retirement for this address, so --retire would remove nothing here and the same plan would abort in the same place. Only you can say which side is wrong:\n  - Terraform is holding a resource that should go: take it out of Terraform's state with `terraform state rm %s` in %s -- that destroys nothing; then rerun `fugaro init --repo`.\n  - the resource should stay: revert the configuration change that asked for its destruction, then rerun.", nonEmpty(addr, "a resource"), where, rm, workdir)
 }
 
 // neverDestroyedTypes are the resource types fugaro never destroys, each
