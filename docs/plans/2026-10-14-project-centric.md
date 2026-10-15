@@ -265,7 +265,7 @@ Project rules (carried over from this repository's existing plans):
 | `internal/runner/{projectpolicy.go (new),policy.go}` (+ tests) | read the policy, fail closed, replace the ceiling, version refusal | 1.3 |
 | `internal/infra/spec.go` (+ tests) | `FUGARO_RTDB_URL` whenever Firebase is configured; `FUGARO_PROJECT` already there | 1.4 |
 | `internal/runner/{runner.go,project.go}` (+ tests), `internal/cli/run.go` | `allow_repos` and the slug binding's first half, before the token and the lease | 1.5 |
-| `internal/cli/{project.go,root.go,doctor.go}` (+ tests) | `newProjectCmd()`, `policy publish`, `show`, `project repos ls\|add\|rm`; the doctor checks | 1.6 |
+| `internal/cli/project_cmd.go` (new: **one file** for the group, finding 33), `internal/cli/root.go`, `internal/cli/doctor.go` (+ tests) | `newProjectCmd()`, `policy publish` (with `--delete`), `show`, `project repos ls\|add\|rm`; the five doctor checks | 1.6 |
 | `docs/gcp-live-checklist.md` | **Check 49**'s row and section | 1.7 |
 | `internal/config/{providers.go,config.go}` (the operator's `routing`), `internal/projectpolicy/` (+ tests) | the `routing.claude` object, validated (explicit list only), delivered through the policy | 1b.1 |
 | `internal/pricing/catalog*`, `internal/config/pricetable.go`, `internal/runner/agentenv.go`, `internal/runner/{spend.go,gateway.go}` (+ tests) | the canonical-to-route ID map in prices, pins and records | 1b.2 |
@@ -302,6 +302,7 @@ Each phase is its own PR (or its own small group of PRs where the table below sp
 | Group | Tasks | What a reviewer reads hardest |
 |---|---|---|
 | **A** | 0.1, 0.2 | the two fixes; nothing shared |
+| **A′** | 0.5 | **docs only** — the design’s eight amendments, D13’s ruled row included; lands on `main` with the rest of phase 0 |
 | **B** | 0.3, 0.4 | **SECURITY-SENSITIVE (rules)** — the rules template, the emulator, the parity test and `model.go` in one commit; then the owner-run deploy |
 | **C** | 1.1 | the policy object's shape and the version (no rules change yet: it is dead code until 1.3) |
 | **D** | 1.2 | **SECURITY-SENSITIVE (rules)** — the per-child read rules, the emulator and the parity test |
@@ -323,7 +324,7 @@ Each phase is its own PR (or its own small group of PRs where the table below sp
 
 ## Phase 0 — small fixes (four tasks, plus the owner's deploy)
 
-The design's phase 0 (§11). Nothing here shares a surface with anything else in the plan, and each of the three tasks is independently vetoable: the four flag names, the optional Anthropic key, D6, and the design document's own amendments (Task 0.5, docs only).
+The design's phase 0 (§11). Nothing here shares a surface with anything else in the plan, and each of the four tasks is independently vetoable: the four flag names, the optional Anthropic key, D6, and the design document's own amendments (Task 0.5, docs only).
 
 ### Task 0.1: the refusal messages name flags that exist
 
@@ -950,7 +951,7 @@ End with: "**Paste back:** every FACT line above, never a token, key or secret v
 
 ### Task 3.2: the project job module and the broadened bucket IAM — SECURITY-SENSITIVE, independent opus review
 
-**Files:** `deploy/terraform/gcp/modules/project/{job.tf,sa.tf,iam.tf,variables.tf,outputs.tf}` (new), `deploy/terraform/gcp/roots/installation/main.tf` (+ `variables.tf`), `deploy/terraform/gcp/modules/installation/{iam.tf,bucket.tf,history.tf,outputs.tf}`, `deploy/terraform/gcp/modules/installation/variables.tf`, `internal/backend/gcp/names.go` (+ `names_test.go`: `ProjectJobName`/`ParseProjectJobName`), `internal/infra/tf/testdata/golden/*.plan.json`, `scripts/gen-golden-plans.sh`, `internal/infra/generated_root_test.go`, `SECURITY.md`, `docs/design/bucket-iam.md`.
+**Files:** `deploy/terraform/gcp/modules/project/{job.tf,sa.tf,iam.tf,variables.tf,outputs.tf}` (new), `deploy/terraform/gcp/roots/installation/main.tf` (+ `variables.tf`), `deploy/terraform/gcp/modules/installation/{iam.tf,bucket.tf,history.tf,outputs.tf}`, `deploy/terraform/gcp/modules/installation/variables.tf`, `internal/backend/gcp/names.go` (+ `names_test.go`: `ProjectJobName` **only** — there is no `ParseProjectJobName`, R2-5 and step 1), `internal/infra/tf/testdata/golden/*.plan.json`, `scripts/gen-golden-plans.sh`, `internal/infra/generated_root_test.go`, `SECURITY.md`, `docs/design/bucket-iam.md`.
 
 **The token exposure is ruled, not open (finding 6; D13, ruled 2026-10-15).** This task changes the `runs/` bucket grant, and that grant also exposes `runs/<slug>/<run>/budget-token` (`internal/budget/token/object.go:15`) — another queued run's RTDB identity. **The owner accepted that on 2026-10-15 (R1)**: the module ships the grant with the exposure documented in SECURITY.md beside D4, Task 3b.1 designs the channel that removes it, and repositories that must not share a budget identity use separate profiles meanwhile. There is **no gate**: this task's steps 2 and 5 are the accepted shape, and the per-profile-isolation alternative the review raised is the mitigation the ruling names, not a shape to wait for. The task still names the decision explicitly, so the reader sees why the condition cannot be narrowed to a profile prefix yet.
 
