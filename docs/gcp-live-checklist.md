@@ -1131,7 +1131,7 @@ Confirms `docs/design/project-secrets.md`'s §5 precedence and §3 allow-list ho
 
 ## Check 41: the one base image's cold start (installation fugaro, sandbox repository only; RUN 2026-10-14: PASSED)
 
-The 0.7.0 base is much larger than the old per-language images (3.8 GB against 1 to 2 GB), so a run's first seconds could get slower while Cloud Run pulls it. The plan's threshold: more than 30 seconds worse than the old image makes the fallback (install tools on demand instead of baking them in) a 0.7.1 task.
+The 0.7.0 base is much larger than the old per-language images (3.8 GB against 1 to 2 GB), so a run's first seconds could get slower while Cloud Run pulls it. The plan's threshold: more than 30 seconds worse than the old image makes the fallback (install tools on demand instead of baking them in) a 0.7.5 task.
 
 **Method.** The sandbox's `web` workflow, a task that changes nothing and opens no pull request (`fugaro run --repo edgeappinc/fugarosandbox --ref master "Cold-start measurement. Do not change any file and do not open a pull request. Reply with the single word ok."`), launched three or four times at least 35 minutes apart so each run starts on an idle container. **Cold start = the run ID's timestamp (the launch time, UTC) to the first Cloud Logging entry of the run's Cloud Run execution** (`gcloud logging read` on the execution named in the run's `launch.json`, oldest entry).
 

@@ -283,10 +283,10 @@ func wantIdentity(owner, repoOnGitHub, version string) CertIdentity {
 func TestResolve(t *testing.T) {
 	tr := fakeResolver{digest: testDigest}
 	ref := "ghcr.io/dimipaun/fugaro-base@" + testDigest
-	v := fakeVerifier{wantRef: ref, wantID: wantIdentity("dimipaun", "fugaro", "0.7.1")}
+	v := fakeVerifier{wantRef: ref, wantID: wantIdentity("dimipaun", "fugaro", "0.7.5")}
 	// "base", not "fugaro-base": Resolve builds the full image name itself.
-	got, err := Resolve(context.Background(), tr, v, "dimipaun", "fugaro", "ghcr.io/dimipaun", "base", "0.7.1")
-	want := "ghcr.io/dimipaun/fugaro-base:0.7.1@" + testDigest
+	got, err := Resolve(context.Background(), tr, v, "dimipaun", "fugaro", "ghcr.io/dimipaun", "base", "0.7.5")
+	want := "ghcr.io/dimipaun/fugaro-base:0.7.5@" + testDigest
 	if err != nil || got != want {
 		t.Errorf("got %q, %v; want %q", got, err, want)
 	}
@@ -295,15 +295,15 @@ func TestResolve(t *testing.T) {
 func TestResolveRefusesAFailedVerification(t *testing.T) {
 	tr := fakeResolver{digest: testDigest}
 	ref := "ghcr.io/dimipaun/fugaro-base@" + testDigest
-	v := fakeVerifier{wantRef: ref, wantID: wantIdentity("dimipaun", "fugaro", "0.7.1"), err: errors.New("certificate identity mismatch")}
-	if _, err := Resolve(context.Background(), tr, v, "dimipaun", "fugaro", "ghcr.io/dimipaun", "base", "0.7.1"); err == nil || !strings.Contains(err.Error(), "certificate identity mismatch") {
+	v := fakeVerifier{wantRef: ref, wantID: wantIdentity("dimipaun", "fugaro", "0.7.5"), err: errors.New("certificate identity mismatch")}
+	if _, err := Resolve(context.Background(), tr, v, "dimipaun", "fugaro", "ghcr.io/dimipaun", "base", "0.7.5"); err == nil || !strings.Contains(err.Error(), "certificate identity mismatch") {
 		t.Errorf("got %v, want the injected verification error", err)
 	}
 }
 
 func TestResolveRefusesAResolveError(t *testing.T) {
 	tr := fakeResolver{err: errors.New("404")}
-	if _, err := Resolve(context.Background(), tr, fakeVerifier{}, "dimipaun", "fugaro", "ghcr.io/dimipaun", "base", "0.7.1"); err == nil {
+	if _, err := Resolve(context.Background(), tr, fakeVerifier{}, "dimipaun", "fugaro", "ghcr.io/dimipaun", "base", "0.7.5"); err == nil {
 		t.Error("want an error")
 	}
 }

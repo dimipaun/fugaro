@@ -41,7 +41,7 @@ func TestPlanRepoRefusesCloneWorkflow(t *testing.T) {
 		"checkout: clone's own runner side is not released yet",
 		"generic-tool plan Task 17",
 		"checkout: baked",
-		"fugaro 0.7.1",
+		"fugaro 0.7.5",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("%v lacks %q", err, want)
