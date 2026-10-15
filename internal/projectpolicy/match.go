@@ -67,6 +67,71 @@ func AdmitRepo(patterns []string, canonical string) bool {
 	return false
 }
 
+// Subsumes reports whether every repository the pattern a admits is also
+// admitted by the pattern p — the question MatchRepo asks one level up:
+// MatchRepo(p, "github/acme/app") is about one repository, Subsumes(p,
+// "github/acme/*") is about all of them. It lives beside the matcher so an
+// answer about admission comes from one implementation: `fugaro project repos
+// rm` asks it whether removing a pattern entry stops anything, and the sentence
+// it prints is a claim about what the next run does.
+//
+// It decides the shapes an operator writes, and answers false for the rest:
+//
+//   - "*" admits every repository, so it subsumes every a;
+//   - equal patterns subsume each other;
+//   - a pattern subsumes a concrete name (a holds no "*") exactly when
+//     MatchRepo matches it: a's language is that one repository;
+//   - a segment with one trailing wildcard subsumes another such segment when
+//     its literal prefix is a prefix of the other's, which decides the shape a
+//     list of owner or name globs is written in ("github/*/*" subsumes
+//     "github/acme/*", "service-*" subsumes "service-web*") without a
+//     language-inclusion algorithm.
+//
+// What it does not decide — two patterns whose wildcards interleave, as
+// "github/ac*/app" against "github/a*/pp*" — reads as "does not subsume", and
+// a caller that words a refusal from it then says what it can act on rather
+// than claiming a superset it has not established.
+//
+// Both arguments are canonical allow-list entries. The matcher does not
+// validate them (MatchRepo does not either); Decode's ValidPattern is what
+// checks an entry read from a node.
+func Subsumes(p, a string) bool {
+	if p == a || p == "*" {
+		return true
+	}
+	if !strings.Contains(a, "*") {
+		return MatchRepo(p, a)
+	}
+	ps, as := strings.Split(p, "/"), strings.Split(a, "/")
+	if len(ps) != len(as) {
+		return false
+	}
+	for i := range as {
+		if !segSubsumes(ps[i], as[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// segSubsumes reports whether every string matched by the segment pattern aSeg
+// is matched by pSeg. A wildcard never crosses a "/", so the segments of two
+// patterns of the same length are independent and this is the whole comparison.
+func segSubsumes(pSeg, aSeg string) bool {
+	if pSeg == "*" || pSeg == aSeg {
+		return true
+	}
+	if !strings.Contains(aSeg, "*") {
+		return matchSeg(pSeg, aSeg)
+	}
+	pLit, okP := strings.CutSuffix(pSeg, "*")
+	aLit, okA := strings.CutSuffix(aSeg, "*")
+	if !okP || !okA || strings.Contains(pLit, "*") || strings.Contains(aLit, "*") {
+		return false
+	}
+	return strings.HasPrefix(aLit, pLit)
+}
+
 // NotAdmitted is the refusal of a repository a published policy does not
 // admit, worded once for both of its readers: the run's admission check
 // (internal/runner, before any git credential exists) and the launcher's

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -687,6 +688,70 @@ func TestProjectPolicyDeleteRemovesChildrenBeforeTheSharedNode(t *testing.T) {
 	}
 }
 
+// TestProjectPolicyDeleteLosesTheETagRaceAsAUserError: every write of the
+// delete is ETag-guarded, so a publish or another delete landing between the
+// read and the write loses the race. That is the operator's to retry — the code
+// `policy publish` and `repos edit` give the same race (exit 1) — where dbErr's
+// remote failure (exit 2) is for a database that answered badly, and nothing
+// about the database failed here.
+//
+// The fake holds the shared node's three requests in turn: the read that decides
+// what is published, the delete's own ETag read, then its write. The node moves
+// while the write waits, which is the race exactly as an operator meets it.
+func TestProjectPolicyDeleteLosesTheETagRaceAsAUserError(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	var stamps []<-chan struct{}
+	var releases []func()
+	for range 3 {
+		stamped, release := f.db.HoldNext(projectpolicy.PathShared())
+		stamps = append(stamps, stamped)
+		releases = append(releases, release)
+	}
+	type result struct {
+		out string
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		out, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+		done <- result{out, err}
+	}()
+	for i, stamped := range stamps {
+		select {
+		case <-stamped:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("the delete's request %d to %s never arrived", i+1, projectpolicy.PathShared())
+		}
+		if i < len(stamps)-1 {
+			releases[i]()
+			continue
+		}
+		// The write is in flight carrying the ETag it read: move the node the way
+		// a publish landing at that moment would.
+		f.db.Set(projectpolicy.PathShared(), map[string]any{"allow_repos": []string{"github/other/*"}})
+		releases[i]()
+	}
+	got := <-done
+	if got.err == nil {
+		t.Fatalf("a delete whose node moved under it was reported as a success:\n%s", got.out)
+	}
+	if code := ExitCode(got.err); code != ExitUserError {
+		t.Errorf("exit code = %d, want %d (a user error): a lost ETag race is the operator's to retry, not a remote failure; err = %v", code, ExitUserError, got.err)
+	}
+	if !strings.Contains(got.err.Error(), "changed while this ran") {
+		t.Errorf("the refusal does not say the policy changed: %v", got.err)
+	}
+	if f.db.Value(projectpolicy.PathShared()) == nil {
+		t.Error("the write that lost the race deleted the node anyway")
+	}
+	if strings.Contains(got.out, "no policy is published") {
+		t.Errorf("the command says the policy is gone though its own write lost the race:\n%s", got.out)
+	}
+}
+
 // TestProjectPolicyDeleteRefusesWithoutYesWhileARunIsInFlight: a repository
 // that is mid-run keeps the policy until it finishes (B5).
 func TestProjectPolicyDeleteRefusesWithoutYesWhileARunIsInFlight(t *testing.T) {
@@ -1289,6 +1354,14 @@ func TestRemovalWarningSaysWhatTheNextRunDoes(t *testing.T) {
 		"pattern, the wildcard remains": {[]string{"*", "github/acme/*"}, "github/acme/*", true, "*"},
 		"pattern, nothing remains":      {[]string{"github/acme/*"}, "github/acme/*", false, ""},
 		"pattern, a narrower one only":  {[]string{"github/acme/*", "github/acme/app"}, "github/acme/*", false, ""},
+		// A wider pattern than the one being removed admits everything it did,
+		// and only the bare wildcard used to count as one (the review of PR
+		// #390): removing github/acme/* while github/*/* is on the list stopped
+		// nothing, and the confirmation said the runs were refused.
+		"pattern, a wider pattern remains":   {[]string{"github/*/*", "github/acme/*"}, "github/acme/*", true, "github/*/*"},
+		"pattern, a wider provider wildcard": {[]string{"*/acme/*", "github/acme/*"}, "github/acme/*", true, "*/acme/*"},
+		"pattern, a prefix glob remains":     {[]string{"github/acme/service-*", "github/acme/service-web*"}, "github/acme/service-web*", true, "github/acme/service-*"},
+		"pattern, an undecided pair":         {[]string{"github/ac*me*", "github/acme*"}, "github/acme*", false, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, by := admittedBy(tc.allow, tc.arg)
@@ -1344,6 +1417,83 @@ func TestProjectReposRmWithAPatternStillOnTheListSaysSo(t *testing.T) {
 	}
 	if !projectpolicy.AdmitRepo(publishedPolicy(t, f).AllowRepos, "github/acme/app") {
 		t.Error("the policy no longer admits the repository the confirmation said it still admits")
+	}
+}
+
+// TestProjectReposRmOfAPatternWithAWiderOneStillOnTheListSaysSo: the same
+// removal, one entry up. Removing a *pattern* is moot only when a remaining
+// entry admits everything it admitted, and github/*/* does: the confirmation
+// used to recognise the bare wildcard alone and said the runs were refused, so
+// an operator un-enrolling github/acme/* was told a stop that did not happen
+// (the review of PR #390). The sentence is read as the next run's behaviour,
+// so it is checked against projectpolicy.AdmitRepo on a repository only the
+// removed pattern admitted.
+func TestProjectReposRmOfAPatternWithAWiderOneStillOnTheListSaysSo(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"github/acme/*", "github/*/*"} {
+		if _, _, err := execute(t, "project", "repos", "add", p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	typed(t)
+	out, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", "github/acme/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "github/*/* still admits it") {
+		t.Errorf("the confirmation does not name the entry that still admits it:\n%s", out)
+	}
+	if strings.Contains(out, "refused from now on") {
+		t.Errorf("the confirmation says the runs are refused though github/*/* is on the list:\n%s", out)
+	}
+	allow := publishedPolicy(t, f).AllowRepos
+	if !projectpolicy.AdmitRepo(allow, "github/acme/anything") {
+		t.Errorf("allow_repos = %v no longer admits a repository of the removed pattern, though the confirmation said it does", allow)
+	}
+}
+
+// TestProjectShowAndReposLsAcceptARepoWithoutAProvider: `provider:` is optional
+// in the config (an empty one is the checkout's own git.provider), so a repos:
+// entry without it is a config localcfg accepts — and the two read-only
+// commands used to hard-fail on it, though an entry that cannot be canonical
+// cannot be an entry of the allow-list they annotate either. The publisher is
+// where the same entry is a refusal, because the seed *is* the list it writes
+// (P4's un-enroll); a reader has nothing to refuse.
+func TestProjectShowAndReposLsAcceptARepoWithoutAProvider(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	// The config gains a third repository that names no provider, which is
+	// legal: fugaro.yaml in its checkout decides.
+	setConfig(t, f, func(s string) string {
+		return strings.TrimSuffix(s, "\n") + "\n  acme/noprov: { workflows: [web] }\n"
+	})
+	for _, cmd := range [][]string{{"project", "show"}, {"project", "repos", "ls"}, {"project", "policy", "show"}} {
+		out, _, err := execute(t, cmd...)
+		if err != nil {
+			t.Errorf("%v = %v, want it to accept a repos: entry with no provider", cmd, err)
+			continue
+		}
+		if strings.Contains(out, "noprov") {
+			t.Errorf("%v mentions a repository it cannot have enrolled:\n%s", cmd, out)
+		}
+	}
+	// The publisher still refuses, and says which entry and what to do.
+	_, _, err := execute(t, "project", "policy", "publish", "--seed-repos")
+	if err == nil {
+		t.Fatal("a seed that cannot enroll repos.acme/noprov was published anyway")
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("the refusal's exit code = %d, want %d (a user error)", ExitCode(err), ExitUserError)
+	}
+	for _, want := range []string{"repos.acme/noprov", "provider:"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
 	}
 }
 

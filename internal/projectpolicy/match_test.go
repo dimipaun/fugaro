@@ -64,6 +64,77 @@ func TestMatchRepo(t *testing.T) {
 	}
 }
 
+// TestSubsumes: the pattern-against-pattern question `fugaro project repos rm`
+// asks about removing a pattern entry. Every case that answers true is
+// cross-checked against MatchRepo on concrete repositories the subsumed
+// pattern admits, because a wrong true is the harmful direction: the CLI words
+// "its runs are not refused" from it, and that sentence is a claim about what
+// the next run does. The last two cases are the shapes it does not decide,
+// recorded so nobody reads a false as a proof about a list.
+func TestSubsumes(t *testing.T) {
+	for _, tc := range []struct {
+		p, a string
+		want bool
+	}{
+		{"*", "github/acme/*", true},
+		{"*", "github/acme/app", true},
+		{"github/acme/*", "github/acme/*", true},
+		{"github/acme/app", "github/acme/app", true},
+		{"github/*/*", "github/acme/*", true}, // the case the CLI got wrong
+		{"github/*/*", "github/acme/app", true},
+		{"*/acme/*", "github/acme/*", true},
+		{"github/acme/*", "github/acme/app", true}, // a concrete name is one repository
+		{"github/acme/service-*", "github/acme/service-web*", true},
+		{"github/acme/service-*", "github/acme/service-web", true},
+		{"github/acme/app", "github/acme/*", false}, // the reverse: a admits more
+		{"github/acme/*", "github/*/*", false},
+		{"github/other/*", "github/acme/*", false},
+		{"bitbucket/acme/*", "github/acme/*", false},
+		{"github/acme/service-web*", "github/acme/service-*", false},
+		{"github/acme/app", "github/acme/other", false},
+		{"github/*/*/*", "github/acme/app", false}, // different depths
+		{"github/ac*/app", "github/a*/pp*", false}, // undecided: interleaved wildcards
+		{"github/ac*me*", "github/acme*", false},   // undecided, and genuinely a superset
+	} {
+		got := Subsumes(tc.p, tc.a)
+		if got != tc.want {
+			t.Errorf("Subsumes(%q, %q) = %v, want %v", tc.p, tc.a, got, tc.want)
+			continue
+		}
+		if !got {
+			continue
+		}
+		for _, sample := range concreteSamples(tc.a) {
+			if !MatchRepo(tc.p, sample) {
+				t.Errorf("Subsumes(%q, %q) = true, but %q admits %q and %q does not",
+					tc.p, tc.a, tc.a, sample, tc.p)
+			}
+		}
+	}
+}
+
+// concreteSamples spells a pattern out as concrete repositories, for the check
+// above: one per combination of a few runs per wildcard, empty ones included.
+func concreteSamples(pattern string) []string {
+	out := []string{pattern}
+	for range 2 {
+		var next []string
+		for _, s := range out {
+			for _, fill := range []string{"", "x", "acme"} {
+				next = append(next, strings.Replace(s, "*", fill, 1))
+			}
+		}
+		out = next
+	}
+	var concrete []string
+	for _, s := range out {
+		if !strings.Contains(s, "*") {
+			concrete = append(concrete, s)
+		}
+	}
+	return concrete
+}
+
 func TestMatchRepoWildcardSegmentsAreGreedy(t *testing.T) {
 	for _, tc := range []struct{ pattern, canonical string }{
 		{"github/*-web/*", "github/acme-web/app"}, // a wildcard before a literal inside a segment
