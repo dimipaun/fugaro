@@ -264,3 +264,58 @@ func TestValidateModelProvidersAcceptsWildcardEntry(t *testing.T) {
 		t.Fatalf("a mixed list with \"*\" was refused: %+v", ps)
 	}
 }
+
+// TestClaimMustBeExplicit pins the whole claim rule (Review Focus 2): the
+// opt-in is one literal "anthropic/<id>" route entry, and the entry is the
+// permission. A wildcard over the prefix, a bare claude-* spelling, a
+// variant, a bracketed context window and an over-length ID all stay refused
+// with the message this rule has always carried; a well-formed explicit ID is
+// accepted, by a route's models here and (through the gateway's own call to
+// CheckModelPattern) by the gateway's routes too.
+func TestClaimMustBeExplicit(t *testing.T) {
+	for _, m := range []string{
+		"anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5",
+		"deepseek/*", "openai/gpt-5*",
+	} {
+		if msg := CheckModelPattern(m); msg != "" {
+			t.Errorf("CheckModelPattern(%q) = %q, want accepted", m, msg)
+		}
+	}
+	for _, m := range []string{
+		"anthropic/*", "anthropic/claude-*", "claude-*", "claude-sonnet-5-5",
+		"anthropic/claude-sonnet-5.5:free", "anthropic/claude-sonnet-5.5[1m]",
+		// Over CheckModelPattern's own 100-character bound, which refuses it
+		// before the claim rule ever looks: pricing.IsProviderModelID is the
+		// grammar alone and carries no bound of its own (Task 4).
+		"anthropic/" + strings.Repeat("a", 100),
+	} {
+		if msg := CheckModelPattern(m); msg == "" {
+			t.Errorf("CheckModelPattern(%q) = accepted, want refused", m)
+		}
+	}
+	// The message a refused claim meets is the one it always did: the gateway
+	// reads it, and a claim is not a licence to widen it.
+	if msg := CheckModelPattern("anthropic/*"); !strings.Contains(msg, "would claim Claude models, which go direct to Anthropic") {
+		t.Errorf("the refusal reads %q", msg)
+	}
+}
+
+// TestCheckClaudeClaimIsOneShape: the exported helper is the rule, spelled
+// once, so a later writer (the project layer's claim key) judges a claim by
+// asking it rather than by repeating the grammar.
+func TestCheckClaudeClaimIsOneShape(t *testing.T) {
+	for _, m := range []string{"anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5"} {
+		if msg := CheckClaudeClaim(m); msg != "" {
+			t.Errorf("CheckClaudeClaim(%q) = %q, want accepted", m, msg)
+		}
+	}
+	for _, m := range []string{
+		"anthropic/*", "anthropic/claude-*", "claude-*", "claude-sonnet-5-5", "anthropic/",
+		"anthropic/claude-sonnet-5.5:free", "anthropic/claude-sonnet-5.5[1m]",
+		"anthropic/Claude-Opus", "deepseek/deepseek-v4-flash",
+	} {
+		if msg := CheckClaudeClaim(m); msg == "" {
+			t.Errorf("CheckClaudeClaim(%q) = accepted, want refused", m)
+		}
+	}
+}

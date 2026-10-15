@@ -956,3 +956,93 @@ func TestValidateJSONNotesTheAnthropicKey(t *testing.T) {
 		}
 	}
 }
+
+// TestValidateJudgesProvidersOnlyWithAMatchingLocalConfig pins what the two
+// surfaces actually do (P5), because "an unclaimed anthropic/<id> is refused
+// at both" is true of the runner and **conditional** in the CLI. The runner's
+// call is unconditional (internal/runner/gateway.go), and that is the
+// enforcement surface; the CLI's provider half returns before it looks unless
+// the checkout has a local config whose name matches the file's project, and
+// its pins half returns early on the same condition. So a machine with no
+// local config, or one for another installation, prints nothing at all about
+// providers or pins -- and that is the truth about the pair, not a gap to
+// close. The two halves are also not one rule: under agent.auth: oauth the
+// pins half is skipped entirely (an oauth run has no gateway, so nothing is
+// priced or pinned) while the provider half still runs. The unclaimed
+// claimed-shape pin in this test is refused under either auth, by the
+// provider half.
+func TestValidateJudgesProvidersOnlyWithAMatchingLocalConfig(t *testing.T) {
+	const budget = "budget: { mode: enforce, per_run_usd: 2 }\n" + validateProviderBlock
+	const agent = "  auth: api-key\n  models: { coder: deepseek/deepseek-v4-flash, reviewer: anthropic/claude-sonnet-5.5 }"
+	// A matching local config: the unclaimed pin is printed at its own path,
+	// with the fix the owner has to make.
+	path := budgetProject(t, budget, agent)
+	inCheckoutOf(t, "acme/sandbox")
+	out, _, err := execute(t, "validate", path)
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.models.reviewer") || !strings.Contains(out, "no provider serves it") {
+		t.Fatalf("a matching local config: exit %d, out %q", ExitCode(err), out)
+	}
+	for _, want := range []string{"is a Claude model", "go direct to Anthropic", "naming that exact ID in a route's models"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the refusal does not say %q: %q", want, out)
+		}
+	}
+	// No local config at all: neither half looks, so nothing is said -- not
+	// even the pin the runner would refuse on the next launch.
+	isolateProjects(t, t.TempDir())
+	fileOnly := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:",
+		"agent:\n"+agent+"\nbudget: { mode: enforce, per_run_usd: 2 }\nworkflows:", 1))
+	out, errOut, err := execute(t, "validate", fileOnly)
+	if err != nil || !strings.Contains(out, "is valid") {
+		t.Fatalf("no local config: err %v, out %q, stderr %q", err, out, errOut)
+	}
+	for _, want := range []string{"agent.models.reviewer", "no provider serves it", "allow_data_to", "providers"} {
+		if strings.Contains(out+errOut, want) {
+			t.Errorf("validate said %q with no local config:\nout: %s\nstderr: %s", want, out, errOut)
+		}
+	}
+	// A local config whose name is another project's: the same silence, from
+	// the same two early returns. The control first: with a local config of
+	// the file's own project, the same pin is refused here, so the silence
+	// below is the name mismatch and not a selection that found nothing.
+	isolateProjects(t, t.TempDir())
+	lcPath := writeProject(t, "borealis", "proj-9999")
+	f, err := os.OpenFile(lcPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(budget); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FUGARO_PROJECT", "borealis")
+	body, err := os.ReadFile(fileOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	matching := writeConfig(t, strings.Replace(string(body), "project: aurora", "project: borealis", 1))
+	if out, _, err := execute(t, "validate", matching); ExitCode(err) != ExitUserError || !strings.Contains(out, "no provider serves it") {
+		t.Fatalf("control (a local config of the file's own project): exit %d, out %q", ExitCode(err), out)
+	}
+	if out, errOut, err = execute(t, "validate", fileOnly); err != nil || !strings.Contains(out, "is valid") {
+		t.Fatalf("another project's config: err %v, out %q, stderr %q", err, out, errOut)
+	}
+	if strings.Contains(out+errOut, "no provider serves it") {
+		t.Errorf("another project's config judged the pin:\nout: %s\nstderr: %s", out, errOut)
+	}
+	// The halves are not one rule. An alias pin under api-key is the pins
+	// half's refusal; under oauth that half does not run at all, while the
+	// provider half above still does.
+	const alias = "  auth: api-key\n  model: sonnet"
+	path = budgetProject(t, budget, alias)
+	inCheckoutOf(t, "acme/sandbox")
+	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.models.coder") {
+		t.Fatalf("api-key alias pin: exit %d, out %q", ExitCode(err), out)
+	}
+	path = budgetProject(t, budget, strings.Replace(alias, "api-key", "oauth", 1))
+	if out, _, err = execute(t, "validate", path); err != nil || !strings.Contains(out, "is valid") {
+		t.Fatalf("under oauth the pins half still ran: err %v, out %q", err, out)
+	}
+}
