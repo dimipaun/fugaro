@@ -24,8 +24,12 @@ import (
 // call jobs.run directly, so the run's own admission check
 // (internal/runner's admissionCheck) is the one that counts. What this adds
 // is a refusal while the operator is still there to read it, before a job
-// exists to fail: the same message, from the same policy node, one step
-// earlier.
+// exists to fail. For a repository the policy does not admit that refusal is
+// the run's own message, from the same policy node, one step earlier
+// (projectpolicy.NotAdmitted, which is what both sides word it with); the
+// binding and the skew are worded here, because they answer questions only
+// this side can see — which slug the launch was about to store the run under,
+// and which release this binary is.
 //
 // The read is the operator's own (projectPolicyRead), which is what makes the
 // gate the launcher's and not the runner's (R2-8(a)): the runner on a
@@ -54,10 +58,17 @@ func launchPolicyGates(ctx context.Context, env *cloudEnv, slug string, spec *ta
 	}
 	// The provider kind is derived from the pair the run itself trusts — the
 	// slug the run is stored under and the repository the task names — never
-	// from the local config's own provider, which is what chose the slug: a
-	// repository configured with a kind no Cloud Run job's slug can be
-	// computed with ("fake", say) is one the run refuses, so the launch is
-	// refused here instead.
+	// from the local config's own provider, which is what chose the slug.
+	//
+	// No launch this CLI builds can reach this refusal: repoSlug computes the
+	// slug with task.Slug of a provider validated against config.Providers,
+	// and that list is the run's own kinds (runner.ProviderKinds reports the
+	// same slice; TestProviderKindsAgreeWithTheConfigsList pins it). The
+	// refusal is here for the day the two stop agreeing — a kind one side
+	// knows and the other does not is a repository whose slug and whose run
+	// would be derived differently — and the test beside this file calls it
+	// with the pair a launcher's own jobs.run call would have to build by
+	// hand.
 	kind, ok := runner.ProviderForSlug(slug, spec.Repo)
 	if !ok {
 		return userErr("the slug this launch stores its run under (%s) is not the slug of %s under any git provider kind (%s): the run this launch would start refuses it for that reason, so the launch is refused before any execution exists",

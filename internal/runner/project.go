@@ -91,7 +91,10 @@ func ProviderForSlug(slug, repo string) (kind string, ok bool) {
 }
 
 // ProviderKinds is the kinds ProviderForSlug derives from, for a refusal that
-// names them (the same list the run's own messages name).
+// names them (the same list the run's own messages name) and for the launcher
+// side, whose slug is computed with internal/config's Providers: the two must
+// be one list, and internal/cli's TestProviderKindsAgreeWithTheConfigsList
+// holds them to it.
 func ProviderKinds() []string {
 	return append([]string(nil), jobProviderKinds...)
 }
