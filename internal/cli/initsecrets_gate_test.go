@@ -108,7 +108,10 @@ func TestSecretsTypedOptInThenPrompt(t *testing.T) {
 				t.Fatal(lr.err)
 			}
 			if tc.stored {
-				if stateOf(lr.res, initflow.Secrets) != initflow.Changed || r.store.latestProject("aurora", "bitbucket-token") == "" {
+				// bitbucket-token has no project-wide default (a repository
+				// access token is per repository), so the stage that runs after
+				// the typed opt-in stores this repository's own copy.
+				if stateOf(lr.res, initflow.Secrets) != initflow.Changed || r.store.latest(bitbucketSlug, "bitbucket-token") == "" {
 					t.Fatalf("%+v", lr.res.Stages)
 				}
 				if !strings.Contains(r.errOut.String(), "bitbucket-token for acme/app on bitbucket.org") {

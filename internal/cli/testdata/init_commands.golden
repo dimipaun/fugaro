@@ -19,7 +19,7 @@
     claude setup-token
     fugaro secrets set claude-oauth-token --repo acme/app
 [secrets/bitbucket] command: run these in your own terminal window, one line at a time, in this order
-    fugaro secrets set bitbucket-token
+    fugaro secrets set bitbucket-token --repo acme/app
 [secrets/odd-repo] command: run these in your own terminal window, one line at a time, in this order
     claude setup-token
     fugaro secrets set claude-oauth-token --repo 'ac me/ap'\''p'

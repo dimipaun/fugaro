@@ -200,10 +200,14 @@ func TestSecretVersions(t *testing.T) {
 // D2 (plan Task 2.1): a name whose only copy is the project-wide one
 // Readiness resolved has a version the job mounts, so nothing is missing.
 // SecretVersions is what NeedsBuild gates the first image build on, so
-// without this a credential stored with `fugaro secrets set
-// bitbucket-token` (the new default) leaves the workflow unbuildable and
-// its job undeployed, and the "still missing" list prints the
-// repository-copy command for a secret that already exists.
+// without this a credential stored with `fugaro secrets set <name>
+// --project-wide` leaves the workflow unbuildable and its job undeployed,
+// and the "still missing" list prints the repository-copy command for a
+// secret that already exists.
+//
+// The name is bitbucket-token, which the sweep does not take in on its own:
+// the project copy is here because the owner's local config allow-lists this
+// repository for it (config.PerRepositorySecret, owner ruling of 2026-10-15).
 //
 // spec is the spec Readiness returned, so ProjectSecrets is its decision,
 // read back rather than resolved live again (B1: the grants the apply made
@@ -215,7 +219,10 @@ func TestSecretVersions(t *testing.T) {
 func TestSecretVersionsCountsAProjectResolvedName(t *testing.T) {
 	ctx := context.Background()
 	f := newCloud(t)
-	spec := sandboxSpec(t)
+	spec, err := Repo(sandboxInputs(t, m5Additions+"project_secrets:\n  bitbucket-token: { allow_data_to: [acme/sandbox] }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	f.seedVersions(spec) // the repository's own copies exist, none has a version
 	id := spec.ProjectSecretCandidates["bitbucket-token"]
 	if id == "" {
@@ -373,25 +380,42 @@ func TestNeedsBuildDedupesNamedAccountVariants(t *testing.T) {
 // a name with a project-wide meaning is missing is the project-scope one,
 // the same `fugaro secrets set <name>` its own prompt prints, because
 // that is what storing it by default now means. A name with no
-// project-wide meaning — a repository's own application secret, and the
-// bare claude-oauth-token, refused project scope by name — keeps the
+// project-wide meaning — a repository's own application secret, the bare
+// claude-oauth-token, refused project scope by name, and bitbucket-token,
+// whose credential is issued for one repository — keeps the
 // repository-copy command, which is the only scope it has.
+//
+// The second half allow-lists this repository for bitbucket-token in the
+// local config, which is the owner's explicit opt-in and the only way that
+// name gets a project copy (config.PerRepositorySecret, owner ruling of
+// 2026-10-15); the project-scope command comes back with it.
 //
 // Mutation (run, restore): drop the ProjectSecretCandidates lookup from
 // SecretCommands (always `--repo <name>`) and this test fails on the
-// bitbucket-token line; make it unconditional the other way (never
-// `--repo`) and it fails on the other two.
+// allow-listed bitbucket-token line; make it unconditional the other way
+// (never `--repo`) and it fails on the claude-oauth-token and
+// sandbox-probe lines.
 func TestSecretCommandsFollowTheScopeOfEachName(t *testing.T) {
-	spec := sandboxSpec(t)
 	versions := map[string]bool{"bitbucket-token": false, "claude-oauth-token": false, "sandbox-probe": false}
+	spec := sandboxSpec(t)
 	got := SecretCommands(spec, versions, "fugaro", func(s string) string { return s })
 	want := []SecretStep{
-		{Name: "bitbucket-token", What: spec.Secrets["bitbucket-token"], Commands: []string{"fugaro secrets set bitbucket-token < PATH-TO-THE-VALUE-FILE"}},
+		{Name: "bitbucket-token", What: spec.Secrets["bitbucket-token"], Commands: []string{"fugaro secrets set bitbucket-token --repo acme/sandbox < PATH-TO-THE-VALUE-FILE"}},
 		{Name: "claude-oauth-token", What: spec.Secrets["claude-oauth-token"], Commands: []string{"claude setup-token", "fugaro secrets set claude-oauth-token --repo acme/sandbox"}},
 		{Name: "sandbox-probe", What: spec.Secrets["sandbox-probe"], Commands: []string{"fugaro secrets set sandbox-probe --repo acme/sandbox < PATH-TO-THE-VALUE-FILE"}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("commands:\n%+v\nwant:\n%+v", got, want)
+	}
+
+	listed, err := Repo(sandboxInputs(t, m5Additions+"project_secrets:\n  bitbucket-token: { allow_data_to: [acme/sandbox] }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = SecretCommands(listed, versions, "fugaro", func(s string) string { return s })
+	want[0] = SecretStep{Name: "bitbucket-token", What: listed.Secrets["bitbucket-token"], Commands: []string{"fugaro secrets set bitbucket-token < PATH-TO-THE-VALUE-FILE"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("commands with the allow-list entry:\n%+v\nwant:\n%+v", got, want)
 	}
 }
 

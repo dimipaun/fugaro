@@ -158,7 +158,7 @@ whitespace (a copy-and-paste slip, so it is refused rather than stored). Ctrl-C 
 
 Scope: with neither flag, a NAME that has a project-wide meaning is stored
 once for the whole Fugaro project, in the project's own Secret Manager --
-the API key, the git credentials, a model provider's own key (any provider,
+the API key, the GitHub App key, a model provider's own key (any provider,
 allow_data_to or not), a reserved secret your local config's project_secrets
 block allow-lists, or a named Claude account's token whose account
 allow-lists at least one repository. --project-wide is accepted as a
@@ -167,6 +167,13 @@ job there is no IAM boundary between repositories: the profile is the
 boundary, and the value reaches every enrolled repository. A workflow's own
 secret has no project-wide meaning and is stored in the repository's own
 container as before.
+
+bitbucket-token is the exception, and has no project-wide default: a
+Bitbucket credential is a repository access token, issued for one repository
+and usable for no other, so it is always stored in this repository's own
+container and every repository is asked for its own value (docs/git-providers.md).
+Storing it for the project is refused unless project_secrets.bitbucket-token
+allow-lists the repositories it is meant for.
 
 With --repo (owner/name, or with no value for this checkout's origin) the
 value is stored as the repository's own copy instead. That copy overrides
@@ -306,10 +313,12 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 		// The name has a project-wide meaning that does not reach this
 		// repository, and the person typed no flag: the copy they are about to
 		// store is this repository's own, and saying which entry left them out
-		// is what tells them --project-wide is the other intent.
+		// is what tells them --project-wide is the other intent -- when the
+		// flag would in fact be accepted for it (projectWideHint; an entry that
+		// is present and empty is the one state where it would not).
 		fmt.Fprintf(cmd.ErrOrStderr(),
-			"note: %s is stored project-wide in this project, but not for %s: this value goes to %s's own copy, which overrides the project copy for it. `fugaro secrets set <name> --project-wide` stores it for the project instead\n",
-			pluginwire.Printable(name), pluginwire.Printable(repo), pluginwire.Printable(repo))
+			"note: %s is stored project-wide in this project, but not for %s: this value goes to %s's own copy, which overrides the project copy for it. %s\n",
+			pluginwire.Printable(name), pluginwire.Printable(repo), pluginwire.Printable(repo), projectWideHint(env.lc, name))
 	}
 	r, err := resolveSecretRepo(cmd, env, o.repo)
 	if err != nil {
@@ -371,7 +380,8 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 //     explicit opt-in under #343, which the new default now reaches without
 //     a flag;
 //   - a reserved secret D2 swept in (config.ProjectScopeByDefault): the API
-//     key and the git credentials;
+//     key and the GitHub App key -- bitbucket-token is not one of them, and
+//     keeps the repository scope it has whenever it is not allow-listed;
 //   - a model provider's own key (accepted project-wide with no list, §3a);
 //   - a named Claude account's token whose account lists a repository.
 //
@@ -438,18 +448,20 @@ func projectSecretRefusal(name, path string) error {
 		pluginwire.Printable(name), path)
 }
 
-// secretsSetProjectWide stores name's value once for the whole Fugaro
-// project (design docs/design/project-secrets.md §4). The eligibility checks
-// run in the design's fixed order (§4, S1) and before any value is read:
+// projectWideAccepted reports whether `fugaro secrets set name --project-wide`
+// would be accepted for this installation's local config: the eligibility
+// checks of design §4 (S1), in its fixed order, and the one place they are
+// decided -- secretsSetProjectWide refuses with projectWideRefusal's message
+// exactly when this is false, and the note that offers the flag as the other
+// intent (projectWideHint) asks this same function before it offers it.
 //
 //  1. a reserved name (config.ReservedSecrets, which takes claude-oauth-token
 //     first, so it never falls through to the named-account branch): a name
-//     D2 swept in (config.ProjectScopeByDefault -- the API key and the git
-//     credentials) is accepted with no project_secrets entry at all, and an
-//     entry the owner wrote still decides when there is one -- a list that
-//     is present and empty keeps meaning "nobody". The bare
-//     claude-oauth-token is not swept in and still needs an entry with a
-//     non-empty allow_data_to;
+//     D2 swept in (config.ProjectScopeByDefault -- the API key and the GitHub
+//     App key) is accepted with no project_secrets entry at all, and an entry
+//     the owner wrote still decides when there is one -- a list that is
+//     present and empty keeps meaning "nobody". The bare claude-oauth-token is
+//     not swept in and still needs an entry with a non-empty allow_data_to;
 //  2. a model provider's own key is accepted unconditionally -- no condition
 //     on allow_data_to at all (§3a: an absent list is a valid, intentional
 //     "available to every repository" state for a provider, not a reason to
@@ -459,27 +471,62 @@ func projectSecretRefusal(name, path string) error {
 //     ClaudeAccountBySecret's implicit default);
 //  4. anything else -- a workflow's own secret -- has no project-wide
 //     meaning and is refused (§3).
-func secretsSetProjectWide(cmd *cobra.Command, env *cloudEnv, o secretsOptions, name string) error {
+func projectWideAccepted(lc *localcfg.Config, name string) bool {
 	if _, reserved := config.ReservedSecrets[name]; reserved {
-		ps, listed := env.lc.ProjectSecrets[name]
-		switch {
-		case listed && len(ps.AllowDataTo) > 0:
-			// The owner's own entry, which is the explicit opt-in #343 had
-			// and the answer a D2 default must not overrule.
-		case !listed && config.ProjectScopeByDefault(name):
-			// D2: swept in, no per-name list needed.
-		default:
-			return projectSecretRefusal(name, "project_secrets."+pluginwire.Printable(name))
-		}
-	} else if _, ok := config.ProviderBySecret(env.lc.Providers, name); ok {
-		// Accepted unconditionally (§3a); nothing to check.
-	} else if account, ok := config.ClaudeAccountBySecret(env.lc.ClaudeAccounts, name); ok && account != config.DefaultClaudeAccount {
-		if len(env.lc.ClaudeAccounts[account].AllowDataTo) == 0 {
-			return projectSecretRefusal(name, "claude_accounts."+pluginwire.Printable(account)+".allow_data_to")
-		}
-	} else {
-		return userErr("%s has no project-wide meaning: only a reserved secret (%s), a model provider's key, or a named Claude account's token is stored project-wide",
-			pluginwire.Printable(name), strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", "))
+		ps, listed := lc.ProjectSecrets[name]
+		// The owner's own entry is the explicit opt-in #343 had, and the answer
+		// a D2 default must not overrule; with no entry, D2's sweep decides.
+		return (listed && len(ps.AllowDataTo) > 0) || (!listed && config.ProjectScopeByDefault(name))
+	}
+	if _, ok := config.ProviderBySecret(lc.Providers, name); ok {
+		return true // accepted unconditionally (§3a)
+	}
+	if account, ok := config.ClaudeAccountBySecret(lc.ClaudeAccounts, name); ok && account != config.DefaultClaudeAccount {
+		return len(lc.ClaudeAccounts[account].AllowDataTo) > 0
+	}
+	return false
+}
+
+// projectWideRefusal is what `secrets set name --project-wide` reports when
+// projectWideAccepted is false: the config field the owner would have to fill
+// in, or, for a name with no project-wide meaning at all, that fact. Read in
+// the same order as projectWideAccepted, so the two cannot disagree about
+// which case a name is in.
+func projectWideRefusal(lc *localcfg.Config, name string) error {
+	if _, reserved := config.ReservedSecrets[name]; reserved {
+		return projectSecretRefusal(name, "project_secrets."+pluginwire.Printable(name))
+	}
+	if account, ok := config.ClaudeAccountBySecret(lc.ClaudeAccounts, name); ok && account != config.DefaultClaudeAccount {
+		return projectSecretRefusal(name, "claude_accounts."+pluginwire.Printable(account)+".allow_data_to")
+	}
+	return userErr("%s has no project-wide meaning: only a reserved secret (%s), a model provider's key, or a named Claude account's token is stored project-wide",
+		pluginwire.Printable(name), strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", "))
+}
+
+// projectWideHint words the other intent the note in secretsSet offers: the
+// flag, when `secrets set name --project-wide` would be accepted for it, or
+// the edit that makes it accepted when it would not. Only a name whose
+// project_secrets entry is present and empty gets the second form -- the one
+// state where the name has a project-wide shape (ProjectScopeByDefault), the
+// note therefore fires for a checkout the entry does not list, and the flag
+// would still refuse (projectWideAccepted). Offering it there would send the
+// person to a command that fails; naming the field is what gets them where
+// they meant to go, and the reading is the same "present and empty means
+// nobody" projectSecretRefusal states.
+func projectWideHint(lc *localcfg.Config, name string) string {
+	if projectWideAccepted(lc, name) {
+		return "`fugaro secrets set <name> --project-wide` stores it for the project instead"
+	}
+	return fmt.Sprintf("storing it for the project instead needs %s to list the repositories it is meant for: while it is present and empty nobody may mount the project copy, so `fugaro secrets set <name> --project-wide` is refused until it names at least one repository",
+		"project_secrets."+pluginwire.Printable(name)+".allow_data_to")
+}
+
+// secretsSetProjectWide stores name's value once for the whole Fugaro
+// project (design docs/design/project-secrets.md §4). Eligibility is
+// projectWideAccepted's decision, and it runs before any value is read.
+func secretsSetProjectWide(cmd *cobra.Command, env *cloudEnv, o secretsOptions, name string) error {
+	if !projectWideAccepted(env.lc, name) {
+		return projectWideRefusal(env.lc, name)
 	}
 	// Design §5's precedence has no override-the-override, and §6 step 4a is
 	// the state both existing installations are in: a repository copy with an
@@ -493,8 +540,13 @@ func secretsSetProjectWide(cmd *cobra.Command, env *cloudEnv, o secretsOptions, 
 			"note: whether a repository's own copy of %s wins over the project copy could not be read (%s), and a repository copy with an enabled version always wins\n",
 			pluginwire.Printable(name), oneLine(err.Error()))
 	} else if len(repos) > 0 {
+		// The list is the local config's repositories (repoCopiesWithVersions
+		// matches a copy by the ID its own slug derives, and a slug cannot be
+		// turned back into an owner/name), so a repository this local config
+		// does not list is not named here and wins all the same -- said, because
+		// the note is read as "these and no others".
 		fmt.Fprintf(cmd.ErrOrStderr(),
-			"note: %s already has its own copy with an enabled version in %s, and a repository copy wins over the project copy: those repositories keep the value their own copy holds until its last enabled version is disabled (`fugaro secrets ls --repo <repository>` names the secret), and this version reaches them only after that\n",
+			"note: %s already has its own copy with an enabled version in %s, and a repository copy wins over the project copy: those repositories keep the value their own copy holds until its last enabled version is disabled (`fugaro secrets ls --repo <repository>` names the secret), and this version reaches them only after that. A repository this local config does not list is not named here, and its own copy wins the same way.\n",
 			pluginwire.Printable(name), pluginwire.Printable(strings.Join(repos, ", ")))
 	}
 	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: env.lc.Name, gcp.LabelSecret: name}
@@ -796,9 +848,11 @@ func newSecretsLsCmd() *cobra.Command {
 value comes from, never any value (this command has no access call at all).
 
 The default listing is the installation's project-wide containers -- the
-scope secrets set stores to by default -- one row per name, with the
-repositories the local config allows to use each one. --project-wide is
-accepted as a synonym, so existing scripts keep working.
+scope secrets set stores to by default for a name that has one -- one row
+per name, with the repositories the local config allows to use each one
+(bitbucket-token is never stored there by default: a repository access
+token serves one repository, so it has only repository copies).
+--project-wide is accepted as a synonym, so existing scripts keep working.
 
 --repo (or a bare --repo, for this checkout's origin) lists one repository
 instead: its own containers, each with SCOPE repo (the repository's own

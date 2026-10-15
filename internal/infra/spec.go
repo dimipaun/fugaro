@@ -552,6 +552,11 @@ func Workflow(in Inputs, name string) (WorkflowSpec, error) {
 // GitSecret is the logical name of the git credential of provider (the
 // secret every job mounts), and false for a provider that is neither
 // Bitbucket nor GitHub. The one place that names them.
+//
+// Bitbucket's is the per-repository one of the two: a repository access token
+// is issued for one repository and works for no other, so it is never stored
+// project-wide (config.PerRepositorySecret, the owner's ruling of 2026-10-15).
+// GitHub's App key is a project's, mounted by every repository the App serves.
 func GitSecret(provider string) (string, bool) {
 	switch provider {
 	case gitprov.KindBitbucket:

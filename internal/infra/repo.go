@@ -152,7 +152,11 @@ func ForgetRepoState(ctx context.Context, c *Clients, stateBucket, slug string) 
 // is the default, so a name whose only copy is the project's is stored,
 // not missing -- NeedsBuild would otherwise leave every workflow of a
 // repository whose git credential was stored with `fugaro secrets set
-// bitbucket-token` unbuildable, and its job would never be deployed. The
+// github-app-key` unbuildable, and its job would never be deployed.
+// (bitbucket-token is never stored that way: it has no project-wide
+// default, so its project copy is a repository's only through an explicit
+// project_secrets entry, which is exactly when ProjectSecrets holds one.)
+// The
 // decision is read back out of the spec Readiness resolved rather than
 // resolved live again, for the reason appliedGitSecretID gives: the grants
 // the apply just made were fixed for exactly that choice, so a second

@@ -61,16 +61,21 @@ func TestNeededSecretsFollowAuth(t *testing.T) {
 			"elsewhere":  {Secret: "elsewhere-key", AllowDataTo: []string{"acme/other"}},
 		}
 		text := left(t, r)
-		// D2: the three names that have a project-wide meaning get the
-		// project-scope command (no --repo); the checkout's own workflow
-		// secret keeps the repository one.
-		for _, want := range []string{"bitbucket-token", "anthropic-api-key", "openrouter-api-key"} {
+		// D2: the names that have a project-wide meaning get the
+		// project-scope command (no --repo); bitbucket-token, whose
+		// credential serves one repository only, and the checkout's own
+		// workflow secret keep the repository one
+		// (config.PerRepositorySecret, the owner's ruling of 2026-10-15).
+		for _, want := range []string{"anthropic-api-key", "openrouter-api-key"} {
 			if !strings.Contains(text, "secrets set "+want+"\n") {
 				t.Errorf("left lacks the project-scope form of %s: %q", want, text)
 			}
 		}
-		if !strings.Contains(text, "secrets set npm-token --repo acme/app") {
-			t.Errorf("left lacks the repository-scope form of the workflow secret: %q", text)
+		for _, want := range []string{"bitbucket-token", "npm-token"} {
+			// npm-token's is the last command, so it has no line after it.
+			if !strings.Contains(text, "secrets set "+want+" --repo acme/app") {
+				t.Errorf("left lacks the repository-scope form of %s: %q", want, text)
+			}
 		}
 		if strings.Contains(text, "elsewhere") || strings.Contains(text, "claude") {
 			t.Errorf("left = %q", text)
@@ -329,7 +334,10 @@ func TestJSONNeverPrompts(t *testing.T) {
 	if err != nil || stateOf(res, "secrets") != initflow.NeedsYou || r.store.setCalls() != 0 || strings.Contains(r.errOut.String(), "hidden") {
 		t.Fatalf("%v, %+v, stderr %q", err, res, r.errOut.String())
 	}
-	if len(res.Left) != 1 || !strings.Contains(strings.Join(res.Left[0].Commands, "\n"), "secrets set bitbucket-token\n") {
+	// bitbucket-token's command carries --repo: a Bitbucket credential is
+	// issued for one repository and is never stored project-wide by default
+	// (config.PerRepositorySecret, the owner's ruling of 2026-10-15).
+	if len(res.Left) != 1 || !strings.Contains(strings.Join(res.Left[0].Commands, "\n"), "secrets set bitbucket-token --repo acme/app\n") {
 		t.Errorf("left = %+v", res.Left)
 	}
 	if after := queued(t, f); after != before || before == 0 {

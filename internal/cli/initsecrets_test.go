@@ -353,7 +353,10 @@ func TestPrintedCommandsHaveNoValues(t *testing.T) {
 		want   []string
 	}{
 		{githubOrigin, []string{"fugaro secrets set github-app-key < PATH-TO-THE-KEY-FILE", "claude setup-token", "fugaro secrets set claude-oauth-token --repo acme/app"}},
-		{bitbucketOrigin, []string{"fugaro secrets set bitbucket-token", "claude setup-token", "fugaro secrets set claude-oauth-token --repo acme/app"}},
+		// bitbucket-token's own command carries --repo: a Bitbucket
+		// credential is a repository access token, so it has no project-wide
+		// default (config.PerRepositorySecret, owner ruling of 2026-10-15).
+		{bitbucketOrigin, []string{"fugaro secrets set bitbucket-token --repo acme/app", "claude setup-token", "fugaro secrets set claude-oauth-token --repo acme/app"}},
 	} {
 		r := newSecretsRig(t, tc.origin, strings.NewReader(""))
 		res, err := r.run(t)
@@ -823,26 +826,64 @@ func TestInitSecretsFindSkipsNameWithProjectVersion(t *testing.T) {
 // reserved name no longer needs one, so the stage must not ask for a value
 // that would then be stored as a repository copy and win over the project's
 // forever.
+//
+// The GitHub App key is the git credential this holds for now (githubOrigin):
+// bitbucket-token is no longer swept in at all (round 2, item 2), and
+// TestInitRepoAsksForTheBitbucketToken pins the other side.
 func TestInitRepoDoesNotAskForAProjectCoveredSecret(t *testing.T) {
+	ctx := context.Background()
+	r := newSecretsRig(t, githubOrigin, strings.NewReader(""))
+	if r.e.lc.ProjectSecrets != nil {
+		t.Fatalf("the rig's local config has project_secrets; this test proves nothing: %v", r.e.lc.ProjectSecrets)
+	}
+	r.stage.resolve(ctx)
+	if _, ok := infra.ProjectSecretCandidate(r.e.lc, "github-app-key", "acme/app"); !ok {
+		t.Fatal("the swept-in name is not a project candidate here: the test would prove nothing")
+	}
+	r.store.seedProject(r.e.lc.Name, "github-app-key", tokenValue)
+	got, err := r.stage.find(ctx, r.store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(got, "github-app-key") {
+		t.Errorf("find = %v, want the project-covered git credential not missing", got)
+	}
+	if r.store.setCalls() != 0 {
+		t.Fatal("a value was stored")
+	}
+}
+
+// TestInitRepoAsksForTheBitbucketToken: bitbucket-token has no project-wide
+// default (config.PerRepositorySecret, the owner's ruling of 2026-10-15), so
+// the initialisation of a Bitbucket repository asks for it even when a
+// project-wide copy of that name exists: the name is not a project candidate
+// for this repository, nothing may mount the project copy, and reading it as
+// covered would leave the repository's runs authenticating with another
+// repository's token. The stage's scope decision is the same
+// infra.ProjectSecretCandidate the store uses, so where it asks is where the
+// value goes -- the repository's own copy.
+func TestInitRepoAsksForTheBitbucketToken(t *testing.T) {
 	ctx := context.Background()
 	r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
 	if r.e.lc.ProjectSecrets != nil {
 		t.Fatalf("the rig's local config has project_secrets; this test proves nothing: %v", r.e.lc.ProjectSecrets)
 	}
 	r.stage.resolve(ctx)
-	if _, ok := infra.ProjectSecretCandidate(r.e.lc, "bitbucket-token", "acme/app"); !ok {
-		t.Fatal("the swept-in name is not a project candidate here: the test would prove nothing")
+	if _, ok := infra.ProjectSecretCandidate(r.e.lc, "bitbucket-token", "acme/app"); ok {
+		t.Fatal("bitbucket-token was treated as project-wide eligible")
 	}
+	if r.stage.projectScope("bitbucket-token") {
+		t.Fatal("init would store the per-repository credential project-wide")
+	}
+	// A project-wide copy of the name exists -- as one built before this
+	// ruling leaves behind -- and does not cover this repository.
 	r.store.seedProject(r.e.lc.Name, "bitbucket-token", tokenValue)
 	got, err := r.stage.find(ctx, r.store)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if slices.Contains(got, "bitbucket-token") {
-		t.Errorf("find = %v, want the project-covered git credential not missing", got)
-	}
-	if r.store.setCalls() != 0 {
-		t.Fatal("a value was stored")
+	if !slices.Contains(got, "bitbucket-token") {
+		t.Errorf("find = %v, want the git credential still missing: a project copy of it is not this repository's", got)
 	}
 }
 

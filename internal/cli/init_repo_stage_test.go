@@ -476,6 +476,12 @@ func TestRepoEngineBuildsOnAProjectWideGitCredential(t *testing.T) {
 	r.appendConfig(t, "base_images: {base: "+sandboxBaseRelease+"}\n")
 	r.script["show"] = map[string]any{"stdout": `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"x"}]}}}`}
 	r.script["output"] = map[string]any{"stdout": outputsJSON(t)} // project_name: aurora, matching the checkout below
+	// The owner's own opt-in to a project-wide git credential (round 2, the
+	// owner's ruling of 2026-10-15): bitbucket-token has no project-wide
+	// default -- a repository access token is issued for one repository -- so a
+	// project copy of it is this repository's only through an explicit
+	// project_secrets entry that lists it.
+	r.appendConfig(t, "project_secrets:\n  bitbucket-token: { allow_data_to: [acme/sandbox] }\n")
 	r.save(t)
 	isolateCache(t)
 	layerDir := t.TempDir()
@@ -501,10 +507,13 @@ func TestRepoEngineBuildsOnAProjectWideGitCredential(t *testing.T) {
 	t.Chdir(dir)
 	// The git credential exists project-wide with a version and the marks
 	// discovery checks, and nowhere else: this is what `fugaro secrets set
-	// bitbucket-token` with no flag stores (D2). The bare claude-oauth-token
-	// is the one name of agent.auth: oauth's mounts that is NOT
-	// project-scope-eligible (person-owned), so it is seeded as the
-	// repository's own copy, which is what init --repo's prompt stores for it.
+	// bitbucket-token --project-wide` stores for an owner whose local config
+	// allow-lists this repository (the entry appended above; with no entry the
+	// name has no project-wide scope at all, so the bare command stores the
+	// repository's own copy). The bare claude-oauth-token is the other name of
+	// agent.auth: oauth's mounts that is not project-scope-eligible
+	// (person-owned), so it is seeded as the repository's own copy, which is
+	// what init --repo's prompt stores for it.
 	projectID := gcp.ProjectSecretID(initProjectName, "bitbucket-token")
 	r.sm.Seed(projectID, projectLabels(initProjectName, "bitbucket-token"), []byte("tok"))
 	slug := mustSlug("bitbucket", "acme/sandbox")

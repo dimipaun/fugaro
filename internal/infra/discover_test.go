@@ -1522,15 +1522,18 @@ func TestReadinessProviderListedExcludesUnlistedRepo(t *testing.T) {
 // the set D2 sweeps in. The bare claude-oauth-token (the default account's
 // own, phase 5's) and a repository's own application secret are not swept in,
 // and an entry the owner wrote still decides.
+// bitbucket-token is the reserved name the sweep deliberately leaves out: its
+// credential is issued for one repository, so it needs the owner's entry
+// (config.PerRepositorySecret, owner ruling of 2026-10-15).
 func TestProjectSecretCandidateAcceptsAReservedNameWithNoList(t *testing.T) {
 	lc := parseLC(t, m4LocalConfig+m5Additions) // no project_secrets, no providers, no claude_accounts
-	for _, name := range []string{"anthropic-api-key", "bitbucket-token", "github-app-key"} {
+	for _, name := range []string{"anthropic-api-key", "github-app-key"} {
 		id, ok := ProjectSecretCandidate(lc, name, "acme/sandbox")
 		if !ok || id != gcp.ProjectSecretID(lc.Name, name) {
 			t.Errorf("ProjectSecretCandidate(%q) = %q, %v; want %q, true", name, id, ok, gcp.ProjectSecretID(lc.Name, name))
 		}
 	}
-	for _, name := range []string{"claude-oauth-token", "sandbox-probe"} {
+	for _, name := range []string{"bitbucket-token", "claude-oauth-token", "sandbox-probe"} {
 		if id, ok := ProjectSecretCandidate(lc, name, "acme/sandbox"); ok {
 			t.Errorf("ProjectSecretCandidate(%q) = %q, true; want not a candidate", name, id)
 		}

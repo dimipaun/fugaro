@@ -41,16 +41,19 @@ func AllowedForProjectSecret(secrets map[string]ProjectSecret, name, repo string
 // ProjectScopeByDefault reports whether name is one of the reserved secrets
 // D2 swept into project scope (plan Task 2.1 step 2, design
 // docs/design/project-centric.md §6.3): the names the platform itself mounts,
-// so its own rules already decide who may read them, minus the Claude OAuth
-// namespace, which stays person-owned until phase 5 substitutes person-owned
-// secrets for it (design project-centric §7).
+// so its own rules already decide who may read them. Two of the four are not
+// swept in.
 //
-// The bare claude-oauth-token is the one name of the four that is not swept
-// in: it is the default Claude account's own token, refused by name
-// (claudeOAuthAccountRefusal in the CLI) until phase 5 replaces it, and only
-// a project_secrets entry reaches it today. A *named* account's derived
-// secret is not in ReservedSecrets at all; its account's own allow_data_to
-// stays its rule, as it already is on main (plan Task 2.1 step 2, finding 12).
+// The bare claude-oauth-token is the default Claude account's own token,
+// refused by name (claudeOAuthAccountRefusal in the CLI) until phase 5
+// replaces it, and only a project_secrets entry reaches it today; the whole
+// Claude OAuth namespace stays person-owned (design project-centric §7). A
+// *named* account's derived secret is not in ReservedSecrets at all; its
+// account's own allow_data_to stays its rule, as it already is on main (plan
+// Task 2.1 step 2, finding 12).
+//
+// bitbucket-token is a per-repository credential and is never swept in
+// (PerRepositorySecret, the owner's ruling of 2026-10-15).
 //
 // This is the shape question only -- whose project copy Fugaro may speak
 // about -- never the eligibility question. Every site that decides project
@@ -61,8 +64,33 @@ func ProjectScopeByDefault(name string) bool {
 	if _, reserved := ReservedSecrets[name]; !reserved {
 		return false
 	}
+	if PerRepositorySecret(name) {
+		return false
+	}
 	return name != ClaudeAccountSecret(DefaultClaudeAccount) && !strings.HasPrefix(name, ClaudeOAuthTokenPrefix)
 }
+
+// PerRepositorySecret reports whether name is a reserved secret whose value
+// belongs to one repository and can serve no other, so D2's project-scope
+// default never applies to it: `fugaro secrets set` and init's secrets stage
+// store it in the repository's own copy, and every repository is asked for its
+// own value.
+//
+// Bitbucket is the one such name (BitbucketSecret). Its credential is a
+// *repository* access token, issued for one repository by design
+// (docs/git-providers.md), and the owner ruled on 2026-10-15 that a Bitbucket
+// credential cannot be scoped project-wide: Bitbucket stays per-repository.
+// Sweeping it into project scope -- which is what D2 did before that ruling --
+// made the first repository's token answer for every other one: init --repo
+// read the name as covered by the project's copy and never prompted for the
+// next repository, whose runs then authenticated with another repository's
+// write token and failed.
+//
+// The GitHub App key is deliberately not here: one App serves a team's
+// repositories and is meant to be shared, and SECURITY.md tells an owner who
+// needs them separated to use one App per repository. The Anthropic key is the
+// project's, not a repository's, in every case.
+func PerRepositorySecret(name string) bool { return name == BitbucketSecret }
 
 // ValidateProjectSecrets reports every rule the local config's
 // project_secrets block breaks, the same shape as ValidateClaudeAccounts.

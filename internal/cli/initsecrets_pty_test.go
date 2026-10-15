@@ -97,11 +97,15 @@ func TestSecretPromptHidden(t *testing.T) {
 	if lr.err != nil || lr.res.Failed != nil || stateOf(lr.res, "secrets") != initflow.Changed {
 		t.Fatalf("%v, %+v", lr.err, lr.res)
 	}
-	// D2: the git credential is a swept-in reserved name, so the prompt
-	// stores the project copy; claude-oauth-token is not swept in and keeps
-	// the repository copy with no project_secrets entry (see the next test).
-	if got := r.store.latestProject("aurora", "bitbucket-token"); got != "bb-secret-value-EXAMPLE" {
+	// bitbucket-token has no project-wide default (round 2, the owner's ruling
+	// of 2026-10-15: a repository access token is issued for one repository),
+	// so the prompt stores this repository's own copy -- where claude-oauth-token
+	// goes too, for its own reason (person-owned; see the next test).
+	if got := r.store.latest(bitbucketSlug, "bitbucket-token"); got != "bb-secret-value-EXAMPLE" {
 		t.Errorf("bitbucket-token = %q", got)
+	}
+	if got := r.store.latestProject("aurora", "bitbucket-token"); got != "" {
+		t.Errorf("bitbucket-token was stored project-wide: %q", got)
 	}
 	if got := r.store.latest(bitbucketSlug, "claude-oauth-token"); got != tokenValue { // the default choice
 		t.Errorf("claude-oauth-token = %q", got)
@@ -329,7 +333,9 @@ func TestExistingSecretNotOverwritten(t *testing.T) {
 		done := r.start(context.Background())
 		r.answer(t, f, "bitbucket-token (input hidden)", 1, "bb-secret-value-EXAMPLE\n")
 		lr := waitLoop(t, done)
-		if lr.err != nil || r.store.latestProject("aurora", "bitbucket-token") != "bb-secret-value-EXAMPLE" {
+		// The repository's own container, which is where the git credential
+		// goes: it has no project-wide default (round 2, item 2).
+		if lr.err != nil || r.store.latest(bitbucketSlug, "bitbucket-token") != "bb-secret-value-EXAMPLE" {
 			t.Fatalf("%v, %+v", lr.err, lr.res)
 		}
 	})
@@ -395,15 +401,16 @@ func TestSecretsStageAgainstSecretManagerFake(t *testing.T) {
 		if lr.res.Failed != nil || stateOf(lr.res, "secrets") != initflow.Changed {
 			t.Fatalf("%+v", lr.res)
 		}
-		// D2: the prompt stores the git credential project-wide, where the
-		// prompt's own text says it will -- with the installation's labels,
-		// never a repository's, and never in the repository's own container.
-		id := gcp.ProjectSecretID("aurora", "bitbucket-token")
+		// The prompt stores the git credential in the repository's own
+		// container, where the prompt's own text says it will (round 2, the
+		// owner's ruling of 2026-10-15: bitbucket-token has no project-wide
+		// default) -- with the repository's labels, never the installation's.
+		id := gcp.SecretID(bitbucketSlug, "bitbucket-token")
 		if string(sm.Latest(id)) != val {
 			t.Fatalf("stored %q, want %s", sm.Latest(id), id)
 		}
-		if sm.Latest(gcp.SecretID(bitbucketSlug, "bitbucket-token")) != nil {
-			t.Error("the prompt stored a repository copy as well")
+		if sm.Latest(gcp.ProjectSecretID("aurora", "bitbucket-token")) != nil {
+			t.Error("the prompt stored a project copy of a per-repository credential")
 		}
 		var labels map[string]string
 		for _, rq := range sm.Requests() {
@@ -413,7 +420,7 @@ func TestSecretsStageAgainstSecretManagerFake(t *testing.T) {
 				labels = body.Labels
 			}
 		}
-		if labels[gcp.LabelManaged] != gcp.ManagedValue || labels[gcp.LabelProject] != "aurora" || labels[gcp.LabelRepo] != "" || labels[gcp.LabelSecret] != "bitbucket-token" {
+		if labels[gcp.LabelManaged] != gcp.ManagedValue || labels[gcp.LabelProject] != "" || labels[gcp.LabelRepo] != mustLabel(t, bitbucketSlug) || labels[gcp.LabelSecret] != "bitbucket-token" {
 			t.Errorf("labels = %v", labels)
 		}
 	})
@@ -542,10 +549,14 @@ func initOnTTY(t *testing.T, asJSON bool) {
 		t.Fatalf("%v\n%s", err, errOut.String())
 	}
 	slug := mustSlug("bitbucket", "acme/sandbox")
-	// D2: the git credential lands in the project's own container, the
-	// Claude token (not swept in) in the repository's.
-	if string(r.sm.Latest(gcp.ProjectSecretID("aurora", "bitbucket-token"))) != val || string(r.sm.Latest(gcp.SecretID(slug, "claude-oauth-token"))) != tokenValue {
+	// Both land in the repository's own container: bitbucket-token has no
+	// project-wide default (a repository access token serves one repository),
+	// and the Claude token is person-owned.
+	if string(r.sm.Latest(gcp.SecretID(slug, "bitbucket-token"))) != val || string(r.sm.Latest(gcp.SecretID(slug, "claude-oauth-token"))) != tokenValue {
 		t.Fatal("the values were not stored")
+	}
+	if r.sm.Latest(gcp.ProjectSecretID("aurora", "bitbucket-token")) != nil {
+		t.Error("the git credential was stored project-wide")
 	}
 	f.waitEcho(t, true)
 	time.Sleep(100 * time.Millisecond)

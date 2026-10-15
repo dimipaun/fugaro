@@ -629,9 +629,17 @@ func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w i
 	// project-wide -- D2's default for `secrets set <name>` with no flag --
 	// and the same command with --repo keeps the value to this repository
 	// instead.
+	//
+	// The reach is projectReach's answer, the same sentence `secrets set`'s own
+	// note uses (code review, low): a fixed "every enrolled repository" is false
+	// of a name whose project_secrets entry lists repositories, or whose
+	// provider's allow_data_to does, and the reach is exactly what decides
+	// whether storing the shared copy is safe. The prompt fires only where the
+	// name has a project-wide meaning for this repository (projectScope), so
+	// projectReach's "no repository can mount it" is not reachable here.
 	if s.projectScope(name) {
-		fmt.Fprintf(w, "%s for %s on %s (stored project-wide in project %s's Secret Manager, where every enrolled repository can mount it; pass --repo to keep it to this repository instead):\n",
-			name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject))
+		fmt.Fprintf(w, "%s for %s on %s (stored project-wide in project %s's Secret Manager, where %s; pass --repo to keep it to this repository instead):\n",
+			name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject), projectReach(s.e.lc, name))
 	} else {
 		fmt.Fprintf(w, "%s for %s on %s (stored in project %s's Secret Manager, in this repository's own copy):\n", name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject))
 	}
