@@ -360,11 +360,17 @@ func (r *Reaper) location() string {
 
 // Reap is one pass: the job pass, then the instance pass.
 //
-// The order is the design's (§3.4). A job this pass deletes is deleted
-// before the instance listing is read, so an instance whose job the reaper
-// has just taken out is reapable in the same pass -- which is what makes
-// "delete the job, and only then look for an instance with no live job
-// behind it" true of a single run rather than of two.
+// The order is the design's (§3.4): the job pass decides every job before the
+// instance listing is read, so no instance is ever deleted underneath a job
+// that still exists, and a VM whose run no listed job answers for is reaped by
+// the pass that read that listing.
+//
+// A job THIS pass deletes does not free its run, though: deleting it hands the
+// run to Batch's own teardown, which is still going when the pass ends, and
+// deleting the VM in the same pass races it (§3.4's race, at the other end of a
+// job's life). Its VMs are therefore left to the pass AFTER this one, which
+// reaps them if they really outlived the job -- deleteJob owns the run for
+// exactly that reason, and the instance pass refuses a VM whose run is owned.
 //
 // An error means the pass could not be trusted to have finished: the report
 // of what it did before that point is still returned, and a caller must not
@@ -398,10 +404,12 @@ func (r *Reaper) Reap(ctx context.Context) (Report, error) {
 // pass refused to act on -- an unknown Batch state, a create time it cannot
 // read, two label fields that disagree -- is still in the region, may still be
 // RUNNING, and owns its VMs exactly as a live job does: a refusal must never
-// hand the VM it just declined to explain to the instance pass. Only a run
-// whose job this pass positively classified as finished, and a run that no job
-// in the listing mentions at all, is reapable: §3.4's "an instance whose job is
-// already gone".
+// hand the VM it just declined to explain to the instance pass. Two jobs the
+// pass acted on own their runs for the same reason: one it deleted (Batch is
+// still tearing that run down) and one Batch is itself still cancelling
+// (CANCELLATION_IN_PROGRESS). Only a run whose job this pass positively
+// classified as finished, and a run that no job in the listing mentions at all,
+// is reapable: §3.4's "an instance whose job is already gone".
 type owners map[string]string
 
 // own records that run's VMs are not the reaper's, with the clause the
@@ -522,7 +530,35 @@ func (r *Reaper) reapJob(ctx context.Context, j *batch.Job, owned owners, rep *R
 		// how the deletion finishes (and is what makes this idempotent for a
 		// job the real API has already removed -- a 404 below is success).
 		return r.deleteJob(ctx, j, run, fmt.Sprintf("a deletion that has not finished in %.0f minutes", spent.Minutes()), owned, rep)
-	case "SUCCEEDED", "FAILED", "CANCELLED", "CANCELLATION_IN_PROGRESS":
+	case "CANCELLATION_IN_PROGRESS":
+		// NOT a finished job, though the seam's own table maps it to the
+		// cancelled state (stateOf): a cancel goes CANCELLATION_IN_PROGRESS ->
+		// CANCELLED (§1.4), and Batch is still tearing the run's VMs down for
+		// as long as this state lasts. Reading it as finished would delete the
+		// VM of a job that Batch is mid-teardown on -- the race §3.4 exists to
+		// avoid, and the case the cancel branch above this one promises is not
+		// the instance pass's ("a cancelled job keeps its VMs out of the
+		// instance pass ... the next pass reads the job as finished"). So the
+		// run is owned here, and stays owned: this is not a state a VM is ever
+		// freed from.
+		//
+		// This job is also never deleted, whatever its time in state, where a
+		// stuck DELETION_IN_PROGRESS is: deleting a cancelled job erases the
+		// record that the run's ls, diagnose and watch read, which is why
+		// §1.4 and C8 make jobs.cancel the cancel and not jobs.delete. A
+		// cancellation that has not finished within the run budget is
+		// therefore reported, not acted on -- a line an operator can look at,
+		// which is all this build can honestly do with it.
+		spent, ok := stateSince(j, r.now())
+		if !ok {
+			return r.refuseUnknownStateTime(j, state, run, owned, rep)
+		}
+		owned.own(run, "its job is CANCELLATION_IN_PROGRESS: Batch tears a cancelled job's VMs down from there")
+		if spent > r.runBudget {
+			rep.refuse(j.Name, fmt.Sprintf("a cancellation that has not finished in %.0f minutes: the reaper will not delete it, because a deleted job's record is what the run's ls, diagnose and watch read", spent.Minutes()))
+		}
+		return nil
+	case "SUCCEEDED", "FAILED", "CANCELLED":
 		// A finished job: its record is history -- fugaro ls, diagnose and
 		// watch read it -- and Batch's own teardown owns its VMs. The one
 		// branch that clears the run: if a VM of it did survive, the instance
@@ -888,10 +924,18 @@ func jobRunLabels(j *batch.Job) []string {
 // (UNVERIFIED -- Check 57a is where an installation could measure it), so the
 // latest job-level event a RUNNING job carries may be its QUEUED transition
 // hours ago. Read as the time in state that is a live run deleted, and
-// runDuration is the field that corrects it -- which is why RUNNING takes the
-// smaller, not the event alone. For the other states there is no second
-// measurement, and a stale event can only make a job look LONGER in its state
-// than it is: that errs towards deleting a job that is already being deleted
+// runDuration is the field that corrects it.
+//
+// RUNNING therefore REQUIRES the second measurement: a RUNNING job that
+// reports no readable runDuration has no trustworthy time in state at all --
+// the event is all there is, and it may date an earlier state -- so it is
+// unknown and the caller refuses it (refuseUnknownStateTime), exactly as if
+// there were no event either. A guard that only applied "when a RUNNING job
+// happens to report a runDuration" would leave the stale-event case it exists
+// for unfixed in the one shape where acting on it deletes a live run. For the
+// states with no second measurement at all there is nothing to fall back to,
+// and a stale event can only make a job look LONGER in its state than it is:
+// that errs towards deleting a job that is already being deleted
 // (DELETION_IN_PROGRESS) or one Batch has not yet started running, and the
 // caller sees it in the report. Being wrong the other way -- deleting a live
 // run -- is the failure this whole function exists to prevent.
@@ -922,6 +966,11 @@ func stateSince(j *batch.Job, now time.Time) (time.Duration, bool) {
 		if t.After(latest) {
 			latest = t
 		}
+	}
+	if j.Status.State == "RUNNING" && !haveRun {
+		// The event, if any, may belong to the queue wait: a RUNNING job with
+		// no runDuration has no measurement a delete may rest on.
+		return 0, false
 	}
 	if latest.IsZero() {
 		return run, haveRun

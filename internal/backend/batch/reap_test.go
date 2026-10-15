@@ -111,6 +111,15 @@ func (rt *reapTest) addJobLabelFields(t *testing.T, runID, state string, age tim
 	// addJobStateAt are for.
 	rt.bf.SetStateAt(id, state, rt.now.Add(-age))
 	rt.bf.SetCreated(id, rt.now.Add(-age))
+	if state == "RUNNING" {
+		// A RUNNING job reports the runDuration Batch defines for exactly this
+		// quantity ("the duration of time that the Job spent in status
+		// RUNNING"), and the reaper requires it for a RUNNING job: the event
+		// may date an earlier state, so it is not a measurement on its own. A
+		// test that wants the shape the reaper refuses clears it again
+		// (SetRunDuration(id, "")).
+		rt.bf.SetRunDuration(id, age.String())
+	}
 	return id
 }
 
@@ -263,7 +272,7 @@ func TestReaperDefaultsComeFromTheLongestWorkflow(t *testing.T) {
 func TestReaperDecidesEveryBatchState(t *testing.T) {
 	// The job's own terminal states: the record is history and Batch's own
 	// teardown owns its VM, so nothing is done to any of them.
-	for _, state := range []string{"SUCCEEDED", "FAILED", "CANCELLED", "CANCELLATION_IN_PROGRESS"} {
+	for _, state := range []string{"SUCCEEDED", "FAILED", "CANCELLED"} {
 		t.Run("keeps a "+state+" job", func(t *testing.T) {
 			rt := newReaperTest(t, nil)
 			id := rt.addJob(t, "20260927-100000-abcd", state, 10*time.Hour)
@@ -282,6 +291,54 @@ func TestReaperDecidesEveryBatchState(t *testing.T) {
 			}
 		})
 	}
+	t.Run("keeps the VMs of a job being cancelled", func(t *testing.T) {
+		rt := newReaperTest(t, nil)
+		// A cancel goes CANCELLATION_IN_PROGRESS -> CANCELLED (§1.4), and
+		// Batch is tearing the run's VMs down for as long as this state lasts.
+		// Reading it as finished deletes the VM of a job Batch is mid-teardown
+		// on -- the race §3.4 forbids -- so the run stays owned and the VM
+		// survives to the pass after, which is when a finished job's VM is
+		// reapable at all.
+		id := rt.addJob(t, "20260927-100000-abcd", "CANCELLATION_IN_PROGRESS", 2*time.Minute)
+		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+		rep := rt.reap(t)
+		if len(rt.bf.Deletes()) != 0 || len(rt.bf.Cancels()) != 0 {
+			t.Fatalf("a cancellation in progress was touched: deletes=%v cancels=%v", rt.bf.Deletes(), rt.bf.Cancels())
+		}
+		if got := rt.cf.Deletes(); len(got) != 0 {
+			t.Fatalf("instances.delete = %v, want none: Batch is still tearing the run down", got)
+		}
+		if !refusedBecause(rep, "fake-region-a/vm-1", "its job is CANCELLATION_IN_PROGRESS") {
+			t.Fatalf("report = %v, want the VM refused as a cancelling job's", rep.Lines())
+		}
+		if len(rt.cf.Instances()) != 1 {
+			t.Fatalf("instances = %v, want the VM still there for the next pass", rt.cf.Instances())
+		}
+		if got := rt.bf.State(id); got != "CANCELLATION_IN_PROGRESS" {
+			t.Fatalf("job state = %q, want the job left exactly as Batch reported it", got)
+		}
+	})
+	t.Run("reports a cancellation that has not finished, and does not delete it", func(t *testing.T) {
+		rt := newReaperTest(t, nil)
+		// Past the run budget. The reaper still will not delete it: deleting a
+		// cancelled job erases the record the run's ls, diagnose and watch
+		// read (§1.4, C8). It says so instead, and leaves the VMs alone.
+		id := rt.addJob(t, "20260927-100000-abcd", "CANCELLATION_IN_PROGRESS", 10*time.Hour)
+		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+		rep := rt.reap(t)
+		if len(rt.bf.Deletes()) != 0 {
+			t.Fatalf("jobs.delete = %v, want none: a cancelled run's record is history", rt.bf.Deletes())
+		}
+		if got := rt.cf.Deletes(); len(got) != 0 {
+			t.Fatalf("instances.delete = %v, want none", got)
+		}
+		if !refusedBecause(rep, rt.name(id), "a cancellation that has not finished in 600 minutes") {
+			t.Fatalf("report = %v, want a refusal naming the stuck cancellation", rep.Lines())
+		}
+		if !refusedBecause(rep, "fake-region-a/vm-1", "its job is CANCELLATION_IN_PROGRESS") {
+			t.Fatalf("report = %v, want the VM refused with it", rep.Lines())
+		}
+	})
 	t.Run("deletes a stuck SCHEDULED job", func(t *testing.T) {
 		rt := newReaperTest(t, nil)
 		id := rt.addJob(t, "20260927-100000-abcd", "SCHEDULED", 10*time.Hour)
@@ -702,6 +759,9 @@ func TestReaperRefusesAJobWhoseTimeInStateIsUnknown(t *testing.T) {
 		rt := newReaperTest(t, nil)
 		id := rt.addJob(t, "20260927-100000-abcd", "RUNNING", 10*time.Hour)
 		rt.bf.SetStatusEvents(id, map[string]any{"type": "STATUS_CHANGED", "description": "no time on this one"})
+		// The harness models the runDuration a RUNNING job reports; this shape
+		// is the one where it reports none.
+		rt.bf.SetRunDuration(id, "")
 		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
 		rep := rt.reap(t)
 		if got := rt.bf.Deletes(); len(got) != 0 {
@@ -712,6 +772,40 @@ func TestReaperRefusesAJobWhoseTimeInStateIsUnknown(t *testing.T) {
 		}
 		if !refused(rep, rt.name(id)) {
 			t.Fatalf("report = %v, want the job refused", rep.Lines())
+		}
+		if !refusedBecause(rep, rt.name(id), "no readable time for the RUNNING state") {
+			t.Fatalf("report = %v, want the refusal to name the missing time", rep.Lines())
+		}
+		if !refusedBecause(rep, "fake-region-a/vm-1", "no readable time for the state") {
+			t.Fatalf("report = %v, want its VM refused with the same reason", rep.Lines())
+		}
+	})
+	t.Run("a stale event and no runDuration", func(t *testing.T) {
+		rt := newReaperTest(t, nil)
+		// The shape the "shorter of the two measurements" guard exists for: a
+		// RUNNING job whose latest job-level event is the QUEUED transition it
+		// passed through hours ago (nothing in the API says a job-level event
+		// is emitted per state change). Delete on that reading is delete on a
+		// live run -- and without a runDuration there is no second measurement
+		// to correct it, so the time in state is unknown and the job is
+		// refused. Guards that apply only when the runDuration happens to be
+		// there leave exactly this shape acting on the stale event.
+		id := rt.addJob(t, "20260927-100000-abcd", "RUNNING", 10*time.Hour)
+		rt.bf.SetStatusEvents(id, map[string]any{
+			"type": "STATUS_CHANGED", "description": "job state changed to QUEUED",
+			"eventTime": rt.now.Add(-10 * time.Hour).Format(time.RFC3339Nano),
+		})
+		rt.bf.SetRunDuration(id, "")
+		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+		rep := rt.reap(t)
+		if got := rt.bf.Deletes(); len(got) != 0 {
+			t.Fatalf("a RUNNING job was deleted on a job-level event that may date its queue wait: %v", got)
+		}
+		if got := rt.bf.Cancels(); len(got) != 0 {
+			t.Fatalf("a RUNNING job was cancelled on that event: %v", got)
+		}
+		if got := rt.cf.Deletes(); len(got) != 0 {
+			t.Fatalf("the VM of a RUNNING job was deleted: %v", got)
 		}
 		if !refusedBecause(rep, rt.name(id), "no readable time for the RUNNING state") {
 			t.Fatalf("report = %v, want the refusal to name the missing time", rep.Lines())
@@ -738,6 +832,29 @@ func TestReaperRefusesAJobWhoseTimeInStateIsUnknown(t *testing.T) {
 		}
 		if !refusedBecause(rep, rt.name(id), "no readable time for the DELETION_IN_PROGRESS state") {
 			t.Fatalf("report = %v, want the refusal to name the missing time", rep.Lines())
+		}
+	})
+	t.Run("a cancellation whose time in state is unknown", func(t *testing.T) {
+		rt := newReaperTest(t, nil)
+		// The third state whose branch reads the time in state. The job is old
+		// enough that an age rule would call it stuck, and there is nothing to
+		// date the state it reports: refused, not reported as a stuck
+		// cancellation, and its VM left alone as always.
+		id := rt.addJob(t, "20260927-100000-abcd", "CANCELLATION_IN_PROGRESS", 60*24*time.Hour)
+		rt.bf.SetStatusEvents(id)
+		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+		rep := rt.reap(t)
+		if got := rt.bf.Deletes(); len(got) != 0 {
+			t.Fatalf("a job whose time in state is unknown was deleted: %v", got)
+		}
+		if got := rt.cf.Deletes(); len(got) != 0 {
+			t.Fatalf("the VM of that job was deleted: %v", got)
+		}
+		if !refusedBecause(rep, rt.name(id), "no readable time for the CANCELLATION_IN_PROGRESS state") {
+			t.Fatalf("report = %v, want the refusal to name the missing time", rep.Lines())
+		}
+		if !refusedBecause(rep, "fake-region-a/vm-1", "no readable time for the state") {
+			t.Fatalf("report = %v, want its VM refused with the same reason", rep.Lines())
 		}
 	})
 	t.Run("runDuration is the fallback", func(t *testing.T) {

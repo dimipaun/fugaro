@@ -397,8 +397,11 @@ does not add a charge.
   (Task 8's plumbing), not the reaper's: the reaper's report names the job
   and the wait. A cancelled job keeps its VMs out of the instance pass as well:
   the cancel moves it to `CANCELLATION_IN_PROGRESS`, and Batch tears its VMs
-  down from there, so deleting them in the same pass would race that — the
-  next pass reads the job as finished and reaps a VM that did leak.
+  down from there, so deleting them in the same pass would race that — a pass
+  that reads the job while it is still `CANCELLATION_IN_PROGRESS` treats it as
+  unfinished and leaves its VMs alone, and once the cancellation has finished
+  (`CANCELLED`) the next pass reads the job as finished and reaps a VM that did
+  leak.
 - **A plain instance** cancels by `instances.delete`; the timeout is ours to
   enforce (a watchdog or the startup script's `timeout`), which is another
   small piece of machinery Batch already has.
@@ -1322,8 +1325,12 @@ the teardown is assumed rather than read:
   transition (**UNVERIFIED**; Check 57a is where an installation could measure
   it), so the latest event a `RUNNING` job carries may be its `QUEUED`
   transition hours ago, and read as the time in state that would delete a live
-  run. A job whose time in state cannot be read is **refused**, with its VMs
-  left alone, rather than assumed stuck. A **finished job's record is never deleted** — it is
+  run. `RUNNING` therefore **requires** the `runDuration`: a running job that
+  reports none has only the event, which may date an earlier state, so its time
+  in state is not a number a delete may rest on — it is unable to be read, and
+  the guard is not conditional on the API happening to supply one. A job whose
+  time in state cannot be read is **refused**, with its VMs left alone, rather
+  than assumed stuck. A **finished job's record is never deleted** — it is
   history, and §3.4's ordering rule is about the jobs the reaper has decided
   must go, so a terminal job whose VM leaked is handled by the instance pass,
   which deletes the VM and leaves the record. A job this pass deletes **owns
@@ -1356,7 +1363,16 @@ the teardown is assumed rather than read:
   too (Batch tears them down from `CANCELLATION_IN_PROGRESS`), as does a job
   whose deletion someone else already started; only a job this pass positively
   classified as **finished**, and a run no job in the listing mentions at all,
-  frees its run. It refuses, and names with its reason in the
+  frees its run. `CANCELLATION_IN_PROGRESS` counts as not finished, whatever
+  the backend's state mapping says (it reads such a job as cancelled for `ls`):
+  Batch is still tearing that run's VMs down for as long as the state lasts, so
+  it never frees its run, and the reaper never deletes it either — deleting a
+  cancelled job erases the record `ls`, `diagnose` and `watch` read, which is
+  why §1.4 and C8 make `jobs.cancel` the cancel — so a cancellation that has
+  not finished within the run budget is **reported**, not acted on. A stuck
+  `DELETION_IN_PROGRESS` is the one such state that *is* deleted again, because
+  its record is going anyway and the second delete is how the deletion
+  finishes. It refuses, and names with its reason in the
   report, a VM with no `fugaro_run` label, a VM whose `fugaro` label is
   another installation's, a VM in another region, a VM whose job is still
   live, a VM young enough that Batch may be mid-teardown, a job whose two
