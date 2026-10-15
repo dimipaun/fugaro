@@ -74,7 +74,8 @@ func newBudgetPreviewCmd() *cobra.Command {
 			"is bounded by the smaller of budget.per_run_usd and the recipe's most\n" +
 			"stages times the repository's agent.max_budget_usd.\n\n" +
 			"That figure is the model ceiling and nothing else: a run also bills for\n" +
-			"the machine it asked for, and no budget key bounds compute at all (D4).\n" +
+			"the machine it asked for, and no budget key bounds compute at all --\n" +
+			"the run's own timeout is the cap.\n" +
 			"So for every workflow the checkout defines the preview also prints a\n" +
 			"compute ceiling -- the workflow's own resources over its own\n" +
 			"timeouts.total, at this installation's compute prices -- and says out\n" +
