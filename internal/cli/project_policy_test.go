@@ -129,9 +129,14 @@ func TestProjectPolicyPublishWritesTheNodeAndSeedsTheAllowList(t *testing.T) {
 }
 
 // policyConflictOnce changes the policy node in the fake just before the
-// publisher's first PUT reaches it: another operator's publish landing between
+// writer's first write reaches it: another operator's publish landing between
 // this one's read and its write. It is budget_test's conflictOnce for the
 // policy node.
+//
+// Any write counts, not only a PUT: a writer that reached the node with an
+// unconditional PATCH is exactly the mutant a compare-and-set test exists to
+// catch, and the conflict has to be planted before that write for the test to
+// see the overwrite instead of a "no write was attempted" sentinel.
 type policyConflictOnce struct {
 	rt   http.RoundTripper
 	db   *gcpfake.RTDB
@@ -140,7 +145,7 @@ type policyConflictOnce struct {
 }
 
 func (c *policyConflictOnce) RoundTrip(r *http.Request) (*http.Response, error) {
-	if r.Method == http.MethodPut && !c.done {
+	if r.Method != http.MethodGet && !c.done {
 		c.done = true
 		c.db.Set(projectpolicy.PathShared(), c.val)
 	}
@@ -954,6 +959,54 @@ func TestProjectReposEditOnlyTheAllowList(t *testing.T) {
 	}
 	if got := publishedPolicy(t, f).AllowRepos; len(got) != 2 {
 		t.Fatalf("allow_repos = %v, want the entry removed", got)
+	}
+}
+
+// TestProjectReposEditRefusesAConcurrentWrite: the edit writes the node under
+// the ETag it read, so an allow-list that changes in between — another
+// operator's publish or repos edit — is refused rather than overwritten with
+// the copy this one read. There is no retry here, unlike the publisher's: this
+// write is the read allow-list plus one name, and re-reading after someone
+// else's change would re-add a name they had just removed (the publisher's
+// retry diff exists for exactly that reason).
+func TestProjectReposEditRefusesAConcurrentWrite(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		stdin string
+	}{
+		{"add", []string{"project", "repos", "add", "github/acme/new"}, ""},
+		{"rm", []string{"project", "repos", "rm", "github/acme/app"}, "aurora\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newProjectFixture(t, "")
+			if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+				t.Fatal(err)
+			}
+			typed(t)
+			c := &policyConflictOnce{rt: http.DefaultTransport, db: f.db, val: map[string]any{
+				"version":     projectpolicy.Version,
+				"budget":      map[string]any{"mode": "observe", "per_run_usd": 7},
+				"allow_repos": []string{"github/acme/app", "github/acme/other-side"},
+			}}
+			budgetTransport = c
+			t.Cleanup(func() { budgetTransport = nil })
+
+			out, _, err := executeStdin(t, tc.stdin, tc.args...)
+			if !c.done {
+				t.Fatal("no write was attempted, so the conflict never happened")
+			}
+			if err == nil {
+				t.Fatalf("repos %s overwrote a policy that changed under it:\n%s", tc.name, out)
+			}
+			if !strings.Contains(err.Error(), "changed while this ran") || !strings.Contains(err.Error(), "nothing was written") {
+				t.Errorf("the refusal does not say what happened: %v", err)
+			}
+			got := publishedPolicy(t, f)
+			if len(got.AllowRepos) != 2 || got.AllowRepos[1] != "github/acme/other-side" || got.Budget.PerRunUSD != 7 {
+				t.Fatalf("the node is not the one the other writer left: %+v", got)
+			}
+		})
 	}
 }
 
