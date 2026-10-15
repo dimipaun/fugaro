@@ -180,3 +180,25 @@ func TestPublishRefusesAnInvalidResourceForm(t *testing.T) {
 		t.Errorf("the refusal does not name cpu: %v", err)
 	}
 }
+
+// TestPublishRefusesASecretValueInAProfile: a profile's secrets are NAMES. A
+// pasted key is refused, and the refusal never echoes it — the node is
+// readable by every run token of the job and printed by `policy show`, so a
+// value written there is a value published, and a value printed back is the
+// same leak one terminal later.
+func TestPublishRefusesASecretValueInAProfile(t *testing.T) {
+	f := newProjectFixture(t, "profiles:\n  standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h, secrets: [\"sk-ant-api03-abc\"] }\n")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("publishing a pasted API key as a secret name succeeded:\n%s", out)
+	}
+	if strings.Contains(err.Error(), "api03") || strings.Contains(out, "api03") {
+		t.Errorf("the refusal echoes the value it refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(err.Error(), "secrets[0]") {
+		t.Errorf("the refusal does not say which entry it refused: %v", err)
+	}
+	if f.db.Value(projectpolicy.PathShared()) != nil {
+		t.Error("a refused publish wrote the node")
+	}
+}

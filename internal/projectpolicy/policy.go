@@ -386,6 +386,9 @@ func decodeProfileBlock(raw json.RawMessage) (map[string]Profile, error) {
 		if err := dec.Decode(&pr); err != nil {
 			return nil, fmt.Errorf("%s: %w", name, err)
 		}
+		if err := checkWrittenProfileFields(name, entries[name]); err != nil {
+			return nil, err
+		}
 		out[name] = pr
 	}
 	return out, nil
@@ -429,6 +432,38 @@ func decodeProviders(raw json.RawMessage) (map[string]Provider, error) {
 		out[name] = pv
 	}
 	return out, nil
+}
+
+// checkWrittenProfileFields applies the one profile rule that reads the
+// written document rather than the decoded value: an explicitly empty
+// allow_repos.
+//
+// A profile that names no list falls back to the project's allow_repos
+// (§4.1), and the carrier's `omitempty` means the node cannot carry an empty
+// list at all — so `"allow_repos": []` and `"allow_repos": null` would both be
+// read as "the project's list applies". That is the ambiguity
+// providers.allow_data_to is refused for, in the wider direction: an operator
+// who wrote "[]" believing it admits nobody would get every repository the
+// project enrolls, with nothing in the node to show the difference. Leaving
+// the key out is how a profile says the project's list applies.
+func checkWrittenProfileFields(name string, raw json.RawMessage) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	v, ok := fields["allow_repos"]
+	if !ok {
+		return nil
+	}
+	var patterns []string
+	empty := isNull(v)
+	if err := json.Unmarshal(v, &patterns); err == nil && len(patterns) == 0 {
+		empty = true
+	}
+	if empty {
+		return fmt.Errorf("%s.allow_repos: an explicit empty list is ambiguous: remove the key to fall back to the project's allow_repos, or write the repositories this profile admits (the project's allow_repos is still required, so a profile's list can only narrow it)", name)
+	}
+	return nil
 }
 
 // validProviders holds the providers block to the rules internal/config holds

@@ -200,3 +200,141 @@ func TestDecodeRefusesAnAllowRepoPatternOfAnotherProvider(t *testing.T) {
 		t.Fatal("a bare owner/name pattern was accepted")
 	}
 }
+
+// TestDecodeRefusesAMisspeltKeyInsideAProfile: the block is decoded with
+// DisallowUnknownFields, and this test is the one that fails if that is
+// dropped (the mutation). It matters more here than at the top level: a
+// misspelt allow_repo would leave the profile with no list of its own and fall
+// back to the project's wider one, silently, on a node an administrator can
+// write by hand.
+func TestDecodeRefusesAMisspeltKeyInsideAProfile(t *testing.T) {
+	for _, doc := range []string{
+		`{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","allow_repo":["github/other/*"]}}`,
+		`{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout":"6h"}}`,
+		`{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","secret":["a"]}}`,
+	} {
+		if _, err := decodeProfiles(t, doc); err == nil {
+			t.Errorf("a misspelt key was accepted: %s", doc)
+		}
+	}
+	// The documented spellings all decode.
+	good := `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","secrets":["deploy-key"],"allow_repos":["github/acme/*"]}}`
+	p, err := decodeProfiles(t, good)
+	if err != nil {
+		t.Fatalf("a fully spelled profile was refused: %v", err)
+	}
+	if len(p.Profiles["standard"].Secrets) != 1 || len(p.Profiles["standard"].AllowRepos) != 1 {
+		t.Errorf("the profile decoded as %+v", p.Profiles["standard"])
+	}
+}
+
+// TestDecodeRefusesAProfileNameThatIsNotAProfileName: an administrator writing
+// a node by hand can spell a name no selection could ever use, and a profile
+// nothing can select is worse than a refusal — it looks defined. The mutation
+// is dropping ValidProfileName from validProfiles.
+func TestDecodeRefusesAProfileNameThatIsNotAProfileName(t *testing.T) {
+	bad := func(name string) string {
+		return `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"},` +
+			`"` + name + `":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}}`
+	}
+	for _, name := range []string{"Bad", "with_underscore", "-leading", "trailing-", "a name"} {
+		if _, err := decodeProfiles(t, bad(name)); err == nil {
+			t.Errorf("the profile name %q was accepted", name)
+		}
+	}
+	if _, err := decodeProfiles(t, bad("standard-bitbucket")); err != nil {
+		t.Errorf("a valid profile name was refused: %v", err)
+	}
+}
+
+// TestDecodeRefusesAProfileSecretThatIsAValueOrNotAName: a secret entry is a
+// NAME, held to config's own rule for one. The mutation is dropping the
+// CheckSecretName call, which would publish a pasted API key on a node every
+// run token can read — and the refusals below must never echo the entry,
+// because the entry may be the value.
+func TestDecodeRefusesAProfileSecretThatIsAValueOrNotAName(t *testing.T) {
+	secrets := func(list string) string {
+		return `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","secrets":` + list + `}}`
+	}
+	for _, list := range []string{`[""]`, `["Deploy_Key"]`, `["sk-ant-api03-abc"]`, `["deploy-key","deploy-key"]`} {
+		if _, err := decodeProfiles(t, secrets(list)); err == nil {
+			t.Errorf("the secrets list %s was accepted", list)
+		}
+	}
+	// A value is never echoed back in the refusal: the thing refused may be
+	// the key itself.
+	if _, err := decodeProfiles(t, secrets(`["sk-ant-api03-abc"]`)); err != nil && strings.Contains(err.Error(), "api03") {
+		t.Errorf("the refusal echoes the entry it refused: %v", err)
+	}
+	if _, err := decodeProfiles(t, secrets(`["deploy-key","git-token"]`)); err != nil {
+		t.Fatalf("valid secret names were refused: %v", err)
+	}
+}
+
+// TestDecodeRefusesAnExplicitlyEmptyProfileAllowRepos: a written empty list is
+// not the same statement as an absent one, and the node cannot carry the
+// difference (the carrier's omitempty): read as "the project's list applies",
+// an operator who wrote [] meaning "this profile admits nobody" would get every
+// repository the project enrolls. The mutation is accepting the empty list.
+func TestDecodeRefusesAnExplicitlyEmptyProfileAllowRepos(t *testing.T) {
+	for _, doc := range []string{
+		`{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","allow_repos":[]}}`,
+		`{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","allow_repos":null}}`,
+	} {
+		if _, err := decodeProfiles(t, doc); err == nil {
+			t.Errorf("an explicitly empty allow_repos was accepted: %s", doc)
+		}
+	}
+	// And the key left out is the way a profile says the project's list
+	// applies — with a project list that admits nothing, that is deny-all.
+	p, err := decodeProfiles(t, `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.AllowRepos = nil
+	if ok, err := p.Admits("standard", "github/acme/app"); err != nil || ok {
+		t.Errorf("Admits = %v, %v; want false with no project allow-list", ok, err)
+	}
+}
+
+// TestProfileAdmitsAlsoRequiresTheProjectList: both gates, and the project's is
+// not optional. §4.3: "there is never a state in which a shared job serves a
+// repository that has not been allowed" — so a profile whose own list is wider
+// than the project's enrolls nothing extra. The mutation is an Admits that
+// reads the profile's list alone (Admission), which the design's own words
+// about a secret staying away from some repositories make look sufficient.
+func TestProfileAdmitsAlsoRequiresTheProjectList(t *testing.T) {
+	p, err := decodeProfiles(t, `{
+		"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"},
+		"wide":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","allow_repos":["github/*/*"]},
+		"narrow":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","allow_repos":["github/acme/*"]}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.AllowRepos = []string{"github/acme/app"}
+	for _, tc := range []struct {
+		profile, repo string
+		want          bool
+	}{
+		{"standard", "github/acme/app", true},   // the project's list, unchanged
+		{"standard", "github/other/app", false}, // and only it
+		{"wide", "github/acme/app", true},       // the profile's list is wider, the project's gate holds
+		{"wide", "github/other/app", false},     // which is the point
+		{"narrow", "github/acme/app", true},
+		{"narrow", "github/acme/other", false}, // the profile narrows the project's list
+	} {
+		ok, err := p.Admits(tc.profile, tc.repo)
+		if err != nil {
+			t.Fatalf("Admits(%s, %s) = %v", tc.profile, tc.repo, err)
+		}
+		if ok != tc.want {
+			t.Errorf("Admits(%s, %s) = %v, want %v", tc.profile, tc.repo, ok, tc.want)
+		}
+	}
+	// An undefined profile is an error (the fail-closed halt), never a plain
+	// "not admitted": the two have different messages and different fixes.
+	if _, err := p.Admits("nope", "github/acme/app"); err == nil {
+		t.Error("Admits of an undefined profile returned a verdict")
+	}
+}

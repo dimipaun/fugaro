@@ -65,10 +65,14 @@ func (p *Policy) ProfileFor(name string) (Profile, error) {
 		name, strings.Join(defined, ", "), DefaultProfileName)
 }
 
-// Admission is the admission list a run of that profile is held to: the
-// profile's own allow_repos when it names any, the project's otherwise. An
-// empty result admits nothing — never everything — so a profile that lists
-// no repository and a project that lists none are both deny-all (design §4.3).
+// Admission is the list a run of that profile is held to on top of the
+// project's: the profile's own allow_repos when it names any, the project's
+// otherwise. An empty result admits nothing — never everything — so a profile
+// that lists no repository and a project that lists none are both deny-all
+// (design §4.3).
+//
+// It is the profile's list alone: a caller deciding whether a repository may
+// run uses Admits, which holds both gates (§4.3's enrollment and this one).
 func (p *Policy) Admission(profile string) ([]string, error) {
 	pr, err := p.ProfileFor(profile)
 	if err != nil {
@@ -78,6 +82,28 @@ func (p *Policy) Admission(profile string) ([]string, error) {
 		return pr.AllowRepos, nil
 	}
 	return p.AllowRepos, nil
+}
+
+// Admits reports whether a canonical repository (Canonical) may run on that
+// profile, and is the check a runner makes before it clones or mints a token
+// (design §4.1). Two gates, both of which must open:
+//
+//   - the project's allow_repos: "there is never a state in which a shared job
+//     serves a repository that has not been allowed" (§4.3). A profile's list
+//     can only narrow the enrollment, never widen it, however it is spelled;
+//   - the profile's own allow_repos, when it names one (§4.1): a secret that
+//     must stay away from some repositories lives on a profile they are not
+//     allowed on, which is the whole meaning of a profile's list.
+//
+// An undefined profile is an error, not a refusal: the caller reports it as
+// the fail-closed halt it is (ProfileFor), rather than as an unenrolled
+// repository.
+func (p *Policy) Admits(profile, canonical string) (bool, error) {
+	list, err := p.Admission(profile)
+	if err != nil {
+		return false, err
+	}
+	return AdmitRepo(p.AllowRepos, canonical) && AdmitRepo(list, canonical), nil
 }
 
 // validProfiles checks the profiles block of a node, entry by entry: the
@@ -123,13 +149,19 @@ func validProfiles(profiles map[string]Profile) error {
 		if err := validTimeoutClass(at, pr.TimeoutClass); err != nil {
 			return err
 		}
+		// A secret entry is a NAME. It is held to config's own rule for one
+		// (CheckSecretName: a lower-case name, and never something that looks
+		// like a pasted key), because this document is readable by every run
+		// token of the job and printed by `policy show` — a value written
+		// here would be a value published. Neither refusal below echoes the
+		// entry: the thing being refused may be the value itself.
 		seen := make(map[string]bool, len(pr.Secrets))
 		for i, secret := range pr.Secrets {
-			if strings.TrimSpace(secret) == "" {
-				return fmt.Errorf("%s.secrets[%d]: a secret entry is the secret's name, and it is empty", at, i)
+			if msg := config.CheckSecretName(secret); msg != "" {
+				return fmt.Errorf("%s.secrets[%d]: %s", at, i, msg)
 			}
 			if seen[secret] {
-				return fmt.Errorf("%s.secrets[%d]: %q is listed twice; list each secret once", at, i, secret)
+				return fmt.Errorf("%s.secrets[%d]: a secret is listed twice; list each secret once", at, i)
 			}
 			seen[secret] = true
 		}
