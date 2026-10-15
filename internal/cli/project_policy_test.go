@@ -951,12 +951,13 @@ func nodeAt(v any, path ...string) (any, bool) {
 	return v, true
 }
 
-// someFuturePolicy is a node carrying keys this Fugaro does not know, in the
-// two places Decode cannot list them: inside a providers entry and inside
-// routing, both of which it decodes tolerantly so that a node a newer release
-// wrote stays readable here (P8). The budget block and model_prices are strict
-// — an unknown key there is refused rather than ignored — so a key of theirs is
-// not the case this is about.
+// someFuturePolicy is a node carrying a key this Fugaro does not know in
+// routing, which Decode reads tolerantly (its values are checked by
+// validRouting, which refuses a block this Fugaro cannot act on, so an unknown
+// key there cannot fail open). The budget block, model_prices and the inside of
+// a providers entry are strict — an unknown key there is refused rather than
+// ignored, because a misspelt provider field can fail open (a nil allow_data_to
+// means every repository) — so a key of theirs is not the case this is about.
 func someFuturePolicy() map[string]any {
 	return map[string]any{
 		"version":     projectpolicy.Version,
@@ -965,7 +966,7 @@ func someFuturePolicy() map[string]any {
 		"providers": map[string]any{"openrouter": map[string]any{
 			"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer",
 			"secret": "openrouter-key", "models": []string{"deepseek/*"},
-			"require_zdr": false, "price_policy": "highest", "future_zdr": true,
+			"require_zdr": false, "price_policy": "highest",
 		}},
 		"routing": map[string]any{"claude": map[string]any{"via": "auto", "future_route": "x"}},
 	}
@@ -985,7 +986,6 @@ func TestProjectReposEditKeepsTheKeysItDoesNotKnow(t *testing.T) {
 	// The keys this Fugaro knows and the ones it does not, all of which must
 	// still be there after an edit.
 	keep := [][]string{
-		{"providers", "openrouter", "future_zdr"},
 		{"providers", "openrouter", "require_zdr"},
 		{"providers", "openrouter", "price_policy"},
 		{"routing", "claude", "future_route"},
@@ -1019,8 +1019,39 @@ func TestProjectReposEditKeepsTheKeysItDoesNotKnow(t *testing.T) {
 		t.Fatalf("allow_repos = %v, want the new entry removed", got)
 	}
 	// The value of the unknown key is the one that was planted, not a zero.
-	if v, _ := nodeAt(f.db.Value(projectpolicy.PathShared()), "providers", "openrouter", "future_zdr"); v != true {
-		t.Errorf("the provider's unknown key is %v, want true", v)
+	if v, _ := nodeAt(f.db.Value(projectpolicy.PathShared()), "routing", "claude", "future_route"); v != "x" {
+		t.Errorf("routing's unknown key is %v, want x", v)
+	}
+}
+
+// TestProjectReposEditRefusesAMisspeltProviderKey: the other half of the
+// tolerance above. An unknown key inside a providers entry is not preserved —
+// it is refused, with the remedy, and the node is left exactly as it was: a
+// repos edit on a node whose provider entry misspells allow_data_to would
+// otherwise write back the widest data-sharing setting there is, since the
+// decoded nil list means every repository.
+func TestProjectReposEditRefusesAMisspeltProviderKey(t *testing.T) {
+	f := newProjectFixture(t, "")
+	node := someFuturePolicy()
+	node["providers"].(map[string]any)["openrouter"].(map[string]any)["allow_data_tp"] = []string{"acme/app"}
+	f.db.Set(projectpolicy.PathShared(), node)
+
+	_, _, err := execute(t, "project", "repos", "add", "github/acme/new")
+	if err == nil {
+		t.Fatalf("the edit was accepted: %s", nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+	for _, want := range []string{"allow_data_tp", "--delete"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	// The node as it was: the misspelt key still there, allow_repos unchanged.
+	if v, _ := nodeAt(f.db.Value(projectpolicy.PathShared()), "providers", "openrouter", "allow_data_tp"); v == nil {
+		t.Errorf("the refused edit rewrote the node: %s", nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+	got, _ := nodeAt(f.db.Value(projectpolicy.PathShared()), "allow_repos")
+	if list, _ := got.([]any); len(list) != 1 || list[0] != "github/acme/app" {
+		t.Errorf("allow_repos = %v, want the list the node held", got)
 	}
 }
 

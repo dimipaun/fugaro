@@ -488,12 +488,15 @@ func checkPolicyBytes(raw []byte) error {
 // `project repos add|rm` changes one key of a document this Fugaro shares with
 // releases that know keys it does not: decoding the node into the typed Policy,
 // changing allow_repos and encoding that writes back only the keys this Fugaro
-// knows, so a key a newer release added *nested* inside providers.<name> or
-// routing is dropped — and a dropped tightening key is a quiet loosening, in
-// the one command whose help says only allow_repos changes. The top-level ones
-// are refused before this is called (Decode can list those); the nested ones
-// cannot be listed, which is exactly why the node is edited as the document it
-// is rather than as a value of this Fugaro's type.
+// knows, so a key a newer release added to a block this Fugaro decodes but does
+// not write — routing's — is dropped, and a dropped tightening key is a quiet
+// loosening, in the one command whose help says only allow_repos changes. The
+// top-level ones are refused before this is called (Decode can list those), and
+// an unknown key inside a providers entry is refused by Decode too
+// (projectpolicy.decodeProviders: ignoring one there means a misspelt
+// allow_data_to is published as "every repository"); a key inside `routing` is
+// the one Decode cannot list, which is exactly why the node is edited as the
+// document it is rather than as a value of this Fugaro's type.
 //
 // The members are streamed rather than decoded into a map: a map would sort the
 // keys and re-encode every nested value, where this keeps each value's own
@@ -1433,10 +1436,11 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 		slices.Sort(allow)
 	}
 	allow = nonNil(allow)
-	// The node is patched, not rewritten: only allow_repos changes, and every
-	// key this Fugaro does not know — a newer release's, nested inside
-	// providers.<name> or routing, where it cannot be listed — stays exactly
-	// as it was (patchPolicyJSON).
+	// The node is patched, not rewritten: only allow_repos changes, and a key
+	// this Fugaro does not know inside `routing` — a newer release's, where
+	// Decode cannot list it — stays exactly as it was (patchPolicyJSON).
+	// Providers entries are handled above: an unknown key inside one is a
+	// refusal, not something to preserve.
 	patched, err := patchPolicyJSON(raw, "allow_repos", allow)
 	if err != nil {
 		return userErr("editing %s: %v; nothing was written", projectpolicy.PathShared(), err)

@@ -57,9 +57,14 @@
 //     rather than reaching a run; price_policy is checked against the
 //     catalogue's two values beside them, and again by validPricePolicy below,
 //     because the node is read by a runner that never parses a config file.
-//     Unknown keys *inside* an entry stay ignored (P8) — which is safe only
-//     because every value is checked: a misspelt key leaves its field zero and
-//     is refused, so tolerance costs no silence.
+//     An unknown key *inside* an entry is refused, exactly as
+//     internal/config's own decoder refuses one in fugaro.yaml: a misspelt
+//     allow_data_to would otherwise leave the widest setting there is (a nil
+//     list means every repository) and a misspelt route_fee_pct would drop the
+//     owner's surcharge, silently, on a node an administrator can write by
+//     hand. The tolerance that stays is at the top level and in `routing`,
+//     whose unknown keys cannot fail open: routing's values are checked by
+//     validRouting, which refuses a block this Fugaro cannot act on.
 //
 // The readable node holds nothing personal and no secret values: every run
 // token can read it, and a prompt-injected agent can take the token through
@@ -321,9 +326,11 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		}
 	}
 	if praw, ok := doc["providers"]; ok && !isNull(praw) {
-		if err := json.Unmarshal(praw, &p.Providers); err != nil {
+		ps, err := decodeProviders(praw)
+		if err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: providers: %w", err)
 		}
+		p.Providers = ps
 		if err := validProviders(praw, p.Providers); err != nil {
 			return nil, true, err
 		}
@@ -331,16 +338,49 @@ func Decode(raw []byte) (*Policy, bool, error) {
 	return &p, true, nil
 }
 
+// decodeProviders reads the providers block off the node, refusing a key inside
+// an entry that this Fugaro does not know. internal/config's decoder refuses one
+// in fugaro.yaml (ModelProvider.UnmarshalYAML, a known-fields check yaml.v3
+// cannot apply while decoding through a Node), and the node is the more
+// security-relevant of the two documents: it is what a run is routed and metered
+// by, and every run token can read it.
+//
+// The tolerance an unknown key used to get here was justified by P8 (a field a
+// newer release adds must not brick an older runner), but it does not hold for
+// this block: two of its fields fail OPEN when a key that names them is
+// misspelt. A misspelt allow_data_to leaves the nil slice that means every
+// repository — the widest data-sharing setting there is, and the value
+// ValidateModelProviders' ambiguity check is skipped for, because the check that
+// marks a written-but-empty list is set by the YAML unmarshaller and never by
+// JSON — and a misspelt route_fee_pct drops the owner's surcharge silently. A
+// newer release that adds a provider field bumps Version, which is what refuses
+// a node this binary cannot read, so nothing forward-compatible is lost.
+func decodeProviders(raw json.RawMessage) (map[string]Provider, error) {
+	var entries map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil, err
+	}
+	out := make(map[string]Provider, len(entries))
+	names := make([]string, 0, len(entries))
+	for name := range entries {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		dec := json.NewDecoder(bytes.NewReader(entries[name]))
+		dec.DisallowUnknownFields()
+		var pv Provider
+		if err := dec.Decode(&pv); err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		out[name] = pv
+	}
+	return out, nil
+}
+
 // validProviders holds the providers block to the rules internal/config holds
 // the same document to in fugaro.yaml (ValidateModelProviders), plus the one
 // rule that only a reader of the written document can apply.
-//
-// The block is decoded tolerantly, unlike the budget block and unlike
-// ProvidersFromEnv's own decoder: an unknown key inside an entry is ignored
-// rather than refused, because the node must stay readable by an older runner
-// (P8) — and a misspelling is not silently accepted for it, since the value it
-// would have set stays zero and every one of these fields is checked below. So
-// "agth": "bearer" is refused, and a field a newer Fugaro adds is not.
 //
 // The one rule ValidateModelProviders cannot apply here is the null spelling of
 // allow_data_to: it reads "the key was written with nothing under it" off the
