@@ -60,6 +60,17 @@ type Backend struct {
 	// the token's absence from the runs bucket is a refusal and never "this
 	// project has published no policy" (see BudgetTokenEnv).
 	TokenMarked bool
+	// MalformedEnv is set, beside BackendErr, when the job's environment
+	// carries the backend URL or the launcher's marker and the value could not
+	// be parsed: the fields above are then only as far as the parse got, and
+	// the run must not read the zero value as "this job has no backend" (L-b
+	// of the security review of PR #379). Losing the marker that way is what
+	// would let a budget-off job skip the read of the project's policy without
+	// a word, which is the one place the marker did not fail closed. A
+	// malformed value that describes no backend at all (a stray grace, an API
+	// key with no URL) leaves it false, and a budget-off run ignores it as it
+	// ignores the rest of the backend's environment.
+	MalformedEnv bool
 	// Tune, for tests only, adjusts the session's configuration (the fakes'
 	// URLs, short intervals).
 	Tune func(*budget.Config)
@@ -73,36 +84,48 @@ func (b Backend) On() bool { return b.RTDBURL != "" }
 // BackendFromEnv reads the backend from the job's environment. loopbackOK
 // admits a database on a loopback address (a local run against a fake or an
 // emulator). A malformed value is an error, which the runner reports as an
-// infra_error at bootstrap: never a silent "no backend".
+// infra_error at bootstrap: never a silent "no backend". The Backend it returns
+// beside an error carries MalformedEnv, which says whether the environment
+// named a backend it could not parse — the two variables that matter are the
+// URL and the launcher's token marker, so the variables are read first and
+// validated after, which is the only order that can report it.
 func BackendFromEnv(lookup func(string) (string, bool), loopbackOK bool) (Backend, error) {
 	var b Backend
-	if v, ok := lookup(RTDBURLEnv); ok {
-		if err := rtdb.ValidateURL(v, loopbackOK); err != nil {
-			return Backend{}, fmt.Errorf("%s: %v", RTDBURLEnv, err)
+	url, hasURL := lookup(RTDBURLEnv)
+	key, hasKey := lookup(FirebaseAPIKeyEnv)
+	marker, hasMarker := lookup(BudgetTokenEnv)
+	grace, hasGrace := lookup(BudgetGraceEnv)
+	// Everything but the two below describes no backend on its own: a stray
+	// grace or an API key with no URL is damage a budget-off run ignores, as it
+	// ignores the rest of the backend's environment.
+	b.MalformedEnv = hasURL || hasMarker
+	if hasURL {
+		if err := rtdb.ValidateURL(url, loopbackOK); err != nil {
+			return b, fmt.Errorf("%s: %v", RTDBURLEnv, err)
 		}
-		b.RTDBURL = v
+		b.RTDBURL = url
 	}
-	if v, ok := lookup(FirebaseAPIKeyEnv); ok {
-		if strings.TrimSpace(v) != v || v == "" || strings.ContainsAny(v, " \t\r\n&?#/") {
-			return Backend{}, fmt.Errorf("%s: it must be a Firebase web API key", FirebaseAPIKeyEnv)
+	if hasKey {
+		if strings.TrimSpace(key) != key || key == "" || strings.ContainsAny(key, " \t\r\n&?#/") {
+			return b, fmt.Errorf("%s: it must be a Firebase web API key", FirebaseAPIKeyEnv)
 		}
-		b.APIKey = v
+		b.APIKey = key
 	}
-	if v, ok := lookup(BudgetTokenEnv); ok {
+	if hasMarker {
 		// Only the launcher writes this, and it writes "1". Anything else is
 		// damage to the job's environment, which the runner reports as an
 		// infra_error rather than reading as "no marker": the marker is what
 		// makes a missing token fail closed, so a value nobody can interpret
 		// must not be the quiet one.
-		if v != "1" {
-			return Backend{}, fmt.Errorf("%s %q: it must be 1, and only a launcher that minted this run's budget token sets it", BudgetTokenEnv, v)
+		if marker != "1" {
+			return b, fmt.Errorf("%s %q: it must be 1, and only a launcher that minted this run's budget token sets it", BudgetTokenEnv, marker)
 		}
 		b.TokenMarked = true
 	}
-	if v, ok := lookup(BudgetGraceEnv); ok {
-		d, err := time.ParseDuration(v)
+	if hasGrace {
+		d, err := time.ParseDuration(grace)
 		if err != nil || d < budget.MinGrace || d > budget.MaxGrace {
-			return Backend{}, fmt.Errorf("%s %q: it must be a duration between %s and %s", BudgetGraceEnv, v, budget.MinGrace, budget.MaxGrace)
+			return b, fmt.Errorf("%s %q: it must be a duration between %s and %s", BudgetGraceEnv, grace, budget.MinGrace, budget.MaxGrace)
 		}
 		b.Grace = d
 	}

@@ -86,11 +86,13 @@ func (r *run) projectPolicy(ctx context.Context) (*projectpolicy.Policy, bool, e
 		return p.policy, p.found, p.err
 	}
 	p.done = true
-	if !r.d.Backend.On() {
+	if !r.d.Backend.On() && !r.d.Backend.MalformedEnv {
 		// No database in the job's environment: no client, no marker, no node.
 		// This is the absence the readiness gate refuses (init --repo) once
 		// the project has published a policy; a run cannot invent the
-		// credential it would need to notice one.
+		// credential it would need to notice one. An environment that named a
+		// backend it could not parse is not that absence (L-b): it goes
+		// through budgetClient, which refuses it whatever the run's mode.
 		return nil, false, nil
 	}
 	db, err := r.budgetClient(ctx)
@@ -239,11 +241,21 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 	c.done = true
 	if r.d.BackendErr != nil {
 		// The job's environment does not describe a usable backend. A
-		// budget-off run ignores it, as it ignores the rest of the backend's
-		// environment; a budget-on run stops on the shipped error, before
-		// anything else (its text is the one startBudgetBackend has always
-		// returned for it).
-		if !r.d.Spend.On() {
+		// budget-off run ignores it when it describes no backend at all
+		// (MalformedEnv false: a stray grace value, an API key with no URL), as
+		// it ignores the rest of the backend's environment; a budget-on run
+		// stops on the shipped error, before anything else (its text is the one
+		// startBudgetBackend has always returned for it).
+		//
+		// An environment that *carries* the URL or the launcher's marker and
+		// cannot be parsed stops the run whatever its mode (L-b of the security
+		// review of PR #379). This is the one place the marker did not fail
+		// closed: BackendFromEnv returns a zero Backend with the error, so the
+		// marker was lost, and a job whose launcher had minted a token — proof
+		// that a policy exists — read the missing backend as "this project has
+		// published nothing" and ran on the environment ceiling with no
+		// session, no cap and no kill switch.
+		if !r.d.Spend.On() && !r.d.Backend.MalformedEnv {
 			return nil, nil
 		}
 		c.err = fmt.Errorf("the budget backend in the job's environment: %w", r.d.BackendErr)

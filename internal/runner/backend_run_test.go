@@ -451,6 +451,29 @@ func TestBackendFromEnv(t *testing.T) {
 	if err != nil || !marked.TokenMarked || marked.On() {
 		t.Fatalf("marker alone = %+v, %v, want TokenMarked with no backend", marked, err)
 	}
+	// L-b: the Backend returned beside an error says whether the environment
+	// named a backend it could not parse, because the runner must not read the
+	// zero value as "this job has no backend" — that is how the marker was
+	// lost. Only the URL and the marker count: a stray grace value describes no
+	// backend, and a budget-off run ignores it.
+	for name, tc := range map[string]struct {
+		env  map[string]string
+		want bool
+	}{
+		"a bad url":            {map[string]string{runner.RTDBURLEnv: "https://evil.example.invalid"}, true},
+		"a bad marker":         {map[string]string{runner.BudgetTokenEnv: "yes"}, true},
+		"a bad url, no marker": {map[string]string{runner.RTDBURLEnv: "not a url", runner.FirebaseAPIKeyEnv: "AIzaSyFakeWebApiKeyForTests000000000"}, true},
+		"a bad grace only":     {map[string]string{runner.BudgetGraceEnv: "1h"}, false},
+		"a bad key only":       {map[string]string{runner.FirebaseAPIKeyEnv: "k&x=1"}, false},
+	} {
+		be, err := runner.BackendFromEnv(get(tc.env), false)
+		if err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+		if be.MalformedEnv != tc.want {
+			t.Errorf("%s: MalformedEnv = %v, want %v (Backend=%+v, err=%v)", name, be.MalformedEnv, tc.want, be, err)
+		}
+	}
 }
 
 // TestHeldLeaseSpendableDuringGrace: the lease a run already holds is its
@@ -997,13 +1020,48 @@ func TestWrongDatabaseIsAnInfraError(t *testing.T) {
 	}
 }
 
-// M2: a run whose budget is off ignores the budget's environment, malformed
-// or not.
+// M2: a run whose budget is off ignores a malformed value in the backend's
+// environment when it describes no backend at all (a stray grace, an API key
+// with no URL): the value is not one the run would have used.
 func TestOffIgnoresMalformedBackendEnv(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "off", "")
-	b.deps.BackendErr = errors.New("FUGARO_RTDB_URL: not a database URL")
+	b.deps.Backend = runner.Backend{}
+	b.deps.BackendErr = errors.New("FUGARO_BUDGET_GRACE: it must be a duration between 5s and 3m")
 	rec, err := b.run(t, implement("feature"), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+}
+
+// L-b of the security review of PR #379: BackendFromEnv returns a zero Backend
+// with its error, so the launcher's marker was lost, and a budget-off run read
+// the environment it could not parse as "this job has no backend" — the state
+// in which it skips the read of the project's policy and runs on the
+// environment ceiling with no session, no cap and no kill switch. An
+// environment that carries the URL or the marker and cannot be parsed stops the
+// run whatever its mode, naming the variable that could not be read.
+func TestOffRefusesAMalformedBackendEnvThatCarriesTheBackend(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  string
+	}{
+		{"the marker", `FUGARO_BUDGET_TOKEN "yes": it must be 1, and only a launcher that minted this run's budget token sets it`},
+		{"the URL", "FUGARO_RTDB_URL: not a database URL"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := newBK(t, gwConfig(t, ""), "off", "")
+			b.deps.Backend = runner.Backend{MalformedEnv: true}
+			b.deps.BackendErr = errors.New(tc.err)
+			rec, err := b.run(t)
+			if err == nil || rec.Status != runstore.StatusInfraError {
+				t.Fatalf("rec = %+v, err = %v", rec, err)
+			}
+			if !strings.Contains(rec.Reason, tc.err) {
+				t.Errorf("reason %q does not name the value that could not be read", rec.Reason)
+			}
+			if len(b.agent.calls) != 0 || len(b.provider.State.PRs) != 0 {
+				t.Fatal("the run went on")
+			}
+		})
 	}
 }
