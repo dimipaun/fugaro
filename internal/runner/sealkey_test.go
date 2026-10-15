@@ -27,6 +27,28 @@ func envOf(m map[string]string) func(string) (string, bool) {
 	return func(k string) (string, bool) { v, ok := m[k]; return v, ok }
 }
 
+// otherSpellings returns the three other 43-character base64url spellings of
+// the bytes enc stands for. 32 bytes is three whole base64 groups plus two, so
+// the last character carries four significant bits and two this encoding
+// discards: three other characters in the alphabet order decode to the same
+// key under a lax decoder. token.ParseKey is strict and refuses them (see
+// keyEncoding there), which is what lets the runner register the one spelling
+// and have no gap; these are the three the tests must therefore refuse and
+// must not find registered.
+func otherSpellings(t *testing.T, enc string) []string {
+	t.Helper()
+	const alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	last := strings.IndexByte(alpha, enc[len(enc)-1])
+	if last < 0 {
+		t.Fatalf("EncodeKey = %q: the last character is not in the alphabet", enc)
+	}
+	return []string{
+		enc[:len(enc)-1] + string(alpha[last+1]),
+		enc[:len(enc)-1] + string(alpha[last+2]),
+		enc[:len(enc)-1] + string(alpha[last+3]),
+	}
+}
+
 // TestSealKeyMarkerIsParsedStrictlyAndNeverEchoed: the marker's value is "1"
 // from a launcher that sealed nothing and the launch's seal key once the
 // launcher seals (D15). Both must parse; everything else is damage and stops
@@ -50,8 +72,13 @@ func TestSealKeyMarkerIsParsedStrictlyAndNeverEchoed(t *testing.T) {
 	}
 	// Everything else is damage to the job's environment, and it fails closed
 	// however the run's mode reads (MalformedEnv), as a bad marker always has.
-	for _, bad := range []string{"", "yes", "true", enc + "=", enc + "\n", enc + " ", "\t" + enc,
-		enc[:len(enc)-1], enc + "A", "+" + enc[1:], enc + "." + enc} {
+	// The last three are the non-canonical spellings of this very key: a lax
+	// decoder would read all four as the key, and the redactor is registered
+	// with the canonical one alone, so refusing them here is what keeps that
+	// registration from having a gap.
+	badValues := append([]string{"", "yes", "true", enc + "=", enc + "\n", enc + " ", "\t" + enc,
+		enc[:len(enc)-1], enc + "A", "+" + enc[1:], enc + "." + enc}, otherSpellings(t, enc)...)
+	for _, bad := range badValues {
 		be, err := runner.BackendFromEnv(envOf(map[string]string{runner.BudgetTokenEnv: bad}), false)
 		if err == nil {
 			t.Errorf("the marker %q was accepted (%+v)", bad, be)
@@ -126,8 +153,21 @@ func TestASealedTokenBootstrapsAndTheKeyIsNeverPublished(t *testing.T) {
 	if !b.tokenObjectGone() {
 		t.Fatal("the sealed object was not taken")
 	}
+	// The registration is the *encoded* key, and that is the spelling the
+	// channel's parse now accepts alone (token.ParseKey is strict, and the
+	// other three 43-character spellings of these bytes are refused): a
+	// registration of the raw bytes, or of a spelling the marker would never
+	// carry, would leave the value a print of the environment shows
+	// unregistered.
 	if !slices.Contains(atStart, enc) {
 		t.Errorf("the seal key is not among the values registered at the start of the run: %v", atStart)
+	}
+	// The other three spellings are not registered and must not be: the marker
+	// refuses them, so no run can hold one to print.
+	for _, spelling := range otherSpellings(t, enc) {
+		if slices.Contains(atStart, spelling) {
+			t.Errorf("a non-canonical spelling of the key is registered: %v", atStart)
+		}
 	}
 	if strings.Contains(redacted, enc) || strings.Contains(hidden, string(key)) {
 		t.Errorf("the redactor leaves the key readable: %q, %q", redacted, hidden)
