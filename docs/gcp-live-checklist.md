@@ -2273,15 +2273,54 @@ gcloud secrets versions access latest --secret="${PROBE_OUT:?}" --project="${P:?
 Google's default service-account quota (about 100 per project) and the runs bucket's IAM policy size at scale. The current model exceeds the SA quota at about 60 repositories and the project-job model does not — this step records that the sandbox still has headroom.
 
 ```bash
+# The count.
 gcloud iam service-accounts list --project="${P:?}" --format='value(email)' | wc -l
+# The quota itself. Two surfaces; the exact quota metric for service accounts
+# is UNVERIFIED here, so read the metric the API returns and name it in the
+# FACT rather than assuming one:
+#  (a) Cloud Quotas API (read-only, jq the metric whose quotaId or metric names
+#      service accounts):
+curl -sS -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  "https://cloudquotas.googleapis.com/v1/projects/${P:?}/locations/global/services/iam.googleapis.com/quotaInfos" \
+  | jq '.quotaInfos[] | {quotaId, metric, dimensionsInfos}'
+#  (b) or the gcloud surface (ALPHA, and its metric name is the UNVERIFIED part):
+gcloud alpha services quota list --consumer="projects/${P:?}" --service=iam.googleapis.com
+# The runs bucket's policy: the members across every binding, which is what the
+# IAM policy size limit counts.
 gcloud storage buckets get-iam-policy "gs://${SANDBOX_BUCKET:?}" --project="${P:?}" \
   --format=json | jq '[.bindings[]?.members[]?] | length'
 ```
 
-**FACT:** the sandbox project's current service-account count against its quota (read the quota itself, not only the count — Google's default is about 100 per project), and the sandbox bucket's policy binding count (the members across all bindings, which is what the IAM policy size limit counts).
+**FACT:** the sandbox project's current service-account count and the quota it is counted against **as the API reports it** (the metric name recorded, because it is UNVERIFIED here; Google's default is about 100 per project), and the sandbox bucket's policy binding count (the members across all bindings, which is what the IAM policy size limit counts).
 
 ### 6. Restore
 
-The scratch branch and the **two scratch probe repositories** deleted (and the third, out-of-scope one), the Bitbucket **project** token revoked **by the owner in Bitbucket** (record only that it was revoked, never the token), the job's env put back as step 1 recorded it — including removing `PROBE_REF` set by U2(b) with `gcloud run jobs update "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --remove-secrets=PROBE_REF` — the IAM binding removed (U3(a)'s condition binding, and any other binding this check added), and one ordinary sandbox task confirming the sandbox still runs.
+Everything this check created, removed in this order. **The job first** — diff it against step 1's file, drop the reference U2(b) put in its template, and check it is back to the file's contents:
+
+```bash
+gcloud run jobs describe "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --format=json > /tmp/chk52-job-after.json
+diff /tmp/chk52-job-before.json /tmp/chk52-job-after.json
+gcloud run jobs update "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --remove-secrets=PROBE_REF
+```
+
+**Then the GCP-side probe state**, each a command:
+
+```bash
+gcloud projects remove-iam-policy-binding "${P:?}" \
+  --member="serviceAccount:${PROBE_SA:?}" --role="roles/secretmanager.secretAccessor" \
+  --condition="${PROBE_COND:?}"
+gcloud iam service-accounts remove-iam-policy-binding "${PROBE_SA:?}" --project="${P:?}" \
+  --member="user:${OWNER:?your own Google account, the active one in gcloud auth list}" \
+  --role="roles/iam.serviceAccountTokenCreator"
+gcloud secrets delete "${PROBE_IN:?}" --project="${P:?}" --quiet      # never before the job stops referencing it
+gcloud secrets delete "${PROBE_OUT:?}" --project="${P:?}" --quiet
+gcloud iam service-accounts delete "${PROBE_SA:?}" --project="${P:?}" --quiet
+[ -n "${SCRATCH:-}" ] && rm -rf "$SCRATCH" || echo "no SCRATCH in this shell: remove the step-2 mktemp -d directory by hand"
+unset PROBE_TOKEN; rm -f "${ASKPASS:-/nonexistent}"
+```
+
+**And the Bitbucket side, which is the owner's own action in Bitbucket's UI** (no command here creates or revokes a credential): the scratch branch and the **three scratch repositories** (`fugaro-probe-1`, `fugaro-probe-2`, `fugaro-probe-3`) deleted, the probe **project** (or the whole scratch workspace, if it was made Premium for this check alone) deleted, and the **project access token revoked** — record only that it was revoked, never the token.
+
+**Last, one ordinary sandbox task** confirming the sandbox still runs with the job back as step 1 recorded it.
 
 **Paste back:** every FACT line above, never a token, key or secret value. **Never run this against `belong`, never create a `edgeappinc` workspace token, and never point a probe at edgeserver or edgeweb** — every repository this check names is a scratch repository created for it.
