@@ -707,9 +707,8 @@ func runProjectShow(cmd *cobra.Command, o *projectShowOptions, policyOnly bool) 
 	if err != nil {
 		return policyReadErr(err)
 	}
-	if found && len(p.UnknownKeys) > 0 {
-		return userErr("%s lists %s, which this Fugaro does not know: a key nobody reads is a policy that never takes effect; fix the policy, or upgrade Fugaro (fugaro upgrade)",
-			projectpolicy.PathShared(), strings.Join(p.UnknownKeys, ", "))
+	if err := refuseUnknownPolicyKeys(p); err != nil {
+		return err
 	}
 	var cfg dbConfig
 	if _, err := db.Get(ctx, "config", &cfg); err != nil {
@@ -741,10 +740,21 @@ func runProjectShow(cmd *cobra.Command, o *projectShowOptions, policyOnly bool) 
 		return err
 	}
 	doc := projectShowDoc{Project: lc.Name, GCPProject: lc.GCPProject, Mode: cfg.Mode, Caps: caps,
-		Enrolled: sources, Seen: seen, SeenNotEnrolled: []string{}, EnrolledNeverSeen: []string{}}
+		Enrolled: map[string]string{}, Seen: seen, SeenNotEnrolled: []string{}, EnrolledNeverSeen: []string{}}
 	if found {
 		doc.Policy = p
 		doc.AllowRepos = nonNil(p.AllowRepos)
+	}
+	// Enrolled is one key per allow-list entry, and only those: where the
+	// publisher would have seeded that entry from, or "" for one it would not
+	// have (an entry added on purpose with 'project repos add', or a pattern).
+	// The seed is wider than the allow-list — it is every repository this
+	// machine's config names — so a name the operator removed with
+	// 'project repos rm' is still in it, and reporting it as enrolled would
+	// say a repository is admitted when the published policy does not admit
+	// it.
+	for _, r := range doc.AllowRepos {
+		doc.Enrolled[r] = sources[r]
 	}
 	for _, r := range seen {
 		if !found {
@@ -914,6 +924,22 @@ func allowSources(ctx context.Context, lc *localcfg.Config) (map[string]string, 
 	return sources, nil
 }
 
+// refuseUnknownPolicyKeys is what every CLI reader of the published node does
+// with a key this Fugaro does not know: it refuses the node rather than acting
+// on a half-read policy, because a key nobody reads is a policy that never
+// takes effect (projectpolicy's Decode tolerates them for the *runner*, which
+// enforces every value it understands and warns about the rest, P8). One
+// function for the readers, so `policy show`, `project show` and `repos ls`
+// cannot disagree on the posture; the writers word their own refusal, because
+// theirs is about dropping the keys (publishedPolicyOf).
+func refuseUnknownPolicyKeys(p *projectpolicy.Policy) error {
+	if p == nil || len(p.UnknownKeys) == 0 {
+		return nil
+	}
+	return userErr("%s lists %s, which this Fugaro does not know: a key nobody reads is a policy that never takes effect; fix the policy, or upgrade Fugaro (fugaro upgrade)",
+		projectpolicy.PathShared(), strings.Join(p.UnknownKeys, ", "))
+}
+
 func sourceSuffix(src string) string {
 	if src == "" {
 		return ""
@@ -1006,6 +1032,9 @@ func runProjectReposLs(cmd *cobra.Command, o *projectReposOptions) error {
 	}
 	if !found {
 		return userErr("no policy is published for project %s (%s): enroll repositories by publishing one ('fugaro project policy publish'), which seeds the allow-list from this machine's config", lc.Name, projectpolicy.PathShared())
+	}
+	if err := refuseUnknownPolicyKeys(p); err != nil {
+		return err
 	}
 	sources, err := allowSources(ctx, lc)
 	if err != nil {

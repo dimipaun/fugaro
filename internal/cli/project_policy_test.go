@@ -417,6 +417,42 @@ func TestProjectPolicyDeleteRemovesSharedThenChildren(t *testing.T) {
 	}
 }
 
+// TestProjectPolicyDeleteRemovesChildrenBeforeTheSharedNode: the children are
+// deleted first and the shared node last, because the shared node is what makes
+// project-centric mode (P3): the state a half-finished deletion must never
+// leave behind is "no shared node, a repository's child still there", which is
+// a project with no policy that still carries a layer. Refusing the write to
+// the shared node is what makes the order observable — the children are gone,
+// the node is not, and the command reports the refusal instead of printing a
+// deletion that did not happen.
+func TestProjectPolicyDeleteRemovesChildrenBeforeTheSharedNode(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	slug, err := task.Slug("github", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := projectpolicy.PathRepo(slug)
+	f.db.Set(child, map[string]any{"allow_repos": []string{"github/acme/app"}})
+	f.db.Deny(projectpolicy.PathShared())
+
+	out, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	if err == nil {
+		t.Fatalf("a refused delete of the shared node was reported as a success:\n%s", out)
+	}
+	if f.db.Value(child) != nil {
+		t.Errorf("%s is still there: the children are deleted before the shared node", child)
+	}
+	if f.db.Value(projectpolicy.PathShared()) == nil {
+		t.Errorf("%s is gone with a child behind it: that is the half-deletion the order exists to prevent, and the shared node is deleted last", projectpolicy.PathShared())
+	}
+	if strings.Contains(out, "no policy is published") {
+		t.Errorf("the command says the policy is gone though the node is still there:\n%s", out)
+	}
+}
+
 // TestProjectPolicyDeleteRefusesWithoutYesWhileARunIsInFlight: a repository
 // that is mid-run keeps the policy until it finishes (B5).
 func TestProjectPolicyDeleteRefusesWithoutYesWhileARunIsInFlight(t *testing.T) {
@@ -507,16 +543,26 @@ func TestProjectShowPrintsEnrolledAndSeen(t *testing.T) {
 		t.Fatal(err)
 	}
 	var doc struct {
-		AllowRepos        []string `json:"allow_repos"`
-		Seen              []string `json:"seen"`
-		SeenNotEnrolled   []string `json:"seen_not_enrolled"`
-		EnrolledNeverSeen []string `json:"enrolled_never_seen"`
+		AllowRepos        []string          `json:"allow_repos"`
+		Enrolled          map[string]string `json:"enrolled"`
+		Seen              []string          `json:"seen"`
+		SeenNotEnrolled   []string          `json:"seen_not_enrolled"`
+		EnrolledNeverSeen []string          `json:"enrolled_never_seen"`
 	}
 	if err := json.Unmarshal([]byte(js), &doc); err != nil {
 		t.Fatalf("--json is not JSON (%v):\n%s", err, js)
 	}
 	if len(doc.AllowRepos) != 2 || len(doc.Seen) != 2 {
 		t.Errorf("--json = %s, want two allow-list entries and two seen repositories", js)
+	}
+	// enrolled is the allow-list with a source each, and nothing else.
+	if len(doc.Enrolled) != len(doc.AllowRepos) {
+		t.Errorf("enrolled = %v, want one entry per allow-list entry %v", doc.Enrolled, doc.AllowRepos)
+	}
+	for repo, want := range map[string]string{"github/acme/app": "repos: acme/app", "bitbucket/acme/other": "repos: acme/other"} {
+		if doc.Enrolled[repo] != want {
+			t.Errorf("enrolled[%s] = %q, want %q", repo, doc.Enrolled[repo], want)
+		}
 	}
 	if len(doc.SeenNotEnrolled) != 1 || doc.SeenNotEnrolled[0] != stranger {
 		t.Errorf("seen_not_enrolled = %v, want [%s]", doc.SeenNotEnrolled, stranger)
@@ -526,20 +572,66 @@ func TestProjectShowPrintsEnrolledAndSeen(t *testing.T) {
 	}
 }
 
+// TestProjectShowEnrolledIsTheAllowListNotTheSeed: the seed the publisher
+// computes is every repository this machine's config names, which is wider than
+// the published allow-list — 'repos rm' takes a name out of the policy and
+// leaves the config alone. So enrolled is built from the allow-list the node
+// carries, one key per entry: reporting a repository the policy does not admit
+// as enrolled would say its runs are allowed when the next one is refused.
+func TestProjectShowEnrolledIsTheAllowListNotTheSeed(t *testing.T) {
+	newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "project", "repos", "rm", "bitbucket/acme/other", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	js, _, err := execute(t, "project", "show", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		AllowRepos []string          `json:"allow_repos"`
+		Enrolled   map[string]string `json:"enrolled"`
+	}
+	if err := json.Unmarshal([]byte(js), &doc); err != nil {
+		t.Fatalf("--json is not JSON (%v):\n%s", err, js)
+	}
+	if len(doc.AllowRepos) != 1 || doc.AllowRepos[0] != "github/acme/app" {
+		t.Fatalf("allow_repos = %v, want the one entry left after the removal", doc.AllowRepos)
+	}
+	if _, ok := doc.Enrolled["bitbucket/acme/other"]; ok {
+		t.Errorf("enrolled = %v: a repository the policy does not admit is still in this machine's seed, and it is not enrolled", doc.Enrolled)
+	}
+	if len(doc.Enrolled) != 1 || doc.Enrolled["github/acme/app"] != "repos: acme/app" {
+		t.Errorf("enrolled = %v, want exactly github/acme/app from the operator's repos:", doc.Enrolled)
+	}
+}
+
 // TestProjectShowRefusesAnUnknownPolicyKey: a key nobody reads is a policy
 // that never takes effect, so the CLI refuses the node rather than showing a
-// half-read policy (the runner is the tolerant side, P8).
+// half-read policy (the runner is the tolerant side, P8). Every reader of the
+// node refuses it, so no two of them disagree on the posture.
 func TestProjectShowRefusesAnUnknownPolicyKey(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), map[string]any{
 		"version": projectpolicy.Version, "budget": map[string]any{"mode": "enforce"}, "per_run_usdc": 5,
 	})
-	_, _, err := execute(t, "project", "show")
-	if err == nil {
-		t.Fatal("an unknown top-level key was accepted")
-	}
-	if !strings.Contains(err.Error(), "per_run_usdc") {
-		t.Errorf("the refusal does not name the key: %v", err)
+	for _, args := range [][]string{
+		{"project", "show"},
+		{"project", "show", "--json"},
+		{"project", "policy", "show"},
+		{"project", "repos", "ls"},
+		{"project", "repos", "add", "github/acme/app"},
+	} {
+		_, _, err := execute(t, args...)
+		if err == nil {
+			t.Errorf("fugaro %s accepted an unknown top-level key", strings.Join(args, " "))
+			continue
+		}
+		if !strings.Contains(err.Error(), "per_run_usdc") {
+			t.Errorf("fugaro %s: the refusal does not name the key: %v", strings.Join(args, " "), err)
+		}
 	}
 }
 
