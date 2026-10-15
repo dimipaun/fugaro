@@ -65,9 +65,19 @@ func refreshBase(lc *localcfg.Config, kind, ver string) (ref string, current boo
 // version this run targets. want is "" for a kind whose pin this release
 // still has to resolve — it is a digest through the remote repository, and
 // there is no value to name offline — and then why says so instead of
-// printing a reference nobody has; ver is what the never-downgrade rule
-// compares against in that case, so a workflow already built from a newer
-// CLI's pin is still kept.
+// printing a reference nobody has.
+//
+// The never-downgrade rule compares the record against the TARGET's version,
+// which is want's whenever there is a want, and this release's version only
+// when there is not: with want == "" this run is about to pin the release's
+// own image, so ver is the only version there is to compare against. The two
+// differ whenever the local config already pins a base NEWER than the running
+// release (refreshBase's "current"), and then comparing against ver is wrong
+// in the direction that matters: a workflow built from a version in between
+// the two is older than the pin, so it must be rebuilt — otherwise the check
+// job moves to the newer pin while the workflow's image stays behind it, and
+// the run prints "No changes: every selected image is built from its current
+// base" over an image that is not.
 func refreshVerdict(rec *imagecheck.Record, want, ver, host, kind, owner string) (build bool, why string) {
 	to := "this release's pinned image"
 	if want != "" {
@@ -82,8 +92,18 @@ func refreshVerdict(rec *imagecheck.Record, want, ver, host, kind, owner string)
 		return true, "its build record does not say which base image it was built from: rebuilt from " + to
 	}
 	got := pluginwire.Printable(rec.BaseRef)
-	if v, ok := managedVersion(rec.BaseRef, host, kind, owner); ok && newer(v, ver) {
-		return false, fmt.Sprintf("kept: built from %s, newer than %s (an older CLI does not downgrade it)", got, ver)
+	// The version the record must not be older than is the target's when there
+	// is a target, and this release's only when there is not (with want == ""
+	// this run is about to pin the release's own image, so ver is all there is
+	// to compare against). A want that is not a managed reference of this kind
+	// names no version at all, and then nothing keeps the record: the rebuild
+	// happens — fail towards moving the image, never towards keeping it.
+	target, ok := ver, want == ""
+	if want != "" {
+		target, ok = managedVersion(want, host, kind, owner)
+	}
+	if v, isManaged := managedVersion(rec.BaseRef, host, kind, owner); ok && isManaged && newer(v, target) {
+		return false, fmt.Sprintf("kept: built from %s, newer than %s (an older CLI does not downgrade it)", got, target)
 	}
 	return true, fmt.Sprintf("built from %s: rebuilt from %s", got, to)
 }

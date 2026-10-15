@@ -139,6 +139,55 @@ func TestRefreshVerdict(t *testing.T) {
 	}
 }
 
+// TestRefreshVerdictComparesAgainstTheTargetNotTheRunningRelease: the
+// never-downgrade rule compares the record's version against the version of
+// the reference the workflow should move to (want), NOT against the running
+// CLI's release version (ver). The two differ in exactly the case the rule
+// exists for: the local config already pins a base NEWER than this release
+// (refreshBase's "current", which is what makes want non-empty), and then a
+// workflow built from a version in between the two is OLDER than the pin.
+// Comparing against ver keeps it — and refreshBuilds then prints "No
+// changes: every selected image is built from its current base" over an
+// image the check job has already moved past.
+//
+// Mutation (run, restore): compare against ver instead of target in
+// refreshVerdict and the "in between" row fails, with build false.
+func TestRefreshVerdictComparesAgainstTheTargetNotTheRunningRelease(t *testing.T) {
+	const ver = "0.7.5"                // the release this CLI is
+	want := pinnedRef("beta", "0.9.0") // what the local config already pins: newer
+	for _, tc := range []struct {
+		name  string
+		rec   *imagecheck.Record
+		build bool
+		why   string
+	}{
+		{"built from the pin", &imagecheck.Record{BaseRef: want}, false, "current: built from " + want},
+		{"built from an in-between version", &imagecheck.Record{BaseRef: managedRef("beta", "0.8.0")}, true, "rebuilt from " + want},
+		{"built from this release's own image", &imagecheck.Record{BaseRef: managedRef("beta", ver)}, true, "rebuilt from " + want},
+		{"built from a newer pin than the target", &imagecheck.Record{BaseRef: pinnedRef("beta", "0.10.0")}, false, "newer than 0.9.0"},
+		{"built from a newer copy than the target", &imagecheck.Record{BaseRef: managedRef("beta", "0.10.0")}, false, "newer than 0.9.0"},
+	} {
+		build, why := refreshVerdict(tc.rec, want, ver, refreshHost, "beta", refreshOwner)
+		if build != tc.build || !strings.Contains(why, tc.why) {
+			t.Errorf("%s: build %v, %q; want %v, %q", tc.name, build, why, tc.build, tc.why)
+		}
+		if strings.Contains(why, "newer than "+ver) {
+			t.Errorf("%s: %q keeps the record above this release's version; the target is what it is kept above", tc.name, why)
+		}
+	}
+	// With no want — this release's pin is still to be resolved, so there is
+	// no reference to name and ver is the only version to compare against.
+	// A record from an older copy is rebuilt; one from a NEWER managed base
+	// is still kept, because this run is about to pin this release's image
+	// and that would be the downgrade the rule forbids.
+	if build, why := refreshVerdict(&imagecheck.Record{BaseRef: managedRef("beta", "0.6.0")}, "", ver, refreshHost, "beta", refreshOwner); !build || !strings.Contains(why, "this release's pinned image") {
+		t.Errorf("no want, older record: build %v, %q", build, why)
+	}
+	if build, why := refreshVerdict(&imagecheck.Record{BaseRef: managedRef("beta", "0.9.0")}, "", ver, refreshHost, "beta", refreshOwner); build || !strings.Contains(why, "newer than "+ver) {
+		t.Errorf("no want, newer record: build %v, %q", build, why)
+	}
+}
+
 func TestReadRefreshRecord(t *testing.T) {
 	newAnchorModeRig(t, anchorModeYAML(), true)
 	lc := &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", Region: "us-east5"}

@@ -612,6 +612,76 @@ func TestRefreshBuildsStartFromTheNewBase(t *testing.T) {
 	}
 }
 
+// The never-downgrade rule compares a build record against the TARGET's
+// version, not against the running CLI's (review finding, medium). Here the
+// local config already pins 0.9.0 while this CLI is 0.7.5, and app's record
+// says 0.8.0 — OLDER than the pin the check job runs from. Comparing
+// against the CLI's own 0.7.5 kept it and the step then printed "No
+// changes: every selected image is built from its current base" over an
+// image the check job has moved past. api's record is at the pin, so it is
+// the control: it is still kept, and only app is built.
+//
+// Mutation (run, restore): compare against ver instead of the target in
+// refreshVerdict, and this test fails: no build is submitted and the output
+// carries the "No changes" line.
+func TestRefreshBuildsRebuildsAnImageOlderThanTheConfigsNewerPin(t *testing.T) {
+	useVersion(t, "0.7.5")
+	r := newAnchorModeRig(t, refreshYAML, true)
+	fb := useFakeBuilder(t)
+	e, tg := buildTarget(t, r)
+	pin := pinnedRef("base", "0.9.0")
+	tg.lc.BaseImages = map[string]string{"base": pin}
+	tg.lc.ImageSource = "ghcr.io/" + refreshOwner
+	p := &refreshPlan{workflows: []string{"app", "api"}, ver: "0.7.5"}
+	putWorkflowRecordFrom("app", "0.7.5", managedRef("base", "0.8.0"))
+	putWorkflowRecordFrom("api", "0.7.5", pin)
+	out := atTerminal(t, e, initProjectName+"\n")
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(fb.specs) != 1 || fb.specs[0].Workflow != "app" || fb.specs[0].Base != pin {
+		t.Fatalf("builds %+v, want app alone from %s", fb.specs, pin)
+	}
+	if !strings.Contains(out.String(), "app: built from "+managedRef("base", "0.8.0")+": rebuilt from "+pin) {
+		t.Errorf("output:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "api: current: built from "+pin) {
+		t.Errorf("api is at the pin and must be left alone:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "No changes") {
+		t.Errorf("printed \"No changes\" with an image older than the pin:\n%s", out.String())
+	}
+}
+
+// The other direction, so the fix cannot pass by rebuilding everything: with
+// every record at or above the config's newer pin, the step still reports
+// "No changes" and submits nothing.
+func TestRefreshBuildsSaysNoChangesWhenEveryImageIsAtTheNewerPin(t *testing.T) {
+	useVersion(t, "0.7.5")
+	r := newAnchorModeRig(t, refreshYAML, true)
+	fb := useFakeBuilder(t)
+	e, tg := buildTarget(t, r)
+	pin := pinnedRef("base", "0.9.0")
+	tg.lc.BaseImages = map[string]string{"base": pin}
+	// The owner the pin is checked against is the local config's recorded
+	// image_source (design §3.6); this rig's config has none until the base
+	// step writes it, so the test records it as that step would.
+	tg.lc.ImageSource = "ghcr.io/" + refreshOwner
+	p := &refreshPlan{workflows: []string{"app", "api"}, ver: "0.7.5"}
+	putWorkflowRecordFrom("app", "0.7.5", pin)
+	putWorkflowRecordFrom("api", "0.7.5", managedRef("base", "0.10.0"))
+	out := atTerminal(t, e, initProjectName+"\n")
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(fb.specs) != 0 {
+		t.Fatalf("builds %+v, want none", fb.specs)
+	}
+	if !strings.Contains(out.String(), "No changes: every selected image is built from its current base") {
+		t.Errorf("output:\n%s", out.String())
+	}
+}
+
 // A workflow with no base: (the implicit Fugaro base) is rebuilt from
 // base_images.base, not from a malformed ref for kind "".
 //
