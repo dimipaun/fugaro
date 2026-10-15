@@ -142,18 +142,23 @@ type previewHeadroom struct {
 // that config value; and always the database's effective per-run cap (the
 // repository's own or the default, and the global one where that side is
 // unset, D6). ok is false when neither side is set, and then only the
-// per-stage cap bounds a run. srcs names each one found, with its value.
+// per-stage cap bounds a run. srcs names each one found, with its value, and
+// the database's names the scope it came from (repo, default or global) --
+// plan Task 0.3 step 7, because "the global cap is the ceiling here" and "the
+// repository has its own smaller cap" are different facts about one number.
+// origin is the short name of the one that binds: the scope for the
+// database's, the variable for the other two.
 //
 // The two owner-side values are alternatives, not a min: a stale
 // $FUGARO_MAX_RUN_USD tells the runner to ignore the config, so taking the
 // smaller of the two would report a ceiling the runner never enforces -- the
 // unsafe direction for a ceiling. The database's cap is a min, because the
 // rules deny a lease that exceeds either.
-func previewPerRun(lc *localcfg.Config, caps budget.Caps) (best budget.Micros, srcs []string, ok bool, err error) {
-	take := func(m budget.Micros, what string) {
+func previewPerRun(lc *localcfg.Config, caps budget.Caps) (best budget.Micros, srcs []string, origin string, ok bool, err error) {
+	take := func(m budget.Micros, what, short string) {
 		srcs = append(srcs, what+" "+usdFixed(m.USD()))
 		if !ok || m < best {
-			best, ok = m, true
+			best, ok, origin = m, true, short
 		}
 	}
 	if v := os.Getenv(runner.MaxRunUSDEnv); v != "" {
@@ -162,25 +167,29 @@ func previewPerRun(lc *localcfg.Config, caps budget.Caps) (best budget.Micros, s
 		// quietly price a run at a cap it would refuse to start with.
 		usd, perr := strconv.ParseFloat(v, 64)
 		if perr != nil || math.IsNaN(usd) || usd <= 0 {
-			return 0, nil, false, userErr("%s %q: it must be a number of US dollars, more than 0 and at most %d", runner.MaxRunUSDEnv, v, pricing.MaxUSD)
+			return 0, nil, "", false, userErr("%s %q: it must be a number of US dollars, more than 0 and at most %d", runner.MaxRunUSDEnv, v, pricing.MaxUSD)
 		}
 		m, ferr := pricing.FromUSD(usd)
 		if ferr != nil {
-			return 0, nil, false, userErr("%s %q: %v", runner.MaxRunUSDEnv, v, ferr)
+			return 0, nil, "", false, userErr("%s %q: %v", runner.MaxRunUSDEnv, v, ferr)
 		}
 		if m < 1 {
-			return 0, nil, false, userErr("%s %q: it rounds to nothing; the smallest cap is $0.000001", runner.MaxRunUSDEnv, v)
+			return 0, nil, "", false, userErr("%s %q: it rounds to nothing; the smallest cap is $0.000001", runner.MaxRunUSDEnv, v)
 		}
-		take(m, runner.MaxRunUSDEnv)
+		take(m, runner.MaxRunUSDEnv, runner.MaxRunUSDEnv)
 	} else if lc.Budget != nil && lc.Budget.PerRunUSD > 0 {
 		if m, ferr := pricing.FromUSD(lc.Budget.PerRunUSD); ferr == nil {
-			take(m, "budget.per_run_usd")
+			take(m, "budget.per_run_usd", "budget.per_run_usd")
 		}
 	}
 	if m, capOK := caps.PerRun(); capOK {
-		take(m, "the database's per-run cap")
+		// The scope, not only the amount: the global fallback and the
+		// repository's own cap bound a run the same way but are different
+		// facts to the operator reading this (plan Task 0.3 step 7).
+		scope := perRunCapSource(caps)
+		take(m, "the database's per-run cap ("+scope+")", scope)
 	}
-	return best, srcs, ok, nil
+	return best, srcs, origin, ok, nil
 }
 
 // previewDoc is --json's document.
@@ -213,6 +222,11 @@ type previewDoc struct {
 	Bounded    bool     `json:"bounded"`
 	PerRunUSD  *float64 `json:"per_run_usd"`
 	CeilingUSD *float64 `json:"ceiling_usd"`
+	// BindingOrigin names what the per-run cap that binds comes from: repo,
+	// default or global for the database's, else the variable that set it
+	// (the text output names it beside the cap; PerRunCapSource already
+	// carries it for --json).
+	BindingOrigin string `json:"binding_origin,omitempty"`
 	// Verdict is fits, may_exceed_repo or exceeds; "" when no daily cap
 	// applies.
 	Verdict  string `json:"verdict,omitempty"`
@@ -343,11 +357,11 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 
 	// The ceiling: N × the smaller side of a run's bound.
 	var perRunUSD *float64
-	if m, srcs, ok, err := previewPerRun(lc, caps); err != nil {
+	if m, srcs, origin, ok, err := previewPerRun(lc, caps); err != nil {
 		return err
 	} else if ok {
 		v := m.USD()
-		perRunUSD, doc.PerRunCapUSD, doc.PerRunCapSource = &v, &v, srcs
+		perRunUSD, doc.PerRunCapUSD, doc.PerRunCapSource, doc.BindingOrigin = &v, &v, srcs, origin
 	}
 	stageUSD := doc.stageUSD()
 	var used, ceiling *float64
@@ -692,6 +706,9 @@ func printPreview(cmd *cobra.Command, d *previewDoc) {
 	} else {
 		fmt.Fprintf(w, "rough worst case: %s\n", usdFixed(*d.CeilingUSD))
 		binding := "per-run cap"
+		if d.BindingOrigin != "" {
+			binding = "per-run cap: " + d.BindingOrigin
+		}
 		if stageUSD := d.stageUSD(); stageUSD != nil && (d.PerRunCapUSD == nil || *stageUSD < *d.PerRunCapUSD) {
 			binding = fmt.Sprintf("%d stages × %s (agent.max_budget_usd)", d.Stages, usdFixed(*d.PerStageCapUSD))
 		}

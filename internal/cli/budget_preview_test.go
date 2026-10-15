@@ -690,7 +690,12 @@ func TestBudgetPreviewCeiling(t *testing.T) {
 	}
 	// standard with f=1, n=2: 1+2+2*(2+2) = 11 stages × $0.50 = $5.50, capped
 	// by the $3 per-run cap: 6 × $3 = $18 ceiling, $15 headroom.
-	for _, want := range []string{"11 stages", "rough worst case: $18.00", "6 runs × $3.00 (per-run cap)", "may exceed the repository's daily cap ($15.00 left today)"} {
+	// The database's cap is the one that binds, and the line names the scope
+	// it came from: the default for repositories without one, not the
+	// repository's own and not the global fallback (plan Task 0.3 step 7).
+	for _, want := range []string{"11 stages", "rough worst case: $18.00", "6 runs × $3.00 (per-run cap: default)",
+		"per-run caps found: budget.per_run_usd $5.00, the database's per-run cap (default) $3.00; the smallest counts",
+		"may exceed the repository's daily cap ($15.00 left today)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("preview never says %q:\n%s", want, out)
 		}
@@ -913,7 +918,7 @@ func TestBudgetPreviewEnvCapSupersedesTheConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"6 runs × $2.00 (per-run cap)", "FUGARO_MAX_RUN_USD $2.00", "the database's per-run cap $3.00"} {
+	for _, want := range []string{"6 runs × $2.00 (per-run cap: FUGARO_MAX_RUN_USD)", "FUGARO_MAX_RUN_USD $2.00", "the database's per-run cap (default) $3.00"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("preview never says %q:\n%s", want, out)
 		}
@@ -1016,9 +1021,34 @@ func TestBudgetPreviewGlobalCapsOnly(t *testing.T) {
 	}
 	for _, want := range []string{
 		"rough worst case: $3.00",
-		"per-run caps found: budget.per_run_usd $5.00, the database's per-run cap $3.00; the smallest counts",
+		"1 runs × $3.00 (per-run cap: global)",
+		"per-run caps found: budget.per_run_usd $5.00, the database's per-run cap (global) $3.00; the smallest counts",
 		"headroom left today: repository not set, project $10.00",
 		"fits the project's daily cap ($10.00 left today)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("preview never says %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestBudgetPreviewRepoCapIsNamed: with a per-run cap on the repository's own
+// node, the preview names that scope -- "repo" -- rather than the default or
+// the global fallback, so Check 48 step 5 can tell the three apart from the
+// output alone (plan Task 0.3 step 7).
+func TestBudgetPreviewRepoCapIsNamed(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.SetCaps(100, 3, 20, 3)
+	f.db.Set(budget.PathCapsRepo(appSlug), map[string]any{"repo": "acme/app", "perRunMicros": usd(2)})
+	f.SetSpentToday(0)
+	f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
+	out, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"1 runs × $2.00 (per-run cap: repo)",
+		"the database's per-run cap (repo) $2.00",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("preview never says %q:\n%s", want, out)
