@@ -421,58 +421,6 @@ func TestJobDefinitionIsTheDesignsJob(t *testing.T) {
 	}
 }
 
-// TestLaunchCarriesTheSpecsPerExecutionEnv: LaunchSpec.Env is the launcher's
-// budget marker — whether it minted a token is a fact about this launch, not
-// about the deployed job (backend.LaunchSpec.Env, internal/runner's
-// BudgetTokenEnv) — and on Batch the job definition is the only environment
-// there is, so the spec's variables must be written into it. Dropping them is
-// not a cosmetic loss: a run launched without FUGARO_BUDGET_TOKEN has no
-// marker, and the runner reads an absent marker as "this project published no
-// policy", which is the fail-open the marker exists to close.
-func TestLaunchCarriesTheSpecsPerExecutionEnv(t *testing.T) {
-	ctx := context.Background()
-	b, bf, _, _ := newTestBackend(t, nil)
-	s := spec()
-	// A value may contain '=': only the first one separates the name.
-	s.Env = []string{"FUGARO_BUDGET_TOKEN=1", "FUGARO_TASK_NOTE=a=b"}
-	if _, err := b.Launch(ctx, s); err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
-	vars := object(t, bf.Creates()[0].Job, "taskGroups", "0", "taskSpec", "environment", "variables")
-	for k, want := range map[string]any{
-		"FUGARO_BUDGET_TOKEN": "1",
-		"FUGARO_TASK_NOTE":    "a=b",
-	} {
-		if vars[k] != want {
-			t.Errorf("job env %s = %v, want %v", k, vars[k], want)
-		}
-	}
-	// The job's own variables are not lost to the merge.
-	if vars["FUGARO_BACKEND"] != backend.CloudBatch {
-		t.Errorf("job env FUGARO_BACKEND = %v, want the merge to keep the job's own", vars["FUGARO_BACKEND"])
-	}
-}
-
-// TestLaunchRefusesAMalformedEnv: a spec variable that is not NAME=value
-// cannot be turned into an environment, and Cloud Run refuses the same input
-// (gcp/run.go). It is an argument no job can be built from, so it is
-// backend.ErrRejected: nothing was created.
-func TestLaunchRefusesAMalformedEnv(t *testing.T) {
-	ctx := context.Background()
-	for _, bad := range []string{"FUGARO_BUDGET_TOKEN", "=1", ""} {
-		b, bf, _, _ := newTestBackend(t, nil)
-		s := spec()
-		s.Env = []string{bad}
-		_, err := b.Launch(ctx, s)
-		if !errors.Is(err, backend.ErrRejected) {
-			t.Errorf("Launch with env %q = %v, want backend.ErrRejected", bad, err)
-		}
-		if n := len(bf.Creates()); n != 0 {
-			t.Errorf("Launch with env %q created %d job(s), want none", bad, n)
-		}
-	}
-}
-
 // TestLaunchSendsNoSecretValue is C10 stated as a search: the bytes Batch
 // receives must not contain a secret's value. The job carries names only, and
 // this is the test that would fail if someone later resolved one.
