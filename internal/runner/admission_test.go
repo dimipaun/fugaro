@@ -21,11 +21,13 @@ import (
 
 // admissionRun is newBK re-homed on the run a launcher creates for slugRepo
 // under kind: the storage slug is task.Slug(kind, slugRepo) — the run's
-// FUGARO_RUN — while task.json keeps naming the fixture's acme/app, so a
-// caller can hand the run a slug that is not its own repository's. The run is
-// given a Cloud Run execution name (the binding's scope, R2-9), and the budget
-// token, the repository caps and the rules marker are seeded under the slug it
-// now carries. policy "" publishes no node under the marker.
+// FUGARO_RUN — while task.json keeps naming the fixture's acme/app. slugRepo
+// "acme/app" is the fixture's own repository (the slug is then repoSlug); any
+// other value hands the run a slug that is not its own repository's, which is
+// the case the binding refuses. The run is given a Cloud Run execution name
+// (the binding's scope, R2-9), and the budget token, the repository caps and
+// the rules marker are seeded under the slug it now carries. policy ""
+// publishes no node under the marker.
 func admissionRun(t *testing.T, kind, slugRepo, mode, capUSD, policy string, script ...anthropicfake.Reply) *bk {
 	t.Helper()
 	b := newBK(t, gwConfig(t, ""), mode, capUSD, script...)
@@ -33,7 +35,10 @@ func admissionRun(t *testing.T, kind, slugRepo, mode, capUSD, policy string, scr
 	if err != nil {
 		t.Fatal(err)
 	}
-	if slug == bkSlug {
+	// A mismatch fixture must not land on the fixture's own slug: the run would
+	// be homed on its own repository and the binding would have nothing to
+	// refuse.
+	if slug == repoSlug && slugRepo != "acme/app" {
 		t.Fatalf("task.Slug(%q, %q) is the fixture's own slug; the test would check nothing", kind, slugRepo)
 	}
 	b.deps.Execution = "projects/aurora-fp/locations/europe-west1/jobs/fugaro/executions/" + runID
@@ -43,7 +48,12 @@ func admissionRun(t *testing.T, kind, slugRepo, mode, capUSD, policy string, scr
 		t.Fatal(err)
 	}
 	b.deps.Store, b.harness.store = store, store
-	mintUnder(t, b, slug, time.Now())
+	if slug != repoSlug {
+		// newBK already left the run's token under the fixture's own slug, so a
+		// run homed on its own repository reuses it. Another slug is another
+		// token: its slug claim is the identity the run compares with its own.
+		mintUnder(t, b, slug, time.Now())
+	}
 	micros := func(v budget.Micros) *budget.Micros { return &v }
 	b.db.Set(budget.PathCapsRepo(slug), budget.RepoCaps{DailyMicros: micros(60_000_000), PerRunMicros: micros(20_000_000), Repo: "acme/app"})
 	b.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)

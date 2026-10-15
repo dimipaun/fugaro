@@ -75,7 +75,7 @@ func refused(t *testing.T, h *harness, want ...string) {
 			t.Errorf("reason %q lacks %q", rec.Reason, w)
 		}
 	}
-	if ok, _ := b.Exists(context.Background(), lock.Key("acme-app", "fugaro/"+runID)); ok {
+	if ok, _ := b.Exists(context.Background(), lock.Key(repoSlug, "fugaro/"+runID)); ok {
 		t.Error("a lock object was written before the project check")
 	}
 	if len(h.provider.State.PRs) != 0 {

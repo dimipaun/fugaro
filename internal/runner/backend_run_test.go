@@ -73,7 +73,7 @@ func TestKillAtBootstrapNoPR(t *testing.T) {
 	if !strings.Contains(rec.Halt.Detail, "admin@example.invalid") || !strings.Contains(rec.Halt.Detail, "runaway spend") {
 		t.Fatalf("the halt does not say who and why: %q", rec.Halt.Detail)
 	}
-	if ok, _ := b.bucket.Exists(context.Background(), lock.Key("acme-app", "fugaro/"+runID)); ok {
+	if ok, _ := b.bucket.Exists(context.Background(), lock.Key(repoSlug, "fugaro/"+runID)); ok {
 		t.Fatal("the branch lock was taken")
 	}
 	if len(b.provider.State.PRs) != 0 || testutil.Git(t, b.remote, "for-each-ref", "refs/heads/fugaro/") != "" {
@@ -95,7 +95,7 @@ func TestKillAtBootstrapNoPR(t *testing.T) {
 
 func TestNoCapHaltsEnforce(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "enforce", "")
-	b.db.Set(budget.PathCapsRepo(bkSlug), nil)
+	b.db.Set(budget.PathCapsRepo(repoSlug), nil)
 	rec, err := b.run(t)
 	if err != nil || rec.Status != runstore.StatusHalted || rec.Outcome != runstore.OutcomeNone ||
 		rec.Halt == nil || rec.Halt.Reason != runstore.HaltNoCap || rec.Halt.Scope != "repo" {
@@ -111,7 +111,7 @@ func TestNoCapHaltsEnforce(t *testing.T) {
 
 func TestKillMidImplementOpensDraft(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "enforce", "")
-	rec, err := b.run(t, killMidStage(b.db, budget.PathKillRepo(bkSlug)))
+	rec, err := b.run(t, killMidStage(b.db, budget.PathKillRepo(repoSlug)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestLeaseTopUpAndRelease(t *testing.T) {
 	if b.repoLeaf("spent") != 80_000 || b.globalLeaf("spent") != 80_000 || b.repoLeaf("calls") != 2 {
 		t.Fatalf("spent: repo %d, global %d; calls %d", b.repoLeaf("spent"), b.globalLeaf("spent"), b.repoLeaf("calls"))
 	}
-	if got := b.num(budget.PathByModel(b.day(), bkSlug, sonnet) + "/micros"); got != 80_000 {
+	if got := b.num(budget.PathByModel(b.day(), repoSlug, sonnet) + "/micros"); got != 80_000 {
 		t.Fatalf("byModel micros = %d", got)
 	}
 	if rec.Budget == nil || rec.Budget.GrantedMicros-rec.Budget.ReleasedMicros != 80_000 || rec.Budget.ReleasedMicros == 0 {
@@ -228,8 +228,8 @@ func TestLeaseTopUpAndRelease(t *testing.T) {
 func TestRepoDailyCapHalts(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "enforce", "", capScript(2)...)
 	micros := budget.Micros(10_000)
-	b.db.Set(budget.PathCapsRepo(bkSlug), budget.RepoCaps{DailyMicros: &micros, PerRunMicros: &micros})
-	b.db.Set(budget.PathCapsRepo(bkSlug)+"/perRunMicros", 20_000_000)
+	b.db.Set(budget.PathCapsRepo(repoSlug), budget.RepoCaps{DailyMicros: &micros, PerRunMicros: &micros})
+	b.db.Set(budget.PathCapsRepo(repoSlug)+"/perRunMicros", 20_000_000)
 	var st []int
 	rec, err := b.run(t, calling(&st, implement("feature"), call{sonnet, 4000}))
 	if err != nil {
@@ -264,7 +264,7 @@ func TestGlobalDailyCapHalts(t *testing.T) {
 // policy's is far looser; the lower of the two rules.
 func TestRunCapFromRTDBMin(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "enforce", "50", capScript(3)...)
-	b.db.Set(budget.PathCapsRepo(bkSlug)+"/perRunMicros", 100_000) // $0.10
+	b.db.Set(budget.PathCapsRepo(repoSlug)+"/perRunMicros", 100_000) // $0.10
 	var st []int
 	rec, err := b.run(t, calling(&st, implement("feature"), call{sonnet, 4000}, call{sonnet, 4000}, call{sonnet, 4000}))
 	if err != nil {
@@ -313,7 +313,7 @@ func TestCommittedDayCapHalts(t *testing.T) {
 func TestObserveNeverHaltsForCaps(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "observe", "0.10", capScript(3)...)
 	b.db.Set(budget.PathCapsGlobal, budget.GlobalCaps{})
-	b.db.Set(budget.PathCapsRepo(bkSlug), nil)
+	b.db.Set(budget.PathCapsRepo(repoSlug), nil)
 	var st []int
 	rec, err := b.run(t, calling(&st, implement("feature"), call{sonnet, 4000}, call{sonnet, 4000}, call{sonnet, 4000}), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Halt != nil {
@@ -522,7 +522,7 @@ func TestOffNeverTouchesBackend(t *testing.T) {
 	// have taken the token — describes a runner that does not read the policy
 	// at all. What remains is what the run must not do: read the database,
 	// exchange anything, or record a budget.
-	if err := token.DeleteObject(context.Background(), b.bucket, bkSlug, runID); err != nil {
+	if err := token.DeleteObject(context.Background(), b.bucket, repoSlug, runID); err != nil {
 		t.Fatal(err)
 	}
 	b.db.Refuse(503, "UNAVAILABLE", "", "down")
@@ -546,7 +546,7 @@ func TestOffNeverTouchesBackend(t *testing.T) {
 
 func TestTokenExpiredHalts(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "enforce", "")
-	if err := token.DeleteObject(context.Background(), b.bucket, bkSlug, runID); err != nil {
+	if err := token.DeleteObject(context.Background(), b.bucket, repoSlug, runID); err != nil {
 		t.Fatal(err)
 	}
 	b.mint(time.Now().Add(-2 * time.Hour)) // queued for two hours
@@ -583,7 +583,7 @@ func TestBackendUnreachableAtBootstrapHalts(t *testing.T) {
 
 func TestMissingTokenIsAnInfraError(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "enforce", "")
-	if err := token.DeleteObject(context.Background(), b.bucket, bkSlug, runID); err != nil {
+	if err := token.DeleteObject(context.Background(), b.bucket, repoSlug, runID); err != nil {
 		t.Fatal(err)
 	}
 	rec, err := b.run(t)
@@ -606,10 +606,10 @@ func TestOAuthReportsNotional(t *testing.T) {
 	if b.runLeaf("reserved") != 0 || b.repoLeaf("counted") != 0 || b.globalLeaf("counted") != 0 || b.runLeaf("spent") != 0 {
 		t.Fatal("an oauth run leased or spent against the caps")
 	}
-	if got := b.num(budget.PathByModel(b.day(), bkSlug, sonnet) + "/in"); got != 1000 {
+	if got := b.num(budget.PathByModel(b.day(), repoSlug, sonnet) + "/in"); got != 1000 {
 		t.Fatalf("byModel in = %d", got)
 	}
-	if got := b.num(budget.PathByModel(b.day(), bkSlug, sonnet) + "/micros"); got <= 0 {
+	if got := b.num(budget.PathByModel(b.day(), repoSlug, sonnet) + "/micros"); got <= 0 {
 		t.Fatalf("byModel micros = %d, want the model's usage priced", got)
 	}
 	if rec.Cost == nil || rec.Cost.ModelBasis != runstore.BasisSubscription {
@@ -634,7 +634,7 @@ func TestOAuthKillHalts(t *testing.T) {
 
 func TestOAuthNeverBlockedByMissingCaps(t *testing.T) {
 	b := oauthBK(t, "enforce")
-	b.db.Set(budget.PathCapsRepo(bkSlug), nil)
+	b.db.Set(budget.PathCapsRepo(repoSlug), nil)
 	b.db.Set(budget.PathCapsGlobal, nil)
 	rec, err := b.run(t, implement("feature"), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Halt != nil {
@@ -736,7 +736,7 @@ func TestKilledStageDoesNotEraseTokens(t *testing.T) {
 			v, _ := n.Int64()
 			return v == 150
 		})
-		b.db.Set(budget.PathKillRepo(bkSlug), killSwitch(true))
+		b.db.Set(budget.PathKillRepo(repoSlug), killSwitch(true))
 		<-ctx.Done()
 		return agent.Result{CostUSD: 0.1}, ctx.Err()
 	}
@@ -850,7 +850,7 @@ func TestBudgetSecretScan(t *testing.T) {
 	b.deps.Env = append(b.deps.Env, runner.RTDBURLEnv+"="+b.db.URL, runner.FirebaseAPIKeyEnv+"="+bkAPIKey)
 	custom := func() string {
 		objs := allObjects(t, b.harness.bucket)
-		return objs[token.ObjectKey(bkSlug, runID)]
+		return objs[token.ObjectKey(repoSlug, runID)]
 	}()
 	if custom == "" {
 		t.Fatal("no token object to start from")
@@ -998,7 +998,7 @@ func TestMidRunEnforceStopsAnObservingRun(t *testing.T) {
 	micros, small := budget.Micros(1_000), budget.Micros(50_000)
 	b.db.Set(budget.PathLimits, budget.Limits{MaxReserveMicros: &small}) // small leases: the second call tops up
 	b.db.Set(budget.PathCapsGlobal, budget.GlobalCaps{DailyMicros: &micros, PerRunMicros: &micros})
-	b.db.Set(budget.PathCapsRepo(bkSlug), budget.RepoCaps{DailyMicros: &micros, PerRunMicros: &micros})
+	b.db.Set(budget.PathCapsRepo(repoSlug), budget.RepoCaps{DailyMicros: &micros, PerRunMicros: &micros})
 	var st []int
 	step := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		s1, _ := post(t, req, sonnet, 4000)

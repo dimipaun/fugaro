@@ -85,7 +85,7 @@ func TestWorkflowChangeSkipsThePushAndSavesTheWork(t *testing.T) {
 	for _, want := range []string{
 		"GitHub refused the push", ".github/workflows/ci.yml",
 		"Fugaro never has permission to change workflow files; a person must make that change",
-		"runs/acme-app/" + runID + "/work.bundle",
+		"runs/" + repoSlug + "/" + runID + "/work.bundle",
 	} {
 		if !strings.Contains(rec.Reason, want) {
 			t.Errorf("reason %q lacks %q", rec.Reason, want)

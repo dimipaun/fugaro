@@ -32,6 +32,22 @@ import (
 
 const runID = "20260926-221530-abcd"
 
+// repoSlug is the storage slug every fixture's run lives under: the real
+// task.Slug of the fixture repository (acme/app, under github), not a
+// readable placeholder. The run's admission check (plan task 1.5) derives the
+// provider kind back out of the slug it was handed and refuses a slug no job
+// provider kind produces — which a bare repoSlug is, so a fixture carrying
+// one could never get past bootstrap.
+var repoSlug = mustSlug("github", "acme/app")
+
+func mustSlug(provider, repo string) string {
+	s, err := task.Slug(provider, repo)
+	if err != nil {
+		panic(err)
+	}
+	return s
+}
+
 type step func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error)
 
 type scriptedAgent struct {
@@ -85,7 +101,7 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 	if spec == nil {
 		spec = &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "Add a feature"}
 	}
-	store := runstore.Open(bucket, "acme-app", spec.RunID)
+	store := runstore.Open(bucket, repoSlug, spec.RunID)
 	if err := store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}
