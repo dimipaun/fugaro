@@ -264,6 +264,60 @@ func TestPerRunOK(t *testing.T) {
 	}
 }
 
+// TestGoMirrorOfThePerRunComparison: perRunOK's branches, written out in Go
+// and checked against budget.Caps.PerRun for every combination of the three
+// sides and a range of amounts. The emulator suite and the parity test prove
+// the rules agree with the client, but they need the Firebase emulator; this
+// runs everywhere and pins the intent of the expression.
+func TestGoMirrorOfThePerRunComparison(t *testing.T) {
+	m := func(v int64) *budget.Micros { x := budget.Micros(v); return &x }
+	// mirror is perRunOK read as prose: the repository's own cap, else the
+	// default, and the global one where it is set; with neither side set the
+	// comparison is false (the rules deny).
+	mirror := func(repo, def, global *budget.Micros, delta budget.Micros) bool {
+		if repo != nil || def != nil {
+			own := repo
+			if own == nil {
+				own = def
+			}
+			return delta <= *own && (global == nil || delta <= *global)
+		}
+		return global != nil && delta <= *global
+	}
+	for _, sides := range []struct {
+		name          string
+		repo, def, gl *budget.Micros
+	}{
+		{"none", nil, nil, nil},
+		{"repo", m(30), nil, nil},
+		{"default", nil, m(10), nil},
+		{"global", nil, nil, m(20)},
+		{"repo+default", m(30), m(10), nil},
+		{"repo+global", m(30), nil, m(20)},
+		{"default+global", nil, m(10), m(20)},
+		{"repo+default+global", m(30), m(10), m(20)},
+	} {
+		t.Run(sides.name, func(t *testing.T) {
+			c := budget.Caps{}
+			if sides.repo != nil {
+				c.Repo = &budget.RepoCaps{PerRunMicros: sides.repo}
+			}
+			if sides.def != nil {
+				c.Defaults = &budget.DefaultCaps{RepoPerRunMicros: sides.def}
+			}
+			if sides.gl != nil {
+				c.Global = &budget.GlobalCaps{PerRunMicros: sides.gl}
+			}
+			cap, ok := c.PerRun()
+			for _, delta := range []budget.Micros{0, 5, 10, 20, 30, 50} {
+				if got, want := mirror(sides.repo, sides.def, sides.gl, delta), ok && delta <= cap; got != want {
+					t.Errorf("delta %d: the rules' branches say %v, Caps.PerRun %d %v says %v", delta, got, cap, ok, want)
+				}
+			}
+		})
+	}
+}
+
 // TestGoMirrorOfTheDayKeys: the expression the rules use for TODAY is the same
 // arithmetic as budget.Day, checked with a Go mirror around the UTC midnight
 // (the emulator has no settable clock, so the boundary cannot be exercised
