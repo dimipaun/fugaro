@@ -11,7 +11,7 @@
 - **docs:** the direct-provider documentation, and the control-plane seam;
 - **security:** a SECURITY.md trust model with its known limits.
 
-The spec's section 1, the Docker-capable backend, is **release 0.8.0** (ruling R2). Its measurement and its blocked phases are at the end of this plan and are not part of any 0.7.0 group or of the 0.7.0 release notes.
+The spec's section 1, the Docker-capable backend, is **release 0.9.0** — ruling R2 placed it in 0.8.0 and the owner's release ruling of 2026-10-15 moved it, together with project-centric phases 3 to 6 (design [compute-backend.md](../design/compute-backend.md) §6.2 is retitled to match). Its measurement and its blocked phases are at the end of this plan and are not part of any 0.7.0 group or of the 0.7.0 release notes.
 
 **Architecture:**
 - **`internal/recipe`** gains:
@@ -37,7 +37,7 @@ The spec's section 1, the Docker-capable backend, is **release 0.8.0** (ruling R
   - the watch flags.
 - **`internal/infra` and the runner** handle `checkout: clone`: the job image is the base, the runner makes a blobless clone and a `provision` stage.
 - **Docs and skills:**
-  - `SECURITY.md`, `docs/recipes.md`, `docs/multi-model.md`, `docs/backends.md` and `docs/gcp-live-checklist.md` (Checks 32 and 33; Check 31 is 0.8.0);
+  - `SECURITY.md`, `docs/recipes.md`, `docs/multi-model.md`, `docs/backends.md` and `docs/gcp-live-checklist.md` (Checks 32 and 33; Check 31 is section 1's, **0.9.0 under the owner's release ruling of 2026-10-15**);
   - the `routing` and `working` skills.
 
 **Tech Stack:** Go 1.27, cobra, bubbletea (watch), yaml.v3. Tests use:
@@ -2352,7 +2352,7 @@ Checked against the design ([design/generic-tool.md](../design/generic-tool.md))
 | Design section | Covered by |
 |---|---|
 | §0 what is shipped | Global Constraints, the tasks' "today" notes |
-| §1 Docker backend (0.8.0) | Tasks 26 to 28, outside every 0.7.0 group |
+| §1 Docker backend (**0.9.0** since the owner's release ruling of 2026-10-15; R2 said 0.8.0) | Tasks 26 to 28, outside every 0.7.0 group |
 | §1.1 cost preview (0.8.0, moved from spec §8 by R4) | Tasks 24, 25, outside every 0.7.0 group |
 | §2 checkout | Tasks 15 to 18 |
 | §3.1 format extensions and safety | Task 8 (parser), 10 (bounce, roles), 11 (gate), 12 (review mode), 13 (attempts) |
@@ -2386,6 +2386,6 @@ Checked against the design ([design/generic-tool.md](../design/generic-tool.md))
 **Placeholders:** the test helpers named as "stand for the existing harness" (budget harness, recipe harness, fake RTDB, config parse helpers) are the only names not read in full. Each task says so and keeps its assertions. Every new type, message and flag is written out.
 
 **Known limits, stated in the tasks:**
-- The live checks (31 for 0.8.0; 32 and 33 for 0.7.0) are the owner's.
+- The live checks (31 for section 1, **0.9.0**; 32 and 33 for 0.7.0) are the owner's.
 - The `refs/pull/N/head` fetch for forks is proved only on the fake.
 - The rules change ships with the release and needs `fugaro init --firebase`.
