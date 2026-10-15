@@ -20,7 +20,8 @@ const GitProviderEnv = "FUGARO_GIT_PROVIDER"
 
 // checkProject refuses a job whose repository belongs to another Fugaro
 // project than the job does (design §2.5). It runs before the lock, so a
-// refusal changes nothing remote. cfg is the configuration the run uses:
+// refusal takes no lease and writes nothing remote but the run's own record
+// (bootstrap's deferred handler). cfg is the configuration the run uses:
 // a first run's is the ref's, a follow-up's the base branch's.
 //
 // A first run reads project: leniently (a file that doesn't parse still
@@ -138,10 +139,15 @@ func remoteOfAnotherKind(derived, remote string) string {
 }
 
 // remoteDisplay is the remote as a refusal may quote it: an scp-like remote as
-// its host alone, anything else as the URL without its userinfo. Deps.Remote is
-// a launcher's to set and a remote URL may carry a token in its userinfo; the
-// run never registers that one as a secret, so it is dropped here rather than
-// redacted later.
+// its host alone, anything else as the URL without its userinfo, its query and
+// its fragment. Deps.Remote is a launcher's to set and a remote URL may carry a
+// credential in any of the three — https://user:token@host/repo.git,
+// https://host/repo.git?access_token=SECRET (the shape Bitbucket's forge URLs
+// use), and the same in a fragment — and what a refusal quotes should carry
+// none of them. The run registers what it can recognise with its redactor as
+// well (addRemoteSecrets), so that git's own messages about a remote it could
+// not reach are redacted too, but the display drops them rather than relying
+// on that.
 func remoteDisplay(remote string) string {
 	if at, rest, ok := strings.Cut(remote, "@"); ok && !strings.Contains(at, "/") {
 		if host, _, ok := strings.Cut(rest, ":"); ok {
@@ -153,7 +159,58 @@ func remoteDisplay(remote string) string {
 		return "the remote"
 	}
 	u.User = nil
+	u.RawQuery, u.ForceQuery, u.Fragment, u.RawFragment = "", false, "", ""
 	return u.String()
+}
+
+// remoteSecretParams are the query parameters a git remote URL carries a
+// credential in, by the convention of the forges that write them that way:
+// Bitbucket's ?access_token=, GitLab's ?private_token=, and the names a
+// hand-written remote reaches for.
+var remoteSecretParams = map[string]bool{
+	"access_token": true, "private_token": true, "token": true, "auth": true,
+	"key": true, "password": true, "client_secret": true, "x-token-auth": true,
+}
+
+// remoteAnonymousUsers are the usernames a remote URL puts in front of a
+// credential, or in front of nothing at all: a bare git@ says nothing, and
+// x-access-token (GitHub) and x-token-auth (Bitbucket) are the names those
+// forges expect with the token as the password. None of them is a secret, and
+// registering one would redact it out of every line the run publishes.
+var remoteAnonymousUsers = map[string]bool{
+	"git": true, "oauth2": true, "x-access-token": true, "x-token-auth": true,
+	"token": true, "user": true,
+}
+
+// addRemoteSecrets registers with the run's redactor every credential a remote
+// URL can carry: its userinfo — the password, and the username when there is
+// none, because https://<token>@host/repo.git is a shape the forges accept —
+// and the value of any query parameter named like one. A remote reaches error
+// text and result.json (git's own "unable to access ..." lines quote the URL
+// it was given), and remoteDisplay is what keeps it out of the refusals this
+// package writes, so this is the other half: what the run can recognise, it
+// redacts wherever it appears.
+func (r *run) addRemoteSecrets(remote string) {
+	u, err := url.Parse(remote)
+	if err != nil {
+		return
+	}
+	if u.User != nil {
+		if pw, ok := u.User.Password(); ok {
+			r.addSecret(pw)
+			// The pair, as a URL writes it: that is how git echoes it back.
+			r.addSecret(u.User.String())
+		} else if name := u.User.Username(); name != "" && !remoteAnonymousUsers[strings.ToLower(name)] {
+			r.addSecret(name)
+		}
+	}
+	for k, vs := range u.Query() {
+		if remoteSecretParams[strings.ToLower(k)] {
+			for _, v := range vs {
+				r.addSecret(v)
+			}
+		}
+	}
 }
 
 // admissionCheck admits the repository this run was launched for, before any
@@ -165,8 +222,11 @@ func remoteDisplay(remote string) string {
 //
 // It runs after the project's policy has been read (Task 1.3) and before the
 // provider is opened, so no git credential exists yet and nothing has been
-// cloned; and before the lock and the budget session, so a run that is not
-// admitted writes no lease. Its refusals are the run's own: the slug it was
+// cloned; and before the run's own record is claimed, the lock is taken and
+// the budget session is opened, so a run that is not admitted writes no lease
+// and — checked here rather than after the claim, which is a run's first
+// write of any kind — leaves no trace but its own record, which is the
+// refusal. Its refusals are the run's own: the slug it was
 // given must be the slug of the repository task.json names; the provider kind
 // and the remote — the two environment values a launcher can set that would
 // say otherwise — may disagree with it only by refusing; and, when the project

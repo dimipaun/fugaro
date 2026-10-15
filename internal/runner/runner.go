@@ -817,6 +817,28 @@ func (r *run) bootstrap(ctx context.Context) error {
 	r.rec.RunID, r.rec.Repo = spec.RunID, spec.Repo
 	// Read before the sync below moves the checkout off the baked commit.
 	r.rec.Image = r.imageInfo(ctx)
+
+	// Every credential the run's two remotes can carry — the job's own
+	// FUGARO_REMOTE and the origin of a checkout already in the work
+	// directory — is in the redactor before anything can quote either of
+	// them: the admission refusal below, git's messages about a remote it
+	// could not reach, and result.json.
+	r.addRemoteSecrets(r.d.Remote)
+	r.addRemoteSecrets(r.originURL(ctx))
+
+	// The run's admission, in the order the security property needs it:
+	// task.json has been read, the project's policy is read here (memoized;
+	// Task 1.3), and only then is the provider opened and the clone made. It
+	// also comes before the claim below, which is a run's first write of any
+	// kind: a run that is not admitted for this repository has asked for no
+	// git credential, cloned nothing and written no lease, and the only trace
+	// it leaves is its own run record — created by the deferred func above,
+	// naming the refusal, which is how the operator and the launcher learn the
+	// run was refused rather than lost (R2-12).
+	if err := r.admissionCheck(ctx); err != nil {
+		return err
+	}
+
 	if r.owned {
 		r.save(ctx)
 	} else if err := r.claimRecord(ctx); err != nil {
@@ -841,16 +863,6 @@ func (r *run) bootstrap(ctx context.Context) error {
 		r.review = true
 	}
 	if err := stateDirOutsideCheckout(r.d.WorkDir, r.d.StateDir); err != nil {
-		return err
-	}
-
-	// The run's admission, in the order the security property needs it:
-	// task.json has been read, the project's policy is read here (memoized;
-	// Task 1.3), and only then is the provider opened and the clone made. No
-	// git credential exists yet, nothing has been cloned and no lease has been
-	// written, so a run that is not admitted for this repository changes
-	// nothing anywhere.
-	if err := r.admissionCheck(ctx); err != nil {
 		return err
 	}
 
