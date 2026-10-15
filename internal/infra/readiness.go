@@ -129,7 +129,19 @@ func dropMount(ws WorkflowSpec, logical string) {
 //   - The daily check's schedule stays paused until every workflow it
 //     covers has a build record, so no unattended build starts for an
 //     image nobody has built on purpose.
-func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (RepoSpec, []Missing, error) {
+//
+// planOnly is fugaro init --repo's --plan-only, and it exempts the refusals
+// that exist to stop a *change* rather than to describe a state: this function
+// returns one, for an existing job this apply would deploy without the backend
+// a published policy is read through (D11). A plan is read-only, so it may be
+// shown whatever the apply would refuse — the same exemption init.go's
+// planRepo applies to refuseClonesNotShipped and the --retire/--plan-only
+// pair, and the reason is the same: an operator who cannot see the plan cannot
+// fix what the refusal is about. What plan-only does not do is hide the
+// problem: the gate above still reports MissingFirebase for that job, so the
+// plan prints the job as one that cannot be deployed until the backend is
+// configured.
+func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, planOnly bool) (RepoSpec, []Missing, error) {
 	out := cloneRepoSpec(spec)
 	tg := target{project: spec.GCPProject, number: ex.ProjectNumber}
 	// A secret a repository's own Terraform module once created can stop
@@ -296,7 +308,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 		// the refusal is the apply's: deploying it without the backend takes
 		// the published policy away from every run of the repository, and
 		// the operator learns at the next launch instead of here.
-		if exists && ex.PolicyExists && !carriesFirebase(ws) {
+		if !planOnly && exists && ex.PolicyExists && !carriesFirebase(ws) {
 			return RepoSpec{}, nil, userErr("the project has published a policy (%s), and this init --repo would deploy workflow %s's job without %s or %s in its environment: the job exists already, so it stays deployed and the policy it is bound by would stop being readable by every run of %s. Set the project's Firebase backend (fugaro init --firebase <firebase-project-id>) and run fugaro init --repo again",
 				projectpolicy.PathShared(), name, RTDBURLEnv, FirebaseAPIKeyEnv, spec.Name)
 		}
