@@ -64,6 +64,9 @@ func TestChecklistHasCheck52(t *testing.T) {
 		"fugaro-chk52-probe",
 		"fugaro-probe-in",
 		"fugaro-other-probe",
+		// Both projects are created for the check and both go in Restore: the
+		// out-of-scope one holds fugaro-probe-3.
+		"two scratch Bitbucket projects",
 	})
 
 	// Check 43's guard block inside the section — the three hard stops and
@@ -152,7 +155,7 @@ func TestChecklistHasCheck52(t *testing.T) {
 	// directory of the job's plain env values behind.
 	mustContain(t, section, "section", []string{
 		`gcloud run jobs describe "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --format=json > "${CHK52_TMP:?}/job-after.json"`,
-		`diff "${CHK52_TMP:?}/job-before.json" "${CHK52_TMP:?}/job-after.json"`,
+		`diff <(jq -S '.spec.template' "${CHK52_TMP:?}/job-before.json") <(jq -S '.spec.template' "${CHK52_TMP:?}/job-after.json")`,
 		`gcloud run jobs update "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --remove-secrets=PROBE_REF`,
 		`gcloud projects remove-iam-policy-binding "${P:?}"`,
 		`--condition="${PROBE_COND:?}"`,
@@ -166,13 +169,32 @@ func TestChecklistHasCheck52(t *testing.T) {
 		`unset PROBE_TOKEN; rm -f "${ASKPASS:-/nonexistent}"`,
 		"the **three scratch repositories**",
 		"**project access token revoked**",
+		// Restore deletes BOTH projects, not only the in-scope one: the
+		// out-of-scope project holding fugaro-probe-3 was created for U1 too.
+		"**both probe projects**",
+		"`PROBE_PROJECT` (holding `fugaro-probe-1` and `fugaro-probe-2`) and `OUT_PROJECT` (holding `fugaro-probe-3`",
 	})
 	// The Restore's job check happens twice: once against the drift U2(b)
 	// added, once after --remove-secrets. With only the first pair the job is
 	// never compared with step 1's baseline again.
-	if n := strings.Count(section, `diff "${CHK52_TMP:?}/job-before.json" "${CHK52_TMP:?}/job-after.json"`); n != 2 {
-		t.Errorf("the Check 52 section diffs the job against step 1's baseline %d times, want 2 (before and after --remove-secrets)", n)
+	// The diff is over the template, never the whole describe: the two `run
+	// jobs update` calls bump metadata.generation and the status conditions, so
+	// a whole-object diff can never come out empty and the second one — the
+	// Restore's evidence — would always report drift.
+	if n := strings.Count(section, `diff <(jq -S '.spec.template' "${CHK52_TMP:?}/job-before.json") <(jq -S '.spec.template' "${CHK52_TMP:?}/job-after.json")`); n != 2 {
+		t.Errorf("the Check 52 section diffs the job's template against step 1's baseline %d times, want 2 (before and after --remove-secrets)", n)
 	}
+	if strings.Contains(section, `diff "${CHK52_TMP:?}/job-before.json" "${CHK52_TMP:?}/job-after.json"`) {
+		t.Error("the Check 52 section diffs the whole job JSON, which the updates' own generation bump makes non-empty even when the template is restored")
+	}
+	// Restore runs from a fresh shell, and the guard block defines only P and
+	// L: the step's variables block is what defines SANDBOX_JOB, PROBE_SA,
+	// PROBE_IN, PROBE_OUT, PROBE_COND and CHK52_TMP. Without re-running it the
+	// first command aborts on ${SANDBOX_JOB:?} and nothing is restored.
+	mustContain(t, section, "section", []string{
+		"**Then re-run the guard block and the step's variables block, in that order**",
+		"the step's variables block defines `SANDBOX_JOB`, `SANDBOX_JOB_SA`, `SANDBOX_BUCKET`, `NUMBER`, `PROBE_SA`, `PROBE_IN`, `PROBE_OUT`, `PROBE_COND` and `CHK52_TMP`",
+	})
 	// Restore runs from a fresh shell: OWNER is set in step 4's block only, so
 	// the removal of the token-creator grant must default it here too.
 	if !strings.Contains(section, `OWNER=${OWNER:-$(gcloud auth list`) {
@@ -265,6 +287,19 @@ func TestChecklistHasCheck52(t *testing.T) {
 		}
 	}
 
+	// U3's inside read is written `if gcloud secrets versions access …`, so it
+	// must be scanned like any other command: a collector that looked only at a
+	// line's first word would let that one drop its --project unnoticed.
+	var sawKeywordCommand bool
+	for _, line := range probeCommands(section) {
+		if strings.HasPrefix(line, "gcloud secrets versions access") {
+			sawKeywordCommand = true
+		}
+	}
+	if !sawKeywordCommand {
+		t.Error("the Check 52 section's `if gcloud secrets versions access …` reads are not read as commands, so nothing checks their --project or their variables")
+	}
+
 	// The access token for the REST calls comes from a command substitution
 	// and is never stored.
 	if n := strings.Count(section, `Bearer $(gcloud auth print-access-token)`); n < 3 {
@@ -284,10 +319,32 @@ func mustContain(t *testing.T, got, part string, want []string) {
 	}
 }
 
+// stripCommandPrefix removes the shell keywords and operators a command can be
+// introduced by, so that `if gcloud …; then` and `… && gcloud …` are read as
+// gcloud commands: U3's inside read is an `if gcloud secrets versions access
+// …`, and a check that only looked at a line's first word would let that one
+// drop its --project or interpolate an unguarded variable unnoticed.
+func stripCommandPrefix(line string) string {
+	for {
+		trimmed := line
+		for _, p := range []string{"if ", "elif ", "then ", "else ", "do ", "! ", "&& ", "|| ", "; ", "| "} {
+			if strings.HasPrefix(line, p) {
+				trimmed = strings.TrimSpace(line[len(p):])
+				break
+			}
+		}
+		if trimmed == line {
+			return line
+		}
+		line = trimmed
+	}
+}
+
 // probeCommands returns the section's `gcloud`, `curl` and `git` invocations
-// as logical lines: backslash continuations are joined, and only lines whose
-// first word is one of those count (so a command inside prose, a comment or a
-// `$(…)` is not read as a command of its own).
+// as logical lines: backslash continuations are joined, leading shell keywords
+// are stripped, and only lines that then start with one of those verbs count
+// (so a command inside prose, a comment or a `$(…)` is not read as a command of
+// its own).
 func probeCommands(section string) []string {
 	var joined []string
 	var buf string
@@ -303,7 +360,7 @@ func probeCommands(section string) []string {
 	joined = append(joined, buf)
 	var out []string
 	for _, line := range joined {
-		line = strings.TrimSpace(line)
+		line = stripCommandPrefix(strings.TrimSpace(line))
 		for _, verb := range []string{"gcloud ", "curl ", "git "} {
 			if strings.HasPrefix(line, verb) {
 				out = append(out, line)
