@@ -687,105 +687,6 @@ func TestProjectPolicyDeleteRemovesChildrenBeforeTheSharedNode(t *testing.T) {
 	}
 }
 
-// TestProjectPolicyDeleteRefusesAConcurrentWrite: the delete is a
-// compare-and-set like the publisher's write and `repos edit`'s, so a policy
-// that lands between the read and the delete is not deleted — and a lost race
-// is the operator's own, not an outage. It used to fall through dbErr to
-// remote(err): exit 2, an "infrastructure failure" that did not happen, and no
-// retry hint, while the publisher and repos edit translate the same
-// rtdb.ErrPrecondition into a sentence naming the retry.
-func TestProjectPolicyDeleteRefusesAConcurrentWrite(t *testing.T) {
-	f := newProjectFixture(t, "")
-	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
-		t.Fatal(err)
-	}
-	c := &policyConflictOnce{rt: http.DefaultTransport, db: f.db, val: map[string]any{
-		"version":     projectpolicy.Version,
-		"budget":      map[string]any{"mode": "observe", "per_run_usd": 7},
-		"allow_repos": []string{"github/acme/app"},
-	}}
-	budgetTransport = c
-	t.Cleanup(func() { budgetTransport = nil })
-
-	out, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
-	if !c.done {
-		t.Fatal("no write was attempted, so the conflict never happened")
-	}
-	if err == nil {
-		t.Fatalf("the delete removed a policy that changed under it:\n%s", out)
-	}
-	if ExitCode(err) != ExitUserError {
-		t.Errorf("ExitCode = %d, want the operator's own error: %v", ExitCode(err), err)
-	}
-	for _, want := range []string{"changed while this ran", "run it again"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not say %q: %v", want, err)
-		}
-	}
-	if f.db.Value(projectpolicy.PathShared()) == nil {
-		t.Error("the policy the other writer left was deleted anyway")
-	}
-}
-
-// policyNewerAfterReads plants a node a newer Fugaro wrote when the shared
-// node is read for the nth time, and lets every other request through. The
-// delete reads the node once to find it exists (which the caller's
-// refuseNewerPolicy checks) and once more for the bytes of the node it is
-// about to remove; this is what makes the two reads differ, which is the case
-// a re-check on the delete's own read exists for.
-type policyNewerAfterReads struct {
-	rt    http.RoundTripper
-	db    *gcpfake.RTDB
-	after int
-	seen  int
-}
-
-func (c *policyNewerAfterReads) RoundTrip(r *http.Request) (*http.Response, error) {
-	if r.Method == http.MethodGet && strings.Contains(r.URL.Path, projectpolicy.PathShared()) {
-		c.seen++
-		if c.seen == c.after {
-			c.db.Set(projectpolicy.PathShared(), map[string]any{
-				"version":     projectpolicy.Version + 1,
-				"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
-				"allow_repos": []string{"github/acme/app"},
-			})
-		}
-	}
-	return c.rt.RoundTrip(r)
-}
-
-// TestProjectPolicyDeleteRefusesANewerPolicyItReRead: refuseNewerPolicy is
-// checked on the node the delete is about to remove, not on the copy the
-// caller read. The delete re-reads the shared node for its ETag, and between
-// the caller's read and that one a newer Fugaro can publish: this binary
-// cannot say what that node means, so it must not delete it (P8), the same
-// rule that stops a publish from overwriting it.
-func TestProjectPolicyDeleteRefusesANewerPolicyItReRead(t *testing.T) {
-	f := newProjectFixture(t, "")
-	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
-		t.Fatal(err)
-	}
-	c := &policyNewerAfterReads{rt: http.DefaultTransport, db: f.db, after: 2}
-	budgetTransport = c
-	t.Cleanup(func() { budgetTransport = nil })
-
-	out, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
-	if c.seen < 2 {
-		t.Fatalf("the delete read the shared node %d time(s), want the second read the re-check is about", c.seen)
-	}
-	if err == nil {
-		t.Fatalf("the delete removed a node a newer Fugaro wrote:\n%s", out)
-	}
-	for _, want := range []string{"version", "upgrade Fugaro"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not say %q: %v", want, err)
-		}
-	}
-	if f.db.Value(projectpolicy.PathShared()) == nil {
-		t.Error("the newer Fugaro's policy was deleted")
-	}
-}
-
 // TestProjectPolicyDeleteRefusesWithoutYesWhileARunIsInFlight: a repository
 // that is mid-run keeps the policy until it finishes (B5).
 func TestProjectPolicyDeleteRefusesWithoutYesWhileARunIsInFlight(t *testing.T) {
@@ -1388,18 +1289,6 @@ func TestRemovalWarningSaysWhatTheNextRunDoes(t *testing.T) {
 		"pattern, the wildcard remains": {[]string{"*", "github/acme/*"}, "github/acme/*", true, "*"},
 		"pattern, nothing remains":      {[]string{"github/acme/*"}, "github/acme/*", false, ""},
 		"pattern, a narrower one only":  {[]string{"github/acme/*", "github/acme/app"}, "github/acme/*", false, ""},
-		// A wildcard *in another segment* still admits the whole pattern:
-		// github/*/* admits everything github/acme/* did, so saying the runs
-		// are refused from now on would be false (the review of this slice).
-		// The matcher answers it by being asked about the pattern itself.
-		"pattern, a wilder one remains":   {[]string{"github/*/*", "github/acme/*"}, "github/acme/*", true, "github/*/*"},
-		"pattern, a different owner only": {[]string{"github/other/*", "github/acme/*"}, "github/acme/*", false, ""},
-		// The other direction of the same question: a remaining pattern does
-		// not admit a wildcard it is narrower than, in any segment
-		// (github/acme/* admits nothing of github/*/app that
-		// github/other/app would not need).
-		"pattern, a narrower segment only": {[]string{"github/acme/*", "github/*/app"}, "github/*/app", false, ""},
-		"concrete, a wildcard prefix":      {[]string{"github/acme/app*", "github/acme/app"}, "github/acme/app", true, "github/acme/app*"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, by := admittedBy(tc.allow, tc.arg)

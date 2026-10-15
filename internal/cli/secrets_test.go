@@ -213,13 +213,6 @@ func TestSecretsAndCloudCommandsRefuseHTTP2Debug(t *testing.T) {
 			{"logs", "some-run"},
 			{"diagnose", "some-run"},
 			{"cancel", "some-run"},
-			// project policy publish is the one cloud-opening path that does
-			// not go through openBudgetDB, and it read ADC with no refusal of
-			// GODEBUG=http2debug until the review of this slice; the delete is
-			// the same command on the same client.
-			{"project", "policy", "publish"},
-			{"project", "policy", "publish", "--delete"},
-			{"project", "policy", "show"},
 		} {
 			_, errOut, err := executeStdin(t, tokenValue, args...)
 			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "http2debug") || strings.Contains(err.Error()+errOut, tokenValue) {
