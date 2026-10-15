@@ -2080,13 +2080,20 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err != nil {
 		return err
 	}
-	versions, err := infra.SecretVersions(ctx, c, spec)
+	// ready, not spec: a name Readiness resolved to the project-wide copy
+	// has a version the job mounts, and D2 made that the default store (see
+	// infra.SecretVersions). Passing the pre-Readiness spec would leave
+	// every workflow whose provider credential was stored with `fugaro
+	// secrets set bitbucket-token` unbuildable -- no first image build
+	// offered, no job ever deployed -- and would print the repository-copy
+	// command for a secret that already exists.
+	versions, err := infra.SecretVersions(ctx, c, ready)
 	if err != nil {
 		return r.retireLeftover(spec, initErr(err))
 	}
 	if !o.planOnly && !o.noBuild {
 		// 6. The first image builds, then the plan that deploys them.
-		names, err := infra.NeedsBuild(ctx, c, spec, versions)
+		names, err := infra.NeedsBuild(ctx, c, ready, versions)
 		if err != nil {
 			return r.retireLeftover(spec, initErr(err))
 		}

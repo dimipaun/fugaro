@@ -143,11 +143,28 @@ func ForgetRepoState(ctx context.Context, c *Clients, stateBucket, slug string) 
 }
 
 // SecretVersions reports, for each of the repository's secrets by logical
-// name, whether it has an enabled version. A secret that doesn't exist has
-// none.
+// name, whether the job has a version to mount: the repository's own copy,
+// or the project-wide one Readiness resolved for it (spec is the spec
+// Readiness returned, ProjectSecrets its decision). A secret that doesn't
+// exist anywhere has none.
+//
+// The project-wide half is D2's (plan Task 2.1): storing at project scope
+// is the default, so a name whose only copy is the project's is stored,
+// not missing -- needsBuild would otherwise leave every workflow of a
+// repository whose git credential was stored with `fugaro secrets set
+// bitbucket-token` unbuildable, and its job would never be deployed. The
+// decision is read back out of the spec Readiness resolved rather than
+// resolved live again, for the reason appliedGitSecretID gives: the grants
+// the apply just made were fixed for exactly that choice, so a second
+// resolution could only disagree with them (and it would re-read a
+// container Readiness already read).
 func SecretVersions(ctx context.Context, c *Clients, spec RepoSpec) (map[string]bool, error) {
 	out := make(map[string]bool, len(spec.Secrets))
 	for _, logical := range slices.Sorted(maps.Keys(spec.Secrets)) {
+		if spec.ProjectSecrets[logical] != "" {
+			out[logical] = true
+			continue
+		}
 		ok, err := hasEnabledVersion(ctx, c.Secrets, target{project: spec.GCPProject}, spec.Secrets[logical])
 		if err != nil {
 			return nil, err
@@ -216,17 +233,32 @@ type SecretStep struct {
 }
 
 // SecretCommands are the fugaro secrets set steps of the repository's
-// secrets that have no version, sorted by name: the value comes from stdin or
-// a hidden prompt, never argv, and the Claude token is made by the user, in
-// their own terminal. bin names the binary and quote makes one shell word of
-// a name, both as the caller prints commands.
+// secrets that have no version anywhere, sorted by name: the value comes
+// from stdin or a hidden prompt, never argv, and the Claude token is made
+// by the user, in their own terminal. bin names the binary and quote makes
+// one shell word of a name, both as the caller prints commands.
+//
+// Each step's command names the scope that name is stored at by default
+// (D2): the project's for a name spec's own eligibility accepts
+// project-wide, the repository's for the rest.
 func SecretCommands(spec RepoSpec, versions map[string]bool, bin string, quote func(string) string) []SecretStep {
 	var out []SecretStep
 	for _, logical := range slices.Sorted(maps.Keys(spec.Secrets)) {
 		if versions[logical] {
 			continue
 		}
-		set := bin + " secrets set " + quote(logical) + " --repo " + quote(spec.Name)
+		// D2 (plan Task 2.1 step 3b, the message half of finding 13): a
+		// name this repository may use project-wide is stored project-wide
+		// by default, so the command that fixes it is the bare one -- the
+		// same line the name's own prompt prints (init --repo's secrets
+		// stage). A name with no project-wide meaning keeps the
+		// repository-copy command, which is the only scope it has. The
+		// eligibility answer is spec's own, ProjectSecretCandidates: the
+		// one function that decides it, never a second spelling here.
+		set := bin + " secrets set " + quote(logical)
+		if spec.ProjectSecretCandidates[logical] == "" {
+			set += " --repo " + quote(spec.Name)
+		}
 		st := SecretStep{Name: logical, What: spec.Secrets[logical], Optional: OptionalSecret(logical)}
 		if logical == "claude-oauth-token" {
 			st.Commands = []string{"claude setup-token", set}

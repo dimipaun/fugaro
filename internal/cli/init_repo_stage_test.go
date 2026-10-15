@@ -437,6 +437,99 @@ func TestRepoEngineRefusesTheBuildWhenTheLayerBucketIsUnreadable(t *testing.T) {
 	}
 }
 
+// (code review, high) D2 made project scope the default store, and a
+// repository whose git credential lives only there must still get its first
+// image build: SecretVersions/NeedsBuild looked at the repository's own
+// container alone, so the engine exited 0 without ever reaching the build
+// offer, the job was never deployed, and the run listed the credential as
+// still missing with the repository-copy command
+// (`secrets set bitbucket-token --repo acme/sandbox`) that D2's other
+// message sites were changed to stop printing.
+//
+// The Anthropic key is absent on purpose (agent.auth: oauth, no key): it is
+// the optional mount, so it gates nothing and must not stand in for the
+// credential this test is about.
+//
+// Mutation (run, restore): give init.go's SecretVersions its pre-D2 body (or
+// hand it the pre-Readiness spec) and no build is submitted, bitbucket-token
+// comes back under res.Missing, and this test fails; drop the
+// ProjectSecretCandidates lookup in infra.SecretCommands and it fails on the
+// `--repo` line alone.
+func TestRepoEngineBuildsOnAProjectWideGitCredential(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	w, err := r.gcs.Bucket(t, initStateBucket).NewWriter(context.Background(), infra.StatePrefixInstallation+"/default.tfstate", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// A base at gitSecretIDSince (0.7.5) or later: an older image's fugaro
+	// predates project-wide resolution and B2's own gate refuses a
+	// repository whose credential has no repository copy (its daily check
+	// job's rebuild would fall back to one that has no version), which is
+	// this test's whole setup.
+	r.appendConfig(t, "base_images: {base: "+sandboxBaseRelease+"}\n")
+	r.script["show"] = map[string]any{"stdout": `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"x"}]}}}`}
+	r.script["output"] = map[string]any{"stdout": outputsJSON(t)} // project_name: aurora, matching the checkout below
+	r.save(t)
+	isolateCache(t)
+	layerDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(layerDir, "fugaro"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(layerDir, "fugaro", "project-layer.yaml"), []byte(testProjectLayer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	openLayer := layerBucketOpener
+	t.Cleanup(func() { layerBucketOpener = openLayer })
+	layerBucketOpener = func(ctx context.Context, _ string) (*blobx.Bucket, error) { return blobx.Open(ctx, "file://"+layerDir) }
+	openRecords := openRecordBucket
+	t.Cleanup(func() { openRecordBucket = openRecords })
+	openRecordBucket = func(ctx context.Context, _ string) (*blobx.Bucket, error) {
+		return blobx.Open(ctx, "file://"+t.TempDir())
+	}
+	// Anchored (gcp_project), on bitbucket (no GitHub App to pre-check), with
+	// one workflow that needs no build record to be offered a first build.
+	yaml := "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: bitbucket }\nagent: { auth: oauth }\nworkflows:\n" +
+		"  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", yaml)
+	t.Chdir(dir)
+	// The git credential exists project-wide with a version and the marks
+	// discovery checks, and nowhere else: this is what `fugaro secrets set
+	// bitbucket-token` with no flag stores (D2). The bare claude-oauth-token
+	// is the one name of agent.auth: oauth's mounts that is NOT
+	// project-scope-eligible (person-owned), so it is seeded as the
+	// repository's own copy, which is what init --repo's prompt stores for it.
+	projectID := gcp.ProjectSecretID(initProjectName, "bitbucket-token")
+	r.sm.Seed(projectID, projectLabels(initProjectName, "bitbucket-token"), []byte("tok"))
+	slug := mustSlug("bitbucket", "acme/sandbox")
+	label, err := gcp.RepoLabel(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.sm.Seed(gcp.SecretID(slug, "claude-oauth-token"),
+		map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelSecret: "claude-oauth-token"}, []byte("tok"))
+	e := rigEngine(t, r, &initOptions{})
+	fb := useFakeBuilder(t)
+	out := atTerminal(t, e, strings.Repeat(initProjectName+"\n", 3))
+	if err := e.r.repoEngine(t.Context(), ".", "", true); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(fb.specs) != 1 || fb.specs[0].Workflow != "app" {
+		t.Fatalf("specs = %+v, want the app workflow's first build: a project-wide credential must not strand the repository", fb.specs)
+	}
+	for _, m := range e.r.res.Missing {
+		if strings.Contains(m, "bitbucket-token") {
+			t.Errorf("a credential stored project-wide is listed as missing: %v", e.r.res.Missing)
+		}
+	}
+}
+
 // Review fix (code review on the prior fix): submitAndWait's project-layer
 // copy write now opens the record bucket through openRecordBucket (the
 // test seam), not blobx.Open directly: this is the happy path that gap

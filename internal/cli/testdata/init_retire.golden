@@ -43,7 +43,7 @@ Still missing for acme/sandbox:
   workflow app (its job is not deployed yet): image not built yet: fugaro image build --repo acme/sandbox --workflow app
   Store each secret with its commands, run in your own terminal window one line at a time; the value comes from stdin or a hidden prompt, never argv:
   bitbucket-token: fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba
-    fugaro secrets set bitbucket-token --repo acme/sandbox < PATH-TO-THE-VALUE-FILE
+    fugaro secrets set bitbucket-token < PATH-TO-THE-VALUE-FILE
   claude-oauth-token: fugaro-acme-sandbox-claude-oauth-token-d68d08fb66f32201
     claude setup-token
     fugaro secrets set claude-oauth-token --repo acme/sandbox
