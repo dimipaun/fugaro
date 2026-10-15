@@ -83,7 +83,7 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	}
 	var fromPolicy map[string]bool
 	if found {
-		if ceiling, c, fromPolicy, err = policyCeiling(pp, ceiling, c); err != nil {
+		if ceiling, c, fromPolicy, err = r.policyCeiling(pp, ceiling, c); err != nil {
 			return err
 		}
 	}
@@ -184,7 +184,7 @@ func envCeiling(c Spend) policy.Layer {
 // Spend.Cap carries the same ceiling in micro-dollars, kept exact rather than
 // through a float round trip, so it is replaced only by the node's own cap and
 // keeps the environment's when the node sets none.
-func policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend) (policy.Layer, Spend, map[string]bool, error) {
+func (r *run) policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend) (policy.Layer, Spend, map[string]bool, error) {
 	ceiling, set := env, map[string]bool{}
 	if m := pp.Budget.Mode; m != "" {
 		ceiling.Mode, set[policy.KeyMode] = m, true
@@ -205,7 +205,7 @@ func policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend) (policy.
 		ceiling.AllowedModels, set[policy.KeyAllowedModels] = pp.Budget.AllowedModels, true
 	}
 	if len(pp.Prices) > 0 {
-		prices, err := policyPrices(pp)
+		prices, err := r.policyPrices(pp)
 		if err != nil {
 			return env, c, nil, fmt.Errorf("%s: model_prices: %w", projectpolicy.PathShared(), err)
 		}
@@ -215,13 +215,26 @@ func policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend) (policy.
 }
 
 // policyPrices is the owner's price overrides as the policy node carries them,
-// on the built-in table. The node spells model_prices exactly as the price
-// catalogue spells them (projectpolicy.Price), so the catalogue's own parser
-// reads them here too — the same one FUGARO_MODEL_PRICES goes through, which
-// this replaces: the policy is the owner's price list, whole.
-func policyPrices(pp *projectpolicy.Policy) (*pricing.Table, error) {
+// on the run's own price table. The node spells model_prices exactly as the
+// price catalogue spells them (projectpolicy.Price), so the catalogue's own
+// parser reads them here too — the same one FUGARO_MODEL_PRICES goes through,
+// which this replaces: the policy is the owner's price list, whole.
+//
+// "The price list, whole" is the overrides list and nothing else: the table it
+// is applied to is the one every other surface builds (r.priceTable →
+// config.PriceTable over the job's providers and the built-in catalog, so
+// through catalogRoutes), never pricing.Embedded(). Publishing a model_prices
+// block would otherwise do more than replace the key it names. A table built
+// from the embedded rows alone drops every model the run's FUGARO_MODEL_PROVIDERS
+// routes claim — a pin that priced and ran without the policy starts refusing
+// with "the models can't be priced under the budget" — and pricing.Table.With
+// materializes an override naming such a model with its limits cleared
+// (MaxOutputTokens 0), so the gateway falls back to DefaultMaxOutputTokens
+// (1e6) and stops refusing a max_tokens above the model's real maximum. That is
+// exactly what catalogRoutes' Overridden list exists to prevent.
+func (r *run) policyPrices(pp *projectpolicy.Policy) (*pricing.Table, error) {
 	if len(pp.Prices) == 0 {
-		return pricing.Embedded(), nil
+		return r.priceTable(nil)
 	}
 	raw, err := json.Marshal(pp.Prices)
 	if err != nil {
@@ -231,7 +244,7 @@ func policyPrices(pp *projectpolicy.Policy) (*pricing.Table, error) {
 	if err != nil {
 		return nil, err
 	}
-	return pricing.Embedded().With(o)
+	return r.priceTable(o)
 }
 
 // policySources renames the merge's first layer for the keys the project's

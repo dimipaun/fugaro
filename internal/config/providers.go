@@ -85,6 +85,15 @@ type ModelProvider struct {
 // mode would have built, and that mode names the type it was decoding into.
 var modelProviderType = reflect.TypeOf(ModelProvider{})
 
+// KnownProviderField reports whether key is a field a providers entry accepts,
+// spelled as the document spells it (read from the struct's own tags, so a new
+// field is picked up without a second list). fugaro.yaml refuses any key this
+// is false for (UnmarshalYAML); a reader that must tolerate a document anyway
+// — the project policy node, which an older runner still has to read (P8) —
+// asks this first, since ignoring a key that was meant to set a field changes
+// nothing while reading as if it had.
+func KnownProviderField(key string) bool { return providerKeys[key] }
+
 // providerKeys are the yaml keys a providers entry accepts, read from the
 // struct's own tags so a new field is picked up without a second list.
 var providerKeys = func() map[string]bool {

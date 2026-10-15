@@ -10,6 +10,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
+	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -644,5 +645,28 @@ func TestPolicyProviderKeyIsRefusedWithoutEchoingIt(t *testing.T) {
 	}
 	if len(b.agent.calls) != 0 {
 		t.Fatalf("%d stages ran", len(b.agent.calls))
+	}
+}
+
+// The policy's model_prices is the owner's override list, not the run's whole
+// price table: the table it lands on is the run's own, built over the job's
+// FUGARO_MODEL_PROVIDERS routes and the built-in catalog, exactly as
+// priceTableFromEnv builds it. A policy published for one model must therefore
+// leave the routes' own models priced — building the ceiling's table from the
+// embedded rows alone (pricing.Embedded().With(o)) refuses this run at
+// bootstrap with "the models can't be priced under the budget", because the
+// coder is deepseek/deepseek-v4-flash, which only the catalog prices.
+func TestPolicyPricesKeepTheRoutePricedModels(t *testing.T) {
+	g := providerRun(t, providerPinned(t), "enforce", "5",
+		[]anthropicfake.Reply{anthropicfake.Compat{}.MessageOK(deepseek, pricing.Usage{Input: 1000, Output: 500})}, "acme/app")
+	b := attachBackend(t, g, "enforce")
+	b.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	b.db.Set(projectpolicy.PathShared(), json.RawMessage(
+		`{"version":1,"budget":{"mode":"enforce","per_run_usd":5},"model_prices":{"`+sonnet+`":{"input_per_m":20,"output_per_m":10}}}`))
+	var status int
+	var body string
+	rec, err := b.run(t, callDeepseek(&status, &body, implement("feature")), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v, body = %q: a policy pricing one model must not leave the route's own model unpriced", rec, err, body)
 	}
 }

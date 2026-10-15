@@ -54,9 +54,11 @@
 //     over the cap or a models list two providers both claim is refused here
 //     rather than reaching a run; price_policy, which internal/config does not
 //     know yet, is checked against the catalogue's two values beside them.
-//     Unknown keys *inside* an entry stay ignored (P8) — which is safe only
-//     because every value is checked: a misspelt key leaves its field zero and
-//     is refused, so tolerance costs no silence.
+//     Unknown keys *inside* an entry stay ignored (P8) only when the entry
+//     spells out allow_data_to: every other field here is refused by its zero
+//     value when it is misspelt, but a misspelt allow_data_to leaves the nil
+//     slice that means every repository, so that one spelling is refused
+//     rather than read as permissive.
 //
 // The readable node holds nothing personal and no secret values: every run
 // token can read it, and a prompt-injected agent can take the token through
@@ -334,11 +336,17 @@ func Decode(raw []byte) (*Policy, bool, error) {
 // The block is decoded tolerantly, unlike the budget block and unlike
 // ProvidersFromEnv's own decoder: an unknown key inside an entry is ignored
 // rather than refused, because the node must stay readable by an older runner
-// (P8) — and a misspelling is not silently accepted for it, since the value it
-// would have set stays zero and every one of these fields is checked below. So
-// "agth": "bearer" is refused, and a field a newer Fugaro adds is not.
+// (P8), so a field a newer Fugaro adds does not brick it. That tolerance is
+// bounded by the one field whose absence is not the safe end: an entry that
+// carries a key this Fugaro does not know **and** does not spell out
+// allow_data_to is refused, because a misspelling of allow_data_to would
+// otherwise be read as the nil (absent) slice — every repository, the
+// permissive meaning (config.ModelProvider.AllowsData) — with nothing said.
+// (The rule does not rest on "every value is checked", which is true of the
+// other fields — a misspelt kind, base_url, auth, secret or models leaves a
+// value ValidateModelProviders refuses — and false for this one.)
 //
-// The one rule ValidateModelProviders cannot apply here is the null spelling of
+// The other rule ValidateModelProviders cannot apply here is the null spelling of
 // allow_data_to: it reads "the key was written with nothing under it" off the
 // YAML node, and JSON has no such marker, so a written null arrives as the nil
 // slice that means every repository (ModelProvider.AllowsData). That is the
@@ -361,6 +369,19 @@ func validProviders(raw json.RawMessage, providers map[string]Provider) error {
 			if err := json.Unmarshal(entry, &fields); err == nil {
 				if data, ok := fields["allow_data_to"]; ok && isNull(data) {
 					return fmt.Errorf("projectpolicy: providers.%s.allow_data_to: an explicit empty list is ambiguous: write [\"*\"] for every repository, or remove the key entirely", name)
+				}
+				if _, spelled := fields["allow_data_to"]; !spelled {
+					keys := make([]string, 0, len(fields))
+					for k := range fields {
+						keys = append(keys, k)
+					}
+					sort.Strings(keys)
+					for _, key := range keys {
+						if config.KnownProviderField(key) {
+							continue
+						}
+						return fmt.Errorf("projectpolicy: providers.%s.%s: this Fugaro does not know this key, and the entry does not spell out allow_data_to: a misspelled allow_data_to would be read as \"every repository\", the same as the key's absence, so nothing would say the rule was lost. Write allow_data_to ([\"*\"] for every repository, or the repositories by owner/name) or correct the key", name, key)
+					}
 				}
 			}
 		}

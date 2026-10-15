@@ -66,10 +66,14 @@ func TestChecklistHasCheck52(t *testing.T) {
 		t.Fatal("the check list has no Check 52 row")
 	}
 	chk52MustContain(t, row, "row", []string{
-		// Up to four override executions can run: the reference call, the
-		// literal comparison, and the length-only run when the container's
-		// command is a shell. "Two" undercounted them.
-		"up to four override executions",
+		// Three override executions can run, and the row names exactly the three:
+		// (a)'s reference call, (c)'s literal comparison, and the length-only run
+		// when the container's command is a shell. (b) is a template-level
+		// `--update-secrets` update and the bare `gcloud run jobs execute` carries
+		// no override, so neither is one — "two" undercounted the three and "four"
+		// counted a call that is not an override.
+		"**three** override executions on the sandbox job",
+		"the bare `gcloud run jobs execute` carries no override at all",
 		"fugaro-chk52-probe",
 		"fugaro-probe-in",
 		"fugaro-other-probe",
@@ -82,6 +86,13 @@ func TestChecklistHasCheck52(t *testing.T) {
 		if strings.Contains(row, dead) {
 			t.Errorf("the Check 52 row still describes U1 as a running probe (%q)", dead)
 		}
+	}
+	// The row's count of override executions, both halves: the miscounts are
+	// what a reader plans the check's blast radius from, and neither the
+	// undercount ("two") nor the overcount ("four") names a call the section
+	// actually sends.
+	if strings.Contains(row, "four override executions") || strings.Contains(row, "two override executions") {
+		t.Error("the Check 52 row miscounts the override executions: the section sends three (the reference call, the literal comparison and the length-only run)")
 	}
 
 	// Check 43's guard block inside the section — the three hard stops and
@@ -269,6 +280,29 @@ func TestChecklistHasCheck52(t *testing.T) {
 	})
 	if strings.Contains(section, `: "${EXEC:?`) {
 		t.Error("the Check 52 section aborts when (a)'s operation reports no execution name: a refused override is the likely answer, and its error is the FACT, not a stop")
+	}
+
+	// The three read-backs are v1 JSON paths, because `gcloud run jobs describe`
+	// and `gcloud run jobs executions describe` force the v1 API
+	// (version_override='v1', surface/run/jobs/describe.py:78 and
+	// surface/run/jobs/executions/describe.py:80 in gcloud 588.0.0): a v1 Job
+	// nests the revision at spec.template.spec.template.spec, a v1 Execution at
+	// spec.template.spec with no top-level `template`. The v2-shaped spellings
+	// print '' and null, so SANDBOX_JOB_SA would stay empty and the override
+	// read-back would record "not visible" — the section's own FACT input.
+	chk52MustContain(t, section, "section", []string{
+		`--format='value(spec.template.spec.template.spec.serviceAccountName)'`,
+		`--format='value(spec.template.spec.template.spec.containers[0].command)'`,
+		`--format=json | jq '.spec.template.spec.containers[0].env'`,
+	})
+	for _, v2 := range []string{
+		`--format='value(template.template.serviceAccountName)'`,
+		`--format='value(template.template.containers[0].command)'`,
+		`jq '.template.containers[0].env'`,
+	} {
+		if strings.Contains(section, v2) {
+			t.Errorf("the Check 52 section reads a v2 JSON path (%q) off the v1 resource gcloud prints, so it prints empty or null", v2)
+		}
 	}
 
 	// U3: the condition names the project NUMBER (a project ID never matches),
