@@ -47,6 +47,24 @@ func newLaunchBudget(t *testing.T, mode string) *launchBudgetFixture {
 	return f
 }
 
+// enforceCaps writes the caps and limits a database that claims
+// mode=enforce must carry: fugaro init --budget-mode enforce and
+// fugaro budget set --mode enforce both refuse a database without global caps
+// (internal/infra/firebasedb.go, internal/cli/budget.go), so a fixture that
+// says enforce and carries none is a state the CLI never creates. A launch
+// with a published policy is pre-checked whatever the local mode is (code
+// review, low), and the pre-check reads them.
+//
+// The limits are written whole, and the marker projectpolicy.PathRulesMarker
+// is a child of config/limits: call this before publishing a policy, or the
+// marker goes with the node.
+func enforceCaps(t *testing.T, f *launchBudgetFixture) {
+	t.Helper()
+	f.db.Set("config/caps/global", map[string]any{"dailyMicros": 100 * usd1, "perRunMicros": 10 * usd1})
+	f.db.Set("config/caps/defaults", map[string]any{"repoDailyMicros": 50 * usd1, "repoPerRunMicros": 5 * usd1})
+	f.db.Set("config/limits", map[string]any{"maxReserveMicros": 5 * usd1})
+}
+
 // readToken is the run's token object, "" when there is none.
 func readToken(t *testing.T, f *cloudFixture, run string) string {
 	t.Helper()
@@ -204,6 +222,13 @@ func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) 
 	t.Run("a policy, a token", func(t *testing.T) {
 		f := newOffModeBudget(t, "")
 		f.appendConfig(t, budget(f))
+		// The database says mode=enforce (newOffModeBudget's own state), so it
+		// carries the global caps that fugaro init --budget-mode enforce
+		// requires of it (infra/firebasedb.go): the pre-check now runs for a
+		// published policy whatever the local mode is, and a database that
+		// claims enforce with no caps is a state the CLI refuses to create.
+		//
+		enforceCaps(t, f)
 		f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 		f.db.Set(projectpolicy.PathShared(), json.RawMessage(policy))
 		var env map[string]string
@@ -249,6 +274,52 @@ func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) 
 	})
 }
 
+// A launch is pre-checked whenever it is given a budget identity, and a
+// published policy is what decides that, not the operator's local mode. The
+// mint decision already follows the policy
+// (TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff), so gating the
+// pre-check on the local mode alone let an installation whose mode is off and
+// whose node enforces mint a token and launch, then halt at bootstrap — after
+// an execution existed — on a limit the CLI could have refused before creating
+// anything (code review, low).
+func TestPrecheckFollowsThePublishedPolicyWhenTheLocalModeIsOff(t *testing.T) {
+	// The fixture of the mint test's "a policy, a token" subtest, with the
+	// node enforcing, its caps published and a global kill switch on: every
+	// part of the pre-check's own decision is in place.
+	newFixture := func(t *testing.T) *launchBudgetFixture {
+		t.Helper()
+		f := newOffModeBudget(t, "")
+		f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+			", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
+		enforceCaps(t, f)
+		f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+		f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":1,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["github/acme/*"]}`))
+		f.db.Set("config/kill/global", map[string]any{"on": true, "by": "boss@example.com", "reason": "incident"})
+		return f
+	}
+	t.Run("one run", func(t *testing.T) {
+		f := newFixture(t)
+		_, _, err := runBudget(t)
+		if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "kill switch") {
+			t.Fatalf("err = %v, want the pre-check's kill-switch refusal", err)
+		}
+		if launchedAny(f) || len(f.iam.SignCalls()) != 0 || readToken(t, f.cloudFixture, budgetRun) != "" {
+			t.Fatal("the launch went on: a refused pre-check leaves no token and no execution")
+		}
+	})
+	t.Run("a batch", func(t *testing.T) {
+		f := newFixture(t)
+		bumpMaxParallel(t, 5)
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "task")
+		if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "kill switch") {
+			t.Fatalf("err = %v, want the batch pre-check's kill-switch refusal", err)
+		}
+		if launchedAny(f) {
+			t.Fatal("the batch was launched")
+		}
+	})
+}
+
 // The launch reads the policy once. Two things read it on this path: the gate,
 // before anything of the launch exists, and the mint decision, because a
 // published policy is what makes a token necessary whatever the local mode is.
@@ -265,6 +336,7 @@ func TestLaunchReadsThePolicyOnce(t *testing.T) {
 	f := newOffModeBudget(t, "")
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
+	enforceCaps(t, f)
 	publishPolicy(t, f, `{"version":1,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["*"]}`)
 	if _, _, err := runBudget(t); err != nil {
 		t.Fatal(err)
