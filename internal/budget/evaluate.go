@@ -30,8 +30,8 @@ const (
 	ReasonRunCap         Reason = "run_cap"
 	ReasonRepoDailyCap   Reason = "repo_daily_cap"
 	ReasonGlobalDailyCap Reason = "global_daily_cap"
-	// ReasonNoCap: a cap the rules compare against is not set, so the rules
-	// deny (a missing node reads null; N <= null is false).
+	// ReasonNoCap: every side of a cap the rules compare against is unset, so
+	// the rules deny (a missing node reads null; N <= null is false).
 	ReasonNoCap Reason = "no_cap"
 	// ReasonMaxReserve: the lease is over limits.maxReserveMicros, or that
 	// limit is not set.
@@ -176,10 +176,12 @@ func Evaluate(st State, w Write, caps Caps, kills Kills, now time.Time) Decision
 		}
 	}
 	enforcing := caps.Enforcing()
-	// Per-run: the lifetime outstanding after the lease.
+	// Per-run: the lifetime outstanding after the lease. The cap is the
+	// repository's own or the default, and the global one where that side is
+	// unset; only a run with no per-run cap anywhere is refused here.
 	switch perRun, ok := caps.PerRun(); {
 	case !ok:
-		check(noCap(caps, "per-run"), enforcing)
+		check(noCap("per-run"), enforcing)
 	case add(st.Run.Outstanding(), w.Amount) > perRun:
 		check(deny(ReasonRunCap, ScopeRun, "run cap %s reached (%s held, %s needed)", dollars(perRun), dollars(st.Run.Outstanding()), dollars(w.Amount)), enforcing)
 	}
@@ -240,13 +242,14 @@ func negativeState(st State) (Decision, bool) {
 	return Decision{}, false
 }
 
-// noCap names which side of the per-run cap is missing.
-func noCap(c Caps, what string) Decision {
-	repoSide := (c.Repo != nil && c.Repo.PerRunMicros != nil) || (c.Defaults != nil && c.Defaults.RepoPerRunMicros != nil)
-	if !repoSide {
-		return Decision{Reason: ReasonNoCap, Scope: ScopeRepo, Detail: "no " + what + " cap is set for this repository and there is no default (fugaro budget set --defaults --repo-per-run)"}
-	}
-	return Decision{Reason: ReasonNoCap, Scope: ScopeGlobal, Detail: "no global " + what + " cap is set (fugaro budget set --global --per-run)"}
+// noCap is the refusal for a run that no per-run cap bounds: neither the
+// repository's own cap, nor the default for repositories without one, nor the
+// project's global cap is set, so the rules read null on every side and deny
+// the lease (fail closed). The scope is the project's: the global cap is the
+// one that would bound every repository.
+func noCap(what string) Decision {
+	return Decision{Reason: ReasonNoCap, Scope: ScopeGlobal,
+		Detail: "no " + what + " cap is set: not for this repository, no default for repositories without one, and none for the project (fugaro budget set --global --per-run, or --defaults --per-run)"}
 }
 
 func deny(r Reason, s Scope, format string, args ...any) Decision {

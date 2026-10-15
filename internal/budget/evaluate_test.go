@@ -131,14 +131,24 @@ func TestEvaluateTable(t *testing.T) {
 			s.Global.Counted = 149 * usd
 		}, false, ReasonRepoDailyCap, ScopeRepo, ""},
 
-		// Null caps deny (design §6.4: N <= null is false).
-		{"no global caps node", func(_ *State, _ *Write, c *Caps, _ *Kills) { c.Global = nil }, false, ReasonNoCap, ScopeGlobal, ""},
+		// Null caps deny (design §6.4: N <= null is false). The per-run cap is
+		// the exception (D6): the repository's own or the default, else the
+		// global one, and only a run with none of the three is refused.
+		{"no global caps node: the global daily cap is missing", func(_ *State, _ *Write, c *Caps, _ *Kills) { c.Global = nil }, false, ReasonNoCap, ScopeGlobal, ""},
 		{"no global daily cap", func(_ *State, _ *Write, c *Caps, _ *Kills) { c.Global.DailyMicros = nil }, false, ReasonNoCap, ScopeGlobal, ""},
-		{"no global per-run cap", func(_ *State, _ *Write, c *Caps, _ *Kills) { c.Global.PerRunMicros = nil }, false, ReasonNoCap, ScopeGlobal, ""},
+		{"no global per-run cap falls back to the default", func(_ *State, _ *Write, c *Caps, _ *Kills) { c.Global.PerRunMicros = nil }, true, "", "", ""},
+		{"no per-run cap but the global one", func(_ *State, _ *Write, c *Caps, _ *Kills) { c.Defaults.RepoPerRunMicros = nil }, true, "", "", ""},
+		{"the global per-run cap alone bounds the run", func(s *State, _ *Write, c *Caps, _ *Kills) {
+			c.Global.PerRunMicros = mp(3 * usd)
+			c.Defaults.RepoPerRunMicros = nil
+			s.Run = RunLedger{Reserved: 2 * usd}
+		}, false, ReasonRunCap, ScopeRun, ""},
+		{"no per-run cap anywhere", func(_ *State, _ *Write, c *Caps, _ *Kills) {
+			c.Global.PerRunMicros, c.Defaults.RepoPerRunMicros = nil, nil
+		}, false, ReasonNoCap, ScopeGlobal, ""},
 		{"no repo cap and no defaults", func(_ *State, _ *Write, c *Caps, _ *Kills) { c.Defaults = nil }, false, ReasonNoCap, ScopeRepo, ""},
 		{"defaults without a repo daily cap", func(_ *State, _ *Write, c *Caps, _ *Kills) { c.Defaults.RepoDailyMicros = nil }, false, ReasonNoCap, ScopeRepo, ""},
-		{"defaults without a repo per-run cap", func(_ *State, _ *Write, c *Caps, _ *Kills) { c.Defaults.RepoPerRunMicros = nil }, false, ReasonNoCap, ScopeRepo, ""},
-		{"nothing set at all", func(_ *State, _ *Write, c *Caps, _ *Kills) { c.Global, c.Defaults = nil, nil }, false, ReasonNoCap, ScopeRepo, ""},
+		{"nothing set at all", func(_ *State, _ *Write, c *Caps, _ *Kills) { c.Global, c.Defaults = nil, nil }, false, ReasonNoCap, ScopeGlobal, ""},
 		{"a zero cap is a cap, not a null", func(_ *State, _ *Write, c *Caps, _ *Kills) { c.Global.DailyMicros = mp(0) }, false, ReasonGlobalDailyCap, ScopeGlobal, ""},
 		{"null caps are fine in observe", func(_ *State, _ *Write, c *Caps, _ *Kills) {
 			c.Mode = ModeObserve
