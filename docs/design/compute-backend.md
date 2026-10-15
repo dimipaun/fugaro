@@ -314,6 +314,15 @@ does not add a charge.
   reason in the job's status message, and what to raise. Without it, "Fugaro's
   timeouts bind long before Google's" is false for the one state a user is
   most likely to be staring at.
+  **Built** (Task 5): the deadline lives in the reaper
+  (`internal/backend/batch/reap.go`), it runs `jobs.cancel` and never
+  `jobs.delete`, it defaults to the longest configured task timeout plus
+  `backend.TaskTimeoutSlack` (this bullet's "launcher's own task timeout"),
+  and its job-state table treats only `QUEUED` as a queue wait — a job that
+  has reached `SCHEDULED` or `RUNNING` has a VM and is Batch's, not the
+  deadline's. The `queue-timeout` outcome in the run record is the caller's
+  (Task 8's plumbing), not the reaper's: the reaper's report names the job
+  and the wait.
 - **A plain instance** cancels by `instances.delete`; the timeout is ours to
   enforce (a watchdog or the startup script's `timeout`), which is another
   small piece of machinery Batch already has.
@@ -1154,6 +1163,40 @@ the teardown is assumed rather than read:
   an occasional VM billing until someone notices. What it costs is in §3.7:
   project-wide `batch.jobs.delete` and `compute.instances.delete`.
 
+  **Built** (Task 5, `internal/backend/batch/reap.go`), and Check 57a's
+  teardown measurement is why it is built as a safety net rather than as the
+  path a finished run's VM takes: the owner measured a job's VM gone 3 to 26
+  seconds after its terminal state (success 25 s, failed 26 s, cancel 3 s, a
+  crashed runner 26 s), so Batch's own teardown is the main path and the
+  reaper only ever sees the residual. The built decisions, each narrower than
+  this section's prose: the job pass runs before the instance pass; a job
+  `QUEUED` past the queue deadline is **cancelled** (`jobs.cancel` — never
+  `jobs.delete`, because the record is what `ls`, `diagnose`, `watch` and the
+  sweeper read) and a job still `SCHEDULED`/`RUNNING`, or stuck in
+  `DELETION_IN_PROGRESS`, past the age floor is **deleted** (the delete *is*
+  its VMs' teardown); a **finished job's record is never deleted** — it is
+  history, and §3.4's ordering rule is about the jobs the reaper has decided
+  must go, so a terminal job whose VM leaked is handled by the instance pass,
+  which deletes the VM and leaves the record. An instance is deleted only
+  when it carries **both** `fugaro=managed` and a `fugaro_run` label, **no
+  live job** carries that run label, and it is past the age floor; the marker
+  is checked client-side as well as in the server-side label filter, the same
+  shape `List` has for jobs. It refuses, and names with its reason in the
+  report, a VM with no `fugaro_run` label, a VM whose `fugaro` label is
+  another installation's, a VM whose job is still live, a VM young enough
+  that Batch may be mid-teardown, a job whose two label fields disagree about
+  the run label, a job whose state this build does not know (including
+  `STATE_UNSPECIFIED`), and a job or VM whose time cannot be read. It is
+  idempotent (a delete of something already gone is not an error), and
+  `DryRun` lists what a pass would delete and touches nothing, cancel
+  included. The age floor is the longest configured task timeout plus
+  `backend.TaskTimeoutSlack`, plus the queue deadline, plus a 15-minute margin
+  (`ReapMargin`: the 120 s boot budget of §1.2, Batch's own teardown, and a
+  listing's settle window); the queue deadline defaults to the longest task
+  timeout plus its slack, "the launcher's own task timeout" above. Neither
+  deadline is a Google field, so both are the caller's, and the Task 8 config
+  plumbing is what fills them.
+
 ### 3.5 What a Docker-capable agent can do to the host
 
 Stated plainly, for SECURITY.md:
@@ -1242,6 +1285,23 @@ What follows, plainly:
   destructive grants in the whole design. It should be a **dedicated
   service account** used only by the scheduled sweeper, not the launcher's and
   not the job's.
+
+  **Built** (Task 5) as **six** permissions, and no others: `batch.jobs.list`
+  and `batch.jobs.get` (every decision comes from a job's own state),
+  `batch.jobs.cancel` (the queue deadline — not optional, since a job stuck
+  `QUEUED` past it counts against `max_parallel`), `batch.jobs.delete` (the
+  destructive one, for a stuck job and a stuck `DELETION_IN_PROGRESS` only),
+  `compute.instances.list` (the project-wide aggregated list, the one call
+  that finds a labelled VM in any of the region's zones) and
+  `compute.instances.delete`. `roles/batch.jobsEditor` on the project carries
+  the four Batch permissions (this section names it for create, cancel and
+  delete alike) and `roles/compute.instanceAdmin.v1` the two Compute ones; a
+  Condition narrowing them is Check 57a step 9's question, and it does not
+  change the list. The reaper reads no secret and needs no Secret Manager,
+  storage or logging grant: `internal/backend/batch/reap.go`'s header states
+  the same six, which is where a reviewer checks them against the code. Task
+  6 grants them; nothing selects the backend before the enable task (9), so
+  none of this is reachable in an installation today.
 
 **Recommendation (C22): give the launcher `batch.jobsEditor`,
 `serviceAccountUser` scoped to the run-class accounts, and nothing else; if
@@ -2945,7 +3005,14 @@ senior reviewer before merge, not just the normal one.
 5. **The reaper, the queue deadline and the teardown paths.** **[review]** The
    job-first reaper, its dedicated project-wide account, and the queue deadline
    (§1.4, §3.4). Destructive: the review is on the permissions and on what it
-   refuses to delete.
+   refuses to delete. **Built** (`internal/backend/batch/reap.go`, with the
+   Compute Engine instances fake in `internal/gcpfake/compute.go`): the two
+   deadlines, the decision table over every `JobStatus.State`, the client-side
+   label checks, the refusals and the dry-run, held to by tests against the
+   Batch and Compute fakes. The account itself is Task 6's (the six
+   permissions §3.7 lists are what it must carry), and
+   `backend: cloud-batch` stays refused everywhere, so nothing here is
+   reachable in an installation.
 6. **The Batch provisioning stage in `fugaro init`** (owner-run live step):
    the Batch API, `containerfilesystem` if streaming is used, the service
    accounts and the launcher/reaper IAM (§3.2, §3.7), the boot image or
