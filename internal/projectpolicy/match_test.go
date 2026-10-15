@@ -271,13 +271,14 @@ func refMatchSeg(pattern, s string) bool {
 }
 
 // TestMatchSegAgreesWithAReferenceGlob: every pattern and every name over
-// {a, b, *} up to four characters, against a reference matcher. The alphabet
-// includes "*" on purpose: matchSeg's second argument is a repository *or* a
-// pattern (admittedBy reads a pattern being removed against the entries a
-// removal leaves), so a "*" in the name is an ordinary character, and an
-// implementation that tests literal equality before the wildcard silently
-// loses the pattern's own star on exactly those inputs — 302 of the pairs
-// below, all of which this test is here to keep failing loudly instead.
+// {a, b, *} up to four characters — 121 of each, 14641 pairs — against a
+// reference matcher. The alphabet includes "*" on purpose: matchSeg's second
+// argument is a repository *or* a pattern (admittedBy reads a pattern being
+// removed against the entries a removal leaves), so a "*" in the name is an
+// ordinary character, and an implementation that tests literal equality before
+// the wildcard silently loses the pattern's own star on exactly those inputs —
+// 302 of the pairs below, which is the number this test printed the last time
+// the two cases were the other way round.
 func TestMatchSegAgreesWithAReferenceGlob(t *testing.T) {
 	var all []string
 	for n := 0; n <= 4; n++ {
