@@ -58,6 +58,11 @@
       "$comment": "outputs: is mode: artifact's own block: a run that opens a pull request delivers its diff, not a file set (recipe.Parse refuses the block in the other two modes, whatever the mode key's value).",
       "if": { "not": { "properties": { "mode": { "const": "artifact" } }, "required": ["mode"] } },
       "then": { "not": { "required": ["outputs"] } }
+    },
+    {
+      "$comment": "A plan or render step is mode: artifact's own shape too: recipe.Parse refuses either in the other two modes with '<kind> is only for mode: artifact' (order), whatever the mode key's value. The steps oneOf above has to list artifactSteps as one alternative for an artifact recipe to have any shape at all, and without this branch that alternative admits [render] under mode: implement — which Go refuses (testdata/recipe/invalid/render-implement.yaml, and its mirror in this schema's own corpus test).",
+      "if": { "not": { "properties": { "mode": { "const": "artifact" } }, "required": ["mode"] } },
+      "then": { "properties": { "steps": { "not": { "$ref": "#/$defs/artifactSteps" } } } }
     }
   ],
   "$defs": {

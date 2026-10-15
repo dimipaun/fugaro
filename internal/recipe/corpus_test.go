@@ -31,6 +31,7 @@ var invalidWhy = map[string]string{
 	"mode-review-rounds.yaml":      "mode: review reviews once: max_rounds must be 1",
 	"model-key.yaml":               "a recipe never names a model",
 	"no-review.yaml":               "must end with a review step",
+	"render-implement.yaml":        "render is only for mode: artifact",
 	"review-first.yaml":            "first_line must come before review",
 	"roles-both-mapped.yaml":       "roles: coder: reviewer and reviewer: coder exclude each other",
 	"roles-unknown-role.yaml":      "only the reviewer and coder roles can be mapped",

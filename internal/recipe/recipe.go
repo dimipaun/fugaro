@@ -209,6 +209,29 @@ type Recipe struct {
 	newKeysV08 bool
 }
 
+// UsesV08 reports whether r uses a construct added in 0.8.0: mode:
+// artifact, an outputs: block, or a plan or render step. It decides by
+// presence (Recipe.newKeysV08), not by the parsed value, for the same
+// reason UsesV07 does: a 0.7 parser refuses all three outright, so a mode:
+// artifact recipe whose outputs block holds nothing but its globs still
+// needs a 0.8 runner. A recipe that uses a 0.8.0 construct always uses a
+// 0.7.0 one too (mode is one), so UsesV08 implies UsesV07; the two are
+// separate gates because the images they need are tagged separately.
+//
+// Nothing reads it yet, deliberately: Task 1 of the artifact-runs plan
+// ships the format and the runner's fail-closed refusal, and the launch
+// gate that will read this -- P9's artifactsSince, chosen beside UsesV07 in
+// checkRecipeImage/checkCloneRecipeImage and passed to the launcher's own
+// spec-mode gate (internal/cli/run.go) -- is Task 2's, because it needs the
+// task field and the *Since constant that task adds. So today an artifact
+// recipe launched at a job image whose runner predates 0.8.0 is refused by
+// the runner's own mode cross-check ("which this runner does not
+// implement"), not by the image gate's "fugaro image refresh"; do not
+// mistake the refusal for that gate.
+func UsesV08(r *Recipe) bool {
+	return r.newKeysV08
+}
+
 // Renamed are catalog names removed in 0.7.0 and what replaced them.
 var Renamed = map[string]string{"cheap-loop-senior": "standard", "claude-solo": "solo"}
 
