@@ -75,16 +75,17 @@ func newProjectPolicyCmd() *cobra.Command {
 }
 
 type projectPolicyPublishOptions struct {
-	cloud     cloudOptions
-	seedRepos bool
-	delete    bool
-	yes       bool
+	cloud         cloudOptions
+	seedRepos     bool
+	delete        bool
+	yes           bool
+	removeRouting bool
 }
 
 func newProjectPolicyPublishCmd() *cobra.Command {
 	var o projectPolicyPublishOptions
 	cmd := &cobra.Command{
-		Use:   "publish [--seed-repos] [--delete] [--yes]",
+		Use:   "publish [--seed-repos] [--delete] [--yes] [--remove-routing]",
 		Short: "Publish the project's policy from the operator's config (budget admins)",
 		Long: "Build the project's policy from this machine's project config — the budget\n" +
 			"block, the providers (their secrets by NAME, never a value), the model_prices\n" +
@@ -108,7 +109,12 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 			"runs are in flight, and asks you to type the project's name otherwise. The\n" +
 			"config/policy/repos children are removed too, shared node or not: a delete\n" +
 			"that failed on the shared node leaves them behind, and this is what clears\n" +
-			"them.",
+			"them.\n\n" +
+			"routing.claude is written where the operator writes it: this config. A publish\n" +
+			"refuses to drop an active route the config does not account for, and refuses\n" +
+			"a config that writes a routing block naming no Claude switch in the same\n" +
+			"state; --remove-routing is how the operator says the block goes away on\n" +
+			"purpose.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runProjectPolicyPublish(cmd, &o) },
 	}
@@ -116,6 +122,7 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 	f.BoolVar(&o.seedRepos, "seed-repos", false, "seed allow_repos from the operator's repositories again")
 	f.BoolVar(&o.delete, "delete", false, "remove the published policy (project-centric mode off again)")
 	f.BoolVar(&o.yes, "yes", false, "confirm the deletion without typing the project's name")
+	f.BoolVar(&o.removeRouting, "remove-routing", false, "drop the published policy's routing block on purpose (an active route stops being taken)")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
@@ -176,11 +183,11 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		if err != nil {
 			return err
 		}
-		pol, err := buildProjectPolicy(lc, allow, old)
+		pol, keepRouting, err := buildProjectPolicy(lc, allow, old, o.removeRouting)
 		if err != nil {
 			return err
 		}
-		body, err := policyNodeBytes(pol, raw, exists)
+		body, err := policyNodeBytes(pol, raw, exists, keepRouting)
 		if err != nil {
 			return err
 		}
@@ -425,27 +432,50 @@ func sharedRepos(ctx context.Context, lc *localcfg.Config) (map[string]localcfg.
 // config.CheckRouting — and only *delivered* to a run through this node.
 //
 // It is also the one key this command refuses to *drop*. The switch has a
-// second definition site the local config is not the only writer of (D1a: the
-// project layer, whose slice does not ship yet), so a node carrying an active
-// route that this config cannot account for is a refusal, not a rewrite: a
-// route that goes away is a Claude call that stops being sent where the owner
-// put it, and printing the removal afterwards does not undo it. An inert block
-// (via: direct) is kept as the node carries it — nothing is routed by it, so
-// there is nothing to refuse and no reason to rewrite the node. Turning
-// routing off is therefore explicit: write routing: {claude: {via: direct}}
-// in the config and publish.
+// second definition site this command cannot read — the project layer carries
+// the *claims* a route entry makes (`claude_models`), and the policy layer
+// slice that writes routing is not part of this release (D1a) — so a node
+// carrying an active route that this config cannot account for is a refusal,
+// not a rewrite: a route that goes away is a Claude call that stops being sent
+// where the owner put it, and printing the removal afterwards does not undo it.
+// An inert block (via: direct) is kept as the node carries it — nothing is
+// routed by it, so there is nothing to refuse and no reason to rewrite the
+// node. Turning routing off is therefore explicit: write routing: {claude:
+// {via: direct}} in the config and publish, or pass --remove-routing to drop
+// the block itself.
+//
+// "This config cannot account for it" is about the *Claude switch*, not about
+// the routing key: `routing: {}` and `routing: {claude:}` decode to a block
+// with no Claude entry, and neither is a statement that the switch is off —
+// the operator wrote a block with nothing in it, not `via: direct`. Reading
+// either as "off" would turn an active route off on a publish that only prints
+// the removal afterwards, so they are held to the same refusal.
+//
+// The second return value is whether the node's own `routing` member stands
+// (policyNodeBytes carries it over byte for byte): true exactly when the config
+// says nothing about Claude and --remove-routing was not passed, which is also
+// when pol.Routing is the node's own block rather than this config's.
 //
 // A repository cannot reach this key either way: its fugaro.yaml has no routing
 // (D1a), and `repos add|rm` edits the node as the document it is
 // (patchPolicyJSON) so it cannot drop what this publisher writes.
-func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.Policy) (*projectpolicy.Policy, error) {
+func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.Policy, removeRouting bool) (*projectpolicy.Policy, bool, error) {
 	if lc.Budget == nil || lc.Budget.Mode == "" {
-		return nil, userErr("this project's config sets no budget.mode, and a published policy's budget block must name one (off, observe or enforce): the mode decides whether the caps bite, and a block that leaves it out would take it from each job's environment, which nobody reading the policy can see; set budget: { mode: ... } in %s, or leave the policy unpublished", lc.Name)
+		return nil, false, userErr("this project's config sets no budget.mode, and a published policy's budget block must name one (off, observe or enforce): the mode decides whether the caps bite, and a block that leaves it out would take it from each job's environment, which nobody reading the policy can see; set budget: { mode: ... } in %s, or leave the policy unpublished", lc.Name)
 	}
-	if lc.Routing == nil && nodeRoutesClaude(old) {
-		return nil, userErr("the policy published at %s carries a routing block this publish cannot account for (routing: %s), and your config sets no routing: publishing from here would turn that route off, and a route that goes away is a Claude call that stops being sent where it was put. Write the same switch under routing: in %s to publish it as yours, or write routing: {claude: {via: direct}} to say the switch is off on purpose",
-			projectpolicy.PathShared(), routingText(old.Routing), lc.Name)
+	silent := lc.Routing == nil || lc.Routing.Claude == nil
+	switch {
+	case silent && !removeRouting && nodeRoutesClaude(old):
+		why := "your config sets no routing"
+		if lc.Routing != nil {
+			why = "your config's routing block names no Claude switch"
+		}
+		return nil, false, userErr("the policy published at %s carries a routing block this publish cannot account for (routing: %s), and %s: publishing from here would turn that route off, and a route that goes away is a Claude call that stops being sent where it was put. Write the same switch under routing: in %s to publish it as yours, write routing: {claude: {via: direct}} to say the switch is off on purpose, or pass --remove-routing to drop the block itself on purpose",
+			projectpolicy.PathShared(), routingText(old.Routing), why, lc.Name)
+	case !silent && removeRouting:
+		return nil, false, userErr("--remove-routing drops the published policy's routing block, and %s writes one (routing: %s): one of the two has to go", lc.Name, routingText(lc.Routing))
 	}
+	keepRouting := silent && !removeRouting
 	pol := &projectpolicy.Policy{
 		Version:    projectpolicy.Version,
 		Budget:     projectpolicy.Budget{Mode: lc.Budget.Mode, PerRunUSD: lc.Budget.PerRunUSD, AllowedModels: lc.Budget.AllowedModels, MaxRunTokens: lc.Budget.MaxRunTokens},
@@ -453,14 +483,16 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		Providers:  policyProviders(lc),
 		Prices:     policyPrices(lc),
 	}
-	if lc.Routing != nil {
+	switch {
+	case !silent:
 		pol.Routing = lc.Routing
-	} else if old != nil {
+	case keepRouting && old != nil:
 		// Inert (or absent): kept as it is, never invented and never written
-		// from a value this config does not hold.
+		// from a value this config does not hold. The member itself is carried
+		// over byte for byte on top of this (policyNodeBytes, keepRouting).
 		pol.Routing = old.Routing
 	}
-	return pol, nil
+	return pol, keepRouting, nil
 }
 
 // nodeRoutesClaude reports whether the node being replaced carries a routing
@@ -532,26 +564,29 @@ func policyPrices(lc *localcfg.Config) projectpolicy.Prices {
 // operator sees which value it was.
 // policyNodeBytes is the document a publish writes: the policy built from the
 // operator's config, with the `routing` member of the node being replaced
-// carried over byte for byte.
+// carried over byte for byte when keepRouting says the node's member stands.
 //
 // The member and not the decoded value, because routing is shared with
 // releases that know more of it than this one does (phase 1b writes it, and a
 // later release writes more): a key inside `routing` that this Fugaro does not
 // model survives the decode — json.Unmarshal ignores it, and Decode cannot
 // list it the way it lists an unknown top-level key — so re-encoding the
-// decoded value would drop it. The publisher does not write routing at all
-// (buildProjectPolicy copies the old one), so "kept" has to mean kept whole:
-// this is the same quiet loosening `repos add|rm` refuses to make by patching
-// the document (patchPolicyJSON), and printPolicyDiff tells the operator the
-// block is kept.
+// decoded value would drop it. That is also why the carry-over is conditional
+// on keepRouting rather than unconditional: when the operator's config *does*
+// write the switch, this publish is what defines the member, and letting the
+// old node's bytes win would publish a config that never takes effect (the
+// review of PR #414). When it does not, "kept" has to mean kept whole: this is
+// the same quiet loosening `repos add|rm` refuses to make by patching the
+// document (patchPolicyJSON), and printPolicyDiff tells the operator the block
+// is kept.
 //
 // A node with no routing member is written without one, which is direct (D1b).
-func policyNodeBytes(pol *projectpolicy.Policy, oldRaw []byte, exists bool) ([]byte, error) {
+func policyNodeBytes(pol *projectpolicy.Policy, oldRaw []byte, exists, keepRouting bool) ([]byte, error) {
 	node, err := json.Marshal(pol)
 	if err != nil {
 		return nil, userErr("building the policy: %v", err)
 	}
-	if !exists {
+	if !exists || !keepRouting {
 		return node, nil
 	}
 	routing, ok, err := jsonMember(oldRaw, "routing")
@@ -730,9 +765,11 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	// config, so a route that appeared or changed is a line an operator reading
 	// money-and-data-sharing changes must see — a route that quietly starts
 	// sending Claude prompts to a provider (or stops) is exactly what this diff
-	// is for. A route that *goes away* cannot reach here: buildProjectPolicy
-	// refuses a publish whose config sets no switch over a node that carries an
-	// active one.
+	// is for. A route that *goes away* against the operator's silence cannot
+	// reach here: buildProjectPolicy refuses a publish whose config says nothing
+	// about Claude over a node that carries an active one. The one removal that
+	// can reach here is the deliberate one, --remove-routing (or a config that
+	// writes via: direct), and then the "-" line is the whole point of the diff.
 	diffLines(out, routingLines(old), routingLines(new))
 	for _, r := range new.AllowRepos {
 		if src, ok := sources[r]; ok {
