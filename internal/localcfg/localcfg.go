@@ -708,7 +708,16 @@ func (c *Config) validate() error {
 		bad("build.machine_type %q is not a machine type such as E2_HIGHCPU_8", c.Build.MachineType)
 	}
 	if c.BackendName != "" && c.BackendName != backend.CloudRun {
-		bad("backend %q is not a known backend (%s)", c.BackendName, backend.CloudRun)
+		// cloud-batch is a name this build knows -- internal/backend/batch
+		// speaks it and the fake tests it -- and must not select yet: the
+		// tasks that make a Batch run safe come after Check 57a (design
+		// compute-backend.md §8.1 Task 2, §9). Calling it unknown would be a
+		// different claim, and a wrong one.
+		if c.BackendName == backend.CloudBatch {
+			bad("backend %q is not enabled yet (this build runs %s)", c.BackendName, backend.CloudRun)
+		} else {
+			bad("backend %q is not a known backend (%s)", c.BackendName, backend.CloudRun)
+		}
 	}
 	if t := c.Terraform; t.StateBucket != "" && !bucketRE.MatchString(t.StateBucket) {
 		bad("terraform.state_bucket %q is not a bucket name", t.StateBucket)
