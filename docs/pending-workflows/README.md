@@ -22,8 +22,11 @@ The `git rm` is not cleanup, it's load-bearing: the static Go tests that pin
 these workflows' shape (`images/base_workflow_test.go`'s `readWorkflow`,
 used by `TestImagesWorkflowPublishesAMultiArchBase`,
 `TestOnlyPublishJobsHoldPackagesWrite`,
-`TestVerifyPublicRunsEvenWhenPublishBaseIsSkipped` and
-`TestImagesWorkflowBuildsTheBaseAndHistory`, plus
+`TestVerifyPublicRunsEvenWhenPublishBaseIsSkipped`,
+`TestImagesWorkflowBuildsTheBaseAndHistory`,
+`TestPublishBaseSignsByOCIDigestOnPushOnly` and its companion
+`TestSigningProblemsFindEveryMutation` — the two that pin the base image's
+signing chain — plus
 `images/verify_public_test.go`'s `TestImagesWorkflowPublishesAndVerifiesEveryImage`)
 read the pending file
 **while it exists** and only fall back to the real
@@ -57,34 +60,48 @@ verbatim, comments included. Diff summary against the committed file:
   itself is an ordinary registry write and needs only the `packages: write`
   that was already there. `id-token: write` is on **no other job** in this
   workflow.
-- **The tag-creation block inside the existing "Push per architecture and
-  publish the index" step adds `--tag $repo:$VERSION-pinned`** to the same
-  `docker buildx imagetools create` call that already makes `:$VERSION` and
-  (when it moves) `:$MAJOR`. That addition is guarded inside the script by
-  `if [ "$GITHUB_EVENT_NAME" = push ]`, because this same script also runs
-  on the nightly and on `workflow_dispatch` — and on those events the
-  `version` job's own logic picks "the latest strict release tag", i.e. the
-  identical `$VERSION` — so an unguarded tag would be created and **moved**
-  by every nightly, which is precisely what a verified copy must not read.
-  `fugaro-base:<v>-pinned` therefore names the release-day, signed bytes
-  until the next release's own tag push, and a nightly rebuild of the plain
-  `:<v>` tag can neither move it nor invalidate the signature on it.
-- **Two new steps in `publish-base`, both `if: github.event_name == 'push'`,**
-  added after the tag step (so the registry login from the earlier step is
-  already in place, and each has its own shell — they share no shell
-  variables with the long script above):
+- **The existing "Push per architecture and publish the index" step gains an
+  `id: index` and a `--metadata-file index.json`** on its `docker buildx
+  imagetools create` call (the one that already makes `:$VERSION` and, when
+  it moves, `:$MAJOR`). The digest of the index that call just published is
+  read out of that file (`containerimage.descriptor.digest` — the key
+  docker's docs document for `imagetools create --metadata-file`; a missing
+  or malformed value fails the job rather than signing something unknown),
+  the step fails if the published index's children are not exactly the two
+  child digests this job pushed, and the digest is handed to the steps below
+  through `$GITHUB_OUTPUT`. **Nothing in the job learns a digest by asking a
+  tag what it resolves to.** A tag is a second, movable registry answer: an
+  actor who can write this repository's tags could move it between a create
+  and a re-read, and the release's own identity would then sign *that*
+  actor's image.
+- **Four new steps after it**, all gated `if: github.event_name == 'push'`
+  (so the nightly and `workflow_dispatch` runs — which resolve the *same*
+  `$VERSION`, "the latest strict release tag" — can neither sign nor touch
+  the pinned tag), each with its own shell, so they share no shell variables
+  with the long script above:
   - `sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2`
     — the exact pin `release.yml:95` already uses, not a placeholder;
-  - `Sign the base image`: resolves the digest the tag it just wrote now
-    names (`docker buildx imagetools inspect "$repo:$VERSION-pinned"
-    --format '{{.Manifest.Digest}}'`, since `imagetools create` does not
-    print it) and runs `cosign sign --yes "$repo@$digest"`. It signs the
-    **digest**, not the tag: the signature is attached as its own OCI
-    artifact in the same ghcr.io repository, and a later move of any tag
-    cannot change what it covers. The resolve is safe here and only here
-    because it runs in the same job, immediately after that job's own
-    create call, under the job's existing `images-publish-base` concurrency
-    group (`cancel-in-progress: false`).
+  - `Sign the published index` (`id: sign`): `cosign sign --yes
+    "$repo@$DIGEST"` for the digest the index step reported. It signs the
+    **digest**, not a tag: a later move of any tag cannot change what the
+    signature covers, and no tag is read to find it.
+  - `Verify the signature just attached` (`id: verify`): `cosign verify`
+    against that same digest, with `--certificate-identity
+    https://github.com/dimipaun/fugaro/.github/workflows/images.yml@refs/tags/v$VERSION`
+    and `--certificate-oidc-issuer
+    https://token.actions.githubusercontent.com`. A signature made by any
+    other identity or workflow fails the job here. No mode that skips the
+    transparency log or the artifact binding is used.
+  - `Publish the -pinned tag at the signed digest` (`id: pinned`): **only
+    now**, with the signature made and verified, does anything name
+    `$VERSION-pinned`: `docker buildx imagetools create --tag
+    "$repo:$VERSION-pinned" "$repo@$DIGEST"` — one source that is an index
+    is copied as-is (docker's docs), so the tag names the very digest that
+    was signed — followed by a read-back that fails unless
+    `$VERSION-pinned` resolves to that same digest. So `-pinned` never
+    exists unsigned, and `fugaro-base:<v>-pinned` names the release-day
+    signed bytes until the next release's own tag push; a nightly rebuild of
+    the plain `:<v>` tag can neither move it nor invalidate its signature.
 
 **Every existing guarantee is kept, and the trigger surface is unchanged.**
 The `on:` block is byte-identical: a strict `vX.Y.Z` tag push, the
@@ -98,9 +115,17 @@ permission and no login, so it keeps running even when `publish-base` is
 skipped (a backport tree with no `images/base`). `publish` and
 `publish-base` remain the only two jobs holding `packages: write`.
 `images/base_workflow_test.go`'s `TestPublishBaseSignsByOCIDigestOnPushOnly`
-pins all of the above — the signing step, the `-pinned` tag, its in-script
-event guard, the cosign-installer pin, and `id-token: write` on
-`publish-base` alone — and `TestOnlyPublishJobsHoldPackagesWrite`,
+pins all of the above, from the parsed YAML (the fields GitHub executes, not
+strings in comments) — the digest source (`--metadata-file`), the two
+children assertion, signing by the digest handed to the step, the identity
+the verification demands, the `-pinned` tag written last and at that digest,
+the step order, the cosign-installer pin, the push-only gates, and
+`id-token: write` on `publish-base` alone. Its companion
+`TestSigningProblemsFindEveryMutation` feeds that checker fifteen weakenings
+(a tag instead of the digest, `|| true`, `continue-on-error: true`, the sign
+step before the push, `-pinned` unconditional with the gate left in a
+comment, workflow-level `id-token: write`, a widened condition, and so on)
+and requires every one to be reported — and `TestOnlyPublishJobsHoldPackagesWrite`,
 `TestVerifyPublicRunsEvenWhenPublishBaseIsSkipped`,
 `TestImagesWorkflowPublishesAMultiArchBase`,
 `TestImagesWorkflowBuildsTheBaseAndHistory` and
@@ -154,10 +179,18 @@ for the minutes between the CLI being published and `publish-base` finishing
 its sign, a copy with the newly-published CLI has nothing to resolve or
 verify. That is expected; it closes when `publish-base` finishes. If the
 sign step fails outright, the job fails (`set -eu`, no `|| true`), and a
-maintainer's re-run rebuilds the image, re-creates and moves `-pinned`, and
-re-signs it — a re-run of the **tag-push** workflow does move `-pinned`
-again, which is harmless (the nightly never does; that is the property the
-tag exists for, and what Check 39e verifies).
+maintainer can re-run the failed job: **a re-run reuses the build artifacts
+that push uploaded** (`fugaro-base-<arch>-image`, kept for one day —
+`retention-days: 1`), and re-runs it through create → sign → verify →
+`-pinned` from there. It does **not** rebuild the image from the tag's
+source; a re-run after the artifacts have expired has nothing to sign, so
+the tag cannot be signed after that. GitHub also only offers re-runs for a
+limited window (about 30 days for a workflow run); past that, a release's
+`-pinned` image stays unsigned and the copy-time resolve fails loudly rather
+than accepting anything else. A re-run does move `-pinned` again, at the
+same digest (the artifacts are the same bytes) — harmless, and the nightly
+never does it: that is the property the tag exists for, and what Check 39e
+verifies.
 
 ### Not verified
 
