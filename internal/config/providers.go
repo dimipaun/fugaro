@@ -528,7 +528,14 @@ func CheckProviderPolicy(a Agent, allowed []string, repo string, providers map[s
 			ps = append(ps, Problem{Path: path, Message: fmt.Sprintf("%s is not an explicit model ID: name a plain vendor/model ID", CodeSpan(model))})
 		case prices != nil:
 			if _, ok := prices.Lookup(model); !ok {
-				ps = append(ps, Problem{Path: path, Message: fmt.Sprintf("%s has no price: add it under model_prices in the project config", CodeSpan(model))})
+				// A model the catalog refused says why — the switch to
+				// flip and both ways out (P8) — rather than only naming
+				// model_prices.
+				msg := fmt.Sprintf("%s has no price: add it under model_prices in the project config", CodeSpan(model))
+				if why := prices.Refusal(model); why != "" {
+					msg = why
+				}
+				ps = append(ps, Problem{Path: path, Message: msg})
 			}
 		}
 	}

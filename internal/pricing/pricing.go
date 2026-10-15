@@ -171,6 +171,28 @@ type Table struct {
 	Source    string // the pricing page's URL
 	CheckedAt string // YYYY-MM-DD
 	Models    map[string]Model
+	// Refused is why a model the built-in provider price catalog cannot
+	// price has no row, keyed by model ID: the message that says what to do
+	// about it (the switch to flip, or model_prices). A model is refused
+	// where it is named — a pin, a call — never by failing the table for
+	// every model a route's pattern happens to claim, and it has no row at
+	// all, so Lookup fails and nothing can be priced free. With drops an
+	// entry for any model it prices: the owner's own number is the way out.
+	Refused map[string]string
+}
+
+// Refusal is why the table has no row for a model, or "" when it has one (or
+// when nothing recorded a reason). The surfaces that judge a pin or refuse a
+// call show this instead of their own "has no price" text, so the owner sees
+// the fix path the catalog recorded.
+func (t *Table) Refusal(model string) string {
+	if t == nil || model == "" {
+		return ""
+	}
+	if _, ok := t.Lookup(model); ok {
+		return ""
+	}
+	return t.Refused[model]
 }
 
 // Lookup finds a model by its exact ID or one of its aliases; it never
@@ -262,11 +284,16 @@ func (t *Table) With(o Overrides) (*Table, error) {
 			m.Unverified, m.PriceSource, m.PriceCheckedAt, m.Catalog = false, "", "", nil
 			m.CacheDefaulted = defaultCacheRates(m.ID, &m.Rates)
 			out.Models[m.ID] = m
+			delete(out.Refused, m.ID)
 			continue
 		}
 		m := Model{ID: key, Rates: r}
 		m.CacheDefaulted = defaultCacheRates(key, &m.Rates)
 		out.Models[key] = m
+		// An owner who prices a model the catalog refused has answered
+		// what the route's switches ask: the row is the way out, so the
+		// refusal goes with it.
+		delete(out.Refused, key)
 	}
 	return out, nil
 }
@@ -298,6 +325,12 @@ func (t *Table) clone() *Table {
 		return out
 	}
 	out.Source, out.CheckedAt = t.Source, t.CheckedAt
+	if len(t.Refused) > 0 {
+		out.Refused = make(map[string]string, len(t.Refused))
+		for id, why := range t.Refused {
+			out.Refused[id] = why
+		}
+	}
 	for id, m := range t.Models {
 		m.Aliases = append([]string(nil), m.Aliases...)
 		m.CacheDefaulted = append([]string(nil), m.CacheDefaulted...)

@@ -1223,6 +1223,19 @@ type pricesDoc struct {
 	CatalogCheckedAt string `json:"catalog_checked_at,omitempty"`
 	CatalogAgeDays   int    `json:"catalog_age_days,omitempty"`
 	CatalogStale     bool   `json:"catalog_stale,omitempty"`
+	// Refused is the models a provider route claims that the built-in
+	// provider price catalog cannot price, with the reason: they have no
+	// row above, and a run pinned to one is refused at bootstrap. Empty
+	// when every claimed model has a row.
+	Refused []priceRefused `json:"refused,omitempty"`
+}
+
+// priceRefused is one model with no row and the reason the catalog recorded:
+// a require_zdr route on a model with no ZDR-eligible endpoint, or a rate the
+// table cannot express.
+type priceRefused struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
 }
 
 func runBudgetPrices(cmd *cobra.Command, o *budgetPricesOptions) error {
@@ -1277,6 +1290,15 @@ func runBudgetPrices(cmd *cobra.Command, o *budgetPricesOptions) error {
 			row.LongContext = fmt.Sprintf("above %d input tokens: $%g in / $%g out", r.LongContext.AboveInputTokens, r.LongContext.InputPerM, r.LongContext.OutputPerM)
 		}
 		doc.Models = append(doc.Models, row)
+	}
+	// A model a route claims that the catalog cannot price has no row: the
+	// owner is told which and why, rather than left with a model missing
+	// from the table. Nothing is refused here — the table is the run's, and
+	// a run that never names the model charges nothing — but a pin on one
+	// is refused at bootstrap (design D9, P8).
+	for _, r := range slices.Sorted(maps.Keys(table.Refused)) {
+		doc.Refused = append(doc.Refused, priceRefused{ID: r, Reason: table.Refused[r]})
+		fmt.Fprintf(errw, "warning: %s has no row: %s\n", oneLine(r), oneLine(table.Refused[r]))
 	}
 	if doc.Stale {
 		fmt.Fprintf(errw, "warning: the built-in price table was last checked %s, older than 90 days (%d days ago); check %s and set model_prices in the project config where it differs\n",

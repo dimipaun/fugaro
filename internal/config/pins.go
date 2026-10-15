@@ -43,6 +43,13 @@ func CheckPins(a Agent, prices *pricing.Table) []Problem {
 			ps = append(ps, Problem{Path: r.path, Message: r.model + " is an alias: with a budget, name a model ID such as claude-sonnet-5-5"})
 		default:
 			if _, ok := prices.Lookup(r.model); !ok {
+				// A model the catalog could not price carries its own
+				// message — the model, the switch and both ways out (P8) —
+				// because the pin is where the refusal becomes real.
+				if why := prices.Refusal(r.model); why != "" {
+					ps = append(ps, Problem{Path: r.path, Message: why})
+					continue
+				}
 				ps = append(ps, Problem{Path: r.path, Message: r.model + " has no price: add it under model_prices in the project config"})
 			}
 		}

@@ -153,23 +153,24 @@ func TestApplyCatalogCarriesWebSearch(t *testing.T) {
 }
 
 // TestApplyCatalogRefusesMultiplierAboveMax pins that a ratio the table
-// cannot express is refused with the model, the dimension and both prices,
-// never clamped.
+// cannot express gets no row, with the model, the dimension and both prices
+// in the recorded refusal, never a clamp.
 func TestApplyCatalogRefusesMultiplierAboveMax(t *testing.T) {
 	e := entry()
 	e.All["cache_read_per_m"] = bound("0.1", "100") // 100 / 4 = 25x, over the limit of 10
-	_, err := ApplyCatalog(Embedded(), catalogFile("2026-10-14", e), route(false, "highest"), catalogNow)
-	if err == nil {
+	got := compile(t, catalogFile("2026-10-14", e), route(false, "highest"))
+	if _, ok := got.Lookup("vendor/model"); ok {
 		t.Fatal("a 25x cache read was accepted")
 	}
+	why := got.Refusal("vendor/model")
 	for _, want := range []string{"vendor/model", "cache_read_per_m", "2026-10-14"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the error does not name %q: %v", want, err)
+		if !strings.Contains(why, want) {
+			t.Errorf("the refusal does not name %q: %v", want, why)
 		}
 	}
 	// Clamping would have priced it at 10x: it must not have.
-	if strings.Contains(err.Error(), "clamp") {
-		t.Errorf("the error suggests clamping: %v", err)
+	if strings.Contains(why, "clamp") {
+		t.Errorf("the refusal suggests clamping: %v", why)
 	}
 }
 
@@ -203,24 +204,97 @@ func TestApplyCatalogStaleForcesTierMax(t *testing.T) {
 }
 
 // TestApplyCatalogRefusesEmptyZDRTier pins design D9: a require_zdr route
-// whose model has no ZDR-eligible endpoint refuses rather than pricing an
-// empty set, and nothing falls back to the all tier.
+// whose model has no ZDR-eligible endpoint gets no row, and the table records
+// why — the model, the switch and both ways out — rather than pricing an
+// empty set. Nothing falls back to the all tier, and Lookup fails, so nothing
+// can be charged for it either.
 func TestApplyCatalogRefusesEmptyZDRTier(t *testing.T) {
 	e := entry()
 	e.ZDR, e.ZDREndpoints = nil, 0
 	f := catalogFile("2026-10-14", e)
-	_, err := ApplyCatalog(Embedded(), f, route(true, "cheapest"), catalogNow)
-	if err == nil {
+	got := compile(t, f, route(true, "cheapest"))
+	if _, ok := got.Lookup("vendor/model"); ok {
 		t.Fatal("a require_zdr route on a model with no ZDR tier was priced")
 	}
+	why := got.Refusal("vendor/model")
+	if why == "" {
+		t.Fatal("the refusal was not recorded")
+	}
 	for _, want := range []string{"vendor/model", "require_zdr", "model_prices"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the error does not name %q: %v", want, err)
+		if !strings.Contains(why, want) {
+			t.Errorf("the refusal does not name %q: %v", want, why)
 		}
 	}
 	// The same model is fine on require_zdr: false.
 	if m, ok := compile(t, f, route(false, "cheapest")).Lookup("vendor/model"); !ok || m.Catalog.Tier != "all" {
 		t.Errorf("require_zdr: false did not price the all tier: %+v", m.Catalog)
+	}
+}
+
+// TestApplyCatalogRefusesOnlyTheModelNamed pins the scope of the refusal: a
+// route's pattern claims a family, and a model of that family the catalog
+// cannot price is refused where it is named — not by failing the table for
+// every other model the same route claims. A model nobody names must not
+// make a run's table unbuildable, or one new non-ZDR model at OpenRouter
+// would break every default route on upgrade.
+func TestApplyCatalogRefusesOnlyTheModelNamed(t *testing.T) {
+	e := entry()
+	e.ZDR, e.ZDREndpoints = nil, 0 // "vendor/model" has no ZDR tier
+	f := catalogFile("2026-10-14", e)
+	ok := entry() // "vendor/other" has both tiers
+	f.Models["vendor/other"] = ok
+	r := []CatalogRoute{{Name: "openrouter", Models: []string{"vendor/model", "vendor/other"}, RequireZDR: true}}
+	got := compile(t, f, r)
+	if _, priced := got.Lookup("vendor/other"); !priced {
+		t.Fatal("the model the catalog can price got no row: one unpriceable model failed the table")
+	}
+	if _, priced := got.Lookup("vendor/model"); priced {
+		t.Fatal("the model with no ZDR tier was priced anyway")
+	}
+	if got.Refusal("vendor/model") == "" {
+		t.Error("the refused model is not recorded")
+	}
+	if got.Refusal("vendor/other") != "" {
+		t.Errorf("a priced model carries a refusal: %q", got.Refusal("vendor/other"))
+	}
+	// The same route with the switch off prices both, so the refusal is
+	// about the tier and not about the family.
+	both := compile(t, f, []CatalogRoute{{Name: "openrouter", Models: []string{"vendor/model", "vendor/other"}, RequireZDR: false}})
+	for _, id := range []string{"vendor/model", "vendor/other"} {
+		if _, priced := both.Lookup(id); !priced {
+			t.Errorf("require_zdr: false did not price %s", id)
+		}
+	}
+}
+
+// TestApplyCatalogRefusalClearedByOverride pins the way out: an owner who
+// prices a refused model under model_prices gets a row, and the refusal goes
+// with it — the surfaces judge the pin by the table, so a stale refusal would
+// refuse a model that now has a price.
+func TestApplyCatalogRefusalClearedByOverride(t *testing.T) {
+	e := entry()
+	e.ZDR, e.ZDREndpoints = nil, 0
+	f := catalogFile("2026-10-14", e)
+	tbl, err := ApplyCatalog(Embedded(), f, route(true, "cheapest"), catalogNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tbl.Refusal("vendor/model") == "" {
+		t.Fatal("no refusal to clear")
+	}
+	with, err := tbl.With(Overrides{"vendor/model": {InputPerM: 7, OutputPerM: 9}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := with.Lookup("vendor/model"); !ok {
+		t.Fatal("the override did not price the model")
+	}
+	if why := with.Refusal("vendor/model"); why != "" {
+		t.Errorf("the refusal survived the override: %q", why)
+	}
+	// And the refusal is still on the table it came from: With copies.
+	if tbl.Refusal("vendor/model") == "" {
+		t.Error("With cleared the refusal on the table it was called on")
 	}
 }
 
@@ -296,9 +370,10 @@ func TestApplyCatalogNoFileIsTodayBehavior(t *testing.T) {
 }
 
 // TestShippedCatalogCompilesAllCombos loads the checked-in catalog.json and
-// compiles every row under all four tier × policy combinations. A shipped
-// row that trips the MaxMultiplier refusal or an empty tier is a test
-// failure here rather than a refusal on someone's first run.
+// compiles every row under all four tier × policy combinations. A shipped row
+// that trips the MaxMultiplier refusal is a test failure here rather than a
+// refusal on someone's first run, and a model whose ZDR tier is empty under
+// require_zdr gets no row and a recorded refusal naming the switch.
 func TestShippedCatalogCompilesAllCombos(t *testing.T) {
 	f, err := catalog.Load()
 	if err != nil {
@@ -313,21 +388,25 @@ func TestShippedCatalogCompilesAllCombos(t *testing.T) {
 			for _, policy := range []string{"cheapest", "highest"} {
 				routes := []CatalogRoute{{Name: "openrouter", Models: []string{id}, RequireZDR: requireZDR, Policy: policy}}
 				got, err := ApplyCatalog(Embedded(), f, routes, catalogNow)
-				noZDR := len(f.Models[id].ZDR) == 0
 				if err != nil {
-					if requireZDR && noZDR {
-						// The P8 case: this is the refusal, not a failure.
-						if !strings.Contains(err.Error(), "require_zdr") {
-							t.Errorf("%s: the refusal does not name the switch: %v", id, err)
-						}
-						continue
-					}
 					t.Errorf("%s require_zdr=%v policy=%s: %v", id, requireZDR, policy, err)
 					continue
 				}
+				noZDR := len(f.Models[id].ZDR) == 0
 				if requireZDR && noZDR {
-					t.Errorf("%s has no zdr tier but a require_zdr route priced it", id)
+					// The P8 case: no row, and the refusal names the switch
+					// and both ways out — never a table that fails.
+					if _, priced := got.Lookup(id); priced {
+						t.Errorf("%s has no zdr tier but a require_zdr route priced it", id)
+					}
+					why := got.Refusal(id)
+					if !strings.Contains(why, "require_zdr") || !strings.Contains(why, "model_prices") {
+						t.Errorf("%s: the refusal does not name the switch and both ways out: %q", id, why)
+					}
 					continue
+				}
+				if why := got.Refusal(id); why != "" {
+					t.Errorf("%s: refused though the catalog prices it: %q", id, why)
 				}
 				m, ok := got.Lookup(id)
 				if !ok {

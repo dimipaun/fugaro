@@ -2,6 +2,7 @@ package pricing
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strconv"
@@ -54,20 +55,27 @@ type CatalogRoute struct {
 //     rates compiled at all: Table.With replaces those, and the route's
 //     switches (the refusal below, and the ratio bound) are about a price
 //     the owner has already stated. See CatalogRoute.Overridden.
-//   - A require_zdr route whose model has no ZDR-eligible endpoint is an
-//     error naming the model, the switch and both ways out (design D9, P8).
-//     Nothing falls back to the all-endpoints set: that would price a
-//     data-policy-sensitive route against a data-retaining endpoint.
+//   - A require_zdr route whose model has no ZDR-eligible endpoint gets no
+//     row, and Table.Refused records why: the message names the model, the
+//     switch and both ways out (design D9, P8). Nothing falls back to the
+//     all-endpoints set: that would price a data-policy-sensitive route
+//     against a data-retaining endpoint. The refusal is recorded rather
+//     than returned because a route's pattern claims every model of a
+//     family: failing the table would refuse a run whose pin names a
+//     different, perfectly priceable model of that family, and the next
+//     model OpenRouter adds without a ZDR endpoint would break every
+//     default route on upgrade. A refused model is refused where it is
+//     named — a pin, or a call — which is what Table.Refusal is for.
 //   - A dimension the tier does not price folds to one stated value, set
 //     explicitly, never left at 0: a cache read to 1.0 (not
 //     DefaultCacheRead, and never 0, because a catalog row never passes
 //     through Table.With and so nothing else would raise it), the two cache
 //     writes to DefaultCacheWrite5m/1h, and web search to 0 — the one
 //     dimension with no conservative fold (design D7(a), plan P12).
-//   - A ratio above MaxMultiplier is an error naming the model, the
-//     dimension, both prices and the file's date, never a clamp: clamping
-//     down would under-price and clamping up would hide a model the table
-//     cannot express.
+//   - A ratio above MaxMultiplier gets no row either, with the model, the
+//     dimension, both prices and the file's date recorded in Table.Refused,
+//     never a clamp: clamping down would under-price and clamping up would
+//     hide a model the table cannot express.
 //   - A checked_at past catalog.StaleAfter forces the selected tier's
 //     maximum whatever the policy, and marks the row stale: an old catalog
 //     over-counts, and never under-prices (design D10, P7).
@@ -87,6 +95,9 @@ func ApplyCatalog(t *Table, file *catalog.File, routes []CatalogRoute, now time.
 		source = file.Sources[0]
 	}
 	out := t.clone()
+	// refused holds this call's refusals until every route has been walked:
+	// a model two routes claim is refused only if none of them can price it.
+	refused := map[string]string{}
 	rs := slices.Clone(routes)
 	sort.Slice(rs, func(i, j int) bool { return rs[i].Name < rs[j].Name })
 	for _, r := range rs {
@@ -102,9 +113,13 @@ func ApplyCatalog(t *Table, file *catalog.File, routes []CatalogRoute, now time.
 			}
 			m, err := catalogModel(id, r, e, source, file.CheckedAt, stale)
 			if err != nil {
-				return nil, err
+				if _, seen := refused[id]; !seen {
+					refused[id] = err.Error()
+				}
+				continue
 			}
 			out.Models[id] = m
+			delete(refused, id)
 		}
 		overridden := slices.Clone(r.Overridden)
 		sort.Strings(overridden)
@@ -118,6 +133,17 @@ func ApplyCatalog(t *Table, file *catalog.File, routes []CatalogRoute, now time.
 			}
 			out.Models[id] = catalogLimits(out.Models[id], id, e)
 		}
+	}
+	for _, id := range slices.Sorted(maps.Keys(refused)) {
+		if _, priced := out.Models[id]; priced {
+			// Another route priced it, or the table already had a row:
+			// nothing is missing, so there is nothing to refuse.
+			continue
+		}
+		if out.Refused == nil {
+			out.Refused = map[string]string{}
+		}
+		out.Refused[id] = refused[id]
 	}
 	return out, nil
 }
