@@ -11,6 +11,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -93,5 +94,61 @@ func TestPolicyRecordCarriesPerDay(t *testing.T) {
 	other := policyRecord(policy.Effective{Layer: policy.Layer{PerRunUSD: 2}, Sources: map[string]string{policy.KeyPerRunUSD: policy.SourceCeiling}}, 0)
 	if raw, _ := json.Marshal(other); strings.Contains(string(raw), "per_day_usd") {
 		t.Fatalf("json = %s", raw)
+	}
+}
+
+// (code review, medium) The policy node's model_prices replace the job
+// environment's, and they must do it on the run's own table, not on the
+// embedded one: pricing.Embedded().With(o) drops every row a
+// catalog-eligible route claims (and every route entry with them), so a
+// model `fugaro validate` and `fugaro budget prices` price from the
+// catalogue becomes unpriced in a run whose node carries any model_prices
+// at all — CheckPins then refuses a pin the owner has, and the gateway
+// refuses the call it should charge.
+//
+// The catalogue here is the shipped one and the route is the one
+// providerRun builds: a deepseek/* model on an openrouter route.
+//
+// Mutation (run, restore): return pricing.Embedded().With(o) from
+// policyPrices again and the catalogue model is not priced by the node's
+// table (the fixture check above the assertion is what says the row is
+// really the catalogue's, not an override).
+func TestPolicyPricesKeepTheCatalogRows(t *testing.T) {
+	const catalogModel, embeddedModel = "deepseek/deepseek-v4-flash", "claude-sonnet-5-5"
+	providers := map[string]config.ModelProvider{"openrouter": {
+		Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+		Secret: "openrouter-api-key", Models: []string{"deepseek/*"},
+	}}
+	r := &run{d: Deps{Providers: providers}}
+	// The job's own table (no node prices): the catalogue prices the model.
+	env, err := r.priceTable(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := env.Lookup(catalogModel); !ok {
+		t.Fatalf("fixture: the route's model %s is not priced by the shipped catalogue", catalogModel)
+	}
+	// The node carries prices for a different model, an embedded one.
+	in, out := 20.0, 10.0
+	pp := &projectpolicy.Policy{Prices: map[string]projectpolicy.Price{
+		embeddedModel: {InputPerM: &in, OutputPerM: &out},
+	}}
+	got, err := r.policyPrices(pp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got.Lookup(catalogModel); !ok {
+		t.Errorf("the node's price table has no row for %s: the catalogue's rows and routes were dropped, so the run cannot price a model the owner pinned", catalogModel)
+	}
+	if m, ok := got.Lookup(embeddedModel); !ok || m.Rates.InputPerM != in || m.Rates.OutputPerM != out {
+		t.Errorf("%s row = %+v, %v: the node's own override must still apply", embeddedModel, m, ok)
+	}
+	// A node with no model_prices at all is the job's own table.
+	empty, err := r.policyPrices(&projectpolicy.Policy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := empty.Lookup(catalogModel); !ok {
+		t.Error("a node without prices must leave the run on the job's own table")
 	}
 }
