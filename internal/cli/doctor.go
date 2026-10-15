@@ -1524,7 +1524,7 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 			Problem: fmt.Sprintf("%s records generation %d, and this Fugaro's rules are generation %d: the deployed rules are newer than this Fugaro, which cannot read a project policy written under them",
 				marker, gen, projectpolicy.RulesVersion),
-			Fix: fmt.Sprintf("upgrade Fugaro first: re-running 'fugaro init --firebase' with this binary would redeploy generation %d over the deployed rules",
+			Fix: fmt.Sprintf("upgrade Fugaro first, and do not re-run 'fugaro init --firebase' with this binary: it would redeploy generation %d over the deployed rules",
 				projectpolicy.RulesVersion)}}
 	}
 	if gen < projectpolicy.RulesVersion {
