@@ -53,7 +53,7 @@ func TestPublishSharedWritesAndOverwrites(t *testing.T) {
 	if _, err := localcfg.Parse(got); err != nil {
 		t.Errorf("the published file does not parse: %v", err)
 	}
-	for _, s := range []string{"user:", "endpoints:", "bucket_url", "providers:"} {
+	for _, s := range []string{"user:", "endpoints:", "bucket_url", "providers:", "routing:"} {
 		if strings.Contains(string(got), s) {
 			t.Errorf("published file contains %q", s)
 		}
@@ -357,6 +357,45 @@ func TestPublishSharedNeverPublishesProviders(t *testing.T) {
 	}
 	if strings.Contains(string(got), "providers") || strings.Contains(string(got), "openrouter") {
 		t.Errorf("providers were published:\n%s", got)
+	}
+	if r := publishedRepos(t, dir); len(r) != 1 || r["acme/app"].Provider != "github" {
+		t.Errorf("published repos = %v; want only the local acme/app", r)
+	}
+}
+
+// TestPublishSharedNeverPublishesRouting: the routing switch is the same
+// decision as providers, from the switch's side — which Claude IDs may leave
+// for a third party — and it resolves through providers, which are local-only.
+// The local routing block is not published, and a published object carrying one
+// (an older publisher's, or a bucket writer's) is refused and replaced, never
+// merged: anyone who can write the runs bucket must not be able to route
+// another operator's Claude calls by adding one.
+func TestPublishSharedNeverPublishesRouting(t *testing.T) {
+	f := newCloudFixture(t)
+	dir := filepath.Join(f.dir, "runs")
+	block := "routing:\n  claude:\n    via: direct\n    models: [claude-sonnet-5-5]\n"
+	writePublished(t, dir, publishedWithOtherRepo+block)
+	if _, err := localcfg.Parse([]byte(publishedWithOtherRepo + block)); err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	f.appendConfig(t, block)
+	lc := publishable(t)
+	if lc.Routing == nil || lc.Routing.Claude == nil {
+		t.Fatalf("the local fixture has no routing block: %+v", lc.Routing)
+	}
+	var warned []string
+	if _, err := publishSharedWarn(context.Background(), lc, func(m string) { warned = append(warned, m) }); err != nil {
+		t.Fatal(err)
+	}
+	if len(warned) != 1 || !strings.Contains(warned[0], "refused") || !strings.Contains(warned[0], "routing") {
+		t.Errorf("warnings = %q", warned)
+	}
+	got, err := os.ReadFile(sharedObjectPath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "routing") {
+		t.Errorf("routing was published:\n%s", got)
 	}
 	if r := publishedRepos(t, dir); len(r) != 1 || r["acme/app"].Provider != "github" {
 		t.Errorf("published repos = %v; want only the local acme/app", r)

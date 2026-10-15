@@ -617,3 +617,83 @@ func TestVersionErrorCarriesBothVersions(t *testing.T) {
 		t.Errorf("CLISkew = %q, want the CLI's remedy only", got)
 	}
 }
+
+// TestPolicyCarriesRouting: the switch is delivered by the node — `project
+// policy publish` copies the operator's routing block into config/policy/shared
+// and a run reads it back byte for byte — and the node is held to the same
+// shape rule the operator's own config is: an explicit list of Claude IDs,
+// never a pattern (D1a). An absent block stays absent, which is direct (D1b).
+func TestPolicyCarriesRouting(t *testing.T) {
+	// The node carries the route entry the switch resolves through: one
+	// explicit "anthropic/<id>" per Claude ID, with allow_data_to written
+	// (D1b) — without them the switch names a route nothing claims, which the
+	// decoder refuses below.
+	pol := &Policy{
+		Version: Version,
+		Budget:  Budget{Mode: "enforce", PerRunUSD: 5},
+		Providers: map[string]Provider{"openrouter": {ModelProvider: config.ModelProvider{
+			Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api/v1", Auth: "bearer",
+			Secret: "openrouter-key", Models: []string{"anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5"},
+			AllowDataTo: []string{"*"}, PricePolicy: PricePolicyHighest,
+		}}},
+		Routing: &Routing{Claude: &ClaudeRoute{Via: RouteOpenRouter, Models: []string{"claude-sonnet-5-5", "claude-opus-5-5"}}},
+	}
+	// The delivery path: the CLI marshals the policy onto the node, exactly as
+	// project policy publish writes it.
+	raw, err := json.Marshal(pol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"claude-sonnet-5-5"`) {
+		t.Fatalf("the node does not carry the IDs: %s", raw)
+	}
+	got, found, err := Decode(raw)
+	if err != nil || !found {
+		t.Fatalf("Decode = (%v, %v, %v)", got, found, err)
+	}
+	if got.Routing == nil || got.Routing.Claude == nil {
+		t.Fatalf("the routing block did not survive the node: %+v", got.Routing)
+	}
+	if got.Routing.Claude.Via != RouteOpenRouter || len(got.Routing.Claude.Models) != 2 || got.Routing.Claude.Models[0] != "claude-sonnet-5-5" {
+		t.Errorf("routing = %+v", got.Routing.Claude)
+	}
+	// A node without one decodes to no block: direct (D1b).
+	if p, _, err := Decode([]byte(`{"version": 1}`)); err != nil || p.Routing != nil {
+		t.Errorf("an absent block = (%+v, %v), want nil and no error", p.Routing, err)
+	}
+	// And the shapes D1a refuses are refused on the node too, with the key
+	// named: a pattern, an empty list under via: openrouter, and a via this
+	// Fugaro cannot act on.
+	routes := `{"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["anthropic/claude-sonnet-5.5"], "allow_data_to": ["*"]}}`
+	for _, tc := range []struct{ name, routing, want string }{
+		{"a glob", `{"claude": {"via": "openrouter", "models": ["claude-*"]}}`, "explicit list"},
+		{"an empty list", `{"claude": {"via": "openrouter"}}`, "routing.claude.models"},
+		{"an empty via", `{"claude": {"via": ""}}`, "routing.claude.via"},
+	} {
+		raw := []byte(`{"version": 1, "providers": ` + routes + `, "routing": ` + tc.routing + `}`)
+		p, found, err := Decode(raw)
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode = (%v, %v, %v), want a refusal", tc.name, p, found, err)
+		} else if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want it to name %q", tc.name, err, tc.want)
+		}
+	}
+	// D1b is D1b on the node too (the security review of this slice): a node
+	// that routes a Claude ID through a provider which does not claim it, or
+	// which claims it without allow_data_to written, is refused — the node is
+	// the artifact every run reads, and "the switch is there but inert" is not
+	// a state a run reports.
+	for _, tc := range []struct{ name, providers, want string }{
+		{"no provider claims the ID", `{"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["*"]}}`, "no provider entry claims it"},
+		{"the claim has no allow_data_to", `{"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["anthropic/claude-sonnet-5.5"]}}`, "allow_data_to"},
+		{"no providers block at all", `{}`, "no provider entry claims it"},
+	} {
+		raw := []byte(`{"version": 1, "providers": ` + tc.providers + `, "routing": {"claude": {"via": "openrouter", "models": ["claude-sonnet-5-5"]}}}`)
+		p, found, err := Decode(raw)
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode = (%v, %v, %v), want a refusal", tc.name, p, found, err)
+		} else if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want it to name %q", tc.name, err, tc.want)
+		}
+	}
+}

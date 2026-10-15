@@ -66,9 +66,15 @@
 //     node an administrator can write by hand — and encoding/json's own
 //     matching, which folds case, is one way to misspell a name that the
 //     strictness above does not catch by itself. The tolerance that stays is at
-//     the top level and in `routing`, whose unknown keys cannot fail open:
-//     routing's values are checked by validRouting, which refuses a block this
-//     Fugaro cannot act on.
+//     the top level, where every unknown key is listed in Policy.UnknownKeys:
+//     each one is a section of its own, so tolerating it leaves the rest of the
+//     policy in force. Inside `routing` there is no such key to tolerate. The
+//     block has exactly one member that does anything — routing.claude — so a
+//     block naming no claude switch (a misspelt member, or a vendor this
+//     release does not route) would decode to a nil switch and leave every
+//     Claude call on the direct route while the node says otherwise: it is
+//     refused, see validRoutingMembers. The values of the switch itself are
+//     checked by validRouting, which refuses a block this Fugaro cannot act on.
 //
 // The readable node holds nothing personal and no secret values: every run
 // token can read it, and a prompt-injected agent can take the token through
@@ -212,16 +218,18 @@ type PriceTier struct {
 
 // Routing is phase 1b's routing layer (D1a: an object, not a scalar). nil is
 // today's behaviour, direct (D1b).
-type Routing struct {
-	Claude *ClaudeRoute `json:"claude,omitempty"`
-}
+//
+// It is config.Routing, aliased rather than respelled, for the reason Provider
+// embeds config.ModelProvider: one document, one declaration. The switch is
+// written in the operator's config, validated there against the providers it
+// resolves through (config.CheckRouting), and only *delivered* here — so a
+// second declaration of the same object would be a second spelling of it, and
+// the reader would then hold it to a rule the writer never applied.
+type Routing = config.Routing
 
 // ClaudeRoute is the Claude routing switch: an explicit list of Claude IDs,
-// never a pattern (D1a).
-type ClaudeRoute struct {
-	Via    string   `json:"via"` // "direct", "openrouter" or "auto"
-	Models []string `json:"models"`
-}
+// never a pattern (D1a). config.RoutingClaude, by the alias above.
+type ClaudeRoute = config.RoutingClaude
 
 // MaxPolicyBytes bounds the policy node Decode accepts. The node is policy
 // text — rules, patterns, prices and names — read by every run, not a data
@@ -322,14 +330,6 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		}
 	}
 
-	if rraw, ok := doc["routing"]; ok && !isNull(rraw) {
-		if err := json.Unmarshal(rraw, &p.Routing); err != nil {
-			return nil, true, fmt.Errorf("projectpolicy: routing: %w", err)
-		}
-		if err := validRouting(p.Routing); err != nil {
-			return nil, true, err
-		}
-	}
 	if praw, ok := doc["providers"]; ok && !isNull(praw) {
 		ps, err := decodeProviders(praw)
 		if err != nil {
@@ -337,6 +337,23 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		}
 		p.Providers = ps
 		if err := validProviders(praw, p.Providers); err != nil {
+			return nil, true, err
+		}
+	}
+	// Routing is judged *after* the providers block, and against it: D1b's
+	// safeguard (a route resolves to a provider only when that provider's
+	// allow_data_to is written) is a property of the two blocks together, and
+	// the node is the document a run is routed by. Decoding them in the other
+	// order would hold the switch to its shape alone and accept a node that
+	// names a route nothing in it claims.
+	if rraw, ok := doc["routing"]; ok && !isNull(rraw) {
+		if err := json.Unmarshal(rraw, &p.Routing); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: routing: %w", err)
+		}
+		if err := validRoutingMembers(rraw, p.Routing); err != nil {
+			return nil, true, err
+		}
+		if err := validRouting(p.Routing, p.Providers); err != nil {
 			return nil, true, err
 		}
 	}
@@ -466,7 +483,7 @@ func validProviders(raw json.RawMessage, providers map[string]Provider) error {
 	if err := json.Unmarshal(raw, &entries); err != nil {
 		return fmt.Errorf("projectpolicy: providers: %w", err)
 	}
-	carrier := make(map[string]config.ModelProvider, len(providers))
+	carrier := providerCarrier(providers)
 	for _, name := range providerNames(providers) {
 		p := providers[name]
 		if err := validPricePolicy(name, p.PricePolicy); err != nil {
@@ -504,7 +521,6 @@ func validProviders(raw json.RawMessage, providers map[string]Provider) error {
 				}
 			}
 		}
-		carrier[name] = p.ModelProvider
 	}
 	// config's own validation is the authority on this document, so a value it
 	// refuses in fugaro.yaml is refused on the readable node too: the node is
@@ -519,35 +535,215 @@ func validProviders(raw json.RawMessage, providers map[string]Provider) error {
 	return nil
 }
 
-// The values routing.claude.via accepts (D1a).
+// The values routing.claude.via accepts (D1a). config's own values, aliased:
+// the switch is one object, written in the operator's config and read here.
 const (
 	// RouteDirect calls Anthropic directly: what a policy without a routing
 	// block means (D1b).
-	RouteDirect = "direct"
+	RouteDirect = config.RouteDirect
 	// RouteOpenRouter routes Claude calls through an openrouter-compatible
 	// provider entry.
-	RouteOpenRouter = "openrouter"
+	RouteOpenRouter = config.RouteOpenRouter
 	// RouteAuto routes by the model list the route carries.
-	RouteAuto = "auto"
+	RouteAuto = config.RouteAuto
 )
 
-// validRouting checks the routing block's values. Phase 1b is what reads it,
-// but a via this Fugaro does not know must be refused now rather than
-// decoded: routing is enforced, and an unrecognised value would later mean
-// either "no route" (a silent bypass of what the owner asked for) or a
-// reader that guesses. The block carries no other value worth checking
-// today; models are Claude IDs, which phase 1b validates against its own
-// list.
-func validRouting(r *Routing) error {
+// CheckRoutingMemberNames refuses a routing block whose member names encoding/json
+// does not read the way the document spells them: a name written twice, two names
+// that differ only in case, or a modelled name (`claude`, `via`, `models`) spelled
+// in another case. It is exported because the CLI's publish writes into the same
+// block and must not add an exact `claude` beside a `Claude` a hand-written node
+// already carries: the two fold to one field, and which one wins is the order the
+// keys were written in.
+//
+// The node is the one document a run is routed by, and it is hand-writable (an
+// administrator edits it through the RTDB console or the CLI, not through a config
+// loader that would have refused this). The values are checked by validRouting and
+// config.CheckRouting; this is the check that the *names* are the ones those checks
+// read, because a name they do not read is not a value they refuse — it is a value
+// nothing looked at. `routing.claude` is where it matters most: `{"via": "direct",
+// "VIA": "openrouter"}` and `{"via": "openrouter", "via": "direct"}` both decode to
+// a switch whose route is decided by document order, and the diff, the runner and
+// the operator's own reading would each see a different one.
+//
+// `routing: {}`, and a block whose members are all names this Fugaro does not
+// model (a sibling a newer release added), pass: there is no name here to read two
+// ways.
+func CheckRoutingMemberNames(raw json.RawMessage) error {
+	names, err := objectMemberNames(raw)
+	if err != nil {
+		return fmt.Errorf("projectpolicy: routing: %w", err)
+	}
+	if err := checkMemberNames("routing", names, []string{"claude"}); err != nil {
+		return err
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &members); err != nil {
+		return fmt.Errorf("projectpolicy: routing: %w", err)
+	}
+	claude, ok := members["claude"]
+	if !ok || isNull(claude) {
+		return nil
+	}
+	cnames, err := objectMemberNames(claude)
+	if err != nil {
+		return fmt.Errorf("projectpolicy: routing.claude: %w", err)
+	}
+	return checkMemberNames("routing.claude", cnames, []string{"via", "models"})
+}
+
+// checkMemberNames refuses, at one level of the block, a member name encoding/json
+// would read as another: the exact same name twice (the decoder keeps the last it
+// reads, so which value survives depends on the order the keys were written in),
+// two names differing only in case (the decoder matches a member name
+// case-insensitively, so they are one field), or a modelled name spelled in
+// another case (which is the same sentence one name at a time). A name this
+// Fugaro does not model passes: an unknown key here is a key this reader ignores,
+// and the refusal for a block that then names no switch is validRoutingMembers'.
+func checkMemberNames(prefix string, names, known []string) error {
+	seen := map[string]bool{}
+	folded := map[string]string{}
+	for _, n := range names {
+		if seen[n] {
+			return fmt.Errorf("projectpolicy: %s names %q twice: encoding/json keeps the last one it reads, so which value this Fugaro routes by would depend on the order the keys were written in — write the member once", prefix, n)
+		}
+		seen[n] = true
+		lower := strings.ToLower(n)
+		if first, dup := folded[lower]; dup {
+			return fmt.Errorf("projectpolicy: %s names both %q and %q, which encoding/json reads as one member (it matches a member name case-insensitively), so which value this Fugaro routes by would depend on the order the keys were written in — write the member once, spelled as the node spells it", prefix, first, n)
+		}
+		folded[lower] = n
+		for _, k := range known {
+			if lower == strings.ToLower(k) && n != k {
+				return fmt.Errorf("projectpolicy: %s spells %s as %q: encoding/json matches a member name case-insensitively, so this Fugaro reads it as %s — write the member as %s documents it, or remove it", prefix, k, n, k, k)
+			}
+		}
+	}
+	return nil
+}
+
+// objectMemberNames returns the member names of a JSON object in the order the
+// document writes them, duplicates included: decoding into a map keeps only the
+// last one of a repeated key, and seeing that there was more than one is the
+// whole point of this walk.
+func objectMemberNames(raw json.RawMessage) ([]string, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return nil, errors.New("the block is not an object")
+	}
+	var names []string
+	for dec.More() {
+		kt, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		name, ok := kt.(string)
+		if !ok {
+			return nil, errors.New("the block has a member without a name")
+		}
+		names = append(names, name)
+		var v json.RawMessage
+		if err := dec.Decode(&v); err != nil {
+			return nil, err
+		}
+	}
+	return names, nil
+}
+
+// validRoutingMembers refuses a written routing block that names no claude
+// switch this Fugaro can act on.
+//
+// An unknown key *inside* this block cannot get the tolerance an unknown
+// top-level key gets. Every other top-level key is a section of its own, so
+// tolerating one leaves the rest of the policy in force; `routing` has exactly
+// one member that does anything, and a block whose member is misspelt
+// (`routing: {claud: ...}`) or belongs to something this release does not route
+// (`routing: {gemini: ...}`) decodes to a nil switch — every Claude call stays
+// on the direct route, silently, on the one document a run is routed by. That
+// is the failure this package exists to prevent, read at P8's boundary: what an
+// older reader would drop here is not a newer release's extra tightening, it is
+// the switch itself.
+//
+// Nothing forward-compatible is lost: a routing block is only ever *delivered*
+// to a node by this Fugaro (internal/cli copies it out of the operator's config,
+// whose own decode refuses these blocks), so a node carrying one this cannot
+// name was hand-written or written by a release whose node also bumps Version,
+// which is what refuses a node this binary cannot read. The remedy is in the
+// message, because the node's writer is an administrator.
+//
+// `routing: {}` — a block with no members at all — is tolerated, exactly as an
+// absent one is: it names nothing, and a nil switch is what it says.
+//
+// The member *names* are checked first, by CheckRoutingMemberNames: encoding/json
+// matches a member case-insensitively and keeps the last of two that fold to one
+// name, so `{"claude": {"via": "direct", "VIA": "openrouter"}}` would otherwise
+// be a switch this Fugaro reads as one of two routes depending on the order the
+// keys were written in — and a `CLAUDE` alone would be read as the switch while
+// the name check below saw no `claude` at all.
+func validRoutingMembers(raw json.RawMessage, r *Routing) error {
+	if err := CheckRoutingMemberNames(raw); err != nil {
+		return err
+	}
+	if r != nil && r.Claude != nil {
+		return nil
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &members); err != nil {
+		return fmt.Errorf("projectpolicy: routing: %w", err)
+	}
+	if len(members) == 0 {
+		return nil
+	}
+	named := make([]string, 0, len(members))
+	for name := range members {
+		named = append(named, fmt.Sprintf("%q", name))
+	}
+	sort.Strings(named)
+	if _, isClaude := members["claude"]; isClaude {
+		// claude is named, so the member name is not the problem: the value is
+		// (a null, or the switch decoded to nothing).
+		return fmt.Errorf("projectpolicy: routing.claude is written with no switch (the block names %s): write routing.claude as an object with the Claude IDs it routes, or remove the routing block — an absent one is direct (D1b)", strings.Join(named, ", "))
+	}
+	return fmt.Errorf("projectpolicy: routing names %s, and this Fugaro routes claude alone: a block that names no claude switch leaves every Claude call on the direct route while the node says otherwise. Write routing.claude, or remove the routing block — an absent one is direct (D1b)", strings.Join(named, ", "))
+}
+
+// validRouting checks the routing block against the providers block of the same
+// node, with the rules the operator's own config loader applies
+// (config.CheckRouting): the via, an explicit list of Claude IDs and never a
+// pattern (D1a), and — for every ID the switch names — a provider entry in
+// this node that claims it and has allow_data_to written (D1b).
+//
+// Both halves are applied here because the node is the artifact every run
+// reads: an operator's config is judged at load, but a hand-written node is
+// never loaded from a config at all. A node that names a route nothing claims,
+// or claims it without allow_data_to written, is refused rather than accepted
+// as "the switch is there but inert" — D1b's safeguard would otherwise be
+// nominal on the one document that decides where a Claude call goes, and
+// "inert" is a state nothing downstream would report.
+func validRouting(r *Routing, providers map[string]Provider) error {
 	if r == nil || r.Claude == nil {
 		return nil
 	}
-	via := r.Claude.Via
-	switch via {
-	case RouteDirect, RouteOpenRouter, RouteAuto:
-		return nil
+	for _, p := range config.CheckRouting(r, providerCarrier(providers), "routing") {
+		return fmt.Errorf("projectpolicy: %s: %s", p.Path, p.Message)
 	}
-	return fmt.Errorf("projectpolicy: routing.claude.via %q must be %s, %s or %s", via, RouteDirect, RouteOpenRouter, RouteAuto)
+	return nil
+}
+
+// providerCarrier is the providers block in the carrier internal/config's rules
+// are written against (config.ModelProvider, which the policy's Provider
+// embeds). One map, built the same way for the providers' own validation and for
+// the routing check that reads them, so the two cannot judge different entries.
+func providerCarrier(providers map[string]Provider) map[string]config.ModelProvider {
+	out := make(map[string]config.ModelProvider, len(providers))
+	for _, name := range providerNames(providers) {
+		out[name] = providers[name].ModelProvider
+	}
+	return out
 }
 
 // validPricePolicy checks the one provider value the carrier's own validation
