@@ -688,9 +688,12 @@ working:
   support labels" (Batch REST reference, checked 2026-10-15). A design that
   sets only `Job.labels` leaves every VM unlabelled — and then the reaper and
   Check 57a step 8's
-  `gcloud compute instances list --filter='labels.fugaro=managed'`
+  `gcloud compute instances list --filter='labels.fugaro_chk=57'`
   find nothing, which reads as "no survivors" precisely when a VM *has*
-  leaked. So the Fugaro set goes in **both**: `fugaro=managed`,
+  leaked. (The check's filter is this design's own second label for exactly
+  that reason: filtered by the installation's `fugaro=managed`, which only
+  `AllocationPolicy.labels` put on a VM, it would list nothing and look like a
+  clean teardown.) So the Fugaro set goes in **both**: `fugaro=managed`,
   `fugaro_repo=<slug>`, `fugaro_workflow=<variant>`, plus the per-run
   `fugaro_run=<slug>-<run id>`, sanitized to the label charset and truncated
   to 63 characters with a short hash of the run id when the slug and id
@@ -1320,7 +1323,11 @@ of Checks 30 and 32.
 ### 7.1 The number
 
 `docs/gcp-live-checklist.md` reserves a number once and never reuses it. On
-`main`, checks 1–44 have rows and the provider-price-catalog design's paragraph
+`main`, the table has rows for checks 1–23, 26–37 and 40–44; **24, 25, 38 and
+39 are reserved with no row** (24 and 25 carry their own `## Check` sections in
+the file, 38 and 39 are the retire-image-mirror plan's and are described there
+— so "checks 1–44 have rows" is not quite true, though nothing about the
+numbering here turns on it). The provider-price-catalog design's paragraph
 names 45 as "the next free number" — true when that paragraph was written.
 Since then the numbers have been claimed by plans that have not landed here:
 **45 and 46 by the OpenRouter senior-reviewer plan (PR #359), 47 by the
@@ -1354,8 +1361,8 @@ plan. It is split:
 
 - **57a — the pre-build probe.** Eleven steps, **`gcloud` and a committed job
   JSON, no Fugaro change whatsoever**, runnable today against the sandbox
-  project (steps 1, 5 and 8 use the *existing* Cloud Run backend for their
-  baseline and their comparison). It is the design's **go/no-go**, and the plan
+  project (step 1 alone uses the *existing* Cloud Run backend, for the
+  baseline the 120 s budget is measured against). It is the design's **go/no-go**, and the plan
   makes it Task 0 (§8.1): if it fails, nothing below it is built.
 - **57b — the post-build acceptance run.** Six steps that only make sense once
   `backend: cloud-batch` can be enabled, i.e. after the last task of §8.1. They
@@ -1376,7 +1383,8 @@ design's own text is the source; the plan task writes it to
       "runnables": [{
         "container": {
           "imageUri": "us-east5-docker.pkg.dev/fugaro-dev/fugaro/fugaro-base:0.7.0",
-          "commands": ["bash", "-lc", "docker run --rm docker.io/library/postgres:17 postgres --version && id && echo first-line"]
+          "commands": ["bash", "-lc", "id && echo first-line"],
+          "volumes": ["/var/run/docker.sock:/var/run/docker.sock"]
         }
       }],
       "computeResource": {"cpuMilli": "2000", "memoryMib": "4096"},
@@ -1400,6 +1408,31 @@ design's own text is the source; the plan task writes it to
 disk and the `imageUri` and nothing else. `machineType`, the regions and the
 account are the check's variables, named in the setup block below.)
 
+**Two things about that JSON are deliberate, and an earlier draft got both
+wrong.** First, the runnable carries the **socket bind mount**
+(`volumes: ["/var/run/docker.sock:/var/run/docker.sock"]`) — Batch documents
+`volumes` as a bind mount from the host, and §1.1 needs it — because the base
+image ships the Docker **CLI only, with no daemon** (`docs/base-image.md`:11:
+"the Docker CLI (client only: a Cloud Run job has no Docker daemon)"); a
+`docker` command in this container reaches the COS host's daemon **through this
+mount**, and without it the CLI fails and any `&&` chain behind it never runs.
+Second, the committed command is `id && echo first-line` and **not** a `docker
+run`: with the mount present but unused, steps 2 and 3 measure the cold start
+to the run's own first line — the number G2's 120 s budget is about — instead
+of timing a Docker Hub pull for `postgres:17` on top of it, which would make
+the medians that decide C4 and the go/no-go a measurement of something else.
+**Step 4 is where a Docker command runs**, and it submits this same JSON with
+one field changed (the plan keeps both committed, `check57/job.json` and
+`check57/job-docker.json`):
+
+```json
+"commands": ["bash", "-lc", "docker run --rm docker.io/library/postgres:17 postgres --version && docker run -d --name pg -e POSTGRES_PASSWORD=x docker.io/library/postgres:17 && until docker exec pg pg_isready -U postgres; do sleep 1; done && echo first-line"]
+```
+
+So every 57a submission carries the socket mount, 57a-4 and 57a-6 exercise the
+path it opens, and the cold-start medians of 57a-2 and 57a-3 are measured with
+a mount whose use begins only after the first line they time to.)
+
 **Guarded setup block (every step re-runs it; it hard-stops otherwise).** The
 shape is Check 43's, because the traps are Check 43's: an empty `$P` makes
 `gcloud` fall back to its ambient `core/project` — for the owner a `*-prod`
@@ -1409,7 +1442,7 @@ resources**.
 
 ```bash
 # === Check 57: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
-# step (57a-1..57a-10, 57b-1..57b-5, Restore). It is idempotent, and nothing
+# step (57a-1..57a-11, 57b-1..57b-6, Restore). It is idempotent, and nothing
 # below the three hard stops runs unless all three pass. ===
 P=fugaro-dev                 # HARD-CODED sandbox project id; never belong, and never read from gcloud
 L=us-east5                   # the sandbox installation's region
@@ -1480,12 +1513,16 @@ leaked VM of *this check* is told from a real run's.
    image Batch "might not be supported" is exactly the question. **The
    recommendation for C4 follows these two numbers, not this document** (§1.2,
    §1.9).
-4. **Docker inside a run.** In a `$J` job, `docker run --rm
-   docker.io/library/postgres:17 postgres --version`, then start a small
-   Postgres container and wait for `pg_isready`. **FACT:** whether the socket
-   was reachable; which permission path let the container open it (container as
+4. **Docker inside a run.** Submit `check57/job-docker.json` — the committed
+   JSON above with only `commands` replaced by the Docker chain quoted after
+   it, the socket mount unchanged — so the container's Docker CLI talks to the
+   host daemon: `docker run --rm docker.io/library/postgres:17 postgres
+   --version`, then a small Postgres container, then `pg_isready` until it
+   answers. **FACT:** whether the socket was reachable at all (the CLI's own
+   error if not); which permission path let the container open it (container as
    root, a supplementary group via the runnable's `options`, or a socket group
-   baked into the boot image); the pull time; and the time to `pg_isready`.
+   baked into the boot image — §2.2's three orderings); the pull time; and the
+   time to `pg_isready`.
 5. **The cost of one run.** Read the billing export (or the console's cost
    table) for one step-2 job and compare it with what the run's own record says
    (`cost.compute_usd` on a real run, 57b-5; on the probe, compute the estimate
@@ -1525,10 +1562,12 @@ leaked VM of *this check* is told from a real run's.
    `allocationPolicy.labels` do (§2.4, Batch REST reference, checked
    2026-10-15), so a design or a check that sets only `Job.labels` lists
    nothing and reads it as "no survivors" precisely when a VM has leaked.
-   **FACT** per path: the job's final state (and, for cancel, whether
-   `Execution` after the cancel returned a terminal state rather than
-   not-found — §1.4), whether any VM survived, and for how long after the job
-   reached its terminal state. This is the answer to "does the reaper delete
+   **FACT** per path: the job's final state (and, for cancel, what
+   `gcloud batch jobs describe` reports afterwards and that `jobs.get` **still
+   returns the job** — a cancel, not a delete, §1.4; the Fugaro-side reading of
+   that, `Execution` returning a terminal state, is 57b-3 and needs the
+   backend), whether any VM survived, and for how long after the job reached
+   its terminal state. This is the answer to "does the reaper delete
    the instance" for every way a run can end, and it is also what tells whether
    the job's own teardown is enough (§3.4, C14).
 9. **IAM, read raw.** Read the sandbox's IAM and answer, with the actual
@@ -1761,7 +1800,7 @@ senior reviewer before merge, not just the normal one.
    3, 4, 5 and 6 — by construction, because `doctor` is what gates it.
 10. **Check 57b, the docs, the skills and the release bullet** — the last task,
     as in every other group: the post-build acceptance run on the real backend
-    (§7.3).
+    (§7.2, 57b).
 11. **The secrets fallback (only if needed).** The runner-side Secret Manager
     fetch for a secret whose name is known only at run time (§1.6). It is a
     task only if Task 7 finds such a case; otherwise it is dropped, not built.
