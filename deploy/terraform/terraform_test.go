@@ -57,6 +57,21 @@ func TestEmbeddedTree(t *testing.T) {
 		"gcp/roots/firebase/outputs.tf",
 		"gcp/roots/firebase/.terraform.lock.hcl",
 		"gcp/roots/firebase/tests/firebase.tftest.hcl",
+		// The Batch backend's installation-level provisioning (design
+		// compute-backend §8.1 task 6). Its build is a script, not HCL: the
+		// wait in the middle of it has no Terraform resource.
+		"gcp/modules/compute/versions.tf",
+		"gcp/modules/compute/variables.tf",
+		"gcp/modules/compute/apis.tf",
+		"gcp/modules/compute/iam.tf",
+		"gcp/modules/compute/network.tf",
+		"gcp/modules/compute/preload.tf",
+		"gcp/modules/compute/preload.sh",
+		"gcp/modules/compute/outputs.tf",
+		"gcp/roots/compute/main.tf",
+		"gcp/roots/compute/variables.tf",
+		"gcp/roots/compute/outputs.tf",
+		"gcp/roots/compute/.terraform.lock.hcl",
 	} {
 		if _, err := fs.Stat(FS, p); err != nil {
 			t.Errorf("embedded tree lacks %s: %v", p, err)
@@ -1059,9 +1074,14 @@ var (
 	// checked against backendRoleRE; each.value (and each.value.role) takes
 	// its roles from literals and references elsewhere in the file, which are
 	// scanned the same way.
-	allowedRoleExprs = regexp.MustCompile(`^(each\.value(\.role)?|var\.job_runner_role|var\.installation\.role_ids\.(tag_mover|build_submitter)|google_project_iam_custom_role\.(launcher|build_submitter|token_minter|job_runner)\.name|google_project_iam_custom_role\.history\[0\]\.name)$`)
+	// The compute module's two roles and its build-submitter reference are on
+	// the allowlist knowingly: each is created by that module with a pinned
+	// permission list (TestComputeReaperRoleIsExactlySix and
+	// TestComputePreloadBuilderRoleAreExactlyTheBuild), and the
+	// build-submitter id is the installation's own role.
+	allowedRoleExprs = regexp.MustCompile(`^(each\.value(\.role)?|var\.job_runner_role|var\.installation\.role_ids\.(tag_mover|build_submitter)|var\.build_submitter_role|google_project_iam_custom_role\.(launcher|build_submitter|token_minter|job_runner|reaper|preload_builder)\.name|google_project_iam_custom_role\.history\[0\]\.name)$`)
 	// The member expressions an IAM member may use.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|google_service_account\.(job|build|scheduler)\.member|google_service_account\.history\[0\]\.member|"serviceAccount:\$\{var\.(history_account|installation\.scheduler_service_account)\}")$`)
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload)\.member|google_service_account\.history\[0\]\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|installation\.scheduler_service_account)\}")$`)
 
 	// Roles that reach the budget backend (RTDB, Firestore, Identity
 	// Platform, API keys, the token signer, IAM or project policy), or that
@@ -1204,6 +1224,24 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 				t.Errorf("%s: %s: permissions is not a literal list of quoted permissions (a variable, local or concat is refused)", path, blk.name)
 				continue
 			}
+			// The compute module's two roles are the one knowing exception to
+			// the compute ban, and each is pinned to its exact permission
+			// list by TestComputeReaperRoleIsExactlySix and
+			// TestComputePreloadBuilderRoleAreExactlyTheBuild: the reaper ends
+			// Batch jobs and VMs and creates nothing, and the builder boots,
+			// reads, stops, images and deletes one VM. Neither reaches the
+			// budget backend, identities or IAM in any other way.
+			if blk.name == "google_project_iam_custom_role.reaper" || blk.name == "google_project_iam_custom_role.preload_builder" {
+				if !strings.HasPrefix(path, "gcp/modules/compute/") {
+					t.Errorf("%s: %s is not in the compute module", path, blk.name)
+				}
+				for _, p := range quotedPerm.FindAllStringSubmatch(m[1], -1) {
+					if !strings.HasPrefix(p[1], "compute.") && !strings.HasPrefix(p[1], "batch.jobs.") {
+						t.Errorf("%s: %s holds %s, which is neither the reaper's six nor the preload builder's build", path, blk.name, p[1])
+					}
+				}
+				continue
+			}
 			if blk.name == "google_project_iam_custom_role.token_minter" {
 				if !strings.HasPrefix(path, "gcp/modules/firebase/") || strings.TrimSpace(strings.Trim(strings.TrimSpace(m[1]), ",")) != `"iam.serviceAccounts.signJwt"` {
 					t.Errorf("%s: %s is not the signJwt-only role in the Firebase module", path, blk.name)
@@ -1228,6 +1266,302 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 }
 
 var quotedPerm = regexp.MustCompile(`"([^"]+)"`)
+
+// The compute module's provisioning, held to what the design says it must be
+// (docs/design/compute-backend.md §3.2, §3.7, §8.1 task 6). These are text
+// checks because the values that matter -- which role, on what, narrowed by
+// what condition -- are what a reviewer has to read, and a plan assertion
+// only ever sees the inputs a test hands it.
+
+// permissionsOf returns the literal permissions a custom role block holds.
+func permissionsOf(t *testing.T, path string, blk block) []string {
+	t.Helper()
+	m := regexp.MustCompile(`(?s)permissions\s*=\s*\[(.*?)\]`).FindStringSubmatch(blk.body)
+	if m == nil {
+		t.Fatalf("%s: %s has no literal permissions list", path, blk.name)
+	}
+	var perms []string
+	for _, p := range quotedPerm.FindAllStringSubmatch(m[1], -1) {
+		perms = append(perms, p[1])
+	}
+	slices.Sort(perms)
+	return perms
+}
+
+// The reaper's role is the SIX permissions the reaper's code uses, and
+// nothing else: list, get, cancel and delete a job, and list and delete an
+// instance. It carries no create permission of any kind, and the two built-in
+// roles Google's own pages name for the same calls -- batch.jobsEditor (which
+// also carries batch.jobs.create) and compute.instanceAdmin.v1 (which carries
+// the whole instance lifecycle, setMetadata included) -- are granted nowhere
+// in the tree.
+func TestComputeReaperRoleIsExactlySix(t *testing.T) {
+	want := []string{
+		"batch.jobs.cancel",
+		"batch.jobs.delete",
+		"batch.jobs.get",
+		"batch.jobs.list",
+		"compute.instances.delete",
+		"compute.instances.list",
+	}
+	roles, grants := 0, 0
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_custom_role") {
+			if blk.name != "google_project_iam_custom_role.reaper" {
+				continue
+			}
+			roles++
+			if path != "gcp/modules/compute/iam.tf" {
+				t.Errorf("%s: the reaper's role is the compute module's", path)
+			}
+			if got := permissionsOf(t, path, blk); !slices.Equal(got, want) {
+				t.Errorf("%s: the reaper holds %v, want exactly %v (design §3.7)", path, got, want)
+			}
+		}
+		for _, blk := range allResourceBlocks(t, path, b) {
+			if !anyIAMRE.MatchString(blk.typ) || !strings.Contains(blk.body, "google_service_account.reaper") {
+				continue
+			}
+			grants++
+			if blk.name != "google_project_iam_member.reaper" ||
+				firstAttr(blk.body, "role") != "google_project_iam_custom_role.reaper.name" {
+				t.Errorf("%s: %s grants the reaper something other than its own six-permission role", path, blk.name)
+			}
+		}
+	})
+	if roles != 1 || grants != 1 {
+		t.Errorf("found %d reaper roles and %d reaper grants, want 1 of each", roles, grants)
+	}
+}
+
+// The preload builder's role is the build's own calls and nothing more, and
+// it is granted on the project to the preload account only.
+func TestComputePreloadBuilderRoleAreExactlyTheBuild(t *testing.T) {
+	want := []string{
+		"compute.images.create",
+		"compute.images.delete",
+		"compute.images.get",
+		"compute.images.getFromFamily",
+		"compute.instances.create",
+		"compute.instances.delete",
+		"compute.instances.get",
+		"compute.instances.getSerialPortOutput",
+		"compute.instances.list",
+		"compute.instances.stop",
+		"compute.zoneOperations.get",
+	}
+	found := 0
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_custom_role") {
+			if blk.name != "google_project_iam_custom_role.preload_builder" {
+				continue
+			}
+			found++
+			if got := permissionsOf(t, path, blk); !slices.Equal(got, want) {
+				t.Errorf("%s: the preload builder holds %v, want exactly %v", path, got, want)
+			}
+			if strings.Contains(blk.body, "compute.instances.setMetadata") {
+				t.Errorf("%s: the preload builder holds setMetadata, which is how SSH keys reach a VM (design §3.2)", path)
+			}
+		}
+	})
+	if found != 1 {
+		t.Errorf("found %d preload builder roles, want 1", found)
+	}
+}
+
+// The built-in roles the design forbids are granted nowhere, and the one
+// batch.jobsEditor binding is narrowed by the Condition 57a-9 read back as
+// written (2026-10-15): a resource-name prefix, never the bare project-wide
+// grant. An unconditioned jobsEditor is the launcher-shaped power to run any
+// container in the project with any image (design §3.7).
+func TestComputeLauncherJobsEditorIsConditioned(t *testing.T) {
+	for _, bad := range []string{"roles/batch.jobsEditor.limited", "roles/compute.instanceAdmin.v1", "roles/compute.admin", "roles/editor", "roles/owner"} {
+		walk(t, func(path string, b []byte) {
+			for _, blk := range allResourceBlocks(t, path, b) {
+				if anyIAMRE.MatchString(blk.typ) && strings.Contains(blk.body, `"`+bad+`"`) {
+					t.Errorf("%s: %s grants %s", path, blk.name, bad)
+				}
+			}
+		})
+	}
+	launchers, conditioned := 0, 0
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_member") {
+			if !hasAttr(blk.body, "role", `"roles/batch.jobsEditor"`) {
+				continue
+			}
+			launchers++
+			if path != "gcp/modules/compute/iam.tf" || blk.name != "google_project_iam_member.launcher_jobs_editor" {
+				t.Errorf("%s: %s grants Batch Job Editor and is not the compute module's launcher binding", path, blk.name)
+				continue
+			}
+			if !strings.Contains(blk.body, "condition {") || !strings.Contains(blk.body, "${local.job_name_prefix}") {
+				t.Errorf("%s: %s grants Batch Job Editor with no Condition on the job-name prefix", path, blk.name)
+				continue
+			}
+			conditioned++
+		}
+	})
+	if launchers != 1 || conditioned != 1 {
+		t.Errorf("found %d batch.jobsEditor bindings, %d of them conditioned, want 1 and 1", launchers, conditioned)
+	}
+}
+
+// The run-class accounts hold the two roles Batch requires of a job's service
+// account (agentReporter, logWriter) plus the reader grant on the repository
+// the PIN names -- and the pin's repository is a variable, never a constant:
+// on 2026-10-15 it was the remote fugaro-ghcr, not fugaro-base (§7.2).
+func TestComputeRunAccountsHoldTheRunRoles(t *testing.T) {
+	want := map[string]string{
+		"google_project_iam_member.run_agent_reporter": "roles/batch.agentReporter",
+		"google_project_iam_member.run_log_writer":     "roles/logging.logWriter",
+	}
+	seen := map[string]bool{}
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_member") {
+			role, ok := want[blk.name]
+			if !ok {
+				continue
+			}
+			seen[blk.name] = true
+			if !hasAttr(blk.body, "role", `"`+role+`"`) {
+				t.Errorf("%s: %s must grant %s", path, blk.name, role)
+			}
+			if !hasAttr(blk.body, "for_each", "var.run_accounts") || !hasAttr(blk.body, "member", "each.value") {
+				t.Errorf("%s: %s must grant the role to each run account", path, blk.name)
+			}
+		}
+		for _, blk := range resourceBlocks(t, path, b, "google_artifact_registry_repository_iam_member") {
+			if !strings.Contains(blk.name, "registry_reader") {
+				continue
+			}
+			if !hasAttr(blk.body, "repository", "var.registry_repository") {
+				t.Errorf("%s: %s must name the repository the pin names, never a constant (§7.2)", path, blk.name)
+			}
+			if strings.Contains(blk.body, `"fugaro-base"`) || strings.Contains(blk.body, `"fugaro-ghcr"`) {
+				t.Errorf("%s: %s writes the repository out by hand", path, blk.name)
+			}
+		}
+	})
+	for name := range want {
+		if !seen[name] {
+			t.Errorf("no %s grant found", name)
+		}
+	}
+}
+
+// The job's no-external-IP posture needs BOTH the network and the subnetwork
+// named (measured 2026-10-15: Batch refuses the field without them), so both
+// are required variables with a shape check and neither has a default, and
+// the NAT is created on exactly those two.
+func TestComputeNetworkAndSubnetworkAreExplicit(t *testing.T) {
+	vars, err := fs.ReadFile(FS, "gcp/modules/compute/variables.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []string{"network", "subnetwork"} {
+		blk := regexp.MustCompile(`(?s)variable "` + v + `" \{(.*?)\n\}`).FindStringSubmatch(string(vars))
+		if blk == nil {
+			t.Fatalf("variable %q is not declared", v)
+		}
+		if strings.Contains(blk[1], "default") {
+			t.Errorf("variable %q has a default: Batch refuses noExternalIpAddress unless both are named explicitly (design §1.7, §7.2)", v)
+		}
+		if !strings.Contains(blk[1], "validation {") {
+			t.Errorf("variable %q has no shape check", v)
+		}
+	}
+	nats, subnetworks := 0, 0
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_compute_router_nat") {
+			nats++
+			if !strings.Contains(blk.body, "subnetwork {") || !hasAttr(blk.body, "name", "var.subnetwork") {
+				t.Errorf("%s: %s must NAT the subnetwork the job's VMs are placed in", path, blk.name)
+			}
+			subnetworks++
+		}
+		for _, blk := range resourceBlocks(t, path, b, "google_compute_router") {
+			if !hasAttr(blk.body, "network", "var.network") {
+				t.Errorf("%s: %s must sit on the network the job's VMs are placed on", path, blk.name)
+			}
+		}
+	})
+	if nats != 1 || subnetworks != 1 {
+		t.Errorf("found %d NATs over %d subnetworks, want 1 and 1", nats, subnetworks)
+	}
+}
+
+// streaming's API is NOT enabled: the design takes the preloaded boot image,
+// and containerfilesystem is streaming's prerequisite only (§1.2, C4). A run
+// that needs no socket could stream one day; nothing here does.
+func TestComputeDoesNotEnableImageStreaming(t *testing.T) {
+	b, err := fs.ReadFile(FS, "gcp/modules/compute/apis.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+	if strings.Contains(code, "containerfilesystem.googleapis.com") {
+		t.Error("the compute module enables containerfilesystem.googleapis.com: the design takes the preload, not streaming")
+	}
+	for _, want := range []string{"compute.googleapis.com", "batch.googleapis.com"} {
+		if !strings.Contains(code, want) {
+			t.Errorf("the compute module does not enable %s", want)
+		}
+	}
+}
+
+// The preload build is a job on a schedule, and the script it runs is the one
+// measured procedure: Google's own base family, a pull into the VM's Docker
+// data root, the serial-port marker, then the image. The build must never
+// delete a VM or an image that is not its own, so every delete in the script
+// is guarded by the fugaro=managed label.
+func TestComputePreloadBuildFollowsTheMeasuredProcedure(t *testing.T) {
+	b, err := fs.ReadFile(FS, "gcp/modules/compute/preload.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh := string(b)
+	for _, want := range []string{
+		"describe-from-family",   // the family is resolved in Google's project
+		"docker pull",            // the pull is what fills the Docker data root
+		"get-serial-port-output", // the wait, because the VM has no external IP
+		"instances stop",         // the disk must be detached before imaging
+		"images create",          // --source-disk
+		"instances delete",       // the builder always goes
+		"fugaro=managed",         // the ownership mark on both
+	} {
+		if !strings.Contains(sh, want) {
+			t.Errorf("preload.sh does not %q: it is not 57a-3b's procedure", want)
+		}
+	}
+	if n := strings.Count(sh, "--labels=fugaro=managed"); n < 2 {
+		t.Errorf("preload.sh marks its own VM and image %d times, want at least 2", n)
+	}
+	for _, line := range strings.Split(sh, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.Contains(line, "delete") || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "say ") {
+			continue
+		}
+		if !strings.Contains(line, `"$BUILDER"`) && !strings.Contains(line, `"$img"`) {
+			t.Errorf("preload.sh deletes something that is not its builder VM or a fugaro-labelled image: %s", trimmed)
+		}
+	}
+	j, err := fs.ReadFile(FS, "gcp/modules/compute/preload.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tf := string(j)
+	if !strings.Contains(tf, `file("${path.module}/preload.sh")`) {
+		t.Error("the build does not run the committed script")
+	}
+	if !strings.Contains(tf, "google_cloud_scheduler_job") || !strings.Contains(tf, "cloudbuild.googleapis.com/v1/projects/") {
+		t.Error("the preload has no scheduled rebuild calling Cloud Build")
+	}
+	if !strings.Contains(tf, "sha256(var.base_image)") {
+		t.Error("the preload image's name must carry the pinned base version: one image per pin")
+	}
+}
 
 // The signer's own IAM is the launchers' and operators' minter grant on the
 // signer account, and nothing else: no role on the project names it, and no

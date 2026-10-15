@@ -1,0 +1,31 @@
+# fugaro init reads these with terraform output -json: the preloaded boot
+# image a Batch job's definition names, and the accounts and network the
+# stage reports (design §8.1 task 6).
+
+output "preload_image" {
+  value = module.compute.preload_image
+}
+
+output "reaper_account" {
+  value = module.compute.reaper_account
+}
+
+output "reaper_role" {
+  value = module.compute.reaper_role
+}
+
+output "preload_account" {
+  value = module.compute.preload_account
+}
+
+output "preload_scheduler_job" {
+  value = module.compute.preload_scheduler_job
+}
+
+output "network" {
+  value = module.compute.network
+}
+
+output "subnetwork" {
+  value = module.compute.subnetwork
+}
