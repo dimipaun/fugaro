@@ -170,7 +170,7 @@ Groups and their lanes (a lane is a sequence; separate lanes are independent dog
   - Task 17 can run in parallel with Task 16.
   - Task 18 runs after base-image Task 16.
 - **Group E, branch `gt-docs`: Tasks 19 and 20.** Task 19 after Group C merges (it names the catalog). Task 20 at any time.
-- **Group F, cost preview, is release 0.8.0** (owner ruling R4, 2026-10-08), not a 0.7.0 group. Branch `gt-cost`, starting after 0.7.0 ships; see "Release 0.8.0" below, where it runs as Tasks 24 and 25, alongside the Docker backend.
+- **Group F, cost preview, is release 0.8.0** (owner ruling R4, 2026-10-08), not a 0.7.0 group. Branch `gt-cost`, starting after 0.7.0 ships; see "Release 0.8.0" below, where it runs as Tasks 24 and 25. **The Docker backend is no longer 0.8.0's**: the owner's release ruling of 2026-10-15 moved section 1 (Task 28, the Cloud Batch compute backend) to **0.9.0**, with project-centric phases 3 to 6 — so the two are no longer one release, and this line's original pairing ("alongside the Docker backend") is superseded.
 - **Task 22** closes each group. **Task 23** runs once every included group has merged, before base-image Task 22's release.
 
 The release freeze (base-image plan) starts at base-image Group 2's merge and ends with 0.7.0. Every group here merges inside it.
@@ -2224,7 +2224,7 @@ Add to the operator steps, after the base-image upgrade order:
 - Replace `fugaro ls` with `fugaro runs ls` in scripts.
 - Replace `agent.recipe: cheap-loop-senior` or `claude-solo` before upgrading. A 0.7.0 CLI refuses the old names with the new one.
 
-**Not in these notes:** the Docker-capable backend and the cost preview (both 0.8.0, rulings R2 and R4).
+**Not in these notes:** the cost preview (release 0.8.0, ruling R4) and the Docker-capable backend (**release 0.9.0** since the owner's release ruling of 2026-10-15, which moved section 1 / Task 28 — the Cloud Batch compute backend — off 0.8.0 and put it with project-centric phases 3 to 6; ruling R2 had placed it in 0.8.0).
 
 - [ ] **Step 2:** `go test -count=1 -run 'TestRelease' ./...` (the release-notes checks, if any), and read the rendered file.
 - [ ] **Step 3: Commit** `git commit -m "generic tool task 23: the 0.7.0 release notes"`. The release itself is base-image Task 22's `/new-release 0.7.0`.

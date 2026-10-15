@@ -93,7 +93,7 @@ A ceiling, not a forecast (G20). `fugaro budget preview --recipe R --runs N [--r
 
 It is read-only and needs no new IAM: launchers can already read the bucket and the budget. If the per-stage record proves awkward, ship the ceiling alone: it needs no history.
 
-**Why 0.8.0 (R4):** nothing here is blocked technically — unlike section 1 it needs no live check and no hardware. It moved because §12's original "0.7.0, last and optional" framing invited dropping it under date pressure, and the owner instead ruled it a clean, deliberate 0.8.0 item: built once, right after 0.7.0, alongside the Docker backend measurement, rather than a group that might be cut and never revisited.
+**Why 0.8.0 (R4):** nothing here is blocked technically — unlike section 1 it needs no live check and no hardware. It moved because §12's original "0.7.0, last and optional" framing invited dropping it under date pressure, and the owner instead ruled it a clean, deliberate 0.8.0 item: built once, right after 0.7.0, rather than a group that might be cut and never revisited. (The sentence here used to pair it with "the Docker backend measurement": the owner's release ruling of 2026-10-15 moved section 1 to 0.9.0, so §1.1's 0.8.0 stands alone — see §1's note above.)
 
 ## 2. Repository provisioning: baked or clone
 
@@ -309,7 +309,7 @@ The defaults are flags, not config keys. Veto alternative: local-config keys `wa
 
 ## 12. Release, order and coordination
 
-**In 0.7.0 (R1):** sections 2 to 7, 9 and 10, and 11's doc. Section 1.1 (cost preview, originally spec section 8) was placed in **release 0.8.0** by R4, alongside section 1: it is not a 0.7.0 group. The owner's 2026-10-14 ruling later moved §1.1 forward — Tasks 24 and 25 shipped in 0.7.5 — and dropped the two gen-2 Docker tasks, leaving section 1 (Task 28, the compute-instance backend) as the last task of the section. **Its release is 0.9.0, not 0.8.0** (the owner's release ruling of 2026-10-15: 0.8.0 is cut after project-centric phases 1 and 2, and the compute backend moves to 0.9.0 with phases 3 to 6 — the sentence above that read "the 0.8.0 work" is superseded by that ruling).
+**In 0.7.0 (R1):** sections 2 to 7, 9 and 10, and 11's doc. Section 1.1 (cost preview, originally spec section 8) was placed in **release 0.8.0** by R4, alongside section 1 as R4 wrote it: it is not a 0.7.0 group. The owner's 2026-10-14 ruling later moved §1.1 forward — Tasks 24 and 25 shipped in 0.7.5 — and dropped the two gen-2 Docker tasks, leaving section 1 (Task 28, the compute-instance backend) as the last task of the section. **Its release is 0.9.0, not 0.8.0** (the owner's release ruling of 2026-10-15: 0.8.0 is cut after project-centric phases 1 and 2, and the compute backend moves to 0.9.0 with phases 3 to 6 — the sentence above that read "the 0.8.0 work" is superseded by that ruling).
 
 **Order against the other 0.7.0 work** (G27):
 - **Layered config Phase 1 (0.6.0) merges first.** Its scope table (`internal/config/scope.go`) and project layer (`layer.go`) must list the new keys `workflows.<n>.checkout`, `commands.lint`, `commands.fix` and `review.allow_forks`. Its Task 17 edits `ls.go`, so it must land before the rename.
