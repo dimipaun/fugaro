@@ -968,11 +968,20 @@ func TestTokenWithoutBackendIsInfraError(t *testing.T) {
 	}
 }
 
+// The job's environment says the budget is on but carries no key: the run
+// stops here, before the identity exchange, naming the variable the deploy is
+// missing. internal/budget's Exchange refuses an empty key as well, so this
+// assertion is what keeps the runner's own guard honest (mutation check 8 of
+// the security review of PR #379): dropping that guard alone still leaves the
+// run stopped — but by the exchange's opaque "the API key is not valid"
+// rather than by the damage to the job, and naming the wrong thing.
 func TestBackendWithoutAPIKeyIsInfraError(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "enforce", "")
 	b.deps.Backend.APIKey = ""
 	rec, err := b.run(t)
-	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, runner.FirebaseAPIKeyEnv) {
+	if err == nil || rec.Status != runstore.StatusInfraError ||
+		!strings.Contains(rec.Reason, runner.FirebaseAPIKeyEnv+" is not set") ||
+		!strings.Contains(rec.Reason, runner.RTDBURLEnv) {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 }

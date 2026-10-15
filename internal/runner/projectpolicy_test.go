@@ -598,13 +598,19 @@ func TestPolicyBudgetSetsTheKeysItNames(t *testing.T) {
 // environment the operator cannot see from the policy, which is the silent
 // "enforcement never turned on" the strict budget decode exists to prevent
 // (H1, and the review's second half).
+//
+// The refusal is guarded twice — validBudget's own check of an empty mode, and
+// policy.ValidMode, which rejects "" as it rejects any other unknown mode — so
+// the wording is asserted too (mutation check 1 of the security review of PR
+// #379): it is the half that tells the operator how to publish the node, and
+// the half the second guard cannot produce on its own.
 func TestPolicyBudgetWithoutAModeHaltsTheRun(t *testing.T) {
 	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":1,"budget":{"per_run_usd":0.05}}`, capScript(3)...)
 	rec, err := b.run(t, implement("feature"))
 	if err == nil || !strings.Contains(err.Error(), projectpolicy.PathShared()) {
 		t.Fatalf("a budget block with no mode must stop the run: err = %v, rec = %+v", err, rec)
 	}
-	for _, want := range []string{"mode", "off, observe or enforce"} {
+	for _, want := range []string{"mode", "off, observe or enforce", "leaves the budget block out"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
