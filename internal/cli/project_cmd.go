@@ -564,21 +564,31 @@ func policyPrices(lc *localcfg.Config) projectpolicy.Prices {
 // operator sees which value it was.
 // policyNodeBytes is the document a publish writes: the policy built from the
 // operator's config, with the `routing` member of the node being replaced
-// carried over byte for byte when keepRouting says the node's member stands.
+// carried over byte for byte.
 //
 // The member and not the decoded value, because routing is shared with
 // releases that know more of it than this one does (phase 1b writes it, and a
 // later release writes more): a key inside `routing` that this Fugaro does not
 // model survives the decode — json.Unmarshal ignores it, and Decode cannot
 // list it the way it lists an unknown top-level key — so re-encoding the
-// decoded value would drop it. That is also why the carry-over is conditional
-// on keepRouting rather than unconditional: when the operator's config *does*
-// write the switch, this publish is what defines the member, and letting the
-// old node's bytes win would publish a config that never takes effect (the
-// review of PR #414). When it does not, "kept" has to mean kept whole: this is
-// the same quiet loosening `repos add|rm` refuses to make by patching the
-// document (patchPolicyJSON), and printPolicyDiff tells the operator the block
-// is kept.
+// decoded value would drop it. This is the same quiet loosening `repos add|rm`
+// refuses to make by patching the document (patchPolicyJSON), and
+// printPolicyDiff tells the operator the block is kept.
+//
+// What "carried over" means depends on what the operator's config says:
+//
+//   - the config writes no Claude switch (keepRouting): the node's member
+//     stands whole, exactly as it is. Nothing routes differently, so there is
+//     nothing to rewrite — and a key a newer release wrote anywhere inside
+//     `routing` survives (TestProjectPolicyPublishKeepsTheRoutingKeys...).
+//   - the config writes one: the switch is this publish's to write, so its
+//     members are the config's — `claude.via` and `claude.models` are replaced
+//     by what the operator wrote (and a `models` the config does not write is
+//     *removed*, not set to null) — while every member this Fugaro does not
+//     model, both beside `claude` (a `routing.gemini` block, say) and inside
+//     it, is left as the node had it. Replacing the member wholesale instead
+//     would drop `routing.gemini` with no refusal and no diff line (the review
+//     of PR #414), and the node is the only place that block exists.
 //
 // A node with no routing member is written without one, which is direct (D1b).
 func policyNodeBytes(pol *projectpolicy.Policy, oldRaw []byte, exists, keepRouting bool) ([]byte, error) {
@@ -586,7 +596,7 @@ func policyNodeBytes(pol *projectpolicy.Policy, oldRaw []byte, exists, keepRouti
 	if err != nil {
 		return nil, userErr("building the policy: %v", err)
 	}
-	if !exists || !keepRouting {
+	if !exists {
 		return node, nil
 	}
 	routing, ok, err := jsonMember(oldRaw, "routing")
@@ -599,11 +609,108 @@ func policyNodeBytes(pol *projectpolicy.Policy, oldRaw []byte, exists, keepRouti
 	if !ok {
 		return node, nil
 	}
-	patched, err := patchPolicyJSON(node, "routing", routing)
+	if keepRouting || pol.Routing == nil || pol.Routing.Claude == nil {
+		// The config says nothing about Claude (or --remove-routing: then
+		// pol.Routing is nil and the member is dropped). Kept whole, or gone on
+		// purpose.
+		if keepRouting {
+			patched, err := patchPolicyJSON(node, "routing", routing)
+			if err != nil {
+				return nil, userErr("building the policy: %v", err)
+			}
+			return patched, nil
+		}
+		return node, nil
+	}
+	claude, err := mergeRoutingClaude(routing, pol.Routing.Claude)
+	if err != nil {
+		return nil, userErr("building the policy: %v", err)
+	}
+	routing, err = patchPolicyJSON(routing, "claude", json.RawMessage(claude))
+	if err != nil {
+		return nil, userErr("building the policy: %v", err)
+	}
+	patched, err := patchPolicyJSON(node, "routing", json.RawMessage(routing))
 	if err != nil {
 		return nil, userErr("building the policy: %v", err)
 	}
 	return patched, nil
+}
+
+// mergeRoutingClaude is the node's `routing.claude` member with the switch the
+// operator's config writes patched into it: via and models come from the
+// config, a member this Fugaro does not model is left as the node had it.
+//
+// `models` is removed when the config writes none (an omitted key, not a null
+// one: the policy's own decode reads a null list and an absent one the same,
+// but a node is a document people read). A node with no claude member at all
+// gets the config's switch as this Fugaro marshals it.
+func mergeRoutingClaude(routing json.RawMessage, c *projectpolicy.ClaudeRoute) ([]byte, error) {
+	claude, ok, err := jsonMember(routing, "claude")
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return json.Marshal(c)
+	}
+	if len(c.Models) > 0 {
+		claude, err = patchPolicyJSON(claude, "models", c.Models)
+	} else {
+		claude, err = dropPolicyJSONMember(claude, "models")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return patchPolicyJSON(claude, "via", c.ViaValue())
+}
+
+// dropPolicyJSONMember is raw with the one member key removed, and every other
+// byte of the object as it was. It is patchPolicyJSON's sibling: a member the
+// publish writes from the config cannot be *set* to "the config writes none",
+// so the member is removed instead.
+func dropPolicyJSONMember(raw []byte, key string) ([]byte, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return nil, errors.New("the member is not a JSON object")
+	}
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for dec.More() {
+		kt, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		name, ok := kt.(string)
+		if !ok {
+			return nil, errors.New("the object has a member without a name")
+		}
+		var v json.RawMessage
+		if err := dec.Decode(&v); err != nil {
+			return nil, err
+		}
+		if name == key {
+			continue
+		}
+		k, err := json.Marshal(name)
+		if err != nil {
+			return nil, err
+		}
+		if buf.Len() > 1 {
+			buf.WriteByte(',')
+		}
+		buf.Write(k)
+		buf.WriteByte(':')
+		buf.Write(v)
+	}
+	if _, err := dec.Token(); err != nil { // the object's closing brace
+		return nil, err
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
 }
 
 // jsonMember is the raw bytes of one member of a JSON object, and whether the

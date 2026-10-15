@@ -59,6 +59,19 @@ const claudeRouteProvidersYAML = projectProvidersYAML +
 	"    models: [\"anthropic/claude-sonnet-5.5\"]\n" +
 	"    allow_data_to: [\"*\"]\n"
 
+// twoClaudeModelsProvidersYAML is claudeRouteProvidersYAML with the route entry
+// claiming a second Claude ID. A node whose switch names that ID still decodes
+// (validRouting resolves every ID the list names), which is what lets a publish
+// replace a switch that was already there with the one the config writes.
+const twoClaudeModelsProvidersYAML = projectProvidersYAML +
+	"  openrouter-claude:\n" +
+	"    kind: anthropic-compat\n" +
+	"    base_url: https://openrouter.ai/api/v1\n" +
+	"    auth: bearer\n" +
+	"    secret: openrouter-claude-key\n" +
+	"    models: [\"anthropic/claude-sonnet-5.5\", \"anthropic/claude-opus-5.5\"]\n" +
+	"    allow_data_to: [\"*\"]\n"
+
 func newProjectFixtureWith(t *testing.T, providers, extra string) *projectFixture {
 	t.Helper()
 	dir := t.TempDir()
@@ -1066,13 +1079,17 @@ func nodeAt(v any, path ...string) (any, bool) {
 	return v, true
 }
 
-// someFuturePolicy is a node carrying a key this Fugaro does not know in
-// routing, which Decode reads tolerantly (its values are checked by
-// validRouting, which refuses a block this Fugaro cannot act on, so an unknown
-// key there cannot fail open). The budget block, model_prices and the inside of
-// a providers entry are strict — an unknown key there is refused rather than
-// ignored, because a misspelt provider field can fail open (a nil allow_data_to
-// means every repository) — so a key of theirs is not the case this is about.
+// someFuturePolicy is a node carrying a key this Fugaro does not know *inside* a
+// block that is otherwise this Fugaro's own: `routing.claude.future_route`. The
+// block is still one this Fugaro acts on — via: auto, a named Claude ID, and a
+// route entry that claims it with allow_data_to written — so Decode reads it and
+// the unknown key inside the switch survives. A routing block whose member this
+// Fugaro cannot name is refused instead (validRoutingMembers): a misspelt
+// `claude` there is the switch itself going missing, not a newer release's extra
+// tightening. The budget block, model_prices and the inside of a providers entry
+// are strict for the same reason — a misspelt provider field can fail open (a
+// nil allow_data_to means every repository) — so a key of theirs is not the case
+// this is about.
 func someFuturePolicy() map[string]any {
 	return map[string]any{
 		"version":     projectpolicy.Version,
@@ -1080,10 +1097,13 @@ func someFuturePolicy() map[string]any {
 		"allow_repos": []string{"github/acme/app"},
 		"providers": map[string]any{"openrouter": map[string]any{
 			"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer",
-			"secret": "openrouter-key", "models": []string{"deepseek/*"},
-			"require_zdr": false, "price_policy": "highest",
+			"secret": "openrouter-key", "models": []string{"deepseek/*", "anthropic/claude-sonnet-5.5"},
+			"allow_data_to": []string{"acme/app"},
+			"require_zdr":   false, "price_policy": "highest",
 		}},
-		"routing": map[string]any{"claude": map[string]any{"via": "auto", "future_route": "x"}},
+		"routing": map[string]any{"claude": map[string]any{
+			"via": "auto", "models": []string{"claude-sonnet-5-5"}, "future_route": "x",
+		}},
 	}
 }
 
@@ -1999,6 +2019,78 @@ func TestProjectPolicyPublishKeepsTheRoutingKeysThisFugaroDoesNotModel(t *testin
 			t.Errorf("the publish dropped %s, a member of the routing block it says it keeps:\n%s",
 				strings.Join(path, "."), nodeJSON(t, f, projectpolicy.PathShared()))
 		}
+	}
+}
+
+// TestProjectPolicyPublishWritesTheSwitchAndKeepsTheRestOfRouting: the switch
+// the operator's config writes is this publish's to write — and the routing
+// block is *also* shared with releases that know members this one does not, so
+// writing one must not take the other with it. Rebuilding `routing` from the
+// decoded switch drops every member this Fugaro cannot name (a `tier` inside
+// claude, a whole `gemini` block beside it), with no refusal and no diff line,
+// on the one document those members exist in (the review of PR #414). So the
+// members the config owns — via, models — are patched into the node's own
+// `claude`, the list the config does not write is removed rather than left
+// stale, everything else is left as the node had it, and the change is in the
+// diff.
+//
+// Mutation (verified, run and restored): in mergeRoutingClaude, return
+// json.Marshal(c) for a member that is there as well (the old "replace the
+// member" behaviour): `routing.claude.tier` and `routing.gemini` are gone and
+// this test fails.
+func TestProjectPolicyPublishWritesTheSwitchAndKeepsTheRestOfRouting(t *testing.T) {
+	f := newProjectFixtureWith(t, twoClaudeModelsProvidersYAML,
+		"routing:\n  claude:\n    via: openrouter\n    models: [claude-sonnet-5-5]\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	// The node as a release that knows more of the block would have left it: a
+	// member inside claude this Fugaro does not model, a whole block beside it,
+	// and a switch naming the other Claude ID the route claims — so this
+	// publish has a switch to change as well as members to keep.
+	node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
+	node["routing"] = map[string]any{
+		"claude": map[string]any{"via": "openrouter", "models": []any{"claude-opus-5-5"}, "tier": "gold"},
+		"gemini": map[string]any{"via": "vertex"},
+	}
+	f.db.Set(projectpolicy.PathShared(), node)
+
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// What the config writes is what the node now says.
+	pol := publishedPolicy(t, f)
+	if pol.Routing == nil || pol.Routing.Claude == nil {
+		t.Fatalf("the publish wrote no switch: %s", nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+	if got := pol.Routing.Claude.ViaValue(); got != "openrouter" {
+		t.Errorf("routing.claude.via = %q, want openrouter", got)
+	}
+	if got := pol.Routing.Claude.Models; !slices.Equal(got, []string{"claude-sonnet-5-5"}) {
+		t.Errorf("routing.claude.models = %v, want the config's list (the node's stale one replaced)", got)
+	}
+
+	// What this Fugaro does not model is still there, inside claude and beside
+	// it.
+	got := f.db.Value(projectpolicy.PathShared())
+	for _, path := range [][]string{
+		{"routing", "claude", "tier"},
+		{"routing", "gemini", "via"},
+	} {
+		if _, ok := nodeAt(got, path...); !ok {
+			t.Errorf("the publish dropped %s, a member the config does not write:\n%s",
+				strings.Join(path, "."), nodeJSON(t, f, projectpolicy.PathShared()))
+		}
+	}
+	if v, _ := nodeAt(got, "routing", "claude", "tier"); v != "gold" {
+		t.Errorf("routing.claude.tier = %v, want the value the node held", v)
+	}
+
+	// And the diff says so.
+	if want := "~ routing.claude.models: [claude-opus-5-5] → [claude-sonnet-5-5]"; !strings.Contains(out, want) {
+		t.Errorf("the diff does not print the switch change (%q):\n%s", want, out)
 	}
 }
 
