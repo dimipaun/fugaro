@@ -974,6 +974,16 @@ func TestExecutionRewritesTheProjectNumber(t *testing.T) {
 // TestLogsReadsOneJobsTaskLogsByUID pins the filter design §2.3 ships, and
 // why it costs one jobs.get: labels.job_uid needs the job's UID, which only
 // the job itself reports.
+//
+// UNVERIFIED, and it is the whole log surface of this backend: the filter's
+// two clauses are the form Google documents for one job's task logs, and the
+// fake answers that shape because it was written to (internal/gcpfake), not
+// because a real entry was read. Nothing here proves that a real
+// batch.googleapis.com/Job entry carries labels.job_uid, that the log's name
+// is batch_task_logs, or that the sink's resource.type arm matches what the
+// platform really writes. Check 57a step 10 reads a raw entry and settles
+// all three (design §9); until then these tests hold the code to the
+// documented shape, and that is all they claim.
 func TestLogsReadsOneJobsTaskLogsByUID(t *testing.T) {
 	ctx := context.Background()
 	b, bf, lf, _ := newTestBackend(t, nil)
