@@ -116,12 +116,19 @@ func (r *initRun) readRetirements(ctx context.Context, c *infra.Clients, t *tf.T
 	return rets, nil
 }
 
-// printRetireNotes is the one informational line an already-released kept
-// container gets (design §3.1a's convergence rule): it is not a retirement,
-// so it must not re-open the gate or re-suggest --retire on every later run,
-// but the user is told the container is still there -- by logical name and,
-// when the label list gave it, by Secret Manager ID, so a rerun after a
-// failed delete still says which container holds the value.
+// printRetireNotes is the one informational line a kept container gets
+// (design §3.1a's convergence rule): it is not a retirement, so it must not
+// re-open the gate or re-suggest --retire on every later run, but the user
+// is told the container is still there -- by logical name and, when the
+// label list gave it, by Secret Manager ID, so a rerun after a failed delete
+// still says which container holds the value.
+//
+// The line says what a note IS, never what the state holds: a note is a live,
+// correctly-labelled container no job of the configuration mounts any more,
+// and whether Terraform still manages it is the plan's business -- Readiness
+// unions it back into the plan's for_each (N4), so the same run that prints
+// this line is the one that adopts it. What is promised here is therefore the
+// value, which is the one thing no step of any run touches.
 func (r *initRun) printRetireNotes(notes []infra.Retirement) {
 	var names []string
 	for _, n := range notes {
@@ -132,9 +139,9 @@ func (r *initRun) printRetireNotes(notes []infra.Retirement) {
 		names = append(names, n.Logical)
 	}
 	slices.Sort(names)
-	fmt.Fprintf(r.w, "note: %s %s no longer mounted by fugaro.yaml and no longer in Terraform's state; %s\n",
+	fmt.Fprintf(r.w, "note: %s %s no longer mounted by any job fugaro.yaml deploys; %s\n",
 		strings.Join(names, ", "), plural(len(names), "is", "are"),
-		"the secret and its value stay in Secret Manager, unmanaged")
+		"what is in Secret Manager stays there, and this is not a retirement: nothing is removed from Terraform's state and nothing is deleted")
 }
 
 // retireGoingAway splits the set by what actually happens to each address
