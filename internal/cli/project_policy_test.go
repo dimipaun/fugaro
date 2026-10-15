@@ -957,6 +957,33 @@ func TestProjectReposEditOnlyTheAllowList(t *testing.T) {
 	}
 }
 
+// TestProjectReposAddRefusesUnicodeLookalikes: the argument is folded ASCII
+// only and a concrete name then goes through projectpolicy.Canonical — the
+// form the runner matches allow_repos in, and the one task.CanonicalRepo
+// produces. strings.ToLower case-folds Unicode, so a name typed with a Kelvin
+// sign K (U+212A) or a dotted capital I (U+0130) used to be accepted and
+// written as the ASCII letter it folds to ("k", "i"): an entry the operator
+// never typed, one Canonical itself refuses to produce, and therefore one
+// `repos rm` could never name back.
+func TestProjectReposAddRefusesUnicodeLookalikes(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	for _, arg := range []string{
+		"github/acme/apK",  // a Kelvin sign K (U+212A)
+		"githuKb/acme/app", // the same, as the provider
+		"github/acme/İapp", // a dotted capital I (U+0130)
+	} {
+		if _, _, err := execute(t, "project", "repos", "add", arg); err == nil {
+			t.Errorf("%q was accepted; it is not a name Canonical can produce", arg)
+		}
+	}
+	if got := publishedPolicy(t, f).AllowRepos; len(got) != 2 {
+		t.Fatalf("allow_repos = %v: a refused argument was written", got)
+	}
+}
+
 // writeSharedConfig writes the project's shared config into its runs bucket,
 // the way fugaro config publish does, so a seed can read its repository list.
 // It is a full published config because ParseShared validates one against the

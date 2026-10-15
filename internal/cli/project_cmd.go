@@ -1264,7 +1264,9 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 // canonicalRepoArg is the operator's argument as a canonical allow-list
 // entry. A bare owner/name takes its provider from this machine's config
 // (repos: is keyed by owner/name); anything else must already be canonical,
-// which is what the allow-list matches.
+// which is what the allow-list matches. Upper-case letters are folded — ASCII
+// only, and a concrete name goes through projectpolicy.Canonical — so the
+// entry written is one the runner's own canonical form could have produced.
 func canonicalRepoArg(lc *localcfg.Config, arg string) (string, error) {
 	parts := strings.Split(arg, "/")
 	if len(parts) == 2 {
@@ -1277,9 +1279,39 @@ func canonicalRepoArg(lc *localcfg.Config, arg string) (string, error) {
 	if len(parts) != 3 {
 		return "", userErr("%q is not a repository: write it as provider/owner/name (github/acme/app), or as owner/name for a repository this machine's config lists", arg)
 	}
-	canonical := strings.ToLower(parts[0]) + "/" + strings.ToLower(parts[1]) + "/" + strings.ToLower(parts[2])
+	provider, repo := asciiLower(parts[0]), asciiLower(parts[1])+"/"+asciiLower(parts[2])
+	canonical := provider + "/" + repo
+	if !strings.Contains(canonical, "*") {
+		// A concrete repository goes through projectpolicy.Canonical, the one
+		// implementation of the form the runner compares an allow-list entry
+		// against. A pattern is not a repository (Canonical would refuse its
+		// "*"), so it is left to ValidPattern below.
+		c, err := projectpolicy.Canonical(provider, repo)
+		if err != nil {
+			return "", userErr("%q is not a repository: %v", arg, err)
+		}
+		canonical = c
+	}
 	if err := projectpolicy.ValidPattern(canonical); err != nil {
 		return "", userErr("%v", err)
 	}
 	return canonical, nil
+}
+
+// asciiLower lower-cases A–Z only, which is task's own rule for a repository
+// (task.asciiLower, unexported there, reached through
+// projectpolicy.Canonical). strings.ToLower case-folds Unicode instead: it
+// turns a Kelvin sign K (U+212A) into an ASCII "k", so an argument typed with
+// one would come out of here looking canonical while the runner's Canonical —
+// ASCII-only, and the form the allow-list is matched in — refuses to produce
+// that name at all. With this fold the look-alike survives into
+// ValidPattern/Canonical, which refuse it.
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + 'a' - 'A'
+		}
+	}
+	return string(b)
 }
