@@ -108,6 +108,111 @@ func TestProviderRunEndsInPR(t *testing.T) {
 	}
 }
 
+// callClaimed is callDeepseek for the claimed Claude ID: the review stage
+// makes one call on the route's claimed model, as Claude Code would, and
+// writes the body to its transcript.
+func callClaimed(status *int, body *string, inner step) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		*status, *body = post(t, req, claimedSenior, 4096)
+		fmt.Fprintf(req.Transcript, "{\"type\":\"user\",\"message\":%q}\n", *body)
+		return inner(t, ctx, req)
+	}
+}
+
+// TestClaimedClaudeSeniorEndToEnd is Task 6 step 1: the whole run, on a
+// provider whose models name the Claude ID explicitly and with the owner's
+// model_prices row for it in the ceiling. The coder is the route's deepseek
+// model and the reviewer is the claimed senior, and both stages make their
+// call through the gateway: the coder's on the provider's model and the
+// reviewer's on the claimed Claude one. Both calls reach the PROVIDER's fake
+// and Anthropic's sees none, each with the provider's key and never the
+// Anthropic one -- which is mounted, because this run's background pin is
+// still Claude's own haiku (NeedsAnthropicKey), so the two keys are both
+// there and the route still decides. The run ends in a PR.
+//
+// The claimed senior is a provider route in every respect (P10): its stage
+// pins the model as Claude Code's opus role and carries the provider route's
+// variable pair, in the process environment and in the managed settings file
+// -- the same treatment the coder's stage gets (TestProviderStageDisablesThinkingVars),
+// so nothing about the review stage says "direct Anthropic".
+func TestClaimedClaudeSeniorEndToEnd(t *testing.T) {
+	use := pricing.Usage{Input: 1000, Output: 500}
+	g := claimedRun(t, claimedPinned(t), "enforce", "50",
+		[]anthropicfake.Reply{
+			anthropicfake.Compat{}.MessageOK(deepseek, use),
+			anthropicfake.Compat{}.MessageOK(claimedSenior, use),
+		}, "acme/app")
+
+	var coderStatus, reviewStatus int
+	var coderBody, reviewBody string
+	var coderManaged, reviewerManaged map[string]string
+	rec, err := g.run(t,
+		readManagedDuring(g.harness, &coderManaged, callDeepseek(&coderStatus, &coderBody, implement("feature"))),
+		readManagedDuring(g.harness, &reviewerManaged, callClaimed(&reviewStatus, &reviewBody, review("ship", 0))))
+	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if coderStatus != 200 || reviewStatus != 200 {
+		t.Fatalf("statuses = %d, %d\ncoder: %s\nreviewer: %s", coderStatus, reviewStatus, coderBody, reviewBody)
+	}
+	onlyPR(t, g.provider)
+
+	// Both stages' calls went to the provider; Anthropic's fake saw nothing at
+	// all, so the claimed Claude call did not go direct.
+	if n := g.compat.Count(); n != 2 {
+		t.Fatalf("the provider saw %d calls, want the coder's and the reviewer's: %+v", n, g.compat.Seen())
+	}
+	if n := g.fake.Count(); n != 0 {
+		t.Fatalf("Anthropic saw %d calls of a run whose every pin it does not serve", n)
+	}
+	// The route carried the claimed model: the provider's second request is
+	// the reviewer's, on the claimed ID.
+	if body := string(g.compat.Body(1)); !strings.Contains(body, `"model":"`+claimedSenior+`"`) {
+		t.Fatalf("the provider's second call is not the claimed senior's: %s", body)
+	}
+	// The provider saw its own key and nothing of the Anthropic one.
+	for i := 0; i < 2; i++ {
+		if got := g.compat.Header(i, "Authorization"); got != "Bearer "+providerKey {
+			t.Errorf("provider call %d: Authorization = %q", i, got)
+		}
+		if got := g.compat.Header(i, "X-Api-Key"); got != "" {
+			t.Errorf("provider call %d: the Anthropic key's header is set: %q", i, got)
+		}
+		if strings.Contains(string(g.compat.Body(i)), plantedKey) {
+			t.Errorf("provider call %d: the body carries the Anthropic key", i)
+		}
+	}
+	// Neither key is in either stage's environment: the agent holds the
+	// gateway's own token and URL, whatever route its call takes.
+	for i, c := range g.agent.calls {
+		for _, kv := range c.Env {
+			if strings.Contains(kv, providerKey) || strings.Contains(kv, plantedKey) {
+				t.Errorf("stage %d: a real key is in the agent's env: %s", i, kv)
+			}
+		}
+	}
+
+	// The claimed senior's stage is a provider stage exactly like the coder's.
+	reviewer := g.agent.calls[1]
+	if got := envValue(reviewer.Env, "ANTHROPIC_DEFAULT_OPUS_MODEL"); got != claimedSenior {
+		t.Errorf("the review stage pins %q as its model, want the claimed ID", got)
+	}
+	for k, v := range map[string]string{"CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1", "MAX_THINKING_TOKENS": "0"} {
+		if got := envValue(reviewer.Env, k); got != v {
+			t.Errorf("review stage (claimed provider route), process env: %s = %q, want %q", k, got, v)
+		}
+		if got, ok := reviewerManaged[k]; !ok || got != v {
+			t.Errorf("review stage (claimed provider route), managed settings env: %s = %q (present %v), want %q", k, got, ok, v)
+		}
+	}
+	if got := envValue(g.agent.calls[0].Env, "ANTHROPIC_DEFAULT_OPUS_MODEL"); got != deepseek {
+		t.Errorf("the coder stage pins %q, want the route's coder model", got)
+	}
+	if strings.Contains(g.logs.String(), providerKey) {
+		t.Error("the log carries the provider key")
+	}
+}
+
 // readManagedDuring wraps a step to snapshot the managed settings file's
 // "env" (what Claude Code would actually merge in, taking precedence over
 // any repository settings.json's own "env") into *dst while that stage runs,
