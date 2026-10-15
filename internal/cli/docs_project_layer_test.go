@@ -112,18 +112,35 @@ func TestDocsProjectLayerSaysWhatDoctorReports(t *testing.T) {
 // price has to know before they edit the local config and re-run init --repo
 // for every repository.
 //
+// It also pins what the node does *not* govern, which the sentence it used to
+// carry got wrong: `providers` reaches a run through the job's own environment
+// copy — cut to that repository's allow_data_to — and never from the policy
+// node, so a provider change is still a reason to re-run `init --repo`. The
+// sentence claimed the node governed it (review finding on this change); no
+// run reads pp.Providers.
+//
 // Mutation (verified, run and restored): remove the "In a project that
-// publishes a policy, the prices, the providers and the ceiling come from
-// the policy" paragraph: this test fails.
+// publishes a policy, the prices, the ceiling and the routing come from the
+// policy" paragraph, or fold `providers` back into that sentence: this test
+// fails.
 func TestDocsMultiModelSaysThePolicyGovernsPrices(t *testing.T) {
 	doc := readDoc(t, "docs/multi-model.md")
 	for _, want := range []string{
-		"the prices, the providers and the ceiling come from the policy",
+		"the prices, the ceiling and the routing come from the policy",
 		"fugaro project policy publish",
 		"rules older than the marker `config/limits/policyRules`",
+		"`providers` is the exception, and it is the one that decides what a routed call costs and where it may go",
+		"still needs `fugaro init --repo` for every repository",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("docs/multi-model.md lacks %q", want)
+		}
+	}
+	for _, notWant := range []string{
+		"the prices, the providers and the ceiling come from the policy",
+	} {
+		if strings.Contains(doc, notWant) {
+			t.Errorf("docs/multi-model.md still says %q: a run never routes by the policy node's providers", notWant)
 		}
 	}
 }
