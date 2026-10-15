@@ -1734,6 +1734,12 @@ func TestDoctorFlagsExtraAccessorForNamedAccountVariant(t *testing.T) {
 	// needs its token stored, or that check fails doctor outright and this
 	// test could not tell a warning from a failure.
 	putSecret(t, r.sm, "proj-1234", mustSlug("github", "acme/app"), "claude-oauth-token-acme-personal", []byte("repo-value"))
+	// D2's sweep makes github-app-key a project candidate for every
+	// repository, so project-secret-stored now also asks whether a value is
+	// stored anywhere for the key this checkout's workflow mounts: without
+	// one its own check is red (no run can start), which is not what this
+	// test is about.
+	putSecret(t, r.sm, "proj-1234", mustSlug("github", "acme/app"), "github-app-key", []byte("repo-value"))
 
 	const name = "claude-oauth-token-acme-personal"
 	projID := putProjectSecret(t, r.sm, "aurora", name, []byte("project-value"))

@@ -1770,8 +1770,13 @@ func TestRepoNeverPrunesSecretsButGainsCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(before.ProjectSecretCandidates) != 0 {
-		t.Fatalf("ProjectSecretCandidates = %+v, want none with no project_secrets configured", before.ProjectSecretCandidates)
+	// D2 (plan Task 2.1 step 3b): the sandbox's git credential is a reserved
+	// name, so it is a project-wide candidate with no project_secrets entry
+	// at all -- an entry was what #343 required, and what D2 replaced. The
+	// candidate set is therefore the same before and after the entry exists.
+	want := map[string]string{"bitbucket-token": gcp.ProjectSecretID("aurora", "bitbucket-token")}
+	if !maps.Equal(before.ProjectSecretCandidates, want) {
+		t.Fatalf("ProjectSecretCandidates = %+v, want %+v with no project_secrets configured", before.ProjectSecretCandidates, want)
 	}
 	// bitbucket-token is the sandbox's git credential, mounted by every
 	// workflow (SecretMounts's unconditional first entry) -- allow-listing
@@ -1785,8 +1790,9 @@ func TestRepoNeverPrunesSecretsButGainsCandidates(t *testing.T) {
 	if !maps.Equal(before.Secrets, after.Secrets) {
 		t.Fatalf("rs.Secrets changed:\nbefore: %+v\nafter:  %+v", before.Secrets, after.Secrets)
 	}
-	// (b) ProjectSecretCandidates gains EXACTLY the expected new entry.
-	want := map[string]string{"bitbucket-token": gcp.ProjectSecretID("aurora", "bitbucket-token")}
+	// (b) ProjectSecretCandidates is unchanged: the entry no longer decides
+	// the candidate, only a written entry's own list narrows it (which the
+	// gate test covers).
 	if !maps.Equal(after.ProjectSecretCandidates, want) {
 		t.Fatalf("ProjectSecretCandidates = %+v, want %+v", after.ProjectSecretCandidates, want)
 	}

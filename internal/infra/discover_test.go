@@ -1038,7 +1038,10 @@ func TestReadinessGatesCheckJob(t *testing.T) {
 	if got.Check.DeployJob || len(missing) != 1 || missing[0].Kind != MissingSecret || missing[0].Deployed {
 		t.Fatalf("an empty credential: deploy %v, missing %+v; want no check job, and the credential missing", got.Check.DeployJob, missing)
 	}
-	want := "secret " + creds[0] + " has no version: fugaro secrets set " + creds[0] + " --repo acme/sandbox"
+	// D2: the credential is a swept-in reserved name, so the fix names the
+	// project-scope command -- what `secrets set <name>` stores by default --
+	// and the repository-copy form is the --repo variant of it.
+	want := "secret " + creds[0] + " has no version: fugaro secrets set " + creds[0]
 	if s := missing[0].String(); !strings.Contains(s, "daily image check") || !strings.Contains(s, "not deployed yet") || !strings.Contains(s, want) {
 		t.Errorf("missing = %q", s)
 	}
