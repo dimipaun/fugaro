@@ -17,8 +17,9 @@
 //   - Task 3: the compute cost of a VM (the machine type's quantities, the
 //     one-minute billing floor, the boot window), which is why Started and
 //     Completed are left zero rather than guessed.
-//   - Task 4: the installation's log sink arm for batch.googleapis.com/Job,
-//     and following a job's logs.
+//   - Task 4 (built): the installation's log sink arm for
+//     batch.googleapis.com/Job, the labels.job_uid filter `fugaro logs`
+//     reads a job's task logs by, and following a job's logs.
 //   - Task 6: provisioning (the Batch API, the service accounts, IAM, the
 //     boot image, the NAT/router).
 //   - Task 7: the real job definition -- the socket mount, the env
@@ -110,6 +111,10 @@ type Options struct {
 	// (projects/<p>/locations/<l>/buckets/<b>/views/<v>) logs are read
 	// through and log URLs open; empty reads the project's default logs.
 	LogView string
+	// LogSettle is how long Logs(follow) waits after a job has ended with
+	// no new entry before it returns: Cloud Logging's ingestion lag. Zero
+	// means 30 seconds, gcp's own default.
+	LogSettle time.Duration
 	// Warn, when set, receives problems that don't fail a call: a job whose
 	// state or create time the backend cannot read (it is kept, with the
 	// state read as pending and a zero time, so one bad job does not fail a
@@ -147,6 +152,9 @@ func New(ctx context.Context, o Options) (*Backend, error) {
 	}
 	if o.Warn == nil {
 		o.Warn = func(string) {}
+	}
+	if o.LogSettle == 0 {
+		o.LogSettle = 30 * time.Second
 	}
 	opts := func(endpoint string) []option.ClientOption {
 		opts := []option.ClientOption{option.WithLogger(discardLogger)}

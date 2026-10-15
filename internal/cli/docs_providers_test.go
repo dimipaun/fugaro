@@ -31,11 +31,18 @@ func docSection(t *testing.T, path, doc, heading string) string {
 // TestMultiModelNamesDirectProviders: docs/multi-model.md must document
 // sending a model's traffic straight to its vendor instead of OpenRouter
 // (design generic-tool.md §6, G18): a "Direct to the vendor" section with a
-// providers: example whose base_url is not OpenRouter's, the overlap and
-// Claude-stays-direct rules, and the live check that settles it. Every
-// assertion below is checked against that section alone (docSection), not
-// the whole document, so a claim that only appears elsewhere does not make
-// this test pass.
+// providers: example whose base_url is not OpenRouter's, the overlap rule,
+// Claude's own rule and the live check that settles it. Every assertion
+// below is checked against that section alone (docSection), not the whole
+// document, so a claim that only appears elsewhere does not make this test
+// pass.
+//
+// Claude's rule is the one the section's sentence changed under: it read
+// "Claude models never go through a provider", and Phase 2's opt-in
+// (design docs/design/mixed-credentials.md §4) made one exact anthropic/<id>
+// claimable per route entry. The two assertions below are the two halves of
+// what the section must say now -- direct by default, one exact ID claimed
+// by an operator -- so an edit that drops either one fails here.
 func TestMultiModelNamesDirectProviders(t *testing.T) {
 	const path = "../../docs/multi-model.md"
 	data, err := os.ReadFile(path)
@@ -62,8 +69,14 @@ func TestMultiModelNamesDirectProviders(t *testing.T) {
 	if !strings.Contains(section, "may not overlap") {
 		t.Error("the Direct to the vendor section does not say providers may not overlap")
 	}
-	if !strings.Contains(section, "Claude models never go through a provider") {
-		t.Error("the Direct to the vendor section does not say Claude models never go through a provider")
+	if !strings.Contains(section, "Claude goes direct by default") {
+		t.Error("the Direct to the vendor section does not say Claude goes direct by default")
+	}
+	// Phase 2's opt-in (design mixed-credentials.md §4) made the rule no
+	// longer absolute, so the section has to say both halves: no pattern
+	// claims a Claude model, and one exact anthropic/<id> does.
+	if !strings.Contains(section, "One exact ID can be claimed") {
+		t.Error("the Direct to the vendor section does not say a route may claim one exact anthropic/<id>")
 	}
 	if !strings.Contains(section, "Check 33") {
 		t.Error("the Direct to the vendor section does not name Check 33")
@@ -165,13 +178,21 @@ func TestReadmeOpenRouterSetup(t *testing.T) {
 		}
 	}
 
-	// Claude goes direct, never through a provider: the section must say so,
-	// and the rule must still be the code's.
-	if !strings.Contains(section, "Claude models never go through a provider") {
-		t.Error("the README OpenRouter section does not say Claude models never go through a provider")
+	// Claude goes direct by default and a provider route for it is an explicit
+	// opt-in (one exact anthropic/<id> in a provider's models): the section
+	// must say both, and the rule must still be the code's (CheckClaudeClaim
+	// accepts that one shape and refuses a wildcard).
+	if !strings.Contains(section, "Claude models go direct to Anthropic by default") {
+		t.Error("the README OpenRouter section does not say Claude models go direct by default")
 	}
-	if why := config.CheckModelPattern("anthropic/claude-sonnet-5-5"); why == "" {
-		t.Error("a provider may claim an anthropic/ model, so the README section is wrong")
+	if !strings.Contains(section, "explicit opt-in") || !strings.Contains(section, "`anthropic/<id>`") {
+		t.Error("the README OpenRouter section does not describe the explicit anthropic/<id> opt-in")
+	}
+	if why := config.CheckClaudeClaim("anthropic/claude-sonnet-5.5"); why != "" {
+		t.Errorf("an exact anthropic/<id> is the one claim a provider may make, but the code says %q, so the README section is wrong", why)
+	}
+	if why := config.CheckClaudeClaim("anthropic/*"); why == "" {
+		t.Error("a wildcard claim must be refused, but the code accepts it, so the README section is wrong")
 	}
 
 	// The section's "ship at <release>" sentence is catalogSince, and the

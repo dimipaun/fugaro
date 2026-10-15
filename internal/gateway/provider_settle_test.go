@@ -369,11 +369,16 @@ func TestUnknownEventsSkipped(t *testing.T) {
 	}
 }
 
-// route is recorded per call and per stage; a Claude call has none.
+// route is recorded per call and per stage; a Claude call has none. One
+// stage makes both calls -- a routed one and a Claude one -- at different
+// usage, so each model's own charge shows in ByModel under its own rate and
+// Used is the two added: a figure that swapped the models' rates, or that
+// reported only one of them, fails here (mixed-credentials plan Task 2,
+// Review Focus 7).
 func TestRouteRecordedPerCall(t *testing.T) {
-	u := pricing.Usage{Input: 1000, Output: 2000}
-	r := feeRouted(t, 0, nil, routedStage, dsRoute, anthropicfake.MessageOK(dsModel, u))
-	r.fake.Script = []anthropicfake.Reply{anthropicfake.MessageOK(sonnet, u)}
+	routed, claude := pricing.Usage{Input: 1000, Output: 2000}, pricing.Usage{Input: 3000, Output: 1000}
+	r := feeRouted(t, 0, nil, routedStage, dsRoute, anthropicfake.MessageOK(dsModel, routed))
+	r.fake.Script = []anthropicfake.Reply{anthropicfake.MessageOK(sonnet, claude)}
 	if resp, b := r.post(msg(dsModel, 4000)); resp.StatusCode != 200 {
 		t.Fatalf("%d %s", resp.StatusCode, b)
 	}
@@ -381,11 +386,24 @@ func TestRouteRecordedPerCall(t *testing.T) {
 		t.Fatalf("%d %s", resp.StatusCode, b)
 	}
 	rep := r.gw.EndStage()
-	if got := rep.ByRoute["openrouter"]; got != cost(t, dsModel, u) {
-		t.Errorf("by route %v, want openrouter %d", rep.ByRoute, cost(t, dsModel, u))
+	wantRouted, wantClaude := cost(t, dsModel, routed), cost(t, sonnet, claude)
+	if wantRouted == wantClaude {
+		t.Fatal("the two models' charges coincide: a swapped rate would not show")
+	}
+	if got := rep.ByRoute["openrouter"]; got != wantRouted {
+		t.Errorf("by route %v, want openrouter %d", rep.ByRoute, wantRouted)
 	}
 	if len(rep.ByRoute) != 1 {
 		t.Errorf("a Claude call has a route: %v", rep.ByRoute)
+	}
+	if got := rep.ByModel[dsModel]; got != wantRouted {
+		t.Errorf("by model %v, want the routed model at its own rate %d", rep.ByModel, wantRouted)
+	}
+	if got := rep.ByModel[sonnet]; got != wantClaude {
+		t.Errorf("by model %v, want the Claude model at its own rate %d", rep.ByModel, wantClaude)
+	}
+	if got := rep.Used; got != wantRouted+wantClaude {
+		t.Errorf("stage used %d, want the two models added: %d", got, wantRouted+wantClaude)
 	}
 }
 
