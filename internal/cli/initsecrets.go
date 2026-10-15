@@ -293,17 +293,15 @@ func (s *secretsStage) resolve(ctx context.Context) {
 	if cfg == nil {
 		tg.noConfig = true
 	} else {
-		// The Anthropic key is asked for only when a pin actually goes direct
-		// to Anthropic: with the gateway on and every pin served by a provider
-		// the run never calls Anthropic, so init does not prompt for a value
-		// and does not store one (design docs/design/project-centric.md §6.1).
-		// The mode is the effective one, the project's ceiling merged with this
-		// file, exactly as the runner and validate read it: without enforce a
-		// provider's model is refused (config.CheckProviderGateway) and every
-		// call goes to Anthropic, so the key is needed whatever the pins are.
+		// The Anthropic key is asked for only when a run actually needs it:
+		// with the gateway on and every pin served by a provider the run never
+		// calls Anthropic, so init does not prompt for a value and does not
+		// store one (design docs/design/project-centric.md §6.1). The rule is
+		// config.AnthropicKeyNeeded, the one validate asks too, over the
+		// effective mode (the project's ceiling merged with this file, as the
+		// runner reads it).
 		mode := policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg)).Mode
-		needsAnthropicKey := cfg.Agent.Auth != "api-key" || mode != policy.ModeEnforce ||
-			config.NeedsAnthropicKey(cfg.Agent, lc.Providers, repo)
+		needsAnthropicKey := config.AnthropicKeyNeeded(cfg.Agent, lc.Providers, repo, mode)
 		for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
 			// The default account only: Task 5 extends this to every name
 			// config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo) allows,

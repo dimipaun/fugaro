@@ -21,10 +21,18 @@ import (
 	"github.com/dimipaun/fugaro/internal/runner"
 )
 
-// anthropicKeyNeeded is the offline note a pin that goes direct to Anthropic
-// gets: the run needs the key, and only the cloud knows whether the secret has
-// a version yet (design docs/design/project-centric.md §6.1).
-const anthropicKeyNeeded = "a pinned model goes direct to Anthropic, so the run needs an Anthropic API key: the job mounts it whenever the anthropic-api-key secret has a version (store one with `fugaro secrets set anthropic-api-key` if none does), or route the model through a provider"
+// anthropicKeyNeeded is the offline note an enforcing run with a pin that goes
+// direct to Anthropic gets: it needs a stored key, and only the cloud knows
+// whether the secret has a version yet, so this is a note for the owner and
+// never a refusal (design docs/design/project-centric.md §6.1; the gateway
+// refuses such a call, by name, when no key is stored).
+const anthropicKeyNeeded = "needs a stored Anthropic API key: a pinned model goes direct to Anthropic, and the job mounts the key whenever the anthropic-api-key secret has a version (store one with `fugaro secrets set anthropic-api-key` and rerun `fugaro init --repo` if none does), or route the model through a provider"
+
+// anthropicKeyNoGateway is the same note when the budget isn't enforcing:
+// there is no gateway at all, so every call goes direct to Anthropic whatever
+// the pins are (config.AnthropicKeyNeeded). The sharper fix, too: with no
+// gateway there is no route to prefer.
+const anthropicKeyNoGateway = "needs a stored Anthropic API key: the budget isn't enforcing, so there is no gateway and every call goes direct to Anthropic, whatever the pins are (store one with `fugaro secrets set anthropic-api-key` and rerun `fugaro init --repo`)"
 
 // ceilingLayer is the owner's ceiling as the runner builds it from the job
 // environment init --repo sets from the project config: an "off" mode is no
@@ -166,9 +174,9 @@ func budgetProblems(cfg *config.Config, lc *localcfg.Config) (problems, warnings
 // the warnings of the pins' prices (unverified placeholders, defaulted cache
 // rates). The repository is the checkout's origin; without one the
 // allow_data_to rule can't be checked, and a warning says so.
-func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config) (problems, warnings []config.Problem) {
+func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config) (problems, warnings, notes []config.Problem) {
 	if lc == nil || lc.Name != cfg.Project {
-		return nil, nil
+		return nil, nil, nil
 	}
 	prices := pricing.Embedded()
 	o, err := lc.Overrides()
@@ -176,7 +184,7 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 		prices, err = prices.With(o)
 	}
 	if err != nil {
-		return nil, nil // budgetProblems says so
+		return nil, nil, nil // budgetProblems says so
 	}
 	var allowed []string
 	if cfg.Budget != nil {
@@ -211,18 +219,27 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 	agent.Models.Background = config.EffectiveBackground(agent, lc.Providers)
 	mode := policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg)).Mode
 	problems = append(problems, config.CheckProviderGateway(agent, agent.Models.Background, lc.Providers, mode)...)
-	// A pin no provider serves goes direct to Anthropic, so the run needs the
-	// Anthropic API key. This is the offline half of the rule: whether the
-	// secret has a version is a fact only the cloud knows, so it is a warning
-	// naming the fix, not a refusal (design docs/design/project-centric.md
-	// §6.1; the gateway refuses such a call, by name, when the key is absent).
-	if cfg.Agent.Auth == "api-key" && mode == policy.ModeEnforce && config.NeedsAnthropicKey(cfg.Agent, lc.Providers, repo) {
-		warnings = append(warnings, config.Problem{Path: "agent.auth", Message: anthropicKeyNeeded})
+	// The run needs the Anthropic API key when a call goes direct to
+	// Anthropic: config.AnthropicKeyNeeded, the rule init asks too, over the
+	// same effective mode -- so a mode that isn't enforcing says so here as
+	// well, since without a gateway every call is direct. That the secret
+	// has a version is a fact only the cloud knows, and whether one is
+	// stored is another, so this is a note, never a warning or a refusal:
+	// the gateway refuses such a call by name when no key is stored (design
+	// docs/design/project-centric.md §6.1).
+	if config.AnthropicKeyNeeded(cfg.Agent, lc.Providers, repo, mode) {
+		msg := anthropicKeyNeeded
+		if mode != policy.ModeEnforce {
+			// The sharper reason, and the sharper fix: with no gateway there
+			// is nothing to route around.
+			msg = anthropicKeyNoGateway
+		}
+		notes = append(notes, config.Problem{Path: "agent.auth", Message: msg})
 	}
 	if cfg.Agent.Auth != "oauth" {
 		warnings = append(warnings, config.PinWarnings(agent, prices)...)
 	}
-	return problems, warnings
+	return problems, warnings, notes
 }
 
 // setsPolicy is whether the file has a budget: block or a token limit: the
@@ -276,7 +293,11 @@ type validateOutput struct {
 	Valid    bool             `json:"valid"`
 	Problems []config.Problem `json:"problems"`
 	// Warnings are not problems: they never make the file invalid.
-	Warnings     []config.Problem `json:"warnings"`
+	Warnings []config.Problem `json:"warnings"`
+	// Notes are neither: things the run will need in a case validate can
+	// only see offline, reported so they are not a surprise (a stored
+	// Anthropic key, for a pin that goes direct).
+	Notes        []config.Problem `json:"notes,omitempty"`
 	ProjectLayer *validateLayer   `json:"project_layer,omitempty"`
 }
 
@@ -303,7 +324,7 @@ func newValidateCmd() *cobra.Command {
 			}
 			cfg, problems := rf.Cfg, rf.Problems
 			layer, layerWarnings := validateLayerLines(rf)
-			var warnings []config.Problem
+			var warnings, notes []config.Problem
 			if cfg != nil {
 				problems = append(config.Check(cfg, filepath.Dir(path)), computeProblems(cfg)...)
 				lc := selectedProjectConfig(cmd.Context())
@@ -317,8 +338,8 @@ func newValidateCmd() *cobra.Command {
 				problems, warnings = append(problems, bp...), append(bw, rw...)
 				warnings = append(warnings, config.CheckWarnings(cfg, filepath.Dir(path))...)
 				warnings = append(warnings, cloneWorkflowWarnings(cfg)...)
-				pp, pw := providerProblems(cmd.Context(), ecfg, lc)
-				problems, warnings = append(problems, pp...), append(warnings, pw...)
+				pp, pw, pn := providerProblems(cmd.Context(), ecfg, lc)
+				problems, warnings, notes = append(problems, pp...), append(warnings, pw...), append(notes, pn...)
 				annotateProjectRecipe(filepath.Dir(path), cfg, problems)
 				if lc != nil && lc.Name == cfg.Project && setsPolicy(cfg) {
 					if n := branchNote(cmd.Context(), path); n != "" {
@@ -339,10 +360,13 @@ func newValidateCmd() *cobra.Command {
 			if asJSON {
 				enc := json.NewEncoder(out)
 				enc.SetIndent("", "  ")
-				if err := enc.Encode(validateOutput{Valid: len(problems) == 0, Problems: append([]config.Problem{}, problems...), Warnings: append([]config.Problem{}, warnings...), ProjectLayer: layer}); err != nil {
+				if err := enc.Encode(validateOutput{Valid: len(problems) == 0, Problems: append([]config.Problem{}, problems...), Warnings: append([]config.Problem{}, warnings...), Notes: append([]config.Problem{}, notes...), ProjectLayer: layer}); err != nil {
 					return err
 				}
 			} else {
+				for _, n := range notes {
+					fmt.Fprintln(cmd.ErrOrStderr(), "note: "+n.String())
+				}
 				for _, w := range warnings {
 					fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+w.String())
 				}

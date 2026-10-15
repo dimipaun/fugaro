@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"gopkg.in/yaml.v3"
 )
@@ -506,7 +507,7 @@ func claimed(providers map[string]ModelProvider, model string) bool {
 //
 // Callers ask this only where the gateway is on and enforcing: without it a
 // provider model is refused (CheckProviderGateway) and every call would go to
-// Anthropic.
+// Anthropic, which AnthropicKeyNeeded decides.
 func NeedsAnthropicKey(a Agent, providers map[string]ModelProvider, repo string) bool {
 	for _, model := range []string{a.ModelFor(RoleCoder), a.ModelFor(RoleReviewer), EffectiveBackground(a, providers)} {
 		if _, p, ok := ProviderFor(providers, model); !ok || !p.AllowsData(repo) {
@@ -514,6 +515,21 @@ func NeedsAnthropicKey(a Agent, providers map[string]ModelProvider, repo string)
 		}
 	}
 	return false
+}
+
+// AnthropicKeyNeeded is the whole rule, and the one both callers ask: does a
+// run on this configuration need the Anthropic API key stored? Only an
+// api-key run ever does (oauth has its own token, Vertex the job's account),
+// and only when a call actually goes direct to Anthropic: the gateway exists
+// under enforce alone, so any other mode sends every call there, whatever the
+// pins are -- and under enforce it is the pins, exactly as NeedsAnthropicKey
+// reads them. mode is the effective one (the project's ceiling merged with the
+// file), the same value the runner and validate compute.
+func AnthropicKeyNeeded(a Agent, providers map[string]ModelProvider, repo, mode string) bool {
+	if a.Auth != "api-key" {
+		return false
+	}
+	return mode != policy.ModeEnforce || NeedsAnthropicKey(a, providers, repo)
 }
 
 // EffectiveBackground is the model of Claude Code's background (haiku-role)
