@@ -569,8 +569,11 @@ unchanged.
   needed** — the same default that the workflow job uses on Cloud Run.
 - The runner never imports a backend implementation (`internal/runner` uses
   only `backend.OnCloudRun`, `backend.SameExecution`, `backend.Prices`,
-  `backend.MemoryGiB`, `backend.TaskTimeoutSlack` **and `backend.ExecID`** —
-  the last one at `runner.go:74`, which §2.5's codec has to keep working). The gateway
+  `backend.MemoryGiB` and `backend.TaskTimeoutSlack`). It does **not** use
+  `backend.ExecID`: the canonical name reaches it as a plain string
+  (`runner.Deps.Execution`, produced by the CLI), and the only mention of
+  `backend.ExecID` in the package is that field's doc comment
+  (`internal/runner/runner.go:74`). The gateway
   (`runner/gateway.go`), the budget session (`runner/budget_session.go`,
   which is RTDB, not `internal/backend`), the cache
   (`runner/lockcache.go`) and `finalize` (`runner/runner.go`) touch only the
@@ -643,7 +646,7 @@ Every method of `internal/backend.Backend` maps onto Batch:
 | Seam method | Batch | Notes |
 |---|---|---|
 | `Launch(LaunchSpec)` | `projects.locations.jobs.create` | One Batch job, one task group, one task. Name derived per run (§2.4). The `FUGARO_RUN` env and the timeout are set in the job definition, not in an override — Batch has no execution-override concept like Cloud Run's `Overrides`. Returns `ExecutionRef{Name, Job, LogURL}`. |
-| `Execution(name)` | `jobs.get` | Maps Batch's nine-value state enum to `backend.State`: `STATE_UNSPECIFIED`/`QUEUED`/`SCHEDULED` → `StatePending`, `RUNNING` → `StateRunning`, `SUCCEEDED` → `StateSucceeded`, `FAILED` → `StateFailed`, and `CANCELLATION_IN_PROGRESS`/`CANCELLED` → `StateCancelled`. `DELETION_IN_PROGRESS` → `StateCancelled` too, but it should only ever be seen for a job the **reaper** is deleting (§3.4) — a user cancel is `jobs.cancel`, which ends `CANCELLED` (§1.4). An unrecognised value is treated as **not terminal** and logged — the same defensive shape as `stateOf` in `internal/backend/gcp/run.go`, which reads Cloud Run's counts rather than trusting one field. `Created`/`Started`/`Completed` from the job's and its task's status times; `CPU`/`MemoryGiB` from the machine type; `Run` from the `FUGARO_RUN` the job was created with (Batch reports the job's `environmentVariables`, so unlike Cloud Run this one is always readable — still a hint, never evidence). |
+| `Execution(name)` | `jobs.get` | Maps Batch's state enum to `backend.State`, for **every** value the API documents: `STATE_UNSPECIFIED`/`QUEUED`/`SCHEDULED` → `StatePending`, `RUNNING` → `StateRunning`, `SUCCEEDED` → `StateSucceeded`, `FAILED` → `StateFailed`, and `CANCELLATION_IN_PROGRESS`/`CANCELLED` → `StateCancelled`. That list is the complete `JobStatus.State` enum — `STATE_UNSPECIFIED`, `QUEUED`, `SCHEDULED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `DELETION_IN_PROGRESS`, `CANCELLATION_IN_PROGRESS`, `CANCELLED`, in that order and **no others**: Batch v1 has no `SUCCEEDING` and no `FAILING` (checked 2026-10-15 against the REST reference, the discovery document and `google/cloud/batch/v1/job.proto`'s `JobStatus.State`, which carry the same eight plus `STATE_UNSPECIFIED`). So no documented value falls through untyped. `DELETION_IN_PROGRESS` → `StateCancelled` too, but it should only ever be seen for a job the **reaper** is deleting (§3.4) — a user cancel is `jobs.cancel`, which ends `CANCELLED` (§1.4). An unrecognised value is treated as **not terminal** and logged — the same defensive shape as `stateOf` in `internal/backend/gcp/run.go`, which reads Cloud Run's counts rather than trusting one field. `Created`/`Started`/`Completed` from the job's and its task's status times; `CPU`/`MemoryGiB` from the machine type; `Run` from the `FUGARO_RUN` the job was created with (Batch reports the job's `environmentVariables`, so unlike Cloud Run this one is always readable — still a hint, never evidence). |
 | `List(filter)` | `jobs.list` | Filter by the Fugaro labels and `CreateTime`; the `fugaro-` name prefix is replaced by the label predicate. |
 | `Logs(query, fn)` | Cloud Logging, through the same installation log view | Filter `labels.job_uid="<uid>" AND logName="projects/<p>/logs/batch_task_logs"`, the form Google documents for one job's task logs (cloud.google.com/batch/docs/analyze-job-using-logs, checked 2026-10-15; §1.5). It needs the job's **UID**, so `Logs` does a `jobs.get` first — one extra read per call, cached for the follow loop. The alternative `resource.labels.job_id` is **UNVERIFIED** (the resource list says only "The identifier of the Job", which may be the name or the UID), which is why it is not the shipped filter; Check 57a step 10 settles it and may allow the cheaper form later. The `fugaro=managed` marker does reach the entry (`Job.labels` applies to the job "and any Cloud Logging LogEntry that it generates") and pins the installation's arm of the sink (§1.5). |
 | `Cancel(name)` | `jobs.cancel` | The job passes through `CANCELLATION_IN_PROGRESS` to `CANCELLED`; `Execution` keeps working afterwards, which is what `backendtest`'s cancel case requires. Tolerate a job already terminal (the same race live check 5 already documents for Cloud Run). `jobs.delete` is **not** `Cancel` — it is the reaper's and the restore's (§3.4). |
@@ -769,8 +772,12 @@ average first task, and it must land **before** any Batch backend can run a
 container (Task 1 before Task 3, §8.1). Two corrections to the earlier draft
 of this section: `CheckRunExecution` lives in **`internal/backend/gcp`**
 (`run.go:92`), not in `internal/backend`, and it is called from
-`internal/cli/cloud.go`; and the runner also uses `backend.ExecID` directly
-(`internal/runner/runner.go:74`), which the codec has to keep working. Veto
+`internal/cli/cloud.go`; and the runner holds the canonical name as a
+**string** (`runner.Deps.Execution`, set by the CLI from
+`backend.ExecID.String()` — `internal/runner/runner.go:74-77` is that field's
+doc comment, not a use), so what the codec has to keep stable is the string
+the CLI stores, which `result.json` and `backend.SameExecution` are read
+against. Veto
 alternative: keep the Cloud-Run shape and encode a Batch job as a synthetic
 "execution" under it (`.../jobs/<fugaro job>/executions/<run id>`), which lies
 in the stored data model and would confuse `fugaro ls`, `cancel` and the
@@ -1324,11 +1331,15 @@ of Checks 30 and 32.
 ### 7.1 The number
 
 `docs/gcp-live-checklist.md` reserves a number once and never reuses it. On
-`main`, the table has rows for checks 1–23, 26–37 and 40–44; **24, 25, 38 and
-39 are reserved with no row** (24 and 25 carry their own `## Check` sections in
-the file, 38 and 39 are the retire-image-mirror plan's and are described there
-— so "checks 1–44 have rows" is not quite true, though nothing about the
-numbering here turns on it). The provider-price-catalog design's paragraph
+`main`, the table has rows for checks 1–23, 26–37, 40–44 and 47; **24, 25, 38
+and 39 are reserved with no row** (24 and 25 carry their own `## Check`
+sections in the file; 38 is the **generic-tool plan's** Task 18 clone-workflow
+check and 39 (39a–39f) is the **retire-image-mirror plan's** Task 7 — the
+checklist's own numbering ruling assigns them that way,
+`docs/gcp-live-checklist.md`:187-189, and the retire-image-mirror plan says so
+itself at `docs/plans/2026-10-13-retire-image-mirror.md`:581 — with their rows
+written when those plans land, so "checks 1–44 have rows" is not quite true,
+though nothing about the numbering here turns on it). The provider-price-catalog design's paragraph
 names 45 as "the next free number" — true when that paragraph was written.
 Since then the numbers have been claimed by plans that have not landed here:
 **45 and 46 by the OpenRouter senior-reviewer plan (PR #359), 47 by the
@@ -1684,9 +1695,15 @@ gcloud batch jobs list --project="${P:?}" --location="${L:?}" \
 
 # 2. Any VM still running. Delete only instances carrying THIS check's label --
 #    and only after step 1, so a job that is still live cannot lose its VM.
+#    The ZONE COMES FROM EACH ROW: Batch places a job's VMs in any zone of the
+#    region, so a hard-coded "${L}-b" leaves a leaked VM in ${L}-a or -c
+#    undeleted -- each delete errors and the loop moves on -- which is exactly
+#    the VM this sweep and the assertion below exist to catch.
 gcloud compute instances list --project="${P:?}" --filter='labels.fugaro_chk=57' \
-  --format='value(name)' | \
-  xargs -r -n1 gcloud compute instances delete --project="${P:?}" --zone="${L:?}-b" --quiet
+  --format='csv[no-heading](name,zone.basename())' | \
+  while IFS=, read -r NAME ZONE; do
+    gcloud compute instances delete "${NAME:?}" --project="${P:?}" --zone="${ZONE:?}" --quiet
+  done
 
 # 3. The account THIS CHECK created. Never the installation's job account, and
 #    never the default Compute Engine SA.
@@ -1732,6 +1749,18 @@ for the record, where the review's phrasing was looser than the code:
 - **B12, `resource.labels.job_id`.** We could not verify it either way, so it
   stays **UNVERIFIED** and the shipped filter is the documented `labels.job_uid`
   form; 57a-10 is written to settle name-vs-UID rather than to assume one.
+- **The later round's "the state enum also defines `SUCCEEDING` and
+  `FAILING`" is wrong, and the nine-value list stands.** Batch v1's
+  `JobStatus.State` has `STATE_UNSPECIFIED`, `QUEUED`, `SCHEDULED`, `RUNNING`,
+  `SUCCEEDED`, `FAILED`, `DELETION_IN_PROGRESS`, `CANCELLATION_IN_PROGRESS`
+  and `CANCELLED` — the same list in the REST reference
+  (`cloud.google.com/batch/docs/reference/rest/v1/projects.locations.jobs`),
+  the discovery document (`batch.googleapis.com/$discovery/rest?version=v1`,
+  and v1alpha) and `google/cloud/batch/v1/job.proto`'s `State` enum
+  (`googleapis/googleapis`), all read 2026-10-15. Neither `SUCCEEDING` nor
+  `FAILING` appears in any of them. §2.3 now names the full enum inline and
+  says so, so no implementer codes a mapping for a value the API cannot
+  return; the not-terminal fallback stays for anything Google adds later.
 - **B7's "billed but not counted" for boot and pull.** The observation is right
   and is now in §5.2, but what the code can do about it before 57b-5's
   billing-export comparison is state the window honestly, not invent a second
@@ -1850,9 +1879,12 @@ above where used):
   switching the runtime to containerd with only four subfields honoured
   (Batch REST reference; `cloud.google.com/batch/docs/use-image-streaming`).
 - Batch job fields used here: `logsPolicy.destination`, `allocationPolicy.
-  serviceAccount`, `maxRetryCount` (default 0), the nine-value State enum
-  (`STATE_UNSPECIFIED`, `QUEUED`, `SCHEDULED`, `RUNNING`, `SUCCEEDED`,
-  `FAILED`, `DELETION_IN_PROGRESS`, `CANCELLATION_IN_PROGRESS`, `CANCELLED`),
+  serviceAccount`, `maxRetryCount` (default 0), the complete `State` enum —
+  `STATE_UNSPECIFIED`, `QUEUED`, `SCHEDULED`, `RUNNING`, `SUCCEEDED`,
+  `FAILED`, `DELETION_IN_PROGRESS`, `CANCELLATION_IN_PROGRESS`, `CANCELLED`
+  and nothing else, per the REST reference, the discovery document and
+  `google/cloud/batch/v1/job.proto` (`JobStatus.State`), all checked
+  2026-10-15 —
   and that `Job.labels` apply to the job "and any Cloud Logging LogEntry that
   it generates" while only `AllocationPolicy.labels` reach the Compute Engine
   resources (Batch REST reference, checked 2026-10-15). Which of those states a cancelled or a preempted job
