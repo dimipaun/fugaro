@@ -292,6 +292,14 @@ func TestApplyCatalogRefusalClearedByOverride(t *testing.T) {
 	if why := with.Refusal("vendor/model"); why != "" {
 		t.Errorf("the refusal survived the override: %q", why)
 	}
+	// The raw list too, not only the answer Refusal gives: Refusal consults
+	// the rows first, so an override that priced the model but left the
+	// reason in the map would still answer "" here while every surface that
+	// reads the list directly — budget prices prints it — kept reporting a
+	// model the owner has priced.
+	if why, ok := with.Refused["vendor/model"]; ok {
+		t.Errorf("the override left the reason in the table's refusal list: %q", why)
+	}
 	// And the refusal is still on the table it came from: With copies.
 	if tbl.Refusal("vendor/model") == "" {
 		t.Error("With cleared the refusal on the table it was called on")
@@ -318,12 +326,49 @@ func TestApplyCatalogSetsProvenance(t *testing.T) {
 
 // TestCatalogRangeSizesTheUndercharge pins the numbers the operator surfaces
 // print for a row charged at the cheapest end: what the dearest endpoint of
-// the tier prices and the multiple of the input price charged, so the size of
+// the tier prices and the multiple of the price charged, so the size of
 // the undercharge is on the surface rather than only in a document (design
 // D6, P11). A row already at the dearest end has no undercharge to size.
 func TestCatalogRangeSizesTheUndercharge(t *testing.T) {
 	m, _ := compile(t, catalogFile("2026-10-14", entry()), route(true, "cheapest")).Lookup("vendor/model")
-	want := "a call served by the dearest endpoint of the tier can be billed $4/M in and $8/M out, 2x the input price charged"
+	want := "a call served by the dearest endpoint of the tier can be billed $4/M in and $8/M out, 2.0x the input price charged and 2.0x the output price charged"
+	if got := m.CatalogRange(); got != want {
+		t.Errorf("CatalogRange() = %q, want %q", got, want)
+	}
+	// The multiple is the figure the docs quote, so it is rounded to the one
+	// decimal they state: the shipped deepseek row's zdr tier is 37.878...x
+	// on input and 13.333...x on output, printed as 37.9x and 13.3x (design
+	// §2, P11), and a raw float64 would put "37.878787878787875x" on the
+	// operator's screen beside a document saying 37.9x.
+	rounded := catalogFile("2026-10-14", catalog.Entry{
+		ContextTokens: 1000, MaxOutputTokens: 100, Endpoints: 3, ZDREndpoints: 2,
+		All: map[string]catalog.Bound{
+			"input_per_m":  bound("0.01584", "0.6"),
+			"output_per_m": bound("0.18", "2.4"),
+		},
+		ZDR: map[string]catalog.Bound{
+			"input_per_m":  bound("0.01584", "0.6"),
+			"output_per_m": bound("0.18", "2.4"),
+		},
+	})
+	m, _ = compile(t, rounded, route(true, "cheapest")).Lookup("vendor/model")
+	want = "a call served by the dearest endpoint of the tier can be billed $0.6/M in and $2.4/M out, 37.9x the input price charged and 13.3x the output price charged"
+	if got := m.CatalogRange(); got != want {
+		t.Errorf("CatalogRange() = %q, want %q", got, want)
+	}
+	// A tier whose dearest endpoint prices what is already charged has no
+	// undercharge, so the multiple is left out rather than printed as "1.0x"
+	// — a warning with no number behind it (the shipped qwen/qwen3.8-flash
+	// row, which has one endpoint per dimension and no zdr tier at all).
+	flat := catalogFile("2026-10-14", catalog.Entry{
+		ContextTokens: 1000, MaxOutputTokens: 100, Endpoints: 1, ZDREndpoints: 0,
+		All: map[string]catalog.Bound{
+			"input_per_m":  bound("0.5", "0.5"),
+			"output_per_m": bound("1", "1"),
+		},
+	})
+	m, _ = compile(t, flat, route(false, "cheapest")).Lookup("vendor/model")
+	want = "a call served by the dearest endpoint of the tier can be billed $0.5/M in and $1/M out"
 	if got := m.CatalogRange(); got != want {
 		t.Errorf("CatalogRange() = %q, want %q", got, want)
 	}

@@ -265,6 +265,34 @@ func TestProviderPolicyUnclaimedAndUnpriced(t *testing.T) {
 	}
 }
 
+// TestProviderPolicySaysWhyTheCatalogRefused pins that a model a provider
+// route claims and the built-in provider price catalog cannot price is
+// reported with the catalog's own reason — the switch to flip and both ways
+// out — and not only with "add it under model_prices": the owner reading
+// validate is looking at the route's switches, which is what the refusal is
+// about (design D9, P8). The shipped file gives qwen/qwen3.8-flash no ZDR
+// tier, so a require_zdr route claims it and cannot price it.
+func TestProviderPolicySaysWhyTheCatalogRefused(t *testing.T) {
+	cat, err := catalog.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps := providers(func(p *ModelProvider) { p.Models = []string{"qwen/*"} })
+	tbl := mustTable(t, ps, nil, cat)
+	got := problemsText(CheckProviderPolicy(Agent{Auth: "api-key", Model: "qwen/qwen3.8-flash"}, nil, "dimipaun/fugaro", ps, tbl))
+	for _, want := range []string{"require_zdr: false", "model_prices"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the refusal does not name %q: %q", want, got)
+		}
+	}
+	// A model no catalog row exists for at all has no recorded reason, and
+	// keeps the generic answer: the refusal is not the only path.
+	got = problemsText(CheckProviderPolicy(Agent{Auth: "api-key", Model: "qwen/qwen-nothing"}, nil, "dimipaun/fugaro", ps, tbl))
+	if !strings.Contains(got, "no price") || !strings.Contains(got, "model_prices") {
+		t.Errorf("an unpriced model without a recorded refusal: %q", got)
+	}
+}
+
 func TestProviderPolicyAllowedModelsEntries(t *testing.T) {
 	ps := map[string]ModelProvider{"openrouter": okProvider()}
 	a := Agent{Auth: "api-key", Model: "claude-sonnet-5-5"}

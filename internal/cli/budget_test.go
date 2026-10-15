@@ -890,6 +890,55 @@ func TestBudgetPricesCatalogColumn(t *testing.T) {
 	}
 }
 
+// TestBudgetPricesListsRefusedModels: a route may claim a model the catalog
+// cannot price — qwen/qwen3.8-flash has no ZDR-eligible endpoint, so a
+// require_zdr route claims it and gets no row — and the owner is told which
+// model and why rather than left with a table that silently omits it: the
+// model is in the JSON's refused list and warned about on stderr (design D9,
+// P8). Nothing is refused here: a run that never names the model charges
+// nothing for it, and a pin on one is refused at bootstrap.
+func TestBudgetPricesListsRefusedModels(t *testing.T) {
+	const qwen = "qwen/qwen3.8-flash"
+	cat := shippedCatalog(t)
+	pinCatalogClock(t, cat, 24*time.Hour)
+	if len(cat.Models[qwen].ZDR) != 0 {
+		t.Fatalf("the shipped catalog gives %s a zdr tier: this test needs it refused", qwen)
+	}
+	newBudgetFixture(t, "budget: { mode: observe, per_run_usd: 5, rtdb_url: http://127.0.0.1:9 }\n"+
+		strings.Replace(catalogRouteYAML, `["deepseek/*"]`, `["qwen/*"]`, 1))
+	out, errOut, err := execute(t, "budget", "prices")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, qwen) {
+		t.Errorf("the refused model has a row:\n%s", out)
+	}
+	if !strings.Contains(errOut, qwen) || !strings.Contains(errOut, "require_zdr: false") {
+		t.Errorf("stderr does not say which model has no row and why:\n%s", errOut)
+	}
+	js, _, err := execute(t, "budget", "prices", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Refused []struct {
+			ID     string `json:"id"`
+			Reason string `json:"reason"`
+		} `json:"refused"`
+	}
+	if err := json.Unmarshal([]byte(js), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Refused) != 1 || doc.Refused[0].ID != qwen {
+		t.Fatalf("refused = %+v, want the one model the route claims and the catalog cannot price", doc.Refused)
+	}
+	for _, want := range []string{"require_zdr: false", "model_prices"} {
+		if !strings.Contains(doc.Refused[0].Reason, want) {
+			t.Errorf("the refusal does not name %q: %q", want, doc.Refused[0].Reason)
+		}
+	}
+}
+
 // zdrPrice is one dimension's dearest price in the shipped entry's zdr tier,
 // as a number, so a test about the numbers reads them from the file rather
 // than writing them down.

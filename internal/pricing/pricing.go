@@ -102,16 +102,36 @@ type CatalogPrice struct {
 
 // CatalogRange is the tier's own span in numbers, for the surfaces that show
 // a catalog-priced row: what the dearest endpoint of the tier prices, and how
-// many times the input price charged that is. It is "" on every other row, and
-// on a row already charged at the dearest end — the cheapest bound is the one
-// that leaves an undercharge to size (design D6, P11).
+// many times the price charged that is. It is "" on every other row, and on a
+// row already charged at the dearest end — the cheapest bound is the one that
+// leaves an undercharge to size (design D6, P11).
+//
+// The multiple is the size of the undercharge, so it is stated only where
+// there is one: a dimension whose dearest endpoint prices what is already
+// charged gets no "1x" clause, which would read as a warning with no number
+// behind it. Each multiple is rounded to one decimal, the precision the docs
+// quote (37.9x on input, 13.3x on output), so the surface and the documents
+// cannot disagree about the figure.
 func (m Model) CatalogRange() string {
 	c := m.Catalog
 	if c == nil || c.Bound != "min" || c.TierInputMax <= 0 || m.Rates.InputPerM <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("a call served by the dearest endpoint of the tier can be billed $%g/M in and $%g/M out, %gx the input price charged",
-		c.TierInputMax, c.TierOutputMax, c.TierInputMax/m.Rates.InputPerM)
+	s := fmt.Sprintf("a call served by the dearest endpoint of the tier can be billed $%g/M in and $%g/M out", c.TierInputMax, c.TierOutputMax)
+	in := c.TierInputMax / m.Rates.InputPerM
+	out := 0.0
+	if m.Rates.OutputPerM > 0 {
+		out = c.TierOutputMax / m.Rates.OutputPerM
+	}
+	switch {
+	case in > 1 && out > 1:
+		s += fmt.Sprintf(", %.1fx the input price charged and %.1fx the output price charged", in, out)
+	case in > 1:
+		s += fmt.Sprintf(", %.1fx the input price charged", in)
+	case out > 1:
+		s += fmt.Sprintf(", %.1fx the output price charged", out)
+	}
+	return s
 }
 
 // CodeCacheRateDefaulted marks the warning CacheWarning returns, for callers

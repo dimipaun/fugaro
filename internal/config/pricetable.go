@@ -28,11 +28,15 @@ import (
 // marketplace guess. cat is the loaded catalog; nil adds no catalog row.
 // now is the clock the catalog's staleness is measured against.
 //
-// The error is the refusal path: a malformed catalog, or a route whose
-// switches cannot price one of the models it claims (a require_zdr route on a
-// model with no ZDR-eligible endpoint), fails the whole table rather than
-// leaving the model out — an owner who hit it needs to see it before a run
-// charges anything.
+// The error is for a malformed catalog, and for nothing else: a model the
+// catalog cannot price under a route's switches (a require_zdr route on a
+// model with no ZDR-eligible endpoint) does not fail the table. It gets no
+// row, so nothing can price it free, and the reason is recorded on the table
+// (Table.Refused) for the pin rules, `budget prices` and the gateway's
+// backstop to report where the model is named — a pin or a call. Failing the
+// whole table instead would refuse a run pinned to a priceable model of the
+// same family, and one new non-ZDR model at the marketplace would break every
+// route that claims its family (design D9).
 func PriceTable(providers map[string]ModelProvider, overrides pricing.Overrides, cat *catalog.File, now time.Time) (*pricing.Table, error) {
 	t, err := pricing.ApplyCatalog(pricing.Embedded(), cat, catalogRoutes(providers, cat, overrides), now)
 	if err != nil {
