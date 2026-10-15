@@ -106,8 +106,9 @@ func TestPolicyRecordCarriesPerDay(t *testing.T) {
 // at all — CheckPins then refuses a pin the owner has, and the gateway
 // refuses the call it should charge.
 //
-// The catalogue here is the shipped one and the route is the one
-// providerRun builds: a deepseek/* model on an openrouter route.
+// The catalogue here is the shipped one and the route is the shape
+// providerRun builds (an openrouter route claiming deepseek/*), written
+// inline because this is the table the run builds, not a run.
 //
 // Mutation (run, restore): return pricing.Embedded().With(o) from
 // policyPrices again and the catalogue model is not priced by the node's

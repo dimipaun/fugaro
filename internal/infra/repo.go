@@ -150,7 +150,7 @@ func ForgetRepoState(ctx context.Context, c *Clients, stateBucket, slug string) 
 //
 // The project-wide half is D2's (plan Task 2.1): storing at project scope
 // is the default, so a name whose only copy is the project's is stored,
-// not missing -- needsBuild would otherwise leave every workflow of a
+// not missing -- NeedsBuild would otherwise leave every workflow of a
 // repository whose git credential was stored with `fugaro secrets set
 // bitbucket-token` unbuildable, and its job would never be deployed. The
 // decision is read back out of the spec Readiness resolved rather than
