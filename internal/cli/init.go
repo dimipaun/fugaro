@@ -2083,10 +2083,13 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// ready, not spec: a name Readiness resolved to the project-wide copy
 	// has a version the job mounts, and D2 made that the default store (see
 	// infra.SecretVersions). Passing the pre-Readiness spec would leave
-	// every workflow whose provider credential was stored with `fugaro
-	// secrets set bitbucket-token` unbuildable -- no first image build
-	// offered, no job ever deployed -- and would print the repository-copy
-	// command for a secret that already exists.
+	// every workflow whose git credential was stored with `fugaro secrets
+	// set github-app-key` unbuildable -- no first image build offered, no
+	// job ever deployed -- and would print the repository-copy command for a
+	// secret that already exists. (github-app-key, not bitbucket-token, is
+	// the example: the App key is the one git credential D2's default sweeps
+	// project-wide, while bitbucket-token has no project-wide default at all
+	// -- config.PerRepositorySecret, the owner's ruling of 2026-10-15.)
 	versions, err := infra.SecretVersions(ctx, c, ready)
 	if err != nil {
 		return r.retireLeftover(spec, initErr(err))

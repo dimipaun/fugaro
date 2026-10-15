@@ -1089,7 +1089,10 @@ func TestInitSecretsStageThroughTheCommand(t *testing.T) {
 		}
 		if len(res.Left) > 0 {
 			last := res.Left[len(res.Left)-1]
-			if last["stage"] == "secrets" && !strings.Contains(last["commands"], "secrets set bitbucket-token") {
+			// The whole command (code review, low): `secrets set
+			// bitbucket-token` alone is a prefix of both scopes, and this
+			// name's scope is the repository's own copy.
+			if last["stage"] == "secrets" && !strings.Contains(last["commands"], "secrets set bitbucket-token --repo acme/sandbox") {
 				t.Fatalf("%v: left %v", flags, res.Left)
 			}
 		}

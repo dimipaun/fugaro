@@ -626,9 +626,15 @@ func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w i
 	)
 	// The prompt is where a person learns the blast radius (plan Task 2.1
 	// step 4): a name this repository may mount project-wide is stored
-	// project-wide -- D2's default for `secrets set <name>` with no flag --
-	// and the same command with --repo keeps the value to this repository
-	// instead.
+	// project-wide -- D2's default for `secrets set <name>` with no flag.
+	//
+	// The way out names a command, never a flag of this one (code review,
+	// low): the stage has no --repo, `fugaro init --repo` never runs it, and
+	// the command Left() hands the user for the same name is the bare one.
+	// `secrets set <name> --repo <owner/name>` is the command that stores this
+	// repository's own copy, and it is run in the user's own terminal like
+	// every other store -- here, before answering, since a value typed at
+	// this prompt goes to the project's container.
 	//
 	// The reach is projectReach's answer, the same sentence `secrets set`'s own
 	// note uses (code review, low): a fixed "every enrolled repository" is false
@@ -638,8 +644,8 @@ func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w i
 	// name has a project-wide meaning for this repository (projectScope), so
 	// projectReach's "no repository can mount it" is not reachable here.
 	if s.projectScope(name) {
-		fmt.Fprintf(w, "%s for %s on %s (stored project-wide in project %s's Secret Manager, where %s; pass --repo to keep it to this repository instead):\n",
-			name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject), projectReach(s.e.lc, name))
+		fmt.Fprintf(w, "%s for %s on %s (stored project-wide in project %s's Secret Manager, where %s; for this repository's own copy instead, press Ctrl-C here and run '%s secrets set %s --repo %s' in your own terminal, then start this again):\n",
+			name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject), projectReach(s.e.lc, name), selfCommand(), quoteWord(name), quoteWord(s.tg.repo))
 	} else {
 		fmt.Fprintf(w, "%s for %s on %s (stored in project %s's Secret Manager, in this repository's own copy):\n", name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject))
 	}

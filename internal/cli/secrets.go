@@ -332,7 +332,19 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 		// The owner's, from the local config, so any checkout will do. The
 		// key is only ever mounted for a repository the provider may see.
 		if !env.lc.Providers[p].AllowsData(r.repo) {
-			return userErr("model provider %s does not list %s in allow_data_to, so its key is not stored for it", p, r.repo)
+			// The bare command landed on this repository's own copy, which
+			// this provider may not see, so it is refused rather than written
+			// -- a repository copy would win over the project's forever (§5),
+			// for a repository that mounts neither. The project's copy is a
+			// different store and `--project-wide` is its own spelling, so the
+			// refusal names it (code review, medium): SECURITY.md calls that
+			// flag a synonym of the default, and a person reading the bare
+			// command's refusal must not be left without the one command that
+			// does store the copy the repositories this provider *does* list
+			// mount. projectWideAccepted accepts a provider's key
+			// unconditionally (§3a), so the command named here always works.
+			return userErr("model provider %s does not list %s in allow_data_to, so its key is not stored for it: store the project's copy instead, which the repositories it does list mount, with '%s secrets set %s --project-wide'",
+				p, r.repo, selfCommand(), quoteWord(name))
 		}
 	} else if !reserved {
 		// A workflow secret must be one the repository declares: a typo

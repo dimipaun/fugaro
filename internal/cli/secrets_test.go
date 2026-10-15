@@ -1211,6 +1211,13 @@ func TestSecretsSetEmptyAllowListNamesTheRepoWayOut(t *testing.T) {
 // <repo>'s own copy, which overrides the project copy for it" promises a store
 // that does not happen. The note is printed after the checks, so a refused
 // command carries none.
+//
+// The refusal names the way forward (code review, medium): SECURITY.md calls
+// --project-wide a synonym of the default, and here the bare command is
+// refused while that flag stores the project's copy -- the copy the
+// repositories the provider *does* list mount -- so a person left with the
+// bare command's refusal alone has no way to store it. The command the
+// refusal names is run below and must work.
 func TestSecretsSetRefusedProviderKeyPrintsNoRepoCopyNote(t *testing.T) {
 	sm := secretsFixture(t)
 	projectSecretFixture(t, `providers:
@@ -1227,11 +1234,20 @@ func TestSecretsSetRefusedProviderKeyPrintsNoRepoCopyNote(t *testing.T) {
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "allow_data_to") {
 		t.Fatalf("err = %v, want the allow_data_to refusal", err)
 	}
+	if !strings.Contains(err.Error(), "secrets set openrouter-api-key --project-wide") {
+		t.Errorf("the refusal does not name the store that does work: %v", err)
+	}
 	if strings.Contains(out+errOut, "own copy") {
 		t.Errorf("the refusal carries the note that promises a store: out %q errOut %q", out, errOut)
 	}
 	if sm.Latest(gcp.SecretID(appSlug, "openrouter-api-key")) != nil {
 		t.Error("a refused value was stored")
+	}
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", "openrouter-api-key", "--project-wide"); err != nil {
+		t.Fatalf("the command the refusal names: %v", err)
+	}
+	if got := string(sm.Latest(gcp.ProjectSecretID("aurora", "openrouter-api-key"))); got != tokenValue {
+		t.Errorf("the project copy = %q, want the value the refusal pointed at", got)
 	}
 }
 

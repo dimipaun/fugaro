@@ -203,6 +203,14 @@ func TestMultilinePEMAccepted(t *testing.T) {
 			if got := r.store.latestProject("aurora", "github-app-key"); got != pemValue {
 				t.Fatalf("stored %q", got)
 			}
+			// The project-scope prompt names the command that stores this
+			// repository's own copy instead (code review, low): the stage has
+			// no --repo flag of its own and `fugaro init --repo` never runs
+			// it, so pointing at a flag of this command would send the person
+			// looking for one that does not exist.
+			if !strings.Contains(r.errOut.String(), "secrets set github-app-key --repo acme/app") {
+				t.Errorf("the prompt does not name the repository-copy command: %q", r.errOut.String())
+			}
 			// Typed in this run: the App pre-check may use it from memory.
 			if string(r.e.r.appKeyMem) != pemValue {
 				t.Fatalf("the typed key is not held in memory for the pre-check")
@@ -521,7 +529,12 @@ func initOnTTY(t *testing.T, asJSON bool) {
 			t.Fatalf("%v:\n%s", jerr, out.String())
 		}
 		last := res.Left[len(res.Left)-1]
-		if last["stage"] != "secrets" || !strings.Contains(last["commands"], "secrets set bitbucket-token") {
+		// The whole command, not the name alone (code review, low): the bare
+		// `secrets set bitbucket-token` is a prefix of both scopes, so it
+		// passed whatever scope the line named -- and for this name the
+		// scope is the repository's own copy, which is what the assertion
+		// has to pin.
+		if last["stage"] != "secrets" || !strings.Contains(last["commands"], "secrets set bitbucket-token --repo acme/sandbox") {
 			t.Fatalf("left %v", res.Left)
 		}
 		if strings.Contains(errOut.String(), "hidden") || queued(t, f) != before || before == 0 {

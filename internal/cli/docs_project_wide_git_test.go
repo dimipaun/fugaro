@@ -57,14 +57,24 @@ func TestDocsWarnAboutAProjectWideGitCredential(t *testing.T) {
 }
 
 // TestSetupSkillStoresTheGitCredentialWithoutRepo: the setup skill's
-// user-runs block is the command a user copies, and since D2 the git
-// credential's default store is the project's own container (plan Task 2.1
-// step 1). A --repo there would store a repository copy instead, which wins
-// over the project copy for that repository from then on (design
+// user-runs block is the command a user copies, and since D2 the App key's
+// default store is the project's own container (plan Task 2.1 step 1). A
+// --repo there would store a repository copy instead, which wins over the
+// project copy for that repository from then on (design
 // project-secrets.md §5) — the very state the default exists to make
 // unnecessary, and the one both existing installations are already in for
 // the names that matter (§6 step 4a). The CLI's own note at store time says
 // which scope each name took, so the skill does not restate it.
+//
+// bitbucket-token is the other way round, and the test must not read the App
+// key's rule onto it (code review, medium): it has no project-wide default at
+// all (config.PerRepositorySecret, the owner's ruling of 2026-10-15 — a
+// repository access token is issued for one repository), so the command the
+// skill gives for it names --repo, and the explicit form is the one that
+// works outside a checkout too. A test that forbade `--repo` for every git
+// credential failed on exactly that correct line. What is wrong for this
+// name is the opposite: the project-wide store, which is refused for it
+// unless the operator's own local config allow-lists repositories.
 func TestSetupSkillStoresTheGitCredentialWithoutRepo(t *testing.T) {
 	skill, err := os.ReadFile("../../plugin/skills/setup/SKILL.md")
 	if err != nil {
@@ -74,13 +84,20 @@ func TestSetupSkillStoresTheGitCredentialWithoutRepo(t *testing.T) {
 	if !strings.Contains(text, "fugaro secrets set github-app-key < <path-to-pem-file>") {
 		t.Error("the setup skill no longer gives the App key as the project-wide default (`fugaro secrets set github-app-key < <path-to-pem-file>`)")
 	}
-	for _, bad := range []string{
-		"fugaro secrets set github-app-key --repo",
-		"fugaro secrets set bitbucket-token --repo",
-	} {
-		if strings.Contains(text, bad) {
-			t.Errorf("the setup skill passes --repo to %q: a repository copy wins over the project copy from then on, and the git credential is stored project-wide by default", bad)
-		}
+	if strings.Contains(text, "fugaro secrets set github-app-key --repo") {
+		t.Error("the setup skill passes --repo to the App key: a repository copy wins over the project copy from then on, and the App key is stored project-wide by default")
+	}
+	// bitbucket-token is the opposite case, and the App key's rule must not be
+	// read onto it (code review, medium): it has no project-wide default at
+	// all (config.PerRepositorySecret, the owner's ruling of 2026-10-15 — a
+	// repository access token is issued for one repository), so `--repo` is
+	// the right spelling for it and the bare command stores the same copy. A
+	// test that forbade `--repo` for every git credential failed on exactly
+	// that correct line. What is wrong for this name is the other store: the
+	// project-wide one, refused for it unless the operator's own local config
+	// allow-lists repositories.
+	if strings.Contains(text, "secrets set bitbucket-token --project-wide") {
+		t.Error("the setup skill stores bitbucket-token project-wide: that store is refused for the name, since a repository access token serves one repository")
 	}
 }
 
