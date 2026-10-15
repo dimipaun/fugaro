@@ -142,6 +142,7 @@ fugaro init --name <project> --gcp-project <gcp-project> --region <region>
 Give it the same flags as step 1. It asks for the project name once more, applies the saved plan, and writes the local config.
 
 - **Creates** what step 1's plan showed.
+- **The log sink and its `_Default` exclusion carry one arm per platform.** `fugaro-jobs` routes a Fugaro-managed job's lines into the installation's log bucket and `fugaro-jobs-from-default` keeps them out of `_Default`; the filters name the resource type the platform gives an entry, so they carry both `cloud_run_job` and `batch.googleapis.com/Job` (the VM backend's jobs, [compute-backend.md](design/compute-backend.md) §1.5). The Batch arm is **additive and inert** on a project with no Batch jobs: nothing carries that resource type, so nothing moves, and who can read a line is unchanged (the `fugaro-runs` view has no filter of its own and its IAM member still names exactly the launchers and operators). **This is installation Terraform, so it reaches a project only when this apply runs there** — no other command applies it, and an installation from before the arm keeps routing only Cloud Run's lines until the owner reruns `fugaro init`.
 - **Cost:**
   - The APIs are free to enable.
   - Service accounts, custom roles and IAM bindings are free.

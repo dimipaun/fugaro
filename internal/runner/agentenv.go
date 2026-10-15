@@ -70,7 +70,7 @@ func (r *run) stagePins(stage string) map[string]string {
 // on it there instead of to Anthropic.
 func (r *run) stageOnProviderRoute(model, background string) bool {
 	for _, m := range []string{model, background} {
-		if _, _, ok := config.ProviderFor(r.d.Providers, m); ok {
+		if _, _, ok := config.ProviderFor(r.modelProviders(), m); ok {
 			return true
 		}
 	}

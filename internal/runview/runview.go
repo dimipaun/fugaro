@@ -155,9 +155,31 @@ func Pushed(t *task.Spec, r *runstore.Record) (head string, ok bool) {
 	return "", false
 }
 
-// PriceBook is the compute prices of a region (a local override, else the
-// list price); "" means the caller's default region.
-type PriceBook func(region string) backend.Prices
+// PriceBook is the compute price table one execution is priced with (a
+// local override, else the backend's list price), for the execution's own
+// region and machine type. The execution is passed rather than a region
+// string because the region is the backend's to resolve -- a second
+// platform's name need not have Cloud Run's fields, so a caller parsing the
+// name would price a VM run with the empty region's table (design
+// compute-backend.md §5.2) -- and because a VM's price also depends on its
+// machine type.
+//
+// The zero Prices means "no table prices this execution": Join then records
+// compute as not estimated, never as $0.00, so a machine type or region the
+// table does not carry reads as unknown rather than free. A book that carries
+// a source line but bills nothing at all is the same thing (priced), because
+// a "$0.00" estimate cannot be told from free either.
+type PriceBook func(e *backend.Execution) backend.Prices
+
+// priced reports whether p prices anything: a book whose two rates are both
+// zero bills every execution at nothing, and "compute $0.00, estimate" is
+// indistinguishable from free, which §5.2 refuses. A table that carries
+// genuine prices always has a positive CPU rate -- neither platform sells
+// vCPU-seconds for nothing -- so this never refuses a real table; it only
+// catches a caller that handed over a partly-filled one.
+func priced(p backend.Prices) bool {
+	return p.VCPUSecondUSD > 0 || p.GiBSecondUSD > 0
+}
 
 // Join builds the row for in, pricing compute with prices.
 func Join(in Input, prices PriceBook, now time.Time) Row {
@@ -343,12 +365,13 @@ func Lost(l *runstore.Launch, created, now time.Time) bool {
 }
 
 // cost is the row's cost: the model spend from the record, and compute
-// from the execution when its resources are known, priced in the
-// execution's own region, else the record's. The record's own facts about
-// the model charge that are not recomputed here are carried over — today
-// CatalogStale, which `diagnose` reports (design provider-price-catalog.md
-// §7, P7) — because the row is a view of that charge, not a second opinion
-// on it.
+// from the execution when its resources are known, priced with the price
+// table of the execution's own backend, region and machine type. The
+// record's own facts about the model charge that are not recomputed here are
+// carried over — today CatalogStale, which `diagnose` reports (design
+// provider-price-catalog.md §7, P7) — because the row is a view of that
+// charge, not a second opinion on it; the compute estimate's own source line
+// is carried over with it.
 func cost(r *runstore.Record, e *backend.Execution, prices PriceBook, now time.Time) runstore.Cost {
 	basis, model := runstore.BasisAPIList, 0.0
 	var stored *runstore.Cost
@@ -360,14 +383,46 @@ func cost(r *runstore.Record, e *backend.Execution, prices PriceBook, now time.T
 	}
 	var c runstore.Cost
 	switch {
-	case e != nil && (e.CPU > 0 || e.MemoryGiB > 0):
-		region := ""
-		if id, ok := backend.ParseExecution(e.Name); ok {
-			region = id.Region
+	case e != nil && (e.CPU > 0 || e.MemoryGiB > 0 || e.MachineType != ""):
+		// The window is the execution's own: a VM is billed from its boot
+		// window with a one-minute minimum, Cloud Run from its start
+		// (backend.Execution.BilledWindow). A window or a price table the
+		// backend has not reported leaves compute unestimated, never 0. A
+		// VM-backed execution qualifies on its machine type alone: Batch
+		// reports no CPU/MemoryGiB limits, so requiring them would leave
+		// every VM run on the model-only fallback (design §5.2).
+		d, known := e.BilledWindow(now)
+		p := prices(e)
+		switch {
+		case !known || !priced(p):
+			c = runstore.ModelOnlyCost(model, basis)
+		default:
+			// A price table that bills a machine type carries that type's
+			// quantities, and they decide the figure: a VM is billed for its
+			// machine type whatever the workflow's resources asked for
+			// (Prices.Quantities, design compute-backend.md §5.2).
+			cpu, mem := p.Quantities(e.CPU, e.MemoryGiB)
+			c = runstore.NewCost(model, p.ComputeUSD(cpu, mem, d), basis)
+			// Only an estimate priced from a table that names itself
+			// records a source line; Cloud Run's list price is what it
+			// always was, and its rows are unchanged. A VM run also records
+			// which time its window started from, so a reader can tell a
+			// window that includes Batch's queue time from one that does
+			// not (§5.2).
+			if e.MachineType != "" {
+				c.ComputeSource = p.Source
+				if n := e.WindowNote(); n != "" {
+					if c.ComputeSource == "" {
+						c.ComputeSource = n
+					} else {
+						c.ComputeSource += "; " + n
+					}
+				}
+			}
 		}
-		c = runstore.NewCost(model, prices(region).ComputeUSD(e.CPU, e.MemoryGiB, e.Billed(now)), basis)
 	case stored != nil && stored.ComputeEstimated:
 		c = runstore.NewCost(model, stored.ComputeUSD, basis)
+		c.ComputeSource = stored.ComputeSource
 	default:
 		c = runstore.ModelOnlyCost(model, basis)
 	}

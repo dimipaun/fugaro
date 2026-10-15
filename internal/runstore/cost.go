@@ -21,6 +21,14 @@ type Cost struct {
 	// ModelSource says where ModelUSD came from: "gateway" (its settled
 	// ledger) or "claude-code" (the agent's own total_cost_usd).
 	ModelSource string `json:"model_source,omitempty"`
+	// ComputeSource is the source line of the compute estimate: the price
+	// table's own line for the figures ComputeUSD was computed from, so a
+	// reader can tell an estimate priced from the Compute Engine VM table
+	// from one priced with Cloud Run's jobs list price (design
+	// compute-backend.md §5.2, C17). Empty when the estimate carries no
+	// table of its own -- Cloud Run's list price today -- so nothing
+	// already recorded changes.
+	ComputeSource string `json:"compute_source,omitempty"`
 	// ModelBy is the model spend by model, in USD.
 	ModelBy map[string]float64 `json:"model_by,omitempty"`
 	// RouteBy is the model spend by provider route, in USD; Claude calls

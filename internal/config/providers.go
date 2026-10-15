@@ -359,12 +359,26 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 			}
 		}
 	}
+	ps = append(ps, providerOverlapProblems(providers)...)
+	return ps
+}
+
+// providerOverlapProblems reports every pair of model patterns that a model
+// could match in two providers: a model must belong to one provider
+// (ProviderFor returns the first match by name), so the overlap is refused.
+// It is the rule ValidateModelProviders applies to the local config and
+// ApplyClaudeClaims applies to the config a project layer's claims merged
+// into, so a claim that collides is refused at config time rather than by a
+// gateway that cannot start.
+func providerOverlapProblems(providers map[string]ModelProvider) []Problem {
+	var ps []Problem
+	names := sortedKeys(providers)
 	for i, a := range names {
 		for _, b := range names[i+1:] {
 			for _, pa := range providers[a].Models {
 				for _, pb := range providers[b].Models {
 					if PatternsOverlap(pa, pb) {
-						add("providers."+b+".models", "%q overlaps %q of provider %s: a model must belong to one provider", pb, pa, a)
+						ps = append(ps, Problem{Path: "providers." + b + ".models", Message: fmt.Sprintf("%q overlaps %q of provider %s: a model must belong to one provider", pb, pa, a)})
 					}
 				}
 			}
@@ -410,21 +424,52 @@ func ProviderBySecret(providers map[string]ModelProvider, secret string) (name s
 func reservedSecretName(s string) bool { _, ok := ReservedSecrets[s]; return ok }
 
 // ClaudePatterns are the model patterns no provider may claim: Claude goes
-// direct to Anthropic, also under the "anthropic/" vendor prefix.
+// direct to Anthropic, also under the "anthropic/" vendor prefix. One
+// explicit ID is the exception, and only one: a route may name it
+// (CheckClaudeClaim).
 var ClaudePatterns = []string{"claude-*", "anthropic/*"}
 
+// CheckClaudeClaim is the rule for a route entry that overlaps a Claude
+// pattern: the problem, or "" when the entry is the one shape a route may
+// claim -- an explicit "anthropic/<id>", and nothing else under that prefix
+// (design docs/design/mixed-credentials.md §4, owner ruling 2026-10-14). The
+// claim is the entry itself, so this is the whole permission: no separate
+// list, no switch. A wildcard ("anthropic/*"), a bare "claude-*" spelling, a
+// ":" variant, a "[1m]" spelling or a name the provider-ID grammar rejects is
+// still refused, with the message this rule has always had.
+//
+// It is exported because it is the one place the shape of a claim is written:
+// the rule the gateway's routes inherit through CheckModelPattern, and the
+// rule a project layer's claim key is judged by (Task 7) are this function,
+// not a copy of it.
+func CheckClaudeClaim(m string) string {
+	// One explicit provider model ID under the prefix, and nothing else. The
+	// "*" test is kept deliberately as a second wall: no wildcard is a
+	// provider model ID by the pricing grammar, so it is redundant today --
+	// but this function *is* the permission, and the grammar it asks is
+	// internal/pricing's to widen. A wildcard that ever passed that grammar
+	// must still not claim a class of Claude models. The rule also stays
+	// readable as the two things the owner ruled out: a class, and a spelling
+	// a pin could not name.
+	if strings.HasPrefix(m, "anthropic/") && !strings.Contains(m, "*") && pricing.IsProviderModelID(m) {
+		return ""
+	}
+	return fmt.Sprintf("%q would claim Claude models, which go direct to Anthropic", m)
+}
+
 // CheckModelPattern is the rule for one entry of a provider's models: a
-// model ID, or a prefix ending in *, that claims no Claude model and is not
-// too broad. It returns the problem, or "" when the pattern is fine. The
-// gateway's routes apply the same rule, so a config that validates here
-// always starts there.
+// model ID, or a prefix ending in *, that claims no Claude model -- no Claude
+// pattern, and one explicit ID only when it is a claim (CheckClaudeClaim) --
+// and is not too broad. It returns the problem, or "" when the pattern is
+// fine. The gateway's routes apply the same rule, so a config that validates
+// here always starts there: the rule lives here and nowhere else.
 func CheckModelPattern(m string) string {
 	if !modelPatternRE.MatchString(m) || len(m) > 100 {
 		return fmt.Sprintf("%q must be a model ID, or a prefix ending in * such as deepseek/*", m)
 	}
 	for _, c := range ClaudePatterns {
 		if PatternsOverlap(m, c) {
-			return fmt.Sprintf("%q would claim Claude models, which go direct to Anthropic", m)
+			return CheckClaudeClaim(m)
 		}
 	}
 	if strings.Count(m, "*") == 1 && len(m) < 3 {
@@ -539,7 +584,7 @@ func CheckProviderPolicy(a Agent, allowed []string, repo string, providers map[s
 		name, p, ok := ProviderFor(providers, model)
 		switch {
 		case !ok:
-			ps = append(ps, Problem{Path: path, Message: fmt.Sprintf("%s is not a Claude model and no provider serves it: providers are set by the owner in the project config, never in fugaro.yaml", CodeSpan(model))})
+			ps = append(ps, Problem{Path: path, Message: unclaimedModelRefusal(model)})
 		case !p.AllowsData(repo):
 			ps = append(ps, Problem{Path: path, Message: fmt.Sprintf("%s is served by provider %s, whose allow_data_to does not name %s: the owner must list the repository in the project config before its code may be sent there", CodeSpan(model), name, CodeSpan(repo))})
 		case strings.Contains(model, ":"):
@@ -577,6 +622,21 @@ func CheckProviderPolicy(a Agent, allowed []string, repo string, providers map[s
 		check(fmt.Sprintf("budget.allowed_models[%d]", i), m)
 	}
 	return ps
+}
+
+// unclaimedModelRefusal is the refusal for a model no provider route serves.
+// A model that would be a claim if a route named it (CheckClaudeClaim's one
+// shape) is told the truth about itself instead of being called "not a Claude
+// model": it is a Claude model, Claude models go direct to Anthropic, and
+// only the owner can change that, by naming that exact ID in a route's models
+// in the project config, or in the project layer's claude_models for a route
+// the project config already defines. Every other model keeps the original
+// wording, whose substring "no provider serves it" three tests read.
+func unclaimedModelRefusal(model string) string {
+	if CheckClaudeClaim(model) == "" {
+		return fmt.Sprintf("%s is a Claude model: Claude models go direct to Anthropic and no provider serves it. Only the owner can change that, by naming that exact ID in a route's models in the project config (or in the project layer's claude_models, for a route the project config already defines), never in fugaro.yaml", CodeSpan(model))
+	}
+	return fmt.Sprintf("%s is not a Claude model and no provider serves it: providers are set by the owner in the project config, never in fugaro.yaml", CodeSpan(model))
 }
 
 func claimed(providers map[string]ModelProvider, model string) bool {

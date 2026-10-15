@@ -48,6 +48,12 @@ func TestLaunchAndInspect(t *testing.T) {
 	if err != nil || e.State != backend.StatePending || e.CPU != 4 || e.MemoryGiB != 8 {
 		t.Fatalf("execution = %+v, %v", e, err)
 	}
+	// Region is the backend's own answer, and it is what a caller prices
+	// with: a caller that had to parse the name would price a run in the
+	// wrong region the moment a backend's name had another shape (§5.2).
+	if e.Region != "us-east5" {
+		t.Errorf("execution region = %q, want the backend's own us-east5", e.Region)
+	}
 	fr.SetState(ref.Name, backend.StateRunning)
 	active, err := b.List(ctx, backend.ListFilter{ActiveOnly: true})
 	if err != nil || len(active) != 1 || active[0].State != backend.StateRunning {
@@ -187,6 +193,38 @@ type execJSON struct {
 func (e execJSON) api() *run.GoogleCloudRunV2Execution {
 	return &run.GoogleCloudRunV2Execution{StartTime: e.StartTime, CompletionTime: e.CompletionTime,
 		RunningCount: e.RunningCount, SucceededCount: e.SucceededCount, FailedCount: e.FailedCount, CancelledCount: e.CancelledCount}
+}
+
+// Every execution a listing returns carries the backend's own region, which
+// is the field the CLI's price book is handed (runview.PriceBook,
+// design §5.2): a listing whose region were dropped or left empty would price
+// every run with the installation's default region and Cloud Run's empty
+// region's table instead.
+func TestListedExecutionsCarryTheirOwnRegion(t *testing.T) {
+	ctx := context.Background()
+	b, fr, _ := newTestBackend(t)
+	fr.AddJob(webJob, "4", "8Gi")
+	fr.AddJob(apiJob, "4", "8Gi")
+	for _, wf := range []string{"web", "api"} {
+		if _, err := b.Launch(ctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: wf, RunID: "20260927-10000" + wf[:1] + "-abcd"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list, err := b.List(ctx, backend.ListFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("List = %+v, want both executions", list)
+	}
+	for _, e := range list {
+		if e.Region != "us-east5" {
+			t.Errorf("%s: region = %q, want us-east5", e.Name, e.Region)
+		}
+		if e.MachineType != "" {
+			t.Errorf("%s: machine type = %q, and Cloud Run runs on no machine type", e.Name, e.MachineType)
+		}
+	}
 }
 
 func TestListFollowsPagesAndStopsAtSince(t *testing.T) {

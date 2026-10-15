@@ -136,7 +136,22 @@ func routeByUSD(by, modelBy map[string]pricing.Micros, total pricing.Micros, rou
 
 // CostLine renders a cost breakdown for reports (design §10.1). It keys
 // off ComputeEstimated, never off a zero compute figure.
+//
+// A compute estimate that came from a price table naming itself gets its
+// source line underneath, which is where a reader learns that the figure is
+// the Compute Engine VM table's -- and that the VM's boot disk and Cloud NAT
+// are not in it (design compute-backend.md §5.2, C17). Cloud Run's list
+// price records no source, so every line it renders is unchanged.
 func CostLine(c runstore.Cost) string {
+	line := costLine(c)
+	if c.ComputeEstimated && c.ComputeSource != "" {
+		line += "\n**Compute source:** " + c.ComputeSource
+	}
+	return line
+}
+
+// costLine is the cost sentence itself, without the estimate's source.
+func costLine(c runstore.Cost) string {
 	sub := c.ModelBasis == runstore.BasisSubscription
 	switch {
 	case !c.ComputeEstimated && sub:

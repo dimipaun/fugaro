@@ -96,13 +96,13 @@ func (r *run) gatewayRoutes() ([]gateway.Route, error) {
 	a := r.cfg.Agent
 	used := map[string]bool{}
 	for _, m := range []string{a.ModelFor(config.RoleCoder), a.ModelFor(config.RoleReviewer), r.backgroundModel()} {
-		if name, _, ok := config.ProviderFor(r.d.Providers, m); ok {
+		if name, _, ok := config.ProviderFor(r.modelProviders(), m); ok {
 			used[name] = true
 		}
 	}
 	var routes []gateway.Route
 	for _, name := range slices.Sorted(maps.Keys(used)) {
-		p := r.d.Providers[name]
+		p := r.modelProviders()[name]
 		cred, value, err := ProviderCredential(r.d.Env, p)
 		if err != nil {
 			return nil, fmt.Errorf("starting the gateway: provider %s: %w", name, err)
@@ -116,5 +116,5 @@ func (r *run) gatewayRoutes() ([]gateway.Route, error) {
 // backgroundModel is config.EffectiveBackground for the run: after
 // checkProviderModels it is also agent.models.background itself.
 func (r *run) backgroundModel() string {
-	return config.EffectiveBackground(r.cfg.Agent, r.d.Providers)
+	return config.EffectiveBackground(r.cfg.Agent, r.modelProviders())
 }

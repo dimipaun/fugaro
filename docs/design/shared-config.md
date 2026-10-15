@@ -59,7 +59,7 @@ Trust level: operators (and, before 0.7.0, launchers) hold `roles/storage.object
    - the budget block passes the existing Firebase output validation (`CheckFirebaseOutputsFor`): the database host derives from `firebase_project`, and `token_signer` is `fugaro-token-signer@<firebase_project>.iam.gserviceaccount.com`;
    - no `endpoints:`, `user:`, `terraform:`, `bucket_url:`, `registry:` or `providers:` section, no `build.service_account`, and no repository `base_branch`.
 
-Error messages quote hostile text (`%q`) so a writer cannot inject terminal escapes or newlines. A 403 from the bucket is an error ("no access"), never "absent": the shared-config readers use a strict read (`blobx.ReadStrict` and `ReadMaxStrict`) that returns it as itself. Ordinary reads keep the driver's 403-as-absent mapping, because the job and build accounts hold prefix-conditioned grants (no list permission, so GCS answers a missing object with 403).
+Error messages quote hostile text (`%q`) so a writer cannot inject terminal escapes or newlines. A 403 from the bucket is an error ("no access"), never "absent": the shared-config readers use a strict read (`blobx.ReadStrict` and `ReadMaxStrict`), which never folds a 403 into a not-found — it comes back as `blobx.ErrForbidden`, with the driver's own 403 still reachable through `errors.As` (the sentinel is made from a GCS 403, so a non-GCS driver keeps its own refusal, `fs.ErrPermission`). Ordinary reads keep the driver's 403-as-absent mapping, because the job and build accounts hold prefix-conditioned grants (no list permission, so GCS answers a missing object with 403).
 
 ## 6. Cache
 

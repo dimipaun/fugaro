@@ -298,6 +298,37 @@ func resolveFugaroYAML(ctx context.Context, data []byte, lc *localcfg.Config, o 
 	return resolvedFile{Cfg: cfg, Res: res, Layer: fl, Problems: ps}, nil
 }
 
+// layerRoutes are the routes an in-checkout command must judge a pin or a
+// provider by: lc's own, with the checkout layer's claude_models merged in
+// (config.ApplyClaudeClaims, design mixed-credentials.md §4 and P8). Without
+// it a pin the layer claims is refused here as "no provider serves it" while
+// the same run succeeds in the cloud. Never lc.Providers itself: the project
+// config on disk carries no claim.
+//
+// Only the *routing* rules take this map. The price table stays lc.Providers'
+// — the claim-blind table the run's own environment builds, since
+// FUGARO_MODEL_PROVIDERS never carries a claim — so a claimed ID is priced by
+// the operator's model_prices and never by the catalog, and validate can
+// never accept a pin the run would refuse as unpriced (P4, P11).
+//
+// A layer that did not apply (nil, or no claim) returns lc.Providers, and so
+// does a merge the rules refuse — an undefined provider name, an empty list, a
+// pattern collision: the problems are returned instead, because the run would
+// not start either and no rule may judge a route table that was refused.
+func layerRoutes(lc *localcfg.Config, l *config.ProjectLayer) (map[string]config.ModelProvider, []config.Problem) {
+	if lc == nil {
+		return nil, nil
+	}
+	if len(config.ClaudeClaimsOf(l)) == 0 {
+		return lc.Providers, nil
+	}
+	merged, ps := config.ApplyClaudeClaims(lc.Providers, l.ClaudeModels)
+	if len(ps) > 0 {
+		return lc.Providers, ps
+	}
+	return merged, nil
+}
+
 // parseCheckoutFugaroYAML is config.Parse for a checkout's fugaro.yaml over
 // its project layer, for the commands that want only the config and its
 // problems. A failure to read the layer is one problem.

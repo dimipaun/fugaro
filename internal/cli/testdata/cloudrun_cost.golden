@@ -1,0 +1,486 @@
+== tier-1 region, 4 vCPU / 8 GiB, 30 min
+--- ls --json
+{
+  "project": "proj-1234",
+  "runs": [
+    {
+      "run": "acme-app-dc4d4e59e884fc44/20260927-100000-abcd",
+      "repo": "",
+      "run_id": "20260927-100000-abcd",
+      "status": "succeeded",
+      "reason": "task.json unreadable",
+      "created": "2026-09-27T10:00:00Z",
+      "cost": {
+        "model_usd": 2,
+        "compute_usd": 0.15839999999999999,
+        "compute_estimated": true,
+        "total_usd": 2.16,
+        "estimate": true,
+        "model_basis": "api-list"
+      },
+      "terminal": true,
+      "settled": true,
+      "pushed": false,
+      "follow_up": false
+    }
+  ],
+  "totals": {
+    "runs": 1,
+    "model_usd": 2,
+    "model_notional_usd": 0,
+    "compute_usd": 0.15839999999999999,
+    "total_usd": 2.16,
+    "compute_not_estimated": 0
+  },
+  "warnings": null
+}
+--- result.json
+{"version":1,"run_id":"20260927-100000-abcd","repo":"acme/app","workflow":"web","status":"succeeded","stage":"","outcome":"","cost_usd":2,"cost":{"model_usd":2,"compute_usd":0,"compute_estimated":true,"total_usd":2,"estimate":true,"model_basis":"api-list"},"started_at":"0001-01-01T00:00:00Z"}
+--- diagnose
+Cost: ≈ $2.16 (model $2.00 + compute $0.16, estimate)
+--- history
+compute_micros=158400 compute_estimated_runs=1 spent_micros=2000000 notional_micros=0 runs=1
+--- report source
+
+== tier-2 region, same limits
+--- ls --json
+{
+  "project": "proj-1234",
+  "runs": [
+    {
+      "run": "acme-app-dc4d4e59e884fc44/20260927-100000-abcd",
+      "repo": "",
+      "run_id": "20260927-100000-abcd",
+      "status": "succeeded",
+      "reason": "task.json unreadable",
+      "created": "2026-09-27T10:00:00Z",
+      "cost": {
+        "model_usd": 2,
+        "compute_usd": 0.19008,
+        "compute_estimated": true,
+        "total_usd": 2.19,
+        "estimate": true,
+        "model_basis": "api-list"
+      },
+      "terminal": true,
+      "settled": true,
+      "pushed": false,
+      "follow_up": false
+    }
+  ],
+  "totals": {
+    "runs": 1,
+    "model_usd": 2,
+    "model_notional_usd": 0,
+    "compute_usd": 0.19008,
+    "total_usd": 2.19,
+    "compute_not_estimated": 0
+  },
+  "warnings": null
+}
+--- result.json
+{"version":1,"run_id":"20260927-100000-abcd","repo":"acme/app","workflow":"web","status":"succeeded","stage":"","outcome":"","cost_usd":2,"cost":{"model_usd":2,"compute_usd":0,"compute_estimated":true,"total_usd":2,"estimate":true,"model_basis":"api-list"},"started_at":"0001-01-01T00:00:00Z"}
+--- diagnose
+Cost: ≈ $2.19 (model $2.00 + compute $0.19, estimate)
+--- history
+compute_micros=190080 compute_estimated_runs=1 spent_micros=2000000 notional_micros=0 runs=1
+--- report source
+
+== no region: the name did not parse
+--- ls --json
+{
+  "project": "proj-1234",
+  "runs": [
+    {
+      "run": "acme-app-dc4d4e59e884fc44/20260927-100000-abcd",
+      "repo": "",
+      "run_id": "20260927-100000-abcd",
+      "status": "succeeded",
+      "reason": "task.json unreadable",
+      "created": "2026-09-27T10:00:00Z",
+      "cost": {
+        "model_usd": 2,
+        "compute_usd": 0.15839999999999999,
+        "compute_estimated": true,
+        "total_usd": 2.16,
+        "estimate": true,
+        "model_basis": "api-list"
+      },
+      "terminal": true,
+      "settled": true,
+      "pushed": false,
+      "follow_up": false
+    }
+  ],
+  "totals": {
+    "runs": 1,
+    "model_usd": 2,
+    "model_notional_usd": 0,
+    "compute_usd": 0.15839999999999999,
+    "total_usd": 2.16,
+    "compute_not_estimated": 0
+  },
+  "warnings": null
+}
+--- result.json
+{"version":1,"run_id":"20260927-100000-abcd","repo":"acme/app","workflow":"web","status":"succeeded","stage":"","outcome":"","cost_usd":2,"cost":{"model_usd":2,"compute_usd":0,"compute_estimated":true,"total_usd":2,"estimate":true,"model_basis":"api-list"},"started_at":"0001-01-01T00:00:00Z"}
+--- diagnose
+Cost: ≈ $2.16 (model $2.00 + compute $0.16, estimate)
+--- history
+compute_micros=158400 compute_estimated_runs=1 spent_micros=2000000 notional_micros=0 runs=1
+--- report source
+
+== limits the execution did not report
+--- ls --json
+{
+  "project": "proj-1234",
+  "runs": [
+    {
+      "run": "acme-app-dc4d4e59e884fc44/20260927-100000-abcd",
+      "repo": "",
+      "run_id": "20260927-100000-abcd",
+      "status": "succeeded",
+      "reason": "task.json unreadable",
+      "created": "2026-09-27T10:00:00Z",
+      "cost": {
+        "model_usd": 2,
+        "compute_usd": 0,
+        "compute_estimated": true,
+        "total_usd": 2,
+        "estimate": true,
+        "model_basis": "api-list"
+      },
+      "terminal": true,
+      "settled": true,
+      "pushed": false,
+      "follow_up": false
+    }
+  ],
+  "totals": {
+    "runs": 1,
+    "model_usd": 2,
+    "model_notional_usd": 0,
+    "compute_usd": 0,
+    "total_usd": 2,
+    "compute_not_estimated": 0
+  },
+  "warnings": null
+}
+--- result.json
+{"version":1,"run_id":"20260927-100000-abcd","repo":"acme/app","workflow":"web","status":"succeeded","stage":"","outcome":"","cost_usd":2,"cost":{"model_usd":2,"compute_usd":0,"compute_estimated":true,"total_usd":2,"estimate":true,"model_basis":"api-list"},"started_at":"0001-01-01T00:00:00Z"}
+--- diagnose
+Cost: ≈ $2.00 (model $2.00 + compute $0.00, estimate)
+--- history
+compute_micros=0 compute_estimated_runs=1 spent_micros=2000000 notional_micros=0 runs=1
+--- report source
+
+== a run under a minute: Cloud Run has no floor
+--- ls --json
+{
+  "project": "proj-1234",
+  "runs": [
+    {
+      "run": "acme-app-dc4d4e59e884fc44/20260927-100000-abcd",
+      "repo": "",
+      "run_id": "20260927-100000-abcd",
+      "status": "succeeded",
+      "reason": "task.json unreadable",
+      "created": "2026-09-27T10:00:00Z",
+      "cost": {
+        "model_usd": 2,
+        "compute_usd": 0.00264,
+        "compute_estimated": true,
+        "total_usd": 2,
+        "estimate": true,
+        "model_basis": "api-list"
+      },
+      "terminal": true,
+      "settled": true,
+      "pushed": false,
+      "follow_up": false
+    }
+  ],
+  "totals": {
+    "runs": 1,
+    "model_usd": 2,
+    "model_notional_usd": 0,
+    "compute_usd": 0.00264,
+    "total_usd": 2,
+    "compute_not_estimated": 0
+  },
+  "warnings": null
+}
+--- result.json
+{"version":1,"run_id":"20260927-100000-abcd","repo":"acme/app","workflow":"web","status":"succeeded","stage":"","outcome":"","cost_usd":2,"cost":{"model_usd":2,"compute_usd":0,"compute_estimated":true,"total_usd":2,"estimate":true,"model_basis":"api-list"},"started_at":"0001-01-01T00:00:00Z"}
+--- diagnose
+Cost: ≈ $2.00 (model $2.00 + compute $0.00, estimate)
+--- history
+compute_micros=2640 compute_estimated_runs=1 spent_micros=2000000 notional_micros=0 runs=1
+--- report source
+
+== inverted times
+--- ls --json
+{
+  "project": "proj-1234",
+  "runs": [
+    {
+      "run": "acme-app-dc4d4e59e884fc44/20260927-100000-abcd",
+      "repo": "",
+      "run_id": "20260927-100000-abcd",
+      "status": "succeeded",
+      "reason": "task.json unreadable",
+      "created": "2026-09-27T10:00:00Z",
+      "cost": {
+        "model_usd": 2,
+        "compute_usd": 0,
+        "compute_estimated": true,
+        "total_usd": 2,
+        "estimate": true,
+        "model_basis": "api-list"
+      },
+      "terminal": true,
+      "settled": true,
+      "pushed": false,
+      "follow_up": false
+    }
+  ],
+  "totals": {
+    "runs": 1,
+    "model_usd": 2,
+    "model_notional_usd": 0,
+    "compute_usd": 0,
+    "total_usd": 2,
+    "compute_not_estimated": 0
+  },
+  "warnings": null
+}
+--- result.json
+{"version":1,"run_id":"20260927-100000-abcd","repo":"acme/app","workflow":"web","status":"succeeded","stage":"","outcome":"","cost_usd":2,"cost":{"model_usd":2,"compute_usd":0,"compute_estimated":true,"total_usd":2,"estimate":true,"model_basis":"api-list"},"started_at":"0001-01-01T00:00:00Z"}
+--- diagnose
+Cost: ≈ $2.00 (model $2.00 + compute $0.00, estimate)
+--- history
+compute_micros=0 compute_estimated_runs=1 spent_micros=2000000 notional_micros=0 runs=1
+--- report source
+
+== subscription model spend
+--- ls --json
+{
+  "project": "proj-1234",
+  "runs": [
+    {
+      "run": "acme-app-dc4d4e59e884fc44/20260927-100000-abcd",
+      "repo": "",
+      "run_id": "20260927-100000-abcd",
+      "status": "succeeded",
+      "reason": "task.json unreadable",
+      "created": "2026-09-27T10:00:00Z",
+      "cost": {
+        "model_usd": 3.2,
+        "compute_usd": 0.15839999999999999,
+        "compute_estimated": true,
+        "total_usd": 0.16,
+        "estimate": true,
+        "model_basis": "subscription"
+      },
+      "terminal": true,
+      "settled": true,
+      "pushed": false,
+      "follow_up": false
+    }
+  ],
+  "totals": {
+    "runs": 1,
+    "model_usd": 0,
+    "model_notional_usd": 3.2,
+    "compute_usd": 0.15839999999999999,
+    "total_usd": 0.16,
+    "compute_not_estimated": 0
+  },
+  "warnings": null
+}
+--- result.json
+{"version":1,"run_id":"20260927-100000-abcd","repo":"acme/app","workflow":"web","status":"succeeded","stage":"","outcome":"","cost_usd":3.2,"cost":{"model_usd":3.2,"compute_usd":0,"compute_estimated":true,"total_usd":0,"estimate":true,"model_basis":"subscription"},"started_at":"0001-01-01T00:00:00Z"}
+--- diagnose
+Cost: ≈ $0.16 compute (estimate); model $3.20 notional, counted against the Claude subscription
+--- history
+compute_micros=158400 compute_estimated_runs=1 spent_micros=0 notional_micros=3200000 runs=1
+--- report source
+
+== a stored model-only cost
+--- ls --json
+{
+  "project": "proj-1234",
+  "runs": [
+    {
+      "run": "acme-app-dc4d4e59e884fc44/20260927-100000-abcd",
+      "repo": "",
+      "run_id": "20260927-100000-abcd",
+      "status": "succeeded",
+      "reason": "task.json unreadable",
+      "created": "2026-09-27T10:00:00Z",
+      "cost": {
+        "model_usd": 3.2,
+        "compute_usd": 0.15839999999999999,
+        "compute_estimated": true,
+        "total_usd": 3.36,
+        "estimate": true,
+        "model_basis": "api-list"
+      },
+      "terminal": true,
+      "settled": true,
+      "pushed": false,
+      "follow_up": false
+    }
+  ],
+  "totals": {
+    "runs": 1,
+    "model_usd": 3.2,
+    "model_notional_usd": 0,
+    "compute_usd": 0.15839999999999999,
+    "total_usd": 3.36,
+    "compute_not_estimated": 0
+  },
+  "warnings": null
+}
+--- result.json
+{"version":1,"run_id":"20260927-100000-abcd","repo":"acme/app","workflow":"web","status":"succeeded","stage":"","outcome":"","cost_usd":3.2,"cost":{"model_usd":3.2,"compute_usd":0,"compute_estimated":false,"total_usd":3.2,"estimate":true,"model_basis":"api-list"},"started_at":"0001-01-01T00:00:00Z"}
+--- diagnose
+Cost: ≈ $3.36 (model $3.20 + compute $0.16, estimate)
+--- history
+compute_micros=158400 compute_estimated_runs=1 spent_micros=3200000 notional_micros=0 runs=1
+--- report source
+
+== a stored compute estimate with its source line
+--- ls --json
+{
+  "project": "proj-1234",
+  "runs": [
+    {
+      "run": "acme-app-dc4d4e59e884fc44/20260927-100000-abcd",
+      "repo": "",
+      "run_id": "20260927-100000-abcd",
+      "status": "succeeded",
+      "reason": "task.json unreadable",
+      "created": "2026-09-27T10:00:00Z",
+      "cost": {
+        "model_usd": 2,
+        "compute_usd": 0.15839999999999999,
+        "compute_estimated": true,
+        "total_usd": 2.16,
+        "estimate": true,
+        "model_basis": "api-list"
+      },
+      "terminal": true,
+      "settled": true,
+      "pushed": false,
+      "follow_up": false
+    }
+  ],
+  "totals": {
+    "runs": 1,
+    "model_usd": 2,
+    "model_notional_usd": 0,
+    "compute_usd": 0.15839999999999999,
+    "total_usd": 2.16,
+    "compute_not_estimated": 0
+  },
+  "warnings": null
+}
+--- result.json
+{"version":1,"run_id":"20260927-100000-abcd","repo":"acme/app","workflow":"web","status":"succeeded","stage":"","outcome":"","cost_usd":2,"cost":{"model_usd":2,"compute_usd":1.5,"compute_estimated":true,"total_usd":3.5,"estimate":false,"model_basis":"api-list","compute_source":"Compute Engine VM list price, e2-standard family, us-east1 (2026-10-14, UNVERIFIED)"},"started_at":"0001-01-01T00:00:00Z"}
+--- diagnose
+Cost: ≈ $2.16 (model $2.00 + compute $0.16, estimate)
+--- history
+compute_micros=158400 compute_estimated_runs=1 spent_micros=2000000 notional_micros=0 runs=1
+--- report source
+
+== an override of zero rates
+--- ls --json
+{
+  "project": "proj-1234",
+  "runs": [
+    {
+      "run": "acme-app-dc4d4e59e884fc44/20260927-100000-abcd",
+      "repo": "",
+      "run_id": "20260927-100000-abcd",
+      "status": "succeeded",
+      "reason": "task.json unreadable",
+      "created": "2026-09-27T10:00:00Z",
+      "cost": {
+        "model_usd": 2,
+        "compute_usd": 0,
+        "compute_estimated": false,
+        "total_usd": 2,
+        "estimate": true,
+        "model_basis": "api-list"
+      },
+      "terminal": true,
+      "settled": true,
+      "pushed": false,
+      "follow_up": false
+    }
+  ],
+  "totals": {
+    "runs": 1,
+    "model_usd": 2,
+    "model_notional_usd": 0,
+    "compute_usd": 0,
+    "total_usd": 2,
+    "compute_not_estimated": 1
+  },
+  "warnings": null
+}
+--- result.json
+{"version":1,"run_id":"20260927-100000-abcd","repo":"acme/app","workflow":"web","status":"succeeded","stage":"","outcome":"","cost_usd":2,"cost":{"model_usd":2,"compute_usd":0,"compute_estimated":true,"total_usd":2,"estimate":true,"model_basis":"api-list"},"started_at":"0001-01-01T00:00:00Z"}
+--- diagnose
+Cost: model $2.00 (compute not estimated)
+--- history
+compute_micros=0 compute_estimated_runs=0 spent_micros=2000000 notional_micros=0 runs=1
+--- report source
+
+== a stored compute estimate and no execution to re-price it
+--- ls --json
+{
+  "project": "proj-1234",
+  "runs": [
+    {
+      "run": "acme-app-dc4d4e59e884fc44/20260927-100000-abcd",
+      "repo": "",
+      "run_id": "20260927-100000-abcd",
+      "status": "succeeded",
+      "reason": "task.json unreadable",
+      "created": "2026-09-27T10:00:00Z",
+      "cost": {
+        "model_usd": 2,
+        "compute_usd": 1.5,
+        "compute_estimated": true,
+        "total_usd": 3.5,
+        "estimate": true,
+        "model_basis": "api-list",
+        "compute_source": "Compute Engine VM list price, e2-standard family, us-east1 (2026-10-14, UNVERIFIED); boot disk and Cloud NAT are not in this figure (design C17)"
+      },
+      "terminal": true,
+      "settled": true,
+      "pushed": false,
+      "follow_up": false
+    }
+  ],
+  "totals": {
+    "runs": 1,
+    "model_usd": 2,
+    "model_notional_usd": 0,
+    "compute_usd": 1.5,
+    "total_usd": 3.5,
+    "compute_not_estimated": 0
+  },
+  "warnings": null
+}
+--- result.json
+{"version":1,"run_id":"20260927-100000-abcd","repo":"acme/app","workflow":"web","status":"succeeded","stage":"","outcome":"","cost_usd":2,"cost":{"model_usd":2,"compute_usd":1.5,"compute_estimated":true,"total_usd":3.5,"estimate":false,"model_basis":"api-list","compute_source":"Compute Engine VM list price, e2-standard family, us-east1 (2026-10-14, UNVERIFIED); boot disk and Cloud NAT are not in this figure (design C17)"},"started_at":"0001-01-01T00:00:00Z"}
+--- diagnose
+Cost: ≈ $3.50 (model $2.00 + compute $1.50, estimate)
+Compute source: Compute Engine VM list price, e2-standard family, us-east1 (2026-10-14, UNVERIFIED); boot disk and Cloud NAT are not in this figure (design C17)
+--- history
+compute_micros=1500000 compute_estimated_runs=1 spent_micros=2000000 notional_micros=0 runs=1
+--- report source
+Compute Engine VM list price, e2-standard family, us-east1 (2026-10-14, UNVERIFIED); boot disk and Cloud NAT are not in this figure (design C17)
