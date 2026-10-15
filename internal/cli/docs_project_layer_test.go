@@ -11,11 +11,10 @@ import (
 
 // docsProjectLayerFuture lists the commands docs/project-layer.md deliberately
 // names as not yet built (section 10, "Not yet"): a reference to real work that
-// does not exist yet, not a typo to flag. `project policy publish` is phase 1
-// task 1.6 of docs/plans/2026-10-14-project-centric.md, and the doc says so
-// where it names it (§5 is about what the publisher refuses, not about a
-// command anyone can run today).
-var docsProjectLayerFuture = map[string]bool{"config extract": true, "project policy publish": true}
+// does not exist yet, not a typo to flag. `fugaro project policy publish` and
+// the rest of the group left this list when they shipped (phase 1 task 1.6);
+// `config extract` is still phase 4 of the layered-config plan.
+var docsProjectLayerFuture = map[string]bool{"config extract": true}
 
 // cmdHasFlag reports whether c, or an ancestor of c (a persistent flag),
 // declares a flag named name.
