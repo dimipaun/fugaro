@@ -638,14 +638,12 @@ func uniqueSecrets(ws WorkflowSpec) []string {
 // spec.Secrets: one the current config no longer computes, but that exists
 // and is ours. The caller unions these into the plan's Secrets map so a
 // config edit can never shrink it (N4). Listing by label is the same
-// metadata-only call the repository's own secrets loop already makes.
+// metadata-only call the repository's own secrets loop already makes -- and
+// the same one Orphans makes, which is why a refusal degrades here too
+// rather than stopping the run: it is a note naming the call, the permission
+// and the gcloud command, and the union is what is lost, not the run.
 func (d *discovery) extraSecrets(spec RepoSpec, out map[string]string) error {
-	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: spec.Label}
-	var filter []string
-	for _, k := range slices.Sorted(maps.Keys(labels)) {
-		filter = append(filter, "labels."+k+"="+labels[k])
-	}
-	err := d.c.Secrets.Projects.Secrets.List("projects/"+d.project).Filter(strings.Join(filter, " AND ")).Pages(d.ctx, func(p *secretmanager.ListSecretsResponse) error {
+	err := d.c.Secrets.Projects.Secrets.List("projects/"+d.project).Filter(labelFilter(OrphanLabels(spec))).Pages(d.ctx, func(p *secretmanager.ListSecretsResponse) error {
 		for _, sec := range p.Secrets {
 			logical := sec.Labels[gcp.LabelSecret]
 			if logical == "" {
@@ -664,7 +662,22 @@ func (d *discovery) extraSecrets(spec RepoSpec, out map[string]string) error {
 	case d.absent(err, serviceSecretManager):
 		return nil
 	case err != nil:
-		return fmt.Errorf("listing the repository's secrets: %w", err)
+		// A refused list narrows what discovery can adopt; it does not end
+		// the run. This is the same rule design §3.1a gives the retirement's
+		// own label calls -- a read whose failure narrows what the run can
+		// see, reported loudly rather than silently -- and the same
+		// permission answers both, since they are the same call. What is
+		// narrower here is the union: a container the configuration no
+		// longer computes is left out of the plan's for_each instead of
+		// being adopted back into it, so the plan meets the module's
+		// prevent_destroy rather than this run's silence. An abandoned
+		// context is not a degradation: that is the run giving up.
+		if d.ctx.Err() != nil {
+			return fmt.Errorf("listing the repository's secrets: %w", err)
+		}
+		d.im.Notes = append(d.im.Notes, fmt.Sprintf("could not list the repository's secrets (secretmanager.secrets.list): %v; a container the configuration no longer computes cannot be adopted back into the plan, so the plan may refuse on lifecycle.prevent_destroy instead of keeping it. Check by hand with: gcloud secrets list --project %s --filter='%s'",
+			err, d.project, labelFilter(OrphanLabels(spec))))
+		return nil
 	}
 	return nil
 }

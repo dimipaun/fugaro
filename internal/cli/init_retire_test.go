@@ -88,6 +88,11 @@ type retireOpts struct {
 	// not be read: Protected keeps it in the removal set (the conservative
 	// direction) and the API delete has no name to call.
 	jobNoName bool
+	// jobNoProtection is a job whose state carries no deletion_protection
+	// attribute at all: Protected is still true (the conservative default
+	// the removal set needs), but nothing was read, so the refusal gate may
+	// not fire on it (design §3.1).
+	jobNoProtection bool
 	// stateRmFails makes the state removal succeed for its first address and
 	// fail for its second: the midway failure M-D's naming rule is about.
 	stateRmFails bool
@@ -199,6 +204,9 @@ func retireStateDoc(t *testing.T, o retireOpts) string {
 		values := map[string]any{"name": retireJobName, "location": "us-east5", "deletion_protection": o.protection}
 		if o.jobNoName {
 			delete(values, "name")
+		}
+		if o.jobNoProtection {
+			delete(values, "deletion_protection")
 		}
 		workflow = append(workflow, map[string]any{"address": retireJobAddr, "mode": "managed", "type": "google_cloud_run_v2_job", "name": "this",
 			"values": values})
@@ -602,10 +610,13 @@ func TestInitRepoRetireResumeFindsTheOrphanByLabel(t *testing.T) {
 }
 
 // The gate's own rule, on its own: a job is blocking only when the state
-// both holds it and says its protection is on.
+// both holds it and says its protection is on -- a value, not the
+// conservative default (ProtectedRead). Protected alone cannot tell the two
+// apart, and the refusal may not put words in the state's mouth (design
+// §3.1, review round 3).
 func TestBlockingJobsReadsTheStatesOwnProtection(t *testing.T) {
 	rets := []infra.Retirement{
-		{Address: retireJobAddr, Kind: "workflow job", Protected: true},
+		{Address: retireJobAddr, Kind: "workflow job", Protected: true, ProtectedRead: true},
 		{Address: retireSvcAddr, Kind: "service account", Protected: true},
 	}
 	if got := blockingJobs([]string{retireJobAddr, retireSvcAddr}, rets); len(got) != 1 || got[0].Address != retireJobAddr {
@@ -614,9 +625,18 @@ func TestBlockingJobsReadsTheStatesOwnProtection(t *testing.T) {
 	if got := blockingJobs([]string{retireSvcAddr}, rets); len(got) != 0 {
 		t.Errorf("blockingJobs = %v, want nothing: the state does not hold the job", got)
 	}
-	open := []infra.Retirement{{Address: retireJobAddr, Kind: "workflow job", Protected: false}}
+	open := []infra.Retirement{{Address: retireJobAddr, Kind: "workflow job", Protected: false, ProtectedRead: true}}
 	if got := blockingJobs([]string{retireJobAddr}, open); len(got) != 0 {
 		t.Errorf("blockingJobs = %v, want nothing for a job the state says is not protected", got)
+	}
+	// The conservative default: a job whose protection could not be read is
+	// protected for the removal set, and not blocking for the gate.
+	unread := []infra.Retirement{{Address: retireJobAddr, Kind: "workflow job", Protected: true}}
+	if got := blockingJobs([]string{retireJobAddr}, unread); len(got) != 0 {
+		t.Errorf("blockingJobs = %v, want nothing for a job whose deletion_protection the state does not carry", got)
+	}
+	if !unread[0].Protected {
+		t.Error("an unread attribute must still leave the job protected: the removal set may not guess it unprotected")
 	}
 }
 
@@ -1347,7 +1367,15 @@ func TestInitRepoRetireResumeAdoptsTheLiveLabelledContainer(t *testing.T) {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
 	text := out + errOut
-	for _, bad := range []string{"no longer mounted by fugaro.yaml", "KEPT", retireKeptAddr} {
+	// The released container is a note, and only a note (design §3.1a's
+	// convergence rule, review round 3): the labels are the only thing left
+	// that remembers it, so the run tells the user the secret is safe -- and
+	// because a note is not a retirement, there is no row for it, no state
+	// removal and no delete.
+	if !strings.Contains(text, "note: "+retireKeptName) {
+		t.Errorf("the live labelled container got no note:\n%s", text)
+	}
+	for _, bad := range []string{"KEPT", retireKeptAddr} {
 		if strings.Contains(text, bad) {
 			t.Errorf("the live labelled container is reported as a leftover (%q):\n%s", bad, text)
 		}
@@ -1536,9 +1564,16 @@ func TestInitRepoRetireConvergesOnAnAdoptedContainer(t *testing.T) {
 			t.Fatalf("run %d: exit %d, err %v\n%s%s", i, ExitCode(err), err, out, errOut)
 		}
 		text := out + errOut
-		for _, bad := range []string{"no longer mounted by fugaro.yaml", "⚠ This change retires", retireNextCommand} {
+		// The adopted container is a note and nothing more: the run says its
+		// value is safe, and the convergence rule -- no summary, no gate, no
+		// next command -- keeps that from becoming a retirement the user is
+		// asked about on every later run (design §3.1a, §6).
+		if !strings.Contains(text, "note: "+retireKeptName) {
+			t.Errorf("run %d: the adopted container got no note:\n%s", i, text)
+		}
+		for _, bad := range []string{"⚠ This change retires", retireNextCommand} {
 			if strings.Contains(text, bad) {
-				t.Errorf("run %d: the adopted container is reported as a leftover (%q):\n%s", i, bad, text)
+				t.Errorf("run %d: the adopted container is reported as a retirement (%q):\n%s", i, bad, text)
 			}
 		}
 		if calls := r.ran(t, "state rm"); len(calls) != 0 {
@@ -1578,6 +1613,121 @@ func TestInitRepoRetireSaysWhenThereIsNothingToRetire(t *testing.T) {
 	}
 	if got := r.applies(t); len(got) != 1 {
 		t.Errorf("applies = %v, want the ordinary apply", got)
+	}
+}
+
+// "Nothing to retire" and "could not look" are different sentences (design
+// §3.1a, review round 3): with the job list refused, the labels never
+// answered, and the run may not claim they found nothing. What it says is
+// that it cannot say -- and it still removes nothing, deletes nothing and
+// confirms nothing.
+func TestInitRepoRetireSaysTheCheckCouldNotBeMade(t *testing.T) {
+	r := newRetireRig(t, retireOpts{protection: false, stateEmpty: true, noOrphanJob: true, keptAsNote: true})
+	r.run.FailListWith = 403
+	out, errOut, err := executeStdin(t, "", "init", "--repo", "--retire", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
+	if err != nil {
+		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
+	}
+	text := out + errOut
+	if !strings.Contains(text, "could not list the repository's Cloud Run jobs (run.jobs.list)") {
+		t.Errorf("the refused label call is not named:\n%s", text)
+	}
+	if strings.Contains(text, "Nothing to retire:") {
+		t.Errorf("the run claims there is nothing to retire after a look it could not make:\n%s", text)
+	}
+	if !strings.Contains(text, "Cannot say whether there is anything to retire:") {
+		t.Errorf("the run does not say the check could not be made:\n%s", text)
+	}
+	if calls := r.ran(t, "state rm"); len(calls) != 0 {
+		t.Errorf("state rm ran: %v", calls)
+	}
+}
+
+// A refused secrets list does not end the run (design §3.1a, review round
+// 3): discovery cannot union a container the configuration no longer
+// computes back into the plan, and it says so rather than aborting the
+// ordinary `fugaro init --repo` -- the same permission answers the
+// retirement's own label call, which the run reports the same way. What is
+// lost is the union, and the plan's own prevent_destroy refusal is what
+// catches the consequence.
+func TestInitRepoRefusedSecretsListDegradesInsteadOfAborting(t *testing.T) {
+	r := newRetireRig(t, retireOpts{protection: false})
+	r.sm.FailListWith = 403
+	out, errOut, err := executeStdin(t, "", "init", "--repo", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
+	if err != nil {
+		t.Fatalf("a refused secrets.list stopped the run: exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
+	}
+	text := out + errOut
+	for _, want := range []string{
+		"could not list the repository's secrets (secretmanager.secrets.list)",
+		"cannot be adopted back into the plan",
+		"gcloud secrets list --project " + initProject,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the degradation does not say %q:\n%s", want, text)
+		}
+	}
+	if got := r.applies(t); len(got) == 0 {
+		t.Errorf("the run stopped before the plan: applies = %v\n%s", got, text)
+	}
+}
+
+// The state removal is between the two confirmations, so only the first of
+// them asks for it (review round 3): by the second the run has already
+// reported the removal, and re-asking for a step it has taken reads as a
+// consent prompt for something that has happened. The second names what
+// remains -- the apply and the API deletes -- and the count of what left the
+// state as the fact it is.
+func TestInitRepoRetireSecondConfirmationIsPastTense(t *testing.T) {
+	newRetireRig(t, retireOpts{protection: true})
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	if err != nil {
+		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
+	}
+	var confirm []string
+	for _, line := range strings.Split(out+errOut, "\n") {
+		if strings.HasPrefix(line, "⚠ CONFIRM") {
+			confirm = append(confirm, line)
+		}
+	}
+	if len(confirm) != 2 {
+		t.Fatalf("%d confirmations, want two:\n%s%s", len(confirm), out, errOut)
+	}
+	if !strings.Contains(confirm[0], "remove 2 from Terraform's state (destroying nothing), then apply") {
+		t.Errorf("the pre-plan confirmation does not ask for the removal:\n%s", confirm[0])
+	}
+	if !strings.Contains(confirm[1], "already out of Terraform's state") {
+		t.Errorf("the post-plan confirmation does not say the removal happened:\n%s", confirm[1])
+	}
+	if !strings.Contains(confirm[1], "what remains is the apply and the delete of 1 Cloud Run job") {
+		t.Errorf("the post-plan confirmation does not name what remains:\n%s", confirm[1])
+	}
+	if strings.Contains(confirm[1], "remove 2") {
+		t.Errorf("the post-plan confirmation re-asks for the removal:\n%s", confirm[1])
+	}
+}
+
+// The gate refuses only on a deletion_protection the state actually carries
+// (design §3.1, review round 3). Such a job is Protected all the same -- the
+// removal set may not guess it unprotected -- so the run walks the ordinary
+// path, and if the job really is protected the plan refuses it and §3.3
+// explains that instead of a refusal that would have said "the state says
+// deletion_protection = true" about an attribute the state does not carry.
+func TestInitRepoRetireRefusalNeedsAValueTheStateCarried(t *testing.T) {
+	r := newRetireRig(t, retireOpts{protection: false, jobNoProtection: true})
+	out, errOut, err := executeStdin(t, "", "init", "--repo", "--no-build", "--yes", "--allow-delete", retireSvcAddr)
+	if err != nil {
+		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
+	}
+	text := out + errOut
+	if strings.Contains(text, "that no apply can delete") {
+		t.Errorf("a job whose state carries no deletion_protection was refused:\n%s", text)
+	}
+	if got := r.applies(t); len(got) != 1 {
+		t.Errorf("applies = %v, want the ordinary apply", got)
+	}
+	if calls := r.ran(t, "state rm"); len(calls) != 0 {
+		t.Errorf("the ordinary path removed state: %v", calls)
 	}
 }
 

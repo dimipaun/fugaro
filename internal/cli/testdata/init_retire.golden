@@ -37,7 +37,7 @@ Other changes:
 IAM: 0 bindings match the live ones (adopted), 3 new
 the plan above is the retirement's: 0 imports, 1 creates, 1 updates, 1 deletes, 0 replaces. Deleting:
   delete module.repo.module.workflow["app_bmb"].google_service_account.this
-⚠ CONFIRM (project aurora, GCP project proj-1234): retire 3 addresses of proj-1234: remove 2 from Terraform's state (destroying nothing), then apply, then delete 1 Cloud Run job through the API. Delete fugaro-acme-sandbox-app-bmb (us-east5, module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0]). Fugaro deletes no secret, so these leave Terraform's state and stay in Secret Manager if they are still there: claude-oauth-token-bmb (fugaro-acme-sandbox-claude-oauth-token-bmb-2dfc7765d8e5dd81), unmanaged.
+⚠ CONFIRM (project aurora, GCP project proj-1234): retire 3 addresses of proj-1234: 2 addresses are already out of Terraform's state (destroying nothing), so what remains is the apply and the delete of 1 Cloud Run job through the API. Delete fugaro-acme-sandbox-app-bmb (us-east5, module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0]). Fugaro deletes no secret, so these leave Terraform's state and stay in Secret Manager if they are still there: claude-oauth-token-bmb (fugaro-acme-sandbox-claude-oauth-token-bmb-2dfc7765d8e5dd81), unmanaged.
 Type aurora to confirm:   confirmed
 Still missing for acme/sandbox:
   workflow app (its job is not deployed yet): image not built yet: fugaro image build --repo acme/sandbox --workflow app

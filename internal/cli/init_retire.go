@@ -93,8 +93,19 @@ func (r *initRun) readRetirements(ctx context.Context, c *infra.Clients, t *tf.T
 		// does nothing without saying so reads as a flag that was ignored
 		// (review round 2, nit). The ordinary path below is what runs; this
 		// line is the whole of what the flag had to say.
+		//
+		// "Nothing to retire" and "could not look" are different sentences
+		// (design §3.1a, review round 3): a label call the run could not
+		// make narrows what it can see, so the line above all may not claim
+		// the labels found nothing when one of them never answered. The
+		// empty set is the same either way -- nothing is removed, deleted or
+		// confirmed -- and what changes is what the run says it knows.
 		if r.o.retire {
-			fmt.Fprintf(r.w, "Nothing to retire: every address in %s's Terraform state is one the configuration still produces, and the labels found no orphan of this repository, so --retire has nothing to remove from the state, nothing to delete through the Cloud Run API and nothing to confirm.\n", spec.Name)
+			if len(warnings) > 0 {
+				fmt.Fprintf(r.w, "Cannot say whether there is anything to retire: the label calls named above did not answer, so an orphan they would have found was not looked for. Every address in %s's Terraform state is one the configuration still produces as far as this run can see, and --retire has nothing to remove from the state, nothing to delete through the Cloud Run API and nothing to confirm.\n", spec.Name)
+			} else {
+				fmt.Fprintf(r.w, "Nothing to retire: every address in %s's Terraform state is one the configuration still produces, and the labels found no orphan of this repository, so --retire has nothing to remove from the state, nothing to delete through the Cloud Run API and nothing to confirm.\n", spec.Name)
+			}
 		}
 		return nil, nil
 	}
@@ -269,7 +280,13 @@ func reasons(rets []infra.Retirement) string {
 // The gate reads the attribute, never "the set contains a job": a job whose
 // state says false was already lowered by the user who followed
 // docs/gcp-setup.md, and their documented --allow-delete flow must keep
-// working.
+// working. That includes the difference between a value and its absence
+// (ProtectedRead): Protected is true for a job whose state carries no
+// deletion_protection at all, the conservative default the *removal* set
+// needs, and the refusal may not tell the user the state says something it
+// never said. A job whose protection could not be read is left to the
+// ordinary path -- if it really is protected, the plan aborts on it and §3.3
+// explains that instead (design §3.1).
 func blockingJobs(stateAddrs []string, rets []infra.Retirement) []infra.Retirement {
 	inState := make(map[string]bool, len(stateAddrs))
 	for _, a := range stateAddrs {
@@ -280,7 +297,7 @@ func blockingJobs(stateAddrs []string, rets []infra.Retirement) []infra.Retireme
 		if r.Kind != "workflow job" && r.Kind != "check job" {
 			continue
 		}
-		if r.Protected && inState[r.Address] {
+		if r.Protected && r.ProtectedRead && inState[r.Address] {
 			out = append(out, r)
 		}
 	}
@@ -541,9 +558,25 @@ func (r *initRun) retireWhat(spec infra.RepoSpec, rets []infra.Retirement) strin
 	// at all, and the plan's real counts are the second confirmation's to
 	// show. What is named here is what fugaro knows now: the addresses, the
 	// state removal and the API deletes.
-	fmt.Fprintf(&b, "retire %d %s of %s: remove %d from Terraform's state (destroying nothing), then apply, then delete %d Cloud Run %s through the API.",
-		len(rets), plural(len(rets), "address", "addresses"), r.gcpProject,
-		len(infra.Removals(r.retireState, rets)), len(api), plural(len(api), "job", "jobs"))
+	//
+	// The state removal is the one step that is already past tense by the
+	// second confirmation (review round 3): it runs between the two prompts,
+	// so a banner that asked again for "remove 2 from Terraform's state"
+	// would re-ask for a step the run has taken and that the terminal has
+	// already reported. The user is consenting to what remains -- the apply
+	// and the API deletes -- and the count of what left the state is still
+	// named, as a fact rather than as a task. Both confirmations share this
+	// banner, and r.retireRemoved is what tells them apart.
+	if removed := len(r.retireRemoved); removed > 0 {
+		fmt.Fprintf(&b, "retire %d %s of %s: %d %s already out of Terraform's state (destroying nothing), so what remains is the apply and the delete of %d Cloud Run %s through the API.",
+			len(rets), plural(len(rets), "address", "addresses"), r.gcpProject,
+			removed, plural(removed, "address is", "addresses are"),
+			len(api), plural(len(api), "job", "jobs"))
+	} else {
+		fmt.Fprintf(&b, "retire %d %s of %s: remove %d from Terraform's state (destroying nothing), then apply, then delete %d Cloud Run %s through the API.",
+			len(rets), plural(len(rets), "address", "addresses"), r.gcpProject,
+			len(infra.Removals(r.retireState, rets)), len(api), plural(len(api), "job", "jobs"))
+	}
 	for _, a := range api {
 		fmt.Fprintf(&b, " Delete %s (%s, %s).", a.Job, a.Region, a.Address)
 	}

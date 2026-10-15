@@ -44,15 +44,31 @@ type Retirement struct {
 	// whose protection is already false is one the apply deletes, and
 	// state-removing it would leave it alive in GCP with nothing managing
 	// it.
+	//
+	// ProtectedRead is whether that value was actually read, and the two
+	// differ for exactly one input: a job whose state carries no
+	// deletion_protection at all (or no readable values, or no row) is
+	// Protected by the conservative default above, and no reader can tell
+	// that apart from a state that said true until it asks this. Design §3.1
+	// needs both directions: the *removal* set treats an unread attribute as
+	// protected (never leaving a job alive), and the refusal *gate* refuses
+	// only on a value it read as true -- it may not tell the user "the state
+	// says deletion_protection = true" about an attribute the state does not
+	// carry. Not part of the run's JSON: it is an input to the gate, not
+	// something the document reports.
+	ProtectedRead bool `json:"-"`
 }
 
 // KeptSecret is what a retired secret container leaves behind. The container
 // is never destroyed: its module declares prevent_destroy, and the value it
 // holds is not Terraform's to delete (design §4.2a). What it may NOT say is
-// that the container is still there: a live, correctly-labelled container is
-// unioned back into the plan by Readiness (Existing.ExtraSecrets, N4) and so
-// is never retired at all -- a retired container address is one the label
-// list did not find, and its value may or may not still exist.
+// that the container is still there. A retired container address is one no
+// workflow and no check job of the configuration mounts any more -- nothing
+// about that says whether the container itself still exists in Secret
+// Manager, and this is the one promise that has to hold either way:
+// Readiness unions a live, correctly-labelled one back into the plan
+// (Existing.ExtraSecrets, N4), so a container that is there survives, and
+// one that is already gone stays gone.
 const KeptSecret = "fugaro never deletes a secret or a secret version: this address leaves Terraform's state, and nothing in the plan or the Cloud Run API deletes the container"
 
 // KeptRegistry is the same promise for the repository's image registry: it
@@ -283,7 +299,9 @@ func checkCause(spec RepoSpec) string {
 // the conservative direction. Removals then takes it out of the state and
 // the API delete finishes it, and that delete works whatever the job's
 // deletion_protection says -- so the conservative reading can never leave a
-// resource alive, while the optimistic one can.
+// resource alive, while the optimistic one can. ProtectedRead is what keeps
+// that default from reaching the refusal gate, which may refuse only on a
+// value the state actually carries (design §3.1).
 func FillFromState(st *tf.State, rets []Retirement) {
 	// Every field is decided by the address, never by the Kind words: the
 	// same walk serves a caller that built its Retirements by hand.
@@ -371,6 +389,9 @@ func fillFromValues(r *Retirement, kind string, values json.RawMessage) {
 		}
 		if v.DeletionProtection != nil {
 			r.Protected = *v.DeletionProtection
+			// The value was read: only now can the gate say the state
+			// carries it (design §3.1's refusal rule).
+			r.ProtectedRead = true
 		}
 	case "container":
 		if v.SecretID != nil {
@@ -697,27 +718,50 @@ func orphanJob(j *run.GoogleCloudRunV2Job, spec RepoSpec) (Retirement, bool) {
 	return Retirement{}, false
 }
 
+// mountedSecrets are the logical secrets the spec's own jobs mount: every
+// workflow's mounts and the check job's, read off the spec's own SecretEnv
+// maps. It is the pre-union answer to "the configuration still produces
+// it" -- Readiness's union of the live containers goes into RepoSpec.Secrets
+// and never into a mount (readiness.go's N4 rule) -- and it is the question
+// §3.1a asks of a labelled container, never the map: the map holds every
+// correctly-labelled live container whether anything mounts it or not, so
+// asking it would make this call's answer a tautology.
+func mountedSecrets(spec RepoSpec) map[string]bool {
+	out := make(map[string]bool)
+	for _, ws := range spec.Workflows {
+		for _, logical := range ws.SecretEnv {
+			out[logical] = true
+		}
+	}
+	if spec.Check != nil {
+		for _, logical := range spec.Check.SecretEnv {
+			out[logical] = true
+		}
+	}
+	return out
+}
+
 // orphanContainers are the labelled secret containers of this repository
-// whose logical name the plan does not produce. The call is a new one:
-// discovery Gets each logical name of spec.Secrets, so it can only ever find
-// a container the new spec still produces, which is exactly what an orphan
-// is not (design §3.1a).
+// that no workflow and no check job of the configuration mounts any more
+// (design §3.1a). The call is a new one: discovery Gets each logical name of
+// the spec, so it can only ever see a container the new spec still produces,
+// which is exactly what an orphan is not.
 //
-// "The plan produces it" is spec.Secrets, and neither the configuration's
-// own mounts nor a list of its own: Readiness has already unioned every
-// correctly-labelled live container back into spec.Secrets
-// (Existing.ExtraSecrets, N4 -- the project-secrets rule that a config edit
-// may never shrink the module's for_each), so a container the label list
-// found is one the plan keeps, re-adopts and mounts no longer, and there is
-// nothing to retire about it. A container that reaches the retirement is
-// therefore one the labels did NOT find: absent from Secret Manager, or
-// carrying other labels -- which is why the kept text promises the value is
-// untouched if it is there, and never that it is.
+// The test is the mounts, not RepoSpec.Secrets, and the difference is the
+// whole of this call: Readiness has already unioned every correctly-labelled
+// live container back into spec.Secrets (Existing.ExtraSecrets, N4 -- the
+// project-secrets rule that a config edit may never shrink the module's
+// for_each), so a container the labels find is always a key of that map, and
+// a test against the map would skip every one of them. A container the state
+// still holds is the current retirement's (the KEPT promise), and one it no
+// longer holds is a note: a secret an earlier retirement already released,
+// which is what makes a rerun name it instead of forgetting it.
 func orphanContainers(ctx context.Context, c *Clients, spec RepoSpec, stateAddrs []string) (rets, notes []Retirement, warn string, err error) {
 	inState := make(map[string]bool, len(stateAddrs))
 	for _, a := range stateAddrs {
 		inState[a] = true
 	}
+	mounted := mountedSecrets(spec)
 	err = c.Secrets.Projects.Secrets.List("projects/"+spec.GCPProject).
 		Filter(labelFilter(OrphanLabels(spec))).
 		Pages(ctx, func(p *secretmanager.ListSecretsResponse) error {
@@ -726,7 +770,7 @@ func orphanContainers(ctx context.Context, c *Clients, spec RepoSpec, stateAddrs
 				if logical == "" {
 					continue
 				}
-				if _, planned := spec.Secrets[logical]; planned {
+				if mounted[logical] {
 					continue
 				}
 				r := Retirement{
