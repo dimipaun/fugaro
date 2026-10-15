@@ -724,13 +724,6 @@ func TestRetireLeftoverNamesWhatAStopBeforeTheAPIDeleteOwes(t *testing.T) {
 			t.Errorf("the stop before the API delete does not say %q:\n%s", want, text)
 		}
 	}
-	// The billable-build exit is the same stop without an error, and it says
-	// the same thing.
-	out.Reset()
-	r.retireNameLeftovers(spec)
-	if !strings.Contains(out.String(), retireJobAddr) || !strings.Contains(out.String(), retireNextCommand) {
-		t.Errorf("the build-left exit does not name the jobs still to delete:\n%s", out.String())
-	}
 	// Nothing applied: nothing is alive and unmanaged, so nothing is said.
 	var quiet strings.Builder
 	if err := (&initRun{w: &quiet}).retireLeftover(spec, boom); err != boom {

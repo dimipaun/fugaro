@@ -500,17 +500,10 @@ func (r *initRun) retireResidue(spec infra.RepoSpec, rets []infra.Retirement, re
 // re-plan -- because each of them is a way for the run to end with the jobs
 // still there.
 func (r *initRun) retireLeftover(spec infra.RepoSpec, err error) error {
-	r.retireNameLeftovers(spec)
-	return err
-}
-
-// retireNameLeftovers is retireLeftover's words alone, for the one path that
-// ends the run without an error: a billable build left for the user, which
-// stops the run before the API delete the same way.
-func (r *initRun) retireNameLeftovers(spec infra.RepoSpec) {
 	if r.retireApplied {
 		r.retireResidue(spec, r.retireSet, r.retireRemoved)
 	}
+	return err
 }
 
 // retireConfirm is one of the retirement's two typed confirmations. It is

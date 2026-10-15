@@ -2140,9 +2140,8 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	}
 	if len(r.buildsLeft) > 0 {
 		// Everything else is done; the billable build is the user's to type.
-		// The run ends before step 7b, so the jobs the state removal took out
-		// are named as left over, the same as on an error path (M-B).
-		r.retireNameLeftovers(spec)
+		// (Step 7b already ran: the API delete is attempted before this, so
+		// there is no residue left to name here.)
 		left := promptLeft(initflow.Repository, "type the project's name at the first image build's prompt (it is billable)", "init", "--repo")
 		if r.buildHold != "" {
 			// Not offered: the GitHub App is not ready (appPreCheck), which no
