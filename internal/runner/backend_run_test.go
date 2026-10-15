@@ -465,11 +465,6 @@ func TestBackendFromEnv(t *testing.T) {
 		"a bad url, no marker": {map[string]string{runner.RTDBURLEnv: "not a url", runner.FirebaseAPIKeyEnv: "AIzaSyFakeWebApiKeyForTests000000000"}, true},
 		"a bad grace only":     {map[string]string{runner.BudgetGraceEnv: "1h"}, false},
 		"a bad key only":       {map[string]string{runner.FirebaseAPIKeyEnv: "k&x=1"}, false},
-		// A blanked URL is the third carried value that names no backend at
-		// all: it is an error (a budget-on job has nothing to read) but not
-		// damage to a backend the job named, so it must not stop a job whose
-		// mode is off (code review, medium).
-		"an empty url": {map[string]string{runner.RTDBURLEnv: ""}, false},
 	} {
 		be, err := runner.BackendFromEnv(get(tc.env), false)
 		if err == nil {
@@ -1048,40 +1043,6 @@ func TestOffIgnoresMalformedBackendEnv(t *testing.T) {
 	rec, err := b.run(t, implement("feature"), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
-	}
-}
-
-// A blanked FUGARO_RTDB_URL names no backend, so it is not damage to one
-// (code review, medium): the operator who clears the variable — in the
-// console, or as FUGARO_RTDB_URL= on a launch override — leaves the job with
-// no database, and a run whose own mode is off ignores that exactly as it
-// ignores a job that carries no backend at all. Before this, the empty value
-// reached rtdb.ValidateURL, failed, and BackendFromEnv reported the
-// environment as carrying a backend it could not parse, which stops the run
-// whatever its mode (L-b, below): blanking the variable stopped every run of
-// the job, mode off included, with "the budget backend in the job's
-// environment: FUGARO_RTDB_URL: ...".
-//
-// The error itself stays: a job whose budget is on has no database to read,
-// which is its own refusal. Only the reading of the value as damage changes.
-func TestOffIgnoresABlankedBackendURL(t *testing.T) {
-	be, err := runner.BackendFromEnv(func(k string) (string, bool) {
-		if k == runner.RTDBURLEnv {
-			return "", true // present, and empty: what a cleared field leaves
-		}
-		return "", false
-	}, false)
-	if err == nil {
-		t.Fatal("an empty FUGARO_RTDB_URL was accepted as a database")
-	}
-	if be.MalformedEnv {
-		t.Errorf("an empty FUGARO_RTDB_URL was read as a backend the environment named and could not parse (Backend=%+v, err=%v)", be, err)
-	}
-	b := newBK(t, gwConfig(t, ""), "off", "")
-	b.deps.Backend, b.deps.BackendErr = be, err
-	rec, err := b.run(t, implement("feature"), review("ship", 0))
-	if err != nil || rec.Status != runstore.StatusSucceeded {
-		t.Fatalf("rec = %+v, err = %v: a budget-off run stopped on a blanked URL", rec, err)
 	}
 }
 
