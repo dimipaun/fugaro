@@ -157,3 +157,97 @@ func TestNoLegacyBaseOutsideHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// writeFile writes a file (and its parents) under root.
+func writeFile(t *testing.T, root, rel, body string) {
+	t.Helper()
+	p := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestLegacyScanFindsATrackedFile: the mutation this test exists to catch.
+// Add `base: go` to a tracked file and TestNoLegacyBaseOutsideHistory fails;
+// the git-based listing above must keep that true, not turn the scan into a
+// walk of an empty (or filtered-to-nothing) file list.
+func TestLegacyScanFindsATrackedFile(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "pkg/thing.go", "package thing\n\n// base: go\n")
+	writeFile(t, root, "pkg/clean.go", "package thing\n\n// base: node\n")
+	files, err := repoFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("files = %v, want both written files", files)
+	}
+	hits, err := legacyOffenders(root, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || !strings.HasPrefix(hits[0], "pkg/thing.go:3") {
+		t.Fatalf("hits = %v, want the one line in pkg/thing.go", hits)
+	}
+}
+
+// TestRepoFilesIgnoresUntrackedDirs: `.worktrees`, `.claude/worktrees` and
+// `.superpowers` hold other branches' trees on a developer machine (and
+// agent runs). CI has none of them, so a scan that walks them reports
+// failures a developer cannot reproduce in CI and half of which belong to
+// work that is not in this checkout at all.
+func TestRepoFilesIgnoresUntrackedDirs(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "pkg/clean.go", "package thing\n")
+	for _, dir := range untrackedDirs {
+		writeFile(t, root, filepath.Join(dir, "stale.go"), "package stale\n\n// base: go\n")
+	}
+	// The fallback path (git unavailable, or root not a checkout): the walk.
+	files, err := walkFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0] != "pkg/clean.go" {
+		t.Fatalf("files = %v, want only pkg/clean.go", files)
+	}
+	hits, err := legacyOffenders(root, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 0 {
+		t.Fatalf("hits = %v, want none: the stale trees must not be scanned", hits)
+	}
+}
+
+// TestRepoFilesListsWhatGitTracks: when root is a git checkout the listing is
+// git's (git ls-files), so an untracked file is out of scope even outside the
+// directories above — that is what keeps the scan the same in CI and on a
+// developer machine.
+func TestRepoFilesListsWhatGitTracks(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	root := t.TempDir()
+	writeFile(t, root, "pkg/tracked.go", "package thing\n")
+	writeFile(t, root, "pkg/untracked.go", "package thing\n\n// base: go\n")
+	for _, args := range [][]string{
+		{"init", "-q", "-c", "init.defaultBranch=main"},
+		{"add", "pkg/tracked.go"},
+	} {
+		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Skipf("git %v: %v: %s", args, err, out)
+		}
+	}
+	files, err := repoFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0] != "pkg/tracked.go" {
+		t.Fatalf("files = %v, want only the tracked pkg/tracked.go", files)
+	}
+}
