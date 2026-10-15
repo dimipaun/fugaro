@@ -322,7 +322,7 @@ func (r *run) budgetConfig() budget.Config {
 		RTDBURL: b.RTDBURL, APIKey: b.APIKey, HTTP: b.HTTP, Grace: b.Grace,
 		Slug: r.d.Store.Slug(), Run: r.d.Store.RunID(),
 		Register: r.addSecret, Now: r.d.Now,
-		Log: slog.New(redactHandler{h: r.d.Log.Handler(), redact: r.redact}),
+		Log:    slog.New(redactHandler{h: r.d.Log.Handler(), redact: r.redact}),
 		OnHalt: r.onBudgetHalt,
 	}
 	if b.Tune != nil {
