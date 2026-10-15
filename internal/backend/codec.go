@@ -23,9 +23,11 @@ import (
 // into the job definition, so they record what the launcher chose, never
 // where the process actually is.
 type Codec interface {
-	// Backend is the codec's backend name: CloudRun, or Local for the
-	// local invocation. It is the name launch.json's backend field and
-	// FUGARO_BACKEND carry.
+	// Backend is the codec's backend name: CloudRun for a platform's codec,
+	// Local for the local invocation's. launch.json's backend field and
+	// FUGARO_BACKEND carry a platform's name -- the launcher's record of
+	// which backend it chose -- so neither carries Local, which is not a
+	// platform.
 	Backend() string
 	// Parse parses one of this backend's run names into the seam's
 	// identity. A caller holding a name but no backend uses
@@ -41,9 +43,15 @@ type Codec interface {
 	// On reports whether this process is one of this backend's runs, from
 	// a signal the platform injects -- never a FUGARO_* variable.
 	On(getenv func(string) string) bool
-	// ValidateRun parses name and refuses it unless it is a run of job, in
-	// region, spelled the way this backend's platform accepts. An empty
-	// job binds no job: the caller only needs a well-formed name in region.
+	// ParseInRegion parses name and refuses it unless it is a name of this
+	// backend's shape, in region, spelled the way this backend's platform
+	// accepts. It binds no job: a caller that knows the run binds it with
+	// ValidateRun.
+	ParseInRegion(name, region string) (ExecID, error)
+	// ValidateRun is ParseInRegion plus the job binding: name must be a run
+	// of job. An empty job is refused, not skipped -- an unbound name is
+	// what a caller that forgot the run's job would pass, and following it
+	// would point the operator's cancel or logs at another job.
 	ValidateRun(name, region, job string) (ExecID, error)
 }
 
@@ -113,12 +121,13 @@ func (cloudRunCodec) On(getenv func(string) string) bool {
 // names.
 var runPartRE = regexp.MustCompile(`^[a-z0-9-]+$`)
 
-// ValidateRun refuses name unless it is an execution of job, in region,
-// spelled [a-z0-9-] throughout. The names it sees come from bucket objects
-// a run's own service account can write (result.json, launch.json), so
-// without this check a run could point the operator's cancel or logs at
-// any job in the project. An empty job skips the binding.
-func (cloudRunCodec) ValidateRun(name, region, job string) (ExecID, error) {
+// ParseInRegion refuses name unless it is a Cloud Run execution name in
+// region, spelled [a-z0-9-] throughout. The names it sees come from bucket
+// objects a run's own service account can write (result.json, launch.json),
+// so without this check a run could point the operator's cancel or logs at
+// any job in the project. It binds no job: a caller that knows the run
+// binds it with ValidateRun.
+func (cloudRunCodec) ParseInRegion(name, region string) (ExecID, error) {
 	id, ok := CloudRunCodec().Parse(name)
 	if !ok {
 		return ExecID{}, fmt.Errorf("%q is not a Cloud Run execution name (projects/<p>/locations/<r>/jobs/<j>/executions/<e>)", name)
@@ -131,7 +140,22 @@ func (cloudRunCodec) ValidateRun(name, region, job string) (ExecID, error) {
 	if id.Region != region {
 		return ExecID{}, &WrongRegionError{Name: name, Region: id.Region, Want: region}
 	}
-	if job != "" && id.Job != job {
+	return id, nil
+}
+
+// ValidateRun is ParseInRegion plus the binding to the run's own job. An
+// empty job is refused: gcp.JobName never returns one, so it means the
+// caller lost the run's job, and a name that is not bound to a job is
+// exactly the name this check exists to refuse.
+func (c cloudRunCodec) ValidateRun(name, region, job string) (ExecID, error) {
+	if job == "" {
+		return ExecID{}, fmt.Errorf("execution %s is not bound to a job: the run's job name is required", name)
+	}
+	id, err := c.ParseInRegion(name, region)
+	if err != nil {
+		return ExecID{}, err
+	}
+	if id.Job != job {
 		return ExecID{}, fmt.Errorf("execution %s belongs to job %s, not the run's job %s", name, id.Job, job)
 	}
 	return id, nil
@@ -169,6 +193,10 @@ func (localCodec) FromEnv(func(string) string) (string, error) { return "", nil 
 // On is false whatever the environment says: nothing local claims a
 // process, and no environment variable can make it.
 func (localCodec) On(func(string) string) bool { return false }
+
+func (localCodec) ParseInRegion(name, region string) (ExecID, error) {
+	return ExecID{}, fmt.Errorf("%q is not a run name: a local run has no execution", name)
+}
 
 func (localCodec) ValidateRun(name, region, job string) (ExecID, error) {
 	return ExecID{}, fmt.Errorf("%q is not a run name: a local run has no execution", name)

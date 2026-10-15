@@ -129,7 +129,9 @@ func TestProjectCheckFollowUpUsesBase(t *testing.T) {
 
 func TestProjectCheckMissingEnvInCloud(t *testing.T) {
 	h := projectHarness(t, "aurora")
-	h.deps.Project, h.deps.InCloud = "", true
+	// Not local: the harness's default is a local run, and this one is the
+	// CLI's answer for a platform that is not the invocation's.
+	h.deps.Project, h.deps.Local = "", false
 	refused(t, h, "job environment lacks FUGARO_PROJECT", "fugaro init --repo")
 }
 

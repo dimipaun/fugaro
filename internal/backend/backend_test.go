@@ -88,10 +88,10 @@ func TestCloudRunCodecValidateRun(t *testing.T) {
 	if id, err := c.ValidateRun(in, "us-east5", job); err != nil || id.Job != job {
 		t.Fatalf("ValidateRun = %+v, %v", id, err)
 	}
-	// An empty job binds no job: parseInRegion only needs a well-formed
-	// name in region.
-	if _, err := c.ValidateRun(in, "us-east5", ""); err != nil {
-		t.Fatalf("an unbound name was refused: %v", err)
+	// An empty job is refused, not read as "skip the binding": a caller
+	// that lost the run's job must not follow an unbound name.
+	if id, err := c.ValidateRun(in, "us-east5", ""); err == nil || id.Job != "" {
+		t.Fatalf("an unbound name was accepted: %+v, %v", id, err)
 	}
 	other := "projects/my-proj/locations/us-east5/jobs/fugaro-other-web/executions/fugaro-other-web-x7k2p"
 	if _, err := c.ValidateRun(other, "us-east5", job); err == nil || !strings.Contains(err.Error(), "belongs to job") {
@@ -108,6 +108,30 @@ func TestCloudRunCodecValidateRun(t *testing.T) {
 	} {
 		if _, err := c.ValidateRun(bad, "us-east5", job); err == nil {
 			t.Errorf("ValidateRun(%q) accepted", bad)
+		}
+	}
+}
+
+// ParseInRegion is the same check without the job binding: it is what
+// gcp's canonical uses to rewrite a name the backend already knows.
+func TestCloudRunCodecParseInRegion(t *testing.T) {
+	const job = "fugaro-acme-app-web"
+	in := "projects/my-proj/locations/us-east5/jobs/" + job + "/executions/" + job + "-x7k2p"
+	c := CloudRunCodec()
+	if id, err := c.ParseInRegion(in, "us-east5"); err != nil || id.Job != job || id.GCPProject != "my-proj" {
+		t.Fatalf("ParseInRegion = %+v, %v", id, err)
+	}
+	var wr *WrongRegionError
+	if _, err := c.ParseInRegion(in, "europe-west1"); !errors.As(err, &wr) {
+		t.Fatalf("another region: %v", err)
+	}
+	for _, bad := range []string{
+		"",
+		"projects/my-proj/locations/us-east5/jobs/" + job, // six fields: a Batch job, not an execution
+		"projects/my-proj/locations/us-east5/jobs/" + job + "/executions/../../etc/passwd",
+	} {
+		if _, err := c.ParseInRegion(bad, "us-east5"); err == nil {
+			t.Errorf("ParseInRegion(%q) accepted", bad)
 		}
 	}
 }
@@ -176,6 +200,9 @@ func TestLocalPlatform(t *testing.T) {
 	}
 	if _, err := p.Codec().ValidateRun("projects/p/locations/r/jobs/j/executions/e", "r", "j"); err == nil {
 		t.Fatal("the local codec accepted a run name")
+	}
+	if _, err := p.Codec().ParseInRegion("projects/p/locations/r/jobs/j/executions/e", "r"); err == nil {
+		t.Fatal("the local codec accepted a name in region")
 	}
 	if _, ok := p.Codec().Parse("projects/p/locations/r/jobs/j/executions/e"); ok {
 		t.Fatal("the local codec parsed a Cloud Run name")

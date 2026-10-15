@@ -129,7 +129,7 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	// On Cloud Run the job's own names come first: a job set up before M9a
 	// fails here, cleanly, before anything compares its old FUGARO_PROJECT
 	// (a GCP ID) with a project name.
-	if err := refuseOldJobEnv(ctx, cmd, o, platform, time.Now); err != nil {
+	if err := refuseOldJobEnv(ctx, cmd, o, platform, os.Getenv, time.Now); err != nil {
 		return err
 	}
 	// The canonical execution name of the run this process is; "" for a
@@ -194,8 +194,10 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 		Prices: prices, Spend: spend, SpendErr: spendErr, Providers: providers, Backend: be, BackendErr: beErr,
 		GatewayUpstream: o.gatewayUpstream, ManagedSettingsPath: o.managedSettings,
 		// A job belongs to one Fugaro project; a run in the cloud that
-		// doesn't say which is refused at bootstrap.
-		Project: os.Getenv("FUGARO_PROJECT"), InCloud: platform.InCloud(),
+		// doesn't say which is refused at bootstrap. Local is the
+		// exception the runner reads, and its zero value is the cloud, so
+		// the field is set only by the invocation that named it.
+		Project: os.Getenv("FUGARO_PROJECT"), Local: platform.Local(),
 	})
 	var writeErr error
 	if rec != nil {
@@ -268,13 +270,13 @@ func oldJobEnvReason(missing string) string {
 // signal: a process whose platform no backend recognises is checked here
 // too, rather than slipping through as a local run (design
 // compute-backend.md §2.5).
-func refuseOldJobEnv(ctx context.Context, cmd *cobra.Command, o execOptions, platform backend.Platform, now func() time.Time) error {
+func refuseOldJobEnv(ctx context.Context, cmd *cobra.Command, o execOptions, platform backend.Platform, getenv func(string) string, now func() time.Time) error {
 	if !platform.InCloud() {
 		return nil
 	}
 	missing := ""
 	for _, k := range []string{"FUGARO_GCP_PROJECT", "FUGARO_PROJECT"} {
-		if os.Getenv(k) == "" {
+		if getenv(k) == "" {
 			missing = k
 			break
 		}

@@ -62,9 +62,10 @@ func (b *Backend) canonical(name string) (backend.ExecID, error) {
 }
 
 // parseInRegion parses name through the backend's codec, and refuses it
-// unless it is in region and every part is [a-z0-9-].
+// unless it is in region and every part is [a-z0-9-]. It binds no job:
+// callers that know the run bind it with CheckRunExecution.
 func parseInRegion(name, region string) (backend.ExecID, error) {
-	return backend.CloudRunCodec().ValidateRun(name, region, "")
+	return backend.CloudRunCodec().ParseInRegion(name, region)
 }
 
 // CheckRunExecution refuses name, an execution name read from a run's
