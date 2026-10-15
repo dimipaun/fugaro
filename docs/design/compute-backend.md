@@ -2449,34 +2449,47 @@ leaked VM of *this check* is told from a real run's.
     # the arm is applied every probe entry is in the bucket and _Default answers
     # nothing -- which reads exactly like "the job's labels do not reach the
     # entry" when the arm the owner just applied is the cause. The bucket and
-    # the view are the installation's own (names.log: `fugaro` and
-    # `fugaro-runs` by default; read the installation's tfvars for others).
-    LOG_BUCKET=fugaro
-    LOG_VIEW=fugaro-runs
+    # the view are the installation's own; the defaults below are names.log's
+    # (`fugaro`, `fugaro-runs`), so export the installation's real ones when its
+    # tfvars differ -- and note that with the arm NOT applied the bucket read
+    # returns nothing for the same shape of reason, which is why every filter
+    # below is read on both scopes.
+    LOG_BUCKET=${LOG_BUCKET:-fugaro}
+    LOG_VIEW=${LOG_VIEW:-fugaro-runs}
     gcloud logging read "resource.type=\"batch.googleapis.com/Job\" AND labels.\"job_uid\"=\"${JOB_UID:?}\"" \
       --project="${P:?}" --bucket="${LOG_BUCKET:?}" --location=global --view="${LOG_VIEW:?}" --limit=1 --format=json
+    gcloud logging read "resource.type=\"batch.googleapis.com/Job\" AND labels.\"job_uid\"=\"${JOB_UID:?}\"" \
+      --project="${P:?}" --limit=1 --format=json
     gcloud logging read 'resource.type="batch.googleapis.com/Job" AND labels.fugaro_chk=57' \
       --project="${P:?}" --bucket="${LOG_BUCKET:?}" --location=global --view="${LOG_VIEW:?}" --limit=1 --format=json
     # And the same label filter on _Default, to record where the lines are NOT:
-    # the two reads together answer "where is it", which is what says whether
-    # the arm caught it, and the bucket read alone answers "does it exist".
+    # the reads together answer "where is it", which is what says whether
+    # the arm caught it; a single read answers only "is it there", and an empty
+    # one has three causes -- no entry, the arm caught it, the arm is broken.
     gcloud logging read 'resource.type="batch.googleapis.com/Job" AND labels.fugaro_chk=57' \
       --project="${P:?}" --limit=1 --format=json
     ```
 
     **FACT:** whether `labels.job_uid` is present and equals the job's UID
-    (`gcloud batch jobs describe … --format='value(uid)'`), whether
-    `resource.labels.job_id` is present, and — the part that is **UNVERIFIED** —
-    whether that value is the job's *name* or its *UID*; the resource list says
-    only "The identifier of the Job" (checked 2026-10-15). The shipped filter is
+    (`gcloud batch jobs describe … --format='value(uid)'`) — asked on
+    `_Default` as well as in the bucket, because the label question is about the
+    entry, not about where the sink put it, and the two scopes answer it
+    independently — whether `resource.labels.job_id` is present, and — the part
+    that is **UNVERIFIED** — whether that value is the job's *name* or its
+    *UID*; the resource list says only "The identifier of the Job" (checked
+    2026-10-15). The shipped filter is
     the documented `labels.job_uid=… AND
     logName="projects/<p>/logs/batch_task_logs"` (§1.5); this step is what would
     allow the cheaper `resource.labels.job_id` form later. Also record whether
     the job's own `labels.fugaro_chk=57` reaches the `LogEntry` (it should:
     `Job.labels` apply to the job "and any Cloud Logging LogEntry that it
     generates"), and whether the **sink/exclusion arm** of §1.5 catches the
-    entry — apply it if the owner wants the answer now, and revert it in the
-    Restore if so. **The arm is installation Terraform** (Task 4,
+    entry — apply it if the owner wants the answer now. On an installation
+    whose Terraform already carries Task 4's arm that is just the apply it
+    should have had, and there is nothing to revert; on one that does not, it
+    is a temporary apply, and the Restore's note says what turning it back off
+    does and does not undo (it moves no entry back). **The arm is installation
+    Terraform** (Task 4,
     `deploy/terraform/gcp/modules/installation/logging.tf`): applying it is
     that installation's own owner-run apply (`fugaro init` from the sandbox's
     config), never a filter hand-edited on the project, and nothing a run of
@@ -2785,17 +2798,25 @@ names
 anything it creates `${SA}-*` — step 5 above — so this restore never reaches
 resources the check did not create, and never by `fugaro=managed`, which is the
 installation's label and reaches resources this check never touched. The log sink
-arm, if 57a-10 applied it, is reverted with the Terraform apply that reverses it
-(`fugaro init` from the sandbox's config), and nothing else: since Task 4 it is
-the installation's own Terraform, so it goes on and off with that apply alone
-(§1.5). While it is on, the check's own probe entries are in the installation's
-bucket and not in `_Default` — the probe carries the installation's label as
-well (`{"fugaro": "managed", "fugaro_chk": "57"}`, §7.2) — so a restore that
-reads `_Default` alone finds none of them and must not record that as "already
-gone": the revert is what puts them back, and nothing below counts log entries
-in any case (they are jobs, VMs, an image, an account, its bindings and a
-router, none of which the arm touches). Nothing in `belong`
-is touched at any step.
+arm, if 57a-10 applied it, is the installation's own Terraform (Task 4, §1.5)
+and moves with that installation's owner-run apply (`fugaro init` from the
+sandbox's config) — and **this restore does not take it away**. After Task 4 the
+merged installation config carries the arm, so `fugaro init` applies it rather
+than reverts it, and an owner who applied it by hand as step 10 offered has
+nothing to undo: the arm is what the installation is supposed to have, and
+leaving it off is the gap step 10 measured, not a clean state. Nor would a
+revert undo anything it did. A sink and an exclusion act on entries **as they
+arrive** and move nothing that already exists: the probe entries the arm routed
+into the bucket while it was on stay in the bucket, and the ones it kept out of
+`_Default` stay out. There is no "back" to put them to; the only thing that
+changes on the way off is where the *next* entry goes. So while the arm is on,
+the check's own probe entries are in the installation's bucket and not in
+`_Default` — the probe carries the installation's label as well
+(`{"fugaro": "managed", "fugaro_chk": "57"}`, §7.2) — and a restore that reads
+`_Default` alone finds none of them and must not record that as "already gone".
+Nothing below counts log entries in any case (they are jobs, VMs, an image, an
+account, its bindings and a router, none of which the arm touches). Nothing in
+`belong` is touched at any step.
 
 **The restore's assertion — run it and paste the output; every line must read
 `0`.** These are counts, so a line that looks empty is a `gcloud` that failed or
