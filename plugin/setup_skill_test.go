@@ -720,9 +720,12 @@ func TestSetupSkillUsesTheProjectLayer(t *testing.T) {
 func TestSetupSkillOffersClone(t *testing.T) {
 	files := setupFiles(t)
 	skill, dec := files["skills/setup/SKILL.md"], files["skills/setup/reference/decisions.md"]
-	if !regexp.MustCompile("(?m)^## \\d+\\. `checkout`").MatchString(dec) {
-		t.Error("decisions.md has no `checkout` topic")
-	}
+	// The topic's own section, not the whole file: decisions.md is one
+	// paragraph per topic, and the words these claims are made of appear in
+	// other topics on main ("leave the key out" in topic 2 at line 32,
+	// "refused"/"refuses" in topics 4, 6 and 9) — so a whole-file search
+	// passes whether or not topic 12 makes the claim.
+	topic := decisionsTopic(t, dec, "`checkout`")
 	for _, want := range []string{
 		"`checkout: clone`",
 		"`checkout: baked`",
@@ -730,7 +733,7 @@ func TestSetupSkillOffersClone(t *testing.T) {
 		"the default is `baked`",
 		"the user's decision",
 	} {
-		if !strings.Contains(dec, want) {
+		if !strings.Contains(topic, want) {
 			t.Errorf("decisions.md's checkout topic never says %q", want)
 		}
 	}
@@ -741,7 +744,7 @@ func TestSetupSkillOffersClone(t *testing.T) {
 	// pins): the skill must not tell a user to set a key every current
 	// binary refuses. Both files say clone is not shipped and to leave the
 	// key out.
-	for name, doc := range map[string]string{"decisions.md": dec, "SKILL.md": skill} {
+	for name, doc := range map[string]string{"decisions.md": topic, "SKILL.md": skill} {
 		for _, want := range []string{"not shipped", "leave the key out"} {
 			if !strings.Contains(doc, want) {
 				t.Errorf("%s never says checkout: clone is %q", name, want)
@@ -750,13 +753,34 @@ func TestSetupSkillOffersClone(t *testing.T) {
 	}
 	// The gate, and its effect, must be named: this is the claim that stops
 	// the skill pointing a user at a key every current binary refuses.
-	// Neither file names the two commands the gate refuses, on purpose:
-	// the plugin lint (skills_lint_test.go, ownerViolation) rejects an
-	// applying `fugaro init` in skill prose, and the claim is the refusal,
-	// not the command line it happens on.
-	for _, want := range []string{"cloneShipped", "internal/cli/recipes_skew.go", "refuse"} {
-		if !strings.Contains(dec, want) {
+	// "refuse such a workflow" and not the bare "refuse", which the topic
+	// also uses for the keys `fugaro validate` refuses under clone — a
+	// different claim. Neither file names the two commands the gate refuses,
+	// on purpose: the plugin lint (skills_lint_test.go, ownerViolation)
+	// rejects an applying `fugaro init` in skill prose, and the claim is the
+	// refusal, not the command line it happens on.
+	for _, want := range []string{"cloneShipped", "internal/cli/recipes_skew.go", "refuse such a workflow"} {
+		if !strings.Contains(topic, want) {
 			t.Errorf("decisions.md's checkout topic never says %q", want)
 		}
 	}
+}
+
+// decisionsTopic returns the body of the `## N. <name>` topic in a
+// decisions.md, from its heading to the next `## ` heading. Callers that
+// assert on a topic's words must search the topic, not the file: several
+// topics say the same things, so a whole-file search can pass on another
+// topic's prose.
+func decisionsTopic(t *testing.T, dec, name string) string {
+	t.Helper()
+	re := regexp.MustCompile("(?m)^## \\d+\\. " + regexp.QuoteMeta(name) + "[^\n]*\n")
+	m := re.FindStringIndex(dec)
+	if m == nil {
+		t.Fatalf("decisions.md has no %s topic", name)
+	}
+	rest := dec[m[1]:]
+	if end := regexp.MustCompile("(?m)^## ").FindStringIndex(rest); end != nil {
+		return rest[:end[0]]
+	}
+	return rest
 }
