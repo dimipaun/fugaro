@@ -309,6 +309,12 @@ func (l *Logging) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			"timestamp": e.Time.UTC().Format(time.RFC3339Nano),
 		}
 		if q.batch() {
+			// The real resource's labels are resource_container/location/
+			// job_id, and whether job_id is the job's name or its UID is
+			// UNVERIFIED (design compute-backend.md §9, Check 57a step 10).
+			// The UID is what the fake has: the filter it answers carries
+			// the UID and the project and nothing else, and no Fugaro code
+			// reads this field -- Logs selects by labels.job_uid.
 			re["logName"] = "projects/" + q.project + "/logs/" + q.logName
 			re["resource"] = map[string]any{"type": "batch.googleapis.com/Job",
 				"labels": map[string]string{"job_id": q.uid, "resource_container": q.project}}
