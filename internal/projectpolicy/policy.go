@@ -3,13 +3,20 @@
 // config/policy/shared, its per-repository children under
 // config/policy/repos/$slug, and the admin-only config/admin.
 //
-// Nothing reads this package yet. Phase 1 task 1.1 is the object, its paths,
-// its version and its matcher only: the runner's fail-closed read is task 1.3
-// and the CLI's is task 1.6, both held back until this shape is reviewed. It
-// imports internal/task, internal/policy, internal/pricing and internal/config
-// (for the secret-name rule a provider entry is held to), and never
-// internal/budget, internal/runner or internal/cli, so a policy can be decoded
-// anywhere without a cycle.
+// Nothing reads a *policy* through this package yet. Phase 1 task 1.1 is the
+// object, its paths, its version and its matcher, and task 1.2 the nodes and
+// their rules: the runner's fail-closed read of the node is task 1.3 and the
+// CLI's is task 1.6, both held back until this shape is reviewed. Two callers
+// do use the package's paths today: internal/infra writes PathRulesMarker
+// after a rules deploy, and internal/budget/rules' tests hold the template's
+// paths in step with the Path* functions (TestTemplatePolicyPathsAgreeWith-
+// Projectpolicy, TestPolicyPathsEscapeASlugLikeBudgetKey — the drift guard
+// lives in that package because internal/projectpolicy must not import
+// internal/budget). It imports internal/task, internal/policy, internal/pricing
+// and internal/config (the carrier a provider entry is decoded and validated
+// as, and the rules the budget block is held to), and never internal/budget,
+// internal/runner or internal/cli, so a policy can be decoded anywhere without
+// a cycle.
 //
 // Decoding is tolerant in one direction and strict in the other. Unknown JSON
 // keys are ignored at the top level, so a policy a newer Fugaro wrote does not
@@ -30,7 +37,14 @@
 //     package promises to prevent;
 //   - model_prices is read with the catalogue's own parser and keeps the
 //     catalogue's pointer spelling, so an omitted optional rate keeps its list
-//     default instead of being priced at zero.
+//     default instead of being priced at zero;
+//   - a providers entry is the document internal/runner's ProvidersFromEnv
+//     decodes out of FUGARO_MODEL_PROVIDERS (Provider embeds
+//     config.ModelProvider, so the spelling cannot drift) and is checked by
+//     internal/config's own ValidateModelProviders, so a base URL that is not
+//     https, an auth style that is not bearer or x-api-key, an ambiguous empty
+//     allow_data_to, a route_fee_pct over the cap or a models list two
+//     providers both claim is refused here rather than reaching a run.
 //
 // The readable node holds nothing personal and no secret values: every run
 // token can read it, and a prompt-injected agent can take the token through
@@ -45,6 +59,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -76,17 +91,60 @@ type Budget struct {
 	MaxRunTokens  int64    `json:"max_run_tokens"`
 }
 
-// Provider is one model provider entry. It carries the secret's NAME, never a
-// value (§5): the node is readable by every run token.
+// Provider is one model provider entry (§5). It carries the secret's NAME,
+// never a value: the node is readable by every run token, and a
+// prompt-injected agent can take that token through /proc.
+//
+// It is config.ModelProvider, embedded rather than respelled, so the policy's
+// provider document is byte-for-byte the one internal/runner's
+// ProvidersFromEnv decodes out of FUGARO_MODEL_PROVIDERS: kind, base_url,
+// auth, secret, models, allow_data_to, route_fee_pct. A respelling here would
+// be a second carrier for one document, and the two would drift — a kind of
+// drift no test can see, because each side would be self-consistent.
+//
+// RequireZDR and PricePolicy are the two price-catalogue switches
+// (docs/design/provider-price-catalog.md D3), which the catalogue design puts
+// on config.ModelProvider beside RouteFeePct; they are spelled here the way
+// that slice will spell them, and when it lands they move into the carrier
+// and this struct loses them.
 type Provider struct {
-	BaseURL     string   `json:"base_url,omitempty"`
-	AuthStyle   string   `json:"auth_style,omitempty"`
-	Secret      string   `json:"secret,omitempty"` // a secret name in Secret Manager, never a value
-	Models      []string `json:"models,omitempty"`
-	AllowDataTo []string `json:"allow_data_to,omitempty"`
-	RouteFeePct float64  `json:"route_fee_pct,omitempty"`
-	RequireZDR  bool     `json:"require_zdr,omitempty"`
-	PricePolicy string   `json:"price_policy,omitempty"`
+	config.ModelProvider
+	// RequireZDR prices the route against the ZDR-eligible endpoints. Unset
+	// means true: nil is the default-true spelling the repository already
+	// uses for a switch (config.PRSettings.EarlyDraft), so an entry written
+	// before the field existed keeps the conservative price. What this is
+	// NOT: a routing guarantee — Fugaro cannot read the account's privacy
+	// setting (catalogue design §8).
+	RequireZDR *bool `json:"require_zdr,omitempty"`
+	// PricePolicy is which end of the catalogue's price range a routed call
+	// is charged at. Unset means PricePolicyCheapest, the default the
+	// catalogue design chose (D3); the empty string is written as an omission
+	// so a job written by a newer CLI stays readable by an older image (D11).
+	PricePolicy string `json:"price_policy,omitempty"`
+}
+
+// The values price_policy accepts (docs/design/provider-price-catalog.md D3).
+const (
+	// PricePolicyCheapest charges the cheapest eligible endpoint's price, and
+	// is what an unset price_policy means (the catalogue's own default).
+	PricePolicyCheapest = "cheapest"
+	// PricePolicyHighest charges the dearest eligible endpoint's price.
+	PricePolicyHighest = "highest"
+)
+
+// RequireZDROn reports whether this route is priced as if only ZDR-eligible
+// endpoints may serve it: true unless require_zdr is explicitly false.
+func (p Provider) RequireZDROn() bool { return p.RequireZDR == nil || *p.RequireZDR }
+
+// EffectivePricePolicy is the policy a route is priced under:
+// PricePolicyCheapest when the policy does not set one (D3). The plan for the
+// catalogue slice calls the same accessor PricePolicySet(); whichever name it
+// lands under in config.ModelProvider, the meaning is this one.
+func (p Provider) EffectivePricePolicy() string {
+	if p.PricePolicy == "" {
+		return PricePolicyCheapest
+	}
+	return p.PricePolicy
 }
 
 // Price is one model's owner-set rates, spelled exactly as the price catalogue
@@ -213,32 +271,90 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		}
 	}
 
-	for key, into := range map[string]any{"providers": &p.Providers, "routing": &p.Routing} {
-		if rraw, ok := doc[key]; ok && !isNull(rraw) {
-			if err := json.Unmarshal(rraw, into); err != nil {
-				return nil, true, fmt.Errorf("projectpolicy: %s: %w", key, err)
-			}
+	if rraw, ok := doc["routing"]; ok && !isNull(rraw) {
+		if err := json.Unmarshal(rraw, &p.Routing); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: routing: %w", err)
 		}
 	}
-	// A provider entry carries the secret's NAME, never a value (§5): the node
-	// is readable by every run token, a prompt-injected agent can take the
-	// token through /proc, and config refuses the same mistake in fugaro.yaml's
-	// providers block with the same rule (internal/config/providers.go). The
-	// name is checked, not merely carried: a value that happens to be a
-	// plausible name is indistinguishable here, but everything else — a
-	// resource path, a literal key, a name that is not a name — is refused
-	// rather than published to every run.
-	for _, name := range providerNames(p.Providers) {
-		if secret := p.Providers[name].Secret; secret != "" && !config.SecretNameRE.MatchString(secret) {
-			return nil, true, fmt.Errorf("projectpolicy: providers.%s.secret %q must be a secret name (lower-case letters, digits and '-'), the name of the secret that holds the key, never the key", name, secret)
+	if praw, ok := doc["providers"]; ok && !isNull(praw) {
+		if err := json.Unmarshal(praw, &p.Providers); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: providers: %w", err)
+		}
+		if err := validProviders(praw, p.Providers); err != nil {
+			return nil, true, err
 		}
 	}
 	return &p, true, nil
 }
 
+// validProviders holds the providers block to the rules internal/config holds
+// the same document to in fugaro.yaml (ValidateModelProviders), plus the one
+// rule that only a reader of the written document can apply.
+//
+// The block is decoded tolerantly, unlike the budget block and unlike
+// ProvidersFromEnv's own decoder: an unknown key inside an entry is ignored
+// rather than refused, because the node must stay readable by an older runner
+// (P8) — and a misspelling is not silently accepted for it, since the value it
+// would have set stays zero and every one of these fields is checked below. So
+// "agth": "bearer" is refused, and a field a newer Fugaro adds is not.
+//
+// The one rule ValidateModelProviders cannot apply here is the null spelling of
+// allow_data_to: it reads "the key was written with nothing under it" off the
+// YAML node, and JSON has no such marker, so a written null arrives as the nil
+// slice that means every repository (ModelProvider.AllowsData). That is the
+// same ambiguity the YAML rule refuses — "shared with nobody" and "not decided
+// yet" would both be published as "every repository" — so it is refused here,
+// from the raw document.
+func validProviders(raw json.RawMessage, providers map[string]Provider) error {
+	var entries map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return fmt.Errorf("projectpolicy: providers: %w", err)
+	}
+	carrier := make(map[string]config.ModelProvider, len(providers))
+	for _, name := range providerNames(providers) {
+		p := providers[name]
+		if err := validPricePolicy(name, p.PricePolicy); err != nil {
+			return err
+		}
+		if entry := entries[name]; entry != nil {
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(entry, &fields); err == nil {
+				if data, ok := fields["allow_data_to"]; ok && isNull(data) {
+					return fmt.Errorf("projectpolicy: providers.%s.allow_data_to: an explicit empty list is ambiguous: write [\"*\"] for every repository, or remove the key entirely", name)
+				}
+			}
+		}
+		carrier[name] = p.ModelProvider
+	}
+	// config's own validation is the authority on this document, so a value it
+	// refuses in fugaro.yaml is refused on the readable node too: the node is
+	// what a run is routed and metered by.
+	if ps := config.ValidateModelProviders(carrier); len(ps) > 0 {
+		msgs := make([]string, len(ps))
+		for i, problem := range ps {
+			msgs[i] = problem.String()
+		}
+		return fmt.Errorf("projectpolicy: %s", strings.Join(msgs, "; "))
+	}
+	return nil
+}
+
+// validPricePolicy checks the one provider field internal/config does not know
+// yet: the two switches are the price catalogue's (docs/design/
+// provider-price-catalog.md D3), and an unrecognised value would price a route
+// at the wrong end of the catalogue's range rather than fail.
+func validPricePolicy(name, policy string) error {
+	switch policy {
+	case "", PricePolicyCheapest, PricePolicyHighest:
+		return nil
+	}
+	return fmt.Errorf("projectpolicy: providers.%s.price_policy %q must be %s or %s", name, policy, PricePolicyCheapest, PricePolicyHighest)
+}
+
 // validBudget mirrors internal/config's checks of fugaro.yaml's budget: block
-// (validateBudget) for the four keys the policy carries, because these values
-// are enforced, not advisory. An unrecognised mode is the dangerous one:
+// (validateBudget) for the four keys the policy carries — every value and, for
+// allowed_models, every entry (CheckModelID, DuplicateModel) — because these
+// values are enforced, not advisory. An unrecognised mode is the dangerous one:
 // policy.Merge treats it as unset, and the run falls back to off.
 func validBudget(b Budget) error {
 	if b.Mode != "" && !policy.ValidMode(b.Mode) {
@@ -254,6 +370,14 @@ func validBudget(b Budget) error {
 	}
 	if b.AllowedModels != nil && len(b.AllowedModels) == 0 {
 		return errors.New("allowed_models must list at least one model; leave it out for no restriction")
+	}
+	for i, m := range b.AllowedModels {
+		if msg := config.CheckModelID(m); msg != "" {
+			return fmt.Errorf("allowed_models[%d]: %s", i, msg)
+		}
+	}
+	if i, dup := config.DuplicateModel(b.AllowedModels); dup {
+		return fmt.Errorf("allowed_models[%d]: %s is listed twice; list each model once", i, b.AllowedModels[i])
 	}
 	return nil
 }

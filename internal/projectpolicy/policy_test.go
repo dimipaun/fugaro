@@ -1,6 +1,7 @@
 package projectpolicy
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -19,6 +20,16 @@ func TestDecodeAbsentIsNotFound(t *testing.T) {
 	}
 }
 
+// okProvider is one provider entry that config.ValidateModelProviders accepts,
+// which is what every provider fixture below has to be before a refusal can be
+// about the field the test names.
+const okProvider = `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`
+
+// providerPolicy is one provider entry under the name openrouter.
+func providerPolicy(entry string) []byte {
+	return []byte(`{"version": 1, "providers": {"openrouter": ` + entry + `}}`)
+}
+
 func TestDecodeIgnoresUnknownKeys(t *testing.T) {
 	// A newer Fugaro's policy must not brick this runner on a field it does
 	// not know (P8): unknown keys outside the budget block are ignored.
@@ -27,7 +38,7 @@ func TestDecodeIgnoresUnknownKeys(t *testing.T) {
 	p, found, err := Decode([]byte(`{
 		"version": 1,
 		"budget": {"mode": "observe"},
-		"providers": {"openrouter": {"base_url": "https://openrouter.ai/api/v1", "secret": "openrouter-key", "future_provider_key": true}},
+		"providers": {"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "future_provider_key": true}},
 		"future": {"anything": [1, 2, 3]}
 	}`))
 	if err != nil || !found || p == nil {
@@ -226,15 +237,17 @@ func TestDecodeChecksAProviderSecretIsASecretName(t *testing.T) {
 		"an empty-ish dot": ".",
 		"too long":         "k" + strings.Repeat("e", 63) + "y",
 	} {
-		raw := []byte(`{"version": 1, "providers": {"openrouter": {"secret": "` + secret + `"}}}`)
+		raw := []byte(`{"version": 1, "providers": {"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "` + secret + `", "models": ["deepseek/*"]}}}`)
 		p, found, err := Decode(raw)
 		if err == nil || p != nil || !found {
 			t.Errorf("%s: Decode(secret %q) = (%v, %v, %v), want a refusal: only a secret name may sit on the readable node", name, secret, p, found, err)
 		}
+		if err != nil && !strings.Contains(err.Error(), "secret") {
+			t.Errorf("%s: the refusal is %v, want it to name the secret (the fixture is otherwise valid, so nothing else may be the reason)", name, err)
+		}
 	}
-	// The name itself is carried through unchanged, and an entry with no
-	// secret at all stays valid (a provider whose key lives in the job env).
-	p, _, err := Decode([]byte(`{"version": 1, "providers": {"openrouter": {"secret": "openrouter-key"}, "other": {"base_url": "https://other.invalid/v1"}}}`))
+	// The name itself is carried through unchanged.
+	p, _, err := Decode(providerPolicy(okProvider))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +256,149 @@ func TestDecodeChecksAProviderSecretIsASecretName(t *testing.T) {
 	}
 }
 
-// TestDecodeRefusesAnOversizedNode: the policy is policy text read by every
+// TestDecodeValidatesProviderEntriesLikeTheCarrier: a providers entry on the
+// policy node is the document internal/runner's ProvidersFromEnv decodes out of
+// FUGARO_MODEL_PROVIDERS, and internal/config refuses the same document in
+// fugaro.yaml. The node is what a run is actually routed and metered by, so the
+// same values are refused here rather than decoded and enforced.
+func TestDecodeValidatesProviderEntriesLikeTheCarrier(t *testing.T) {
+	for name, entry := range map[string]string{
+		"no kind":             `{"base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
+		"an unknown kind":     `{"kind": "openai-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
+		"an http base URL":    `{"kind": "anthropic-compat", "base_url": "http://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
+		"no base URL":         `{"kind": "anthropic-compat", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
+		"a mistyped auth":     `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "Authorization", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
+		"no auth":             `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "secret": "openrouter-key", "models": ["deepseek/*"]}`,
+		"no models":           `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key"}`,
+		"an empty data list":  `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": []}`,
+		"a null data list":    `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": null}`,
+		"a bad data entry":    `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["acme"]}`,
+		"an absurd route fee": `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "route_fee_pct": 51}`,
+		"an alias pattern":    `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["claude-*"]}`,
+		"a misspelt policy":   `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "price_policy": "cheaper"}`,
+	} {
+		p, found, err := Decode(providerPolicy(entry))
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode(%s) = (%v, %v, %v), want a refusal on an existing node", name, entry, p, found, err)
+		}
+	}
+	// Two providers may not claim the same model: the run would route to one of
+	// them arbitrarily, and the charge would be whichever one it was.
+	if _, _, err := Decode([]byte(`{"version": 1, "providers": {
+		"one": {"kind": "anthropic-compat", "base_url": "https://one.example/v1", "auth": "bearer", "secret": "one-key", "models": ["deepseek/*"]},
+		"two": {"kind": "anthropic-compat", "base_url": "https://two.example/v1", "auth": "x-api-key", "secret": "two-key", "models": ["deepseek/deepseek-v4.1-flash"]}}}`)); err == nil {
+		t.Error("two providers claiming one model must be refused")
+	}
+	// The whole entry as fugaro.yaml spells it decodes, including the switches.
+	p, found, err := Decode(providerPolicy(`{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "x-api-key", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["acme/app"], "route_fee_pct": 5, "require_zdr": false, "price_policy": "highest"}`))
+	if err != nil || !found {
+		t.Fatalf("a valid entry must decode: %v", err)
+	}
+	got := p.Providers["openrouter"]
+	if got.BaseURL != "https://openrouter.ai/api/v1" || got.Auth != "x-api-key" || got.Kind != "anthropic-compat" ||
+		got.RouteFeePct != 5 || len(got.AllowDataTo) != 1 || !got.AllowsData("acme/app") {
+		t.Errorf("the entry decoded as %+v, want the yaml spelling carried through", got)
+	}
+	if got.RequireZDROn() || got.EffectivePricePolicy() != PricePolicyHighest {
+		t.Errorf("switches = %v/%q, want false/highest", got.RequireZDROn(), got.EffectivePricePolicy())
+	}
+}
+
+// TestDecodeRequireZDRIsDefaultTrue: require_zdr defaults to true (tool design
+// D3), so "unset" and "false" are different documents and the field has to tell
+// them apart: a plain bool decodes an omitted key as false — the non-default —
+// and omitempty then writes the default and drops the non-default, the inverse
+// of the design's rule that a default is omitted from a job's environment
+// (D11).
+func TestDecodeRequireZDRIsDefaultTrue(t *testing.T) {
+	p, _, err := Decode(providerPolicy(okProvider))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unset := p.Providers["openrouter"]
+	if unset.RequireZDR != nil {
+		t.Errorf("RequireZDR = %v, want nil: the key was not written", *unset.RequireZDR)
+	}
+	if !unset.RequireZDROn() {
+		t.Error("an omitted require_zdr must read as true: the ZDR tier is the conservative price")
+	}
+	if unset.EffectivePricePolicy() != PricePolicyCheapest {
+		t.Errorf("EffectivePricePolicy = %q, want cheapest", unset.EffectivePricePolicy())
+	}
+
+	p, _, err = Decode(providerPolicy(`{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "require_zdr": false, "price_policy": "cheapest"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	off := p.Providers["openrouter"]
+	if off.RequireZDR == nil || *off.RequireZDR {
+		t.Errorf("RequireZDR = %v, want false", off.RequireZDR)
+	}
+	if off.RequireZDROn() {
+		t.Error("an explicit require_zdr false must read as false")
+	}
+
+	// Written back: an unwritten switch stays unwritten and a written one is
+	// written, which is what keeps an unset key off the wire (D11). A plain bool
+	// gets this backwards, which is why the field is a *bool.
+	zdron, zdroff := true, false
+	for name, tc := range map[string]struct {
+		p    Provider
+		want string // the key and value the marshalled entry must carry, "" for none of them
+	}{
+		"unset":   {Provider{}, ""},
+		"true":    {Provider{RequireZDR: &zdron}, `"require_zdr":true`},
+		"false":   {Provider{RequireZDR: &zdroff}, `"require_zdr":false`},
+		"highest": {Provider{PricePolicy: PricePolicyHighest}, `"price_policy":"highest"`},
+	} {
+		got, err := json.Marshal(tc.p)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if tc.want == "" {
+			if strings.Contains(string(got), `"require_zdr"`) || strings.Contains(string(got), `"price_policy"`) {
+				t.Errorf("%s: marshal = %s, want neither switch written: an unset switch is the default and is omitted", name, got)
+			}
+			continue
+		}
+		if !strings.Contains(string(got), tc.want) {
+			t.Errorf("%s: marshal = %s, want it to carry %s", name, got, tc.want)
+		}
+	}
+}
+
+// TestDecodeRefusesABadAllowedModel: allowed_models is enforced by the run, so
+// its entries are checked the way internal/config's validateBudget checks
+// fugaro.yaml's (CheckModelID, DuplicateModel) — an alias names no model, and a
+// model listed twice is a mistake that would otherwise be enforced silently.
+func TestDecodeRefusesABadAllowedModel(t *testing.T) {
+	for name, list := range map[string]string{
+		"an alias":           `["sonnet"]`,
+		"the wildcard":       `["claude-*"]`,
+		"a -latest pointer":  `["deepseek/deepseek-v4-flash-latest"]`,
+		"a :variant":         `["deepseek/deepseek-v4-flash:free"]`,
+		"an anthropic alias": `["anthropic/claude-sonnet-5.5"]`,
+		"empty entry":        `[""]`,
+		"whitespace":         `["claude sonnet"]`,
+		"listed twice":       `["claude-sonnet-5-5", "claude-sonnet-5-5"]`,
+		"too long":           `["` + strings.Repeat("m", 101) + `"]`,
+		"null entry":         `[null]`,
+		"a number entry":     `[5]`,
+	} {
+		p, found, err := Decode([]byte(`{"version": 1, "budget": {"allowed_models": ` + list + `}}`))
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode(allowed_models %s) = (%v, %v, %v), want a refusal", name, list, p, found, err)
+		}
+	}
+	p, _, err := Decode([]byte(`{"version": 1, "budget": {"allowed_models": ["claude-sonnet-5-5", "deepseek/deepseek-v4.1-flash"]}}`))
+	if err != nil {
+		t.Fatalf("two explicit model IDs must be valid: %v", err)
+	}
+	if len(p.Budget.AllowedModels) != 2 {
+		t.Errorf("AllowedModels = %v, want both", p.Budget.AllowedModels)
+	}
+}
+
 // run, not a data store, so a node past MaxPolicyBytes is refused rather than
 // decoded.
 func TestDecodeRefusesAnOversizedNode(t *testing.T) {
