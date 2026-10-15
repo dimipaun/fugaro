@@ -232,6 +232,15 @@ func (a Agent) MaxOutputFor(r Role) int64 {
 	return a.MaxOutputTokens.Coder
 }
 
+// PinnedModels are the three models a run under a budget charges through the
+// gateway: the coder's, the reviewer's and the background model's, in the
+// order PinPaths names them. An empty name is one the config pins to nothing
+// (the agent's own default), so callers that judge a pin keep the empty
+// entry rather than dropping it.
+func (a Agent) PinnedModels() []string {
+	return []string{a.ModelFor(RoleCoder), a.ModelFor(RoleReviewer), a.Models.Background}
+}
+
 // Workflow is one buildable unit of the repository, such as a server or a web app.
 type Workflow struct {
 	// Profile names the project layer's profile this workflow starts from;

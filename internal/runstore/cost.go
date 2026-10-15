@@ -35,6 +35,13 @@ type Cost struct {
 	// UsageUnparsed counts calls settled at their reservation because
 	// their usage could not be read.
 	UsageUnparsed int `json:"usage_unparsed,omitempty"`
+	// CatalogStale is true when the built-in provider price catalog was
+	// older than its own 30-day threshold, so every model it priced was
+	// charged the dearest end of its tier's range rather than the end the
+	// route's price_policy asked for (design provider-price-catalog.md §7,
+	// D10, P7). It is a fact about the prices, not about the run: the run
+	// charged, and over-counted on purpose.
+	CatalogStale bool `json:"catalog_stale,omitempty"`
 }
 
 // ModelBasis is the basis for an agent.auth mode.

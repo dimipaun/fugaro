@@ -344,7 +344,11 @@ func Lost(l *runstore.Launch, created, now time.Time) bool {
 
 // cost is the row's cost: the model spend from the record, and compute
 // from the execution when its resources are known, priced in the
-// execution's own region, else the record's.
+// execution's own region, else the record's. The record's own facts about
+// the model charge that are not recomputed here are carried over — today
+// CatalogStale, which `diagnose` reports (design provider-price-catalog.md
+// §7, P7) — because the row is a view of that charge, not a second opinion
+// on it.
 func cost(r *runstore.Record, e *backend.Execution, prices PriceBook, now time.Time) runstore.Cost {
 	basis, model := runstore.BasisAPIList, 0.0
 	var stored *runstore.Cost
@@ -354,18 +358,23 @@ func cost(r *runstore.Record, e *backend.Execution, prices PriceBook, now time.T
 			basis = stored.ModelBasis
 		}
 	}
+	var c runstore.Cost
 	switch {
 	case e != nil && (e.CPU > 0 || e.MemoryGiB > 0):
 		region := ""
 		if id, ok := backend.ParseExecution(e.Name); ok {
 			region = id.Region
 		}
-		return runstore.NewCost(model, prices(region).ComputeUSD(e.CPU, e.MemoryGiB, e.Billed(now)), basis)
+		c = runstore.NewCost(model, prices(region).ComputeUSD(e.CPU, e.MemoryGiB, e.Billed(now)), basis)
 	case stored != nil && stored.ComputeEstimated:
-		return runstore.NewCost(model, stored.ComputeUSD, basis)
+		c = runstore.NewCost(model, stored.ComputeUSD, basis)
 	default:
-		return runstore.ModelOnlyCost(model, basis)
+		c = runstore.ModelOnlyCost(model, basis)
 	}
+	if stored != nil {
+		c.CatalogStale = stored.CatalogStale
+	}
+	return c
 }
 
 // Totals sums rows' costs (design §10.1).

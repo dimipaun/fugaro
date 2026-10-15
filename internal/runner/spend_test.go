@@ -1,11 +1,13 @@
 package runner
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 )
 
 func env(kv ...string) func(string) (string, bool) {
@@ -139,5 +141,27 @@ func TestSpendFromEnvPricesHoldWhenOff(t *testing.T) {
 	// No keys: exactly M9a's off.
 	if s, err := SpendFromEnv(env()); err != nil || s.Prices != nil || s.Cap != 0 || s.Mode != "off" {
 		t.Fatalf("%+v, %v", s, err)
+	}
+}
+
+// TestSpendFromEnvReportsACatalogThatWillNotLoad pins the run's half of the
+// one builder's contract: a catalog the loader refuses is an error out of
+// SpendFromEnv — reported as an infra_error at bootstrap, never a silent off
+// that leaves the run unpriced. The shipped file is valid, so the seam stands
+// in for a bad one.
+func TestSpendFromEnvReportsACatalogThatWillNotLoad(t *testing.T) {
+	old := loadCatalog
+	loadCatalog = func() (*catalog.File, error) {
+		return nil, errors.New("the built-in price catalog is malformed: version is 2: this build reads version 1")
+	}
+	t.Cleanup(func() { loadCatalog = old })
+	for _, mode := range []string{"enforce", "observe"} {
+		s, err := SpendFromEnv(env(BudgetModeEnv, mode))
+		if err == nil {
+			t.Fatalf("%s: a malformed catalog built a table: %+v", mode, s)
+		}
+		if !strings.Contains(err.Error(), "malformed") || !strings.Contains(err.Error(), "version is 2") {
+			t.Errorf("%s: the error does not say what is wrong with the file: %v", mode, err)
+		}
 	}
 }

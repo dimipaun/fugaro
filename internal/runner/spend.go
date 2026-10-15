@@ -2,12 +2,16 @@ package runner
 
 import (
 	"fmt"
+	"maps"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 )
 
 // The job environment variables that carry the project's budget (the
@@ -53,8 +57,7 @@ func SpendFromEnv(lookup func(string) (string, bool)) (Spend, error) {
 	if err != nil {
 		return Spend{}, err
 	}
-	getenv := func(k string) string { v, _ := lookup(k); return v }
-	s, err := spendFromEnv(getenv)
+	s, err := spendFromEnv(lookup)
 	if err != nil {
 		return Spend{}, err
 	}
@@ -87,7 +90,8 @@ func policyFromEnv(lookup func(string) (string, bool)) (int64, []string, error) 
 	return tokens, models, nil
 }
 
-func spendFromEnv(getenv func(string) string) (Spend, error) {
+func spendFromEnv(lookup func(string) (string, bool)) (Spend, error) {
+	getenv := func(k string) string { v, _ := lookup(k); return v }
 	var s Spend
 	switch mode := getenv(BudgetModeEnv); mode {
 	case "", "off":
@@ -119,9 +123,75 @@ func spendFromEnv(getenv func(string) string) (Spend, error) {
 		if err != nil {
 			return Spend{}, err
 		}
-		if s.Prices, err = pricing.Embedded().With(o); err != nil {
-			return Spend{}, fmt.Errorf("%s: %w", ModelPricesEnv, err)
+		if s.Prices, err = priceTableFromEnv(lookup, o); err != nil {
+			return Spend{}, err
 		}
 	}
 	return s, nil
+}
+
+// priceTableFromEnv is the run's price table: config.PriceTable over the
+// providers the job carries and the built-in price catalog, with the owner's
+// overrides. The routes come from FUGARO_MODEL_PROVIDERS, the same value the
+// run routes with (Deps.Providers), so the models the run prices and the
+// models it may send to a provider cannot disagree.
+func priceTableFromEnv(lookup func(string) (string, bool), ov pricing.Overrides) (*pricing.Table, error) {
+	providers, err := ProvidersFromEnv(lookup)
+	if err != nil {
+		return nil, err
+	}
+	return priceTable(providers, ov)
+}
+
+// loadCatalog is the embedded catalog behind a variable, the same seam the
+// CLI has. A released binary's file is valid — the generator validates its own
+// output with catalog.Parse and a compile-time test prices every shipped row —
+// so the run's reporting of a file that will not load has no other way to be
+// exercised from a test.
+var loadCatalog = catalog.Load
+
+// priceTable is config.PriceTable with the built-in catalog and the clock:
+// the one place the runner builds a table, so a run with the budget off is
+// priced by the same rules as one with it on.
+func priceTable(providers map[string]config.ModelProvider, ov pricing.Overrides) (*pricing.Table, error) {
+	cat, err := loadCatalog()
+	if err != nil {
+		return nil, err
+	}
+	return config.PriceTable(providers, ov, cat, time.Now())
+}
+
+// priceTable is the run's own table (priceTable over the job's providers).
+func (r *run) priceTable(ov pricing.Overrides) (*pricing.Table, error) {
+	return priceTable(r.d.Providers, ov)
+}
+
+// catalogStale reports whether any of the named models is a row the built-in
+// provider price catalog priced while the catalog was past its own 30-day
+// threshold (catalog.StaleAfter). Every such row has been forced to the dearest
+// end of its tier's range (design D10, P7), which result.json records and the
+// run warns about once.
+//
+// named is the models the caller means, never the whole table: a table holds a
+// stale row as soon as one catalog-eligible route claims one, and a run whose
+// call was priced by hand, or never made, charged nothing at the dearest end.
+// cost.catalog_stale is about the charge, so it names the run's spend by model;
+// the pre-flight WARN names the models the run is pinned to, which is what it
+// is about to charge.
+func catalogStale(t *pricing.Table, named []string) bool {
+	if t == nil {
+		return false
+	}
+	for _, id := range named {
+		if m, ok := t.Lookup(id); ok && m.Catalog != nil && m.Catalog.Stale {
+			return true
+		}
+	}
+	return false
+}
+
+// chargedModels names the run's spend by model, in a fixed order, for the
+// callers that ask what a run actually charged from.
+func chargedModels(by map[string]pricing.Micros) []string {
+	return slices.Sorted(maps.Keys(by))
 }
