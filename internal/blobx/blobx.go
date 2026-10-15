@@ -9,12 +9,17 @@ package blobx
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/storage"
@@ -46,6 +51,13 @@ var (
 	ErrNotExist = errors.New("object does not exist")
 	// ErrTooLarge means Read found an object larger than MaxReadBytes.
 	ErrTooLarge = errors.New("object is too large")
+	// ErrMismatch means GetFile read an object whose sha256 is not the one
+	// its caller expected. Nothing is written to the destination.
+	ErrMismatch = errors.New("the object's hash does not match")
+	// ErrChanged means PutFile read a different number of bytes than the
+	// source's own size said, so the file changed while it was uploaded.
+	// Nothing is committed to the bucket.
+	ErrChanged = errors.New("the file changed while it was read")
 )
 
 // MaxReadBytes caps what Read reads. Its objects (locks, launch claims,
@@ -117,21 +129,30 @@ func (b *Bucket) write(ctx context.Context, key string, data []byte, contentType
 		return nil
 	}}
 	if err := b.WriteAll(ctx, key, data, opts); err != nil {
-		if gcerrors.Code(err) == gcerrors.FailedPrecondition {
-			if ifNotExist {
-				return 0, ErrExists
-			}
-			return 0, ErrConflict
-		}
-		if isForbidden(err) {
-			return 0, fmt.Errorf("%w: %w", ErrForbidden, err)
-		}
-		return 0, err
+		return 0, writeErr(err, ifNotExist)
 	}
 	if sw != nil && sw.Attrs() != nil {
 		return sw.Attrs().Generation, nil
 	}
 	return 0, nil
+}
+
+// writeErr classifies a failed write, the same way for WriteAll and for the
+// streaming PutFile: a lost precondition is ErrExists for a create-only
+// write and ErrConflict otherwise, and a 403 is ErrForbidden (gocloud
+// reports a GCS 403 as NotFound, so without it a refused write would read
+// as a missing object).
+func writeErr(err error, ifNotExist bool) error {
+	if gcerrors.Code(err) == gcerrors.FailedPrecondition {
+		if ifNotExist {
+			return ErrExists
+		}
+		return ErrConflict
+	}
+	if isForbidden(err) {
+		return fmt.Errorf("%w: %w", ErrForbidden, err)
+	}
+	return err
 }
 
 // Create writes key only if it does not exist (ErrExists otherwise).
@@ -314,6 +335,148 @@ func (b *Bucket) DeleteExisting(ctx context.Context, key string, gen int64, prev
 func (b *Bucket) Put(ctx context.Context, key string, data []byte, contentType string) error {
 	_, err := b.write(ctx, key, data, contentType, false, nil)
 	return err
+}
+
+// PutFile streams path to key with contentType, hashing the bytes as they
+// go, and returns the number of bytes written and the lower-case hex sha256
+// of what it wrote. Unlike Put, which takes a []byte, this is the write path
+// for an object that can be large (a render's output, an attachment) and it
+// never holds the file in memory (design artifact-runs.md §3).
+//
+// ifNotExist is Create's create-only condition, carried into the streaming
+// write through the same WriterOptions the existing write uses and
+// classified the same way (ErrExists). It is a parameter and not a separate
+// method because the caller that needs it is the same caller that needs the
+// streaming path: an attachment cannot go through Create, which takes a
+// []byte. The condition holds on gocloud's file:// driver too, but it is
+// still only race hardening — a condition that fires mid-upload leaves the
+// earlier objects written.
+//
+// On any error it aborts the write before it closes it. go-cloud requires
+// Close to be called even for an aborted write, and only cancelling the
+// context stops the object being committed — Close alone commits whatever
+// arrived. So PutFile owns a per-call cancel and, on a source read error or
+// on a source that changed size while it was read, cancels first and then
+// closes, returning the original error and not Close's. Without that rule a
+// failed upload would leave a truncated object at a key the caller recorded
+// (blob.go:436-456 is the same pattern in go-cloud's own MD5 path).
+func (b *Bucket) PutFile(ctx context.Context, key, path, contentType string, ifNotExist bool) (size int64, sum string, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, "", err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return 0, "", err
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	w, err := b.NewWriter(ctx, key, &blob.WriterOptions{ContentType: contentType, IfNotExist: ifNotExist})
+	if err != nil {
+		return 0, "", writeErr(err, ifNotExist)
+	}
+	h := sha256.New()
+	n, err := io.Copy(io.MultiWriter(w, h), f)
+	if err != nil {
+		// The abort rule: cancel, then close, and report the read error
+		// rather than whatever Close says about the aborted write.
+		cancel()
+		_ = w.Close()
+		return 0, "", fmt.Errorf("reading %s: %w", path, err)
+	}
+	if n != st.Size() {
+		cancel()
+		_ = w.Close()
+		return 0, "", fmt.Errorf("%s: %w (read %d bytes, its size said %d)", path, ErrChanged, n, st.Size())
+	}
+	if err := w.Close(); err != nil {
+		return 0, "", writeErr(err, ifNotExist)
+	}
+	return n, hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// GetFile streams key into path, up to limit bytes, hashing as it goes, and
+// returns the size and the lower-case hex sha256 of what it wrote. Nothing
+// is ever placed at path unless the whole object arrived: the bytes go to a
+// temporary file in the destination's own directory which is renamed into
+// place only after the hash is checked, so a mismatch or an over-cap object
+// removes the temp file and leaves no destination at all. The cap refuses,
+// it never truncates — the object's own size is checked first when the
+// backend reports one (file:// and GCS both do).
+//
+// sum is the *expected* hash (the record's own, or the task spec's for an
+// input): when it is non-empty and does not match what was read, the result
+// is ErrMismatch with both hashes in the message and nothing at path. It is
+// an argument because both callers must keep the "nothing was written"
+// property: a caller that checked afterwards would find the mismatching file
+// already at its final path. An empty sum means no check, and the hash comes
+// back for the caller to record.
+//
+// strict decides how an HTTP 403 is classified, and the two callers need
+// opposite answers (design artifact-runs.md §3):
+//
+//   - strict (fugaro artifacts get): a 403 is ErrForbidden, with the
+//     googleapi.Error still reachable through errors.As, and a 404 stays
+//     ErrNotExist. This caller holds unconditional objectAdmin, which
+//     includes storage.objects.list (docs/design/bucket-iam.md:88,126-128),
+//     so for it a 403 really is an access problem and "no such artifact"
+//     would be a lie.
+//   - non-strict (the runner's input download): a 403 folds into
+//     ErrNotExist, exactly as Read does. The run's own account holds
+//     storage.objectUser under a prefix condition and CANNOT list, so GCS
+//     answers a GET of a missing object with 403, not 404 (blobx.go's Read).
+//     A strict caller here would report a missing input as an IAM problem
+//     and send the owner to change grants that are already correct.
+func (b *Bucket) GetFile(ctx context.Context, key, path, sum string, limit int64, strict bool) (size int64, sha string, err error) {
+	r, err := b.NewReader(ctx, key, nil)
+	if gcerrors.Code(err) == gcerrors.NotFound && !(strict && isForbidden(err)) {
+		return 0, "", ErrNotExist
+	}
+	if err != nil {
+		if strict && isForbidden(err) {
+			return 0, "", fmt.Errorf("%w: %w", ErrForbidden, err)
+		}
+		return 0, "", err
+	}
+	defer r.Close()
+	if r.Size() > limit {
+		return 0, "", fmt.Errorf("%s: %w (%d bytes, the cap is %d)", key, ErrTooLarge, r.Size(), limit)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".part-*")
+	if err != nil {
+		return 0, "", err
+	}
+	tmpName := tmp.Name()
+	done := false
+	defer func() {
+		if !done {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	h := sha256.New()
+	n, err := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(r, limit+1))
+	if err != nil {
+		_ = tmp.Close()
+		return 0, "", fmt.Errorf("reading %s: %w", key, err)
+	}
+	if n > limit {
+		_ = tmp.Close()
+		return 0, "", fmt.Errorf("%s: %w (%d bytes, the cap is %d)", key, ErrTooLarge, n, limit)
+	}
+	if err := tmp.Close(); err != nil {
+		return 0, "", err
+	}
+	got := hex.EncodeToString(h.Sum(nil))
+	want := strings.TrimSpace(sum)
+	if want != "" && !strings.EqualFold(got, want) {
+		return 0, "", fmt.Errorf("%s: %w (expected sha256 %s, read %s)", key, ErrMismatch, want, got)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return 0, "", err
+	}
+	done = true
+	return n, got, nil
 }
 
 // Touch sets the object's GCS custom time, which the bucket's lifecycle
