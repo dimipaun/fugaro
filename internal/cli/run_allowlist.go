@@ -100,11 +100,39 @@ func allowListRefusal(p *projectpolicy.Policy, provider, repo string) error {
 }
 
 // policySkewRefusal is the policySince gate's message (plan task 1.5 step 4):
-// the sentence the CLI already prints for a policy written by a newer Fugaro,
-// the release the policy model ships in quoted beside the policy's own
-// version, and the fix. launchPolicyGates refuses a launch with it before the
-// execution is created.
+// the sentence the CLI prints for a policy written in a version this Fugaro
+// does not read, the release the policy model ships in quoted beside the
+// policy's own version, and the remedy for *this direction* of the skew.
+// launchPolicyGates refuses a launch with it before the execution is created.
 func policySkewRefusal(ve *projectpolicy.VersionError) error {
-	return userErr("%s (the policy model is fugaro %s's): upgrade Fugaro (fugaro upgrade) to launch a run with this policy, or publish a policy of version %d",
-		fmt.Sprintf(projectpolicy.Skew, ve.Found, ve.Understood), policySince, ve.Understood)
+	return userErr("%s (the policy model is fugaro %s's): %s",
+		fmt.Sprintf(projectpolicy.Skew, ve.Found, ve.Understood), policySince, cliSkewRemedy(ve))
+}
+
+// cliSkewSentence is the CLI's refusal of a policy node written in a version
+// this Fugaro does not read, remedy included, picked by the direction of the
+// skew: this Fugaro is the newer side (CLISkewNewer: the node is behind, and
+// the operator re-runs init to bring it up to this release) or the older one
+// (CLISkew: the node is ahead, so this binary must be upgraded). Found >
+// Understood is the former.
+//
+// Both callers in this package share it — the launch gate's refusal above and
+// launch_budget.go's policyReadErr, which words the same error for the budget
+// decision — so an operator reads the same sentence whichever read refused.
+func cliSkewSentence(ve *projectpolicy.VersionError) string {
+	if ve.Found > ve.Understood {
+		return fmt.Sprintf(projectpolicy.CLISkew, ve.Found, ve.Understood)
+	}
+	return fmt.Sprintf(projectpolicy.CLISkewNewer, ve.Found, ve.Understood)
+}
+
+// cliSkewRemedy is cliSkewSentence's remedy alone — everything after the
+// shared "Skew; " prefix — for the gate, which prints Skew itself with the
+// release the model ships in inside it. Deriving it here rather than wording a
+// second remedy keeps the constants the one source of both sentences (what
+// each direction may and may not say is pinned by
+// TestTheCLISkewRemediesStayApart and TestSkewSentencesSplitByDirection).
+func cliSkewRemedy(ve *projectpolicy.VersionError) string {
+	skew := fmt.Sprintf(projectpolicy.Skew, ve.Found, ve.Understood)
+	return strings.TrimPrefix(cliSkewSentence(ve), skew+"; ")
 }

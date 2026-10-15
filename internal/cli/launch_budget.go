@@ -137,7 +137,12 @@ func policyReadErr(err error) error {
 	var me *projectpolicy.MarkerError
 	switch {
 	case errors.As(err, &ve):
-		return userErr("%s", fmt.Sprintf(projectpolicy.CLISkew, ve.Found, ve.Understood))
+		// The remedy depends on the direction of the skew — an older node
+		// wants init re-run, an older binary wants upgrading — and
+		// cliSkewSentence is the one place that picks between the two
+		// sentences (run_allowlist.go, beside the launch gate's own refusal
+		// of the same error).
+		return userErr("%s", cliSkewSentence(ve))
 	case errors.As(err, &me):
 		return userErr("%v", err)
 	case errors.Is(err, rtdb.ErrPermission):
