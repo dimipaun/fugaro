@@ -55,6 +55,8 @@
 
 ## Global Constraints
 
+**Status first: this plan is held until phase 5 of [docs/design/project-centric.md](../design/project-centric.md) (owner D9, 2026-10-14).** No task below is started, and no commit below is made, until the hold lifts — see "What survives phase 5, and what is replaced" above for the four parts that are rewritten then.
+
 From the design:
 - Only `stage_auth.reviewer: oauth` exists in this slice; `coder` and every value but `oauth` are refused (P1, P3).
 - Only `agent.auth: api-key` may combine with `stage_auth`; every other mix is refused (P3).
@@ -123,7 +125,7 @@ Project rules (carried over from this repository's existing plans):
 | `internal/cli/init_fugaroyaml.go`, `internal/cli/recipes_skew.go`, `internal/cli/upgrade_cloud.go` (+ tests), `docs/release.md` | `stageAuthSince` and the `init --repo` refusal (P9); the deployed-job note extended to secret mounts and variant jobs (P9) | 6 |
 | `SECURITY.md` | the known-gaps line, in the same task as the mount it describes (design §6, Review Focus 1 and 2) | 6 |
 | `docs/multi-model.md`, `docs/design/mixed-credentials.md` | the owner-facing story, the design's status (P7's account rule, P14's two holes, P15's budget-off case) | 7 |
-| `docs/gcp-live-checklist.md` | **Check 47** (the next free number: 42 and 43 are reserved by other designs, 44 by the price catalog, 45 and 46 by the open senior-reviewer plan PR #359) — sandbox only, never `belong`, run by the owner | 8 |
+| `docs/gcp-live-checklist.md` | **Check 47** (the number this plan claims: 42 to 44 are on `main`, `main` says 45 is next free, and 45 and 46 are claimed by the open senior-reviewer plan PR #359) — sandbox only, never `belong`, run by the owner, and **held with the plan until phase 5** | 8 |
 
 ## PR groups
 
@@ -251,9 +253,9 @@ Nothing in this task changes a run's behavior: the fields are added, the constru
 
 ### Task 8: Check 47 (owner-run; sandbox only)
 
-**Files:** `docs/gcp-live-checklist.md` — **already written by the PR that adds this plan**, which reserves the number the same way the price-catalog plan's PR reserved Check 44 and the senior-reviewer plan's PR #359 reserved 45 and 46. The task left for the implementer is to **run** it, and to correct the file from what the run finds: a step whose `FACT` the run contradicts, a number that moved, or a step the code made unnecessary is an edit to this section, not a note in the PR.
+**Files:** `docs/gcp-live-checklist.md` — **already written by the PR that adds this plan**, which reserves the number the same way the price-catalog plan's PR reserved Check 44 and the senior-reviewer plan's PR #359 reserved 45 and 46. **Held with the plan (B1):** the section carries the same status banner, and nothing here is to be run until the hold lifts, because phase 5 of `docs/design/project-centric.md` replaces the per-repository secrets and variant jobs its steps 2 and 6 are written against. When the hold lifts, the task is to **run** it and to correct the file from what the run finds: a step whose `FACT` the run contradicts, a number that moved, or a step the code made unnecessary is an edit to this section, not a note in the PR.
 
-The section is `## Check 47: the subscription OAuth token for the reviewer stage only (sandbox installation and sandbox repository only, never `belong`; run by you; NOT RUN)` — the next free number (42 is reserved by the config-transitions design and plan, merged to `main` as PR #344; 43 by the registry design in PR #353; 44 by the provider price catalog; 45 and 46 by the open senior-reviewer plan, PR #359, whose own checklist patch claims both) — with its row in the summary table. It has exactly eight steps, in this order, all against a **sandbox** project and a sandbox repository, with the owner's own token typed by the owner and never by an agent:
+The section is `## Check 47: the subscription OAuth token for the reviewer stage only (sandbox installation and sandbox repository only, never `belong`; run by you; NOT RUN)` — the number this plan claims (`main` says **45 is the next free number**; 42, 43 and 44 are on `main`, merged as PRs #344, #353 and #354; 45 and 46 are claimed by the open senior-reviewer plan, PR #359, whose own checklist patch claims both) — with its row in the summary table, which is marked held. It has exactly eight steps, in this order, all against a **sandbox** project and a sandbox repository, with the owner's own token typed by the owner and never by an agent:
 
 1. **Cleanup first.** The repository's `agent` block, its `followup` block, its budget mode and caps, the named accounts and their `allow_data_to`, and the deployed job names; the restore is step 8. The sandbox repository must be **private**.
 2. **Store the token, as you, and the placeholder the api-key half still needs.** `fugaro secrets set claude-oauth-token-<name>` (or the default `claude-oauth-token`), plus the `anthropic-api-key` `fugaro init --repo` demands for **every** api-key workflow even when a provider route serves the coder — a placeholder of at least 4 bytes reaches nothing and is only there to satisfy the mount; then `fugaro init --repo`. The `FACT` is the job names created (one variant per allowed account plus the default) and the token mount on the workflow's job.
@@ -264,7 +266,7 @@ The section is `## Check 47: the subscription OAuth token for the reviewer stage
 7. **The reviewer stage is not routed, and nothing warned.** The absence of the reviewer's `model call` lines, of its counted spend, and of a `cost cross-check` WARN for the `review` stage.
 8. **Restore** and confirm one ordinary sandbox run still succeeds.
 
-End with: "**Paste back:** every FACT line above, never a secret value and never a token value. Never run this against `belong`; this is a sandbox project and a sandbox repository, and no agent runs any step of this check — every step is yours, including typing the token." The file's own eight steps carry the detail; this list is the plan's summary of them, and if the two ever disagree the file wins.
+End with: "**Paste back:** every FACT line above, never a secret value and never a token value. Never run this against `belong`; this is a sandbox project and a sandbox repository, and no agent runs any step of this check — every step is yours, including typing the token." Steps 2 and 6 are the two phase 5 rewrites (store the person's token once and share it by reference; the reference's allowed-list and the failover order instead of `--token <name>` against `allow_data_to`); the other six stand as written. The file's own eight steps carry the detail; this list is the plan's summary of them, and if the two ever disagree the file wins.
 
 **Tests:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1` (the checklist is linted with the docs).
 
