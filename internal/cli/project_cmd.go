@@ -1528,10 +1528,10 @@ func runProjectReposEdit(cmd *cobra.Command, o *projectReposOptions, repo string
 		// list, and then the removal removes nothing and refuses nothing: saying
 		// only "nothing to remove" would read as if the repository had stopped
 		// running.
-		for _, p := range p.AllowRepos {
-			if projectpolicy.MatchRepo(p, canonical) {
+		for _, pattern := range p.AllowRepos {
+			if projectpolicy.MatchRepo(pattern, canonical) {
 				return userErr("%s is not an entry of the allow-list of %s; the pattern %s admits it, so its runs keep running — remove that pattern to refuse them",
-					canonical, projectpolicy.PathShared(), p)
+					canonical, projectpolicy.PathShared(), pattern)
 			}
 		}
 		return userErr("%s is not on the allow-list of %s: nothing to remove", canonical, projectpolicy.PathShared())
@@ -1608,23 +1608,26 @@ func removalWarning(allow []string, canonical string) string {
 // and the launcher use (projectpolicy.MatchRepo), so the sentence above is what
 // the next run will actually do.
 //
-// A concrete repository is admitted by any remaining entry that matches it: the
-// wildcard, or a pattern such as github/acme/*. A *pattern* being removed is a
-// different question — removing it is moot only if some remaining entry admits
-// every repository it admitted — and MatchRepo alone does not answer it:
-// MatchRepo("github/acme/*", "github/*/app") is true while the first does not
-// admit github/other/app, so a pattern is covered by the wildcard alone, or by
-// a pattern whose every segment is either "*" or exactly arg's. That covers the
-// case this exists for — github/acme/* removed while github/*/* is on the list
-// refuses nothing — and it never says "not refused" about a repository the
-// removal does refuse.
+// One matcher answers both questions a removal raises. A concrete repository is
+// admitted by any remaining entry that matches it: the wildcard, or a pattern
+// such as github/acme/*. A *pattern* being removed is moot only if some
+// remaining entry admits every repository it admitted — and MatchRepo answers
+// that too, because it matches its second argument as a *repository*: an entry
+// that matches the string github/acme/* is one whose own segments match
+// "github", "acme" and "*", which is exactly what admitting github/acme/<any>
+// takes. github/*/* matches it, github/ac*/* matches it (github/ac* is every
+// owner whose name starts with "ac"), and github/*/app does not — its middle
+// segment would have to match the literal string "*". The reading is sound in
+// the direction that matters: a pattern that matches a string matches every
+// expansion of it, since a "*" stands for any run of characters within one
+// segment, so no entry can be reported as still admitting a repository the
+// removal really does refuse.
 //
-// An entry is a pattern when it carries a wildcard, not when ValidPattern
-// accepts it: ValidPattern accepts a concrete name too (a pattern with no "*"
-// matches exactly itself), so asking it would send every concrete removal down
-// the pattern branch — and github/acme/app removed while github/acme/* is on
-// the list would read "its runs are refused from now on", which is the one
-// thing the removal does not do.
+// An entry is a pattern when it carries a wildcard, and that is not a question
+// for this function: MatchRepo reads a concrete repository and a pattern alike,
+// because ValidPattern accepts a concrete name too (a pattern with no "*"
+// matches exactly itself) — so github/acme/app removed while github/acme/* is on
+// the list reads "its runs are not refused", which is what the removal does.
 func admittedBy(allow []string, arg string) (bool, string) {
 	rest := make([]string, 0, len(allow))
 	for _, p := range allow {
@@ -1633,40 +1636,11 @@ func admittedBy(allow []string, arg string) (bool, string) {
 		}
 	}
 	for _, p := range rest {
-		if strings.Contains(arg, "*") {
-			if coversRepo(p, arg) {
-				return true, p
-			}
-			continue
-		}
 		if projectpolicy.MatchRepo(p, arg) {
 			return true, p
 		}
 	}
 	return false, ""
-}
-
-// coversRepo reports whether pattern admits every repository other admits —
-// whether other is a subset of pattern — when both are patterns: "*" admits
-// everything, and otherwise the two are compared segment against segment, where
-// a "*" admits whatever the other segment admits and any other segment must be
-// equal to it. A segment with a partial wildcard ("ac*") is only covered by
-// itself or by "*", which is conservative in the safe direction: it can miss a
-// covering entry, and never claims a repository keeps running when it does not.
-func coversRepo(pattern, other string) bool {
-	if pattern == "*" {
-		return true
-	}
-	ps, os := strings.Split(pattern, "/"), strings.Split(other, "/")
-	if len(ps) != len(os) {
-		return false
-	}
-	for i := range ps {
-		if ps[i] != "*" && ps[i] != os[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // canonicalRepoArg is the operator's argument as a canonical allow-list

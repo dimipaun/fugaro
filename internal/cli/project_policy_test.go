@@ -1388,9 +1388,21 @@ func TestRemovalWarningSaysWhatTheNextRunDoes(t *testing.T) {
 		// The broader pattern really does keep every repository the removed one
 		// admitted, so the runs are not refused (the review of PR #390).
 		"pattern, a broader pattern": {[]string{"github/*/*", "github/acme/*"}, "github/acme/*", true, "github/*/*"},
-		// The other direction, and the reason this is not just MatchRepo: it
-		// says github/acme/* matches the string "github/*/app", while
-		// github/acme/* does not admit github/other/app, which github/*/app does.
+		// A covering entry need not be written with bare "*" segments: github/ac*
+		// admits every owner whose name starts with "ac", which is every owner
+		// github/acme/* admitted, so the runs are not refused either. MatchRepo
+		// answers this — and coversRepo did not, which is why the sentence could
+		// claim a stop the removal does not make (the review of PR #402).
+		"pattern, a partial wildcard that covers it": {[]string{"github/ac*/*", "github/acme/*"}, "github/acme/*", true, "github/ac*/*"},
+		// The other direction: github/a*/app admits github/acme/app, but not
+		// github/acme/anything-else, which the removed pattern did admit — so the
+		// removal does refuse something and must say so.
+		"pattern, a partial wildcard that does not": {[]string{"github/a*/app", "github/acme/*"}, "github/acme/*", false, ""},
+		// Overlap is not coverage, in either direction. This one is not a comment
+		// about MatchRepo's arguments being patterns: they are not — MatchRepo
+		// reads its second argument as a repository, so MatchRepo("github/acme/*",
+		// "github/*/app") is false. It is that github/*/app admits
+		// github/other/app, which github/acme/* does not.
 		"pattern, one that only overlaps it": {[]string{"github/acme/*", "github/*/app"}, "github/*/app", false, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1447,6 +1459,52 @@ func TestProjectReposRmWithAPatternStillOnTheListSaysSo(t *testing.T) {
 	}
 	if !projectpolicy.AdmitRepo(publishedPolicy(t, f).AllowRepos, "github/acme/app") {
 		t.Error("the policy no longer admits the repository the confirmation said it still admits")
+	}
+}
+
+// TestProjectReposRmOfAPatternWithAPartialWildcardLeftSaysSo: the same
+// sentence, end to end, with the covering entry a partial wildcard.
+// github/ac*/* admits every repository github/acme/* admitted — github/ac* is
+// the owners whose name starts with "ac" — so removing github/acme/* refuses
+// nothing, and the confirmation has to say that rather than claim a stop it
+// does not make (the review of PR #402: coversRepo missed this, and the
+// sentence read "its runs are refused from now on" while github/ac*/* was on
+// the list).
+//
+// Mutation (verified, run and restored): put coversRepo back in admittedBy's
+// pattern branch: this test fails, reading "refused from now on" while
+// github/ac*/* still admits every repository the removed pattern admitted.
+func TestProjectReposRmOfAPatternWithAPartialWildcardLeftSaysSo(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{"github/ac*/*", "github/acme/*"} {
+		if _, _, err := execute(t, "project", "repos", "add", p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	typed(t)
+	out, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", "github/acme/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "github/ac*/* still admits it") {
+		t.Errorf("the confirmation does not name the partial wildcard that still admits it:\n%s", out)
+	}
+	if strings.Contains(out, "refused from now on") {
+		t.Errorf("the confirmation says the runs are refused though github/ac*/* is on the list:\n%s", out)
+	}
+	allow := publishedPolicy(t, f).AllowRepos
+	if slices.Contains(allow, "github/acme/*") {
+		t.Errorf("allow_repos = %v, want the pattern removed", allow)
+	}
+	// The point of the sentence: every repository the removed pattern admitted
+	// is still admitted, by the entry the confirmation named.
+	for _, r := range []string{"github/acme/app", "github/acme/anything"} {
+		if !projectpolicy.AdmitRepo(allow, r) {
+			t.Errorf("allow_repos = %v no longer admits %s, which the confirmation said it keeps", allow, r)
+		}
 	}
 }
 
@@ -1701,9 +1759,7 @@ func TestProjectPolicyDeleteRemovesOrphanChildrenWithoutASharedNode(t *testing.T
 // TestProjectReposRmOfAPatternWithABroaderPatternLeftSaysSo: removing a
 // pattern while a broader one remains refuses nothing — github/*/* admits
 // every repository github/acme/* admitted — so the confirmation must not
-// claim a stop it does not make (the review of PR #390). MatchRepo answers a
-// different question ("does this entry admit that string"), and the narrower
-// case below is why it is not the whole answer.
+// claim a stop it does not make (the review of PR #390).
 //
 // Mutation (verified, run and restored): restore admittedBy's old
 // `for _, p := range rest { if p == "*" }` branch for patterns: this test
