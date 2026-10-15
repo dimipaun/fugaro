@@ -70,6 +70,106 @@ func globAll(t *testing.T, pattern string) []string {
 	return files
 }
 
+// fencedYAML are a markdown document's ```yaml blocks, in order.
+func fencedYAML(doc string) []string {
+	var out []string
+	lines := strings.Split(doc, "\n")
+	for i := 0; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != "```yaml" {
+			continue
+		}
+		for j := i + 1; j < len(lines); j++ {
+			if strings.TrimSpace(lines[j]) == "```" {
+				out = append(out, strings.Join(lines[i+1:j], "\n")+"\n")
+				i = j
+				break
+			}
+		}
+	}
+	return out
+}
+
+// TestProjectLayerDocsExample: the §6 example in docs/project-layer.md is a
+// project layer the authoring schema accepts *and* config.ParseProjectLayer
+// parses. It is the shape a reader copies, so a key the docs show can never be
+// one the schema (additionalProperties: false) or the parser refuses — which
+// is exactly the gap this closes: claude_models shipped in the parser, the CLI
+// and the docs example, and project-layer.schema.json had no property for it,
+// so every layer carrying a claim — the documented example included — was
+// rejected by the schema an editor validates against.
+func TestProjectLayerDocsExample(t *testing.T) {
+	data, err := os.ReadFile("../docs/project-layer.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var example string
+	for _, b := range fencedYAML(string(data)) {
+		if strings.Contains(b, "claude_models:") {
+			example = b
+			break
+		}
+	}
+	if example == "" {
+		t.Fatal("docs/project-layer.md has no ```yaml example carrying claude_models:")
+	}
+	if err := compile(t, "project-layer.schema.json").Validate(yamlInstance(t, []byte(example))); err != nil {
+		t.Errorf("project-layer.schema.json rejects docs/project-layer.md's own example: %v", err)
+	}
+	project, err := config.ProjectOf([]byte(example))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gcp, err := config.GCPProjectOf([]byte(example))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ps := config.ParseProjectLayer([]byte(example), config.LayerAnchor{Project: project, GCPProject: gcp}); len(ps) > 0 {
+		t.Errorf("config.ParseProjectLayer rejects docs/project-layer.md's own example: %v", ps)
+	}
+}
+
+// TestProjectLayerSchemaClaudeModels ties the schema's claude_models to the Go
+// rules it mirrors (config.providerNameRE for the name, config.CheckClaudeClaim
+// for the entry — the same rule a route entry is judged by): both are separate
+// copies, and the schema's additionalProperties: false means a schema stricter
+// than the parser refuses a layer the parser accepts. Every text below must
+// come out the same way in both, which a change to either Go rule breaks here.
+func TestProjectLayerSchemaClaudeModels(t *testing.T) {
+	sch := compile(t, "project-layer.schema.json")
+	const head = "version: 1\nproject: aurora\ngcp_project: proj-1234\n"
+	anchor := config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
+	for _, entry := range []string{
+		"claude_models:\n  openrouter: [\"anthropic/claude-sonnet-5.5\"]\n",
+		"claude_models:\n  openrouter: [\"anthropic/claude-sonnet-5.5\", \"anthropic/claude-opus-5.5\"]\n",
+		"claude_models:\n  openrouter: [\"anthropic/a\"]\n",
+		"claude_models:\n  openrouter: [\"anthropic/claude-3.5-sonnet\"]\n",
+		"claude_models:\n  openrouter: []\n",
+		"claude_models:\n  openrouter: \"anthropic/claude-sonnet-5.5\"\n",
+		"claude_models:\n  openrouter: [\"anthropic/*\"]\n",
+		"claude_models:\n  openrouter: [\"anthropic/\"]\n",
+		"claude_models:\n  openrouter: [\"claude-sonnet-5-5\"]\n",
+		"claude_models:\n  openrouter: [\"openai/gpt-5\"]\n",
+		"claude_models:\n  openrouter: [\"anthropic/Claude-Sonnet\"]\n",
+		"claude_models:\n  openrouter: [\"anthropic/claude-sonnet[1m]\"]\n",
+		"claude_models:\n  OpenRouter: [\"anthropic/claude-sonnet-5.5\"]\n",
+		"claude_models:\n  openrouter:\n    - anthropic/claude-sonnet-5.5\n",
+		"claude_models: []\n",
+		"claude_models: openrouter\n",
+		// 101 characters: the parser's route-entry rule (CheckModelPattern)
+		// bound, which the schema mirrors as the item's maxLength.
+		"claude_models:\n  openrouter: [\"anthropic/" + strings.Repeat("c", 91) + "\"]\n",
+		// 100 exactly: inside the bound in both.
+		"claude_models:\n  openrouter: [\"anthropic/" + strings.Repeat("c", 90) + "\"]\n",
+	} {
+		text := head + entry
+		schemaOK := sch.Validate(yamlInstance(t, []byte(text))) == nil
+		_, ps := config.ParseProjectLayer([]byte(text), anchor)
+		if schemaOK != (len(ps) == 0) {
+			t.Errorf("claude_models: %s: schema ok = %v, config.ParseProjectLayer problems = %v", entry, schemaOK, ps)
+		}
+	}
+}
+
 func TestFugaroSchemaCorpus(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	for _, f := range globAll(t, "../testdata/config/valid/*.yaml") {
@@ -926,6 +1026,127 @@ func TestProjectLayerSchemaCommandsLintFix(t *testing.T) {
 		if (err == nil) != c.ok {
 			t.Errorf("commands: %s: schema err = %v, want ok=%v", c.commands, err, c.ok)
 		}
+	}
+}
+
+// TestProjectLayerSchemaArtifactKeys keeps the profile schema's 0.8.0 keys
+// (commands.render, commands.probe, timeouts.render, inputs) in step with the
+// Go parser the way TestProjectLayerSchemaClaudeModels keeps claude_models:
+// each snippet must be accepted or refused by both. Without the properties a
+// profile carrying any of them was refused by the schema an editor validates
+// against while config.ParseProjectLayer accepted it (additionalProperties:
+// false), which is the gap that made the docs example carrying claude_models
+// fail before that property existed. The bounds are deliberately narrower
+// here too: the schema's minimum 0 / maximum ceilings are the ones
+// config.validateInputs applies (config.MaxInputFiles and friends), pinned
+// against the Go constants by TestInputCapCeilingsAgreeWithGo.
+func TestProjectLayerSchemaArtifactKeys(t *testing.T) {
+	sch := compile(t, "project-layer.schema.json")
+	head := "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  p:\n"
+	anchor := config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
+	for _, entry := range []string{
+		"    commands: { render: make shots, probe: make check }\n",
+		"    commands: { render: make shots }\n",
+		"    commands: { shots: make shots }\n",
+		"    timeouts: { render: 30m }\n",
+		"    timeouts: { render: soon }\n",
+		"    inputs: { max_files: 4, max_bytes: 1048576, max_total_bytes: 4194304 }\n",
+		"    inputs: {}\n",
+		"    inputs: { max_files: 65 }\n",
+		"    inputs: { max_bytes: -1 }\n",
+		"    inputs: { max_total_bytes: 4294967297 }\n",
+		"    inputs: { globs: ['out/*.png'] }\n",
+	} {
+		text := head + entry
+		schemaOK := sch.Validate(yamlInstance(t, []byte(text))) == nil
+		_, ps := config.ParseProjectLayer([]byte(text), anchor)
+		if schemaOK != (len(ps) == 0) {
+			t.Errorf("%s: schema ok = %v, config.ParseProjectLayer problems = %v", entry, schemaOK, ps)
+		}
+	}
+}
+
+// TestInputCapCeilingsAgreeWithGo ties both schemas' inputs bounds to the Go
+// ceilings they mirror (config.MaxInputFiles, MaxInputBytes and
+// MaxInputTotalBytes, applied by validateInputs): the numbers are separate
+// copies in each schema, so a raised ceiling in Go would otherwise leave the
+// schema silently stricter — an editor refusing a cap fugaro accepts — with
+// no test to notice.
+func TestInputCapCeilingsAgreeWithGo(t *testing.T) {
+	for _, tc := range []struct{ file, root string }{
+		{"fugaro.schema.json", "workflow"},
+		{"project-layer.schema.json", "profile"},
+	} {
+		data, err := os.ReadFile(tc.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(data, &doc); err != nil {
+			t.Fatal(err)
+		}
+		at := func(v any, path ...string) any {
+			for _, k := range path {
+				m, ok := v.(map[string]any)
+				if !ok {
+					t.Fatalf("%s: no %v", tc.file, path)
+				}
+				v = m[k]
+			}
+			return v
+		}
+		in := at(doc, "$defs", tc.root, "properties", "inputs", "properties")
+		for _, c := range []struct {
+			name string
+			want int64
+		}{
+			{"max_files", config.MaxInputFiles},
+			{"max_bytes", config.MaxInputBytes},
+			{"max_total_bytes", config.MaxInputTotalBytes},
+		} {
+			p, ok := in.(map[string]any)[c.name].(map[string]any)
+			if !ok {
+				t.Fatalf("%s: inputs.%s is not an object", tc.file, c.name)
+			}
+			if got, ok := p["maximum"].(float64); !ok || int64(got) != c.want {
+				t.Errorf("%s: inputs.%s maximum = %v, config has %d", tc.file, c.name, p["maximum"], c.want)
+			}
+			if got, ok := p["minimum"].(float64); !ok || got != 0 {
+				t.Errorf("%s: inputs.%s minimum = %v, want 0", tc.file, c.name, p["minimum"])
+			}
+		}
+	}
+}
+
+// TestRecipeSchemaArtifactStepsMatchGo pins the schema's step shapes for the
+// artifact steps against recipe.Parse for every mode: a plan or render step
+// is mode: artifact's own, so [render] under mode: implement (or with no mode
+// at all, which is implement) is refused by both. The steps oneOf has to
+// list artifactSteps for an artifact recipe to have a shape at all, and the
+// schema's own branch is what stops that alternative admitting the step in
+// the other two modes; testdata/recipe/invalid/render-implement.yaml pins the
+// same thing through the corpus instead, so it can never be relaxed to a
+// shape- fixture the schema test skips.
+func TestRecipeSchemaArtifactStepsMatchGo(t *testing.T) {
+	sch := compile(t, "recipe.schema.json")
+	const outs = "outputs:\n  globs: [\"out/*.png\"]\n"
+	for _, tc := range []struct{ name, text string }{
+		{"implement names render", "version: 1\nname: a\nmode: implement\nsteps:\n  - render: {}\n"},
+		{"no mode names render", "version: 1\nname: a\nsteps:\n  - render: {}\n"},
+		{"no mode names plan then render", "version: 1\nname: a\nsteps:\n  - plan: {}\n  - render: {}\n"},
+		{"review names render", "version: 1\nname: a\nmode: review\nsteps:\n  - render: {}\n"},
+		{"artifact renders", "version: 1\nname: a\nmode: artifact\n" + outs + "steps:\n  - render: {}\n"},
+		{"artifact plans then renders", "version: 1\nname: a\nmode: artifact\n" + outs + "steps:\n  - plan: {}\n  - render: {}\n"},
+		{"artifact renders twice", "version: 1\nname: a\nmode: artifact\n" + outs + "steps:\n  - render: {}\n  - render: {}\n"},
+		{"artifact without outputs", "version: 1\nname: a\nmode: artifact\nsteps:\n  - render: {}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			schemaOK := sch.Validate(yamlInstance(t, []byte(tc.text))) == nil
+			_, ps := recipe.Parse([]byte(tc.text))
+			if schemaOK != (len(ps) == 0) {
+				t.Errorf("schema ok = %v, recipe.Parse problems = %v", schemaOK, ps)
+			}
+		})
 	}
 }
 

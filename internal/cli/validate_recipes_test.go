@@ -275,3 +275,74 @@ func TestValidateWarnsRenamedAgentRecipe(t *testing.T) {
 		t.Fatalf("a repository recipe of the renamed name wins over the rename: %+v", doc.Warnings)
 	}
 }
+
+// TestOutputCapsMustFitTheWorkflowsMemory (Review Focus 12): on Cloud Run the
+// container's filesystem is memory and the runner stages a copy of every
+// artifact beside the render's originals, with the downloaded inputs in the
+// same place, so 2 × outputs.max_total_bytes + inputs.max_total_bytes must
+// fit resources.memory (design artifact-runs.md §5.2, U3). The rule pairs a
+// recipe with a workflow, which is why it is reported by gateCheckProblems
+// and not by internal/config: an over-memory set is a killed container with
+// no result.json, not a clean failure.
+func TestOutputCapsMustFitTheWorkflowsMemory(t *testing.T) {
+	run := func(t *testing.T, workflow, outputs string) validateOutput {
+		t.Helper()
+		isolateProjects(t, t.TempDir())
+		dir := t.TempDir()
+		yaml := "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: api-key\n" +
+			"workflows:\n  app:\n" + workflow
+		testutil.WriteFiles(t, dir, map[string]string{
+			"fugaro.yaml": yaml,
+			".fugaro/recipes/default.yaml": "version: 1\nname: default\nmode: artifact\noutputs: { globs: [out/*.png]" + outputs +
+				" }\nsteps:\n  - render: {}\n",
+		})
+		out, _, err := execute(t, "validate", "--json", filepath.Join(dir, "fugaro.yaml"))
+		var doc validateOutput
+		if jerr := json.Unmarshal([]byte(out), &doc); jerr != nil {
+			t.Fatalf("output %q: %v", out, jerr)
+		}
+		if err != nil && ExitCode(err) != ExitUserError {
+			t.Fatalf("validate: %v", err)
+		}
+		return doc
+	}
+	render := "    commands: { build: go build ./..., test: go test ./..., render: sh render.sh }\n"
+	memory := func(m string) string { return "    resources: { memory: " + m + " }\n" }
+
+	// The defaults: a 2 GiB output set stages a second 2 GiB copy and the
+	// default 1 GiB input set sits beside it, which is 5 GiB — over a 3Gi
+	// workflow. The message carries the set, the doubled peak and the limit.
+	doc := run(t, render+memory("3Gi"), "")
+	if !has(doc.Problems, "workflows.app.resources.memory", "need 5 GiB of memory") ||
+		!has(doc.Problems, "workflows.app.resources.memory", "2 × 2 GiB of outputs plus 1 GiB of inputs") ||
+		!has(doc.Problems, "workflows.app.resources.memory", "resources.memory 3Gi") {
+		t.Fatalf("doc = %+v", doc)
+	}
+	// A workflow with room, and one whose caps are lowered to fit.
+	for _, tc := range []struct{ name, workflow, outputs string }{
+		{"room to spare", render + memory("8Gi"), ""},
+		{"lowered caps", render + memory("2Gi"), ", max_total_bytes: 524288"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if doc := run(t, tc.workflow, tc.outputs); !doc.Valid || has(doc.Problems, "workflows.app.resources.memory", "") {
+				t.Fatalf("doc = %+v", doc)
+			}
+		})
+	}
+	// The other two artifact refusals come from the same list, each at the
+	// key it is about: an artifact recipe over a blank commands.render, and
+	// outputs.probe: probe over a blank commands.probe.
+	doc = run(t, "    commands: { build: go build ./..., test: go test ./... }\n"+memory("8Gi"), "")
+	if !has(doc.Problems, "workflows.app.commands", "the render step needs commands.render") {
+		t.Fatalf("blank render: %+v", doc)
+	}
+	doc = run(t, render+memory("8Gi"), ", probe: probe")
+	if !has(doc.Problems, "workflows.app.commands", "the probe step needs commands.probe") {
+		t.Fatalf("blank probe: %+v", doc)
+	}
+	// A probe the workflow does declare is no problem at all.
+	withProbe := "    commands: { build: go build ./..., test: go test ./..., render: sh render.sh, probe: sh probe.sh }\n"
+	if doc := run(t, withProbe+memory("8Gi"), ", probe: probe"); !doc.Valid {
+		t.Fatalf("declared probe: %+v", doc)
+	}
+}

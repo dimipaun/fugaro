@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -428,6 +429,13 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			}
 		}
 		if err := checkMaxParallel(ctx, env); err != nil {
+			return launchResult{}, err
+		}
+		// The artifact gate: locally computable (a recipe's caps against
+		// the workflow's memory, a render or probe step against the
+		// commands they need), so it runs before the budget read below and
+		// before createTask writes anything at all.
+		if err := checkArtifactLaunch(ctx, spec); err != nil {
 			return launchResult{}, err
 		}
 		if !skipBudget {
@@ -937,6 +945,73 @@ func printRecipeNote(warn io.Writer, rr *resolvedRecipe, explicit bool) {
 		return
 	}
 	io.WriteString(warn, noteLine(rr.Note))
+}
+
+// checkArtifactLaunch refuses a mode: artifact launch whose caps cannot fit
+// the workflow's memory, or whose render or probe step names a command the
+// workflow leaves empty: the launch's arm of runner.RecipeGateProblems
+// (design artifact-runs.md §5.2, Review Focus 12), called before createTask
+// writes anything, so an over-memory artifact launch leaves no task and no
+// execution behind. A launch whose recipe or workflow the launcher cannot
+// resolve locally is judged by the runner's own bootstrap instead
+// (checkGateCommands), which reports the same list.
+func checkArtifactLaunch(ctx context.Context, spec *task.Spec) error {
+	cfg := checkoutConfig(ctx, spec.Repo)
+	if cfg == nil {
+		return nil
+	}
+	name, wf, err := cfg.SelectWorkflow(spec.Workflow)
+	if err != nil {
+		return nil
+	}
+	rcp := recipeForLaunch(ctx, cfg, spec)
+	if rcp == nil || rcp.Mode != recipe.ModeArtifact {
+		return nil
+	}
+	var msgs []string
+	for _, p := range runner.RecipeGateProblems(rcp, wf) {
+		msgs = append(msgs, fmt.Sprintf("workflows.%s.%s: the %s", name, p.Field, p.Message))
+	}
+	if len(msgs) == 0 {
+		return nil
+	}
+	return userErr("recipe %s: %s", rcp.Name, strings.Join(msgs, "; "))
+}
+
+// recipeForLaunch is the recipe this launch will run, parsed: the task's own
+// (the text the launcher embedded for a project or catalog recipe, else the
+// repository file a repo-sourced one names, read from this checkout), or,
+// for a task that names none, the one this checkout's config selects
+// (localRecipe, exactly as `fugaro validate` resolves it). nil when the
+// launcher cannot read or parse it here: the runner resolves the same
+// recipe at the task's ref and refuses it there.
+func recipeForLaunch(ctx context.Context, cfg *config.Config, spec *task.Spec) *recipe.Recipe {
+	root := checkoutRoot(ctx, spec.Repo)
+	if spec.Recipe == nil {
+		if cfg == nil {
+			return nil
+		}
+		return localRecipe(root, cfg)
+	}
+	data := []byte(spec.Recipe.YAML)
+	if len(data) == 0 {
+		// A repository recipe: task.json carries its name alone (the
+		// runner reads the file at the task's ref), so the launcher reads
+		// the same file from its own checkout of the repository.
+		if root == "" {
+			return nil
+		}
+		var found bool
+		var err error
+		if data, found, err = recipe.ReadRepoFile(root, spec.Recipe.Name); err != nil || !found {
+			return nil
+		}
+	}
+	rcp, ps := recipe.Parse(data)
+	if len(ps) > 0 {
+		return nil
+	}
+	return rcp
 }
 
 // runnerChooses reports whether the runner, not this CLI, decides spec's

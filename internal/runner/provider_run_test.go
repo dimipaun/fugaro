@@ -499,6 +499,127 @@ func TestProviderStageDisablesThinkingVars(t *testing.T) {
 	}
 }
 
+// providerReviewerPinned is providerPinned with the reviewer on the route's
+// model too, so both roles are provider-served. That is the case `auto` needs
+// to leave the derived recipe without a first line: FirstLineOn asks for a
+// coder a provider serves *and a reviewer no provider serves*, so with a
+// Claude coder the line is off for the coder's own sake and a fixture would
+// stay green even with the reviewer clause deleted. The background stays
+// Claude's haiku, which gwConfig pins explicitly: an unset one would become
+// the coder's provider-served model (config.EffectiveBackground) and the
+// review stage would carry the provider's variables for a reason this test is
+// not about (Review Focus 10).
+func providerReviewerPinned(t *testing.T) string {
+	t.Helper()
+	cfg := providerFirstLine(t, "")
+	out := strings.Replace(cfg, "reviewer: "+sonnet, "reviewer: "+deepseek, 1)
+	if out == cfg {
+		t.Fatal("the fixture has no reviewer line")
+	}
+	return out
+}
+
+// TestProviderReviewerSkipsTheFirstLine is the runner half of the
+// mixed-credentials plan's Task 2: a provider on both the coder and the
+// reviewer, `first_line_review: auto` (left to its default), and the derived
+// catalog recipe -- so the first line is off and the run is implement, review.
+// The senior review's Tier is "" rather than senior: it is a senior review in
+// a run that had no first line (runstore), which is exactly what `auto` just
+// made this run, so the assertion is Tier != runstore.TierFirst and never
+// Tier == runstore.TierSenior. Both roles provider-served is the point of the
+// fixture; the reviewer's stage is a provider stage in every respect, thinking
+// off, and the second half of the test is the contrast that says so.
+func TestProviderReviewerSkipsTheFirstLine(t *testing.T) {
+	use := pricing.Usage{Input: 1000, Output: 500}
+	g := providerRun(t, providerReviewerPinned(t), "enforce", "50",
+		[]anthropicfake.Reply{
+			anthropicfake.Compat{}.MessageOK(deepseek, use),
+			anthropicfake.Compat{}.MessageOK(deepseek, use),
+		}, "acme/app")
+	var coderStatus, reviewStatus int
+	var coderBody, reviewBody string
+	var reviewerManaged map[string]string
+	rec, err := g.run(t,
+		callDeepseek(&coderStatus, &coderBody, implement("feature")),
+		readManagedDuring(g.harness, &reviewerManaged, callDeepseek(&reviewStatus, &reviewBody, review("ship", 0))))
+	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if coderStatus != 200 || reviewStatus != 200 {
+		t.Fatalf("statuses = %d, %d: %s %s", coderStatus, reviewStatus, coderBody, reviewBody)
+	}
+	onlyPR(t, g.provider)
+
+	// The derived recipe has no first-line step under `auto` here.
+	if got := stageNames(rec); !eq(got, "implement", "review") {
+		t.Fatalf("stages = %v, want no first-line step: auto is off once a provider serves the reviewer too", got)
+	}
+	if len(rec.Reviews) != 1 {
+		t.Fatalf("reviews = %+v, want the senior review alone", rec.Reviews)
+	}
+	for _, r := range rec.Reviews {
+		if r.Tier == runstore.TierFirst {
+			t.Errorf("a first-line review ran under a provider-served reviewer: %+v", r)
+		}
+	}
+	if got := rec.Reviews[0].Verdict; got != "ship" {
+		t.Errorf("the senior review's verdict = %q, want ship", got)
+	}
+
+	// Both stages' calls went to the provider, so the review stage is a
+	// provider stage: Anthropic's fake saw nothing at all.
+	if n := g.compat.Count(); n != 2 {
+		t.Fatalf("the provider saw %d calls, want the coder's and the reviewer's: %+v", n, g.compat.Seen())
+	}
+	if n := g.fake.Count(); n != 0 {
+		t.Fatalf("Anthropic saw %d calls of a run whose every pin a provider serves", n)
+	}
+	reviewer := g.agent.calls[1]
+	if got := envValue(reviewer.Env, "ANTHROPIC_DEFAULT_OPUS_MODEL"); got != deepseek {
+		t.Errorf("the review stage pins %q, want the provider's model", got)
+	}
+	for k, v := range map[string]string{"CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1", "MAX_THINKING_TOKENS": "0"} {
+		if got := envValue(reviewer.Env, k); got != v {
+			t.Errorf("reviewer stage (provider route), process env: %s = %q, want %q", k, got, v)
+		}
+		if got, ok := reviewerManaged[k]; !ok || got != v {
+			t.Errorf("reviewer stage (provider route), managed settings env: %s = %q (present %v), want %q", k, got, ok, v)
+		}
+	}
+
+	// The contrast, in one short run: the same provider coder with a Claude
+	// reviewer carries neither variable -- the stage is not a provider stage
+	// -- so the assertions above are about the reviewer's own model and not
+	// about the run. providerPinned's first line is off, so the reviewer is
+	// the run's second and last stage.
+	g = providerRun(t, providerPinned(t), "enforce", "50",
+		[]anthropicfake.Reply{anthropicfake.Compat{}.MessageOK(deepseek, use)}, "acme/app")
+	var claudeManaged map[string]string
+	var coderStatus2 int
+	var coderBody2 string
+	rec, err = g.run(t,
+		callDeepseek(&coderStatus2, &coderBody2, implement("feature")),
+		readManagedDuring(g.harness, &claudeManaged, review("ship", 0)))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if len(g.agent.calls) != 2 {
+		t.Fatalf("stages = %d, want 2: %+v", len(g.agent.calls), g.agent.calls)
+	}
+	claudeReviewer := g.agent.calls[1]
+	if got := envValue(claudeReviewer.Env, "ANTHROPIC_DEFAULT_OPUS_MODEL"); got != sonnet {
+		t.Errorf("the Claude reviewer's stage pins %q, want its own model", got)
+	}
+	for k := range map[string]string{"CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1", "MAX_THINKING_TOKENS": "0"} {
+		if got := envValue(claudeReviewer.Env, k); got != "" {
+			t.Errorf("reviewer stage (Claude), process env: %s = %q, want unset", k, got)
+		}
+		if got, ok := claudeManaged[k]; ok {
+			t.Errorf("reviewer stage (Claude), managed settings env: %s = %q, want absent", k, got)
+		}
+	}
+}
+
 // Provider models are real dollars and observe never refuses a call, so a
 // provider model is refused at bootstrap in observe (and off) mode, naming the
 // rule and the command to change the mode; enforce runs, and a Claude-only run
