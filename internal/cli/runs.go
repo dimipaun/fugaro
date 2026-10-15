@@ -69,8 +69,9 @@ type lsDoc struct {
 }
 
 // newRunsCmd is "fugaro runs". ls is its only subcommand today; the 0.7.0
-// top-level `fugaro ls` tombstone was deleted in 0.8.0 (design generic-tool
-// §5, G17).
+// top-level `fugaro ls` tombstone was deleted in 0.7.1 (design generic-tool
+// §5, G17; the owner's 2026-10-14 ruling moved it from 0.8.0 to 0.7.1,
+// plan Task 29).
 func newRunsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "runs",

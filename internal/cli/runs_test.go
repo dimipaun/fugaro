@@ -1120,14 +1120,15 @@ func TestRunsLsIsTheOldLs(t *testing.T) {
 	}
 }
 
-// TestLsIsGone: the 0.7.0 tombstone was deleted in 0.8.0 (design
-// generic-tool §5, G17, P3), so there is no top-level `ls` command at all.
+// TestLsIsGone: the 0.7.0 tombstone was deleted in 0.7.1 (design
+// generic-tool §5, G17, P3; the owner's 2026-10-14 ruling moved the deletion
+// from 0.8.0 to 0.7.1), so there is no top-level `ls` command at all.
 // `fugaro runs ls` is the only listing (TestRunsLsIsTheOldLs).
 func TestLsIsGone(t *testing.T) {
 	newCloudFixture(t)
 	for _, c := range NewRootCmd().Commands() {
 		if c.Name() == "ls" {
-			t.Fatal("a top-level ls command is still registered: the 0.7.0 tombstone should be gone in 0.8.0")
+			t.Fatal("a top-level ls command is still registered: the tombstone was deleted in 0.7.1")
 		}
 	}
 	_, _, err := execute(t, "ls")
