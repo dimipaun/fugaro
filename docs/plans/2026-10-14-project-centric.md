@@ -657,3 +657,124 @@ Append `## Check 51: project scope by default, and what it reaches (installation
 7. Restore: put back the scope and copies step 1 recorded, one ordinary sandbox task.
 
 **Paste back:** every FACT line, never a secret value. **Depends on:** 2.1 to 2.3.
+
+## Phase 3 — shared project jobs for clone workflows (eight tasks)
+
+The design's §4 and §4.1. **This is the phase that removes per-repository provisioning for clone workflows**, and the phase that states a regression: one job service account per (profile, account) means the bucket conditions can no longer name one slug, and a run — an untrusted agent, unlike a launcher — could poison another repository's cache, forge or steal a lock, or rewrite another repository's queued `task.json` (design §4.1's table; `SECURITY.md:36` lists exactly those among the properties 0.7.0 gained). D4 accepts it and documents it. Terraform today lives at `deploy/terraform/gcp/{roots,modules}` — `roots/{installation,firebase,repo}` and `modules/{installation,firebase,repo,workflow}` — and a repository's job, its service account and its bucket conditions come from `modules/workflow/{job.tf,sa.tf}`, with the launcher's `run.jobs.runWithOverrides` role in `modules/installation/iam.tf:26-31` and `modules/workflow/job.tf:93-102`.
+
+### Task 3.0: the four UNVERIFIED probes, written and answered first — OWNER-RUN, and a go/no-go — Check 52
+
+**Files:** `docs/gcp-live-checklist.md`.
+
+Design §13 lists what was never settled from the code, and this phase is the one that needs four of them. **They are run before any phase 3 code is written**, because two of them decide whether the phase is shaped the way the design says: the Bitbucket token decides whether Bitbucket is first-class here at all (D5), and the Secret Manager IAM question decides whether a runtime fetch is even a fallback. Append `## Check 52: the four probes phase 3 depends on (installation fugaro, sandbox only, never belong; run by you; NOT RUN)` and its row, with the guard and hard-coded project of Check 48 (Task 0.4 step 1) and these steps:
+
+1. **Setup and guard**, plus the recorded state (the sandbox job's env, its service account and its bucket condition; the Bitbucket token's kind).
+2. **U1 — the Bitbucket project-wide token (the first task of the design's phase 3, §4.5).** Create a Bitbucket **workspace access token** for the sandbox workspace (the owner, in Bitbucket's UI — no agent creates a credential). Then, **on the sandbox repository only**: `git ls-remote https://x-token-auth:<token>@bitbucket.org/<workspace>/<repo>.git` and one push to a scratch branch, plus `git ls-remote` against a repository **outside** the intended scope. **FACT:** whether the token can read and push to exactly the project's repositories, what else it can reach, and the token's own scopes as Bitbucket reports them. **If it cannot be scoped to the project's repositories, Bitbucket projects stay on the per-repository path** (design §4.5) — **the owner is told before phase 3 starts**, D5 is re-decided, and Tasks 3.1 to 3.7 proceed for GitHub only. The fallback the design names — a runtime fetch by secret-name prefix with an IAM condition — is itself probe U4 below and **reintroduces the shared-service-account exposure of §4.1**, so it is a decision, not a default.
+3. **U2 — does a Cloud Run **secret reference** work inside a container env override?** The API type has a `ValueSource`. One `gcloud run jobs execute`/`jobs update` attempt on the sandbox job with a `ContainerOverride` env var whose value is a secret reference, and one plain run. **FACT:** whether the override is accepted and whether the value arrives; **and the D10 counterpart — whether an execution's own overrides are visible to the container** (the runner already reads its execution's template for `FUGARO_RUN`, `internal/backend/gcp/run.go:420-430`; what is unverified is whether the *override* is what the template reports). **This step's answer is what SECURITY.md's launcher-override paragraph is allowed to claim** (Task 1.5 step 3): if the override is visible, the text says so; if it is not, the text says only that the API merges overrides and the runner cannot see them.
+4. **U3 — Secret Manager IAM conditions on a name prefix.** `gcloud secrets add-iam-policy-binding` on one sandbox secret with an `expression` naming a prefix, then a read attempt with the sandbox job's service account. **FACT:** whether the condition is honoured for `secretmanager.versions.access` and what the denial looks like. If it works, it is a *possibility* for U1's fallback and for phase 5's per-person grants; if not, both designs say so.
+5. **U4 — the quota and bucket-policy ceilings** (design §13): Google's default service-account quota (about 100 per project) and the runs bucket's IAM policy size at scale. **FACT:** the sandbox project's current service-account count against its quota, and the sandbox bucket's policy binding count. The current model exceeds the SA quota at about 60 repositories and the project-job model does not — this step is what records that the sandbox still has headroom.
+6. **Restore**: the scratch branch deleted, the sandbox token revoked **by the owner in Bitbucket** (record only that it was revoked, never the token), the job's env put back, the IAM binding removed, and one ordinary sandbox task confirming the sandbox still runs.
+
+End with: "**Paste back:** every FACT line above, never a token, key or secret value. Never run this against `belong`." **A step that fails does not stop the phase silently**: it is reported to the owner and the affected task is re-scoped in the same PR, in writing.
+
+### Task 3.1: profiles — the policy's shape and the workflow's selection
+
+**Files:** `internal/projectpolicy/{policy.go,profiles.go}` (+ tests), `internal/config/{config.go,validate.go}` (+ tests), `internal/infra/spec.go` (the workflow's `profile`), `internal/cli/project.go` (`policy publish`).
+
+**Interfaces.** Consumes: Task 1.1's `Policy`. Produces: `projectpolicy.Profile{CPU, Memory, TimeoutClass string, Secrets []string, AllowRepos []string}` and `Policy.Profiles map[string]Profile`, plus `config.Workflow.Profile string` defaulting to `standard`.
+
+1. `profiles` in the policy: the shareable unit is "a job with these properties" (design §4.1). `standard` must exist; a policy that names a profile in `workflows.<n>.profile` and does not define it is refused **at publish time** and at runner start (fail closed, the Task 1.3 path).
+2. **`allow_repos` on a profile is the admission list the runner enforces in Task 3.3**, and the *project's* `allow_repos` stays the enrollment list of phase 1: an empty profile list means "the project's list applies", never "everything".
+3. `cpu`/`memory`/`timeout` are validated against Cloud Run's accepted forms (the same shapes Check 4 already exercised: `internal/backend/gcp/limits.go`), so a policy cannot name a job the API will refuse.
+4. `policy publish` writes the profiles; `project show` prints them with the jobs each maps to.
+
+**Tests:** `TestPublishRefusesAnUndefinedProfile`; `TestProfileDefaultsToStandard`; `TestProfileAdmissionFallsBackToTheProjectList`; `TestProfileRefusesAnInvalidResourceForm`.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/projectpolicy/... ./internal/config/... -count=1`. **Depends on:** 1.1, 1.6. **Commit:** "projectpolicy: profiles, and a workflow's selection of one".
+
+### Task 3.2: the project job module and the broadened bucket IAM — SECURITY-SENSITIVE, independent opus review
+
+**Files:** `deploy/terraform/gcp/modules/project/{job.tf,sa.tf,iam.tf,variables.tf,outputs.tf}` (new), `deploy/terraform/gcp/roots/installation/main.tf` (+ `variables.tf`), `deploy/terraform/gcp/modules/installation/{iam.tf,bucket.tf,history.tf,outputs.tf}`, `deploy/terraform/gcp/modules/installation/variables.tf`, `internal/infra/tf/testdata/golden/*.plan.json`, `scripts/gen-golden-plans.sh`, `internal/infra/generated_root_test.go`, `SECURITY.md`, `docs/bucket-iam.md`.
+
+**Verified today:** a workflow's job service account, its per-slug bucket grant and its secret grants are `deploy/terraform/gcp/modules/workflow/sa.tf:5,24-33,36-43`; the job is `.../workflow/job.tf:15` (deletion protection) with the launcher's `job_runner` grant at `:94-102`; the launcher role's permissions are `.../modules/installation/iam.tf:26-31` (`run.jobs.run`, `run.jobs.runWithOverrides`); the history job's whole-bucket read is `.../modules/installation/history.tf:163-169`; the bucket prefixes and the condition builder are `internal/backend/gcp/names.go:374` (`JobBucketPrefixes`) and `:383` (`BucketCondition`), with the launcher's own condition at `:424` (`LauncherBucketCondition`).
+
+1. The new module creates, per (profile, account): **one Cloud Run job** (the base image, the profile's cpu/memory/timeout, the profile's secret mounts, deletion protection as today) and **one job service account** with the bucket grant, the secret grants for the profile's mounts and (under Vertex) the same optional grant as today. The job's env carries what phase 1 left in env and nothing per-repository: `FUGARO_RUN` (an override at launch), the timeout, `FUGARO_RTDB_URL`, `FUGARO_PROJECT`, `FUGARO_BUCKET`, and the **job's own provider** (12a item 2 — a job serves one provider, and the runner's binding check needs it from somewhere a launcher cannot override).
+2. **The bucket condition loses the slug**: one condition per prefix (`runs/`, `cache/`, `locks/`), built by a new `ProjectBucketCondition(bucket, prefixes)` beside `BucketCondition` (`internal/backend/gcp/names.go:383`) so the old per-slug builder stays for the per-repository path until Task 4.4 drops it. **SECURITY.md and `docs/bucket-iam.md` state the regression in the words D4 chose**: it is a loss of a documented 0.7.0 property, a run could poison another repository's cache (cross-repository code execution on its next run), forge or steal a lock, or rewrite a queued `task.json`, and **repositories that must stay apart use different profiles** (a profile is a job, so a profile boundary is a job-service-account boundary).
+3. Launcher and operator grants move from per (repository, workflow) to per project job (`modules/project/iam.tf`), with the same `job_runner` role and the same `run.jobs.runWithOverrides` permission — nothing widens: every launcher already holds every job (design §4.1's table, "Nothing: every launcher already holds every job").
+4. The history job and its sweep (`.../modules/installation/history.tf:174-253`) are unchanged (it already reads the whole bucket), and the per-project base-image check is unchanged: clone repositories need no check (`internal/infra/spec.go:846`), the inert per-repository registry stays until Task 4.2.
+5. **Golden plans** (`internal/infra/tf/testdata/golden/`): regenerate with `scripts/gen-golden-plans.sh` (it runs `terraform show -json` offline with a fake token and a dead proxy, and derives the `*-adopt` variants with `jq`) and add the new root's plan. **The test that underpins the whole phase is a golden test asserting the project root's resource set**: one job and one SA per (profile, account), three bucket conditions, no per-slug condition. A reviewer reads the golden diff, not the HCL.
+6. **The size claim the design makes** (design §13: the current model exceeds the default service-account quota at about 60 repositories, the project-job model does not) gets a test: the golden plan's SA count is asserted to be a function of the profiles and accounts, not of the repository count.
+
+**Command:** the repository's Terraform checks through `fugaro verify test` (the golden-plan test is a Go test: `GOFLAGS=-p=2 go test ./internal/infra/... -count=1`), plus `terraform validate`/`plan` for the new module **offline** (no apply, no credentials — the generator's own `env -i` pattern). **Depends on:** 3.0 (a probe failure can re-scope this), 3.1, 1.6. **Commit:** "tf: one project job and job service account per (profile, account)".
+
+### Task 3.3: the runner's binding, the remote and the admission — SECURITY-SENSITIVE, independent opus review
+
+**Files:** `internal/runner/{projectjob.go (new),runner.go,provision.go,project.go}` (+ tests), `internal/backend/backend.go` (the accessor the runner uses), `internal/runner/{lockcache.go,budget_session.go}` (the ordering comment).
+
+**Verified today:** the runner clones from `r.d.Remote` (`internal/runner/runner.go:789-794`; `internal/runner/provision.go:30-44` is `RemoteEnv = "FUGARO_REMOTE"`, set at `internal/infra/spec.go:669` only for `checkout: clone`); the slug arrives in `FUGARO_RUN` (`internal/cli/exec.go:157`,`:168`); `task.json` carries repository, ref, task, workflow, account and layer but **no provider** (`internal/task/task.go:45-79`); the token is minted for `spec.Repo` (`internal/runner/runner.go:586`); `CLOUD_RUN_JOB` is read by `backend.ExecutionFromEnv` (`internal/backend/backend.go:96-104`), wired at `internal/cli/exec.go:134` — **the design's §12a item 1 is wrong that the runner reads it directly today**; this task makes the derivation real.
+
+**Interfaces.** Consumes: 3.1's profiles, 1.1's `MatchRepo`, `task.Slug` (`internal/task/task.go:179`). Produces: `func (r *run) jobIdentity() (profile, account string, err error)` and the extended `admissionCheck` of Task 1.5.
+
+1. `jobIdentity` derives the **profile and account from the job's own name** (`CLOUD_RUN_JOB` through `backend.ExecutionFromEnv`), matching it against the policy's profiles — never from an env var a launcher can override (12a item 1). A job name that maps to no profile of the published policy halts the run: an old per-repository job running against a published policy is a *state* the owner must resolve (`doctor` says so, Task 1.6 step 4).
+2. **The slug is bound**: `slug == task.Slug(provider, spec.Repo)` where the provider is the **job's own** provider (from the job's env, which only the installation can write) or, when the job carries none, the provider the policy's profile names (12a item 2 — never `FUGARO_GIT_PROVIDER` from a launcher's override). The check runs **before** `openProvider` mints a git token (`internal/runner/runner.go:586`) and before the budget session takes a lease (`internal/runner/budget_session.go:180`) — the phase-1 ordering check, extended to the profile case.
+3. **The remote comes from data, not from the job env**: the clone URL is computed from `task.json`'s repository, the job's provider and the policy (a custom clone URL lives in the policy, design §4.1(1)), reusing `internal/infra/spec.go:454`'s `repoURL` logic moved to a shared helper so the deploy-time and run-time answers cannot differ. `FUGARO_REMOTE` stops being read on a project job; `provision.go:30-44`'s constant stays for the per-repository path until Task 4.4.
+4. **Admission** (design §4.1): the runner refuses a repository the profile's `allow_repos` does not admit, for the (profile, account) it is actually running on — so the repository's `fugaro.yaml` selection of a profile cannot widen its own access, and the launch check stays advisory (§4.2). One function, one message, shared with the CLI's advisory twin (`internal/cli/run.go`, Task 1.5 step 2).
+5. `task.json`'s repository is *not* trusted to name the slug: it is the input the binding compares, and the comparison is what makes the bucket condition's absence survivable.
+6. The GitHub App ID and key become project policy (design §4.1(3), §4.5): the runner mints a token per repository from the project's App credentials. A project with several Apps cannot share jobs, and SECURITY.md says so (`SECURITY.md:48` already tells users to use one App per repository if that matters).
+
+**Tests:** `TestJobIdentityFromTheJobName`, `TestJobIdentityRefusesAnUnknownJob`, `TestRunnerRefusesSlugNotInProfileAllowList`, `TestRunnerChecksBeforeTheTokenAndTheLease` (extended), `TestRemoteFromTaskAndPolicy` (including a custom clone URL), `TestProjectJobIgnoresFUGARORemote`, `TestBindingUsesTheJobsOwnProviderNotEnv`. Each refusal test asserts the *absence* of a token request and a reserve write in the fake, which is the mutation that matters.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/runner/... ./internal/backend/... -count=1`. **Depends on:** 3.1, 3.2 (the job names it parses), 3.0 step 3. **Commit:** "runner: bind the slug to the job's own repository and admit the profile's repositories".
+
+### Task 3.4: every job-naming caller
+
+**Files:** `internal/backend/gcp/{run.go,names.go,logs.go}`, `internal/cli/{run.go,runs.go,logs.go,cancel.go}`, `internal/gcpfake/` (+ tests).
+
+**Verified today:** `CheckRunExecution` is `internal/backend/gcp/run.go:92-100`, `Launch` is `:106-140`, the job path `:30-45`, execution parsing `:47-80`, and the execution's own env is read at `:420-430`; the CLI's `max_parallel` counts `fugaro-` jobs at `internal/cli/run.go:1084-1112`; the job names are `internal/backend/gcp/names.go:130` (`JobName`).
+
+1. `Launch` launches the project job for the (profile, account) the workflow selects, and sets `FUGARO_RUN` as it does today (the override, `:110`).
+2. **`CheckRunExecution` compares the execution's own `FUGARO_RUN`** (already read from the execution, `:420-430`) with the run it belongs to, and with the repository the caller asked for — "which must compare the execution's own `FUGARO_RUN`, not the job's name" (design §4.1). This is what keeps `logs`, `cancel` and `ls` honest now that several repositories share a job.
+3. `fugaro ls`/`runs`/`logs`/`cancel`: selection stays by execution name and by the `FUGARO_RUN` the execution reports, and `max_parallel` (`internal/cli/run.go:1084-1112`) keeps counting `fugaro-` jobs at the same horizon — but its per-job assumption is restated: with shared jobs, one job's executions are several repositories', so the count is by execution, not by job.
+4. `internal/gcpfake`: the fake learns project jobs (a name → (profile, account) mapping, and the override merge), because every runner and CLI test in this phase runs against it.
+5. `docs/`: the `logs`/`ls` user-facing notes that named a per-repository job.
+
+**Tests:** `TestListAndLogsAcrossRepositorySharedJobs`, `TestCancelRefusesAnotherRunsExecution`, `TestMaxParallelCountsExecutionsNotJobs`, and the existing golden-adjacent CLI tests updated to project job names.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/cli/... ./internal/backend/... ./internal/gcpfake/... -count=1`. **Depends on:** 3.2, 3.3. **Commit:** "cli and backend: every job-naming caller on project jobs".
+
+### Task 3.5: the launcher and operator grants, and the dashboard
+
+**Files:** `deploy/terraform/gcp/modules/{installation,project}/*.tf`, `internal/watch/*` (+ tests), `internal/cli/doctor.go` (+ tests), `SECURITY.md`.
+
+1. The cross-cutting list's "launcher grants": the launcher role's permissions are unchanged (`run.jobs.run`, `run.jobs.runWithOverrides`, the secret metadata list — `modules/installation/iam.tf:15-31`), and what changes is *how many* jobs and secrets they attach to. `fugaro doctor` reports the grant count it sees and the jobs a launcher can start, which is the surface the owner checks after a migration.
+2. `fugaro watch`/`watch --json`: a run's job is now a (profile, account) name, so the JSON gains `profile` and `account` beside the job; the TUI's grouping stays by repository (from `FUGARO_RUN`), which is what a person reads.
+3. SECURITY.md's D4 paragraphs and the launcher-override paragraph (Task 1.5) are in place before this task closes the phase, and the phase's own `docs/bucket-iam.md` table of what each service account may do is regenerated.
+
+**Tests:** `TestWatchJSONCarriesProfileAndAccount`, `TestDoctorReportsLauncherReach`. **Command:** `GOFLAGS=-p=2 go test ./internal/watch/... ./internal/cli/... -count=1`. **Commit:** "watch, doctor and the grants: what a project job changed".
+
+### Task 3.6: `cloneShipped` flipped, and the docs that gate on it
+
+**Files:** `internal/cli/recipes_skew.go`, `internal/cli/{docs_checkout_test.go,image_refresh_steps_test.go,init_repo_clone_test.go}`, `docs/checkout.md`, `docs/git-providers.md`.
+
+**Verified today:** `cloneSince = "0.7.1"` at `internal/cli/recipes_skew.go:44` and `cloneShipped = false` at `:70`, with three tests pinning the docs/gate agreement (`internal/cli/docs_checkout_test.go:123-132`, `image_refresh_steps_test.go:662`, `init_repo_clone_test.go:19`).
+
+1. **The flip is gated on Check 38** — #360's Task 18, the owner-run check that proves `checkout: clone` end to end; it is on this phase's critical path and the design says the flip PR follows Check 38 (`docs/design/project-centric.md` §10). This task records the evidence (the check's run date and its FACT lines) in the PR description, not in the code.
+2. Flip `cloneShipped` to `true`, update `docs/checkout.md` and `docs/git-providers.md` to say clone workflows are shipped and what they need, and let the three gating tests pass — they fail if the flip and the docs disagree, which is the point of Review Focus 12.
+3. `docs/git-providers.md`: the Bitbucket section gains the D5 outcome from Task 3.0 step 2 — either a shared project-wide token and its scope, or the statement that Bitbucket stays per-repository and why.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/cli/... -count=1` and `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`. **Depends on:** #360/Check 38 (**outside this repository's control**), 3.2, 3.3, 3.4. **Commit:** "checkout: clone is shipped (cloneShipped), and the docs say what it needs".
+
+### Task 3.7: Check 53 — OWNER-RUN
+
+Append `## Check 53: a shared project job, end to end (installation fugaro and the sandbox only, never belong; run by you; NOT RUN)` and its row — the design's phase 3 live check (§11): *"Live check on the Bitbucket sandbox, plus a GitHub repository for the GitHub-specific parts (one has to be created; `dimipaun/fugarosandbox` is Bitbucket)"*. Steps, guarded and hard-coded:
+
+1. Setup and guard; record the restore (the sandbox's workflow/job names, its service account's bucket condition, its launcher grants, the workflow's `profile`, and whether `cloneShipped` is true in the installed binary).
+2. **The GitHub half needs a repository that does not exist yet** (design §4.4): the owner creates a GitHub sandbox repository under the App, adds it to `allow_repos`, and everything below runs once on it and once on the Bitbucket sandbox. If no GitHub repository is created, the check runs the Bitbucket half and **says so**; the GitHub-specific claims (the App token minted per repository) stay open.
+3. **The project root applies** (OWNER-RUN Terraform): `fugaro init`'s installation root with the new `modules/project`, on installation `fugaro`. **FACT:** the resource counts (jobs, service accounts, bucket conditions) and that the per-repository root is **not** applied.
+4. **A clone workflow runs on the shared job**: `fugaro run` on the sandbox, `checkout: clone`. **FACT:** the job name, the execution's own `FUGARO_RUN`, the clone URL the runner used and where it came from, the profile it ran on, and the run's outcome.
+5. **The binding refuses a mismatch**: launch with a `FUGARO_RUN` override naming another slug, and (a second run) with a repository the profile's `allow_repos` does not admit. **FACT:** both refusals verbatim, and that no token was minted and no lease taken (the absence of the credential and reserve lines).
+6. **The regression, measured**: from the sandbox job's service account, `gcloud storage cat` of **another** slug's `cache/` object succeeds (the property D4 accepted). **FACT:** the object read, and one sentence confirming SECURITY.md's wording matches it. This step is deliberately written as a test of the documented regression rather than a test that it does not happen.
+7. **`ls`, `logs` and `cancel` on a shared job**: two repositories' runs on the same job, then `fugaro ls`, `fugaro logs <run>` and a `fugaro cancel` of the wrong execution. **FACT:** each command's selection, and that cancel refuses an execution that is not the run it was asked for.
+8. Restore: the sandbox back to its per-repository path if the owner wants it (the per-repository root is still applied in phase 3), the launcher grants and bucket conditions as recorded, one ordinary sandbox task.
+
+**Paste back:** every FACT line, never a token or key. **Depends on:** 3.0 to 3.6.
