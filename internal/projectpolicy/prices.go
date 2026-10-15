@@ -73,7 +73,15 @@ func (ps *Prices) UnmarshalJSON(raw []byte) error {
 
 // CatalogJSON renders the block under the catalogue's own spelling — the real
 // model IDs — which is what pricing.ParseOverrides reads and what a reader
-// outside RTDB expects. A nil block is an empty object.
+// outside RTDB expects. A nil block is an empty object, exactly as MarshalJSON
+// writes the node: json.Marshal of a nil map is the literal `null`, which
+// pricing.ParseOverrides refuses ("it must be a JSON object keyed by model
+// ID"), so a caller that did not guard the call would be handed a document the
+// reader it is written for cannot read.
 func (ps Prices) CatalogJSON() ([]byte, error) {
-	return json.Marshal(map[string]Price(ps))
+	out := make(map[string]Price, len(ps))
+	for id, price := range ps {
+		out[id] = price
+	}
+	return json.Marshal(out)
 }
