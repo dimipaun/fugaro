@@ -421,7 +421,14 @@ func validPricePolicy(name, policy string) error {
 // values are enforced, not advisory. An unrecognised mode is the dangerous one:
 // policy.Merge treats it as unset, and the run falls back to off.
 func validBudget(b Budget) error {
-	if b.Mode != "" && !policy.ValidMode(b.Mode) {
+	if b.Mode == "" {
+		// The block is there and names no mode: a node published for its caps
+		// alone would take the mode from the job environment, which nobody
+		// reading the policy can see, so enforcement would depend on a deploy
+		// (H1). Leaving the block out is how a policy says it sets no budget.
+		return errors.New("mode must be off, observe or enforce: a policy that sets no budget key leaves the budget block out")
+	}
+	if !policy.ValidMode(b.Mode) {
 		return fmt.Errorf("mode %q must be off, observe or enforce", b.Mode)
 	}
 	if m, err := pricing.FromUSD(b.PerRunUSD); err != nil {

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -408,5 +409,116 @@ func TestPolicyPricesReplaceTheEnvOverrides(t *testing.T) {
 	}
 	if !near(rec.CostUSD, 0.04) {
 		t.Fatalf("cost = $%v, want $0.04: the environment's $100/M still applies", rec.CostUSD)
+	}
+}
+
+// H1 (the security review of this PR): a policy that sets only part of the
+// ceiling does not turn the rest of it off. A policy published for
+// allow_repos alone used to replace the environment's ceiling whole — mode,
+// cap, prices, token cap and allow-list — so an installation enforcing a $50
+// cap with its kill switches on ran with no session, no cap and no switch at
+// all. The node replaces the keys it sets, one by one, and every key it is
+// silent about stays exactly as the job environment had it.
+func TestPolicySetsOnlyItsOwnKeys(t *testing.T) {
+	// The global kill switch is the environment ceiling's own limit, read by
+	// the session the environment's mode opens: a policy that dropped the mode
+	// to off would drop the switch with it.
+	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":1,"allow_repos":["github/acme/*"]}`, capScript(3)...)
+	b.db.Set(budget.PathKillGlobal, killSwitch(true))
+	rec, err := b.run(t) // no stage may run
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if rec.Status != runstore.StatusHalted || rec.Halt == nil || rec.Halt.Reason != runstore.HaltKillSwitch || rec.Halt.Scope != "global" {
+		t.Fatalf("rec = %+v: the environment's kill switch must still stop the run", rec)
+	}
+
+	// The same node over the environment's own cap: the cap is the run's, so
+	// the third call is refused at it. One 4,000-token reply on sonnet costs
+	// about $0.04.
+	b = policyRun(t, gwConfig(t, ""), "enforce", "0.09", `{"version":1,"allow_repos":["github/acme/*"]}`, capScript(3)...)
+	var st []int
+	rec, err = b.run(t, calling(&st, implement("feature"), call{sonnet, 4000}, call{sonnet, 4000}, call{sonnet, 4000}), review("ship", 0))
+	if err != nil || rec.Halt == nil || rec.Halt.Reason != runstore.HaltRunCap || !strings.Contains(rec.Halt.Detail, "0.09") {
+		t.Fatalf("rec = %+v, err = %v: the environment's $0.09 cap must apply", rec, err)
+	}
+	if rec.Budget == nil || rec.Budget.Mode != "enforce" || rec.Budget.Backend != "rtdb" {
+		t.Fatalf("budget record = %+v, want the environment's enforce session", rec.Budget)
+	}
+	// The keys the policy is silent about are the environment's, and the
+	// record says so rather than naming the node.
+	for _, key := range []string{"mode", "per_run_usd"} {
+		if s := sourceOf(t, rec, key); s != "ceiling" {
+			t.Errorf("%s source = %q, want ceiling", key, s)
+		}
+	}
+}
+
+// The keys the policy does set are the policy's: a node that names the mode
+// replaces the environment's, in the one direction Merge cannot express (the
+// ceiling may be raised or lowered by the node itself, since the node is the
+// ceiling). The cap the node is silent about stays the environment's.
+func TestPolicyModeReplacesTheEnvMode(t *testing.T) {
+	// The environment enforces with a $50 cap; the policy observes. Every
+	// call is accounted and none is refused: the $50 ceiling is the job's.
+	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":1,"budget":{"mode":"observe"}}`, capScript(3)...)
+	var st []int
+	rec, err := b.run(t, calling(&st, implement("feature"), call{sonnet, 4000}, call{sonnet, 4000}, call{sonnet, 4000}), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if rec.Budget == nil || rec.Budget.Mode != "observe" {
+		t.Fatalf("budget record = %+v, want the policy's observe", rec.Budget)
+	}
+	if s := sourceOf(t, rec, "mode"); s != "policy" {
+		t.Errorf("mode source = %q, want policy", s)
+	}
+	if s := sourceOf(t, rec, "per_run_usd"); s != "ceiling" {
+		t.Errorf("per_run_usd source = %q, want ceiling: the policy does not set it", s)
+	}
+	if len(st) != 3 || st[2] != 200 {
+		t.Fatalf("statuses = %v: observe refuses nothing", st)
+	}
+}
+
+// The node's own keys replace the environment's one at a time, and the keys it
+// does not name stay the environment's: here the budget block names the mode
+// and the cap, while the environment's token ceiling is what stops the run.
+func TestPolicyBudgetSetsTheKeysItNames(t *testing.T) {
+	// The environment caps a run at 1,000 tokens; the node caps it at $5 and
+	// names the mode. The token ceiling is the environment's, so the run halts
+	// on it rather than on the policy's cap.
+	b := policyRun(t, gwConfig(t, ""), "off", "", `{"version":1,"budget":{"mode":"enforce","per_run_usd":5}}`, capScript(3)...)
+	b.deps.Spend = ceilingOf(t, runner.MaxRunTokensEnv, "1000")
+	rec, err := b.run(t, big(implement("feature"), 1200))
+	tokenHalt(t, rec, err, "run used 1200 tokens of 1000")
+	if s := sourceOf(t, rec, "max_run_tokens"); s != "ceiling" {
+		t.Errorf("max_run_tokens source = %q, want ceiling: the policy does not set it", s)
+	}
+	for _, key := range []string{"mode", "per_run_usd"} {
+		if s := sourceOf(t, rec, key); s != "policy" {
+			t.Errorf("%s source = %q, want policy", key, s)
+		}
+	}
+}
+
+// A budget block that is there and names no mode is refused by the decoder: a
+// node published for its caps would otherwise take the mode from the job
+// environment the operator cannot see from the policy, which is the silent
+// "enforcement never turned on" the strict budget decode exists to prevent
+// (H1, and the review's second half).
+func TestPolicyBudgetWithoutAModeHaltsTheRun(t *testing.T) {
+	b := policyRun(t, gwConfig(t, ""), "enforce", "50", `{"version":1,"budget":{"per_run_usd":0.05}}`, capScript(3)...)
+	rec, err := b.run(t, implement("feature"))
+	if err == nil || !strings.Contains(err.Error(), projectpolicy.PathShared()) {
+		t.Fatalf("a budget block with no mode must stop the run: err = %v, rec = %+v", err, rec)
+	}
+	for _, want := range []string{"mode", "off, observe or enforce"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if len(b.agent.calls) != 0 {
+		t.Fatalf("%d stages ran", len(b.agent.calls))
 	}
 }
