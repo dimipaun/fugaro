@@ -951,6 +951,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := spec.Apply(cfg, &wf); err != nil {
 		return fmt.Errorf("applying task overrides: %w", err)
 	}
+	// The workflow's job profile, once the config is resolved and the
+	// overrides are applied: the selection is a name the published policy must
+	// define (plan task 3.1 step 1, the fail-closed half).
+	if err := r.checkJobProfile(ctx, name, wf); err != nil {
+		return err
+	}
 	rcp, rrec, err := r.resolveRecipe(ctx, cfg)
 	if err != nil {
 		return err

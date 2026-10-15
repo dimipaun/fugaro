@@ -50,10 +50,11 @@ func ValidProfileName(name string) error {
 // (§5(3), the Task 1.3 path). The error lists the profiles the policy does
 // define, so an operator reads one line.
 //
-// It is the gate Task 3.2's job layout calls when it reads a workflow's
-// job_profile (config.Workflow.JobProfileOrDefault). Nothing in this release
-// calls it outside tests: no run selects a job profile yet, and the refusal
-// this returns is the halt a run takes once the selection exists.
+// The runner calls it at run start (internal/runner's checkJobProfile), which
+// is the plan's fail-closed half: a workflow naming a profile the published
+// policy does not define halts the run. Task 3.2's job layout calls it again
+// when it builds the job the run is launched as (the profile's cpu, memory,
+// timeout and secrets), which is the half that does not exist yet.
 func (p *Policy) ProfileFor(name string) (Profile, error) {
 	if name == "" {
 		name = DefaultProfileName
@@ -112,11 +113,12 @@ func (p *Policy) Admission(profile string) ([]string, error) {
 // is not admitted to this profile, and a profile is one of several the same
 // repository may be run on.
 //
-// As with ProfileFor, nothing outside tests calls it in this release: a run
-// checks the project's allow_repos (internal/runner/project.go,
-// internal/cli/run_allowlist.go) and no run has a selected profile to narrow
-// it with. This is the check the other two gates will be applied through, not
-// one applied today — which is why the profile's list is validated strictly
+// Admits and Admission have no caller outside tests in this release: the run
+// refuses an undefined profile (ProfileFor, checkJobProfile) but holds a
+// repository to the project's allow_repos alone, because the job it is in does
+// not carry a selected profile yet (internal/runner/project.go,
+// internal/cli/run_allowlist.go). These are the gates Task 3.2's job layout
+// will be applied through — which is why a profile's list is validated strictly
 // here (validProfiles) rather than trusted to a caller that does not exist yet.
 func (p *Policy) Admits(profile, canonical string) (bool, error) {
 	pr, err := p.ProfileFor(profile)

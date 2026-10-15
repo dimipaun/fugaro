@@ -936,7 +936,6 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 		"budget.max_run_tokens": fmt.Sprintf("%d", p.Budget.MaxRunTokens),
 		"allow_repos":           fmt.Sprintf("%v", nonNil(p.AllowRepos)),
 		"providers":             strings.Join(slices.Sorted(maps.Keys(p.Providers)), ", "),
-		"model_prices":          fmt.Sprintf("%d", len(p.Prices)),
 		"profiles":              profilesText(p),
 	}
 }

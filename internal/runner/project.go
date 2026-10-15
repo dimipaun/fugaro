@@ -122,6 +122,50 @@ func providerForSlug(slug, repo string) (kind string, ok bool) {
 	return found[0], true
 }
 
+// checkJobProfile halts a run whose workflow selected a job profile the
+// published policy does not define (plan task 3.1 step 1: a workflow naming an
+// undefined profile is refused at publish time *and* at run start, fail
+// closed). The alternative — falling back to the default or to another profile
+// — would run a repository's work on a job whose shape, secrets and admission
+// its owner did not choose for it.
+//
+// Only an explicit selection is checked. A workflow that names none runs on
+// the default (standard), and a policy that carries a profiles block must
+// define it (projectpolicy.validProfiles), so the default can only be defined;
+// a policy with no profiles block at all defines nothing, and a run has no job
+// layout to apply one with yet (task 3.2), so nothing is refused for the
+// default. An installation that has published no policy is the phase-2
+// installation: naming a job profile there is a claim about a document that
+// does not exist, and it is refused rather than ignored.
+//
+// The name is the whole check this release can make: the profile's resources,
+// secrets and admission list describe the job the run is launched as, and the
+// job this run is in does not carry the selection yet — that is task 3.2's job
+// layout. So this is the plan's fail-closed half, and the enforcement half
+// arrives with the layout.
+//
+// An older binary (0.8.0, which does not know the key) refuses a fugaro.yaml
+// that sets job_profile: the key is a config field, and the strict decoder
+// refuses a name it does not know. The skew is therefore a refusal at
+// validation, never a run on a profile nobody selected.
+func (r *run) checkJobProfile(ctx context.Context, workflow string, wf config.Workflow) error {
+	if wf.JobProfile == "" {
+		return nil
+	}
+	p, found, err := r.projectPolicy(ctx)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("workflow %s selects the job profile %q, and this project has published no policy: a job profile is a profile of the published policy, which names the job the run is launched as. Nothing published defines it, so the run stops rather than running on a job nobody selected",
+			workflow, wf.JobProfile)
+	}
+	if _, err := p.ProfileFor(wf.JobProfile); err != nil {
+		return fmt.Errorf("workflow %s: %w. The run stops rather than falling back to another profile", workflow, err)
+	}
+	return nil
+}
+
 // remoteOfAnotherKind names the provider kind the remote this run would clone
 // from belongs to, when that is not the kind its slug derives. "" is no
 // disagreement, and it is the answer for most remotes: a local path, a
