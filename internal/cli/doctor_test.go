@@ -3,18 +3,23 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/basepin"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -28,12 +33,22 @@ type doctorRig struct {
 	crm     *gcpfake.CRM
 	billing *gcpfake.Billing
 	sm      *gcpfake.Secrets
+	// run is the Cloud Run fake the project-secret scope check reads a
+	// deployed job's own mounted secret references from. No test has to use
+	// it: a rig with no job in it reports nothing.
+	run *gcpfake.Run
 }
 
 func newDoctorRig(t *testing.T) *doctorRig {
 	t.Helper()
 	dir := t.TempDir()
-	r := &doctorRig{dir: dir, crm: gcpfake.NewCRM(t), billing: gcpfake.NewBilling(t), sm: gcpfake.NewSecrets(t)}
+	// The rig runs the whole command, catalog check included, on a clock
+	// inside the shipped catalog's own window: a check that turns into a
+	// warning as the file ages (the catalog's 30 days, catalog.StaleAfter)
+	// must not decide whether these tests pass, and --strict fails on a
+	// warning.
+	pinCatalogClock(t, shippedCatalog(t), 24*time.Hour)
+	r := &doctorRig{dir: dir, crm: gcpfake.NewCRM(t), billing: gcpfake.NewBilling(t), sm: gcpfake.NewSecrets(t), run: gcpfake.NewRun(t)}
 	r.crm.AddProject("proj-1234", 123456789012)
 	r.crm.SetPolicy("proj-1234", gcpfake.Binding{Role: "roles/owner", Members: []string{"user:owner@example.com"}})
 	r.billing.SetBilling("proj-1234", true)
@@ -48,7 +63,7 @@ func newDoctorRig(t *testing.T) *doctorRig {
 	path := isolateProjects(t, dir)
 	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: fugaro-runs-proj-1234\n" +
 		"user: someone@example.com\n" +
-		"endpoints: { resource_manager: " + r.crm.URL + "/, cloud_billing: " + r.billing.URL + "/, secret_manager: " + r.sm.URL + "/, no_auth: true }\n"
+		"endpoints: { resource_manager: " + r.crm.URL + "/, cloud_billing: " + r.billing.URL + "/, secret_manager: " + r.sm.URL + "/, run: " + r.run.URL + "/, no_auth: true }\n"
 	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -261,6 +276,71 @@ func TestDoctorStrictFailsForeignAndUnpinned(t *testing.T) {
 				t.Fatal("--strict: want a failure")
 			}
 		})
+	}
+}
+
+// TestDoctorOpenProvidersIsInformational: doctor names every provider whose
+// project config leaves it open to every repository (an absent
+// allow_data_to, or ["*"] -- design §3a), as an informational finding: the
+// owner ruled that state valid, so it informs and never fails doctor, with
+// --strict or without.
+func TestDoctorOpenProvidersIsInformational(t *testing.T) {
+	r := newDoctorRig(t)
+	doctorJSON := func(t *testing.T) doctorOutput {
+		t.Helper()
+		out, _, err := execute(t, "doctor", "--json", "--dir", t.TempDir())
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		var o doctorOutput
+		if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+			t.Fatalf("json: %v\n%s", jerr, out)
+		}
+		return o
+	}
+	// The rig has failures of its own (no checkout for plugin-pin, no base
+	// image), so strictness is compared rather than expected to pass: the
+	// set of checks that fail under --strict must be the same one as before
+	// the provider existed.
+	failing := func(t *testing.T) map[string]string {
+		t.Helper()
+		out, _, _ := execute(t, "doctor", "--strict", "--json", "--dir", t.TempDir())
+		var o doctorOutput
+		if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+			t.Fatalf("json: %v\n%s", jerr, out)
+		}
+		m := map[string]string{}
+		for _, c := range o.Checks {
+			// "info" is what checksFail never fails on, so an informational
+			// finding is not part of the verdict either way.
+			if !c.OK && c.Severity != "info" {
+				m[c.ID] = c.Severity
+			}
+		}
+		return m
+	}
+	before := failing(t)
+	if _, ok := before["provider-open-to-every-repository"]; ok {
+		t.Fatal("reported with no providers configured")
+	}
+	addLocalLines(t, r, "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n"+
+		"    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n")
+	o := doctorJSON(t)
+	c, ok := doctorCheckByID(o.Checks, "provider-open-to-every-repository")
+	if !ok || c.OK || c.Severity != "info" {
+		t.Fatalf("provider-open-to-every-repository = %+v", c)
+	}
+	if !strings.Contains(c.Problem, "provider openrouter has no allow_data_to") || !strings.Contains(c.Problem, "may mount its key") {
+		t.Fatalf("problem = %q", c.Problem)
+	}
+	if !strings.Contains(c.Fix, "allow_data_to") || !strings.Contains(c.Fix, "init --repo") {
+		t.Fatalf("fix = %q", c.Fix)
+	}
+	if !o.OK {
+		t.Fatalf("an informational state failed doctor: %+v", o)
+	}
+	if after := failing(t); !maps.Equal(before, after) {
+		t.Fatalf("--strict: the finding changed the verdict: before %v, after %v", before, after)
 	}
 }
 
@@ -489,6 +569,96 @@ func doctorApp(t *testing.T, status int, perms map[string]string) (*doctorRig, *
 		t.Fatal(err)
 	}
 	putSecret(t, r.sm, "proj-1234", mustSlug("github", "acme/app"), "github-app-key", []byte(appKeyPEM(t)))
+	auth := gitHubAppServer(t, status, perms)
+	return r, auth
+}
+
+// doctorAppChecks is doctorJSON with the App check's own flag: doctor's
+// checks, with each recorded GitHub App's installation looked up.
+func doctorAppChecks(t *testing.T) []doctorCheck {
+	t.Helper()
+	return doctorJSON(t, "--check-github-app").Checks
+}
+
+// grantBuildAccount grants the project-wide secret's accessor role to repo's
+// build service account, as the apply that resolved that name to the
+// project copy did (grantedTo is true) -- or to nothing at all, the
+// pre-first-apply state, when it is false.
+func grantBuildAccount(t *testing.T, r *doctorRig, secretID, repo string, grantedTo bool) {
+	t.Helper()
+	member := buildAccountMember(gcp.BuildServiceAccountID(mustSlug("github", repo)) + "@" + initProject + ".iam.gserviceaccount.com")
+	var bindings []gcpfake.Binding
+	if grantedTo {
+		bindings = []gcpfake.Binding{{Role: gcp.SecretAccessorRole, Members: []string{member}}}
+	}
+	r.sm.SetPolicy(secretID, bindings)
+}
+
+// The doctor GitHub App check reads the key live state resolves for
+// github-app-key, not the repository's own ID unconditionally (small item
+// 5): with the repository's own copy holding no version and the project
+// copy holding one -- and the build account's grant already naming the
+// project copy -- the check signs with the PROJECT secret's value and
+// reports the App fine, where the old hard-coded repo ID would have
+// reported "its private key is not stored yet".
+func TestDoctorGitHubAppCheckResolvesLive(t *testing.T) {
+	r := projectSecretsRig(t)
+	r.sm.AllowAccess()
+	slug := mustSlug("github", "acme/app")
+	repoID := gcp.SecretID(slug, "github-app-key")
+	r.sm.Seed(repoID, map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, slug), gcp.LabelSecret: "github-app-key"}, nil)
+	projectID := putProjectSecret(t, r.sm, "aurora", "github-app-key", []byte(appKeyPEM(t)))
+	grantBuildAccount(t, r, projectID, "acme/app", true)
+	gitHubAppServer(t, 200, fullPerms)
+
+	checks := doctorAppChecks(t)
+	c, ok := doctorCheckByID(checks, "github-app:acme/app")
+	if !ok || !c.OK {
+		t.Fatalf("github-app:acme/app = %+v (%v)", c, ok)
+	}
+	if !slices.Contains(r.sm.Accessed(), projectID) {
+		t.Fatalf("doctor read %v, want the project-wide copy %s (the repository's own %s has no version)", r.sm.Accessed(), projectID, repoID)
+	}
+}
+
+// B1 at doctor's call site: the live resolution and the build account's own
+// grant disagree (a repository override stored since the last apply), so
+// the check is a warning naming both IDs and the apply that fixes it,
+// rather than silently signing with whichever one resolved live.
+func TestDoctorGitHubAppCheckRefusesOnGrantMismatch(t *testing.T) {
+	r := projectSecretsRig(t)
+	r.sm.AllowAccess()
+	slug := mustSlug("github", "acme/app")
+	repoID := putSecretID(t, r.sm, slug, "github-app-key", []byte(appKeyPEM(t))) // the override: versioned
+	projectID := seedProjectSecret(t, r.sm, "aurora", "github-app-key")
+	grantBuildAccount(t, r, projectID, "acme/app", true) // the grant still names the project copy
+	gitHubAppServer(t, 200, fullPerms)
+
+	checks := doctorAppChecks(t)
+	c, ok := doctorCheckByID(checks, "github-app:acme/app")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("github-app:acme/app = %+v (%v)", c, ok)
+	}
+	if !strings.Contains(c.Problem, repoID) || !strings.Contains(c.Problem, projectID) || !strings.Contains(c.Fix, "init --repo") {
+		t.Fatalf("the warning names neither ID nor the fix: %+v", c)
+	}
+}
+
+// putSecretID stores a version of name for repo's slug directly in the
+// fake, through the production client (as fugaro secrets set does), and
+// returns the secret ID.
+func putSecretID(t *testing.T, sm *gcpfake.Secrets, slug, name string, value []byte) string {
+	t.Helper()
+	putSecret(t, sm, initProject, slug, name, value)
+	return gcp.SecretID(slug, name)
+}
+
+// gitHubAppServer points githubAPIURL at a GitHub answering the App's
+// installation lookup with status and perms, and returns the Authorization
+// headers it saw.
+func gitHubAppServer(t *testing.T, status int, perms map[string]string) *[]string {
+	t.Helper()
 	var auth []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		auth = append(auth, req.Header.Get("Authorization"))
@@ -499,7 +669,7 @@ func doctorApp(t *testing.T, status int, perms map[string]string) (*doctorRig, *
 	old := githubAPIURL
 	githubAPIURL = srv.URL
 	t.Cleanup(func() { githubAPIURL = old })
-	return r, &auth
+	return &auth
 }
 
 // doctor says whether each recorded GitHub App is installed with what runs
@@ -508,12 +678,7 @@ func doctorApp(t *testing.T, status int, perms map[string]string) (*doctorRig, *
 func TestDoctorGitHubApp(t *testing.T) {
 	doctorChecks := func(t *testing.T) (out string, checks []doctorCheck) {
 		t.Helper()
-		out, errOut, _ := execute(t, "doctor", "--check-github-app", "--json", "--dir", t.TempDir())
-		var o doctorOutput
-		if err := json.Unmarshal([]byte(out), &o); err != nil {
-			t.Fatalf("%v\n%s\n%s", err, out, errOut)
-		}
-		return out + errOut, o.Checks
+		return "", doctorAppChecks(t)
 	}
 	t.Run("fine", func(t *testing.T) {
 		_, auth := doctorApp(t, 200, fullPerms)
@@ -1098,5 +1263,567 @@ func TestDoctorWithoutFlagNeverReadsTheKey(t *testing.T) {
 	}
 	if a := r.sm.Accessed(); len(a) != 0 || len(*auth) != 0 {
 		t.Errorf("accessed %v, GitHub asked %d times", a, len(*auth))
+	}
+}
+
+// TestDoctorPriceCatalogStaleIsWarning: the catalog check measures the
+// catalog's own 30 days, not the Claude table's 90, and a stale catalog is a
+// warning (it fails doctor only under --strict) whose fix is the command
+// that regenerates the file (design §7, P7, Task 5 step 3).
+func TestDoctorPriceCatalogStaleIsWarning(t *testing.T) {
+	cat, err := catalog.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked, err := time.Parse("2006-01-02", cat.CheckedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh := doctorPriceCatalog(checked.Add(29 * 24 * time.Hour))
+	if fresh.ID != "provider-price-catalog" || fresh.Severity == "warning" || !strings.Contains(fresh.Problem, cat.CheckedAt) {
+		t.Errorf("29 days: %+v", fresh)
+	}
+	if !strings.Contains(fresh.Problem, cat.Sources[0]) {
+		t.Errorf("the fresh check does not name the catalog's source: %+v", fresh)
+	}
+	if checksFail([]doctorCheck{fresh}, true) {
+		t.Error("a fresh catalog failed doctor")
+	}
+	// The threshold is 30 days, not the Anthropic table's 90: 89 days is
+	// already stale here.
+	stale := doctorPriceCatalog(checked.Add(31 * 24 * time.Hour))
+	if stale.Severity != "warning" || !strings.Contains(stale.Problem, "stale") {
+		t.Errorf("31 days: %+v", stale)
+	}
+	if !strings.Contains(stale.Fix, "scripts/gen-price-catalog.sh") {
+		t.Errorf("the stale check does not name the regeneration command: %+v", stale)
+	}
+	if checksFail([]doctorCheck{stale}, false) || !checksFail([]doctorCheck{stale}, true) {
+		t.Error("a stale catalog is not a --strict-only warning")
+	}
+	if long := doctorPriceCatalog(checked.Add(89 * 24 * time.Hour)); long.Severity != "warning" {
+		t.Errorf("89 days is not stale: %+v", long)
+	}
+}
+
+// TestDoctorZDRCheckSaysUnverified: a route whose require_zdr is on (the
+// default) is priced at the ZDR-eligible endpoints, and doctor says plainly
+// that this is a price and not an enforcement Fugaro can make or read
+// (design §8, P9, Task 5 step 3). Only the routes the built-in catalog prices
+// are named: require_zdr on a vendor's own endpoint selects no price, so the
+// sentence would be false there.
+func TestDoctorZDRCheckSaysUnverified(t *testing.T) {
+	if c := doctorProviderZDR(&localcfg.Config{}); c != nil {
+		t.Errorf("no route, but %+v", c)
+	}
+	off := false
+	lc := &localcfg.Config{Providers: map[string]config.ModelProvider{
+		"quiet": {BaseURL: "https://openrouter.ai/api", RequireZDR: &off},
+		"zdr":   {BaseURL: "https://openrouter.ai/api"},
+		// A vendor's own endpoint: require_zdr selects no price there, so
+		// the note must not claim its models are priced from the catalog.
+		"vendor": {BaseURL: "https://api.deepseek.com/anthropic"},
+	}}
+	c := doctorProviderZDR(lc)
+	if c == nil {
+		t.Fatal("a require_zdr route is not reported")
+	}
+	if c.Severity != "info" || c.OK {
+		t.Errorf("the check is not informational: %+v", c)
+	}
+	for _, want := range []string{"zdr", "price", "privacy setting", "cannot read", "zdr"} {
+		if !strings.Contains(c.Problem, want) {
+			t.Errorf("the check lacks %q: %s", want, c.Problem)
+		}
+	}
+	if strings.Contains(c.Problem, "quiet") || strings.Contains(c.Problem, "vendor") || !strings.Contains(c.Problem, "zdr") {
+		t.Errorf("the check names the wrong routes: %s", c.Problem)
+	}
+	// A require_zdr route the catalog does not price is not this check's
+	// business at all: with no catalog-eligible route there is nothing to
+	// say, rather than a sentence that would be false.
+	if c := doctorProviderZDR(&localcfg.Config{Providers: map[string]config.ModelProvider{
+		"vendor": {BaseURL: "https://api.deepseek.com/anthropic"},
+	}}); c != nil {
+		t.Errorf("a route the catalog does not price is reported as catalog-priced: %+v", c)
+	}
+	if checksFail([]doctorCheck{*c}, true) {
+		t.Error("the informational ZDR check failed doctor under --strict")
+	}
+}
+
+// addLocalLines appends configuration to the rig's local config file, as an
+// owner's own hand edit would (project_secrets and repos are local-config-only
+// and never written by a Fugaro command other than init --repo).
+func addLocalLines(t *testing.T, r *doctorRig, yaml string) {
+	t.Helper()
+	data, err := os.ReadFile(r.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfgPath, append(data, []byte(yaml)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// repoLabel is the fugaro_repo label of a repository slug, for seeding the
+// fake Secret Manager with a container that looks like init --repo's own.
+func repoLabel(t *testing.T, slug string) string {
+	t.Helper()
+	l, err := gcp.RepoLabel(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return l
+}
+
+// projectLabels are the labels of a project-wide container (design
+// docs/design/project-secrets.md §4).
+func projectLabels(fugaroProject, name string) map[string]string {
+	return map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: fugaroProject, gcp.LabelSecret: name}
+}
+
+// seedProjectSecret creates the project-wide container of name with no
+// version at all: init --repo created it (or a hand edit did), and nothing
+// has ever been stored.
+func seedProjectSecret(t *testing.T, sm *gcpfake.Secrets, fugaroProject, name string) string {
+	t.Helper()
+	id := gcp.ProjectSecretID(fugaroProject, name)
+	sm.Seed(id, projectLabels(fugaroProject, name), nil)
+	return id
+}
+
+// putProjectSecret stores value as a new version of a project-wide
+// container, through the production Secrets client, exactly as
+// `fugaro secrets set NAME --project-wide` would.
+func putProjectSecret(t *testing.T, sm *gcpfake.Secrets, fugaroProject, name string, value []byte) string {
+	t.Helper()
+	ctx := context.Background()
+	s, err := gcp.NewSecrets(ctx, gcp.Options{GCPProject: "proj-1234", Endpoints: gcp.Endpoints{SecretManager: sm.URL + "/", NoAuth: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := gcp.ProjectSecretID(fugaroProject, name)
+	if _, err := s.Set(ctx, id, value, projectLabels(fugaroProject, name)); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// projectSecretsConfig is the local config the project-secret rigs below
+// add: github-app-key opted into project-wide storage for acme/app, and
+// acme/app's own repos entry (infra.Repo requires a GitHub repository's App
+// ID, which is not a secret).
+const projectSecretsConfig = "project_secrets:\n  github-app-key:\n    allow_data_to: [acme/app]\n" +
+	"repos:\n  acme/app: { provider: github, github_app_id: \"12345\", workflows: [app] }\n"
+
+// projectSecretsRig is a doctor rig inside a checkout of github.com/acme/app,
+// whose local config opts github-app-key into project-wide storage for
+// acme/app.
+func projectSecretsRig(t *testing.T) *doctorRig {
+	t.Helper()
+	r := newDoctorRig(t)
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	addLocalLines(t, r, projectSecretsConfig)
+	return r
+}
+
+// TestDoctorFlagsUnstoredProjectSecret: the one secret every run mounts is
+// allow-listed for this repository project-wide, and neither copy holds an
+// enabled version, so no run can start. Red, and the fix names both ways out.
+func TestDoctorFlagsUnstoredProjectSecret(t *testing.T) {
+	r := projectSecretsRig(t)
+	slug := mustSlug("github", "acme/app")
+	// Both containers exist (init --repo created them) and neither has an
+	// enabled version: a container with no version can never be mounted.
+	r.sm.Seed(gcp.SecretID(slug, "github-app-key"), map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, slug), gcp.LabelSecret: "github-app-key"}, nil)
+	seedProjectSecret(t, r.sm, "aurora", "github-app-key")
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err == nil {
+		t.Fatalf("want doctor to fail: the secret every run mounts has no version anywhere\n%s", out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "project-secret-stored")
+	if !ok || c.OK || c.Severity != "" {
+		t.Fatalf("project-secret-stored = %+v", c)
+	}
+	if !strings.Contains(c.Problem, "github-app-key") {
+		t.Fatalf("problem doesn't name the secret: %q", c.Problem)
+	}
+	if !strings.Contains(c.Fix, "secrets set github-app-key --repo acme/app") {
+		t.Fatalf("fix doesn't name the repository command: %q", c.Fix)
+	}
+	if !strings.Contains(c.Fix, "secrets set github-app-key --project-wide") {
+		t.Fatalf("fix doesn't name the project-wide command: %q", c.Fix)
+	}
+}
+
+// TestDoctorProjectSecretStoredPassesWithEitherCopy: a version on either
+// side is enough: the repository's own copy wins, and the project copy is
+// what a repository with no copy of its own mounts.
+func TestDoctorProjectSecretStoredPassesWithEitherCopy(t *testing.T) {
+	r := projectSecretsRig(t)
+	slug := mustSlug("github", "acme/app")
+	// Only the project copy: the repository has no container of its own.
+	putProjectSecret(t, r.sm, "aurora", "github-app-key", []byte("project-value"))
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	if c, ok := doctorCheckByID(o.Checks, "project-secret-stored"); ok && !c.OK {
+		t.Fatalf("project-secret-stored = %+v, want ok: the project copy has a version", c)
+	}
+	if out := string(r.sm.Latest(gcp.SecretID(slug, "github-app-key"))); out != "" {
+		t.Fatalf("a repository copy exists: %q", out)
+	}
+}
+
+// TestDoctorFlagsStaleScope: the deployed job still mounts the repository's
+// own copy, and the copy Readiness resolves now is the project's (the
+// repository's lost its last version since the last apply). A warning: the
+// next apply fixes it, and doctor without --strict must not fail on it.
+func TestDoctorFlagsStaleScope(t *testing.T) {
+	// The fix is printed to be pasted, so it names the binary as the user
+	// ran it: the literal text below is what a person sees.
+	old := selfCommand
+	selfCommand = func() string { return "fugaro" }
+	t.Cleanup(func() { selfCommand = old })
+	r := projectSecretsRig(t)
+	slug := mustSlug("github", "acme/app")
+	repoID := gcp.SecretID(slug, "github-app-key")
+	r.sm.Seed(repoID, map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, slug), gcp.LabelSecret: "github-app-key"}, nil)
+	projID := putProjectSecret(t, r.sm, "aurora", "github-app-key", []byte("project-value"))
+
+	// The deployed job's own mounted reference, as the module writes it.
+	job := gcp.JobName(slug, "app")
+	r.run.SetJobJSON(job, `{"name":"projects/proj-1234/locations/us-east5/jobs/`+job+`",
+	  "template":{"template":{"containers":[{"image":"fake/app","env":[
+	    {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueSource":{"secretKeyRef":{"secret":"`+repoID+`","version":"latest"}}}]}]}}}`)
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("a warning must not fail doctor without --strict: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "project-secret-scope-stale")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("project-secret-scope-stale = %+v", c)
+	}
+	if !strings.Contains(c.Problem, "github-app-key") || !strings.Contains(c.Problem, projID) || !strings.Contains(c.Problem, repoID) {
+		t.Fatalf("problem doesn't name the secret and both copies: %q", c.Problem)
+	}
+	if !strings.Contains(c.Fix, "fugaro init --repo") {
+		t.Fatalf("fix doesn't name the command that re-applies it: %q", c.Fix)
+	}
+}
+
+// TestDoctorNoStaleScopeWhenTheJobAlreadyMountsTheProjectCopy: the same
+// repository, already re-applied. Nothing to say.
+func TestDoctorNoStaleScopeWhenTheJobAlreadyMountsTheProjectCopy(t *testing.T) {
+	r := projectSecretsRig(t)
+	slug := mustSlug("github", "acme/app")
+	repoID := gcp.SecretID(slug, "github-app-key")
+	r.sm.Seed(repoID, map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, slug), gcp.LabelSecret: "github-app-key"}, nil)
+	projID := putProjectSecret(t, r.sm, "aurora", "github-app-key", []byte("project-value"))
+
+	job := gcp.JobName(slug, "app")
+	r.run.SetJobJSON(job, `{"name":"projects/proj-1234/locations/us-east5/jobs/`+job+`",
+	  "template":{"template":{"containers":[{"image":"fake/app","env":[
+	    {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueSource":{"secretKeyRef":{"secret":"`+projID+`","version":"latest"}}}]}]}}}`)
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	if c, ok := doctorCheckByID(o.Checks, "project-secret-scope-stale"); ok && !c.OK {
+		t.Fatalf("project-secret-scope-stale = %+v, want nothing: the job already mounts the resolved copy", c)
+	}
+}
+
+// TestDoctorFlagsStaleScopeWhenTheRepoCopyComesBack: the same repository
+// moving the other way. The deployed job was applied while the project-wide
+// copy was the one Readiness resolved, and a repository copy has since been
+// stored again (`fugaro secrets set github-app-key --repo acme/app`). The
+// job still mounts the project's ID, while the copy Fugaro resolves for it
+// now is the repository's own -- so the warning has to fire in this
+// direction too, or a job keeps reading the project value after the
+// operator moved the name back, with nothing said.
+func TestDoctorFlagsStaleScopeWhenTheRepoCopyComesBack(t *testing.T) {
+	r := projectSecretsRig(t)
+	slug := mustSlug("github", "acme/app")
+	repoID := gcp.SecretID(slug, "github-app-key")
+	r.sm.Seed(repoID, map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, slug), gcp.LabelSecret: "github-app-key"}, []byte("repo-value"))
+	projID := putProjectSecret(t, r.sm, "aurora", "github-app-key", []byte("project-value"))
+
+	// The deployed job's own mounted reference: the project-wide copy, as
+	// the apply that ran before this repository had one of its own wrote it.
+	job := gcp.JobName(slug, "app")
+	r.run.SetJobJSON(job, `{"name":"projects/proj-1234/locations/us-east5/jobs/`+job+`",
+	  "template":{"template":{"containers":[{"image":"fake/app","env":[
+	    {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueSource":{"secretKeyRef":{"secret":"`+projID+`","version":"latest"}}}]}]}}}`)
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("a warning must not fail doctor without --strict: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "project-secret-scope-stale")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("project-secret-scope-stale = %+v, want a warning: the job mounts the project copy and the repository's own copy wins now", c)
+	}
+	if !strings.Contains(c.Problem, "github-app-key") || !strings.Contains(c.Problem, projID) || !strings.Contains(c.Problem, repoID) {
+		t.Fatalf("problem doesn't name the secret and both copies: %q", c.Problem)
+	}
+}
+
+// extraAccessorRig is a doctor rig whose local config opts github-app-key
+// into project-wide storage for acme/app only, and records acme/old (which
+// is not allow-listed any more) with one workflow, so its job's service
+// account can be derived forward from the slug.
+func extraAccessorRig(t *testing.T) *doctorRig {
+	t.Helper()
+	r := newDoctorRig(t)
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	addLocalLines(t, r, projectSecretsConfig+
+		"  acme/old: { provider: github, workflows: [app] }\n")
+	return r
+}
+
+// TestDoctorFlagsExtraProjectSecretAccessor (S3, SF9): a project-wide
+// container's live IAM policy still grants a repository the allow-list no
+// longer names. That is revocation lag, expected until that repository's own
+// apply runs again, so it is a warning -- and its fix is spelled out, so the
+// operator needs no cross-referencing to act on it.
+func TestDoctorFlagsExtraProjectSecretAccessor(t *testing.T) {
+	// The fix is printed to be pasted, so it names the binary as the user
+	// ran it: the literal text below is what a person sees.
+	old := selfCommand
+	selfCommand = func() string { return "fugaro" }
+	t.Cleanup(func() { selfCommand = old })
+	r := extraAccessorRig(t)
+	projID := putProjectSecret(t, r.sm, "aurora", "github-app-key", []byte("project-value"))
+	oldSA := gcp.ServiceAccountID(mustSlug("github", "acme/old"), "app")
+	r.sm.SetPolicy(projID, []gcpfake.Binding{{Role: "roles/secretmanager.secretAccessor",
+		Members: []string{"serviceAccount:" + oldSA + "@proj-1234.iam.gserviceaccount.com"}}})
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("a warning must not fail doctor without --strict: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "project-secret-extra-accessors")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("project-secret-extra-accessors = %+v", c)
+	}
+	if !strings.Contains(c.Problem, "acme/old") || !strings.Contains(c.Problem, "github-app-key") {
+		t.Fatalf("problem doesn't name the repository and the secret: %q", c.Problem)
+	}
+	if !strings.Contains(c.Fix, "fugaro init --repo") || !strings.Contains(c.Fix, "--allow-delete") {
+		t.Fatalf("fix doesn't name the follow-up command and its flag: %q", c.Fix)
+	}
+	if strings.Contains(out, "project-value") {
+		t.Fatalf("a value leaked: %s", out)
+	}
+}
+
+// TestDoctorNoExtraAccessorWhenTheRepoIsAllowed: the repository the policy
+// grants is the one the allow-list names. Nothing to say -- and the
+// installation's own build account, which the same project-wide container
+// legitimately grants, is never mistaken for an extra one.
+func TestDoctorNoExtraAccessorWhenTheRepoIsAllowed(t *testing.T) {
+	r := extraAccessorRig(t)
+	projID := putProjectSecret(t, r.sm, "aurora", "github-app-key", []byte("project-value"))
+	slug := mustSlug("github", "acme/app")
+	old := gcp.ServiceAccountID(mustSlug("github", "acme/old"), "app")
+	r.sm.SetPolicy(projID, []gcpfake.Binding{
+		{Role: "roles/secretmanager.secretAccessor", Members: []string{
+			"serviceAccount:" + gcp.ServiceAccountID(slug, "app") + "@proj-1234.iam.gserviceaccount.com",
+			"serviceAccount:" + gcp.BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com"}},
+		{Role: "roles/secretmanager.secretAccessor", Members: []string{
+			"serviceAccount:" + old + "@proj-1234.iam.gserviceaccount.com"}}})
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "project-secret-extra-accessors")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("project-secret-extra-accessors = %+v", c)
+	}
+	if strings.Contains(c.Problem, "acme/app") {
+		t.Fatalf("an allow-listed repository was flagged as extra: %q", c.Problem)
+	}
+}
+
+// TestDoctorFlagsExtraAccessorForNamedAccountVariant (MUST-FIX 4): a named
+// Claude account's own job runs under its own, variant-keyed service
+// account, so the live grant to be found is that account's, not the bare
+// workflow's. A precomputed set built only from bare repository/workflow
+// pairs would miss this finding entirely.
+func TestDoctorFlagsExtraAccessorForNamedAccountVariant(t *testing.T) {
+	r := newDoctorRig(t)
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	// A named account's own token is never an entry of project_secrets
+	// (config.ValidateProjectSecrets accepts only config.ReservedSecrets
+	// keys): its eligibility for project-wide storage comes from the
+	// account's own allow_data_to, and ProjectSecretCandidate reads it from
+	// there.
+	addLocalLines(t, r, "claude_accounts:\n  acme-personal:\n    allow_data_to: [acme/app]\n"+
+		"repos:\n  acme/app: { provider: github, github_app_id: \"12345\", workflows: [app] }\n"+
+		"  acme/other: { provider: github, workflows: [app] }\n")
+	// claude-accounts-stored's own business: the account acme/app may choose
+	// needs its token stored, or that check fails doctor outright and this
+	// test could not tell a warning from a failure.
+	putSecret(t, r.sm, "proj-1234", mustSlug("github", "acme/app"), "claude-oauth-token-acme-personal", []byte("repo-value"))
+
+	const name = "claude-oauth-token-acme-personal"
+	projID := putProjectSecret(t, r.sm, "aurora", name, []byte("project-value"))
+	slug := mustSlug("github", "acme/other")
+	variant := gcp.ServiceAccountID(slug, gcp.WorkflowVariant("app", "acme-personal"))
+	if variant == gcp.ServiceAccountID(slug, "app") {
+		t.Fatal("the variant account id equals the bare workflow's: this test proves nothing")
+	}
+	r.sm.SetPolicy(projID, []gcpfake.Binding{{Role: "roles/secretmanager.secretAccessor",
+		Members: []string{"serviceAccount:" + variant + "@proj-1234.iam.gserviceaccount.com"}}})
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("a warning must not fail doctor without --strict: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "project-secret-extra-accessors")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("project-secret-extra-accessors = %+v", c)
+	}
+	if !strings.Contains(c.Problem, "acme/other") || !strings.Contains(c.Problem, name) {
+		t.Fatalf("problem doesn't name the repository and the secret: %q", c.Problem)
+	}
+}
+
+// TestDoctorProjectSecretChecksReadNoValue: none of the three project-secret
+// checks ever reads a value: a listing and a getIamPolicy are metadata, and
+// the fake fails the test outright for an access call of any kind.
+func TestDoctorProjectSecretChecksReadNoValue(t *testing.T) {
+	r := extraAccessorRig(t)
+	projID := putProjectSecret(t, r.sm, "aurora", "github-app-key", []byte("project-value"))
+	old := gcp.ServiceAccountID(mustSlug("github", "acme/old"), "app")
+	r.sm.SetPolicy(projID, []gcpfake.Binding{{Role: "roles/secretmanager.secretAccessor",
+		Members: []string{"serviceAccount:" + old + "@proj-1234.iam.gserviceaccount.com"}}})
+	// A deployed job still mounting the repository's own copy, so the
+	// scope check has something to read too.
+	slug := mustSlug("github", "acme/app")
+	job := gcp.JobName(slug, "app")
+	r.run.SetJobJSON(job, `{"name":"projects/proj-1234/locations/us-east5/jobs/`+job+`",
+	  "template":{"template":{"containers":[{"image":"fake/app","env":[
+	    {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueSource":{"secretKeyRef":{"secret":"`+gcp.SecretID(slug, "github-app-key")+`","version":"latest"}}}]}]}}}`)
+
+	_, _, _ = execute(t, "doctor", "--json")
+	if a := r.sm.Accessed(); len(a) != 0 {
+		t.Fatalf("a project-secret check read a value: %v", a)
+	}
+}
+
+// TestDoctorProjectSecretExtraAccessorsReadsNoValue is the project-wide
+// check's own mutation-proof case: getIamPolicy and nothing else, whatever
+// the policy says.
+func TestDoctorProjectSecretExtraAccessorsReadsNoValue(t *testing.T) {
+	r := extraAccessorRig(t)
+	projID := putProjectSecret(t, r.sm, "aurora", "github-app-key", []byte("project-value"))
+	old := gcp.ServiceAccountID(mustSlug("github", "acme/old"), "app")
+	r.sm.SetPolicy(projID, []gcpfake.Binding{{Role: "roles/secretmanager.secretAccessor",
+		Members: []string{"serviceAccount:" + old + "@proj-1234.iam.gserviceaccount.com"}}})
+
+	// The seeding above writes (Set creates the container and adds its
+	// version); only what doctor itself sends is doctor's.
+	before := len(r.sm.Requests())
+	_, _, _ = execute(t, "doctor", "--json")
+	if a := r.sm.Accessed(); len(a) != 0 {
+		t.Fatalf("the project-wide accessor check read a value: %v", a)
+	}
+	for _, req := range r.sm.Requests()[before:] {
+		if req.Method != http.MethodGet {
+			t.Errorf("the project-wide accessor check made a non-read call: %s %s", req.Method, req.Path)
+		}
+	}
+}
+
+// The base pin's verifier: `cosign` must be on PATH for any base pin
+// (internal/basepin shells out to it, design registry-remote-repository.md
+// §9 Decision 1's option (ii)), and a missing binary refuses the pin rather
+// than warning past it — so doctor says so before the project's name is
+// typed. It is a warning, not a failure: a repository that only copies
+// history never needs it.
+func TestDoctorChecksTheCosignVerifier(t *testing.T) {
+	old := basepin.CosignBin
+	t.Cleanup(func() { basepin.CosignBin = old })
+	bin := filepath.Join(t.TempDir(), "cosign")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	check := func(t *testing.T, o doctorOutput) doctorCheck {
+		t.Helper()
+		for _, c := range o.Checks {
+			if c.ID == "cosign" {
+				return c
+			}
+		}
+		t.Fatalf("no cosign check in %+v", o.Checks)
+		return doctorCheck{}
+	}
+	run := func(t *testing.T) doctorOutput {
+		t.Helper()
+		newDoctorRig(t)
+		out, _, _ := execute(t, "doctor", "--json", "--dir", t.TempDir())
+		var o doctorOutput
+		if err := json.Unmarshal([]byte(out), &o); err != nil {
+			t.Fatalf("json: %v\n%s", err, out)
+		}
+		return o
+	}
+
+	basepin.CosignBin = bin
+	if c := check(t, run(t)); !c.OK || c.Problem != "" || c.Severity != "" {
+		t.Errorf("with cosign on PATH: %+v", c)
+	}
+
+	basepin.CosignBin = filepath.Join(t.TempDir(), "not-here")
+	c := check(t, run(t))
+	if c.OK || c.Severity != "info" || !strings.Contains(c.Problem, "cosign is not on PATH") || !strings.Contains(c.Fix, "install cosign") {
+		t.Errorf("with no cosign: %+v", c)
 	}
 }

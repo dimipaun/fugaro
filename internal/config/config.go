@@ -232,6 +232,15 @@ func (a Agent) MaxOutputFor(r Role) int64 {
 	return a.MaxOutputTokens.Coder
 }
 
+// PinnedModels are the three models a run under a budget charges through the
+// gateway: the coder's, the reviewer's and the background model's, in the
+// order PinPaths names them. An empty name is one the config pins to nothing
+// (the agent's own default), so callers that judge a pin keep the empty
+// entry rather than dropping it.
+func (a Agent) PinnedModels() []string {
+	return []string{a.ModelFor(RoleCoder), a.ModelFor(RoleReviewer), a.Models.Background}
+}
+
 // Workflow is one buildable unit of the repository, such as a server or a web app.
 type Workflow struct {
 	// Profile names the project layer's profile this workflow starts from;
@@ -256,10 +265,11 @@ type Workflow struct {
 	// "" defaults to baked (design generic-tool.md §2, G3, G5). The build
 	// acts on it (generic-tool plan Task 16): a clone workflow's job image
 	// is base_images.base, with no per-repository image build or daily
-	// check. clone is not released yet: the runner side (plan Task 17, not
-	// merged) is what actually reads FUGARO_CHECKOUT and makes the
+	// check. clone is not released yet: the runner side (generic-tool plan
+	// Task 17, in the tree but in no tagged release) is what actually reads
+	// FUGARO_CHECKOUT and makes the
 	// blobless clone, so a checkout: clone launch is refused at launch
-	// until fugaro 0.7.1 (internal/cli/recipes_skew.go's cloneSince) ships
+	// until fugaro 0.7.5 (internal/cli/recipes_skew.go's cloneSince) ships
 	// it, whether or not the installation's own base image (fugaro-base)
 	// has been published — a separate, person-run step this plan does not
 	// do. Use checkout: baked to run a workflow today.
@@ -378,6 +388,22 @@ type Secret struct {
 	Env  string `yaml:"env"`
 }
 
+// AnthropicSecret is the logical secret that holds the Anthropic API key. It
+// is the one secret a job may go without: it is mounted whenever the secret
+// has a version, and a run whose models all route through providers needs
+// none (design docs/design/project-centric.md §6.1).
+const AnthropicSecret = "anthropic-api-key"
+
+// MissingAnthropicKey is what a call that needs Anthropic gets when no key is
+// stored: the gateway refuses the call with it, and the agent's environment
+// refuses to start without one in the one case where the gateway can't say so
+// (the budget is off: there is no gateway, and every call goes to Anthropic).
+// One text, so
+// the two cannot say different things, and both name the fix that actually
+// works: store a key and rerun `fugaro init --repo` (the mount is planned at
+// deploy), or route the model through a provider.
+const MissingAnthropicKey = "no Anthropic API key is stored, so this call cannot go to Anthropic: store one with `fugaro secrets set anthropic-api-key` and rerun fugaro init --repo, or route the model through a provider"
+
 // ReservedSecrets are the logical secret names the platform itself mounts,
 // mapped to the variable each one becomes. A workflow's secrets may not
 // reuse them (design §5.1, §6.1).
@@ -385,7 +411,7 @@ var ReservedSecrets = map[string]string{
 	"bitbucket-token":    "FUGARO_BITBUCKET_TOKEN",
 	"github-app-key":     "FUGARO_GITHUB_APP_PRIVATE_KEY",
 	"claude-oauth-token": "CLAUDE_CODE_OAUTH_TOKEN",
-	"anthropic-api-key":  "ANTHROPIC_API_KEY",
+	AnthropicSecret:      "ANTHROPIC_API_KEY",
 }
 
 // Resources are the task resources for the workflow's job. The backend checks them against its own limits (Cloud Run: gcp.CheckResources).

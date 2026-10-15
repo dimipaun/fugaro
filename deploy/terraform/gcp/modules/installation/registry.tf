@@ -71,3 +71,34 @@ resource "google_artifact_registry_repository" "base" {
 
   depends_on = [google_project_service.this]
 }
+
+# The public Fugaro images from ghcr.io, cached for this installation's
+# builds and jobs. It is a remote (pull-through) repository, not a copy:
+# nothing writes it, the packages are public so it is unauthenticated, and
+# it carries no cleanup policies — an eviction during an upstream outage
+# would turn a warm pull into a 504 (design registry-remote-repository.md
+# §2.3, §7). Upstream validation is left at its default (on), so a typo'd
+# upstream URI fails the apply rather than a job's first pull (§2.3).
+resource "google_artifact_registry_repository" "ghcr" {
+  project       = var.project
+  location      = var.region
+  repository_id = var.names.ghcr_registry
+  description   = "Public Fugaro images from ghcr.io, cached for this installation's builds and jobs"
+  format        = "DOCKER"
+  mode          = "REMOTE_REPOSITORY"
+  labels        = { fugaro = "managed" }
+  remote_repository_config {
+    description = "ghcr.io"
+    docker_repository {
+      custom_repository {
+        uri = "https://ghcr.io"
+      }
+    }
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [google_project_service.this]
+}

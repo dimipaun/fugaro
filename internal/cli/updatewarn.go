@@ -22,7 +22,7 @@ const noUpdateCheckEnv = "FUGARO_NO_UPDATE_CHECK"
 
 // updateCheckExcluded are the commands the nag and the background check
 // never run for: the in-container runner (also caught by
-// backend.OnCloudRun, but named here too so a local `fugaro exec` never
+// backend.OnPlatform, but named here too so a local `fugaro exec` never
 // fires either), `help`, and `version` itself, which already answers
 // "what version is this". Completion is excluded separately
 // (excludedCommand/inCompletionTree below): cobra dispatches `fugaro
@@ -152,7 +152,7 @@ func updateCheckDisabled(cmd *cobra.Command) bool {
 	if os.Getenv(noUpdateCheckEnv) == "1" {
 		return true
 	}
-	if excludedCommand(cmd) || backend.OnCloudRun(os.Getenv) {
+	if excludedCommand(cmd) || backend.OnPlatform(os.Getenv) {
 		return true
 	}
 	if lc := selectedProjectConfig(cmd.Context()); lc != nil {
@@ -183,7 +183,7 @@ const ciEnv = "CI"
 func shouldStartUpdateCheck(cmd *cobra.Command, disabled bool) bool {
 	return !disabled && !excludedCommand(cmd) && cmd.Name() != "doctor" &&
 		os.Getenv(ciEnv) == "" && stderrIsTerminal(cmd.ErrOrStderr()) &&
-		!backend.OnCloudRun(os.Getenv) && updatecheck.Valid(Version)
+		!backend.OnPlatform(os.Getenv) && updatecheck.Valid(Version)
 }
 
 // updateCheckDone, when non-nil, is closed when the background Refresh
@@ -257,7 +257,7 @@ func WaitForUpdateCheck() {
 func shouldWarnUpdateAvailable(cmd *cobra.Command, disabled bool) bool {
 	return !disabled && os.Getenv(noUpdateCheckEnv) != "1" &&
 		!excludedCommand(cmd) && !helpRequested(cmd) &&
-		!machineReadable(cmd) && stderrIsTerminal(cmd.ErrOrStderr()) && !backend.OnCloudRun(os.Getenv)
+		!machineReadable(cmd) && stderrIsTerminal(cmd.ErrOrStderr()) && !backend.OnPlatform(os.Getenv)
 }
 
 // warnUpdateAvailable prints the cached nag line (design "update

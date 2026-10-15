@@ -30,6 +30,13 @@ type Imports struct {
 	// Bindings counts the job accounts' grants on the runs bucket and
 	// their secrets against the live policies.
 	Bindings BindingCount
+	// ProjectSecrets is the installation module's project-wide secret
+	// containers to plan (logical name -> ID): the spec's own,
+	// config-computed map unioned with every correctly-labelled container
+	// that already exists live, so the module's for_each can only ever grow,
+	// never shrink under prevent_destroy (N3). The caller writes it back
+	// onto the spec it plans.
+	ProjectSecrets map[string]string
 	// Notes are things the user should know that don't stop the plan.
 	Notes []string
 }
@@ -54,7 +61,9 @@ const (
 	importRunsBucket     importKind = "runs bucket"
 	importLegacyRegistry importKind = "legacy registry"
 	importBaseRegistry   importKind = "base registry"
+	importGhcrRegistry   importKind = "ghcr registry"
 	importSecret         importKind = "secret"
+	importProjectSecret  importKind = "project secret"
 	importRepoRegistry   importKind = "repository registry"
 	importJobSA          importKind = "job account"
 	importJob            importKind = "job"
@@ -84,7 +93,9 @@ var importTable = map[importKind]struct{ to, id string }{
 	importRunsBucket:     {"module.installation.google_storage_bucket.runs", "{project}/{name}"},
 	importLegacyRegistry: {"module.installation.google_artifact_registry_repository.legacy[0]", "projects/{project}/locations/{region}/repositories/{name}"},
 	importBaseRegistry:   {"module.installation.google_artifact_registry_repository.base", "projects/{project}/locations/{region}/repositories/{name}"},
+	importGhcrRegistry:   {"module.installation.google_artifact_registry_repository.ghcr", "projects/{project}/locations/{region}/repositories/{name}"},
 	importSecret:         {"module.repo.google_secret_manager_secret.this[{key}]", "projects/{project}/secrets/{name}"},
+	importProjectSecret:  {"module.installation.google_secret_manager_secret.project[{key}]", "projects/{project}/secrets/{name}"},
 	importRepoRegistry:   {"module.repo.google_artifact_registry_repository.images", "projects/{project}/locations/{region}/repositories/{name}"},
 	importJobSA:          {"module.repo.module.workflow[{key}].google_service_account.job", "projects/{project}/serviceAccounts/{name}"},
 	importJob:            {"module.repo.module.workflow[{key}].google_cloud_run_v2_job.this[0]", "projects/{project}/locations/{region}/jobs/{name}"},

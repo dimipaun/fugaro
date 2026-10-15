@@ -25,6 +25,7 @@ variable "names" {
   type = object({
     legacy_registry              = string
     base_registry                = string
+    ghcr_registry                = string
     scheduler_service_account_id = string
     role_ids = object({
       launcher        = string
@@ -142,4 +143,14 @@ variable "history" {
     rtdb_url         = optional(string)
   })
   default = null
+}
+
+variable "project_secrets" {
+  type = map(string)
+  # The project-wide secret containers (logical name -> secret ID) the
+  # installation module creates or adopts; empty for an installation with
+  # none, which is every installation until fugaro secrets set
+  # NAME --project-wide has something to store.
+  default  = {}
+  nullable = false
 }

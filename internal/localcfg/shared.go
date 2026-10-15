@@ -36,6 +36,7 @@ func (c *Config) Shared() *Config {
 	s.Registry = ""
 	s.Providers = nil
 	s.ClaudeAccounts = nil
+	s.ProjectSecrets = nil
 	s.UpdateCheck = nil
 	s.Build.ServiceAccount = ""
 	s.Repos = withoutBaseBranches(c.Repos)
@@ -90,6 +91,7 @@ func MergeShared(published, local *Config) *Config {
 	keep(&out.RegistryHost, published.RegistryHost)
 	keep(&out.BackendName, published.BackendName)
 	keep(&out.LogView, published.LogView)
+	keep(&out.ImageSource, published.ImageSource)
 	keep(&out.SchedulerRegion, published.SchedulerRegion)
 	if out.Build == (Build{}) {
 		out.Build = published.Build

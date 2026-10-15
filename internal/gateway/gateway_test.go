@@ -106,7 +106,7 @@ func newHarnessWith(t *testing.T, edit func(*Options), script ...anthropicfake.R
 	logs := &logBuf{}
 	o := Options{
 		Upstream: Upstream{Kind: "anthropic", BaseURL: up.URL, APIKey: testKey},
-		Prices:   pricing.Embedded(),
+		Prices:   dsPrices(),
 		Mode:     Observe,
 		Log:      slog.New(slog.NewJSONHandler(logs, nil)),
 	}
@@ -186,9 +186,26 @@ func msgBlocks(model string, maxTokens int64, blocks string, extra ...string) st
 	return s + "}"
 }
 
+// dsPrices is the table the routed tests price from: Embedded() plus a row
+// for dsModel. The embedded table no longer carries provider rows — the
+// built-in provider price catalog prices those, and the runner hands the
+// gateway the one table config.PriceTable built — so a test that routes
+// dsModel states its price here. The row is the placeholder the embedded
+// table used to hold (1/4 with 0.1x cache reads), kept as a fixture: these
+// tests are about routing, credentials, caps and the kill switch, not about
+// where a price comes from.
+func dsPrices() *pricing.Table {
+	t := pricing.Embedded()
+	t.Models[dsModel] = pricing.Model{
+		ID: dsModel, ContextTokens: 200_000, MaxOutputTokens: 64_000,
+		Rates: pricing.Rates{InputPerM: 1, OutputPerM: 4, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1},
+	}
+	return t
+}
+
 func model(t *testing.T, id string) pricing.Model {
 	t.Helper()
-	m, ok := pricing.Embedded().Lookup(id)
+	m, ok := dsPrices().Lookup(id)
 	if !ok {
 		t.Fatalf("model %s isn't in the table", id)
 	}
@@ -355,15 +372,14 @@ func TestStartListensOnLoopbackOnly(t *testing.T) {
 func TestStartRejectsBadOptions(t *testing.T) {
 	ok := Options{Upstream: Upstream{Kind: "anthropic", APIKey: testKey}, Prices: pricing.Embedded(), Mode: Observe}
 	for name, edit := range map[string]func(*Options){
-		"no prices":             func(o *Options) { o.Prices = nil },
-		"no mode":               func(o *Options) { o.Mode = "" },
-		"unknown mode":          func(o *Options) { o.Mode = "off" },
-		"enforce without cap":   func(o *Options) { o.Mode = Enforce },
-		"negative cap":          func(o *Options) { o.Mode, o.Cap = Enforce, -1 },
-		"unknown upstream":      func(o *Options) { o.Upstream.Kind = "bedrock" },
-		"anthropic without key": func(o *Options) { o.Upstream.APIKey = "" },
-		"plain http elsewhere":  func(o *Options) { o.Upstream.BaseURL = "http://api.example.invalid" },
-		"base with a path":      func(o *Options) { o.Upstream.BaseURL = "https://api.example.invalid/proxy" },
+		"no prices":            func(o *Options) { o.Prices = nil },
+		"no mode":              func(o *Options) { o.Mode = "" },
+		"unknown mode":         func(o *Options) { o.Mode = "off" },
+		"enforce without cap":  func(o *Options) { o.Mode = Enforce },
+		"negative cap":         func(o *Options) { o.Mode, o.Cap = Enforce, -1 },
+		"unknown upstream":     func(o *Options) { o.Upstream.Kind = "bedrock" },
+		"plain http elsewhere": func(o *Options) { o.Upstream.BaseURL = "http://api.example.invalid" },
+		"base with a path":     func(o *Options) { o.Upstream.BaseURL = "https://api.example.invalid/proxy" },
 		"vertex without token": func(o *Options) {
 			o.Upstream = Upstream{Kind: "vertex", VertexProject: "proj-1234", VertexLocations: []string{"us-east5"}}
 		},
@@ -389,6 +405,16 @@ func TestStartRejectsBadOptions(t *testing.T) {
 		t.Fatalf("valid options: %v", err)
 	}
 	_ = gw.Close(context.Background())
+	// No key at all is valid: a run whose models all route through providers
+	// has none (design project-centric §6.1), and a call that needs Anthropic
+	// is refused by name instead (TestNoAnthropicKeyRefusesClaudeCall).
+	bare := ok
+	bare.Upstream.APIKey = ""
+	gw2, err := Start(context.Background(), bare)
+	if err != nil {
+		t.Fatalf("an anthropic upstream without a key: %v", err)
+	}
+	_ = gw2.Close(context.Background())
 }
 
 // --- pins ---

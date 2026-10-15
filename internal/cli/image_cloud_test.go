@@ -86,7 +86,9 @@ func TestImageBuildCloudNeedsRegistry(t *testing.T) {
 // build.
 func TestImageBuildCloudDeclinedConfirmationWritesNoLayerCopy(t *testing.T) {
 	fb := gcpfake.NewBuild(t)
-	f := newCloudFixture(t, "cloud_build: "+fb.URL+"/")
+	sm := gcpfake.NewSecrets(t)
+	f := newCloudFixture(t, "cloud_build: "+fb.URL+"/", "secret_manager: "+sm.URL+"/")
+	f.sm = sm
 	publishedLayer(t, f, testProjectLayer)
 	path := os.Getenv("FUGARO_CONFIG")
 	data, err := os.ReadFile(path)
@@ -192,6 +194,7 @@ func TestImageBuildCloudUsesTheSelectedProjectsLayer(t *testing.T) {
 	run := gcpfake.NewRun(t)
 	run.Project, run.Region = "proj-1234", "us-east5"
 	logging := gcpfake.NewLogging(t)
+	sm := gcpfake.NewSecrets(t)
 	fb := gcpfake.NewBuild(t)
 	fb.AddRegistry("proj-1234", "us-east5", gcp.RegistryRepoID(mustSlug("bitbucket", "acme/app")))
 
@@ -215,7 +218,7 @@ func TestImageBuildCloudUsesTheSelectedProjectsLayer(t *testing.T) {
 	cfgPath := filepath.Join(dir, "selected.yaml")
 	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: fugaro-runs-proj-1234\nbucket_url: file://" + runs +
 		"\nuser: someone@example.com\nmax_parallel: 2\n" +
-		"endpoints: { run: " + run.URL + "/, logging: " + logging.URL + "/, cloud_build: " + fb.URL + "/, no_auth: true }\n"
+		"endpoints: { run: " + run.URL + "/, logging: " + logging.URL + "/, cloud_build: " + fb.URL + "/, secret_manager: " + sm.URL + "/, no_auth: true }\n"
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +235,9 @@ func TestImageBuildCloudGitHub(t *testing.T) {
 	checkoutWith(t, npmFiles())
 	testutil.Git(t, ".", "remote", "set-url", "origin", "https://github.com/acme/app.git")
 	fb := gcpfake.NewBuild(t)
-	newCloudFixture(t, "cloud_build: "+fb.URL+"/")
+	smsrv := gcpfake.NewSecrets(t)
+	f := newCloudFixture(t, "cloud_build: "+fb.URL+"/", "secret_manager: "+smsrv.URL+"/")
+	f.sm = smsrv
 	path := os.Getenv("FUGARO_CONFIG")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -327,6 +332,42 @@ func TestImageBuildCloudRefusesOtherProjectRegistry(t *testing.T) {
 	}
 	if len(fb.Requests()) != 0 {
 		t.Error("a build for another project's registry reached Cloud Build")
+	}
+}
+
+// A base reference that lives under the installation's remote
+// (pull-through) repository without being a pin this tool wrote is refused
+// before anything is submitted, in every kind's entry and in --base alike:
+// the reference reaches the build's FROM line as it stands, the proxy
+// serves all of ghcr.io, and such a path is whatever its owner publishes —
+// not "a custom base image" of the operator's (design §3.6, §10.7).
+func TestImageBuildCloudRefusesAForeignProxyBase(t *testing.T) {
+	host := "us-east5-docker.pkg.dev/proj-1234/" + infra.GhcrRegistry + "/"
+	for _, tc := range []struct {
+		name, config, flag, want string
+	}{
+		{"another owner in the config", "base_images: {base: " + host + "evil/fugaro-base:9.9.9@sha256:" + strings.Repeat("a", 64) + "}\n", "", "evil"},
+		{"a tag that is not a release version", "image_source: ghcr.io/dimipaun\nbase_images: {base: " + host + "dimipaun/fugaro-base:latest@sha256:" + strings.Repeat("a", 64) + "}\n", "", "latest"},
+		{"no digest at all", "image_source: ghcr.io/dimipaun\nbase_images: {base: " + host + "dimipaun/fugaro-base:0.7.5}\n", "", "0.7.5"},
+		{"the flag, pasted in", "", host + "evil/fugaro-base:9.9.9@sha256:" + strings.Repeat("a", 64), "evil"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fb, f := cloudBuildCheckout(t, false)
+			if tc.config != "" {
+				f.appendConfig(t, tc.config)
+			}
+			args := []string{"image", "build"}
+			if tc.flag != "" {
+				args = append(args, "--base", tc.flag)
+			}
+			_, _, err := executeBuild(t, args...)
+			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("exit %d, err %v, want a refusal naming %q", ExitCode(err), err, tc.want)
+			}
+			if n := len(fb.Requests()); n != 0 {
+				t.Errorf("the build reached Cloud Build %d time(s)", n)
+			}
+		})
 	}
 }
 

@@ -1,20 +1,25 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"math"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -23,18 +28,29 @@ import (
 //
 //	N × min(per-run cap, stages_max(recipe) × agent.max_budget_usd)
 //
-// Nothing here is written and no run is started: the caps and today's
-// counters are read as budget show reads them, and the recipe is resolved as
-// run resolves it (the repository's .fugaro/recipes, the project's published
-// recipes, the catalog).
+// and, when the repository has recorded enough runs, what one run of the
+// recipe typically costs, from the real-dollar cost each stage of those runs
+// recorded (a subscription run's figure is notional and is left out).
 //
-// The design's second figure, the mean cost per stage over the repository's
-// last 30 days of result.json, needs the runner to record a cost per stage
-// (StageTiming.ModelUSD); until it does, the preview is the ceiling alone.
+// Nothing here is written and no run is started: the caps and today's
+// counters are read as budget show reads them, the recipe is resolved as
+// run resolves it (the repository's .fugaro/recipes, the project's published
+// recipes, the catalog), and the history is read from the runs bucket as
+// runs ls reads it.
 
 // previewMaxRuns bounds --runs: a larger batch is a typo, and the ceiling it
 // would print means nothing.
 const previewMaxRuns = 100000
+
+const (
+	// previewHistoryWindow is how far back the typical line looks: the
+	// design's "the repository's last 30 days of result.json".
+	previewHistoryWindow = 30 * 24 * time.Hour
+	// previewMinRuns is how many recorded runs the typical line needs. With
+	// fewer, a mean says more about the sample than about the recipe, so the
+	// design omits the line.
+	previewMinRuns = 5
+)
 
 type budgetPreviewOptions struct {
 	cloud  cloudOptions
@@ -53,16 +69,35 @@ func newBudgetPreviewCmd() *cobra.Command {
 			"with today's remaining daily caps. It is a ceiling, not a forecast: a run\n" +
 			"is bounded by the smaller of budget.per_run_usd and the recipe's most\n" +
 			"stages times the repository's agent.max_budget_usd.\n\n" +
+			"When the repository's recorded runs of the last 30 days are at least 5,\n" +
+			"the preview also prints, clearly labelled typical:, what one run of the\n" +
+			"recipe usually costs: the mean recorded cost of each stage kind (on the\n" +
+			"model the checkout pins for it, with the recipe's role mapping applied as\n" +
+			"a run applies it), at the recipe's typical stage count -- one round of\n" +
+			"each loop the recipe and its round knobs leave in, the two fix stages\n" +
+			"sharing one mean -- over the runs of the window, whatever they ended as:\n" +
+			"a stage counts once it recorded a cost. A kind the window has no cost\n" +
+			"for on that model leaves the line out and names the model, rather than\n" +
+			"pricing the pinned model with what another one cost. Runs the figure\n" +
+			"cannot use are said to be left out, never counted as runs that cost\n" +
+			"nothing: a run on a subscription (agent.auth oauth), whose model_usd is\n" +
+			"notional rather than charged, a result.json that is missing or\n" +
+			"unreadable, and a record with no per-stage cost at all (one from before\n" +
+			"the runner kept it, or stages that all cost nothing).\n\n" +
 			"The recipe resolves as it does for a run: the repository's\n" +
 			".fugaro/recipes, the project's published recipes, then the catalog. The\n" +
 			"knobs come from the checkout's fugaro.yaml; without a checkout of the\n" +
 			"repository here, agent.max_budget_usd is unknown and only\n" +
 			"budget.per_run_usd bounds the figure, so with neither the preview says it\n" +
 			"is unbounded.\n\n" +
-			"It reads the database's caps and today's counters (the Viewer role); a\n" +
-			"recipe that is not in the checkout also reads the project's recipes from\n" +
-			"the runs bucket, as recipes ls does, which a plain project Viewer cannot\n" +
-			"read (init removes that access). It writes nothing.",
+			"It reads the database's caps and today's counters (the Viewer role), and\n" +
+			"the repository's runs (the runs bucket, for the typical line). A recipe\n" +
+			"that is not in the checkout also reads the project's recipes from the\n" +
+			"runs bucket, as recipes ls does, which a plain project Viewer cannot\n" +
+			"read (init removes that access): not reading it costs the project layer,\n" +
+			"and the ceiling with it. The typical line's own read of the bucket is\n" +
+			"the one that costs the line and nothing else: a bucket it cannot read\n" +
+			"leaves the ceiling standing. It writes nothing.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runBudgetPreview(cmd, &o) },
 	}
@@ -104,20 +139,26 @@ type previewHeadroom struct {
 // previewPerRun is the per-run cap a run launched from here would be held
 // to: $FUGARO_MAX_RUN_USD when it is set (the job's own cap, which
 // init --repo writes from the project config's budget.per_run_usd), else
-// that config value; and always the database's own per-run cap. ok is false
-// when neither side is set, and then only the per-stage cap bounds a run.
-// srcs names each one found, with its value.
+// that config value; and always the database's effective per-run cap (the
+// repository's own or the default, and the global one where that side is
+// unset, D6). ok is false when neither side is set, and then only the
+// per-stage cap bounds a run. srcs names each one found, with its value, and
+// the database's names the scope it came from (repo, default or global) --
+// plan Task 0.3 step 7, because "the global cap is the ceiling here" and "the
+// repository has its own smaller cap" are different facts about one number.
+// origin is the short name of the one that binds: the scope for the
+// database's, the variable for the other two.
 //
 // The two owner-side values are alternatives, not a min: a stale
 // $FUGARO_MAX_RUN_USD tells the runner to ignore the config, so taking the
 // smaller of the two would report a ceiling the runner never enforces -- the
 // unsafe direction for a ceiling. The database's cap is a min, because the
 // rules deny a lease that exceeds either.
-func previewPerRun(lc *localcfg.Config, caps budget.Caps) (best budget.Micros, srcs []string, ok bool, err error) {
-	take := func(m budget.Micros, what string) {
+func previewPerRun(lc *localcfg.Config, caps budget.Caps) (best budget.Micros, srcs []string, origin string, ok bool, err error) {
+	take := func(m budget.Micros, what, short string) {
 		srcs = append(srcs, what+" "+usdFixed(m.USD()))
 		if !ok || m < best {
-			best, ok = m, true
+			best, ok, origin = m, true, short
 		}
 	}
 	if v := os.Getenv(runner.MaxRunUSDEnv); v != "" {
@@ -126,25 +167,29 @@ func previewPerRun(lc *localcfg.Config, caps budget.Caps) (best budget.Micros, s
 		// quietly price a run at a cap it would refuse to start with.
 		usd, perr := strconv.ParseFloat(v, 64)
 		if perr != nil || math.IsNaN(usd) || usd <= 0 {
-			return 0, nil, false, userErr("%s %q: it must be a number of US dollars, more than 0 and at most %d", runner.MaxRunUSDEnv, v, pricing.MaxUSD)
+			return 0, nil, "", false, userErr("%s %q: it must be a number of US dollars, more than 0 and at most %d", runner.MaxRunUSDEnv, v, pricing.MaxUSD)
 		}
 		m, ferr := pricing.FromUSD(usd)
 		if ferr != nil {
-			return 0, nil, false, userErr("%s %q: %v", runner.MaxRunUSDEnv, v, ferr)
+			return 0, nil, "", false, userErr("%s %q: %v", runner.MaxRunUSDEnv, v, ferr)
 		}
 		if m < 1 {
-			return 0, nil, false, userErr("%s %q: it rounds to nothing; the smallest cap is $0.000001", runner.MaxRunUSDEnv, v)
+			return 0, nil, "", false, userErr("%s %q: it rounds to nothing; the smallest cap is $0.000001", runner.MaxRunUSDEnv, v)
 		}
-		take(m, runner.MaxRunUSDEnv)
+		take(m, runner.MaxRunUSDEnv, runner.MaxRunUSDEnv)
 	} else if lc.Budget != nil && lc.Budget.PerRunUSD > 0 {
 		if m, ferr := pricing.FromUSD(lc.Budget.PerRunUSD); ferr == nil {
-			take(m, "budget.per_run_usd")
+			take(m, "budget.per_run_usd", "budget.per_run_usd")
 		}
 	}
 	if m, capOK := caps.PerRun(); capOK {
-		take(m, "the database's per-run cap")
+		// The scope, not only the amount: the global fallback and the
+		// repository's own cap bound a run the same way but are different
+		// facts to the operator reading this (plan Task 0.3 step 7).
+		scope := perRunCapSource(caps)
+		take(m, "the database's per-run cap ("+scope+")", scope)
 	}
-	return best, srcs, ok, nil
+	return best, srcs, origin, ok, nil
 }
 
 // previewDoc is --json's document.
@@ -177,6 +222,11 @@ type previewDoc struct {
 	Bounded    bool     `json:"bounded"`
 	PerRunUSD  *float64 `json:"per_run_usd"`
 	CeilingUSD *float64 `json:"ceiling_usd"`
+	// BindingOrigin names what the per-run cap that binds comes from: repo,
+	// default or global for the database's, else the variable that set it
+	// (the text output names it beside the cap; PerRunCapSource already
+	// carries it for --json).
+	BindingOrigin string `json:"binding_origin,omitempty"`
 	// Verdict is fits, may_exceed_repo or exceeds; "" when no daily cap
 	// applies.
 	Verdict  string `json:"verdict,omitempty"`
@@ -184,7 +234,28 @@ type previewDoc struct {
 		RepoUSD   *float64 `json:"repo_usd"`
 		GlobalUSD *float64 `json:"global_usd"`
 	} `json:"headroom"`
-	Notes []string `json:"notes"`
+	// Typical is what a run of the recipe typically costs, from the cost
+	// the repository's recorded runs gave each stage; null when the window
+	// holds fewer than previewMinRuns of them.
+	Typical *previewTypical `json:"typical"`
+	Notes   []string        `json:"notes"`
+}
+
+// previewTypical is the history figure: the mean recorded cost of each stage
+// kind, at the recipe's typical stage count. Its runs are the real-dollar
+// ones only; Skipped says how many the figure left out, and the three fields
+// under it why, each counted once and never as a run that cost nothing.
+type previewTypical struct {
+	USD    float64 `json:"usd"`
+	Stages int     `json:"stages"`
+	// Runs is how many of the window's runs recorded a per-stage cost: the
+	// history this figure was taken from.
+	Runs int `json:"runs"`
+	// Skipped is the runs the figure left out, the sum of the three below.
+	Skipped    int `json:"skipped"`
+	Notional   int `json:"notional"`   // subscription (oauth) runs: model_usd is notional
+	Unreadable int `json:"unreadable"` // runs with no readable result.json
+	Unpriced   int `json:"unpriced"`   // runs whose record held no per-stage cost
 }
 
 func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
@@ -285,17 +356,14 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 	doc.Headroom.RepoUSD, doc.Headroom.GlobalUSD = headroomPtr(repoHR), headroomPtr(globalHR)
 
 	// The ceiling: N × the smaller side of a run's bound.
-	var perRunUSD, stageUSD *float64
-	if m, srcs, ok, err := previewPerRun(lc, caps); err != nil {
+	var perRunUSD *float64
+	if m, srcs, origin, ok, err := previewPerRun(lc, caps); err != nil {
 		return err
 	} else if ok {
 		v := m.USD()
-		perRunUSD, doc.PerRunCapUSD, doc.PerRunCapSource = &v, &v, srcs
+		perRunUSD, doc.PerRunCapUSD, doc.PerRunCapSource, doc.BindingOrigin = &v, &v, srcs, origin
 	}
-	if knobs.maxStageUSD > 0 {
-		v := knobs.maxStageUSD * float64(stages)
-		stageUSD = &v
-	}
+	stageUSD := doc.stageUSD()
 	var used, ceiling *float64
 	switch {
 	case perRunUSD != nil && (stageUSD == nil || *perRunUSD <= *stageUSD):
@@ -306,11 +374,286 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 	doc.Bounded, doc.PerRunUSD, doc.CeilingUSD = ceiling != nil, used, ceiling
 	doc.Verdict = previewVerdict(ceiling, repoHR, globalHR)
 
+	previewAddTypical(ctx, doc, env, lc, cfg, rr.Recipe, repo, slug)
+
 	if o.json {
 		return writeJSON(cmd.OutOrStdout(), doc)
 	}
-	printPreview(cmd, doc, doc.PerRunCapUSD, stageUSD)
+	printPreview(cmd, doc)
 	return nil
+}
+
+// previewAddTypical fills doc.Typical in from the repository's recorded
+// runs, and notes what stopped it when it can't: the ceiling above stands
+// whatever history the bucket holds. The runs bucket is the one the recipe
+// resolution may already have opened; when it didn't (a repository recipe,
+// or a project layer that is not read), open it here, and read no further
+// than a note if that fails: a Viewer without the bucket's read still gets
+// the ceiling.
+func previewAddTypical(ctx context.Context, doc *previewDoc, env *cloudEnv, lc *localcfg.Config, cfg *config.Config, rp *recipe.Recipe, repo, slug string) {
+	bucket := env.bucket
+	if bucket == nil {
+		opened, err := openCloudFor(ctx, lc)
+		if err != nil {
+			doc.Notes = append(doc.Notes, "no typical line: "+oneLine(err.Error()))
+			return
+		}
+		defer opened.Close()
+		bucket = opened.bucket
+	}
+	h, err := readPreviewHistory(ctx, bucket, slug, budgetNow())
+	if err != nil {
+		doc.Notes = append(doc.Notes, "no typical line: reading "+repo+"'s runs: "+oneLine(err.Error()))
+		return
+	}
+	// One note per group of runs the figure left out, in a fixed order, each
+	// naming its own reason: "skipped" alone would say a run was no use
+	// without saying why.
+	total := h.total()
+	if h.notional > 0 {
+		doc.Notes = append(doc.Notes, fmt.Sprintf("%d of the %d runs of %s in the last 30 days ran on a subscription (agent.auth oauth): their model_usd is notional and is not averaged into a real-dollar figure",
+			h.notional, total, repo))
+	}
+	if h.unreadable > 0 {
+		doc.Notes = append(doc.Notes, fmt.Sprintf("%d of the %d runs of %s in the last 30 days have no readable result.json; they are not counted",
+			h.unreadable, total, repo))
+	}
+	if h.unpriced > 0 {
+		doc.Notes = append(doc.Notes, fmt.Sprintf("%d of the %d runs of %s in the last 30 days recorded no cost for any stage (a result.json from before the runner kept one, or stages that all cost nothing); they are not counted",
+			h.unpriced, total, repo))
+	}
+	usd, stages, missing, model := h.typical(rp, cfg)
+	if missing != "" {
+		on := ""
+		if model != "" {
+			on = " on " + model
+		}
+		doc.Notes = append(doc.Notes, fmt.Sprintf("no typical line: no %s stage of %s%s recorded a cost in the last 30 days", missing, repo, on))
+		return
+	}
+	if stages == 0 { // the design's "with fewer than 5 runs, the line is omitted"
+		return
+	}
+	doc.Typical = &previewTypical{USD: usd, Stages: stages, Runs: h.runs,
+		Skipped: total - h.runs, Notional: h.notional, Unreadable: h.unreadable, Unpriced: h.unpriced}
+}
+
+// previewHistory is what the repository's runs of the last 30 days say about
+// the cost of one stage.
+type previewHistory struct {
+	// runs counts the runs the means are taken from: the ones that recorded a
+	// real-dollar cost for at least one stage.
+	runs int
+	// unpriced counts the runs whose record was read but held no per-stage
+	// cost at all (a result.json from before the runner kept one, or a run
+	// whose stages all cost nothing); unreadable the runs with no readable
+	// result.json; and notional the runs that ran on a subscription
+	// (agent.auth oauth, design §10.1), whose model_usd counts against the
+	// plan's limits and is no one's bill. Each is counted and said, and none
+	// is ever averaged in as a run that cost nothing.
+	unpriced, unreadable, notional int
+	// means is the mean cost of the stages seen per (stage kind, model).
+	means map[previewKind]previewMean
+}
+
+// total is every run of the window the read accounted for, whichever group it
+// went into.
+func (h previewHistory) total() int { return h.runs + h.unpriced + h.unreadable + h.notional }
+
+// previewKind keys a mean by a stage's kind and the model it was pinned to;
+// model "" is a stage whose config pinned none (Claude Code's own default).
+type previewKind struct{ kind, model string }
+
+// previewMean is the mean cost of the stages one previewKind saw.
+type previewMean struct {
+	total  float64
+	stages int
+}
+
+func (m previewMean) mean() float64 { return m.total / float64(m.stages) }
+
+// readPreviewHistory reads the repository's runs of the last 30 days: the run
+// IDs under the slug with runstore.ListRunIDs, as runs ls lists them, and
+// then each run's result.json, read the way runs ls reads a run's objects (in
+// parallel, a bounded number at a time).
+//
+// It is not runs ls's own loader: loadRows also reads launch.json and the
+// task, joins the backend's executions and prices compute, which is three
+// objects and a backend call per run for figures a stage's cost does not use.
+// The read here is bounded by one repository's runs of the last 30 days, and
+// it reads no object but result.json.
+//
+// A run it cannot price is counted, not guessed at: unreadable (no readable
+// result.json), unpriced (a record with no cost for any stage), or notional
+// (a subscription run). Only a read that fails for some other reason fails
+// the whole thing.
+func readPreviewHistory(ctx context.Context, b *blobx.Bucket, slug string, now time.Time) (previewHistory, error) {
+	h := previewHistory{means: map[previewKind]previewMean{}}
+	ids, err := runstore.ListRunIDs(ctx, b.Bucket, slug, now.Add(-previewHistoryWindow))
+	if err != nil {
+		return h, err
+	}
+	recs := make([]*runstore.Record, len(ids))
+	errs := make([]error, len(ids))
+	parallel(len(ids), func(i int) {
+		recs[i], errs[i] = runstore.Open(b.Bucket, slug, ids[i]).ReadRecord(ctx)
+	})
+	for i, id := range ids {
+		if err := errs[i]; err != nil {
+			if errors.Is(err, runstore.ErrNotFound) || corruptObject(err) {
+				h.unreadable++
+				continue
+			}
+			return h, fmt.Errorf("run %s: %w", id, err)
+		}
+		rec := recs[i]
+		if rec.Cost != nil && rec.Cost.ModelBasis == runstore.BasisSubscription {
+			// Notional dollars: they count against the plan's limits, not
+			// against a bill, and a figure printed beside real caps must not
+			// mix them in (design §10.1, as runs ls's own ~ marker says).
+			h.notional++
+			continue
+		}
+		priced := false
+		for _, st := range rec.Stages {
+			if st.ModelUSD <= 0 { // omitempty: a record from before Task 24, or a stage that called no model
+				continue
+			}
+			priced = true
+			k := previewKind{kind: st.Name, model: st.Model}
+			m := h.means[k]
+			m.total, m.stages = m.total+st.ModelUSD, m.stages+1
+			h.means[k] = m
+		}
+		if priced {
+			h.runs++
+		} else {
+			h.unpriced++
+		}
+	}
+	return h, nil
+}
+
+// typical is what a run of rp typically costs: every stage kind the recipe
+// would run at one round each (previewTypicalCounts), times the mean cost of
+// that kind's recorded stages on the model the checkout pins for it, with
+// the recipe's roles mapping applied as the runner applies it. A stages of 0
+// means there is no figure to print; missing names the kind whose stages the
+// window recorded no cost for on that model, and is "" otherwise.
+//
+// Only the pinned model's own stages are averaged: a kind the window holds no
+// cost for on that model has no figure rather than another model's mean,
+// which would price the model the run will use with what a cheaper one cost
+// (the help's promise, and the rule a missing kind already follows). The
+// design's "with fewer than 5 runs, the line is omitted" and a recipe that
+// runs no agent stage at all are silent: there is nothing to explain.
+func (h previewHistory) typical(rp *recipe.Recipe, cfg *config.Config) (usd float64, stages int, missing, model string) {
+	knobs := previewKnobsOf(cfg) // the same knobs the ceiling's stage bound uses
+	counts := previewTypicalCounts(rp, knobs.first, knobs.rounds)
+	for _, n := range counts {
+		stages += n
+	}
+	if h.runs < previewMinRuns || stages == 0 {
+		return 0, 0, "", ""
+	}
+	pinned := previewPinnedAgent(cfg, rp)
+	for _, kind := range previewStageKinds { // a fixed order, so the note names one kind
+		n := counts[kind]
+		if n == 0 {
+			continue
+		}
+		model := previewPinnedModel(pinned, kind)
+		m, ok := h.means[previewKind{kind: kind, model: model}]
+		if !ok {
+			return 0, 0, kind, model
+		}
+		usd += m.mean() * float64(n)
+	}
+	return usd, stages, "", ""
+}
+
+// previewPinnedAgent is the checkout's agent as the recipe leaves it: when
+// the recipe maps reviewer to coder, or coder to reviewer, the aliased role
+// takes the other's model (runner.ApplyRoles, the runner's own, which the
+// runner applies before it records a stage's model), so the pin below is the
+// model the runs really recorded and not an agent.models key this recipe
+// ignores. nil, when there is no checkout, pins nothing.
+func previewPinnedAgent(cfg *config.Config, rp *recipe.Recipe) *config.Agent {
+	if cfg == nil {
+		return nil
+	}
+	a := cfg.Agent
+	if rp != nil {
+		runner.ApplyRoles(&a, rp)
+	}
+	return &a
+}
+
+// previewPinnedModel is the model a stage kind would run on here: the
+// agent's model for the kind's role (implement, fix and the first-line
+// review are the coder's, the senior review the reviewer's), "" when there
+// is no checkout or it pins none.
+func previewPinnedModel(a *config.Agent, kind string) string {
+	if a == nil {
+		return ""
+	}
+	return a.ModelFor(config.StageRole(kind))
+}
+
+// previewStageKinds is the order a run's stages are counted and named in: the
+// order the runner first records each kind in (implement, review_first, fix,
+// then the senior review, with another fix after it), held fixed so that a
+// note about a kind the window has no cost for always names the same one when
+// several are missing.
+var previewStageKinds = [...]string{"implement", "review_first", "fix", "review"}
+
+// previewTypicalCounts is the kind of every stage a run of rp records with
+// one round of each loop — the design's typical run, and the count the
+// history mean is multiplied by. It mirrors the runner's loop: an implement,
+// then a first line of review_first and its fix, then a senior review, its
+// fix, and, with bounce, one more cheap pair. A mode: review recipe runs the
+// senior review alone.
+//
+// first and rounds are the checkout's first_line_rounds and review_rounds (a
+// step's own max_rounds overriding its knob, as recipe.StageBound takes
+// them), each read as at most one round: a loop the knobs leave at 0 never
+// runs, so its stages are not counted -- the sum here is StageBound(rp, f, n)
+// for the same f and n, which the tests pin for every catalog recipe.
+func previewTypicalCounts(rp *recipe.Recipe, first, rounds int) map[string]int {
+	if rp.Mode == recipe.ModeReview {
+		return map[string]int{"review": 1}
+	}
+	f, n, bounce := 0, 0, false
+	for _, s := range rp.Steps {
+		switch s.Kind {
+		case recipe.StepFirstLine:
+			f = roundCount(first, s.MaxRounds)
+		case recipe.StepReview:
+			n, bounce = roundCount(rounds, s.MaxRounds), s.Bounce
+		}
+	}
+	cheap := 0
+	if bounce && f > 0 && n > 0 {
+		cheap = f // the senior review sent it back to the cheap loop once
+	}
+	// The fix after the first line and the fix after the senior review are one
+	// kind in result.json ("fix"), so they share one mean and one count here.
+	return map[string]int{
+		"implement":    1,             // the first_line step's first stage
+		"review_first": f + cheap,     // the first line, and its bounce-back
+		"review":       n,             // one senior round
+		"fix":          f + n + cheap, // each review's demands answered
+	}
+}
+
+// roundCount is how many rounds one loop gets, read as a typical run's count:
+// one, however many the knob and the step allow, and none when they allow
+// none (maxRounds 0 defers to the knob, as recipe.StageBound reads it).
+func roundCount(knob, maxRounds int) int {
+	if maxRounds > 0 {
+		knob = maxRounds
+	}
+	return min(max(knob, 0), 1)
 }
 
 // repoHasRecipe reports whether the checkout at root holds name in
@@ -351,7 +694,7 @@ func previewVerdict(ceiling *float64, repo, global previewHeadroom) string {
 	return ""
 }
 
-func printPreview(cmd *cobra.Command, d *previewDoc, perRunCap, stageUSD *float64) {
+func printPreview(cmd *cobra.Command, d *previewDoc) {
 	w := cmd.OutOrStdout()
 	for _, n := range d.Notes {
 		fmt.Fprintf(cmd.ErrOrStderr(), "note: %s\n", oneLine(n))
@@ -363,7 +706,10 @@ func printPreview(cmd *cobra.Command, d *previewDoc, perRunCap, stageUSD *float6
 	} else {
 		fmt.Fprintf(w, "rough worst case: %s\n", usdFixed(*d.CeilingUSD))
 		binding := "per-run cap"
-		if stageUSD != nil && (perRunCap == nil || *stageUSD < *perRunCap) {
+		if d.BindingOrigin != "" {
+			binding = "per-run cap: " + d.BindingOrigin
+		}
+		if stageUSD := d.stageUSD(); stageUSD != nil && (d.PerRunCapUSD == nil || *stageUSD < *d.PerRunCapUSD) {
 			binding = fmt.Sprintf("%d stages × %s (agent.max_budget_usd)", d.Stages, usdFixed(*d.PerStageCapUSD))
 		}
 		fmt.Fprintf(w, "  %d runs × %s (%s)\n", d.Runs, usdFixed(*d.PerRunUSD), binding)
@@ -381,6 +727,19 @@ func printPreview(cmd *cobra.Command, d *previewDoc, perRunCap, stageUSD *float6
 	case "exceeds":
 		fmt.Fprintf(w, "exceeds the project's daily cap (%s left today)\n", usdFixed(*d.Headroom.GlobalUSD))
 	}
+	if t := d.Typical; t != nil {
+		fmt.Fprintf(w, "typical: %s a run (%d stages, from %d runs of the last 30 days)\n",
+			usdFixed(t.USD), t.Stages, t.Runs)
+	}
+}
+
+// stageUSD is what the recipe's stage bound costs at the checkout's
+// per-stage cap: nil when no checkout named one (agent.max_budget_usd).
+func (d *previewDoc) stageUSD() *float64 {
+	if d.PerStageCapUSD == nil {
+		return nil
+	}
+	return ptr(*d.PerStageCapUSD * float64(d.Stages))
 }
 
 // narrowerHeadroom is the smaller of the two headrooms: the cap a fitting

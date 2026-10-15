@@ -18,6 +18,7 @@ variable "installation" {
     runs_bucket               = string
     registry_host             = string
     base_registry             = string
+    ghcr_registry             = string
     scheduler_service_account = string
     role_ids = object({
       job_runner      = string
@@ -36,6 +37,13 @@ variable "repo" {
     slug     = string
     label    = string
     secrets  = map(string)
+    # The project-wide secret containers Readiness resolved for this
+    # repository (logical name -> gcp.ProjectSecretID). Optional: a
+    # repository that shares nothing carries no such key at all, and the
+    # module's own default is an empty map. This attribute list is what
+    # lets the value through: an object-typed variable drops any key it
+    # does not name.
+    project_secrets = optional(map(string), {})
     registry = object({
       repository_id   = string
       cleanup_dry_run = bool

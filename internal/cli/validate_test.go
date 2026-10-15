@@ -2,15 +2,21 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"strconv"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pricing/catalog"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -367,6 +373,29 @@ func fileWithBudget(t *testing.T, projectBudget, fileBlock, agent string) string
 
 const pinnedAgent = "  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }"
 
+// TestValidatePerRunWarningNamesTheDatabaseCaps: with enforce and no
+// budget.per_run_usd the warning says what actually halts a run (D6): the
+// database's effective per-run cap bounds it when one is set anywhere, and
+// only a database with no per-run cap on any of the three sides refuses the
+// lease.
+func TestValidatePerRunWarningNamesTheDatabaseCaps(t *testing.T) {
+	// The project config can't hold enforce with no cap (localcfg refuses
+	// it), so the reachable shape is a project that observes and a file that
+	// tightens the mode to enforce without adding a cap.
+	path := fileWithBudget(t, "budget: { mode: observe }\n", "budget: { mode: enforce }\n", pinnedAgent)
+	out, errOut, err := execute(t, "validate", path)
+	if err != nil || !strings.Contains(out, "is valid") {
+		t.Fatalf("a missing per-run cap is a warning: %v %q", err, out)
+	}
+	want := "warning: budget.per_run_usd: the mode is enforce but no per-run cap is set in the project config or here; the database's effective per-run cap still bounds the run when one is set anywhere (the repository's own, the default for repositories without one, or the project's global one), and the run halts (no_cap) only when all three are unset"
+	if !strings.Contains(errOut, want) {
+		t.Errorf("stderr lacks %q:\n%s", want, errOut)
+	}
+	if strings.Contains(errOut, "the run would halt (no_cap)\n") {
+		t.Errorf("the warning still claims the run halts:\n%s", errOut)
+	}
+}
+
 func TestValidateWarnsOnLooserThanCeiling(t *testing.T) {
 	path := fileWithBudget(t, "budget: { mode: observe, per_run_usd: 5, max_run_tokens: 1000 }\n",
 		"budget: { mode: off, per_run_usd: 20 }\n", pinnedAgent+"\n  max_run_tokens: 9000")
@@ -398,14 +427,17 @@ func TestValidateWarnsOnLooserThanCeiling(t *testing.T) {
 	if !got.Valid || len(got.Problems) != 0 || len(got.Warnings) != 4 {
 		t.Fatalf("json = %+v", got)
 	}
-	// A tighter file says nothing about the ceilings. The no-language-runtime
-	// warning still fires (cliMinimalYAML's workflow has no mise config
-	// either way): stripped out by its own exact text before asserting no
-	// warning at all remains, so a ceiling-unrelated warning this test does
-	// not expect (a clamp, say) would still be caught.
+	// A tighter file says nothing about the ceilings. Two ceiling-unrelated
+	// lines still fire — the pinned Claude model needs a stored Anthropic key
+	// (the file's enforce is the effective mode), which is a note, not a
+	// warning, and cliMinimalYAML's workflow installs no language runtime
+	// either way — and both are stripped out by their own exact text before
+	// asserting no warning at all remains, so a ceiling-unrelated warning this
+	// test does not expect (a clamp, say) would still be caught.
 	path = fileWithBudget(t, "budget: { mode: observe, per_run_usd: 5 }\n", "budget: { mode: enforce, per_run_usd: 2 }\n", pinnedAgent)
 	_, errOut, err = execute(t, "validate", path)
-	stripped := strings.Replace(errOut, "warning: workflows.app: no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)\n", "", 1)
+	stripped := strings.Replace(errOut, "note: agent.auth: "+anthropicKeyNeeded+"\n", "", 1)
+	stripped = strings.Replace(stripped, "warning: workflows.app: no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)\n", "", 1)
 	if err != nil || strings.Contains(stripped, "warning") {
 		t.Fatalf("tightening warned: %v %q", err, stripped)
 	}
@@ -629,16 +661,96 @@ func inCheckoutOf(t *testing.T, repo string) {
 	t.Chdir(dir)
 }
 
+// TestValidateDoesNotRefuseWhatTheRunnerPrices pins the failure this design
+// exists to prevent (Review Focus 10): for one fixture route and model,
+// `validate` has no problem while the run's own table charges the catalog's
+// rate — the same row, from the same builder.
+func TestValidateDoesNotRefuseWhatTheRunnerPrices(t *testing.T) {
+	const id = "deepseek/deepseek-v4.1-flash"
+	const budget = "budget: { mode: enforce, per_run_usd: 2 }\n" + validateProviderBlock
+	const coder = "  auth: api-key\n  models: { coder: " + id + ", reviewer: claude-sonnet-5-5 }"
+	path := budgetProject(t, budget, coder)
+	inCheckoutOf(t, "acme/sandbox")
+	if out, _, err := execute(t, "validate", path); err != nil || !strings.Contains(out, "is valid") {
+		t.Fatalf("validate refused a pin the run prices: %v\n%s", err, out)
+	}
+	// The run's table, built from the job's environment.
+	p := cliRoute()["openrouter"]
+	p.AllowDataTo = []string{"acme/sandbox"}
+	env, err := runner.ProvidersEnv(map[string]config.ModelProvider{"openrouter": p}, "acme/sandbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := runner.SpendFromEnv(func(k string) (string, bool) {
+		switch k {
+		case runner.BudgetModeEnv:
+			return "observe", true
+		case runner.ModelProvidersEnv:
+			return env, true
+		}
+		return "", false
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, ok := s.Prices.Lookup(id)
+	if !ok {
+		t.Fatal("the run's table does not price the model validate accepted")
+	}
+	cat := shippedCatalog(t)
+	// The end of the tier's range the run charges is the one its own row
+	// says it is on (min, or max once the catalog is past its 30 days), so
+	// this reads it from the row under test: the catalog's age is a date,
+	// and a test written against one end only would expire with the file
+	// (catalog.StaleAfter).
+	bound := cat.Models[id].ZDR["input_per_m"].Min
+	if m.Catalog != nil && m.Catalog.Bound == "max" {
+		bound = cat.Models[id].ZDR["input_per_m"].Max
+	}
+	want, err := strconv.ParseFloat(bound, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Rates.InputPerM != want {
+		t.Errorf("the run charges %v per million input tokens, want the catalog's %v", m.Rates.InputPerM, want)
+	}
+	if m.Catalog == nil {
+		t.Error("the run's row is not catalog-priced")
+	}
+}
+
 func TestValidateProviderModels(t *testing.T) {
 	const budget = "budget: { mode: enforce, per_run_usd: 2 }\n" + validateProviderBlock
 	const coder = "  auth: api-key\n  models: { coder: deepseek/deepseek-v4-flash, reviewer: claude-sonnet-5-5 }"
 	// An approved repository: valid, the background model defaults to the
-	// coder's, and the placeholder price is a warning.
+	// coder's, and the coder's price comes from the built-in price catalog,
+	// which is a warning (the tier and the end of the range charged). The
+	// clock is pinned inside the catalog's own window, because the note
+	// below names the end of the range this test expects (the cheapest, by
+	// the default price_policy) and a stale catalog names the other one.
+	cat := shippedCatalog(t)
+	pinCatalogClock(t, cat, 24*time.Hour)
 	path := budgetProject(t, budget, coder)
 	inCheckoutOf(t, "acme/sandbox")
 	out, errOut, err := execute(t, "validate", path)
-	if err != nil || !strings.Contains(out, "is valid") || !strings.Contains(errOut, "warning: agent.models.coder: deepseek/deepseek-v4-flash has an unverified placeholder price") {
+	if err != nil || !strings.Contains(out, "is valid") {
 		t.Fatalf("%v\nout: %s\nerr: %s", err, out, errOut)
+	}
+	// The note says which tier and which end of its range is charged, and
+	// for the default (cheapest) row that the charge is the cheapest of the
+	// tier's endpoints, with the switch that would charge the top (P11,
+	// Task 5 step 2). The endpoint count is the row's own: the note names
+	// the zdr tier's endpoints, and regenerating the catalog is a release
+	// step (design §7), so a test written against today's number would
+	// break on a regeneration that changed no rule.
+	endpoints := strconv.Itoa(cat.Models["deepseek/deepseek-v4-flash"].ZDREndpoints) + " endpoint(s)"
+	for _, want := range []string{
+		"warning: agent.models.coder: deepseek/deepseek-v4-flash is priced from the built-in provider price catalog: the zdr tier",
+		endpoints, "the cheapest of those endpoints", "price_policy: highest", "model_prices",
+	} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("validate's catalog note lacks %q:\n%s", want, errOut)
+		}
 	}
 	// Another repository is refused, naming the rule.
 	inCheckoutOf(t, "acme/other")
@@ -667,5 +779,180 @@ func TestValidateProviderModels(t *testing.T) {
 	path = budgetProject(t, "budget: { mode: observe }\n", coder)
 	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "no provider serves it") {
 		t.Fatalf("exit %d: %s", ExitCode(err), out)
+	}
+}
+
+// TestValidateReportsACatalogItCannotPrice pins the CLI half of the one
+// builder's contract: a catalog row the compile refuses is reported where the
+// model is pinned, naming what is missing, rather than the model quietly
+// having no price. The row is reachable — the loader checks that a tier prices
+// *something*, not that it prices input and output — and the shipped file is
+// valid, so the seam stands in for a regenerated one whose row lost a
+// dimension.
+func TestValidateReportsACatalogItCannotPrice(t *testing.T) {
+	const id = "deepseek/deepseek-v4.1-flash"
+	const budget = "budget: { mode: enforce, per_run_usd: 2 }\n" + validateProviderBlock
+	const coder = "  auth: api-key\n  models: { coder: " + id + ", reviewer: claude-sonnet-5-5 }"
+	cat := shippedCatalog(t)
+	// The shipped row with its input price taken out of both tiers: the
+	// route prices the zdr tier (require_zdr is on unless it is set false),
+	// and a tier the file prices nothing but a cache dimension for is what
+	// Load accepts and the compile refuses.
+	e := cat.Models[id]
+	delete(e.All, "input_per_m")
+	delete(e.ZDR, "input_per_m")
+	cat.Models[id] = e
+	old := loadCatalog
+	loadCatalog = func() (*catalog.File, error) { return cat, nil }
+	t.Cleanup(func() { loadCatalog = old })
+
+	path := budgetProject(t, budget, coder)
+	inCheckoutOf(t, "acme/sandbox")
+	out, errOut, err := execute(t, "validate", path)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d: %s%s", ExitCode(err), out, errOut)
+	}
+	for _, want := range []string{id, "prices no input_per_m"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("validate does not report %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestValidateReportsACatalogThatWillNotLoad is the other half: a file the
+// loader refuses is reported by the surface, never read as "no catalog" —
+// which would price every model from the embedded table alone and let the
+// run go unpriced.
+func TestValidateReportsACatalogThatWillNotLoad(t *testing.T) {
+	const budget = "budget: { mode: enforce, per_run_usd: 2 }\n" + validateProviderBlock
+	const coder = "  auth: api-key\n  models: { coder: deepseek/deepseek-v4-flash, reviewer: claude-sonnet-5-5 }"
+	old := loadCatalog
+	loadCatalog = func() (*catalog.File, error) {
+		return nil, errors.New("the built-in price catalog is malformed: version is 2: this build reads version 1")
+	}
+	t.Cleanup(func() { loadCatalog = old })
+
+	path := budgetProject(t, budget, coder)
+	inCheckoutOf(t, "acme/sandbox")
+	out, errOut, err := execute(t, "validate", path)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d: %s%s", ExitCode(err), out, errOut)
+	}
+	if !strings.Contains(out, "malformed") || !strings.Contains(out, "version is 2") {
+		t.Errorf("validate does not report the file it could not load:\n%s", out)
+	}
+}
+
+// TestValidateNotesProvidersOpenToEveryRepository: a provider with no
+// allow_data_to means every repository now (design §3a, the owner's ruling),
+// where it used to mean nobody, so validate names it -- from any checkout,
+// and whether the list was left out or written as ["*"]. It is a warning,
+// never a problem: the file is valid, and the note is there so the widening
+// is seen rather than inherited.
+func TestValidateNotesProvidersOpenToEveryRepository(t *testing.T) {
+	const budget = "budget: { mode: enforce, per_run_usd: 2 }\n"
+	const coder = "  auth: api-key\n  models: { coder: deepseek/deepseek-v4-flash, reviewer: claude-sonnet-5-5 }"
+	const listed = `    allow_data_to: ["acme/sandbox"]`
+	notes := map[string]struct {
+		block string
+		repo  string
+		want  string
+	}{
+		"absent":   {strings.Replace(validateProviderBlock, listed+"\n", "", 1), "acme/other", `providers.openrouter: has no allow_data_to, so every repository of the project may mount its key and send it code (write allow_data_to: ["*"] to mean that on purpose`},
+		"wildcard": {strings.Replace(validateProviderBlock, listed, `    allow_data_to: ["*"]`, 1), "acme/other", `providers.openrouter: has allow_data_to: ["*"]: every repository`},
+		"listed":   {validateProviderBlock, "acme/sandbox", ""},
+	}
+	for name, tc := range notes {
+		// The checkout of the open spellings is a repository on no
+		// allow-list: it is allowed, which is exactly the widening the note
+		// is about, and the note must not be reported from one repository's
+		// point of view only.
+		inCheckoutOf(t, tc.repo)
+		path := budgetProject(t, budget+tc.block, coder)
+		out, errOut, err := execute(t, "validate", path)
+		if err != nil || !strings.Contains(out, "is valid") {
+			t.Fatalf("%s: %v\nout: %s\nerr: %s", name, err, out, errOut)
+		}
+		if tc.want == "" {
+			if strings.Contains(errOut, "providers.openrouter") {
+				t.Fatalf("%s: noted though it lists its repositories: %s", name, errOut)
+			}
+			continue
+		}
+		if !strings.Contains(errOut, "warning: "+tc.want) {
+			t.Fatalf("%s: no note naming the provider: %s", name, errOut)
+		}
+	}
+}
+
+// TestValidateNotesAnthropicKeyNeededOffline (design
+// docs/design/project-centric.md §6.1): a pin that goes direct to Anthropic
+// needs the Anthropic key, and validate says so offline -- whether the secret
+// has a version is a fact only the cloud knows -- naming the fix. A run whose
+// pins a provider may all serve gets no such note.
+func TestValidateNotesAnthropicKeyNeededOffline(t *testing.T) {
+	const enforce = "budget: { mode: enforce, per_run_usd: 2 }\n"
+	const observe = "budget: { mode: observe, per_run_usd: 2 }\n"
+	const allProvider = "  auth: api-key\n  models: { coder: deepseek/deepseek-v4-flash, reviewer: deepseek/deepseek-v4-flash, background: deepseek/deepseek-v4-flash }"
+	const claudePins = "  auth: api-key\n  models: { coder: claude-sonnet-5-5, reviewer: claude-sonnet-5-5 }"
+	for _, tc := range []struct {
+		name   string
+		budget string
+		agent  string
+		repo   string
+		want   string
+	}{
+		{"a Claude pin", enforce, claudePins, "acme/sandbox", anthropicKeyNeeded},
+		{"every pin served by a provider", enforce, allProvider, "acme/sandbox", ""},
+		{"a provider pin this repository may not be sent to", enforce, allProvider, "acme/other", anthropicKeyNeeded},
+		// Without a gateway the key is needed whatever the pins are: every
+		// call goes direct to Anthropic (config.AnthropicKeyNeeded). The
+		// same rule init asks, so the two can't disagree.
+		{"a Claude pin, budget observe", observe, claudePins, "acme/sandbox", anthropicKeyNoEnforce},
+		{"a Claude pin, budget off", "budget: { mode: off }\n", claudePins, "acme/sandbox", anthropicKeyNoEnforce},
+		{"every pin served by a provider, budget observe", observe, allProvider, "acme/sandbox", anthropicKeyNoEnforce},
+		// oauth brings its own token: no key, no note, whatever the mode.
+		{"oauth, budget observe", observe, "  auth: oauth\n  model: claude-sonnet-5-5", "acme/sandbox", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inCheckoutOf(t, tc.repo)
+			path := budgetProject(t, tc.budget+validateProviderBlock, tc.agent)
+			_, errOut, _ := execute(t, "validate", path)
+			got := ""
+			for _, line := range strings.Split(errOut, "\n") {
+				if rest, ok := strings.CutPrefix(line, "note: agent.auth: "); ok {
+					got = rest
+				}
+			}
+			if got != tc.want {
+				t.Fatalf("note = %q, want %q:\n%s", got, tc.want, errOut)
+			}
+		})
+	}
+}
+
+// TestValidateJSONNotesTheAnthropicKey: the note is machine-readable too, in
+// its own channel: never a problem, never a warning.
+func TestValidateJSONNotesTheAnthropicKey(t *testing.T) {
+	inCheckoutOf(t, "acme/sandbox")
+	path := budgetProject(t, "budget: { mode: off }\n", "  auth: api-key\n  model: claude-sonnet-5-5")
+	out, _, _ := execute(t, "validate", "--json", path)
+	var got validateOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	var note bool
+	for _, n := range got.Notes {
+		if n.Path == "agent.auth" && n.Message == anthropicKeyNoEnforce {
+			note = true
+		}
+	}
+	if !note {
+		t.Fatalf("notes = %+v, want the Anthropic key note", got.Notes)
+	}
+	for _, p := range append(append([]config.Problem{}, got.Problems...), got.Warnings...) {
+		if strings.Contains(p.Message, "Anthropic API key") {
+			t.Errorf("the key needs a note, not %v: %s", p.Path, p.Message)
+		}
 	}
 }

@@ -2,6 +2,7 @@ package infra
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 // MissingKind says what a readiness gate is waiting for.
@@ -23,6 +26,11 @@ const (
 	MissingSecret MissingKind = "secret"
 	// MissingImage is the job's image, not built yet.
 	MissingImage MissingKind = "image"
+	// MissingNote is not a gate at all: something the run will need in one
+	// case, reported so it is not a surprise later (the optional Anthropic
+	// key: the job deploys without it, and a call that needs Anthropic is
+	// refused until a key is stored).
+	MissingNote MissingKind = "note"
 )
 
 // Missing is something a workflow's job needs that doesn't exist yet.
@@ -38,6 +46,11 @@ type Missing struct {
 }
 
 func (m Missing) String() string {
+	// A note gates nothing, and says only itself: no job is mentioned, so
+	// nobody reads it as one that didn't deploy.
+	if m.Kind == MissingNote {
+		return m.Reason
+	}
 	if m.Check {
 		if m.Deployed {
 			return "the daily image check (its job exists and stays deployed): " + m.Reason
@@ -52,6 +65,29 @@ func (m Missing) String() string {
 
 // errFound stops a listing at its first match.
 var errFound = errors.New("found")
+
+// OptionalSecret reports whether a job may go without this logical secret.
+// Only one may: the Anthropic API key, mounted whenever the secret has a
+// version, because a run whose models all route through providers needs none
+// (design docs/design/project-centric.md §6.1). Everything else a job mounts
+// is required for the job to work at all.
+func OptionalSecret(logical string) bool { return logical == config.AnthropicSecret }
+
+// dropMount removes a logical secret from a job's mounts: the variable it
+// would become is deleted, so no secret_key_ref points at a secret with no
+// version (Cloud Run checks a job's secrets when it creates it), and the
+// runner's redaction list is rebuilt from the variables that are left.
+func dropMount(ws WorkflowSpec, logical string) {
+	for env, l := range ws.SecretEnv {
+		if l == logical {
+			delete(ws.SecretEnv, env)
+		}
+	}
+	delete(ws.SecretIDs, logical)
+	if ws.Env != nil {
+		ws.Env[runner.SecretEnvsVar] = strings.Join(slices.Sorted(maps.Keys(ws.SecretEnv)), ",")
+	}
+}
 
 // Readiness decides, from what exists, what the plan may deploy. It
 // returns a deep copy of spec with the gates applied (spec itself is not
@@ -74,18 +110,56 @@ var errFound = errors.New("found")
 func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (RepoSpec, []Missing, error) {
 	out := cloneRepoSpec(spec)
 	tg := target{project: spec.GCPProject, number: ex.ProjectNumber}
-	versions := map[string]bool{} // logical secret → has an enabled version
+	// A secret a repository's own Terraform module once created can stop
+	// being computed by the current config (a provider that was eligible
+	// everywhere under §3a, now excluded by a newly added list). Its
+	// container must stay in Terraform's for_each -- prevent_destroy would
+	// otherwise fail the next plan outright (P2, extended; N4) -- so every
+	// correctly-labelled one discovery found is unioned back in. Only the
+	// mount is dropped, by SecretMounts's own, config-driven output.
+	maps.Copy(out.Secrets, ex.ExtraSecrets)
+	versions := map[string]bool{} // secret ID → has an enabled version
 	var missing []Missing
-	hasVersion := func(logical string) (bool, error) {
-		ok, seen := versions[logical]
+	hasVersionID := func(id string) (bool, error) {
+		ok, seen := versions[id]
 		if !seen {
 			var err error
-			if ok, err = hasEnabledVersion(ctx, c, tg, spec.Secrets[logical]); err != nil {
+			if ok, err = hasEnabledVersion(ctx, c.Secrets, tg, id); err != nil {
 				return false, err
 			}
-			versions[logical] = ok
+			versions[id] = ok
 		}
 		return ok, nil
+	}
+	hasVersion := func(logical string) (bool, error) { return hasVersionID(spec.Secrets[logical]) }
+	// resolveProject is Readiness's own repo-wins-else-project precedence
+	// (design docs/design/project-secrets.md §5), through the one helper
+	// that decides it (resolveSecretID, ResolveSecretID's own body). It is
+	// only ever called for a logical name whose repository copy has no
+	// enabled version, so resolved is true exactly when the project copy is
+	// the one that resolves; fix names the command that would change that.
+	resolveProject := func(logical string) (resolved bool, fix string, err error) {
+		fix = fmt.Sprintf("fugaro secrets set %s --repo %s", logical, spec.Name)
+		cand, isCandidate := spec.ProjectSecretCandidates[logical]
+		if !isCandidate {
+			return false, fix, nil
+		}
+		fix = fmt.Sprintf("fugaro secrets set %s --project-wide", logical)
+		if !ex.ProjectSecretsOK[logical] {
+			return false, fix, nil
+		}
+		id, ok, err := resolveSecretID(hasVersionID, spec.Secrets[logical], cand)
+		if err != nil {
+			return false, fix, err
+		}
+		if !ok || id != cand {
+			return false, fix, nil
+		}
+		if out.ProjectSecrets == nil {
+			out.ProjectSecrets = map[string]string{}
+		}
+		out.ProjectSecrets[logical] = cand
+		return true, fix, nil
 	}
 	for _, name := range slices.Sorted(maps.Keys(out.Workflows)) {
 		ws := out.Workflows[name]
@@ -97,13 +171,64 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 			reason string
 		}
 		var reasons []gate
+		var unresolved []string
 		for _, logical := range uniqueSecrets(ws) {
 			ok, err := hasVersion(logical)
 			if err != nil {
 				return RepoSpec{}, nil, err
 			}
-			if !ok {
-				reasons = append(reasons, gate{MissingSecret, fmt.Sprintf("secret %s has no version: fugaro secrets set %s --repo %s", logical, logical, spec.Name)})
+			if ok {
+				continue
+			}
+			// The repository copy has no version: the project-wide one may
+			// still resolve it, optional secret or not, so this comes first
+			// (design docs/design/project-secrets.md §5).
+			resolved, fix, err := resolveProject(logical)
+			if err != nil {
+				return RepoSpec{}, nil, err
+			}
+			if resolved {
+				continue
+			}
+			if OptionalSecret(logical) {
+				// Mounted whenever the secret has a version, and a fact
+				// about data rather than about policy, so flipping a
+				// routing setting never needs Terraform (design
+				// project-centric §6.1). With no version anywhere the
+				// mount is dropped and the job deploys anyway: a run whose
+				// models all route through providers needs no such key,
+				// and a call that needs it is refused by the gateway by
+				// name, not blocked here.
+				//
+				// Not blocked here is the point, but silently was not: with
+				// the budget not enforcing nothing routes a call to a
+				// provider (config.CheckProviderGateway refuses a provider
+				// model in any other mode), so every call goes to Anthropic,
+				// and a keyless run fails at agent start. Say so up front,
+				// without gating the job (MissingNote): the deploy is right,
+				// and the owner hears about the key here rather than from a
+				// failed run. The mode is the job's own, the local config's
+				// ceiling: a file that enforces under it only makes the note
+				// unnecessary, never wrong, since the note never blocks.
+				dropMount(ws, logical)
+				if ws.Env[BudgetModeEnv] != localcfg.BudgetEnforce {
+					missing = append(missing, Missing{Workflow: name, Kind: MissingNote, Reason: fmt.Sprintf(
+						"%s has no version: the job deploys without it, and a run that calls Anthropic is refused until a key is stored (%s, then rerun fugaro init --repo)", logical, fix)})
+				}
+				continue
+			}
+			unresolved = append(unresolved, logical)
+			reasons = append(reasons, gate{MissingSecret, fmt.Sprintf("secret %s has no version: %s", logical, fix)})
+		}
+		current, exists := ex.Jobs[name]
+		// P7a: an existing job must never carry a secret_env entry with no
+		// version anywhere. Omitting it (rather than refusing the update)
+		// keeps the job's other properties updating; DeployJob is never set
+		// false for a job that already exists, since job.tf's count would
+		// destroy it outright. The Missing above is still reported.
+		if exists && len(unresolved) > 0 {
+			for _, logical := range unresolved {
+				dropMount(ws, logical)
 			}
 		}
 		var built bool
@@ -129,7 +254,6 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 				reasons = append(reasons, gate{MissingImage, fmt.Sprintf("image not built yet: fugaro image build --repo %s --workflow %s", spec.Name, ws.Name)})
 			}
 		}
-		current, exists := ex.Jobs[name]
 		switch {
 		case exists:
 			ws.DeployJob = true
@@ -163,15 +287,58 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 	}
 	if spec.Check != nil {
 		ready := true
+		var unresolved []string
+		// The provider credential's resolved ID, carried by the check job's
+		// own spec so the rebuild it submits names the secret it reads
+		// (CheckJobSpec.GitSecretID, design §7): derived here from the very
+		// decision this loop just made, not resolved a second time.
+		gitLogical, _ := GitSecret(spec.Provider)
+		gitSecretID := ""
 		for _, logical := range slices.Compact(slices.Sorted(maps.Values(out.Check.SecretEnv))) {
 			ok, err := hasVersion(logical)
 			if err != nil {
 				return RepoSpec{}, nil, err
 			}
-			if !ok {
-				ready = false
-				missing = append(missing, Missing{Check: true, Kind: MissingSecret, Deployed: ex.CheckJob,
-					Reason: fmt.Sprintf("secret %s has no version: fugaro secrets set %s --repo %s", logical, logical, spec.Name)})
+			if ok {
+				if logical == gitLogical {
+					gitSecretID = spec.Secrets[logical]
+				}
+				continue
+			}
+			// B4: the check job mounts a subset of the same logical names,
+			// and reads the same repo-wide local.secrets Terraform local, so
+			// it resolves precedence identically.
+			resolved, fix, err := resolveProject(logical)
+			if err != nil {
+				return RepoSpec{}, nil, err
+			}
+			if resolved {
+				if logical == gitLogical {
+					gitSecretID = spec.ProjectSecretCandidates[logical]
+				}
+				continue
+			}
+			unresolved = append(unresolved, logical)
+			ready = false
+			missing = append(missing, Missing{Check: true, Kind: MissingSecret, Deployed: ex.CheckJob,
+				Reason: fmt.Sprintf("secret %s has no version: %s", logical, fix)})
+		}
+		if err := setCheckGitSecretID(out.Check, gitSecretID); err != nil {
+			return RepoSpec{}, nil, err
+		}
+		// P7a for the check job: it runs as the build account and its image
+		// is always the base image, so an unresolvable entry left in place
+		// would point secret_key_ref at a secret with zero versions.
+		if ex.CheckJob && len(unresolved) > 0 {
+			for _, logical := range unresolved {
+				for env, l := range out.Check.SecretEnv {
+					if l == logical {
+						delete(out.Check.SecretEnv, env)
+					}
+				}
+			}
+			if out.Check.Env != nil {
+				out.Check.Env[runner.SecretEnvsVar] = strings.Join(slices.Sorted(maps.Keys(out.Check.SecretEnv)), ",")
 			}
 		}
 		out.Check.DeployJob = ready || ex.CheckJob
@@ -191,6 +358,78 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 		out.Check.Paused = records == 0 || records < len(out.Check.Workflows)
 	}
 	return out, missing, nil
+}
+
+// ResolveSecretID is the one place Readiness's own repo-wins-else-project
+// precedence lives, extracted so the CLI's own live call sites (image
+// builds, the GitHub App pre-checks) can resolve a single logical name
+// without a full Readiness pass. repoID is always checked first; projectID
+// is checked only if repoID has no enabled version, and projectID == "" means
+// no candidate exists for this repository (not eligible at all), in which
+// case repoID is returned regardless of its own version state -- byte-for-byte
+// today's unconditional repo-only behavior for a non-eligible name. hasVersion
+// is the chosen ID's own version state, so a caller can report a
+// Missing-style error the same way Readiness already does. project is the
+// GCP project both IDs live in.
+func ResolveSecretID(ctx context.Context, sm *secretmanager.Service, project, repoID, projectID string) (id string, hasVersion bool, err error) {
+	tg := target{project: project}
+	has := func(id string) (bool, error) { return hasEnabledVersion(ctx, sm, tg, id) }
+	return resolveSecretID(has, repoID, projectID)
+}
+
+// resolveSecretID is ResolveSecretID over a version lookup the caller
+// controls: Readiness passes its own memoized one, so the precedence is
+// still decided in one place while a full pass still asks about each
+// secret at most once.
+func resolveSecretID(hasVersion func(string) (bool, error), repoID, projectID string) (string, bool, error) {
+	ok, err := hasVersion(repoID)
+	if err != nil {
+		return repoID, false, err
+	}
+	if ok || projectID == "" || projectID == repoID {
+		return repoID, ok, nil
+	}
+	ok, err = hasVersion(projectID)
+	if err != nil {
+		return repoID, false, err
+	}
+	if ok {
+		return projectID, true, nil
+	}
+	return repoID, false, nil
+}
+
+// setCheckGitSecretID rewrites the check job's own spec (CheckSpecEnv) with
+// the secret ID Readiness resolved for the provider credential. It is the
+// one place Readiness touches an env var's value rather than only which
+// secret ID a job mounts, and it is why the job's own rebuild cannot name a
+// different copy than the job's clone reads: the ID travels with the
+// deployed job.
+//
+// An absent or unparsable spec is left exactly as it is: infra.Repo always
+// writes one, and refusing a spec this fugaro cannot read is checkjob.go's
+// own, separate gate. id == "" (nothing resolved anywhere) leaves the field
+// empty, which the in-job rebuild reads as "fall back to the repository's
+// own ID" -- the pre-feature behavior, and never a silently missing mount.
+func setCheckGitSecretID(check *CheckSpec, id string) error {
+	if id == "" || check.Env == nil {
+		return nil
+	}
+	raw, ok := check.Env[CheckSpecEnv]
+	if !ok {
+		return nil
+	}
+	var cs CheckJobSpec
+	if err := json.Unmarshal([]byte(raw), &cs); err != nil {
+		return nil
+	}
+	cs.GitSecretID = id
+	b, err := json.Marshal(cs)
+	if err != nil {
+		return err
+	}
+	check.Env[CheckSpecEnv] = string(b)
+	return nil
 }
 
 // cloneRepoSpec is a deep copy of spec's maps, slices and check, so
@@ -222,8 +461,8 @@ func cloneRepoSpec(spec RepoSpec) RepoSpec {
 
 // hasEnabledVersion reports whether secret id has an enabled version; a
 // missing secret has none.
-func hasEnabledVersion(ctx context.Context, c *Clients, tg target, id string) (bool, error) {
-	err := c.Secrets.Projects.Secrets.Versions.List("projects/"+tg.project+"/secrets/"+id).Pages(ctx, func(p *secretmanager.ListSecretVersionsResponse) error {
+func hasEnabledVersion(ctx context.Context, sm *secretmanager.Service, tg target, id string) (bool, error) {
+	err := sm.Projects.Secrets.Versions.List("projects/"+tg.project+"/secrets/"+id).Pages(ctx, func(p *secretmanager.ListSecretVersionsResponse) error {
 		for _, v := range p.Versions {
 			if v.State == "ENABLED" {
 				return errFound

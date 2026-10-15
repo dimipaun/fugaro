@@ -280,3 +280,55 @@ func TestSharedDropsBaseBranchAndBuildAccount(t *testing.T) {
 		t.Errorf("merged build = %+v", m.Build)
 	}
 }
+
+// The recorded owner travels with the entry it validates: a teammate
+// adopting the published config must check the pin against the same owner
+// the publisher did (design §3.6, §10.7), so MergeShared keeps it — and the
+// local machine's own record, when it has one, is the one that wins.
+func TestMergeSharedKeepsTheOwnerInStep(t *testing.T) {
+	existing := sharedBase(t, "image_source: ghcr.io/acme\nbase_images: {base: us-east5-docker.pkg.dev/p/fugaro-ghcr/acme/fugaro-base:0.7.5@sha256:"+strings.Repeat("a", 64)+"}\n")
+	local := sharedBase(t, "")
+	got := MergeShared(existing, local)
+	if got.ImageSource != "ghcr.io/acme" {
+		t.Errorf("image_source = %q, want the published owner kept", got.ImageSource)
+	}
+	if _, err := got.Marshal(); err != nil {
+		t.Fatalf("the merged config does not marshal: %v", err)
+	}
+	// A local record wins, both halves together: the adopter who recorded
+	// their own owner never inherits the published one.
+	local = sharedBase(t, "image_source: ghcr.io/other\n")
+	if got := MergeShared(existing, local); got.ImageSource != "ghcr.io/other" {
+		t.Errorf("image_source = %q, want the local owner", got.ImageSource)
+	}
+	// Shared() does not drop it either: what is published is what the
+	// readers get.
+	if s := existing.Shared(); s.ImageSource != "ghcr.io/acme" {
+		t.Errorf("the shared config's image_source = %q", s.ImageSource)
+	}
+}
+
+// TestMergeSharedNeverCarriesProjectSecrets: project_secrets is
+// operator-only local config (design docs/design/project-secrets.md §7),
+// never published -- neither the local nor a published config's block
+// reaches the output.
+func TestMergeSharedNeverCarriesProjectSecrets(t *testing.T) {
+	block := "project_secrets:\n  anthropic-api-key:\n    allow_data_to: [acme/web]\n"
+	existing := sharedBase(t, block)
+	local := sharedBase(t, strings.ReplaceAll(block, "anthropic-api-key", "bitbucket-token"))
+	if len(existing.ProjectSecrets) != 1 || len(local.ProjectSecrets) != 1 {
+		t.Fatalf("fixtures: %v %v", existing.ProjectSecrets, local.ProjectSecrets)
+	}
+	for name, got := range map[string]*Config{"merged": MergeShared(existing, local), "nil published": MergeShared(nil, local), "published only": MergeShared(existing, sharedBase(t, ""))} {
+		if got.ProjectSecrets != nil {
+			t.Errorf("%s: project_secrets = %v", name, got.ProjectSecrets)
+		}
+		out, _ := got.Marshal()
+		if strings.Contains(string(out), "project_secrets") {
+			t.Errorf("%s: output carries project_secrets:\n%s", name, out)
+		}
+	}
+	if len(local.ProjectSecrets) != 1 {
+		t.Error("MergeShared cleared the local project_secrets")
+	}
+}

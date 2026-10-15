@@ -516,8 +516,13 @@ func TestFirebaseRunTakesOnePromptPlusTheLocation(t *testing.T) {
 	if got := strings.Join(r.applies(t), ","); got != "installation,firebase,installation" {
 		t.Errorf("applies %s", got)
 	}
-	if r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] == "" || r.dst.tags[initProject+"/fugaro-base/history:latest"] == "" {
-		t.Errorf("images not copied: %v", r.dst.tags)
+	// The base kind is pinned, not copied: only the history image lands in
+	// the registry, and the base's entry is the remote path at a digest.
+	if r.dst.tags[initProject+"/fugaro-base/history:latest"] == "" {
+		t.Errorf("the history image was not copied: %v", r.dst.tags)
+	}
+	if r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] != "" {
+		t.Errorf("a base kind was copied into the base registry: %v", r.dst.tags)
 	}
 	runP, stepP := prompts(out)
 	if runP != 1 || stepP != 0 || strings.Count(out, "Type "+infra.FirestoreLocation+" to create it there") != 1 {
@@ -526,7 +531,9 @@ func TestFirebaseRunTakesOnePromptPlusTheLocation(t *testing.T) {
 	if n := strings.Count(out, "covered by the run confirmation"); n < 5 {
 		t.Errorf("%d covered steps:\n%s", n, out)
 	}
-	if !strings.Contains(out, "images:         copy history latest, base 1.2.3") || !strings.Contains(out, "NOT pinned with --expect-digest: history, base") {
+	if !strings.Contains(out, "images:         base (pinned by digest through the remote repository), history latest") ||
+		!strings.Contains(out, "NOT pinned with --expect-digest: history") ||
+		strings.Contains(out, "NOT pinned with --expect-digest: history, base") {
 		t.Errorf("the review does not name the images and their pinning before the typed name:\n%s", out)
 	}
 	if i, j := strings.Index(out, "NOT pinned"), strings.Index(out, "Type aurora to apply all of the above"); i < 0 || j < i {
@@ -981,7 +988,7 @@ func TestSubmitAndWaitSpecCarriesMachineBucketBase(t *testing.T) {
 		t.Fatalf("err %v, specs %d", err, len(fb.specs))
 	}
 	got := fb.specs[0]
-	want, err := cloudBuildSpec(spec, cfg, "a", lc.BaseImages["base"], "E2_HIGHCPU_32", "gs://proj-runs")
+	want, err := cloudBuildSpec(spec, cfg, "a", lc.BaseImages["base"], "E2_HIGHCPU_32", "gs://proj-runs", appliedGitSecretID(spec))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -990,5 +997,34 @@ func TestSubmitAndWaitSpecCarriesMachineBucketBase(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("spec = %+v, want %+v", got, want)
+	}
+}
+
+// TestInitRepoAcceptsAForkPinWithTheRecordedOwner is why the owner is
+// recorded in the local config at all (design §3.6, the row after the site
+// table). `fugaro init --repo` — the command that renders every job image
+// and the check spec — CANNOT take --image-source (it is installation-only),
+// so with the flag as the only source the owner would be "" there, an empty
+// owner refuses every remote path, and a fork's own legitimate pin would be
+// refused on every run. The record is what the readers use instead.
+// Mutation (run, restore): set tf.Cover.Owner from e.r.o.imageSource (empty
+// here) and every assertion fails.
+func TestInitRepoAcceptsAForkPinWithTheRecordedOwner(t *testing.T) {
+	r := newInitRig(t)
+	r.appendConfig(t, "image_source: ghcr.io/acme\n")
+	r.stateBucket()
+	e := rigEngine(t, r, &initOptions{}) // no --image-source: the flag is empty
+	if e.r.o.imageSource != "" {
+		t.Fatalf("the flag is %q, and this test is about the run where it is not set", e.r.o.imageSource)
+	}
+	if got := baseOwner(e.lc); got != "acme" {
+		t.Fatalf("baseOwner = %q, want the recorded acme", got)
+	}
+	if got := newImagesStage(e).allow()[0]; got != "ghcr.io/acme" {
+		t.Errorf("the run resolves from %q, want the recorded source", got)
+	}
+	c := e.cover()
+	if c.Owner != "acme" || c.Ghcr != infra.GhcrRegistry {
+		t.Errorf("the cover trusts owner %q of repository %q; want acme of %s", c.Owner, c.Ghcr, infra.GhcrRegistry)
 	}
 }

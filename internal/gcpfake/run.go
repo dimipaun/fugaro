@@ -18,8 +18,8 @@ import (
 )
 
 // Run is a stateful fake of the Cloud Run Admin v2 calls Fugaro makes:
-// jobs.run, jobs get, list and patch, operations get (of a patch), and
-// executions get, list (including across jobs/-) and cancel.
+// jobs.run, jobs get, list, patch and delete, operations get (of a patch or
+// a delete), and executions get, list (including across jobs/-) and cancel.
 //
 // It stores executions by (job, short name), so it accepts a name in any
 // form: full with the project ID, full with ProjectNumber, or short when the
@@ -39,6 +39,11 @@ type Run struct {
 	// FailRunWith, when non-zero, makes :run answer that HTTP status
 	// without creating anything.
 	FailRunWith int
+	// FailListWith and FailDeleteWith, when non-zero, make jobs.list and
+	// jobs.delete answer that HTTP status, changing nothing. They are what
+	// pins the degradation of a refused label read (infra.Orphans) and the
+	// delete's own 403.
+	FailListWith, FailDeleteWith int
 	// ProjectNumber, when set, replaces the project ID in every name the
 	// fake returns, as the real API may.
 	ProjectNumber string
@@ -51,6 +56,7 @@ type Run struct {
 
 	mu       sync.Mutex
 	requests []RunCall
+	deletes  []string
 	jobs     map[string]*runJob
 	execs    map[execKey]*runExec
 	seq      int
@@ -73,6 +79,17 @@ type JobFaults struct {
 	// OpError, when set, ends the patch's operation with this error, and
 	// the job is left unchanged.
 	OpError string
+	// DeletePolls is how many operations get answer not done before a
+	// job delete's operation is done, and DeleteOpError, when set, ends
+	// that operation with this error, leaving the job in place. Both are
+	// the delete's own, apart from the patch's Polls and OpError.
+	DeletePolls   int
+	DeleteOpError string
+	// OpStatus, when non-zero, makes operations get answer that HTTP
+	// status, changing nothing and leaving the operation pending. The read
+	// is the same one for a patch's operation and a delete's, so it covers
+	// both.
+	OpStatus int
 }
 
 type runOp struct {
@@ -95,6 +112,22 @@ type RunCall struct {
 	Job       string
 	Env       map[string]string // the override's env
 	Timeout   string            // the override's task timeout ("2820s"), empty when none
+}
+
+// labelMap is the job's labels, from the fields or from a body SetJobJSON
+// stored.
+func (j *runJob) labelMap() map[string]string {
+	if j.labels != nil {
+		return j.labels
+	}
+	raw, _ := j.raw["labels"].(map[string]any)
+	out := make(map[string]string, len(raw))
+	for k, v := range raw {
+		if s, ok := v.(string); ok {
+			out[k] = s
+		}
+	}
+	return out
 }
 
 type runJob struct {
@@ -249,6 +282,23 @@ func (f *Run) RunRequests() []RunCall {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]RunCall(nil), f.requests...)
+}
+
+// JobDeletes are the names jobs.delete was called with, in order, refused
+// attempts included: a test asserting that no delete was attempted reads
+// this, and one asserting a delete happened reads the job's own absence
+// (HasJob).
+func (f *Run) JobDeletes() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.deletes...)
+}
+
+// HasJob reports whether the fake still holds job name.
+func (f *Run) HasJob(name string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.jobs[name] != nil
 }
 
 // SetOnRun sets OnRun under the fake's lock. Use it instead of assigning
@@ -514,6 +564,8 @@ func (f *Run) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		f.list(w, r, strings.TrimSuffix(p, "/executions"))
 	case r.Method == http.MethodPatch && isJobPath(p):
 		f.patchJob(w, r, p, body)
+	case r.Method == http.MethodDelete && isJobPath(p):
+		f.deleteJob(w, p)
 	case r.Method == http.MethodGet && isJobPath(p):
 		f.getJob(w, p)
 	case r.Method == http.MethodGet && strings.Contains(p, "/operations/"):
@@ -586,6 +638,33 @@ func (f *Run) jobBody(project, region, name string) map[string]any {
 	}
 	out["etag"] = fmt.Sprintf("e%d", j.etag)
 	return out
+}
+
+// deleteJob is jobs.delete: the job goes away when the operation it returns
+// is done, so a test can hold the operation open (JobFaults.DeletePolls) and
+// watch the client wait for it. A job that is not there is 404, as the real
+// API answers a second delete of the same job.
+func (f *Run) deleteJob(w http.ResponseWriter, p string) {
+	project, region, name, _ := jobPath(p)
+	f.deletes = append(f.deletes, name)
+	if f.FailDeleteWith != 0 {
+		writeError(w, f.FailDeleteWith, http.StatusText(f.FailDeleteWith), "injected failure")
+		return
+	}
+	if f.jobs[name] == nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "job "+name+" not found")
+		return
+	}
+	f.ops++
+	opName := fmt.Sprintf("projects/%s/locations/%s/operations/%d", f.project(project), region, f.ops)
+	op := &runOp{polls: f.faults.DeletePolls, err: f.faults.DeleteOpError, apply: func() { delete(f.jobs, name) }}
+	f.pending[opName] = op
+	if op.polls > 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"name": opName})
+		return
+	}
+	op.done()
+	writeJSON(w, http.StatusOK, opBody(opName, op))
 }
 
 // Patches are the bodies of the jobs patch requests the fake accepted.
@@ -670,9 +749,14 @@ func (f *Run) patchJob(w http.ResponseWriter, r *http.Request, p string, body []
 	writeJSON(w, http.StatusOK, opBody(opName, op))
 }
 
-// getOp is operations get of a patch's operation: not done for its polls,
-// then done, with its error if any.
+// getOp is operations get of a patch's or a delete's operation: not done for
+// its polls, then done, with its error if any. JobFaults.OpStatus fails the
+// read itself, leaving the operation pending.
 func (f *Run) getOp(w http.ResponseWriter, p string) {
+	if f.faults.OpStatus != 0 {
+		writeError(w, f.faults.OpStatus, http.StatusText(f.faults.OpStatus), "injected failure")
+		return
+	}
 	op := f.pending[p]
 	if op == nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "operation not found")
@@ -754,8 +838,14 @@ func (f *Run) run(w http.ResponseWriter, r *http.Request, jp string, body []byte
 }
 
 // listJobs answers jobs.list of a location, sorted by name, paged like
-// executions.list. Each job carries its task template's timeout when set.
+// executions.list. Each job carries its labels and its task template's
+// timeout when set: the labels are what makes a job discoverable as ours
+// (infra.Orphans), and the real API lists them too.
 func (f *Run) listJobs(w http.ResponseWriter, r *http.Request, parent string) {
+	if f.FailListWith != 0 {
+		writeError(w, f.FailListWith, http.StatusText(f.FailListWith), "injected failure")
+		return
+	}
 	f0 := strings.Split(parent, "/")
 	if len(f0) != 4 || f0[0] != "projects" || f0[2] != "locations" {
 		f.unhandled(w, r)
@@ -777,6 +867,9 @@ func (f *Run) listJobs(w http.ResponseWriter, r *http.Request, parent string) {
 	var out []any
 	for _, n := range names[start:end] {
 		job := map[string]any{"name": parent + "/jobs/" + n}
+		if l := f.jobs[n].labelMap(); len(l) > 0 {
+			job["labels"] = l
+		}
 		if d := f.jobs[n].timeout; d > 0 {
 			job["template"] = map[string]any{"template": map[string]any{"timeout": fmt.Sprintf("%ds", int(d/time.Second))}}
 		}

@@ -339,7 +339,7 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 		if err != nil {
 			return err
 		}
-		build, why := refreshVerdict(rec, want, host, kind)
+		build, why := refreshVerdict(rec, want, p.ver, host, kind, baseOwner(t.lc))
 		fmt.Fprintf(r.w, "  %s: %s\n", wf, why)
 		if build {
 			todo = append(todo, wf)
@@ -361,6 +361,14 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 			fmt.Fprintf(r.w, "note: %s had no build record; if its job is not deployed yet, fugaro init --repo in this checkout deploys it\n", wf)
 		}
 	}
+	// The provider credential's ID the rebuilds' clones read: a refresh has
+	// just applied nothing, so unlike init's own first builds it resolves
+	// live and compares that with the build account's own grant (B1), the
+	// same way a standalone fugaro image build does.
+	gitID, err := gitSecretID(ctx, t.lc, t.spec, "the image refresh of "+t.spec.Name)
+	if err != nil {
+		return err
+	}
 	var built []string
 	for _, wf := range todo {
 		ok, reachable, err := r.askBuild(cloudBuildBanner(t.spec.Name, wf, t.lc.Build.MachineType, t.spec.BuildServiceAccountEmail, t.spec.RegistryPath))
@@ -375,7 +383,7 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 			notes()
 			return builtSoFar(userErr("the build of %s/%s was not confirmed (the project's name was not typed), so it and the builds after it were not submitted", t.spec.Name, wf), built)
 		}
-		if id, err := r.submitAndWait(ctx, b, t.lc, t.cfg, t.spec, wf, t.lc.BaseImage(t.cfg.Workflows[wf].BaseKind())); err != nil {
+		if id, err := r.submitAndWait(ctx, b, t.lc, t.cfg, t.spec, wf, t.lc.BaseImage(t.cfg.Workflows[wf].BaseKind()), gitID); err != nil {
 			notes()
 			if id != "" {
 				// Submitted, then the wait failed (Ctrl-C included): the

@@ -128,7 +128,7 @@ func repoPlan(t *testing.T, stdin string, changes func(spec infra.RepoSpec) []pl
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = r.planRepo(t.Context(), c, tfr, wd, spec, infra.RepoRootOptions{}, true)
+	_, _, err = r.planRepo(t.Context(), c, tfr, wd, spec, infra.RepoRootOptions{}, true)
 	return out.String(), err, ri, wd.Root
 }
 

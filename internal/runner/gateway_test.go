@@ -414,19 +414,42 @@ func TestStageTimingCarriesCost(t *testing.T) {
 // report. The stages then sum to model_usd minus cost.model_by's
 // "unattributed", which is the exact relation the runner's comment states
 // (generic-tool plan Task 24).
+//
+// The ordering is enforced by the fakes, never by a sleep lining up with a
+// stream: the late call is held inside the scripted upstream until the
+// second stage releases it, and that stage then waits for the gateway's own
+// settle log line before returning. So the call is in flight for every
+// microsecond of its stage's report (the upstream function has not even
+// answered its headers), and it has provably settled before the run closes
+// the gateway and reads the ledger.
 func TestStageTimingLateSpendIsUnattributed(t *testing.T) {
 	slow := out4k()
 	slow.Events = anthropicfake.StreamOK(sonnet, pricing.Usage{Output: 4000}).Events
-	slow.Body, slow.EventDelay = "", 80*time.Millisecond
-	g := newGW(t, gwConfig(t, ""), "observe", "", slow)
+	slow.Body = ""
+	g := newGW(t, gwConfig(t, ""), "observe", "")
 	g.deps.GatewayStageWait = 20 * time.Millisecond
+	// release holds the late call upstream; upstream says it arrived, so a
+	// stage can return knowing the call is registered and in flight.
+	release, upstream := make(chan struct{}), make(chan struct{})
+	var upstreamOnce sync.Once
+	g.fake.Func = func(*http.Request, []byte) anthropicfake.Reply {
+		upstreamOnce.Do(func() { close(upstream) })
+		<-release
+		return slow
+	}
 	fireAndForget := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		go post(t, req, sonnet, 4000) // outlives its stage's wait
-		time.Sleep(50 * time.Millisecond)
+		<-upstream                    // it reached the fake, so it is in flight
 		return implement("feature")(t, ctx, req)
 	}
 	waits := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
-		time.Sleep(900 * time.Millisecond) // the call settles meanwhile
+		close(release) // the call settles now, after its stage's report
+		// The settle is logged after the ledger is updated, so this is the
+		// moment the run's money includes it.
+		waitUntil(t, "the late call to settle", func() bool {
+			s := g.logs.String()
+			return strings.Contains(s, "stage=implement") && strings.Contains(s, "settled=usage")
+		})
 		return review("ship", 0)(t, ctx, req)
 	}
 	rec, err := g.run(t, fireAndForget, waits)
@@ -476,12 +499,20 @@ func TestStageTimingFailedStage(t *testing.T) {
 // first-line review is a stage like any other. A stage with no model call
 // records none.
 func TestStageTimingProviderRouteAndReviewFirst(t *testing.T) {
-	use := pricing.Usage{Input: 1000, Output: 500} // $1/M in, $4/M out: 3000 µ$
+	use := pricing.Usage{Input: 1000, Output: 500}
 	g := providerRun(t, providerFirstLine(t, "on"), "enforce", "50",
 		[]anthropicfake.Reply{
 			anthropicfake.Compat{}.MessageOK(deepseek, use),
 			anthropicfake.Compat{}.MessageOK(deepseek, use),
 		}, "acme/app")
+	// The figure is the run's own table's for that usage (Task 4: the
+	// catalog prices the route's model, so naming a number here would only
+	// pin the catalog's rates, not the stage's attribution).
+	m, ok := g.deps.Spend.Prices.Lookup(deepseek)
+	if !ok {
+		t.Fatal("the run's table has no row for the model it routed")
+	}
+	one := m.Rates.Cost(use).USD()
 	var status, firstStatus int
 	var body, firstBody string
 	rec, err := g.run(t,
@@ -499,8 +530,8 @@ func TestStageTimingProviderRouteAndReviewFirst(t *testing.T) {
 		model string
 		usd   float64
 	}{
-		{"implement", deepseek, 0.003},
-		{"review_first", deepseek, 0.003},
+		{"implement", deepseek, one},
+		{"review_first", deepseek, one},
 		{"review", sonnet, 0},
 	}
 	for i, w := range want {
@@ -509,7 +540,7 @@ func TestStageTimingProviderRouteAndReviewFirst(t *testing.T) {
 			t.Errorf("stage %d = %+v, want %s on %s for $%v", i, s, w.name, w.model, w.usd)
 		}
 	}
-	if rec.Cost == nil || stageMicros(t, rec.Stages) != micros(t, rec.Cost.ModelUSD) || micros(t, rec.Cost.ModelUSD) != micros(t, 0.006) {
+	if rec.Cost == nil || stageMicros(t, rec.Stages) != micros(t, rec.Cost.ModelUSD) || micros(t, rec.Cost.ModelUSD) != micros(t, 2*one) {
 		t.Fatalf("the stages total %v, model_usd = %+v", stageMicros(t, rec.Stages), rec.Cost)
 	}
 }
@@ -918,9 +949,11 @@ func TestManagedSettingsWrittenBeforeFirstStage(t *testing.T) {
 	}
 }
 
-func TestTestKnobIgnoredOnCloudRun(t *testing.T) {
+func TestTestKnobIgnoredInCloud(t *testing.T) {
 	g := newGWFiles(t, gwConfig(t, ""), "observe", "", map[string]string{".claude/settings.json": rerouting})
 	g.deps.GatewayUpstream = "" // as a local run against the real API would be
+	g.deps.Local = false        // the CLI's resolved platform: a Cloud Run execution, or any it can't name
+	g.deps.Project = "aurora"   // and its job names the project, as every job does
 	g.deps.Env = append(g.deps.Env, "FUGARO_TEST_ALLOW_ROUTING_SETTINGS=1", "CLOUD_RUN_EXECUTION=exec-1")
 	rec, err := g.run(t)
 	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "ANTHROPIC_BASE_URL") {

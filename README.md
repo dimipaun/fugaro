@@ -88,7 +88,7 @@ The engine is generic: everything specific to a repository lives in its `fugaro.
 - **Spend caps, on by default:** every stage passes Claude Code a dollar limit (`agent.max_budget_usd`, default 25).
 - **Spend caps, opt-in:** with the budget on and `agent.auth: api-key` (an Anthropic API key), a gateway (a local proxy in the runner that every model call goes through) prices each call and, in `enforce` mode, halts the run at its dollar cap; `oauth` runs can get a token cap. The budget is off by default, and a Firebase budget starts in `observe`, which counts and logs would-be cap refusals but refuses no call until you switch to `enforce` (kill switches still work). With a Firebase project (`fugaro init --firebase`), runs also share daily caps per repository and project, and kill switches (`fugaro budget kill`, or `k`/`K` in `fugaro watch`) halt running runs within seconds. The caps guard against mistakes and expensive tasks, not against a hostile agent. An optional GCP billing budget alert (`--budget`) is the backstop.
 - **Log isolation.** Run logs carry agent output, so by default they go to Fugaro's own log bucket, which only launchers and operators (and the project's owners and editors) can read.
-- **Pinned releases.** Release checksums are signed with cosign; `fugaro init` copies base images from the release tag in ghcr.io and checks the copy by digest; to pin what the tag must resolve to, pass `--expect-digest`. It pins the plugin to the binary's release. Signing the images is planned.
+- **Pinned releases.** Release checksums are signed with cosign; `fugaro init` resolves the base image's release tag on ghcr.io, verifies the cosign signature the release attached to that exact digest, and pins the digest through the installation's own Artifact Registry remote repository — nothing is copied and nothing is pushed; `--expect-digest` cross-checks the verified digest. It pins the plugin to the binary's release.
 
 The full model, with its residual risks: [design §6](docs/design/v1.md#6-security-model). Budget setup: [docs/gcp-setup.md](docs/gcp-setup.md#turning-the-model-budget-on).
 
@@ -125,6 +125,8 @@ workflows:
 
 **Project layer:** a project can publish shared defaults and named workflow profiles that every anchored repository's minimal `fugaro.yaml` inherits; see [docs/project-layer.md](docs/project-layer.md).
 
+**Checkout:** by default a workflow runs a per-repository image with a clone baked into it (`checkout: baked`); a workflow can instead run the installation's base image and clone blobless at start (`checkout: clone`), for repositories that need no build; see [docs/checkout.md](docs/checkout.md).
+
 ## Requirements
 
 - For the GCP backend, the only one today: a Google Cloud project with billing enabled and `serviceusage.googleapis.com` on; `fugaro init` enables the other APIs it needs. Setting up the installation needs the Owner role ([precondition 7](docs/gcp-setup.md#preconditions)).
@@ -146,7 +148,7 @@ A new cloud is a backend behind the interface in `internal/backend` plus its pro
 - [x] `fugaro init` and `/fugaro:setup`, the five plugin skills, teammates with no setup
 - [x] Follow-up runs, early draft PRs, the shared budget, `fugaro watch` and `fugaro report`, other models through OpenRouter (experimental)
 - [x] Releases with GoReleaser, the Homebrew tap and cosign-signed checksums
-- [ ] Signed base images, verified before `fugaro init` copies them
+- [ ] Signed base images, verified and pinned by `fugaro init` (nothing is copied)
 - [ ] An egress-restricted network for runs
 - [ ] A Docker-capable backend, for test suites that need Docker
 - [ ] One-command offboarding of a repository

@@ -3,10 +3,12 @@ package infra
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -19,11 +21,14 @@ const (
 	RoleBuildSubmitter        = "fugaroBuildSubmitter"
 	RoleTagMover              = "fugaroTagMover"
 	BaseRegistry              = "fugaro-base"
-	LegacyRegistry            = "fugaro"
-	LogBucket                 = "fugaro"
-	LogView                   = "fugaro-runs"
-	LogSink                   = "fugaro-jobs"
-	LogExclusion              = "fugaro-jobs-from-default"
+	// GhcrRegistry is the remote (pull-through) repository over ghcr.io:
+	// the base image's pin goes through it (design §3.1).
+	GhcrRegistry   = "fugaro-ghcr"
+	LegacyRegistry = "fugaro"
+	LogBucket      = "fugaro"
+	LogView        = "fugaro-runs"
+	LogSink        = "fugaro-jobs"
+	LogExclusion   = "fugaro-jobs-from-default"
 	// LogBucketDescription is the log bucket's ownership mark: a log
 	// bucket carries no labels, so discovery adopts a bucket of that name
 	// only when it carries this description.
@@ -105,12 +110,21 @@ type InstallationSpec struct {
 	// out of an installation without a budget backend.
 	EnableBudget bool         `json:"enable_budget,omitempty"`
 	History      *HistorySpec `json:"history,omitempty"`
+	// ProjectSecrets are the installation module's project-wide secret
+	// containers (logical name -> gcp.ProjectSecretID), which fugaro init
+	// creates or adopts; their values are never set by Terraform (design
+	// docs/design/project-secrets.md §4). Installation() fills it from the
+	// local config's eligibility; DiscoverInstallation then unions in every
+	// correctly-labelled container that already exists, so a config edit
+	// can never shrink the module's for_each (N3).
+	ProjectSecrets map[string]string `json:"project_secrets,omitempty"`
 }
 
 // InstallationNames are the installation's singleton names.
 type InstallationNames struct {
 	LegacyRegistry            string              `json:"legacy_registry"`
 	BaseRegistry              string              `json:"base_registry"`
+	GhcrRegistry              string              `json:"ghcr_registry"`
 	SchedulerServiceAccountID string              `json:"scheduler_service_account_id"`
 	RoleIDs                   InstallationRoleIDs `json:"role_ids"`
 	Log                       LogNames            `json:"log"`
@@ -172,6 +186,7 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		Names: InstallationNames{
 			LegacyRegistry:            LegacyRegistry,
 			BaseRegistry:              BaseRegistry,
+			GhcrRegistry:              GhcrRegistry,
 			SchedulerServiceAccountID: SchedulerServiceAccountID,
 			RoleIDs:                   InstallationRoleIDs{Launcher: RoleLauncher, JobRunner: RoleJobRunner, BuildSubmitter: RoleBuildSubmitter, TagMover: RoleTagMover},
 			Log:                       LogNames{Bucket: LogBucket, View: LogView, Sink: LogSink, Exclusion: LogExclusion},
@@ -188,6 +203,7 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		Budget:               o.Budget,
 		AdoptLegacyRegistry:  o.AdoptLegacyRegistry,
 		LogBucketDescription: LogBucketDescription,
+		ProjectSecrets:       projectSecretContainers(lc),
 	}
 	if o.NoLogIsolation {
 		s.LogIsolation = new(false)
@@ -216,6 +232,38 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		return InstallationSpec{}, userErr("--registry-cleanup %q must be dry-run, on or off", o.RegistryCleanup)
 	}
 	return s, nil
+}
+
+// projectSecretContainers are the project-wide secret containers the local
+// config makes eligible (design docs/design/project-secrets.md §4): every
+// project_secrets entry with a non-empty allow_data_to, every provider's own
+// key unconditionally (§3a: a provider's key is eligible for project storage
+// whether or not its allow_data_to list exists, and an absent list is a
+// valid "every repository" state, not a reason to leave the container out),
+// and every named Claude account with a non-empty allow_data_to. A reserved
+// name with no project_secrets entry has no container at all.
+//
+// This is only the config half: DiscoverInstallation unions the live
+// containers in before the map reaches Terraform (N3).
+func projectSecretContainers(lc *localcfg.Config) map[string]string {
+	out := map[string]string{}
+	for _, name := range slices.Sorted(maps.Keys(lc.ProjectSecrets)) {
+		if len(lc.ProjectSecrets[name].AllowDataTo) > 0 {
+			out[name] = gcp.ProjectSecretID(lc.Name, name)
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(lc.Providers)) {
+		if secret := lc.Providers[name].Secret; secret != "" {
+			out[secret] = gcp.ProjectSecretID(lc.Name, secret)
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(lc.ClaudeAccounts)) {
+		if len(lc.ClaudeAccounts[name].AllowDataTo) > 0 {
+			s := config.ClaudeAccountSecret(name)
+			out[s] = gcp.ProjectSecretID(lc.Name, s)
+		}
+	}
+	return out
 }
 
 func firstOf(v ...string) string {

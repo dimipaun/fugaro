@@ -1,0 +1,282 @@
+{
+ "data": {
+  "endpoints": [
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.0000149",
+     "discount": 0,
+     "input_cache_read": "0.00000045",
+     "prompt": "0.00000049"
+    },
+    "tag": "wafer/us"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.000015",
+     "discount": 0,
+     "input_cache_read": "0.00000028",
+     "prompt": "0.00000058"
+    },
+    "tag": "inference-net/fp4"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.00002",
+     "discount": 0,
+     "input_cache_read": "0.00000029",
+     "prompt": "0.00000072"
+    },
+    "tag": "morph/fp8"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.000024",
+     "discount": 0,
+     "input_cache_read": "0.00000045",
+     "prompt": "0.00000072"
+    },
+    "tag": "wafer"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.0000135",
+     "discount": 0,
+     "input_cache_read": "0.0000003",
+     "prompt": "0.00000084"
+    },
+    "tag": "sail-research/fp4"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.000014",
+     "discount": 0,
+     "input_cache_read": "0.0000012",
+     "prompt": "0.0000012"
+    },
+    "tag": "akashml/fp4"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.00001275",
+     "discount": 0,
+     "input_cache_read": "0.000000204",
+     "prompt": "0.00000153"
+    },
+    "tag": "makora/fp4"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 65535,
+    "pricing": {
+     "completion": "0.0000095",
+     "discount": 0,
+     "input_cache_read": "0.000000185",
+     "prompt": "0.00000185"
+    },
+    "tag": "chutes/mxfp4"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.0000105",
+     "discount": 0.3,
+     "input_cache_read": "0.00000021",
+     "prompt": "0.0000021"
+    },
+    "tag": "decart/mxfp4"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.000014",
+     "discount": 0,
+     "input_cache_read": "0.0000003",
+     "prompt": "0.0000024"
+    },
+    "tag": "relace/fp4"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.000015",
+     "discount": 0,
+     "input_cache_read": "0.00000035",
+     "prompt": "0.00000249"
+    },
+    "tag": "inference-net/fast"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.00001275",
+     "discount": 0.15,
+     "input_cache_read": "0.000000255",
+     "prompt": "0.00000255"
+    },
+    "tag": "phala"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.00001295",
+     "discount": 0,
+     "input_cache_read": "0.000000255",
+     "prompt": "0.00000255"
+    },
+    "tag": "digitalocean"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.000013",
+     "discount": 0,
+     "input_cache_read": "0.00000026",
+     "prompt": "0.0000026"
+    },
+    "tag": "parasail/fp4"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.00001425",
+     "discount": 0,
+     "input_cache_read": "0.000000285",
+     "prompt": "0.00000285"
+    },
+    "tag": "deepinfra/mxfp4"
+   },
+   {
+    "context_length": 1000000,
+    "max_completion_tokens": 900000,
+    "pricing": {
+     "completion": "0.000015",
+     "discount": 0,
+     "input_cache_read": "0.0000003",
+     "prompt": "0.000003"
+    },
+    "tag": "parasail/fast"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 128000,
+    "pricing": {
+     "completion": "0.000015",
+     "discount": 0,
+     "input_cache_read": "0.0000003",
+     "input_cache_write": "0.00000375",
+     "prompt": "0.000003"
+    },
+    "tag": "amazon-bedrock/us-east-2"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.000015",
+     "discount": 0,
+     "input_cache_read": "0.0000003",
+     "prompt": "0.000003"
+    },
+    "tag": "modal/mxfp4"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.000015",
+     "discount": 0,
+     "input_cache_read": "0.0000003",
+     "prompt": "0.000003"
+    },
+    "tag": "together"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.000015",
+     "discount": 0,
+     "input_cache_read": "0.0000003",
+     "prompt": "0.000003"
+    },
+    "tag": "fireworks"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 262144,
+    "pricing": {
+     "completion": "0.000015",
+     "discount": 0,
+     "input_cache_read": "0.0000003",
+     "prompt": "0.000003"
+    },
+    "tag": "baseten/fp8"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.000015",
+     "discount": 0,
+     "input_cache_read": "0.0000003",
+     "prompt": "0.000003"
+    },
+    "tag": "moonshotai/mxfp4"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 131072,
+    "pricing": {
+     "completion": "0.00001725",
+     "discount": 0,
+     "input_cache_read": "0.000000345",
+     "prompt": "0.00000345"
+    },
+    "tag": "alibaba"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.0000225",
+     "discount": 0,
+     "input_cache_read": "0.00000045",
+     "prompt": "0.0000045"
+    },
+    "tag": "fireworks/us"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.0000225",
+     "discount": 0,
+     "input_cache_read": "0.00000045",
+     "prompt": "0.0000045"
+    },
+    "tag": "fireworks/fast"
+   }
+  ]
+ }
+}

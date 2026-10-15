@@ -51,7 +51,7 @@ type initOptions struct {
 	baseKinds                           []string // --base: base kinds to mirror now
 	imageSource                         string   // --image-source: a fork's own release registry/owner
 	expectDigests                       []string // --expect-digest KIND=sha256:...: the digest a release tag must resolve to
-	replaceImages                       []string // --replace-image KIND: kinds (history, or a base kind) whose tag in your registry may be replaced, each still behind a typed confirmation
+	replaceImages                       []string // --replace-image KIND: kinds (history) whose tag in your registry may be replaced, each still behind a typed confirmation; a base kind is refused there, since nothing is copied for it any more
 	launchers, operators                []string
 	budget                              int64
 	budgetCurrency, billingAccount      string
@@ -90,8 +90,11 @@ type initOptions struct {
 
 	// --repo: onboard the repository of a checkout.
 	repo, noBuild, allowJobDelete bool
-	githubAppID                   string
-	checkApp                      bool // --check-github-app
+	// retire is --retire: run the retirement a config change needs, behind
+	// two typed confirmations --yes cannot cover (init_retire.go).
+	retire      bool
+	githubAppID string
+	checkApp    bool // --check-github-app
 }
 
 func newInitCmd() *cobra.Command {
@@ -168,13 +171,14 @@ FROM (the record's base_ref, whose fugaro binary the image holds) is such a
 release too: a missing record, a record that does not say its base, an older
 or development CLI, or an older, development or hand-pushed base fails. It
 also checks that each base image the local config sets for those workflows is
-a release image init copied, at or after that release, since the next build
-starts from it (a development or hand-pushed one is never replaced by fugaro
-init --base or fugaro image refresh: remove its base_images entry first). The
-fix it names is: that removal when needed, fugaro image refresh --repo
-<owner/name> --workflow <name> in the checkout (it copies the base image,
-points the daily image check job at it and rebuilds the image), then fugaro
-init --anchor. The image checks trust the build records (written by
+this release's pin through the remote repository, or a release image an
+earlier fugaro copied, at or after that release, since the next build starts
+from it (a development or hand-pushed one is never replaced by fugaro init
+--base or fugaro image refresh: remove its base_images entry first). The fix
+it names is: that removal when needed, fugaro image refresh --repo
+<owner/name> --workflow <name> in the checkout (it verifies the release's
+base image and pins it by digest, points the daily image check job at it and
+rebuilds the image), then fugaro init --anchor. The image checks trust the build records (written by
 the builds, unsigned: the same trust as the shared config), and a hand-pushed
 image under a release-looking tag passes them. Then the diff; --yes writes, a terminal asks, and otherwise it
 prints the line and writes nothing. Exit codes: 0 written or already present
@@ -228,7 +232,8 @@ named fugaro-runs-<gcp project> that belongs to that project; read-only check:
 a custom runs bucket never qualifies). There, at a terminal, the ordinary steps (the Terraform applies of the
 installation, the Firebase root, the history job and the repository, the state
 bucket, the Cloud Resource Manager API, the Viewer-read removal, image copies
-that only add tags, the Firestore marks and rules, the local config) share one
+and base-image pins that only add tags, the Firestore marks and rules, the
+local config) share one
 review screen and ONE typed project name, asked when the first of them has
 something to change (so a rerun with nothing to do asks nothing). Each step
 still prints its own exact plan. It never covers creating a project, linking
@@ -343,9 +348,9 @@ secrets stage is behind the same gate.`,
 	f.StringVar(&o.stateBucket, "state-bucket", "", "the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>)")
 	f.StringArrayVar(&o.baseImages, "base-image", nil, "a base image the image checks run and builds start from, recorded in the local config under its base kind (repeatable; KIND=IMAGE, or just IMAGE when its repository is named fugaro-<kind>; the kinds you don't name keep theirs)")
 	f.StringSliceVar(&o.baseKinds, "base", nil, "copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated)")
-	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release images are copied from (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme)")
-	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "pin the digest of a release image copied by init, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. Without it init trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag")
-	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history or base; repeatable): let init replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). It names the intent only: replacing is confirmed by typing the project's name at a real terminal, never by --yes, --non-interactive or --json")
+	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release images come from: a base kind is resolved and signature-verified there and pinned through the installation's remote repository, a history image is copied from it (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme)")
+	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it init trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag")
+	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history; repeatable): let init replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is confirmed by typing the project's name at a real terminal, never by --yes, --non-interactive or --json")
 	f.StringArrayVar(&o.launchers, "launcher", nil, "an IAM member who launches and watches runs (repeatable; default: the local config's, and for a new config you, the authenticated user)")
 	f.StringArrayVar(&o.operators, "operator", nil, "an IAM member who onboards repositories (repeatable; default: the local config's, and for a new config you, the authenticated user)")
 	f.Int64Var(&o.budget, "budget", 0, "a monthly budget on the project, in whole units of --budget-currency")
@@ -378,6 +383,7 @@ secrets stage is behind the same gate.`,
 	f.StringVar(&o.githubAppID, "github-app-id", "", "the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; init asks once at a terminal, and --non-interactive needs it)")
 	f.BoolVar(&o.noBuild, "no-build", false, "with --repo: don't offer the first image builds")
 	f.BoolVar(&o.allowJobDelete, "allow-job-delete", false, "with --repo: lower the jobs' deletion protection, for offboarding")
+	f.BoolVar(&o.retire, "retire", false, "with --repo: run the retirement this config change needs (a workflow or a named account removed, a secret no longer mounted): remove the protected addresses from Terraform's state (destroying nothing), apply, then delete the orphaned Cloud Run jobs through the API. The project's name is typed twice at a real terminal, and --yes, --non-interactive, --json, a pipe and a coding agent cover neither. Excludes --plan-only, --print-vars and --forget, which read or forget rather than apply")
 	return cmd
 }
 
@@ -402,6 +408,10 @@ type initRun struct {
 	historyNoted bool
 	printed      bool // the --json result has been printed
 	anchorNoted  bool // init --repo's pointer at --anchor has been said
+	// notedOpenProviders is the once-per-run guard on the note about the
+	// providers every repository may use: the converge's repository stage
+	// runs the repo engine too, and the note belongs once.
+	notedOpenProviders bool
 
 	// buildsLeft is the workflows whose first image build was not offered
 	// because this run cannot take a typed confirmation (--yes, --json, a pipe
@@ -418,6 +428,18 @@ type initRun struct {
 	// review is the run's one confirmation, set only by the converge
 	// (init_review.go).
 	review *runReview
+
+	// The retirement (init_retire.go): what the run read before its first
+	// plan -- the state's addresses, the retirement set of design §3.1a and
+	// the notes Orphans returned -- and whether its flow ran and applied, so
+	// the API delete is attempted once, after the last apply.
+	retireState   []string
+	retireSet     []infra.Retirement
+	retireNotes   []infra.Retirement
+	retired       bool     // the flow was entered (a later plan must not re-enter it)
+	retireApplied bool     // it applied: the jobs it removed from state still need deleting
+	retireRemoved []string // what the state removal took out: what a stop before the API delete owes (M-B)
+	retireClean   bool     // the resume's plan changed nothing: no apply is left, only the API delete
 }
 
 // initResult is what --json prints.
@@ -439,6 +461,11 @@ type initResult struct {
 	Builds     []string                   `json:"builds,omitempty"`
 	Missing    []string                   `json:"missing,omitempty"`
 	Warnings   []string                   `json:"warnings,omitempty"`
+	// Retire is the retirement set the run predicted -- the summary's own
+	// rows, with the state's and the labels' fields filled in -- so --json
+	// carries the same thing the run printed (design §3.2). It is set by
+	// every run that reads the state, --plan-only and --retire alike.
+	Retire []infra.Retirement `json:"retire,omitempty"`
 	// Stages and LeftForYou are the converge's account (initflow): each
 	// stage's state, and what only the user can do.
 	Stages     []initflow.StageResult `json:"stages,omitempty"`
@@ -502,6 +529,7 @@ func runInit(r *initRun) error {
 		return err
 	}
 	r.setProject(lc)
+	r.noteOpenProviders(lc)
 	if o.publishConfig {
 		if old == nil {
 			return userErr("--publish-config publishes an existing project config, and there is none: run fugaro init first")
@@ -682,8 +710,8 @@ func (o *initOptions) checkOnboardRepo() error {
 
 // check refuses flag combinations that mean nothing.
 func (o *initOptions) check() error {
-	if o.noBuild || o.allowJobDelete {
-		return userErr("--no-build and --allow-job-delete are for fugaro init --repo")
+	if o.noBuild || o.allowJobDelete || o.retire {
+		return userErr("--no-build, --allow-job-delete and --retire are for fugaro init --repo")
 	}
 	if err := o.checkAppID(); err != nil {
 		return err
@@ -1145,6 +1173,10 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		return outs, false, initErr(err)
 	}
 	spec.AdoptLegacyRegistry = im.AdoptLegacyRegistry
+	// The installation module's project-wide secret containers: the config's
+	// own eligible names unioned with every one discovery found live, so a
+	// config edit can never shrink the module's for_each (N3).
+	spec.ProjectSecrets = im.ProjectSecrets
 	for _, n := range im.Notes {
 		r.warn(n)
 	}
@@ -1564,6 +1596,26 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 	return nil
 }
 
+// noteOpenProviders says, once per run, which providers every repository of
+// the project may use (internal/config's rule): their keys are mounted into
+// every repository's job and every repository may send them code. Before
+// this design an absent allow_data_to meant nobody, so an operator who
+// never wrote the key is now at the widest setting; this says so at the one
+// command that acts on it. A note, not a warning: the owner ruled it valid.
+func (r *initRun) noteOpenProviders(lc *localcfg.Config) {
+	if r.notedOpenProviders || lc == nil {
+		return
+	}
+	r.notedOpenProviders = true
+	w := r.w
+	if r.o.printVars {
+		w = r.cmd.ErrOrStderr() // stdout stays the tfvars alone
+	}
+	for _, name := range config.OpenProviders(lc.Providers) {
+		fmt.Fprintf(w, "note: provider %s %s\n", name, lc.Providers[name].OpenToEveryRepoReason())
+	}
+}
+
 // noteSecondProject says, once a new project config is written beside
 // another, what that means for commands run outside a checkout.
 func (r *initRun) noteSecondProject() {
@@ -1786,16 +1838,27 @@ func (o *initOptions) checkRepo() error {
 		return err
 	}
 	n := 0
-	for _, b := range []bool{o.planOnly, o.printVars, o.forget} {
+	if o.retire && o.planOnly {
+		// terraform state rm is a change to the state, and --plan-only's
+		// contract is that it creates and changes nothing (design §3.3).
+		return userErr("--retire and --plan-only exclude one another: retiring removes addresses from Terraform's state, and --plan-only changes nothing. Run --plan-only first to read the predicted retirement, then --retire to run it")
+	}
+	if o.retire && o.printVars {
+		// --print-vars writes the tfvars and returns before the first cloud
+		// call -- no discovery, no state, no plan -- so a --retire that came
+		// with it would print the file and drop the retirement silently.
+		return userErr("--retire and --print-vars exclude one another: --print-vars writes the tfvars and stops before the state is read, so the retirement would be dropped. Run --print-vars on its own, then --retire")
+	}
+	for _, b := range []bool{o.planOnly, o.printVars, o.forget, o.retire} {
 		if b {
 			n++
 		}
 	}
 	if n > 1 {
-		return userErr("--plan-only, --print-vars and --forget exclude one another")
+		return userErr("--plan-only, --print-vars, --forget and --retire exclude one another")
 	}
-	if o.forget && (len(o.allowDelete) > 0 || o.allowJobDelete || o.noBuild) {
-		return userErr("--forget only removes the repository from Terraform's state; it takes no --allow-delete, --allow-job-delete or --no-build")
+	if o.forget && (len(o.allowDelete) > 0 || o.allowJobDelete || o.noBuild || o.retire) {
+		return userErr("--forget only removes the repository from Terraform's state; it takes no --allow-delete, --allow-job-delete, --no-build or --retire")
 	}
 	if set := o.installationFlags(); len(set) > 0 {
 		return userErr("%s set(s) up the installation, not a repository: run fugaro init with it, then fugaro init --repo", strings.Join(set, ", "))
@@ -1882,6 +1945,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		return err
 	}
 	r.setProject(lc)
+	r.noteOpenProviders(lc)
 	r.res.Repo = repo
 	if !embedded && !o.planOnly && !o.forget && !o.printVars {
 		if err := r.gateRepo(ctx, root, lc); err != nil {
@@ -1892,6 +1956,13 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		if err := checkVertexBudget(lc, cfg); err != nil {
 			return err
 		}
+	}
+	// A route that sets require_zdr or price_policy lands in the job's
+	// FUGARO_MODEL_PROVIDERS, and an older runner refuses an unknown key
+	// there at bootstrap: refuse before any cloud effect (Task 4 step 2 of
+	// the price-catalog plan).
+	if err := r.gateCatalogSwitches(o, repo, lc); err != nil {
+		return err
 	}
 	if !o.forget {
 		w := r.w
@@ -1997,20 +2068,23 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		return remote(err)
 	}
 
-	// 3–5. Discover, gate, plan, guard, confirm, apply.
-	missing, err := r.planRepo(ctx, c, t, wd, spec, rootOpts, true)
+	// 3–5. Discover, gate, plan, guard, confirm, apply. ready is what the
+	// apply just wrote, Readiness's own output: the first build below reads
+	// its resolved secret IDs back out of it instead of resolving them
+	// again (B1), since the grants the apply just made were fixed for them.
+	ready, missing, err := r.planRepo(ctx, c, t, wd, spec, rootOpts, true)
 	if err != nil {
 		return err
 	}
 	versions, err := infra.SecretVersions(ctx, c, spec)
 	if err != nil {
-		return initErr(err)
+		return r.retireLeftover(spec, initErr(err))
 	}
 	if !o.planOnly && !o.noBuild {
 		// 6. The first image builds, then the plan that deploys them.
 		names, err := infra.NeedsBuild(ctx, c, spec, versions)
 		if err != nil {
-			return initErr(err)
+			return r.retireLeftover(spec, initErr(err))
 		}
 		// Only re-resolved (a strict, bucket-reading read: resolveForBuild's
 		// own doc comment) when a build is actually about to happen: the
@@ -2021,36 +2095,54 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		var buildCfg *config.Config
 		if len(names) > 0 {
 			if buildCfg, err = resolveForBuild(ctx, root, lc); err != nil {
-				return err
+				return r.retireLeftover(spec, err)
 			}
 		}
-		built, err := r.offerBuilds(ctx, lc, buildCfg, spec, names)
+		built, err := r.offerBuilds(ctx, lc, buildCfg, ready, names)
 		if err != nil {
 			// The first apply already made the repository's resources, so
 			// it joins the local config (and says what it still needs)
 			// before the build's failure ends the run.
-			r.printMissing(spec, versions, missing)
+			r.printMissing(spec, versions, missing, needsAnthropicKey(lc, cfg, spec.Name))
 			if cerr := r.writeRepoConfig(ctx, lc, spec, cfg, path, old); cerr != nil {
 				r.warn(fmt.Sprintf("the local config was not updated: %v", cerr))
 			}
-			return err
+			return r.retireLeftover(spec, err)
 		}
 		if built > 0 {
-			if missing, err = r.planRepo(ctx, c, t, wd, spec, rootOpts, false); err != nil {
-				return err
+			if _, missing, err = r.planRepo(ctx, c, t, wd, spec, rootOpts, false); err != nil {
+				return r.retireLeftover(spec, err)
 			}
 		}
 	}
 
 	// 7. What is still missing.
-	r.printMissing(spec, versions, missing)
+	r.printMissing(spec, versions, missing, needsAnthropicKey(lc, cfg, spec.Name))
 	if o.planOnly {
 		return finish()
 	}
 
+	// 7b. The retirement's last step: the jobs the state removal left
+	// unmanaged, deleted through the Cloud Run API after every apply, so the
+	// re-plan that deploys freshly built images cannot race the delete.
+	// A failed delete does not cost the run its local config (M4): the plan
+	// did apply, the state did change, and the config file is the record of
+	// what the deployment now is. The error is returned after step 8, so the
+	// run still exits nonzero and still says what was left behind.
+	var deleteErr error
+	if r.retireApplied {
+		deleteErr = r.retireDelete(ctx, c, spec)
+	}
+
 	// 8. The local config.
 	if err := r.writeRepoConfig(ctx, lc, spec, cfg, path, old); err != nil {
+		if deleteErr != nil {
+			return remote(errors.Join(deleteErr, err))
+		}
 		return err
+	}
+	if deleteErr != nil {
+		return deleteErr
 	}
 	if !embedded {
 		// The converge's repository stage writes the line itself.
@@ -2058,6 +2150,8 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	}
 	if len(r.buildsLeft) > 0 {
 		// Everything else is done; the billable build is the user's to type.
+		// (Step 7b already ran: the API delete is attempted before this, so
+		// there is no residue left to name here.)
 		left := promptLeft(initflow.Repository, "type the project's name at the first image build's prompt (it is billable)", "init", "--repo")
 		if r.buildHold != "" {
 			// Not offered: the GitHub App is not ready (appPreCheck), which no
@@ -2107,11 +2201,45 @@ func (r *initRun) offerBuilds(ctx context.Context, lc *localcfg.Config, cfg *con
 // each named with its fix. A check that could not be made (no key to read, no
 // access, GitHub unreachable) is a warning that does not claim the App is
 // fine, and the build is offered as before.
+//
+// The secret this check reads is the one live state resolves for
+// github-app-key, not the repository's own ID unconditionally (small item 5:
+// this is the fifth call site that named the repo-scoped ID, doctor's own
+// GitHub App check being the fourth). It is resolved live and compared with
+// the build account's own grant first (B1), the identical comparison a
+// standalone fugaro image build makes: a grant naming a different ID means
+// this check would sign with a key the build's clone would not, a misleading
+// diagnostic rather than an access error, and the build is left with that
+// reason instead of being offered on a wrong key.
+//
+// Only behind --check-github-app, though: that is the one path that reaches
+// Secret Manager at all (a key typed at this run's own secrets stage is
+// signed with from memory), so it is the only one a resolved ID decides
+// anything for.
 func (r *initRun) appPreCheck(ctx context.Context, lc *localcfg.Config, spec infra.RepoSpec) string {
 	if spec.Provider != gitprov.KindGitHub || spec.GitHubAppID == "" {
 		return ""
 	}
-	c := checkGitHubApp(ctx, lc, spec.Name, spec.GitHubAppID, appKeySource{Mem: r.appKeyMem, Read: r.o.checkApp, SecretID: spec.Secrets["github-app-key"], Notice: r.w})
+	keyID := spec.Secrets["github-app-key"]
+	if r.o.checkApp {
+		id, err := gitSecretID(ctx, lc, spec, "the GitHub App pre-check of "+spec.Name)
+		if err != nil {
+			// One line, and for a drift the short form of it: oneLineCLI
+			// prints through pluginwire.Printable, which would cut the
+			// granted ID out of the full refusal (driftError.short).
+			why := oneLineCLI(err.Error())
+			fix := ""
+			var drift *driftError
+			if errors.As(err, &drift) {
+				why = drift.short()
+				fix = "\n  fix: run " + selfCommand() + " init --repo " + spec.Name + " in its checkout, so the mounts and the grants agree again"
+			}
+			fmt.Fprintf(r.w, "GitHub App check for %s was not made: %s%s\n  The first image build is not offered until this is fixed (nothing was billed).\n", spec.Name, why, fix)
+			return why
+		}
+		keyID = id
+	}
+	c := checkGitHubApp(ctx, lc, spec.Name, spec.GitHubAppID, appKeySource{Mem: r.appKeyMem, Read: r.o.checkApp, SecretID: keyID, Notice: r.w})
 	for _, w := range c.Warnings {
 		r.warn(w)
 	}
@@ -2143,6 +2271,24 @@ func (o *initOptions) requireCheckoutProject(ctx context.Context, dir string) er
 // vertexBudgetRefusal is the refusal of a Vertex workflow under a budget
 // that enforces: the gateway can't yet be relied on to cap Vertex spend.
 const vertexBudgetRefusal = runner.VertexBudgetRefusal
+
+// gateCatalogSwitches is repoEngine's route-switch version gate (price-catalog
+// plan Task 4 step 2): refuseCatalogSwitches, unless there is nothing to
+// refuse it for — --forget tears the repository down, and --plan-only shows
+// the plan without applying it (the same escape planRepo's clone refusal
+// leaves). --print-vars is judged like a deploy would be, since the values it
+// prints are the ones a deploy would use, and its warnings go to stderr so
+// stdout stays the Terraform variables alone.
+func (r *initRun) gateCatalogSwitches(o *initOptions, repo string, lc *localcfg.Config) error {
+	if o.forget || o.planOnly {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseCatalogSwitches(repo, lc, w)
+}
 
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates
 // the agent through Vertex AI (agent.auth: vertex) under a project budget
@@ -2282,8 +2428,11 @@ func (r *initRun) installationOutputs(ctx context.Context, lc *localcfg.Config, 
 }
 
 // planRepo is one discover, gate, plan, guard, confirm and apply of the
-// repository root. It returns what the readiness gates found missing.
-// first says whether this is the run's first plan, whose notes are shown.
+// repository root. It returns the spec Readiness resolved (ready: what the
+// apply below just wrote, whose resolved secret IDs the caller's first
+// builds read back instead of resolving them again, B1) and what the
+// readiness gates found missing. first says whether this is the run's first
+// plan, whose notes are shown.
 //
 // Before any of that (review finding, 0.7.0 safety fix round 2): a
 // checkout: clone workflow's job must never come to exist while
@@ -2294,15 +2443,15 @@ func (r *initRun) installationOutputs(ctx context.Context, lc *localcfg.Config, 
 // checkoutConfig does not, once the job is already deployed). --plan-only
 // skips the refusal so the plan can still be shown; --print-vars never
 // reaches planRepo at all.
-func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, spec infra.RepoSpec, opts infra.RepoRootOptions, first bool) ([]infra.Missing, error) {
+func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, spec infra.RepoSpec, opts infra.RepoRootOptions, first bool) (infra.RepoSpec, []infra.Missing, error) {
 	if !r.o.planOnly {
 		if err := refuseClonesNotShipped(spec.Name, "fugaro init --repo", "deploy", cloneWorkflowNames(spec.Workflows)); err != nil {
-			return nil, err
+			return infra.RepoSpec{}, nil, err
 		}
 	}
 	im, ex, err := infra.DiscoverRepo(ctx, c, spec)
 	if err != nil {
-		return nil, initErr(err)
+		return infra.RepoSpec{}, nil, initErr(err)
 	}
 	if first {
 		for _, n := range im.Notes {
@@ -2311,30 +2460,73 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	}
 	ready, missing, err := infra.Readiness(ctx, c, spec, ex)
 	if err != nil {
-		return nil, initErr(err)
+		return infra.RepoSpec{}, nil, initErr(err)
+	}
+	if err := r.checkCheckImageKnowsGitSecretID(ready); err != nil {
+		return infra.RepoSpec{}, nil, err
 	}
 	vars, err := infra.RepoRootVars(ready, opts)
 	if err != nil {
-		return nil, err
+		return infra.RepoSpec{}, nil, err
 	}
 	if err := wd.WriteVars(vars); err != nil {
-		return nil, userErr("writing the tfvars: %v", err)
+		return infra.RepoSpec{}, nil, userErr("writing the tfvars: %v", err)
 	}
 	if err := infra.WriteImports(wd.Root, im); err != nil {
-		return nil, userErr("writing the imports: %v", err)
+		return infra.RepoSpec{}, nil, userErr("writing the imports: %v", err)
+	}
+	// The retirement, read once, from the run's first plan (design §3.1a,
+	// §4.2): the state, the labels, the union, the summary -- and, with
+	// --retire, the whole guarded flow in place of the ordinary plan below.
+	// It has to be here, before t.Plan: in the case that matters no plan
+	// exists until the protected addresses have left the state.
+	// rets outlives the block: a plan that aborts on prevent_destroy is
+	// told whether the aborting address is one of them (retireAborted).
+	var rets []infra.Retirement
+	if first && !r.retired {
+		var err error
+		rets, err = r.readRetirements(ctx, c, t, ready)
+		if err != nil {
+			return infra.RepoSpec{}, nil, err
+		}
+		if len(rets) > 0 {
+			r.retired = true
+			if r.o.retire {
+				if err := r.retirePlan(ctx, c, t, wd, ready, rets, opts, im); err != nil {
+					return infra.RepoSpec{}, nil, err
+				}
+				return ready, missing, nil
+			}
+			// The gate, and it is the two cases the design names and no
+			// more: a job the state still holds whose own values say
+			// deletion_protection = true, after its variant left the
+			// configuration, cannot be finished by any apply. --plan-only
+			// removes nothing and refuses nothing here: it prints the
+			// summary and carries on to the read-only plan.
+			if blocked := blockingJobs(r.retireState, rets); len(blocked) > 0 && !r.o.planOnly {
+				return infra.RepoSpec{}, nil, retireRefusal(blocked)
+			}
+		}
 	}
 	changed, err := t.Plan(ctx, infra.PlanFile)
 	if err != nil {
-		return nil, remote(err)
+		// A plan Terraform refuses on a prevent_destroy resource is the one
+		// failure a retirement gets its own words for (design §3.3): the
+		// summary was printed above, and Terraform's text stays in the
+		// workdir, so nothing is hidden, only re-framed.
+		if preventDestroyAbort(err) {
+			return infra.RepoSpec{}, nil, retireAborted(rets, preventDestroyAddress(err), wd.Root)
+		}
+		return infra.RepoSpec{}, nil, remote(err)
 	}
 	if !changed {
 		r.res.Changes = &infra.PlanCounts{}
 		fmt.Fprintf(r.w, "No changes: %s matches the plan.\n", spec.Name)
-		return missing, nil
+		return ready, missing, nil
 	}
 	plan, err := t.Show(ctx, infra.PlanFile)
 	if err != nil {
-		return nil, remote(err)
+		return infra.RepoSpec{}, nil, remote(err)
 	}
 	if opts.AllowJobDelete {
 		fmt.Fprintln(r.w, "⚠ --allow-job-delete: this plan lowers the deletion protection of "+spec.Name+"'s jobs, for offboarding")
@@ -2342,26 +2534,66 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	fmt.Fprint(r.w, tf.Summary(plan))
 	fmt.Fprintln(r.w, im.Bindings.String())
 	if err := guard(plan, r.o.allowDelete); err != nil {
-		return nil, err
+		return infra.RepoSpec{}, nil, err
 	}
 	counts := infra.CountPlan(plan)
 	r.res.Changes = &counts
 	if r.o.planOnly {
 		fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
-		return missing, nil
+		return ready, missing, nil
 	}
 	what := "applies " + counts.String() + " to " + spec.Name
 	if !first {
 		what += ", deploying the images just built"
 	}
 	if err := r.confirmOrdinary(what, "nothing was applied", r.notCovered(plan, im.Keys())); err != nil {
-		return nil, err
+		return infra.RepoSpec{}, nil, err
 	}
 	if err := t.Apply(ctx, infra.PlanFile); err != nil {
-		return nil, remote(err)
+		return infra.RepoSpec{}, nil, remote(err)
 	}
 	r.res.Applied = true
-	return missing, nil
+	return ready, missing, nil
+}
+
+// checkCheckImageKnowsGitSecretID is B2's gate: the daily image check job
+// reads its own spec's git_secret_id (infra.CheckJobSpec) to name the secret
+// its rebuild's clone reads, and a fugaro older than gitSecretIDSince
+// ignores that field and falls back to the repository's own ID -- which,
+// once the provider credential resolves from the project copy instead, is a
+// secret with no version at all, so every rebuild the check submits would
+// fail its clone.
+//
+// The judge is ready.Check.Image, the check job's own base ref: that job is
+// never built from a repository image, so unlike every other gate in
+// recipes_skew.go there is no build record to read (B2's own correction --
+// an earlier draft judged the record of the image the submitting CLI built,
+// which is a different, irrelevant version). It reuses baseRefReleaseRE and
+// imagePredates, the same pair baseRefReason already calls for
+// gcpProjectFieldSince.
+//
+// It fires only when the provider credential resolved to the project copy:
+// with the repository's own copy resolving, the in-job fallback names the
+// right secret anyway. A base ref that is not a release at all (a dev build,
+// a hand-pushed image, --image-source without a release tag) is a warning,
+// never a refusal: the version is genuinely unknown, the identical
+// distinction baseRefReason draws between reasonBaseRefOld and
+// reasonBaseRefDev.
+func (r *initRun) checkCheckImageKnowsGitSecretID(ready infra.RepoSpec) error {
+	logical, ok := infra.GitSecret(ready.Provider)
+	if !ok || ready.Check == nil || ready.ProjectSecrets[logical] == "" || ready.Check.Image == "" {
+		return nil
+	}
+	ref := ready.Check.Image
+	m := baseRefReleaseRE.FindStringSubmatch(ref)
+	switch {
+	case m == nil:
+		r.warn(fmt.Sprintf("the daily image check job of %s runs %s, which is not a release base image: whether its fugaro knows the resolved secret ID of %s (fugaro %s or later) is not checked, and an older one would rebuild with the repository's own %s, which has no version", ready.Name, oneLine(ref), logical, gitSecretIDSince, logical))
+	case imagePredates(m[2], gitSecretIDSince):
+		return userErr("the daily image check job of %s runs base image %s, release %s, whose fugaro predates %s's project-wide resolution (fugaro %s or later): its rebuilds would fall back to the repository's own %s, which has no version. Move the base image to a current release (set base_images.base in the local config, or fugaro init --base base), or re-enable a version of the repository's own %s (fugaro secrets set %s --repo %s) so the resolution falls back to it",
+			ready.Name, oneLine(ref), m[2], logical, gitSecretIDSince, logical, logical, logical, ready.Name)
+	}
+	return nil
 }
 
 // cloneWorkflowNames are the distinct workflow names among ws whose
@@ -2396,9 +2628,13 @@ var newCloudBuilder = func(ctx context.Context, lc *localcfg.Config) (cloudBuild
 
 // submitAndWait submits workflow name's Cloud Build from base and waits for
 // it: the one build fugaro init's first builds and fugaro image refresh run,
-// each after its caller's typed confirmation. It returns the build's ID, also when the wait fails after the submit.
-func (r *initRun) submitAndWait(ctx context.Context, b cloudBuilder, lc *localcfg.Config, cfg *config.Config, spec infra.RepoSpec, name, base string) (string, error) {
-	bs, err := cloudBuildSpec(spec, cfg, name, base, lc.Build.MachineType, lc.RecordBucketURL())
+// each after its caller's typed confirmation. gitSecretID is the provider
+// credential's ID the build's clone reads, which the caller decides: init's
+// first builds read it back out of the spec the apply just ran (B1), while a
+// standalone image refresh resolves it live and checks it against the build
+// account's own grant. It returns the build's ID, also when the wait fails after the submit.
+func (r *initRun) submitAndWait(ctx context.Context, b cloudBuilder, lc *localcfg.Config, cfg *config.Config, spec infra.RepoSpec, name, base, gitSecretID string) (string, error) {
+	bs, err := cloudBuildSpec(spec, cfg, name, base, lc.Build.MachineType, lc.RecordBucketURL(), gitSecretID)
 	if err != nil {
 		return "", err
 	}
@@ -2464,7 +2700,7 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 			r.warn(fmt.Sprintf("the first image build of %s/%s was not confirmed (the project's name was not typed), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks for the project's name too), then fugaro init --repo", spec.Name, name, spec.Name, name))
 			continue
 		}
-		if _, err := r.submitAndWait(ctx, b, lc, cfg, spec, name, base); err != nil {
+		if _, err := r.submitAndWait(ctx, b, lc, cfg, spec, name, base, appliedGitSecretID(spec)); err != nil {
 			return built, err
 		}
 		built++
@@ -2475,8 +2711,16 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 // printMissing prints what the repository still needs: each secret's fugaro
 // secrets set command, as the bootstrap printed them, and each workflow's
 // other gates.
-func (r *initRun) printMissing(spec infra.RepoSpec, versions map[string]bool, missing []infra.Missing) {
+func (r *initRun) printMissing(spec infra.RepoSpec, versions map[string]bool, missing []infra.Missing, needKey bool) {
 	steps := infra.SecretCommands(spec, versions, selfCommand(), quoteWord)
+	if !needKey {
+		// This run never calls Anthropic, so the key is not missing: it gates
+		// nothing (infra.NeedsBuild skips it), the job deploys without it, and
+		// nothing about it may be listed as missing -- not here, and not in
+		// the --json result, which is the same list. The rule is the one
+		// init's own secrets stage asks (needsAnthropicKey).
+		steps = slices.DeleteFunc(steps, func(st infra.SecretStep) bool { return st.Optional })
+	}
 	var other []string
 	for _, m := range missing {
 		// Secrets are listed as commands below.

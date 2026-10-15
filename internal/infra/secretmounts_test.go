@@ -86,3 +86,46 @@ func TestGitSecret(t *testing.T) {
 		t.Errorf("GitSecret(gitlab) = %q, %v", got, ok)
 	}
 }
+
+// TestSecretMountsNoListProviderAvailableToAnyRepo proves the automatic
+// consequence of Task 1's AllowsData change: spec.go's per-provider mount
+// condition is unedited, and a provider with no allow_data_to at all is
+// now eligible for every repository (design §3a).
+func TestSecretMountsNoListProviderAvailableToAnyRepo(t *testing.T) {
+	lc := &localcfg.Config{Providers: map[string]config.ModelProvider{
+		"openrouter": {Secret: "openrouter-api-key"}, // no AllowDataTo at all
+	}}
+	w := config.Workflow{}
+	ms, err := SecretMounts("bitbucket-token", &config.Config{Agent: config.Agent{Auth: "api-key"}}, "app", config.DefaultClaudeAccount, w, lc, "acme/never-named")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, m := range ms {
+		if m.Logical == "openrouter-api-key" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("mounts = %+v, want openrouter-api-key present for a repo the no-list provider never named (design §3a)", ms)
+	}
+}
+
+// TestSecretMountsListedProviderStillRefusesUnlistedRepo is the paired
+// mutation-proof case: P7 must not weaken a real, non-empty, non-wildcard
+// list.
+func TestSecretMountsListedProviderStillRefusesUnlistedRepo(t *testing.T) {
+	lc := &localcfg.Config{Providers: map[string]config.ModelProvider{
+		"openrouter": {Secret: "openrouter-api-key", AllowDataTo: []string{"acme/app"}},
+	}}
+	w := config.Workflow{}
+	ms, err := SecretMounts("bitbucket-token", &config.Config{Agent: config.Agent{Auth: "api-key"}}, "app", config.DefaultClaudeAccount, w, lc, "acme/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range ms {
+		if m.Logical == "openrouter-api-key" {
+			t.Fatalf("mounts = %+v, want no openrouter-api-key for a repo an explicit, non-empty list excludes (P7 must not weaken this case)", ms)
+		}
+	}
+}

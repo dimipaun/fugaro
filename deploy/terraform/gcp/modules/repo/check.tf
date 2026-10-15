@@ -68,7 +68,7 @@ resource "google_cloud_run_v2_job" "check" {
             name = env.key
             value_source {
               secret_key_ref {
-                secret  = google_secret_manager_secret.this[env.value].secret_id
+                secret  = local.secrets[env.value]
                 version = "latest"
               }
             }

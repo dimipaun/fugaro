@@ -60,7 +60,11 @@ func newExecCmd() *cobra.Command {
 	f.StringVar(&o.run, "run", os.Getenv("FUGARO_RUN"), "run to execute, as <repo-slug>/<run-id>")
 	f.StringVar(&o.taskFile, "task-file", "", "store this task spec (path, or - for stdin) and run it; a run ID is generated if missing")
 	f.StringVar(&o.workDir, "workdir", "/work/repo", "repository checkout; it is force-reset to the task's ref and untracked files are removed (ignored ones are kept)")
-	f.StringVar(&o.remote, "remote", "", "clone this remote when --workdir has no checkout")
+	// The default is the job's own FUGARO_REMOTE (infra.RemoteEnv), which a
+	// checkout: clone workflow's job carries and a baked one does not: the
+	// repository has to reach a clone job from its environment, since its
+	// image holds no checkout and nothing else on Cloud Run names one.
+	f.StringVar(&o.remote, "remote", os.Getenv("FUGARO_REMOTE"), "clone this remote when --workdir has no checkout (default: $FUGARO_REMOTE)")
 	f.StringVar(&o.stateDir, "state-dir", "/work/state", "run state directory, outside the checkout; created if absent, and only Fugaro's own entries in it (verify/, workflow.json, pr.md) are replaced")
 	f.StringVar(&o.provider, "provider", os.Getenv("FUGARO_GIT_PROVIDER"), `git provider: github or bitbucket to open it before fugaro.yaml is read (it must match git.provider), or "fake" for the file-backed test provider; empty lets the origin URL's host, then git.provider, decide`)
 	f.StringVar(&o.providerState, "provider-state", "", "state file for --provider fake")
@@ -93,9 +97,11 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	if spendErr == nil {
 		spendErr = provErr
 	}
+	// Where this process runs, resolved once and read by every check below.
+	platform := execPlatform(o, os.Getenv)
 	// The budget backend (the project's Firebase database): a local run may
-	// point it at a loopback database, a job on Cloud Run never.
-	be, beErr := runner.BackendFromEnv(os.LookupEnv, !backend.OnCloudRun(os.Getenv))
+	// point it at a loopback database, a cloud run never.
+	be, beErr := runner.BackendFromEnv(os.LookupEnv, platform.Local())
 	if o.identityURL != "" {
 		be.Tune = func(c *budget.Config) { c.IdentityURL, c.SecureTokenURL = o.identityURL, o.identityURL }
 	}
@@ -123,11 +129,12 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	// On Cloud Run the job's own names come first: a job set up before M9a
 	// fails here, cleanly, before anything compares its old FUGARO_PROJECT
 	// (a GCP ID) with a project name.
-	if err := refuseOldJobEnv(ctx, cmd, o, os.Getenv, time.Now); err != nil {
+	if err := refuseOldJobEnv(ctx, cmd, o, platform, os.Getenv, time.Now); err != nil {
 		return err
 	}
-	// On Cloud Run, the canonical execution name; "" for a local run.
-	execName, err := backend.ExecutionFromEnv(os.Getenv)
+	// The canonical execution name of the run this process is; "" for a
+	// local run and for a platform no backend claims.
+	execName, err := platform.ExecutionFromEnv(os.Getenv)
 	if err != nil {
 		return err
 	}
@@ -178,7 +185,7 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 		return fmt.Errorf("finding the fugaro executable: %w", err)
 	}
 	log = runner.NewLogger(cmd.ErrOrStderr(), "run_id", runID, "repo", slug)
-	prices := execPrices(os.Getenv, warn)
+	prices := execPrices(platform, os.Getenv, warn)
 	rec, runErr := runner.Run(ctx, runner.Deps{
 		Store: runstore.Open(bucket.Bucket, slug, runID), OpenProvider: openProvider, ProviderKind: providerKind, Agent: agent.Claude{Bin: o.claudeBin},
 		WorkDir: workDir, Remote: o.remote, StateDir: stateDir, Env: env,
@@ -186,9 +193,11 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 		Bucket: bucket, Execution: execName, BaseImage: os.Getenv("FUGARO_BASE_IMAGE"),
 		Prices: prices, Spend: spend, SpendErr: spendErr, Providers: providers, Backend: be, BackendErr: beErr,
 		GatewayUpstream: o.gatewayUpstream, ManagedSettingsPath: o.managedSettings,
-		// A job belongs to one Fugaro project; on Cloud Run a job that
-		// doesn't say which is refused at bootstrap.
-		Project: os.Getenv("FUGARO_PROJECT"), RequireProject: backend.OnCloudRun(os.Getenv),
+		// A job belongs to one Fugaro project; a run in the cloud that
+		// doesn't say which is refused at bootstrap. Local is the
+		// exception the runner reads, and its zero value is the cloud, so
+		// the field is set only by the invocation that named it.
+		Project: os.Getenv("FUGARO_PROJECT"), Local: platform.Local(),
 	})
 	var writeErr error
 	if rec != nil {
@@ -250,14 +259,19 @@ func oldJobEnvReason(missing string) string {
 	return "job environment lacks " + missing + ": run fugaro init --repo from the repository's checkout; see docs/design/m9-budget-and-dashboard.md §13.1"
 }
 
-// refuseOldJobEnv is nil unless this is a Cloud Run execution whose job
+// refuseOldJobEnv is nil unless this process is in the cloud and its job
 // lacks FUGARO_GCP_PROJECT or FUGARO_PROJECT. Then it records an
 // infra_error for the run (create-if-absent, like the runner's first
 // record, so it never replaces another execution's) and returns the exit-2
 // error. The record carries no execution name: without the GCP project one
 // can't be formed.
-func refuseOldJobEnv(ctx context.Context, cmd *cobra.Command, o execOptions, getenv func(string) string, now func() time.Time) error {
-	if !backend.OnCloudRun(getenv) {
+//
+// "In the cloud" is the platform's fail-closed answer, not Cloud Run's own
+// signal: a process whose platform no backend recognises is checked here
+// too, rather than slipping through as a local run (design
+// compute-backend.md §2.5).
+func refuseOldJobEnv(ctx context.Context, cmd *cobra.Command, o execOptions, platform backend.Platform, getenv func(string) string, now func() time.Time) error {
+	if !platform.InCloud() {
 		return nil
 	}
 	missing := ""
@@ -358,12 +372,39 @@ func readTaskFile(path string, stdin io.Reader) (*task.Spec, error) {
 	return &s, nil
 }
 
+// execPlatform is where this process runs, resolved from the invocation
+// first and from the platforms' own signals second (design
+// compute-backend.md §2.5, C12). Every check in runExec reads this one
+// value.
+//
+// Local is the invocation's own answer, never a missing marker: `exec
+// --task-file` is the CLI's one local invocation, and it names the local
+// case only where no platform claims the process -- the same flag on a
+// Cloud Run execution stays a contradiction, refused later, because the
+// two rules cannot both apply to one run. Everything else is in the cloud,
+// so a platform no backend claims (or one whose marker was stripped) fails
+// closed rather than open.
+func execPlatform(o execOptions, getenv func(string) string) backend.Platform {
+	platform := backend.DetectPlatform(getenv)
+	if o.taskFile != "" && platform.Backend() == "" {
+		return backend.LocalPlatform()
+	}
+	return platform
+}
+
 // execPrices are the prices the runner estimates compute with: on Cloud
 // Run, the job's FUGARO_COMPUTE_PRICES override, else (or when it is
 // malformed, with a warning) the list price of FUGARO_REGION; nil for a
 // local run, whose compute isn't estimated.
-func execPrices(getenv func(string) string, warn func(string)) *backend.Prices {
-	if getenv("FUGARO_BACKEND") != backend.CloudRun {
+//
+// It asks the platform, not FUGARO_BACKEND (design compute-backend.md
+// §5.2, site 3): the variable is the launcher's record of the backend it
+// chose, and keying prices on it made a second cloud backend record no
+// compute cost at all. A platform no backend claims has no price table
+// either, so its prices are nil -- the same as today's non-Cloud-Run
+// answer, and a backend added to backend.DetectPlatform brings its own.
+func execPrices(platform backend.Platform, getenv func(string) string, warn func(string)) *backend.Prices {
+	if platform.Backend() != backend.CloudRun {
 		return nil
 	}
 	p, ok, err := runner.PricesFromEnv(getenv)

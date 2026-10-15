@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -213,6 +214,26 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 			return userErr("%v", err)
 		}
 	}
+	// The base image reaches the build's FROM line as it stands, so a
+	// reference under the installation's remote (pull-through) repository
+	// that is not a pin this tool wrote is refused here, not taken as the
+	// operator's own image: the proxy serves all of ghcr.io, and every job
+	// of this repository would pull whatever that path's owner publishes.
+	// The same goes for every other kind's entry, which goes into the
+	// repository's spec beside it (design §3.6, §10.7).
+	host, err := infra.RegistryHost(lc)
+	if err != nil {
+		return userErr("%v", err)
+	}
+	kind := cfg.Workflows[name].BaseKind()
+	for _, k := range slices.Sorted(maps.Keys(lc.BaseImages)) {
+		if foreignProxyRef(lc.BaseImages[k], host, k, baseOwner(lc)) {
+			return foreignProxyRefusal("the base image for "+k, lc.BaseImages[k], host, k, baseOwner(lc))
+		}
+	}
+	if foreignProxyRef(base, host, kind, baseOwner(lc)) {
+		return foreignProxyRefusal("the base image for "+kind, base, host, kind, baseOwner(lc))
+	}
 	// Every name comes from the repository's spec, as fugaro init --repo
 	// creates them: the build account, the registry (refused when its host
 	// names another GCP project than the config's own) and the provider
@@ -235,7 +256,15 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	if note := buildRecordNote(lc); note != "" {
 		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", note)
 	}
-	spec, err := cloudBuildSpec(rs, cfg, name, base, lc.Build.MachineType, lc.RecordBucketURL())
+	// The provider credential's ID as live state resolves it, checked
+	// against what this repository's build account is actually granted
+	// (B1): a build submitted with an ID that account may not read fails
+	// its clone at the build's end, long after it was billed.
+	gitID, err := gitSecretID(ctx, lc, rs, "the image build of "+rs.Name)
+	if err != nil {
+		return err
+	}
+	spec, err := cloudBuildSpec(rs, cfg, name, base, lc.Build.MachineType, lc.RecordBucketURL(), gitID)
 	if err != nil {
 		return err
 	}
@@ -368,16 +397,18 @@ func buildRecordNote(lc *localcfg.Config) string {
 // cloudBuildSpec is the Cloud Build build of workflow name of the
 // repository rs, from base, recording to bucket (gs://…, the local
 // config's RecordBucketURL): the one spec fugaro image build, fugaro
-// init's first build and the daily image check submit.
-func cloudBuildSpec(rs infra.RepoSpec, cfg *config.Config, name, base, machineType, bucket string) (gcp.BuildSpec, error) {
-	ws, ok := rs.Workflows[name]
-	if !ok {
+// init's first build and the daily image check submit. gitSecretID is the
+// secret the build's clone reads (rs.Secrets[ws.GitSecret] would be the
+// repository's own copy, which Readiness may have resolved past: design
+// docs/design/project-secrets.md §5), never looked up here.
+func cloudBuildSpec(rs infra.RepoSpec, cfg *config.Config, name, base, machineType, bucket, gitSecretID string) (gcp.BuildSpec, error) {
+	if _, ok := rs.Workflows[name]; !ok {
 		return gcp.BuildSpec{}, userErr("fugaro.yaml has no workflow %q", name)
 	}
 	return gcp.BuildSpec{
 		Slug: rs.Slug, GitProvider: rs.Provider, RepoURL: rs.RepoURL, BaseBranch: cmp.Or(rs.BaseBranch, "main"), Workflow: name, Base: base,
 		Image:       gcp.ImageName(rs.RegistryPath, rs.Slug, name),
-		GitSecretID: rs.Secrets[ws.GitSecret], GitUser: rs.GitUser, GitHubAppID: rs.GitHubAppID,
+		GitSecretID: gitSecretID, GitUser: rs.GitUser, GitHubAppID: rs.GitHubAppID,
 		ServiceAccount: rs.BuildServiceAccountEmail, MachineType: machineType,
 		WorkflowSecrets:    cfg.Workflows[name].Secrets,
 		Bucket:             bucket,

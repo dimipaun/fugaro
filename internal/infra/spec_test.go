@@ -5,14 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
+	terraform "github.com/dimipaun/fugaro/deploy/terraform"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -26,6 +29,10 @@ var update = flag.Bool("update", false, "rewrite the golden tfvars under deploy/
 // goldenDir holds the repository root's tfvars fixtures, the Go side of the
 // contract with the Terraform modules.
 const goldenDir = "../../deploy/terraform/gcp/roots/repo/tests/testdata"
+
+// baseTestDigest is any well-formed sha256 digest: BaseImageWarnings reads
+// the reference's registry and path, never its digest.
+const baseTestDigest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 
 // m4LocalConfig is the local config the M4 job spec was captured with
 // (testdata/README.md).
@@ -639,6 +646,32 @@ func TestSpecCloneSetsCheckoutEnv(t *testing.T) {
 	}
 }
 
+// TestSpecCloneSetsRemoteEnv (review C1): a clone job runs the installation's
+// base image, which holds no checkout, and nothing on Cloud Run names a
+// repository for it: FUGARO_CHECKOUT=clone alone would leave the runner with
+// nothing to clone. The job carries the repository's own credential-free
+// clone URL in FUGARO_REMOTE (runner.RemoteEnv), which fugaro exec's --remote
+// defaults to — repoURL is what checks that URL is https, carries no
+// credentials and is this repository's — and a baked workflow's job carries
+// no such key, so nothing baked changes.
+//
+// Mutation (run, restore): delete the `ws.Env[RemoteEnv] = c.repoURL` line in
+// workflow() — this test then fails: web's env has no FUGARO_REMOTE, and the
+// end-to-end test in internal/cli (TestExecCloneJobClonesTheRepositoryItWas
+// DeployedFor) fails with "this job has no repository to clone".
+func TestSpecCloneSetsRemoteEnv(t *testing.T) {
+	rs, err := Repo(cloneInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rs.Workflows["web"].Env[RemoteEnv]; got != "https://github.com/acme/webapp.git" {
+		t.Errorf("web's %s = %q, want the repository's clone URL", RemoteEnv, got)
+	}
+	if _, ok := rs.Workflows["api"].Env[RemoteEnv]; ok {
+		t.Errorf("api (baked) carries %s = %q, want no such key", RemoteEnv, rs.Workflows["api"].Env[RemoteEnv])
+	}
+}
+
 func TestSpecRefuses(t *testing.T) {
 	var ue *UserError
 	for name, mutate := range map[string]func(*Inputs){
@@ -810,7 +843,7 @@ func TestInstallationSpec(t *testing.T) {
 		t.Fatal(err)
 	}
 	n := s.Names
-	if n.SchedulerServiceAccountID != "fugaro-scheduler" || n.BaseRegistry != "fugaro-base" || n.LegacyRegistry != "fugaro" ||
+	if n.SchedulerServiceAccountID != "fugaro-scheduler" || n.BaseRegistry != "fugaro-base" || n.GhcrRegistry != "fugaro-ghcr" || n.LegacyRegistry != "fugaro" ||
 		n.RoleIDs != (InstallationRoleIDs{Launcher: "fugaroLauncher", JobRunner: "fugaroJobRunner", BuildSubmitter: "fugaroBuildSubmitter", TagMover: "fugaroTagMover"}) ||
 		n.Log != (LogNames{Bucket: "fugaro", View: "fugaro-runs", Sink: "fugaro-jobs", Exclusion: "fugaro-jobs-from-default"}) {
 		t.Errorf("names = %+v", n)
@@ -892,19 +925,28 @@ func TestDefaultInstallationOutputs(t *testing.T) {
 	}
 }
 
-// The build account can read only the installation's base registry, so a
-// base image elsewhere (an M4 local config's, in the legacy registry)
-// would fail every build at its pull.
+// The build account can read only the installation's two image
+// repositories — the base registry (the copy an earlier release made) and
+// the remote (pull-through) repository over ghcr.io (this release's pin) —
+// so a base image elsewhere (an M4 local config's, in the legacy registry,
+// or ghcr.io itself, whose upstream the remote repository is) would fail
+// every build at its pull.
 func TestBaseImageWarnings(t *testing.T) {
-	outs := InstallationOutputs{RegistryHost: "us-east5-docker.pkg.dev/proj-1234", BaseRegistry: BaseRegistry}
+	outs := InstallationOutputs{RegistryHost: "us-east5-docker.pkg.dev/proj-1234", BaseRegistry: BaseRegistry, GhcrRegistry: GhcrRegistry}
 	if ws := BaseImageWarnings(nil, outs); len(ws) != 0 {
 		t.Errorf("no base images: %v", ws)
 	}
+	pin := "us-east5-docker.pkg.dev/proj-1234/" + GhcrRegistry + "/dimipaun/fugaro-base:0.7.5@" + baseTestDigest
 	for base, warn := range map[string]bool{
-		"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc":  false,
-		"us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro-base:dev-0123abc":       true,
-		"us-east5-docker.pkg.dev/proj-1234/fugaro-basex/fugaro-base:dev-0123abc": true,
-		"us-east5-docker.pkg.dev/other-proj/fugaro-base/fugaro-base:dev-0123abc": true,
+		"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc": false,
+		pin: false,
+		"us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro-base:dev-0123abc":                            true,
+		"us-east5-docker.pkg.dev/proj-1234/fugaro-basex/fugaro-base:dev-0123abc":                      true,
+		"us-east5-docker.pkg.dev/proj-1234/fugaro-ghcrx/dimipaun/fugaro-base:0.7.5@" + baseTestDigest: true,
+		"us-east5-docker.pkg.dev/other-proj/fugaro-base/fugaro-base:dev-0123abc":                      true,
+		// The remote repository's upstream is not the installation's own
+		// repository: a pull there is not one the build accounts can make.
+		"ghcr.io/dimipaun/fugaro-base:0.7.5": true,
 	} {
 		got := BaseImageWarnings(map[string]string{"base": base}, outs)
 		if (len(got) != 0) != warn {
@@ -922,6 +964,11 @@ func TestBaseImageWarnings(t *testing.T) {
 		"kind-a": "us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro-base:1",
 		"kind-z": "ghcr.io/dimipaun/fugaro-base:1",
 	}, outs)
+	// Both repositories named in the warning: the operator reading it needs
+	// to see where a base image may go, not only where it may not.
+	if len(got) != 2 || !strings.Contains(got[0], outs.RegistryHost+"/"+BaseRegistry) || !strings.Contains(got[0], outs.RegistryHost+"/"+GhcrRegistry) {
+		t.Errorf("the warnings %q don't name both repositories", got)
+	}
 	if len(got) != 2 || !strings.Contains(got[0], "base_images.kind-a") || !strings.Contains(got[1], "base_images.kind-z") {
 		t.Errorf("warnings = %q", got)
 	}
@@ -1612,4 +1659,450 @@ func TestRepoSpecSecretMountsOnlyTheVariantsOwnToken(t *testing.T) {
 			t.Errorf("%s: claude secrets mounted = %v, want exactly %v", c.variant, claudeSecrets, want)
 		}
 	}
+}
+
+// A migrated base_images.base is in the installation's own project, through
+// its remote repository, so nothing is warned about: the build account can
+// read it. The remote repository's own upstream on ghcr.io is not in the
+// installation's project and still warns — the pull there is not one the
+// build account can make.
+func TestBaseImageWarningsAcceptTheRemoteRepository(t *testing.T) {
+	outs := InstallationOutputs{RegistryHost: "us-east5-docker.pkg.dev/proj-1234", BaseRegistry: BaseRegistry, GhcrRegistry: GhcrRegistry}
+	pin := outs.RegistryHost + "/" + GhcrRegistry + "/dimipaun/fugaro-base:0.7.5@" + baseTestDigest
+	if ws := BaseImageWarnings(map[string]string{"base": pin}, outs); len(ws) != 0 {
+		t.Errorf("the pin: %v", ws)
+	}
+	if ws := BaseImageWarnings(map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.7.5"}, outs); len(ws) != 1 {
+		t.Errorf("the upstream itself: %v", ws)
+	} else if !strings.Contains(ws[0], outs.RegistryHost+"/"+GhcrRegistry) {
+		t.Errorf("the warning does not name the remote repository: %q", ws[0])
+	}
+}
+
+func TestRepoNeverPrunesSecretsButGainsCandidates(t *testing.T) {
+	before, err := Repo(sandboxInputs(t, m5Additions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before.ProjectSecretCandidates) != 0 {
+		t.Fatalf("ProjectSecretCandidates = %+v, want none with no project_secrets configured", before.ProjectSecretCandidates)
+	}
+	// bitbucket-token is the sandbox's git credential, mounted by every
+	// workflow (SecretMounts's unconditional first entry) -- allow-listing
+	// it project-wide here is the design's own worked example (§6).
+	after, err := Repo(sandboxInputs(t, m5Additions+"project_secrets:\n  bitbucket-token:\n    allow_data_to: [\"acme/sandbox\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// (a) P2's golden property: the key SET (and every ID) is identical,
+	// unaffected by project_secrets existing at all.
+	if !maps.Equal(before.Secrets, after.Secrets) {
+		t.Fatalf("rs.Secrets changed:\nbefore: %+v\nafter:  %+v", before.Secrets, after.Secrets)
+	}
+	// (b) ProjectSecretCandidates gains EXACTLY the expected new entry.
+	want := map[string]string{"bitbucket-token": gcp.ProjectSecretID("aurora", "bitbucket-token")}
+	if !maps.Equal(after.ProjectSecretCandidates, want) {
+		t.Fatalf("ProjectSecretCandidates = %+v, want %+v", after.ProjectSecretCandidates, want)
+	}
+}
+
+// The containers the installation root plans (design §4, installation
+// secrets.tf): §3a's rule is that every provider gets one whether or not its
+// allow_data_to exists -- an absent list is a valid "every repository" state,
+// not a reason to skip the container -- while a project_secrets or
+// claude_accounts entry needs a non-empty list, an empty one meaning nobody.
+// A mutation that drops the unconditional provider branch, or that lets an
+// empty-list entry through, leaves the rest of the spec identical, so nothing
+// else fails.
+func TestProjectSecretContainers(t *testing.T) {
+	const accounts = `claude_accounts:
+  acme-personal:
+    allow_data_to: [acme/sandbox]
+  acme-nobody:
+    allow_data_to: []
+`
+	tests := []struct {
+		name string
+		lc   string
+		want []string
+	}{
+		{"nothing configured", "", nil},
+		{"project_secrets entry with a list", projectSecretLC, []string{"bitbucket-token"}},
+		{"project_secrets entry with an empty list", "project_secrets:\n  bitbucket-token: { allow_data_to: [] }\n", nil},
+		{"provider with no list", noListProviderLC, []string{"no-list-key"}},
+		{"provider with a list", providerLC, []string{"openrouter-api-key", "other-key"}},
+		{"named account with a list", accounts, []string{"claude-oauth-token-acme-personal"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lc := parseLC(t, m4LocalConfig+m5Additions+tt.lc)
+			spec, err := Installation(lc, InstallOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := map[string]string{}
+			for _, logical := range tt.want {
+				want[logical] = gcp.ProjectSecretID(lc.Name, logical)
+			}
+			if !maps.Equal(spec.ProjectSecrets, want) {
+				t.Errorf("ProjectSecrets = %+v, want %+v", spec.ProjectSecrets, want)
+			}
+		})
+	}
+}
+
+// --- RepoSpec.Addresses (plan docs/plans/2026-10-14-config-transitions.md Task 1)
+
+// The golden fixtures' agent blocks. oauth with one named account and
+// vertex exclude one another (Repo builds named variants only under oauth),
+// so google_project_iam_member.vertex[0] can never appear in the oauth
+// fixture's address set and needs a fixture of its own.
+const (
+	repoRootOAuthAgent  = `agent: { auth: oauth }`
+	repoRootVertexAgent = `agent: { auth: vertex }`
+)
+
+// repoRootInputs is the golden fixtures' spec: one baked workflow with its
+// daily check on, one workflow-only secret and the git provider's
+// credential, one operator and one launcher, and the agent block given.
+// Between the two agent blocks it turns every branch of the address set on
+// but checkout: clone, which TestRepoAddressesIncludesCheckOnlyWhenChecked
+// covers.
+func repoRootInputs(t *testing.T, agent string) Inputs {
+	t.Helper()
+	lc := parseLC(t, `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry_host: us-east5-docker.pkg.dev/proj-1234
+base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
+repos:
+  acme/webapp: { provider: github, base_branch: main, workflows: [web], github_app_id: "123456" }
+claude_accounts:
+  bmb: { allow_data_to: [acme/webapp] }
+`)
+	out := installationOutputs()
+	out.Launchers = []string{"user:launcher@example.com"}
+	out.Operators = []string{"user:operator@example.com"}
+	cfg := `version: 1
+project: aurora
+git: { provider: github, base_branch: main }
+` + agent + `
+workflows:
+  web:
+    commands: { build: npm run build, test: npm test }
+    secrets:
+      - { name: npm-token, env: NPM_TOKEN }
+`
+	return Inputs{LC: lc, Repo: "acme/webapp", Cfg: parseCfg(t, []byte(cfg)), Installation: out}
+}
+
+// repoRootSpec is the golden fixture's spec for the agent block given.
+func repoRootSpec(t *testing.T, agent string) RepoSpec {
+	t.Helper()
+	rs, err := Repo(repoRootInputs(t, agent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rs
+}
+
+// variantKeys are the workflow variant keys the addresses name, in the
+// order they first appear.
+func variantKeys(addrs []string) []string {
+	var out []string
+	for _, a := range addrs {
+		rest, ok := strings.CutPrefix(a, "module.repo.module.workflow[")
+		if !ok {
+			continue
+		}
+		key, _, ok := strings.Cut(rest, "]")
+		if !ok {
+			continue
+		}
+		if k, err := strconv.Unquote(key); err == nil && !slices.Contains(out, k) {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// A named Claude account is a workflow variant only under oauth: Repo
+// builds them only there, and the address set must follow the map rather
+// than drift from it (Review Focus 3).
+func TestRepoAddressesNamedVariantsOnlyUnderOAuth(t *testing.T) {
+	oauth := repoRootSpec(t, repoRootOAuthAgent)
+	if got, want := slices.Sorted(maps.Keys(oauth.Workflows)), []string{"web", "web_bmb"}; !slices.Equal(got, want) {
+		t.Fatalf("oauth spec Workflows = %v, want %v", got, want)
+	}
+	if got, want := variantKeys(oauth.Addresses()), []string{"web", "web_bmb"}; !slices.Equal(got, want) {
+		t.Errorf("oauth variant keys = %v, want %v", got, want)
+	}
+	apiKey := repoRootSpec(t, `agent: { auth: api-key }`)
+	if got, want := variantKeys(apiKey.Addresses()), []string{"web"}; !slices.Equal(got, want) {
+		t.Errorf("api-key variant keys = %v, want %v", got, want)
+	}
+	if _, ok := apiKey.Secrets["claude-oauth-token"]; ok {
+		t.Error("an api-key spec still carries the OAuth secret")
+	}
+}
+
+// A checkout: clone workflow has no derived image, so it is never checked:
+// with no checked workflow at all the check job, its invoker grant and its
+// Scheduler job are gone, and so are their addresses.
+func TestRepoAddressesIncludesCheckOnlyWhenChecked(t *testing.T) {
+	checked := repoRootSpec(t, repoRootOAuthAgent)
+	if checked.Check == nil {
+		t.Fatal("the baked fixture has no check")
+	}
+	for _, want := range []string{
+		"module.repo.google_cloud_run_v2_job.check[0]",
+		"module.repo.google_cloud_run_v2_job_iam_member.check_invoker[0]",
+		"module.repo.google_cloud_scheduler_job.check[0]",
+	} {
+		if !slices.Contains(checked.Addresses(), want) {
+			t.Errorf("a checked workflow's addresses are missing %s", want)
+		}
+	}
+	// A repository whose only workflow is checkout: clone: Repo sets no
+	// Check at all (the clone workflow is never in checked).
+	cloneLC := parseLC(t, `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry_host: us-east5-docker.pkg.dev/proj-1234
+base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
+repos:
+  acme/webapp: { provider: github, base_branch: main, workflows: [web], github_app_id: "123456" }
+`)
+	in := repoRootInputs(t, `agent: { auth: api-key }`)
+	in.LC = cloneLC
+	in.Cfg = parseCfg(t, []byte(`version: 1
+project: aurora
+git: { provider: github, base_branch: main }
+agent: { auth: api-key }
+workflows:
+  web:
+    checkout: clone
+    commands: { build: npm run build, test: npm test }
+`))
+	clone, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clone.Check != nil {
+		t.Fatal("a repository whose only workflow is clone has a check spec")
+	}
+	for _, a := range clone.Addresses() {
+		if strings.Contains(a, "check") {
+			t.Errorf("a repository with no checked workflow still names %s", a)
+		}
+	}
+}
+
+// The vertex grant exists only for agent.auth: vertex, so the oauth
+// fixture can never pin it: the vertex fixture does, and the oauth one is
+// the negative half.
+func TestRepoAddressesVertexIsNotUnderOAuth(t *testing.T) {
+	const vertexGrant = `google_project_iam_member.vertex`
+	oauth := repoRootSpec(t, repoRootOAuthAgent).Addresses()
+	if slices.ContainsFunc(oauth, func(a string) bool { return strings.Contains(a, vertexGrant) }) {
+		t.Error("the oauth spec's addresses name a vertex grant")
+	}
+	vertex := repoRootSpec(t, repoRootVertexAgent)
+	if got, want := variantKeys(vertex.Addresses()), []string{"web"}; !slices.Equal(got, want) {
+		t.Errorf("vertex variant keys = %v, want %v (vertex has no named variants)", got, want)
+	}
+	if !slices.Contains(vertex.Addresses(), `module.repo.module.workflow["web"].`+vertexGrant+`[0]`) {
+		t.Error("the vertex spec's addresses are missing the vertex grant")
+	}
+}
+
+// repoRootGoldenDir holds the golden fixtures of Addresses: the tfvars the
+// real root is planned from, and the address list that plan produced.
+const repoRootGoldenDir = "testdata"
+
+// repoRootFixtures are the two fixture specs, keyed by the golden's name.
+// A third is how the guard grows: add the key here with the agent spec it
+// plans from, add testdata/<name>.tfvars.json (TestRepoRootFixtureTfvars
+// writes it under -update), then on a machine with terraform run
+// `go test -tags terraform ./internal/infra -run TestRealRepoRootAddresses
+// -update` to write testdata/<name>_addresses.golden. CI (untagged) then
+// compares Addresses() against it on every run. Every address the modules
+// declare is named by Addresses() and by both goldens: #362's
+// module.repo.google_artifact_registry_repository_iam_member.build_ghcr was
+// the last one the untagged guard caught as missing, and naming it in
+// Addresses() and regenerating the goldens from the real plan is what closed
+// that gap.
+var repoRootFixtures = map[string]string{"repo_root": repoRootOAuthAgent, "repo_root_vertex": repoRootVertexAgent}
+
+// TestRepoRootFixtureTfvars keeps the committed tfvars fixtures and the Go
+// fixture that plans from them in step: the golden address list belongs to
+// exactly the spec these tfvars encode, so a fixture edit without a
+// regeneration fails here rather than silently changing what the golden
+// pins.
+func TestRepoRootFixtureTfvars(t *testing.T) {
+	for name, agent := range repoRootFixtures {
+		spec := repoRootSpec(t, agent)
+		got, err := RepoRootVars(spec, RepoRootOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(repoRootGoldenDir, name+".tfvars.json")
+		if *update {
+			if err := os.WriteFile(path, got, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		want, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("%v (regenerate with go test ./internal/infra -run TestRepoRootFixtureTfvars -update, or the tagged generator real_addresses_test.go)", err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("%s differs from the fixture spec's tfvars; regenerate with -update and review the diff", path)
+		}
+	}
+}
+
+// addressesGolden reads one golden address list.
+func addressesGolden(t *testing.T, name string) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(repoRootGoldenDir, name+"_addresses.golden"))
+	if err != nil {
+		t.Fatalf("%v (generate it with go test -tags terraform ./internal/infra -run TestRealRepoRootAddresses -update -count=1, which plans a temp copy of the real root with no credentials)", err)
+	}
+	var out []string
+	for line := range strings.Lines(string(data)) {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// Addresses is a hand-maintained mirror of the Terraform modules, so it is
+// pinned against a real plan rather than trusted (Review Focus 8): every
+// address the real root's plan produces for the fixture spec must be in
+// Addresses, and the other way round.
+func TestRepoAddressesMatchTheRealPlanGolden(t *testing.T) {
+	spec := repoRootSpec(t, repoRootFixtures["repo_root"])
+	want := addressesGolden(t, "repo_root")
+	if len(want) == 0 {
+		t.Fatal("the golden is empty")
+	}
+	got := spec.Addresses()
+	if !slices.Equal(got, want) {
+		t.Errorf("Addresses() differs from %s:\nmissing: %v\nunexpected: %v", "repo_root_addresses.golden",
+			missingFrom(want, got), missingFrom(got, want))
+	}
+}
+
+// The vertex fixture pins the one address the oauth fixture can never
+// contain, google_project_iam_member.vertex[0], and the named-account
+// variants it does not have.
+func TestRepoAddressesMatchTheVertexGolden(t *testing.T) {
+	spec := repoRootSpec(t, repoRootFixtures["repo_root_vertex"])
+	want := addressesGolden(t, "repo_root_vertex")
+	if len(want) == 0 {
+		t.Fatal("the golden is empty")
+	}
+	got := spec.Addresses()
+	if !slices.Equal(got, want) {
+		t.Errorf("Addresses() differs from repo_root_vertex_addresses.golden:\nmissing: %v\nunexpected: %v",
+			missingFrom(want, got), missingFrom(got, want))
+	}
+}
+
+// moduleResources are the resource blocks the repository's own modules
+// declare, as "type.name", for the modules a repository root includes.
+//
+// The two tests above compare Addresses() with a golden, and a golden is a
+// snapshot a manual -tags terraform -update rewrites: a resource added to a
+// module -- #362's google_artifact_registry_repository_iam_member.build_ghcr,
+// say -- leaves both sides agreeing with each other and both wrong, and
+// every fugaro init --repo would then print a false "This change retires 1
+// address" pointing at a destructive command. This reads the modules
+// themselves, embedded in the binary, so the drift fails a test that CI runs
+// with no terraform, no network and no golden to maintain.
+var moduleResources = []string{"gcp/modules/repo", "gcp/modules/workflow"}
+
+// moduleResourceRE matches a resource declaration's type and name. The
+// instance key is not in the declaration: it is for_each's, at apply time.
+var moduleResourceRE = regexp.MustCompile(`(?m)^resource\s+"([^"]+)"\s+"([^"]+)"`)
+
+// conditionalResources are the declared resources Addresses() may legitimately
+// not produce for either fixture, each with the reason it is off. Every entry
+// is a hole in this guard, so it takes a reason: a resource that is merely
+// missing because nobody regenerated the golden does not belong here.
+var conditionalResources = map[string]string{}
+
+// TestAddressesCoversEveryModuleResource is the drift guard the goldens
+// cannot be: every resource the repo and workflow modules declare must show
+// up in the union of the two fixtures' Addresses(), or a retirement would be
+// predicted for something the plan really produces.
+func TestAddressesCoversEveryModuleResource(t *testing.T) {
+	var addrs []string
+	for _, agent := range repoRootFixtures {
+		addrs = append(addrs, repoRootSpec(t, agent).Addresses()...)
+	}
+	if len(addrs) == 0 {
+		t.Fatal("the fixtures produce no address")
+	}
+	// The address carries the instance key and its module prefix; what a
+	// declaration names is the type and the name inside it.
+	produced := func(typ, name string) bool {
+		re := regexp.MustCompile(`\.` + regexp.QuoteMeta(typ) + `\.` + regexp.QuoteMeta(name) + `(\[|$)`)
+		return slices.ContainsFunc(addrs, re.MatchString)
+	}
+	seen := 0
+	for _, dir := range moduleResources {
+		files, err := fs.Glob(terraform.FS, dir+"/*.tf")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(files) == 0 {
+			t.Fatalf("%s declares no .tf file: the guard is reading nothing", dir)
+		}
+		for _, file := range files {
+			b, err := fs.ReadFile(terraform.FS, file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, m := range moduleResourceRE.FindAllStringSubmatch(string(b), -1) {
+				typ, name := m[1], m[2]
+				seen++
+				if produced(typ, name) {
+					continue
+				}
+				if why, ok := conditionalResources[typ+"."+name]; ok {
+					t.Logf("%s.%s is declared but no fixture produces it: %s", typ, name, why)
+					continue
+				}
+				t.Errorf("%s declares %s.%s, and no fixture's Addresses() has an address for it.\n"+
+					"A retirement is computed as the state minus those addresses, so this resource would be\n"+
+					"retired -- printed as a change that removes it -- on every fugaro init --repo.\n"+
+					"Add it to Addresses() (internal/infra/spec.go), regenerate the goldens\n"+
+					"(go test -tags terraform ./internal/infra -run TestRealRepoRootAddresses -update),\n"+
+					"or list it in conditionalResources with the reason it is off in both fixtures.",
+					file, typ, name)
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no resource declaration was read: the guard is reading nothing")
+	}
+}
+
+// missingFrom are the items of want that got does not have.
+func missingFrom(want, got []string) []string {
+	var out []string
+	for _, w := range want {
+		if !slices.Contains(got, w) {
+			out = append(out, w)
+		}
+	}
+	return out
 }

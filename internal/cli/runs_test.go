@@ -1135,6 +1135,16 @@ func TestLsIsGone(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `unknown command "ls"`) {
 		t.Fatalf("ls = %v, want an unknown-command error", err)
 	}
+	// The exit code is part of the contract, not just the message. With the
+	// tombstone gone, `fugaro ls` is nothing but a typo to cobra, and a typo
+	// is a user error: exit 1 (design v1 §9.1, "1 for a user error, 2 for a
+	// remote failure"). Nothing here touched the cloud, so it must never be
+	// ExitRemoteError. (The deleted tombstone's line in design generic-tool
+	// §5 said "exits 2", which the tombstone's own code never did: it
+	// returned userErr, exit 1.)
+	if got := ExitCode(err); got != ExitUserError {
+		t.Fatalf("fugaro ls exit code = %d, want %d (an unknown command is a user error)", got, ExitUserError)
+	}
 }
 
 func TestSingularNounAliases(t *testing.T) {

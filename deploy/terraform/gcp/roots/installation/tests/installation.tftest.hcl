@@ -17,6 +17,7 @@ variables {
   names = {
     legacy_registry              = "fugaro"
     base_registry                = "fugaro-base"
+    ghcr_registry                = "fugaro-ghcr"
     scheduler_service_account_id = "fugaro-scheduler"
     role_ids = {
       launcher        = "fugaroLauncher"
@@ -57,7 +58,7 @@ run "root_passes_inputs" {
     error_message = "the root must pass fugaro_project to the module and output it as project_name"
   }
   assert {
-    condition     = output.base_registry == "fugaro-base" && output.legacy_registry == "fugaro"
+    condition     = output.base_registry == "fugaro-base" && output.legacy_registry == "fugaro" && output.ghcr_registry == "fugaro-ghcr"
     error_message = "the root must pass the registry names and adopt_legacy_registry to the module"
   }
   assert {
@@ -167,11 +168,15 @@ run "registries_are_marked" {
     error_message = "both registries are Docker registries"
   }
   assert {
+    condition     = google_artifact_registry_repository.ghcr.mode == "REMOTE_REPOSITORY" && google_artifact_registry_repository.ghcr.remote_repository_config[0].docker_repository[0].custom_repository[0].uri == "https://ghcr.io"
+    error_message = "the remote repository must proxy https://ghcr.io"
+  }
+  assert {
     condition     = length(google_artifact_registry_repository.legacy[0].cleanup_policies) == 0
     error_message = "the legacy registry holds the rollback's images and must have no cleanup policy"
   }
   assert {
-    condition     = output.legacy_registry == "fugaro" && output.base_registry == "fugaro-base"
+    condition     = output.legacy_registry == "fugaro" && output.base_registry == "fugaro-base" && output.ghcr_registry == "fugaro-ghcr"
     error_message = "the registry outputs must be the IDs"
   }
   assert {
@@ -1465,5 +1470,60 @@ run "same_project_resolved_iam" {
       [for p in r.permissions : !can(regex("^(firebase|datastore|identitytoolkit|iam\\.|resourcemanager|serviceusage|apikeys)", p))]],
     ]))
     error_message = "no installation custom role holds a permission on the budget backend, identities or IAM"
+  }
+}
+
+# The project-wide secret containers (design docs/design/project-secrets.md
+# §4). What this run pins is the shape a config edit must not quietly change:
+# the labels discovery adopts one by, the ID the plan creates or imports it
+# at, automatic replication (any other replication would replace an adopted
+# container, deleting every version first), and the operator grant -- an
+# operator stores versions and reads metadata, so secretVersionAdder and
+# viewer, never secretAccessor: the value is readable by the jobs that mount
+# it, not by the people who store it.
+run "project_secrets" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    project_secrets = {
+      "anthropic-api-key" = "fugaro-aurora-anthropic-api-key-0f0f0f0f0f0f0f0f"
+      "bitbucket-token"   = "fugaro-aurora-bitbucket-token-1e1e1e1e1e1e1e1e"
+    }
+  }
+
+  assert {
+    condition     = length(google_secret_manager_secret.project) == length(var.project_secrets)
+    error_message = "there must be exactly one container per project-wide input"
+  }
+  assert {
+    condition = alltrue([for k, s in google_secret_manager_secret.project :
+    s.labels == tomap({ fugaro = "managed", fugaro_project = "aurora", fugaro_secret = k })])
+    error_message = "each project-wide container must carry fugaro=managed, fugaro_project and its own fugaro_secret, the labels fugaro secrets set checks before adopting it"
+  }
+  assert {
+    condition     = tomap({ for k, s in google_secret_manager_secret.project : k => s.secret_id }) == var.project_secrets
+    error_message = "each container's secret_id must be the input ID (gcp.ProjectSecretID)"
+  }
+  assert {
+    condition = alltrue([for s in google_secret_manager_secret.project :
+    length(s.replication) == 1 && length(s.replication[0].auto) == 1])
+    error_message = "every project-wide container must be replicated automatically"
+  }
+  assert {
+    condition = toset([for m in google_secret_manager_secret_iam_member.operator : "${m.secret_id} ${m.role} ${m.member}"]) == toset(flatten([
+      for k, id in var.project_secrets : [
+        "${id} roles/secretmanager.secretVersionAdder user:operator@example.com",
+        "${id} roles/secretmanager.viewer user:operator@example.com",
+      ]
+    ]))
+    error_message = "an operator gets secretVersionAdder and viewer on each project-wide container, and nothing else"
+  }
+  assert {
+    condition     = alltrue([for m in google_secret_manager_secret_iam_member.operator : m.role != "roles/secretmanager.secretAccessor"])
+    error_message = "no operator may read a project-wide secret's value"
   }
 }

@@ -3,10 +3,14 @@ package cli
 import (
 	"bytes"
 	"context"
+	"io"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -56,7 +60,7 @@ func TestCheckRecipeImage(t *testing.T) {
 	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.4.1")
 	err := checkRecipeImage(context.Background(), env, appSlug, spec, "", &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "fugaro.yaml's agent.recipe needs a job image") || strings.Contains(err.Error(), "--recipe default") ||
-		!strings.Contains(err.Error(), "it copies this release's base image, points") {
+		!strings.Contains(err.Error(), "it verifies this release's base image and pins it by digest through the installation's remote repository, points") {
 		t.Fatalf("agent.recipe: %v", err)
 	}
 }
@@ -124,7 +128,7 @@ func TestCheckCloneImageSince(t *testing.T) {
 // refused on any image's release, including today's current release
 // (0.7.0), with guidance that says plainly the runner side is not released
 // yet and names checkout: baked as the way to run the workflow today; only
-// an image built from cloneSince itself (0.7.1, the release that will ship
+// an image built from cloneSince itself (0.7.5, the release that will ship
 // Task 17) passes.
 //
 // A non-release ref (dev, hand-pushed, --image-source) gets the same
@@ -145,7 +149,7 @@ func TestCheckCloneImageSinceRefusedUntilCloneSince(t *testing.T) {
 		t.Fatalf("0.7.0 (today's current release): err = %v, want refused", err)
 	}
 	for _, want := range []string{
-		"this checkout: clone workflow needs a job image whose runner knows how to provision a blobless clone (FUGARO_CHECKOUT) (fugaro 0.7.1 or later)",
+		"this checkout: clone workflow needs a job image whose runner knows how to provision a blobless clone (FUGARO_CHECKOUT) (fugaro 0.7.5 or later)",
 		"checkout: clone's own runner side is not released yet",
 		"generic-tool plan Task 17",
 		"acme/app workflow web",
@@ -179,10 +183,10 @@ func TestCheckCloneImageSinceRefusedUntilCloneSince(t *testing.T) {
 			t.Errorf("dev ref: %v lacks %q", err, want)
 		}
 	}
-	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:0.7.1"
+	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:0.7.5"
 	warn.Reset()
 	if err := checkCloneImageSince(&lc, spec, cloneSince, "this checkout: clone workflow", "how to provision a blobless clone (FUGARO_CHECKOUT)", "", &warn); err != nil {
-		t.Fatalf("0.7.1 (ships Task 17): %v", err)
+		t.Fatalf("0.7.5 (ships Task 17): %v", err)
 	}
 }
 
@@ -297,5 +301,168 @@ func TestCloneRecipeV07NeedsA07Image(t *testing.T) {
 	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:0.5.0"
 	if err := checkCloneRecipeImage(&lc, defSpec, &bytes.Buffer{}); err != nil {
 		t.Fatalf("default on 0.5.0 base: %v", err)
+	}
+}
+
+// TestRefuseCatalogSwitches pins plan P4 and Task 4 step 2 for the route
+// switches: FUGARO_MODEL_PROVIDERS is decoded with DisallowUnknownFields
+// (internal/runner/providers.go) and a decode failure is a hard bootstrap
+// error, so a route that sets require_zdr or price_policy — at any value,
+// default or not: the omitempty tags write the key whenever the owner set it
+// — cannot be deployed while no release reads it. init --repo refuses it
+// before any cloud effect, naming the release that will read it and both ways
+// out (leave it unset, or price the model under model_prices); a route that
+// sets neither passes, and so does a repository with no provider at all.
+//
+// The shipped half (the release that reads them has been tagged) judges the
+// installation's base image the way the clone gate does: a release that
+// predates catalogSince is refused, a non-release ref only warned about, and
+// no base image at all means the job is built from this release, which reads
+// them.
+func TestRefuseCatalogSwitches(t *testing.T) {
+	yes, no := true, false
+	allows := []string{"acme/app"}
+	cases := []struct {
+		name string
+		p    config.ModelProvider
+		set  bool
+	}{
+		{"neither key", config.ModelProvider{AllowDataTo: allows}, false},
+		{"require_zdr: false", config.ModelProvider{AllowDataTo: allows, RequireZDR: &no}, true},
+		{"require_zdr: true (the default, but still written)", config.ModelProvider{AllowDataTo: allows, RequireZDR: &yes}, true},
+		{"price_policy: highest", config.ModelProvider{AllowDataTo: allows, PricePolicy: config.PricePolicyHighest}, true},
+		{"price_policy: cheapest (the default, but still written)", config.ModelProvider{AllowDataTo: allows, PricePolicy: config.PricePolicyCheapest}, true},
+		{"both", config.ModelProvider{AllowDataTo: allows, RequireZDR: &no, PricePolicy: config.PricePolicyHighest}, true},
+		{"a switch on a route that may not receive this repository", config.ModelProvider{AllowDataTo: []string{"acme/other"}, RequireZDR: &no}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			lc := &localcfg.Config{Providers: map[string]config.ModelProvider{"openrouter": c.p}}
+			var warn bytes.Buffer
+			err := refuseCatalogSwitches("acme/app", lc, &warn)
+			if !c.set {
+				if err != nil || warn.Len() != 0 {
+					t.Fatalf("err = %v, warn = %q, want neither", err, warn.String())
+				}
+				// The job's own value must not carry the key either: this
+				// gate and ProvidersEnv agree on what "set" means.
+				v, err := runner.ProvidersEnv(lc.Providers, "acme/app")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(v, "require_zdr") || strings.Contains(v, "price_policy") {
+					t.Fatalf("the gate let through a value the env writes a key for: %s", v)
+				}
+				return
+			}
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want refused", err)
+			}
+			for _, want := range []string{
+				"fugaro init --repo refuses to deploy acme/app's provider openrouter",
+				"require_zdr or price_policy",
+				"fugaro " + catalogSince,
+				"model_prices",
+				"require_zdr: true, price_policy: cheapest",
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%v lacks %q", err, want)
+				}
+			}
+			if warn.Len() != 0 {
+				t.Errorf("warn = %q, want none (refused, not warned)", warn.String())
+			}
+			// The key really is in the value that would be deployed: the
+			// refusal is about a field an older runner would refuse.
+			v, err := runner.ProvidersEnv(lc.Providers, "acme/app")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(v, "require_zdr") && !strings.Contains(v, "price_policy") {
+				t.Fatalf("the gate refused a value that carries no key: %s", v)
+			}
+		})
+	}
+
+	// Several routes: every one that set a key is named, sorted.
+	lc := &localcfg.Config{Providers: map[string]config.ModelProvider{
+		"zroute": {AllowDataTo: allows, PricePolicy: config.PricePolicyHighest},
+		"aroute": {AllowDataTo: allows, RequireZDR: &no},
+		"plain":  {AllowDataTo: allows},
+	}}
+	err := refuseCatalogSwitches("acme/app", lc, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "providers aroute, zroute") || strings.Contains(err.Error(), "plain") {
+		t.Fatalf("two routes: %v", err)
+	}
+
+	// The shipped half: the base image decides. Before catalogSince is
+	// refused, at it (and past it) passes, a ref that is not a release only
+	// warns, and no base image at all passes (the job is built from this
+	// release, which reads the keys).
+	names := []string{"openrouter"}
+	judge := func(ref string) (string, error) {
+		var warn bytes.Buffer
+		err := catalogSwitchSkew("acme/app", names, ref, true, &warn)
+		return warn.String(), err
+	}
+	warn, err := judge("ghcr.io/dimipaun/fugaro-base:0.7.0")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("0.7.0: err = %v, want refused", err)
+	}
+	for _, want := range []string{
+		"the provider openrouter of acme/app sets require_zdr or price_policy",
+		"fugaro " + catalogSince + " or later",
+		"ghcr.io/dimipaun/fugaro-base:0.7.0, release 0.7.0",
+		"fugaro init --base base",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%v lacks %q", err, want)
+		}
+	}
+	if warn != "" {
+		t.Errorf("warn = %q, want none", warn)
+	}
+	for _, ref := range []string{"ghcr.io/dimipaun/fugaro-base:" + catalogSince, "ghcr.io/dimipaun/fugaro-base:0.9.0", ""} {
+		if warn, err := judge(ref); err != nil || warn != "" {
+			t.Errorf("%q: err = %v, warn = %q, want neither", ref, err, warn)
+		}
+	}
+	warn, err = judge("us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c")
+	if err != nil || !strings.Contains(warn, "not a release base image") || !strings.Contains(warn, "is not checked") {
+		t.Errorf("dev ref: err = %v, warn = %q", err, warn)
+	}
+}
+
+// TestGateCatalogSwitches is repoEngine's guard around the refusal above:
+// --forget and --plan-only pass it through (nothing is deployed; the plan can
+// still be shown), and --print-vars is judged with its warning on stderr, so
+// stdout stays the Terraform variables alone.
+func TestGateCatalogSwitches(t *testing.T) {
+	no := false
+	lc := &localcfg.Config{
+		Providers:  map[string]config.ModelProvider{"openrouter": {AllowDataTo: []string{"acme/app"}, RequireZDR: &no}},
+		BaseImages: map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.7.0"},
+	}
+	var out, errOut bytes.Buffer
+	cmd := NewRootCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	r := &initRun{o: &initOptions{}, cmd: cmd, w: &out}
+	if err := r.gateCatalogSwitches(r.o, "acme/app", lc); err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want refused", err)
+	}
+	for _, o := range []*initOptions{{planOnly: true}, {forget: true}} {
+		if err := (&initRun{o: o, cmd: cmd, w: &out}).gateCatalogSwitches(o, "acme/app", lc); err != nil {
+			t.Errorf("%+v: err = %v, want none", o, err)
+		}
+	}
+	// --print-vars: refused the same way, and nothing of it lands on stdout.
+	pv := &initOptions{printVars: true}
+	r = &initRun{o: pv, cmd: cmd, w: io.Discard}
+	if err := r.gateCatalogSwitches(pv, "acme/app", lc); err == nil {
+		t.Fatal("--print-vars: want refused")
+	}
+	if out.Len() != 0 {
+		t.Errorf("--print-vars: stdout = %q, want empty", out.String())
 	}
 }

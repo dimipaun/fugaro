@@ -93,15 +93,16 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 			secretNames = append([]string{"ANTHROPIC_API_KEY"}, secretNames...)
 		} else {
 			// The real key is registered for redaction but never put in
-			// the agent's environment: the gateway holds it.
-			realKey := p["ANTHROPIC_API_KEY"]
-			if realKey == "" {
-				return nil, nil, fmt.Errorf("secret ANTHROPIC_API_KEY is not set in the runner environment")
+			// the agent's environment: the gateway holds it. It is
+			// optional, too: a run whose models all route through
+			// providers has none, and a call that needs it is refused by
+			// the gateway rather than here (design project-centric §6.1).
+			if realKey := p["ANTHROPIC_API_KEY"]; realKey != "" {
+				if len(realKey) < 4 {
+					return nil, nil, fmt.Errorf("secret ANTHROPIC_API_KEY is shorter than 4 bytes, so it cannot be redacted safely")
+				}
+				secretValues = append(secretValues, realKey)
 			}
-			if len(realKey) < 4 {
-				return nil, nil, fmt.Errorf("secret ANTHROPIC_API_KEY is shorter than 4 bytes, so it cannot be redacted safely")
-			}
-			secretValues = append(secretValues, realKey)
 		}
 	case "oauth":
 		if spec.Gateway != nil {
@@ -122,6 +123,14 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 		}
 		v := p[k]
 		if v == "" {
+			if k == "ANTHROPIC_API_KEY" {
+				// This run has no gateway at all (the budget is off), so
+				// every call goes to Anthropic -- the key is not optional
+				// here whatever the pins are -- and "is not set" alone names
+				// no fix. Refuse with the gateway's own text, one text for
+				// both (internal/config.MissingAnthropicKey).
+				return nil, nil, fmt.Errorf("secret ANTHROPIC_API_KEY is not set in the runner environment: %s", config.MissingAnthropicKey)
+			}
 			return nil, nil, fmt.Errorf("secret %s is not set in the runner environment", k)
 		}
 		if len(v) < 4 {

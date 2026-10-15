@@ -95,6 +95,7 @@ Ask the user, with your evidence and a recommended answer for each, **one topic 
 9. `agent.recipe`: its own question, after review rounds: which task loop runs after implement. Open with the 0.5.0 requirement: the key is refused by every CLI, CI pin and job image older than 0.5.0, so tell the user before it goes into the file. Then recommend `default` (leave the key out). Offer `standard` or `solo` only if the user asks for one or says what they want; never write `agent.recipe` without their explicit decision, and never guess a recipe from the repository's domain or language.
 10. `rebuild`: usually the defaults.
 11. Workflow names, when there are several, and anything the user wants kept off Fugaro.
+12. `checkout`: **it is not shipped yet**, so say so and leave the key out — `clone` is the value today's gate refuses, while `baked` is the default and is what every build runs, so leaving the key out loses nothing. What the topic is for the day it ships: the default is `baked`, or `clone` for a workflow that needs no per-repository image (no build and no daily check; a blobless clone and `mise install` at start-up), and only when the evidence rules out everything a build gives the workflow (the keys `fugaro validate` refuses under clone — `image.apt`, `image.setup`, `image.tools`, `image.skip_build_scripts`, `dockerfile:`; a service arrives through one of those). It is the user's decision (`reference/decisions.md`; [docs/checkout.md](https://github.com/dimipaun/fugaro/blob/main/docs/checkout.md)).
 
 ## 6. Show what will execute, then get the go-ahead
 
@@ -115,7 +116,7 @@ Pin every download by version and checksum. Don't pipe a download into a shell, 
 ## 8. Secrets
 
 Run `fugaro secrets ls --json` (or read the `secrets` field of `fugaro doctor --json`).
-Compare it with what the config needs: the git credential for the provider (`github-app-key` for GitHub, `bitbucket-token` for Bitbucket), the model credential the chosen auth names (`claude-oauth-token`, `anthropic-api-key`, none for `vertex`), and each name under `workflows.<w>.secrets`. For every one that is missing, give the user a one-line command with the reason (the block below is the shape). Never ask for a value, never put one on a command line, and tell the user not to paste one into this conversation. A one-line value is typed at a hidden prompt; a multi-line one, such as the GitHub App's PEM key, must be redirected from a file with `<`. The user can also leave all of these to init's own hidden prompts in step 9. Where a credential is created, its name is shown as the author of every pull request and comment and can't be changed later. A Bitbucket repository access token: a name such as `Fugaro <org>`. A GitHub App: a name is unique across all of GitHub and the bare `Fugaro` is taken, so `<yourname>-fugaro` (for example `acme-fugaro`). The App's four repository permissions are Contents Read & write, Pull requests Read & write, Issues Read and Metadata Read, and never Workflows. Install it on this repository, and when its permissions change later, accept the change on the installation (GitHub requires it, or the old permissions stay). Details: [docs/git-providers.md](https://github.com/dimipaun/fugaro/blob/main/docs/git-providers.md).
+Compare it with what the config needs: the git credential for the provider (`github-app-key` for GitHub, `bitbucket-token` for Bitbucket), the model credential the chosen auth names (`claude-oauth-token` for `oauth`; `anthropic-api-key` for `api-key` **whenever a call actually goes direct to Anthropic**: with the budget enforcing, that is a pin no provider the repository may use serves (a run whose models all route through providers needs none), and with the budget off or observing nothing routes a call to a provider (observing only accounts for the spend), so every call goes to Anthropic and the key is always needed whatever the pins are; `vertex` needs none), and each name under `workflows.<w>.secrets`. For every one that is missing, give the user a one-line command with the reason (the block below is the shape). Never ask for a value, never put one on a command line, and tell the user not to paste one into this conversation. A one-line value is typed at a hidden prompt; a multi-line one, such as the GitHub App's PEM key, must be redirected from a file with `<`. The user can also leave all of these to init's own hidden prompts in step 9. Where a credential is created, its name is shown as the author of every pull request and comment and can't be changed later. A Bitbucket repository access token: a name such as `Fugaro <org>`. A GitHub App: a name is unique across all of GitHub and the bare `Fugaro` is taken, so `<yourname>-fugaro` (for example `acme-fugaro`). The App's four repository permissions are Contents Read & write, Pull requests Read & write, Issues Read and Metadata Read, and never Workflows. Install it on this repository, and when its permissions change later, accept the change on the installation (GitHub requires it, or the old permissions stay). Details: [docs/git-providers.md](https://github.com/dimipaun/fugaro/blob/main/docs/git-providers.md).
 
 The user runs these in their own terminal window, not through the agent, never you. One line per missing secret:
 
@@ -148,6 +149,14 @@ fugaro init --project <name>
 ```
 
 After that, suggest a first small `fugaro run` for the user to launch, and point to the `working` skill.
+
+## 10. Changing the auth, a workflow, a secret or a provider
+
+A `fugaro.yaml` edit that retires resources: see [reference/transitions.md](reference/transitions.md). The user runs this in their own terminal, not through the agent:
+
+```bash user-runs
+fugaro init --repo --retire
+```
 
 ## Dogfooding facts
 

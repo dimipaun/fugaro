@@ -56,6 +56,7 @@ variable "names" {
   type = object({
     legacy_registry              = string
     base_registry                = string
+    ghcr_registry                = string
     scheduler_service_account_id = string
     role_ids = object({
       launcher        = string
@@ -72,9 +73,9 @@ variable "names" {
   })
 
   validation {
-    condition = alltrue([for id in [var.names.legacy_registry, var.names.base_registry] :
+    condition = alltrue([for id in [var.names.legacy_registry, var.names.base_registry, var.names.ghcr_registry] :
     can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", id))])
-    error_message = "names.legacy_registry and names.base_registry must be registry IDs: 1-63 characters of a-z, 0-9 and -, starting with a letter."
+    error_message = "names.legacy_registry, names.base_registry and names.ghcr_registry must be registry IDs: 1-63 characters of a-z, 0-9 and -, starting with a letter."
   }
 
   validation {
@@ -280,4 +281,11 @@ variable "history" {
     ))
     error_message = "history.deploy_job needs the Firebase root's firebase_project and rtdb_url (an https://<instance>.firebasedatabase.app or .firebaseio.com URL, without a path)."
   }
+}
+
+variable "project_secrets" {
+  description = "Project-wide secret containers: logical name -> secret ID (gcp.ProjectSecretID), fugaro init creates/adopts each; values are never set by Terraform."
+  type        = map(string)
+  default     = {}
+  nullable    = false
 }

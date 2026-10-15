@@ -8,6 +8,29 @@ import (
 
 const dsID = "deepseek/deepseek-v4-flash"
 
+// unverifiedRow is the placeholder row a provider model used to get from the
+// embedded table, built by hand here: the built-in provider price catalog
+// prices provider models now, so no row of Embedded() carries the flag, but
+// Unverified, PriceSource, PriceCheckedAt and CacheWarning all still exist and
+// are still what a pin warning and a cost line read.
+func unverifiedRow() Model {
+	return Model{
+		ID: dsID, Unverified: true,
+		PriceSource:    "https://example.invalid/prices",
+		PriceCheckedAt: "2026-01-01",
+		Rates:          Rates{InputPerM: 0.1, OutputPerM: 0.2, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1},
+	}
+}
+
+// unverifiedTable is Embedded() plus that placeholder row: the table a
+// provider model had before the catalog, and what the tests about the
+// placeholder's behavior start from.
+func unverifiedTable() *Table {
+	t := Embedded()
+	t.Models[dsID] = unverifiedRow()
+	return t
+}
+
 func TestWithFee(t *testing.T) {
 	for _, c := range []struct {
 		in   Micros
@@ -41,24 +64,31 @@ func TestWithFee(t *testing.T) {
 }
 
 func TestUnverifiedPriceWarns(t *testing.T) {
-	tbl := Embedded()
+	tbl := unverifiedTable()
 	m, ok := tbl.Lookup(dsID)
 	if !ok {
-		t.Fatal("the starter row for " + dsID + " is missing")
+		t.Fatal("the placeholder row for " + dsID + " is missing")
 	}
 	if !m.Unverified || m.PriceSource == "" || m.PriceCheckedAt == "" {
-		t.Errorf("starter row must be unverified with a source and a date: %+v", m)
+		t.Errorf("a placeholder row must be unverified with a source and a date: %+v", m)
 	}
 	if err := m.Rates.Validate(); err != nil {
-		t.Errorf("starter rates: %v", err)
+		t.Errorf("placeholder rates: %v", err)
 	}
 	if c, _ := tbl.Lookup("claude-sonnet-5-5"); c.Unverified {
 		t.Error("a Claude row is verified")
 	}
+	// Nothing in the embedded table is a placeholder any more: the catalog is
+	// where a provider model's price comes from.
+	for id, e := range Embedded().Models {
+		if e.Unverified {
+			t.Errorf("embedded row %s is still a placeholder", id)
+		}
+	}
 }
 
 func TestOverrideBeatsEmbedded(t *testing.T) {
-	base := Embedded()
+	base := unverifiedTable()
 	o := Overrides{dsID: Rates{InputPerM: 0.11, OutputPerM: 0.22, CacheRead: 0.1}}
 	tbl, err := base.With(o)
 	if err != nil {
@@ -95,7 +125,8 @@ func TestMaxOf(t *testing.T) {
 // row says so. A Claude row keeps what the owner set.
 func TestOverrideDefaultsZeroCacheRatesOnProviderRow(t *testing.T) {
 	o := Overrides{dsID: Rates{InputPerM: 0.2, OutputPerM: 0.4, CacheRead: 0.1}, "qwen/qwen3-coder": Rates{InputPerM: 1, OutputPerM: 2}}
-	tbl, err := Embedded().With(o)
+	base := Embedded()
+	tbl, err := base.With(o)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,8 +164,8 @@ func TestOverrideDefaultsZeroCacheRatesOnProviderRow(t *testing.T) {
 		t.Errorf("wire override warned: %q", wm.CacheWarning())
 	}
 	// With does not touch the table it started from.
-	if b, _ := Embedded().Lookup(dsID); b.CacheWarning() != "" {
-		t.Error("embedded row carries a warning")
+	if b, _ := base.Lookup(dsID); b.CacheWarning() != "" {
+		t.Error("the table With started from carries a warning")
 	}
 }
 

@@ -5,11 +5,14 @@ import (
 	"math"
 	"net"
 	"net/url"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"gopkg.in/yaml.v3"
 )
 
 // Model providers are the owner's list of non-Anthropic backends a run's
@@ -25,6 +28,15 @@ const ModelProviderKind = "anthropic-compat"
 // MaxRouteFeePct bounds route_fee_pct; a larger fee is a typo.
 const MaxRouteFeePct = 50
 
+// The two price policies a provider route may set: which end of the selected
+// tier's price range the built-in price catalog charges. They are the config's
+// spelling of pricing.CatalogRoute.Policy, and ValidateModelProviders refuses
+// anything else.
+const (
+	PricePolicyCheapest = "cheapest"
+	PricePolicyHighest  = "highest"
+)
+
 // ModelProvider is one entry of the local config's providers block.
 type ModelProvider struct {
 	Kind string `yaml:"kind" json:"kind"`
@@ -38,12 +50,84 @@ type ModelProvider struct {
 	Secret string `yaml:"secret" json:"secret"`
 	// RouteFeePct is added to every charge on this provider; 0 is none.
 	RouteFeePct float64 `yaml:"route_fee_pct,omitempty" json:"route_fee_pct,omitempty"`
+	// RequireZDR prices the provider's models at the endpoints that hold no
+	// data (the built-in price catalog's zdr tier) rather than at every
+	// endpoint the model is served by. Unset means true: a route's safe end
+	// is the one the owner would have picked. It prices a tier; it does not
+	// enforce routing (see PricePolicy).
+	RequireZDR *bool `yaml:"require_zdr,omitempty" json:"require_zdr,omitempty"`
+	// PricePolicy is which end of the selected tier's price range is charged:
+	// "cheapest" or "highest"; unset means cheapest (PricePolicySet). It
+	// prices a tier; it does not choose the endpoint OpenRouter serves from,
+	// so a call may still be billed at the other end of the range (see
+	// docs/multi-model.md §2).
+	PricePolicy string `yaml:"price_policy,omitempty" json:"price_policy,omitempty"`
 	// Models are the model IDs the provider serves: exact IDs, or a prefix
 	// ending in "*" such as "deepseek/*". No two providers may overlap.
 	Models []string `yaml:"models" json:"models"`
 	// AllowDataTo are the repositories (owner/name) whose code may be sent
-	// here; empty means none.
+	// here. Absent (the zero value) or ["*"] mean every repository (owner
+	// ruling, 2026-10-13 and its follow-ups, design
+	// docs/design/project-secrets.md §3a); a list written with no
+	// repositories in it -- [] , or the key with nothing under it at all --
+	// is refused by ValidateModelProviders as ambiguous.
 	AllowDataTo []string `yaml:"allow_data_to,omitempty" json:"allow_data_to,omitempty"`
+	// allowDataToWritten records that the YAML gave allow_data_to at all.
+	// It exists because a key written with nothing under it (`allow_data_to:`
+	// with every entry commented out, or `~`) decodes to the same nil slice
+	// as an absent key -- which means every repository -- and only the
+	// mapping node can tell the two apart (UnmarshalYAML).
+	allowDataToWritten bool
+}
+
+// modelProviderType is ModelProvider's own type name, for the unknown-field
+// refusal below: UnmarshalYAML has to build the message yaml.v3's strict
+// mode would have built, and that mode names the type it was decoding into.
+var modelProviderType = reflect.TypeOf(ModelProvider{})
+
+// providerKeys are the yaml keys a providers entry accepts, read from the
+// struct's own tags so a new field is picked up without a second list.
+var providerKeys = func() map[string]bool {
+	out := map[string]bool{}
+	t := reflect.TypeOf(ModelProvider{})
+	for i := range t.NumField() {
+		if tag, _, _ := strings.Cut(t.Field(i).Tag.Get("yaml"), ","); tag != "" && tag != "-" {
+			out[tag] = true
+		}
+	}
+	return out
+}()
+
+// UnmarshalYAML decodes one providers entry, and refuses a key it does not
+// know. That second job is normally yaml.v3's own (Decoder.KnownFields), but
+// known fields are a property of a Decoder while decoding through a Node --
+// the only way to see a key that was written with nothing under it -- is
+// always lenient, so the check is repeated here, with the same message.
+func (p *ModelProvider) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: a provider must be a mapping of field to value", node.Line)}}
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if k := node.Content[i]; !providerKeys[k.Value] {
+			return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: field %s not found in type %s", k.Line, k.Value, modelProviderType)}}
+		}
+	}
+	type plain ModelProvider // no methods: decodes the fields without recursing into this one
+	var v plain
+	if err := node.Decode(&v); err != nil {
+		return err
+	}
+	*p = ModelProvider(v)
+	// A null value is short-circuited by yaml.v3 before any unmarshaler
+	// sees it, so the key's presence is read off the node itself: written
+	// with nothing under it is not the same state as absent.
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == "allow_data_to" {
+			p.allowDataToWritten = true
+			break
+		}
+	}
+	return nil
 }
 
 var (
@@ -52,15 +136,107 @@ var (
 	repoSlugRE     = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
 )
 
+// RequireZDROn reports whether the route prices the ZDR-eligible endpoints
+// only: true unless require_zdr is false (the PRSettings.EarlyDraftOn shape).
+func (p ModelProvider) RequireZDROn() bool { return p.RequireZDR == nil || *p.RequireZDR }
+
+// PricePolicySet is the policy to apply, spelled out: cheapest when the field
+// is unset. It is the value that reaches the price table, so the compiler
+// never branches on the empty string.
+func (p ModelProvider) PricePolicySet() string {
+	if p.PricePolicy == "" {
+		return PricePolicyCheapest
+	}
+	return p.PricePolicy
+}
+
+// CatalogEligible reports whether the built-in price catalog may price a
+// route at baseURL. It is an inference, not a knob: the catalog is generated
+// from OpenRouter's public API, so it prices OpenRouter itself (openrouter.ai
+// and any subdomain of it) and a loopback address, which is the fake a test
+// routes to. A vendor's own endpoint — api.deepseek.com, a Bedrock host — is
+// priced by model_prices, because its prices are the vendor's and nothing
+// here has read them (design D5, P6).
+func CatalogEligible(baseURL string) bool {
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Hostname() == "" {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "openrouter.ai" || strings.HasSuffix(host, ".openrouter.ai") {
+		return true
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // Matches reports whether the provider serves model.
 func (p ModelProvider) Matches(model string) bool {
 	return slices.ContainsFunc(p.Models, func(pat string) bool { return PatternMatches(pat, model) })
 }
 
-// AllowsData reports whether repo (owner/name) may send code to p. Git hosts
-// treat owner and repository names case-insensitively, so so does this.
+// AllowsData reports whether repo (owner/name) may send code to p: true for
+// every repository when AllowDataTo is nil (the key is absent -- never
+// written at all), or when it contains the literal entry "*" (owner ruling,
+// 2026-10-13, and its follow-ups, design docs/design/project-secrets.md
+// §3a). A list written with no repositories in it -- [] , or a null key,
+// which the unmarshaller marks with allowDataToWritten -- is refused by
+// ValidateModelProviders before this method is ever called on valid config.
+// Checking the zero value here, rather than len(...) == 0, is deliberate: it
+// keeps this method correctly fail-closed (an empty-but-not-absent list
+// matches nothing in the ContainsFunc below, and a written-but-null one
+// answers false above) even if that validation were ever bypassed.
+// Otherwise, an exact, case-insensitive match against a listed repository,
+// as before.
 func (p ModelProvider) AllowsData(repo string) bool {
-	return slices.ContainsFunc(p.AllowDataTo, func(r string) bool { return strings.EqualFold(r, repo) })
+	if p.AllowDataTo == nil {
+		return !p.allowDataToWritten
+	}
+	return slices.ContainsFunc(p.AllowDataTo, func(r string) bool { return r == "*" || strings.EqualFold(r, repo) })
+}
+
+// OpenToEveryRepo reports whether every repository of the project may use
+// p's key and send it code: an absent allow_data_to (the key never written
+// at all), or the explicit ["*"] marker -- both mean the same thing (design
+// §3a, the owner's ruling). A list written with no repositories in it is
+// refused by ValidateModelProviders and is not open.
+//
+// It exists so the three surfaces that must make this visible -- validate,
+// init and doctor -- ask one question, rather than each reading the field:
+// before this design an absent list meant nobody, so a config written under
+// the old rule silently becomes the widest setting there is.
+func (p ModelProvider) OpenToEveryRepo() bool {
+	if p.AllowDataTo == nil {
+		return !p.allowDataToWritten
+	}
+	return slices.Contains(p.AllowDataTo, "*")
+}
+
+// OpenToEveryRepoReason is why p is open to every repository, as a clause
+// for a message whose subject is the provider (validate's Problem.Path,
+// init's note, doctor's check), so the three surfaces cannot drift apart in
+// wording. The two spellings read differently on purpose: a key never
+// written is usually an oversight, while ["*"] is the marker for meaning it.
+func (p ModelProvider) OpenToEveryRepoReason() string {
+	if p.AllowDataTo == nil {
+		return "has no allow_data_to, so every repository of the project may mount its key and send it code (write allow_data_to: [\"*\"] to mean that on purpose, or remove the ambiguity by listing the repositories)"
+	}
+	return "has allow_data_to: [\"*\"]: every repository of the project may mount its key and send it code, deliberately"
+}
+
+// OpenProviders are the providers every repository of the project may use,
+// in name order.
+func OpenProviders(providers map[string]ModelProvider) []string {
+	var out []string
+	for _, name := range sortedKeys(providers) {
+		if providers[name].OpenToEveryRepo() {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // PatternMatches reports whether the model pattern (an exact ID, or a prefix
@@ -136,6 +312,9 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 		if math.IsNaN(p.RouteFeePct) || p.RouteFeePct < 0 || p.RouteFeePct > MaxRouteFeePct {
 			add(at+".route_fee_pct", "must be between 0 and %d (a percentage added to every charge)", MaxRouteFeePct)
 		}
+		if p.PricePolicy != "" && p.PricePolicy != PricePolicyCheapest && p.PricePolicy != PricePolicyHighest {
+			add(at+".price_policy", "%q must be one of %s, %s (which end of the built-in price catalog's range to charge; unset means %s)", p.PricePolicy, PricePolicyCheapest, PricePolicyHighest, PricePolicyCheapest)
+		}
 		if len(p.Models) == 0 {
 			add(at+".models", "must list the model IDs the provider serves, such as deepseek/*")
 		}
@@ -144,9 +323,20 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 				add(at+".models", "%s", msg)
 			}
 		}
+		if len(p.AllowDataTo) == 0 && (p.allowDataToWritten || p.AllowDataTo != nil) {
+			// An absent key and ["*"] both mean "every repository", but a
+			// list written with nothing in it cannot be told apart from
+			// "not decided yet" (design §3a, round 5). That covers [] and
+			// the null spellings alike: `allow_data_to:` with every entry
+			// commented out, or `~`, decodes to a nil slice -- the same
+			// value as an absent key, and the reason unmarshalling reads
+			// the key's presence off the node (round 6). Refuse rather
+			// than guess.
+			add(at+".allow_data_to", "an explicit empty list is ambiguous: write [\"*\"] for any repository, or remove the key entirely")
+		}
 		for _, r := range p.AllowDataTo {
-			if !repoSlugRE.MatchString(r) {
-				add(at+".allow_data_to", "%q must be a repository as owner/name", r)
+			if r != "*" && !repoSlugRE.MatchString(r) {
+				add(at+".allow_data_to", "%q must be a repository as owner/name (or \"*\" for every repository)", r)
 			}
 		}
 	}
@@ -339,7 +529,14 @@ func CheckProviderPolicy(a Agent, allowed []string, repo string, providers map[s
 			ps = append(ps, Problem{Path: path, Message: fmt.Sprintf("%s is not an explicit model ID: name a plain vendor/model ID", CodeSpan(model))})
 		case prices != nil:
 			if _, ok := prices.Lookup(model); !ok {
-				ps = append(ps, Problem{Path: path, Message: fmt.Sprintf("%s has no price: add it under model_prices in the project config", CodeSpan(model))})
+				// A model the catalog refused says why — the switch to
+				// flip and both ways out (P8) — rather than only naming
+				// model_prices.
+				msg := fmt.Sprintf("%s has no price: add it under model_prices in the project config", CodeSpan(model))
+				if why := prices.Refusal(model); why != "" {
+					msg = why
+				}
+				ps = append(ps, Problem{Path: path, Message: msg})
 			}
 		}
 	}
@@ -366,6 +563,42 @@ func CheckProviderPolicy(a Agent, allowed []string, repo string, providers map[s
 func claimed(providers map[string]ModelProvider, model string) bool {
 	_, _, ok := ProviderFor(providers, model)
 	return ok
+}
+
+// NeedsAnthropicKey reports whether a run on this configuration sends a call
+// to Anthropic, and so needs the Anthropic API key. The model ID alone decides
+// the route, exactly as the gateway decides it (internal/gateway/route.go): a
+// model no allowed provider claims goes direct. So a Claude pin, or a model no
+// route serves, needs the key, and a repository whose pins are all served by
+// providers it may send code to does not (design docs/design/project-centric.md
+// §6.1). repo "" is an unknown repository, which no provider may serve.
+//
+// Callers ask this only where the gateway is on and enforcing: without it a
+// provider model is refused (CheckProviderGateway) and every call would go to
+// Anthropic, which AnthropicKeyNeeded decides.
+func NeedsAnthropicKey(a Agent, providers map[string]ModelProvider, repo string) bool {
+	for _, model := range []string{a.ModelFor(RoleCoder), a.ModelFor(RoleReviewer), EffectiveBackground(a, providers)} {
+		if _, p, ok := ProviderFor(providers, model); !ok || !p.AllowsData(repo) {
+			return true
+		}
+	}
+	return false
+}
+
+// AnthropicKeyNeeded is the whole rule, and the one both callers ask: does a
+// run on this configuration need the Anthropic API key stored? Only an
+// api-key run ever does (oauth has its own token, Vertex the job's account),
+// and only when a call actually goes to Anthropic: only enforce routes a call
+// to a provider (CheckProviderGateway refuses a provider model in any other
+// mode), so under any other mode every call goes to Anthropic whatever the
+// pins are -- and under enforce it is the pins, exactly as NeedsAnthropicKey
+// reads them. mode is the effective one (the project's ceiling merged with the
+// file), the same value the runner and validate compute.
+func AnthropicKeyNeeded(a Agent, providers map[string]ModelProvider, repo, mode string) bool {
+	if a.Auth != "api-key" {
+		return false
+	}
+	return mode != policy.ModeEnforce || NeedsAnthropicKey(a, providers, repo)
 }
 
 // EffectiveBackground is the model of Claude Code's background (haiku-role)

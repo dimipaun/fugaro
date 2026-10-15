@@ -1,12 +1,16 @@
 package infra
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"maps"
 	"net/http"
+	"os"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 // testProjectNumber is proj-1234's number in the fakes.
@@ -152,10 +157,12 @@ func (f *cloud) m5(t *testing.T, spec RepoSpec) {
 
 // m5Installation adds what an earlier M5 installation apply made, which
 // the rollback's state rm leaves in place: the runs bucket, the base
-// registry, the custom roles, the scheduler account and the log bucket.
+// registry, the remote repository, the custom roles, the scheduler
+// account and the log bucket.
 func (f *cloud) m5Installation(inst InstallationSpec) {
 	f.gcs.AddBucket(inst.RunsBucket, testProjectNumber, managed)
 	f.ar.AddRepository(inst.Project, inst.Region, BaseRegistry, managed)
+	f.ar.AddRepository(inst.Project, inst.Region, GhcrRegistry, managed)
 	f.iam.AddRole(inst.Project, RoleLauncher, "Fugaro launcher", false)
 	f.iam.AddRole(inst.Project, RoleJobRunner, "Fugaro job runner", false)
 	f.iam.AddRole(inst.Project, RoleBuildSubmitter, "Fugaro build submitter", false)
@@ -414,6 +421,47 @@ func TestDiscoverInstallation(t *testing.T) {
 	}
 }
 
+// TestDiscoverInstallationAdoptsTheGhcrRegistry: the remote repository is
+// an installation singleton like the base registry (design §5.3). Check
+// 43a creates fugaro-ghcr by hand before the implementation exists, so the
+// first init after it must adopt a repository that carries fugaro=managed
+// and refuse, by name, one that does not — never the bare Terraform
+// "already exists" an ordinary create would give (design §5.4).
+func TestDiscoverInstallationAdoptsTheGhcrRegistry(t *testing.T) {
+	ctx := context.Background()
+	inst := installationSpec(t)
+	const address = "module.installation.google_artifact_registry_repository.ghcr"
+
+	f := newCloud(t)
+	f.gcs.AddBucket(inst.RunsBucket, testProjectNumber, managed)
+	f.ar.AddRepository("proj-1234", "us-east5", GhcrRegistry, managed)
+	im, err := DiscoverInstallation(ctx, f.c, inst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := importMap(im)[address]; got != "projects/proj-1234/locations/us-east5/repositories/"+GhcrRegistry {
+		t.Errorf("imports %v, want the remote repository adopted", importMap(im))
+	}
+
+	// Unmarked: refused by name, at discovery time, and nothing is adopted.
+	f = newCloud(t)
+	f.gcs.AddBucket(inst.RunsBucket, testProjectNumber, managed)
+	f.ar.AddRepository("proj-1234", "us-east5", GhcrRegistry, nil)
+	_, err = DiscoverInstallation(ctx, f.c, inst)
+	foreign(t, err, GhcrRegistry, "fugaro=none")
+
+	// Absent: nothing planned and nothing noted, the ordinary create.
+	f = newCloud(t)
+	f.gcs.AddBucket(inst.RunsBucket, testProjectNumber, managed)
+	im, err = DiscoverInstallation(ctx, f.c, inst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := importMap(im)[address]; ok || len(im.Notes) != 0 {
+		t.Errorf("a project without the remote repository: %+v", im)
+	}
+}
+
 // After a rollback (state rm), every installation resource is still
 // there; a retried fugaro init imports the custom roles, the scheduler
 // account and the log bucket too, since a create of any of them fails.
@@ -429,6 +477,7 @@ func TestDiscoverInstallationAfterForget(t *testing.T) {
 	want := map[string]string{
 		"module.installation.google_storage_bucket.runs":                     "proj-1234/" + inst.RunsBucket,
 		"module.installation.google_artifact_registry_repository.base":       p + "locations/us-east5/repositories/fugaro-base",
+		"module.installation.google_artifact_registry_repository.ghcr":       p + "locations/us-east5/repositories/" + GhcrRegistry,
 		"module.installation.google_project_iam_custom_role.launcher":        p + "roles/" + RoleLauncher,
 		"module.installation.google_project_iam_custom_role.job_runner":      p + "roles/" + RoleJobRunner,
 		"module.installation.google_project_iam_custom_role.build_submitter": p + "roles/" + RoleBuildSubmitter,
@@ -1252,5 +1301,653 @@ func TestScheduleStaysPausedWithoutWorkflows(t *testing.T) {
 	}
 	if !got.Check.Paused {
 		t.Error("a check covering no workflow must stay paused")
+	}
+}
+
+// --- Task 3: Readiness's repo-wins-else-project precedence ---------------
+
+// projectSecretLC makes bitbucket-token (a reserved name, design §3) a
+// project-wide secret acme/sandbox may use, so infra.Repo() computes a
+// ProjectSecretCandidates entry for it.
+const projectSecretLC = `project_secrets:
+  bitbucket-token: { allow_data_to: [acme/sandbox] }
+`
+
+// noListProviderLC is a model provider with no allow_data_to at all: under
+// §3a's no-list rule its key is mountable by every repository.
+const noListProviderLC = `providers:
+  no-list:
+    kind: anthropic-compat
+    base_url: https://nolist.example
+    auth: bearer
+    secret: no-list-key
+    models: ["x/*"]
+`
+
+func projectSpec(t *testing.T, extraLC string) RepoSpec {
+	t.Helper()
+	rs, err := Repo(sandboxInputs(t, m5Additions+extraLC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rs
+}
+
+// seedProjectSecret stores the project copy of logical, correctly labelled,
+// with one enabled version, and returns its ID.
+func (f *cloud) seedProjectSecret(spec RepoSpec, logical string) string {
+	id := spec.ProjectSecretCandidates[logical]
+	f.sm.Seed(id, with(managed, gcp.LabelProject, spec.Installation.ProjectName, gcp.LabelSecret, logical), []byte("project-"+logical))
+	return id
+}
+
+// resolve runs DiscoverRepo then Readiness against the same spec.
+func readinessOf(t *testing.T, f *cloud, spec RepoSpec) (RepoSpec, []Missing, Existing) {
+	t.Helper()
+	_, ex, err := DiscoverRepo(context.Background(), f.c, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, missing, err := Readiness(context.Background(), f.c, spec, ex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got, missing, ex
+}
+
+// Review focus 2: a repo copy with an enabled version wins, and the only
+// trace of that is the ABSENCE of an out.ProjectSecrets entry (the field
+// that reaches tfvars). An earlier, inverted draft populated it for every
+// eligible name regardless of the repo's own version, and Terraform's
+// merge() prefers the project map's value for a key in both -- so this
+// asserts the map, never some other field that "looks like" the repo won.
+func TestReadinessRepoVersionMeansNoProjectSecretsEntry(t *testing.T) {
+	f := newCloud(t)
+	spec := projectSpec(t, projectSecretLC)
+	f.bootstrap(t, spec, legacyDisplay)
+	f.seedProjectSecret(spec, "bitbucket-token")
+	got, missing, _ := readinessOf(t, f, spec)
+	if id, ok := got.ProjectSecrets["bitbucket-token"]; ok {
+		t.Errorf("ProjectSecrets[bitbucket-token] = %q, want no entry: the repo copy has a version", id)
+	}
+	for _, m := range missing {
+		if strings.Contains(m.Reason, "bitbucket-token") {
+			t.Errorf("missing = %v, want none for a name the repo copy resolves", m)
+		}
+	}
+}
+
+func TestReadinessFallsBackToProjectWhenRepoHasNoVersion(t *testing.T) {
+	f := newCloud(t)
+	spec := projectSpec(t, projectSecretLC)
+	// The repo copy exists but has no enabled version.
+	f.sm.Seed(spec.Secrets["bitbucket-token"], with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, "bitbucket-token"), nil)
+	want := f.seedProjectSecret(spec, "bitbucket-token")
+	got, missing, _ := readinessOf(t, f, spec)
+	if id := got.ProjectSecrets["bitbucket-token"]; id != want {
+		t.Errorf("ProjectSecrets[bitbucket-token] = %q, want the project copy %q", id, want)
+	}
+	for _, m := range missing {
+		if strings.Contains(m.Reason, "bitbucket-token") {
+			t.Errorf("missing = %v, want none: the project copy resolves", m)
+		}
+	}
+}
+
+func TestReadinessOmitsProjectSecretForUnlistedRepo(t *testing.T) {
+	f := newCloud(t)
+	// The allow-list names a different repository.
+	spec := projectSpec(t, "project_secrets:\n  bitbucket-token: { allow_data_to: [acme/other] }\n")
+	if _, ok := spec.ProjectSecretCandidates["bitbucket-token"]; ok {
+		t.Fatal("an unlisted repository got a ProjectSecretCandidates entry")
+	}
+	f.sm.Seed(spec.Secrets["bitbucket-token"], with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, "bitbucket-token"), nil)
+	f.sm.Seed(gcp.ProjectSecretID(spec.Installation.ProjectName, "bitbucket-token"),
+		with(managed, gcp.LabelProject, spec.Installation.ProjectName, gcp.LabelSecret, "bitbucket-token"), []byte("v"))
+	got, missing, _ := readinessOf(t, f, spec)
+	if id, ok := got.ProjectSecrets["bitbucket-token"]; ok {
+		t.Errorf("ProjectSecrets[bitbucket-token] = %q, want no entry for an unlisted repository", id)
+	}
+	if !slices.ContainsFunc(missing, func(m Missing) bool {
+		return strings.Contains(m.Reason, "fugaro secrets set bitbucket-token --repo acme/sandbox")
+	}) {
+		t.Errorf("missing = %v, want the fix to name --repo, never --project-wide", missing)
+	}
+}
+
+func TestReadinessMissingNamesProjectWideFix(t *testing.T) {
+	f := newCloud(t)
+	spec := projectSpec(t, projectSecretLC)
+	// Neither copy has a version, and the repository IS a candidate.
+	f.sm.Seed(spec.Secrets["bitbucket-token"], with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, "bitbucket-token"), nil)
+	got, missing, _ := readinessOf(t, f, spec)
+	if id, ok := got.ProjectSecrets["bitbucket-token"]; ok {
+		t.Errorf("ProjectSecrets[bitbucket-token] = %q, want no entry: nothing resolves yet", id)
+	}
+	if !slices.ContainsFunc(missing, func(m Missing) bool {
+		return strings.Contains(m.Reason, "fugaro secrets set bitbucket-token --project-wide")
+	}) {
+		t.Errorf("missing = %v, want the fix to name --project-wide", missing)
+	}
+}
+
+// design §5/P3: the fallback happens on the NEXT apply, never within one.
+// The fake cannot disable a version in place, so the second call uses a
+// fresh fake holding the same spec with the repo copy unversioned.
+func TestReadinessFallsBackOnceRepoVersionGone(t *testing.T) {
+	f := newCloud(t)
+	spec := projectSpec(t, projectSecretLC)
+	f.sm.Seed(spec.Secrets["bitbucket-token"], with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, "bitbucket-token"), []byte("v"))
+	want := f.seedProjectSecret(spec, "bitbucket-token")
+	if got, _, _ := readinessOf(t, f, spec); got.ProjectSecrets["bitbucket-token"] != "" {
+		t.Errorf("first call: ProjectSecrets = %v, want no entry while the repo copy is live", got.ProjectSecrets)
+	}
+	g := newCloud(t)
+	g.sm.Seed(spec.Secrets["bitbucket-token"], with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, "bitbucket-token"), nil)
+	g.seedProjectSecret(spec, "bitbucket-token")
+	if got, _, _ := readinessOf(t, g, spec); got.ProjectSecrets["bitbucket-token"] != want {
+		t.Errorf("second call: ProjectSecrets[bitbucket-token] = %q, want %q once the repo version is gone", got.ProjectSecrets["bitbucket-token"], want)
+	}
+}
+
+// P7: a provider with no allow_data_to is a candidate for a repository its
+// config names nowhere, and resolves to the project copy.
+func TestReadinessProviderNoListEligibleForEveryRepo(t *testing.T) {
+	in := sandboxInputs(t, m5Additions+noListProviderLC)
+	in.Cfg.Agent.Auth = "api-key"
+	spec, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := newCloud(t)
+	f.sm.Seed(spec.Secrets["no-list-key"], with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, "no-list-key"), nil)
+	want := f.seedProjectSecret(spec, "no-list-key")
+	got, _, _ := readinessOf(t, f, spec)
+	if id := got.ProjectSecrets["no-list-key"]; id != want {
+		t.Errorf("ProjectSecrets[no-list-key] = %q, want the project copy %q (no list means every repository)", id, want)
+	}
+}
+
+// P7, the non-empty-list case, routed through ProviderBySecret +
+// ModelProvider.AllowsData (not AllowedForProjectSecret, which reads an
+// entirely different map): no candidate entry at all.
+func TestReadinessProviderListedExcludesUnlistedRepo(t *testing.T) {
+	in := sandboxInputs(t, m5Additions+providerLC)
+	in.Cfg.Agent.Auth = "api-key"
+	spec, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := spec.ProjectSecretCandidates["other-key"]; ok {
+		t.Error("a provider listing another repository got a candidate entry for acme/sandbox")
+	}
+	if _, ok := spec.ProjectSecretCandidates["openrouter-api-key"]; !ok {
+		t.Error("a provider listing acme/sandbox got no candidate entry")
+	}
+}
+
+// ProjectSecretCandidate is exported and called directly by the CLI's
+// secrets stage and doctor, not only through Repo's candidate map, so its
+// provider (and named-account) gate has to hold by itself. The map-based
+// tests above would still pass if this function answered true for
+// everything: SecretMounts never asks about a name the repository cannot
+// mount. A mutation to `eligible = lc.Providers[name].Secret != ""` is what
+// this test exists to kill.
+func TestProjectSecretCandidateGate(t *testing.T) {
+	const accounts = `claude_accounts:
+  acme-personal:
+    allow_data_to: [acme/sandbox]
+  acme-other:
+    allow_data_to: [acme/other]
+`
+	const wildcard = `providers:
+  any-repo:
+    kind: anthropic-compat
+    base_url: https://any.example
+    auth: bearer
+    secret: any-key
+    models: ["x/*"]
+    allow_data_to: ["*"]
+`
+	tests := []struct {
+		name    string
+		lc      string
+		logical string
+		repo    string
+		want    bool
+	}{
+		{"provider lists this repository", providerLC, "openrouter-api-key", "acme/sandbox", true},
+		{"provider lists another repository", providerLC, "openrouter-api-key", "acme/other", false},
+		{"provider lists another repository, asked by it", providerLC, "other-key", "acme/other", true},
+		{"provider with no list", noListProviderLC, "no-list-key", "acme/other", true},
+		{"provider with the wildcard", wildcard, "any-key", "acme/other", true},
+		{"named account allows this repository", accounts, "claude-oauth-token-acme-personal", "acme/sandbox", true},
+		{"named account excludes this repository", accounts, "claude-oauth-token-acme-personal", "acme/other", false},
+		{"project_secrets entry names this repository", projectSecretLC, "bitbucket-token", "acme/sandbox", true},
+		{"project_secrets entry names another repository", projectSecretLC, "bitbucket-token", "acme/other", false},
+		{"a name nothing configures", providerLC, "sandbox-probe", "acme/sandbox", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lc := parseLC(t, m4LocalConfig+m5Additions+tt.lc)
+			id, ok := ProjectSecretCandidate(lc, tt.logical, tt.repo)
+			if ok != tt.want {
+				t.Fatalf("ProjectSecretCandidate(%q, %q) ok = %v, want %v", tt.logical, tt.repo, ok, tt.want)
+			}
+			if !tt.want {
+				if id != "" {
+					t.Errorf("ProjectSecretCandidate(%q, %q) id = %q, want %q with ok false", tt.logical, tt.repo, id, "")
+				}
+				return
+			}
+			if want := gcp.ProjectSecretID(lc.Name, tt.logical); id != want {
+				t.Errorf("ProjectSecretCandidate(%q, %q) id = %q, want %q", tt.logical, tt.repo, id, want)
+			}
+		})
+	}
+}
+
+// B4: the check job's own secret_env goes through the identical resolution.
+func TestReadinessCheckJobResolvesProjectSecretsToo(t *testing.T) {
+	f := newCloud(t)
+	spec := projectSpec(t, projectSecretLC)
+	if spec.Check == nil {
+		t.Fatal("the sandbox fixture has no check job")
+	}
+	for _, logical := range spec.Check.SecretEnv {
+		if logical == "bitbucket-token" {
+			f.sm.Seed(spec.Secrets[logical], with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, logical), nil)
+			continue
+		}
+		f.sm.Seed(spec.Secrets[logical], with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, logical), []byte("v"))
+	}
+	want := f.seedProjectSecret(spec, "bitbucket-token")
+	got, missing, _ := readinessOf(t, f, spec)
+	if id := got.ProjectSecrets["bitbucket-token"]; id != want {
+		t.Errorf("ProjectSecrets[bitbucket-token] = %q, want %q", id, want)
+	}
+	if !got.Check.DeployJob {
+		t.Errorf("the check job is not deployed: %v", missing)
+	}
+}
+
+// P7a/B5(a): an existing job never carries an unresolvable secret_env
+// entry, and the runner's redaction list is recomputed from the
+// post-omission set. This fails if the mount is left dangling (a
+// secret_key_ref at a version-less secret) or if the omission is made but
+// FUGARO_SECRET_ENVS still names the variable.
+func TestReadinessOmitsUnresolvableMountFromExistingJob(t *testing.T) {
+	f := newCloud(t)
+	spec := projectSpec(t, projectSecretLC)
+	f.bootstrap(t, spec, legacyDisplay)
+	// No version anywhere: the repo copy is unversioned and no project
+	// copy exists.
+	f.sm.Seed(spec.Secrets["bitbucket-token"], with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, "bitbucket-token"), nil)
+	env := config.ReservedSecrets["bitbucket-token"]
+	got, missing, _ := readinessOf(t, f, spec)
+	ws := got.Workflows["web"]
+	if _, ok := ws.SecretEnv[env]; ok {
+		t.Errorf("the existing job still mounts %s: %v", env, ws.SecretEnv)
+	}
+	if _, ok := ws.SecretIDs["bitbucket-token"]; ok {
+		t.Errorf("the existing job still names the unresolvable secret: %v", ws.SecretIDs)
+	}
+	if !ws.DeployJob {
+		t.Error("DeployJob must stay true: job.tf's count would destroy the job outright")
+	}
+	if !slices.ContainsFunc(missing, func(m Missing) bool {
+		return m.Kind == MissingSecret && m.Deployed && strings.Contains(m.Reason, "bitbucket-token")
+	}) {
+		t.Errorf("missing = %v, want a Deployed MissingSecret for bitbucket-token", missing)
+	}
+	if strings.Contains(ws.Env[runner.SecretEnvsVar], env) {
+		t.Errorf("%s = %q, still names %s: the redaction list must be recomputed", runner.SecretEnvsVar, ws.Env[runner.SecretEnvsVar], env)
+	}
+}
+
+// P7a for the check job (readiness.go's own branch, review L3): the check
+// job runs as the build account from the base image, so an unresolvable entry
+// left in its secret_env points secret_key_ref at a secret with zero
+// versions, and its daily rebuild fails with no way to see why. The workflow
+// jobs' half of P7a is the test above; this one fails if the check job's
+// branch is disabled, which no test caught before.
+func TestReadinessOmitsUnresolvableMountFromExistingCheckJob(t *testing.T) {
+	f := newCloud(t)
+	spec := projectSpec(t, projectSecretLC)
+	f.bootstrap(t, spec, legacyDisplay)
+	f.m5(t, spec) // the check job exists
+	var gitEnv string
+	for env, logical := range spec.Check.SecretEnv {
+		if logical == "bitbucket-token" {
+			gitEnv = env
+		}
+	}
+	if gitEnv == "" {
+		t.Fatalf("the sandbox fixture's check job mounts no bitbucket-token: %v", spec.Check.SecretEnv)
+	}
+	// No version anywhere: the repo copy is unversioned and no project copy
+	// exists.
+	f.sm.Seed(spec.Secrets["bitbucket-token"], with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, "bitbucket-token"), nil)
+	got, missing, _ := readinessOf(t, f, spec)
+	if _, ok := got.Check.SecretEnv[gitEnv]; ok {
+		t.Errorf("the existing check job still mounts %s: %v", gitEnv, got.Check.SecretEnv)
+	}
+	if env := config.ReservedSecrets["bitbucket-token"]; env != gitEnv {
+		t.Errorf("the git credential's env name is %s, not %s", env, gitEnv)
+	}
+	if !got.Check.DeployJob {
+		t.Error("the check job must stay deployed: check.tf's count would destroy it outright")
+	}
+	if !slices.ContainsFunc(missing, func(m Missing) bool {
+		return m.Check && m.Kind == MissingSecret && m.Deployed && strings.Contains(m.Reason, "bitbucket-token")
+	}) {
+		t.Errorf("missing = %v, want a Deployed MissingSecret for the check job", missing)
+	}
+	if strings.Contains(got.Check.Env[runner.SecretEnvsVar], gitEnv) {
+		t.Errorf("%s = %q, still names %s: the redaction list must be recomputed", runner.SecretEnvsVar, got.Check.Env[runner.SecretEnvsVar], gitEnv)
+	}
+}
+
+func TestReadinessNewJobStillRefusesOnUnresolvableMount(t *testing.T) {
+	f := newCloud(t)
+	spec := projectSpec(t, projectSecretLC)
+	f.sm.Seed(spec.Secrets["bitbucket-token"], with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, "bitbucket-token"), nil)
+	got, _, _ := readinessOf(t, f, spec)
+	if got.Workflows["web"].DeployJob {
+		t.Error("a brand-new job must not deploy while a mount is unresolved")
+	}
+}
+
+// N4: a correctly-labelled secret the current config no longer computes is
+// unioned back into the tfvars-reaching Secrets map, so Terraform's
+// for_each never shrinks (prevent_destroy would fail the plan outright).
+func TestReadinessUnionsExtraSecretsNeverShrinksRsSecrets(t *testing.T) {
+	f := newCloud(t)
+	spec := projectSpec(t, "")
+	if _, ok := spec.Secrets["openrouter-api-key"]; ok {
+		t.Fatal("the fixture already computes openrouter-api-key")
+	}
+	id := gcp.SecretID(spec.Slug, "openrouter-api-key")
+	f.sm.Seed(id, with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, "openrouter-api-key"), []byte("v"))
+	got, _, ex := readinessOf(t, f, spec)
+	if ex.ExtraSecrets["openrouter-api-key"] != id {
+		t.Errorf("ExtraSecrets = %v, want openrouter-api-key → %s", ex.ExtraSecrets, id)
+	}
+	if got.Secrets["openrouter-api-key"] != id {
+		t.Errorf("out.Secrets = %v, want the live container unioned back", got.Secrets)
+	}
+	// The mount is still governed by SecretMounts's own, config-driven
+	// output: the container stays, the mount does not come back.
+	if _, ok := got.Workflows["web"].SecretEnv[config.ProviderKeyEnv("openrouter-api-key")]; ok {
+		t.Errorf("the union re-mounted a name the config no longer computes: %v", got.Workflows["web"].SecretEnv)
+	}
+}
+
+// Plan follow-up 3 (review M1): an extra secret is not only unioned into the
+// plan's Secrets (the test above) but imported and its live policy read,
+// exactly as the secrets the config still computes are. Without the import
+// the next apply tries to create a container that already exists: the 409
+// that re-running init after `fugaro forget` (or with any missing repo
+// state) would hit. Without the policy, the extra-accessors note sees
+// nothing for the name, so a grant that outlives the config that made it
+// goes unsaid.
+func TestDiscoverRepoImportsExtraSecretsAndNotesTheirGrant(t *testing.T) {
+	f := newCloud(t)
+	spec := projectSpec(t, "")
+	const logical = "openrouter-api-key"
+	if _, ok := spec.Secrets[logical]; ok {
+		t.Fatalf("the fixture already computes %s", logical)
+	}
+	id := gcp.SecretID(spec.Slug, logical)
+	f.sm.Seed(id, with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, logical), []byte("v"))
+	member := saMember(spec.Workflows["web"].ServiceAccountEmail)
+	f.sm.SetPolicy(id, []gcpfake.Binding{{Role: gcp.SecretAccessorRole, Members: []string{member}}})
+	im, ex, err := DiscoverRepo(context.Background(), f.c, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ex.ExtraSecrets[logical] != id {
+		t.Fatalf("ExtraSecrets = %v, want %s → %s", ex.ExtraSecrets, logical, id)
+	}
+	want := fmt.Sprintf("module.repo.google_secret_manager_secret.this[%q]", logical)
+	if !slices.ContainsFunc(im.List, func(i Import) bool {
+		return i.To == want && i.ID == "projects/"+spec.GCPProject+"/secrets/"+id
+	}) {
+		t.Errorf("imports = %+v, want %s at the live ID %s", im.List, want, id)
+	}
+	if !slices.ContainsFunc(im.Notes, func(n string) bool { return strings.Contains(n, id) && strings.Contains(n, member) }) {
+		t.Errorf("notes = %q, want one naming %s and its accessor %s", im.Notes, id, member)
+	}
+}
+
+// SF7: a secret at the candidate's derived ID that is not ours is refused,
+// the same path an unmarked repo secret already takes.
+func TestReadinessRefusesAccidentalLabelMismatch(t *testing.T) {
+	f := newCloud(t)
+	spec := projectSpec(t, projectSecretLC)
+	id := gcp.ProjectSecretID(spec.Installation.ProjectName, "bitbucket-token")
+	f.sm.Seed(id, with(managed, gcp.LabelSecret, "bitbucket-token"), []byte("v")) // no fugaro_project
+	_, _, err := DiscoverRepo(context.Background(), f.c, spec)
+	if err == nil || !strings.Contains(err.Error(), "project secret") {
+		t.Fatalf("DiscoverRepo = %v, want a refusal naming the project secret", err)
+	}
+}
+
+func TestReadinessResolvesCorrectlyLabelledProjectSecret(t *testing.T) {
+	f := newCloud(t)
+	spec := projectSpec(t, projectSecretLC)
+	f.seedProjectSecret(spec, "bitbucket-token")
+	_, ex, err := DiscoverRepo(context.Background(), f.c, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ex.ProjectSecretsOK["bitbucket-token"] {
+		t.Errorf("ProjectSecretsOK = %v, want bitbucket-token true", ex.ProjectSecretsOK)
+	}
+}
+
+// installationSpecWith is installationSpec for a local config with extra
+// blocks (project_secrets, providers, claude_accounts).
+func installationSpecWith(t *testing.T, extraLC string) InstallationSpec {
+	t.Helper()
+	s, err := Installation(parseLC(t, m4LocalConfig+m5Additions+extraLC), InstallOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// projectSecretLCBlock makes bitbucket-token a project-wide secret the
+// sandbox repository may use, so Installation() computes it.
+const projectSecretLCBlock = `project_secrets:
+  bitbucket-token: { allow_data_to: [acme/sandbox] }
+`
+
+// TestDiscoverInstallationImportsPreExistingProjectSecret (S2): a project
+// secret stored with --project-wide before the installation root's first
+// apply is adopted, not conflicted with, and reaches the map the root plans.
+func TestDiscoverInstallationImportsPreExistingProjectSecret(t *testing.T) {
+	f := newCloud(t)
+	inst := installationSpecWith(t, projectSecretLCBlock)
+	id := gcp.ProjectSecretID(inst.FugaroProject, "bitbucket-token")
+	f.sm.Seed(id, with(managed, gcp.LabelProject, inst.FugaroProject, gcp.LabelSecret, "bitbucket-token"), []byte("project-value"))
+	im, err := DiscoverInstallation(context.Background(), f.c, inst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := `module.installation.google_secret_manager_secret.project["bitbucket-token"]`
+	if got := importMap(im)[addr]; got != "projects/proj-1234/secrets/"+id {
+		t.Errorf("imports = %v, want an import of %s at %s", importMap(im), id, addr)
+	}
+	if im.ProjectSecrets["bitbucket-token"] != id {
+		t.Errorf("ProjectSecrets = %v, want bitbucket-token -> %s", im.ProjectSecrets, id)
+	}
+}
+
+// TestDiscoverInstallationRefusesForeignProjectSecret (S2): a secret exists
+// at the computed project ID but its labels aren't ours -- refused, never
+// silently adopted or overwritten.
+func TestDiscoverInstallationRefusesForeignProjectSecret(t *testing.T) {
+	f := newCloud(t)
+	inst := installationSpecWith(t, projectSecretLCBlock)
+	id := gcp.ProjectSecretID(inst.FugaroProject, "bitbucket-token")
+	f.sm.Seed(id, with(managed, gcp.LabelProject, "some-other-project", gcp.LabelSecret, "bitbucket-token"), []byte("someone-elses"))
+	_, err := DiscoverInstallation(context.Background(), f.c, inst)
+	if err == nil || !strings.Contains(err.Error(), "project secret "+id) {
+		t.Fatalf("err = %v, want a foreign-project-secret refusal", err)
+	}
+}
+
+// TestDiscoverInstallationNeverShrinksProjectSecrets (N3 BLOCKER): a name
+// eligible on the first call, discovered live, must still be in the map on a
+// second call whose config no longer makes it eligible at all -- the exact
+// property P2 gives the repo module, extended here. Otherwise
+// google_secret_manager_secret.project's for_each shrinks and
+// prevent_destroy fails the plan itself.
+func TestDiscoverInstallationNeverShrinksProjectSecrets(t *testing.T) {
+	f := newCloud(t)
+	first := installationSpecWith(t, projectSecretLCBlock)
+	id := gcp.ProjectSecretID(first.FugaroProject, "bitbucket-token")
+	f.sm.Seed(id, with(managed, gcp.LabelProject, first.FugaroProject, gcp.LabelSecret, "bitbucket-token"), []byte("project-value"))
+	im, err := DiscoverInstallation(context.Background(), f.c, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := im.ProjectSecrets["bitbucket-token"]; !ok {
+		t.Fatalf("first call: ProjectSecrets = %v, want bitbucket-token", im.ProjectSecrets)
+	}
+	// The second operator's config: the same installation, no
+	// project_secrets entry at all (the list was emptied, or the entry
+	// removed).
+	second := installationSpec(t)
+	if len(second.ProjectSecrets) != 0 {
+		t.Fatalf("the second spec computes %v, want nothing", second.ProjectSecrets)
+	}
+	im2, err := DiscoverInstallation(context.Background(), f.c, second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name := range im.ProjectSecrets {
+		if _, ok := im2.ProjectSecrets[name]; !ok {
+			t.Errorf("the second call dropped %s: %v is not a superset of %v", name, im2.ProjectSecrets, im.ProjectSecrets)
+		}
+	}
+}
+
+// TestDiscoverInstallationSecondOperatorMissingEntryDoesNotShrink (S5): a
+// local config with no project_secrets/providers/claude_accounts entries at
+// all, run against an installation where another operator's config already
+// created project secrets, still plans every one the live discovery finds.
+func TestDiscoverInstallationSecondOperatorMissingEntryDoesNotShrink(t *testing.T) {
+	f := newCloud(t)
+	inst := installationSpec(t)
+	// Two project secrets a first operator's config created, live.
+	ids := map[string]string{}
+	for _, logical := range []string{"bitbucket-token", "claude-oauth-token"} {
+		id := gcp.ProjectSecretID(inst.FugaroProject, logical)
+		f.sm.Seed(id, with(managed, gcp.LabelProject, inst.FugaroProject, gcp.LabelSecret, logical), []byte("v"))
+		ids[logical] = id
+	}
+	im, err := DiscoverInstallation(context.Background(), f.c, inst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for logical, id := range ids {
+		if im.ProjectSecrets[logical] != id {
+			t.Errorf("ProjectSecrets[%s] = %q, want %s (map %v)", logical, im.ProjectSecrets[logical], id, im.ProjectSecrets)
+		}
+	}
+}
+
+// A live secret carrying this installation's labels but sitting at an ID the
+// plan does not derive for its logical name is neither adopted nor deleted
+// (liveProjectSecrets's own check, plan follow-up 2): adopting it cannot work
+// -- the resource the plan manages is the derived ID -- and deleting it is
+// not ours to do. Without the check, it would be imported under
+// prevent_destroy and managed by the installation, so a mutation to `if
+// false` there used to pass every test.
+func TestDiscoverInstallationLeavesAMisnamedProjectSecretAlone(t *testing.T) {
+	f := newCloud(t)
+	inst := installationSpec(t)
+	want := gcp.ProjectSecretID(inst.FugaroProject, "bitbucket-token")
+	f.sm.Seed(want+"9", with(managed, gcp.LabelProject, inst.FugaroProject, gcp.LabelSecret, "bitbucket-token"), []byte("v"))
+	im, err := DiscoverInstallation(context.Background(), f.c, inst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id, ok := im.ProjectSecrets["bitbucket-token"]; ok {
+		t.Errorf("ProjectSecrets[bitbucket-token] = %q, want no entry: the live secret is not at the derived %s", id, want)
+	}
+	addr := `module.installation.google_secret_manager_secret.project["bitbucket-token"]`
+	if got := importMap(im)[addr]; got != "" {
+		t.Errorf("imports[%s] = %q, want no import of a secret that is not the derived %s", addr, got, want)
+	}
+	if joined := strings.Join(im.Notes, "\n"); !strings.Contains(joined, "not the derived") || !strings.Contains(joined, want) {
+		t.Errorf("Notes = %v, want one naming the derived ID %s", im.Notes, want)
+	}
+}
+
+// TestReadinessVarsIncludeProjectSecrets (SF2's gap): a RepoSpec field with a
+// correct json tag that nothing threads through RepoVars is invisible from Go
+// unless this asserts the SERIALIZED output. A project copy with an enabled
+// version and a repo copy without one resolves to the project container, and
+// that has to reach the tfvars the repo root plans.
+func TestReadinessVarsIncludeProjectSecrets(t *testing.T) {
+	f := newCloud(t)
+	spec := projectSpec(t, projectSecretLC)
+	// The repo copy exists but has no enabled version, so the project copy wins.
+	f.sm.Seed(spec.Secrets["bitbucket-token"], with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, "bitbucket-token"), nil)
+	want := f.seedProjectSecret(spec, "bitbucket-token")
+	got, _, _ := readinessOf(t, f, spec)
+	data, err := RepoVars(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Repo struct {
+			ProjectSecrets map[string]string `json:"project_secrets"`
+		} `json:"repo"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Repo.ProjectSecrets["bitbucket-token"] != want {
+		t.Errorf("RepoVars project_secrets = %v, want bitbucket-token -> %s\n%s", doc.Repo.ProjectSecrets, want, data)
+	}
+}
+
+// TestProjectSecretsFixtureIsTheGoldenPlusOneKey pins the hand-maintained
+// Terraform fixture (deploy/terraform/gcp/roots/repo/tests/testdata/
+// project-secrets.tfvars.json, see its README): it must stay exactly the
+// golden tfvars plus one repo.project_secrets entry, so regenerating the
+// golden for an unrelated reason cannot let the fixture drift silently.
+func TestProjectSecretsFixtureIsTheGoldenPlusOneKey(t *testing.T) {
+	dir := "../../deploy/terraform/gcp/roots/repo/tests/testdata/"
+	golden, err := os.ReadFile(dir + "bitbucket-oauth.tfvars.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture, err := os.ReadFile(dir + "project-secrets.tfvars.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decode := func(b []byte) map[string]any {
+		t.Helper()
+		var doc map[string]any
+		dec := json.NewDecoder(bytes.NewReader(b))
+		dec.UseNumber()
+		if err := dec.Decode(&doc); err != nil {
+			t.Fatal(err)
+		}
+		return doc
+	}
+	want, got := decode(golden), decode(fixture)
+	repo, ok := want["repo"].(map[string]any)
+	if !ok {
+		t.Fatal("the golden has no repo object")
+	}
+	repo["project_secrets"] = map[string]any{"bitbucket-token": gcp.ProjectSecretID("aurora", "bitbucket-token")}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("project-secrets.tfvars.json is not bitbucket-oauth.tfvars.json plus the one project_secrets key:\n got %v\nwant %v", got, want)
 	}
 }

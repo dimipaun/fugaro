@@ -76,12 +76,20 @@ func TestProviderRunEndsInPR(t *testing.T) {
 		}
 	}
 
-	// $1/M in, $4/M out, 10% route fee: (1000*1 + 500*4) = 3000 micros, 3300 with the fee.
-	m, ok := pricing.Embedded().Lookup(deepseek)
+	// The fee and the attribution are the run's: the model's usage at the
+	// run's own rate for it, plus the 10% route fee. The rate is the built-in
+	// catalog's for the route's model — the zdr tier's minimum under the
+	// default switches — read from the table the run built rather than named
+	// here, so the arithmetic under test is the fee, the attribution and the
+	// reported figure. The charge is in whole micros, as the engine's is.
+	m, ok := g.deps.Spend.Prices.Lookup(deepseek)
 	if !ok {
-		t.Fatal("no price")
+		t.Fatal("the run's table has no row for the model it routed")
 	}
-	want := (float64(use.Input)*m.Rates.InputPerM + float64(use.Output)*m.Rates.OutputPerM) / 1e6 * 1.10
+	if m.Catalog == nil || m.Catalog.Tier != "zdr" || m.Catalog.Bound != "min" {
+		t.Fatalf("the run's row is not the catalog's zdr minimum: %+v", m.Catalog)
+	}
+	want := pricing.WithFee(m.Rates.Cost(use), 10).USD()
 	if rec.Cost == nil || !near(rec.CostUSD, want) || !near(rec.Cost.RouteBy["openrouter"], want) || !near(rec.Cost.ModelBy[deepseek], want) {
 		t.Fatalf("want %v: cost_usd = %v, cost = %+v", want, rec.CostUSD, rec.Cost)
 	}
@@ -186,14 +194,26 @@ func TestProviderModelNeedsEnforce(t *testing.T) {
 // A provider that reports more than 10% above the charge is logged once at
 // the end of the run (warn level, no key); a report below the charge is not.
 // The charge is compared without the route fee, which the provider doesn't
-// report: with a 10% fee the charge is 3300 and the bare price 3000.
+// report. The reported figures are relative to the charge the run's own table
+// makes for the usage, read from that table (Task 4: the catalog prices the
+// route's model, at a fraction of the placeholder row this test was written
+// against), so the case under test is the 10% threshold and not a number.
 func TestReportedAboveChargeWarnsOnce(t *testing.T) {
-	use := pricing.Usage{Input: 1000, Output: 500} // charged 3000 micros at the starter prices
+	use := pricing.Usage{Input: 1000, Output: 500}
+	g0 := providerRun(t, providerPinned(t), "enforce", "50", nil, "acme/app")
+	m, ok := g0.deps.Spend.Prices.Lookup(deepseek)
+	if !ok {
+		t.Fatal("the run's table has no row for the model it routed")
+	}
+	bare := m.Rates.Cost(use).USD()
 	for _, c := range []struct {
 		cost float64
 		fee  float64
 		warn int
-	}{{0.0100, 0, 1}, {0.0031, 0, 0}, {0.0010, 0, 0}, {0.0035, 10, 1}, {0.0032, 10, 0}} {
+	}{
+		{bare * 3, 0, 1}, {bare * 1.05, 0, 0}, {bare * 0.5, 0, 0},
+		{bare * 1.2, 10, 1}, {bare * 1.05, 10, 0},
+	} {
 		g := providerRun(t, providerPinned(t), "enforce", "50", []anthropicfake.Reply{anthropicfake.Compat{Cost: c.cost}.MessageOK(deepseek, use)}, "acme/app")
 		prov := g.deps.Providers["openrouter"]
 		prov.RouteFeePct = c.fee
@@ -266,9 +286,13 @@ func TestMissingProviderKeyIsInfraError(t *testing.T) {
 
 // TestHaltOnProviderRun: the cap holds a provider run as it does a Claude
 // one: a call whose reservation does not fit is refused at the gateway and
-// never forwarded, and the run halts.
+// never forwarded, and the run halts. The cap is small because the route's
+// model is priced by the built-in catalog at the zdr tier's minimum, a
+// fraction of the placeholder row it replaced (Task 4): the reservation for
+// a 1,000-token reply is a few hundred micro-dollars, so $0.00001 is under
+// it while staying above the smallest cap the budget takes.
 func TestHaltOnProviderRun(t *testing.T) {
-	g := providerRun(t, providerPinned(t), "enforce", "0.001", nil, "acme/app")
+	g := providerRun(t, providerPinned(t), "enforce", "0.00001", nil, "acme/app")
 	var status int
 	var body string
 	rec, err := g.run(t, callDeepseek(&status, &body, implement("feature")))
@@ -435,4 +459,46 @@ func replies(n int) []anthropicfake.Reply {
 		out[i] = anthropicfake.MessageOK("m", pricing.Usage{Output: 1})
 	}
 	return out
+}
+
+// TestProviderRunStartsWithNoAnthropicKey (design project-centric §6.1, review
+// Medium 1): a run whose coder is a provider's needs no Anthropic key at all.
+// The gateway starts without one, the agent's environment is built without
+// one, and the call reaches the provider with the provider's key -- the
+// counterpart of TestBuildEnvNoGatekeeperNeedsTheKeyActionably, which covers
+// the one case where the key is still not optional (no gateway).
+func TestProviderRunStartsWithNoAnthropicKey(t *testing.T) {
+	use := pricing.Usage{Input: 1000, Output: 500}
+	g := providerRun(t, providerPinned(t), "enforce", "50",
+		[]anthropicfake.Reply{anthropicfake.Compat{}.MessageOK(deepseek, use)}, "acme/app")
+	// No key stored anywhere: the env the job runs with has none.
+	g.deps.Env = filterEnv(g.deps.Env, "ANTHROPIC_API_KEY")
+
+	var status int
+	var body string
+	rec, err := g.run(t, callDeepseek(&status, &body, implement("feature")), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if status != 200 {
+		t.Fatalf("the provider call got %d: %s", status, body)
+	}
+	if n := g.compat.Count(); n != 1 {
+		t.Errorf("the provider saw %d calls", n)
+	}
+	if g.fake.Count() != 0 {
+		t.Errorf("Anthropic saw %d calls of a provider-only run with no key", g.fake.Count())
+	}
+	// The agent still gets an ANTHROPIC_API_KEY: the gateway's own token, the
+	// stand-in that keeps Claude Code pointed at the gateway with no stored
+	// key (and no provider key anywhere near it).
+	for i, c := range g.agent.calls {
+		v := envValue(c.Env, "ANTHROPIC_API_KEY")
+		if v == "" {
+			t.Errorf("call %d: the agent's ANTHROPIC_API_KEY is empty", i)
+		}
+		if strings.Contains(envValue(c.Env, "ANTHROPIC_BASE_URL"), "openrouter") || v == providerKey {
+			t.Errorf("call %d: the agent holds a real key or a direct provider URL: %v", i, c.Env)
+		}
+	}
 }

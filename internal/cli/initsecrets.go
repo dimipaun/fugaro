@@ -291,6 +291,13 @@ func (s *secretsStage) resolve(ctx context.Context) {
 	if cfg == nil {
 		tg.noConfig = true
 	} else {
+		// The Anthropic key is asked for only when a run actually needs it:
+		// with the gateway on and every pin served by a provider the run never
+		// calls Anthropic, so init does not prompt for a value and does not
+		// store one (design docs/design/project-centric.md §6.1). The rule is
+		// needsAnthropicKey (config.AnthropicKeyNeeded over the effective
+		// mode), the one validate and init --repo ask too.
+		needsKey := needsAnthropicKey(lc, cfg, repo)
 		for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
 			// The default account only: Task 5 extends this to every name
 			// config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo) allows,
@@ -301,6 +308,15 @@ func (s *secretsStage) resolve(ctx context.Context) {
 				return
 			}
 			for _, m := range allowedClaudeOAuthMounts(lc.ClaudeAccounts, repo, mounts) {
+				if m.Logical == config.AnthropicSecret && !needsKey {
+					// No call of this run goes to Anthropic, so there is
+					// nothing to ask for: the run never calls it (design
+					// docs/design/project-centric.md §6.1). The container is
+					// still planned, so the owner can store a key later with
+					// `fugaro secrets set`, and a run that needs one without
+					// it is refused with that command.
+					continue
+				}
 				if !slices.Contains(tg.wanted, m.Logical) {
 					tg.wanted = append(tg.wanted, m.Logical)
 				}
@@ -358,17 +374,49 @@ func (s *secretsStage) authorize(env initflow.Env) error {
 
 // find lists the repository's secrets (metadata only) and returns what its
 // jobs mount that has no value yet.
+//
+// A name the project's own local config allows this repository to use
+// project-wide (infra.ProjectSecretCandidate: the reserved names through
+// project_secrets, a named Claude account's or a model provider's through its
+// own allow_data_to) is not missing when the installation's copy has a
+// version, whatever the repository's own copy holds: mounting resolves the
+// logical name to that copy (infra.ResolveSecretID, a repository copy with a
+// version wins), so a project-covered name needs nothing typed. Prompting for
+// it anyway would store a repository copy that then wins forever -- a silent
+// precedence flip, and exactly the re-entry project-wide secrets exist to
+// remove; without a terminal it would block the init on NeedsYou.
+//
+// The project-wide listing is read only when some wanted name could be
+// covered by one (the local config has no project_secrets, no allowed Claude
+// account and no allowed provider otherwise, which is most installations), so
+// it costs an IAM-covered call only where it can change the answer.
 func (s *secretsStage) find(ctx context.Context, st secretStore) ([]string, error) {
 	list, err := st.List(ctx, map[string]string{gcp.LabelRepo: s.tg.label})
 	if err != nil {
 		return nil, err
 	}
+	var project []gcp.SecretInfo
+	if slices.ContainsFunc(s.tg.wanted, func(name string) bool {
+		_, ok := infra.ProjectSecretCandidate(s.e.lc, name, s.tg.repo)
+		return ok
+	}) {
+		project, err = st.List(ctx, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: s.e.lc.Name})
+		if err != nil {
+			return nil, err
+		}
+	}
+	has := func(list []gcp.SecretInfo, id string) bool {
+		return slices.ContainsFunc(list, func(i gcp.SecretInfo) bool { return i.ID == id && i.Latest != "" })
+	}
 	var out []string
 	for _, name := range s.tg.wanted {
-		id := gcp.SecretID(s.tg.slug, name)
-		if !slices.ContainsFunc(list, func(i gcp.SecretInfo) bool { return i.ID == id && i.Latest != "" }) {
-			out = append(out, name)
+		if has(list, gcp.SecretID(s.tg.slug, name)) {
+			continue
 		}
+		if id, ok := infra.ProjectSecretCandidate(s.e.lc, name, s.tg.repo); ok && has(project, id) {
+			continue
+		}
+		out = append(out, name)
 	}
 	return out, nil
 }

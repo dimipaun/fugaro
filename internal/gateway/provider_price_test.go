@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 )
 
 // feeRouted is a routed gateway whose route charges fee percent, with the
@@ -19,7 +21,7 @@ func feeRouted(t *testing.T, fee float64, prices func(*pricing.Table), stage Sta
 	prov, psrv := anthropicfake.New(t, script...)
 	h := newHarnessWith(t, func(o *Options) {
 		if prices != nil {
-			tbl := pricing.Embedded()
+			tbl := dsPrices()
 			prices(tbl)
 			o.Prices = tbl
 		}
@@ -127,6 +129,58 @@ func TestUnpricedModelRefused(t *testing.T) {
 	}
 }
 
+// TestRefusedCatalogModelRefusedWithTheReason pins the gateway's backstop for
+// a model the built-in provider price catalog refused: the call is not sent —
+// a routed call is real money — and the 400 carries the catalog's own message,
+// which names the switch to flip and both ways out, rather than the generic
+// "set model_prices" (design D9, P8). CheckPins refuses such a pin at
+// bootstrap; this is what a call that reached the gateway sees.
+func TestRefusedCatalogModelRefusedWithTheReason(t *testing.T) {
+	const qwen = "qwen/qwen3.8-flash"
+	cat, err := catalog.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked, err := time.Parse("2006-01-02", cat.CheckedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The shipped file gives qwen no ZDR tier, so the require_zdr route
+	// claims the model and cannot price it: the table records the reason and
+	// materializes no row.
+	// Models here are the catalog's own IDs, expanded from the route's
+	// pattern by config.catalogRoutes: the gateway's route below keeps the
+	// pattern, which is what decides where a call goes.
+	tbl, err := pricing.ApplyCatalog(pricing.Embedded(), cat,
+		[]pricing.CatalogRoute{{Name: "openrouter", Models: []string{qwen}, RequireZDR: true, Policy: "cheapest"}},
+		checked.Add(24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if why := tbl.Refusal(qwen); why == "" {
+		t.Fatal("the shipped catalog priced the model this test needs refused")
+	}
+	r := feeRouted(t, 0, func(o *pricing.Table) { *o = *tbl },
+		Stage{Name: "implement", Model: qwen, Background: sonnet}, []string{"qwen/*"},
+		anthropicfake.MessageOK(qwen, pricing.Usage{Input: 1, Output: 1}))
+	resp, b := r.post(msg(qwen, 100))
+	if resp.StatusCode != http.StatusBadRequest || r.prov.Count() != 0 {
+		t.Fatalf("a refused model was sent: %d %s (provider saw %d)", resp.StatusCode, b, r.prov.Count())
+	}
+	typ, m := apiError(t, b)
+	if typ != "invalid_request_error" {
+		t.Errorf("error type %q, want invalid_request_error", typ)
+	}
+	for _, want := range []string{"require_zdr: false", "model_prices"} {
+		if !strings.Contains(m, want) {
+			t.Errorf("the refusal does not carry the catalog's reason (%q): %s", want, m)
+		}
+	}
+	if rep := r.gw.EndStage(); len(rep.Violations) != 1 || rep.Used != 0 {
+		t.Errorf("report %+v", rep)
+	}
+}
+
 func TestUnknownServingModelPricedMax(t *testing.T) {
 	u := pricing.Usage{Input: 1000, Output: 2000}
 	// The provider served a model the table has no price for.
@@ -162,7 +216,7 @@ func TestServingModelNeverLowersTheCharge(t *testing.T) {
 			if resp, b := r.post(msg(dsModel, 4000)); resp.StatusCode != 200 {
 				t.Fatalf("%d %s", resp.StatusCode, b)
 			}
-			tbl := pricing.Embedded()
+			tbl := dsPrices()
 			prices(tbl)
 			a, _ := tbl.Lookup(dsModel)
 			b, _ := tbl.Lookup(c.served)

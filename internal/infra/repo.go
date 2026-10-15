@@ -148,7 +148,7 @@ func ForgetRepoState(ctx context.Context, c *Clients, stateBucket, slug string) 
 func SecretVersions(ctx context.Context, c *Clients, spec RepoSpec) (map[string]bool, error) {
 	out := make(map[string]bool, len(spec.Secrets))
 	for _, logical := range slices.Sorted(maps.Keys(spec.Secrets)) {
-		ok, err := hasEnabledVersion(ctx, c, target{project: spec.GCPProject}, spec.Secrets[logical])
+		ok, err := hasEnabledVersion(ctx, c.Secrets, target{project: spec.GCPProject}, spec.Secrets[logical])
 		if err != nil {
 			return nil, err
 		}
@@ -163,6 +163,14 @@ func SecretVersions(ctx context.Context, c *Clients, spec RepoSpec) (map[string]
 // mounts has a version (versions, from SecretVersions). A checkout: clone
 // workflow never needs one: it runs the installation's base image directly,
 // and there is no per-repository image to build or push.
+//
+// An optional secret holds no build back (OptionalSecret): the spec in hand
+// is the pre-readiness one, whose job still mounts the Anthropic key, but
+// Readiness drops that mount when no version exists anywhere
+// (internal/infra/readiness.go), so the job deploys without it and the image
+// can be built. Gating on it here would strand every keyless provider-only
+// repository: no build would ever be submitted, and the job it is meant to
+// deploy could never come.
 //
 // spec.Workflows may hold several keys per fugaro.yaml workflow, one per
 // Claude account the repository may choose (gcp.WorkflowVariant, design
@@ -179,7 +187,7 @@ func NeedsBuild(ctx context.Context, c *Clients, spec RepoSpec, versions map[str
 		if key != ws.Name || ws.Checkout == config.CheckoutClone {
 			continue
 		}
-		if slices.ContainsFunc(uniqueSecrets(ws), func(l string) bool { return !versions[l] }) {
+		if slices.ContainsFunc(uniqueSecrets(ws), func(l string) bool { return !versions[l] && !OptionalSecret(l) }) {
 			continue
 		}
 		ok, err := hasRecord(ctx, c, target{project: spec.GCPProject}, spec.Installation.RunsBucket, imagecheck.RecordKey(spec.Slug, ws.Name))
@@ -197,6 +205,11 @@ func NeedsBuild(ctx context.Context, c *Clients, spec RepoSpec, versions map[str
 // command lines that store it.
 type SecretStep struct {
 	Name, What string
+	// Optional marks a secret the job can go without (OptionalSecret): it is
+	// not a gate, and the caller decides whether this run needs it at all
+	// (config.AnthropicKeyNeeded) before printing the command or listing it
+	// as missing.
+	Optional bool
 	// Commands are run in order, each one complete line: no chaining, no
 	// comment, no value. The Claude token is made by the user first.
 	Commands []string
@@ -214,7 +227,7 @@ func SecretCommands(spec RepoSpec, versions map[string]bool, bin string, quote f
 			continue
 		}
 		set := bin + " secrets set " + quote(logical) + " --repo " + quote(spec.Name)
-		st := SecretStep{Name: logical, What: spec.Secrets[logical]}
+		st := SecretStep{Name: logical, What: spec.Secrets[logical], Optional: OptionalSecret(logical)}
 		if logical == "claude-oauth-token" {
 			st.Commands = []string{"claude setup-token", set}
 		} else {

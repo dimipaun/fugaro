@@ -26,6 +26,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/mirror"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -49,10 +50,20 @@ type Config struct {
 	// every image registry of the installation.
 	RegistryHost string `yaml:"registry_host,omitempty"`
 	// BaseImages are the base images the image builds and the daily image
-	// check start from, by base kind (config.Bases), in the installation's
-	// base registry. A workflow builds from the image of its base kind, so
-	// a project needs an entry for each kind its repositories use.
+	// check start from, by base kind (config.Bases). A workflow builds from
+	// the image of its base kind, so a project needs an entry for each kind
+	// its repositories use.
 	BaseImages map[string]string `yaml:"base_images,omitempty"`
+	// ImageSource is the registry/owner prefix a base pin's images come
+	// from: "<host>/<owner>" (for example ghcr.io/dimipaun), the same
+	// string fugaro init's --image-source takes. It is the TRUSTED owner a
+	// base_images entry under the remote repository is checked against
+	// (design registry-remote-repository.md §3.6), recorded once by the run
+	// that pins, published in the shared config, and read from here by
+	// every reader — never derived from the reference being checked, which
+	// would make the check vacuous. Empty means no pin has been recorded on
+	// this installation, and a remote-shaped entry then refuses.
+	ImageSource string `yaml:"image_source,omitempty"`
 	// BackendName is the compute backend by name (backend.Open's registry
 	// key); empty means backend.CloudRun, the only one implemented
 	// (design m11-setup-and-skills.md §7). Read it through Backend.
@@ -82,6 +93,14 @@ type Config struct {
 	// choose among by name (design docs/design/named-oauth-tokens.md).
 	// Only the owner sets them, here, never in fugaro.yaml.
 	ClaudeAccounts map[string]config.ClaudeAccount `yaml:"claude_accounts,omitempty"`
+	// ProjectSecrets are the reserved secret names (config.ReservedSecrets)
+	// the owner has opted into project-wide storage for, by allow-listed
+	// repository (design docs/design/project-secrets.md §3). Only the owner
+	// sets them, here, never in fugaro.yaml. A provider's or a named Claude
+	// account's own allow_data_to governs its own secret instead; neither
+	// can collide with a ReservedSecrets key in the first place, so
+	// ValidateProjectSecrets checks membership in ReservedSecrets only.
+	ProjectSecrets map[string]config.ProjectSecret `yaml:"project_secrets,omitempty"`
 	// Watch tunes fugaro watch.
 	Watch *Watch `yaml:"watch,omitempty"`
 	// UpdateCheck turns off the daily check for a newer fugaro release and
@@ -670,6 +689,11 @@ func (c *Config) validate() error {
 	if c.RegistryHost != "" && !registryHostRE.MatchString(c.RegistryHost) {
 		bad("registry_host %q is not <region>-docker.pkg.dev/<project>", c.RegistryHost)
 	}
+	if c.ImageSource != "" {
+		if err := mirror.ValidSourcePrefix(c.ImageSource); err != nil {
+			bad("image_source %v", err)
+		}
+	}
 	if c.LogView != "" && !logViewRE.MatchString(c.LogView) {
 		bad("log_view %q is not projects/<project>/locations/<location>/buckets/<bucket>/views/<view>", c.LogView)
 	}
@@ -725,6 +749,9 @@ func (c *Config) validate() error {
 		bad("%s: %s", p.Path, p.Message)
 	}
 	for _, p := range config.ValidateClaudeAccounts(c.ClaudeAccounts) {
+		bad("%s: %s", p.Path, p.Message)
+	}
+	for _, p := range config.ValidateProjectSecrets(c.ProjectSecrets) {
 		bad("%s: %s", p.Path, p.Message)
 	}
 	if w := c.Watch; w != nil && w.BurnAlertUSDPerHour != nil {

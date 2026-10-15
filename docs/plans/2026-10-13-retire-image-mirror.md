@@ -1,5 +1,17 @@
 # Implementation plan: verify the base image at copy time
 
+> **Status: PARTLY SUPERSEDED.** This plan's premise — that `fugaro init --base` / `image refresh` keeps *copying* the base image into the installation's registry — is replaced by [docs/design/registry-remote-repository.md](../design/registry-remote-repository.md) and its plan [docs/plans/2026-10-14-registry-remote-repository.md](2026-10-14-registry-remote-repository.md): the base is resolved, its signature verified, read back through a new Artifact Registry remote repository and **pinned** there, with nothing copied. Read every task below through that, and in particular the newer plan's own section "Changes to #318's plan", which is the authority for what survives:
+>
+> - **Task 1** (CI — sign the pushed base image by OCI digest, the `-pinned` tag, the `cosign-installer` pin): **kept, unchanged, and a precondition of the newer plan** — it is what the resolve step verifies. Its rollout precondition (the workflow file must be on `main` before the release's version-bump merge commit is created and tagged) applies verbatim.
+> - **Task 2** (`internal/basepin` + `mirror.ResolveDigest`): **kept, amended** — `basepin.Resolve` returns the **index** digest to its caller, and the reference it feeds is the remote path (the newer plan's Tasks 2/3), not a ghcr.io one.
+> - **Task 3** (the copy gains a verification pre-step): **dropped entirely** — its whole premise is that a copy still happens; the call site it edits (`internal/cli/init_images.go`'s `read()`, `mirror.Plan`) is replaced by the newer plan's Task 3.
+> - **Task 4** (CLI confirmation text, "still copies"): **dropped entirely**, replaced by the newer plan's Task 5.
+> - **Task 5** (docs): **kept in spirit, rewritten** — the newer plan's Task 6.
+> - **Task 6** (full sweep): **kept** — the newer plan's Task 7.
+> - **Task 7** (live checks 39a–39f): **amended — by the newer plan, not here.** 39a, 39c and 39e stand. 39a's Expected text **is amended** — by the newer plan's Task 6, in this branch — to *"and the pinned reference is the remote repository's path at that digest; nothing is copied"* (there is no copy: the same command verifies the same digest and pins the remote path instead), and the row below now reads that way; the checklist's numbering ruling and the newer plan's Task 8 record the amendment. **39b is dropped** (it asserts the copy lands from the `-pinned` tag — there is no copy) and **39f is superseded by Check 43f** of [docs/gcp-live-checklist.md](../gcp-live-checklist.md) (the same round trip against the new path); those two rows below are likewise left as they were written, and the checklist's numbering ruling names both and says to read them through it. 39d stays out of scope.
+>
+> The design it implements, [docs/design/retire-image-mirror.md](../design/retire-image-mirror.md), is likewise kept as the historical design of the copy-plus-verification; this change adds the one status line at its top pointing at the newer design. This document stays the record of the copy's design, not a description of what ships. **The banner above adds twelve lines at the top of this file and two at the top of that design**, so the absolute line citations other documents made into them are re-pointed in place with it: this file's Task 1 quote `:11` → `:23`; 39a's Expected text `:562` → `:574` (amended by the newer plan's Task 6 to *"…the pinned reference is the remote repository's path at that digest; nothing is copied"*); 39b `:563` → `:575`; 39e `:566` → `:578`; 39f `:567` → `:579`; the design's §4 quote `:60` → `:62`. The clauses that said the design carries no status line pointing at the newer design are updated with them.
+
 Source: [docs/design/retire-image-mirror.md](../design/retire-image-mirror.md). Depends on the base-image hard cut (`docs/plans/2026-10-08-base-image.md` Tasks 17–21, release 0.7.0) having already landed: `config.Bases == ["base"]`, one `base_images` key. **This plan is not executed in this change** (docs only); it is handed to the owner to rule on and, once approved, implemented task by task.
 
 **A note on this revision (fifth review round — a narrowing, scoped down from the fourth round's own course correction).** A fourth review found that the daily image check job is itself a Cloud Run Job running directly FROM the base image (`check.tf`, `internal/infra/spec.go`'s `check()`), and Cloud Run Jobs cannot deploy a bare `ghcr.io` reference (not verified live, assumed conservatively) — so `base_images.base` must keep its existing, Artifact-Registry-hosted shape, used exactly as today by the check job and `FUGARO_CHECK_SPEC`. That round's own fix, though, still had **Cloud Build** resolve a verified `ghcr.io` digest fresh at every build submission while the check job kept reading the Artifact Registry copy — leaving two independently-maintained "what base was this built from" references. A fifth review found this breaks rebuild detection: `submitRebuild` (`internal/cli/imagecheck.go:690-692`), `refreshVerdict` (`internal/cli/image_refresh_rules.go:51-66`), and `triggers()` (`internal/imagecheck/triggers.go:34`) all compare `base_ref`/`base_images.base`-derived strings by exact equality, with no concept that a ghcr.io-shaped value and an Artifact-Registry-shaped value could name the same digest. **This revision narrows the scope to "verify-then-copy": Cloud Build and the check job both keep reading `base_images.base`, unchanged, exactly as today.** The design doc's earlier Tasks 4 (`cover.go`) and 5 (the Terraform grant) stay dropped — their premise was already false before this round, for the same reason — and what was Task 3's "Part A" (the three Cloud Build callers resolving fresh) is removed entirely: no build-submission call site changes at all. Task 3 is now exactly what Part B was: a verification pre-step ahead of the *existing*, unchanged copy mechanism, with its source fixed to the nightly-immune `-pinned` tag instead of the plain tag the nightly moves (a bug this round's review caught in the previous draft of Task 3, below).
@@ -11,7 +23,7 @@ Source: [docs/design/retire-image-mirror.md](../design/retire-image-mirror.md). 
 - **Nothing here weakens an existing guard.** `tf.Guard`, `internal/infra/tf/cover.go`, `managedVersion`/`isManaged`, the Terraform `build_base` grant — **none of these are touched by this plan at all** (design §4, §6).
 - **Each task is independently reviewable**: a task's tests fail before its implementation and pass after.
 - **Security-sensitive tasks are flagged for opus review** inline.
-- **A real, owner-applied rollout precondition (design §5, §8), corrected: it's about which commit gets tagged, not a prior tag push.** `docs/pending-workflows/images.yml` (Task 1) can only reach the real `.github/workflows/images.yml` by a human manually copying it in. Once Task 3's code lands, **every** `fugaro init --base`/`image refresh` copy attempt depends on finding a signed `-pinned` image for the installed CLI's **own** version — not a Cloud Build submission (none is touched by this plan), and not any other release's signed image (`basepin.Resolve` only ever resolves the running CLI's embedded version's tag). GitHub Actions runs a tag push's workflow exactly as that file exists in the tagged commit, and `scripts/release.sh` always tags whatever commit is currently on `main` — so the real requirement is just: **the workflow file copy must be on `main` before that release's version-bump PR's merge commit is created and tagged.** Once it is, that release's own tag push runs the updated `images.yml` and signs its own `-pinned` image as part of the same push — there is no earlier, separate tag push to wait for ("at least one real tag push must have already run" was a circular, earlier-draft mistake). This can be the same release as Task 1, as long as the copy lands on `main` first. The release process cannot enforce this automatically; the owner applies it by hand. **A real, if ordinarily brief, window exists regardless:** `release.yml` (the CLI) and `images.yml` (`publish-base`, the sign) are independent workflows on the same tag push with no guaranteed ordering, so copies with a newly-published CLI can refuse until `publish-base` finishes signing; if its sign step fails outright, a maintainer re-running that job rebuilds, re-tags, and re-signs (design §5).
+- **A real, owner-applied rollout precondition (design §5, §8), corrected: it's about which commit gets tagged, not a prior tag push.** `docs/pending-workflows/images.yml` (Task 1) can only reach the real `.github/workflows/images.yml` by a human manually copying it in. Once Task 3's code lands, **every** `fugaro init --base`/`image refresh` copy attempt depends on finding a signed `-pinned` image for the installed CLI's **own** version — not a Cloud Build submission (none is touched by this plan), and not any other release's signed image (`basepin.Resolve` only ever resolves the running CLI's embedded version's tag). GitHub Actions runs a tag push's workflow exactly as that file exists in the tagged commit, and `scripts/release.sh` always tags whatever commit is currently on `main` — so the real requirement is just: **the workflow file copy must be on `main` before that release's version-bump PR's merge commit is created and tagged.** Once it is, that release's own tag push runs the updated `images.yml` and signs its own `-pinned` image as part of the same push — there is no earlier, separate tag push to wait for ("at least one real tag push must have already run" was a circular, earlier-draft mistake). This can be the same release as Task 1, as long as the copy lands on `main` first. The release process cannot enforce this automatically; the owner applies it by hand. **A real, if ordinarily brief, window exists regardless:** `release.yml` (the CLI) and `images.yml` (`publish-base`, the sign) are independent workflows on the same tag push with no guaranteed ordering, so copies with a newly-published CLI can refuse until `publish-base` finishes signing; if its sign step fails outright, a maintainer can re-run that failed job, which **reuses the build artifacts that push uploaded** (kept one day, `retention-days: 1`) and runs them through create → sign → verify → `-pinned` again — it does not rebuild from the tagged source, and GitHub only offers re-runs for about 30 days, after which that release's `-pinned` image stays unsigned and the copy-time resolve fails loudly (design §5; corrected by PR #377's review, which found "rebuilds" wrong).
 - **Docs match code.** `go test ./internal/cli -run 'Docs|Lint'` and `gofmt -l .` are run after every task.
 
 ## Task 1: CI — sign the pushed base image by OCI digest
@@ -27,81 +39,43 @@ Source: [docs/design/retire-image-mirror.md](../design/retire-image-mirror.md). 
 - Modify: `images/base_workflow_test.go` (new pinning tests below), `docs/pending-workflows/README.md` (its `## images.yml` section rewritten wholesale to describe this diff)
 
 **Interfaces:**
-- `publish-base`'s `permissions` gains `id-token: write` (alongside its existing `contents: read`/`packages: write`) — needed **only** for the OCI signing step's keyless (OIDC) Fulcio certificate request. The `-pinned` tag push itself is an ordinary registry write, the same as `:$VERSION`/`:$MAJOR`, and needs only the already-granted `packages: write`; an earlier draft of this task said `id-token: write` was needed for "both," which overstates it.
-- A second, nightly-immune tag, `fugaro-base:<v>-pinned`, added to the **same** `docker buildx imagetools create` call that already creates `:<v>`/`:<major>`, conditioned on `github.event_name == 'push'` (the nightly/`workflow_dispatch` runs of the same script never create or move it, since the version-picking step treats them identically — always "the latest release tag," never a dispatched ref).
-- `cosign sign --yes "ghcr.io/dimipaun/fugaro-base@$digest"`, signing the digest `docker buildx imagetools inspect` resolves from the just-created `-pinned` tag (immediately, same job, same concurrency-serialized run — safe for reasons distinct from, and narrower than, the severe nightly-vs-fresh-resolution race the `-pinned` tag itself exists to close, design §2).
-- `sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2` — the exact, real pin `release.yml:95` already uses, not a placeholder.
+- `publish-base`'s `permissions` gains `id-token: write` (alongside its existing `contents: read`/`packages: write`) — needed **only** for the OCI signing step's keyless (OIDC) Fulcio certificate request. The `-pinned` tag push itself is an ordinary registry write, the same as `:$VERSION`/`:$MAJOR`, and needs only the already-granted `packages: write`; an earlier draft of this task said `id-token: write` was needed for "both," which overstates it. It is granted at **job** scope (GitHub grants permissions per job, not per step, and `publish-base` is the only signing job) and on **no other job**; a workflow-level `id-token: write` would hand it to the build-only jobs too.
+- **The digest that gets signed is read from the create call's own `--metadata-file`, never from a tag** (PR #377 review H1). `docker buildx imagetools create` takes `--metadata-file FILE`, and the file's `containerimage.descriptor.digest` is the index it just published — that key, not `containerimage.digest`, is what docker's docs document for *this* command (`imagetools create`; `containerimage.digest` is `buildx build`'s — checked against docs.docker.com 2026-10-15). A missing or malformed value fails the job rather than signing something unknown. Re-reading the just-created `-pinned` tag instead (an earlier draft's approach, and a severe mistake) makes the signed digest whatever that tag names **at that moment**: anyone who can write this repository's tags — a leaked `packages: write` token is enough — could move it between the create and the re-read, and this workflow's own OIDC identity would then sign *their* image, which is exactly the trust anchor this design exists to remove.
+- The index's own children are asserted against the two child digests **this job** pushed (`imagetools inspect --raw "$repo@$digest"`'s `.manifests[].digest` vs the two `RepoDigests` from the per-arch pushes), so a digest that is not this job's build is never signed whatever the metadata file says.
+- A second, nightly-immune tag, `fugaro-base:<v>-pinned`, created **only after** the signature exists and has been verified (PR #377 review M1), and pointing at that same signed digest — `docker buildx imagetools create --tag "$repo:$VERSION-pinned" "$repo@$DIGEST"`, one index source, which docker's docs say is copied as-is (carbon copy, same digest) — followed by a read-back that fails unless the tag resolves to that digest. The nightly/`workflow_dispatch` runs, whose version-picking step resolves the identical `$VERSION`, must never create or move it: every step of the chain below carries `if: github.event_name == 'push'` exactly.
+- `cosign sign --yes "ghcr.io/dimipaun/fugaro-base@$DIGEST"` for that digest (never a tag), and then `cosign verify` against the same digest with `--certificate-identity https://github.com/dimipaun/fugaro/.github/workflows/images.yml@refs/tags/v$VERSION --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-github-workflow-trigger push --certificate-github-workflow-repository dimipaun/fugaro` (PR #377 review M3; the last two added by its re-review, M1 — the identity alone is also what a `workflow_dispatch` run against the same tag ref presents) — an independent read-back that fails the job on a wrong identity, a non-push trigger, or another repository. No `--insecure-ignore-tlog` or "verify without an artifact" mode anywhere.
+- `sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2` — the exact, real pin `release.yml:95` already uses, not a placeholder; it is gated `if: github.event_name == 'push'` like the rest of the chain, and it runs before the sign step so `cosign` is on `PATH` there.
 
 - [ ] **Step 1: Write the failing tests**
 
+Two tests, both reading the **parsed YAML** (the fields GitHub executes — `id`, `uses`, `if`, `env`, `run`, `continue-on-error`, the job and workflow `permissions`, and the order the steps run in), never substrings in comments: a guard that survives only in a comment is not a guard, and reviewing PR #377 found eight mutations that string-matching tests let through. `images/base_workflow_test.go` holds the real ones; in shape:
+
 ```go
-// TestPublishBaseSignsByOCIDigestOnPushOnly pins the signing shape (design
-// retire-image-mirror.md §2): publish-base gains id-token: write, a
-// cosign-installer step at the exact pin release.yml already uses, a
-// -pinned tag added only on a real tag push, and a cosign sign step gated
-// the same way.
+// signingProblems reads the parsed publish-base chain and names every way it
+// can be weakened. TestPublishBaseSignsByOCIDigestOnPushOnly requires it
+// empty for the real workflow; TestSigningProblemsFindEveryMutation feeds it
+// one mutation at a time and requires each to be reported.
+func signingProblems(wf imagesWorkflow) []string { /* ... */ }
+
 func TestPublishBaseSignsByOCIDigestOnPushOnly(t *testing.T) {
-	data := readImagesWorkflow(t)
-	var wf struct {
-		Jobs map[string]struct {
-			Permissions map[string]string `yaml:"permissions"`
-			Steps       []struct {
-				Uses string `yaml:"uses"`
-				If   string `yaml:"if"`
-				Run  string `yaml:"run"`
-			} `yaml:"steps"`
-		} `yaml:"jobs"`
-	}
-	if err := yaml.Unmarshal(data, &wf); err != nil {
-		t.Fatal(err)
-	}
-	const cosignPin = "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6"
-	job, ok := wf.Jobs["publish-base"]
-	if !ok {
-		t.Fatal("no publish-base job")
-	}
-	if job.Permissions["id-token"] != "write" {
-		t.Errorf("permissions[id-token] = %q, want write", job.Permissions["id-token"])
-	}
-	var installed, taggedPinned, signed bool
-	var pinnedGuarded, signGuarded bool
-	for _, s := range job.Steps {
-		if strings.HasPrefix(s.Uses, cosignPin) {
-			installed = true
-		}
-		// The tag-creation step's own run script literally invokes
-		// "docker buildx imagetools create $tags" (the real command, with
-		// its real argument list); the sign step's run script only ever
-		// *mentions* imagetools create in a comment ("docker buildx
-		// imagetools create does not print...") and in a different
-		// subcommand, "imagetools inspect" — both of which also contain
-		// the bare substring "imagetools create" and "$VERSION-pinned".
-		// Matching on "imagetools create" alone (an earlier draft of this
-		// test's mistake) lets the sign step's own iteration overwrite
-		// pinnedGuarded with a false negative, since the sign step's
-		// guard is YAML-level (If), not this in-script check. Matching on
-		// the exact invocation instead is unambiguous between the two
-		// steps.
-		if strings.Contains(s.Run, "docker buildx imagetools create $tags") {
-			taggedPinned = strings.Contains(s.Run, "$VERSION-pinned")
-			pinnedGuarded = strings.Contains(s.Run, `"$GITHUB_EVENT_NAME" = push`)
-		}
-		if strings.Contains(s.Run, "cosign sign ") {
-			signed = true
-			signGuarded = strings.Contains(s.If, "github.event_name == 'push'")
-		}
-	}
-	if !installed || !taggedPinned || !signed {
-		t.Errorf("cosign-installer=%v, -pinned tag=%v, cosign sign=%v", installed, taggedPinned, signed)
-	}
-	if !pinnedGuarded {
-		t.Error("the -pinned tag addition must be guarded by $GITHUB_EVENT_NAME = push in its own shell script (a different gating mechanism from the sign step's YAML-level if:, since both live inside the same long-running script)")
-	}
-	if !signGuarded {
-		t.Error("the cosign sign step's if: must require github.event_name == 'push'")
+	for _, p := range signingProblems(parseImagesWorkflow(t, readImagesWorkflow(t))) {
+		t.Error(p)
 	}
 }
 ```
+
+What `signingProblems` must catch (each mutation is one test case in `TestSigningProblemsFindEveryMutation`, on a clone of the real parsed workflow):
+
+- the sign step signs a **tag** (`"$repo:$VERSION"`) instead of the digest handed to it, or takes its `DIGEST` from anything but `steps.index.outputs.digest`;
+- the index step no longer takes the digest from `--metadata-file` (in particular, learns it by `imagetools inspect`ing a tag), or stops asserting the published index's children are the two digests this job pushed;
+- `cosign sign ... || true` — or the same thing spelled `|| :`, `|| /bin/true`, `|| exit 0` — `continue-on-error: true` on any chain step, or `continue-on-error` at the **job** level on `publish-base`: a failed signature must fail the job;
+- an insecure mode anywhere (`--insecure-ignore-tlog`, …);
+- the sign, verify or `-pinned` step's `if` is not exactly `github.event_name == 'push'` (a widened condition signs or tags on an event this release's identity does not cover), or `-pinned` is made unconditional with the guard left in a comment;
+- a workflow-level `id-token: write`, or `id-token: write` on any job but `publish-base`;
+- the verify step's `--certificate-identity`, `--certificate-oidc-issuer`, `--certificate-github-workflow-trigger` or `--certificate-github-workflow-repository` missing or wrong (the last two are what make the first two mean *a tag push*), or the verify step dropped;
+- `publish-base`'s own `if:` widened past its publish/kinds gate (to `always()`, say), or dropped;
+- a floating `cosign-installer` pin (anything but the full commit SHA);
+- **the step order**: index → sign → verify → `-pinned`, with the installer before sign. The `-pinned` tag must never precede the signature.
 
 (`TestOnlyPublishJobsHoldPackagesWrite`, the real, already-existing test in this file, needs no change — this task adds no new job and widens no job's `packages: write`.)
 
@@ -112,50 +86,65 @@ Expected: FAIL.
 
 - [ ] **Step 3: Implement**
 
-Create `docs/pending-workflows/images.yml` by copying today's real `.github/workflows/images.yml` verbatim, then making these additions, all **inside `publish-base`'s existing "Push per architecture and publish the index" step** (one continuous shell script — a mistake an earlier draft of this document made was treating "define `$repo` here" and "use `$repo` in a signing step" as spanning two *separate* GitHub Actions steps, which do **not** share shell variables; everything below stays in the one script that already has `$repo`/`$VERSION`/`$MOVE_MAJOR` in scope):
+Create `docs/pending-workflows/images.yml` by copying today's real `.github/workflows/images.yml` verbatim, then making these additions. The existing "Push per architecture and publish the index" step gains an `id: index` and a `--metadata-file`, and hands its digest out through `$GITHUB_OUTPUT` (separate Actions steps do **not** share shell variables — an earlier draft of this document made exactly that mistake, and a later one had the sign step re-read a tag to get the digest, which is the race H1 above); all other additions are new steps in the same job:
 
 ```yaml
-          tags="--tag $repo:$VERSION"
-          if [ "$MOVE_MAJOR" = true ]; then
-            tags="$tags --tag $repo:$MAJOR"
-          fi
-          # Nightly-immune: created only on a real tag push, in the SAME
-          # create call as :$VERSION/:$MAJOR above, so the nightly's own
-          # run of this same script never creates or moves it (design
-          # retire-image-mirror.md §2).
-          if [ "$GITHUB_EVENT_NAME" = push ]; then
-            tags="$tags --tag $repo:$VERSION-pinned"
-          fi
-          # shellcheck disable=SC2086
-          docker buildx imagetools create $tags $digests
-          # ... (the existing size-summary block stays here, unchanged) ...
-```
-
-Then, as **two more steps in the same job** (after the step above, so `cosign` and the registry login from earlier steps are usable, but each as its own shell — neither references a variable only a prior step's script defined):
-
-```yaml
+      - name: Push per architecture and publish the index
+        id: index
+        # ... unchanged env and per-arch push loop ...
+        # (--metadata-file is the only place the index's own digest comes
+        # from: nothing here asks a tag what it resolves to.)
+        # shellcheck disable=SC2086
+        docker buildx imagetools create $tags $digests --metadata-file index.json
+        index=$(jq -r '."containerimage.descriptor".digest' index.json)
+        # ... validate it is sha256:<64 hex>, assert the published index's
+        # .manifests[]?.digest set equals the two child digests this job
+        # pushed, then:
+        echo "digest=$index" >> "$GITHUB_OUTPUT"
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         if: github.event_name == 'push'
-      - name: Sign the base image
+      - name: Sign the published index
+        id: sign
         if: github.event_name == 'push'
         env:
+          DIGEST: ${{ steps.index.outputs.digest }}
+        run: |
+          set -eu
+          repo=ghcr.io/dimipaun/fugaro-base
+          cosign sign --yes "$repo@$DIGEST"
+      - name: Verify the signature just attached
+        id: verify
+        if: github.event_name == 'push'
+        env:
+          DIGEST: ${{ steps.index.outputs.digest }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -eu
           repo=ghcr.io/dimipaun/fugaro-base
-          # docker buildx imagetools create does not print the index's own
-          # digest: the only way to learn it is to ask the registry what
-          # the tag it just wrote now resolves to. Safe here (unlike
-          # resolving the plain tag days or weeks later): this runs
-          # immediately after the SAME job's own imagetools create call,
-          # under a concurrency group (images-publish-base,
-          # cancel-in-progress: false) that already serializes every run
-          # touching this image.
-          digest=$(docker buildx imagetools inspect "$repo:$VERSION-pinned" --format '{{.Manifest.Digest}}')
-          cosign sign --yes "$repo@$digest"
+          cosign verify \
+            --certificate-identity "https://github.com/dimipaun/fugaro/.github/workflows/images.yml@refs/tags/v$VERSION" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$repo@$DIGEST"
+      - name: Publish the -pinned tag at the signed digest
+        id: pinned
+        if: github.event_name == 'push'
+        env:
+          DIGEST: ${{ steps.index.outputs.digest }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -eu
+          repo=ghcr.io/dimipaun/fugaro-base
+          docker buildx imagetools create --tag "$repo:$VERSION-pinned" "$repo@$DIGEST"
+          got=$(docker buildx imagetools inspect "$repo:$VERSION-pinned" --format '{{.Manifest.Digest}}')
+          if [ "$got" != "$DIGEST" ]; then
+            echo "::error::$repo:$VERSION-pinned resolves to $got, not the signed digest $DIGEST" >&2
+            exit 1
+          fi
 ```
 
-`docs/pending-workflows/README.md`'s `## images.yml` section is replaced wholesale to describe this diff (the `-pinned` tag addition and the two new steps in `publish-base`) against the real, already-merged file.
+(`docs/pending-workflows/images.yml` in this repository is the authority for the exact text; it also keeps the two-step comment lines that explain each of the above in place.)
+
+`docs/pending-workflows/README.md`'s `## images.yml` section is replaced wholesale to describe this diff (the `--metadata-file` digest source, the create → sign → verify → `-pinned` chain, and the push-only gates) against the real, already-merged file.
 
 **A cheap, recommended addendum, not required by this task:** extend `images/verify-public.sh`'s existing checks to also confirm `fugaro-base:<v>-pinned` is anonymously readable.
 
@@ -199,12 +188,27 @@ type TagResolver interface {
 	ResolveDigest(ctx context.Context, source, kind, version string) (digest string, err error)
 }
 
-// CertIdentity is what a signing certificate must name: the workflow ref
-// GitHub's OIDC issues for a TAG PUSH specifically (Task 1's own event
-// guard is exactly why this identity is the one to expect).
+// CertIdentity is what a signing certificate must name. WorkflowRef and
+// Issuer are NOT enough on their own (PR #377's review, M1): a
+// workflow_dispatch run started against a tag ref gets the very same
+// ".../images.yml@refs/tags/vX.Y.Z" subject, so a ref that looks like a
+// release proves nothing about what triggered the run. Trigger and
+// Repository are the claims that distinguish them — the Fulcio extensions
+// 1.3.6.1.4.1.57264.1.2 ("event_name") and 1.3.6.1.4.1.57264.1.5
+// ("repository") — and all four MUST be required. With the cosign binary
+// that is exactly:
+//   cosign verify \
+//     --certificate-identity "$WorkflowRef" \
+//     --certificate-oidc-issuer "$Issuer" \
+//     --certificate-github-workflow-trigger "$Trigger" \
+//     --certificate-github-workflow-repository "$Repository"
+// (flag names checked against cosign v3's own cosign_verify docs; the
+// extension OIDs against fulcio's docs/oid-info.md).
 type CertIdentity struct {
 	WorkflowRef string // "https://github.com/<owner>/<repo>/.github/workflows/images.yml@refs/tags/vX.Y.Z"
 	Issuer      string // "https://token.actions.githubusercontent.com"
+	Trigger     string // "push" — never a dispatch run against the same tag ref
+	Repository  string // "<owner>/fugaro" — the same owner Resolve was given, never one read back from the registry
 }
 
 // OCIVerifier checks a specific digest's OCI-attached cosign signature
@@ -232,7 +236,13 @@ func Resolve(ctx context.Context, tr TagResolver, v OCIVerifier, owner, repoOnGi
 
 **A subtlety worth one sentence (design §9 Decision 1, M3):** cosign's OCI signature binds to the **digest**, not to which repository name it is referenced under — so a digest signed as `fugaro-base`'s could, in principle, verify just as well if (by mistake or by copying bytes) the same digest were ever referenced under `fugaro-history`'s name instead. Low impact here, since `Resolve`'s own `ref` is always built from the caller's own, correctly-known `kind`, never read from anywhere an attacker could substitute it — but worth knowing if this code is ever reused more generally.
 
-**Finding the signature (sigstore-go route, if chosen — design §9 Decision 1).** `sigstore-go` itself fetches nothing from a registry; the implementer must locate the signature artifact first. Under cosign v3 (paired with `cosign-installer` v4.x, Task 1's pin), a signature is stored either as an OCI *referrer* of the signed digest, or, where referrers aren't supported, under the fallback tag `sha256-<hex>.sig` in the same repository — the implementer checks which ghcr.io actually uses (not verified here) before writing the fetch. **The verifier must set an artifact-digest policy equal to the resolved digest and must never use a "without artifact" / unsafe verification mode** — accepting a signature with no artifact binding at all would defeat the entire point of digest-pinning.
+**Finding the signature (sigstore-go route, if chosen — design §9 Decision 1).** `sigstore-go` itself fetches nothing from a registry; the implementer must locate the signature artifact first. Under cosign v3 (paired with `cosign-installer` v4.x, Task 1's pin), a signature is stored as an **OCI referrer** of the signed digest (the OCI 1.1 `subject` field, listed through the registry's referrers API), or, where that API is missing, through the OCI distribution spec's **referrers tag schema**: an image index at tag `<algorithm>-<hex>` — i.e. `sha256-<hex>`, with **no `.sig` suffix** — in the same repository (spec §"Unavailable Referrers API", whose table maps a `sha256:aaaa…` subject to the tag `sha256-aaaa…`). The `sha256-<hex>.sig` tag is cosign's *older* layout, used only with `--registry-referrers-mode=legacy`, not what the pinned v3 writes; a fetch that looks for `.sig` will find nothing and must not then conclude "unsigned". The implementer checks which of the two ghcr.io actually produces (not verified here) before writing the fetch. **The verifier must set an artifact-digest policy equal to the resolved digest and must never use a "without artifact" / unsafe verification mode** — accepting a signature with no artifact binding at all would defeat the entire point of digest-pinning.
+
+**Info for the Task 2 verifier (PR #377's supply-chain review, after Task 1's signing chain was hardened).** Three things the implementer of this task must check, because Task 1's workflow now guarantees them and `Resolve` is where that guarantee is *enforced*:
+
+- **The certificate must say the run was a tag *push*, of `dimipaun/fugaro`'s own workflow — four claims, not two.** Task 1 signs only under `if: github.event_name == 'push'`, so the certificate's identity is `https://github.com/dimipaun/fugaro/.github/workflows/images.yml@refs/tags/vX.Y.Z` and its issuer is `https://token.actions.githubusercontent.com` (`CertIdentity.WorkflowRef` and `.Issuer`, both checked exactly). **The ref alone does not prove a push** (PR #377's re-review, M1): a `workflow_dispatch` run started against a tag ref is issued the very same `...images.yml@refs/tags/vX.Y.Z` subject, so identity-plus-issuer would accept an image signed by a manual run on a release ref. The claims that distinguish them are the Fulcio extensions **1.3.6.1.4.1.57264.1.2** (`event_name`) and **1.3.6.1.4.1.57264.1.5** (`repository`), i.e. `CertIdentity.Trigger` = `"push"` and `CertIdentity.Repository` = `"<owner>/fugaro"`; with the cosign binary they are `--certificate-github-workflow-trigger push` and `--certificate-github-workflow-repository dimipaun/fugaro` (flag names checked against cosign v3's `cosign_verify` docs; the OIDs against fulcio's `docs/oid-info.md`). All four MUST be required, and the repository must be the one the caller asked for — a fork's `--image-source ghcr.io/<fork-owner>` expects `<fork-owner>/fugaro` (see "Forks and --image-source" above) — never a name read out of anything the registry or the image returned. Task 1's own `cosign verify` step carries all four for the same reason.
+- **Never use a cosign mode that skips the transparency log or the digest binding.** Specifically not `--insecure-ignore-tlog`, not `--insecure-ignore-sct`, and not any "verify without an artifact" / `verify-blob`-style path that accepts a signature covering some other digest: the signature must be checked against exactly the `<source>/fugaro-<kind>@sha256:<hex>` digest `TagResolver` just resolved, or the whole of digest-pinning is decoration. (Design §9 Decision 1's "correctness beats convenience"; the same rule applies whether the route is `sigstore-go` or the `cosign` binary.)
+- **Look for the signature in the right place, in `fugaro-base` itself.** Under cosign v3 (paired with Task 1's `cosign-installer` v4.x pin), the signature is attached in the **same repository** as the signed image — as an OCI *referrer* of the signed digest, or, where the registry has no referrers API, through the OCI distribution spec's referrers tag schema, an image index at `sha256-<hex>` (no `.sig`: that suffix is cosign's older, legacy-mode tag, and looking only for it finds nothing on a v3 signature). Which of the two ghcr.io actually produces is **not verified here** (no live registry access in this run): the implementer must determine it before writing the fetch, and a fetch that finds nothing must fail closed, never fall through to "no signature found, accept" or to the plain `<version>` tag.
 
 **Network, beyond ghcr.io (design §2's "new operational cost").** Keyless verification needs the sigstore TUF trusted root and Rekor to be reachable from wherever `Resolve` runs (the operator's machine, or a CI runner doing `fugaro image refresh --yes`) — not only `ghcr.io` itself.
 
@@ -273,20 +283,24 @@ func (f fakeVerifier) Verify(_ context.Context, ref string, id CertIdentity) err
 	return f.err
 }
 
+// All four claims, not just the ref: the ref alone is also what a
+// workflow_dispatch run against a tag ref is issued (see CertIdentity).
 func wantIdentity(owner, repoOnGitHub, version string) CertIdentity {
 	return CertIdentity{
 		WorkflowRef: "https://github.com/" + owner + "/" + repoOnGitHub + "/.github/workflows/images.yml@refs/tags/v" + version,
 		Issuer:      "https://token.actions.githubusercontent.com",
+		Trigger:     "push",
+		Repository:  owner + "/" + repoOnGitHub,
 	}
 }
 
 func TestResolve(t *testing.T) {
 	tr := fakeResolver{digest: testDigest}
 	ref := "ghcr.io/dimipaun/fugaro-base@" + testDigest
-	v := fakeVerifier{wantRef: ref, wantID: wantIdentity("dimipaun", "fugaro", "0.7.1")}
+	v := fakeVerifier{wantRef: ref, wantID: wantIdentity("dimipaun", "fugaro", "0.7.5")}
 	// "base", not "fugaro-base": Resolve builds the full image name itself.
-	got, err := Resolve(context.Background(), tr, v, "dimipaun", "fugaro", "ghcr.io/dimipaun", "base", "0.7.1")
-	want := "ghcr.io/dimipaun/fugaro-base:0.7.1@" + testDigest
+	got, err := Resolve(context.Background(), tr, v, "dimipaun", "fugaro", "ghcr.io/dimipaun", "base", "0.7.5")
+	want := "ghcr.io/dimipaun/fugaro-base:0.7.5@" + testDigest
 	if err != nil || got != want {
 		t.Errorf("got %q, %v; want %q", got, err, want)
 	}
@@ -295,15 +309,15 @@ func TestResolve(t *testing.T) {
 func TestResolveRefusesAFailedVerification(t *testing.T) {
 	tr := fakeResolver{digest: testDigest}
 	ref := "ghcr.io/dimipaun/fugaro-base@" + testDigest
-	v := fakeVerifier{wantRef: ref, wantID: wantIdentity("dimipaun", "fugaro", "0.7.1"), err: errors.New("certificate identity mismatch")}
-	if _, err := Resolve(context.Background(), tr, v, "dimipaun", "fugaro", "ghcr.io/dimipaun", "base", "0.7.1"); err == nil || !strings.Contains(err.Error(), "certificate identity mismatch") {
+	v := fakeVerifier{wantRef: ref, wantID: wantIdentity("dimipaun", "fugaro", "0.7.5"), err: errors.New("certificate identity mismatch")}
+	if _, err := Resolve(context.Background(), tr, v, "dimipaun", "fugaro", "ghcr.io/dimipaun", "base", "0.7.5"); err == nil || !strings.Contains(err.Error(), "certificate identity mismatch") {
 		t.Errorf("got %v, want the injected verification error", err)
 	}
 }
 
 func TestResolveRefusesAResolveError(t *testing.T) {
 	tr := fakeResolver{err: errors.New("404")}
-	if _, err := Resolve(context.Background(), tr, fakeVerifier{}, "dimipaun", "fugaro", "ghcr.io/dimipaun", "base", "0.7.1"); err == nil {
+	if _, err := Resolve(context.Background(), tr, fakeVerifier{}, "dimipaun", "fugaro", "ghcr.io/dimipaun", "base", "0.7.5"); err == nil {
 		t.Error("want an error")
 	}
 }
@@ -559,7 +573,7 @@ Add to `docs/gcp-live-checklist.md`, in the existing numbered-table format, scop
 
 | # | Check | Command | Expected |
 |---|---|---|---|
-| 39a | `fugaro init --base`/`image refresh` resolving and verifying a real, signed `fugaro-base:<v>-pinned` image on the operator's own machine, against a real release that has run Task 1's signing steps (design retire-image-mirror.md §7, item a) | `fugaro init --base base` (or `image refresh`) in the sandbox repository's checkout, after the implementation lands and a real tag push has produced a signed image | The resolution succeeds and reports the verified digest; the copy lands in the installation's own Artifact Registry. |
+| 39a | `fugaro init --base`/`image refresh` resolving and verifying a real, signed `fugaro-base:<v>-pinned` image on the operator's own machine, against a real release that has run Task 1's signing steps (design retire-image-mirror.md §7, item a) | `fugaro init --base base` (or `image refresh`) in the sandbox repository's checkout, after the implementation lands and a real tag push has produced a signed image | The resolution succeeds and reports the verified digest, and the pinned reference is the remote repository's path at that digest; nothing is copied. |
 | 39b | The copy is sourced from the `-pinned` tag, not the plain tag the nightly moves: a copy run after the nightly has moved the plain tag still succeeds and copies the release's originally-signed image (design §7, item b) | Dispatch `images.yml` nightly once (moving the plain tag), then run `fugaro init --base base`/`image refresh` in the sandbox | The copy succeeds (no `ErrDigestMismatch`); the registry's `fugaro-base:<v>` now holds the signed index's linux/amd64 manifest digest (what `mirror.Copy` actually writes, not the index digest itself), matching the release's originally-signed image, not the nightly-moved plain tag's. |
 | 39c | OCI-signature verification of a real signed base image, on the operator's own machine; a deliberately mismatched expected identity is refused (tamper-test) | A copy attempt against a real release that has run Task 1's signing steps, then once by hand against a forged/mismatched identity | The real signature verifies; the forged/mismatched one is refused with a clear reason. |
 | 39d | Egress/rate-limit behavior under load | — | **Out of scope for this design (§3); not planned.** |

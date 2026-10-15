@@ -64,10 +64,17 @@ const (
 	// CheckoutEnv, set to config.CheckoutClone on a checkout: clone
 	// workflow's job (never on a baked one, whose spec stays exactly what
 	// it was before clone existed), tells the runner's bootstrap to make a
-	// blobless clone at start instead of moving a baked-in one (design
-	// generic-tool.md §2, G4; plan Task 17, not yet merged: this value is
-	// inert until the runner reads it).
-	CheckoutEnv = "FUGARO_CHECKOUT"
+	// blobless clone at start instead of moving a baked-in one, and to
+	// install the checkout's mise tools (design generic-tool.md §2, G4;
+	// plan Task 17). The runner reads it, so the constant lives there
+	// (runner.CheckoutEnv), the same way the budget variables do.
+	CheckoutEnv = runner.CheckoutEnv
+	// RemoteEnv, set to the repository's credential-free clone URL on a
+	// checkout: clone workflow's job (and on no other): the job's image
+	// carries no checkout, so fugaro exec clones one from this URL — its
+	// --remote flag defaults to it (runner.RemoteEnv). Without it the
+	// clone job would have no remote to clone at all (review C1).
+	RemoteEnv = runner.RemoteEnv
 )
 
 // The installation-identity env vars platformEnv and the vertex branch of
@@ -118,6 +125,7 @@ type InstallationOutputs struct {
 	RunsBucket              string   `json:"runs_bucket"`
 	RegistryHost            string   `json:"registry_host"`
 	BaseRegistry            string   `json:"base_registry"`
+	GhcrRegistry            string   `json:"ghcr_registry"`
 	LegacyRegistry          string   `json:"legacy_registry"`
 	SchedulerServiceAccount string   `json:"scheduler_service_account"`
 	RoleIDs                 RoleIDs  `json:"role_ids"`
@@ -227,6 +235,13 @@ type CheckJobSpec struct {
 	// BaseImages are the base images of the checked workflows' base kinds
 	// (kind -> image): what a rebuild the check submits builds FROM.
 	BaseImages map[string]string `json:"base_images"`
+	// GitSecretID is the secret ID of the provider credential as Readiness
+	// resolved it for this repository (the repository's own copy, or the
+	// project-wide one; design docs/design/project-secrets.md §5, §7), so
+	// the rebuild the check job submits names the secret the job itself
+	// reads. Empty in a spec written before this field existed: the in-job
+	// rebuild falls back to the repository's own ID (imagecheck.go).
+	GitSecretID string `json:"git_secret_id,omitempty"`
 }
 
 // RepoInstallation are the installation values a repository root needs.
@@ -237,6 +252,7 @@ type RepoInstallation struct {
 	RunsBucket              string      `json:"runs_bucket"`
 	RegistryHost            string      `json:"registry_host"`
 	BaseRegistry            string      `json:"base_registry"`
+	GhcrRegistry            string      `json:"ghcr_registry"`
 	SchedulerServiceAccount string      `json:"scheduler_service_account"`
 	RoleIDs                 RepoRoleIDs `json:"role_ids"`
 	Launchers               []string    `json:"launchers"`
@@ -263,6 +279,18 @@ type RepoSpec struct {
 	BuildBucketCondition Condition               `json:"build_bucket_condition"`
 	Check                *CheckSpec              `json:"check"`
 	Workflows            map[string]WorkflowSpec `json:"workflows"`
+	// ProjectSecretCandidates are the logical names this repository may use
+	// project-wide, mapped to the secret ID they would resolve to
+	// (gcp.ProjectSecretID). Candidate data only: being here says nothing
+	// about whether anything actually resolves there yet -- Readiness
+	// decides that against live state, and produces ProjectSecrets.
+	// json:"-": this map never reaches tfvars.
+	ProjectSecretCandidates map[string]string `json:"-"`
+	// ProjectSecrets are the logical names Readiness resolved to the
+	// project copy for this repository (repo has no version, project does),
+	// mapped to the project secret ID. This is the field that reaches
+	// tfvars as repo.project_secrets.
+	ProjectSecrets map[string]string `json:"project_secrets,omitempty"`
 
 	// GCPProject is the GCP project ID. It is not in the tfvars under this
 	// name: the root's own variable is "project".
@@ -464,6 +492,7 @@ func withDefaults(o InstallationOutputs, lc *localcfg.Config, bucket string) Ins
 	def(&o.ProjectName, lc.Name)
 	def(&o.RunsBucket, bucket)
 	def(&o.BaseRegistry, BaseRegistry)
+	def(&o.GhcrRegistry, GhcrRegistry)
 	def(&o.SchedulerServiceAccount, serviceAccountEmail(SchedulerServiceAccountID, lc.GCPProject))
 	def(&o.RoleIDs.Launcher, role(RoleLauncher))
 	def(&o.RoleIDs.JobRunner, role(RoleJobRunner))
@@ -637,6 +666,10 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	}
 	if w.Checkout == config.CheckoutClone {
 		ws.Env[CheckoutEnv] = config.CheckoutClone
+		// Where the run clones from: the repository's own URL, which
+		// c.repoURL already checked is https, credential-free and this
+		// repository's (see repoURL).
+		ws.Env[RemoteEnv] = c.repoURL
 	}
 	if ws.Vertex {
 		ws.Env[VertexRegionEnv] = lc.Region
@@ -773,6 +806,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 			RunsBucket:              c.bucket,
 			RegistryHost:            c.registryHost,
 			BaseRegistry:            c.inst.BaseRegistry,
+			GhcrRegistry:            c.inst.GhcrRegistry,
 			SchedulerServiceAccount: c.inst.SchedulerServiceAccount,
 			RoleIDs:                 RepoRoleIDs{JobRunner: c.inst.RoleIDs.JobRunner, BuildSubmitter: c.inst.RoleIDs.BuildSubmitter, TagMover: c.inst.RoleIDs.TagMover},
 			Launchers:               c.inst.Launchers,
@@ -824,7 +858,72 @@ func Repo(in Inputs) (RepoSpec, error) {
 			return RepoSpec{}, err
 		}
 	}
+	rs.ProjectSecretCandidates = c.projectSecretCandidates(rs)
 	return rs, nil
+}
+
+// projectSecretCandidates are the logical names this repository is eligible
+// to use project-wide, mapped to the project secret ID each would resolve
+// to: every name its workflows (and the check job) mount that
+// ProjectSecretCandidate accepts. Being here says nothing about whether the
+// name actually resolves to the project copy -- Readiness decides that
+// against live state (design docs/design/project-secrets.md §5).
+func (c *repoCtx) projectSecretCandidates(rs RepoSpec) map[string]string {
+	out := map[string]string{}
+	add := func(logical string) {
+		if id, ok := ProjectSecretCandidate(c.lc, logical, c.in.Repo); ok {
+			out[logical] = id
+		}
+	}
+	for _, key := range slices.Sorted(maps.Keys(rs.Workflows)) {
+		for _, logical := range uniqueSecrets(rs.Workflows[key]) {
+			add(logical)
+		}
+	}
+	if rs.Check != nil {
+		for _, logical := range slices.Compact(slices.Sorted(maps.Values(rs.Check.SecretEnv))) {
+			add(logical)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// ProjectSecretCandidate is the one place that answers "may this repository
+// use logical project-wide, and what ID would that be": the name is an
+// entry of project_secrets that lists repo, or a named Claude account's own
+// derived secret whose account lists repo, or a model provider's own key
+// whose provider lists repo -- AllowsData uniformly across all three, so
+// §3a's no-list/["*"]-means-any-repository rule applies to a provider's key
+// exactly as it does everywhere else. ok is false, id "" otherwise. It is
+// exported because fugaro init --repo's secrets stage (before any RepoSpec
+// exists) needs the identical answer.
+func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id string, ok bool) {
+	if lc == nil || logical == "" {
+		return "", false
+	}
+	eligible := config.AllowedForProjectSecret(lc.ProjectSecrets, logical, repo)
+	if !eligible {
+		// ClaudeAccountBySecret always resolves the bare claude-oauth-token
+		// to DefaultClaudeAccount, which is never a key of the map
+		// (ValidateClaudeAccounts refuses it), so the default account's own
+		// secret is eligible only through project_secrets above -- the
+		// documented shape (design §3).
+		if name, found := config.ClaudeAccountBySecret(lc.ClaudeAccounts, logical); found {
+			eligible = lc.ClaudeAccounts[name].AllowsData(repo)
+		}
+	}
+	if !eligible {
+		if name, found := config.ProviderBySecret(lc.Providers, logical); found {
+			eligible = lc.Providers[name].AllowsData(repo)
+		}
+	}
+	if !eligible {
+		return "", false
+	}
+	return gcp.ProjectSecretID(lc.Name, logical), true
 }
 
 // UsesVertex reports whether any of the repository's workflows
@@ -839,18 +938,26 @@ func (rs RepoSpec) UsesVertex() bool {
 }
 
 // BaseImageWarnings are the warnings for each of the local config's base
-// images (kind -> image) that isn't in the installation's base registry,
-// in kind order. The build accounts can read only that registry, so every
-// build from such an image would fail at its pull; the check job's own pull
-// would still work, which hides it until then.
+// images (kind -> image) that is in neither of the installation's own image
+// repositories, in kind order: the base registry (the copy an earlier
+// release made) or the remote (pull-through) repository over ghcr.io (this
+// release's pin). The build accounts can read those two, so a build from
+// anything else would fail at its pull; the check job's own pull would
+// still work, which hides it until then.
+//
+// It is deliberately not a gate: the build account can read both, so this
+// is a readability hint and a pointer at where a base image belongs, and
+// the gate is cover.go's shape test and managedVersion.
 func BaseImageWarnings(bases map[string]string, outs InstallationOutputs) []string {
-	registry := outs.RegistryHost + "/" + outs.BaseRegistry
+	registries := []string{outs.RegistryHost + "/" + outs.BaseRegistry, outs.RegistryHost + "/" + outs.GhcrRegistry}
 	var ws []string
 	for _, kind := range slices.Sorted(maps.Keys(bases)) {
-		if ref := bases[kind]; ref != "" && !strings.HasPrefix(ref, registry+"/") {
-			ws = append(ws, fmt.Sprintf("the local config's base_images.%s %s is not in the installation's base registry %s, the only one the build accounts can read, so the image builds would fail at its pull: push the base image to %s and set base_images.%s to it",
-				kind, ref, registry, registry, kind))
+		ref := bases[kind]
+		if ref == "" || slices.ContainsFunc(registries, func(r string) bool { return strings.HasPrefix(ref, r+"/") }) {
+			continue
 		}
+		ws = append(ws, fmt.Sprintf("the local config's base_images.%s %s is in neither of the installation's image repositories (%s), the only ones the build accounts can read, so the image builds would fail at its pull: push the base image to %s and set base_images.%s to it",
+			kind, ref, strings.Join(registries, ", "), registries[0], kind))
 	}
 	return ws
 }
@@ -912,6 +1019,112 @@ func (c *repoCtx) check(rs RepoSpec, checked []string) (*CheckSpec, error) {
 		SecretEnv:       map[string]string{gitEnv: c.gitSecret},
 		Workflows:       checked,
 	}, nil
+}
+
+// Addresses are the Terraform addresses of every resource instance the
+// repository root (deploy/terraform/gcp/roots/repo -> modules/repo and
+// modules/workflow) declares for rs, sorted. It is deterministic from the
+// spec alone -- the same spec always yields the same set -- which is what
+// makes Retirements (retire.go) a set difference.
+//
+// It mirrors the modules' own for_each, count and deploy gates, not their
+// prose: a resource a module does not declare for this spec is not an
+// address here either, because an address claimed but not produced would
+// make Retirements call a live resource retired. In particular the jobs
+// (google_cloud_run_v2_job.this[0], the check job and the launcher grants)
+// exist only when the spec's DeployJob says so, exactly as
+// `count = var.workflow.deploy_job ? 1 : 0` and check.tf's
+// `local.deploy_check` do; Readiness never turns DeployJob off for a job
+// that already exists, so an address the state holds is never dropped this
+// way.
+//
+// Keys are quoted with strconv.Quote, as newImport does, and for the same
+// reason (config.SecretNameRE and config.WorkflowNameRE restrict every key
+// to [a-z0-9-], where strconv.Quote and HCL's quoting agree).
+//
+// It is a hand-maintained mirror, so it is pinned rather than trusted:
+// internal/infra/testdata/repo_root_addresses.golden holds the address list
+// of a real `terraform plan` of the real root, and
+// TestRepoAddressesMatchTheRealPlanGolden fails when a module gains a
+// resource this function does not name (Review Focus 8 of
+// docs/plans/2026-10-14-config-transitions.md).
+func (rs RepoSpec) Addresses() []string {
+	const root = "module.repo."
+	q := strconv.Quote
+	var out []string
+	add := func(s string) { out = append(out, s) }
+	operators := rs.Installation.Operators
+	// The roots read the tfvars' installation.launchers, which RepoVars
+	// writes as the launchers and the operators together (tfvars.go's
+	// launchersWithOperators): an operator launches too.
+	launchers := launchersWithOperators(rs.Installation.Launchers, operators)
+
+	// modules/repo/secrets.tf
+	for _, logical := range slices.Sorted(maps.Keys(rs.Secrets)) {
+		add(root + "google_secret_manager_secret.this[" + q(logical) + "]")
+	}
+	// The operator grants are for_each over setproduct(secret, operator),
+	// with the role appended to the key.
+	for _, logical := range slices.Sorted(maps.Keys(rs.Secrets)) {
+		for _, member := range operators {
+			add(root + "google_secret_manager_secret_iam_member.operator[" + q(logical+" "+member+" secretVersionAdder") + "]")
+			add(root + "google_secret_manager_secret_iam_member.operator[" + q(logical+" "+member+" viewer") + "]")
+		}
+	}
+	// modules/repo/registry.tf
+	add(root + "google_artifact_registry_repository.images")
+	for _, member := range operators {
+		add(root + "google_artifact_registry_repository_iam_member.operator_images[" + q(member) + "]")
+	}
+	// modules/repo/build.tf
+	add(root + "google_service_account.build")
+	for _, logical := range rs.BuildSecrets {
+		add(root + "google_secret_manager_secret_iam_member.build[" + q(logical) + "]")
+	}
+	add(root + "google_artifact_registry_repository_iam_member.build_images")
+	add(root + "google_artifact_registry_repository_iam_member.build_tag_mover")
+	add(root + "google_artifact_registry_repository_iam_member.build_base")
+	// #362's remote repository: the build's reader grant on the ghcr.io
+	// mirror, declared without a gate (build.tf), so it is an address of
+	// every repository root.
+	add(root + "google_artifact_registry_repository_iam_member.build_ghcr")
+	add(root + `google_project_iam_member.build["log_writer"]`)
+	add(root + `google_project_iam_member.build["build_submitter"]`)
+	add(root + "google_service_account_iam_member.build_self")
+	for _, member := range operators {
+		add(root + "google_service_account_iam_member.operator_build[" + q(member) + "]")
+	}
+	add(root + "google_storage_bucket_iam_member.build")
+	// modules/repo/check.tf
+	if rs.Check != nil && rs.Check.DeployJob {
+		add(root + "google_cloud_run_v2_job.check[0]")
+		add(root + "google_cloud_run_v2_job_iam_member.check_invoker[0]")
+		add(root + "google_cloud_scheduler_job.check[0]")
+	}
+	// modules/repo/workflows.tf -> modules/workflow
+	for _, key := range slices.Sorted(maps.Keys(rs.Workflows)) {
+		ws := rs.Workflows[key]
+		p := "module.repo.module.workflow[" + q(key) + "]."
+		add(p + "google_service_account.job")
+		for _, member := range operators {
+			add(p + "google_service_account_iam_member.operator[" + q(member) + "]")
+		}
+		add(p + "google_storage_bucket_iam_member.job")
+		for _, logical := range uniqueSecrets(ws) {
+			add(p + "google_secret_manager_secret_iam_member.job[" + q(logical) + "]")
+		}
+		if ws.Vertex {
+			add(p + "google_project_iam_member.vertex[0]")
+		}
+		if ws.DeployJob {
+			add(p + "google_cloud_run_v2_job.this[0]")
+			for _, member := range launchers {
+				add(p + "google_cloud_run_v2_job_iam_member.launcher[" + q(member) + "]")
+			}
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // Schedule is the check's daily cron schedule: a minute between 05:00 and

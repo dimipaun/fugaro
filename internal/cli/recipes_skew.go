@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
@@ -30,8 +32,9 @@ const layeredSince = "0.6.0"
 
 // cloneSince names the release whose runner reads FUGARO_CHECKOUT and makes
 // a blobless clone at start (plan Task 17). Today it names a release that
-// does not exist yet, on purpose (see cloneShipped): until Task 17 lands,
-// this constant is a placeholder for "the release that will ship it", not
+// does not exist yet, on purpose (see cloneShipped): until that release is
+// tagged, this constant is a placeholder for "the release that will ship
+// it", not
 // a verified fact the way recipesSince/layeredSince/namedTokensSince above
 // are. checkCloneImageSince below gates it unconditionally, whether or not
 // the workflow also uses a recipe or a project layer: nothing else here
@@ -40,12 +43,13 @@ const layeredSince = "0.6.0"
 // one). Once Task 17 ships, this constant's job becomes the same as the
 // others': docs/release.md's ("Before you tag") checklist verifies it
 // equals the release that ships it.
-const cloneSince = "0.7.1"
+const cloneSince = "0.7.5"
 
 // cloneShipped is false until the release named by cloneSince is actually
-// tagged: Task 17 (the runner's own FUGARO_CHECKOUT support, and the
-// refusal of any deployed checkout: clone job before it) has not landed
-// yet, so no fugaro release can run one. While it is false:
+// tagged: Task 17's runner side (the runner's own FUGARO_CHECKOUT support,
+// and the refusal of any deployed checkout: clone job before it) is in the
+// tree, but no tagged fugaro release carries it yet, so no released binary
+// can run one. While it is false:
 //   - checkCloneImageSince's cloneSince-specific branches refuse every
 //     checkout: clone launch on any job image, known release or not,
 //     including the current one, with guidance that the runner side is
@@ -59,13 +63,48 @@ const cloneSince = "0.7.1"
 //     stale checkout, decides from the deployed job, never reaching that
 //     check at all).
 //
-// Flip this to true in the same commit that bumps cloneSince to the
-// release that actually ships Task 17: that one edit is what turns both
-// of the above back into their ordinary behavior (string equality against
-// cloneSince alone cannot tell "not released yet" from "this image or job
-// just predates a release that now exists"); update docs/release.md's
-// checklist line for cloneSince in that commit too.
+// Flip this to true in its own tiny PR — never in a release commit, and
+// never before live Check 38 (docs/gcp-live-checklist.md) has passed: the
+// check needs a build with this gate open, and no release may ship
+// checkout: clone before the check has run. That one edit is what turns
+// both of the above back into their ordinary behavior (string equality
+// against cloneSince alone cannot tell "not released yet" from "this image
+// or job just predates a release that now exists"); update docs/release.md's
+// "Verify cloneSince" bullet in that PR too, since that bullet is what says
+// the flip has not happened yet. Bump cloneSince in that same PR too, if
+// Check 38 found the runner side needs a fix: the release that fix ships in
+// is the release cloneSince then has to name. If the check needed no fix,
+// cloneSince stays as it is — it already names the release that ships
+// Task 17.
 const cloneShipped = false
+
+// catalogSince names the release whose runner reads a route's require_zdr
+// and price_policy (price-catalog plan Task 4, design D11): a runner before
+// it decodes FUGARO_MODEL_PROVIDERS with DisallowUnknownFields
+// (internal/runner/providers.go), so a job whose value carries either key
+// fails at bootstrap with an error naming a field nobody typed. Today it
+// names a release that does not exist yet, on purpose (see catalogShipped).
+// Once the release that ships them is tagged, this constant's job becomes
+// the same as recipesSince's above: docs/release.md's ("Before you tag")
+// checklist verifies it equals the release that ships them.
+const catalogSince = "0.7.5"
+
+// catalogShipped is false until the release named by catalogSince is
+// actually tagged: no fugaro release reads a route's require_zdr or
+// price_policy yet, so no runner that can exist today can run a job whose
+// value carries either key. While it is false, catalogSwitchSkew refuses
+// fugaro init --repo outright when any provider that may receive the
+// repository's code sets one — before any cloud effect, since the job it
+// would deploy carries FUGARO_MODEL_PROVIDERS — rather than judging the
+// base image (no release, of any base image, would read the key, so
+// "upgrade your base image" would not fix anything).
+//
+// Flip this to true in the same commit that bumps catalogSince to the
+// release that ships them: that one edit turns the refusal back into the
+// ordinary base-image age check (the installation's base image predating
+// catalogSince), the same shape as checkCloneImageSince's; update
+// docs/release.md's checklist line for catalogSince in that commit too.
+const catalogShipped = false
 
 // recipesV07Since is the first fugaro release whose runner knows the 0.7.0
 // recipe format: use_when, mode, roles.coder, a check step and
@@ -73,6 +112,23 @@ const cloneShipped = false
 // unknown (recipe.UsesV07). docs/release.md's checklist verifies it equals
 // the release that ships them.
 const recipesV07Since = "0.7.0"
+
+// gitSecretIDSince is the first fugaro release whose runner reads
+// CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image
+// check job's own rebuild names the secret ID Readiness resolved, so a
+// project-wide provider credential resolves for the rebuild exactly as it
+// does for the job's clone. A runner before it ignores the field (plain
+// json.Unmarshal) and falls back to the repository's own ID, which mounts a
+// secret with no version once that name has moved to project scope (design
+// docs/design/project-secrets.md §5, §6 step 4a).
+//
+// It is a genuine, narrow exception to P6's "no *Since constant per feature":
+// unlike every other gate here, it is not judged against a build record
+// (there is none to judge: the check job always runs the base image itself),
+// but against ready.Check.Image, the check job's own base ref, in planRepo --
+// see the gate there. docs/release.md ("Before you tag") has the checklist
+// verify it equals the release that ships the field.
+const gitSecretIDSince = "0.7.5"
 
 // namedTokensSince is the first fugaro release whose runner reads a task's
 // oauth_token field (docs/design/named-oauth-tokens.md); an older runner
@@ -143,7 +199,7 @@ func checkImageSince(ctx context.Context, env *cloudEnv, slug string, spec *task
 	}
 	refuse := func(why string) error {
 		return userErr("%s needs a job image whose runner knows %s (fugaro %s or later), but the job image of %s workflow %s %s. "+
-			"Run fugaro image refresh --repo %s --workflow %s in its checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it copies %s, points the daily image check job at it and rebuilds the image)%s",
+			"Run fugaro image refresh --repo %s --workflow %s in its checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it verifies %s and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image)%s",
 			subject, knows, since, spec.Repo, spec.Workflow, why, spec.Repo, spec.Workflow, base, alt)
 	}
 	b, err := env.recordBucket(ctx)
@@ -284,4 +340,70 @@ func refuseClonesNotShipped(repo, cmd, verb string, names []string) error {
 		"(generic-tool plan Task 17 has not shipped), so no release can run its job yet. Use checkout: baked "+
 		"instead to run it today; checkout: clone starts working at fugaro %s.",
 		cmd, verb, repo, strings.Join(names, ", "), cloneSince)
+}
+
+// switchProviders lists, sorted, the providers that set require_zdr or
+// price_policy — at any value — and may receive repo's code. "Set" is the
+// test, not "different from the default": the omitempty tags write the key
+// whenever the owner wrote it (require_zdr: true and price_policy:
+// cheapest are written too), and ProvidersEnv (internal/runner/providers.go)
+// writes exactly this distinction, so an explicit default breaks an older
+// runner just like the other value does. A provider whose allow_data_to
+// does not cover repo is not in the job's value at all, so it cannot break
+// it and is not this command's business.
+func switchProviders(providers map[string]config.ModelProvider, repo string) []string {
+	var names []string
+	for _, name := range slices.Sorted(maps.Keys(providers)) {
+		if p := providers[name]; p.AllowsData(repo) && (p.RequireZDR != nil || p.PricePolicy != "") {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// refuseCatalogSwitches refuses fugaro init --repo, before any cloud effect,
+// when a provider that may receive the repository's code sets require_zdr or
+// price_policy and the runner that would read it cannot be known to exist:
+// see catalogSince/catalogShipped above and catalogSwitchSkew below.
+func refuseCatalogSwitches(repo string, lc *localcfg.Config, warn io.Writer) error {
+	names := switchProviders(lc.Providers, repo)
+	if len(names) == 0 {
+		return nil
+	}
+	return catalogSwitchSkew(repo, names, lc.BaseImage(config.BaseKind), catalogShipped, warn)
+}
+
+// catalogSwitchSkew is the refusal itself: shipped false refuses every
+// provider in names, whatever the base image, because no release reads the
+// keys yet; shipped true judges the installation's base image the job is
+// built from, the way checkCloneImageSince does — a release that predates
+// catalogSince is refused, a ref that is not a release image is only warned
+// about (nothing can tell what its runner knows), and no base image at all
+// passes (infra.Repo then builds the job from this release's own image,
+// which reads them). names must not be empty and is already sorted.
+func catalogSwitchSkew(repo string, names []string, ref string, shipped bool, warn io.Writer) error {
+	where := "provider " + names[0]
+	if len(names) > 1 {
+		where = "providers " + strings.Join(names, ", ")
+	}
+	if !shipped {
+		return userErr("fugaro init --repo refuses to deploy %s's %s with require_zdr or price_policy set: no fugaro release reads "+
+			"those route keys yet (they ship at fugaro %s), and FUGARO_MODEL_PROVIDERS is decoded strictly, so an older runner fails "+
+			"the job at bootstrap on a field nobody typed. Leave both unset for now (their defaults are require_zdr: true, "+
+			"price_policy: cheapest), or price the model under model_prices, which replaces the catalog's row and both switches with it",
+			repo, where, catalogSince)
+	}
+	switch rel, ok := releaseOf(ref); {
+	case ref == "":
+		return nil
+	case !ok:
+		fmt.Fprintf(warn, "warning: the %s of %s sets require_zdr or price_policy, but the installation's base image is %s, which is not a release base image; whether its runner reads them is not checked\n",
+			where, repo, pluginwire.Printable(ref))
+	case imagePredates(rel, catalogSince):
+		return userErr("the %s of %s sets require_zdr or price_policy, which needs a job image whose runner reads them (fugaro %s or later), "+
+			"but the installation's base image is %s, release %s. Run fugaro init --base base in your own terminal window to move the "+
+			"installation's base image to a current release, or leave both unset for now",
+			where, repo, catalogSince, pluginwire.Printable(ref), rel)
+	}
+	return nil
 }
