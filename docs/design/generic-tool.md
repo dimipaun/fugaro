@@ -309,7 +309,7 @@ The defaults are flags, not config keys. Veto alternative: local-config keys `wa
 
 ## 12. Release, order and coordination
 
-**In 0.7.0 (R1):** sections 2 to 7, 9 and 10, and 11's doc. Section 1.1 (cost preview, originally spec section 8) is **release 0.8.0** (R4), alongside section 1: it is not a 0.7.0 group.
+**In 0.7.0 (R1):** sections 2 to 7, 9 and 10, and 11's doc. Section 1.1 (cost preview, originally spec section 8) was placed in **release 0.8.0** by R4, alongside section 1: it is not a 0.7.0 group. The owner's 2026-10-14 ruling later moved §1.1 forward — Tasks 24 and 25 shipped in 0.7.5 — and dropped the two gen-2 Docker tasks, leaving section 1 (Task 28, the compute-instance backend) as the 0.8.0 work.
 
 **Order against the other 0.7.0 work** (G27):
 - **Layered config Phase 1 (0.6.0) merges first.** Its scope table (`internal/config/scope.go`) and project layer (`layer.go`) must list the new keys `workflows.<n>.checkout`, `commands.lint`, `commands.fix` and `review.allow_forks`. Its Task 17 edits `ls.go`, so it must land before the rename.
@@ -327,7 +327,7 @@ The defaults are flags, not config keys. Veto alternative: local-config keys `wa
 - Group D, provisioning: 4.
 - Group E, docs and skills: 2.
 
-Plus six tasks for 0.8.0 (plan Tasks 24 to 29), five of them still: the cost preview (Group F, moved from 0.7.0 by R4), the measurement and two blocked phases — Task 29, the tombstone's removal, was moved to the next release by the owner's 2026-10-14 ruling and shipped there (#350, in 0.7.5). Recipes are the largest risk: four of the runner changes sit in `agentLoop`, which every run executes.
+Plus six tasks the plan wrote after 0.7.0 (plan Tasks 24 to 29), of which one is still open. The owner's 2026-10-14 ruling moved them: Tasks 24 and 25 (the per-stage cost in `result.json` and `fugaro budget preview`) shipped in 0.7.5 as §1.1; Task 29 (the tombstone's removal) shipped there too (#350); Tasks 26 and 27 (the Check 31 gen-2 Docker measurement and Docker on gen-2) are **dropped**, because Cloud Run gen-2 cannot run Docker; Task 28 (a Docker-capable backend on Compute Engine VMs) was **restored** in their place and is the only one left for 0.8.0 — its design shipped (#375, `compute-backend.md`) and its implementation plan is written after that design is approved. Recipes are the largest risk: four of the runner changes sit in `agentLoop`, which every run executes.
 
 ## 13. Verified and unverified
 
