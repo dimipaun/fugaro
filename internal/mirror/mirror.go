@@ -152,6 +152,19 @@ type Plan struct {
 	TotalBytes, TransferBytes int64
 }
 
+// ResolveDigest reads what ref's tag currently names, anonymously, reusing
+// Plan's own first step (not reimplemented). It is the read the -pinned
+// tag's resolution needs, and it dereferences nothing: for a
+// multi-platform index it returns the index's digest, which is what a
+// signature is attached to and what a caller pins.
+func (m *Mirror) ResolveDigest(ctx context.Context, ref Ref) (digest string, err error) {
+	if err := m.checkSource(ref); err != nil {
+		return "", err
+	}
+	_, digest, _, err = m.getManifest(ctx, ref, ref.Tag)
+	return digest, err
+}
+
 // Plan reads the source and the destination and says what Copy would do. A
 // non-empty expect is the digest the source tag must resolve to (for
 // example from the release notes); another is refused.
