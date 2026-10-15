@@ -1616,7 +1616,13 @@ accounts this installation named and on no others, never on the project.
 `TestComputeLauncherJobsEditorIsConditioned` refuses a second
 `batch.jobsEditor` binding, a binding without the condition, and any
 `compute.instanceAdmin.v1`, `compute.admin`, `editor` or `owner` grant
-anywhere under the module. **What was measured is the binding's acceptance, not its reach**:
+anywhere under the module. The other actAs in the module is the preload
+build's: the build step runs as the preload account, so it — not Cloud
+Build's own agent — holds `serviceAccountUser` on the run accounts whose
+names the builder VM is created with
+(`TestComputeThePreloadBuildActsAsTheRunAccountsOnly`); Cloud Build's agent
+holds actAs on the preload account alone, which is what running a build as it
+needs. **What was measured is the binding's acceptance, not its reach**:
 57a-9's purpose was to read *what the sandbox's IAM actually allows*, and **no
 request was ever made under the binding**, so no allow and no deny was ever
 observed — the enforcement below is **inferred from `resource.name`'s

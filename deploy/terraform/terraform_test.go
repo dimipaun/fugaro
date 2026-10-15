@@ -1451,6 +1451,36 @@ func TestComputeRunAccountsHoldTheRunRoles(t *testing.T) {
 	}
 }
 
+// Creating the builder VM names a run-class account, and the caller is the
+// build STEP -- which runs as the preload account. So the preload account
+// holds actAs on each run account, and Cloud Build's own agent holds none:
+// that agent is reachable by anyone who can submit a build in this project,
+// and actAs on a run account is the power to run code as it (design §3.7).
+func TestComputeThePreloadBuildActsAsTheRunAccountsOnly(t *testing.T) {
+	users := 0
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_service_account_iam_member") {
+			if !strings.Contains(blk.name, "run_account") {
+				continue
+			}
+			users++
+			if path != "gcp/modules/compute/iam.tf" || blk.name != "google_service_account_iam_member.preload_run_account_user" {
+				t.Errorf("%s: %s grants actAs on a run account", path, blk.name)
+				continue
+			}
+			if !hasAttr(blk.body, "for_each", "var.run_accounts") || !hasAttr(blk.body, "member", "google_service_account.preload.member") {
+				t.Errorf("%s: %s must grant the run accounts' actAs to the preload account", path, blk.name)
+			}
+			if strings.Contains(blk.body, "cloud_build_agent") {
+				t.Errorf("%s: %s grants Cloud Build's agent actAs on a run account", path, blk.name)
+			}
+		}
+	})
+	if users != 1 {
+		t.Errorf("found %d actAs grants on the run accounts, want 1", users)
+	}
+}
+
 // The job's no-external-IP posture needs BOTH the network and the subnetwork
 // named (measured 2026-10-15: Batch refuses the field without them), so both
 // are required variables with a shape check and neither has a default, and

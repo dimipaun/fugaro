@@ -231,15 +231,19 @@ resource "google_service_account_iam_member" "preload_cloud_build_agent" {
 }
 
 # The builder VM the build boots runs as a run-class account: that is the
-# account whose reader grant lets it pull the base image. So the Cloud Build
-# agent needs actAs on each of them — actAs on one named account, never a role
-# on the project.
-resource "google_service_account_iam_member" "cloud_build_agent_user" {
+# account whose reader grant lets it pull the base image. Creating an instance
+# that names an account needs actAs on it, and the caller here is the BUILD
+# STEP — which runs as the preload account, not as Cloud Build's own agent —
+# so the preload account is who holds it. actAs on each named account, never a
+# role on the project, and never on the Cloud Build agent: that agent is
+# reachable by anyone who can submit a build in this project, and actAs on a
+# run account is the power to run code as it.
+resource "google_service_account_iam_member" "preload_run_account_user" {
   for_each = var.run_accounts
 
   service_account_id = "projects/${var.project}/serviceAccounts/${trimprefix(each.value, "serviceAccount:")}"
   role               = "roles/iam.serviceAccountUser"
-  member             = local.cloud_build_agent
+  member             = google_service_account.preload.member
 }
 
 # The reader grant the builder VM's own pull needs: the same repository the
