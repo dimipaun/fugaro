@@ -2,7 +2,6 @@ package runner
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -219,11 +218,15 @@ func policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend) (policy.
 // catalogue spells them (projectpolicy.Price), so the catalogue's own parser
 // reads them here too — the same one FUGARO_MODEL_PRICES goes through, which
 // this replaces: the policy is the owner's price list, whole.
+//
+// Prices.CatalogJSON is the spelling the parser reads: the node's own member
+// names escape what an RTDB key may not hold (the "/" and "." of a model ID),
+// and the decoded map this run prices with is keyed by the real ID.
 func policyPrices(pp *projectpolicy.Policy) (*pricing.Table, error) {
 	if len(pp.Prices) == 0 {
 		return pricing.Embedded(), nil
 	}
-	raw, err := json.Marshal(pp.Prices)
+	raw, err := pp.Prices.CatalogJSON()
 	if err != nil {
 		return nil, err
 	}

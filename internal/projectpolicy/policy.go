@@ -44,7 +44,9 @@
 //     the exact failure this package promises to prevent;
 //   - model_prices is read with the catalogue's own parser and keeps the
 //     catalogue's pointer spelling, so an omitted optional rate keeps its list
-//     default instead of being priced at zero;
+//     default instead of being priced at zero; its member names are escaped on
+//     the node (an RTDB key cannot hold the "/" or "." of a model ID) and
+//     unescaped when the node is read, see Prices;
 //   - a providers entry is the document internal/runner's ProvidersFromEnv
 //     decodes out of FUGARO_MODEL_PROVIDERS (Provider embeds
 //     config.ModelProvider, so the spelling cannot drift) and is checked by
@@ -91,7 +93,7 @@ type Policy struct {
 	Budget     Budget              `json:"budget"`
 	AllowRepos []string            `json:"allow_repos"`
 	Providers  map[string]Provider `json:"providers,omitempty"`
-	Prices     map[string]Price    `json:"model_prices,omitempty"` // the owner's price overrides, as fugaro.yaml's model_prices spells them
+	Prices     Prices              `json:"model_prices,omitempty"` // the owner's price overrides, keyed by model ID (Prices documents the node's own spelling)
 	Routing    *Routing            `json:"routing,omitempty"`      // phase 1b writes it; nil = direct (D1b)
 
 	// UnknownKeys lists the top-level keys of the node this Fugaro does not
@@ -178,7 +180,8 @@ func (p Provider) EffectivePricePolicy() string { return p.ModelProvider.PricePo
 // default (cache_write_5m 1.25, cache_write_1h 2, cache_read 0.1,
 // web_search_per_1k 10), never 0. Decode checks the block with the catalogue's
 // own pricing.ParseOverrides as well, so the two spellings cannot drift
-// (TestDecodeModelPricesAgreeWithTheCatalog).
+// (TestDecodeModelPricesAgreeWithTheCatalog). The model ID it belongs to is
+// the map key of Prices, which escapes it on the node and not in Go.
 type Price struct {
 	InputPerM      *float64   `json:"input_per_m"`
 	OutputPerM     *float64   `json:"output_per_m"`
@@ -280,9 +283,10 @@ func Decode(raw []byte) (*Policy, bool, error) {
 	}
 
 	if rraw, ok := doc["model_prices"]; ok && !isNull(rraw) {
-		dec := json.NewDecoder(bytes.NewReader(rraw))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&p.Prices); err != nil {
+		// Prices' own UnmarshalJSON does the strict part: each entry is
+		// decoded with DisallowUnknownFields, and each member name is
+		// unescaped back into the model ID the block is keyed by.
+		if err := json.Unmarshal(rraw, &p.Prices); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: model_prices: %w", err)
 		}
 		for _, id := range sortedKeys(p.Prices) {
@@ -296,8 +300,14 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		}
 		// The catalogue's own parser is the authority on this document's
 		// spelling, its required fields and its ranges: the strict decode
-		// above and this call must agree.
-		if _, err := pricing.ParseOverrides(string(rraw)); err != nil {
+		// above and this call must agree. It reads the block in the
+		// catalogue's own spelling, which is the decoded map's — never the
+		// node's escaped member names, which are not model IDs.
+		catalog, err := p.Prices.CatalogJSON()
+		if err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: model_prices: %w", err)
+		}
+		if _, err := pricing.ParseOverrides(string(catalog)); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: model_prices: %w", err)
 		}
 	}
