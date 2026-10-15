@@ -10,6 +10,8 @@ import (
 
 	"gocloud.dev/blob/memblob"
 
+	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/batch"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -216,7 +218,8 @@ func TestRemoteKeepsAnExistingCode(t *testing.T) {
 	}
 }
 
-// The cost estimate's prices are the region the jobs run in, after --region.
+// The cost estimate's prices are the region the jobs run in, after --region:
+// a run with no execution at all is priced in the installation's own region.
 func TestCloudPricesFollowTheRegion(t *testing.T) {
 	newCloudFixture(t) // region us-east5
 	if gcp.ListPrices("us-east5") == gcp.ListPrices("europe-west2") {
@@ -227,10 +230,47 @@ func TestCloudPricesFollowTheRegion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := env.prices()(""), gcp.ListPrices(region); got != want {
+		if got, want := env.prices()(nil), gcp.ListPrices(region); got != want {
 			t.Errorf("--region %q: prices = %+v, want %s's %+v", flag, got, region, want)
 		}
 		env.Close()
+	}
+}
+
+// A VM-backed execution is priced with Compute Engine's table for its own
+// machine type and region, not with Cloud Run's jobs list price -- and one
+// the table does not carry is left unestimated rather than priced with
+// either (design compute-backend.md §5.2).
+func TestCloudPricesUseTheVMsTableForAVMRun(t *testing.T) {
+	newCloudFixture(t)
+	env, err := openCloud(context.Background(), cloudOptions{stderr: discard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer env.Close()
+	prices := env.prices()
+	vm := &backend.Execution{Name: "projects/p/locations/us-central1/jobs/fugaro-j-1", Region: "us-central1", MachineType: "e2-standard-4", CPU: 4, MemoryGiB: 16}
+	got := prices(vm)
+	want, err := batch.PricesFor("us-central1", "e2-standard-4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("a VM run prices = %+v, want the VM table's %+v", got, want)
+	}
+	if got == gcp.ListPrices("us-central1") {
+		t.Error("a VM run is priced with Cloud Run's table")
+	}
+	// The execution's own region decides, not the installation's.
+	other := *vm
+	other.Region = "europe-west2"
+	if got := prices(&other); got != (backend.Prices{}) {
+		t.Errorf("a VM in an unpriced region = %+v, want no prices (compute not estimated)", got)
+	}
+	unknown := *vm
+	unknown.MachineType = "n2-standard-4"
+	if got := prices(&unknown); got != (backend.Prices{}) {
+		t.Errorf("a VM of an unknown machine type = %+v, want no prices (compute not estimated)", got)
 	}
 }
 

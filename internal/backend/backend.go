@@ -78,7 +78,23 @@ type Execution struct {
 	State                       State
 	Created, Started, Completed time.Time
 	CPU, MemoryGiB              float64 // the task's limits, for compute cost
-	LogURL                      string
+	// Region is the region the backend resolved this execution to: the
+	// backend's own answer, from its configuration or from its codec's
+	// parse of the name it returned. Callers that price an execution use
+	// it instead of parsing the name themselves, because a name's shape is
+	// the backend's business and a second platform's name need not have
+	// Cloud Run's fields (design compute-backend.md §5.2). "" when the
+	// backend does not report one; callers then fall back to the codec's
+	// parse of the name, which answers the same question.
+	Region string
+	// MachineType is the Compute Engine machine type backing this
+	// execution, "" when the backend does not run on VMs (Cloud Run's
+	// CPU/MemoryGiB are then the job's own limits, not a machine type's).
+	// Its presence is what makes a run a VM-backed one: a VM is billed for
+	// its machine type from its boot window, with a one-minute minimum
+	// (BilledWindow, design compute-backend.md §5.2).
+	MachineType string
+	LogURL      string
 	// Run is "<slug>/<run id>", the FUGARO_RUN the execution was launched
 	// with, when the platform reports the execution's environment; empty
 	// when it does not (the sweeper then treats the execution as possibly
@@ -98,6 +114,48 @@ func (e Execution) Billed(now time.Time) time.Duration {
 		end = now
 	}
 	return max(0, end.Sub(e.Started))
+}
+
+// VMMinimumBilled is the shortest window Compute Engine bills: "All vCPUs,
+// GPUs, and GB of memory are charged a minimum of 1 minute", then per
+// second (cloud.google.com/compute/vm-instance-pricing, checked 2026-10-15,
+// quoted in docs/design/compute-backend.md §5.2). Cloud Run jobs have no
+// such floor, which is why the floor is applied here rather than in
+// Prices.ComputeUSD: it is a property of the platform, not of the prices.
+const VMMinimumBilled = time.Minute
+
+// BilledWindow is how long this execution has been billed, and whether that
+// is known at all (design compute-backend.md §5.2).
+//
+// For a VM-backed execution -- one whose MachineType is set -- it is the
+// boot window: from the job's creation, when the platform starts
+// provisioning the VM, to its completion or to now while it runs, floored at
+// VMMinimumBilled. The VM boots, Batch sets the task up and the image may be
+// streamed or pulled all before the runner's first line, and Compute Engine
+// bills every second of it, so a window that started at Started would
+// under-report exactly the runs whose cold start is most of their cost. The
+// caller says so in the estimate's source line.
+//
+// For every other execution it is Billed, unchanged: Cloud Run's own
+// billing has no floor and starts when the container does, and a caller
+// that priced it differently would change every Cloud Run estimate already
+// recorded.
+//
+// ok is false only for a VM-backed execution whose boot window the backend
+// has not reported (Created is zero, so nothing can be priced). The estimate
+// must then say "unknown", never "free".
+func (e Execution) BilledWindow(now time.Time) (time.Duration, bool) {
+	if e.MachineType == "" {
+		return e.Billed(now), true
+	}
+	if e.Created.IsZero() {
+		return 0, false
+	}
+	end := e.Completed
+	if end.IsZero() {
+		end = now
+	}
+	return max(VMMinimumBilled, end.Sub(e.Created)), true
 }
 
 // ListFilter narrows List.

@@ -390,11 +390,40 @@ func reportDegraded(ctx context.Context, cmd *cobra.Command, o *reportOptions, l
 		}
 		recs = append(recs, report.Rec{DayRecord: recordOfRun(r)})
 	}
+	// The compute figures above are estimates, and these rows carry the
+	// price table each came from. The report has no per-row column for it
+	// (design compute-backend.md §5.2, C17: the figure's shape is Cloud
+	// Run's, so the report and the history need no new column), so the
+	// source is said once here -- which is where a reader learns that a VM
+	// backend's estimate leaves the VM's boot disk and Cloud NAT out.
+	for _, src := range computeSources(rows) {
+		m.Warnings = append(m.Warnings, "compute_usd is an estimate priced from "+src)
+	}
 	rep := report.Build(recs, dim)
 	rep.NoHours = true
 	return reportEmit(cmd, o, rep, m)
 }
 
+// computeSources is the distinct price-table source lines the rows' compute
+// estimates were priced from, sorted, for the report's own source line. Rows
+// priced with a table that does not name itself (Cloud Run's list price, and
+// every run recorded before this existed) contribute nothing, so the report
+// of an installation that never ran on a VM reads exactly as it did.
+func computeSources(rows []runview.Row) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, r := range rows {
+		if src := r.Cost.ComputeSource; src != "" && !seen[src] {
+			seen[src] = true
+			out = append(out, src)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// microsOfUSD converts a USD figure to the history's micro-dollars, treating
+// a figure that is not a positive number as zero.
 func microsOfUSD(v float64) budget.Micros {
 	if math.IsNaN(v) || math.IsInf(v, 0) || v <= 0 {
 		return 0

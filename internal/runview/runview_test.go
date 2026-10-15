@@ -15,7 +15,7 @@ import (
 var (
 	now    = time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
 	flat   = backend.Prices{VCPUSecondUSD: 0.00001, GiBSecondUSD: 0}
-	prices = func(string) backend.Prices { return flat }
+	prices = func(*backend.Execution) backend.Prices { return flat }
 	spec   = &task.Spec{Version: 1, RunID: "20260927-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x", Batch: "b1", RequestedBy: "me@example.com"}
 	launch = &runstore.Launch{Execution: "exec-1", LogURL: "https://log", LaunchedAt: now.Add(-time.Minute)}
 )
@@ -181,14 +181,19 @@ func TestJoinLaunchedRunLostWithoutRecord(t *testing.T) {
 	}
 }
 
-// Compute is priced in the execution's own region, not the local config's.
-func TestJoinPricesTheExecutionsRegion(t *testing.T) {
+// Compute is priced with the execution's own region and machine type, which
+// are the backend's answers: runview hands the execution to the price book
+// rather than parsing the name, so a platform whose name has no region in it
+// (a Batch job) is priced as well as Cloud Run's (design compute-backend.md
+// §5.2).
+func TestJoinPricesWithTheExecutionsOwnRegion(t *testing.T) {
 	e := exec(backend.StateSucceeded)
 	e.Name = "projects/p/locations/europe-west2/jobs/j/executions/j-1"
-	var asked []string
-	book := func(region string) backend.Prices {
-		asked = append(asked, region)
-		if region == "europe-west2" {
+	e.Region = "europe-west2"
+	var asked []*backend.Execution
+	book := func(x *backend.Execution) backend.Prices {
+		asked = append(asked, x)
+		if x != nil && x.Region == "europe-west2" {
 			return backend.Prices{VCPUSecondUSD: 1}
 		}
 		return flat
@@ -196,6 +201,61 @@ func TestJoinPricesTheExecutionsRegion(t *testing.T) {
 	row := Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusSucceeded, nil), Exec: e}, book, now)
 	if want := 4 * 1800.0; row.Cost.ComputeUSD != want {
 		t.Fatalf("compute = %v (asked %v), want %v", row.Cost.ComputeUSD, asked, want)
+	}
+}
+
+// A VM-backed execution is billed for its machine type from its boot window,
+// with Compute Engine's one-minute minimum, and its estimate records the
+// table it came from (design compute-backend.md §5.2, C17).
+func TestJoinPricesAVMRunFromItsBootWindow(t *testing.T) {
+	vm := backend.Prices{VCPUSecondUSD: 1e-5, GiBSecondUSD: 2e-6,
+		Source: "Compute Engine VM list price, e2-standard family, us-central1 (2026-10-15, UNVERIFIED); boot disk and Cloud NAT are not in this figure (design C17)"}
+	book := func(x *backend.Execution) backend.Prices {
+		if x == nil || x.MachineType != "e2-standard-4" || x.Region != "us-central1" {
+			t.Errorf("price book asked for %+v, want the VM's own type and region", x)
+		}
+		return vm
+	}
+	e := &backend.Execution{Name: "projects/p/locations/us-central1/jobs/fugaro-j-1", State: backend.StateSucceeded,
+		Region: "us-central1", MachineType: "e2-standard-4", CPU: 4, MemoryGiB: 16,
+		Created: now.Add(-40 * time.Second), Started: now.Add(-10 * time.Second), Completed: now.Add(-5 * time.Second)}
+	row := Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusSucceeded, nil), Exec: e}, book, now)
+	// 35 s from the boot window, floored to the 60 s Compute Engine bills.
+	if want := 60 * (4*1e-5 + 16*2e-6); row.Cost.ComputeUSD != want {
+		t.Errorf("compute = %v, want %v (a one-minute floor over the boot window)", row.Cost.ComputeUSD, want)
+	}
+	if !row.Cost.ComputeEstimated {
+		t.Error("compute is not estimated")
+	}
+	if row.Cost.ComputeSource != vm.Source {
+		t.Errorf("compute source = %q, want the VM table's line %q", row.Cost.ComputeSource, vm.Source)
+	}
+	// Cloud Run's window and its record stay what they were: no source line,
+	// and the window from Started.
+	cloud := &backend.Execution{Name: "projects/p/locations/us-central1/jobs/j/executions/j-1", State: backend.StateSucceeded,
+		Region: "us-central1", CPU: 4, MemoryGiB: 16,
+		Created: now.Add(-40 * time.Second), Started: now.Add(-10 * time.Second), Completed: now.Add(-5 * time.Second)}
+	row = Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusSucceeded, nil), Exec: cloud}, prices, now)
+	if want := 5 * flat.VCPUSecondUSD * 4; row.Cost.ComputeUSD != want {
+		t.Errorf("Cloud Run compute = %v, want %v (start to completion, no floor)", row.Cost.ComputeUSD, want)
+	}
+	if row.Cost.ComputeSource != "" {
+		t.Errorf("Cloud Run compute source = %q, want none", row.Cost.ComputeSource)
+	}
+}
+
+// A VM whose boot window the backend has not reported, and an execution no
+// price table carries, are both "not estimated": never $0.00, which a reader
+// could not tell from free (design compute-backend.md §5.2).
+func TestJoinLeavesWhatItCannotPriceUnestimated(t *testing.T) {
+	e := &backend.Execution{Name: "projects/p/locations/us-central1/jobs/fugaro-j-1", State: backend.StateRunning,
+		Region: "us-central1", MachineType: "e2-standard-4", CPU: 4, MemoryGiB: 16, Started: now.Add(-10 * time.Minute)}
+	if row := Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusRunning, nil), Exec: e}, prices, now); row.Cost.ComputeEstimated || row.Cost.ComputeUSD != 0 {
+		t.Errorf("a VM with no boot window: compute = %v estimated=%v, want not estimated", row.Cost.ComputeUSD, row.Cost.ComputeEstimated)
+	}
+	known := func(*backend.Execution) backend.Prices { return backend.Prices{} }
+	if row := Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusRunning, nil), Exec: e}, known, now); row.Cost.ComputeEstimated {
+		t.Error("an execution no price table carries is priced as estimated")
 	}
 }
 

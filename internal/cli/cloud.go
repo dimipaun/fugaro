@@ -17,6 +17,7 @@ import (
 	"golang.org/x/oauth2/google"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/batch"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -106,15 +107,36 @@ func recordReadURL(lc *localcfg.Config) string {
 	return lc.RecordBucketURL()
 }
 
-// prices are the compute prices of a region, for cost estimates of cloud
-// runs (design §10.1): the local config's override, else the list price;
-// "" is the region the jobs run in, after --region.
+// prices are the compute prices one execution is priced with, for cost
+// estimates of cloud runs (design §10.1, compute-backend.md §5.2): the local
+// config's override, else the list price of the execution's own backend and
+// region. The execution tells us both — its Region is the backend's own
+// answer, not a parse of a name shape this package would have to know, and
+// its MachineType is what makes a run a VM-backed one, whose table is
+// Compute Engine's and not Cloud Run's.
+//
+// An execution no table prices — a machine type or a region the VM table
+// does not carry — gets the zero price book, so its row reads "compute not
+// estimated" rather than being priced with another platform's figures or
+// with $0.00. A nil execution (a run with no execution at all) prices in the
+// installation's own region.
 func (e *cloudEnv) prices() runview.PriceBook {
-	return func(region string) backend.Prices {
-		if region == "" {
-			region = e.lc.Region
+	return func(x *backend.Execution) backend.Prices {
+		region := e.lc.Region
+		if x != nil && x.Region != "" {
+			region = x.Region
 		}
 		if p, ok := e.lc.PriceOverride(region); ok {
+			return p
+		}
+		if x != nil && x.MachineType != "" {
+			p, err := batch.PricesFor(region, x.MachineType)
+			if err != nil {
+				// The row says "compute not estimated"; the reason is the
+				// operator's to read from `fugaro diagnose`, not from a
+				// listing that would otherwise fail as a whole.
+				return backend.Prices{}
+			}
 			return p
 		}
 		return gcp.ListPrices(region)
