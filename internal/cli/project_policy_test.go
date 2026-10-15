@@ -313,31 +313,45 @@ func TestProjectPolicyPublishCarriesThePriceCatalogueSwitches(t *testing.T) {
 }
 
 // TestProjectPolicyPublishNeverSeedsFromTheBucket is B3's regression test. The
-// bucket holds a run of a repository the operator's config does not name, at
-// the slug task.Slug gives it; the seed must not turn that into an enrollment.
-// Under phase 3's broadened runs/ grant every run of the profile can write
-// those prefixes, so a seed from them would be a path by which an enrolled
-// repository enrolls anything it likes.
+// bucket holds runs of repositories the operator's config does not name, at
+// the slugs task.Slug gives them; the seed must not turn those into
+// enrollments. Under phase 3's broadened runs/ grant every run of the profile
+// can write those prefixes, so a seed from them would be a path by which an
+// enrolled repository enrolls anything it likes.
+//
+// Both layouts are planted. The one a run writes is
+// runs/<slug>/<run-id>/task.json (internal/task Spec's own doc); the flat
+// runs/<slug>/task.json is what an object laid down by hand — or by anything
+// else holding the bucket — looks like, and it is the one an early version of
+// this test planted alone, which let a seed that walked the real layout pass.
 func TestProjectPolicyPublishNeverSeedsFromTheBucket(t *testing.T) {
 	f := newProjectFixture(t, "")
-	slug, err := task.Slug("github", "acme/evil")
-	if err != nil {
-		t.Fatal(err)
+	plantRun := func(repo, runID, sub string) {
+		t.Helper()
+		slug, err := task.Slug("github", repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Join(f.dir, "runs", "runs", slug)
+		if sub != "" {
+			dir = filepath.Join(dir, sub)
+		}
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		spec := `{"version":1,"run_id":"` + runID + `","repo":"` + repo + `","ref":"main","task":"enroll me"}`
+		if err := os.WriteFile(filepath.Join(dir, "task.json"), []byte(spec), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	dir := filepath.Join(f.dir, "runs", "runs", slug)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	spec := `{"version":1,"run_id":"20261015-120000-aaaa","repo":"acme/evil","ref":"main","task":"enroll me"}`
-	if err := os.WriteFile(filepath.Join(dir, "task.json"), []byte(spec), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	plantRun("acme/evil", "20261015-120000-aaaa", "")                       // the flat layout
+	plantRun("acme/sneaky", "20261015-120001-bbbb", "20261015-120001-bbbb") // the real one
 	if _, _, err := execute(t, "project", "policy", "publish", "--seed-repos"); err != nil {
 		t.Fatal(err)
 	}
 	got := publishedPolicy(t, f).AllowRepos
 	for _, r := range got {
-		if strings.Contains(r, "acme/evil") {
+		if strings.Contains(r, "acme/evil") || strings.Contains(r, "acme/sneaky") {
 			t.Fatalf("allow_repos = %v: the seed came from the bucket's runs/<slug>/ prefixes, which every run of the profile can write", got)
 		}
 	}
