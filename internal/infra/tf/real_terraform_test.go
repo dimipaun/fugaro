@@ -6,11 +6,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -223,4 +225,103 @@ func mapsEqual(a, b map[string][]string) bool {
 		}
 	}
 	return true
+}
+
+// The real prevent_destroy abort, as Terraform prints it, is the fixture the
+// CLI's matcher is pinned against (internal/cli/testdata's copy): the design's
+// §1 quote also comes from a real run, and a fixture written by hand could
+// pin text Terraform never produces. It really runs Terraform -- against the
+// built-in terraform_data resource, so nothing is downloaded, no credentials
+// are read and nothing is applied beyond the local backend -- and rewrites
+// the fixture only under -update, so a CI run with -tags terraform compiles
+// and vets it without writing anything.
+//
+// The message must still be *wrapped*: Terraform breaks the sentence at the
+// terminal width, and a fixture whose line happens to fit would make both the
+// CLI's normalization test and this generator vacuous.
+func TestRealPreventDestroyText(t *testing.T) {
+	bin, err := exec.LookPath("terraform")
+	if err != nil {
+		t.Fatalf("this test needs terraform on PATH: %v", err)
+	}
+	if !*update {
+		t.Skip("it rewrites internal/cli/testdata/prevent_destroy_wrapped.txt: pass -update")
+	}
+	root := t.TempDir()
+	dir := filepath.Join(root, "work")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	env, err := Env([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + filepath.Join(root, "home")}, dir, filepath.Join(root, "plugins"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The container the design names, with the prevent_destroy a secret
+	// container carries. The resource stays in the configuration and only its
+	// for_each key leaves, which is the shape a retirement really has: the
+	// module keeps declaring the container, and the instance whose key the
+	// spec no longer computes is the one Terraform refuses to destroy. Drop
+	// the block instead and prevent_destroy goes with it -- Terraform reads it
+	// from the configuration, so nothing would protect the instance and the
+	// plan would succeed, which is what the first version of this generator
+	// found.
+	keep := `
+resource "terraform_data" "this" {
+  for_each = toset(["claude-oauth-token"])
+  input    = each.key
+  lifecycle { prevent_destroy = true }
+}
+`
+	drop := `
+resource "terraform_data" "this" {
+  for_each = toset([])
+  input    = each.key
+  lifecycle { prevent_destroy = true }
+}
+`
+	write := func(content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "terraform.tfvars.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	write(keep)
+	tfr, err := New(bin, dir, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := tfr.Init(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	planFile := filepath.Join(dir, "tfplan")
+	if changed, err := tfr.Plan(ctx, planFile); err != nil || !changed {
+		t.Fatalf("the first plan: changed=%v err=%v", changed, err)
+	}
+	if err := tfr.Apply(ctx, planFile); err != nil {
+		t.Fatal(err)
+	}
+	write(drop)
+	_, err = tfr.Plan(ctx, planFile)
+	var xe *ExitError
+	if !errors.As(err, &xe) {
+		t.Fatalf("the plan of a dropped for_each key: err=%v, want a failed plan", err)
+	}
+	const sig = "has lifecycle.prevent_destroy set, but the plan calls for this resource to be destroyed"
+	if !strings.Contains(xe.Stderr, "prevent_destroy") {
+		t.Fatalf("Terraform no longer says prevent_destroy:\n%s", xe.Stderr)
+	}
+	if strings.Contains(xe.Stderr, sig) {
+		t.Fatalf("Terraform no longer wraps the message, so the fixture would pin nothing:\n%s", xe.Stderr)
+	}
+	if !strings.Contains(strings.Join(strings.Fields(xe.Stderr), " "), sig) {
+		t.Fatalf("the whitespace-normalized signature is not in the real text:\n%s", xe.Stderr)
+	}
+	path := filepath.Join("..", "..", "cli", "testdata", "prevent_destroy_wrapped.txt")
+	if err := os.WriteFile(path, []byte(xe.Stderr), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }

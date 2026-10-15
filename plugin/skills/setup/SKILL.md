@@ -150,6 +150,14 @@ fugaro init --project <name>
 
 After that, suggest a first small `fugaro run` for the user to launch, and point to the `working` skill.
 
+## 10. Changing the auth, a workflow, a secret or a provider
+
+A `fugaro.yaml` edit that retires resources: see [reference/transitions.md](reference/transitions.md). The user runs this in their own terminal, not through the agent:
+
+```bash user-runs
+fugaro init --repo --retire
+```
+
 ## Dogfooding facts
 
 - On GitHub a run can never change `.github/workflows/*` (the job's credential can't push workflow files). A task that needs one is the user's to do by hand.
