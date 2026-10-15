@@ -21,6 +21,21 @@ type CatalogRoute struct {
 	Models     []string // the model IDs this route claims, already resolved
 	RequireZDR bool     // price the ZDR-eligible endpoints only (the default)
 	Policy     string   // "cheapest" (also ""), or "highest"
+
+	// Overridden is the subset of the models this route claims that the owner
+	// has priced by hand under model_prices. Such a model keeps the file's
+	// row for its limits alone: Table.With replaces the rates and clears the
+	// provenance, but it keeps the limits, and a row the override created out
+	// of nothing would carry neither — raising the model's ceiling to the
+	// table's defaults, so the gateway would stop refusing a max_tokens above
+	// the model's real maximum. Nothing else about them is compiled, so the
+	// route's switches are not a refusal there either: an owner who priced the
+	// model has answered what the switches ask (design D9, P8).
+	//
+	// It must be disjoint from Models, and every entry must also be in the
+	// Overrides passed to Table.With: until that call the row carries no rates
+	// at all, and a model left out of both would be free.
+	Overridden []string
 }
 
 // ApplyCatalog compiles the loaded catalog into t: for every route, every
@@ -34,6 +49,11 @@ type CatalogRoute struct {
 //   - A model the file does not price is left alone: a route that claims a
 //     model OpenRouter does not serve, or a model no route claims, keeps
 //     the existing refusal rather than a marketplace guess.
+//   - A model in r.Overridden — one the owner has priced by hand under
+//     model_prices — keeps the file's row for its limits alone, with no
+//     rates compiled at all: Table.With replaces those, and the route's
+//     switches (the refusal below, and the ratio bound) are about a price
+//     the owner has already stated. See CatalogRoute.Overridden.
 //   - A require_zdr route whose model has no ZDR-eligible endpoint is an
 //     error naming the model, the switch and both ways out (design D9, P8).
 //     Nothing falls back to the all-endpoints set: that would price a
@@ -86,8 +106,40 @@ func ApplyCatalog(t *Table, file *catalog.File, routes []CatalogRoute, now time.
 			}
 			out.Models[id] = m
 		}
+		overridden := slices.Clone(r.Overridden)
+		sort.Strings(overridden)
+		for _, id := range overridden {
+			e, ok := file.Models[id]
+			if !ok {
+				continue
+			}
+			if IsAlias(id) {
+				return nil, fmt.Errorf("the built-in price catalog is malformed: %s is not a model ID a route can claim and a pin can name", id)
+			}
+			out.Models[id] = catalogLimits(out.Models[id], id, e)
+		}
 	}
 	return out, nil
+}
+
+// catalogLimits is the row a model the owner priced by hand keeps: the file's
+// context window and maximum output, and nothing else. Table.With replaces the
+// rates and clears the provenance a moment later, but it keeps the limits —
+// which is exactly why the row has to exist, because a row it has to create
+// carries neither. A row already in the table keeps its own limits: a
+// hand-priced model is never the place to widen a ceiling the table already
+// states.
+func catalogLimits(m Model, id string, e catalog.Entry) Model {
+	if m.ID == "" {
+		m.ID = id
+	}
+	if m.ContextTokens == 0 {
+		m.ContextTokens = e.ContextTokens
+	}
+	if m.MaxOutputTokens == 0 {
+		m.MaxOutputTokens = e.MaxOutputTokens
+	}
+	return m
 }
 
 // catalogModel is one compiled row.

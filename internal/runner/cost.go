@@ -72,16 +72,16 @@ func (r *run) updateCost() {
 		c.ModelBy = modelByUSD(r.modelBy, r.gwUsed)
 		c.ReportedUSD = r.reported.USD()
 		c.RouteBy = routeByUSD(r.routeBy, r.modelBy, r.gwUsed, r.routed)
+		// The catalog only prices the routes' models, so its staleness is a
+		// fact about what this run charged: a table that holds a stale row for
+		// a model the run never called, or priced by hand, over-counted
+		// nothing (design §7, P7).
+		c.CatalogStale = catalogStale(r.spend.Prices, chargedModels(r.modelBy))
 	}
 	r.mu.Unlock()
 	c.ModelSource = "claude-code"
 	if gateway {
 		c.ModelSource = "gateway"
-		// The catalog only prices the routes' models, so its staleness is a
-		// fact about a run that went through the gateway: the flag says the
-		// charge was the dearest end of every catalog-priced tier (design
-		// §7, P7).
-		c.CatalogStale = catalogStale(r.spend.Prices)
 	}
 	r.rec.Cost = &c
 }

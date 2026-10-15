@@ -353,10 +353,13 @@ func (r *run) checkBudget() error {
 	for _, w := range config.PinWarnings(r.cfg.Agent, s.Prices) {
 		r.d.Log.Warn("model pin: "+w.String(), "code", w.Code)
 	}
-	if catalogStale(s.Prices) {
-		// One line per run, whatever the mode: every catalog-priced model
-		// is charged the dearest end of its tier's range, and result.json
-		// says so too (design §7, P7).
+	if catalogStale(s.Prices, r.cfg.Agent.PinnedModels()) {
+		// One line per run, whatever the mode: the models this run is pinned
+		// to are charged the dearest end of their tier's range, and
+		// result.json says what was charged once the run is over (design §7,
+		// P7). A stale row no pin names is not this run's business: the routes
+		// may have materialized one, and a run that never calls it, or prices
+		// it by hand, over-charges nothing.
 		r.d.Log.Warn("budget: price catalog stale", "code", "catalog_stale")
 	}
 	if err := r.checkManagedDirWritable(); err != nil {

@@ -242,6 +242,49 @@ func TestOverrideBeatsCatalog(t *testing.T) {
 	}
 }
 
+// TestOverrideKeepsTheCatalogRowsLimits pins the reason a hand-priced catalog
+// model still gets its row: Table.With replaces the rates and clears the
+// provenance, but it keeps the row's limits — and a row the override created
+// out of nothing has neither, so the gateway would fall back to the table's
+// default output ceiling and stop refusing a max_tokens above the model's real
+// maximum. The row is materialized for its limits alone; the rates are the
+// override's, and a model the owner prices is still no refusal whatever the
+// route's switches (design D9, P8).
+func TestOverrideKeepsTheCatalogRowsLimits(t *testing.T) {
+	ov := pricing.Overrides{catModel: {InputPerM: 7, OutputPerM: 9}}
+	m, ok := mustTable(t, providers(nil), ov, fixtureCatalog("2026-10-14")).Lookup(catModel)
+	if !ok {
+		t.Fatal("no row")
+	}
+	if m.ContextTokens != 200_000 || m.MaxOutputTokens != 64_000 {
+		t.Errorf("the overridden catalog row has context=%d output=%d, want the catalog's 200000/64000", m.ContextTokens, m.MaxOutputTokens)
+	}
+	if m.Rates.InputPerM != 7 || m.Rates.OutputPerM != 9 {
+		t.Errorf("the rates are %v/%v, want the override's 7/9", m.Rates.InputPerM, m.Rates.OutputPerM)
+	}
+	if m.Catalog != nil {
+		t.Errorf("the override left the catalog provenance: %+v", m.Catalog)
+	}
+	// A model the catalog does not price keeps the old shape: there is no row
+	// to keep the limits of, so the override's row stands alone.
+	elsewhere := pricing.Overrides{"qwen/qwen-elsewhere": {InputPerM: 1, OutputPerM: 2}}
+	m, ok = mustTable(t, providers(nil), elsewhere, fixtureCatalog("2026-10-14")).Lookup("qwen/qwen-elsewhere")
+	if !ok || m.ContextTokens != 0 || m.MaxOutputTokens != 0 {
+		t.Errorf("a model the catalog does not price got limits: %+v", m)
+	}
+	// The D9 escape still works, and now keeps the limits too: a require_zdr
+	// route whose model has no ZDR tier is refused, and an owner who prices
+	// that model by hand gets a table (with the catalog's limits).
+	no := providers(func(p *ModelProvider) { p.Models = []string{"deepseek/*"} })
+	tbl, err := PriceTable(no, ov, noZDRCatalog(), catNow)
+	if err != nil {
+		t.Fatalf("a hand-priced model on a require_zdr route was refused: %v", err)
+	}
+	if m, _ := tbl.Lookup(catModel); m.ContextTokens != 200_000 || m.MaxOutputTokens != 64_000 {
+		t.Errorf("the hand-priced way out lost the catalog's limits: context=%d output=%d", m.ContextTokens, m.MaxOutputTokens)
+	}
+}
+
 // TestPinRefusedNamesTheSwitchAndBothWaysOut pins Review Focus 14 and design
 // P8: a require_zdr route whose model has no ZDR-eligible endpoint fails the
 // table with the model, the switch and both ways out — the message is the

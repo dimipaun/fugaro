@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 )
 
@@ -379,6 +381,54 @@ func TestGeneratorStandInFactors(t *testing.T) {
 		{"0.00000019", 2, 1, "0.00000038"},
 		{"0.00000015", 125, 100, "0.0000001875"},
 		{"0", 2, 1, "0"},
+	}
+	// The same arithmetic, run on the factors the generator actually uses:
+	// the cases above are the shapes, this is the table. The names are the
+	// set apiDims reaches for, and each factor's exact value is here too, so
+	// a mistyped stand-in cannot pass.
+	for name, want := range map[string]string{
+		"cache_read":     "1",    // the endpoint's whole input price
+		"cache_write_5m": "1.25", // pricing.DefaultCacheWrite5m
+		"cache_write_1h": "2",    // pricing.DefaultCacheWrite1h
+	} {
+		f, ok := standInFactor[name]
+		if !ok {
+			t.Errorf("no %s stand-in", name)
+			continue
+		}
+		if got, err := scaleBy("1", f.num, f.den); err != nil {
+			t.Errorf("the %s stand-in %d/%d: %v", name, f.num, f.den, err)
+		} else if got != want {
+			t.Errorf("the %s stand-in is %d/%d = %s, want %s", name, f.num, f.den, got, want)
+		}
+	}
+	if len(standInFactor) != 3 {
+		t.Errorf("the stand-in table has %d entries, want 3: %v", len(standInFactor), standInFactor)
+	}
+	// And the factors must be pricing's own write defaults, to the digit:
+	// the compile folds a dimension the catalog does not price with
+	// pricing.DefaultCacheWrite5m/1h (catalog_apply.go), so a change to
+	// overrides.go that left the generator's fractions alone would write
+	// bounds the compiler disagrees with. The comparison is on the decimal
+	// text, so it is exact and needs no float arithmetic here.
+	for name, def := range map[string]float64{
+		"cache_write_5m": pricing.DefaultCacheWrite5m,
+		"cache_write_1h": pricing.DefaultCacheWrite1h,
+	} {
+		f := standInFactor[name]
+		got, err := scaleBy("1", f.num, f.den)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		if want := strconv.FormatFloat(def, 'f', -1, 64); got != want {
+			t.Errorf("the %s stand-in is %d/%d = %s, but pricing's default is %s: the generated bound and the compiled fold would disagree", name, f.num, f.den, got, want)
+		}
+	}
+	// The cache read is the generator's own rule, not a table default: 1.0,
+	// the whole of the endpoint's input price (design D7(a)).
+	if f, ok := standInFactor["cache_read"]; ok && f.num != f.den {
+		t.Errorf("the cache_read stand-in is %d/%d, want 1/1", f.num, f.den)
 	}
 	for _, c := range cases {
 		got, err := scaleBy(c.in, c.num, c.den)

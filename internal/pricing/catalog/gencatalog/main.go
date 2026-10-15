@@ -86,15 +86,20 @@ var apiDims = []dim{
 
 // standInFactor is the multiple of an endpoint's own input price that stands
 // in for a dimension the endpoint does not price, applied to both bounds
-// (design D7(a), plan P12): 1.0 for a cache read, the table's own write
-// defaults for the writes (pricing.DefaultCacheWrite5m/1h, restated here
-// because this package must not read pricing's rates). A dimension with no
-// factor — web search, a per-search price with no input-price equivalent —
-// has no stand-in and is omitted when no endpoint prices it.
+// (design D7(a), plan P12): 1.0 for a cache read, and for the writes the same
+// multiples the compile folds with, pricing.DefaultCacheWrite5m (1.25) and
+// pricing.DefaultCacheWrite1h (2), so a generated bound and a folded one are
+// the same number. The writes are spelled as the exact fractions the
+// generator's string arithmetic needs — this package shifts prices as decimal
+// strings and never as float64 (decimal.go) — and TestGeneratorStandInFactors
+// pins each fraction to its constant, so changing overrides.go without
+// changing these cannot pass. A dimension with no factor — web search, a
+// per-search price with no input-price equivalent — has no stand-in and is
+// omitted when no endpoint prices it.
 var standInFactor = map[string]struct{ num, den int }{
 	"cache_read":     {1, 1},
-	"cache_write_5m": {125, 100},
-	"cache_write_1h": {2, 1},
+	"cache_write_5m": {125, 100}, // pricing.DefaultCacheWrite5m
+	"cache_write_1h": {2, 1},     // pricing.DefaultCacheWrite1h
 }
 
 type options struct {

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -18,6 +19,39 @@ func paths(ps []Problem) string {
 		s = append(s, p.Path)
 	}
 	return strings.Join(s, ",")
+}
+
+// TestPinnedModelsAreTheThreePins pins the one list of a run's pins: the
+// models PinnedModels returns are the three the paths above name, in the same
+// order, with an empty name where the config pins nothing rather than the
+// entry dropped. The runner asks for those three to decide what a stale
+// catalog means for a run (internal/runner/gateway.go), so a set that drifted
+// from the one CheckPins and PinWarnings judge would judge some other run.
+func TestPinnedModelsAreTheThreePins(t *testing.T) {
+	a := pinnedAgent()
+	want := []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"}
+	if got := a.PinnedModels(); !slices.Equal(got, want) {
+		t.Errorf("PinnedModels() = %q, want %q", got, want)
+	}
+	if len(a.PinnedModels()) != len(pinPaths) {
+		t.Fatalf("PinnedModels returns %d models for %d paths", len(a.PinnedModels()), len(pinPaths))
+	}
+	// Every path in pinPaths is the path CheckPins reports for that pin.
+	ps := CheckPins(a, pricing.Embedded())
+	if got := paths(ps); got != "" {
+		t.Fatalf("the fixture is not pinnable (%s): %q", got, ps)
+	}
+	// An agent.model with no role overrides pins the coder and the reviewer
+	// to it, and the background model to nothing: the empty entry stays.
+	b := Agent{Model: "claude-sonnet-5-5"}
+	want = []string{"claude-sonnet-5-5", "claude-sonnet-5-5", ""}
+	if got := b.PinnedModels(); !slices.Equal(got, want) {
+		t.Errorf("an agent.model-only config pinned %q, want %q", got, want)
+	}
+	ps = CheckPins(b, pricing.Embedded())
+	if got := paths(ps); got != "agent.models.background" {
+		t.Errorf("CheckPins reported %q, want the background pin only", got)
+	}
 }
 
 // placeholderPrices is Embedded() with the placeholder row a provider model

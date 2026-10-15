@@ -8,17 +8,32 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
+// pin is one of an Agent's three pins with the config path a Problem about it
+// points the owner at.
+type pin struct{ path, model string }
+
+// pinPaths are the config paths of an Agent's three pins, in the order
+// Agent.PinnedModels returns them. One place, so `validate`, `diagnose` and
+// the run's own checks name the same three keys.
+var pinPaths = [...]string{"agent.models.coder", "agent.models.reviewer", "agent.models.background"}
+
+// pins pairs each of an Agent's pins with its path, for the three loops that
+// judge or warn about all three.
+func pins(a Agent) []pin {
+	out := make([]pin, len(pinPaths))
+	for i, m := range a.PinnedModels() {
+		out[i] = pin{pinPaths[i], m}
+	}
+	return out
+}
+
 // CheckPins is the rule for a run under a budget: the coder, the reviewer and
 // the background model each name an explicit model ID that prices knows, never
 // an alias, so the price charged is the price in the table. prices is the
 // embedded table with the owner's overrides.
 func CheckPins(a Agent, prices *pricing.Table) []Problem {
 	var ps []Problem
-	for _, r := range []struct{ path, model string }{
-		{"agent.models.coder", a.ModelFor(RoleCoder)},
-		{"agent.models.reviewer", a.ModelFor(RoleReviewer)},
-		{"agent.models.background", a.Models.Background},
-	} {
+	for _, r := range pins(a) {
 		switch {
 		case r.model == "" && r.path == "agent.models.background":
 			ps = append(ps, Problem{Path: r.path, Message: "is required with a budget: name a model ID such as claude-haiku-4-5"})
@@ -44,11 +59,7 @@ func CheckPins(a Agent, prices *pricing.Table) []Problem {
 func PinWarnings(a Agent, prices *pricing.Table) []Problem {
 	var ps []Problem
 	seen := map[string]bool{}
-	for _, r := range []struct{ path, model string }{
-		{"agent.models.coder", a.ModelFor(RoleCoder)},
-		{"agent.models.reviewer", a.ModelFor(RoleReviewer)},
-		{"agent.models.background", a.Models.Background},
-	} {
+	for _, r := range pins(a) {
 		m, ok := prices.Lookup(r.model)
 		if !ok || seen[m.ID+r.path] {
 			continue
@@ -128,11 +139,7 @@ func CheckAllowed(a Agent, e policy.Effective, ceiling []string) []Problem {
 		where += "; the project's allow-list: " + strings.Join(ceiling, ", ")
 	}
 	var ps []Problem
-	for _, r := range []struct{ path, model string }{
-		{"agent.models.coder", a.ModelFor(RoleCoder)},
-		{"agent.models.reviewer", a.ModelFor(RoleReviewer)},
-		{"agent.models.background", a.Models.Background},
-	} {
+	for _, r := range pins(a) {
 		switch {
 		case r.model == "":
 			ps = append(ps, Problem{Path: r.path, Message: "names no model, but the run has an allow-list (" + where + "): set it, or agent.model, to a model on the list"})

@@ -2,7 +2,9 @@ package runner
 
 import (
 	"fmt"
+	"maps"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -157,19 +159,32 @@ func (r *run) priceTable(ov pricing.Overrides) (*pricing.Table, error) {
 	return priceTable(r.d.Providers, ov)
 }
 
-// catalogStale reports whether a table holds a row the built-in provider
-// price catalog priced while the catalog was past its own 30-day threshold
-// (catalog.StaleAfter). Every such row has been forced to the dearest end of
-// its tier's range (design D10, P7), which result.json records and the run
-// warns about once.
-func catalogStale(t *pricing.Table) bool {
+// catalogStale reports whether any of the named models is a row the built-in
+// provider price catalog priced while the catalog was past its own 30-day
+// threshold (catalog.StaleAfter). Every such row has been forced to the dearest
+// end of its tier's range (design D10, P7), which result.json records and the
+// run warns about once.
+//
+// named is the models the caller means, never the whole table: a table holds a
+// stale row as soon as one catalog-eligible route claims one, and a run whose
+// call was priced by hand, or never made, charged nothing at the dearest end.
+// cost.catalog_stale is about the charge, so it names the run's spend by model;
+// the pre-flight WARN names the models the run is pinned to, which is what it
+// is about to charge.
+func catalogStale(t *pricing.Table, named []string) bool {
 	if t == nil {
 		return false
 	}
-	for _, m := range t.Models {
-		if m.Catalog != nil && m.Catalog.Stale {
+	for _, id := range named {
+		if m, ok := t.Lookup(id); ok && m.Catalog != nil && m.Catalog.Stale {
 			return true
 		}
 	}
 	return false
+}
+
+// chargedModels names the run's spend by model, in a fixed order, for the
+// callers that ask what a run actually charged from.
+func chargedModels(by map[string]pricing.Micros) []string {
+	return slices.Sorted(maps.Keys(by))
 }
