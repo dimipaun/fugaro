@@ -44,7 +44,9 @@
 //     the exact failure this package promises to prevent;
 //   - model_prices is read with the catalogue's own parser and keeps the
 //     catalogue's pointer spelling, so an omitted optional rate keeps its list
-//     default instead of being priced at zero;
+//     default instead of being priced at zero; its member names are escaped on
+//     the node (an RTDB key cannot hold the "/" or "." of a model ID) and
+//     unescaped when the node is read, see Prices;
 //   - a providers entry is the document internal/runner's ProvidersFromEnv
 //     decodes out of FUGARO_MODEL_PROVIDERS (Provider embeds
 //     config.ModelProvider, so the spelling cannot drift) and is checked by
@@ -52,13 +54,17 @@
 //     https, a kind that is not anthropic-compat, an auth style that is not
 //     bearer or x-api-key, an ambiguous empty allow_data_to, a route_fee_pct
 //     over the cap or a models list two providers both claim is refused here
-//     rather than reaching a run; price_policy, which internal/config does not
-//     know yet, is checked against the catalogue's two values beside them.
-//     Unknown keys *inside* an entry stay ignored (P8) only when the entry
-//     spells out allow_data_to: every other field here is refused by its zero
-//     value when it is misspelt, but a misspelt allow_data_to leaves the nil
-//     slice that means every repository, so that one spelling is refused
-//     rather than read as permissive.
+//     rather than reaching a run; price_policy is checked against the
+//     catalogue's two values beside them, and again by validPricePolicy below,
+//     because the node is read by a runner that never parses a config file.
+//     An unknown key *inside* an entry is refused, exactly as
+//     internal/config's own decoder refuses one in fugaro.yaml: a misspelt
+//     allow_data_to would otherwise leave the widest setting there is (a nil
+//     list means every repository) and a misspelt route_fee_pct would drop the
+//     owner's surcharge, silently, on a node an administrator can write by
+//     hand. The tolerance that stays is at the top level and in `routing`,
+//     whose unknown keys cannot fail open: routing's values are checked by
+//     validRouting, which refuses a block this Fugaro cannot act on.
 //
 // The readable node holds nothing personal and no secret values: every run
 // token can read it, and a prompt-injected agent can take the token through
@@ -92,7 +98,7 @@ type Policy struct {
 	Budget     Budget              `json:"budget"`
 	AllowRepos []string            `json:"allow_repos"`
 	Providers  map[string]Provider `json:"providers,omitempty"`
-	Prices     map[string]Price    `json:"model_prices,omitempty"` // the owner's price overrides, as fugaro.yaml's model_prices spells them
+	Prices     Prices              `json:"model_prices,omitempty"` // the owner's price overrides, keyed by model ID (Prices documents the node's own spelling)
 	Routing    *Routing            `json:"routing,omitempty"`      // phase 1b writes it; nil = direct (D1b)
 
 	// UnknownKeys lists the top-level keys of the node this Fugaro does not
@@ -135,49 +141,42 @@ type Budget struct {
 // drift no test can see, because each side would be self-consistent.
 //
 // RequireZDR and PricePolicy are the two price-catalogue switches
-// (docs/design/provider-price-catalog.md D3), which the catalogue design puts
-// on config.ModelProvider beside RouteFeePct; they are spelled here the way
-// that slice will spell them, and when it lands they move into the carrier
-// and this struct loses them.
+// (docs/design/provider-price-catalog.md D3). They live on the carrier
+// (config.ModelProvider, beside RouteFeePct) and are NOT respelled here: a
+// second declaration of the same key would be shadowed rather than merged,
+// and — because Provider embeds a carrier that has its own UnmarshalYAML —
+// a decode that went through the carrier would fill one declaration and
+// leave the other at zero, which is a switch silently dropped from a
+// published policy. One carrier, one declaration: a field copied out of the
+// operator's config by name (internal/cli's policyProviders) cannot lose
+// either switch, and neither can a decode.
 type Provider struct {
 	config.ModelProvider
-	// RequireZDR prices the route against the ZDR-eligible endpoints. Unset
-	// means true: nil is the default-true spelling the repository already
-	// uses for a switch (config.PRSettings.EarlyDraft), so an entry written
-	// before the field existed keeps the conservative price. What this is
-	// NOT: a routing guarantee — Fugaro cannot read the account's privacy
-	// setting (catalogue design §8).
-	RequireZDR *bool `json:"require_zdr,omitempty"`
-	// PricePolicy is which end of the catalogue's price range a routed call
-	// is charged at. Unset means PricePolicyCheapest, the default the
-	// catalogue design chose (D3); the empty string is written as an omission
-	// so a job written by a newer CLI stays readable by an older image (D11).
-	PricePolicy string `json:"price_policy,omitempty"`
 }
 
-// The values price_policy accepts (docs/design/provider-price-catalog.md D3).
+// The values price_policy accepts (docs/design/provider-price-catalog.md D3),
+// spelled here as the policy spells them. They are config's own values, kept
+// as constants of this package too so a reader of a policy need not import
+// internal/config to name one.
 const (
 	// PricePolicyCheapest charges the cheapest eligible endpoint's price, and
 	// is what an unset price_policy means (the catalogue's own default).
-	PricePolicyCheapest = "cheapest"
+	PricePolicyCheapest = config.PricePolicyCheapest
 	// PricePolicyHighest charges the dearest eligible endpoint's price.
-	PricePolicyHighest = "highest"
+	PricePolicyHighest = config.PricePolicyHighest
 )
 
 // RequireZDROn reports whether this route is priced as if only ZDR-eligible
-// endpoints may serve it: true unless require_zdr is explicitly false.
-func (p Provider) RequireZDROn() bool { return p.RequireZDR == nil || *p.RequireZDR }
+// endpoints may serve it: true unless require_zdr is explicitly false. It is
+// the carrier's own accessor (config.ModelProvider.RequireZDROn), named here
+// as a policy reader reads it.
+func (p Provider) RequireZDROn() bool { return p.ModelProvider.RequireZDROn() }
 
 // EffectivePricePolicy is the policy a route is priced under:
-// PricePolicyCheapest when the policy does not set one (D3). The plan for the
-// catalogue slice calls the same accessor PricePolicySet(); whichever name it
-// lands under in config.ModelProvider, the meaning is this one.
-func (p Provider) EffectivePricePolicy() string {
-	if p.PricePolicy == "" {
-		return PricePolicyCheapest
-	}
-	return p.PricePolicy
-}
+// PricePolicyCheapest when the policy does not set one (D3). It is the
+// carrier's own accessor (config.ModelProvider.PricePolicySet), under the
+// name this package's readers use.
+func (p Provider) EffectivePricePolicy() string { return p.ModelProvider.PricePolicySet() }
 
 // Price is one model's owner-set rates, spelled exactly as the price catalogue
 // spells model_prices (internal/pricing/overrides.go's wireRates, and
@@ -186,7 +185,8 @@ func (p Provider) EffectivePricePolicy() string {
 // default (cache_write_5m 1.25, cache_write_1h 2, cache_read 0.1,
 // web_search_per_1k 10), never 0. Decode checks the block with the catalogue's
 // own pricing.ParseOverrides as well, so the two spellings cannot drift
-// (TestDecodeModelPricesAgreeWithTheCatalog).
+// (TestDecodeModelPricesAgreeWithTheCatalog). The model ID it belongs to is
+// the map key of Prices, which escapes it on the node and not in Go.
 type Price struct {
 	InputPerM      *float64   `json:"input_per_m"`
 	OutputPerM     *float64   `json:"output_per_m"`
@@ -288,9 +288,10 @@ func Decode(raw []byte) (*Policy, bool, error) {
 	}
 
 	if rraw, ok := doc["model_prices"]; ok && !isNull(rraw) {
-		dec := json.NewDecoder(bytes.NewReader(rraw))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&p.Prices); err != nil {
+		// Prices' own UnmarshalJSON does the strict part: each entry is
+		// decoded with DisallowUnknownFields, and each member name is
+		// unescaped back into the model ID the block is keyed by.
+		if err := json.Unmarshal(rraw, &p.Prices); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: model_prices: %w", err)
 		}
 		for _, id := range sortedKeys(p.Prices) {
@@ -304,8 +305,14 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		}
 		// The catalogue's own parser is the authority on this document's
 		// spelling, its required fields and its ranges: the strict decode
-		// above and this call must agree.
-		if _, err := pricing.ParseOverrides(string(rraw)); err != nil {
+		// above and this call must agree. It reads the block in the
+		// catalogue's own spelling, which is the decoded map's — never the
+		// node's escaped member names, which are not model IDs.
+		catalog, err := p.Prices.CatalogJSON()
+		if err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: model_prices: %w", err)
+		}
+		if _, err := pricing.ParseOverrides(string(catalog)); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: model_prices: %w", err)
 		}
 	}
@@ -319,9 +326,11 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		}
 	}
 	if praw, ok := doc["providers"]; ok && !isNull(praw) {
-		if err := json.Unmarshal(praw, &p.Providers); err != nil {
+		ps, err := decodeProviders(praw)
+		if err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: providers: %w", err)
 		}
+		p.Providers = ps
 		if err := validProviders(praw, p.Providers); err != nil {
 			return nil, true, err
 		}
@@ -329,24 +338,51 @@ func Decode(raw []byte) (*Policy, bool, error) {
 	return &p, true, nil
 }
 
+// decodeProviders reads the providers block off the node, refusing a key inside
+// an entry that this Fugaro does not know. internal/config's decoder refuses one
+// in fugaro.yaml (ModelProvider.UnmarshalYAML, a known-fields check yaml.v3
+// cannot apply while decoding through a Node), and the node is the more
+// security-relevant of the two documents: it is what a run is routed and metered
+// by, and every run token can read it.
+//
+// The tolerance an unknown key used to get here was justified by P8 (a field a
+// newer release adds must not brick an older runner), but it does not hold for
+// this block: two of its fields fail OPEN when a key that names them is
+// misspelt. A misspelt allow_data_to leaves the nil slice that means every
+// repository — the widest data-sharing setting there is, and the value
+// ValidateModelProviders' ambiguity check is skipped for, because the check that
+// marks a written-but-empty list is set by the YAML unmarshaller and never by
+// JSON — and a misspelt route_fee_pct drops the owner's surcharge silently. A
+// newer release that adds a provider field bumps Version, which is what refuses
+// a node this binary cannot read, so nothing forward-compatible is lost.
+func decodeProviders(raw json.RawMessage) (map[string]Provider, error) {
+	var entries map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil, err
+	}
+	out := make(map[string]Provider, len(entries))
+	names := make([]string, 0, len(entries))
+	for name := range entries {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		dec := json.NewDecoder(bytes.NewReader(entries[name]))
+		dec.DisallowUnknownFields()
+		var pv Provider
+		if err := dec.Decode(&pv); err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		out[name] = pv
+	}
+	return out, nil
+}
+
 // validProviders holds the providers block to the rules internal/config holds
 // the same document to in fugaro.yaml (ValidateModelProviders), plus the one
 // rule that only a reader of the written document can apply.
 //
-// The block is decoded tolerantly, unlike the budget block and unlike
-// ProvidersFromEnv's own decoder: an unknown key inside an entry is ignored
-// rather than refused, because the node must stay readable by an older runner
-// (P8), so a field a newer Fugaro adds does not brick it. That tolerance is
-// bounded by the one field whose absence is not the safe end: an entry that
-// carries a key this Fugaro does not know **and** does not spell out
-// allow_data_to is refused, because a misspelling of allow_data_to would
-// otherwise be read as the nil (absent) slice — every repository, the
-// permissive meaning (config.ModelProvider.AllowsData) — with nothing said.
-// (The rule does not rest on "every value is checked", which is true of the
-// other fields — a misspelt kind, base_url, auth, secret or models leaves a
-// value ValidateModelProviders refuses — and false for this one.)
-//
-// The other rule ValidateModelProviders cannot apply here is the null spelling of
+// The one rule ValidateModelProviders cannot apply here is the null spelling of
 // allow_data_to: it reads "the key was written with nothing under it" off the
 // YAML node, and JSON has no such marker, so a written null arrives as the nil
 // slice that means every repository (ModelProvider.AllowsData). That is the
@@ -369,19 +405,6 @@ func validProviders(raw json.RawMessage, providers map[string]Provider) error {
 			if err := json.Unmarshal(entry, &fields); err == nil {
 				if data, ok := fields["allow_data_to"]; ok && isNull(data) {
 					return fmt.Errorf("projectpolicy: providers.%s.allow_data_to: an explicit empty list is ambiguous: write [\"*\"] for every repository, or remove the key entirely", name)
-				}
-				if _, spelled := fields["allow_data_to"]; !spelled {
-					keys := make([]string, 0, len(fields))
-					for k := range fields {
-						keys = append(keys, k)
-					}
-					sort.Strings(keys)
-					for _, key := range keys {
-						if config.KnownProviderField(key) {
-							continue
-						}
-						return fmt.Errorf("projectpolicy: providers.%s.%s: this Fugaro does not know this key, and the entry does not spell out allow_data_to: a misspelled allow_data_to would be read as \"every repository\", the same as the key's absence, so nothing would say the rule was lost. Write allow_data_to ([\"*\"] for every repository, or the repositories by owner/name) or correct the key", name, key)
-					}
 				}
 			}
 		}
@@ -431,10 +454,12 @@ func validRouting(r *Routing) error {
 	return fmt.Errorf("projectpolicy: routing.claude.via %q must be %s, %s or %s", via, RouteDirect, RouteOpenRouter, RouteAuto)
 }
 
-// validPricePolicy checks the one provider field internal/config does not know
-// yet: the two switches are the price catalogue's (docs/design/
-// provider-price-catalog.md D3), and an unrecognised value would price a route
-// at the wrong end of the catalogue's range rather than fail.
+// validPricePolicy checks the one provider value the carrier's own validation
+// does not: an unrecognised price_policy would price a route at the wrong end
+// of the catalogue's range rather than fail. internal/config refuses it too
+// (ValidateModelProviders, the same two values); this is the check the *node*
+// is held to, because a policy is read by a runner that never parses the
+// operator's config.
 func validPricePolicy(name, policy string) error {
 	switch policy {
 	case "", PricePolicyCheapest, PricePolicyHighest:

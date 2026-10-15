@@ -176,6 +176,52 @@ func TestRunnerWithNoCredentialTakesTheModeOffPath(t *testing.T) {
 			t.Fatal("a run with its budget off and no token exchanged one")
 		}
 	})
+	t.Run("the job carries no web API key", func(t *testing.T) {
+		// The launcher writes the database's address and its web key
+		// independently (internal/infra's job environment) and the key is
+		// optional in the operator's config (internal/localcfg), so a job can
+		// name a database and carry no way to exchange a token with it. The
+		// key is a credential, and on a budget-off job its absence is the
+		// mode-off path, like the two cases above: the run cannot tell "no
+		// policy" from "no key", so the refusal is the launcher's readiness
+		// gate, and a run that halts here is halting on a credential it was
+		// never given (B1).
+		b := newBK(t, gwConfig(t, ""), "off", "")
+		b.deps.Backend.APIKey = ""
+		rec, err := b.run(t, implement("feature"), review("ship", 0))
+		if err != nil || rec.Status != runstore.StatusSucceeded || rec.Budget != nil {
+			t.Fatalf("rec = %+v, err = %v: a mode-off job with no key is the mode-off path", rec, err)
+		}
+		if n := len(b.db.Credentials()); n != 0 {
+			t.Fatalf("a run with its budget off made %d database requests", n)
+		}
+		if b.itk.Exchanges() != 0 {
+			t.Fatal("a run with its budget off and no key exchanged a token")
+		}
+		// The key is checked before the bucket read, so the take that would
+		// delete the token object never happened: the run did not even look.
+		if ok, err := b.bucket.Exists(context.Background(), token.ObjectKey(repoSlug, runID)); err != nil || !ok {
+			t.Fatalf("the run's token object is gone (exists = %v, err = %v)", ok, err)
+		}
+	})
+	t.Run("the launcher's marker outranks the mode", func(t *testing.T) {
+		// The same job, launched by a launcher that minted: with the mode off
+		// the launcher mints only when the project has published a policy
+		// (internal/cli's budgetMintOn), so the marker says a policy exists
+		// and this run cannot read it. The missing credential is then the
+		// refusal, exactly as a missing token object is (M2), and never the
+		// mode-off path.
+		b := newBK(t, gwConfig(t, ""), "off", "")
+		b.deps.Backend.APIKey = ""
+		b.deps.Backend.TokenMarked = true
+		rec, err := b.run(t, implement("feature"))
+		if err == nil || !strings.Contains(err.Error(), runner.FirebaseAPIKeyEnv+" is not set") {
+			t.Fatalf("err = %v, want the missing-key refusal", err)
+		}
+		if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
+			t.Fatalf("the run proceeded without its Firebase API key: calls = %d, rec = %+v", len(b.agent.calls), rec)
+		}
+	})
 }
 
 // M2's regression test (security review of PR #379): the launcher that minted
@@ -476,6 +522,30 @@ func TestPolicyPricesReplaceTheEnvOverrides(t *testing.T) {
 	}
 }
 
+// TestPolicyPricesKeepTheJobsRoutes: the end-to-end half of the same rule. A
+// job whose FUGARO_MODEL_PROVIDERS claims the deepseek family, a workflow
+// pinned to one of its models, and a policy node that prices only some *other*
+// model (sonnet): the run must bootstrap and finish. A policy table built from
+// the node's overrides alone drops every row the job's routes contributed, so
+// this run is refused before it starts — "has no price: add it under
+// model_prices in the project config", which points the owner at the wrong
+// place, because the same job with no policy published boots fine.
+func TestPolicyPricesKeepTheJobsRoutes(t *testing.T) {
+	use := pricing.Usage{Input: 1000, Output: 500}
+	b := policyRun(t, providerPinned(t), "enforce", "50",
+		`{"version":1,"budget":{"mode":"enforce","per_run_usd":5},"model_prices":{"`+sonnet+`":{"input_per_m":1,"output_per_m":2}}}`)
+	wireProviders(t, b.gw, []anthropicfake.Reply{anthropicfake.Compat{}.MessageOK(deepseek, use)}, "acme/app")
+	var status int
+	var body string
+	rec, err := b.run(t, callDeepseek(&status, &body, implement("feature")), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v: a policy that prices another model must not drop the job's routes", rec, err)
+	}
+	if status != 200 {
+		t.Errorf("the provider call answered %d: %s", status, body)
+	}
+}
+
 // H1 (the security review of this PR): a policy that sets only part of the
 // ceiling does not turn the rest of it off. A policy published for
 // allow_repos alone used to replace the environment's ceiling whole — mode,
@@ -645,28 +715,5 @@ func TestPolicyProviderKeyIsRefusedWithoutEchoingIt(t *testing.T) {
 	}
 	if len(b.agent.calls) != 0 {
 		t.Fatalf("%d stages ran", len(b.agent.calls))
-	}
-}
-
-// The policy's model_prices is the owner's override list, not the run's whole
-// price table: the table it lands on is the run's own, built over the job's
-// FUGARO_MODEL_PROVIDERS routes and the built-in catalog, exactly as
-// priceTableFromEnv builds it. A policy published for one model must therefore
-// leave the routes' own models priced — building the ceiling's table from the
-// embedded rows alone (pricing.Embedded().With(o)) refuses this run at
-// bootstrap with "the models can't be priced under the budget", because the
-// coder is deepseek/deepseek-v4-flash, which only the catalog prices.
-func TestPolicyPricesKeepTheRoutePricedModels(t *testing.T) {
-	g := providerRun(t, providerPinned(t), "enforce", "5",
-		[]anthropicfake.Reply{anthropicfake.Compat{}.MessageOK(deepseek, pricing.Usage{Input: 1000, Output: 500})}, "acme/app")
-	b := attachBackend(t, g, "enforce")
-	b.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
-	b.db.Set(projectpolicy.PathShared(), json.RawMessage(
-		`{"version":1,"budget":{"mode":"enforce","per_run_usd":5},"model_prices":{"`+sonnet+`":{"input_per_m":20,"output_per_m":10}}}`))
-	var status int
-	var body string
-	rec, err := b.run(t, callDeepseek(&status, &body, implement("feature")), review("ship", 0))
-	if err != nil || rec.Status != runstore.StatusSucceeded {
-		t.Fatalf("rec = %+v, err = %v, body = %q: a policy pricing one model must not leave the route's own model unpriced", rec, err, body)
 	}
 }

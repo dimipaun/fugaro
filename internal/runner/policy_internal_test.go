@@ -101,11 +101,16 @@ func TestPolicyRecordCarriesPerDay(t *testing.T) {
 // The policy's model_prices is the owner's override list, and the table it is
 // applied to is the run's own (r.priceTable → config.PriceTable over the job's
 // FUGARO_MODEL_PROVIDERS routes and the built-in catalog). Building it as
-// pricing.Embedded().With(o) instead — as policyPrices did — does more than
-// replace the model_prices key: it drops every row a catalog-eligible route
-// claims, and an override naming such a model materializes it with its limits
-// cleared, so the gateway falls back to DefaultMaxOutputTokens (1e6) and stops
-// refusing a max_tokens above the model's real maximum.
+// pricing.Embedded().With(o) instead does more than replace the model_prices
+// key: it drops every row a catalog-eligible route claims, and an override
+// naming such a model materializes it with its limits cleared, so the gateway
+// falls back to DefaultMaxOutputTokens (1e6) and stops refusing a max_tokens
+// above the model's real maximum.
+//
+// This is the strict half of the pair TestPolicyCeilingKeepsTheJobsRoutesAndCatalog
+// covers (that one's limit check passes when an override kept ContextTokens and
+// cleared MaxOutputTokens, which is exactly the fallback above): what this
+// asserts is that MaxOutputTokens itself is the catalog's.
 func TestPolicyPricesBuildOnTheRunsOwnTable(t *testing.T) {
 	const ds = "deepseek/deepseek-v4-flash"
 	cat, err := loadCatalog()
@@ -124,25 +129,30 @@ func TestPolicyPricesBuildOnTheRunsOwnTable(t *testing.T) {
 	price := func(in, out float64) projectpolicy.Price {
 		return projectpolicy.Price{InputPerM: &in, OutputPerM: &out}
 	}
+	// priced is the ceiling's table for a node carrying one model_prices entry,
+	// read through the same call the run's bootstrap makes.
+	priced := func(id string, p projectpolicy.Price) *pricing.Table {
+		t.Helper()
+		_, spend, _, err := r.policyCeiling(&projectpolicy.Policy{Prices: map[string]projectpolicy.Price{id: p}}, envCeiling(Spend{}), Spend{})
+		if err != nil {
+			t.Fatalf("the policy's model_prices was refused: %v", err)
+		}
+		if spend.Prices == nil {
+			t.Fatal("the ceiling carries no price table")
+		}
+		return spend.Prices
+	}
 	// An override for a model no route claims: the route's own row — the one
 	// the run's pin is priced from — must survive it. Without that row the run
 	// is refused at bootstrap ("the models can't be priced under the budget").
-	tbl, err := r.policyPrices(&projectpolicy.Policy{Prices: map[string]projectpolicy.Price{"claude-sonnet-5-5": price(1, 2)}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if m, ok := tbl.Lookup(ds); !ok {
+	if m, ok := priced("claude-sonnet-5-5", price(1, 2)).Lookup(ds); !ok {
 		t.Fatal("the policy's model_prices dropped the job's own route-priced row, so nothing can price a run pinned to it")
 	} else if m.MaxOutputTokens != entry.MaxOutputTokens {
 		t.Errorf("%s: the policy's list changed the model's output maximum to %d, want the catalog's %d", ds, m.MaxOutputTokens, entry.MaxOutputTokens)
 	}
 	// An override naming the route's model: the override's rates win, and the
 	// file's limits stay, so the ceiling on max_tokens is still the model's.
-	tbl, err = r.policyPrices(&projectpolicy.Policy{Prices: map[string]projectpolicy.Price{ds: price(3, 4)}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	m, ok := tbl.Lookup(ds)
+	m, ok := priced(ds, price(3, 4)).Lookup(ds)
 	if !ok {
 		t.Fatalf("the owner's override left %s with no row at all", ds)
 	}
