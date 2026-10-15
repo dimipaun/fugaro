@@ -377,6 +377,15 @@ view (internal/backend/gcp/logs.go filters on
    can read them — a worse outcome than the Cloud Run path. This is an
    installation-level Terraform change (§8).
 
+   **Built** (Task 4): the sink and the exclusion each carry both arms,
+   parenthesized so the exclusion's `NOT` clauses hang off the pair and not
+   off the Batch arm alone (`AND` binds tighter than `OR`). The Cloud Run arm
+   is unchanged byte-for-byte, and the arm is additive and inert on a project
+   with no Batch jobs. It reaches a project only when the installation's
+   Terraform is applied there; it widens no reader: the view has no filter of
+   its own and its IAM member still names exactly the launchers and
+   operators.
+
 A plain instance has no such integration: a startup script would have to ship
 container output to Cloud Logging itself (the Ops Agent, or an explicit
 `gcloud logging write`), which is exactly the machinery Batch supplies.
@@ -734,7 +743,7 @@ Every method of `internal/backend.Backend` maps onto Batch:
 | `Launch(LaunchSpec)` | `projects.locations.jobs.create` | One Batch job, one task group, one task. Name derived per run (§2.4). The `FUGARO_RUN` env and the timeout are set in the job definition, not in an override — Batch has no execution-override concept like Cloud Run's `Overrides`. Returns `ExecutionRef{Name, Job, LogURL}`. |
 | `Execution(name)` | `jobs.get` | Maps Batch's state enum to `backend.State`, for **every** value the API documents: `STATE_UNSPECIFIED`/`QUEUED`/`SCHEDULED` → `StatePending`, `RUNNING` → `StateRunning`, `SUCCEEDED` → `StateSucceeded`, `FAILED` → `StateFailed`, and `CANCELLATION_IN_PROGRESS`/`CANCELLED` → `StateCancelled`. That list is the complete `JobStatus.State` enum — `STATE_UNSPECIFIED`, `QUEUED`, `SCHEDULED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `DELETION_IN_PROGRESS`, `CANCELLATION_IN_PROGRESS`, `CANCELLED`, in that order and **no others**: Batch v1 has no `SUCCEEDING` and no `FAILING` (checked 2026-10-15 against the REST reference, the discovery document and `google/cloud/batch/v1/job.proto`'s `JobStatus.State`, which carry the same eight plus `STATE_UNSPECIFIED`). So no documented value falls through untyped. `DELETION_IN_PROGRESS` → `StateCancelled` too, but it should only ever be seen for a job the **reaper** is deleting (§3.4) — a user cancel is `jobs.cancel`, which ends `CANCELLED` (§1.4). An unrecognised value is treated as **not terminal** and logged — the same defensive shape as `stateOf` in `internal/backend/gcp/run.go`, which reads Cloud Run's counts rather than trusting one field. `Created`/`Started`/`Completed` from the job's and its task's status times; `CPU`/`MemoryGiB` from the machine type; `Run` from the `FUGARO_RUN` the job was created with (Batch reports the task's `environment.variables`, so unlike Cloud Run this one is always readable — still a hint, never evidence). |
 | `List(filter)` | `jobs.list` | Filter by the Fugaro labels and `CreateTime`; the `fugaro-` name prefix is replaced by the label predicate. |
-| `Logs(query, fn)` | Cloud Logging, through the same installation log view | Filter `labels.job_uid="<uid>" AND logName="projects/<p>/logs/batch_task_logs"`, the form Google documents for one job's task logs (cloud.google.com/batch/docs/analyze-job-using-logs, checked 2026-10-15; §1.5). It needs the job's **UID**, so `Logs` does a `jobs.get` first — one extra read per call, cached for the follow loop. The alternative `resource.labels.job_id` is **UNVERIFIED** (the resource list says only "The identifier of the Job", which may be the name or the UID), which is why it is not the shipped filter; Check 57a step 10 settles it and may allow the cheaper form later. The `fugaro=managed` marker does reach the entry (`Job.labels` applies to the job "and any Cloud Logging LogEntry that it generates") and pins the installation's arm of the sink (§1.5). |
+| `Logs(query, fn)` | Cloud Logging, through the same installation log view | Filter `labels.job_uid="<uid>" AND logName="projects/<p>/logs/batch_task_logs"`, the form Google documents for one job's task logs (cloud.google.com/batch/docs/analyze-job-using-logs, checked 2026-10-15; §1.5). It needs the job's **UID**, so `Logs` does a `jobs.get` first — one extra read per call, cached for the follow loop. The alternative `resource.labels.job_id` is **UNVERIFIED** (the resource list says only "The identifier of the Job", which may be the name or the UID), which is why it is not the shipped filter; Check 57a step 10 settles it and may allow the cheaper form later. The `fugaro=managed` marker does reach the entry (`Job.labels` applies to the job "and any Cloud Logging LogEntry that it generates") and pins the installation's arm of the sink (§1.5). **Built** (Task 4): the UID is checked against a charset before it enters the filter, so a value the API reports can add no clause of its own. |
 | `Cancel(name)` | `jobs.cancel` | The job passes through `CANCELLATION_IN_PROGRESS` to `CANCELLED`; `Execution` keeps working afterwards, which is what `backendtest`'s cancel case requires. Tolerate a job already terminal (the same race live check 5 already documents for Cloud Run). `jobs.delete` is **not** `Cancel` — it is the reaper's and the restore's (§3.4). |
 | `LongestTaskTimeout()` | The longest configured workflow timeout | See §2.5: on Batch there is no deployed job to read it from. |
 | `TaskTimeout(slug, workflow)` | The workflow's configured timeout | Same: a config/policy read, `ErrNotFound` for an unknown workflow. |
@@ -2439,7 +2448,14 @@ leaked VM of *this check* is told from a real run's.
     `Job.labels` apply to the job "and any Cloud Logging LogEntry that it
     generates"), and whether the **sink/exclusion arm** of §1.5 catches the
     entry — apply it if the owner wants the answer now, and revert it in the
-    Restore if so.
+    Restore if so. **The arm is installation Terraform** (Task 4,
+    `deploy/terraform/gcp/modules/installation/logging.tf`): applying it is
+    that installation's own owner-run apply (`fugaro init` from the sandbox's
+    config), never a filter hand-edited on the project, and nothing a run of
+    this check can do for itself. An installation that has not applied it yet
+    routes only Cloud Run's lines; the check's own probe jobs carry
+    `fugaro_chk=57` and not the installation's `fugaro=managed`, so this arm
+    matches none of them either way.
 11. **(Optional, quota.) Queueing, and what a queued job does.** Submit
     `check57/job-quota.json` — the committed JSON whose machine type is the
     largest vCPU count **the region's own zones offer** (`__QUOTA_MT__`, resolved
@@ -2734,7 +2750,10 @@ anything it creates `${SA}-*` — step 5 above — so this restore never reaches
 resources the check did not create, and never by `fugaro=managed`, which is the
 installation's label and reaches resources this check never touched. The log sink
 arm, if 57a-10 applied it, is reverted with the Terraform apply that reverses it
-(`fugaro init` from the sandbox's config), and nothing else. Nothing in `belong`
+(`fugaro init` from the sandbox's config), and nothing else: since Task 4 it is
+the installation's own Terraform, so it goes on and off with that apply alone
+(§1.5), and the check's own probe jobs — `fugaro_chk=57`, never
+`fugaro=managed` — are matched by it neither way. Nothing in `belong`
 is touched at any step.
 
 **The restore's assertion — run it and paste the output; every line must read
