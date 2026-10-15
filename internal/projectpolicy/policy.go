@@ -9,7 +9,8 @@
 // ceiling the job's environment was deployed with (internal/runner's
 // projectPolicy, task 1.3) — and the launcher reads it before it decides
 // whether to mint a run's budget identity and whether a job may be deployed at
-// all (internal/cli's projectPolicyOf and init.go's policyReadOnce). Phase 1's
+// all (internal/cli's policyReadOnce, which the launch gate and init.go's
+// readiness gate both call). Phase 1's
 // shape is task 1.1 (the object, its paths, its version and its matcher) and
 // task 1.2 (the nodes and their rules); the CLI's own `project policy publish`
 // is task 1.6 and is not part of this. Beyond those two readers, internal/infra

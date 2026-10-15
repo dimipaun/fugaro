@@ -154,14 +154,14 @@ func TestRunnerWithNoCredentialTakesTheModeOffPath(t *testing.T) {
 		if rec.Budget != nil {
 			t.Fatalf("a budget-off run with no backend joined the shared budget: %+v", rec.Budget)
 		}
-		ok, err := h.Exists(context.Background(), token.ObjectKey(bkSlug, runID))
+		ok, err := h.Exists(context.Background(), token.ObjectKey(repoSlug, runID))
 		if err != nil || ok {
 			t.Fatalf("a token object was left in the bucket (exists = %v, err = %v)", ok, err)
 		}
 	})
 	t.Run("the bucket holds no token", func(t *testing.T) {
 		b := newBK(t, gwConfig(t, ""), "off", "")
-		if err := token.DeleteObject(context.Background(), b.bucket, bkSlug, runID); err != nil {
+		if err := token.DeleteObject(context.Background(), b.bucket, repoSlug, runID); err != nil {
 			t.Fatal(err)
 		}
 		rec, err := b.run(t, implement("feature"), review("ship", 0))
@@ -188,7 +188,7 @@ func TestRunnerWithTheMintedMarkerRefusesAMissingToken(t *testing.T) {
 	t.Run("mode off", func(t *testing.T) {
 		b := policyRun(t, gwConfig(t, ""), "off", "50", policy, capScript(3)...)
 		b.deps.Backend.TokenMarked = true
-		if err := token.DeleteObject(context.Background(), b.bucket, bkSlug, runID); err != nil {
+		if err := token.DeleteObject(context.Background(), b.bucket, repoSlug, runID); err != nil {
 			t.Fatal(err)
 		}
 		rec, err := b.run(t, implement("feature"))
@@ -204,7 +204,7 @@ func TestRunnerWithTheMintedMarkerRefusesAMissingToken(t *testing.T) {
 		// never minted (an installation with nothing published, or a local
 		// run), and it keeps today's behaviour exactly.
 		b := policyRun(t, gwConfig(t, ""), "off", "", policy)
-		if err := token.DeleteObject(context.Background(), b.bucket, bkSlug, runID); err != nil {
+		if err := token.DeleteObject(context.Background(), b.bucket, repoSlug, runID); err != nil {
 			t.Fatal(err)
 		}
 		rec, err := b.run(t, implement("feature"), review("ship", 0))
@@ -262,7 +262,7 @@ func TestRunnerWithTheModeOnAndNoCredentialHalts(t *testing.T) {
 // one, and the shipped refusal is the only safe answer.
 func TestRunnerWithTheModeOnAndNoTokenHalts(t *testing.T) {
 	b := policyRun(t, gwConfig(t, ""), "enforce", "50", "", capScript(3)...)
-	if err := token.DeleteObject(context.Background(), b.bucket, bkSlug, runID); err != nil {
+	if err := token.DeleteObject(context.Background(), b.bucket, repoSlug, runID); err != nil {
 		t.Fatal(err)
 	}
 	rec, err := b.run(t, implement("feature"))
@@ -297,7 +297,7 @@ func TestRunnerHaltsWhenTheExchangeFails(t *testing.T) {
 		b := policyRun(t, gwConfig(t, ""), "enforce", "50", "", capScript(3)...)
 		// The launcher's own token, replaced by one minted two hours ago: a
 		// run that queued that long.
-		if err := token.DeleteObject(context.Background(), b.bucket, bkSlug, runID); err != nil {
+		if err := token.DeleteObject(context.Background(), b.bucket, repoSlug, runID); err != nil {
 			t.Fatal(err)
 		}
 		b.mint(time.Now().Add(-2 * time.Hour))

@@ -169,7 +169,7 @@ func TestFollowUpResolvesOverItsOwnLayer(t *testing.T) {
 	spec := &task.Spec{Version: 1, RunID: followID, Repo: "acme/app", Ref: "main", Workflow: rec1.Workflow, Task: "Tidy up.",
 		Branch: rec1.Branch, PR: rec1.PR.Number, PreviousRun: runID,
 		ProjectLayer: &task.ProjectLayer{SHA256: config.LayerSum([]byte(followLayer)), Generation: 7, YAML: followLayer}}
-	store := runstore.Open(h.bucket, "acme-app", followID)
+	store := runstore.Open(h.bucket, repoSlug, followID)
 	if err := store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}

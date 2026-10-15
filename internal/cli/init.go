@@ -424,7 +424,7 @@ type initRun struct {
 	review *runReview
 
 	// policy is the project's published policy, read at most once per run
-	// through the operator's own credentials (projectPolicyOf). Readiness's
+	// through the operator's own credentials (policyReadOnce.read). Readiness's
 	// D11 gate turns on whether one exists.
 	policy policyReadOnce
 }

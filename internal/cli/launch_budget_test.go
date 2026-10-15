@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -176,7 +177,11 @@ func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) 
 		return "budget: { mode: off, per_run_usd: 5, rtdb_url: " + f.db.URL + ", token_signer: " + testSigner +
 			", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n"
 	}
-	policy := `{"version":1,"budget":{"mode":"enforce","per_run_usd":5}}`
+	// The allow-list admits the fixture's repository: a published policy with
+	// an empty allow_repos is deny-all (plan task 1.5), so a policy that names
+	// no repository would refuse the launch before the mint decision these
+	// subtests are about.
+	policy := `{"version":1,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["github/acme/*"]}`
 
 	t.Run("no policy, no token", func(t *testing.T) {
 		f := newOffModeBudget(t, "")
@@ -244,12 +249,52 @@ func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) 
 	})
 }
 
+// The launch reads the policy once. Two things read it on this path: the gate,
+// before anything of the launch exists, and the mint decision, because a
+// published policy is what makes a token necessary whatever the local mode is.
+// Two reads are two chances for an owner to change the node under one launch,
+// on the launch that mints a run its identity, so both go through the launch's
+// one memoized read (policyReadOnce) and the database sees a single GET of the
+// node. (The runner reads it again in its own process; that read is the one
+// that counts.)
+//
+// Mutation (run, restored): read it directly in launchPolicyGates again
+// (projectPolicyRead instead of env.policy.read) — the count below becomes 2
+// and this test fails.
+func TestLaunchReadsThePolicyOnce(t *testing.T) {
+	f := newOffModeBudget(t, "")
+	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
+	publishPolicy(t, f, `{"version":1,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["*"]}`)
+	if _, _, err := runBudget(t); err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	for _, r := range f.db.Requests() {
+		if r.Method == http.MethodGet && strings.Contains(r.Path, projectpolicy.PathShared()) {
+			reads++
+		}
+	}
+	if reads != 1 {
+		t.Fatalf("%d reads of %s in one launch, want 1: the gate and the mint decision must not be admitted against two different policies", reads, projectpolicy.PathShared())
+	}
+}
+
 // L2 of the PR #379 review, the first mutation no test caught: the CLI must
 // not read a denied read of a published policy as "no policy here". The
 // marker is deployed, so a policy may exist, and the database refuses the node
 // to this operator — the rules were changed out from under it. Reading that as
 // an absent node would launch the run with no budget identity at all, and the
 // run would then go on with the project's policy unread and unenforced.
+//
+// A second mutation lives here, and this test carries the observable that
+// catches it: swallowing the error in the launch gate (launchPolicyGates) so
+// the launch goes on. Nothing else tells the two apart — the mint's own read
+// then fails with the same message and the same exit code, no token is
+// written and no execution is created either way. What differs is where the
+// launch stopped: with the gate swallowing, createTask has already run, so the
+// run's task.json is in the bucket. No stored task is this gate's promise
+// ("a refused launch leaves nothing behind at all"), and it is asserted below.
 func TestLaunchRefusesADeniedPolicyRead(t *testing.T) {
 	f := newOffModeBudget(t, "")
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
@@ -269,6 +314,9 @@ func TestLaunchRefusesADeniedPolicyRead(t *testing.T) {
 	if launchedAny(f) || readToken(t, f.cloudFixture, budgetRun) != "" {
 		t.Fatal("a denied read of a published policy minted a token or launched the run")
 	}
+	if storedTask(t, f.cloudFixture) {
+		t.Error("the refused launch stored a task: the gate read the policy after createTask had run")
+	}
 }
 
 // Carried review item (b), the CLI half: the decoder reports the top-level
@@ -285,12 +333,18 @@ func TestLaunchRefusesAPolicyKeyThisFugaroDoesNotKnow(t *testing.T) {
 	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "allow_repo") {
 		t.Fatalf("err = %v, want a refusal naming the unknown key", err)
 	}
+	// The refusal names the node itself, and policyReadErr must leave it alone:
+	// re-prefixing it printed the same path twice ("config/policy/shared:
+	// config/policy/shared lists ...").
+	if n := strings.Count(err.Error(), projectpolicy.PathShared()); n != 1 {
+		t.Errorf("the refusal names %s %d times, want once: %v", projectpolicy.PathShared(), n, err)
+	}
 	if launchedAny(f) {
 		t.Fatal("the run was launched with a policy this Fugaro does not understand")
 	}
 }
 
-// The branch of projectPolicyOf no test reached (the review of PR #379): a
+// The branch of the CLI's policy read no test reached (the review of PR #379): a
 // policy node the database handed over and this Fugaro could not read is the
 // project's own published data, so it is the user's error (exit 1) — the class
 // dbErr and checkDBProject use for a bad node in the same database. It used to
@@ -574,12 +628,17 @@ func TestNoBudgetCheckSkipsOnlyPrecheck(t *testing.T) {
 	if !strings.Contains(errOut, "--no-budget-check") {
 		t.Fatalf("the skip is not announced: %q", errOut)
 	}
-	// The mint still happens, and no database read did.
+	// The mint still happens, and the pre-check's own reads did not: the only
+	// calls left are the policy read the launch makes for itself (its
+	// admission and skew gates, plan task 1.5 step 4), never a cap, a kill
+	// switch or a lease.
 	if len(f.iam.SignCalls()) != 1 || readToken(t, f.cloudFixture, budgetRun) == "" || !launchedAny(f) {
 		t.Fatal("the skip must still mint and launch")
 	}
-	if n := len(f.db.Requests()); n != 0 {
-		t.Fatalf("%d database requests with the pre-check skipped", n)
+	for _, r := range f.db.Requests() {
+		if r.Method != "GET" || !strings.Contains(r.Path, "config/policy/") && !strings.Contains(r.Path, "policyRules") {
+			t.Fatalf("--no-budget-check skipped the pre-check, but the launch made a budget read: %s %s", r.Method, r.Path)
+		}
 	}
 }
 

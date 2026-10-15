@@ -22,7 +22,6 @@ import (
 )
 
 const (
-	bkSlug        = "acme-app"
 	bkSignerEmail = "fugaro-token-signer@aurora-fp.iam.gserviceaccount.com"
 	bkAPIKey      = "AIzaSyFakeWebApiKeyForTests000000000"
 	bkRB          = "dev@example.invalid"
@@ -38,6 +37,10 @@ type bk struct {
 	iam    *gcpfake.IAMCredentials
 	itk    *gcpfake.IdentityToolkit
 	bucket *blobx.Bucket
+	// auths counts the git credential requests the fixture's provider has
+	// received (countAuths). Nil until a test — admissionRun always does —
+	// installs the counter.
+	auths *int
 
 	mu      sync.Mutex
 	secrets []string
@@ -64,7 +67,7 @@ func attachBackend(t *testing.T, g *gw, mode string) *bk {
 	micros := func(v budget.Micros) *budget.Micros { return &v }
 	b.db.Set(budget.PathLimits, budget.Limits{MaxReserveMicros: micros(5_000_000)})
 	b.db.Set(budget.PathCapsGlobal, budget.GlobalCaps{DailyMicros: micros(150_000_000), PerRunMicros: micros(20_000_000)})
-	b.db.Set(budget.PathCapsRepo(bkSlug), budget.RepoCaps{DailyMicros: micros(60_000_000), PerRunMicros: micros(20_000_000), Repo: "acme/app"})
+	b.db.Set(budget.PathCapsRepo(repoSlug), budget.RepoCaps{DailyMicros: micros(60_000_000), PerRunMicros: micros(20_000_000), Repo: "acme/app"})
 	b.bucket = withBucket(g.harness)
 	g.deps.Backend = runner.Backend{
 		RTDBURL: b.db.URL, APIKey: bkAPIKey,
@@ -91,11 +94,11 @@ func (b *bk) mint(at time.Time) {
 	if err != nil {
 		b.tb.Fatal(err)
 	}
-	tok, err := token.MintAt(context.Background(), signer, token.Claims{Slug: bkSlug, Run: runID, FX: token.ExpiryFX(at, 3*time.Hour), FP: "aurora", RB: bkRB}, at)
+	tok, err := token.MintAt(context.Background(), signer, token.Claims{Slug: repoSlug, Run: runID, FX: token.ExpiryFX(at, 3*time.Hour), FP: "aurora", RB: bkRB}, at)
 	if err != nil {
 		b.tb.Fatal(err)
 	}
-	if err := token.PutObject(context.Background(), b.bucket, bkSlug, runID, tok); err != nil {
+	if err := token.PutObject(context.Background(), b.bucket, repoSlug, runID, tok); err != nil {
 		b.tb.Fatal(err)
 	}
 }
@@ -121,26 +124,26 @@ func (b *bk) num(path string) int64 {
 
 func (b *bk) day() int64 { return budget.Day(time.Now()) }
 
-func (b *bk) runLeaf(leaf string) int64 { return b.num(budget.PathRun(bkSlug, runID) + "/" + leaf) }
+func (b *bk) runLeaf(leaf string) int64 { return b.num(budget.PathRun(repoSlug, runID) + "/" + leaf) }
 func (b *bk) repoLeaf(leaf string) int64 {
-	return b.num(budget.PathSpendRepo(b.day(), bkSlug) + "/" + leaf)
+	return b.num(budget.PathSpendRepo(b.day(), repoSlug) + "/" + leaf)
 }
 func (b *bk) globalLeaf(leaf string) int64 {
 	return b.num(budget.PathSpendGlobal(b.day()) + "/" + leaf)
 }
 
 func (b *bk) tokenObjectGone() bool {
-	ok, err := b.bucket.Exists(context.Background(), token.ObjectKey(bkSlug, runID))
+	ok, err := b.bucket.Exists(context.Background(), token.ObjectKey(repoSlug, runID))
 	return err == nil && !ok
 }
 
 func (b *bk) outcome() map[string]any {
-	m, _ := b.db.Value(budget.PathOutcome(b.day(), bkSlug, runID)).(map[string]any)
+	m, _ := b.db.Value(budget.PathOutcome(b.day(), repoSlug, runID)).(map[string]any)
 	return m
 }
 
 func (b *bk) entry() map[string]any {
-	m, _ := b.db.Value(budget.PathAgent(bkSlug, runID)).(map[string]any)
+	m, _ := b.db.Value(budget.PathAgent(repoSlug, runID)).(map[string]any)
 	return m
 }
 

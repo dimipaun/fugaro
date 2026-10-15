@@ -53,6 +53,43 @@ func MatchRepo(pattern, canonical string) bool {
 	return true
 }
 
+// AdmitRepo reports whether any entry of an allow_repos list admits a
+// canonical "<provider>/<owner>/<name>". An empty list admits nothing: a
+// policy that is published with an empty allow_repos is deny-all, which is a
+// different thing from an installation that has published no policy at all
+// (the caller decides which of the two it is holding).
+func AdmitRepo(patterns []string, canonical string) bool {
+	for _, p := range patterns {
+		if MatchRepo(p, canonical) {
+			return true
+		}
+	}
+	return false
+}
+
+// NotAdmitted is the refusal of a repository a published policy does not
+// admit, worded once for both of its readers: the run's admission check
+// (internal/runner, before any git credential exists) and the launcher's
+// advisory twin (internal/cli, before any execution exists, plan task 1.5
+// step 4). "The same message" is a property worth an implementation rather
+// than a copied string: the two refusals must not drift apart, since an
+// operator who sees the launcher's refusal and a run's is reading about one
+// policy. What differs between the two — what stops, and when — is each
+// caller's own sentence, appended to this one.
+//
+// allow is the policy's own allow_repos, and an empty list is the deny-all
+// case the text says out loud: a policy that is published with no repository
+// on its list admits nothing, which is not the same as an installation that
+// has published no policy at all (the caller decides which of the two it
+// holds, and only this one refuses).
+func NotAdmitted(allow []string, canonical string) string {
+	what := fmt.Sprintf("%q", allow)
+	if len(allow) == 0 {
+		what = "empty, and a published policy with an empty allow-list admits no repository at all"
+	}
+	return fmt.Sprintf("the project's policy does not admit %s: allow_repos is %s. The project's owner adds the repository with 'fugaro project repos add %s'", canonical, what, canonical)
+}
+
 const (
 	// maxPatternStars is the most wildcards one allow_repos entry may carry.
 	// The matcher is linear, so this is not about its cost: a pattern with a
