@@ -36,9 +36,11 @@ func TestDecodeIgnoresUnknownKeys(t *testing.T) {
 	// not know (P8): unknown keys at the TOP LEVEL are ignored. Version gates
 	// a newer policy; the budget block is strict
 	// (TestDecodeRefusesABudgetWhoseKeysAllMiss), and so is a providers entry
-	// and routing (TestDecodeRefusesAMisspeltProviderKey,
-	// TestDecodeValidatesRouting) — see the package doc for why the shape of
-	// a known block is not the same case as a key this binary cannot name.
+	// (TestDecodeRefusesAMisspeltProviderKey). `routing` is NOT: a key inside
+	// it is ignored like one at the top level, and only its one actionable
+	// value is checked (TestDecodeRefusesAnUnknownVia,
+	// TestRoutingCommentsMatchTheCode) — see the package doc for why the shape
+	// of a known block is not the same case as a key this binary cannot name.
 	p, found, err := Decode([]byte(`{
 		"version": 1,
 		"budget": {"mode": "observe"},

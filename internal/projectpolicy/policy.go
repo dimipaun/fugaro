@@ -62,9 +62,17 @@
 //     allow_data_to would otherwise leave the widest setting there is (a nil
 //     list means every repository) and a misspelt route_fee_pct would drop the
 //     owner's surcharge, silently, on a node an administrator can write by
-//     hand. The tolerance that stays is at the top level and in `routing`,
-//     whose unknown keys cannot fail open: routing's values are checked by
-//     validRouting, which refuses a block this Fugaro cannot act on.
+//     hand. The tolerance that stays is at the top level and inside `routing`:
+//     unknown keys inside `routing` are ignored, exactly as one at the top
+//     level is, and Decode cannot list them — which is why the node is edited
+//     as a document rather than as a value of this Fugaro's type
+//     (internal/cli's patchPolicyJSON). What is not tolerated is the block's
+//     one actionable value: validRouting refuses a `routing.claude.via` this
+//     Fugaro does not know, because a route nobody acts on would later mean
+//     either "no route" or a reader that guesses. routing is decoded and
+//     validated, not applied: phase 1b is what reads it, so an ignored key
+//     inside the block changes no run today, and the via check is what
+//     protects the reader that will read it.
 //
 // The readable node holds nothing personal and no secret values: every run
 // token can read it, and a prompt-injected agent can take the token through
@@ -437,11 +445,13 @@ const (
 
 // validRouting checks the routing block's values. Phase 1b is what reads it,
 // but a via this Fugaro does not know must be refused now rather than
-// decoded: routing is enforced, and an unrecognised value would later mean
-// either "no route" (a silent bypass of what the owner asked for) or a
-// reader that guesses. The block carries no other value worth checking
-// today; models are Claude IDs, which phase 1b validates against its own
-// list.
+// decoded: an unrecognised value would later mean either "no route" (a
+// silent bypass of what the owner asked for) or a reader that guesses.
+// Nothing applies the block today — the runner decodes it with the rest of
+// the policy and acts on none of it, and the CLI preserves and prints it —
+// so what this check protects is the phase-1b reader, not a live route. The
+// block carries no other value worth checking today; models are Claude IDs,
+// which phase 1b validates against its own list.
 func validRouting(r *Routing) error {
 	if r == nil || r.Claude == nil {
 		return nil
