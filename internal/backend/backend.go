@@ -28,6 +28,21 @@ const CloudBatch = "cloud-batch"
 // the runner's lock expiry and writeback window rely on it. It is the single source for both.
 const TaskTimeoutSlack = 2 * time.Minute
 
+// MaxRunTime is the longest total time a run may ask for with a per-run
+// override (--total-timeout), and therefore the longest any run can
+// legitimately be active whatever the workflows are configured with: the CLI
+// refuses an override above it (OverrideCap, internal/cli/run.go) and the
+// platform caps what a task may run for besides. A runaway value is more
+// likely a typo than a plan, so it is a ceiling rather than a plan value.
+//
+// It lives here rather than in internal/cli because it is not a CLI policy
+// but a fact about LaunchSpec.Timeout: anything that measures how long a run
+// may legitimately be active has to account for it -- the CLI's max_parallel
+// horizon (max(longest, OverrideCap), internal/cli/run.go) and the reaper's
+// deadlines (internal/backend/batch/reap.go) both do -- and internal/backend
+// cannot import internal/cli.
+const MaxRunTime = 24 * time.Hour
+
 // State is an execution's lifecycle state as the platform reports it.
 type State string
 
@@ -240,8 +255,10 @@ type Backend interface {
 	Logs(ctx context.Context, q LogQuery, fn func(LogEntry) error) error
 	Cancel(ctx context.Context, name string) error
 	// LongestTaskTimeout is the longest task timeout among the Fugaro
-	// workflow jobs, zero when there are none. No run of them can be active
-	// for longer, so it bounds how far back an active-only List must look.
+	// workflow jobs, zero when there are none. A run of one of them may
+	// override its own total time past it, though (LaunchSpec.Timeout, up to
+	// MaxRunTime), so a caller bounding how long a run may legitimately be
+	// active must use max(LongestTaskTimeout, MaxRunTime).
 	LongestTaskTimeout(ctx context.Context) (time.Duration, error)
 	// TaskTimeout is the task timeout of the repository's workflow job
 	// (DefaultTaskTimeout when the job sets none). ErrNotFound when the job

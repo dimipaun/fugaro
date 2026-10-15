@@ -1049,8 +1049,12 @@ func launchRecipeOf(spec *task.Spec, chooses bool) *launchRecipe {
 }
 
 // OverrideCap is the longest total time a run may ask for with
-// --total-timeout: a runaway value is more likely a typo than a plan.
-const OverrideCap = 24 * time.Hour
+// --total-timeout: a runaway value is more likely a typo than a plan. It is
+// the flag's own name for backend.MaxRunTime, which is where the bound is
+// defined -- it is a fact about what a run may ask for rather than a CLI
+// policy, and the reaper's deadlines have to account for it too
+// (internal/backend cannot import this package).
+const OverrideCap = backend.MaxRunTime
 
 // parseTotalTimeout checks the parts of --total-timeout that need no
 // checkout: the runner and the platform bound what is left.

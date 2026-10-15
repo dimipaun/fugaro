@@ -389,8 +389,12 @@ does not add a charge.
   most likely to be staring at.
   **Built** (Task 5): the deadline lives in the reaper
   (`internal/backend/batch/reap.go`), it runs `jobs.cancel` and never
-  `jobs.delete`, it defaults to the longest configured task timeout plus
-  `backend.TaskTimeoutSlack` (this bullet's "launcher's own task timeout"),
+  `jobs.delete`, it defaults to the longest configured task timeout — or
+  `backend.MaxRunTime`, a run's own `--total-timeout` ceiling, whichever is
+  longer — plus `backend.TaskTimeoutSlack` (this bullet's "launcher's own task
+  timeout", bounded by the override the launcher accepts: a run may ask for
+  longer than every configured workflow, so a deadline built from the
+  configured longest alone would cancel a run that is inside its own budget),
   and its job-state table treats only `QUEUED` as a queue wait — a job that
   has reached `SCHEDULED` or `RUNNING` has a VM and is Batch's, not the
   deadline's. The `queue-timeout` outcome in the run record is the caller's
@@ -884,7 +888,7 @@ Every method of `internal/backend.Backend` maps onto Batch:
 | `List(filter)` | `jobs.list` | Filter by the Fugaro labels and `CreateTime`; the `fugaro-` name prefix is replaced by the label predicate. |
 | `Logs(query, fn)` | Cloud Logging, through the same installation log view | Filter `labels.job_uid="<uid>" AND logName="projects/<p>/logs/batch_task_logs"`, the form Google documents for one job's task logs (cloud.google.com/batch/docs/analyze-job-using-logs, checked 2026-10-15; §1.5). It needs the job's **UID**, so `Logs` does a `jobs.get` first — one extra read per call, cached for the follow loop. The alternative `resource.labels.job_id` was **UNVERIFIED** and **57a-10 answered it on 2026-10-15: it carries the UID (in uid form), not the job's name** — but that is *not* the cheaper form this line once hoped for, since the UID still has to be fetched first, so the shipped `labels.job_uid` filter stands unchanged. The `fugaro=managed` marker does reach the entry (`Job.labels` applies to the job "and any Cloud Logging LogEntry that it generates") and pins the installation's arm of the sink (§1.5). **Built** (Task 4): the UID is checked against a charset before it enters the filter, so a value the API reports can add no clause of its own. |
 | `Cancel(name)` | `jobs.cancel` | The job passes through `CANCELLATION_IN_PROGRESS` to `CANCELLED`; `Execution` keeps working afterwards, which is what `backendtest`'s cancel case requires. Tolerate a job already terminal (the same race live check 5 already documents for Cloud Run). `jobs.delete` is **not** `Cancel` — it is the reaper's and the restore's (§3.4). |
-| `LongestTaskTimeout()` | The longest configured workflow timeout | See §2.5: on Batch there is no deployed job to read it from. |
+| `LongestTaskTimeout()` | The longest configured workflow timeout | See §2.5: on Batch there is no deployed job to read it from. A run may override its own total time past it (`LaunchSpec.Timeout`, up to `backend.MaxRunTime`), so a caller bounding how long a run may legitimately be active uses `max(LongestTaskTimeout, MaxRunTime)` (§3.4's Built note, which is where the reaper's deadlines do). |
 | `TaskTimeout(slug, workflow)` | The workflow's configured timeout | Same: a config/policy read, `ErrNotFound` for an unknown workflow. |
 
 Two properties make this work: a Batch job is created **per run** (there is no
@@ -1282,7 +1286,9 @@ the teardown is assumed rather than read:
   deletes that instance directly with `compute.instances.delete`
   (`compute.instances.delete` alone, not the instance-admin role, §3.7). Age is
   the other filter: older than the
-  longest workflow timeout plus `backend.TaskTimeoutSlack` plus a margin — and
+  longest workflow timeout — or a run's own override ceiling,
+  `backend.MaxRunTime`, whichever is longer (the Built note below) — plus
+  `backend.TaskTimeoutSlack` plus a margin — and
   on this backend also older than a plausible **queue** wait, or a job that is
   legitimately still waiting gets deleted by its own reaper.
   Batch's optional Pub/Sub job-state notifications (Batch REST reference,
@@ -1404,12 +1410,25 @@ the teardown is assumed rather than read:
   nothing, cancel included.
 
   The age floor is an **instance's** floor — it bounds no job, a job's
-  deadlines being its queue deadline and its time in state: the longest
-  configured task timeout plus
+  deadlines being its queue deadline and its time in state. All three derived
+  deadlines rest on one **base**: the longest configured task timeout, or
+  `backend.MaxRunTime`, whichever is longer. Not the longest workflow times
+  alone — a workflow's `timeouts.total` is the *default* a run starts with, and
+  `--total-timeout` overrides it (`LaunchSpec.Timeout`), capped only at
+  `backend.MaxRunTime` (`internal/cli`'s `OverrideCap` is that constant's name
+  inside the CLI), so a run on an installation whose longest workflow is 30
+  minutes may legitimately be active for two hours. A base that stopped at the
+  configured longest would call such a run stuck at 47 minutes and
+  `jobs.delete` it — a live run killed by the component built never to delete
+  one. The CLI's own `max_parallel` horizon (`internal/cli/run.go`) already
+  bounds itself by `max(longest, OverrideCap)` for exactly this reason, and
+  `internal/backend` cannot import `internal/cli`, so the constant lives in
+  `internal/backend` (where it is a fact about `LaunchSpec.Timeout` rather than
+  a CLI policy) and the CLI aliases it. The base plus
   `backend.TaskTimeoutSlack`, plus the queue deadline, plus a 15-minute margin
   (`ReapMargin`: the 120 s boot budget of §1.2, Batch's own teardown, and a
-  listing's settle window); the queue deadline defaults to the longest task
-  timeout plus its slack, "the launcher's own task timeout" above; the **run
+  listing's settle window) is the age floor; the queue deadline defaults to the
+  base plus its slack, "the launcher's own task timeout" above; the **run
   budget** — how long a job may be in one state before it is stuck — is
   everything in the age floor except the queue wait. Neither deadline is a
   Google field, so both are the caller's, and the Task 8 config plumbing is
@@ -1530,9 +1549,12 @@ What follows, plainly:
   **The grant is a custom role carrying exactly those six — `fugaroReaper`,
   the naming `fugaroLauncher`, `fugaroJobRunner` and `fugaroHistory` already
   use, which is `internal/infra/tf/cover.go`'s `FugaroRoles` list and the
-  `RolePermissions` table beside it (the two launcher-shaped names are also
-  constants in `internal/infra/tfvars.go`; `fugaroHistory` and
-  `fugaroTokenMinter` are not — they exist only in that table)** — and not
+  `RolePermissions` table beside it (four of the six are also constants:
+  `RoleLauncher`, `RoleJobRunner`, `RoleBuildSubmitter` and `RoleTagMover` in
+  `internal/infra/tfvars.go`, and `fugaroTokenMinter` as `MinterRoleID` in
+  `internal/infra/firebase.go`; `fugaroHistory` alone is a bare literal, in
+  that table and in the module that creates it,
+  `deploy/terraform/gcp/modules/installation/history.tf`)** — and not
   `roles/batch.jobsEditor` plus `roles/compute.instanceAdmin.v1`, which is
   what Google's own pages name for the same calls (`batch.googleapis.com`
   create/cancel/delete, `compute.instances.delete`). Those two built-in roles

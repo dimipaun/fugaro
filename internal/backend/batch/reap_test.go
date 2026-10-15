@@ -56,6 +56,33 @@ func newReaperTest(t *testing.T, tweak func(*ReaperOptions)) *reapTest {
 	return &reapTest{r: r, bf: bf, cf: cf, now: now}
 }
 
+// The ages the tests back-date their jobs and instances by, read off the
+// reaper's own deadlines rather than written as literals. The harness's
+// 30-minute workflow is shorter than a run's own override ceiling
+// (backend.MaxRunTime), so the deadlines are the ceiling's -- a queue deadline
+// of a day, a run budget of a day plus ReapMargin, an age floor of the two
+// added -- and a literal "ten hours" is no longer past any of them.
+// TestReaperDefaultsComeFromTheRunCeiling pins the numbers themselves.
+
+// stuck is a time in one state past the run budget: the shape the reaper
+// deletes, and the shape a cancellation that has not finished is reported for.
+func (rt *reapTest) stuck() time.Duration { return rt.r.RunBudget() + time.Hour }
+
+// old is an instance age past MaxAge: the age floor no longer saves it, which
+// is what a test wants when the thing that must save a VM is the job behind it.
+func (rt *reapTest) old() time.Duration { return rt.r.MaxAge() + time.Hour }
+
+// startedAfter is how long ago to create a job whose state began stateAge ago,
+// for the states whose event must postdate the creation time plus the queue
+// deadline: the check the SCHEDULED, DELETION_IN_PROGRESS and
+// CANCELLATION_IN_PROGRESS branches make before they read a status event as the
+// state's. A job created only stateAge ago (the harness's default) carries an
+// event at its creation time, which may date the queue wait, and is refused
+// (TestReaperRefusesAStaleStateEvent is that shape).
+func (rt *reapTest) startedAfter(stateAge time.Duration) time.Duration {
+	return rt.r.QueueDeadline() + stateAge + time.Hour
+}
+
 // addJob creates a Fugaro job as the launcher would: the design's label set
 // in both label fields, which is what makes it reapable at all (design
 // §2.4), in the raw Batch state and at the age given.
@@ -244,24 +271,50 @@ func refusedBecause(rep Report, target, reason string) bool {
 	return false
 }
 
-// TestReaperDefaultsComeFromTheLongestWorkflow pins the two derived
-// deadlines: the queue deadline is the longest configured task timeout plus
-// its slack (design §1.4's "the launcher's own task timeout"), and the age
-// floor adds the queue wait, the run and ReapMargin (§3.4).
-func TestReaperDefaultsComeFromTheLongestWorkflow(t *testing.T) {
+// TestReaperDefaultsComeFromTheRunCeiling pins the two derived deadlines: they
+// come from the longest a run may legitimately be active, which is the longest
+// configured task timeout OR a run's own override ceiling, whichever is more
+// (design §1.4's "the launcher's own task timeout", read as the launcher's
+// longest), and the age floor adds the queue wait, the run and ReapMargin
+// (§3.4).
+//
+// The ceiling half is the destructive one: --total-timeout lets a run ask for
+// up to backend.MaxRunTime whatever the workflows are configured with, so a
+// base that stopped at the configured longest would call a two-hour run stuck
+// forty-seven minutes in and delete it (jobs.delete), one pass after it
+// crossed -- the live run this whole file exists not to delete.
+func TestReaperDefaultsComeFromTheRunCeiling(t *testing.T) {
 	rt := newReaperTest(t, nil)
-	if got, want := rt.r.QueueDeadline(), 30*time.Minute+backend.TaskTimeoutSlack; got != want {
-		t.Fatalf("QueueDeadline = %v, want %v", got, want)
+	// The harness's 30-minute workflow is SHORTER than the ceiling, so the
+	// ceiling is what both deadlines are built from.
+	queueDeadline := backend.MaxRunTime + backend.TaskTimeoutSlack
+	if got := rt.r.QueueDeadline(); got != queueDeadline {
+		t.Fatalf("QueueDeadline = %v, want %v", got, queueDeadline)
 	}
-	want := 30*time.Minute + backend.TaskTimeoutSlack + 30*time.Minute + backend.TaskTimeoutSlack + ReapMargin
-	if got := rt.r.MaxAge(); got != want {
+	runBudget := queueDeadline + ReapMargin
+	if got := rt.r.RunBudget(); got != runBudget {
+		t.Fatalf("RunBudget = %v, want %v", got, runBudget)
+	}
+	if got, want := rt.r.MaxAge(), queueDeadline+runBudget; got != want {
 		t.Fatalf("MaxAge = %v, want %v", got, want)
 	}
-	// An installation with no workflows at all must not collapse to a
-	// two-minute deadline: the default task timeout is the floor.
+	// A workflow longer than the ceiling is the base instead, so an
+	// installation whose workflows are configured for longer than any override
+	// is still waited out.
+	long := backend.MaxRunTime + time.Hour
+	rt = newReaperTest(t, func(o *ReaperOptions) { o.Timeouts = testTimeouts{task: long, longest: long} })
+	if got, want := rt.r.QueueDeadline(), long+backend.TaskTimeoutSlack; got != want {
+		t.Fatalf("QueueDeadline with a %v workflow = %v, want %v", long, got, want)
+	}
+	if got, want := rt.r.RunBudget(), long+backend.TaskTimeoutSlack+ReapMargin; got != want {
+		t.Fatalf("RunBudget with a %v workflow = %v, want %v", long, got, want)
+	}
+	// An installation with no workflows at all answers zero, and must not
+	// collapse to a two-minute deadline: the ceiling is what a run may still
+	// ask for, whatever its workflows are configured with.
 	rt = newReaperTest(t, func(o *ReaperOptions) { o.Timeouts = testTimeouts{} })
-	if got, want := rt.r.QueueDeadline(), backend.DefaultTaskTimeout+backend.TaskTimeoutSlack; got != want {
-		t.Fatalf("QueueDeadline with no workflows = %v, want %v", got, want)
+	if got := rt.r.QueueDeadline(); got != queueDeadline {
+		t.Fatalf("QueueDeadline with no workflows = %v, want %v", got, queueDeadline)
 	}
 }
 
@@ -276,7 +329,7 @@ func TestReaperDecidesEveryBatchState(t *testing.T) {
 		t.Run("keeps a "+state+" job", func(t *testing.T) {
 			rt := newReaperTest(t, nil)
 			id := rt.addJob(t, "20260927-100000-abcd", state, 10*time.Hour)
-			rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+			rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
 			rep := rt.reap(t)
 			if len(rt.bf.Deletes()) != 0 || len(rt.bf.Cancels()) != 0 {
 				t.Fatalf("a %s job was touched: deletes=%v cancels=%v", state, rt.bf.Deletes(), rt.bf.Cancels())
@@ -299,8 +352,8 @@ func TestReaperDecidesEveryBatchState(t *testing.T) {
 		// on -- the race §3.4 forbids -- so the run stays owned and the VM
 		// survives to the pass after, which is when a finished job's VM is
 		// reapable at all.
-		id := rt.addJob(t, "20260927-100000-abcd", "CANCELLATION_IN_PROGRESS", 2*time.Minute)
-		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+		id := rt.addJobStateAt(t, "20260927-100000-abcd", "CANCELLATION_IN_PROGRESS", rt.startedAfter(2*time.Minute), 2*time.Minute)
+		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
 		rep := rt.reap(t)
 		if len(rt.bf.Deletes()) != 0 || len(rt.bf.Cancels()) != 0 {
 			t.Fatalf("a cancellation in progress was touched: deletes=%v cancels=%v", rt.bf.Deletes(), rt.bf.Cancels())
@@ -323,8 +376,8 @@ func TestReaperDecidesEveryBatchState(t *testing.T) {
 		// Past the run budget. The reaper still will not delete it: deleting a
 		// cancelled job erases the record the run's ls, diagnose and watch
 		// read (§1.4, C8). It says so instead, and leaves the VMs alone.
-		id := rt.addJob(t, "20260927-100000-abcd", "CANCELLATION_IN_PROGRESS", 10*time.Hour)
-		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+		id := rt.addJobStateAt(t, "20260927-100000-abcd", "CANCELLATION_IN_PROGRESS", rt.startedAfter(rt.stuck()), rt.stuck())
+		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
 		rep := rt.reap(t)
 		if len(rt.bf.Deletes()) != 0 {
 			t.Fatalf("jobs.delete = %v, want none: a cancelled run's record is history", rt.bf.Deletes())
@@ -332,7 +385,8 @@ func TestReaperDecidesEveryBatchState(t *testing.T) {
 		if got := rt.cf.Deletes(); len(got) != 0 {
 			t.Fatalf("instances.delete = %v, want none", got)
 		}
-		if !refusedBecause(rep, rt.name(id), "a cancellation that has not finished in 600 minutes") {
+		stuckReport := fmt.Sprintf("a cancellation that has not finished in %.0f minutes", rt.stuck().Minutes())
+		if !refusedBecause(rep, rt.name(id), stuckReport) {
 			t.Fatalf("report = %v, want a refusal naming the stuck cancellation", rep.Lines())
 		}
 		if !refusedBecause(rep, "fake-region-a/vm-1", "its job is CANCELLATION_IN_PROGRESS") {
@@ -345,7 +399,7 @@ func TestReaperDecidesEveryBatchState(t *testing.T) {
 		// 32-minute deadline, so its SCHEDULED event postdates the moment the
 		// queue wait ended and is the transition this state began with -- the
 		// measurement the branch may act on.
-		id := rt.addJobStateAt(t, "20260927-100000-abcd", "SCHEDULED", 34*time.Hour, 10*time.Hour)
+		id := rt.addJobStateAt(t, "20260927-100000-abcd", "SCHEDULED", rt.startedAfter(rt.stuck()), rt.stuck())
 		rep := rt.reap(t)
 		if got := rt.bf.Deletes(); len(got) != 1 || got[0] != id {
 			t.Fatalf("jobs.delete = %v, want [%s]", got, id)
@@ -356,7 +410,7 @@ func TestReaperDecidesEveryBatchState(t *testing.T) {
 	})
 	t.Run("deletes a stuck RUNNING job", func(t *testing.T) {
 		rt := newReaperTest(t, nil)
-		id := rt.addJob(t, "20260927-100000-abcd", "RUNNING", 10*time.Hour)
+		id := rt.addJob(t, "20260927-100000-abcd", "RUNNING", rt.stuck())
 		if len(rt.reap(t).Actions) != 1 || len(rt.bf.Deletes()) != 1 {
 			t.Fatalf("a hung RUNNING job past every deadline was not deleted: deletes=%v", rt.bf.Deletes())
 		}
@@ -368,7 +422,7 @@ func TestReaperDecidesEveryBatchState(t *testing.T) {
 		// The residual §3.4 names: a deletion that never finished, on a job
 		// whose queue wait was over long before the deletion's own event.
 		rt := newReaperTest(t, nil)
-		id := rt.addJobStateAt(t, "20260927-100000-abcd", "DELETION_IN_PROGRESS", 34*time.Hour, 10*time.Hour)
+		id := rt.addJobStateAt(t, "20260927-100000-abcd", "DELETION_IN_PROGRESS", rt.startedAfter(rt.stuck()), rt.stuck())
 		rt.reap(t)
 		if got := rt.bf.Deletes(); len(got) != 1 || got[0] != id {
 			t.Fatalf("jobs.delete = %v, want [%s]", got, id)
@@ -408,14 +462,14 @@ func TestReaperDecidesEveryBatchState(t *testing.T) {
 func TestReaperQueueDeadline(t *testing.T) {
 	rt := newReaperTest(t, nil)
 	// 40 minutes: past the 32-minute queue deadline, on a 30-minute workflow.
-	old := rt.addJob(t, "20260927-100000-abcd", "QUEUED", 40*time.Minute)
+	old := rt.addJob(t, "20260927-100000-abcd", "QUEUED", rt.r.QueueDeadline()+time.Minute)
 	// 10 minutes: still within it.
 	young := rt.addJob(t, "20260927-100001-abcd", "QUEUED", 10*time.Minute)
 	// Both jobs' VMs, old enough that only the job behind each stands between
 	// it and the reaper: one job is still waiting for capacity, the other is
 	// being cancelled, and neither frees its VM in this pass.
-	rt.vm("vm-young", runLabels(t, "20260927-100001-abcd"), 10*time.Hour)
-	rt.vm("vm-cancelled", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+	rt.vm("vm-young", runLabels(t, "20260927-100001-abcd"), rt.old())
+	rt.vm("vm-cancelled", runLabels(t, "20260927-100000-abcd"), rt.old())
 	rep := rt.reap(t)
 	if got := rt.bf.Cancels(); len(got) != 1 || got[0] != old {
 		t.Fatalf("jobs.cancel = %v, want [%s]", got, old)
@@ -457,7 +511,7 @@ func TestReaperKeepsTheVMsOfAJobBeingDeleted(t *testing.T) {
 	// deadline is refused rather than read as a fresh deletion; that is
 	// TestReaperRefusesAStaleStateEvent.)
 	rt.addJobStateAt(t, "20260927-100000-abcd", "DELETION_IN_PROGRESS", 34*time.Hour, 10*time.Minute)
-	rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+	rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
 	rep := rt.reap(t)
 	if len(rt.bf.Deletes()) != 0 {
 		t.Fatalf("a job whose deletion is under way was deleted again: %v", rt.bf.Deletes())
@@ -495,7 +549,7 @@ func TestReaperRefusesAStaleStateEvent(t *testing.T) {
 				"type": "STATUS_CHANGED", "description": "Job state is QUEUED",
 				"eventTime": rt.now.Add(-34 * time.Hour).Format(time.RFC3339Nano),
 			})
-			rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+			rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
 			rep := rt.reap(t)
 			if got := rt.bf.Deletes(); len(got) != 0 {
 				t.Fatalf("a %s job was deleted on an event that may date its queue wait: %v", state, got)
@@ -517,6 +571,30 @@ func TestReaperRefusesAStaleStateEvent(t *testing.T) {
 			}
 		})
 	}
+	// CANCELLATION_IN_PROGRESS is the third branch that reads a state event, and
+	// the one where nothing destructive rests on the measurement -- it is never
+	// deleted, only reported. It needs the guard all the same: the report is the
+	// audit trail, and the latest event of a job cancelled moments after a long
+	// queue wait may date that wait, which would name "a cancellation that has
+	// not finished in 26 hours" for a cancellation just asked for. A refusal is
+	// the line an operator can act on; a wrong measurement is not.
+	t.Run("a just-cancelled job is not reported as a stuck cancellation", func(t *testing.T) {
+		rt := newReaperTest(t, nil)
+		id := rt.addJobStateAt(t, "20260927-100000-abcd", "CANCELLATION_IN_PROGRESS", 34*time.Hour, time.Second)
+		rt.bf.SetStatusEvents(id, map[string]any{
+			"type": "STATUS_CHANGED", "description": "Job state is QUEUED",
+			"eventTime": rt.now.Add(-34 * time.Hour).Format(time.RFC3339Nano),
+		})
+		rep := rt.reap(t)
+		if !refusedBecause(rep, rt.name(id), "may date the queue wait rather than the CANCELLATION_IN_PROGRESS state") {
+			t.Fatalf("report = %v, want the job refused for the stale event", rep.Lines())
+		}
+		for _, l := range rep.Lines() {
+			if strings.Contains(l, "a cancellation that has not finished") {
+				t.Fatalf("report = %v, want no stuck-cancellation line: the event dates the queue wait, not the state", rep.Lines())
+			}
+		}
+	})
 	// And the other side of the bound: an event that DOES postdate the queue
 	// deadline is acted on, so the guard is a narrowing of what is measured, not
 	// a branch that never deletes. (SCHEDULED is the state whose event is the
@@ -524,7 +602,7 @@ func TestReaperRefusesAStaleStateEvent(t *testing.T) {
 	// tests cover.)
 	t.Run("an event that postdates the queue deadline is acted on", func(t *testing.T) {
 		rt := newReaperTest(t, nil)
-		id := rt.addJobStateAt(t, "20260927-100000-abcd", "SCHEDULED", 34*time.Hour, 10*time.Hour)
+		id := rt.addJobStateAt(t, "20260927-100000-abcd", "SCHEDULED", rt.startedAfter(rt.stuck()), rt.stuck())
 		rt.reap(t)
 		if got := rt.bf.Deletes(); len(got) != 1 || got[0] != id {
 			t.Fatalf("jobs.delete = %v, want [%s]: its SCHEDULED event is the transition it began with", got, id)
@@ -532,12 +610,12 @@ func TestReaperRefusesAStaleStateEvent(t *testing.T) {
 	})
 }
 
-// TestReaperQueueDeadlineLeavesTheDeadlineToJobState: a job past the queue
+// TestReaperQueueDeadlineNeedsACreateTime: a job past the queue
 // deadline with no readable create time is refused, not cancelled -- the
 // deadline cannot be judged.
 func TestReaperQueueDeadlineNeedsACreateTime(t *testing.T) {
 	rt := newReaperTest(t, nil)
-	id := rt.addJob(t, "20260927-100000-abcd", "QUEUED", 40*time.Minute)
+	id := rt.addJob(t, "20260927-100000-abcd", "QUEUED", rt.r.QueueDeadline()+time.Minute)
 	rt.bf.SetCreated(id, time.Time{})
 	rep := rt.reap(t)
 	if len(rt.bf.Cancels()) != 0 || len(rt.bf.Deletes()) != 0 {
@@ -555,7 +633,7 @@ func TestReaperKeepsALiveJobAndItsVM(t *testing.T) {
 	rt.addJob(t, "20260927-100000-abcd", "RUNNING", 10*time.Minute)
 	// The VM is old enough that the age floor does not save it: the only
 	// thing standing between it and the reaper is the live job behind it.
-	rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+	rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
 	rep := rt.reap(t)
 	if len(rt.bf.Deletes()) != 0 || len(rt.bf.Cancels()) != 0 {
 		t.Fatalf("a live job was acted on: %v", rep.Lines())
@@ -613,13 +691,16 @@ func TestReaperRefusesTheVMsOfAJobItRefused(t *testing.T) {
 				// reapJob refuses, and the VM carries one of the two.
 				rt.addJobDisagreeingRunLabels(t, run, "RUNNING", 10*time.Hour)
 			},
-			why: "disagree",
+			// The whole clause, not one word of it: the refusal covers a
+			// missing label and a malformed one as well as two fields that
+			// disagree, so the test reads the part this case is.
+			why: "not the same in both label fields",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rt := newReaperTest(t, nil)
 			tc.setup(t, rt)
-			rt.vm("vm-1", runLabels(t, run), 10*time.Hour)
+			rt.vm("vm-1", runLabels(t, run), rt.old())
 			rep := rt.reap(t)
 			if got := rt.cf.Deletes(); len(got) != 0 {
 				t.Fatalf("the VM of a job this pass refused was deleted: %v", got)
@@ -639,8 +720,8 @@ func TestReaperRefusesTheVMsOfAJobItRefused(t *testing.T) {
 // deadline, with no job behind it.
 func TestReaperDeletesALeakedVMWhoseJobIsGone(t *testing.T) {
 	rt := newReaperTest(t, nil)
-	rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 3*time.Hour)
-	rt.vm("vm-2", runLabels(t, "20260927-100001-abcd"), 3*time.Hour)
+	rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
+	rt.vm("vm-2", runLabels(t, "20260927-100001-abcd"), rt.old())
 	rep := rt.reap(t)
 	got := rt.cf.Deletes()
 	if len(got) != 2 || got[0] != "fake-region-a/vm-1" || got[1] != "fake-region-a/vm-2" {
@@ -656,7 +737,7 @@ func TestReaperDeletesALeakedVMWhoseJobIsGone(t *testing.T) {
 // §2.4, §3.4).
 func TestReaperRefusesAVMWithNoRunLabel(t *testing.T) {
 	rt := newReaperTest(t, nil)
-	rt.vm("vm-1", map[string]string{labelManaged: managedValue}, 3*time.Hour)
+	rt.vm("vm-1", map[string]string{labelManaged: managedValue}, rt.old())
 	rep := rt.reap(t)
 	if got := rt.cf.Deletes(); len(got) != 0 {
 		t.Fatalf("a VM with no %s label was deleted: %v", RunLabel, got)
@@ -678,7 +759,7 @@ func TestReaperRefusesAnotherInstallationsVM(t *testing.T) {
 	rt.cf.IgnoreFilter = true
 	labels := runLabels(t, "20260927-100000-abcd")
 	labels[labelManaged] = "someone-else"
-	rt.vm("vm-foreign", labels, 3*time.Hour)
+	rt.vm("vm-foreign", labels, rt.old())
 	rep := rt.reap(t)
 	if got := rt.cf.Deletes(); len(got) != 0 {
 		t.Fatalf("another installation's VM was deleted: %v", got)
@@ -698,10 +779,10 @@ func TestReaperRefusesAVMOutsideItsRegion(t *testing.T) {
 	rt := newReaperTest(t, nil)
 	// Another region's zone, same installation, the run label of a run this
 	// pass found no job for: every check the reaper makes except the region.
-	rt.cf.AddInstanceCreated("other-region-a", "vm-elsewhere", runLabels(t, "20260927-100000-abcd"), rt.now.Add(-3*time.Hour))
+	rt.cf.AddInstanceCreated("other-region-a", "vm-elsewhere", runLabels(t, "20260927-100000-abcd"), rt.now.Add(-rt.old()))
 	// And one of its own, which must still be reaped: the region check must
 	// refuse the other region, not stop the pass.
-	rt.vm("vm-here", runLabels(t, "20260927-100001-abcd"), 3*time.Hour)
+	rt.vm("vm-here", runLabels(t, "20260927-100001-abcd"), rt.old())
 	rep := rt.reap(t)
 	if got := rt.cf.Deletes(); len(got) != 1 || got[0] != "fake-region-a/vm-here" {
 		t.Fatalf("instances.delete = %v, want only this region's VM", got)
@@ -721,8 +802,8 @@ func TestReaperRefusesAVMOutsideItsRegion(t *testing.T) {
 // the pass before anything is deleted, with an error rather than a report.
 func TestReaperRefusesAPartialJobListing(t *testing.T) {
 	rt := newReaperTest(t, nil)
-	stuck := rt.addJob(t, "20260927-100000-abcd", "RUNNING", 10*time.Hour)
-	rt.vm("vm-1", runLabels(t, "20260927-100002-abcd"), 3*time.Hour)
+	stuck := rt.addJob(t, "20260927-100000-abcd", "RUNNING", rt.stuck())
+	rt.vm("vm-1", runLabels(t, "20260927-100002-abcd"), rt.old())
 	rt.bf.Unreachable = []string{"fake-region-b"}
 	_, err := rt.r.Reap(context.Background())
 	if err == nil {
@@ -754,7 +835,7 @@ func TestReaperJudgesStucknessByTimeInState(t *testing.T) {
 		// Created 34 hours ago (past the queue deadline AND past MaxAge), in
 		// the RUNNING state for 20 seconds.
 		id := rt.addJobStateAt(t, "20260927-100000-abcd", "RUNNING", 34*time.Hour, 20*time.Second)
-		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
 		rep := rt.reap(t)
 		if got := rt.bf.Deletes(); len(got) != 0 {
 			t.Fatalf("a job that started 20 seconds ago was deleted for its queue wait: %v", got)
@@ -784,7 +865,7 @@ func TestReaperJudgesStucknessByTimeInState(t *testing.T) {
 			"state": "QUEUED", "eventTime": rt.now.Add(-10 * time.Hour).Format(time.RFC3339Nano),
 		})
 		rt.bf.SetRunDuration(id, "30s")
-		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
 		rep := rt.reap(t)
 		if got := rt.bf.Deletes(); len(got) != 0 {
 			t.Fatalf("a job that started 30 seconds ago was deleted for a stale event: %v", got)
@@ -801,7 +882,7 @@ func TestReaperJudgesStucknessByTimeInState(t *testing.T) {
 		// Batch's own 60-day job delete (design §9) puts an old job into
 		// DELETION_IN_PROGRESS moments before the pass reads it.
 		rt.addJobStateAt(t, "20260927-100000-abcd", "DELETION_IN_PROGRESS", 60*24*time.Hour, 2*time.Minute)
-		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
 		rep := rt.reap(t)
 		if got := rt.bf.Deletes(); len(got) != 0 {
 			t.Fatalf("a deletion that started two minutes ago was deleted again: %v", got)
@@ -821,8 +902,8 @@ func TestReaperJudgesStucknessByTimeInState(t *testing.T) {
 		// has to actually run to say so: without rt.reap there is nothing to
 		// observe and a SCHEDULED branch that measured from the creation time
 		// would go unnoticed.
-		id := rt.addJobStateAt(t, "20260927-100000-abcd", "SCHEDULED", 34*time.Hour, time.Second)
-		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+		id := rt.addJobStateAt(t, "20260927-100000-abcd", "SCHEDULED", rt.old(), time.Second)
+		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
 		rep := rt.reap(t)
 		if got := rt.bf.Deletes(); len(got) != 0 {
 			t.Fatalf("a just-scheduled job was deleted: %v", got)
@@ -855,7 +936,7 @@ func TestReaperRefusesAJobWhoseTimeInStateIsUnknown(t *testing.T) {
 		// The harness models the runDuration a RUNNING job reports; this shape
 		// is the one where it reports none.
 		rt.bf.SetRunDuration(id, "")
-		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
 		rep := rt.reap(t)
 		if got := rt.bf.Deletes(); len(got) != 0 {
 			t.Fatalf("a job whose time in state is unknown was deleted: %v", got)
@@ -889,7 +970,7 @@ func TestReaperRefusesAJobWhoseTimeInStateIsUnknown(t *testing.T) {
 			"eventTime": rt.now.Add(-10 * time.Hour).Format(time.RFC3339Nano),
 		})
 		rt.bf.SetRunDuration(id, "")
-		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
 		rep := rt.reap(t)
 		if got := rt.bf.Deletes(); len(got) != 0 {
 			t.Fatalf("a RUNNING job was deleted on a job-level event that may date its queue wait: %v", got)
@@ -915,7 +996,7 @@ func TestReaperRefusesAJobWhoseTimeInStateIsUnknown(t *testing.T) {
 		// instead, and leaves its VM alone.
 		id := rt.addJob(t, "20260927-100000-abcd", "DELETION_IN_PROGRESS", 60*24*time.Hour)
 		rt.bf.SetStatusEvents(id)
-		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
 		rep := rt.reap(t)
 		if got := rt.bf.Deletes(); len(got) != 0 {
 			t.Fatalf("a deletion with no readable time in state was deleted again: %v", got)
@@ -935,7 +1016,7 @@ func TestReaperRefusesAJobWhoseTimeInStateIsUnknown(t *testing.T) {
 		// cancellation, and its VM left alone as always.
 		id := rt.addJob(t, "20260927-100000-abcd", "CANCELLATION_IN_PROGRESS", 60*24*time.Hour)
 		rt.bf.SetStatusEvents(id)
-		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
 		rep := rt.reap(t)
 		if got := rt.bf.Deletes(); len(got) != 0 {
 			t.Fatalf("a job whose time in state is unknown was deleted: %v", got)
@@ -952,23 +1033,23 @@ func TestReaperRefusesAJobWhoseTimeInStateIsUnknown(t *testing.T) {
 	})
 	t.Run("runDuration is the fallback", func(t *testing.T) {
 		rt := newReaperTest(t, nil)
-		id := rt.addJob(t, "20260927-100000-abcd", "RUNNING", 10*time.Hour)
+		id := rt.addJob(t, "20260927-100000-abcd", "RUNNING", rt.stuck())
 		rt.bf.SetStatusEvents(id)
-		rt.bf.SetRunDuration(id, "600m")
+		rt.bf.SetRunDuration(id, rt.stuck().String())
 		if got := rt.reap(t).Actions; len(got) != 1 || got[0].Kind != ActionDeleteJob {
-			t.Fatalf("actions = %v, want the job deleted: runDuration says it has been running for 10 hours", rt.reap(t).Lines())
+			t.Fatalf("actions = %v, want the job deleted: runDuration says it has been running past the run budget", rt.reap(t).Lines())
 		}
 	})
 	t.Run("a task-level event is not when the job changed state", func(t *testing.T) {
 		rt := newReaperTest(t, nil)
-		id := rt.addJob(t, "20260927-100000-abcd", "RUNNING", 10*time.Hour)
+		id := rt.addJob(t, "20260927-100000-abcd", "RUNNING", rt.stuck())
 		// Only a task-level event, and it is recent: the job has been RUNNING
-		// for ten hours whatever a task inside it did a minute ago.
+		// past the run budget whatever a task inside it did a minute ago.
 		rt.bf.SetStatusEvents(id, map[string]any{
 			"type": "TASK_STATE_CHANGED", "taskState": "RUNNING",
 			"eventTime": rt.now.Add(-time.Minute).Format(time.RFC3339Nano),
 		})
-		rt.bf.SetRunDuration(id, "600m")
+		rt.bf.SetRunDuration(id, rt.stuck().String())
 		if got := rt.reap(t).Actions; len(got) != 1 || got[0].Kind != ActionDeleteJob {
 			t.Fatalf("actions = %v, want the job deleted by its runDuration", rt.reap(t).Lines())
 		}
@@ -999,8 +1080,8 @@ func TestReaperKeepsAYoungVM(t *testing.T) {
 // is what a scheduled reaper runs, reaps what Batch left behind.
 func TestReaperDeletesTheJobBeforeTheInstance(t *testing.T) {
 	rt := newReaperTest(t, nil)
-	id := rt.addJob(t, "20260927-100000-abcd", "RUNNING", 10*time.Hour)
-	rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+	id := rt.addJob(t, "20260927-100000-abcd", "RUNNING", rt.stuck())
+	rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
 
 	first := rt.reap(t)
 	if len(first.Actions) != 1 || first.Actions[0].Kind != ActionDeleteJob || first.Actions[0].Target != rt.name(id) {
@@ -1036,8 +1117,8 @@ func TestReaperDeletesTheJobBeforeTheInstance(t *testing.T) {
 // shape -- the job listed as a delete, its VM refused -- and touches nothing.
 func TestReaperDoesNotRaceItsOwnJobDeleteInADryRun(t *testing.T) {
 	rt := newReaperTest(t, func(o *ReaperOptions) { o.DryRun = true })
-	rt.addJob(t, "20260927-100000-abcd", "RUNNING", 10*time.Hour)
-	rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+	rt.addJob(t, "20260927-100000-abcd", "RUNNING", rt.stuck())
+	rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
 	rep := rt.reap(t)
 	if len(rep.Actions) != 1 || rep.Actions[0].Kind != ActionDeleteJob {
 		t.Fatalf("dry run = %v, want the job listed as the one action", rep.Lines())
@@ -1078,7 +1159,7 @@ func TestReaperRefusesAJobItCannotAttribute(t *testing.T) {
 		unmarked := rt.addJobLabelFields(t, "20260927-100000-abcd", "RUNNING", 10*time.Hour, map[string]string{labelManaged: ""}, nil)
 		// A marked job in the same listing, which the pass must still act on:
 		// without it the test would pass on a pass that did nothing at all.
-		marked := rt.addJob(t, "20260927-100001-abcd", "RUNNING", 10*time.Hour)
+		marked := rt.addJob(t, "20260927-100001-abcd", "RUNNING", rt.stuck())
 		rep := rt.reap(t)
 		if got := rt.bf.Deletes(); len(got) != 1 || got[0] != marked {
 			t.Fatalf("jobs.delete = %v, want only the marked job %s (the unmarked one is not this installation's)", got, marked)
@@ -1095,15 +1176,81 @@ func TestReaperRefusesAJobItCannotAttribute(t *testing.T) {
 	})
 }
 
+// TestReaperOwnsEveryRunLabelTheJobClaims is the ownership half of the refusal
+// above, and it is the destructive half. A job the reaper refuses is still in
+// the project and may still be RUNNING; its VMs must survive the pass whatever
+// they are labelled with. The value a VM carries is AllocationPolicy.labels'
+// (design §2.4), and the API does not check a label's SHAPE -- the launcher's
+// IAM condition narrows job names, not labels -- so the value that reaches a VM
+// can be anything a job creator wrote. A jobRunLabels that returned only the
+// well-formed values would therefore fail to own exactly the value the
+// instance pass then reads off the VM and finds absent from owned: the VM would
+// pass the marker, region, non-empty-run and age checks and be deleted under a
+// job that is still RUNNING. Owning a garbage value costs a map entry; the
+// alternative costs someone's live run.
+//
+// Every case also has its VM past MaxAge with the job in a state the pass
+// refuses, so nothing but the run-label ownership stands between the VM and
+// compute.instances.delete.
+func TestReaperOwnsEveryRunLabelTheJobClaims(t *testing.T) {
+	const wellFormed = "acme-app-20260927-100000-abcd"
+	for _, tc := range []struct {
+		name                 string
+		jobLabel, allocLabel string
+	}{
+		{
+			// Reachable for anyone who can create a Batch job in the project:
+			// nothing about the label's shape is checked before it reaches a VM.
+			name:       "the job claims a malformed run in both label fields",
+			jobLabel:   "NOT-A-LABEL",
+			allocLabel: "NOT-A-LABEL",
+		},
+		{
+			// Job.labels well-formed and AllocationPolicy.labels malformed:
+			// jobRunLabel refuses (the fields disagree), and the value the VM
+			// actually carries is the malformed one. This is the case a
+			// well-formed-only jobRunLabels gets wrong on its own.
+			name:       "the job is well-formed where the VMs do not read it",
+			jobLabel:   wellFormed,
+			allocLabel: "NOT-A-LABEL",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := newReaperTest(t, nil)
+			id := rt.addJobLabelFields(t, wellFormed, "RUNNING", 10*time.Hour,
+				map[string]string{RunLabel: tc.jobLabel},
+				map[string]string{RunLabel: tc.allocLabel})
+			// The VM carries what AllocationPolicy gave the job, which is what
+			// a real VM would carry.
+			vmLabels := runLabels(t, wellFormed)
+			vmLabels[RunLabel] = tc.allocLabel
+			rt.vm("vm-1", vmLabels, rt.old())
+			rep := rt.reap(t)
+			if got := rt.cf.Deletes(); len(got) != 0 {
+				t.Fatalf("the VM of a job the pass refused was deleted because its %s label is malformed: %v", RunLabel, got)
+			}
+			if got := rt.bf.Deletes(); len(got) != 0 {
+				t.Fatalf("the unattributable job was deleted: %v", got)
+			}
+			if !refusedBecause(rep, "fake-region-a/vm-1", "could not attribute the job to a run") {
+				t.Fatalf("report = %v, want the VM refused as the refused job's", rep.Lines())
+			}
+			if !refused(rep, rt.name(id)) {
+				t.Fatalf("report = %v, want the job refused too", rep.Lines())
+			}
+		})
+	}
+}
+
 // TestReaperIsIdempotent: a second pass over the same project finds nothing
 // left to do -- the deletes it made are gone, and the refusals it made are
 // made again, which is not an action.
 func TestReaperIsIdempotent(t *testing.T) {
 	rt := newReaperTest(t, nil)
-	rt.addJob(t, "20260927-100000-abcd", "RUNNING", 10*time.Hour)
-	rt.addJob(t, "20260927-100001-abcd", "QUEUED", 40*time.Minute)
-	rt.vm("vm-1", runLabels(t, "20260927-100002-abcd"), 10*time.Hour)
-	rt.vm("vm-2", map[string]string{labelManaged: managedValue}, 10*time.Hour)
+	rt.addJob(t, "20260927-100000-abcd", "RUNNING", rt.stuck())
+	rt.addJob(t, "20260927-100001-abcd", "QUEUED", rt.r.QueueDeadline()+time.Minute)
+	rt.vm("vm-1", runLabels(t, "20260927-100002-abcd"), rt.old())
+	rt.vm("vm-2", map[string]string{labelManaged: managedValue}, rt.old())
 	first := rt.reap(t)
 	if len(first.Actions) != 3 {
 		t.Fatalf("first pass actions = %v, want a job, a cancel and a VM", first.Lines())
@@ -1128,7 +1275,7 @@ func TestReaperIsIdempotent(t *testing.T) {
 func TestReaperToleratesADeleteOfSomethingAlreadyGone(t *testing.T) {
 	t.Run("jobs.delete", func(t *testing.T) {
 		rt := newReaperTest(t, nil)
-		id := rt.addJob(t, "20260927-100000-abcd", "RUNNING", 10*time.Hour)
+		id := rt.addJob(t, "20260927-100000-abcd", "RUNNING", rt.stuck())
 		// The job is in the listing; by the time the delete arrives it is gone
 		// (another reaper, or an operator). Only the delete path is refused.
 		rt.bf.RefusePath(rt.name(id), http.StatusNotFound, "NOT_FOUND", "NOT_FOUND", "job "+id+" not found")
@@ -1145,7 +1292,7 @@ func TestReaperToleratesADeleteOfSomethingAlreadyGone(t *testing.T) {
 	})
 	t.Run("instances.delete", func(t *testing.T) {
 		rt := newReaperTest(t, nil)
-		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
 		// The VM is in the listing; by the time the delete arrives it is gone.
 		rt.cf.FailDeleteWith = http.StatusNotFound
 		rep, err := rt.r.Reap(context.Background())
@@ -1161,7 +1308,7 @@ func TestReaperToleratesADeleteOfSomethingAlreadyGone(t *testing.T) {
 	})
 	t.Run("a delete refused for another reason still fails the pass", func(t *testing.T) {
 		rt := newReaperTest(t, nil)
-		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
 		rt.cf.FailDeleteWith = http.StatusForbidden
 		if _, err := rt.r.Reap(context.Background()); err == nil {
 			t.Fatal("a forbidden instances.delete was tolerated: want an error")
@@ -1175,12 +1322,13 @@ func TestReaperToleratesADeleteOfSomethingAlreadyGone(t *testing.T) {
 // way acts a second (or a pass) early on something that was still legitimate.
 func TestReaperDeadlineBoundaries(t *testing.T) {
 	rt := newReaperTest(t, nil)
-	// Exactly at the 32-minute queue deadline: still waiting, not cancelled.
-	at := rt.addJob(t, "20260927-100000-abcd", "QUEUED", 30*time.Minute+backend.TaskTimeoutSlack)
+	// Exactly at the queue deadline (the run ceiling plus the slack): still
+	// waiting, not cancelled.
+	at := rt.addJob(t, "20260927-100000-abcd", "QUEUED", rt.r.QueueDeadline())
 	// One second past it: cancelled.
-	past := rt.addJob(t, "20260927-100001-abcd", "QUEUED", 30*time.Minute+backend.TaskTimeoutSlack+time.Second)
-	// Exactly at the run budget (30m task + 2m slack + 15m margin) in state:
-	// still live. One second past it: stuck.
+	past := rt.addJob(t, "20260927-100001-abcd", "QUEUED", rt.r.QueueDeadline()+time.Second)
+	// Exactly at the run budget (the ceiling, the slack and ReapMargin) in
+	// state: still live. One second past it: stuck.
 	live := rt.addJob(t, "20260927-100002-abcd", "RUNNING", rt.r.RunBudget())
 	stuck := rt.addJob(t, "20260927-100003-abcd", "RUNNING", rt.r.RunBudget()+time.Second)
 	rep := rt.reap(t)
@@ -1195,18 +1343,62 @@ func TestReaperDeadlineBoundaries(t *testing.T) {
 	}
 }
 
+// TestReaperWaitsOutAnOverriddenRun is the ceiling half of the run budget, and
+// the destructive one. --total-timeout (LaunchSpec.Timeout) lets a run ask for
+// far longer than every workflow the installation configures, and the CLI caps
+// it only at backend.MaxRunTime. A run budget built from the configured longest
+// alone would therefore call an overridden run stuck the moment it crossed that
+// number and delete it -- jobs.delete on a live run, one pass after it crossed,
+// which is the failure this whole file exists to prevent and which no deadline
+// validation can catch (the override is legal). That is why NewReaper's base is
+// max(longest, backend.MaxRunTime).
+func TestReaperWaitsOutAnOverriddenRun(t *testing.T) {
+	// The harness's longest workflow is 30 minutes, so a budget built from it
+	// would be 47 minutes: two hours of RUNNING is far past that and well
+	// inside the day a run may ask for.
+	t.Run("a run two hours into an overridden timeout is not stuck", func(t *testing.T) {
+		rt := newReaperTest(t, nil)
+		id := rt.addJobStateAt(t, "20260927-100000-abcd", "RUNNING", rt.old(), 2*time.Hour)
+		rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
+		rep := rt.reap(t)
+		if got := rt.bf.Deletes(); len(got) != 0 {
+			t.Fatalf("a run two hours into an overridden timeout was deleted: %v (run budget %v)", got, rt.r.RunBudget())
+		}
+		if got := rt.cf.Deletes(); len(got) != 0 {
+			t.Fatalf("the VM of that run was deleted: %v", got)
+		}
+		if !refusedBecause(rep, "fake-region-a/vm-1", "its job is RUNNING, 120 minutes into the state") {
+			t.Fatalf("report = %v, want the VM refused as a live run's", rep.Lines())
+		}
+		if st := rt.bf.State(id); st != "RUNNING" {
+			t.Fatalf("job state = %q, want it left running", st)
+		}
+	})
+	// And the run budget is still where the patience ends, so the subtest above
+	// is not green because this pass deletes nothing at all: past it the same
+	// job goes, and the VM with the pass after.
+	t.Run("and past the run budget the same run is stuck", func(t *testing.T) {
+		rt := newReaperTest(t, nil)
+		id := rt.addJobStateAt(t, "20260927-100000-abcd", "RUNNING", rt.old(), rt.r.RunBudget()+time.Second)
+		rt.reap(t)
+		if got := rt.bf.Deletes(); len(got) != 1 || got[0] != id {
+			t.Fatalf("jobs.delete = %v, want [%s]: past the run budget a run is stuck again", got, id)
+		}
+	})
+}
+
 // TestReaperDryRunListsWhatItWouldDelete: dry-run is the way an operator sees
 // what a pass would do before letting it -- and it touches nothing, cancel
 // included.
 func TestReaperDryRunListsWhatItWouldDelete(t *testing.T) {
 	rt := newReaperTest(t, func(o *ReaperOptions) { o.DryRun = true })
-	id := rt.addJob(t, "20260927-100000-abcd", "RUNNING", 10*time.Hour)
-	queued := rt.addJob(t, "20260927-100001-abcd", "QUEUED", 40*time.Minute)
-	rt.vm("vm-1", runLabels(t, "20260927-100002-abcd"), 10*time.Hour)
+	id := rt.addJob(t, "20260927-100000-abcd", "RUNNING", rt.stuck())
+	queued := rt.addJob(t, "20260927-100001-abcd", "QUEUED", rt.r.QueueDeadline()+time.Minute)
+	rt.vm("vm-1", runLabels(t, "20260927-100002-abcd"), rt.old())
 	// A VM whose run is the queued job, so the refusal's wording for that job
 	// is in the report too: a dry run cancels nothing, and a line saying the
 	// job "was cancelled" would be a line an operator cannot act on.
-	rt.vm("vm-2", runLabels(t, "20260927-100001-abcd"), 10*time.Hour)
+	rt.vm("vm-2", runLabels(t, "20260927-100001-abcd"), rt.old())
 	rep := rt.reap(t)
 	if !rep.DryRun {
 		t.Fatal("Report.DryRun is false")
@@ -1244,12 +1436,12 @@ func TestReaperDryRunListsWhatItWouldDelete(t *testing.T) {
 	}
 }
 
-// TestReaperRefusalsAreReasonsAnOperatorCanActOn checks that every refusal
+// TestReaperRefusalsCarryAReason checks that every refusal
 // carries why, since the report is the audit trail: a bare "refused" line is
 // useless to the person reading it.
 func TestReaperRefusalsCarryAReason(t *testing.T) {
 	rt := newReaperTest(t, nil)
-	rt.vm("vm-1", map[string]string{labelManaged: managedValue}, 3*time.Hour)
+	rt.vm("vm-1", map[string]string{labelManaged: managedValue}, rt.old())
 	rt.addJob(t, "20260927-100000-abcd", "SUCCEEDING", 3*time.Hour)
 	rep := rt.reap(t)
 	if len(rep.Refused) == 0 {
@@ -1267,8 +1459,8 @@ func TestReaperRefusalsCarryAReason(t *testing.T) {
 // of a listing it could not finish.
 func TestReaperFailsClosedWhenTheListingsFail(t *testing.T) {
 	rt := newReaperTest(t, nil)
-	id := rt.addJob(t, "20260927-100000-abcd", "RUNNING", 10*time.Hour)
-	rt.vm("vm-1", runLabels(t, "20260927-100001-abcd"), 10*time.Hour)
+	id := rt.addJob(t, "20260927-100000-abcd", "RUNNING", rt.stuck())
+	rt.vm("vm-1", runLabels(t, "20260927-100001-abcd"), rt.old())
 	rt.bf.Refuse(http.StatusForbidden, "PERMISSION_DENIED", "IAM_PERMISSION_DENIED", "no batch.jobs.list")
 	if _, err := rt.r.Reap(context.Background()); err == nil {
 		t.Fatal("Reap with an unreadable job listing: want an error")
@@ -1281,7 +1473,7 @@ func TestReaperFailsClosedWhenTheListingsFail(t *testing.T) {
 	// The same for the instance listing, which is read after the job pass:
 	// the job pass's work is reported, and the pass still fails.
 	rt = newReaperTest(t, nil)
-	rt.addJob(t, "20260927-100000-abcd", "RUNNING", 10*time.Hour)
+	rt.addJob(t, "20260927-100000-abcd", "RUNNING", rt.stuck())
 	rt.cf.Refuse(http.StatusForbidden, "PERMISSION_DENIED", "IAM_PERMISSION_DENIED", "no compute.instances.list")
 	rep, err := rt.r.Reap(context.Background())
 	if err == nil {
@@ -1292,13 +1484,13 @@ func TestReaperFailsClosedWhenTheListingsFail(t *testing.T) {
 	}
 }
 
-// TestReaperJobsDeleteIsTheOnlyThingThatErasesAJob: the queue deadline's
+// TestReaperCancelKeepsTheRecordAndDeleteDoesNot: the queue deadline's
 // cancel and the failure to cancel both leave the record; only the stuck-job
 // delete erases one. This is the promise §1.4 makes about ls, diagnose and
 // watch.
 func TestReaperCancelKeepsTheRecordAndDeleteDoesNot(t *testing.T) {
 	rt := newReaperTest(t, nil)
-	rt.addJob(t, "20260927-100000-abcd", "QUEUED", 40*time.Minute)
+	rt.addJob(t, "20260927-100000-abcd", "QUEUED", rt.r.QueueDeadline()+time.Minute)
 	rt.reap(t)
 	if got := rt.bf.IDs(); len(got) != 1 {
 		t.Fatalf("the queue deadline's cancel removed the job: %v", got)
@@ -1316,13 +1508,13 @@ func TestReaperCancelKeepsTheRecordAndDeleteDoesNot(t *testing.T) {
 // (§2.3, live check 5), and must leave its record alone.
 func TestReaperToleratesACancelThatRacesTheJobsOwnEnd(t *testing.T) {
 	rt := newReaperTest(t, nil)
-	id := rt.addJob(t, "20260927-100000-abcd", "QUEUED", 40*time.Minute)
+	id := rt.addJob(t, "20260927-100000-abcd", "QUEUED", rt.r.QueueDeadline()+time.Minute)
 	// The race: the job reaches a terminal state as the cancel arrives, which
 	// is the only way this branch is reachable at all (a listing and a cancel
 	// read the same stored state otherwise).
 	rt.bf.CancelRace = map[string]string{id: "SUCCEEDED"}
 	// An old VM of the run, so the age floor cannot be what saves it.
-	rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+	rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
 	rep := rt.reap(t)
 	if len(rt.bf.Cancels()) != 0 {
 		t.Fatalf("a cancel that raced the job's own end was recorded: %v", rt.bf.Cancels())
@@ -1359,13 +1551,13 @@ func TestReaperToleratesACancelThatRacesTheJobsOwnEnd(t *testing.T) {
 // recorded, because nothing was cancelled.
 func TestReaperCancelOfAQueuedJobThatIsAlreadyGone(t *testing.T) {
 	rt := newReaperTest(t, nil)
-	id := rt.addJob(t, "20260927-100000-abcd", "QUEUED", 40*time.Minute)
+	id := rt.addJob(t, "20260927-100000-abcd", "QUEUED", rt.r.QueueDeadline()+time.Minute)
 	rt.bf.CancelGone = map[string]bool{id: true}
 	// Something else in the same pass that the reaper must still do: a stuck job
 	// after the vanished one. Without it the test would pass on a pass that gave
 	// up at the first cancel.
-	stuck := rt.addJobStateAt(t, "20260927-100001-abcd", "SCHEDULED", 34*time.Hour, 10*time.Hour)
-	rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+	stuck := rt.addJobStateAt(t, "20260927-100001-abcd", "SCHEDULED", rt.startedAfter(rt.stuck()), rt.stuck())
+	rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), rt.old())
 	rep, err := rt.r.Reap(context.Background())
 	if err != nil {
 		t.Fatalf("Reap: %v, want no error: a job that is already gone needed no cancel", err)
@@ -1397,7 +1589,7 @@ func TestReaperCancelOfAQueuedJobThatIsAlreadyGone(t *testing.T) {
 // must be left where it was.
 func TestReaperCancelOfAQueuedJobThatFails(t *testing.T) {
 	rt := newReaperTest(t, nil)
-	id := rt.addJob(t, "20260927-100000-abcd", "QUEUED", 40*time.Minute)
+	id := rt.addJob(t, "20260927-100000-abcd", "QUEUED", rt.r.QueueDeadline()+time.Minute)
 	// Only the cancel is refused: the listing and the read-back it falls back
 	// on still answer, so the failure is the cancel's and not the listing's.
 	rt.bf.RefusePath(id+":cancel", http.StatusForbidden, "PERMISSION_DENIED", "IAM_PERMISSION_DENIED", "no batch.jobs.cancel")
@@ -1454,13 +1646,18 @@ func TestReaperNeedsItsConfiguration(t *testing.T) {
 func TestReaperRefusesDeadlinesItCannotHonour(t *testing.T) {
 	base := 30 * time.Minute
 	slack := backend.TaskTimeoutSlack
-	queueDefault := base + slack
+	// The base the defaults derive from is max(longest, the run ceiling): a run
+	// may override its total time past the installation's workflows, so the
+	// deadlines are the ceiling's, not this 30-minute workflow's.
+	longest := max(base, backend.MaxRunTime)
+	queueDefault := longest + slack
 	// The floor is the queue deadline plus a whole run budget, and the run
-	// budget is the longest task timeout, its slack AND ReapMargin: an instance
-	// must also be old enough for a boot and a teardown, or the floor would
-	// admit an age at which a VM of a just-finished run looks like a leak.
-	floor := queueDefault + base + slack + ReapMargin
-	runBudget := base + slack + ReapMargin
+	// budget is the longest a run may be active, its slack AND ReapMargin: an
+	// instance must also be old enough for a boot and a teardown, or the floor
+	// would admit an age at which a VM of a just-finished run looks like a
+	// leak.
+	floor := queueDefault + longest + slack + ReapMargin
+	runBudget := longest + slack + ReapMargin
 	for _, tc := range []struct {
 		name  string
 		tweak func(*ReaperOptions)
@@ -1538,8 +1735,8 @@ func TestReaperListingsPageAndSort(t *testing.T) {
 	// Instances come back in scope order, not map order: two instances in two
 	// zones, and the report names them sorted.
 	rt.cf.Zones = []string{"fake-region-b", "fake-region-a"}
-	rt.cf.AddInstanceCreated("fake-region-b", "vm-b", runLabels(t, "20260927-100003-abcd"), rt.now.Add(-3*time.Hour))
-	rt.cf.AddInstanceCreated("fake-region-a", "vm-a", runLabels(t, "20260927-100004-abcd"), rt.now.Add(-3*time.Hour))
+	rt.cf.AddInstanceCreated("fake-region-b", "vm-b", runLabels(t, "20260927-100003-abcd"), rt.now.Add(-rt.old()))
+	rt.cf.AddInstanceCreated("fake-region-a", "vm-a", runLabels(t, "20260927-100004-abcd"), rt.now.Add(-rt.old()))
 	rep := rt.reap(t)
 	var targets []string
 	for _, a := range rep.Actions {

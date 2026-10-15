@@ -106,10 +106,11 @@ import (
 // Nothing here reads a secret, and nothing here needs Secret Manager, storage
 // or logging: the reaper's whole surface is the six permissions above.
 
-// ReapMargin is the margin the reaper's age filter adds on top of the
-// longest task timeout, its slack and the queue deadline: the VM boot and
-// image pull the design budgets 120 s for (§1.2), Batch's own teardown after
-// a terminal state (Check 57a measured 3 to 26 s), and the settle window a
+// ReapMargin is the margin the reaper's age filter adds on top of the longest
+// a run may be active (see NewReaper's base), its slack and the queue
+// deadline: the VM boot and image pull the design budgets 120 s for (§1.2),
+// Batch's own teardown after a terminal state (Check 57a measured 3 to 26 s),
+// and the settle window a
 // listing's own lag needs. A VM younger than MaxAge is left alone whatever
 // else is true about it, because "young" is the one explanation the reaper
 // cannot tell apart from "Batch is still doing its job". (MaxAge bounds
@@ -160,8 +161,11 @@ type Report struct {
 }
 
 // Lines renders the report for an operator: one line per action and per
-// refusal, in the order they were decided. A dry run says "would" on every
-// action.
+// refusal, every action first and every refusal after. That is not the order
+// they were decided in -- refusals come out of both passes, so a job refused
+// in the job pass prints after an instance deleted in the instance pass -- but
+// it is the order an operator reads: what the pass did to their project, then
+// what it left alone and why. A dry run says "would" on every action.
 func (r Report) Lines() []string {
 	out := make([]string, 0, len(r.Actions)+len(r.Refused))
 	for _, a := range r.Actions {
@@ -205,12 +209,17 @@ type ReaperOptions struct {
 	// Options' own is (design §2.3). Required: both of the reaper's deadlines
 	// derive from the longest configured task timeout, so that an
 	// installation which lengthens a workflow lengthens the reaper's patience
-	// with it rather than the other way round.
+	// with it rather than the other way round. That is the longest TASK
+	// timeout, and a run may override its own total time past it
+	// (backend.MaxRunTime), so what both deadlines actually derive from is
+	// max(longest, backend.MaxRunTime) -- see NewReaper's base.
 	Timeouts Timeouts
 	// QueueDeadline is how long a job may sit in QUEUED before the queue
-	// deadline cancels it (design §1.4, C8). Zero means the longest
-	// configured task timeout plus backend.TaskTimeoutSlack -- "the
-	// launcher's own task timeout", the design's natural default.
+	// deadline cancels it (design §1.4, C8). Zero means the longest a run
+	// may be active -- the longest configured task timeout, or a run's own
+	// override ceiling (backend.MaxRunTime) when that is longer -- plus
+	// backend.TaskTimeoutSlack: "the launcher's own task timeout", the
+	// design's natural default, read as the launcher's longest one.
 	//
 	// It is also the bound under which a job's latest status event is read as
 	// the transition into the state the job reports (Reaper.reapJob's SCHEDULED
@@ -222,11 +231,12 @@ type ReaperOptions struct {
 	QueueDeadline time.Duration
 	// MaxAge is the age floor for an INSTANCE: how old an instance must be
 	// before the reaper will delete it. Zero means the queue deadline, plus
-	// the longest task timeout and its slack, plus ReapMargin: nothing a
-	// Fugaro run can legitimately be doing takes longer than queueing, running
-	// and tearing down. The age filter exists because Batch's own teardown
-	// takes seconds, so a VM that is still there moments after its job ended
-	// is not yet evidence of a leak (§3.4).
+	// the longest a run may be active (the longest configured task timeout,
+	// or a run's own override ceiling, whichever is longer) and its slack,
+	// plus ReapMargin: nothing a Fugaro run can legitimately be doing takes
+	// longer than queueing, running and tearing down. The age filter exists
+	// because Batch's own teardown takes seconds, so a VM that is still there
+	// moments after its job ended is not yet evidence of a leak (§3.4).
 	//
 	// It bounds no job. A job's deadlines are separate and both about time
 	// spent, not age: a QUEUED job is cancelled when it has waited longer than
@@ -267,9 +277,10 @@ type Reaper struct {
 	maxAge        time.Duration
 	// runBudget is how long a job may spend in one state (RUNNING,
 	// SCHEDULED, DELETION_IN_PROGRESS) before the reaper reads it as stuck:
-	// the longest task timeout, its slack and ReapMargin, i.e. everything in
-	// MaxAge except the queue wait. Time in a state is measured from the job's
-	// own status events, never from its creation time.
+	// the longest a run may be active (NewReaper's base), its slack and
+	// ReapMargin, i.e. everything in MaxAge except the queue wait. Time in a
+	// state is measured from the job's own status events, never from its
+	// creation time.
 	runBudget time.Duration
 	// listPageSize is the job listing's page size; tests shrink it to
 	// exercise paging.
@@ -297,13 +308,18 @@ func NewReaper(ctx context.Context, o ReaperOptions) (*Reaper, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading the longest workflow timeout: %w", err)
 	}
-	// An installation with no workflows at all answers zero, and a zero base
-	// would make every deadline two minutes: the default task timeout is what
-	// "no workflow is longer than this" means (backend.DefaultTaskTimeout).
-	base := longest
-	if base <= 0 {
-		base = backend.DefaultTaskTimeout
-	}
+	// The base is not the longest workflow timeout on its own: a run may
+	// override its total time well past every configured workflow
+	// (LaunchSpec.Timeout, which the launcher takes from --total-timeout and
+	// which only backend.MaxRunTime caps), and a run that outran the base
+	// would be deleted by the pass after it crossed -- a live run killed by
+	// the component built never to delete one. So the base is the same
+	// max(longest, the per-run ceiling) internal/cli's max_parallel horizon
+	// uses, for the same reason. An installation with no workflows at all
+	// answers the ceiling too, which is the right answer there: it has no
+	// configured timeouts to derive anything from, and a run may still ask
+	// for a day.
+	base := max(longest, backend.MaxRunTime)
 	switch {
 	case o.QueueDeadline < 0:
 		return nil, fmt.Errorf("a negative queue deadline (%v): a caller meaning \"no deadline\" leaves it zero", o.QueueDeadline)
@@ -454,7 +470,7 @@ func (r *Reaper) reapJob(ctx context.Context, j *batch.Job, owned owners, rep *R
 		// an unattributable job is not ours to delete -- and its VMs are not
 		// ours either: every run label it claims is owned, so a VM carrying
 		// one is refused rather than deleted under a job that is still here.
-		why := "its job's two label fields disagree about " + RunLabel + ", so the reaper could not attribute the job to a run and refused to act on it"
+		why := "its job's " + RunLabel + " label is missing, malformed, or not the same in both label fields, so the reaper could not attribute the job to a run and refused to act on it"
 		for _, claimed := range jobRunLabels(j) {
 			owned.own(claimed, why)
 		}
@@ -591,6 +607,16 @@ func (r *Reaper) reapJob(ctx context.Context, j *batch.Job, owned owners, rep *R
 		spent, ok := stateSince(j, r.now())
 		if !ok {
 			return r.refuseUnknownStateTime(j, state, run, owned, rep)
+		}
+		if !stateEventPostdatesQueueDeadline(j, created, r.queueDeadline) {
+			// The same uncertainty as SCHEDULED's and DELETION_IN_PROGRESS's,
+			// and here it is the report rather than an action that rests on
+			// the measurement: the latest event may date a long queue wait,
+			// and reading it as this state's would name a cancellation that
+			// has not finished in N minutes when it has barely begun. The
+			// report is the audit trail, so a line it cannot stand behind is
+			// not written: refused, exactly as the two delete branches are.
+			return r.refuseStaleStateEvent(j, state, run, owned, rep)
 		}
 		owned.own(run, "its job is CANCELLATION_IN_PROGRESS: Batch tears a cancelled job's VMs down from there")
 		if spent > r.runBudget {
@@ -962,12 +988,20 @@ func jobRunLabel(j *batch.Job) (string, bool) {
 	return run, true
 }
 
-// jobRunLabels is every well-formed per-run label the job claims, from either
-// label field. It is what a job the reaper refused to attribute still tells it:
-// whatever the two fields disagree about, the VMs of that job carry one of
-// these values, and none of them is the reaper's to reap (see owners). A job
-// whose fields agree returns the one value twice over, which the caller
+// jobRunLabels is every per-run label the job claims, from either label field,
+// well-formed or not. It is what a job the reaper refused to attribute still
+// tells it: whatever the two fields disagree about, the VMs of that job carry
+// one of these values, and none of them is the reaper's to reap (see owners). A
+// job whose fields agree returns the one value twice over, which the caller
 // dedupes.
+//
+// Everything non-empty, NOT only the well-formed values. reapInstances refuses
+// or deletes a VM by whatever non-empty fugaro_run it carries, and the value a
+// VM carries is the one from AllocationPolicy.labels -- so a value this
+// function dropped for its shape would be exactly the value the instance pass
+// then read off the VM and found absent from owned: a VM deleted under a job
+// that is still RUNNING, which is what owners exists to prevent. Owning a
+// garbage value costs a map entry; the alternative costs someone's live run.
 func jobRunLabels(j *batch.Job) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -977,7 +1011,7 @@ func jobRunLabels(j *batch.Job) []string {
 	}
 	for _, l := range fields {
 		v := l[RunLabel]
-		if v == "" || !labelValueRE.MatchString(v) || seen[v] {
+		if v == "" || seen[v] {
 			continue
 		}
 		seen[v] = true
