@@ -431,6 +431,12 @@ func TestBackendFromEnv(t *testing.T) {
 		"empty url":       {runner.RTDBURLEnv: ""},
 		"empty key":       {runner.FirebaseAPIKeyEnv: ""},
 		"key with query":  {runner.FirebaseAPIKeyEnv: "k&x=1"},
+		// The launcher's marker: only "1" is it. Anything else is damage to
+		// the job's environment, and it must not be the quiet reading, because
+		// the marker is what makes a missing token fail closed (M2).
+		"marker not 1":  {runner.BudgetTokenEnv: "true"},
+		"marker empty":  {runner.BudgetTokenEnv: ""},
+		"marker quoted": {runner.BudgetTokenEnv: `"1"`},
 	} {
 		if _, err := runner.BackendFromEnv(get(m), false); err == nil {
 			t.Errorf("%s was accepted", name)
@@ -438,6 +444,12 @@ func TestBackendFromEnv(t *testing.T) {
 	}
 	if _, err := runner.BackendFromEnv(get(map[string]string{runner.RTDBURLEnv: "http://127.0.0.1:9000"}), true); err != nil {
 		t.Errorf("a local run against a loopback database was refused: %v", err)
+	}
+	// The marker alone is readable: it needs no backend, and reading it is
+	// what lets a run with no backend refuse a launch that minted a token.
+	marked, err := runner.BackendFromEnv(get(map[string]string{runner.BudgetTokenEnv: "1"}), false)
+	if err != nil || !marked.TokenMarked || marked.On() {
+		t.Fatalf("marker alone = %+v, %v, want TokenMarked with no backend", marked, err)
 	}
 }
 

@@ -64,6 +64,35 @@ func TestLaunchAndInspect(t *testing.T) {
 	}
 }
 
+// The launcher's per-execution variables (the budget marker) travel as
+// override env beside FUGARO_RUN: the API merges override env into the job's
+// own environment, so the marker reaches the run without touching the deploy
+// (plan R2-8(a)).
+func TestLaunchCarriesTheSpecEnv(t *testing.T) {
+	ctx := context.Background()
+	b, fr, _ := newTestBackend(t)
+	fr.AddJob(webJob, "4", "8Gi")
+	var gotEnv map[string]string
+	fr.OnRun = func(c gcpfake.RunCall) { gotEnv = c.Env }
+	spec := backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd",
+		Env: []string{"FUGARO_BUDGET_TOKEN=1"}}
+	if _, err := b.Launch(ctx, spec); err != nil {
+		t.Fatal(err)
+	}
+	if gotEnv["FUGARO_BUDGET_TOKEN"] != "1" || gotEnv["FUGARO_RUN"] != "acme-app/20260927-100000-abcd" {
+		t.Fatalf("env = %v", gotEnv)
+	}
+	// An entry that is not NAME=value is refused before anything starts.
+	before := len(fr.Requests())
+	spec.Env = []string{"FUGARO_BUDGET_TOKEN"}
+	if _, err := b.Launch(ctx, spec); err == nil {
+		t.Fatal("an entry that is not NAME=value was sent to the API")
+	}
+	if len(fr.Requests()) != before {
+		t.Fatalf("a malformed launch env made %d requests", len(fr.Requests())-before)
+	}
+}
+
 func TestNamesAreCanonicalWhateverTheAPISends(t *testing.T) {
 	ctx := context.Background()
 	b, fr, _ := newTestBackend(t)

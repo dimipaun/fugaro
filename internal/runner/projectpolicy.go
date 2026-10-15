@@ -255,13 +255,25 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 	custom, err := r.takeBudgetToken(ctx)
 	switch {
 	case err == nil:
-	case errors.Is(err, token.ErrNoToken) && !r.d.Spend.On():
-		// No token, and the job's own mode is off: nothing to read.
+	case errors.Is(err, token.ErrNoToken) && !r.d.Spend.On() && !r.d.Backend.TokenMarked:
+		// No token, and the job's own mode is off, and no launcher said it
+		// minted one: nothing to read.
 		return nil, nil
 	case errors.Is(err, token.ErrNoToken):
 		// A budget-on run with no token object in the bucket is the shipped
 		// refusal (B1, budget_session.go's startBudgetBackend said the same
-		// before this read existed).
+		// before this read existed). So is a job whose environment carries
+		// the launcher's marker (M2): the launcher mints whenever it can see
+		// a policy, whatever the mode, so a marker means this run HAD a token
+		// and it is gone — another run of the repository can delete a queued
+		// run's object. Reading that as "no policy here" would run a mode-off
+		// job of a policy-enforcing project with no session, no cap and no
+		// kill switch. The marker is a fact about this launch, so it is the
+		// one the run trusts.
+		if r.d.Backend.TokenMarked {
+			c.err = errors.New("the run's budget token is not in the runs bucket, though the launcher minted one for this run (FUGARO_BUDGET_TOKEN is set in the job's environment): it was already taken, or deleted; launch the run again")
+			return nil, c.err
+		}
 		c.err = errors.New("the run's budget token is not in the runs bucket (already taken, or the run was not launched with one): launch the run again")
 		return nil, c.err
 	default:

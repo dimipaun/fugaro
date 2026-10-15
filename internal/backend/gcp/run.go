@@ -105,10 +105,18 @@ func CheckRunExecution(name, region, slug, workflow string) error {
 // returns completes only when the execution ends, so Launch never waits.
 func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.ExecutionRef, error) {
 	job := b.JobPath(spec.Repo.Slug, spec.Workflow)
+	env := []*run.GoogleCloudRunV2EnvVar{{Name: "FUGARO_RUN", Value: spec.Repo.Slug + "/" + spec.RunID}}
+	// The spec's own variables (the launcher's budget marker) go in the same
+	// override: the API merges these into the job's environment.
+	for _, kv := range spec.Env {
+		name, value, ok := strings.Cut(kv, "=")
+		if !ok || name == "" {
+			return backend.ExecutionRef{}, fmt.Errorf("launch env %q: it must be NAME=value", kv)
+		}
+		env = append(env, &run.GoogleCloudRunV2EnvVar{Name: name, Value: value})
+	}
 	req := &run.GoogleCloudRunV2RunJobRequest{Overrides: &run.GoogleCloudRunV2Overrides{
-		ContainerOverrides: []*run.GoogleCloudRunV2ContainerOverride{{
-			Env: []*run.GoogleCloudRunV2EnvVar{{Name: "FUGARO_RUN", Value: spec.Repo.Slug + "/" + spec.RunID}},
-		}},
+		ContainerOverrides: []*run.GoogleCloudRunV2ContainerOverride{{Env: env}},
 	}}
 	if spec.Timeout != 0 {
 		req.Overrides.Timeout = fmt.Sprintf("%ds", int((spec.Timeout+backend.TaskTimeoutSlack)/time.Second))

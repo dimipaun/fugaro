@@ -32,6 +32,20 @@ const (
 	// BudgetGraceEnv shortens the D14 grace (a Go duration, at least 5 s and
 	// at most the default 3 m): it exists for tests and can only tighten.
 	BudgetGraceEnv = "FUGARO_BUDGET_GRACE"
+	// BudgetTokenEnv is set to "1" in a job's environment by the launcher that
+	// minted this run's budget token, and by nothing else: whether a token was
+	// minted is a fact about one launch, so it travels as an execution
+	// override (backend.LaunchSpec.Env) and never through init --repo's
+	// deploy-time environment. It closes a fail-open the security review of
+	// PR #379 found: a run of the same repository can delete a queued run's
+	// token object, and a job whose own mode is off read that as "this project
+	// has published no policy" and ran with no session, no cap and no kill
+	// switch — while the launcher had minted a token precisely because a
+	// policy exists. With the marker set, a missing token is the refusal it
+	// is on a budget-on job, whatever the job's mode; a job with no marker
+	// (every install that never minted one, and every local run) keeps
+	// today's behaviour.
+	BudgetTokenEnv = "FUGARO_BUDGET_TOKEN"
 )
 
 // Backend is how the run reaches the project's budget database. The zero
@@ -41,6 +55,11 @@ type Backend struct {
 	APIKey  string
 	// Grace is the D14 window; zero is budget.DefaultGrace.
 	Grace time.Duration
+	// TokenMarked is true when the job's environment carries BudgetTokenEnv:
+	// the launcher that started this execution minted it a budget token, so
+	// the token's absence from the runs bucket is a refusal and never "this
+	// project has published no policy" (see BudgetTokenEnv).
+	TokenMarked bool
 	// Tune, for tests only, adjusts the session's configuration (the fakes'
 	// URLs, short intervals).
 	Tune func(*budget.Config)
@@ -68,6 +87,17 @@ func BackendFromEnv(lookup func(string) (string, bool), loopbackOK bool) (Backen
 			return Backend{}, fmt.Errorf("%s: it must be a Firebase web API key", FirebaseAPIKeyEnv)
 		}
 		b.APIKey = v
+	}
+	if v, ok := lookup(BudgetTokenEnv); ok {
+		// Only the launcher writes this, and it writes "1". Anything else is
+		// damage to the job's environment, which the runner reports as an
+		// infra_error rather than reading as "no marker": the marker is what
+		// makes a missing token fail closed, so a value nobody can interpret
+		// must not be the quiet one.
+		if v != "1" {
+			return Backend{}, fmt.Errorf("%s %q: it must be 1, and only a launcher that minted this run's budget token sets it", BudgetTokenEnv, v)
+		}
+		b.TokenMarked = true
 	}
 	if v, ok := lookup(BudgetGraceEnv); ok {
 		d, err := time.ParseDuration(v)
@@ -160,6 +190,16 @@ func (r *run) bootstrapHalt(reason runstore.HaltReason, scope, detail string) er
 // creates the registry entry and starts the heartbeat and the kill watch.
 // A halt here has outcome none and exit 0: nothing was locked or pushed.
 func (r *run) startBudgetBackend(ctx context.Context) error {
+	// The launcher's marker says it minted this run a budget token, which it
+	// only does when the project has a shared budget or a published policy.
+	// A job with no backend in its environment then cannot read that policy,
+	// and a run whose own mode is off would go on with the environment
+	// ceiling, no session and no kill switch (M2; refuseStrayToken below is
+	// the same refusal for a budget-on job, found by reading the bucket).
+	// The marker is proof enough: nothing else writes it.
+	if r.d.Backend.TokenMarked && !r.d.Backend.On() {
+		return fmt.Errorf("this run was launched with a budget token, so this repository has a shared budget or a published policy, but its job carries no budget backend (%s is not set in the job's environment): run fugaro init --repo for this repository, then launch the run again", RTDBURLEnv)
+	}
 	// A run whose budget is off ignores the budget's environment entirely.
 	if !r.spend.On() {
 		return nil

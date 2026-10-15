@@ -180,11 +180,16 @@ func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) 
 	t.Run("no policy, no token", func(t *testing.T) {
 		f := newOffModeBudget(t, "")
 		f.appendConfig(t, budget(f))
+		var env map[string]string
+		f.run.OnRun = func(c gcpfake.RunCall) { env = c.Env }
 		if _, _, err := runBudget(t); err != nil {
 			t.Fatal(err)
 		}
 		if tok := readToken(t, f.cloudFixture, budgetRun); tok != "" {
 			t.Fatalf("a launch for a project with no policy minted a token: %q", tok)
+		}
+		if v, ok := env[runner.BudgetTokenEnv]; ok {
+			t.Fatalf("a launch that minted nothing set %s = %q", runner.BudgetTokenEnv, v)
 		}
 		if n := len(f.iam.SignCalls()); n != 0 {
 			t.Fatalf("sign calls = %d", n)
@@ -228,6 +233,33 @@ func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) 
 			t.Fatal("the run was launched without a budget identity")
 		}
 	})
+}
+
+// L2 of the PR #379 review, the first mutation no test caught: the CLI must
+// not read a denied read of a published policy as "no policy here". The
+// marker is deployed, so a policy may exist, and the database refuses the node
+// to this operator — the rules were changed out from under it. Reading that as
+// an absent node would launch the run with no budget identity at all, and the
+// run would then go on with the project's policy unread and unenforced.
+func TestLaunchRefusesADeniedPolicyRead(t *testing.T) {
+	f := newOffModeBudget(t, "")
+	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
+	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":1,"budget":{"mode":"enforce","per_run_usd":5}}`))
+	f.db.DenyRead(projectpolicy.PathShared())
+	_, _, err := runBudget(t)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a refusal (the policy node is published and cannot be read)", err)
+	}
+	for _, want := range []string{projectpolicy.PathShared(), projectpolicy.PathRulesMarker(), "init --firebase"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if launchedAny(f) || readToken(t, f.cloudFixture, budgetRun) != "" {
+		t.Fatal("a denied read of a published policy minted a token or launched the run")
+	}
 }
 
 // Carried review item (b), the CLI half: the decoder reports the top-level
@@ -277,6 +309,13 @@ func TestMintedTokenNotInJobsRunRequest(t *testing.T) {
 			if strings.Contains(v, secret) {
 				t.Fatalf("the token is in the job's env %s", k)
 			}
+		}
+		// The marker, and only the marker: the runner learns that this
+		// execution was minted a token from this one variable, and never the
+		// token itself (internal/runner's BudgetTokenEnv, M2).
+		if env[runner.BudgetTokenEnv] != "1" {
+			t.Fatalf("%s = %q in the launch, want \"1\": the runner cannot tell a deleted token from a project with nothing published",
+				runner.BudgetTokenEnv, env[runner.BudgetTokenEnv])
 		}
 		if strings.Contains(out+errOut, secret) {
 			t.Fatal("the token was printed")

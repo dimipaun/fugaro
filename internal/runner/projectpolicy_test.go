@@ -177,6 +177,69 @@ func TestRunnerWithNoCredentialTakesTheModeOffPath(t *testing.T) {
 	})
 }
 
+// M2's regression test (security review of PR #379): the launcher that minted
+// this run's token says so in the execution's environment, and the marker
+// outranks the job's own mode. A mode-off job whose token object was deleted —
+// any run of the same repository can take it — must not read that as "this
+// project has published no policy" and go on with the environment ceiling while
+// the launcher minted a token precisely because a policy exists.
+func TestRunnerWithTheMintedMarkerRefusesAMissingToken(t *testing.T) {
+	const policy = `{"version":1,"budget":{"mode":"enforce","per_run_usd":0.09}}`
+	t.Run("mode off", func(t *testing.T) {
+		b := policyRun(t, gwConfig(t, ""), "off", "50", policy, capScript(3)...)
+		b.deps.Backend.TokenMarked = true
+		if err := token.DeleteObject(context.Background(), b.bucket, bkSlug, runID); err != nil {
+			t.Fatal(err)
+		}
+		rec, err := b.run(t, implement("feature"))
+		if err == nil || !strings.Contains(err.Error(), "not in the runs bucket") {
+			t.Fatalf("err = %v, want the missing-token refusal", err)
+		}
+		if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
+			t.Fatalf("the run went on without its token: calls = %d, rec = %+v", len(b.agent.calls), rec)
+		}
+	})
+	t.Run("no marker, the job's own mode off", func(t *testing.T) {
+		// The marker is the launcher's; a job without one is a launch that
+		// never minted (an installation with nothing published, or a local
+		// run), and it keeps today's behaviour exactly.
+		b := policyRun(t, gwConfig(t, ""), "off", "", policy)
+		if err := token.DeleteObject(context.Background(), b.bucket, bkSlug, runID); err != nil {
+			t.Fatal(err)
+		}
+		rec, err := b.run(t, implement("feature"), review("ship", 0))
+		if err != nil || rec.Status != runstore.StatusSucceeded || rec.Budget != nil {
+			t.Fatalf("rec = %+v, err = %v: an unmarked mode-off run with no token is today's path", rec, err)
+		}
+		if n := len(b.db.Credentials()); n != 0 {
+			t.Fatalf("an unmarked run with its budget off made %d database requests", n)
+		}
+	})
+}
+
+// The marker also closes the job that was never re-applied: the launcher
+// minted because the project has a shared budget or a published policy, and a
+// job whose environment carries no backend at all cannot read that policy. The
+// run stops instead of going on with the environment ceiling (refuseStrayToken
+// is the same refusal for a budget-on job, found by reading the bucket).
+func TestRunnerWithTheMarkerAndNoBackendRefuses(t *testing.T) {
+	g := newGW(t, gwConfig(t, ""), "off", "")
+	withBucket(g.harness)
+	g.deps.Backend = runner.Backend{TokenMarked: true}
+	rec, err := g.run(t, implement("feature"))
+	if err == nil {
+		t.Fatalf("a marked run with no backend in its job must stop: rec = %+v", rec)
+	}
+	for _, want := range []string{runner.RTDBURLEnv, "fugaro init --repo"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if len(g.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
+		t.Fatalf("the run went on: calls = %d, rec = %+v", len(g.agent.calls), rec)
+	}
+}
+
 // B1's regression test: the job's environment says the budget is on but carries
 // no FUGARO_FIREBASE_API_KEY. That is the shipped refusal — never the mode-off
 // path, and never "no policy here": the run must not proceed on the environment
