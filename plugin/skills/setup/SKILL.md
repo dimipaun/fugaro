@@ -149,6 +149,18 @@ fugaro init --project <name>
 
 After that, suggest a first small `fugaro run` for the user to launch, and point to the `working` skill.
 
+## 10. Changing the auth, a workflow, a secret or a provider
+
+A `fugaro.yaml` edit that stops producing something the repository already has — `agent.auth` switched between `oauth` and `api-key`, a workflow or a secret dropped — **retires** the resources behind it. Two of them no apply can delete: a secret container carries `prevent_destroy`, and a job whose variant has left the file keeps `deletion_protection = true` in the state, past what `--allow-job-delete` can lower. They must leave Terraform's *state* first.
+
+**This is not an agent session's to run.** A typed confirmation naming the project guards it, and it refuses `--yes`, `--json` and a pipe by design; never pass `--yes`, `--allow-delete` or `--allow-job-delete` for the user either. Your part is the file edit and the pull request; afterwards the user runs this in their own terminal, not through the agent:
+
+```bash user-runs
+fugaro init --repo --retire
+```
+
+It takes the protected addresses out of Terraform's state first, destroying nothing in GCP, then plans, applies, and deletes the orphaned Cloud Run jobs carrying this repository's labels for a variant the file no longer builds. **It never deletes a secret or a secret version**: a container taken out of the state stays in Secret Manager with its value, and re-mounting it later re-adopts it. An ordinary run refuses, exit 1, exactly when Terraform refuses a plan on a `prevent_destroy` resource or a state-held job is still protected after its variant left the file — both answered by that command.
+
 ## Dogfooding facts
 
 - On GitHub a run can never change `.github/workflows/*` (the job's credential can't push workflow files). A task that needs one is the user's to do by hand.

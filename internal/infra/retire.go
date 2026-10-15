@@ -24,19 +24,19 @@ import (
 // runs -- never a substitute for the plan's own guard, which is what
 // actually decides what an apply may delete.
 type Retirement struct {
-	Address string
-	Kind    string // "secret container", "workflow job", "check job", "IAM member", …
-	Cause   string // the config change, in the user's words
-	Kept    string // what survives, or "" when nothing does
+	Address string `json:"address"`
+	Kind    string `json:"kind"`           // "secret container", "workflow job", "check job", "IAM member", …
+	Cause   string `json:"cause"`          // the config change, in the user's words
+	Kept    string `json:"kept,omitempty"` // what survives, or "" when nothing does
 
 	// The fields the later steps need, which an address alone cannot give
 	// (design §3.1). Retirements leaves them at their zero value; the
 	// state's own attribute values fill them, through FillFromState.
-	Logical   string // a secret container's logical name, "" otherwise
-	SecretID  string // its Secret Manager ID, "" otherwise
-	Job       string // a job's Cloud Run job name, "" otherwise
-	Region    string // its region, "" otherwise
-	Protected bool   // whether an ordinary apply can delete this address at all
+	Logical   string `json:"logical,omitempty"`   // a secret container's logical name, "" otherwise
+	SecretID  string `json:"secret_id,omitempty"` // its Secret Manager ID, "" otherwise
+	Job       string `json:"job,omitempty"`       // a job's Cloud Run job name, "" otherwise
+	Region    string `json:"region,omitempty"`    // its region, "" otherwise
+	Protected bool   `json:"protected"`           // whether an ordinary apply can delete this address at all
 
 	// Protected is NOT implied by the address alone: it is true for a
 	// secret container (and for the registry, which carries prevent_destroy
@@ -687,11 +687,19 @@ func orphanJob(j *run.GoogleCloudRunV2Job, spec RepoSpec) (Retirement, bool) {
 // Gets each logical name of spec.Secrets, so it can only ever find a
 // container the new spec still produces, which is exactly what an orphan is
 // not (design §3.1a).
+//
+// "Still mounts" is the config's own set (mountedSecrets), not the keys of
+// spec.Secrets: Readiness unions every correctly-labelled live container
+// back into that map (its N4 rule, so a config edit can never shrink the
+// module's for_each), which would otherwise make every released container
+// look mounted and leave §3.1a's convergence note -- the one line that tells
+// a user their kept value is still there -- unreachable.
 func orphanContainers(ctx context.Context, c *Clients, spec RepoSpec, stateAddrs []string) (rets, notes []Retirement, warn string, err error) {
 	inState := make(map[string]bool, len(stateAddrs))
 	for _, a := range stateAddrs {
 		inState[a] = true
 	}
+	mounted := mountedSecrets(spec)
 	err = c.Secrets.Projects.Secrets.List("projects/"+spec.GCPProject).
 		Filter(labelFilter(OrphanLabels(spec))).
 		Pages(ctx, func(p *secretmanager.ListSecretsResponse) error {
@@ -700,7 +708,7 @@ func orphanContainers(ctx context.Context, c *Clients, spec RepoSpec, stateAddrs
 				if logical == "" {
 					continue
 				}
-				if _, mounted := spec.Secrets[logical]; mounted {
+				if mounted[logical] {
 					continue
 				}
 				r := Retirement{
@@ -721,6 +729,24 @@ func orphanContainers(ctx context.Context, c *Clients, spec RepoSpec, stateAddrs
 		return nil, nil, warn, fatal
 	}
 	return rets, notes, "", nil
+}
+
+// mountedSecrets are the logical secrets the current configuration mounts:
+// every live workflow's own mounts (its job's env) and the build's. They are
+// computed from the spec's workflows, so they say what fugaro.yaml and the
+// owner's local config ask for -- unlike spec.Secrets, which Readiness has
+// already unioned the live, correctly-labelled containers back into.
+func mountedSecrets(spec RepoSpec) map[string]bool {
+	out := map[string]bool{}
+	for _, ws := range spec.Workflows {
+		for _, logical := range uniqueSecrets(ws) {
+			out[logical] = true
+		}
+		for _, logical := range ws.BuildSecrets {
+			out[logical] = true
+		}
+	}
+	return out
 }
 
 // labelCallFailed is what a refused or failed label call is: a warning that

@@ -89,6 +89,7 @@ func (r *initRun) readRetirements(ctx context.Context, c *infra.Clients, t *tf.T
 	if len(rets) == 0 {
 		return nil, nil
 	}
+	r.res.Retire = rets
 	if err := r.printRetirements(spec, rets); err != nil {
 		return nil, err
 	}
@@ -98,10 +99,16 @@ func (r *initRun) readRetirements(ctx context.Context, c *infra.Clients, t *tf.T
 // printRetireNotes is the one informational line an already-released kept
 // container gets (design §3.1a's convergence rule): it is not a retirement,
 // so it must not re-open the gate or re-suggest --retire on every later run,
-// but the user is told the container is still there.
+// but the user is told the container is still there -- by logical name and,
+// when the label list gave it, by Secret Manager ID, so a rerun after a
+// failed delete still says which container holds the value.
 func (r *initRun) printRetireNotes(notes []infra.Retirement) {
 	var names []string
 	for _, n := range notes {
+		if n.SecretID != "" {
+			names = append(names, n.Logical+" ("+n.SecretID+")")
+			continue
+		}
 		names = append(names, n.Logical)
 	}
 	slices.Sort(names)
@@ -282,7 +289,7 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 	// 1. The prediction, confirmed. Nothing has left the state yet, so this
 	//    banner is the only place the kept secrets and the job delete are
 	//    named before they happen.
-	if err := r.retireConfirm(rets, spec); err != nil {
+	if err := r.retireConfirm(rets, spec, "nothing was removed from Terraform's state and nothing was deleted"); err != nil {
 		return err
 	}
 
@@ -296,11 +303,18 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 	for _, a := range gone {
 		r.warn(a + " was already out of Terraform's state")
 	}
+	// From here on the state and the cloud disagree until the run finishes,
+	// so every failure below names what is left over rather than stopping
+	// quietly (design §6, Review Focus 6).
+	leftover := func(err error) error {
+		r.retireResidue(spec, rets, removed)
+		return err
+	}
 
 	// 3. The plan that could not run before, and the guard that always runs.
 	changed, err := t.Plan(ctx, infra.PlanFile)
 	if err != nil {
-		return remote(err)
+		return leftover(remote(err))
 	}
 	if !changed {
 		fmt.Fprintf(r.w, "No changes: %s matches the plan.\n", spec.Name)
@@ -309,7 +323,7 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 	}
 	plan, err := t.Show(ctx, infra.PlanFile)
 	if err != nil {
-		return remote(err)
+		return leftover(remote(err))
 	}
 	counts := infra.CountPlan(plan)
 	r.res.Changes = &counts
@@ -318,19 +332,49 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 	fmt.Fprint(r.w, tf.Summary(plan))
 	fmt.Fprintln(r.w, im.Bindings.String())
 	if err := guard(plan, retireAllowDelete(plan, rets, r.o.allowDelete)); err != nil {
-		return err
+		return leftover(err)
 	}
 	fmt.Fprintf(r.w, "the plan above is the retirement's: %s. Deleting:\n", counts.String())
 	fmt.Fprint(r.w, deleteList(plan))
-	if err := r.retireConfirm(rets, spec); err != nil {
-		return err
+	if err := r.retireConfirm(rets, spec, "the plan was not applied and no job was deleted; the addresses that left Terraform's state stay out of it (nothing was destroyed), so rerun "+retireNextCommand+" to finish"); err != nil {
+		return leftover(err)
 	}
 	if err := t.Apply(ctx, infra.PlanFile); err != nil {
-		return remote(err)
+		return leftover(remote(err))
 	}
 	r.res.Applied = true
 	r.retireApplied = true
 	return nil
+}
+
+// retireResidue is the account a retirement owes when it stops after the
+// state removal: those addresses are alive in GCP with nothing managing
+// them, and the API delete is the step that has not happened. Naming them is
+// the whole of design §6's rule -- the state and the cloud may not be left
+// disagreeing silently -- and it is printed before the error the run returns,
+// so the user reads what is left over, not only what went wrong.
+func (r *initRun) retireResidue(spec infra.RepoSpec, rets []infra.Retirement, removed []string) {
+	if len(removed) == 0 {
+		return
+	}
+	fmt.Fprintf(r.w, "the run stopped after the state removal, so %s alive in GCP with nothing managing %s (nothing was destroyed):\n",
+		plural(len(removed), "this address is", "these addresses are"), plural(len(removed), "it", "them"))
+	for _, a := range removed {
+		fmt.Fprintf(r.w, "  %s\n", a)
+	}
+	for _, ret := range rets {
+		if ret.Job == "" || !slices.Contains(removed, ret.Address) {
+			continue
+		}
+		region := ret.Region
+		if region == "" {
+			region = spec.Region
+		}
+		fmt.Fprintf(r.w, "  the Cloud Run job %s (%s) still has to be deleted through the API: %s\n",
+			ret.Job, region, gcloudJobDelete(spec.GCPProject, region, ret.Job))
+	}
+	fmt.Fprintf(r.w, "Rerun %s: %s plans and applies what is left, then deletes the orphaned jobs. It is safe to rerun (%s).\n",
+		retireNextCommand, retireNextCommand, "the addresses already out of the state are not removed twice")
 }
 
 // retireConfirm is one of the retirement's two typed confirmations. It is
@@ -338,7 +382,7 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 // --yes could confirm is exactly what the design forbids. reachable=false
 // means the run cannot ask at all (--yes, --non-interactive, --json, a pipe,
 // a coding agent), and then nothing is removed and nothing is deleted.
-func (r *initRun) retireConfirm(rets []infra.Retirement, spec infra.RepoSpec) error {
+func (r *initRun) retireConfirm(rets []infra.Retirement, spec infra.RepoSpec, undone string) error {
 	what := r.retireWhat(rets)
 	confirmed, reachable, err := r.askTyped(what)
 	if err != nil {
@@ -348,10 +392,10 @@ func (r *initRun) retireConfirm(rets []infra.Retirement, spec infra.RepoSpec) er
 		if m := agentMarker(os.Getenv); m != "" {
 			return &initflow.AgentError{Marker: m}
 		}
-		return r.notConfirmed("nothing was removed from Terraform's state and nothing was deleted")
+		return r.notConfirmed(undone)
 	}
 	if !confirmed {
-		return r.notConfirmed("nothing was removed from Terraform's state and nothing was deleted")
+		return r.notConfirmed(undone)
 	}
 	fmt.Fprintln(r.w, "  confirmed")
 	return nil
@@ -426,6 +470,11 @@ func preventDestroyAbort(err error) bool {
 	if !errors.As(err, &xe) {
 		return false
 	}
+	if xe.Command != "plan" {
+		// Only the plan's own failure is re-framed: the same words out of
+		// another command are that command's failure, not a plan abort.
+		return false
+	}
 	return strings.Contains(collapseSpace(xe.Stderr), "has lifecycle.prevent_destroy set, but the plan calls for this resource to be destroyed")
 }
 
@@ -448,12 +497,29 @@ func (r *initRun) retireDelete(ctx context.Context, c *infra.Clients, spec infra
 	var firstErr error
 	for _, ret := range r.retireSet {
 		want, ok := infra.JobDeleteLabels(spec, ret)
-		if !ok || ret.Job == "" {
+		if !ok {
 			continue
 		}
 		region := ret.Region
 		if region == "" {
 			region = spec.Region
+		}
+		if ret.Job == "" {
+			// A job address the state holds whose own `name` could not be
+			// read: the state removal took the address out and Protected
+			// kept it there for that reason, so no apply can delete it
+			// either, and the job is alive in GCP with nothing managing it.
+			// The API delete needs a name and guessing one is forbidden
+			// (design §3.1), so this is a leftover the run names and the
+			// user finishes by hand -- never a silent success (§4.2c).
+			err := fmt.Errorf("its name could not be read from Terraform's state, so the API delete has no name to call: %s", gcloudJobList(spec.GCPProject, region, want))
+			fmt.Fprintf(r.w, "apply ok, job delete impossible: the Cloud Run job behind %s (%s) is alive in GCP with nothing managing it: %v\n", ret.Address, region, err)
+			r.retireFailed(err)
+			if firstErr == nil {
+				firstErr = userErr("the Cloud Run job behind %s (%s) was removed from Terraform's state and is alive in GCP with nothing managing it: %v",
+					ret.Address, region, err)
+			}
+			continue
 		}
 		err := deleteOrphanedJob(ctx, c, spec.GCPProject, region, ret.Job, want)
 		if err == nil {
@@ -567,6 +633,18 @@ func deleteOrphanedJob(ctx context.Context, c *infra.Clients, project, region, j
 // the run never ends with work left and no way to see it through.
 func gcloudJobDelete(project, region, job string) string {
 	return "gcloud run jobs delete " + job + " --project " + project + " --region " + region
+}
+
+// gcloudJobList is the command that finds a job whose name the state could
+// not give: its own labels are what identify it, and they are the same set
+// the API delete would have checked.
+func gcloudJobList(project, region string, want map[string]string) string {
+	var filter []string
+	for _, k := range slices.Sorted(maps.Keys(want)) {
+		filter = append(filter, "labels."+k+"="+want[k])
+	}
+	return "gcloud run jobs list --project " + project + " --region " + region +
+		" --filter='" + strings.Join(filter, " AND ") + "'"
 }
 
 // missingLabels is the label that kept a job from being deleted, named: the

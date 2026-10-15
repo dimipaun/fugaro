@@ -1,0 +1,11 @@
+
+Error: Instance cannot be destroyed
+
+  on main.tf line 2:
+   2: resource "terraform_data" "this" {
+
+Resource terraform_data.this["claude-oauth-token"] has
+lifecycle.prevent_destroy set, but the plan calls for this resource to be
+destroyed. To avoid this error and continue with the plan, either disable
+lifecycle.prevent_destroy or reduce the scope of the plan using the -target
+option.

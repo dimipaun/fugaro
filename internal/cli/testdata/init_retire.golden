@@ -1,0 +1,83 @@
+warning: build.service_account is deprecated and will be ignored: each repository's builds run as its own build account; fugaro init drops it
+warning: couldn't check origin/main's fugaro.yaml for project: aurora (git fetch --quiet origin +refs/heads/main:refs/remotes/origin/main: exit status 128: fatal: unable to access 'https://bitbucket.org/acme/sandbox.git/': Failed to connect to 127.0.0.1 port 1 after 0 ms: Could not connect to server); runs read it from there
+⚠ This change retires 3 addresses (project aurora, GCP project proj-1234, repository acme/sandbox).
+  2 go away; 1 secret stays in Secret Manager with its value.
+
+Why: agent.auth no longer mounts claude-oauth-token-bmb; the named Claude account bmb is no longer a variant this repository deploys.
+
+Going away (2, predicted from the state and the labels) — 1 the plan will delete, 1 deleted through the Cloud Run API after it:
+  module.repo.module.workflow["app_bmb"].google_service_account.this       service account: the named Claude account bmb is no longer a variant this repository deploys
+  module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0]   workflow job: the named Claude account bmb is no longer a variant this repository deploys
+
+Removed from Terraform's state, and never deleted (1):
+  module.repo.google_secret_manager_secret.this["claude-oauth-token-bmb"]
+
+KEPT — Fugaro never deletes a secret or a secret version:
+  claude-oauth-token-bmb           claude-oauth-token-bmb stays in Secret Manager, unmanaged, with its value
+  Their containers carry the fugaro labels, so re-adding one later re-adopts it.
+
+Order of operations:
+  1. remove 1 address from Terraform's state without destroying it: the addresses no apply can delete (a secret container's prevent_destroy, a job whose deletion_protection the state says is on). Nothing in the cloud is deleted by this step.
+  2. plan, show the plan's own counts and its full delete list, and ask again — the project's name typed at a real terminal, never --yes.
+  3. apply, then delete the 1 orphaned Cloud Run job through the API.
+
+Next command:
+  fugaro init --repo . --retire
+⚠ CONFIRM (project aurora, GCP project proj-1234): retire 3 addresses of proj-1234: remove 2 from Terraform's state (destroying nothing), apply 1 changes, then delete 1 Cloud Run job through the API. Delete fugaro-acme-sandbox-app-bmb (us-east5, module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0]). These secrets stay in Secret Manager with their values: claude-oauth-token-bmb (claude-oauth-token-bmb), unmanaged.
+Type aurora to confirm:   confirmed
+removed 2 addresses from Terraform's state; nothing was destroyed
+Plan: 0 to import, 1 to create, 1 to update, 0 to forget, 1 to delete.
+
+⚠ Review these first:
+  ⚠ delete module.repo.module.workflow["app_bmb"].google_service_account.this
+
+Other changes:
+  update module.repo.module.workflow["app"].google_cloud_run_v2_job.this[0]
+  create module.repo.google_artifact_registry_repository.images
+IAM: 0 bindings match the live ones (adopted), 3 new
+the plan above is the retirement's: 0 imports, 1 creates, 1 updates, 1 deletes, 0 replaces. Deleting:
+  delete module.repo.module.workflow["app_bmb"].google_service_account.this
+⚠ CONFIRM (project aurora, GCP project proj-1234): retire 3 addresses of proj-1234: remove 2 from Terraform's state (destroying nothing), apply 1 changes, then delete 1 Cloud Run job through the API. Delete fugaro-acme-sandbox-app-bmb (us-east5, module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0]). These secrets stay in Secret Manager with their values: claude-oauth-token-bmb (claude-oauth-token-bmb), unmanaged.
+Type aurora to confirm:   confirmed
+Still missing for acme/sandbox:
+  workflow app (its job is not deployed yet): image not built yet: fugaro image build --repo acme/sandbox --workflow app
+  Store each secret with its commands, run in your own terminal window one line at a time; the value comes from stdin or a hidden prompt, never argv:
+  bitbucket-token: fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba
+    fugaro secrets set bitbucket-token --repo acme/sandbox < PATH-TO-THE-VALUE-FILE
+  claude-oauth-token: fugaro-acme-sandbox-claude-oauth-token-d68d08fb66f32201
+    claude setup-token
+    fugaro secrets set claude-oauth-token --repo acme/sandbox
+  Then rerun fugaro init --repo when they are stored.
+deleted the orphaned Cloud Run job fugaro-acme-sandbox-app-bmb (us-east5, module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0])
+The local config <tmp> changes:
+  + base_images:
+  +     base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.4.0
+  + build:
+  +     service_account: fugaro-build@proj-1234.iam.gserviceaccount.com
+  +     machine_type: E2_HIGHCPU_8
+  - build: { service_account: fugaro-build@proj-1234.iam.gserviceaccount.com }
+  + max_parallel: 20
+  + endpoints:
+  +     run: http://127.0.0.1:<port>/
+  +     logging: http://127.0.0.1:<port>/
+  +     secret_manager: http://127.0.0.1:<port>/
+  +     storage: http://127.0.0.1:<port>/storage/v1/
+  +     iam: http://127.0.0.1:<port>/
+  +     artifact_registry: http://127.0.0.1:<port>/
+  +     resource_manager: http://127.0.0.1:<port>/
+  +     cloud_scheduler: http://127.0.0.1:<port>/
+  +     service_usage: http://127.0.0.1:<port>/
+  +     no_auth: true
+  - endpoints: { run: http://127.0.0.1:<port>/, secret_manager: http://127.0.0.1:<port>/, storage: http://127.0.0.1:<port>/storage/v1/, iam: http://127.0.0.1:<port>/, artifact_registry: http://127.0.0.1:<port>/, resource_manager: http://127.0.0.1:<port>/, logging: http://127.0.0.1:<port>/, cloud_scheduler: http://127.0.0.1:<port>/, service_usage: http://127.0.0.1:<port>/, no_auth: true }
+  +     acme/sandbox:
+  +         provider: bitbucket
+  +         base_branch: master
+  +         workflows:
+  +             - app
+  -   acme/sandbox: { provider: bitbucket, base_branch: master, workflows: [web] }
+  - base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.4.0}
+backed up the old local config to <tmp>
+wrote <tmp>
+published the shared config to gs://fugaro-runs-proj-1234/fugaro/config.yaml
+note: to let teammates use this installation without setup, run fugaro init --anchor in this checkout (it checks the images first)
+project: aurora (GCP proj-1234)

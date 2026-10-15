@@ -450,6 +450,62 @@ So do it in this order:
 2. **A secret only the removed workflow used:** Terraform must forget it rather than delete it. Take it out of the state as in "Offboarding a repository", step 2 (a `removed` block, or `terraform state rm '<address>'`, run by hand in the repository's working directory, outside fugaro's guard); the secret and its value stay in Secret Manager, and `gcloud secrets delete` removes it if you want it gone. Skip this when no secret is used by that workflow alone.
 3. **Change `fugaro.yaml`,** merge it, and run `fugaro init --repo --allow-delete <address> …`, naming each address the guard listed (the refusal prints them). Read the plan: it must delete only what you removed. The remaining jobs get their protection back in the same apply.
 
+The same transition has a one-command form since 0.7.2, and it is the one to reach for: `fugaro init --repo --retire`, below. It also covers the cases this section's manual order does not — a job whose `deletion_protection` can no longer be lowered because its variant has already left the configuration, and a secret container Terraform refuses to destroy.
+
+## Changing auth, or removing a workflow, secret or provider
+
+`fugaro init --repo` reads the repository's Terraform state and the labels on its jobs and secrets before it plans, and prints what the change retires:
+
+```
+⚠ This change retires 3 addresses (project aurora, GCP project proj-1234, repository acme/sandbox).
+  2 go away; 1 secret stays in Secret Manager with its value.
+
+Why: agent.auth no longer mounts claude-oauth-token-bmb; the named Claude account bmb is no longer a variant this repository deploys.
+
+Going away (2, predicted from the state and the labels) — 1 the plan will delete, 1 deleted through the Cloud Run API after it:
+  module.repo.module.workflow["app_bmb"].google_service_account.this       service account: the named Claude account bmb is no longer a variant this repository deploys
+  module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0]   workflow job: the named Claude account bmb is no longer a variant this repository deploys
+
+Removed from Terraform's state, and never deleted (1):
+  module.repo.google_secret_manager_secret.this["claude-oauth-token-bmb"]
+
+KEPT — Fugaro never deletes a secret or a secret version:
+  claude-oauth-token-bmb           claude-oauth-token-bmb stays in Secret Manager, unmanaged, with its value
+  Their containers carry the fugaro labels, so re-adding one later re-adopts it.
+
+Order of operations:
+  1. remove 1 address from Terraform's state without destroying it: the addresses no apply can delete (a secret container's prevent_destroy, a job whose deletion_protection the state says is on). Nothing in the cloud is deleted by this step.
+  2. plan, show the plan's own counts and its full delete list, and ask again — the project's name typed at a real terminal, never --yes.
+  3. apply, then delete the 1 orphaned Cloud Run job through the API.
+
+Next command:
+  fugaro init --repo . --retire
+```
+
+A retirement the run only *predicts* is a warning, not a refusal: an ordinary `fugaro init --repo` goes on to plan, and exits 1 only in the two cases below. A retirement an ordinary run cannot finish is one of:
+
+- **A plan Terraform refuses on a `prevent_destroy` resource.** A secret container keeps `prevent_destroy` in the configuration, so a plan that would destroy one fails before the guard sees it. The run re-frames that failure in its own words — the summary above, and `Rerun with --retire` — and prints no Terraform text of its own; Terraform's stderr still goes to your terminal, and the workdir keeps it.
+- **A job whose `deletion_protection` the state says is on, after its variant left `fugaro.yaml`.** No apply can lower it any more (`--allow-job-delete` reaches only the jobs the configuration still declares), so the run refuses (exit 1) and names `fugaro init --repo . --retire`.
+
+`fugaro init --repo --retire` is the whole transition, in the order the design fixes:
+
+1. **Remove the protected addresses from Terraform's state**, with `terraform state rm` (which destroys nothing in GCP): a secret container, and a job the state holds with its protection still on. This runs *before* the plan, because no plan exists until it has.
+2. **Plan, print the plan's own counts and its full delete list, and confirm again** — the project's name typed at a real terminal. `--yes`, `--json`, `--non-interactive` and a pipe cannot take this confirmation; a coding agent's session cannot either.
+3. **Apply**, then **delete the orphaned Cloud Run jobs through the Cloud Run API** — and only jobs carrying this repository's own labels, of a variant the configuration no longer builds. A job that is not ours, or another variant's, is refused, with the `gcloud run jobs delete` command to run by hand.
+4. **Say what is left** if it stops in the middle: the addresses that left the state (alive in GCP, with nothing managing them until the delete runs) and the `gcloud` command that finishes it. Rerunning `fugaro init --repo --retire` is safe: an address the state no longer holds is not removed again, and the orphaned jobs are found by their labels.
+
+**Fugaro never deletes a secret or a secret version.** The container is taken out of Terraform's state and stays in Secret Manager with its value; `gcloud secrets delete` removes it if you want it gone. The container keeps its `fugaro` labels, so re-adding the mount later re-adopts it in the next plan. A container a previous retirement already released is reported as one informational line ("no longer mounted by fugaro.yaml and no longer in Terraform's state"), not as a retirement: nothing is left to do about it, and the summary, the gate and the `--retire` suggestion do not recur for it.
+
+`--retire` excludes `--plan-only`, `--print-vars` and `--forget` (each is refused: they print or forget rather than apply). `--allow-delete <address>` may be passed with it and can only narrow what the guard allows: the retirement's own allow-list already covers exactly the addresses its summary named.
+
+**Worked example (2026-10-14).** A repository had deployed the named Claude account `bmb` as the variant `app_bmb`, and its owner moved back to the default account. `fugaro.yaml` lost the account; the state and the labels still held the variant's job, its service account and the `claude-oauth-token-bmb` container. In order: `agent.auth` back to `oauth` in the checkout, merge; `fugaro init --repo` (the summary above, and the refusal, because the state said `deletion_protection = true` on `app_bmb`'s job); `fugaro init --repo --retire`, confirming the project name twice. The run removed the container's address and the job's address from the state, planned and applied the service account's deletion, deleted the job through the API, and left the container and its token in Secret Manager, unmanaged.
+
+**Binaries older than 0.7.2.** Do it by hand in the repository's working directory, and in this order:
+
+1. `fugaro init --repo --allow-job-delete` (only reaches jobs the configuration still declares).
+2. `terraform state rm '<address>'` for each secret container and each protected job, with the addresses from `terraform state list` — this destroys nothing, and it is what makes the next plan possible.
+3. `fugaro init --repo --allow-delete <address> …`, naming each address the guard lists, then `gcloud run jobs delete <name> --region <region>` for each orphaned job. **Do not hand-write a `removed { … }` block into the working directory** (`$XDG_STATE_HOME/fugaro/terraform/<gcp-project>/repos/<slug>`): `PrepareWorkdir` wipes and rewrites that directory on the next run, so the file does not survive to the plan it was meant for. `terraform state rm` is the mechanic that does.
+
 ## Flags to pass again
 
 `init` doesn't remember every flag. The local config keeps the state bucket, launchers, operators, alert email, base image and scheduler region. It also keeps the shared budget: `init --firebase` records `budget.firebase_project`, so a plain `fugaro init` or `init --repo` afterwards keeps the backend, and `--budget-admin` entries are remembered in `terraform.budget_admins` when passed. `--firebase <id>` and `--budget-mode` themselves are not remembered: pass them again for `init --firebase` and to change the mode (`--budget-mode off` turns the jobs' backend off). The budget flags (`--budget`, `--budget-currency`, `--billing-account`), `--registry-cleanup` and `--no-log-isolation` are not kept: leave one out and the plan removes or resets what it set. The guard refuses a plan that deletes the budget, alert channel or member grants, with a hint naming the flags that keep them. `fugaro init --repo` needs `--github-app-id` only the first time (it is stored), and records whether the repository uses Vertex AI, which `fugaro init` reads. Read the plan every time.
@@ -548,7 +604,7 @@ Plain `fugaro init`, run in the checkout, also writes the line as its last stage
 There is no offboarding command. **Only step 1 is implemented.** Steps 2 and 3 are an unsupported outline: no fugaro command produces a removal or destroy plan (`init --repo` always plans the whole `fugaro.yaml`), so they mean running `terraform` by hand in the workdir, outside fugaro's guard and environment allowlist, and `PrepareWorkdir` overwrites hand edits the next time `init --repo` runs. Every resource that could lose data is protected on purpose: jobs by `deletion_protection`, and secrets, the runs bucket and every registry by `prevent_destroy`, which makes a destroy plan fail at plan time until you edit the module.
 
 1. **Lower the jobs' protection:** `fugaro init --repo --allow-job-delete`, an apply whose only change is `deletion_protection = false` on the repository's jobs (workflow jobs and the check job). The flag is a variable of that apply, and the next run without it puts the protection back.
-2. **Keep the secrets.** They hold values Terraform never saw, and `prevent_destroy` would refuse to delete them. Take them out of the repository's state first, with a `removed { from = … lifecycle { destroy = false } }` block for each secret in the repository's working directory (`$XDG_STATE_HOME/fugaro/terraform/<gcp-project>/repos/<slug>`), so that Terraform forgets them and leaves them in Secret Manager. Delete them yourself later with `gcloud secrets delete` if you want them gone.
+2. **Keep the secrets.** They hold values Terraform never saw, and `prevent_destroy` would refuse to delete them. Take them out of the repository's state first, so that Terraform forgets them and leaves them and their values in Secret Manager: `fugaro init --repo --retire` does exactly that (see "Changing auth, or removing a workflow, secret or provider"), and `terraform state rm '<address>'` run by hand in the repository's working directory is the fallback for a binary older than 0.7.2. Do **not** hand-write a `removed { from = … lifecycle { destroy = false } }` block into the working directory (`$XDG_STATE_HOME/fugaro/terraform/<gcp-project>/repos/<slug>`): `PrepareWorkdir` wipes and rewrites that directory, so the file does not survive to the run it was meant for, and whether `removed.from` accepts an instance-key address of a still-declared resource is unverified. Delete the secrets yourself later with `gcloud secrets delete` if you want them gone.
 3. **Destroy the rest, by hand.** The repository's registry has `prevent_destroy`, so this needs the module edited first, and nothing checks the plan for you: read it line by line. The registry, its images, the job accounts, the build account and the check job and schedule go with it, and the runs bucket keeps the repository's `runs/`, `cache/` and `builds/` objects until their lifecycle rules delete them (`builds/` never expires: delete it by hand).
 
 Finish with `fugaro init --repo --forget` if any state remains, and remove the repository from the local config's `repos`. The repository stays in the published shared config until you edit `fugaro/config.yaml` by hand (a later `init --publish-config` merges, so it does not remove it). Steps 2 and 3 haven't been exercised live.

@@ -457,6 +457,11 @@ type initResult struct {
 	Builds     []string                   `json:"builds,omitempty"`
 	Missing    []string                   `json:"missing,omitempty"`
 	Warnings   []string                   `json:"warnings,omitempty"`
+	// Retire is the retirement set the run predicted -- the summary's own
+	// rows, with the state's and the labels' fields filled in -- so --json
+	// carries the same thing the run printed (design §3.2). It is set by
+	// every run that reads the state, --plan-only and --retire alike.
+	Retire []infra.Retirement `json:"retire,omitempty"`
 	// Stages and LeftForYou are the converge's account (initflow): each
 	// stage's state, and what only the user can do.
 	Stages     []initflow.StageResult `json:"stages,omitempty"`
@@ -1829,21 +1834,27 @@ func (o *initOptions) checkRepo() error {
 		return err
 	}
 	n := 0
-	for _, b := range []bool{o.planOnly, o.printVars, o.forget} {
+	if o.retire && o.planOnly {
+		// terraform state rm is a change to the state, and --plan-only's
+		// contract is that it creates and changes nothing (design §3.3).
+		return userErr("--retire and --plan-only exclude one another: retiring removes addresses from Terraform's state, and --plan-only changes nothing. Run --plan-only first to read the predicted retirement, then --retire to run it")
+	}
+	if o.retire && o.printVars {
+		// --print-vars writes the tfvars and returns before the first cloud
+		// call -- no discovery, no state, no plan -- so a --retire that came
+		// with it would print the file and drop the retirement silently.
+		return userErr("--retire and --print-vars exclude one another: --print-vars writes the tfvars and stops before the state is read, so the retirement would be dropped. Run --print-vars on its own, then --retire")
+	}
+	for _, b := range []bool{o.planOnly, o.printVars, o.forget, o.retire} {
 		if b {
 			n++
 		}
 	}
 	if n > 1 {
-		return userErr("--plan-only, --print-vars and --forget exclude one another")
+		return userErr("--plan-only, --print-vars, --forget and --retire exclude one another")
 	}
 	if o.forget && (len(o.allowDelete) > 0 || o.allowJobDelete || o.noBuild || o.retire) {
 		return userErr("--forget only removes the repository from Terraform's state; it takes no --allow-delete, --allow-job-delete, --no-build or --retire")
-	}
-	if o.retire && o.planOnly {
-		// terraform state rm is a change to the state, and --plan-only's
-		// contract is that it creates and changes nothing (design §3.3).
-		return userErr("--retire and --plan-only exclude one another: retiring removes addresses from Terraform's state, and --plan-only changes nothing. Run --plan-only first to read the predicted retirement, then --retire to run it")
 	}
 	if set := o.installationFlags(); len(set) > 0 {
 		return userErr("%s set(s) up the installation, not a repository: run fugaro init with it, then fugaro init --repo", strings.Join(set, ", "))

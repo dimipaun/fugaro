@@ -1449,6 +1449,34 @@ func TestOrphansKeptContainerAloneIsANoteNotARetirement(t *testing.T) {
 	}
 }
 
+// Readiness unions every live, correctly-labelled container back into
+// spec.Secrets (its N4 rule, so a config edit can never shrink the module's
+// for_each), so a container whose logical name the configuration no longer
+// mounts is still a *key* of spec.Secrets by the time Orphans reads it. The
+// note rule therefore asks the workflows' own mounts, not that map: reading
+// the map would make every released container look mounted and leave the
+// convergence note unreachable, which is the regression this pins.
+func TestOrphansNoteAsksTheMountsNotTheUnionedSecrets(t *testing.T) {
+	f := newCloud(t)
+	spec := originSpec(t, `agent: { auth: api-key }`)
+	// One the config mounts, and one only Readiness' union knows about.
+	spec.Secrets["claude-oauth-token-bmb"] = "claude-oauth-token-bmb"
+	liveContainer(f, spec, "claude-oauth-token-bmb", "claude-oauth-token-bmb")
+	liveContainer(f, spec, "anthropic-api-key", "anthropic-api-key")
+
+	_, notes, _, err := Orphans(context.Background(), f.c, spec, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, n := range notes {
+		got = append(got, n.Logical)
+	}
+	if !slices.Equal(got, []string{"claude-oauth-token-bmb"}) {
+		t.Errorf("notes = %q, want only the logical no workflow mounts: the unioned key is not a mount", got)
+	}
+}
+
 // The secret half is a new call, and it must be a label-filtered list: the
 // discovery path Gets each logical name of spec.Secrets, which can only find
 // a container the new spec still produces (design §3.1a). So the test reads
