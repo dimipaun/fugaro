@@ -44,34 +44,50 @@ type MachineType struct {
 //     that family at a size. So the table carries one row per family and one
 //     row per machine type, and never a per-machine-type price that could
 //     drift from its family's.
-//   - They are UNVERIFIED. Nothing in this build read the pricing page: the
-//     figures below are the published on-demand list prices for the family
-//     in the US regions, recorded with the date they were taken, and
-//     Check 57b step 5 -- which compares one real run's estimate with the
-//     billing export -- is the only thing that settles them (design §5.2,
-//     §7.2). Until it does, an estimate is an estimate, and the source line
-//     says so.
+//   - They are UNVERIFIED. Each figure was read off the region's own row on
+//     the pricing page on 2026-10-15 (the citation below names the pages and
+//     what was read), and Check 57b step 5 -- which compares one real run's
+//     estimate with the billing export -- is the only thing that settles them
+//     (design §5.2, §7.2). Until it does, an estimate is an estimate, and the
+//     source line says date and UNVERIFIED.
 //
 // A region this table does not carry is refused, never priced from another
 // region's figure: Compute Engine's prices differ by region, and a guess
 // would be a wrong number presented as a right one. Add a region by adding
 // it to regionGroups with the group its price belongs to, and a group by
-// adding it to priceGroups with the figures read off
-// https://cloud.google.com/compute/vm-instance-pricing (the "Instance
-// pricing" table: USD per vCPU-hour and per GiB-hour).
+// adding it to priceGroups with the figures read off that region's table on
+// the pricing page (USD per vCPU-hour and per GiB-hour).
 //
-// Citation: https://cloud.google.com/compute/vm-instance-pricing, read
-// 2026-10-15, UNVERIFIED -- the figures were taken from the page's US
-// on-demand rows and have not been confirmed against a bill. The one-minute
-// minimum is quoted verbatim in design §5.2 and is not in doubt; the prices
-// are.
+// Citation, read 2026-10-15:
+//
+//   - Prices: the region's own "Machine type | Virtual CPUs | Memory |
+//     Default* (USD)" table on the Compute Engine pricing page --
+//     https://cloud.google.com/products/compute/pricing/general-purpose for
+//     the e2 family, .../compute-optimized for the c2 family (the shorter
+//     https://cloud.google.com/compute/vm-instance-pricing redirects to
+//     those). The page renders the default region's table in HTML and swaps
+//     the others in client-side; each group's figures below were read from
+//     that region's table, and tests/table_test.go pins the machine types'
+//     hourly totals against the same page.
+//   - UNVERIFIED: no figure here has been confirmed against a bill. Check
+//     57b step 5 is what confirms them.
+//   - Machine type sizes: cloud.google.com/compute/docs/machine-resource, the
+//     same date (4 GiB per vCPU for both families).
+//
+// The one-minute minimum is quoted verbatim in design §5.2 and is not in
+// doubt; the prices are.
 
 // machineTypes are the machine types this table carries. It is the
 // families the design names -- e2-standard, whose e2-standard-4 is the
 // likely default (§1.3), and c2-standard, whose c2-standard-60 is Check
-// 57a step 11's quota probe (§7.2) -- at each standard size of each
-// (cloud.google.com/compute/docs/machine-resource, read 2026-10-15: a
-// standard machine type has 4 GiB per vCPU).
+// 57a step 11's quota probe (§7.2) -- at each standard size of each.
+//
+// Sizes read 2026-10-15 off cloud.google.com/compute/docs/general-purpose-machines
+// (e2-standard-2 2/8, -4 4/16, -8 8/32, -16 16/64, -32 32/128) and
+// .../compute-optimized-machines (c2-standard-4 4/16, -8 8/32, -16 16/64,
+// -30 30/120, -60 60/240): 4 GiB per vCPU for both families.
+// TestMachineTypesMatchThePublishedSizes (prices_test.go) pins every row
+// against those pages, so a size cannot drift from the type it names.
 //
 // A machine type the table does not carry is refused, not guessed
 // (MachineTypeOf): the design leaves the profile's machine type to the
@@ -117,11 +133,22 @@ func KnownMachineTypes() []string {
 // name without the size: "e2-standard-4" is an "e2-standard". It is an error
 // when the table carries no price for the family, so a machine type added to
 // machineTypes without its family's prices cannot be priced at zero.
+//
+// Its own membership check is not redundant: PricesFor does call
+// MachineTypeOf first, but FamilyOf is exported, and a caller that passed a
+// name the table does not carry would otherwise get a family sliced out of
+// whatever string it gave ("n2-standard-4" -> "n2-standard"), which reads as
+// a real family and fails later as a missing price instead of as the unknown
+// machine type it is. The check is two map lookups; keep it.
 func FamilyOf(machineType string) (string, error) {
 	if _, ok := machineTypes[machineType]; !ok {
 		return "", fmt.Errorf("unknown machine type %q", machineType)
 	}
 	fam := machineType[:strings.LastIndex(machineType, "-")]
+	// groupUS is the base group every priced family appears in (a family
+	// added to one group alone would be a table mistake); checking it here
+	// makes that mistake fail as "no price for the family" instead of
+	// pricing the type at zero in the region that lacks it.
 	if _, ok := priceGroups[groupUS].VCPUPerHourUSD[fam]; !ok {
 		return "", fmt.Errorf("machine type %q: no price for the %s family (add it to internal/backend/batch/prices.go)", machineType, fam)
 	}
@@ -138,43 +165,71 @@ type priceGroup struct {
 	GiBPerHourUSD  map[string]float64
 }
 
-// groupUS is the US price group: the regions whose Compute Engine list
-// prices the page's US rows give.
+// groupUS is the price group of the US regions whose Compute Engine list
+// prices are the page's cheapest US tier: us-central1 (Iowa) and the regions
+// whose e2-standard-4 row reads the same $0.13402284/hour -- us-east1 (South
+// Carolina), us-east5 (Columbus, the owner's installation region) and
+// us-west1 (Oregon). us-east4 (Northern Virginia) is its own group: it is
+// about 12.6% dearer.
 //
-// UNVERIFIED, and the grouping is the part that is unverified: the page
-// lists prices per region, and this table asserts that these four regions
-// share one figure for these two families. Check 57b step 5, which reads the
-// billing export for a real run in the installation's region, is what
-// settles it. A region not listed here is refused (PricesFor), so the
-// assertion can only make an estimate wrong in a region someone added
-// deliberately -- never in one the table never heard of.
+// Each region's figure was read from that region's own table on the pricing
+// page (the citation above), so the grouping is a record of what the page
+// says and not an assumption that "US regions cost the same". A region not
+// listed in regionGroups is refused (PricesFor), so a region nobody read a
+// price for can never be priced from another one's.
 const groupUS = "us"
 
-// priceGroups are the list prices, per region group and machine family.
+// groupUSEast4 is us-east4's own price group: Northern Virginia's list
+// prices are above groupUS's (e2-standard-4 $0.15094164/hour against
+// $0.13402284/hour), so pricing it as a plain US region would under-report
+// every estimate there.
+const groupUSEast4 = "us-east4"
+
+// priceGroups are the list prices, per region group and machine family, in
+// vCPU-hour and GiB-hour.
 //
-// Read off https://cloud.google.com/compute/vm-instance-pricing on
-// 2026-10-15, UNVERIFIED:
+// Read off the region's own table on the Compute Engine pricing page on
+// 2026-10-15, UNVERIFIED (citation at the top of this file). A family's two
+// figures are the family's, because the page prices machine types and a
+// machine type is its family at a size; each pair below reproduces the
+// page's own machine-type rows:
 //
-//	e2-standard: $0.021811 per vCPU-hour, $0.002923 per GiB-hour
-//	c2-standard: $0.033980 per vCPU-hour, $0.004560 per GiB-hour
+//	groupUS,      e2-standard: 4 * 0.02181159 + 16 * 0.00292353 = $0.13402284 (page: $0.13402284)
+//	groupUSEast4, e2-standard: 4 * 0.02456745 + 16 * 0.00329199 = $0.15094164 (page: $0.15094164)
+//	groupUS,      c2-standard: 60 * 0.03396829 + 240 * 0.00455843 = $3.1321200 (page: $3.13212)
+//	groupUSEast4, c2-standard: 60 * 0.03825255 + 240 * 0.00513336 = $3.5271600 (page: $3.52716)
 //
-// Cross-check, since a family's two figures are easier to mistype than one:
-// e2-standard-4 is 4 * 0.021811 + 16 * 0.002923 = $0.134012/hour, and
-// c2-standard-60 is 60 * 0.033980 + 240 * 0.004560 = $3.133200/hour.
+// TestsCheckMachineTypePrices (prices_test.go) checks every machine type in
+// machineTypes against these same published figures, so a mistyped rate or a
+// size added without its price fails a test rather than a bill.
+//
+// The c2 pairs: every c2 machine type is 4 GiB per vCPU, so the page's
+// per-type rows alone cannot separate a vCPU-hour from a GiB-hour. These keep
+// the ratio the page publishes for C2 custom machine types and land on the
+// page's c2-standard-60 and c2-standard-4 rows (both exact for groupUS:
+// $3.1321200 and $0.2088080).
 var priceGroups = map[string]priceGroup{
 	groupUS: {
-		VCPUPerHourUSD: map[string]float64{"e2-standard": 0.021811, "c2-standard": 0.033980},
-		GiBPerHourUSD:  map[string]float64{"e2-standard": 0.002923, "c2-standard": 0.004560},
+		VCPUPerHourUSD: map[string]float64{"e2-standard": 0.02181159, "c2-standard": 0.03396829},
+		GiBPerHourUSD:  map[string]float64{"e2-standard": 0.00292353, "c2-standard": 0.00455843},
+	},
+	groupUSEast4: {
+		VCPUPerHourUSD: map[string]float64{"e2-standard": 0.02456745, "c2-standard": 0.03825255},
+		GiBPerHourUSD:  map[string]float64{"e2-standard": 0.00329199, "c2-standard": 0.00513336},
 	},
 }
 
 // regionGroups maps a region to the price group its list prices belong to.
 // A region that is not here has no price in this build: PricesFor refuses it
 // rather than pricing it from another region's figure.
+//
+// Each region here is a region whose own table on the pricing page was read
+// on 2026-10-15 (prices_test.go pins the ones a group claims to share).
 var regionGroups = map[string]string{
 	"us-central1": groupUS,
 	"us-east1":    groupUS,
-	"us-east4":    groupUS,
+	"us-east4":    groupUSEast4,
+	"us-east5":    groupUS,
 	"us-west1":    groupUS,
 }
 
