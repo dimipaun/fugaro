@@ -125,7 +125,7 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `followup.allow_public` | repo | it decides whose comments steer a run with the repository's credentials |
 <!-- scope-table:end -->
 
-Outside this table: secrets' values live in Secret Manager and are never in any layer; per-person Claude tokens are a later project; the individual layer is flags and env only.
+Outside this table: secrets' values live in Secret Manager and are never in any layer; per-person Claude tokens are a later project; the individual layer is flags and env only. `claude_models` (§6) has no row here on purpose: it is a top-level key of the layer file, not a `fugaro.yaml` key at all, so it exists in no repository's file to be scoped — a repository cannot write it even in principle, which is the whole point of the key (§8).
 
 ## 6. The project layer file
 
@@ -158,7 +158,14 @@ profiles:
     image: { tools: { node: "22" } }
     commands: { build: npm run build, test: npm test }
 default_profile: java-service
+# An explicit Claude model ID a route the installation config already
+# defines also serves (mixed-credentials.md §4): provider name -> one
+# "anthropic/<id>" per line, never a pattern.
+claude_models:
+  openrouter: ["anthropic/claude-sonnet-5.5"]
 ```
+
+`claude_models` is the one top-level key (`version`, `project`, `gcp_project`, `defaults`, `profiles`, `default_profile`, `claude_models`) that adds to the **local** config rather than to a repository's file: it names a route only the owner defines and says which Claude model that route also serves, so a senior review can be routed to it. It may only add an explicit `anthropic/<id>` to a provider the installation config already lists — never create a provider, never change its `base_url`, `auth`, `secret` or `allow_data_to`, never name a class of models — and a name the installation config does not define, an empty list or an entry overlapping another route's pattern is refused, at bootstrap and by `fugaro validate`, before any call. The price is not the layer's to set: it comes from the operator's `model_prices` (or the catalog), so the layer cannot make a call cheaper than the ceiling says. The claim reaches a run through the layer (it is never written into the deployed job's `FUGARO_MODEL_PROVIDERS`), so removing it from the layer puts the refusal back on the next launch.
 
 Reserved keys, refused with a message: `environments` (the image catalog, Phase 2, blocked on the base image consolidation) and `extends` (profiles do not extend each other in this release). The object has a 64 KiB limit.
 
@@ -209,8 +216,8 @@ Its shape is checked strictly, with the shared config's trust rules: one documen
 **The threat model (design §11):**
 
 - **Who can write.** Operators, since the 0.7.0 bucket IAM hardening. An installation whose operator has not yet run `fugaro init` to apply the 0.7.0 grants still has every launcher holding `roles/storage.objectAdmin` too (see the lead note above).
-- **What a hostile or careless layer could do.** Replace build or test commands for every repository that takes a profile: this already takes effect, through the embedded layer every launch carries, with no human reviewing the change first. Since Task 14 and Task 15 shipped, add `image.apt`, `image.setup` or `image.tools` (as dangerous as `image.setup`: it names tools installed into the image) or turn off `image.skip_build_scripts`, which then runs in Cloud Build, including on the nightly rebuild, with no human launching anything. `commands.lint` and `commands.fix` are executable keys too, like `commands.build` and `commands.test`. Also: raise `resources` or `timeouts`; change `agent.model`, `recipe` or `auth`; point `base` at another shipped kind; or hide any of this, since a plain bucket write leaves no review trail.
-- **What already bounds it.** The project layer cannot hold policy keys, `secrets`, `followup.*`, `base_branch`, `reviewers`, `dockerfile` or `instructions` (§5); the policy ceiling (dollars, tokens, allowed models) still comes from the owner and only tightens; base images stay `config.Bases`; and every run records the layer's sha256 and generation, which `fugaro runs ls`, `diagnose` and `doctor` show.
+- **What a hostile or careless layer could do.** Replace build or test commands for every repository that takes a profile: this already takes effect, through the embedded layer every launch carries, with no human reviewing the change first. Since Task 14 and Task 15 shipped, add `image.apt`, `image.setup` or `image.tools` (as dangerous as `image.setup`: it names tools installed into the image) or turn off `image.skip_build_scripts`, which then runs in Cloud Build, including on the nightly rebuild, with no human launching anything. `commands.lint` and `commands.fix` are executable keys too, like `commands.build` and `commands.test`. Also: raise `resources` or `timeouts`; change `agent.model`, `recipe` or `auth`; point `base` at another shipped kind; or hide any of this, since a plain bucket write leaves no review trail. And, since the claim shipped, add one explicit Claude model ID to a route the installation config already defines (`claude_models`, §6), which sends that route's model to the provider the owner set up under the owner's own terms — nothing more: the layer cannot create a route, change a route's `base_url`, `auth`, `secret` or `allow_data_to`, name a provider the operator did not define, claim a class of Claude models, or set a price.
+- **What already bounds it.** The project layer cannot hold policy keys, `secrets`, `followup.*`, `base_branch`, `reviewers`, `dockerfile` or `instructions` (§5); the policy ceiling (dollars, tokens, allowed models) still comes from the owner and only tightens; base images stay `config.Bases`; and every run records the layer's sha256 and generation, which `fugaro runs ls`, `diagnose` and `doctor` show. A `claude_models` claim (§6) is bounded by the route it names: the traffic still goes to a provider the owner defined, under that provider's `allow_data_to` (so a repository the owner did not list for it is refused, not sent), the claim is one explicit ID rather than a class, the run needs `agent.auth: api-key` and `budget.mode: enforce` like any other provider model, and the price is the owner's `model_prices`', never the layer's.
 - **The fix, shipped in 0.7.0.** [design/bucket-iam.md](design/bucket-iam.md) narrows the bucket grant so only operators (and, for its own copy, a repository's own build account) can write `fugaro/` and `builds/<slug>/`. Each installation's operator applies it by running `fugaro init`; until they do, the bucket stays writable by every launcher (see the lead note above).
 
 ## 9. Rollout (0.6.0)
