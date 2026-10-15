@@ -3,7 +3,7 @@
 Status: design for review (2026-10-08), from the owner's "Generic-Tool Hardening Spec" (`fugaro-generic-tool-spec.md`, 158 lines, 11 sections) and two owner rulings:
 
 - **R1.** Everything in the spec except section 1 is **added to release 0.7.0**, the hard-cut base-image consolidation release ([base-image.md](base-image.md), [plans/2026-10-08-base-image.md](../plans/2026-10-08-base-image.md)). The spec's header says "following 0.7.0"; the ruling overrides it.
-- **R2.** Section 1, the Docker-capable execution backend, is **release 0.8.0**. It stays measure-first. Its design and its measurement are here so the work can start right after 0.7.0, but it is not part of any 0.7.0 task group or of the 0.7.0 release notes.
+- **R2.** Section 1, the Docker-capable execution backend, is **release 0.8.0**. It stays measure-first. Its design and its measurement are here so the work can start right after 0.7.0, but it is not part of any 0.7.0 task group or of the 0.7.0 release notes. **(Note, 2026-10-15: the owner's release ruling moved section 1 to release 0.9.0 — the compute-instance backend is Task 28, and the ruling moved it together with project-centric phases 3 to 6. See [compute-backend.md](compute-backend.md) §6.2, retitled to 0.9.0. Everything R2 says about the work's shape and its measure-first order stands; only the release changed.)**
 - **R3.** Decisions G1 to G27 are **all taken as recommended**: the owner's instruction on merging this design and its plan (PR #214) was "merge #214 with the recommendations". No veto alternative in §14 is chosen.
 - **R4 (2026-10-08, after R1 to R3).** Section 8's cost preview (G20) also moves to **release 0.8.0**, alongside section 1; it is placed as §1.1 below. Its design and its tasks stay exactly as recommended (R3), only the release changes: it is no longer a 0.7.0 task group or part of the 0.7.0 release notes, and it can start right after 0.7.0 ships.
 
@@ -37,7 +37,7 @@ Read from the code at `origin/main` 65a6a24. Each claim names its file.
 
 **Summary.** About a fifth of the spec is shipped or needs only documentation: logs, model routing, the existing SECURITY.md and backend seam, the recipe layers and listing. Recipes need the most new work: three format extensions and two pieces of runner machinery. The dashboard items look small in the spec but need new data first: watch has never seen a finished run.
 
-## 1. Docker-capable execution backend (release 0.8.0, measure-first)
+## 1. Docker-capable execution backend (release 0.9.0 — R2 as amended by the owner's release ruling of 2026-10-15; measure-first)
 
 **Correction to the spec's premise.** Fugaro already runs on gen-2. gen-2 gives full Linux syscall compatibility, but a Cloud Run container is not privileged. Whether a Docker daemon can run there at all, in any form, is the first unknown; startup latency is the second. Both are unverified. The candidates:
 
@@ -62,7 +62,7 @@ Read from the code at `origin/main` 65a6a24. Each claim names its file.
 
 **Threshold (G2).** gen-2 is suitable if A passes and B's median start-to-services-ready is at most 60 s above D's median. A VM backend is worth building if C's median is at most 120 s above D's. Otherwise Docker stays out, and the documented answer is `fugaro-services` plus `image.apt`. Veto alternative: no threshold; the owner decides from the numbers.
 
-**The 0.8.0 phase, BLOCKED until Check 31's FACT lines are recorded.**
+**The section-1 phase, BLOCKED until Check 31's FACT lines are recorded — and release 0.9.0** (the owner's release ruling of 2026-10-15 moved it off 0.8.0; see R2 above).
 - **If gen-2 is suitable.** A per-workflow `docker: true` key (scopes: project via profile, and repository). The workflow's job gets a larger `ephemeral-storage`, the image gets rootless podman with a `docker` shim, and the runner starts the user-mode service before the first stage. The agent's environment gains `DOCKER_HOST` (unix socket in `$XDG_RUNTIME_DIR`), which is the first addition to the env allowlist since M9 and must be reviewed as such. No change to the `Backend` interface.
 - **If only the VM backend is suitable.** `internal/backend/batch` implements `Backend` and passes `backendtest.Run` on a new fake. The `backend:` key gains `cloud-batch`. `fugaro init` gets a Batch stage: the job template, its service account (the same per-workflow account), and the log routing into the existing log bucket. Provisioning and log isolation are outside the seam (docs/backends.md), so this is the larger option, sized at about 12 tasks.
 
@@ -93,7 +93,7 @@ A ceiling, not a forecast (G20). `fugaro budget preview --recipe R --runs N [--r
 
 It is read-only and needs no new IAM: launchers can already read the bucket and the budget. If the per-stage record proves awkward, ship the ceiling alone: it needs no history.
 
-**Why 0.8.0 (R4):** nothing here is blocked technically — unlike section 1 it needs no live check and no hardware. It moved because §12's original "0.7.0, last and optional" framing invited dropping it under date pressure, and the owner instead ruled it a clean, deliberate 0.8.0 item: built once, right after 0.7.0, alongside the Docker backend measurement, rather than a group that might be cut and never revisited.
+**Why 0.8.0 (R4):** nothing here is blocked technically — unlike section 1 it needs no live check and no hardware. It moved because §12's original "0.7.0, last and optional" framing invited dropping it under date pressure, and the owner instead ruled it a clean, deliberate 0.8.0 item: built once, right after 0.7.0, rather than a group that might be cut and never revisited. (The sentence here used to pair it with "the Docker backend measurement": the owner's release ruling of 2026-10-15 moved section 1 to 0.9.0, so §1.1's 0.8.0 stands alone — see §1's note above.)
 
 ## 2. Repository provisioning: baked or clone
 
@@ -309,7 +309,7 @@ The defaults are flags, not config keys. Veto alternative: local-config keys `wa
 
 ## 12. Release, order and coordination
 
-**In 0.7.0 (R1):** sections 2 to 7, 9 and 10, and 11's doc. Section 1.1 (cost preview, originally spec section 8) was placed in **release 0.8.0** by R4, alongside section 1: it is not a 0.7.0 group. The owner's 2026-10-14 ruling later moved §1.1 forward — Tasks 24 and 25 shipped in 0.7.5 — and dropped the two gen-2 Docker tasks, leaving section 1 (Task 28, the compute-instance backend) as the 0.8.0 work.
+**In 0.7.0 (R1):** sections 2 to 7, 9 and 10, and 11's doc. Section 1.1 (cost preview, originally spec section 8) was placed in **release 0.8.0** by R4, alongside section 1 as R4 wrote it: it is not a 0.7.0 group. The owner's 2026-10-14 ruling later moved §1.1 forward — Tasks 24 and 25 shipped in 0.7.5 — and dropped the two gen-2 Docker tasks, leaving section 1 (Task 28, the compute-instance backend) as the last task of the section. **Its release is 0.9.0, not 0.8.0** (the owner's release ruling of 2026-10-15: 0.8.0 is cut after project-centric phases 1 and 2, and the compute backend moves to 0.9.0 with phases 3 to 6 — the sentence above that read "the 0.8.0 work" is superseded by that ruling).
 
 **Order against the other 0.7.0 work** (G27):
 - **Layered config Phase 1 (0.6.0) merges first.** Its scope table (`internal/config/scope.go`) and project layer (`layer.go`) must list the new keys `workflows.<n>.checkout`, `commands.lint`, `commands.fix` and `review.allow_forks`. Its Task 17 edits `ls.go`, so it must land before the rename.
@@ -327,7 +327,7 @@ The defaults are flags, not config keys. Veto alternative: local-config keys `wa
 - Group D, provisioning: 4.
 - Group E, docs and skills: 2.
 
-Plus six tasks the plan wrote after 0.7.0 (plan Tasks 24 to 29), of which one is still open. The owner's 2026-10-14 ruling moved them: Tasks 24 and 25 (the per-stage cost in `result.json` and `fugaro budget preview`) shipped in 0.7.5 as §1.1; Task 29 (the tombstone's removal) shipped there too (#350); Tasks 26 and 27 (the Check 31 gen-2 Docker measurement and Docker on gen-2) are **dropped**, because Cloud Run gen-2 cannot run Docker; Task 28 (a Docker-capable backend on Compute Engine VMs) was **restored** in their place and is the only one left for 0.8.0 — its design shipped (#375, `compute-backend.md`) and its implementation plan is written after that design is approved. Recipes are the largest risk: four of the runner changes sit in `agentLoop`, which every run executes.
+Plus six tasks the plan wrote after 0.7.0 (plan Tasks 24 to 29), of which one is still open. The owner's 2026-10-14 ruling moved them: Tasks 24 and 25 (the per-stage cost in `result.json` and `fugaro budget preview`) shipped in 0.7.5 as §1.1; Task 29 (the tombstone's removal) shipped there too (#350); Tasks 26 and 27 (the Check 31 gen-2 Docker measurement and Docker on gen-2) are **dropped**, because Cloud Run gen-2 cannot run Docker; Task 28 (a Docker-capable backend on Compute Engine VMs) was **restored** in their place and is the section's last open task — its design shipped (#375, `compute-backend.md`) and its implementation plan is written after that design is approved; **its release is 0.9.0**, not 0.8.0 (the owner's release ruling of 2026-10-15, above). Recipes are the largest risk: four of the runner changes sit in `agentLoop`, which every run executes.
 
 ## 13. Verified and unverified
 
@@ -344,7 +344,7 @@ Plus six tasks the plan wrote after 0.7.0 (plan Tasks 24 to 29), of which one is
 
 | # | Decision | Recommendation | Veto alternative |
 |---|---|---|---|
-| G1 | §1 measurement | User-run Check 31 on `belong`: rootless podman in gen-2, gen-2 and Batch VM cold starts, today's baseline | (owner ruling R2: 0.8.0, measure-first; not vetoable here) |
+| G1 | §1 measurement | User-run Check 31 on `belong`: rootless podman in gen-2, gen-2 and Batch VM cold starts, today's baseline | (owner ruling R2: 0.8.0 at the time, **moved to 0.9.0 on 2026-10-15** with project-centric phases 3 to 6; measure-first, not vetoable here) |
 | G2 | §1 threshold | gen-2 if ≤60 s over baseline, VM if ≤120 s, else no Docker | No threshold; owner decides from numbers |
 | G3 | §2 key name | `workflows.<n>.checkout: baked \| clone` | Spec's `repo_provisioning` |
 | G4 | §2 clone kind | Blobless partial clone, single branch | `--depth 1` shallow (breaks checkpoints and follow-ups) |
