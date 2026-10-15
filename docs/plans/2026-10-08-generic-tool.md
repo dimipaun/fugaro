@@ -1928,7 +1928,11 @@ been through the live check there is nothing to justify the flip, and the
 release it names (`cloneSince`) cannot be named before that. Check 38's own
 setup says so and names the build it needs. Nothing else in this task changes;
 the deferred gap (a) above reopens with that separate PR, not with this one.
-That PR owns the edits the flip makes stale as well as the constant:
+That PR also bumps `cloneSince` if Check 38 found the runner side needs a fix:
+the release that fix ships in is the release `cloneSince` then has to name (the
+check's own finding decides it). If the check needed no runner fix, `cloneSince`
+already names the release that shipped Task 17 and stays as it is. That PR owns
+the edits the flip makes stale as well as the constant:
 `docs/checkout.md`'s "not shipped yet" notes (which
 `internal/cli/docs_checkout_test.go` holds to `cloneShipped`), this skill's
 topic 12 in `plugin/skills/setup/reference/decisions.md` and its one line in
