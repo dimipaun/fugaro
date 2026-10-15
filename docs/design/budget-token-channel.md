@@ -1,11 +1,14 @@
 # The budget token's channel
 
-**Status: design only, awaiting the owner's approval (2026-10-15).** Phase 3b, Task 3b.1 of
-[the project-centric plan](../plans/2026-10-14-project-centric.md). SECURITY-SENSITIVE: it is
-flagged for an independent review, and it decides nothing by itself. This is an approval-gated
-design, and the gate is real: no code follows this document until the owner approves it — no
-change under `internal/`, no Terraform, no config, no live action, no secret handled. Its one red
-step is the documentation test beside it,
+**Status: the decisions are answered (2026-10-15); implementation awaits the owner's explicit go.**
+Phase 3b, Task 3b.1 of [the project-centric plan](../plans/2026-10-14-project-centric.md).
+SECURITY-SENSITIVE: it is flagged for an independent review, and it decides nothing by itself.
+**D14 to D19 are no longer open**: the owner answered all six on 2026-10-15, and each answer is
+recorded under the decision it answers, in the owner's own terms. The answers settle *what* to
+build, not *whether to start*. This is still an approval-gated design and the gate is real:
+no code follows this document until the owner approves it — no change under `internal/`, no
+Terraform, no config, no live action, no secret handled. Its one red step is the documentation test
+beside it,
 `internal/cli/docs_budget_token_channel_test.go`, which fails until this file and the
 [SECURITY.md](../../SECURITY.md) pointer exist.
 
@@ -302,13 +305,20 @@ nothing.
   **`version byte || 12-byte nonce || ciphertext || 16-byte tag`**, and the object's own key —
   `token.ObjectKey(slug, run)`, the `tokens/…` form of §7.2 once the object has moved — is the GCM
   **additional authenticated data**. **What stops a sealed object from being replayed sideways is the
-  per-launch key, not the AAD**: copying one run's object onto another run's key is a write the peer's
-  widened grant already allows (`google_storage_bucket_iam_member.job`, whose condition covers the
-  bucket's declared prefixes), but the copy is sealed under the *other* run's key, so it fails to
-  unseal at the victim regardless of what the AAD says. The AAD's job is narrower and still worth its
-  line: it binds the ciphertext to the object's own name, so a blob sealed for one key string cannot
-  be read under another — the property §7.2 hinges on, because the move out of `runs/` changes the
-  key string and must therefore land in the same change as the seal (D18). **The AAD cannot be proved
+  per-launch key, not the AAD**: while the object still lives under `runs/` — the seal-only first
+  step D19 ships — copying one run's object onto another run's key is a write the peer's grant
+  already allows (`google_storage_bucket_iam_member.job`, whose condition covers the bucket's
+  declared prefixes), but the copy is sealed under the *other* run's key, so it fails to unseal at
+  the victim regardless of what the AAD says. After the move the peer cannot make that copy at all:
+  its grant on `tokens/` is read-only (D16, §7.2), so the sideways *write* stops being available
+  while the sideways *read* is exactly what the seal is for. The AAD's job is narrower and still
+  worth its line: it binds the ciphertext to the object's own name, so a blob sealed for one key
+  string cannot be read under another — which is what makes the move out of `runs/` safe rather than
+  merely tidy, since the move changes the key string and the AAD with it. **What lands together is
+  therefore the name change and the code that computes the name, not the seal and the move**: the
+  seal's own first step (D19) seals under the name the shipped `token.ObjectKey` computes, inside
+  `runs/`, and the `tokens/` form of that name lands later with Task 3.2, in the same change as the
+  grant that reads it (D18). **The AAD cannot be proved
   by the end-to-end check**: every step of Check 60 that could exercise it already fails earlier, at
   the unseal, because the keys differ. It needs a unit test in `internal/budget/token` that seals under
   one key string and opens under another and asserts the tag check refuses — that test, not a check
@@ -444,16 +454,26 @@ the second half of the recommendation moves the object:
 
   **The read-only take leaves the object in place, and that is a residue this section has to
   state.** Under `tokens/` the take never deletes, so after the legitimate execution has read it the
-  sealed object stays in the bucket until the lifecycle rule above reaps it — up to a day. The
-  exposure is bounded by the token, not by the object: the token's own validity is what
-  `token.ExpiryFX` plus `Slack` buy (about an hour), so an object that survives its take is a token
-  that is dead or dying. What it is *not* is nothing: anyone who holds the object **and** that
-  execution's key can replay the unseal within that window and exchange the token while it is still
-  live — the same both-halves composition §7.1 prices, now with a day to notice it instead of a
-  single read. Consume-once under `tokens/` rests entirely on the key, which is delivered once, to
-  one execution, in an override no principal §4 names may read; the alternative — making the
-  read-only take delete — is not available, since the delete is exactly the write the job's grant
-  does not have (this section's second bullet, and D16).
+  sealed object stays in the bucket until the lifecycle rule above reaps it — up to a day. **Two
+  clocks bound that residue, and they are not the same clock** — the round-3 review caught this
+  paragraph reading `token.ExpiryFX` as the token's own life, which it is not. The *token* is
+  exchangeable for as long as it is valid inside Firebase: `token.MintAt` sets its `exp` to the mint
+  plus `token.Lifetime`, one hour, which is Firebase's maximum for a custom token. So a copied object
+  **and** its key can be traded for a session for about an hour after the mint, whenever the copy was
+  taken. The session that trade yields has a longer life, and a different one: its `fx` claim is
+  `token.ExpiryFX(launch, jobTimeout)` — the launch plus the job's own timeout plus `QueueAllowance`
+  (an hour) plus `Slack` (five minutes) — and the rules stop honouring the identity at `fx`, whatever
+  the token's lifetime was. For a job whose timeout is an hour, that is a little over two hours past
+  the mint. What the residue is *not* is nothing: anyone who holds the object **and** that
+  execution's key can replay the unseal inside the first of those two windows — about an hour — and
+  exchange the token while it is still live, and the identity they get runs to `fx`. It is the same
+  both-halves composition §7.1 prices, now with a day to notice it instead of a single read.
+  Consume-once under `tokens/` rests entirely on the key, which is delivered once, to one execution,
+  in the override of the launch that won the claim, and whose audience is §7.1's and not §4's peer
+  (D15); the object's own stay in the bucket gives no second delivery, which is why a copy taken
+  *before* the legitimate take is the case that matters. The alternative — making the read-only take
+  delete — is not available, since the delete is exactly the write the job's grant does not have
+  (this section's second bullet, and D16).
 
 ### 7.3 What this does not change
 
@@ -487,16 +507,26 @@ the second half of the recommendation moves the object:
 | the object is plaintext and the seal is expected | refuse, for the same reason: a fallback to plaintext is the whole exposure coming back quietly |
 | the key is wrong because the execution is not the one the launcher minted for | the unseal fails and the run refuses; the take's `checkNames` still refuses a token whose own claims are not this run's |
 
-One concrete requirement falls out of the second row and belongs in the later implementation:
-`internal/runner/budget_session.go`'s `BackendFromEnv` currently words its marker error as
-`fmt.Errorf("%s %q: it must be 1, ...", BudgetTokenEnv, marker)` — it echoes the value. Harmless while
-the value is `"1"`; a leak of the run's own key into a bootstrap error, and from there into the run's
-log, once the value is a key. The parse must not print it, and **the runner** must register the key
-with its own redactor before anything can print it, the way `takeBudgetToken` already does for the
-token itself (`internal/runner/runner.go`'s `r.addSecret`, called from
+One concrete requirement falls out of the second row, and the round-3 review was right that this
+paragraph's earlier wording did not state it consistently: it is an **ordering** requirement, and a
+redactor cannot carry it alone. `internal/runner/budget_session.go`'s `BackendFromEnv` words its
+marker error as `fmt.Errorf("%s %q: it must be 1, ...", BudgetTokenEnv, marker)` — it echoes the
+value. Harmless while the value is `"1"`; a leak of the run's own key into a bootstrap error, and
+from there into the run's log, once the value is a key. The parse that can print it runs **before
+the runner exists**: `internal/cli/exec.go`'s `runExec` calls
+`runner.BackendFromEnv(os.LookupEnv, platform.Local())` at bootstrap, and the failure reaches the
+record only later, as the run's `infra_error` — so at the moment the value could be formatted there
+is no redactor to register the key with, and none to catch the value if it is printed. **The parse
+must therefore not print the value at all**; that is the requirement, and the fix is to word the
+error around the variable and the *shape* it wants ("it must be one unpadded base64url string
+decoding to 32 bytes") with no value in it. The redactor is the second, weaker half: once the runner
+holds the key it must register it with its own redactor, the way `takeBudgetToken` already does for
+the token itself (`internal/runner/runner.go`'s `r.addSecret`, called from
 `internal/runner/projectpolicy.go`). It is the runner, not the launcher: `addSecret` is a method on
 the run's redactor and is the only door into it, so the launcher has no way to register anything —
-whatever the launcher knows is redacted only once the runner's `takeBudgetToken` has said so.
+whatever the launcher knows is redacted only once the runner's `takeBudgetToken` has said so. Both
+halves belong to D19's first step, and both are why that step ships before the launcher seals: an
+image that has neither prints the key.
 
 ### 7.5 What the later implementation would touch (not this task)
 
@@ -535,10 +565,25 @@ These continue the numbering of the project-centric series — D1 to D12 in
 are unrelated to the D14 to D19 of `docs/design/m9-budget-and-dashboard.md`, which governs the
 budget's own behaviour and not this channel.
 
+**All six were answered by the owner on 2026-10-15**, and each answer is recorded beneath the
+decision it answers, in the owner's own terms; the recommendation is left standing above it, so a
+reader sees what was asked against what was decided. The heading is unchanged because it is the name
+this section has been cited by since the first round, and the register of decisions should not move
+under the readers who cite it. **The answers decide *what* to build; the gate is untouched** — no
+code follows this document until the owner says go, and the status line's own words are what the
+answers now point at.
+
 **D14. Is the seal built at all, or is D13's documentation the permanent answer?** Phase 3b's
 deliverable is this design, and D13 remains in force until something replaces it. If the owner
 answers "documented is enough", this document becomes the record of a considered alternative and
 nothing more. The recommendation is to build it, before or with phase 3 (see D19).
+
+**Owner's answer (2026-10-15): build the seal.** The recommendation is the answer — the seal is
+built, before phase 3 or with it, in the order D19 fixes (the seal first, on its own) — so this
+document is not the record of "documented is enough". D13's paragraph in SECURITY.md stays as the
+interim record until the seal lands — §7.3 says what it keeps then, and D15 says what the marker's
+own sentence and the launcher paragraph beside it must become — and "documented is enough" is not
+the answer a later implementer may fall back on.
 
 **D15. Where does the key travel?** Recommended: in the existing marker's value
 (`FUGARO_BUDGET_TOKEN=<key>`), because no new name has to stay in step between the launcher, the
@@ -547,13 +592,26 @@ alternative is a second, strictly parsed variable (a new name in `BackendFromEnv
 `LaunchSpec.Env`, a new row in SECURITY.md and in the doc tests). A third option — a key object in
 the bucket beside the token — is self-defeating and is listed only to be struck out. **Note the
 nature change either way:** the marker stops being a one-bit marker and becomes a secret, whose
-audience is the project's readers rather than the execution alone (§7.1: the launchers, and anyone
-the owner has given log or execution read), which is precisely the audience `m9-budget-and-dashboard.md`
-§6.4 keeps the *token* away from. So SECURITY.md's description of the marker and the launcher
+audience is the project's readers rather than the execution alone (§7.1: the launchers, anyone the
+owner has given log read, and, under U2, anyone given execution read), which is precisely the
+audience `m9-budget-and-dashboard.md` §6.4 keeps the *token* away from. So SECURITY.md's description
+of the marker and the launcher
 paragraph beside it — "The budget token deliberately does not travel that way … because the request
 that starts a job reaches audit logs" — have to be rewritten **together**, or the two sentences
 contradict each other; the distinction to write is the one §7.1 draws, a bearer token against a
 per-execution key. The `%q` above makes the leak half of this concrete.
+
+**Owner's answer (2026-10-15): the marker's value, with SECURITY.md's two sentences rewritten in the
+same change.** The key travels in the existing marker — `FUGARO_BUDGET_TOKEN=<key>`, no second
+variable — and the marker's description in SECURITY.md and the launcher paragraph beside it are
+rewritten **together**, because a marker described one way and carried another is exactly the
+contradiction the recommendation was written to avoid. What those two sentences have to say is the
+distinction §7.1 draws: a **bearer token** is a credential whose theft is the whole attack, which is
+why it does not travel as an override; a **per-execution key** is not a credential at all — it
+unseals one object, for the one execution the launcher minted for, and grants nothing by itself — and
+its audience is named rather than assumed (the project's readers: the launchers, anyone with log
+read, and, under U2, anyone with execution read). The nature change stands and is priced rather than
+waved away: the marker stops being a one-bit marker the moment the launcher seals.
 
 **D16. Does `tokens/` become a fourth granted prefix, at which role?** Read-only for the job account
 is what makes a peer unable to delete a queued token (7.2); it also means the runner no longer
@@ -567,12 +625,38 @@ widened expression — a new title, the `precondition` that re-checks it and its
 Check 60 step 8). The job account's read on the prefix is the decision; the launchers' write is the
 consequence of the move itself.
 
+**Owner's answer (2026-10-15): `tokens/` becomes a fourth granted prefix, read-only for the job
+account.** The runner no longer deletes on take — §7.2's read-only shape, and no fallback keyed on the
+403 that gocloud reports as `NotFound` — and consume-once rests on the key. The consequence the owner
+named with the answer is the launchers' side of it: their `runs_launcher` write is conditioned to
+`runs/` by its `precondition`, so `tokens/` needs either a second conditioned member or a widened
+expression with its own title, its `precondition` and its tftest line, and that change lands with the
+move in Task 3.2 (D19), not with the seal. The job account's *read* on the prefix and the launchers'
+*write* on it are two grants; this answer is about the first, and the second follows from the move
+itself.
+
 **D17. The seal's lifetime and the re-mint path.** A `--retry` re-mints and re-puts the object
 (`mintBudgetToken` deletes the earlier attempt's before writing), so it must re-seal and re-hand the
-key to the new execution; the object's one-day lifecycle rule and the token's own one-hour claim
-(`token.ExpiryFX`, with `Slack`) are unchanged. Deciding this now avoids a later implementation
+key to the new execution; the object's one-day lifecycle rule is unchanged, and so are the two clocks
+§7.2 states apart — the **token's** own validity (`token.MintAt` sets `exp` to the mint plus
+`token.Lifetime`, one hour, Firebase's maximum for a custom token) and the **identity's** `fx`
+(`token.ExpiryFX`: the launch plus the job's own timeout plus `QueueAllowance` and `Slack`), which is
+the longer of the two. This paragraph read `ExpiryFX` as the token's life when it was written, which
+the round-3 review caught; the two are not the same clock and the difference is the hour of
+exchangeability against the identity's life to `fx`. Deciding this now avoids a later implementation
 choosing "seal once, reuse the key", which would put one key in front of two executions of the same
 run.
+
+**Owner's answer (2026-10-15): a retry re-mints, re-seals and hands a NEW key to the new
+execution** — never one key in front of two executions of the same run. The path is the launcher's
+own, and saying why bounds how many times a key can be handed out at all: Cloud Run never starts a
+second execution behind the launcher — the job sets **`max_retries = 0`**
+(`deploy/terraform/gcp/modules/workflow/job.tf`: "The provider's default is 3; a run is never retried
+behind the launcher's back") — so the only second execution of a run is the launcher's own
+`fugaro run --retry` (`internal/cli/run.go`), which launches the stored task of a run that never
+started, and whose `mintBudgetToken` already deletes the earlier attempt's object before `PutObject`.
+The re-seal rides that same call: a fresh key per attempt, the earlier attempt's object gone, and no
+attempt able to unseal the next one's.
 
 **D18. The envelope's shape and where it lives.** Recommended: a versioned sealed envelope defined
 in `internal/budget/token` beside `PutObject`/`TakeObject` (one package owns both halves of the
@@ -582,12 +666,21 @@ shape is fixed by §7.1 and decided here only in the sense of being accepted: `v
 12-byte nonce || ciphertext || 16-byte tag`, the object's key as additional authenticated data,
 and a 32-byte key carried as unpadded base64url. **The AAD makes the envelope's bytes depend on the
 name they are stored under**, so the `tokens/` move of §7.2 changes the AAD and cannot be deployed
-against a launcher or a runner that still computes the old key: the two land together, and the
-formats are not interchangeable across the move (an object sealed under one name does not unseal
-under the other — which is the property, not a migration problem, since a queued token is
-short-lived and a re-launch re-seals). A generic helper package is the alternative; it would be the
+against a launcher or a runner that still computes the old key — **the move and the code that
+computes the name land together**, and that change is Task 3.2's, not the seal's (D19: the seal,
+shipping first, seals under the name the shipped `token.ObjectKey` computes) — and the formats are
+not interchangeable across the move (an object sealed under one name does not unseal under the
+other, which is the property and not a migration problem, since a queued token is short-lived and a
+re-launch re-seals). A generic helper package is the alternative; it would be the
 first generic sealing code in the tree and it would put the format's compatibility rules away from
 their only caller.
+
+**Owner's answer (2026-10-15): the versioned envelope, in `internal/budget/token`.** The file lives
+beside `PutObject`/`TakeObject`; the shape is **`version byte || 12-byte nonce || ciphertext ||
+16-byte tag`**; the object's own name is the additional authenticated data; the key is **32 bytes**
+carried as **unpadded base64url**; and a plaintext object is **refused** once the launcher seals —
+no fallback to plaintext, for the reason §7.4's rows give (a mixed deployment is not an unsealing
+one), because a fallback would hand the exposure D13 accepted straight back.
 
 **D19. Ordering against phase 3.** Recommended: the seal ships on its own first, while the
 per-repository conditions are still what protects the object, because its tests are unit tests in
@@ -597,22 +690,48 @@ alternative — one change with phase 3 — means the exposure D13 accepts is ne
 a window in which both the grant and the channel move at once. The owner decides, and this decision
 is the one a reviewer should look at hardest.
 
+**Owner's answer (2026-10-15): the seal ships first, on its own** — unit tests in
+`internal/budget/token`, no grant change — and the `tokens/` move and the prefix condition land
+later, with Task 3.2. **Ordering is load-bearing in one more direction than the recommendation
+said, and this is where it is written down**, because the round-3 review found it and it is a live
+consequence of D15 rather than a detail of it. Once a launcher seals, the marker's value is a key,
+and an image built before the parse stopped echoing it prints that key: `internal/cli/exec.go`'s
+`runExec` calls `runner.BackendFromEnv(os.LookupEnv, platform.Local())` at bootstrap,
+`internal/runner/budget_session.go`'s marker error formats the value with `%q`, and the failure is
+recorded as the run's `infra_error` — all of it **before any redactor exists** (§7.4). So the fleet
+must first carry a runner that (a) refuses to echo the value and (b) registers the key with its
+redactor as soon as it holds it, and **only then** may the launcher start sealing: **runner and image
+first, launcher second, in that order and in separate deployments.** A gate is the alternative and
+is acceptable to the owner as well; the repository does not need a new one, because it has this
+shape already — `gcpProjectFieldSince` (`internal/cli/init_fugaroyaml.go`) with `imagePredates`
+compares the image build record's `FugaroVersion` (`internal/imagecheck/record.go`) against a
+`*Since` constant, records `reasonRecordVersionOld` when the image predates it, and
+`checkCheckImageKnowsGitSecretID` (`internal/cli/init.go`) is the check that reads it; plan P8's
+"jobs still carry the old image" message is the same idea in prose. Whichever form it takes, it is
+two ordered halves of the seal's own deployment, and neither half is a Terraform change.
+
 ## The check outline: Check 60, owner-run, sandbox only
 
 None of this is run by this task, and none of it may be run by an agent: every owner-run step in the
 plan is the owner's (Global Constraints, "Every owner-run step … no agent performs it"), and the
 `belong` installation is never touched. Checks 48 to 56 are already named by the plan's phases, and
-the next numbers are taken elsewhere: **57 by PR #375**, the compute-instance backend (the plan says
-so in its own words — "**#375 claims 57**"), and **58 by PR #393**, the artifact-runs design, which
-merged to `main` holding 58. **59 is PR #401's expectation rather than a reservation this document
-may state flatly**: the desktop console design **claims 58 as well**, and by the register's own rule
-— a number belongs to the check that first wrote a row, and a duplicate is fixed by the later
-writer — #401 renumbers itself to "59, unless something else takes it first"
-(`docs/design/artifact-runs.md` §11, on `main`, records both sides of that duplicate; the rule is
-the one the plan already states for #359's 45 and 46). This outline therefore proposes
-**Check 60** for the later implementation task — the first number past those three — which is the
-task that would write it into `docs/gcp-live-checklist.md` in Check 43's block form, with the guard
-block, the FACT lines and the restore step that shape requires.
+the numbers above them are taken: **57 by PR #375**, the compute-instance backend, **merged** —
+`main` carries its summary row, and its 57a and 57b sections live in
+`docs/design/compute-backend.md` §7.2, which is a number taken even when the section is not in the
+checklist; **58 by PR #393**, the artifact-runs design, **merged**, whose §11 on `main` writes the
+reservation and records the duplicate's resolution; and **59 by PR #401**, the desktop-console
+design, **merged**, which takes 59 as **59a and 59b** — its own plan's table says why
+(`docs/plans/2026-10-15-desktop-console.md`: "#393 takes 58 and merges first; #393 does not use 59,
+which leaves 59 free for this plan") — so
+#401 is the later writer and renumbers itself off 58, which is the register's own rule (a number
+belongs to the check that first wrote a row, and a duplicate is fixed by the later writer — the rule
+the plan already states for #359's 45 and 46). Both of those PRs are merged and neither has written
+its row yet — each plan says its own docs task writes the row and the section when its phase ships —
+so `main`'s summary table ends at 57 and the two reservations are read from the two plans rather
+than from a grep for `## Check 58`. **That leaves 60 as the first free number**, and this outline
+proposes **Check 60** for the later implementation task, which is the task that would write it into
+`docs/gcp-live-checklist.md` in Check 43's block form, with the guard block, the FACT lines and the
+restore step that shape requires.
 
 Before anything: **Check 52 has not been run**, and two of its step 3 (U2) facts bear directly on
 this document. C2 depends on its step 4 (the U3 Secret Manager IAM condition probe), and D14's
@@ -676,7 +795,10 @@ untouched:
    read off the live plan, not by inspection of the module source.
 9. **A sideways replay refuses, and what that does and does not prove.** Copy a sealed object from one
    run's key to another run's key in the sandbox bucket and watch the second run refuse rather than
-   unseal it; then put the bytes back. **This step proves the per-launch key, not the AAD.** The copy
+   unseal it; then put the bytes back. The copy is made with the operator's own credentials, which
+   after the move are the only ones with a write on `tokens/`: a peer *run* could make this copy only
+   while the object is still under `runs/`, which is the seal-only step of D19 (§7.1, D16).
+   **This step proves the per-launch key, not the AAD.** The copy
    is sealed under a different launch's key, so it fails at the unseal before the AAD is ever
    consulted — the refusal would be identical if the AAD were the empty string. The AAD's own property
    (a blob sealed for one name cannot be opened under another) is a unit test in `internal/budget/token`,
