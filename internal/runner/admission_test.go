@@ -28,6 +28,13 @@ import (
 // (the binding's scope, R2-9), and the budget token, the repository caps and
 // the rules marker are seeded under the slug it now carries. policy ""
 // publishes no node under the marker.
+//
+// The fixture names the deriving kind as its --provider (FUGARO_GIT_PROVIDER),
+// so the run really opens the provider unless the admission check refuses it
+// first, and counts the git credential requests it receives (auths). That
+// counter is the only thing that can tell a refusal from a run that went on to
+// clone and halt later: both end in an error, and only one of them handed a git
+// credential out first.
 func admissionRun(t *testing.T, kind, slugRepo, mode, capUSD, policy string, script ...anthropicfake.Reply) *bk {
 	t.Helper()
 	b := newBK(t, gwConfig(t, ""), mode, capUSD, script...)
@@ -35,6 +42,8 @@ func admissionRun(t *testing.T, kind, slugRepo, mode, capUSD, policy string, scr
 	if err != nil {
 		t.Fatal(err)
 	}
+	b.deps.ProviderKind = kind
+	countAuths(b)
 	// A mismatch fixture must not land on the fixture's own slug: the run would
 	// be homed on its own repository and the binding would have nothing to
 	// refuse.
@@ -83,8 +92,17 @@ func mintUnder(t *testing.T, b *bk, slug string, at time.Time) {
 
 // refusedAdmission fails unless the run stopped at the admission check: an
 // infra error (so the process exits non-zero and the job shows failed), the
-// record kept as infra_error with outcome none, every want in the reason, and
-// no stage run.
+// record kept as infra_error with outcome none, every want in the reason, no
+// stage run — and nothing changed anywhere (R2-12). No git credential was
+// requested of the provider, the branch lock was not taken, no lease was
+// reserved and no outcome and no spend were written: a run that is not admitted
+// for this repository must be indistinguishable from one that never started.
+//
+// The credential count is what makes the placement of the check observable.
+// Every one of these refusals also happens further down bootstrap (the run
+// halts on the same error after the clone), so the error, the reason and the
+// record alone cannot tell "refused before anything happened" from "refused
+// after the repository was cloned and a credential handed out".
 func refusedAdmission(t *testing.T, b *bk, rec *runstore.Record, err error, want ...string) {
 	t.Helper()
 	if err == nil || rec == nil || rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone {
@@ -101,15 +119,38 @@ func refusedAdmission(t *testing.T, b *bk, rec *runstore.Record, err error, want
 	if len(b.agent.calls) != 0 {
 		t.Errorf("%d stages ran after the refusal", len(b.agent.calls))
 	}
+	if b.auths == nil {
+		t.Fatal("the fixture is not counting git credential requests")
+	}
+	if *b.auths != 0 {
+		t.Errorf("%d git credential requests were made before the refusal: the run was not refused before its provider was opened", *b.auths)
+	}
+	slug := b.deps.Store.Slug()
+	if v := b.db.Value(budget.PathRun(slug, runID) + "/reserved"); v != nil {
+		t.Errorf("the refused run reserved %v in its ledger", v)
+	}
+	if v := b.db.Value(budget.PathSpendRepo(b.day(), slug)); v != nil {
+		t.Errorf("the refused run accounted %v against its repository's day", v)
+	}
+	if ok, err := b.bucket.Exists(context.Background(), lock.Key(slug, "fugaro/"+runID)); err != nil || ok {
+		t.Errorf("the refused run took the branch lock (ok = %v, err = %v)", ok, err)
+	}
+	if v := b.db.Value(budget.PathOutcome(b.day(), slug, runID)); v != nil {
+		t.Errorf("the refused run wrote an outcome: %v", v)
+	}
 }
 
-// countAuths counts the git credential requests the provider receives.
+// countAuths counts the git credential requests the provider receives, from
+// here on, on the fixture (b.auths) as well as in the returned counter:
+// admissionRun installs it before the run, so a refusal can be told from a run
+// that opened its provider first.
 func countAuths(b *bk) *int {
 	n := 0
 	b.provider.Auth = func(time.Duration) gitprov.GitAuth {
 		n++
 		return gitprov.GitAuth{}
 	}
+	b.auths = &n
 	return &n
 }
 
@@ -131,12 +172,8 @@ func TestRunnerIgnoresAnOverriddenProviderEnvAmongAgreeingKinds(t *testing.T) {
 	t.Run("the other kind is refused", func(t *testing.T) {
 		b := admissionRun(t, "github", "acme/app", "off", "", policy)
 		b.deps.ProviderKind = "bitbucket"
-		auths := countAuths(b)
 		rec, err := b.run(t)
 		refusedAdmission(t, b, rec, err, "bitbucket", "github", "--provider", "may only tighten")
-		if *auths != 0 {
-			t.Errorf("%d git credential requests were made before the refusal", *auths)
-		}
 	})
 }
 
@@ -146,51 +183,44 @@ func TestRunnerIgnoresAnOverriddenProviderEnvAmongAgreeingKinds(t *testing.T) {
 // work. The policy admitted this repository, so the binding is what refused.
 func TestRunnerRefusesSlugMismatch(t *testing.T) {
 	b := admissionRun(t, "github", "acme/other", "off", "", `{"version":1,"allow_repos":["*"]}`)
-	auths := countAuths(b)
 	rec, err := b.run(t)
 	refusedAdmission(t, b, rec, err, b.deps.Store.Slug(), "acme/app", "provider kind")
-	if *auths != 0 {
-		t.Errorf("%d git credential requests were made before the refusal", *auths)
-	}
 }
 
 // A published policy that does not admit the run's repository stops the run:
 // the project's owner has said which repositories may run here.
 func TestRunnerRefusesSlugNotInAllowList(t *testing.T) {
 	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":["github/other/*","bitbucket/acme/*"]}`)
-	auths := countAuths(b)
 	rec, err := b.run(t)
 	refusedAdmission(t, b, rec, err, "github/acme/app", "allow_repos", "github/other/*", "fugaro project repos add")
-	if *auths != 0 {
-		t.Errorf("%d git credential requests were made before the refusal", *auths)
-	}
 }
 
 // R2-12: a run that is not admitted changes nothing. The refusal lands before
 // the provider is opened (no git credential request), before the lock, and
 // before the budget session exists — so no lease is reserved and no spend is
-// accounted for a repository the project's policy does not admit.
+// accounted for a repository the project's policy does not admit. This is the
+// mode-on case of the same fixture the refusal tests above use, with the whole
+// ledger asserted (refusedAdmission).
 func TestRunnerChecksBeforeTheTokenAndTheLease(t *testing.T) {
 	b := admissionRun(t, "github", "acme/app", "enforce", "50", `{"version":1,"allow_repos":["github/other/*"]}`)
-	auths := countAuths(b)
 	rec, err := b.run(t)
 	refusedAdmission(t, b, rec, err, "github/acme/app", "fugaro project repos add")
-	slug := b.deps.Store.Slug()
-	if *auths != 0 {
-		t.Errorf("%d git credential requests were made before the refusal", *auths)
-	}
-	if v := b.db.Value(budget.PathRun(slug, runID) + "/reserved"); v != nil {
-		t.Errorf("the refused run reserved %v in its ledger", v)
-	}
-	if v := b.db.Value(budget.PathSpendRepo(b.day(), slug)); v != nil {
-		t.Errorf("the refused run accounted %v against its repository's day", v)
-	}
-	if ok, err := b.bucket.Exists(context.Background(), lock.Key(slug, "fugaro/"+runID)); err != nil || ok {
-		t.Errorf("the refused run took the branch lock (ok = %v, err = %v)", ok, err)
-	}
-	if v := b.db.Value(budget.PathOutcome(b.day(), slug, runID)); v != nil {
-		t.Errorf("the refused run wrote an outcome: %v", v)
-	}
+}
+
+// A policy this run can see and may not read stops the run (R2-3). It is not
+// read as "no policy here" — that would drop a mode-on run of a
+// policy-enforcing project onto the environment ceiling — and it stops in the
+// admission check, before the provider is opened.
+//
+// The error, the reason and the record cannot tell that apart from the run that
+// went on: swallowed here, the same memoized error halts bootstrap a few lines
+// later, after the clone. What differs is that the credential was requested
+// first, so the counter is what this test rests on.
+func TestRunnerRefusesAnUnreadablePolicyBeforeAnyCredential(t *testing.T) {
+	b := admissionRun(t, "github", "acme/app", "enforce", "50", `{"version":1,"allow_repos":["github/acme/*"]}`)
+	b.db.DenyRead(projectpolicy.PathShared())
+	rec, err := b.run(t)
+	refusedAdmission(t, b, rec, err, "could not be read", projectpolicy.PathShared(), "older than the marker", "does not start on a ceiling the policy did not set")
 }
 
 // An installation that has published no policy has no allow-list, and inventing

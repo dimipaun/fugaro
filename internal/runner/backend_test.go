@@ -37,6 +37,10 @@ type bk struct {
 	iam    *gcpfake.IAMCredentials
 	itk    *gcpfake.IdentityToolkit
 	bucket *blobx.Bucket
+	// auths counts the git credential requests the fixture's provider has
+	// received (countAuths). Nil until a test — admissionRun always does —
+	// installs the counter.
+	auths *int
 
 	mu      sync.Mutex
 	secrets []string
