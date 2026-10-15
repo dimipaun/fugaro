@@ -36,8 +36,12 @@ Two properties of that channel are load-bearing and easy to lose in a redesign:
 
 - **The token is not in the override.** The override carries one bit. The credential itself is a
   bucket object the launcher writes and one run reads. Design §4.2 states the rule for the token
-  ("The budget token deliberately does not travel as an override"); `mintBudgetToken`'s own header
-  says the token is never in the launch request, an env var, an error or a message.
+  ("The budget token deliberately does not travel as an override"), and `internal/cli/launch_budget.go`
+  states it for this code in the **file-level comment** above the launcher's part of the budget
+  backend — the token "is never in the jobs.run request (the request reaches audit logs), an env var,
+  an error or a message" — which is where the invariant is written. `mintBudgetToken`'s own doc
+  comment is about the mint it performs (the earlier attempt's object is replaced) and does not carry
+  the sentence.
 - **The take is the consume.** `TakeObject` deletes as it reads, so a token can be used once, and a
   run that finds none where its own marker says one was minted refuses to start rather than run
   without a session, a cap or a kill switch (`budgetClient`'s `TokenMarked` branch). That refusal
@@ -598,13 +602,17 @@ is the one a reviewer should look at hardest.
 None of this is run by this task, and none of it may be run by an agent: every owner-run step in the
 plan is the owner's (Global Constraints, "Every owner-run step … no agent performs it"), and the
 `belong` installation is never touched. Checks 48 to 56 are already named by the plan's phases, and
-the next three numbers are taken elsewhere: **57 by PR #375**, the compute-instance backend (the
-plan says so in its own words — "**#375 claims 57**"), **58 by #393** and **59 by #401**. This
-outline therefore proposes **Check 60** for the later implementation task, which is the task that
-would write it into `docs/gcp-live-checklist.md` in Check 43's block form, with the guard block, the
-FACT lines and the restore step that shape requires. If any of those three merges under a different
-number, whichever pull request merges second renumbers itself — the same rule the plan already
-states for #359's 45 and 46.
+the next numbers are taken elsewhere: **57 by PR #375**, the compute-instance backend (the plan says
+so in its own words — "**#375 claims 57**"), and **58 by PR #393**, the artifact-runs design, which
+merged to `main` holding 58. **59 is PR #401's expectation rather than a reservation this document
+may state flatly**: the desktop console design **claims 58 as well**, and by the register's own rule
+— a number belongs to the check that first wrote a row, and a duplicate is fixed by the later
+writer — #401 renumbers itself to "59, unless something else takes it first"
+(`docs/design/artifact-runs.md` §11, on `main`, records both sides of that duplicate; the rule is
+the one the plan already states for #359's 45 and 46). This outline therefore proposes
+**Check 60** for the later implementation task — the first number past those three — which is the
+task that would write it into `docs/gcp-live-checklist.md` in Check 43's block form, with the guard
+block, the FACT lines and the restore step that shape requires.
 
 Before anything: **Check 52 has not been run**, and two of its step 3 (U2) facts bear directly on
 this document. C2 depends on its step 4 (the U3 Secret Manager IAM condition probe), and D14's

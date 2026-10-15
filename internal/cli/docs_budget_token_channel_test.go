@@ -47,13 +47,34 @@ func TestDocsBudgetTokenChannelDesignIsWritten(t *testing.T) {
 
 // TestDocsSecurityMdPointsAtTheTokenChannelDesign: the trust model's reader can
 // find the design that replaces the token's delivery channel, and the pointer
-// says the design is not built.
+// says the design is not built — which is the property, and it is carried by
+// the pointer's own wording, not by the path string. A paragraph rewritten to
+// imply the channel ships must fail this test.
 func TestDocsSecurityMdPointsAtTheTokenChannelDesign(t *testing.T) {
+	const (
+		design = "docs/design/budget-token-channel.md"
+		gate   = "no code follows that document until the owner approves it"
+	)
 	sec := readDoc(t, "SECURITY.md")
-	if !strings.Contains(sec, "docs/design/budget-token-channel.md") {
-		t.Fatal("SECURITY.md does not point at docs/design/budget-token-channel.md")
+	// The pointer is one line of SECURITY.md's own list: assert on that line,
+	// so wording somewhere else in the file cannot stand in for it.
+	var pointer string
+	for _, line := range strings.Split(sec, "\n") {
+		if strings.Contains(line, design) {
+			pointer = line
+			break
+		}
 	}
-	if _, err := os.Stat("../../docs/design/budget-token-channel.md"); err != nil {
-		t.Fatalf("SECURITY.md points at %s, which is not there: %v", "docs/design/budget-token-channel.md", err)
+	if pointer == "" {
+		t.Fatalf("SECURITY.md does not point at %s", design)
+	}
+	for _, want := range []string{"awaiting the owner's approval", gate} {
+		if !strings.Contains(pointer, want) {
+			t.Errorf("SECURITY.md's line about %s does not say the design is not built: it must carry %q\n\nline: %s",
+				design, want, pointer)
+		}
+	}
+	if _, err := os.Stat("../../" + design); err != nil {
+		t.Fatalf("SECURITY.md points at %s, which is not there: %v", design, err)
 	}
 }
