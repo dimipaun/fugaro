@@ -7,6 +7,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/mirror"
 )
 
 // validShared is a published shared config of the belong installation, as
@@ -202,6 +203,58 @@ func TestParseSharedRefusals(t *testing.T) {
 				t.Errorf("the refusal is not one clean line: %q", err.Error())
 			}
 		})
+	}
+}
+
+// A published image_source other than the default is accepted only on a
+// machine whose own local config records the same one (design §10.7,
+// DECIDED as option (i)): the pin's shape is checked against the owner that
+// record names, so a publisher able to write this document must not be able
+// to choose the owner its readers trust.
+func TestSharedConfigRefusesAForeignPublishedOwner(t *testing.T) {
+	const fork = "ghcr.io/acme"
+	pin := "us-east5-docker.pkg.dev/fugaro-belong/fugaro-ghcr/acme/fugaro-base:0.7.5@sha256:" + strings.Repeat("a", 64)
+	published := strings.Replace(validShared(), "base_images:\n", "image_source: "+fork+"\nbase_images:\n", 1)
+	published = strings.Replace(published, "base: us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-base:0.3.1", "base: "+pin, 1)
+
+	// A machine that records nothing: refused, naming the owner and how to
+	// record it.
+	_, err := ParseShared([]byte(published), sharedAnchor)
+	if err == nil || !strings.Contains(err.Error(), "image_source") || !strings.Contains(err.Error(), fork) || !strings.Contains(err.Error(), "--image-source") {
+		t.Fatalf("err = %v, want a refusal naming image_source, the owner and the flag", err)
+	}
+	if strings.ContainsAny(err.Error(), "\n\x1b\a") {
+		t.Errorf("the refusal is not one clean line: %q", err.Error())
+	}
+
+	// The machine that records the same owner: the pin and its owner come
+	// through together.
+	a := sharedAnchor
+	a.ImageSource = fork
+	c, err := ParseShared([]byte(published), a)
+	if err != nil {
+		t.Fatalf("a machine recording %s: %v", fork, err)
+	}
+	if c.ImageSource != fork || c.BaseImages["base"] != pin {
+		t.Errorf("image_source %q, base_images %v", c.ImageSource, c.BaseImages)
+	}
+
+	// The default owner is what an unset one means, and needs no record:
+	// the machine that recorded no owner still reads it.
+	def := strings.Replace(validShared(), "base_images:\n", "image_source: "+mirror.DefaultSources[0]+"\nbase_images:\n", 1)
+	if c, err := ParseShared([]byte(def), sharedAnchor); err != nil {
+		t.Errorf("the default owner: %v", err)
+	} else if c.ImageSource != mirror.DefaultSources[0] {
+		t.Errorf("image_source = %q, want the published default", c.ImageSource)
+	}
+
+	// A pin is checked against the owner the record names, never the one
+	// the reference names itself: with no record at all it is refused even
+	// though the reference spells an owner out.
+	none := strings.Replace(validShared(), "base: us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-base:0.3.1",
+		"base: us-east5-docker.pkg.dev/fugaro-belong/fugaro-ghcr/dimipaun/fugaro-base:0.7.5@sha256:"+strings.Repeat("a", 64), 1)
+	if _, err := ParseShared([]byte(none), sharedAnchor); err == nil || !strings.Contains(err.Error(), "records none") {
+		t.Fatalf("a pin with no recorded owner: %v", err)
 	}
 }
 

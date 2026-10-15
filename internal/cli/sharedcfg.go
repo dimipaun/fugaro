@@ -26,6 +26,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/mirror"
 )
 
 // publishShared writes the installation-wide part of the local config
@@ -45,7 +46,7 @@ func publishShared(ctx context.Context, lc *localcfg.Config) error {
 // gcp_project, or content ParseShared refuses). written says whether the
 // object was written.
 func publishSharedWarn(ctx context.Context, lc *localcfg.Config, warn func(string)) (written bool, err error) {
-	anchor := SharedAnchor{Name: lc.Name, GCPProject: lc.GCPProject, Bucket: "fugaro-runs-" + lc.GCPProject}
+	anchor := SharedAnchor{Name: lc.Name, GCPProject: lc.GCPProject, Bucket: "fugaro-runs-" + lc.GCPProject, ImageSource: lc.ImageSource}
 	if lc.RunsBucketName() != anchor.Bucket {
 		warn(fmt.Sprintf("not publishing the shared config: the runs bucket is %q, and a shared config needs the default runs bucket name %s, which teammates find from gcp_project", lc.RunsBucketName(), anchor.Bucket))
 		return false, nil
@@ -140,8 +141,18 @@ var sharedBucketOpener = func(ctx context.Context, url string) (*blobx.Bucket, e
 
 // SharedAnchor is what a fetched shared config must agree with: the
 // project name and GCP project from the checkout (the committed, reviewed
-// trust anchor), and the bucket the file was read from.
-type SharedAnchor struct{ Name, GCPProject, Bucket string }
+// trust anchor), the bucket the file was read from, and — for the published
+// owner — the registry/owner prefix the READING machine's own local config
+// records ("" when it records none).
+type SharedAnchor struct {
+	Name, GCPProject, Bucket string
+	// ImageSource is the owner the reading machine knows (design
+	// registry-remote-repository.md §10.7, DECIDED as option (i)): the
+	// trusted owner is published in the same document as the entry it
+	// validates, so a published one is accepted only when it is the default
+	// or the reader's own record.
+	ImageSource string
+}
 
 // sharedForbidden are the top-level keys the publisher never writes
 // (localcfg.Config.Shared): owner-only, personal, derived or local-only.
@@ -225,10 +236,26 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 	case c.LogView != "" && !strings.HasPrefix(c.LogView, "projects/"+a.GCPProject+"/"):
 		return bad("log_view", "%q is not under projects/%s/", c.LogView, a.GCPProject)
 	}
+	// The published owner: the pin's shape is checked against it, and it is
+	// published beside the entry it validates, so a publisher who can write
+	// this document sets both halves at once (design §3.6). The one thing
+	// that binds that publisher is this check (design §10.7, DECIDED (i)):
+	// a fork's own source is accepted only on a machine that records the
+	// same one, so the owner is never the writer's alone to set.
+	switch {
+	case c.ImageSource == "" || c.ImageSource == mirror.DefaultSources[0] || c.ImageSource == a.ImageSource:
+	default:
+		return bad("image_source", "%q is not %s, and this machine's local config does not record it: a base pin through the remote repository is checked against the owner recorded there, so record %s first (fugaro init --base base --image-source %s), then publish",
+			c.ImageSource, mirror.DefaultSources[0], c.ImageSource, c.ImageSource)
+	}
 	for _, kind := range slices.Sorted(maps.Keys(c.BaseImages)) {
-		if ref := c.BaseImages[kind]; !baseImageRE(c.RegistryHost, kind).MatchString(ref) {
+		ref := c.BaseImages[kind]
+		if !baseImageRE(c.RegistryHost, kind).MatchString(ref) {
 			return bad("base_images."+kind, "%q is not an image of this project's base registry, %s/%s/<image>[:tag][@sha256:<digest>], nor a pin through the remote repository, %s/%s/<owner>/fugaro-%s:<version>@sha256:<digest>",
 				ref, c.RegistryHost, infra.BaseRegistry, c.RegistryHost, infra.GhcrRegistry, kind)
+		}
+		if c.ImageSource == "" && strings.HasPrefix(ref, c.RegistryHost+"/"+infra.GhcrRegistry+"/") {
+			return bad("base_images."+kind, "%q is a pin through the remote repository, which is checked against the owner image_source records, and this config records none: rerun fugaro init --base %s there to record one, or remove the entry", ref, kind)
 		}
 	}
 	if c.Build.ServiceAccount != "" {
@@ -404,6 +431,13 @@ func fetchSharedConfig(ctx context.Context, getenv func(string) string, now time
 	}
 	bucket := "fugaro-runs-" + gcp
 	anchor := SharedAnchor{Name: name, GCPProject: gcp, Bucket: bucket}
+	// What THIS machine records is the other half of the owner check
+	// (design §10.7, DECIDED (i)); best effort, because a machine with no
+	// local config for this project is exactly the reader the shared config
+	// exists for.
+	if lc, _, err := localcfg.LoadProject(getenv, name); err == nil && lc != nil && lc.GCPProject == gcp {
+		anchor.ImageSource = lc.ImageSource
+	}
 	cached, ok := localcfg.LoadSharedCache(getenv, name)
 	ours := ok && cached.GCPProject == gcp && cached.Bucket == bucket
 	if ours {
