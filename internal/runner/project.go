@@ -221,12 +221,13 @@ func (r *run) addRemoteSecrets(remote string) {
 // identity is what an admission rests on (R2-9).
 //
 // It runs after the project's policy has been read (Task 1.3) and before the
-// provider is opened, so no git credential exists yet and nothing has been
-// cloned; and before the run's own record is claimed, the lock is taken and
-// the budget session is opened, so a run that is not admitted writes no lease
-// and — checked here rather than after the claim, which is a run's first
-// write of any kind — leaves no trace but its own record, which is the
-// refusal. Its refusals are the run's own: the slug it was
+// provider is opened, so no git credential is requested and nothing has been
+// cloned; and before the lock and the budget session, so a run that is not
+// admitted writes no lease, no outcome and no spend. The claim is the one
+// write that precedes it — it is what makes this execution the run's owner,
+// and a duplicate is turned away there, before any of this is read — so the
+// trace a refusal leaves is its own run record, carrying the refusal, and
+// nothing else anywhere. Its refusals are the run's own: the slug it was
 // given must be the slug of the repository task.json names; the provider kind
 // and the remote — the two environment values a launcher can set that would
 // say otherwise — may disagree with it only by refusing; and, when the project

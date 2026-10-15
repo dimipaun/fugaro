@@ -826,24 +826,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 	r.addRemoteSecrets(r.d.Remote)
 	r.addRemoteSecrets(r.originURL(ctx))
 
-	// The run's admission, in the order the security property needs it:
-	// task.json has been read, the project's policy is read here (memoized;
-	// Task 1.3), and only then is the provider opened and the clone made. It
-	// also comes before the claim below, which is a run's first write of any
-	// kind: a run that is not admitted for this repository has asked for no
-	// git credential, cloned nothing and written no lease, and the only trace
-	// it leaves is its own run record — created by the deferred func above,
-	// naming the refusal, which is how the operator and the launcher learn the
-	// run was refused rather than lost (R2-12).
-	if err := r.admissionCheck(ctx); err != nil {
-		return err
-	}
-
 	if r.owned {
 		r.save(ctx)
 	} else if err := r.claimRecord(ctx); err != nil {
 		// Claimed before the lock, so two executions of one run are
-		// always told apart here (design §4.7).
+		// always told apart here (design §4.7) — and before the admission
+		// check below, so a duplicate is told it is a duplicate whatever
+		// else about it would have been refused (fugaro exec exits a
+		// duplicate as a remote error, and prints no record).
 		return err
 	}
 	if r.d.SpendErr != nil {
@@ -863,6 +853,21 @@ func (r *run) bootstrap(ctx context.Context) error {
 		r.review = true
 	}
 	if err := stateDirOutsideCheckout(r.d.WorkDir, r.d.StateDir); err != nil {
+		return err
+	}
+
+	// The run's admission, in the order the security property needs it:
+	// task.json has been read, the project's policy is read here (memoized;
+	// Task 1.3), and only then is the provider opened and the clone made. No
+	// git credential is requested, nothing is cloned, and no lease, no
+	// outcome and no spend is written, so a run that is not admitted for this
+	// repository leaves exactly one trace: its own run record, claimed above
+	// and carrying the refusal — which is what makes it visible to the
+	// operator and to the launcher instead of looking like a run that never
+	// started (R2-12). It is the record and nothing else: the claim above is
+	// what makes this execution the run's owner, and a duplicate was turned
+	// away there.
+	if err := r.admissionCheck(ctx); err != nil {
 		return err
 	}
 

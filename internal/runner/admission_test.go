@@ -3,6 +3,7 @@ package runner_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -110,11 +112,12 @@ func mintUnder(t *testing.T, b *bk, slug string, at time.Time) {
 //
 // Mutation (run, restored): move the admissionCheck call in bootstrap below
 // the openProvider block. Every test that comes through here fails, on this
-// counter and on nothing else. Mutation (run, restored): move it below the
+// counter and on nothing else. Mutation (run, restored): move it above the
 // claim (claimRecord/save). These tests stay green — the record the store ends
-// up with is the refusal either way — so that ordering is pinned by
-// TestRunnerRefusesADuplicateThatIsNotAdmitted instead, where the claim would
-// answer first.
+// up with is the refusal either way, because the claim is what creates it —
+// and what that ordering breaks is the duplicate's precedence
+// (TestRunnerTellsADuplicateApartBeforeAdmission) and, end to end, internal/cli's
+// TestExecDuplicateExecutionExitsRemoteError.
 func refusedAdmission(t *testing.T, b *bk, rec *runstore.Record, err error, want ...string) {
 	t.Helper()
 	if err == nil || rec == nil || rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone {
@@ -150,10 +153,10 @@ func refusedAdmission(t *testing.T, b *bk, rec *runstore.Record, err error, want
 	if v := b.db.Value(budget.PathOutcome(b.day(), slug, runID)); v != nil {
 		t.Errorf("the refused run wrote an outcome: %v", v)
 	}
-	// The one trace it does leave, and the one the ordering is pinned by: its
-	// own record, created by the deferred handler because the run never
-	// claimed it. The claim comes after the check, so this create only ever
-	// fills a gap — an existing record (the owner's) is left alone.
+	// The one trace it does leave: its own record, claimed before this check
+	// and carrying the refusal — a run that is not admitted must be visible
+	// as refused rather than as one that never started — and nothing else
+	// under the run's prefix.
 	stored, rerr := b.harness.store.ReadRecord(context.Background())
 	if rerr != nil || stored.RunID != runID || stored.Execution != b.deps.Execution ||
 		stored.Status != runstore.StatusInfraError || stored.Reason != rec.Reason {
@@ -353,28 +356,24 @@ func TestEmptyAllowListInAPublishedPolicyDeniesEverything(t *testing.T) {
 	refusedAdmission(t, b, rec, err, "github/acme/app", "empty", "admits no repository at all", "fugaro project repos add")
 }
 
-// The ordering the claim moved below, from the other side: a duplicate
-// execution that is also unadmitted. The admission check answers first, so
-// this execution is told it is not admitted rather than told it is a
-// duplicate — and, because it never claimed, the record it writes is the one
-// the deferred handler creates only when nothing is there, so the owner's
-// record survives (ownerRecord/assertOwnerRecordIntact, and
-// TestDuplicateExecutionFailingBeforeItsRecordWritesNothing for the same
-// convention at task.json). Below the claim this test fails on both counts:
-// claimRecord returns ErrDuplicateExecution before the check runs, and the
-// refusal is never reached.
-func TestRunnerRefusesADuplicateThatIsNotAdmitted(t *testing.T) {
+// The ordering the claim keeps: a duplicate execution is told it is a
+// duplicate whatever else about it would have been refused, because the claim
+// comes before the admission check (design §4.7). The owner's record is left
+// exactly as it was and this execution prints none (fugaro exec exits a
+// duplicate as a remote error, internal/cli's
+// TestExecDuplicateExecutionExitsRemoteError), so a run whose job was
+// re-executed — a retry, a second execution of one run — never gains a second
+// record of its own. Swapping the two calls fails here: the admission refusal
+// is what comes back, and the record is written over the owner's.
+func TestRunnerTellsADuplicateApartBeforeAdmission(t *testing.T) {
 	b := admissionRun(t, "github", "acme/other", "off", "", "")
 	ownerRecord(t, b.harness)
 	rec, err := b.run(t)
-	if err == nil || !strings.Contains(err.Error(), "acme/app") || !strings.Contains(err.Error(), "provider kind") {
-		t.Fatalf("rec = %+v, err = %v: want the admission refusal", rec, err)
-	}
-	if strings.Contains(err.Error(), "duplicate") {
-		t.Errorf("err = %v: the run is told it is a duplicate before it is told it is not admitted", err)
+	if !errors.Is(err, runner.ErrDuplicateExecution) {
+		t.Fatalf("rec = %+v, err = %v: want ErrDuplicateExecution", rec, err)
 	}
 	if rec != nil {
-		t.Errorf("rec = %+v, want none: this execution never owned the run", rec)
+		t.Errorf("rec = %+v, want none: this execution does not own the run", rec)
 	}
 	assertOwnerRecordIntact(t, b.harness)
 }
