@@ -316,6 +316,45 @@ func TestPinRefusedNamesTheSwitchAndBothWaysOut(t *testing.T) {
 	}
 }
 
+// TestPriceTableRefusesARowItCannotPrice pins the one builder's contract for
+// a row the catalog cannot compile. The missing input/output price branch of
+// pricing.ApplyCatalog is reachable: the loader checks that a tier prices
+// *something* (catalog.validate), not that it prices those two, so a file
+// whose tier prices only a cache dimension loads and arrives at the compile.
+// It must refuse that model and record why — never fail the table the pin
+// rules, the gateway and `budget prices` share (design D5, P8).
+func TestPriceTableRefusesARowItCannotPrice(t *testing.T) {
+	cat := fixtureCatalog("2026-10-14")
+	e := cat.Models[catModel]
+	e.All = map[string]catalog.Bound{"cache_read_per_m": {Min: "0.125", Max: "0.5", MinOf: "a", MaxOf: "b"}}
+	cat.Models[catModel] = e
+	no := false
+	tbl := mustTable(t, providers(func(p *ModelProvider) { p.RequireZDR = &no }), nil, cat)
+	if _, ok := tbl.Lookup(catModel); ok {
+		t.Fatal("a tier with no input or output price got a row: nothing can price it free")
+	}
+	if why := tbl.Refusal(catModel); !strings.Contains(why, catModel) || !strings.Contains(why, "prices no input_per_m") {
+		t.Errorf("the refusal does not name the model and what is missing: %q", why)
+	}
+}
+
+// TestPriceTableReportsAMalformedCatalog pins the other half of that
+// contract: a file that is not a catalog at all is an error out of the one
+// builder, not an empty table. `validate` and the run's bootstrap report it
+// as they report any other failure to read the file.
+func TestPriceTableReportsAMalformedCatalog(t *testing.T) {
+	tbl, err := PriceTable(providers(nil), nil, fixtureCatalog("yesterday"), catNow)
+	if err == nil {
+		t.Fatalf("a catalog with no readable checked_at built a table: %d rows", len(tbl.Models))
+	}
+	if tbl != nil {
+		t.Error("a failed build returned a table")
+	}
+	if !strings.Contains(err.Error(), "checked_at") || !strings.Contains(err.Error(), "yesterday") {
+		t.Errorf("the error does not say what is wrong with the file: %v", err)
+	}
+}
+
 // TestUnnamedNonZDRModelDoesNotFailTheTable pins the scope of that refusal: a
 // route's pattern claims a whole family, so a model of that family the
 // catalog cannot price under require_zdr is refused where it is named — a

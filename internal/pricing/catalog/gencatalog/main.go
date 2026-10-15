@@ -433,6 +433,14 @@ func buildEntry(id string, eps []endpoint, zdr map[string]bool) (catalog.Entry, 
 // serving the same model under one tag from two regions); two rows with the
 // same tag and different prices are a hard error naming both, never a
 // silent pick.
+//
+// The two rows of one tag are one endpoint for pricing but not for the
+// limits, so their context and output limits are folded to the smaller of
+// the two here rather than one row being kept whole: keeping either would
+// record a limit above what the other row accepts, which is what design §4
+// promises the file does not do, and would make the file depend on the
+// order the response listed the rows in. The fold is a minimum, so it is
+// the same whichever row came first.
 func dedupe(id string, eps []endpoint) ([]endpoint, error) {
 	byTag := map[string]endpoint{}
 	for _, e := range eps {
@@ -443,7 +451,8 @@ func dedupe(id string, eps []endpoint) ([]endpoint, error) {
 			if !samePricing(prev.Pricing, e.Pricing) {
 				return nil, fmt.Errorf("%s: the endpoint tag %q appears twice with different prices: the file cannot say which one is charged", id, e.Tag)
 			}
-			continue
+			e.ContextLength = lowerLimit(prev.ContextLength, e.ContextLength)
+			e.MaxCompletion = lowerLimit(prev.MaxCompletion, e.MaxCompletion)
 		}
 		byTag[e.Tag] = e
 	}
@@ -452,6 +461,23 @@ func dedupe(id string, eps []endpoint) ([]endpoint, error) {
 		out = append(out, byTag[t])
 	}
 	return out, nil
+}
+
+// lowerLimit is the smaller of two limits the API reported for one endpoint
+// tag, with an absent one (null: the endpoint advertises no limit) imposing
+// nothing — the same reading minima applies, so a fold over duplicate rows
+// cannot raise a limit either row advertised, and cannot invent one where
+// neither did.
+func lowerLimit(a, b *int64) *int64 {
+	switch {
+	case a == nil || *a <= 0:
+		return b
+	case b == nil || *b <= 0:
+		return a
+	case *b < *a:
+		return b
+	}
+	return a
 }
 
 // samePricing compares two endpoint pricing objects by their raw JSON, with

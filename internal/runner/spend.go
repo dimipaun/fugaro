@@ -143,11 +143,18 @@ func priceTableFromEnv(lookup func(string) (string, bool), ov pricing.Overrides)
 	return priceTable(providers, ov)
 }
 
+// loadCatalog is the embedded catalog behind a variable, the same seam the
+// CLI has. A released binary's file is valid — the generator validates its own
+// output with catalog.Parse and a compile-time test prices every shipped row —
+// so the run's reporting of a file that will not load has no other way to be
+// exercised from a test.
+var loadCatalog = catalog.Load
+
 // priceTable is config.PriceTable with the built-in catalog and the clock:
 // the one place the runner builds a table, so a run with the budget off is
 // priced by the same rules as one with it on.
 func priceTable(providers map[string]config.ModelProvider, ov pricing.Overrides) (*pricing.Table, error) {
-	cat, err := catalog.Load()
+	cat, err := loadCatalog()
 	if err != nil {
 		return nil, err
 	}

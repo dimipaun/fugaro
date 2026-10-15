@@ -149,6 +149,163 @@ func allowlist() []string {
 	}
 }
 
+// TestSnapshotsAreTrimmedToTheDocumentedFields pins the snapshot README
+// against the generator: stripping testdata/openrouter down to exactly the
+// fields the README documents must still generate the checked-in
+// catalog.json, byte for byte. The README is what a reviewer trims a
+// refreshed snapshot to, so a field the generator reads and the README
+// leaves out would silently drop a whole dimension from the file — which is
+// how `input_cache_write` went missing once — and this test fails instead.
+func TestSnapshotsAreTrimmedToTheDocumentedFields(t *testing.T) {
+	kept := keptFields(t)
+	src := filepath.Join("..", "testdata", "openrouter")
+	dir := t.TempDir()
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		fields, ok := kept[kind(name)]
+		if !ok {
+			t.Fatalf("%s is not one of the documented snapshot files: %v", name, kept)
+		}
+		b, err := os.ReadFile(filepath.Join(src, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(b, &doc); err != nil {
+			t.Fatal(err)
+		}
+		switch data := doc["data"].(type) {
+		case []any:
+			for i, r := range data {
+				data[i] = keepFields(t, r.(map[string]any), fields)
+			}
+		case map[string]any:
+			rows, _ := data["endpoints"].([]any)
+			for i, r := range rows {
+				rows[i] = keepFields(t, r.(map[string]any), fields)
+			}
+		default:
+			t.Fatalf("%s: data is %T", name, doc["data"])
+		}
+		out, err := json.Marshal(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), out, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		n++
+	}
+	if n < 3 {
+		t.Fatalf("stripped %d snapshot files, want at least 3", n)
+	}
+	want, err := os.ReadFile(filepath.Join("..", "catalog.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	allow := filepath.Join(dir, "allow.txt")
+	if err := os.WriteFile(allow, []byte(strings.Join(allowlist(), "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := generate(options{from: dir, allow: allow, date: "2026-10-14", out: filepath.Join(dir, "catalog.json")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("the snapshots trimmed to the fields the README documents do not generate the checked-in catalog.json:\n" +
+			"the README's kept-fields list is missing something the generator reads (or names something it does not); " +
+			"compare it with apiDims and the endpoint struct in main.go")
+	}
+}
+
+// kind is the README's name for a snapshot file: models.json, zdr.json, or
+// one of the per-model endpoints files.
+func kind(name string) string {
+	switch {
+	case name == "models.json":
+		return "models"
+	case name == "zdr.json":
+		return "zdr"
+	default:
+		return "endpoints"
+	}
+}
+
+// keepFields is one row with only the documented fields left: a bare name is
+// the row's own field, a dotted one a field of that sub-object.
+func keepFields(t *testing.T, row map[string]any, fields []string) map[string]any {
+	t.Helper()
+	out := map[string]any{}
+	for _, f := range fields {
+		head, tail, dotted := strings.Cut(f, ".")
+		v, ok := row[head]
+		if !ok {
+			continue
+		}
+		if !dotted {
+			out[head] = v
+			continue
+		}
+		sub, ok := v.(map[string]any)
+		if !ok {
+			t.Fatalf("%s is %T, not an object", head, v)
+		}
+		if x, ok := sub[tail]; ok {
+			kept, _ := out[head].(map[string]any)
+			if kept == nil {
+				kept = map[string]any{}
+				out[head] = kept
+			}
+			kept[tail] = x
+		}
+	}
+	return out
+}
+
+// keptFields parses the README's kept-fields block: the fields each snapshot
+// file keeps, keyed by the kind above.
+func keptFields(t *testing.T) map[string][]string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "testdata", "openrouter", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const begin, end = "<!-- kept-fields: begin -->", "<!-- kept-fields: end -->"
+	out := map[string][]string{}
+	in := false
+	for _, line := range strings.Split(string(b), "\n") {
+		switch {
+		case strings.Contains(line, begin):
+			in = true
+			continue
+		case strings.Contains(line, end):
+			in = false
+			continue
+		case !in || strings.TrimSpace(line) == "":
+			continue
+		}
+		k, fields, ok := strings.Cut(line, ":")
+		if !ok {
+			t.Fatalf("the README's kept-fields line %q is not \"kind: field field\"", line)
+		}
+		out[strings.TrimSpace(k)] = strings.Fields(fields)
+	}
+	for _, k := range []string{"models", "endpoints", "zdr"} {
+		if len(out[k]) == 0 {
+			t.Fatalf("the README's kept-fields block documents no %s fields: %v", k, out)
+		}
+	}
+	return out
+}
+
 // TestGeneratorSkipsVariantsAndAliases pins that no key in the shipped file
 // is a spelling pricing.IsAlias refuses: a ":" variant or a "~" alias can
 // never be claimed by a route or named by a pin, so a row for one would
@@ -318,6 +475,49 @@ func TestGeneratorRefusesDuplicateTagWithDifferentPrices(t *testing.T) {
 	)
 	if f := s.genFile("vendor/model"); f.Models["vendor/model"].Endpoints != 1 {
 		t.Errorf("two identical rows for one tag gave %d endpoints, want 1", f.Models["vendor/model"].Endpoints)
+	}
+}
+
+// TestGeneratorDuplicateTagTakesTheLowerLimits pins the fold dedupe does:
+// the two rows of one tag are one endpoint for pricing but two reports of
+// its limits, and keeping either row whole would record a ceiling above
+// what the other row accepts — which is what design §4 promises the file
+// does not do — and would make the file depend on the order the response
+// listed them in.
+func TestGeneratorDuplicateTagTakesTheLowerLimits(t *testing.T) {
+	row := func(context, out any) map[string]any {
+		return map[string]any{
+			"tag": "p", "context_length": context, "max_completion_tokens": out,
+			"pricing": map[string]any{"prompt": "0.000001", "completion": "0.000002"},
+		}
+	}
+	for _, c := range []struct {
+		name string
+		rows []map[string]any
+	}{
+		{"the higher row first", []map[string]any{row(2000, 200), row(1000, 100)}},
+		{"the lower row first", []map[string]any{row(1000, 100), row(2000, 200)}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := newSnapshots(t, "vendor/model")
+			s.endpoints("vendor/model", c.rows...)
+			e := s.genFile("vendor/model").Models["vendor/model"]
+			if e.Endpoints != 1 {
+				t.Errorf("%d endpoints, want 1: the two rows share a tag", e.Endpoints)
+			}
+			if e.ContextTokens != 1000 || e.MaxOutputTokens != 100 {
+				t.Errorf("limits %d/%d, want 1000/100: the fold must take the smaller of the two rows, in either order",
+					e.ContextTokens, e.MaxOutputTokens)
+			}
+		})
+	}
+	// A null on one row is an endpoint advertising no limit, so it imposes
+	// nothing and does not erase what the other row reported.
+	s := newSnapshots(t, "vendor/model")
+	s.endpoints("vendor/model", row(nil, nil), row(1000, 100))
+	e := s.genFile("vendor/model").Models["vendor/model"]
+	if e.ContextTokens != 1000 || e.MaxOutputTokens != 100 {
+		t.Errorf("limits %d/%d, want the one row that advertised them", e.ContextTokens, e.MaxOutputTokens)
 	}
 }
 

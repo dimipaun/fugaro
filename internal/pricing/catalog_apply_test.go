@@ -174,6 +174,66 @@ func TestApplyCatalogRefusesMultiplierAboveMax(t *testing.T) {
 	}
 }
 
+// TestApplyCatalogRefusesATierWithNoInputOrOutput pins the reachable
+// catalogRates branch for the two dimensions every row needs. The loader
+// checks that a tier prices *something* (catalog.validate), not that it
+// prices these two, so a file whose tier prices only a cache dimension
+// passes Load and arrives here -- where a row without them would price every
+// token at nothing. It is a refusal of that model, never a failed table
+// (design D5, P8): the reason is on the table for the surfaces that name the
+// model, and every other row still prices.
+func TestApplyCatalogRefusesATierWithNoInputOrOutput(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		tier map[string]catalog.Bound
+		want string
+	}{
+		{"no input", map[string]catalog.Bound{"output_per_m": bound("2", "8")}, "prices no input_per_m"},
+		{"no output", map[string]catalog.Bound{"input_per_m": bound("1", "4")}, "prices no output_per_m"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := entry()
+			e.All, e.ZDR = c.tier, nil
+			got := compile(t, catalogFile("2026-10-14", e), route(false, "cheapest"))
+			if _, priced := got.Lookup("vendor/model"); priced {
+				t.Fatal("a tier with no input or output price got a row")
+			}
+			why := got.Refusal("vendor/model")
+			for _, want := range []string{"vendor/model", c.want} {
+				if !strings.Contains(why, want) {
+					t.Errorf("the refusal does not name %q: %v", want, why)
+				}
+			}
+			// The refusal is that model's alone: the embedded rows are
+			// still priced, so one unpriceable row cannot fail a run.
+			if len(got.Models) != len(Embedded().Models) {
+				t.Errorf("%d rows, want the embedded table's %d", len(got.Models), len(Embedded().Models))
+			}
+		})
+	}
+}
+
+// TestApplyCatalogErrorsOnAMalformedFile pins the one thing ApplyCatalog
+// itself fails on (its doc comment's error contract): a file it cannot read
+// as a catalog at all -- here a checked_at that is not a date -- is an
+// error, and no table comes back. A model it merely cannot price is the
+// refusal above, never this.
+func TestApplyCatalogErrorsOnAMalformedFile(t *testing.T) {
+	f := catalogFile("the 14th of October", entry())
+	got, err := ApplyCatalog(Embedded(), f, route(false, "cheapest"), catalogNow)
+	if err == nil {
+		t.Fatalf("a catalog with no readable checked_at compiled: %d rows", len(got.Models))
+	}
+	if got != nil {
+		t.Error("a failed build returned a table")
+	}
+	for _, want := range []string{"malformed", "checked_at", "the 14th of October"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error does not name %q: %v", want, err)
+		}
+	}
+}
+
 // TestApplyCatalogStaleForcesTierMax pins design D10: past the catalog's
 // own 30-day threshold the bound is the selected tier's maximum whatever
 // the policy asked for, and the row says it is stale. Inverting or dropping

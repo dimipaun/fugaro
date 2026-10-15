@@ -529,6 +529,49 @@ func TestDiagnoseShowsRouteReportedAndPinWarnings(t *testing.T) {
 	}
 }
 
+// TestDiagnoseShowsAStaleCatalog: a run whose models the catalog priced while
+// it was past its own 30 days charged the dearest end of their tier's range,
+// and diagnose says so and says how to fix it (design §7, P7). The line is
+// driven by the record's own flag — result.json's cost.catalog_stale, written
+// by the run that charged — so diagnose reports what the run did rather than
+// re-measuring the catalog's age today; a run that charged no such row has no
+// line.
+func TestDiagnoseShowsAStaleCatalog(t *testing.T) {
+	f := newCloudFixture(t)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	for i, tc := range []struct {
+		stale bool
+	}{{true}, {false}} {
+		id := fmt.Sprintf("20260927-15000%d-aaaa", i)
+		exec := seedRun(t, f, id, "", "someone@example.com", true)
+		s := runstore.Open(b, appSlug, id)
+		cost := runstore.NewCost(0.42, 0, runstore.BasisAPIList)
+		cost.ModelBy = map[string]float64{"deepseek/deepseek-v4-flash": 0.42}
+		cost.CatalogStale = tc.stale
+		if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+			Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, CostUSD: 0.42, Cost: &cost}); err != nil {
+			t.Fatal(err)
+		}
+		human, _, err := execute(t, "diagnose", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !tc.stale {
+			if strings.Contains(human, "Catalog:") {
+				t.Fatalf("a run with no stale row shows the catalog line:\n%s", human)
+			}
+			continue
+		}
+		for _, want := range []string{"Catalog:", "stale", "dearest end", "scripts/gen-price-catalog.sh"} {
+			if !strings.Contains(human, want) {
+				t.Errorf("diagnose lacks %q:\n%s", want, human)
+			}
+		}
+	}
+}
+
 // A run with a provider coder and a Claude senior: the charge compared with
 // the provider's report is the provider route's spend, not the whole run's,
 // and an "unattributed" remainder (maybe Claude's) is not in it.

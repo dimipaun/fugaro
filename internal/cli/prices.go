@@ -9,12 +9,19 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 )
 
+// loadCatalog is the embedded catalog behind a variable, like this package's
+// other seams (doctorLookPath, readAppKey). The file a released binary reads
+// is valid — TestShippedCatalogLoads and the generator's own Parse keep it so
+// — which leaves the surfaces' reporting of a catalog that will not load, and
+// of a row the compile refuses, with no way to be exercised from a test.
+var loadCatalog = catalog.Load
+
 // priceTableFor is the table every CLI pricing surface builds: config.PriceTable
 // over the owner's provider routes and model_prices, with the built-in price
 // catalog. One function, so `validate`, `diagnose` and `budget prices` cannot
 // price a model differently from the run (design D5, plan P5).
 func priceTableFor(providers map[string]config.ModelProvider, ov pricing.Overrides, now time.Time) (*pricing.Table, error) {
-	cat, err := catalog.Load()
+	cat, err := loadCatalog()
 	if err != nil {
 		return nil, err
 	}

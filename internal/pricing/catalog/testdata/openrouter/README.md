@@ -17,20 +17,33 @@ generator reads:
 | `models_<id>_endpoints.json` | every endpoint row of those 5 models | one file per model, of 462 |
 | `zdr.json` | the 67 rows whose `model_id` is one of the 5 | 946 rows over 356 models |
 
-Within a row, only the fields the generator reads are kept:
+Within a row, only the fields the generator reads are kept. **This list is
+machine-read**: `TestSnapshotsAreTrimmedToTheDocumentedFields` strips the
+snapshots down to exactly the fields below, regenerates, and requires the
+result to be the checked-in `catalog.json` byte for byte — so a field the
+generator reads and this list leaves out fails that test instead of quietly
+dropping a dimension from the file.
 
-- `models.json`: `id` and `pricing.{prompt,completion,input_cache_read}`.
-- `models_<id>_endpoints.json`: `tag`, `context_length`,
-  `max_completion_tokens` and `pricing.{prompt,completion,input_cache_read,discount}`.
-- `zdr.json`: `model_id` and `tag` (the row's own `pricing` is not read; the
-  prices come from the endpoint rows above).
+<!-- kept-fields: begin -->
+models: id pricing.prompt pricing.completion pricing.input_cache_read
+endpoints: tag context_length max_completion_tokens pricing.prompt pricing.completion pricing.input_cache_read pricing.input_cache_write pricing.input_cache_write_1h pricing.discount
+zdr: model_id tag
+<!-- kept-fields: end -->
+
+`models.json`'s row is a model (`data` is a list); the endpoints file's is one
+endpoint (`data.endpoints` is the list); `zdr.json`'s is a ZDR-eligible
+endpoint, and only its `model_id` and `tag` are read — its own `pricing` is
+ignored, because the prices come from the endpoint rows above. The
+`pricing.`-prefixed names are the endpoint's pricing fields the generator reads
+(`apiDims` in `../gencatalog/main.go`); `discount` is kept because it is part
+of the published row, and is deliberately not read (design D8).
 
 Everything else the API sends — names, descriptions, context lengths at the
 model level, `alias_target`, `created`, provider metadata — is dropped: the
 generator never reads it, and a full response would be megabytes of noise
 around the prices. Dropping a field the generator *does* read is therefore the
-one way to make these files lie, which is why the shape above is worth keeping
-in step with `apiDims` and `buildEntry` in `../gencatalog/main.go`.
+one way to make these files lie, which is why the list above is checked
+against the generator rather than kept in step by hand.
 
 ## Regenerating offline
 
