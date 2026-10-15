@@ -398,6 +398,19 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 			return nil, userErr("this project's config sets profiles: and does not define %q, the profile every workflow that names none runs on: a repository selecting it would have every run refused; define it in %s, or remove the profiles: block (a policy with no profiles block sets no profile at all)",
 				projectpolicy.DefaultProfileName, lc.Name)
 		}
+		for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
+			// A profile's allow_repos is either written or not, and the node
+			// could not tell the two apart: the carrier's json omitempty drops
+			// an empty list on the way into the policy, so projectpolicy's own
+			// refusal for a written empty list (checkWrittenProfileFields)
+			// never sees this one — the profile would silently fall back to
+			// the project's wider allow_repos, which is the one direction a
+			// profile's list must never move (docs/project-layer.md §5).
+			// It is refused here, where the file still says which it was.
+			if lc.Profiles[name].AllowRepos != nil && len(lc.Profiles[name].AllowRepos) == 0 {
+				return nil, userErr("this project's config sets profiles.%s.allow_repos to an empty list, which is ambiguous: remove the key to fall back to the project's allow_repos, or write the repositories this profile admits (the project's own allow_repos is still required, so a profile's list can only narrow it)", name)
+			}
+		}
 	}
 	pol := &projectpolicy.Policy{
 		Version:    projectpolicy.Version,

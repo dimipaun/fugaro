@@ -202,3 +202,31 @@ func TestPublishRefusesASecretValueInAProfile(t *testing.T) {
 		t.Error("a refused publish wrote the node")
 	}
 }
+
+// TestPublishRefusesAnEmptyProfileAllowRepos: an operator writing `allow_repos:
+// []` means "this profile admits nobody", and the policy cannot carry the
+// difference between that and the key left out (the carrier's omitempty drops
+// the empty list on the way in). Read as "the project's list applies", it
+// would hand the profile every repository the project enrolls — the one
+// direction a profile's list must never move — so the publisher refuses it.
+// The mutation is a policyProfiles that copies the carrier and lets the
+// projectpolicy-level refusal try (and fail) to see the empty list.
+func TestPublishRefusesAnEmptyProfileAllowRepos(t *testing.T) {
+	f := newProjectFixture(t, "profiles:\n  standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h, allow_repos: [] }\n")
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatalf("publishing a profile with an empty allow_repos succeeded:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "profiles.standard.allow_repos") {
+		t.Errorf("the refusal does not name the key it refused: %v", err)
+	}
+	if f.db.Value(projectpolicy.PathShared()) != nil {
+		t.Error("a refused publish wrote the node")
+	}
+	// The project's list is seeded from repos:, so a publish that had gone
+	// through would have admitted both of them — which is what this refusal
+	// exists to prevent.
+	if strings.Contains(out, "acme/other") && err == nil {
+		t.Errorf("the empty list was widened to the project's allow-list:\n%s", out)
+	}
+}
