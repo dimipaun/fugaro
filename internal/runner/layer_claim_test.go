@@ -50,6 +50,13 @@ func claimCfg(t *testing.T, reviewer string) string {
 // project layer cannot carry. The claim itself is only ever in the layer.
 func layerClaimGW(t *testing.T, cfg, layer string, extra map[string]config.ModelProvider, script ...anthropicfake.Reply) *gw {
 	t.Helper()
+	return layerClaimGWMode(t, cfg, layer, "enforce", "50", extra, script...)
+}
+
+// layerClaimGWMode is layerClaimGW with the budget mode and cap a test
+// chooses: the mode is what CheckProviderGateway judges a claimed pin by.
+func layerClaimGWMode(t *testing.T, cfg, layer, mode, capUSD string, extra map[string]config.ModelProvider, script ...anthropicfake.Reply) *gw {
+	t.Helper()
 	h := newHarnessFiles(t, cfg, layerSpec(layer), nil)
 	// The direct Anthropic upstream the run must not reach, and the
 	// provider's own fake.
@@ -76,7 +83,7 @@ func layerClaimGW(t *testing.T, cfg, layer string, extra map[string]config.Model
 		t.Fatal(err)
 	}
 	env := map[string]string{
-		runner.BudgetModeEnv: "enforce", runner.MaxRunUSDEnv: "50", runner.ModelProvidersEnv: string(raw),
+		runner.BudgetModeEnv: mode, runner.MaxRunUSDEnv: capUSD, runner.ModelProvidersEnv: string(raw),
 		runner.ModelPricesEnv: `{"` + claimedClaude + `": {"input_per_m": 3, "output_per_m": 15}}`,
 	}
 	spend, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
@@ -91,6 +98,33 @@ func layerClaimGW(t *testing.T, cfg, layer string, extra map[string]config.Model
 	h.deps.Spend = spend
 	withProviderKey(h)
 	return &gw{harness: h, fake: anth, compat: compat, logs: &lockedBuf{}}
+}
+
+// claimCfgClaimed is the fixture whose coder and reviewer are both the
+// layer's claimed model, with the background pin removed and the first-line
+// review off: no pin names a model the job's own route table carries, so the
+// claim alone decides that the run is a provider run — (r *run).gatewayRoutes
+// registers no route without it, (r *run).stageOnProviderRoute says no stage
+// is a provider stage, and config.EffectiveBackground pins no background.
+func claimCfgClaimed(t *testing.T) string {
+	t.Helper()
+	cfg := gwConfig(t, "  first_line_review: off\n")
+	cfg = strings.Replace(cfg, "coder: "+sonnet, "coder: "+claimedClaude, 1)
+	cfg = strings.Replace(cfg, "reviewer: "+sonnet, "reviewer: "+claimedClaude, 1)
+	cfg = strings.Replace(cfg, ", background: "+haiku, "", 1)
+	cfg = strings.Replace(cfg, "project: aurora\n", "project: aurora\ngcp_project: proj-1234\n", 1)
+	return cfg
+}
+
+// claimCfgMixed is the fixture whose coder and background are a Claude model
+// that goes direct to Anthropic, and whose reviewer is the layer's claimed
+// model: the two kinds of stage side by side in one run.
+func claimCfgMixed(t *testing.T) string {
+	t.Helper()
+	cfg := gwConfig(t, "  first_line_review: off\n")
+	cfg = strings.Replace(cfg, "reviewer: "+sonnet, "reviewer: "+claimedClaude, 1)
+	cfg = strings.Replace(cfg, "project: aurora\n", "project: aurora\ngcp_project: proj-1234\n", 1)
+	return cfg
 }
 
 // mustLayer is layer text as config.ParseProjectLayer reads it.
@@ -196,14 +230,121 @@ func TestLayerClaimEnablesTheRoute(t *testing.T) {
 	}
 }
 
+// A claim is a route's worth of routing on its own: a run whose pins all name
+// the claimed model is a provider run, with the route registered, both stages
+// provider stages and the background the coder's own claimed model. No pin
+// names anything the job's own table carries, so nothing but the merge can
+// put this run on the provider. Mutations that make this fail, one at a time:
+// (r *run).gatewayRoutes' `used` map built from r.d.Providers (no route is
+// registered, and both calls reach Anthropic), (r *run).stageOnProviderRoute
+// reading r.d.Providers (no stage carries agent.ProviderRouteVars), and
+// (r *run).backgroundModel reading r.d.Providers through
+// config.EffectiveBackground (the background pin becomes empty and CheckPins
+// refuses the run).
+func TestLayerClaimAloneMakesTheRunAProviderRun(t *testing.T) {
+	use := pricing.Usage{Input: 1000, Output: 500}
+	g := layerClaimGW(t, claimCfgClaimed(t), layerWithClaim("  openrouter: [\""+claimedClaude+"\"]\n"), nil,
+		anthropicfake.Compat{}.MessageOK(claimedClaude, use), anthropicfake.Compat{}.MessageOK(claimedClaude, use))
+	rec, err := g.run(t, callOn(claimedClaude, implement("feature")), callOn(claimedClaude, review("ship", 0)))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	onlyPR(t, g.provider)
+	if n := g.compat.Count(); n != 2 {
+		t.Fatalf("the provider saw %d calls, want both stages", n)
+	}
+	if g.fake.Count() != 0 {
+		t.Fatalf("Anthropic saw %d calls: the claim did not put the run on the route", g.fake.Count())
+	}
+	if rec.Cost == nil || rec.Cost.ModelBy[claimedClaude] <= 0 || rec.Cost.RouteBy["openrouter"] <= 0 {
+		t.Fatalf("cost = %+v", rec.Cost)
+	}
+	for i, call := range g.agent.calls {
+		if got := envValue(call.Env, "MAX_THINKING_TOKENS"); got != "0" {
+			t.Fatalf("stage %d is not a provider stage: MAX_THINKING_TOKENS = %q", i, got)
+		}
+		if got := envValue(call.Env, "ANTHROPIC_DEFAULT_HAIKU_MODEL"); got != claimedClaude {
+			t.Fatalf("stage %d: ANTHROPIC_DEFAULT_HAIKU_MODEL = %q, want the claimed coder", i, got)
+		}
+	}
+}
+
+// The claim routes the reviewer's calls and leaves a Claude coder's stage
+// alone: agent.ProviderRouteVars are for a stage the gateway would send to a
+// provider, so a direct model's stage never carries them (P10). Mutation that
+// makes this fail: (r *run).stageOnProviderRoute reading r.d.Providers, which
+// is where the claim is not — the reviewer's stage then loses the provider's
+// variables while the coder's stage is untouched.
+func TestLayerClaimLeavesADirectCoderStageAlone(t *testing.T) {
+	use := pricing.Usage{Input: 1000, Output: 500}
+	g := layerClaimGW(t, claimCfgMixed(t), layerWithClaim("  openrouter: [\""+claimedClaude+"\"]\n"), nil,
+		anthropicfake.Compat{}.MessageOK(claimedClaude, use))
+	// The direct upstream answers the coder's own call.
+	g.fake.Script = []anthropicfake.Reply{anthropicfake.Compat{}.MessageOK(sonnet, use)}
+	rec, err := g.run(t, callOn(sonnet, implement("feature")), callOn(claimedClaude, review("ship", 0)))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if g.fake.Count() != 1 || g.compat.Count() != 1 {
+		t.Fatalf("Anthropic saw %d calls and the provider %d, want the coder's and the reviewer's", g.fake.Count(), g.compat.Count())
+	}
+	if len(g.agent.calls) != 2 {
+		t.Fatalf("stages = %d", len(g.agent.calls))
+	}
+	coder, reviewer := g.agent.calls[0], g.agent.calls[1]
+	if got := envValue(coder.Env, "ANTHROPIC_DEFAULT_OPUS_MODEL"); got != sonnet {
+		t.Fatalf("the coder's stage was pointed at %q", got)
+	}
+	for _, v := range []string{"MAX_THINKING_TOKENS", "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"} {
+		if got := envValue(coder.Env, v); got != "" {
+			t.Errorf("the direct coder's stage carries %s = %q", v, got)
+		}
+	}
+	if got := envValue(reviewer.Env, "ANTHROPIC_DEFAULT_OPUS_MODEL"); got != claimedClaude {
+		t.Fatalf("the reviewer's stage was pointed at %q", got)
+	}
+	for _, v := range []string{"MAX_THINKING_TOKENS", "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"} {
+		if got := envValue(reviewer.Env, v); got == "" {
+			t.Errorf("the claimed reviewer's stage does not carry %s", v)
+		}
+	}
+}
+
+// A claimed pin is a model a provider serves, and the credential rule is
+// asked of it exactly as of any other provider model: an oauth token is a
+// Claude subscription credential and never goes to another provider.
+// Mutation that makes this fail: checkProviderModels calling
+// config.CheckProviderAuth with r.d.Providers instead of r.modelProviders()
+// (the claimed model is not in the job's own table, so the refusal is never
+// written and the run starts).
+func TestLayerClaimedPinUnderOauthIsRefused(t *testing.T) {
+	cfg := strings.Replace(claimCfgMixed(t), "auth: api-key", "auth: oauth", 1)
+	g := layerClaimGW(t, cfg, layerWithClaim("  openrouter: [\""+claimedClaude+"\"]\n"), nil)
+	g.deps.Env = append(filterEnv(g.deps.Env, "ANTHROPIC_API_KEY"), "CLAUDE_CODE_OAUTH_TOKEN=oauth-token-abcdef")
+	refusedBeforeAnyCall(t, g, "agent.models.reviewer", "served by provider openrouter",
+		"an oauth token is a Claude subscription credential")
+}
+
+// The mode rule is asked of a claimed pin too: observe never refuses a call
+// and a provider's calls are real dollars, so a claimed pin needs the budget
+// gateway enforcing. Mutation that makes this fail: checkProviderModels
+// calling config.CheckProviderGateway with r.d.Providers instead of
+// r.modelProviders() (no problem is written, and the observe run starts).
+func TestLayerClaimedPinUnderObserveIsRefused(t *testing.T) {
+	g := layerClaimGWMode(t, claimCfgMixed(t), layerWithClaim("  openrouter: [\""+claimedClaude+"\"]\n"), "observe", "50", nil)
+	// The refusal names the model, not the path: checkProviderModels reports
+	// CheckProviderGateway's message alone (ps[0].Message).
+	refusedBeforeAnyCall(t, g, claimedClaude, "is served by a provider, which needs budget.mode enforce")
+}
+
 // The environment the run routes by is the one written for the repository,
 // and the claim — which only the layer carries — is not in it: the run
 // merges the claim on top of that table, never into it. That is why removing
 // the claim from the layer puts the refusal back on the next launch, with no
 // stale environment to step around. (The other half — that `fugaro init
 // --repo` writes no claim, whatever the layer says — is
-// internal/infra's TestLayerClaimIsNotInTheJobEnvironment, where that table
-// is written; this asserts the input side, the run's own Deps.)
+// internal/infra's TestTheJobProvidersEnvNeverCarriesALayerClaim, where that
+// table is written; this asserts the input side, the run's own Deps.)
 func TestLayerClaimIsNeverInTheEnvironment(t *testing.T) {
 	use := pricing.Usage{Input: 1000, Output: 500}
 	g := layerClaimGW(t, claimCfg(t, claimedClaude), layerWithClaim("  openrouter: [\""+claimedClaude+"\"]\n"), nil,
