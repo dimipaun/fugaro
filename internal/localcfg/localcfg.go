@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -101,6 +102,22 @@ type Config struct {
 	// can collide with a ReservedSecrets key in the first place, so
 	// ValidateProjectSecrets checks membership in ReservedSecrets only.
 	ProjectSecrets map[string]config.ProjectSecret `yaml:"project_secrets,omitempty"`
+	// Profiles are the project's job profiles (design
+	// docs/design/project-centric.md §4.1), by name: what a Cloud Run job is
+	// deployed as, and what a repository's workflow selects with job_profile.
+	// They are the owner's to write, here, never in fugaro.yaml, and
+	// `fugaro project policy publish` copies them into the policy node, where
+	// the runner reads the one a workflow selected (refusing the run when the
+	// policy does not define it). The profile a workflow that names none runs
+	// on is config.DefaultJobProfile ("standard"), and a policy that carries
+	// profiles must define it (projectpolicy.validProfiles).
+	//
+	// The document is config.JobProfile — one declaration, shared with the
+	// policy node — so a key this file sets cannot be a key the node drops.
+	// Only the names are checked here; what a profile holds (its provider,
+	// resources, timeout, secrets and admission list) is checked where it is
+	// used and published, and by the package that owns those rules.
+	Profiles map[string]config.JobProfile `yaml:"profiles,omitempty"`
 	// Watch tunes fugaro watch.
 	Watch *Watch `yaml:"watch,omitempty"`
 	// UpdateCheck turns off the daily check for a newer fugaro release and
@@ -665,6 +682,18 @@ func (c *Config) checkRegistryHostProject() error {
 	return nil
 }
 
+// profileNames is the config's profile names, sorted (a map's range is
+// random, so the errors below would otherwise come out in a different order
+// on each read).
+func profileNames(profiles map[string]config.JobProfile) []string {
+	names := make([]string, 0, len(profiles))
+	for name := range profiles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 func (c *Config) validate() error {
 	var errs []error
 	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf("local config: "+f, a...)) }
@@ -688,6 +717,19 @@ func (c *Config) validate() error {
 	}
 	if c.RegistryHost != "" && !registryHostRE.MatchString(c.RegistryHost) {
 		bad("registry_host %q is not <region>-docker.pkg.dev/<project>", c.RegistryHost)
+	}
+	// Profile names only: what a profile holds is refused where it is used and
+	// published (projectpolicy.validProfiles, which `fugaro project policy
+	// publish` runs), so that a profile missing its provider is a publish
+	// refusal with the profile's name in it rather than a parse error here.
+	// The rule is config.ProjectNameRE, the same one projectpolicy's
+	// ValidProfileName applies to a policy's own profile names (that package
+	// is not imported here: it is the reader of the published node, and this
+	// is the file it is published from).
+	for _, name := range profileNames(c.Profiles) {
+		if !config.ProjectNameRE.MatchString(name) {
+			bad("profiles.%s: a profile name must be 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit", name)
+		}
 	}
 	if c.ImageSource != "" {
 		if err := mirror.ValidSourcePrefix(c.ImageSource); err != nil {
