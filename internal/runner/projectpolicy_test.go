@@ -522,3 +522,30 @@ func TestPolicyBudgetWithoutAModeHaltsTheRun(t *testing.T) {
 		t.Fatalf("%d stages ran", len(b.agent.calls))
 	}
 }
+
+// M1 (the security review of this PR): a policy node whose provider entry
+// pastes an API key where the secret's NAME belongs is refused by the decoder,
+// and the refusal must not repeat the key back — it lands in the halt message
+// and in result.json, which are the two places a run's policy error is read
+// from.
+func TestPolicyProviderKeyIsRefusedWithoutEchoingIt(t *testing.T) {
+	const key = "sk-or-v1-leakme0123456789abcdef"
+	b := policyRun(t, gwConfig(t, ""), "enforce", "50",
+		`{"version":1,"allow_repos":["github/acme/*"],"providers":{"openrouter":{"kind":"anthropic-compat",`+
+			`"base_url":"https://openrouter.ai/api/v1","auth":"bearer","secret":"`+key+`","models":["deepseek/*"]}}}`, capScript(1)...)
+	rec, err := b.run(t, implement("feature"))
+	if err == nil || !strings.Contains(err.Error(), "secret") {
+		t.Fatalf("a provider key pasted where its name belongs must stop the run, naming the field: rec = %+v, err = %v", rec, err)
+	}
+	if strings.Contains(err.Error(), key) {
+		t.Fatalf("the refusal echoed the key: %v", err)
+	}
+	// result.json carries one of the two: a bootstrap refusal is the record's
+	// Reason, a halt found during the run is Halt.Detail.
+	if rec != nil && (strings.Contains(rec.Reason, key) || (rec.Halt != nil && strings.Contains(rec.Halt.Detail, key))) {
+		t.Fatalf("the run's own record echoed the key: reason %q, halt %+v", rec.Reason, rec.Halt)
+	}
+	if len(b.agent.calls) != 0 {
+		t.Fatalf("%d stages ran", len(b.agent.calls))
+	}
+}

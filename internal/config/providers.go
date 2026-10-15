@@ -255,7 +255,13 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 			// the name rule), so a pasted key would otherwise be accepted
 			// here, written into the config and stored as the name of a
 			// secret — the one thing .secret must never carry.
-			add(at+".secret", "%q starts with %q: that is the beginning of an API key, not a secret's name; .secret is the NAME of the secret in Secret Manager that holds the key", p.Secret, keyPrefix)
+			//
+			// The value is never echoed: this check exists because the value
+			// IS a key, and a %q of it would print one into a terminal, a
+			// log, a halt message or result.json — the leak the check is
+			// for, and the field path already says which value it refuses
+			// (M1, the security review of PR #379).
+			add(at+".secret", "starts with %q: that is the beginning of an API key, not a secret's name; .secret is the NAME of the secret in Secret Manager that holds the key", keyPrefix)
 		case reservedSecretName(p.Secret):
 			add(at+".secret", "%q is a secret Fugaro already uses: give the provider key its own name", p.Secret)
 		default:

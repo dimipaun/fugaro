@@ -192,6 +192,13 @@ func TestValidateModelProvidersRefusesAKeyWhereItsNameBelongs(t *testing.T) {
 		if !strings.Contains(problemsText(ps), "beginning of an API key") {
 			t.Fatalf("problems = %q, want the key-pasted-here message", problemsText(ps))
 		}
+		// M1 (security review of PR #379): the whole point of the check is
+		// that the value IS a key, so the refusal names the field and the
+		// "sk-" it starts with, never the value — this text reaches a
+		// terminal, a log, a halt message and result.json.
+		if strings.Contains(problemsText(ps), key) {
+			t.Fatalf("problems = %q: the refusal printed the key", problemsText(ps))
+		}
 	}
 	// A name that merely contains the prefix is a name: only the beginning of
 	// the value is the key's.
