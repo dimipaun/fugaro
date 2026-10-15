@@ -1282,9 +1282,45 @@ func TestInitRepoPassesRTDBEnv(t *testing.T) {
 	}
 }
 
-// With the budget off no job learns of the backend, whatever the config
-// holds: off never touches it.
-func TestJobEnvOmitsBackendWhenBudgetOff(t *testing.T) {
+// D11 (plan task 1.4 step 1, "the RTDB URL and API key reach every job"): a
+// job carries the database's address and the Firebase web key whenever the
+// installation has them, whatever the mode — the mode is policy now, and a
+// run reads its own policy with those two variables (the token exchange needs
+// the key, not only the URL). The mode itself stays the deploy-time mode:
+// it is the fallback for the absent-node case.
+func TestBudgetEnvWritesRTDBURLAndAPIKeyWhenFirebaseIsConfigured(t *testing.T) {
+	for _, mode := range []string{"off", "observe", "enforce"} {
+		rs, err := Repo(budgetInputs(t, "budget:\n  mode: "+mode+"\n  per_run_usd: 5\n"+backendBlock))
+		if err != nil {
+			t.Fatal(mode, err)
+		}
+		if len(rs.Workflows) == 0 {
+			t.Fatal("no workflows")
+		}
+		for _, w := range rs.Workflows {
+			if w.Env[RTDBURLEnv] != "https://aurora-fp-default-rtdb.firebaseio.com" ||
+				w.Env[FirebaseAPIKeyEnv] != "AIzaSyA0123456789abcdefghijklmnopqrstu" {
+				t.Errorf("mode %s: %s env = %v, want the backend's address and web key", mode, w.Name, backendEnv(w.Env))
+			}
+			if v, ok := w.Env[BudgetModeEnv]; ok != (mode != "off") || (ok && v != mode) {
+				t.Errorf("mode %s: %s has %s=%q: the mode stays conditional", mode, w.Name, BudgetModeEnv, v)
+			}
+			if _, ok := w.Env[BudgetGraceEnv]; ok {
+				t.Errorf("mode %s: %s has a grace nobody set", mode, w.Name)
+			}
+		}
+		// The check job calls no model and reads no policy: it gets none of
+		// it, whatever the mode.
+		if rs.Check != nil && len(backendEnv(rs.Check.Env)) != 0 {
+			t.Errorf("mode %s: the check job has %v", mode, backendEnv(rs.Check.Env))
+		}
+	}
+}
+
+// With the budget off the job still learns where the database is — a policy
+// may exist and a run must be able to read it — but its budget is off: no
+// mode, and nothing that would turn the shared caps on.
+func TestBudgetEnvKeepsModeOff(t *testing.T) {
 	for name, block := range map[string]string{
 		"mode off":   "budget:\n  mode: off\n" + backendBlock + "  unreachable_grace: 90s\n",
 		"empty mode": "budget:\n  per_run_usd: 5\n" + backendBlock,
@@ -1294,12 +1330,29 @@ func TestJobEnvOmitsBackendWhenBudgetOff(t *testing.T) {
 			t.Fatal(name, err)
 		}
 		for _, w := range rs.Workflows {
-			if got := backendEnv(w.Env); len(got) != 0 {
-				t.Errorf("%s: %s has %v with the budget off", name, w.Name, got)
+			if _, ok := w.Env[BudgetModeEnv]; ok {
+				t.Errorf("%s: %s carries a budget mode with the budget off: %v", name, w.Name, w.Env[BudgetModeEnv])
+			}
+			if _, ok := w.Env[BudgetGraceEnv]; ok {
+				t.Errorf("%s: %s carries a grace with the budget off", name, w.Name)
+			}
+			if w.Env[RTDBURLEnv] == "" || w.Env[FirebaseAPIKeyEnv] == "" {
+				t.Errorf("%s: %s = %v, want the backend's address and web key", name, w.Name, backendEnv(w.Env))
+			}
+			if s, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := w.Env[k]; return v, ok }); err != nil || s.On() {
+				t.Errorf("%s: %s: SpendFromEnv = %+v, %v; want the budget off", name, w.Name, s, err)
 			}
 		}
-		if rs.Check != nil && len(backendEnv(rs.Check.Env)) != 0 {
-			t.Errorf("%s: the check job has %v", name, backendEnv(rs.Check.Env))
+	}
+	// An installation with no Firebase configured writes neither variable:
+	// there is no backend to point a job at.
+	rs, err := Repo(budgetInputs(t, "budget:\n  mode: off\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range rs.Workflows {
+		if got := backendEnv(w.Env); len(got) != 0 {
+			t.Errorf("%s has %v with no Firebase in the config", w.Name, got)
 		}
 	}
 }

@@ -892,7 +892,9 @@ func TestReadinessCloneDeploysWithoutAnImageBuild(t *testing.T) {
 		t.Errorf("web (checkout: clone) not ready: missing = %v", missing)
 	}
 	for _, m := range missing {
-		if m.Workflow == "web" {
+		// A note gates nothing (MissingNote): it reports what the project
+		// will need one day, not something holding this job back.
+		if m.Workflow == "web" && m.Kind != MissingNote {
 			t.Errorf("web (checkout: clone) has a missing reason: %v", m)
 		}
 	}

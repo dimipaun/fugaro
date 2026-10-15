@@ -14,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
 
@@ -31,6 +32,12 @@ const (
 	// key: the job deploys without it, and a call that needs Anthropic is
 	// refused until a key is stored).
 	MissingNote MissingKind = "note"
+	// MissingFirebase is a job that carries neither the RTDB URL nor the
+	// Firebase web key, so a run of it cannot read the project's policy
+	// (D11, plan task 1.4 step 2). It gates the job only once a policy
+	// exists: an installation that has not adopted the model is not
+	// blocked, it is warned.
+	MissingFirebase MissingKind = "firebase"
 )
 
 // Missing is something a workflow's job needs that doesn't exist yet.
@@ -72,6 +79,17 @@ var errFound = errors.New("found")
 // (design docs/design/project-centric.md §6.1). Everything else a job mounts
 // is required for the job to work at all.
 func OptionalSecret(logical string) bool { return logical == config.AnthropicSecret }
+
+// carriesFirebase reports whether a workflow's job carries what a run needs
+// to read the project's policy: the database's address and the Firebase web
+// key, both of which budgetEnv writes whenever the installation has them,
+// whatever the budget mode (plan task 1.4 step 1 — the key is not optional:
+// the token exchange needs it). A job that carries them is not promised a
+// policy, only able to read one; whether one exists is Readiness's
+// PolicyExists.
+func carriesFirebase(ws WorkflowSpec) bool {
+	return ws.Env[RTDBURLEnv] != "" && ws.Env[FirebaseAPIKeyEnv] != ""
+}
 
 // dropMount removes a logical secret from a job's mounts: the variable it
 // would become is deleted, so no secret_key_ref points at a secret with no
@@ -219,6 +237,33 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 			}
 			unresolved = append(unresolved, logical)
 			reasons = append(reasons, gate{MissingSecret, fmt.Sprintf("secret %s has no version: %s", logical, fix)})
+		}
+		// D11: project-centric mode requires the Firebase backend, and there
+		// is no other way to detect the mode (plan task 1.4 step 2). The
+		// runner cannot see a policy without the run's own Firebase identity,
+		// and a job deployed without the two variables below would run on the
+		// environment ceiling with the project's policy unread and unenforced
+		// — silently, because it cannot tell "no policy" from "no way to read
+		// one". So once a policy has been published this gates the job;
+		// before that it is a note, because an installation that has not
+		// adopted the model is not blocked.
+		//
+		// The note is for the installation that wants the shared budget and
+		// has no backend to hold it: one whose jobs carry a mode that is not
+		// off. An installation that leaves the budget off has chosen the
+		// per-repository path, permanently (design §5(1)), and its runs are
+		// told so by `fugaro doctor` — warning it about a model it is not
+		// adopting would be noise on every apply.
+		if !carriesFirebase(ws) {
+			if ex.PolicyExists {
+				reasons = append(reasons, gate{MissingFirebase, fmt.Sprintf(
+					"the project has published a policy (%s), which only a job carrying %s and %s can read: set the project's Firebase backend (fugaro init --firebase <firebase-project-id>), then run fugaro init --repo for %s",
+					projectpolicy.PathShared(), RTDBURLEnv, FirebaseAPIKeyEnv, spec.Name)})
+			} else if ws.Env[BudgetModeEnv] != "" {
+				missing = append(missing, Missing{Workflow: name, Kind: MissingNote, Reason: fmt.Sprintf(
+					"this job's budget is on (%s=%s) but it carries neither %s nor %s, so a run of it could not read a project policy: configure the project's Firebase backend (fugaro init --firebase <firebase-project-id>, then fugaro init --repo). Nothing is blocked until a policy exists; once one does, this job stops being deployable until it can read it",
+					BudgetModeEnv, ws.Env[BudgetModeEnv], RTDBURLEnv, FirebaseAPIKeyEnv)})
+			}
 		}
 		current, exists := ex.Jobs[name]
 		// P7a: an existing job must never carry a secret_env entry with no

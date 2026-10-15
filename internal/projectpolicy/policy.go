@@ -85,6 +85,24 @@ type Policy struct {
 	Providers  map[string]Provider `json:"providers,omitempty"`
 	Prices     map[string]Price    `json:"model_prices,omitempty"` // the owner's price overrides, as fugaro.yaml's model_prices spells them
 	Routing    *Routing            `json:"routing,omitempty"`      // phase 1b writes it; nil = direct (D1b)
+
+	// UnknownKeys lists the top-level keys of the node this Fugaro does not
+	// know, sorted. Decode fills it in and never writes it back (json:"-"):
+	// the keys are tolerated so that a policy a newer Fugaro wrote does not
+	// brick an older reader (P8), but "tolerated" and "silently absent" look
+	// the same in a decoded policy — a misspelt per_run_usdc leaves the cap
+	// unset and the run then reports no ceiling where the owner set one. The
+	// runner logs them (it must keep going: they may be a newer Fugaro's, and
+	// it enforces every value it does understand); the CLI refuses them,
+	// because the operator is the one who can fix them.
+	UnknownKeys []string `json:"-"`
+}
+
+// knownTopLevelKeys are the keys Decode reads. Every other key is tolerated
+// and listed in Policy.UnknownKeys.
+var knownTopLevelKeys = map[string]bool{
+	"version": true, "budget": true, "allow_repos": true,
+	"providers": true, "model_prices": true, "routing": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -220,6 +238,13 @@ func Decode(raw []byte) (*Policy, bool, error) {
 	}
 
 	var p Policy
+	for k := range doc {
+		if !knownTopLevelKeys[k] {
+			p.UnknownKeys = append(p.UnknownKeys, k)
+		}
+	}
+	sort.Strings(p.UnknownKeys)
+
 	vraw, ok := doc["version"]
 	if !ok {
 		return nil, true, errors.New("projectpolicy: the policy has no version")
@@ -279,6 +304,9 @@ func Decode(raw []byte) (*Policy, bool, error) {
 	if rraw, ok := doc["routing"]; ok && !isNull(rraw) {
 		if err := json.Unmarshal(rraw, &p.Routing); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: routing: %w", err)
+		}
+		if err := validRouting(p.Routing); err != nil {
+			return nil, true, err
 		}
 	}
 	if praw, ok := doc["providers"]; ok && !isNull(praw) {
@@ -342,6 +370,37 @@ func validProviders(raw json.RawMessage, providers map[string]Provider) error {
 		return fmt.Errorf("projectpolicy: %s", strings.Join(msgs, "; "))
 	}
 	return nil
+}
+
+// The values routing.claude.via accepts (D1a).
+const (
+	// RouteDirect calls Anthropic directly: what a policy without a routing
+	// block means (D1b).
+	RouteDirect = "direct"
+	// RouteOpenRouter routes Claude calls through an openrouter-compatible
+	// provider entry.
+	RouteOpenRouter = "openrouter"
+	// RouteAuto routes by the model list the route carries.
+	RouteAuto = "auto"
+)
+
+// validRouting checks the routing block's values. Phase 1b is what reads it,
+// but a via this Fugaro does not know must be refused now rather than
+// decoded: routing is enforced, and an unrecognised value would later mean
+// either "no route" (a silent bypass of what the owner asked for) or a
+// reader that guesses. The block carries no other value worth checking
+// today; models are Claude IDs, which phase 1b validates against its own
+// list.
+func validRouting(r *Routing) error {
+	if r == nil || r.Claude == nil {
+		return nil
+	}
+	via := r.Claude.Via
+	switch via {
+	case RouteDirect, RouteOpenRouter, RouteAuto:
+		return nil
+	}
+	return fmt.Errorf("projectpolicy: routing.claude.via %q must be %s, %s or %s", via, RouteDirect, RouteOpenRouter, RouteAuto)
 }
 
 // validPricePolicy checks the one provider field internal/config does not know

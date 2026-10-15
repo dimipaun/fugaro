@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -14,6 +15,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -43,6 +46,63 @@ func budgetBackendOn(lc *localcfg.Config) (bool, error) {
 		return false, userErr("budget.token_signer is not set in project %s's config, so runs cannot be given a budget identity: an operator runs fugaro init --firebase <firebase-project-id> --name %s", lc.Name, lc.Name)
 	}
 	return true, nil
+}
+
+// projectPolicyOf reads the project's policy with the operator's own
+// credentials: the one read the CLI itself makes of the node (Readiness's D11
+// gate, and in mintBudgetToken the decision whether a run needs a budget
+// identity at all). A project whose config carries no database URL has no
+// policy this CLI can see, and says so without a call.
+//
+// The keys this Fugaro does not know are refused, not ignored. The runner
+// tolerates them (P8: a policy a newer Fugaro wrote must not brick an older
+// image, which cannot be upgraded mid-run), but the CLI is the operator's own
+// tool and can be upgraded, and a misspelt key that is silently dropped is a
+// policy the owner believes he set. Refusing names the keys and the way out.
+func projectPolicyOf(ctx context.Context, lc *localcfg.Config) (*projectpolicy.Policy, bool, error) {
+	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
+		return nil, false, nil
+	}
+	db, err := newBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
+	if err != nil {
+		return nil, false, err
+	}
+	p, found, err := projectpolicy.Read(ctx, db)
+	var ve *projectpolicy.VersionError
+	var me *projectpolicy.MarkerError
+	switch {
+	case err == nil:
+	case errors.As(err, &ve):
+		return nil, false, userErr("%s", fmt.Sprintf(projectpolicy.CLISkew, ve.Found, ve.Understood))
+	case errors.As(err, &me):
+		return nil, false, userErr("%v", err)
+	case errors.Is(err, rtdb.ErrPermission):
+		return nil, false, userErr("%v: the deployed rules no longer let this project read its own policy; if they are older than %s, run fugaro init --firebase again with this Fugaro", err, projectpolicy.PathRulesMarker())
+	default:
+		return nil, false, remote(err)
+	}
+	if found && len(p.UnknownKeys) > 0 {
+		return nil, false, userErr("%s lists %s, which this Fugaro does not know: a key nobody reads is a policy that never takes effect; fix the policy, or upgrade Fugaro (fugaro upgrade)",
+			projectpolicy.PathShared(), strings.Join(p.UnknownKeys, ", "))
+	}
+	return p, found, nil
+}
+
+// policyReadOnce memoizes one CLI run's read of the policy: init --repo asks
+// twice (once before the first plan, once after the builds) and must not pay
+// for it twice, and the answer cannot change under it.
+type policyReadOnce struct {
+	done  bool
+	found bool
+	err   error
+}
+
+func (p *policyReadOnce) exists(ctx context.Context, lc *localcfg.Config) (bool, error) {
+	if !p.done {
+		p.done = true
+		_, p.found, p.err = projectPolicyOf(ctx, lc)
+	}
+	return p.found, p.err
 }
 
 // budgetPrecheck refuses a launch the budget would refuse anyway (see

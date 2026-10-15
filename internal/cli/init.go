@@ -422,6 +422,11 @@ type initRun struct {
 	// review is the run's one confirmation, set only by the converge
 	// (init_review.go).
 	review *runReview
+
+	// policy is the project's published policy, read at most once per run
+	// through the operator's own credentials (projectPolicyOf). Readiness's
+	// D11 gate turns on whether one exists.
+	policy policyReadOnce
 }
 
 // initResult is what --json prints.
@@ -2031,7 +2036,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// apply just wrote, Readiness's own output: the first build below reads
 	// its resolved secret IDs back out of it instead of resolving them
 	// again (B1), since the grants the apply just made were fixed for them.
-	ready, missing, err := r.planRepo(ctx, c, t, wd, spec, rootOpts, true)
+	ready, missing, err := r.planRepo(ctx, c, t, wd, spec, lc, rootOpts, true)
 	if err != nil {
 		return err
 	}
@@ -2069,7 +2074,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 			return err
 		}
 		if built > 0 {
-			if _, missing, err = r.planRepo(ctx, c, t, wd, spec, rootOpts, false); err != nil {
+			if _, missing, err = r.planRepo(ctx, c, t, wd, spec, lc, rootOpts, false); err != nil {
 				return err
 			}
 		}
@@ -2364,7 +2369,7 @@ func (r *initRun) installationOutputs(ctx context.Context, lc *localcfg.Config, 
 // checkoutConfig does not, once the job is already deployed). --plan-only
 // skips the refusal so the plan can still be shown; --print-vars never
 // reaches planRepo at all.
-func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, spec infra.RepoSpec, opts infra.RepoRootOptions, first bool) (infra.RepoSpec, []infra.Missing, error) {
+func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, spec infra.RepoSpec, lc *localcfg.Config, opts infra.RepoRootOptions, first bool) (infra.RepoSpec, []infra.Missing, error) {
 	if !r.o.planOnly {
 		if err := refuseClonesNotShipped(spec.Name, "fugaro init --repo", "deploy", cloneWorkflowNames(spec.Workflows)); err != nil {
 			return infra.RepoSpec{}, nil, err
@@ -2372,6 +2377,12 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	}
 	im, ex, err := infra.DiscoverRepo(ctx, c, spec)
 	if err != nil {
+		return infra.RepoSpec{}, nil, initErr(err)
+	}
+	// Whether the project has published a policy decides whether the jobs
+	// must be able to read one (D11): the database is read with the
+	// operator's own credentials, which only this side holds.
+	if ex.PolicyExists, err = r.policy.exists(ctx, lc); err != nil {
 		return infra.RepoSpec{}, nil, initErr(err)
 	}
 	if first {

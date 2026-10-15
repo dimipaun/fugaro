@@ -10,7 +10,7 @@ It applies to every repository whose `fugaro.yaml` names the project and its `gc
 
 ## 2. The one rule
 
-For each key, the narrowest layer that sets it wins: per-task flag, then repository, then the workflow's profile, then project defaults, then Fugaro default. The budget ceiling is the owner's, outside every layer, and only tightens.
+For each key, the narrowest layer that sets it wins: per-task flag, then repository, then the workflow's profile, then project defaults, then Fugaro default. The budget ceiling is the owner's, outside every layer, and only tightens. A project that has published a project policy ([design/project-centric.md](design/project-centric.md)) has no `budget.mode: off`: a run reads the policy from the project's database, so its jobs must carry the Firebase backend and the mode itself is policy.
 
 A workflow takes a profile only when it names one (`workflows.<name>.profile`), or when the file has no `workflows:` at all (then one workflow, `default`, takes `profile:` or the project's `default_profile`). A workflow that names no profile takes nothing from any profile.
 

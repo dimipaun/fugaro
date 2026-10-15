@@ -727,8 +727,10 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 // budgetEnv adds the project's budget to a workflow job's env: the token
 // cap and the allow-list, the cap when there is one and the price overrides
 // when there are any, whatever the mode (they are the owner's ceiling, which
-// a repository's committed policy is clamped to), and the mode itself when it
-// is not off. The check job calls no model and gets none of it.
+// a repository's committed policy is clamped to), the mode itself when it is
+// not off, and the backend's address and web key whenever the installation
+// has them (D11: a run reads the project's policy with them). The check job
+// calls no model and gets none of it.
 func budgetEnv(lc *localcfg.Config, env map[string]string) error {
 	if b := lc.Budget; b != nil {
 		if b.MaxRunTokens > 0 {
@@ -752,19 +754,28 @@ func budgetEnv(lc *localcfg.Config, env map[string]string) error {
 	if prices != "" {
 		env[ModelPricesEnv] = prices
 	}
+	// The backend's address and its web key go to every job whenever the
+	// installation has them, whatever the mode (D11, plan task 1.4 step 1):
+	// the mode is policy now, and a run reads the project's policy with these
+	// two — the token exchange needs the key, not only the URL. A job
+	// deployed without them cannot read a policy at all, and cannot tell that
+	// apart from a project that published none, so it would run on the
+	// environment ceiling with the policy unenforced; Readiness's Firebase
+	// gate is what refuses that once a policy exists.
+	if b := lc.Budget; b != nil {
+		if b.RTDBURL != "" {
+			env[RTDBURLEnv] = b.RTDBURL
+		}
+		if b.FirebaseAPIKey != "" {
+			env[FirebaseAPIKeyEnv] = b.FirebaseAPIKey
+		}
+	}
+	// The mode stays the deploy-time mode: it is the fallback for the case
+	// where no policy exists (P3), and the grace only matters to a session.
 	if mode := lc.BudgetMode(); mode != localcfg.BudgetOff {
 		env[BudgetModeEnv] = mode
-		// Budget off never touches the backend, so no job learns of it.
-		if b := lc.Budget; b != nil {
-			if b.RTDBURL != "" {
-				env[RTDBURLEnv] = b.RTDBURL
-			}
-			if b.FirebaseAPIKey != "" {
-				env[FirebaseAPIKeyEnv] = b.FirebaseAPIKey
-			}
-			if b.Grace > 0 {
-				env[BudgetGraceEnv] = b.Grace.String()
-			}
+		if b := lc.Budget; b != nil && b.Grace > 0 {
+			env[BudgetGraceEnv] = b.Grace.String()
 		}
 	}
 	return nil

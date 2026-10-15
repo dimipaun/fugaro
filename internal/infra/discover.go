@@ -626,6 +626,14 @@ type Existing struct {
 	// ProjectNumber is the project's number, which the readiness gates
 	// match a SERVICE_DISABLED answer's consumer against (0: unknown).
 	ProjectNumber uint64
+	// PolicyExists says the project has published a project policy
+	// (projectpolicy.PathShared, under rules new enough for it to be
+	// readable). Discovery cannot see it: the database is read through the
+	// *operator's* credentials, which only the CLI holds, so the caller that
+	// has them fills this in (internal/cli's projectPolicyOf). It is the
+	// fact that turns the Firebase requirement into a gate (D11, plan task
+	// 1.4 step 2).
+	PolicyExists bool
 }
 
 // uniqueSecrets are the logical secrets ws mounts, sorted.
