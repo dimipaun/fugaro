@@ -796,3 +796,36 @@ func RetireSet(orphans, retired []Retirement) []Retirement {
 	slices.SortFunc(out, byAddress)
 	return out
 }
+
+// HasMarks reports whether have carries every pair in want: the label rule
+// discovery adopts by and a delete checks before it runs. It is hasMarks
+// (discover.go) exported for the retirement's API delete, which lives in
+// internal/cli and must apply the same rule Orphans applies here -- the two
+// kinds of job carry different labels, and a delete judged by the wrong one
+// either refuses a legitimate delete or takes another variant's job.
+func HasMarks(have, want map[string]string) bool { return hasMarks(have, want) }
+
+// JobDeleteLabels is the label set the API delete must find on the live job
+// of a retired address, and whether there is one: the fugaro mark and this
+// repository's label, plus fugaro_workflow=<the retired variant> for a
+// workflow job, or fugaro_role=check for the check job -- which carries no
+// fugaro_workflow at all (modules/repo/check.tf:22-26). A check job judged
+// by a workflow label would be refused forever; a workflow job judged by
+// fugaro_role alone would take a surviving variant's job (design §4.2c,
+// review B2).
+func JobDeleteLabels(spec RepoSpec, r Retirement) (map[string]string, bool) {
+	want := OrphanLabels(spec)
+	switch r.Kind {
+	case "workflow job":
+		variant, ok := workflowVariantOf(addressSegments(r.Address))
+		if !ok {
+			return nil, false
+		}
+		want[gcp.LabelWorkflow] = variant
+	case "check job":
+		want[gcp.LabelRole] = gcp.RoleCheck
+	default:
+		return nil, false
+	}
+	return want, true
+}

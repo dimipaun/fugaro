@@ -90,8 +90,11 @@ type initOptions struct {
 
 	// --repo: onboard the repository of a checkout.
 	repo, noBuild, allowJobDelete bool
-	githubAppID                   string
-	checkApp                      bool // --check-github-app
+	// retire is --retire: run the retirement a config change needs, behind
+	// two typed confirmations --yes cannot cover (init_retire.go).
+	retire      bool
+	githubAppID string
+	checkApp    bool // --check-github-app
 }
 
 func newInitCmd() *cobra.Command {
@@ -378,6 +381,7 @@ secrets stage is behind the same gate.`,
 	f.StringVar(&o.githubAppID, "github-app-id", "", "the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; init asks once at a terminal, and --non-interactive needs it)")
 	f.BoolVar(&o.noBuild, "no-build", false, "with --repo: don't offer the first image builds")
 	f.BoolVar(&o.allowJobDelete, "allow-job-delete", false, "with --repo: lower the jobs' deletion protection, for offboarding")
+	f.BoolVar(&o.retire, "retire", false, "with --repo: run the retirement this config change needs (a workflow or a named account removed, a secret no longer mounted): remove the protected addresses from Terraform's state (destroying nothing), apply, then delete the orphaned Cloud Run jobs through the API. The project's name is typed twice at a real terminal, and --yes, --non-interactive, --json, a pipe and a coding agent cover neither. Excludes --plan-only, which changes no state")
 	return cmd
 }
 
@@ -422,6 +426,16 @@ type initRun struct {
 	// review is the run's one confirmation, set only by the converge
 	// (init_review.go).
 	review *runReview
+
+	// The retirement (init_retire.go): what the run read before its first
+	// plan -- the state's addresses, the retirement set of design §3.1a and
+	// the notes Orphans returned -- and whether its flow ran and applied, so
+	// the API delete is attempted once, after the last apply.
+	retireState   []string
+	retireSet     []infra.Retirement
+	retireNotes   []infra.Retirement
+	retired       bool // the flow was entered (a later plan must not re-enter it)
+	retireApplied bool // it applied: the jobs it removed from state still need deleting
 }
 
 // initResult is what --json prints.
@@ -687,8 +701,8 @@ func (o *initOptions) checkOnboardRepo() error {
 
 // check refuses flag combinations that mean nothing.
 func (o *initOptions) check() error {
-	if o.noBuild || o.allowJobDelete {
-		return userErr("--no-build and --allow-job-delete are for fugaro init --repo")
+	if o.noBuild || o.allowJobDelete || o.retire {
+		return userErr("--no-build, --allow-job-delete and --retire are for fugaro init --repo")
 	}
 	if err := o.checkAppID(); err != nil {
 		return err
@@ -1823,8 +1837,13 @@ func (o *initOptions) checkRepo() error {
 	if n > 1 {
 		return userErr("--plan-only, --print-vars and --forget exclude one another")
 	}
-	if o.forget && (len(o.allowDelete) > 0 || o.allowJobDelete || o.noBuild) {
-		return userErr("--forget only removes the repository from Terraform's state; it takes no --allow-delete, --allow-job-delete or --no-build")
+	if o.forget && (len(o.allowDelete) > 0 || o.allowJobDelete || o.noBuild || o.retire) {
+		return userErr("--forget only removes the repository from Terraform's state; it takes no --allow-delete, --allow-job-delete, --no-build or --retire")
+	}
+	if o.retire && o.planOnly {
+		// terraform state rm is a change to the state, and --plan-only's
+		// contract is that it creates and changes nothing (design §3.3).
+		return userErr("--retire and --plan-only exclude one another: retiring removes addresses from Terraform's state, and --plan-only changes nothing. Run --plan-only first to read the predicted retirement, then --retire to run it")
 	}
 	if set := o.installationFlags(); len(set) > 0 {
 		return userErr("%s set(s) up the installation, not a repository: run fugaro init with it, then fugaro init --repo", strings.Join(set, ", "))
@@ -2079,6 +2098,15 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	r.printMissing(spec, versions, missing)
 	if o.planOnly {
 		return finish()
+	}
+
+	// 7b. The retirement's last step: the jobs the state removal left
+	// unmanaged, deleted through the Cloud Run API after every apply, so the
+	// re-plan that deploys freshly built images cannot race the delete.
+	if r.retireApplied {
+		if err := r.retireDelete(ctx, c, spec); err != nil {
+			return err
+		}
 	}
 
 	// 8. The local config.
@@ -2396,8 +2424,44 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	if err := infra.WriteImports(wd.Root, im); err != nil {
 		return infra.RepoSpec{}, nil, userErr("writing the imports: %v", err)
 	}
+	// The retirement, read once, from the run's first plan (design §3.1a,
+	// §4.2): the state, the labels, the union, the summary -- and, with
+	// --retire, the whole guarded flow in place of the ordinary plan below.
+	// It has to be here, before t.Plan: in the case that matters no plan
+	// exists until the protected addresses have left the state.
+	if first && !r.retired {
+		rets, err := r.readRetirements(ctx, c, t, ready)
+		if err != nil {
+			return infra.RepoSpec{}, nil, err
+		}
+		if len(rets) > 0 {
+			r.retired = true
+			if r.o.retire {
+				if err := r.retirePlan(ctx, c, t, wd, ready, rets, opts, im); err != nil {
+					return infra.RepoSpec{}, nil, err
+				}
+				return ready, missing, nil
+			}
+			// The gate, and it is the two cases the design names and no
+			// more: a job the state still holds whose own values say
+			// deletion_protection = true, after its variant left the
+			// configuration, cannot be finished by any apply. --plan-only
+			// removes nothing and refuses nothing here: it prints the
+			// summary and carries on to the read-only plan.
+			if blocked := blockingJobs(r.retireState, rets); len(blocked) > 0 && !r.o.planOnly {
+				return infra.RepoSpec{}, nil, retireRefusal(blocked)
+			}
+		}
+	}
 	changed, err := t.Plan(ctx, infra.PlanFile)
 	if err != nil {
+		// A plan Terraform refuses on a prevent_destroy resource is the one
+		// failure a retirement gets its own words for (design §3.3): the
+		// summary was printed above, and Terraform's text stays in the
+		// workdir, so nothing is hidden, only re-framed.
+		if preventDestroyAbort(err) {
+			return infra.RepoSpec{}, nil, retireAborted()
+		}
 		return infra.RepoSpec{}, nil, remote(err)
 	}
 	if !changed {
