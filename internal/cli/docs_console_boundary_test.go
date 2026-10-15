@@ -35,6 +35,22 @@ package cli
 // to the slice below, with a test that fails on a second entry, rather than a
 // quiet new reference in some future file.
 //
+// The mention half of (a3) is a heuristic, and the file says which half of it
+// is which. Its floor is the plan's literal rule: a file whose text holds the
+// string "console/" is a mention, wherever that string appears, which is
+// deliberately loose -- a string like "github.com/x/console/y" is reported too,
+// and the answer is an allow-list entry or a reworded string, made on purpose.
+// Above that floor sits a segment-aware detector for the spellings the literal
+// rule cannot see, because no single literal holds "console/": a "console" path
+// SEGMENT (the word between separators, not a substring of a longer word) that
+// sits next to a "docs" segment or is written as a directory, including inside
+// a filepath.Join/path.Join argument list -- so Join("..", "..", "console",
+// "docs", "json-contract.md") is a mention and Join(tmp, "consolekit", "x") is
+// not. The detector does not follow a
+// path assembled from variables, and it cannot prove that a "console" segment
+// is THIS repository's console; both limits err toward the floor, which is the
+// plan's rule and stays in force.
+//
 // This file is the scanner, so the mention half of (a3) exempts it by name: it
 // necessarily holds the literal "console/" itself (in the checks, in their
 // messages, and in the exemption), and a test cannot list itself without naming
@@ -42,13 +58,20 @@ package cli
 // the module including this one, so this file's own imports and its own embed
 // directives are checked like any other file's.
 //
-// Two things this file's scan deliberately does not skip, and one it does:
-// console/ itself is walked (a Go file there is exactly what (a3) forbids) and
-// so is testdata/ (a reference in a file the build ignores is still a reference
-// this contract forbids), while .git/ and node_modules/ are skipped because the
-// go command ignores them everywhere.
+// The walk reads every .go file of the module except the directories the go
+// command itself ignores -- .git/, node_modules/, and any directory whose name
+// begins with "." or "_". That last one is not tidiness: a nested checkout
+// under .worktrees/ or .claude/worktrees/ is a second copy of this module (and
+// of the console work in flight), and checking it against THIS module's
+// boundary would fail the test for reasons that have nothing to do with this
+// repository's own files. Two directories are deliberately still walked:
+// console/ itself (a Go file there is exactly what (a3) forbids) and testdata/
+// (a reference in a file the build ignores is still a reference this contract
+// forbids). A read error is returned rather than skipped, so a file that
+// disappears mid-scan fails the test instead of quietly shortening the scan.
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -205,18 +228,47 @@ func consoleBoundaryDoc(t *testing.T, rel string) string {
 	return string(data)
 }
 
+// consoleBoundarySkipDir reports whether the walk steps out of a directory
+// rather than into it: the ones the go command ignores everywhere -- .git/,
+// node_modules/, and any name beginning with "." or "_". A nested checkout
+// under .worktrees/ or .claude/worktrees/ is a second module and not this one,
+// so its files are not this boundary's business (see this file's doc comment).
+// testdata/ is NOT skipped: a reference in a file the build ignores is still a
+// reference this contract forbids.
+func consoleBoundarySkipDir(name string) bool {
+	return name == "node_modules" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")
+}
+
 // consoleBoundaryGoFiles is every .go file in the module, relative to the root,
-// slash-separated and sorted. See this file's doc comment for why console/ and
-// testdata/ are walked and only .git/ and node_modules/ are skipped.
+// slash-separated and sorted. It asserts the walk found a module, so no check
+// below can pass by looking at nothing.
 func consoleBoundaryGoFiles(t *testing.T, root string) []string {
 	t.Helper()
+	files, err := consoleBoundaryWalk(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(files)
+	// A scan that silently lost the module would pass every check below by
+	// looking at nothing.
+	if len(files) < 100 {
+		t.Fatalf("found %d .go files under %s: the walk lost the module", len(files), root)
+	}
+	return files
+}
+
+// consoleBoundaryWalk is consoleBoundaryGoFiles without the "did it find the
+// module" guard, so a test can point it at a small tree it built itself. An
+// error is returned, never swallowed: a file that cannot be read fails the
+// test rather than leaving the scan short.
+func consoleBoundaryWalk(root string) ([]string, error) {
 	var files []string
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
-			if p != root && (d.Name() == ".git" || d.Name() == "node_modules") {
+			if p != root && consoleBoundarySkipDir(d.Name()) {
 				return fs.SkipDir
 			}
 			return nil
@@ -232,15 +284,9 @@ func consoleBoundaryGoFiles(t *testing.T, root string) []string {
 		return nil
 	})
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
-	slices.Sort(files)
-	// A scan that silently lost the module would pass every check below by
-	// looking at nothing.
-	if len(files) < 100 {
-		t.Fatalf("found %d .go files under %s: the walk lost the module", len(files), root)
-	}
-	return files
+	return files, nil
 }
 
 // consoleBoundaryModulePath is go.mod's module path, which is what makes an
@@ -311,6 +357,142 @@ func consoleBoundaryResolvedIntoConsole(fileRel, p string) bool {
 	resolved := path.Join(path.Dir(fileRel), path.Clean(p))
 	return resolved == consoleDirName || strings.HasPrefix(resolved, consoleDirName+"/")
 }
+
+// consoleBoundaryMention reports whether a Go file mentions a path under the
+// module root's console directory -- the (a3) question, asked of one file.
+//
+// Two detections, and the difference between them is the point. The floor is
+// the plan's literal rule: the string "console/" anywhere in the file counts,
+// wherever it appears and whatever it is part of. It is deliberately loose. A
+// string like "github.com/x/console/y" is therefore a mention, and a file that
+// has one either joins the allow-list on purpose or words the string
+// differently on purpose; neither is a decision this test makes for the author.
+//
+// The detector above the floor exists because some files name the console
+// without ever writing "console/" in one literal -- filepath.Join("..", "..",
+// "console", "docs", "x") is the same path spelled in pieces -- so the file is
+// parsed and read as paths: see consoleBoundaryPathMentionsConsole for what a
+// "console" segment has to be to count, and consoleBoundaryJoinMentionsConsole
+// for the argument-list half. A file the parser refuses is read as runs of
+// quoted literals instead, since a broken fixture is exactly the kind of file
+// that would otherwise carry a reference past every check.
+func consoleBoundaryMention(file, src string) bool {
+	if strings.Contains(src, consoleDirName+"/") {
+		return true
+	}
+	f, err := parser.ParseFile(token.NewFileSet(), file, src, parser.ParseComments|parser.SkipObjectResolution)
+	if err != nil {
+		// No AST to read, so the run of comma-separated literals is read as
+		// the list of path segments it is in the Join spelling, and the joined
+		// result is asked the same question the parsed path asks.
+		for _, run := range consoleStringRunRE.FindAllString(src, -1) {
+			var parts []string
+			for _, q := range consoleStringLitRE.FindAllString(run, -1) {
+				if s, err := strconv.Unquote(q); err == nil {
+					parts = append(parts, s)
+				}
+			}
+			if len(parts) > 1 && consoleBoundaryPathMentionsConsole(strings.Join(parts, "/")) {
+				return true
+			}
+		}
+		return false
+	}
+	mention := false
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch v := n.(type) {
+		case *ast.BasicLit:
+			if v.Kind == token.STRING {
+				if s, err := strconv.Unquote(v.Value); err == nil && consoleBoundaryPathMentionsConsole(s) {
+					mention = true
+				}
+			}
+		case *ast.CallExpr:
+			if consoleBoundaryJoinCall(v) && consoleBoundaryJoinMentionsConsole(v.Args) {
+				mention = true
+			}
+		}
+		return true
+	})
+	return mention
+}
+
+// consoleBoundaryPathMentionsConsole reports whether a path-shaped string names
+// the module's console directory. What counts is a "console" SEGMENT -- the
+// word between separators, so "consolekit" and "console.md" are other names --
+// that is either followed by a "docs" segment, which is how the console's own
+// paths are written, or followed by a separator, which is a reference to the
+// directory itself (".." + ".." + "console" + separator, as a relative read
+// would build it). It answers "does this string look like a console path", not
+// "is this string the path of THIS repository's console": a string from another
+// tree with the same shape counts, and the literal floor above counts more
+// still, which is the direction the plan's rule asks for.
+func consoleBoundaryPathMentionsConsole(s string) bool {
+	segs := strings.Split(s, "/")
+	for i, seg := range segs {
+		if seg != consoleDirName {
+			continue
+		}
+		if i+1 < len(segs) && (segs[i+1] == "docs" || segs[i+1] == "") {
+			return true
+		}
+	}
+	return false
+}
+
+// consoleBoundaryJoinCall reports whether a call is a filepath.Join / path.Join
+// -- the two functions whose ARGUMENT LIST is one path, and so the one place a
+// "console/" spelling can hide from a per-literal scan. strings.Join is not one
+// of them: its arguments are elements, not path segments, and treating them as
+// a path is how a detector starts reporting nonsense. The check is on the name
+// as written, so a renamed import (p "path"; p.Join(...)) is not seen -- a limit
+// on the safe side, since the literal floor and the per-literal read still
+// apply, and a helper that imported path under another name would be a
+// deliberate obfuscation rather than an accident.
+func consoleBoundaryJoinCall(call *ast.CallExpr) bool {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Join" {
+		return false
+	}
+	pkg, ok := sel.X.(*ast.Ident)
+	return ok && (pkg.Name == "path" || pkg.Name == "filepath")
+}
+
+// consoleBoundaryJoinMentionsConsole reports whether a Join call builds a path
+// through the console directory. Each literal argument is read as a path
+// segment: "console" alone (Join(root, "console") is the directory) or a
+// path-shaped literal (Join("..", "..", "console", "docs", "x")) is a mention.
+// An argument that is a variable or another call is not followed -- this is a
+// detector for spellings, not an evaluator, and a path built entirely from
+// variables is the case the classifier cannot see.
+func consoleBoundaryJoinMentionsConsole(args []ast.Expr) bool {
+	if len(args) < 2 {
+		return false
+	}
+	for _, a := range args {
+		lit, ok := a.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			continue
+		}
+		s, err := strconv.Unquote(lit.Value)
+		if err != nil {
+			continue
+		}
+		if s == consoleDirName || consoleBoundaryPathMentionsConsole(s) {
+			return true
+		}
+	}
+	return false
+}
+
+// consoleStringLitRE finds a quoted string in the raw text of a file the parser
+// refuses, and consoleStringRunRE finds a run of two or more of them separated
+// by commas -- the text-level shape of a Join call's argument list, which is
+// the one spelling the literal floor cannot see.
+var (
+	consoleStringLitRE = regexp.MustCompile(`"[^"\n]*"`)
+	consoleStringRunRE = regexp.MustCompile(`"[^"\n]*"(?:\s*,\s*"[^"\n]*")+`)
+)
 
 // consoleRelativeImportRE finds a quoted relative import path, in the raw text
 // of a file the parser refuses. Such a file gives the import check no AST to
@@ -462,7 +644,7 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 	t.Run("only_the_allow_list_may_mention_a_console_path", func(t *testing.T) {
 		var mentioning []string
 		for _, rel := range files {
-			if strings.Contains(consoleBoundaryDoc(t, rel), consoleDirName+"/") {
+			if consoleBoundaryMention(rel, consoleBoundaryDoc(t, rel)) {
 				mentioning = append(mentioning, rel)
 			}
 		}
@@ -588,5 +770,128 @@ func TestNoGoFileEmbedsFromConsole(t *testing.T) {
 	}
 	if directives == 0 {
 		t.Errorf("no go:embed directive was found anywhere in the module, so this check proved nothing: the directive regexp or the walk is wrong")
+	}
+}
+
+// TestConsoleBoundaryWalkSkipsHiddenDirectories holds the walk's rule: it reads
+// this module's .go files and steps out of the directories the go command
+// ignores, so a nested checkout under .worktrees/ or .claude/worktrees/ -- a
+// whole second copy of this module -- cannot fail the boundary test for reasons
+// that have nothing to do with this repository's own files. A visible copy of
+// the very same file still counts, which is what keeps the skip from turning
+// into a hole: the file below says "console/docs/json-contract.md" and only its
+// directory decides whether that is this module's business.
+//
+// The tree is built under t.TempDir() and passed to consoleBoundaryWalk
+// directly, so the module's own walk is the only thing exercised and the
+// repository is never written to.
+func TestConsoleBoundaryWalkSkipsHiddenDirectories(t *testing.T) {
+	root := t.TempDir()
+	const body = "package probe\n\nvar zzzConsoleDoc = \"console/docs/json-contract.md\"\n"
+	if !consoleBoundaryMention("probe.go", body) {
+		t.Fatalf("the planted body is not recognised as a %s/ mention, so this test would prove nothing about the walk", consoleDirName)
+	}
+	plant := func(rel string) {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const visible = "internal/visible/probe.go"
+	plant(visible)
+	hidden := []string{
+		".worktrees/wt/internal/cli/probe.go",
+		".claude/worktrees/wt/internal/cli/probe.go",
+		"_scratch/internal/cli/probe.go",
+		"internal/node_modules/dep/probe.go",
+	}
+	for _, rel := range hidden {
+		plant(rel)
+	}
+	files, err := consoleBoundaryWalk(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(files, visible) {
+		t.Errorf("the walk did not read %s, a visible .go file mentioning a %s/ path: the skip is too wide and the boundary would have a hole in it (%v)", visible, consoleDirName, files)
+	}
+	for _, rel := range hidden {
+		if slices.Contains(files, rel) {
+			t.Errorf("the walk read %s: a directory the go command ignores is not this module, and a nested checkout of it must not fail this boundary (plan Task 0.3 a3)", rel)
+		}
+	}
+	// A walk that cannot read what it was pointed at returns the error: a
+	// silent empty result is how a scan passes by looking at nothing.
+	if _, err := consoleBoundaryWalk(filepath.Join(root, "no-such-directory")); err == nil {
+		t.Error("consoleBoundaryWalk on a path that does not exist returned no error: a read failure must fail loudly, not shorten the scan")
+	}
+}
+
+// TestConsoleBoundaryMentionDetectsConsoleSpellings holds the (a3) mention
+// detector: the plan's literal rule is the floor, and above it a "console" path
+// segment next to "docs" -- or written as a directory -- is a mention even when
+// no single literal holds "console/", which is the filepath.Join spelling. The
+// false cases are what keeps the floor from being lowered into a word match:
+// "consolekit" and "console.md" are other names, and a Join list of unrelated
+// segments is not a path through the console.
+func TestConsoleBoundaryMentionDetectsConsoleSpellings(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		want bool
+	}{
+		{"the plan's literal rule (the floor)", `package p
+
+var zzz = "../../console/docs/json-contract.md"`, true},
+		{"a console directory reference", `package p
+
+var zzz = "../../console/"`, true},
+		{"filepath.Join spelled in pieces", `package p
+
+import "path/filepath"
+
+var zzz = filepath.Join("..", "..", "console", "docs", "json-contract.md")`, true},
+		{"path.Join spelled in pieces", `package p
+
+import "path"
+
+var zzz = path.Join("..", "console", "docs")`, true},
+		{"a Join through the directory itself", `package p
+
+import "path/filepath"
+
+func zzz(root string) string { return filepath.Join(root, "console") }`, true},
+		{"a longer word that merely starts with console", `package p
+
+var zzz = "github.com/x/consolekit/y"`, false},
+		{"console as part of another file name", `package p
+
+var zzz = "docs/console.md"`, false},
+		{"a Join list with no console segment", `package p
+
+import "path/filepath"
+
+var zzz = filepath.Join("..", "..", "internal", "docs")`, false},
+		{"a string.Join is not a path", `package p
+
+import "strings"
+
+var zzz = strings.Join([]string{"console", "docs"}, "/")`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := consoleBoundaryMention("probe.go", tc.src); got != tc.want {
+				t.Errorf("consoleBoundaryMention(%q) = %v, want %v", tc.src, got, tc.want)
+			}
+		})
+	}
+
+	// A file the parser refuses is read as quoted strings, so a broken fixture
+	// cannot carry a Join spelling past the scan.
+	const broken = "package p\n\nvar zzz = filepath.Join(\"..\", \"..\", \"console\", \"docs\"\n"
+	if !consoleBoundaryMention("broken.go", broken) {
+		t.Errorf("a file that does not parse, but holds the %s/ path in pieces, was not seen as a mention", consoleDirName)
 	}
 }
