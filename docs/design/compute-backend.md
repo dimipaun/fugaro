@@ -1540,8 +1540,11 @@ submission in 57a and 57b then uses that file and never the committed one — so
 run of the check cannot send an image, a project, a region or an account the
 rest of the check is not using.
 
-`IMG` is `<region>-docker.pkg.dev/<project>/fugaro-base/fugaro-base:<version>`
-— the **base repository the installation creates**, named by
+`IMG` is the installation's own base image, and the setup block **reads it out
+of the installation** (`fugaro doctor --json`'s `project.base_images.base`)
+rather than naming a tag by hand; its shape is
+`<region>-docker.pkg.dev/<project>/fugaro-base/fugaro-base:<version>` — the
+**base repository the installation creates**, named by
 `infra.BaseRegistry = "fugaro-base"` (`internal/infra/tfvars.go`:23;
 `LegacyRegistry` is the older `sandbox/` path and a different name). It is
 **not** the `fugaro-ghcr/dimipaun/fugaro-base` remote-repository path of
@@ -1626,16 +1629,37 @@ P=fugaro-dev                 # HARD-CODED sandbox project id; never belong, and 
 L=us-east5                   # the sandbox installation's region
 SA=fugaro-chk57              # the account THIS CHECK creates; NOT the installation's job account
 J=fugaro-chk57               # the job-name prefix THIS CHECK uses; not the `fugaro-<slug>-<workflow>` shape
-IMG=${L}-docker.pkg.dev/${P}/fugaro-base/fugaro-base:0.7.5   # the installation's BASE repository (infra.BaseRegistry), not the #362 proxy path
 NET=default                  # the sandbox's network; a project with its own sets it here, with its subnetwork
 SA_EMAIL=${SA}@${P}.iam.gserviceaccount.com   # what allocationPolicy.serviceAccount takes
+IMG=                         # resolved below, from the installation's own config: never a hand-written tag
 
 # ${VAR:?} everywhere: an empty variable is a hard error, never an empty
 # argument gcloud would resolve from its ambient configuration.
-[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$SA" ] && [ -n "$J" ] && [ -n "$IMG" ] && [ -n "$NET" ] \
-  || { echo "Check 57 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L SA=$SA J=$J IMG=$IMG NET=$NET must not be empty)" >&2; exit 1; }
-fugaro doctor --project fugaro --gcp-project "${P:?}" | grep -q '^project: .*(GCP fugaro-dev,' \
-  || { echo "Check 57 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
+[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$SA" ] && [ -n "$J" ] && [ -n "$NET" ] \
+  || { echo "Check 57 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L SA=$SA J=$J NET=$NET must not be empty)" >&2; exit 1; }
+DOCTOR=/tmp/check57-doctor.json
+fugaro doctor --project fugaro --gcp-project "${P:?}" --json > "${DOCTOR}" || true   # a failing check still prints the object; the parses below are the guard
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); p=d.get("project") or {}; sys.exit(0 if p.get("name")=="fugaro" and p.get("gcp_project")=="fugaro-dev" else 1)' "${DOCTOR}" \
+  || { echo "Check 57 stopped: this is not the fugaro-dev installation (fugaro doctor --json names project $(python3 -c 'import json,sys; p=json.load(open(sys.argv[1])).get("project") or {}; print(p.get("name"), p.get("gcp_project"))' "${DOCTOR}" 2>/dev/null), or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
+
+# IMG is the installation's own base image, read out of that same object
+# (`project.base_images.base`: what `fugaro image refresh` records for this
+# installation, doctorProject in internal/cli/doctor.go:350 -- the BASE
+# repository, infra.BaseRegistry, not the #362 proxy path). Nothing here pins
+# a version by hand: a hand-written tag is a tag that can stop existing, and
+# the probe would then fail for a setup reason on every submission.
+IMG=$(python3 -c 'import json,sys; print(((json.load(open(sys.argv[1])).get("project") or {}).get("base_images") or {}).get("base",""))' "${DOCTOR}")
+[ -n "$IMG" ] \
+  || { echo "Check 57 stopped: the installation records no base image (fugaro doctor --json's project.base_images.base is empty); run fugaro image refresh in the sandbox checkout first" >&2; exit 1; }
+gcloud artifacts docker images describe "${IMG:?}" --project="${P:?}" >/dev/null 2>&1 \
+  || { echo "Check 57 stopped: the installation's base image ${IMG} cannot be described in ${P} (gcloud artifacts docker images describe). Fix that before submitting: otherwise every job below fails to pull for a setup reason, and the go/no-go measures nothing" >&2; exit 1; }
+# BASE_REPO is the repository that image lives in, taken from IMG's own third
+# path component (`<region>-docker.pkg.dev/<project>/<repository>/<image>:<tag>`)
+# rather than written out again: 57a-0 grants the probe reader ON THIS
+# repository, and a second hand-kept copy of the name is a second thing to drift.
+BASE_REPO=$(printf '%s\n' "${IMG}" | cut -d/ -f3)
+[ -n "$BASE_REPO" ] \
+  || { echo "Check 57 stopped: could not read the repository out of IMG=${IMG}" >&2; exit 1; }
 git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
   || { echo "Check 57 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
 
@@ -1702,6 +1726,13 @@ leaked VM of *this check* is told from a real run's.
      gcloud projects add-iam-policy-binding "${P:?}" --member="serviceAccount:${SA_EMAIL:?}" \
        --role="${ROLE}" --condition=None --quiet >/dev/null || exit 1
    done
+   # The base image is private: without this the agent's pull is denied and the
+   # job fails for a setup reason on every submission. Granted ON THE
+   # REPOSITORY (infra.BaseRegistry), never at project level: reading one
+   # repository must not imply reading the project's others.
+   gcloud artifacts repositories add-iam-policy-binding "${BASE_REPO:?}" \
+     --project="${P:?}" --location="${L:?}" \
+     --member="serviceAccount:${SA_EMAIL:?}" --role="roles/artifactregistry.reader" --quiet >/dev/null || exit 1
    ```
 
    `roles/logging.logWriter` is what lets the job write its own lines (step 10
@@ -1713,6 +1744,45 @@ leaked VM of *this check* is told from a real run's.
    default account). Step 9 adds the design's other grants under a Condition and
    is where C21's granularity is examined; this step is only what the probe
    itself needs.
+
+0b. **Egress, before anything submits a job — without it nothing below runs at
+   all.** The job JSON sets `noExternalIpAddress: true` (the design's network
+   posture, §3.2's C7), and Batch supplies no egress of its own: with neither a
+   Cloud NAT nor Private Google Access behind the subnet, the VM has no route
+   out, the agent's image pull is denied, and **every** submission below fails
+   before its first line — a probe that measures nothing and a go/no-go with no
+   data. Private Google Access alone would reach Artifact Registry (a Google
+   API), but not step 4's `docker.io` pull, which is not one; the check
+   therefore needs NAT. Like the installation, which puts NAT at the
+   installation level (§1.7), it **borrows** a NAT that already exists and
+   creates one only when there is none — named `${SA}-*`, which is how the
+   Restore finds it and the reason it can never find the project's own:
+
+   ```bash
+   ROUTER=${SA}-router
+   NAT=${SA}-nat
+   if gcloud compute routers describe "${ROUTER}" --project="${P:?}" --region="${L:?}" >/dev/null 2>&1; then
+     :                                 # an earlier run of this block created this pair
+   elif [ "$(gcloud compute routers nats list --project="${P:?}" --region="${L:?}" --format='value(name)' | grep -c .)" != 0 ]; then
+     echo "57a-0b: ${P}/${L} already has a NAT; borrowing it, creating none (this check deletes only ${SA}-*)"
+   else
+     gcloud compute routers create "${ROUTER}" --project="${P:?}" --region="${L:?}" --network="${NET:?}" || exit 1
+     gcloud compute routers nats create "${NAT}" --project="${P:?}" --region="${L:?}" --router="${ROUTER}" \
+       --auto-allocate-nat-external-ips --nat-all-subnet-ip-ranges || exit 1
+   fi
+   ```
+
+   (Neither `gcloud compute routers create` nor `gcloud compute routers nats
+   create` takes labels in the pinned gcloud — the `${SA}-*` name is the marker,
+   exactly as it is for `${SA}-preload` in the Restore below.)
+
+   **FACT:** which of the three branches ran, and — if a NAT already existed —
+   that its NAT rules cover `${NET}`'s `${L}` subnetwork. A NAT that exists but
+   does not cover it is still a setup failure: enable Private Google Access on
+   that subnet instead (`gcloud compute networks subnets update <subnet>
+   --region="${L:?}" --project="${P:?}" --enable-private-ip-google-access`)
+   before submitting, and remember it is the *project's* setting: revert it by
+   hand, because the Restore below deletes only `${SA}-*` and would leave it on.
 
 1. **Baseline (Cloud Run).** On the sandbox, `fugaro run --project fugaro
    --gcp-project "${P:?}"` a no-change task and time launch-to-first-log-line
@@ -2013,25 +2083,49 @@ gcloud compute instances list --project="${P:?}" --filter='labels.fugaro_chk=57'
     gcloud compute instances delete "${NAME:?}" --project="${P:?}" --zone="${ZONE:?}" --quiet
   done
 
-# 3. The account THIS CHECK created. Never the installation's job account, and
+# 3. The IAM this check added, BEFORE deleting the account. Deleting a service
+#    account does NOT remove its bindings: the policy keeps the member as
+#    `deleted:serviceAccount:...`, which is a grant nobody meant to leave and a
+#    policy that no longer reads as clean. The repository binding goes first
+#    (57a-0), removal of the account's own bindings second.
+gcloud artifacts repositories remove-iam-policy-binding "${BASE_REPO:?}" \
+  --project="${P:?}" --location="${L:?}" \
+  --member="serviceAccount:${SA_EMAIL:?}" --role="roles/artifactregistry.reader" --quiet
+for ROLE in roles/logging.logWriter roles/batch.agentReporter; do
+  gcloud projects remove-iam-policy-binding "${P:?}" --member="serviceAccount:${SA_EMAIL:?}" \
+    --role="${ROLE}" --condition=None --quiet >/dev/null
+done
+# 57a-9's conditioned grants (roles/batch.jobsEditor and the rest), if it added
+# them: same removal, one per role, then read the policy back and confirm no
+# member of this check's remains.
+
+# 4. The account THIS CHECK created. Never the installation's job account, and
 #    never the default Compute Engine SA.
 gcloud iam service-accounts delete "${SA:?}@${P:?}.iam.gserviceaccount.com" --project="${P:?}" --quiet
 
-# 4. The preloaded boot image, if 57a-3b built one (named after $SA).
+# 5. The router and NAT, only if 57a-0b created them (named after $SA). The
+#    project's own NAT is not touched: it does not carry this name.
+gcloud compute routers nats delete "${SA:?}-nat" --router="${SA:?}-router" --project="${P:?}" --region="${L:?}" --quiet 2>/dev/null || true
+gcloud compute routers delete "${SA:?}-router" --project="${P:?}" --region="${L:?}" --quiet 2>/dev/null || true
+
+# 6. The preloaded boot image, if 57a-3b built one (named after $SA).
 gcloud compute images list --project="${P:?}" --filter="name~^${SA}-preload" --format='value(name)' | \
   xargs -r -n1 gcloud compute images delete --project="${P:?}" --quiet
 ```
 
-The NAT/router/subnet, if the check had to create egress of its own (the
-design puts NAT at the installation level, §1.7, so the check should **borrow**
-the installation's where one exists and name anything it creates
-`${SA}-*`), is deleted the same way, by that name — **not** by
-`fugaro=managed`, which is the installation's label and reaches resources this
-check never touched. The log sink arm, if 57a-10 applied it, is reverted with
-the Terraform apply that reverses it (`fugaro init` from the sandbox's config),
-and nothing else. Nothing in `belong` is touched at any step.
+The NAT/router/subnet note, if the check had to create egress of its own: it
+**borrows** the installation's NAT where one exists (the design puts NAT at the
+installation level, §1.7, and 57a-0b prints which branch it took), and names
+anything it creates `${SA}-*` — step 5 above — so this restore never reaches
+resources the check did not create, and never by `fugaro=managed`, which is the
+installation's label and reaches resources this check never touched. The log sink
+arm, if 57a-10 applied it, is reverted with the Terraform apply that reverses it
+(`fugaro init` from the sandbox's config), and nothing else. Nothing in `belong`
+is touched at any step.
 
-**The restore's assertion — run it and paste the output; it must be empty:**
+**The restore's assertion — run it and paste the output; every line must be
+`0` (five zeroes; the lines are counts, and an empty-looking line would hide a
+`gcloud` that failed):**
 
 ```bash
 echo "jobs (57a): $(gcloud batch jobs list --project="${P:?}" --location="${L:?}" --filter='labels.fugaro_chk=57' --format='value(name)' | wc -l)"
@@ -2039,6 +2133,7 @@ echo "jobs (57b): $(gcloud batch jobs list --project="${P:?}" --location="${L:?}
 echo "vms:        $(gcloud compute instances list --project="${P:?}" --filter='labels.fugaro_chk=57' --format='value(name)' | wc -l)"
 echo "image:      $(gcloud compute images list --project="${P:?}" --filter="name~^${SA}-preload" --format='value(name)' | wc -l)"
 echo "account:    $(gcloud iam service-accounts list --project="${P:?}" --filter="email~^${SA}@" --format='value(email)' | wc -l)"
+echo "router:     $(gcloud compute routers list --project="${P:?}" --regions="${L:?}" --filter="name~^${SA}-" --format='value(name)' | wc -l)"
 ```
 
 **Five zeroes** — one per line above: the two job listings (57a's probe jobs and
