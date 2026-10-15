@@ -67,12 +67,13 @@ type MachineType struct {
 //     https://cloud.google.com/compute/vm-instance-pricing redirects to
 //     those). The page renders the default region's table in HTML and swaps
 //     the others in client-side; each group's figures below were read from
-//     that region's table, and tests/table_test.go pins the machine types'
-//     hourly totals against the same page.
+//     that region's table, and TestCheckMachineTypePrices (prices_test.go)
+//     pins every machine type's hourly total against the same page.
 //   - UNVERIFIED: no figure here has been confirmed against a bill. Check
 //     57b step 5 is what confirms them.
-//   - Machine type sizes: cloud.google.com/compute/docs/machine-resource, the
-//     same date (4 GiB per vCPU for both families).
+//   - Machine type sizes: cloud.google.com/compute/docs/general-purpose-machines
+//     and .../compute-optimized-machines, read the same date (4 GiB per vCPU
+//     for both families).
 //
 // The one-minute minimum is quoted verbatim in design §5.2 and is not in
 // doubt; the prices are.
@@ -199,7 +200,7 @@ const groupUSEast4 = "us-east4"
 //	groupUS,      c2-standard: 60 * 0.03396829 + 240 * 0.00455843 = $3.1321200 (page: $3.13212)
 //	groupUSEast4, c2-standard: 60 * 0.03825255 + 240 * 0.00513336 = $3.5271600 (page: $3.52716)
 //
-// TestsCheckMachineTypePrices (prices_test.go) checks every machine type in
+// TestCheckMachineTypePrices (prices_test.go) checks every machine type in
 // machineTypes against these same published figures, so a mistyped rate or a
 // size added without its price fails a test rather than a bill.
 //
