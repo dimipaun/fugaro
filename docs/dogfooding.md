@@ -43,7 +43,7 @@ GitHub refuses a push from the App that creates or updates a workflow file unles
 
 ## Follow-ups and `followup.allow_public`
 
-`fugaro run --pr N` continues a Fugaro PR and acts on the comments of `followup.trusted` accounts, with the workflow's secrets and the model credential in hand. On a **public** repository anyone can comment, so a follow-up is refused unless `followup.allow_public: true` is set, and even then only trusted accounts' comments are acted on. This repository is public, and its `fugaro.yaml` sets neither key, so follow-ups on its PRs are refused today: continue by starting a new run, or make that decision deliberately in a reviewed PR (a security decision: set `trusted` to the maintainers' numeric IDs and read the design's §6.1 first). The `setup` skill never sets `allow_public` without an explicit yes.
+`fugaro run --pr N` continues a Fugaro PR and acts on the comments of `followup.trusted` accounts, with the workflow's secrets and the model credential in hand. On a **public** repository anyone can comment, so a follow-up is refused unless `followup.allow_public: true` is set, and even then only trusted accounts' comments are acted on. This repository is public and its `fugaro.yaml` sets both keys — `trusted: ["625256"]`, the maintainer's numeric ID, and `allow_public: true`, the owner's decision on 2026-10-04 (#111) — so a follow-up on its PRs acts on the maintainer's comments and ignores everyone else's. Widening `trusted` is a security decision: read the design's §6.1 first. The `setup` skill never sets `allow_public` without an explicit yes.
 
 ## Parallel runs and `--batch`
 
