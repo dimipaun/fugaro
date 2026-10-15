@@ -55,10 +55,31 @@ var discardLogger = slog.New(slog.DiscardHandler)
 var _ backend.Backend = (*Backend)(nil)
 
 // Endpoints override API roots, for fakes and emulators. Empty means the
-// real Google endpoint.
+// real Google endpoint. Compute is the reaper's (reap.go): the backend itself
+// never calls the Compute Engine API.
 type Endpoints struct {
-	Batch, Logging string
-	NoAuth         bool
+	Batch, Logging, Compute string
+	NoAuth                  bool
+}
+
+// clientOptions builds one Google client's options: a discarding logger (see
+// discardLogger), the endpoint override a fake or emulator needs, and either
+// ADC or no authentication at all.
+func clientOptions(endpoint string, o Endpoints, httpClient *http.Client, quotaProject string) []option.ClientOption {
+	opts := []option.ClientOption{option.WithLogger(discardLogger)}
+	if endpoint != "" {
+		opts = append(opts, option.WithEndpoint(endpoint))
+	}
+	if o.NoAuth {
+		opts = append(opts, option.WithoutAuthentication())
+	}
+	if httpClient != nil {
+		opts = append(opts, option.WithHTTPClient(httpClient))
+	}
+	if !o.NoAuth {
+		opts = append(opts, option.WithQuotaProject(quotaProject))
+	}
+	return opts
 }
 
 // Timeouts is where a Batch backend reads a workflow's timeouts from.
@@ -156,27 +177,11 @@ func New(ctx context.Context, o Options) (*Backend, error) {
 	if o.LogSettle == 0 {
 		o.LogSettle = 30 * time.Second
 	}
-	opts := func(endpoint string) []option.ClientOption {
-		opts := []option.ClientOption{option.WithLogger(discardLogger)}
-		if endpoint != "" {
-			opts = append(opts, option.WithEndpoint(endpoint))
-		}
-		if o.Endpoints.NoAuth {
-			opts = append(opts, option.WithoutAuthentication())
-		}
-		if o.HTTPClient != nil {
-			opts = append(opts, option.WithHTTPClient(o.HTTPClient))
-		}
-		if !o.Endpoints.NoAuth {
-			opts = append(opts, option.WithQuotaProject(o.GCPProject))
-		}
-		return opts
-	}
-	bs, err := batch.NewService(ctx, opts(o.Endpoints.Batch)...)
+	bs, err := batch.NewService(ctx, clientOptions(o.Endpoints.Batch, o.Endpoints, o.HTTPClient, o.GCPProject)...)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to Cloud Batch: %w", err)
 	}
-	ls, err := logging.NewService(ctx, opts(o.Endpoints.Logging)...)
+	ls, err := logging.NewService(ctx, clientOptions(o.Endpoints.Logging, o.Endpoints, o.HTTPClient, o.GCPProject)...)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to Cloud Logging: %w", err)
 	}
