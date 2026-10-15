@@ -156,7 +156,7 @@ func TestChecklistHasCheck52(t *testing.T) {
 	// And no command anywhere in the section is a git command: the check reads
 	// and writes no repository, so the whole credential-helper machinery
 	// (K1) is gone with the probe it protected.
-	for _, line := range chk52ProbeCommands(section) {
+	for _, line := range sectionCommands(section) {
 		// The guard's own origin assertion is the one git command left, and it
 		// is one of the three hard stops: it reads the sandbox checkout's
 		// remote, not a repository this check would touch.
@@ -299,7 +299,7 @@ func TestChecklistHasCheck52(t *testing.T) {
 	// never a racy --limit=1 listing; and the container override carries args
 	// or clearArgs, never both. The checks are over the section's command
 	// lines, since the prose says why those spellings are wrong.
-	for _, line := range chk52ProbeCommands(section) {
+	for _, line := range sectionCommands(section) {
 		switch {
 		case strings.Contains(line, "--overrides"):
 			t.Errorf("the Check 52 section has a command using `gcloud run jobs execute --overrides`, which does not exist: %q", line)
@@ -448,7 +448,7 @@ func TestChecklistHasCheck52(t *testing.T) {
 	// command interpolates an unguarded `${VAR}`: an empty variable there is
 	// an empty argument gcloud resolves from its ambient configuration.
 	unguarded := regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*\}`)
-	for _, line := range chk52ProbeCommands(section) {
+	for _, line := range sectionCommands(section) {
 		if strings.HasPrefix(line, "gcloud ") &&
 			!strings.Contains(line, `--project="${P:?}"`) &&
 			!strings.Contains(line, `"${P:?}"`) &&
@@ -464,7 +464,7 @@ func TestChecklistHasCheck52(t *testing.T) {
 	// must be scanned like any other command: a collector that looked only at a
 	// line's first word would let that one drop its --project unnoticed.
 	var sawKeywordCommand bool
-	for _, line := range chk52ProbeCommands(section) {
+	for _, line := range sectionCommands(section) {
 		if strings.HasPrefix(line, "gcloud secrets versions access") {
 			sawKeywordCommand = true
 		}
@@ -492,12 +492,12 @@ func chk52MustContain(t *testing.T, got, part string, want []string) {
 	}
 }
 
-// chk52StripCommandPrefix removes the shell keywords and operators a command can be
+// stripCommandPrefix removes the shell keywords and operators a command can be
 // introduced by, so that `if gcloud …; then` and `… && gcloud …` are read as
 // gcloud commands: U3's inside read is an `if gcloud secrets versions access
 // …`, and a check that only looked at a line's first word would let that one
 // drop its --project or interpolate an unguarded variable unnoticed.
-func chk52StripCommandPrefix(line string) string {
+func stripCommandPrefix(line string) string {
 	for {
 		trimmed := line
 		for _, p := range []string{"if ", "elif ", "then ", "else ", "do ", "! ", "&& ", "|| ", "; ", "| "} {
@@ -513,12 +513,29 @@ func chk52StripCommandPrefix(line string) string {
 	}
 }
 
-// chk52ProbeCommands returns the section's `gcloud`, `curl` and `git` invocations
+// sectionCommands returns the section's `gcloud`, `curl` and `git` invocations
 // as logical lines: backslash continuations are joined, leading shell keywords
 // are stripped, and only lines that then start with one of those verbs count
 // (so a command inside prose, a comment or a `$(…)` is not read as a command of
 // its own).
-func chk52ProbeCommands(section string) []string {
+func sectionCommands(section string) []string {
+	return commandLines(section, "gcloud ", "curl ", "git ")
+}
+
+// fugaroCommands returns the section's `fugaro` invocations, read the same way
+// sectionCommands reads the cloud ones. Check 49 is a Fugaro check — its steps
+// are mostly `fugaro` commands — so its rule that every one of them names the
+// installation has to be checked over them and not over the gcloud commands
+// alone.
+func fugaroCommands(section string) []string {
+	return commandLines(section, "fugaro ")
+}
+
+// commandLines is sectionCommands and fugaroCommands' shared reader: the
+// section's logical lines that begin with one of verbs, once backslash
+// continuations are joined and the shell keywords a command can be introduced
+// by are stripped.
+func commandLines(section string, verbs ...string) []string {
 	var joined []string
 	var buf string
 	for _, raw := range strings.Split(section, "\n") {
@@ -533,8 +550,8 @@ func chk52ProbeCommands(section string) []string {
 	joined = append(joined, buf)
 	var out []string
 	for _, line := range joined {
-		line = chk52StripCommandPrefix(strings.TrimSpace(line))
-		for _, verb := range []string{"gcloud ", "curl ", "git "} {
+		line = stripCommandPrefix(strings.TrimSpace(line))
+		for _, verb := range verbs {
 			if strings.HasPrefix(line, verb) {
 				out = append(out, line)
 				break
@@ -542,4 +559,231 @@ func chk52ProbeCommands(section string) []string {
 		}
 	}
 	return out
+}
+
+// TestChecklistHasCheck49: docs/gcp-live-checklist.md must carry the phase 1
+// owner-run check (design project-centric.md §5; plan
+// 2026-10-14-project-centric.md Task 1.7) as one owner-run, not-yet-run,
+// installation-`fugaro`-only check numbered 49 — with its row in the check
+// list and Check 43's guard block (the three hard stops and the project
+// pinning) inside its section, so a reader cannot mistake it for something CI
+// covers and no step of it can run against a project other than fugaro-dev.
+//
+// The owner runs this document against the live installation, so the
+// assertions are per-line facts the section must state — a stop it can take, a
+// flag a command must carry, a FACT it records, a step of its Restore — and
+// each of the hand mutations the review named fails one of them rather than
+// passing on the heading alone. Three of them are corrections the code forces
+// on the plan's own wording, and each is asserted both ways:
+//
+//   - the plan names `fugaro upgrade --cloud`, which does not exist (there is
+//     no --cloud flag; `cloud` is one of upgrade's steps), so the section must
+//     name the real command;
+//   - finding 15: only `fugaro init --repo` writes a job's environment, so the
+//     runner rollout is two steps and not one;
+//   - step 6 cannot point "the sandbox's fugaro.yaml at a repository": no key
+//     of fugaro.yaml names a repository (internal/config/config.go), so the
+//     un-enrolled state is made with the allow-list itself.
+//
+// Phase 3 ships in 0.9.0 (the owner's ruling of 2026-10-15), so the section
+// must not depend on any phase 3 code; the one thing it may say about the
+// binding's live proof is that it belongs to Check 53 step 6, which is a
+// pointer to a later check and not a dependency on it.
+func TestChecklistHasCheck49(t *testing.T) {
+	const path = "../../docs/gcp-live-checklist.md"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	const heading = "## Check 49: policy as data, end to end (installation fugaro only, never belong; run by you; NOT RUN)"
+	section := docSection(t, path, doc, heading)
+	body := section
+	if i := strings.Index(body, "\n"); i != -1 {
+		body = body[i+1:]
+	}
+	chk49MustContain(t, body, "body", []string{
+		"**Never `belong`**",
+		"you run every command",
+		"no agent runs any step of it",
+		"no step of this check types, prints or records a secret value or a key value",
+		// The phase the check belongs to, and the release it ships in: the
+		// owner ruled on 2026-10-15 that phases 3 to 6 ship in 0.9.0, so
+		// nothing here may depend on phase 3 code.
+		"0.9.0",
+	})
+
+	// Its row in the check list (the summary table), not only the section.
+	var row string
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "| 49 |") {
+			row = line
+			break
+		}
+	}
+	if row == "" {
+		t.Error("the check list has no `| 49 |` row")
+	} else {
+		chk49MustContain(t, row, "row", []string{
+			"USER-RUN, NOT RUN",
+			"never `belong`",
+			"See \"Check 49\" below",
+			"sandbox repository only",
+		})
+	}
+
+	// Check 43's guard block inside the section — the three hard stops and
+	// the project pinning, not merely a ${P:?...}.
+	chk49MustContain(t, section, "section", []string{
+		"P=fugaro-dev",
+		`[ "$P" = fugaro-dev ] && [ -n "$L" ] \`,
+		`|| { echo "Check 49 stopped: re-run the whole setup block`,
+		`fugaro doctor --project fugaro | grep -q '^project: .*(GCP fugaro-dev,'`,
+		`|| { echo "Check 49 stopped: this is not the fugaro-dev installation" >&2; exit 1; }`,
+		`git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$'`,
+		`|| { echo "Check 49 stopped: this checkout's origin is not the sandbox" >&2; exit 1; }`,
+		// The block is re-run at the start of every step, and pasted into a
+		// file: an interactive zsh does not honour its `#` comments.
+		"RE-RUN THIS WHOLE BLOCK at the start of every",
+		"Paste the block into a file, not straight into an interactive zsh",
+	})
+
+	// The order the design fixes (design §5): the rules go first, then the
+	// runner, and only then the policy — publishing before the rules are
+	// deployed is a policy the runs it bounds cannot read.
+	chk49MustContain(t, section, "section", []string{
+		"### 2. The rules deploy",
+		"### 3. The runner rollout, and the two halves it actually needs (finding 15)",
+		"### 4. Publish",
+		"rules deploy",
+		"runner rollout",
+		"`policy publish`",
+		"Publishing refuses without the rules marker",
+		"config/limits/policyRules",
+	})
+
+	// Finding 15, both ways: the rollout is two owner steps, `fugaro init
+	// --repo` is the only one that writes a job's environment, and the
+	// command the plan named does not exist.
+	chk49MustContain(t, section, "section", []string{
+		"finding 15",
+		"the only path that writes a job's environment is `fugaro init --repo`",
+		"`fugaro upgrade`",
+		"`fugaro image refresh`",
+		"fugaro init --repo . --project fugaro",
+	})
+	for _, dead := range []string{
+		"fugaro upgrade --cloud", // no such flag: `cloud` is one of upgrade's steps
+		"fugaro upgrade --project fugaro --cloud",
+	} {
+		if strings.Contains(section, dead) {
+			t.Errorf("the Check 49 section names a command that does not exist (%q): `fugaro upgrade` has no --cloud flag, and `cloud` is one of its steps", dead)
+		}
+	}
+
+	// Step 6, both ways: no key of fugaro.yaml names a repository, so the
+	// un-enrolled state is made with the allow-list, and the refusal it
+	// produces is the launcher's; the run-side half is a direct launch.
+	chk49MustContain(t, section, "section", []string{
+		"fugaro.yaml has no key that names a repository",
+		"fugaro project repos rm bitbucket/edgeappinc/fugarosandbox --project fugaro",
+		"The launch stops before any execution exists",
+		"FUGARO_RUN",
+		"the run stops before any lease exists",
+		"Record which layer refused",
+		"Check 53 step 6",
+		"the live test of the binding itself belongs to Check 53 step 6",
+	})
+	if strings.Contains(section, "Point the sandbox's `fugaro.yaml` at a repository") {
+		t.Error("the Check 49 section still points fugaro.yaml at a repository: no key of fugaro.yaml names one, so that edit cannot change which repository a run is for")
+	}
+	// The `credential` line the plan asked for does not exist: the run refuses
+	// before the provider is opened, so there is no credential line to be
+	// absent. The section says so rather than asserting a line nobody emits.
+	if strings.Contains(section, "the absence of a `credential` line") {
+		t.Error("the Check 49 section still asserts the absence of a `credential` line: no step of the run emits one, because the refusal is before the provider is opened")
+	}
+
+	// Every step asserts its own outcome: the FACT lines are what the owner
+	// pastes back, and there is one per step at least.
+	if n := strings.Count(section, "**FACT:**"); n < 8 {
+		t.Errorf("the Check 49 section carries %d FACT lines, want at least 8 (one per step, from the rules deploy to the CLI's advisory refusal)", n)
+	}
+
+	// The Restore returns the installation to its recorded state, and the
+	// published policy has a command to leave with, not an outline.
+	chk49MustContain(t, section, "section", []string{
+		"### 8. Restore",
+		"fugaro budget show --json --project fugaro",
+		"fugaro budget set",
+		"fugaro project show --json --project fugaro",
+		"fugaro project policy publish --delete --project fugaro",
+		"the sandbox still runs",
+	})
+
+	// No step handles a secret value: the check reads the rules' bytes, the
+	// node's version and the job environment's key *presence*, never a value.
+	chk49MustContain(t, section, "section", []string{
+		"never its value",
+	})
+	for _, dead := range []string{
+		"gcloud secrets versions access", "--data-file", "gcloud secrets create",
+		"print-access-token", "FUGARO_FIREBASE_API_KEY=", "ANTHROPIC_API_KEY=",
+	} {
+		if strings.Contains(section, dead) {
+			t.Errorf("the Check 49 section handles a secret value (%q): this check never reads, prints or records one", dead)
+		}
+	}
+
+	// The closing paragraph, which is what the owner reads last.
+	chk49MustContain(t, section, "section", []string{
+		"**Paste back:** every FACT line above, never a secret value and never a key value.",
+		"Never run this against `belong`.",
+	})
+
+	// Every command that acts on a project names it, and no gcloud/fugaro
+	// command interpolates an unguarded `${VAR}`: an empty variable there is
+	// an empty argument gcloud resolves from its ambient configuration.
+	unguarded := regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*\}`)
+	for _, line := range sectionCommands(section) {
+		if strings.HasPrefix(line, "gcloud ") &&
+			!strings.Contains(line, `--project="${P:?}"`) &&
+			!strings.Contains(line, `"${P:?}"`) &&
+			!strings.Contains(line, `projects/${P:?}`) {
+			t.Errorf("the Check 49 section has a gcloud command that does not name the project: %q", line)
+		}
+		if m := unguarded.FindString(line); m != "" {
+			t.Errorf("the Check 49 section has an unguarded %s in a command: %q", m, line)
+		}
+	}
+	// `fugaro doctor --project fugaro` is the guard's own cross-check; every
+	// other fugaro command acts on the installation and must name it too.
+	var sawDoctor bool
+	for _, line := range fugaroCommands(section) {
+		if strings.HasPrefix(line, "fugaro doctor --project fugaro") {
+			sawDoctor = true
+			continue
+		}
+		if !strings.Contains(line, "--project fugaro") {
+			t.Errorf("the Check 49 section has a fugaro command that does not name the installation: %q", line)
+		}
+		if m := unguarded.FindString(line); m != "" {
+			t.Errorf("the Check 49 section has an unguarded %s in a fugaro command: %q", m, line)
+		}
+	}
+	if !sawDoctor {
+		t.Error("the Check 49 section's guard block is not read as a command, so nothing checks that it pins the installation")
+	}
+}
+
+// chk49MustContain fails the test for each want that is not in got, naming the
+// part of the section (its body, its table row, the whole section) that should
+// hold it.
+func chk49MustContain(t *testing.T, got, part string, want []string) {
+	t.Helper()
+	for _, w := range want {
+		if !strings.Contains(got, w) {
+			t.Errorf("the Check 49 section's %s is missing %q", part, w)
+		}
+	}
 }

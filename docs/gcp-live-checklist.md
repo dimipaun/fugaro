@@ -2082,6 +2082,22 @@ Confirms `docs/design/mixed-credentials.md` §5 (Path B) and `docs/plans/2026-10
 
 **Paste back:** every `FACT` line above, never a secret value and never a token value. Until this check runs, `docs/design/mixed-credentials.md` §5's Path B is implemented but unverified live, and `SECURITY.md`'s known-gaps line for it stands as written. Never run this against `belong`; no agent runs any step of this check — every step is yours, including typing the token.
 
+## Check 49: policy as data, end to end (installation fugaro only, never belong; run by you; NOT RUN)
+
+**Method.** All of it happens in the installation's own project (`fugaro-dev`) and the **sandbox** repository, and **you run every command**: no agent runs any step of it, and no step of this check types, prints or records a secret value or a key value. **Never `belong`**.
+
+**The order the design fixes (design §5): rules deploy, then runner rollout, then `policy publish`.** Phase 1 ships in 0.8.0, and phases 3 to 6 ship in 0.9.0 (the owner's ruling of 2026-10-15), so nothing here depends on phase 3 code.
+
+1. **Setup and guard** — the variables and the three hard stops.
+2. **The rules deploy.** `fugaro init --firebase <the Firebase project id> --project fugaro`.
+3. **The runner rollout, and the two halves it actually needs (finding 15).** The rollout is two owner steps: release a runner image, then apply the job environment.
+4. **Publish.** `fugaro project policy publish --project fugaro`.
+5. **The policy governs.** One sandbox run.
+6. **It fails closed.** Un-enroll the sandbox and run.
+7. **The CLI is advisory and says so.** `fugaro run` refuses before launching.
+
+**Paste back:** every FACT line above, never a secret value and never a key value. Never run this against `belong`.
+
 ## Check 52: the four probes phase 3 depends on (installation fugaro, sandbox only, never belong; run by you; NOT RUN)
 
 Design §13 lists what was never settled from the code, and this phase is the one that needs four of them — three as probes and one, U1, as a ruling already made. **They are answered before any phase 3 code is written**, because they decide whether the phase is shaped the way the design says: who may carry a secret reference decides whether an execution override can mount one at all (U2), and the Secret Manager IAM question decides whether a runtime fetch is even a fallback (design §4.5, U3). **U1 needs no run: the owner ruled it on 2026-10-15** — a Bitbucket credential cannot be scoped to one project's repositories, so Bitbucket stays on the per-repository path. That is the branch the design's §4.5 already names for a failed verification, and it is what the design's own D5 row and §13 entry do **not** yet say: both still read as they did before the ruling (*"First-class in phase 3, via a project-wide Bitbucket access token"*; the token scope listed as UNVERIFIED), so the plan carries the amendment that corrects them and applies it in its Task 0.5 (§2 below records the ruling and that amendment; the heading above keeps the plan's word "four", which is the check's own name). This check is phase 3's **go/no-go**: nothing in phase 3 starts before the remaining three are answered.
