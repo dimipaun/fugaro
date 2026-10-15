@@ -42,6 +42,13 @@ type Secrets struct {
 	// FailListWith, when non-zero, makes secrets.list answer that HTTP
 	// status: what pins the degradation of a refused label read.
 	FailListWith int
+	// FailVersionsAfter makes every version list after the first n answer
+	// 403 PERMISSION_DENIED: the read a step past the label calls makes,
+	// which a test cannot name by ID because the same secrets are read
+	// earlier in the run. Pair it with VersionsListCalls, so a test can fail
+	// the last read of a successful run without hard-coding how many there
+	// are.
+	FailVersionsAfter int
 
 	mu          sync.Mutex
 	secrets     map[string]*fakeSecret // by ID
@@ -49,6 +56,7 @@ type Secrets struct {
 	accessed    []string // the secret IDs whose latest version was read
 	deletes     []string // the secret IDs a delete removed, in order
 	destroys    []string // the version names a destroy or a version delete took
+	versionList int      // the version lists served, successful or failed
 }
 
 type fakeSecret struct {
@@ -88,6 +96,15 @@ func (f *Secrets) Latest(id string) []byte {
 		return nil
 	}
 	return append([]byte(nil), s.versions[len(s.versions)-1]...)
+}
+
+// VersionsListCalls is how many version lists the fake has served, successful
+// or failed: a test reads it from one run to arm FailVersionsAfter for the
+// last read of the next.
+func (f *Secrets) VersionsListCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.versionList
 }
 
 // AllowAccess lets the fake answer the access call (the latest version's
@@ -284,6 +301,15 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeJSON(w, http.StatusOK, versionJSON(m[1], m[2], n, s.created))
 	case r.Method == http.MethodGet && versionsPathRE.MatchString(p):
 		m := versionsPathRE.FindStringSubmatch(p)
+		// handle holds f.mu for the whole switch, so the counter is touched
+		// directly here.
+		f.versionList++
+		if f.FailVersionsAfter > 0 && f.versionList > f.FailVersionsAfter {
+			// 403, not 5xx: the client retries a 500 on its own, so the
+			// caller would never see it.
+			writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "injected failure")
+			return
+		}
 		s := f.secrets[m[2]]
 		if s == nil {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "not found")
