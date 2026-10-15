@@ -175,6 +175,52 @@ func TestRunnerWithNoCredentialTakesTheModeOffPath(t *testing.T) {
 			t.Fatal("a run with its budget off and no token exchanged one")
 		}
 	})
+	t.Run("the job carries no web API key", func(t *testing.T) {
+		// The launcher writes the database's address and its web key
+		// independently (internal/infra's job environment) and the key is
+		// optional in the operator's config (internal/localcfg), so a job can
+		// name a database and carry no way to exchange a token with it. The
+		// key is a credential, and on a budget-off job its absence is the
+		// mode-off path, like the two cases above: the run cannot tell "no
+		// policy" from "no key", so the refusal is the launcher's readiness
+		// gate, and a run that halts here is halting on a credential it was
+		// never given (B1).
+		b := newBK(t, gwConfig(t, ""), "off", "")
+		b.deps.Backend.APIKey = ""
+		rec, err := b.run(t, implement("feature"), review("ship", 0))
+		if err != nil || rec.Status != runstore.StatusSucceeded || rec.Budget != nil {
+			t.Fatalf("rec = %+v, err = %v: a mode-off job with no key is the mode-off path", rec, err)
+		}
+		if n := len(b.db.Credentials()); n != 0 {
+			t.Fatalf("a run with its budget off made %d database requests", n)
+		}
+		if b.itk.Exchanges() != 0 {
+			t.Fatal("a run with its budget off and no key exchanged a token")
+		}
+		// The key is checked before the bucket read, so the take that would
+		// delete the token object never happened: the run did not even look.
+		if ok, err := b.bucket.Exists(context.Background(), token.ObjectKey(repoSlug, runID)); err != nil || !ok {
+			t.Fatalf("the run's token object is gone (exists = %v, err = %v)", ok, err)
+		}
+	})
+	t.Run("the launcher's marker outranks the mode", func(t *testing.T) {
+		// The same job, launched by a launcher that minted: with the mode off
+		// the launcher mints only when the project has published a policy
+		// (internal/cli's budgetMintOn), so the marker says a policy exists
+		// and this run cannot read it. The missing credential is then the
+		// refusal, exactly as a missing token object is (M2), and never the
+		// mode-off path.
+		b := newBK(t, gwConfig(t, ""), "off", "")
+		b.deps.Backend.APIKey = ""
+		b.deps.Backend.TokenMarked = true
+		rec, err := b.run(t, implement("feature"))
+		if err == nil || !strings.Contains(err.Error(), runner.FirebaseAPIKeyEnv+" is not set") {
+			t.Fatalf("err = %v, want the missing-key refusal", err)
+		}
+		if len(b.agent.calls) != 0 || rec.Status == runstore.StatusSucceeded {
+			t.Fatalf("the run proceeded without its Firebase API key: calls = %d, rec = %+v", len(b.agent.calls), rec)
+		}
+	})
 }
 
 // M2's regression test (security review of PR #379): the launcher that minted

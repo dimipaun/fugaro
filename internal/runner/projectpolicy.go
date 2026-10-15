@@ -228,7 +228,8 @@ func (r *run) unreadablePolicy(err error) error {
 //
 // A nil client with a nil error means this run has no database to read: the job
 // carries no backend, or its budget is off and the runs bucket holds no token
-// for it. The second is safe to read as "no policy here" because the launcher
+// for it, or its budget is off and the job carries no web API key. The second is
+// safe to read as "no policy here" because the launcher
 // mints a token whenever it can see a policy, whatever the mode
 // (internal/cli's mint decision): off, with no token, is a job of a project
 // with nothing published. Every other failure is returned as the error that
@@ -262,6 +263,26 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 		return nil, c.err
 	}
 	if !r.d.Backend.On() {
+		return nil, nil
+	}
+	if r.d.Backend.APIKey == "" && !r.d.Spend.On() && !r.d.Backend.TokenMarked {
+		// A job that names a database and carries no web API key: the token
+		// exchange needs that key, so this run cannot read the marker or the
+		// node at all. The key is a credential, and on a budget-off job its
+		// absence is the mode-off path, exactly as an absent backend or an
+		// absent token object is (B1, P3): the mode-off path is entered by the
+		// job's own mode being off, never by an absence of a credential, and
+		// the refusal for this job is the launcher's readiness gate — a job
+		// that cannot read a published policy is not deployed (task 1.4).
+		// The run cannot tell "no policy" from "no key" here, which is why the
+		// gate and not the runner is the refusal.
+		//
+		// A budget-on job stops on the shipped error below, and so does a job
+		// whose launcher minted a token: the marker means this launch HAD a
+		// policy to read, and the run must not read its own missing credential
+		// as "this project has published nothing" (M2). So does a budget-off
+		// job whose environment names a backend it cannot parse (BackendErr
+		// above, L-b), which never reaches here.
 		return nil, nil
 	}
 	custom, err := r.takeBudgetToken(ctx)
