@@ -5,10 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
 
+	run "google.golang.org/api/run/v2"
+	secretmanager "google.golang.org/api/secretmanager/v1"
+
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
@@ -541,4 +546,259 @@ func alreadyGone(err error) bool {
 		return false
 	}
 	return xe.Command == "state rm" && strings.Contains(xe.Stderr, noMatchingObjects)
+}
+
+// --- Task 4: the orphan set, read from the labels -------------------------
+//
+// The state alone cannot answer the question a rerun asks. Retirements is
+// state − spec, and the retirement's first step removes addresses from the
+// state (design §4.2a), so after a failed run the orphaned job is in no
+// state at all. The labels are the second source of truth (design §3.1a):
+// discovery's own rule -- a resource under one of our names that carries our
+// mark is ours -- applied to the resources that outlive the configuration.
+
+// OrphanLabels are the labels every resource of this repository carries
+// (v1.md §8.2). They are also the secrets.list filter, which takes the one
+// shape both the real API and the fake do.
+func OrphanLabels(spec RepoSpec) map[string]string {
+	return map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: spec.Label}
+}
+
+// labelFilter is OrphanLabels as a list filter, in the shape
+// discover.go's extraSecrets already sends.
+func labelFilter(labels map[string]string) string {
+	var out []string
+	for _, k := range slices.Sorted(maps.Keys(labels)) {
+		out = append(out, "labels."+k+"="+labels[k])
+	}
+	return strings.Join(out, " AND ")
+}
+
+// Orphans are the cloud resources the labels say are ours that spec no
+// longer produces, in two groups:
+//
+//   - retirements: a workflow job whose fugaro_workflow is no longer a
+//     variant key of spec.Workflows, the check job (fugaro_role=check) when
+//     spec.Check is nil, and a labelled secret container whose logical name
+//     spec no longer mounts while the state still holds its address.
+//   - notes: a labelled secret container whose logical name is no longer
+//     mounted and whose address the state no longer holds. Informational
+//     only: RetireSet never counts one as a retirement, so a kept container
+//     an earlier run released can never make the summary, the refusal gate
+//     or --retire fire again. Without this split every later
+//     `fugaro init --repo` would re-report the two OAuth tokens forever,
+//     because a kept container is forgotten by design (design §3.1a).
+//
+// stateAddrs are the addresses the state holds, which is the only thing that
+// tells the two groups apart: a container the *current* retirement releases
+// has its address in the state while the run starts, and one an earlier
+// retirement already released is remembered by nothing but its labels.
+//
+// It is read-only -- one jobs.list, one secrets.list with a label filter --
+// and runs under --plan-only too. A label call that is refused degrades
+// loudly rather than silently (design §3.1a): the warning names the call,
+// the permission and the gcloud command that answers the question by hand,
+// the run continues with the state-derived set, and "nothing to retire" and
+// "could not look" stay different sentences. A refused read narrows what the
+// run can see; it never makes it see something that is not there. The error
+// is for a context that was abandoned, which is the run giving up rather
+// than a permission the operator lacks.
+func Orphans(ctx context.Context, c *Clients, spec RepoSpec, stateAddrs []string) (rets, notes []Retirement, warnings []string, err error) {
+	jobs, warn, err := orphanJobs(ctx, c, spec)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if warn != "" {
+		warnings = append(warnings, warn)
+	}
+	rets = append(rets, jobs...)
+
+	containers, notes, warn, err := orphanContainers(ctx, c, spec, stateAddrs)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if warn != "" {
+		warnings = append(warnings, warn)
+	}
+	rets = append(rets, containers...)
+	slices.SortFunc(rets, byAddress)
+	slices.SortFunc(notes, byAddress)
+	return rets, notes, warnings, nil
+}
+
+// byAddress orders retirements, so a set built from two sources reads the
+// same however the cloud listed them.
+func byAddress(a, b Retirement) int { return strings.Compare(a.Address, b.Address) }
+
+// orphanJobs are the labelled Cloud Run jobs of this repository that spec no
+// longer produces. The two kinds carry different labels and so get one rule
+// each (design §3.1a, review B2): a workflow job is judged by
+// fugaro_workflow -- the variant key -- and the check job by fugaro_role,
+// which it carries in place of a workflow label. A rule that asked every job
+// for fugaro_workflow would get the check job wrong in both directions: it
+// would call a live check job an orphan on every run while the check is
+// still wanted, and it would leave a genuinely retired one alive forever.
+func orphanJobs(ctx context.Context, c *Clients, spec RepoSpec) ([]Retirement, string, error) {
+	parent := "projects/" + spec.GCPProject + "/locations/" + spec.Region
+	var out []Retirement
+	err := c.Run.Projects.Locations.Jobs.List(parent).Pages(ctx, func(p *run.GoogleCloudRunV2ListJobsResponse) error {
+		for _, j := range p.Jobs {
+			if !hasMarks(j.Labels, OrphanLabels(spec)) {
+				continue
+			}
+			if r, ok := orphanJob(j, spec); ok {
+				out = append(out, r)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		warn, fatal := labelCallFailed(ctx, "the repository's Cloud Run jobs", "run.jobs.list",
+			"gcloud run jobs list --project "+spec.GCPProject+" --region "+spec.Region, err)
+		return nil, warn, fatal
+	}
+	return out, "", nil
+}
+
+// orphanJob is one labelled job of this repository as a retirement, and
+// whether it is one at all: a job of a variant the spec still builds is not,
+// whatever the state says, and neither is the check job while the check is
+// still wanted.
+func orphanJob(j *run.GoogleCloudRunV2Job, spec RepoSpec) (Retirement, bool) {
+	name := lastSegment(j.Name)
+	switch variant := j.Labels[gcp.LabelWorkflow]; {
+	case variant != "":
+		if _, live := spec.Workflows[variant]; live {
+			return Retirement{}, false
+		}
+		return Retirement{
+			Address: workflowJobAddress(variant), Kind: "workflow job", Cause: variantCause(variant, spec),
+			Job: name, Region: spec.Region,
+			// Out of the configuration, so no apply can lower its
+			// deletion_protection any more: the API delete is the only
+			// thing that finishes it (design §4.2c).
+			Protected: true,
+		}, true
+	case j.Labels[gcp.LabelRole] == gcp.RoleCheck && spec.Check == nil:
+		return Retirement{
+			Address: checkJobAddress(), Kind: "check job", Cause: checkCause(spec),
+			Job: name, Region: spec.Region, Protected: true,
+		}, true
+	}
+	return Retirement{}, false
+}
+
+// orphanContainers are the labelled secret containers of this repository
+// whose logical name spec no longer mounts. The call is a new one: discovery
+// Gets each logical name of spec.Secrets, so it can only ever find a
+// container the new spec still produces, which is exactly what an orphan is
+// not (design §3.1a).
+func orphanContainers(ctx context.Context, c *Clients, spec RepoSpec, stateAddrs []string) (rets, notes []Retirement, warn string, err error) {
+	inState := make(map[string]bool, len(stateAddrs))
+	for _, a := range stateAddrs {
+		inState[a] = true
+	}
+	err = c.Secrets.Projects.Secrets.List("projects/"+spec.GCPProject).
+		Filter(labelFilter(OrphanLabels(spec))).
+		Pages(ctx, func(p *secretmanager.ListSecretsResponse) error {
+			for _, s := range p.Secrets {
+				logical := s.Labels[gcp.LabelSecret]
+				if logical == "" {
+					continue
+				}
+				if _, mounted := spec.Secrets[logical]; mounted {
+					continue
+				}
+				r := Retirement{
+					Address: secretContainerAddress(logical), Kind: "secret container", Cause: secretCause(logical),
+					Kept: KeptSecret, Logical: logical, SecretID: lastSegment(s.Name), Protected: true,
+				}
+				if inState[r.Address] {
+					rets = append(rets, r)
+					continue
+				}
+				notes = append(notes, r)
+			}
+			return nil
+		})
+	if err != nil {
+		warn, fatal := labelCallFailed(ctx, "the repository's secrets", "secretmanager.secrets.list",
+			"gcloud secrets list --project "+spec.GCPProject+" --filter='"+labelFilter(OrphanLabels(spec))+"'", err)
+		return nil, nil, warn, fatal
+	}
+	return rets, notes, "", nil
+}
+
+// labelCallFailed is what a refused or failed label call is: a warning that
+// names the call, the permission and the gcloud command that answers the
+// question by hand, and nothing at all when the run itself was abandoned.
+func labelCallFailed(ctx context.Context, what, permission, gcloud string, err error) (warning string, fatal error) {
+	if ctx.Err() != nil {
+		return "", fmt.Errorf("listing %s: %w", what, err)
+	}
+	return fmt.Sprintf("could not list %s (%s): %v; orphaned resources cannot be checked, so anything the state no longer holds will not be named. Check by hand with: %s",
+		what, permission, err, gcloud), nil
+}
+
+// workflowJobAddress and checkJobAddress are the addresses the modules give
+// the two kinds of job, so an orphan read from the labels deduplicates
+// against the state's own row for the same resource instead of being
+// reported twice.
+func workflowJobAddress(variant string) string {
+	return "module.repo.module.workflow[" + strconv.Quote(variant) + "].google_cloud_run_v2_job.this[0]"
+}
+
+func checkJobAddress() string { return "module.repo.google_cloud_run_v2_job.check[0]" }
+
+// secretContainerAddress is the address modules/repo/secrets.tf gives the
+// container of a logical name.
+func secretContainerAddress(logical string) string {
+	return "module.repo.google_secret_manager_secret.this[" + strconv.Quote(logical) + "]"
+}
+
+// lastSegment is the name a full resource name ends in.
+func lastSegment(name string) string { return name[strings.LastIndex(name, "/")+1:] }
+
+// RetireSet is the retirement set of design §3.1a: Orphans' retirements
+// unioned with the state-derived rows, deduplicated by address. Orphans wins
+// on the fields it read from the live resource -- Job, Region, SecretID,
+// Logical -- and nothing else: Protected, Kept, Kind and Cause stay the
+// state-derived row's, because the state is what says whether an ordinary
+// apply can delete the address at all.
+//
+// Orphans' notes are never part of it, and that is the whole point of the
+// split: a kept container an earlier retirement already released cannot make
+// the summary print, cannot open the refusal gate and cannot make --retire
+// the next command.
+func RetireSet(orphans, retired []Retirement) []Retirement {
+	out := make([]Retirement, 0, len(orphans)+len(retired))
+	at := make(map[string]int, len(orphans)+len(retired))
+	for _, r := range retired {
+		if r.Address == "" {
+			continue
+		}
+		if _, dup := at[r.Address]; dup {
+			continue
+		}
+		at[r.Address] = len(out)
+		out = append(out, r)
+	}
+	for _, o := range orphans {
+		i, ok := at[o.Address]
+		if !ok {
+			at[o.Address] = len(out)
+			out = append(out, o)
+			continue
+		}
+		for _, f := range []struct{ live, into *string }{
+			{&o.Job, &out[i].Job}, {&o.Region, &out[i].Region},
+			{&o.SecretID, &out[i].SecretID}, {&o.Logical, &out[i].Logical},
+		} {
+			if *f.live != "" {
+				*f.into = *f.live
+			}
+		}
+	}
+	slices.SortFunc(out, byAddress)
+	return out
 }

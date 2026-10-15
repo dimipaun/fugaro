@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
@@ -69,14 +72,35 @@ workflows:
 // and the state it can go back to.
 func originSpec(t *testing.T, agent string) RepoSpec {
 	t.Helper()
+	return originSpecCfg(t, originCfg(agent))
+}
+
+// originSpecCfg is originSpec with the repository config given whole.
+func originSpecCfg(t *testing.T, cfg string) RepoSpec {
+	t.Helper()
 	out := installationOutputs()
 	out.Operators = []string{originMember}
 	out.Launchers = []string{originMember}
-	rs, err := Repo(Inputs{LC: originLC(t), Repo: "acme/webapp", Cfg: parseCfg(t, []byte(originCfg(agent))), Installation: out})
+	rs, err := Repo(Inputs{LC: originLC(t), Repo: "acme/webapp", Cfg: parseCfg(t, []byte(cfg)), Installation: out})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return rs
+}
+
+// noCheckCfg is the origin's config with the daily check off, so
+// RepoSpec.Check is nil: the spec of a repository that checks nothing, and
+// so of one whose live check job really is an orphan (design row E).
+func noCheckCfg(agent string) string {
+	return `version: 1
+project: aurora
+git: { provider: github, base_branch: main }
+` + agent + `
+workflows:
+  go:
+    commands: { build: npm run build, test: npm test }
+    rebuild: { check: off }
+`
 }
 
 // originState is the fixture state: internal/infra/testdata/state_origin.json,
@@ -1205,5 +1229,378 @@ func TestRetireAllowDeleteAllowsTheReplacesTheTransitionNeeds(t *testing.T) {
 	p.ResourceChanges = append(p.ResourceChanges, change(job, "delete"))
 	if got := RetireAllowDelete(p, rets); !slices.Equal(got, want) {
 		t.Errorf("allow = %q, want %q with no repeats", got, want)
+	}
+}
+
+// --- Task 4: Orphans and RetireSet ---------------------------------------
+
+// liveJob is one Cloud Run job as the labels make it, with this
+// repository's own marks and the ones its kind carries besides.
+func liveJob(t *testing.T, f *cloud, spec RepoSpec, name string, extra map[string]string) {
+	t.Helper()
+	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: spec.Label}
+	maps.Copy(labels, extra)
+	f.run.SetJob(name, labels, "us-east5-docker.pkg.dev/proj-1234/fugaro/acme-webapp:"+name)
+}
+
+// liveContainer is one Secret Manager container as `fugaro secrets set`
+// wrote it: the container's own labels, and the logical name it holds.
+func liveContainer(f *cloud, spec RepoSpec, id, logical string) {
+	f.sm.Seed(id, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: spec.Label, gcp.LabelSecret: logical}, []byte("value"))
+}
+
+// The labels are the second source of truth (design §3.1a): an orphan is
+// found without any state at all, which is what makes the deletion resumable
+// after a run removed the address from the state and then failed.
+func TestOrphansReadsTheLabelsNotTheState(t *testing.T) {
+	f := newCloud(t)
+	spec := originSpec(t, `agent: { auth: api-key }`)
+	const name = "fugaro-acme-webapp-go-bmb-56f1e9f74859"
+	liveJob(t, f, spec, name, map[string]string{gcp.LabelWorkflow: "go_bmb"})
+
+	rets, notes, warnings, err := Orphans(context.Background(), f.c, spec, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %q, want none: every call was answered", warnings)
+	}
+	if len(notes) != 0 {
+		t.Errorf("notes = %+v, want none", notes)
+	}
+	if len(rets) != 1 {
+		t.Fatalf("Orphans = %+v, want the one labelled job", rets)
+	}
+	r := rets[0]
+	if r.Address != workflowJobAddress("go_bmb") || r.Kind != "workflow job" {
+		t.Errorf("%+v: want the workflow job's own address and kind", r)
+	}
+	if r.Job != name || r.Region != spec.Region {
+		t.Errorf("Job = %q, Region = %q; want the live job's name and the region it was listed in", r.Job, r.Region)
+	}
+	if !r.Protected || !strings.Contains(r.Cause, "bmb") {
+		t.Errorf("%+v: want it protected, with the account the config dropped named", r)
+	}
+}
+
+// A job of a variant the spec still builds is not an orphan, whatever the
+// state says: the repo label alone is shared by every variant, so matching
+// on it would delete a surviving variant's job (Review Focus 7).
+func TestOrphansNeverReturnsASurvivingVariant(t *testing.T) {
+	f := newCloud(t)
+	spec := originSpec(t, `agent: { auth: api-key }`)
+	liveJob(t, f, spec, "fugaro-acme-webapp-go-abc", map[string]string{gcp.LabelWorkflow: "go"})
+	if _, live := spec.Workflows["go"]; !live {
+		t.Fatal("fixture bug: the spec builds go")
+	}
+
+	rets, _, _, err := Orphans(context.Background(), f.c, spec, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rets) != 0 {
+		t.Fatalf("Orphans = %+v, want nothing: the variant is still deployed", rets)
+	}
+}
+
+// The check job carries fugaro_role and no fugaro_workflow at all, so it
+// needs its own rule in both directions (review B2). This is the direction
+// that would report a live check job as an orphan on every run.
+func TestOrphansNeverReturnsTheCheckJobItStillNeeds(t *testing.T) {
+	f := newCloud(t)
+	spec := originSpec(t, `agent: { auth: api-key }`)
+	if spec.Check == nil {
+		t.Fatal("fixture bug: the origin's workflow is checked")
+	}
+	liveJob(t, f, spec, "fugarochk-acme-webapp-abc", map[string]string{gcp.LabelRole: gcp.RoleCheck})
+
+	rets, _, _, err := Orphans(context.Background(), f.c, spec, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rets) != 0 {
+		t.Fatalf("Orphans = %+v, want nothing: the repository still schedules the check", rets)
+	}
+}
+
+// And this is the direction that would leave a retired check job alive
+// forever: no fugaro_workflow to match, so a rule that demanded one would
+// refuse it. It is the design's row E, baked -> clone (or the last checked
+// workflow leaving).
+func TestOrphansCheckJobIsAnOrphanWhenSpecCheckIsNil(t *testing.T) {
+	f := newCloud(t)
+	spec := originSpecCfg(t, noCheckCfg(`agent: { auth: api-key }`))
+	if spec.Check != nil {
+		t.Fatal("fixture bug: rebuild.check: off must leave no check")
+	}
+	liveJob(t, f, spec, "fugarochk-acme-webapp-abc", map[string]string{gcp.LabelRole: gcp.RoleCheck})
+
+	rets, _, _, err := Orphans(context.Background(), f.c, spec, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rets) != 1 || rets[0].Kind != "check job" || rets[0].Job != "fugarochk-acme-webapp-abc" {
+		t.Fatalf("Orphans = %+v, want the check job, under fugaro_role=check", rets)
+	}
+	if rets[0].Address != checkJobAddress() {
+		t.Errorf("address = %q, want the check job's own", rets[0].Address)
+	}
+	if !strings.Contains(rets[0].Cause, "no workflow is checked any more") {
+		t.Errorf("Cause = %q, want the check having left the configuration", rets[0].Cause)
+	}
+}
+
+// The two rules do not bleed into one another: a job the workflow rule
+// judges is not judged by its role, and a job of neither kind is not ours at
+// all.
+func TestOrphansWorkflowJobRuleIgnoresAFugaroRole(t *testing.T) {
+	f := newCloud(t)
+	spec := originSpec(t, `agent: { auth: api-key }`)
+	// A live variant, with a role label beside its workflow one.
+	liveJob(t, f, spec, "fugaro-acme-webapp-go-abc", map[string]string{gcp.LabelWorkflow: "go", gcp.LabelRole: gcp.RoleCheck})
+	// Someone else's job in our project, with none of our labels.
+	f.run.SetJob("another-team-job", map[string]string{"team": "other"}, "img:1")
+
+	rets, _, _, err := Orphans(context.Background(), f.c, spec, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rets) != 0 {
+		t.Fatalf("Orphans = %+v, want nothing", rets)
+	}
+}
+
+// A container the current retirement releases still has its address in the
+// state, so it is a retirement with the plain-words promise: the design's
+// KEPT block.
+func TestOrphansReturnsALabelledContainerNoLongerMounted(t *testing.T) {
+	f := newCloud(t)
+	spec := originSpec(t, `agent: { auth: api-key }`)
+	liveContainer(f, spec, "claude-oauth-token", "claude-oauth-token")
+
+	state := []string{secretContainerAddress("claude-oauth-token")}
+	rets, notes, _, err := Orphans(context.Background(), f.c, spec, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notes) != 0 {
+		t.Errorf("notes = %+v, want none: the state still holds the container", notes)
+	}
+	if len(rets) != 1 {
+		t.Fatalf("Orphans = %+v, want the container", rets)
+	}
+	r := rets[0]
+	if r.Kind != "secret container" || r.Logical != "claude-oauth-token" || r.SecretID != "claude-oauth-token" {
+		t.Errorf("%+v: want the container, its logical name and its ID", r)
+	}
+	if r.Kept != KeptSecret || !r.Protected {
+		t.Errorf("%+v: want the promise and prevent_destroy's protection", r)
+	}
+}
+
+// The convergence rule (review B3): a container an *earlier* retirement
+// already released is remembered by nothing but its labels, and there is
+// nothing left to do about it. It is a note, so RetireSet is empty, the
+// summary is not printed, the gate does not open and --retire is not
+// suggested -- the test that stops the recurring summary.
+func TestOrphansKeptContainerAloneIsANoteNotARetirement(t *testing.T) {
+	f := newCloud(t)
+	spec := originSpec(t, `agent: { auth: api-key }`)
+	liveContainer(f, spec, "claude-oauth-token", "claude-oauth-token")
+	liveContainer(f, spec, "claude-oauth-token-bmb", "claude-oauth-token-bmb")
+
+	rets, notes, _, err := Orphans(context.Background(), f.c, spec, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rets) != 0 {
+		t.Errorf("retirements = %+v, want none: an already-released container is not retired again", rets)
+	}
+	if len(notes) != 2 {
+		t.Fatalf("notes = %+v, want the two the state no longer holds", notes)
+	}
+	if got := RetireSet(rets, nil); len(got) != 0 {
+		t.Errorf("RetireSet = %+v, want empty: a note never makes the set", got)
+	}
+	for _, n := range notes {
+		if n.Kept != KeptSecret || n.SecretID == "" {
+			t.Errorf("%+v: a note still carries the promise and the ID the run prints", n)
+		}
+	}
+}
+
+// The secret half is a new call, and it must be a label-filtered list: the
+// discovery path Gets each logical name of spec.Secrets, which can only find
+// a container the new spec still produces (design §3.1a). So the test reads
+// the recorded request, not merely the result.
+func TestOrphansListsSecretsByLabelNotByExpectedName(t *testing.T) {
+	f := newCloud(t)
+	spec := originSpec(t, `agent: { auth: api-key }`)
+	mounted := ""
+	for logical := range spec.Secrets {
+		mounted = logical
+	}
+	if mounted == "" {
+		t.Fatal("fixture bug: the api-key spec mounts something")
+	}
+	liveContainer(f, spec, mounted, mounted)                           // still mounted: not an orphan
+	liveContainer(f, spec, "claude-oauth-token", "claude-oauth-token") // no longer mounted
+	liveContainer(f, spec, "unrelated", "")                            // ours, but holds no logical name
+
+	rets, notes, _, err := Orphans(context.Background(), f.c, spec, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, r := range append(append([]Retirement{}, rets...), notes...) {
+		got = append(got, r.SecretID)
+	}
+	if !slices.Equal(got, []string{"claude-oauth-token"}) {
+		t.Errorf("found %q, want only the container no spec.Secrets entry names", got)
+	}
+
+	var filters []string
+	for _, req := range f.sm.Requests() {
+		if req.Method != "GET" || !strings.HasSuffix(req.Path, "/secrets") {
+			continue
+		}
+		q, err := url.ParseQuery(req.Query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		filters = append(filters, q.Get("filter"))
+	}
+	want := "labels.fugaro=managed AND labels.fugaro_repo=" + spec.Label
+	if !slices.Equal(filters, []string{want}) {
+		t.Errorf("the list filters were %q, want exactly %q: a Get by logical name cannot find an orphan", filters, want)
+	}
+}
+
+// A refused label call is a false-negative risk, never a silent one (design
+// §3.1a): the warning names the call, the permission and the gcloud command
+// that answers by hand, the run continues with the state-derived set, and
+// "nothing could be checked" cannot be read as "there is nothing to retire".
+func TestOrphansReportsARefusedLabelCallInsteadOfSilence(t *testing.T) {
+	f := newCloud(t)
+	spec := originSpec(t, `agent: { auth: api-key }`)
+	f.run.FailListWith = 403
+	f.sm.FailListWith = 403
+
+	rets, notes, warnings, err := Orphans(context.Background(), f.c, spec, nil)
+	if err != nil {
+		t.Fatalf("a refused read is not an error: %v", err)
+	}
+	if len(rets) != 0 || len(notes) != 0 {
+		t.Fatalf("Orphans = %+v / %+v, want the state-derived set only (empty here)", rets, notes)
+	}
+	if len(warnings) != 2 {
+		t.Fatalf("warnings = %q, want one per call", warnings)
+	}
+	for i, want := range []struct{ call, permission, gcloud string }{
+		{"the repository's Cloud Run jobs", "run.jobs.list", "gcloud run jobs list --project " + spec.GCPProject},
+		{"the repository's secrets", "secretmanager.secrets.list", "gcloud secrets list --project " + spec.GCPProject},
+	} {
+		w := warnings[i]
+		for _, part := range []string{want.call, want.permission, want.gcloud, "will not be named"} {
+			if !strings.Contains(w, part) {
+				t.Errorf("warning %d = %q, want it to name %q", i+1, w, part)
+			}
+		}
+	}
+	// And the caller can tell the two apart: an empty set with a warning is
+	// not an empty set with none.
+	if warnings == nil {
+		t.Error("warnings must not be nil-and-indistinguishable from a clean run")
+	}
+}
+
+// Orphans is read-only, and it needs nothing but the clients the repository
+// root already builds: a jobs.list and a secrets.list, and no delete, patch
+// or run anywhere. It runs under --plan-only too, because listing changes
+// nothing.
+func TestOrphansIsReadOnlyAndNeedsOneClient(t *testing.T) {
+	f := newCloud(t)
+	spec := originSpec(t, `agent: { auth: api-key }`)
+	liveJob(t, f, spec, "fugaro-acme-webapp-go-bmb-56f1e9f74859", map[string]string{gcp.LabelWorkflow: "go_bmb"})
+	liveContainer(f, spec, "claude-oauth-token", "claude-oauth-token")
+	f.run.SetJobFaults(gcpfake.JobFaults{})
+	f.run.FailDeleteWith = 0
+
+	if _, _, _, err := Orphans(context.Background(), f.c, spec, []string{secretContainerAddress("claude-oauth-token")}); err != nil {
+		t.Fatal(err)
+	}
+	for _, req := range append(f.run.Requests(), f.sm.Requests()...) {
+		if req.Method != "GET" {
+			t.Errorf("Orphans made a %s %s: it is read-only", req.Method, req.Path)
+		}
+	}
+	if len(f.run.Requests()) != 1 || len(f.sm.Requests()) != 1 {
+		t.Errorf("calls = %d jobs + %d secrets, want exactly one of each", len(f.run.Requests()), len(f.sm.Requests()))
+	}
+	if got := f.sm.Deleted(); len(got) != 0 {
+		t.Errorf("Deleted = %q: fugaro never deletes a secret", got)
+	}
+	if got := f.sm.Destroyed(); len(got) != 0 {
+		t.Errorf("Destroyed = %q: fugaro never destroys a version", got)
+	}
+	if got := f.run.JobDeletes(); len(got) != 0 {
+		t.Errorf("JobDeletes = %q: discovery deletes nothing", got)
+	}
+}
+
+// The union: deduplicated by address, with the fields Orphans read live
+// winning, and the state's own reading of protection kept -- the state is
+// what says whether an ordinary apply can delete the address at all.
+func TestRetireSetDeduplicatesAndPrefersTheLiveFields(t *testing.T) {
+	job := workflowJobAddress("go_bmb")
+	fromState := []Retirement{
+		{Address: job, Kind: "workflow job", Cause: "from the state", Protected: false},
+		{Address: `module.repo.module.workflow["go_bmb"].google_service_account.job`, Kind: "service account"},
+	}
+	fromLabels := []Retirement{
+		{Address: job, Kind: "workflow job", Job: "fugaro-acme-webapp-go-bmb-56f1e9f74859", Region: "us-east5", Protected: true},
+		{Address: checkJobAddress(), Kind: "check job", Job: "fugarochk-acme-webapp-abc", Region: "us-east5", Protected: true},
+	}
+	got := RetireSet(fromLabels, fromState)
+	if len(got) != 3 {
+		t.Fatalf("RetireSet = %+v, want three rows", got)
+	}
+	// Sorted by address, so module.repo.google_… comes before
+	// module.repo.module.workflow[…]: the check job, the deduplicated
+	// workflow job, the state's own service account.
+	if got[0].Address != checkJobAddress() || got[0].Kind != "check job" || got[0].Job != "fugarochk-acme-webapp-abc" {
+		t.Errorf("%+v: an address only the labels know is added as it is", got[0])
+	}
+	if got[1].Address != job {
+		t.Fatalf("the union is not the set of addresses: %+v", got)
+	}
+	if got[1].Job != "fugaro-acme-webapp-go-bmb-56f1e9f74859" || got[1].Region != "us-east5" {
+		t.Errorf("%+v: the live fields must win", got[1])
+	}
+	if got[1].Protected || got[1].Cause != "from the state" {
+		t.Errorf("%+v: protection and the cause stay the state's own", got[1])
+	}
+	// A row the state holds and the labels do not is not dropped.
+	if got[2].Address != fromState[1].Address {
+		t.Errorf("%+v: the state's own rows are kept", got)
+	}
+}
+
+// A note is not a retirement, so nothing about it can make the summary
+// print, open the gate or suggest --retire: the union is what the gate and
+// the next command are decided on.
+func TestRetireSetNeverCountsANote(t *testing.T) {
+	f := newCloud(t)
+	spec := originSpec(t, `agent: { auth: api-key }`)
+	liveContainer(f, spec, "claude-oauth-token", "claude-oauth-token")
+	rets, notes, _, err := Orphans(context.Background(), f.c, spec, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notes) == 0 {
+		t.Fatal("fixture bug: the container must come back as a note")
+	}
+	if got := RetireSet(rets, nil); len(got) != 0 {
+		t.Errorf("RetireSet = %+v, want empty: Orphans' notes are not passed to it", got)
 	}
 }
