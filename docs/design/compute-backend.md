@@ -3655,6 +3655,30 @@ senior reviewer before merge, not just the normal one.
    to be **off**, this task takes the preload of Task 6 and never
    `enableImageStreaming` on a Docker workflow. This is the
    task that makes root-on-a-VM real, hence the review.
+   **Built** (`internal/backend/batch/run.go`'s `jobDefinition`, `Launch` and
+   `Execution`, `batch.go`'s `checkVM`/`checkNetwork`/`checkDocker` and
+   `Options.Docker`, the `DOCKER_HOST` line in `internal/agent/env.go`'s
+   `baseEnv`, `SECURITY.md`'s "The VM backend, and the Docker daemon it gives a
+   run", with §3.6's section written as this task asked): the machine type and
+   its `computeResource` quantities, the preloaded boot disk, the network
+   interface with `noExternalIpAddress`, the socket's `volumes` and
+   `options: "--group-add <gid>"`, `Execution.MachineType` (which is what
+   makes a Batch run price as VM-backed rather than as Cloud Run), and the
+   refusals. Two of them are this task's own reading of §2.2 and are worth
+   stating: **the gid cannot be read at run start** — `jobs.create` happens
+   before any VM exists and Batch's container `options` are static — so it
+   belongs to the boot image, Task 6 reads it off the VM it builds that image
+   on, and `Options.Docker.SocketGID` is where an installation records it; a
+   Docker run on an installation that has recorded none is refused
+   (`backend.ErrRejected`, before the create) rather than launched with a
+   socket it cannot open, and nothing in this package carries a literal 412
+   (the tests use 998, so a hard-coded one could not pass). And **the
+   streaming refusal is `Launch`'s, not `New`'s**: an installation may have
+   streaming on for its non-Docker workflows, and it is only the combination
+   that Batch would run with `options` disregarded. `Cloud Run` refuses a
+   `LaunchSpec.Docker` outright (`internal/backend/gcp/run.go`): it has no
+   daemon and no VM to mount one from, so the ask fails closed there rather
+   than in the middle of a stage.
 8. **Config, `validate`, `doctor`, `backends ls`** — the plumbing for §4, with
    `cloud-batch` still refused. `doctor`'s live checks gain what Task 6 has to
    satisfy and 57a sharpened (§4.4): the **Compute and Batch APIs enabled**,
