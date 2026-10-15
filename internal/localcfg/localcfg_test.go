@@ -1050,3 +1050,33 @@ func TestBuildBlockValidated(t *testing.T) {
 		}
 	}
 }
+
+// TestRoutingInTheLocalConfig: the operator's config is the first definition
+// site of the routing switch, so a switch it cannot act on is refused at load
+// — a glob (D1a: an explicit list, never a pattern), a via it does not know,
+// and a route no provider entry claims (D1b: openrouter resolves to a provider
+// or it does not resolve at all). A valid switch loads, and an absent one is
+// direct.
+func TestRoutingInTheLocalConfig(t *testing.T) {
+	if c, err := Parse([]byte(sample)); err != nil || c.Routing != nil {
+		t.Fatalf("an absent switch: c.Routing = %+v, err = %v; want nil and no error", c.Routing, err)
+	}
+	ok := sample + "routing:\n  claude:\n    via: direct\n"
+	c, err := Parse([]byte(ok))
+	if err != nil {
+		t.Fatalf("via: direct: %v", err)
+	}
+	if c.Routing == nil || c.Routing.Claude.ViaValue() != config.RouteDirect || len(c.Routing.Claude.Models) != 0 {
+		t.Fatalf("via: direct: routing = %+v", c.Routing)
+	}
+	for _, tc := range []struct{ name, block, msg string }{
+		{"a glob", "routing:\n  claude:\n    via: openrouter\n    models: [claude-*]\n", "explicit list"},
+		{"an unknown via", "routing:\n  claude:\n    via: somewhere-else\n    models: [claude-sonnet-5-5]\n", "routing.claude.via"},
+		{"an empty list", "routing:\n  claude:\n    via: openrouter\n", "routing.claude.models"},
+		{"an unclaimed route", "routing:\n  claude:\n    via: openrouter\n    models: [claude-sonnet-5-5]\n", "no provider entry claims it"},
+	} {
+		if _, err := Parse([]byte(sample + tc.block)); err == nil || !strings.Contains(err.Error(), tc.msg) {
+			t.Errorf("%s: err = %v, want a refusal naming %q", tc.name, err, tc.msg)
+		}
+	}
+}

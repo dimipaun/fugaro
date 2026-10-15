@@ -207,16 +207,18 @@ type PriceTier struct {
 
 // Routing is phase 1b's routing layer (D1a: an object, not a scalar). nil is
 // today's behaviour, direct (D1b).
-type Routing struct {
-	Claude *ClaudeRoute `json:"claude,omitempty"`
-}
+//
+// It is config.Routing, aliased rather than respelled, for the reason Provider
+// embeds config.ModelProvider: one document, one declaration. The switch is
+// written in the operator's config, validated there against the providers it
+// resolves through (config.CheckRouting), and only *delivered* here — so a
+// second declaration of the same object would be a second spelling of it, and
+// the reader would then hold it to a rule the writer never applied.
+type Routing = config.Routing
 
 // ClaudeRoute is the Claude routing switch: an explicit list of Claude IDs,
-// never a pattern (D1a).
-type ClaudeRoute struct {
-	Via    string   `json:"via"` // "direct", "openrouter" or "auto"
-	Models []string `json:"models"`
-}
+// never a pattern (D1a). config.RoutingClaude, by the alias above.
+type ClaudeRoute = config.RoutingClaude
 
 // MaxPolicyBytes bounds the policy node Decode accepts. The node is policy
 // text — rules, patterns, prices and names — read by every run, not a data
@@ -423,35 +425,48 @@ func validProviders(raw json.RawMessage, providers map[string]Provider) error {
 	return nil
 }
 
-// The values routing.claude.via accepts (D1a).
+// The values routing.claude.via accepts (D1a). config's own values, aliased:
+// the switch is one object, written in the operator's config and read here.
 const (
 	// RouteDirect calls Anthropic directly: what a policy without a routing
 	// block means (D1b).
-	RouteDirect = "direct"
+	RouteDirect = config.RouteDirect
 	// RouteOpenRouter routes Claude calls through an openrouter-compatible
 	// provider entry.
-	RouteOpenRouter = "openrouter"
+	RouteOpenRouter = config.RouteOpenRouter
 	// RouteAuto routes by the model list the route carries.
-	RouteAuto = "auto"
+	RouteAuto = config.RouteAuto
 )
 
-// validRouting checks the routing block's values. Phase 1b is what reads it,
-// but a via this Fugaro does not know must be refused now rather than
-// decoded: routing is enforced, and an unrecognised value would later mean
-// either "no route" (a silent bypass of what the owner asked for) or a
-// reader that guesses. The block carries no other value worth checking
-// today; models are Claude IDs, which phase 1b validates against its own
-// list.
+// validRouting checks the routing block's values, with the rule the operator's
+// own config loader applies (config.CheckRoutingShape): a via this Fugaro does
+// not know, and a list that is not an explicit one (a pattern, an empty list
+// under via: openrouter). Routing is enforced, so an unrecognised value would
+// mean either "no route" — a silent bypass of what the owner asked for — or a
+// reader that guesses, and the pattern-like spellings are the ones D1a exists
+// to refuse.
+//
+// The half of D1b's safeguard that needs the *providers* (a route resolves only
+// to a provider whose allow_data_to is written) is not checked here: Decode
+// reads the routing block before the providers block, and the check that has to
+// hold on the node is the one this reader can apply whole. It is applied where
+// the node is written — `project policy publish` builds it from an operator's
+// config that config.CheckRouting has already judged — and the runner's own
+// route enforcement is what holds a hand-written node.
 func validRouting(r *Routing) error {
 	if r == nil || r.Claude == nil {
 		return nil
 	}
 	via := r.Claude.Via
 	switch via {
-	case RouteDirect, RouteOpenRouter, RouteAuto:
-		return nil
+	case "", RouteDirect, RouteOpenRouter, RouteAuto:
+	default:
+		return fmt.Errorf("projectpolicy: routing.claude.via %q must be %s, %s or %s", via, RouteDirect, RouteOpenRouter, RouteAuto)
 	}
-	return fmt.Errorf("projectpolicy: routing.claude.via %q must be %s, %s or %s", via, RouteDirect, RouteOpenRouter, RouteAuto)
+	for _, p := range config.CheckRoutingShape(r, "routing") {
+		return fmt.Errorf("projectpolicy: %s: %s", p.Path, p.Message)
+	}
+	return nil
 }
 
 // validPricePolicy checks the one provider value the carrier's own validation

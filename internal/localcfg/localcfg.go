@@ -89,6 +89,14 @@ type Config struct {
 	// Providers are the non-Anthropic backends models may be routed to
 	// (design m10-multi-model.md §3), by name. Only the owner sets them.
 	Providers map[string]config.ModelProvider `yaml:"providers,omitempty"`
+	// Routing is the routing switch: which route the Claude IDs it names take
+	// (design docs/design/project-centric.md §6.2, D1a/D1b). Only the owner
+	// sets it, here or in the project layer, and it is never settable from a
+	// repository's fugaro.yaml; an absent block means direct, today's
+	// behaviour. It reaches a run only through the published policy:
+	// `fugaro project policy publish` copies it into config/policy/shared,
+	// which is where an edit takes effect.
+	Routing *config.Routing `yaml:"routing,omitempty"`
 	// ClaudeAccounts are named Claude OAuth credentials a repository may
 	// choose among by name (design docs/design/named-oauth-tokens.md).
 	// Only the owner sets them, here, never in fugaro.yaml.
@@ -755,6 +763,13 @@ func (c *Config) validate() error {
 	}
 	c.validateBudget(bad)
 	for _, p := range config.ValidateModelProviders(c.Providers) {
+		bad("%s: %s", p.Path, p.Message)
+	}
+	// The routing switch is judged against the providers it resolves through:
+	// its explicit list (D1a) and the allow_data_to safeguard (D1b) are both
+	// checked here, at config load, which is the one place the operator's own
+	// providers are known.
+	for _, p := range config.CheckRouting(c.Routing, c.Providers, "routing") {
 		bad("%s: %s", p.Path, p.Message)
 	}
 	for _, p := range config.ValidateClaudeAccounts(c.ClaudeAccounts) {

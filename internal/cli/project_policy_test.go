@@ -1436,32 +1436,27 @@ func TestProjectPolicyPublishDiffNamesProvidersAndRates(t *testing.T) {
 	}
 }
 
-// TestProjectPolicyPublishKeepsAnExistingRoutingBlock: this Fugaro does not
-// write routing (phase 1b does), so a publish that built the node from its own
-// type would silently turn routing off — a quiet loosening of a key the
-// operator cannot see in this binary. The node's block is kept, and the diff
-// says so rather than saying nothing.
-func TestProjectPolicyPublishKeepsAnExistingRoutingBlock(t *testing.T) {
-	f := newProjectFixture(t, "")
-	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
-		t.Fatal(err)
-	}
-	// A routing block, written the way a newer release (phase 1b) would.
-	node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
-	node["routing"] = map[string]any{"claude": map[string]any{"via": "openrouter"}}
-	f.db.Set(projectpolicy.PathShared(), node)
-
+// TestProjectPolicyPublishCarriesTheRoutingSwitch: the routing switch belongs
+// to the operator's config (phase 1b, design §6.2), and a publish is where an
+// edit to it takes effect (the plan's item 9). So a publish writes the block
+// from the local config, the diff names the values that changed rather than
+// keeping quiet about them, `policy show` prints them, and a publish whose
+// config has no switch removes the route — printing that too, because a route
+// that disappears silently is a Claude call that stops being sent where the
+// owner put it.
+func TestProjectPolicyPublishCarriesTheRoutingSwitch(t *testing.T) {
+	f := newProjectFixture(t, "routing:\n  claude:\n    via: direct\n")
 	out, _, err := execute(t, "project", "policy", "publish")
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := f.db.Value(projectpolicy.PathShared())
-	if v, ok := nodeAt(got, "routing", "claude", "via"); !ok || v != "openrouter" {
-		t.Errorf("the publish dropped or changed the routing block:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
+	if v, ok := nodeAt(f.db.Value(projectpolicy.PathShared()), "routing", "claude", "via"); !ok || v != "direct" {
+		t.Errorf("the publish did not write the operator's routing block:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
 	}
-	// The operator is told it is kept, not left to wonder.
-	if !strings.Contains(out, "routing kept: claude via openrouter") {
-		t.Errorf("the diff does not say the routing block is kept:\n%s", out)
+	// The operator reads the values, not a count: the diff is where an added,
+	// changed or removed route is visible.
+	if !strings.Contains(out, "+ routing.claude.via: direct") {
+		t.Errorf("the diff does not print the routing block:\n%s", out)
 	}
 	// And `policy show` prints it: a node with a routing block must not look
 	// like a node without one.
@@ -1469,8 +1464,38 @@ func TestProjectPolicyPublishKeepsAnExistingRoutingBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(shown, "routing: claude via openrouter") {
+	if !strings.Contains(shown, "routing: claude via direct") {
 		t.Errorf("policy show does not print the routing block:\n%s", shown)
+	}
+	// `project show` prints the same policy, and the switch is part of the
+	// picture of where runs go.
+	full, _, err := execute(t, "project", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(full, "routing: claude via direct") {
+		t.Errorf("project show does not print the routing block:\n%s", full)
+	}
+
+	// A local config with no switch publishes no block (direct, D1b), and says
+	// the route went away rather than leaving it to be noticed at run time.
+	cfg, err := os.ReadFile(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	without := strings.Replace(string(cfg), "routing:\n  claude:\n    via: direct\n", "", 1)
+	if err := os.WriteFile(f.path, []byte(without), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err = execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "- routing.claude.via: direct") {
+		t.Errorf("the diff does not say the routing block is gone:\n%s", out)
+	}
+	if _, ok := nodeAt(f.db.Value(projectpolicy.PathShared()), "routing"); ok {
+		t.Errorf("the node still carries a routing block:\n%s", nodeJSON(t, f, projectpolicy.PathShared()))
 	}
 }
 

@@ -376,13 +376,15 @@ func sharedRepos(ctx context.Context, lc *localcfg.Config) (map[string]localcfg.
 // would take the mode from the job environment, which nobody reading the
 // policy can see (H1), and the decoder refuses such a node anyway.
 //
-// The routing block is *kept* from the node being replaced, not dropped: this
-// Fugaro does not write routing (phase 1b does), so a publish that built the
-// policy without it would silently turn routing off — the same quiet loosening
-// `repos add|rm` refuses to make by rewriting the node from this binary's type
-// (patchPolicyJSON). A publish cannot choose a route; it can only refuse to
-// lose the one the node already carries, and printPolicyDiff says it is kept.
-// A node that never had routing stays without one, which is direct (D1b).
+// The routing block comes from the operator's config, and a publish is where an
+// edit to it takes effect (design §6.2 item 9): the switch is written in the
+// local config — validated there against the providers it resolves through,
+// config.CheckRouting — and only *delivered* to a run through this node. A
+// publish without one therefore writes no block, which is direct (D1b), and
+// printPolicyDiff says so rather than letting a route disappear quietly. A
+// repository cannot reach this key: its fugaro.yaml has no routing (D1a), and
+// `repos add|rm` edits the node as the document it is (patchPolicyJSON) so it
+// cannot drop what this publisher writes.
 func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.Policy) (*projectpolicy.Policy, error) {
 	if lc.Budget == nil || lc.Budget.Mode == "" {
 		return nil, userErr("this project's config sets no budget.mode, and a published policy's budget block must name one (off, observe or enforce): the mode decides whether the caps bite, and a block that leaves it out would take it from each job's environment, which nobody reading the policy can see; set budget: { mode: ... } in %s, or leave the policy unpublished", lc.Name)
@@ -393,9 +395,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		AllowRepos: nonNil(allow),
 		Providers:  policyProviders(lc),
 		Prices:     policyPrices(lc),
-	}
-	if old != nil {
-		pol.Routing = old.Routing
+		Routing:    lc.Routing,
 	}
 	return pol, nil
 }
@@ -589,13 +589,13 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	// TestPolicyCarriesNoSecretValue is the guard that it never does.
 	diffLines(out, providerLines(old), providerLines(new))
 	diffLines(out, priceLines(old), priceLines(new))
-	// The routing block is not this binary's to write (phase 1b's): a publish
-	// keeps whatever the node carries, and saying so is the difference between
-	// an operator reading "the route I set is still there" and wondering
-	// whether this publish just turned it off.
-	if new.Routing != nil {
-		fmt.Fprintf(out, "  routing kept: %s\n", routingText(new.Routing))
-	}
+	// The routing switch moves with this publish: it comes from the operator's
+	// config, so a route that appeared, changed or went away is a line an
+	// operator reading money-and-data-sharing changes must see — a route
+	// dropped silently is a Claude prompt that stops being sent to a provider
+	// (or starts being sent to Anthropic), which is exactly what this diff is
+	// for.
+	diffLines(out, routingLines(old), routingLines(new))
 	for _, r := range new.AllowRepos {
 		if src, ok := sources[r]; ok {
 			fmt.Fprintf(out, "  allow_repos %s (%s)\n", r, src)
@@ -657,6 +657,21 @@ func allowDataToText(p projectpolicy.Provider) string {
 		return "every repository (the key is absent)"
 	}
 	return fmt.Sprintf("%v", p.AllowDataTo)
+}
+
+// routingLines is the routing switch as diff lines: the via and the explicit
+// list of Claude IDs, so a publish that adds, changes or removes a route says
+// which one and for which models. A node with no block has no lines, which is
+// what makes "the route is gone" print as a removal rather than as silence.
+func routingLines(p *projectpolicy.Policy) map[string]string {
+	if p == nil || p.Routing == nil || p.Routing.Claude == nil {
+		return nil
+	}
+	c := p.Routing.Claude
+	return map[string]string{
+		"routing.claude.via":    c.ViaValue(),
+		"routing.claude.models": fmt.Sprintf("%v", nonNil(c.Models)),
+	}
 }
 
 // priceLines is one line per model under model_prices, for the diff: a count
