@@ -3,6 +3,7 @@ package infra
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -217,6 +218,55 @@ func TestReadinessWarnsWhenAnApplyWouldRemoveTheJobFirebaseBackend(t *testing.T)
 				strings.Contains(r, "fugaro init --firebase") && strings.Contains(r, "init --repo")
 		}) {
 			t.Errorf("no note tells workflow %s's owner that this apply removes the backend: %v", name, notes)
+		}
+	}
+}
+
+// The same apply with the budget mode set: budgetEnv writes the mode whenever
+// it is not off, whether or not the local config names a database address, so
+// this is the installation L3's note is really for — and it must get L3's
+// sentence, not the generic one. The generic note says "Nothing is blocked
+// until a policy exists", which is true of a job that never had the backend
+// and false here: this apply takes a backend away from a job that has one, and
+// every run of the repository stops reading a policy that exists.
+func TestReadinessWarnsAboutTheRemovedBackendWhenTheModeIsSet(t *testing.T) {
+	f := newCloud(t)
+	spec, err := Repo(budgetInputs(t, "budget: { mode: enforce, per_run_usd: 5 }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Workflows[slices.Sorted(maps.Keys(spec.Workflows))[0]].Env[BudgetModeEnv] == "" {
+		t.Fatal("the fixture writes no budget mode, so this test would pass for the wrong reason")
+	}
+	readyJob(t, f, spec)
+	for _, ws := range spec.Workflows {
+		f.run.SetJob(ws.Job, ws.Labels, ws.Image)
+		f.run.SetJobEnv(ws.Job, map[string]string{
+			RTDBURLEnv:        "https://aurora-fp-default-rtdb.firebaseio.com",
+			FirebaseAPIKeyEnv: "AIzaSyFakeWebApiKeyForTests000000000",
+		})
+	}
+	got, missing := readinessPolicy(t, f, spec, false)
+	var notes []string
+	for _, m := range missing {
+		if m.Kind == MissingNote {
+			notes = append(notes, m.Reason)
+		}
+	}
+	for name, ws := range got.Workflows {
+		if !ws.DeployJob {
+			t.Errorf("workflow %s is not deployed: %v", name, missing)
+		}
+		if !slices.ContainsFunc(notes, func(r string) bool {
+			return strings.Contains(r, fmt.Sprintf("workflow %s's job carries", name)) &&
+				strings.Contains(r, "would remove them")
+		}) {
+			t.Errorf("workflow %s's owner is not told this apply removes the backend: %v", name, notes)
+		}
+	}
+	for _, r := range notes {
+		if strings.Contains(r, "Nothing is blocked until a policy exists") {
+			t.Errorf("a job that has the backend today got the generic note: %s", r)
 		}
 	}
 }
