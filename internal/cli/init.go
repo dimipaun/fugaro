@@ -2114,15 +2114,24 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// 7b. The retirement's last step: the jobs the state removal left
 	// unmanaged, deleted through the Cloud Run API after every apply, so the
 	// re-plan that deploys freshly built images cannot race the delete.
+	// A failed delete does not cost the run its local config (M4): the plan
+	// did apply, the state did change, and the config file is the record of
+	// what the deployment now is. The error is returned after step 8, so the
+	// run still exits nonzero and still says what was left behind.
+	var deleteErr error
 	if r.retireApplied {
-		if err := r.retireDelete(ctx, c, spec); err != nil {
-			return err
-		}
+		deleteErr = r.retireDelete(ctx, c, spec)
 	}
 
 	// 8. The local config.
 	if err := r.writeRepoConfig(ctx, lc, spec, cfg, path, old); err != nil {
+		if deleteErr != nil {
+			return remote(errors.Join(deleteErr, err))
+		}
 		return err
+	}
+	if deleteErr != nil {
+		return deleteErr
 	}
 	if !embedded {
 		// The converge's repository stage writes the line itself.
@@ -2440,8 +2449,12 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	// --retire, the whole guarded flow in place of the ordinary plan below.
 	// It has to be here, before t.Plan: in the case that matters no plan
 	// exists until the protected addresses have left the state.
+	// rets outlives the block: a plan that aborts on prevent_destroy is
+	// told whether the aborting address is one of them (retireAborted).
+	var rets []infra.Retirement
 	if first && !r.retired {
-		rets, err := r.readRetirements(ctx, c, t, ready)
+		var err error
+		rets, err = r.readRetirements(ctx, c, t, ready)
 		if err != nil {
 			return infra.RepoSpec{}, nil, err
 		}
@@ -2471,7 +2484,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 		// summary was printed above, and Terraform's text stays in the
 		// workdir, so nothing is hidden, only re-framed.
 		if preventDestroyAbort(err) {
-			return infra.RepoSpec{}, nil, retireAborted()
+			return infra.RepoSpec{}, nil, retireAborted(rets, preventDestroyAddress(err))
 		}
 		return infra.RepoSpec{}, nil, remote(err)
 	}

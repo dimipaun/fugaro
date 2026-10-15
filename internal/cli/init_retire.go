@@ -117,22 +117,21 @@ func (r *initRun) printRetireNotes(notes []infra.Retirement) {
 		"the secret and its value stay in Secret Manager, unmanaged")
 }
 
-// retireGoingAway splits the set by how each address goes: the jobs the
-// Cloud Run API deletes after the apply, and everything else, which the
-// plan deletes. Kept rows (a secret container, the registry) are in
-// neither: nothing deletes them.
-func retireGoingAway(rets []infra.Retirement) (api, apply, kept []infra.Retirement) {
-	for _, r := range rets {
-		switch {
-		case r.Kept != "":
-			kept = append(kept, r)
-		case r.Job != "":
-			api = append(api, r)
-		default:
-			apply = append(apply, r)
-		}
-	}
-	return api, apply, kept
+// retireGoingAway splits the set by what actually happens to each address
+// (infra.RetireSplit): the jobs the Cloud Run API deletes after the apply,
+// everything else, which the plan deletes, and the rows nothing deletes. A
+// job the state still holds with deletion_protection = false is in the
+// apply group, not the API's: the plan deletes it.
+func (r *initRun) retireGoingAway(spec infra.RepoSpec, rets []infra.Retirement) (api, apply, kept []infra.Retirement) {
+	return infra.RetireSplit(r.retireState, spec, rets)
+}
+
+// retireAPI is that split's api group alone, sorted by address: the deletes
+// retireDelete makes, in a fixed order whatever the state's own order was.
+func (r *initRun) retireAPI(spec infra.RepoSpec, rets []infra.Retirement) []infra.Retirement {
+	api, _, _ := r.retireGoingAway(spec, rets)
+	slices.SortFunc(api, func(a, b infra.Retirement) int { return strings.Compare(a.Address, b.Address) })
+	return api
 }
 
 // printRetirements is the ⚠ RETIRE summary of design §3.2: what goes, why,
@@ -140,14 +139,13 @@ func retireGoingAway(rets []infra.Retirement) (api, apply, kept []infra.Retireme
 // It is printed before the plan, so it carries none of the plan's counts --
 // those are the second confirmation's (retirePlan).
 func (r *initRun) printRetirements(spec infra.RepoSpec, rets []infra.Retirement) error {
-	api, apply, kept := retireGoingAway(rets)
+	api, apply, kept := r.retireGoingAway(spec, rets)
 	gone := len(api) + len(apply)
 	fmt.Fprintf(r.w, "⚠ This change retires %d %s (project %s, GCP project %s, repository %s).\n",
 		len(rets), plural(len(rets), "address", "addresses"), r.projectName, r.gcpProject, spec.Name)
-	if secrets := keptSecrets(kept); len(secrets) > 0 {
-		fmt.Fprintf(r.w, "  %d go away; %d %s %s in Secret Manager %s.\n",
-			gone, len(secrets), plural(len(secrets), "secret", "secrets"), plural(len(secrets), "stays", "stay"),
-			plural(len(secrets), "with its value", "with their values"))
+	if len(kept) > 0 {
+		fmt.Fprintf(r.w, "  %d go away; fugaro deletes no %s.\n",
+			gone, plural(len(kept), "secret", "secret or image"))
 	} else {
 		fmt.Fprintf(r.w, "  %d go away.\n", gone)
 	}
@@ -157,7 +155,7 @@ func (r *initRun) printRetirements(spec infra.RepoSpec, rets []infra.Retirement)
 	for _, ret := range slices.Concat(apply, api) {
 		fmt.Fprintf(r.w, "  %-72s %s: %s\n", ret.Address, ret.Kind, ret.Cause)
 	}
-	if removed := r.retireRemovals(rets); len(removed) > 0 {
+	if removed := r.retireRemovals(spec, rets); len(removed) > 0 {
 		fmt.Fprintf(r.w, "\nRemoved from Terraform's state, and never deleted (%d):\n", len(removed))
 		for _, a := range removed {
 			fmt.Fprintf(r.w, "  %s\n", a)
@@ -168,17 +166,17 @@ func (r *initRun) printRetirements(spec infra.RepoSpec, rets []infra.Retirement)
 		for _, k := range kept {
 			switch {
 			case k.SecretID != "":
-				fmt.Fprintf(r.w, "  %-32s %s stays in Secret Manager, unmanaged, with its value\n", k.Logical, k.SecretID)
+				fmt.Fprintf(r.w, "  %-32s leaves Terraform's state, unmanaged; Secret Manager is untouched\n", k.Logical)
 			case k.Logical != "":
-				fmt.Fprintf(r.w, "  %-32s stays in Secret Manager, unmanaged, with its value (its Secret Manager ID could not be read)\n", k.Logical)
+				fmt.Fprintf(r.w, "  %-32s leaves Terraform's state, unmanaged; Secret Manager is untouched (its Secret Manager ID could not be read)\n", k.Logical)
 			default:
 				fmt.Fprintf(r.w, "  %s\n", k.Address)
 			}
 		}
-		fmt.Fprintln(r.w, "  Their containers carry the fugaro labels, so re-adding one later re-adopts it.")
+		fmt.Fprintln(r.w, "  Nothing here deletes a container, so one that still exists keeps its value. A live container carrying this repository's labels is adopted back into the plan instead of being retired at all, so these are the ones the label list did not find: check them with `fugaro secrets ls`.")
 	}
 	fmt.Fprintf(r.w, "\nOrder of operations:\n  1. remove %d %s from Terraform's state without destroying %s: the addresses no apply can delete (a secret container's prevent_destroy, a job whose deletion_protection the state says is on). Nothing in the cloud is deleted by this step.\n",
-		len(r.retireRemovals(rets)), plural(len(r.retireRemovals(rets)), "address", "addresses"), plural(len(r.retireRemovals(rets)), "it", "them"))
+		len(r.retireRemovals(spec, rets)), plural(len(r.retireRemovals(spec, rets)), "address", "addresses"), plural(len(r.retireRemovals(spec, rets)), "it", "them"))
 	fmt.Fprintln(r.w, "  2. plan, show the plan's own counts and its full delete list, and ask again — the project's name typed at a real terminal, never --yes.")
 	fmt.Fprintf(r.w, "  3. apply, then delete the %d orphaned Cloud Run %s through the API.\n", len(api), plural(len(api), "job", "jobs"))
 	fmt.Fprintln(r.w, "\nNext command:\n  fugaro init --repo . --retire")
@@ -189,16 +187,15 @@ func (r *initRun) printRetirements(spec infra.RepoSpec, rets []infra.Retirement)
 // addresses the state still holds, minus the jobs the API deletes, which are
 // removed from the state too (that is what makes the plan able to run) and
 // are listed under "going away" rather than here.
-func (r *initRun) retireRemovals(rets []infra.Retirement) []string {
-	api := map[string]bool{}
-	for _, ret := range rets {
-		if ret.Job != "" && ret.Kept == "" {
-			api[ret.Address] = true
-		}
+func (r *initRun) retireRemovals(spec infra.RepoSpec, rets []infra.Retirement) []string {
+	api, _, _ := r.retireGoingAway(spec, rets)
+	inAPI := map[string]bool{}
+	for _, ret := range api {
+		inAPI[ret.Address] = true
 	}
 	var out []string
 	for _, a := range infra.Removals(r.retireState, rets) {
-		if !api[a] {
+		if !inAPI[a] {
 			out = append(out, a)
 		}
 	}
@@ -284,7 +281,19 @@ func retireRefusal(blocked []infra.Retirement) error {
 // the run's last step, after the last apply, so the re-plan that deploys
 // freshly built images cannot race it.
 func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, spec infra.RepoSpec, rets []infra.Retirement, opts infra.RepoRootOptions, im infra.Imports) error {
-	_ = opts // the retirement changes nothing about the root's variables
+	// 0. The one refusal that has to come before anything else: a protected,
+	//    state-held job the API delete cannot finish. Refusing here is what
+	//    keeps the two rules that matter -- nothing is removed from the state
+	//    that no later step can delete, and no job is left alive in GCP with
+	//    nothing managing it and nothing said.
+	if err := retireBlockers(spec, r.retireState, rets); err != nil {
+		return err
+	}
+	if opts.AllowJobDelete {
+		// The ordinary plan's own banner (planRepo), which the retirement's
+		// path replaces: --allow-job-delete keeps its meaning here.
+		fmt.Fprintln(r.w, "⚠ --allow-job-delete: this plan lowers the deletion protection of "+spec.Name+"'s jobs, for offboarding")
+	}
 
 	// 1. The prediction, confirmed. Nothing has left the state yet, so this
 	//    banner is the only place the kept secrets and the job delete are
@@ -317,7 +326,15 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 		return leftover(remote(err))
 	}
 	if !changed {
+		// A clean plan is not the end of a retirement that still has jobs to
+		// delete through the API: the delete is a destructive step no plan
+		// shows, so the second confirmation is asked here too (and a run
+		// that cannot ask it -- --yes, a pipe, an agent -- is refused, not
+		// silently obeyed).
 		fmt.Fprintf(r.w, "No changes: %s matches the plan.\n", spec.Name)
+		if err := r.retireConfirm(rets, spec, retireUndone("nothing was applied and no job was deleted", removed)); err != nil {
+			return leftover(err)
+		}
 		r.retireApplied = true
 		return nil
 	}
@@ -336,7 +353,7 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 	}
 	fmt.Fprintf(r.w, "the plan above is the retirement's: %s. Deleting:\n", counts.String())
 	fmt.Fprint(r.w, deleteList(plan))
-	if err := r.retireConfirm(rets, spec, "the plan was not applied and no job was deleted; the addresses that left Terraform's state stay out of it (nothing was destroyed), so rerun "+retireNextCommand+" to finish"); err != nil {
+	if err := r.retireConfirm(rets, spec, retireUndone("the plan was not applied and no job was deleted", removed)); err != nil {
 		return leftover(err)
 	}
 	if err := t.Apply(ctx, infra.PlanFile); err != nil {
@@ -345,6 +362,65 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 	r.res.Applied = true
 	r.retireApplied = true
 	return nil
+}
+
+// retireUndone is what a confirmation that was declined, or could not be
+// asked at all, leaves behind -- in the words of what actually happened. The
+// addresses that had already left the state by then are named, because the
+// user has to know that the state is no longer the whole record of the
+// project, and a message that said "nothing was removed" here would be
+// false: by the second confirmation the removal has happened (I1).
+func retireUndone(action string, removed []string) string {
+	if len(removed) == 0 {
+		return action + "; nothing had left Terraform's state and nothing was destroyed"
+	}
+	return fmt.Sprintf("%s; %d %s had already left Terraform's state (nothing was destroyed) and %s out of it: %s. Rerun %s to finish",
+		action, len(removed), plural(len(removed), "address", "addresses"),
+		plural(len(removed), "stays", "stay"), strings.Join(removed, ", "), retireNextCommand)
+}
+
+// retireBlockers refuses a retirement the run cannot finish, before anything
+// leaves the state. The case is a Cloud Run job the state holds with its
+// deletion_protection still on: no apply can delete it (its resource has
+// left the configuration) and the API delete is what finishes it, so the
+// state removal is only safe when that call can actually be made. The one
+// thing that stops it is a state whose own values carry no `name`: the API
+// call has nothing to call with, and guessing a name is forbidden (design
+// §3.1). Removing the address anyway would leave the job alive in GCP with
+// nothing managing it and nothing said, so the run refuses (exit 1), names
+// the address, and removes nothing (I3).
+func retireBlockers(spec infra.RepoSpec, stateAddrs []string, rets []infra.Retirement) error {
+	inState := make(map[string]bool, len(stateAddrs))
+	for _, a := range stateAddrs {
+		inState[a] = true
+	}
+	var unnameable []infra.Retirement
+	for _, ret := range rets {
+		if ret.Kept != "" || !ret.Protected || !inState[ret.Address] || ret.Job != "" {
+			continue
+		}
+		// Only a job the API delete finishes: JobDeleteLabels refuses every
+		// other kind, including a job of a variant that is still deployed.
+		if _, ok := infra.JobDeleteLabels(spec, ret); !ok {
+			continue
+		}
+		unnameable = append(unnameable, ret)
+	}
+	if len(unnameable) == 0 {
+		return nil
+	}
+	var b strings.Builder
+	b.WriteString("nothing was removed from Terraform's state and nothing was applied: this retirement cannot be finished.")
+	for _, ret := range unnameable {
+		region := ret.Region
+		if region == "" {
+			region = spec.Region
+		}
+		fmt.Fprintf(&b, "\n  %s (%s): the state's own values carry no name for it, and fugaro never guesses one. Find it by its labels, then delete it by hand: %s",
+			ret.Address, region, gcloudJobList(spec.GCPProject, region, infra.OrphanLabels(spec)))
+	}
+	b.WriteString("\nThen rerun " + retireNextCommand + ": with the job gone, the state removal, the plan and the apply can run.")
+	return userErr("%s", b.String())
 }
 
 // retireResidue is the account a retirement owes when it stops after the
@@ -383,7 +459,7 @@ func (r *initRun) retireResidue(spec infra.RepoSpec, rets []infra.Retirement, re
 // means the run cannot ask at all (--yes, --non-interactive, --json, a pipe,
 // a coding agent), and then nothing is removed and nothing is deleted.
 func (r *initRun) retireConfirm(rets []infra.Retirement, spec infra.RepoSpec, undone string) error {
-	what := r.retireWhat(rets)
+	what := r.retireWhat(spec, rets)
 	confirmed, reachable, err := r.askTyped(what)
 	if err != nil {
 		return err
@@ -404,17 +480,22 @@ func (r *initRun) retireConfirm(rets []infra.Retirement, spec infra.RepoSpec, un
 // retireWhat is the banner both confirmations print: the secrets that stay
 // behind, by logical name and Secret Manager ID, and the jobs the API
 // deletes -- the things the user is consenting to that no plan will show.
-func (r *initRun) retireWhat(rets []infra.Retirement) string {
-	api, apply, kept := retireGoingAway(rets)
+func (r *initRun) retireWhat(spec infra.RepoSpec, rets []infra.Retirement) string {
+	_, _, kept := r.retireGoingAway(spec, rets)
+	api := r.retireAPI(spec, rets)
 	var b strings.Builder
-	fmt.Fprintf(&b, "retire %d %s of %s: remove %d from Terraform's state (destroying nothing), apply %d changes, then delete %d Cloud Run %s through the API.",
+	// No counts of the plan's own: before the state removal no plan exists
+	// at all, and the plan's real counts are the second confirmation's to
+	// show. What is named here is what fugaro knows now: the addresses, the
+	// state removal and the API deletes.
+	fmt.Fprintf(&b, "retire %d %s of %s: remove %d from Terraform's state (destroying nothing), then apply, then delete %d Cloud Run %s through the API.",
 		len(rets), plural(len(rets), "address", "addresses"), r.gcpProject,
-		len(infra.Removals(r.retireState, rets)), len(apply), len(api), plural(len(api), "job", "jobs"))
+		len(infra.Removals(r.retireState, rets)), len(api), plural(len(api), "job", "jobs"))
 	for _, a := range api {
 		fmt.Fprintf(&b, " Delete %s (%s, %s).", a.Job, a.Region, a.Address)
 	}
 	if secrets := keptSecrets(kept); len(secrets) > 0 {
-		b.WriteString(" These secrets stay in Secret Manager with their values:")
+		b.WriteString(" Fugaro deletes no secret, so these leave Terraform's state and stay in Secret Manager if they are still there:")
 		for _, s := range secrets {
 			if s.SecretID != "" {
 				fmt.Fprintf(&b, " %s (%s),", s.Logical, s.SecretID)
@@ -466,6 +547,12 @@ func deleteList(plan *tf.Plan) string {
 // prevent_destroy resource: the §3.3 signature, matched whitespace-
 // normalized because Terraform wraps the message to the terminal width.
 func preventDestroyAbort(err error) bool {
+	return preventDestroyAddress(err) != "" || preventDestroyText(err)
+}
+
+// preventDestroyText is whether the failed plan carries Terraform's
+// prevent_destroy refusal at all, address or not.
+func preventDestroyText(err error) bool {
 	var xe *tf.ExitError
 	if !errors.As(err, &xe) {
 		return false
@@ -475,7 +562,34 @@ func preventDestroyAbort(err error) bool {
 		// another command are that command's failure, not a plan abort.
 		return false
 	}
-	return strings.Contains(collapseSpace(xe.Stderr), "has lifecycle.prevent_destroy set, but the plan calls for this resource to be destroyed")
+	return strings.Contains(collapseSpace(xe.Stderr), preventDestroyMarker)
+}
+
+// preventDestroyMarker is the clause Terraform's refusal ends with, matched
+// whitespace-normalized because Terraform wraps the message to the terminal
+// width.
+const preventDestroyMarker = "has lifecycle.prevent_destroy set, but the plan calls for this resource to be destroyed"
+
+// preventDestroyAddress is the resource address Terraform names in front of
+// that clause: the plan's own words, pulled out so the refusal can name the
+// resource instead of asking the user to read Terraform's text.
+func preventDestroyAddress(err error) string {
+	var xe *tf.ExitError
+	if !errors.As(err, &xe) || xe.Command != "plan" {
+		return ""
+	}
+	msg := collapseSpace(xe.Stderr)
+	i := strings.Index(msg, preventDestroyMarker)
+	if i < 0 {
+		return ""
+	}
+	words := strings.Fields(msg[:i])
+	for j := len(words) - 1; j >= 0; j-- {
+		if words[j] == "Resource" {
+			return strings.Join(words[j+1:], " ")
+		}
+	}
+	return ""
 }
 
 // collapseSpace folds every run of whitespace, newlines included, to one
@@ -483,9 +597,34 @@ func preventDestroyAbort(err error) bool {
 func collapseSpace(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 // retireAborted is what a plan aborted on prevent_destroy gets instead of
-// Terraform's text: the next command, with the reason (design §3.3).
-func retireAborted() error {
-	return userErr("the plan was refused: a resource this change retires carries lifecycle.prevent_destroy, so Terraform will not plan without it being removed from the state first.\nRerun with --retire: it removes the protected addresses from Terraform's state (destroying nothing), applies, and deletes the orphaned jobs through the Cloud Run API:\n  %s", retireNextCommand)
+// Terraform's text: the reason, the address, and -- only when it is the
+// address's own answer -- the next command (design §3.3).
+//
+// --retire is named only when the aborting address is one of the retirements
+// this run read: for any other address the state removal would not touch it,
+// the same plan would abort in the same place, and pointing at --retire would
+// be advice that cannot work. The configuration is what holds that
+// prevent_destroy, so the two ways out are named instead: take the block out
+// of the module, or put back the configuration change that made Terraform
+// want to destroy the resource (M5).
+func retireAborted(rets []infra.Retirement, addr string) error {
+	where := ""
+	if addr != "" {
+		where = "\n  " + addr
+	}
+	if slices.ContainsFunc(rets, func(r infra.Retirement) bool { return r.Address == addr }) && addr != "" {
+		return userErr("the plan was refused: %s carries lifecycle.prevent_destroy, so Terraform will not plan its destruction, and this change retires it.%s\nRerun with --retire: it removes the protected addresses from Terraform's state (destroys nothing), applies, and deletes the orphaned jobs through the Cloud Run API:\n  %s", addr, where, retireNextCommand)
+	}
+	return userErr("the plan was refused: %s carries lifecycle.prevent_destroy, so Terraform will not plan its destruction.%s\nfugaro read no retirement for this address, so --retire would remove nothing here and the same plan would abort in the same place. The block is in the configuration, and only you can say which side is wrong:\n  - Terraform is holding a resource that should go: take the lifecycle.prevent_destroy block out of the module for that address (or restore the configuration that used to produce it), then rerun.\n  - the resource should stay: revert the configuration change that asked for its destruction, then rerun.", nonEmpty(addr, "a resource"), where)
+}
+
+// nonEmpty is s, or fallback for the empty string, in a message that has to
+// read as a sentence whether or not the address was found.
+func nonEmpty(s, fallback string) string {
+	if s == "" {
+		return fallback
+	}
+	return s
 }
 
 // retireDelete is the run's last step: the jobs the state removal left
@@ -495,7 +634,11 @@ func retireAborted() error {
 // before the run reports anything as done.
 func (r *initRun) retireDelete(ctx context.Context, c *infra.Clients, spec infra.RepoSpec) error {
 	var firstErr error
-	for _, ret := range r.retireSet {
+	// Only the rows the API delete is what finishes: a job the state still
+	// holds and the plan deleted is not one of them, and calling the API on
+	// it would be a second delete of a resource the apply already took.
+	api := r.retireAPI(spec, r.retireSet)
+	for _, ret := range api {
 		want, ok := infra.JobDeleteLabels(spec, ret)
 		if !ok {
 			continue

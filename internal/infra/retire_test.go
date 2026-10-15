@@ -165,7 +165,10 @@ func originRetired() []string {
 // The real 2026-10-14 case: a state holding the two OAuth containers and
 // the go_bmb variant's addresses, and an api-key spec. The counts of design
 // §1 are asserted here so the table cannot drift from the fixture: 14
-// retired = 12 going away + 2 kept containers.
+// retired = 12 going away + 2 kept containers. This is the *unlabelled*
+// container case -- the one the owner hit when Terraform refused on
+// prevent_destroy -- because the spec here is the config's own, with no
+// discovery in front of it.
 //
 // The spec is the config's own, with no discovery in front of it. In the
 // real run Readiness unions the live labelled containers back in
@@ -219,7 +222,7 @@ func TestRetirementsOriginTransition(t *testing.T) {
 	// Both containers carry the plain-words promise; no grant does: an
 	// accessor to a kept secret is still a grant that goes away, and only
 	// the container is kept (Review Focus 2).
-	const keptWords = "the secret and its value stay in Secret Manager; its container carries the fugaro labels, so re-adding it re-adopts it"
+	const keptWords = "fugaro never deletes a secret or a secret version: this address leaves Terraform's state, and nothing in the plan or the Cloud Run API deletes the container"
 	for _, r := range rets {
 		switch {
 		case r.Kind == "secret container":
@@ -533,6 +536,53 @@ repos:
 		return r.Address == `module.repo.google_secret_manager_secret.this["`+logical+`"]`
 	}) {
 		t.Error("fixture bug: without the union the dropped account's container must be a retirement")
+	}
+}
+
+// The origin transition as it really runs today, with #329's union in
+// front of the spec (I4): discovery finds both OAuth containers live and
+// labelled, Readiness unions them back into spec.Secrets, so the module
+// still produces them -- and their operator grants with them. What is left
+// of the design's 14 is 8: the go_bmb variant's seven addresses, of which
+// the job (state-held, deletion_protection still on) is the API delete's
+// and six the plan's, plus the one accessor the surviving variant stopped
+// mounting. No container retires, so nothing is "kept": the KEPT block is
+// for the containers the label list did not find -- the unlabelled case
+// TestRetirementsOriginTransition pins, and the one the owner's
+// prevent_destroy abort came from.
+func TestRetirementsOriginTransitionWithTheUnion(t *testing.T) {
+	st := originState(t)
+	spec := originSpec(t, `agent: { auth: api-key }`)
+	// What Readiness does with ExtraSecrets: every correctly-labelled live
+	// container goes back in, whether or not a workflow still mounts it.
+	spec.Secrets["claude-oauth-token"] = "fugaro-aurora-claude-oauth-token"
+	spec.Secrets["claude-oauth-token-bmb"] = "fugaro-aurora-claude-oauth-token-bmb"
+
+	rets := Retirements(st.Addresses(), spec)
+	// The state's own values are what say a job's protection is still on
+	// (Protected defaults to true for a job before the fill, so the fill is
+	// what makes the split meaningful rather than conservative).
+	FillFromState(st, rets)
+	if len(rets) != 8 {
+		t.Fatalf("Retirements = %d addresses, want the unioned 8:\n%v", len(rets), rets)
+	}
+	api, apply, kept := RetireSplit(st.Addresses(), spec, rets)
+	if len(api) != 1 || api[0].Kind != "workflow job" {
+		t.Errorf("api = %v, want the one state-held protected job", api)
+	}
+	if len(apply) != 7 {
+		t.Errorf("apply = %d, want the variant's other seven addresses:\n%v", len(apply), apply)
+	}
+	if len(kept) != 0 {
+		t.Errorf("kept = %v, want none: a unioned container is adopted, not released", kept)
+	}
+	if n := len(Removals(st.Addresses(), rets)); n != 1 {
+		t.Errorf("Removals = %d addresses, want only the API-deleted job", n)
+	}
+	for _, r := range rets {
+		if strings.HasPrefix(r.Address, "module.repo.google_secret_manager_secret.") {
+			t.Errorf("%s retired: the union makes the plan produce it", r.Address)
+		}
 	}
 }
 
@@ -1450,30 +1500,48 @@ func TestOrphansKeptContainerAloneIsANoteNotARetirement(t *testing.T) {
 }
 
 // Readiness unions every live, correctly-labelled container back into
-// spec.Secrets (its N4 rule, so a config edit can never shrink the module's
-// for_each), so a container whose logical name the configuration no longer
-// mounts is still a *key* of spec.Secrets by the time Orphans reads it. The
-// note rule therefore asks the workflows' own mounts, not that map: reading
-// the map would make every released container look mounted and leave the
-// convergence note unreachable, which is the regression this pins.
-func TestOrphansNoteAsksTheMountsNotTheUnionedSecrets(t *testing.T) {
+// spec.Secrets (its ExtraSecrets rule, #329), so a container discovery found
+// is one the plan still produces: it is adopted -- mounted no longer, kept in
+// the module's for_each -- and it is neither retired nor noted. The
+// retirement is for the containers the label list did NOT find, which is why
+// the kept text promises the value is untouched *if* the container is there.
+//
+// The rule is spec.Secrets, not the workflows' own mounts: a container the
+// union put back is produced by the plan whether or not anything mounts it,
+// and reporting it as a leftover would name a container the run is about to
+// keep managing.
+func TestOrphansSkipsWhatTheUnionAdopted(t *testing.T) {
 	f := newCloud(t)
 	spec := originSpec(t, `agent: { auth: api-key }`)
-	// One the config mounts, and one only Readiness' union knows about.
+	// What Readiness does with the live labelled containers it found: both
+	// go back into Secrets, one of them (bmb) with no mount left anywhere.
 	spec.Secrets["claude-oauth-token-bmb"] = "claude-oauth-token-bmb"
+	spec.Secrets["anthropic-api-key"] = "anthropic-api-key"
 	liveContainer(f, spec, "claude-oauth-token-bmb", "claude-oauth-token-bmb")
 	liveContainer(f, spec, "anthropic-api-key", "anthropic-api-key")
+	// And one the labels find that the spec does not know at all: no union
+	// covers it, so it is a leftover -- a note here, because the state does
+	// not hold it (it would be a retirement if it did).
+	liveContainer(f, spec, "released-token", "released-token")
 
-	_, notes, _, err := Orphans(context.Background(), f.c, spec, nil)
+	rets, notes, _, err := Orphans(context.Background(), f.c, spec, nil)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(rets) != 0 {
+		t.Errorf("rets = %+v, want none: the union-adopted containers are produced, and the unheld one is a note", rets)
 	}
 	var got []string
 	for _, n := range notes {
 		got = append(got, n.Logical)
 	}
-	if !slices.Equal(got, []string{"claude-oauth-token-bmb"}) {
-		t.Errorf("notes = %q, want only the logical no workflow mounts: the unioned key is not a mount", got)
+	if !slices.Equal(got, []string{"released-token"}) {
+		t.Errorf("notes = %q, want only the container the spec does not know", got)
+	}
+	for _, n := range notes {
+		if n.Kept != KeptSecret || n.SecretID == "" {
+			t.Errorf("%+v: a note still carries the promise and the ID the run prints", n)
+		}
 	}
 }
 

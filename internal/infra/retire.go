@@ -48,8 +48,12 @@ type Retirement struct {
 
 // KeptSecret is what a retired secret container leaves behind. The container
 // is never destroyed: its module declares prevent_destroy, and the value it
-// holds is not Terraform's to delete (design §4.2a).
-const KeptSecret = "the secret and its value stay in Secret Manager; its container carries the fugaro labels, so re-adding it re-adopts it"
+// holds is not Terraform's to delete (design §4.2a). What it may NOT say is
+// that the container is still there: a live, correctly-labelled container is
+// unioned back into the plan by Readiness (Existing.ExtraSecrets, N4) and so
+// is never retired at all -- a retired container address is one the label
+// list did not find, and its value may or may not still exist.
+const KeptSecret = "fugaro never deletes a secret or a secret version: this address leaves Terraform's state, and nothing in the plan or the Cloud Run API deletes the container"
 
 // KeptRegistry is the same promise for the repository's image registry: it
 // is the module's second prevent_destroy resource (registry.tf), and nothing
@@ -91,12 +95,23 @@ func retirement(addr string, spec RepoSpec) Retirement {
 	}
 	typ, name, key := resourceOf(segs)
 	if variant, ok := workflowVariantOf(segs); ok {
-		r.Kind = workflowKind(typ)
-		// The variant itself is gone (design rows A and C) unless the spec
-		// still builds it, in which case only this one resource of it
-		// changed: an accessor to a secret it stopped mounting.
 		if _, live := spec.Workflows[variant]; !live {
+			// The variant itself is gone (design rows A and C), so this is
+			// the variant-swap retirement the whole flow is for.
+			r.Kind = workflowKind(typ)
 			r.Cause = variantCause(variant, spec)
+			return r
+		}
+		// The variant is still in the configuration and only this one
+		// resource of it changed -- the module stopped declaring it. Nothing
+		// here may be called "workflow job": that kind is what the Cloud Run
+		// API delete keys on (JobDeleteLabels), and the job of a workflow
+		// that is still deployed must never be a candidate for it (M3). It
+		// is a plain job, which no apply can delete and the API will not
+		// touch, so the run refuses rather than acting on it.
+		if r.Kind = workflowKind(typ); r.Kind == "workflow job" {
+			r.Kind = "job"
+			r.Cause = "the configuration no longer produces this job, though the workflow variant " + variant + " is still deployed"
 			return r
 		}
 		if r.Kind == "secret accessor" {
@@ -683,23 +698,26 @@ func orphanJob(j *run.GoogleCloudRunV2Job, spec RepoSpec) (Retirement, bool) {
 }
 
 // orphanContainers are the labelled secret containers of this repository
-// whose logical name spec no longer mounts. The call is a new one: discovery
-// Gets each logical name of spec.Secrets, so it can only ever find a
-// container the new spec still produces, which is exactly what an orphan is
-// not (design §3.1a).
+// whose logical name the plan does not produce. The call is a new one:
+// discovery Gets each logical name of spec.Secrets, so it can only ever find
+// a container the new spec still produces, which is exactly what an orphan
+// is not (design §3.1a).
 //
-// "Still mounts" is the config's own set (mountedSecrets), not the keys of
-// spec.Secrets: Readiness unions every correctly-labelled live container
-// back into that map (its N4 rule, so a config edit can never shrink the
-// module's for_each), which would otherwise make every released container
-// look mounted and leave §3.1a's convergence note -- the one line that tells
-// a user their kept value is still there -- unreachable.
+// "The plan produces it" is spec.Secrets, and neither the configuration's
+// own mounts nor a list of its own: Readiness has already unioned every
+// correctly-labelled live container back into spec.Secrets
+// (Existing.ExtraSecrets, N4 -- the project-secrets rule that a config edit
+// may never shrink the module's for_each), so a container the label list
+// found is one the plan keeps, re-adopts and mounts no longer, and there is
+// nothing to retire about it. A container that reaches the retirement is
+// therefore one the labels did NOT find: absent from Secret Manager, or
+// carrying other labels -- which is why the kept text promises the value is
+// untouched if it is there, and never that it is.
 func orphanContainers(ctx context.Context, c *Clients, spec RepoSpec, stateAddrs []string) (rets, notes []Retirement, warn string, err error) {
 	inState := make(map[string]bool, len(stateAddrs))
 	for _, a := range stateAddrs {
 		inState[a] = true
 	}
-	mounted := mountedSecrets(spec)
 	err = c.Secrets.Projects.Secrets.List("projects/"+spec.GCPProject).
 		Filter(labelFilter(OrphanLabels(spec))).
 		Pages(ctx, func(p *secretmanager.ListSecretsResponse) error {
@@ -708,7 +726,7 @@ func orphanContainers(ctx context.Context, c *Clients, spec RepoSpec, stateAddrs
 				if logical == "" {
 					continue
 				}
-				if mounted[logical] {
+				if _, planned := spec.Secrets[logical]; planned {
 					continue
 				}
 				r := Retirement{
@@ -729,24 +747,6 @@ func orphanContainers(ctx context.Context, c *Clients, spec RepoSpec, stateAddrs
 		return nil, nil, warn, fatal
 	}
 	return rets, notes, "", nil
-}
-
-// mountedSecrets are the logical secrets the current configuration mounts:
-// every live workflow's own mounts (its job's env) and the build's. They are
-// computed from the spec's workflows, so they say what fugaro.yaml and the
-// owner's local config ask for -- unlike spec.Secrets, which Readiness has
-// already unioned the live, correctly-labelled containers back into.
-func mountedSecrets(spec RepoSpec) map[string]bool {
-	out := map[string]bool{}
-	for _, ws := range spec.Workflows {
-		for _, logical := range uniqueSecrets(ws) {
-			out[logical] = true
-		}
-		for _, logical := range ws.BuildSecrets {
-			out[logical] = true
-		}
-	}
-	return out
 }
 
 // labelCallFailed is what a refused or failed label call is: a warning that
@@ -821,6 +821,51 @@ func RetireSet(orphans, retired []Retirement) []Retirement {
 	}
 	slices.SortFunc(out, byAddress)
 	return out
+}
+
+// RetireSplit sorts a retirement set by what actually happens to each
+// address, which is what the summary's counts and the API delete's own loop
+// both read (design §3.2). The three groups are exclusive and are decided by
+// facts, never by the address's kind:
+//
+//   - api: the rows the Cloud Run API deletes after the apply. A job is one
+//     when its own labels name it (JobDeleteLabels) AND the apply cannot
+//     delete it: either it is state-removed and the delete is what finishes
+//     it, or the state does not hold it at all (the rerun after a failed
+//     run, where the labels are the only record left). A job the state still
+//     holds with deletion_protection = false is NOT one: the plan deletes
+//     it, and calling the API on it as well would be a second delete of a
+//     resource the apply already took.
+//   - kept: the rows nothing deletes (Kept is set: a secret container, the
+//     registry).
+//   - apply: everything else -- the addresses the plan's own delete list
+//     covers.
+func RetireSplit(stateAddrs []string, spec RepoSpec, rets []Retirement) (api, apply, kept []Retirement) {
+	inState := make(map[string]bool, len(stateAddrs))
+	for _, a := range stateAddrs {
+		inState[a] = true
+	}
+	for _, r := range rets {
+		switch {
+		case r.Kept != "":
+			kept = append(kept, r)
+		case apiDeleted(r, spec, inState):
+			api = append(api, r)
+		default:
+			apply = append(apply, r)
+		}
+	}
+	return api, apply, kept
+}
+
+// apiDeleted is whether the Cloud Run API delete is what finishes r: a job
+// whose labels name it and that no apply can delete -- out of the state
+// already, or state-removed because its protection is still on.
+func apiDeleted(r Retirement, spec RepoSpec, inState map[string]bool) bool {
+	if _, ok := JobDeleteLabels(spec, r); !ok {
+		return false
+	}
+	return !inState[r.Address] || r.Protected
 }
 
 // HasMarks reports whether have carries every pair in want: the label rule

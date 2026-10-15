@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -399,7 +400,7 @@ func TestInitRepoRetireConfirmationNamesEveryKeptSecret(t *testing.T) {
 	text := out + errOut
 	for _, want := range []string{
 		retireKeptName + " (" + retireKeptName + ")",
-		"These secrets stay in Secret Manager with their values",
+		"Fugaro deletes no secret, so these leave Terraform's state and stay in Secret Manager if they are still there",
 		"unmanaged",
 	} {
 		if n := strings.Count(text, want); n < 2 {
@@ -577,22 +578,74 @@ func TestBlockingJobsReadsTheStatesOwnProtection(t *testing.T) {
 	}
 }
 
-// The set splits by how each row goes, and nothing deletes a kept row.
-func TestRetireGoingAwaySplitsTheSet(t *testing.T) {
+// The set splits by what actually happens to each row, and nothing deletes
+// a kept row (I3).
+func TestRetireSplitIsWhatHappensToEachRow(t *testing.T) {
+	const goneByLabel = `module.repo.module.workflow["gone"].google_cloud_run_v2_job.this[0]`
+	const goneByLabel2 = `module.repo.module.workflow["gone2"].google_cloud_run_v2_job.this[0]`
+	spec := infra.RepoSpec{Name: "acme-sandbox", GCPProject: initProject, Region: "us-east5"}
+	inState := []string{retireJobAddr, retireSvcAddr, retireKeptAddr, goneByLabel}
 	rets := []infra.Retirement{
+		// The state holds it, its protection is off: the plan's own delete
+		// finishes it, and calling the API on it would delete twice.
 		{Address: retireJobAddr, Kind: "workflow job", Job: retireJobName},
 		{Address: retireSvcAddr, Kind: "service account"},
 		{Address: retireKeptAddr, Kind: "secret container", Logical: retireKeptName, Kept: infra.KeptSecret},
+		// The state still holds it and says its protection is on: no apply
+		// can finish it.
+		{Address: goneByLabel, Kind: "workflow job", Job: "fugaro-acme-sandbox-gone", Protected: true},
+		// The labels found it and the state never had it.
+		{Address: goneByLabel2, Kind: "workflow job", Job: "fugaro-acme-sandbox-gone2"},
 	}
-	api, apply, kept := retireGoingAway(rets)
-	if len(api) != 1 || api[0].Address != retireJobAddr {
-		t.Errorf("api = %v", api)
+	api, apply, kept := infra.RetireSplit(inState, spec, rets)
+	got := func(rs []infra.Retirement) []string {
+		var out []string
+		for _, r := range rs {
+			out = append(out, r.Address)
+		}
+		return out
 	}
-	if len(apply) != 1 || apply[0].Address != retireSvcAddr {
-		t.Errorf("apply = %v", apply)
+	if want := []string{goneByLabel, goneByLabel2}; !slices.Equal(got(api), want) {
+		t.Errorf("api = %v, want %v", got(api), want)
 	}
-	if len(kept) != 1 || kept[0].Address != retireKeptAddr {
-		t.Errorf("kept = %v", kept)
+	if want := []string{retireJobAddr, retireSvcAddr}; !slices.Equal(got(apply), want) {
+		t.Errorf("apply = %v, want %v", got(apply), want)
+	}
+	if want := []string{retireKeptAddr}; !slices.Equal(got(kept), want) {
+		t.Errorf("kept = %v, want %v", got(kept), want)
+	}
+}
+
+// The classification reads the configuration, not the shape of an address:
+// while the variant is still in fugaro.yaml no row of it is called a
+// workflow job, because that kind is what the API delete keys on and the
+// job of a deployed workflow must never be a candidate for it (M3).
+func TestRetirementNeedsTheVariantToHaveLeftTheConfig(t *testing.T) {
+	spec := infra.RepoSpec{Workflows: map[string]infra.WorkflowSpec{retireVariant: {}}}
+	live := infra.Retirements([]string{retireJobAddr}, spec)
+	if len(live) != 1 {
+		t.Fatalf("rets = %+v, want the one address", live)
+	}
+	if live[0].Kind == "workflow job" {
+		t.Errorf("%s was called a workflow job while %s is still in the configuration", live[0].Address, retireVariant)
+	}
+	if _, ok := infra.JobDeleteLabels(spec, live[0]); ok {
+		t.Error("JobDeleteLabels accepted a job of a variant that is still deployed")
+	}
+	if !strings.Contains(live[0].Cause, retireVariant) {
+		t.Errorf("cause = %q, want the variant it belongs to named", live[0].Cause)
+	}
+	// With the variant gone it is one, and the cause says which config edit
+	// took it away.
+	gone := infra.Retirements([]string{retireJobAddr}, infra.RepoSpec{})
+	if len(gone) != 1 || gone[0].Kind != "workflow job" {
+		t.Fatalf("rets = %+v, want one workflow job", gone)
+	}
+	if _, ok := infra.JobDeleteLabels(infra.RepoSpec{}, gone[0]); !ok {
+		t.Error("JobDeleteLabels refused the job of a variant that is gone")
+	}
+	if !strings.Contains(gone[0].Cause, "fugaro.yaml") {
+		t.Errorf("cause = %q, want the configuration change named", gone[0].Cause)
 	}
 }
 
@@ -639,8 +692,24 @@ func TestPreventDestroyAbortMatchesWrappedTerraformText(t *testing.T) {
 	if preventDestroyAbort(errors.New("plain")) {
 		t.Error("a non-terraform error was read as prevent_destroy")
 	}
-	if !strings.Contains(retireAborted().Error(), retireNextCommand) {
-		t.Error("the abort does not name the next command")
+	// M5: --retire is named only for an address it would actually remove.
+	// For anything else the same plan would abort in the same place, so the
+	// refusal names the configuration and the block instead of advice that
+	// cannot work.
+	notRead := retireAborted(nil, retireKeptAddr)
+	if strings.Contains(notRead.Error(), retireNextCommand) {
+		t.Errorf("the abort points at --retire for an address it would not remove: %v", notRead)
+	}
+	if !strings.Contains(notRead.Error(), retireKeptAddr) || !strings.Contains(notRead.Error(), "prevent_destroy") {
+		t.Errorf("the abort does not name the address and the block: %v", notRead)
+	}
+	read := retireAborted([]infra.Retirement{{Address: retireKeptAddr, Kept: infra.KeptSecret}}, retireKeptAddr)
+	if !strings.Contains(read.Error(), retireNextCommand) {
+		t.Errorf("the abort does not name the next command for an address --retire removes: %v", read)
+	}
+	// The address Terraform named is pulled out of its own wrapped text.
+	if got := preventDestroyAddress(&tf.ExitError{Command: "plan", Stderr: wrapped}); got != retireKeptAddr {
+		t.Errorf("preventDestroyAddress = %q, want %q", got, retireKeptAddr)
 	}
 }
 
@@ -833,7 +902,10 @@ func TestPreventDestroySignatureIsWhitespaceNormalized(t *testing.T) {
 
 // A plan that dies on prevent_destroy is re-framed: the summary was printed
 // first, and the run's own words are the next command, not Terraform's text
-// (Review Focus 5). Terraform's stderr is streamed to the terminal by the
+// (Review Focus 5). The fixture is the owner's own case -- a wrapped refusal
+// naming a repo secret container the configuration stopped producing -- so
+// the address Terraform names is one this change really retires, which is
+// what makes --retire the right advice. Terraform's stderr is streamed by the
 // terraform plumbing either way -- that is what "nothing is hidden, only
 // re-framed" means -- so what is asserted about the raw text is the run's own
 // message, and the stdout the summary owns.
@@ -849,8 +921,8 @@ func TestInitRepoPreventDestroyReframed(t *testing.T) {
 	if strings.Contains(out, "lifecycle.prevent_destroy") {
 		t.Errorf("Terraform's text reached stdout:\n%s", out)
 	}
-	if err == nil || !strings.Contains(err.Error(), "the plan was refused: a resource this change retires") {
-		t.Errorf("the failure was not re-framed as a retirement: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "the plan was refused: "+retireKeptAddr) || !strings.Contains(err.Error(), "this change retires it") {
+		t.Errorf("the failure was not re-framed as a retirement naming the address Terraform named: %v", err)
 	}
 	if err == nil || !strings.Contains(err.Error(), retireNextCommand) {
 		t.Errorf("the re-framing does not name the next command: %v", err)
@@ -914,12 +986,15 @@ func TestInitRepoRetireReportsAnApplyThatSucceededAndADeleteThatFailed(t *testin
 	}
 }
 
-// A state-held job whose values carry no readable `name` is state-removed and
-// then cannot be deleted through the API -- the name is the one thing the call
-// needs and guessing it is forbidden (design §3.1). The run must say so, name
-// the address, and exit non-zero: a silent success would leave a job alive in
-// GCP with nothing managing it and nothing said (Review Focus 6).
-func TestInitRepoRetireNamesAJobTheStateCannotName(t *testing.T) {
+// A protected, state-held job whose values carry no readable `name` is the
+// one retirement the run cannot finish: the state removal takes the address
+// out, no apply can delete the resource, and the API call needs a name it
+// does not have -- guessing one is forbidden (design §3.1). The run refuses
+// before anything leaves the state, names the address and the gcloud command
+// that answers the question by hand, and exits non-zero: a state removal that
+// left a job alive in GCP with nothing managing it, and said nothing, is the
+// outcome this refuses (I3, Review Focus 6).
+func TestInitRepoRetireRefusesAJobTheStateCannotName(t *testing.T) {
 	// noOrphanJob too: when the label list answers, it names the job and the
 	// delete goes ahead -- the empty-name path is what is left when the state
 	// cannot name it and the labels cannot either (a refused or degraded
@@ -930,24 +1005,33 @@ func TestInitRepoRetireNamesAJobTheStateCannotName(t *testing.T) {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
 	text := out + errOut
+	// The refusal is a returned error (the root command silences cobra's own
+	// printing and main prints it), so its words are asserted on the error.
+	msg := err.Error()
 	for _, want := range []string{
-		retireJobAddr, "alive in GCP with nothing managing it",
-		"its name could not be read from Terraform's state", "gcloud run jobs list",
+		retireJobAddr, "nothing was removed from Terraform's state and nothing was applied",
+		"the state's own values carry no name for it", "gcloud run jobs list",
+		retireNextCommand,
 	} {
-		if !strings.Contains(text, want) {
-			t.Errorf("the unnameable job does not say %q:\n%s", want, text)
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal does not say %q in %q\n%s", want, msg, text)
 		}
 	}
-	// The address left the state, so nothing manages the job any more, and
-	// the run did not invent a name to delete it with.
+	if strings.Contains(text, "removed ") && strings.Contains(text, " from Terraform's state") {
+		t.Errorf("a state removal was reported:\n%s", text)
+	}
+	// Nothing left the state: that is the whole point of refusing here.
+	if got := r.ran(t, "state rm"); len(got) != 0 {
+		t.Errorf("state rm = %v, want none: the job cannot be finished once it leaves the state", got)
+	}
+	if got := r.applies(t); len(got) != 0 {
+		t.Errorf("applies = %v, want none", got)
+	}
 	if got := r.run.JobDeletes(); len(got) != 0 {
 		t.Errorf("JobDeletes = %v, want none: no name to call the API with", got)
 	}
 }
 
-// A rerun does not re-remove what an earlier run already took out of the
-// state: Removals filters on what the state still holds, which is what makes
-// `terraform state rm` (which fails on an address that is not there) safe to
 // repeat.
 func TestInitRepoRetireResumeDoesNotReremove(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true, noJobInState: true})
@@ -972,20 +1056,32 @@ func TestInitRepoRetireResumeDoesNotReremove(t *testing.T) {
 	}
 }
 
-// The same rerun as the previous test, one step further on: the containers an
-// earlier retirement released are no longer in the state at all, and the
-// label list is the only thing that still knows them. The run names them by
-// logical name and Secret Manager ID, so the user can see their value is
-// still there.
-func TestInitRepoRetireResumeNamesTheKeptSecretsFromTheLabels(t *testing.T) {
-	newRetireRig(t, retireOpts{protection: true, keptAsNote: true})
+// The same rerun as the previous test, one step further on: the container an
+// earlier retirement released is no longer in the state at all, and it is
+// live with this repository's labels. With #329 on main that is the case the
+// union takes: Readiness puts the container back into the spec, so the plan
+// adopts it (import, kept in the module's for_each, mounted or not) and the
+// run never reports it as a leftover -- no note, no KEPT row, no state
+// removal, nothing deleted (I4).
+func TestInitRepoRetireResumeAdoptsTheLiveLabelledContainer(t *testing.T) {
+	r := newRetireRig(t, retireOpts{protection: true, keptAsNote: true})
 	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
 	}
 	text := out + errOut
-	if !strings.Contains(text, "note:") || !strings.Contains(text, retireKeptName) {
-		t.Errorf("the released container is not named by the labels:\n%s", text)
+	for _, bad := range []string{"no longer mounted by fugaro.yaml", "KEPT", retireKeptAddr} {
+		if strings.Contains(text, bad) {
+			t.Errorf("the live labelled container is reported as a leftover (%q):\n%s", bad, text)
+		}
+	}
+	for _, c := range r.ran(t, "state rm") {
+		if strings.Contains(strings.Join(c, " "), retireKeptAddr) {
+			t.Errorf("the adopted container was removed from the state: %v", c)
+		}
+	}
+	if d, x := r.sm.Deleted(), r.sm.Destroyed(); len(d) != 0 || len(x) != 0 {
+		t.Errorf("the adopted secret was deleted (%v) or destroyed (%v)", d, x)
 	}
 }
 
@@ -1129,21 +1225,20 @@ func TestInitRepoRetireTranscriptGolden(t *testing.T) {
 	}
 }
 
-// The converse of the convergence rule (design §3.1a, review D8): a
-// container an earlier retirement released, still live and still labelled,
-// and a configuration that re-mounts nothing of it. The run names it as a
-// note and does nothing else -- no retirement summary, no --retire advice,
-// no state removal, no import -- and the second run says exactly the same
-// thing, so a project with nothing left to retire converges instead of
-// re-reporting forever.
+// The convergence rule as #329 leaves it (design §3.1a, review D8, I4): a
+// container an earlier retirement released, still live and still carrying
+// this repository's labels, and a configuration that re-mounts nothing of it.
+// Readiness unions it back into the spec, so the run reports no retirement,
+// removes nothing from the state, deletes no secret and asks for no --retire
+// advice; the run says the same thing twice, so a project with nothing left
+// to retire converges instead of re-reporting forever.
 //
-// The other half of the pair -- a config that mounts the logical name again,
-// so DiscoverRepo's Get-by-logical-name path re-adopts the container as an
-// import -- needs a claude_accounts fixture (a named account the local
-// config allows for this repository) that this rig does not build; the
-// mounted side of the same rule is what TestInitRepoRetireResumeNames* and
-// the default rig's KEPT block pin, where the container is not a note.
-func TestInitRepoRetireReverseReimportsKeptContainersOnlyWhenMountedAgain(t *testing.T) {
+// What the plan does with the adopted container (the import that keeps it in
+// the module's for_each) is the plan's own business, printed with the plan's
+// counts; the union itself is pinned by
+// infra's TestRetirementsProviderDroppedIsTheUnionCase and
+// TestOrphansSkipsWhatTheUnionAdopted.
+func TestInitRepoRetireConvergesOnAnAdoptedContainer(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: false, stateEmpty: true, noOrphanJob: true, keptAsNote: true})
 	for i := 1; i <= 2; i++ {
 		// --allow-delete names the one address this fixture's plan deletes (the
@@ -1154,19 +1249,13 @@ func TestInitRepoRetireReverseReimportsKeptContainersOnlyWhenMountedAgain(t *tes
 			t.Fatalf("run %d: exit %d, err %v\n%s%s", i, ExitCode(err), err, out, errOut)
 		}
 		text := out + errOut
-		if !strings.Contains(text, retireKeptName) || !strings.Contains(text, "no longer mounted by fugaro.yaml") {
-			t.Errorf("run %d: the released container is not named as a note:\n%s", i, text)
-		}
-		if strings.Contains(text, "⚠ This change retires") || strings.Contains(text, retireNextCommand) {
-			t.Errorf("run %d: an empty retirement set still reported one:\n%s", i, text)
+		for _, bad := range []string{"no longer mounted by fugaro.yaml", "⚠ This change retires", retireNextCommand} {
+			if strings.Contains(text, bad) {
+				t.Errorf("run %d: the adopted container is reported as a leftover (%q):\n%s", i, bad, text)
+			}
 		}
 		if calls := r.ran(t, "state rm"); len(calls) != 0 {
 			t.Errorf("run %d: state rm ran: %v", i, calls)
-		}
-	}
-	for _, c := range r.calls(t) {
-		if joined := strings.Join(c, " "); strings.Contains(joined, "import") || strings.Contains(joined, retireKeptAddr) {
-			t.Errorf("the released container was imported or removed: %s", joined)
 		}
 	}
 	if got := r.sm.Deleted(); len(got) != 0 {

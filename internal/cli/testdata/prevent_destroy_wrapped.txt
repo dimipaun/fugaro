@@ -1,10 +1,9 @@
-
 Error: Instance cannot be destroyed
 
-  on main.tf line 2:
-   2: resource "terraform_data" "this" {
+  on secrets.tf line 1:
+   1: resource "google_secret_manager_secret" "this" {
 
-Resource terraform_data.this["claude-oauth-token"] has
+Resource module.repo.google_secret_manager_secret.this["claude-oauth-token-bmb"] has
 lifecycle.prevent_destroy set, but the plan calls for this resource to be
 destroyed. To avoid this error and continue with the plan, either disable
 lifecycle.prevent_destroy or reduce the scope of the plan using the -target

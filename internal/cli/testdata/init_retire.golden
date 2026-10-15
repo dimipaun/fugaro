@@ -1,7 +1,7 @@
 warning: build.service_account is deprecated and will be ignored: each repository's builds run as its own build account; fugaro init drops it
 warning: couldn't check origin/main's fugaro.yaml for project: aurora (git fetch --quiet origin +refs/heads/main:refs/remotes/origin/main: exit status 128: fatal: unable to access 'https://bitbucket.org/acme/sandbox.git/': Failed to connect to 127.0.0.1 port 1 after 0 ms: Could not connect to server); runs read it from there
 ⚠ This change retires 3 addresses (project aurora, GCP project proj-1234, repository acme/sandbox).
-  2 go away; 1 secret stays in Secret Manager with its value.
+  2 go away; fugaro deletes no secret.
 
 Why: agent.auth no longer mounts claude-oauth-token-bmb; the named Claude account bmb is no longer a variant this repository deploys.
 
@@ -13,8 +13,8 @@ Removed from Terraform's state, and never deleted (1):
   module.repo.google_secret_manager_secret.this["claude-oauth-token-bmb"]
 
 KEPT — Fugaro never deletes a secret or a secret version:
-  claude-oauth-token-bmb           claude-oauth-token-bmb stays in Secret Manager, unmanaged, with its value
-  Their containers carry the fugaro labels, so re-adding one later re-adopts it.
+  claude-oauth-token-bmb           leaves Terraform's state, unmanaged; Secret Manager is untouched
+  Nothing here deletes a container, so one that still exists keeps its value. A live container carrying this repository's labels is adopted back into the plan instead of being retired at all, so these are the ones the label list did not find: check them with `fugaro secrets ls`.
 
 Order of operations:
   1. remove 1 address from Terraform's state without destroying it: the addresses no apply can delete (a secret container's prevent_destroy, a job whose deletion_protection the state says is on). Nothing in the cloud is deleted by this step.
@@ -23,7 +23,7 @@ Order of operations:
 
 Next command:
   fugaro init --repo . --retire
-⚠ CONFIRM (project aurora, GCP project proj-1234): retire 3 addresses of proj-1234: remove 2 from Terraform's state (destroying nothing), apply 1 changes, then delete 1 Cloud Run job through the API. Delete fugaro-acme-sandbox-app-bmb (us-east5, module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0]). These secrets stay in Secret Manager with their values: claude-oauth-token-bmb (claude-oauth-token-bmb), unmanaged.
+⚠ CONFIRM (project aurora, GCP project proj-1234): retire 3 addresses of proj-1234: remove 2 from Terraform's state (destroying nothing), then apply, then delete 1 Cloud Run job through the API. Delete fugaro-acme-sandbox-app-bmb (us-east5, module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0]). Fugaro deletes no secret, so these leave Terraform's state and stay in Secret Manager if they are still there: claude-oauth-token-bmb (claude-oauth-token-bmb), unmanaged.
 Type aurora to confirm:   confirmed
 removed 2 addresses from Terraform's state; nothing was destroyed
 Plan: 0 to import, 1 to create, 1 to update, 0 to forget, 1 to delete.
@@ -37,7 +37,7 @@ Other changes:
 IAM: 0 bindings match the live ones (adopted), 3 new
 the plan above is the retirement's: 0 imports, 1 creates, 1 updates, 1 deletes, 0 replaces. Deleting:
   delete module.repo.module.workflow["app_bmb"].google_service_account.this
-⚠ CONFIRM (project aurora, GCP project proj-1234): retire 3 addresses of proj-1234: remove 2 from Terraform's state (destroying nothing), apply 1 changes, then delete 1 Cloud Run job through the API. Delete fugaro-acme-sandbox-app-bmb (us-east5, module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0]). These secrets stay in Secret Manager with their values: claude-oauth-token-bmb (claude-oauth-token-bmb), unmanaged.
+⚠ CONFIRM (project aurora, GCP project proj-1234): retire 3 addresses of proj-1234: remove 2 from Terraform's state (destroying nothing), then apply, then delete 1 Cloud Run job through the API. Delete fugaro-acme-sandbox-app-bmb (us-east5, module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0]). Fugaro deletes no secret, so these leave Terraform's state and stay in Secret Manager if they are still there: claude-oauth-token-bmb (claude-oauth-token-bmb), unmanaged.
 Type aurora to confirm:   confirmed
 Still missing for acme/sandbox:
   workflow app (its job is not deployed yet): image not built yet: fugaro image build --repo acme/sandbox --workflow app
