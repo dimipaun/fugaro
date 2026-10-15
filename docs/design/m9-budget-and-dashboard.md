@@ -269,9 +269,9 @@ Freeing *project* for the Fugaro project means renaming everything that means th
 | Cap | Set with | Bounds |
 |---|---|---|
 | `global.dailyUsd` | `fugaro budget set --global --daily` | The sum over all of the project's repositories of reserved minus released per UTC day |
-| `global.perRunUsd` | `--global --per-run` | Each run's lifetime reserved minus released, and the default for every repository |
+| `global.perRunUsd` | `--global --per-run` | Each run's lifetime reserved minus released, and **the fallback of every repository that has no per-run cap of its own** (D6, §6.4) |
 | `repos/<slug>.dailyUsd` | `--repo R --daily` | This repository per day. A repository without one uses `defaults.repoDailyUsd`. With neither, it has **no budget and halts** (fail closed) |
-| `repos/<slug>.perRunUsd` | `--repo R --per-run` | Per run. The effective cap is `min(repo, global)` |
+| `repos/<slug>.perRunUsd` | `--repo R --per-run` | Per run. A repository without one uses `defaults.repoPerRunUsd`, and without that the global one. The effective cap is `min(repo or defaults, global)`, where **a side that is not set does not bound the run**; with no per-run cap on any of the three the rules deny every lease (**fail closed**) |
 | `limits.maxReserveMicros` | `--max-reserve` | The most one write may reserve (default $5). This bounds each step of a compromised token |
 
 - **Kill switches:** `kill/global` and `kill/repos/<slug>`, each `{on, by, at, reason}`.
@@ -604,7 +604,8 @@ The global figure is computed on read. There is no composite index: `report` que
   day        .validate: the day node this write touches (today, or yesterday for spent/released only); $day below = N(day)
   reserved   .validate: N ≥ O  &&  N − O ≤ limits.maxReserveMicros
                          && (N == O || (TODAY-lease && kill/global.on != true && kill/repos/$slug.on != true))
-                         && N − N(released) ≤ min(caps/repos/$slug.perRunMicros ?? defaults, caps/global.perRunMicros)
+                         && N − N(released) ≤ the per-run cap: min(caps/repos/$slug.perRunMicros ?? caps/defaults.repoPerRunMicros, caps/global.perRunMicros),
+                                            where a side that is unset does not bound the run and with neither side set the comparison is false (deny; D6)
                          && N − O == N(spend/$day/runs/$slug/$run/reserved) − O(same)      # moves with the day share
   released   .validate: N ≥ O && N + N(spent) ≤ N(reserved)
                          && N − O == N(spend/$day/runs/$slug/$run/released) − O(same)
