@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1710,4 +1711,269 @@ func TestProjectSecretContainers(t *testing.T) {
 			}
 		})
 	}
+}
+
+// --- RepoSpec.Addresses (plan docs/plans/2026-10-14-config-transitions.md Task 1)
+
+// The golden fixtures' agent blocks. oauth with one named account and
+// vertex exclude one another (Repo builds named variants only under oauth),
+// so google_project_iam_member.vertex[0] can never appear in the oauth
+// fixture's address set and needs a fixture of its own.
+const (
+	repoRootOAuthAgent  = `agent: { auth: oauth }`
+	repoRootVertexAgent = `agent: { auth: vertex }`
+)
+
+// repoRootInputs is the golden fixtures' spec: one baked workflow with its
+// daily check on, one workflow-only secret and the git provider's
+// credential, one operator and one launcher, and the agent block given.
+// Between the two agent blocks it turns every branch of the address set on
+// but checkout: clone, which TestRepoAddressesIncludesCheckOnlyWhenChecked
+// covers.
+func repoRootInputs(t *testing.T, agent string) Inputs {
+	t.Helper()
+	lc := parseLC(t, `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry_host: us-east5-docker.pkg.dev/proj-1234
+base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
+repos:
+  acme/webapp: { provider: github, base_branch: main, workflows: [web], github_app_id: "123456" }
+claude_accounts:
+  bmb: { allow_data_to: [acme/webapp] }
+`)
+	out := installationOutputs()
+	out.Launchers = []string{"user:launcher@example.com"}
+	out.Operators = []string{"user:operator@example.com"}
+	cfg := `version: 1
+project: aurora
+git: { provider: github, base_branch: main }
+` + agent + `
+workflows:
+  web:
+    commands: { build: npm run build, test: npm test }
+    secrets:
+      - { name: npm-token, env: NPM_TOKEN }
+`
+	return Inputs{LC: lc, Repo: "acme/webapp", Cfg: parseCfg(t, []byte(cfg)), Installation: out}
+}
+
+// repoRootSpec is the golden fixture's spec for the agent block given.
+func repoRootSpec(t *testing.T, agent string) RepoSpec {
+	t.Helper()
+	rs, err := Repo(repoRootInputs(t, agent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rs
+}
+
+// variantKeys are the workflow variant keys the addresses name, in the
+// order they first appear.
+func variantKeys(addrs []string) []string {
+	var out []string
+	for _, a := range addrs {
+		rest, ok := strings.CutPrefix(a, "module.repo.module.workflow[")
+		if !ok {
+			continue
+		}
+		key, _, ok := strings.Cut(rest, "]")
+		if !ok {
+			continue
+		}
+		if k, err := strconv.Unquote(key); err == nil && !slices.Contains(out, k) {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// A named Claude account is a workflow variant only under oauth: Repo
+// builds them only there, and the address set must follow the map rather
+// than drift from it (Review Focus 3).
+func TestRepoAddressesNamedVariantsOnlyUnderOAuth(t *testing.T) {
+	oauth := repoRootSpec(t, repoRootOAuthAgent)
+	if got, want := slices.Sorted(maps.Keys(oauth.Workflows)), []string{"web", "web_bmb"}; !slices.Equal(got, want) {
+		t.Fatalf("oauth spec Workflows = %v, want %v", got, want)
+	}
+	if got, want := variantKeys(oauth.Addresses()), []string{"web", "web_bmb"}; !slices.Equal(got, want) {
+		t.Errorf("oauth variant keys = %v, want %v", got, want)
+	}
+	apiKey := repoRootSpec(t, `agent: { auth: api-key }`)
+	if got, want := variantKeys(apiKey.Addresses()), []string{"web"}; !slices.Equal(got, want) {
+		t.Errorf("api-key variant keys = %v, want %v", got, want)
+	}
+	if _, ok := apiKey.Secrets["claude-oauth-token"]; ok {
+		t.Error("an api-key spec still carries the OAuth secret")
+	}
+}
+
+// A checkout: clone workflow has no derived image, so it is never checked:
+// with no checked workflow at all the check job, its invoker grant and its
+// Scheduler job are gone, and so are their addresses.
+func TestRepoAddressesIncludesCheckOnlyWhenChecked(t *testing.T) {
+	checked := repoRootSpec(t, repoRootOAuthAgent)
+	if checked.Check == nil {
+		t.Fatal("the baked fixture has no check")
+	}
+	for _, want := range []string{
+		"module.repo.google_cloud_run_v2_job.check[0]",
+		"module.repo.google_cloud_run_v2_job_iam_member.check_invoker[0]",
+		"module.repo.google_cloud_scheduler_job.check[0]",
+	} {
+		if !slices.Contains(checked.Addresses(), want) {
+			t.Errorf("a checked workflow's addresses are missing %s", want)
+		}
+	}
+	// A repository whose only workflow is checkout: clone: Repo sets no
+	// Check at all (the clone workflow is never in checked).
+	cloneLC := parseLC(t, `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry_host: us-east5-docker.pkg.dev/proj-1234
+base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc}
+repos:
+  acme/webapp: { provider: github, base_branch: main, workflows: [web], github_app_id: "123456" }
+`)
+	in := repoRootInputs(t, `agent: { auth: api-key }`)
+	in.LC = cloneLC
+	in.Cfg = parseCfg(t, []byte(`version: 1
+project: aurora
+git: { provider: github, base_branch: main }
+agent: { auth: api-key }
+workflows:
+  web:
+    checkout: clone
+    commands: { build: npm run build, test: npm test }
+`))
+	clone, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clone.Check != nil {
+		t.Fatal("a repository whose only workflow is clone has a check spec")
+	}
+	for _, a := range clone.Addresses() {
+		if strings.Contains(a, "check") {
+			t.Errorf("a repository with no checked workflow still names %s", a)
+		}
+	}
+}
+
+// The vertex grant exists only for agent.auth: vertex, so the oauth
+// fixture can never pin it: the vertex fixture does, and the oauth one is
+// the negative half.
+func TestRepoAddressesVertexIsNotUnderOAuth(t *testing.T) {
+	const vertexGrant = `google_project_iam_member.vertex`
+	oauth := repoRootSpec(t, repoRootOAuthAgent).Addresses()
+	if slices.ContainsFunc(oauth, func(a string) bool { return strings.Contains(a, vertexGrant) }) {
+		t.Error("the oauth spec's addresses name a vertex grant")
+	}
+	vertex := repoRootSpec(t, repoRootVertexAgent)
+	if got, want := variantKeys(vertex.Addresses()), []string{"web"}; !slices.Equal(got, want) {
+		t.Errorf("vertex variant keys = %v, want %v (vertex has no named variants)", got, want)
+	}
+	if !slices.Contains(vertex.Addresses(), `module.repo.module.workflow["web"].`+vertexGrant+`[0]`) {
+		t.Error("the vertex spec's addresses are missing the vertex grant")
+	}
+}
+
+// repoRootGoldenDir holds the golden fixtures of Addresses: the tfvars the
+// real root is planned from, and the address list that plan produced.
+const repoRootGoldenDir = "testdata"
+
+// repoRootFixtures are the two fixture specs, keyed by the golden's name.
+var repoRootFixtures = map[string]string{"repo_root": repoRootOAuthAgent, "repo_root_vertex": repoRootVertexAgent}
+
+// TestRepoRootFixtureTfvars keeps the committed tfvars fixtures and the Go
+// fixture that plans from them in step: the golden address list belongs to
+// exactly the spec these tfvars encode, so a fixture edit without a
+// regeneration fails here rather than silently changing what the golden
+// pins.
+func TestRepoRootFixtureTfvars(t *testing.T) {
+	for name, agent := range repoRootFixtures {
+		spec := repoRootSpec(t, agent)
+		got, err := RepoRootVars(spec, RepoRootOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(repoRootGoldenDir, name+".tfvars.json")
+		if *update {
+			if err := os.WriteFile(path, got, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		want, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("%v (regenerate with go test ./internal/infra -run TestRepoRootFixtureTfvars -update, or the tagged generator real_addresses_test.go)", err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("%s differs from the fixture spec's tfvars; regenerate with -update and review the diff", path)
+		}
+	}
+}
+
+// addressesGolden reads one golden address list.
+func addressesGolden(t *testing.T, name string) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(repoRootGoldenDir, name+"_addresses.golden"))
+	if err != nil {
+		t.Fatalf("%v (generate it with go test -tags terraform ./internal/infra -run TestRealRepoRootAddresses -update -count=1, which plans a temp copy of the real root with no credentials)", err)
+	}
+	var out []string
+	for line := range strings.Lines(string(data)) {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// Addresses is a hand-maintained mirror of the Terraform modules, so it is
+// pinned against a real plan rather than trusted (Review Focus 8): every
+// address the real root's plan produces for the fixture spec must be in
+// Addresses, and the other way round.
+func TestRepoAddressesMatchTheRealPlanGolden(t *testing.T) {
+	spec := repoRootSpec(t, repoRootFixtures["repo_root"])
+	want := addressesGolden(t, "repo_root")
+	if len(want) == 0 {
+		t.Fatal("the golden is empty")
+	}
+	got := spec.Addresses()
+	if !slices.Equal(got, want) {
+		t.Errorf("Addresses() differs from %s:\nmissing: %v\nunexpected: %v", "repo_root_addresses.golden",
+			missingFrom(want, got), missingFrom(got, want))
+	}
+}
+
+// The vertex fixture pins the one address the oauth fixture can never
+// contain, google_project_iam_member.vertex[0], and the named-account
+// variants it does not have.
+func TestRepoAddressesMatchTheVertexGolden(t *testing.T) {
+	spec := repoRootSpec(t, repoRootFixtures["repo_root_vertex"])
+	want := addressesGolden(t, "repo_root_vertex")
+	if len(want) == 0 {
+		t.Fatal("the golden is empty")
+	}
+	got := spec.Addresses()
+	if !slices.Equal(got, want) {
+		t.Errorf("Addresses() differs from repo_root_vertex_addresses.golden:\nmissing: %v\nunexpected: %v",
+			missingFrom(want, got), missingFrom(got, want))
+	}
+}
+
+// missingFrom are the items of want that got does not have.
+func missingFrom(want, got []string) []string {
+	var out []string
+	for _, w := range want {
+		if !slices.Contains(got, w) {
+			out = append(out, w)
+		}
+	}
+	return out
 }
