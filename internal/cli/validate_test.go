@@ -1257,3 +1257,101 @@ func TestValidateDoesNotPriceAClaimedIDFromTheCatalog(t *testing.T) {
 		t.Errorf("the run's table prices the claimed ID (%+v), so validate must have accepted it", m)
 	}
 }
+
+// The routes validate judges a pin by are the run's own (layerRoutes), and so
+// is everything the run derives from them: the *effective background* (the
+// coder's own model, when the file sets none and a route serves the coder) and
+// whether an Anthropic key is needed at all (config.AnthropicKeyNeeded, which
+// asks the same map about the same three pins). Judge either over lc.Providers
+// instead and a claim the layer holds is invisible here: the background reads
+// as unset, which CheckPins refuses ("is required with a budget"), and every
+// pin reads as a direct Anthropic call, which asks init for a key the run never
+// uses -- while the run itself, merging the layer, backgrounds those calls on
+// the claimed route and never takes that path.
+//
+// Mutations that make this fail, one at a time: in validate.go take
+// budgetProblems' agentPins background (:132), providerProblems' own agent
+// copy's background (:251) or its config.AnthropicKeyNeeded (:262) from
+// lc.Providers instead of the merged map.
+func TestValidateResolvesTheBackgroundAndTheKeyOverTheClaimedMap(t *testing.T) {
+	const id = "anthropic/claude-sonnet-5.5"
+	// checkout is a checkout whose coder and reviewer are the layer's claim (the
+	// layer below claims exactly that ID) and whose agent.models holds pins; it
+	// returns validate's two streams and its error.
+	checkout := func(t *testing.T, mode, pins string) (string, string, error) {
+		t.Helper()
+		f := newCloudFixture(t)
+		isolateCache(t)
+		f.appendConfig(t, "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n    allow_data_to: [\"acme/other\"]\n"+
+			"model_prices:\n  \""+id+"\": { input_per_m: 3, output_per_m: 15 }\n")
+		repo := "version: 1\nproject: aurora\ngcp_project: proj-1234\nbudget: { mode: " + mode + ", per_run_usd: 2 }\n" +
+			"agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { " + pins + " }\n" +
+			"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+		layerCheckout(t, f, repo)
+		publishedLayer(t, f, testProjectLayer+"claude_models:\n  openrouter: [\""+id+"\"]\n")
+		out, errOut, err := execute(t, "validate")
+		return out, errOut, err
+	}
+	t.Run("a claimed coder with no background of its own needs no key", func(t *testing.T) {
+		out, errOut, err := checkout(t, "enforce", "coder: "+id+", reviewer: "+id)
+		if err != nil || !strings.Contains(out, "is valid") {
+			t.Fatalf("the claimed coder's own background was not resolved over the claim: exit %d\n%s%s", ExitCode(err), out, errOut)
+		}
+		if strings.Contains(errOut, "note:") {
+			t.Errorf("every pin is served by the claimed route, so the run needs no Anthropic key:\n%s", errOut)
+		}
+	})
+	// The control: the assertion above is worth nothing if validate never notes
+	// anything at all. A background pinned to a Claude model is a call Anthropic
+	// serves, so the key is needed and the note is there.
+	t.Run("a direct background pin still needs the key", func(t *testing.T) {
+		out, errOut, err := checkout(t, "enforce", "coder: "+id+", reviewer: "+id+", background: claude-haiku-4-5")
+		if err != nil || !strings.Contains(out, "is valid") {
+			t.Fatalf("exit %d\n%s%s", ExitCode(err), out, errOut)
+		}
+		if !strings.Contains(errOut, "note: agent.auth") {
+			t.Errorf("an explicit Claude background goes to Anthropic, so the key is needed:\n%s", errOut)
+		}
+	})
+	// The background is one of the three pins the gateway rule walks, so it is
+	// the run's own resolved background that must appear there.
+	t.Run("the claimed coder's own background is a provider pin", func(t *testing.T) {
+		out, errOut, _ := checkout(t, "observe", "coder: "+id+", reviewer: "+id)
+		if !strings.Contains(out, "agent.models.background") || !strings.Contains(out, "is served by a provider") {
+			t.Errorf("the background the run resolves is the claimed coder's model, a provider model:\n%s%s", out, errOut)
+		}
+	})
+}
+
+// init asks for the Anthropic key from needsAnthropicKey, the one rule
+// validate notes and the runner's gateway applies, so a claim the checkout's
+// layer holds must turn that question off there too: with every pin on the
+// claimed route a run never calls Anthropic, and init has no reason to prompt
+// for a key it would not use (or to list it as still missing). The rule reads
+// the layer the file resolved over (cfg.Layer).
+//
+// Mutation that makes this fail: pass lc.Providers to config.AnthropicKeyNeeded
+// in needsAnthropicKey (the claim becomes invisible, so the pins read as direct
+// Anthropic calls and init asks for a key that gates nothing).
+func TestNeedsAnthropicKeySeesTheLayerClaim(t *testing.T) {
+	const id = "anthropic/claude-sonnet-5.5"
+	layer, ps := config.ParseProjectLayer([]byte(testProjectLayer+"claude_models:\n  openrouter: [\""+id+"\"]\n"),
+		config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"})
+	if len(ps) > 0 {
+		t.Fatalf("the fixture layer is invalid: %v", ps)
+	}
+	lc := &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", Providers: map[string]config.ModelProvider{
+		"openrouter": {Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+			Secret: "openrouter-api-key", Models: []string{"deepseek/*"}, AllowDataTo: []string{"acme/other"}},
+	}}
+	cfg := &config.Config{Project: "aurora", Budget: &config.Budget{Mode: "enforce", PerRunUSD: 2},
+		Agent: config.Agent{Auth: "api-key", Model: "claude-sonnet-5-5",
+			Models: config.ModelRoles{Coder: id, Reviewer: id}}}
+	if !needsAnthropicKey(lc, cfg, "acme/other") {
+		t.Error("no layer: the pins name Claude models no route claims, so the run calls Anthropic")
+	}
+	cfg.Layer = layer
+	if needsAnthropicKey(lc, cfg, "acme/other") {
+		t.Error("the layer claims every pin: the run never calls Anthropic, so init must not ask for a key")
+	}
+}

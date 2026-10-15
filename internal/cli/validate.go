@@ -40,9 +40,21 @@ const anthropicKeyNoEnforce = "needs a stored Anthropic API key: the budget isn'
 // the project's ceiling merged with the file, exactly as the runner reads it.
 // The one place the CLI decides it, so init's hidden prompt, init --repo's
 // "still missing" list and validate's note cannot disagree.
+//
+// The routes are the run's own (layerRoutes, over the layer this file resolved
+// over): the project layer may claim the very models the pins name, and in the
+// cloud those calls go to the provider, so init must not ask for an Anthropic
+// key such a run never uses. A layer whose claims the rules refuse changes
+// nothing here (layerRoutes answers with lc.Providers): the run would not start
+// either, and the key is then asked for rather than promised unnecessary.
 func needsAnthropicKey(lc *localcfg.Config, cfg *config.Config, repo string) bool {
 	mode := policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg)).Mode
-	return config.AnthropicKeyNeeded(cfg.Agent, lc.Providers, repo, mode)
+	var layer *config.ProjectLayer
+	if cfg != nil {
+		layer = cfg.Layer
+	}
+	providers, _ := layerRoutes(lc, layer)
+	return config.AnthropicKeyNeeded(cfg.Agent, providers, repo, mode)
 }
 
 // ceilingLayer is the owner's ceiling as the runner builds it from the job
