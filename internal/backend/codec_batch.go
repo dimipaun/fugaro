@@ -47,20 +47,30 @@ func (batchCodec) Format(id ExecID) string {
 
 // FromEnv is the canonical name of the Batch job this process is, or ""
 // outside a Batch task. The name comes from the job definition
-// (BatchJobEnv), and it is checked against FUGARO_REGION, which the job
-// definition also carries: a job whose environment was edited cannot name
-// another region's job.
+// (BatchJobEnv), and it is checked against the two other names the same
+// definition carries: FUGARO_REGION, which the job definition also writes,
+// and FUGARO_GCP_PROJECT, which must be the project the name is in. Neither
+// is evidence -- the launcher writes all three, and whoever can create a job
+// can write any of them -- but a job whose environment was edited must not be
+// able to name another region's or another project's job.
 func (c batchCodec) FromEnv(getenv func(string) string) (string, error) {
 	if !c.On(getenv) {
 		return "", nil
 	}
 	name := getenv(BatchJobEnv)
 	if name == "" {
-		return "", fmt.Errorf("on Batch the job must set %s (its own resource name) and FUGARO_REGION", BatchJobEnv)
+		return "", fmt.Errorf("on Batch the job must set %s (its own resource name), FUGARO_REGION and FUGARO_GCP_PROJECT", BatchJobEnv)
 	}
 	id, err := c.ParseInRegion(name, getenv("FUGARO_REGION"))
 	if err != nil {
 		return "", err
+	}
+	// The name carries the project, so a mismatch is a job environment that
+	// names a job it is not. An empty FUGARO_GCP_PROJECT mismatches too, and
+	// the CLI's own job-env check refuses that case anyway
+	// (internal/cli/exec.go, refuseOldJobEnv).
+	if got, want := id.GCPProject, getenv("FUGARO_GCP_PROJECT"); got != want {
+		return "", fmt.Errorf("job %s is in project %s, not in the job environment's FUGARO_GCP_PROJECT (%q)", name, got, want)
 	}
 	return c.Format(id), nil
 }

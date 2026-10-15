@@ -263,13 +263,14 @@ func TestBatchCodecOn(t *testing.T) {
 }
 
 // FromEnv is the name the job definition carries, checked against the region
-// the same definition carries: neither is evidence, but a job whose
-// environment was edited must not be able to name another region's job.
+// and the project the same definition carries: none of the three is evidence,
+// but a job whose environment was edited must not be able to name another
+// region's or another project's job.
 func TestBatchCodecFromEnv(t *testing.T) {
 	const name = "projects/my-proj/locations/us-east5/jobs/fugaro-acme-app-web-0123456789ab"
 	get := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
 	c := BatchCodec()
-	env := map[string]string{"BATCH_TASK_INDEX": "0", "BATCH_TASK_COUNT": "1", BatchJobEnv: name, "FUGARO_REGION": "us-east5"}
+	env := map[string]string{"BATCH_TASK_INDEX": "0", "BATCH_TASK_COUNT": "1", BatchJobEnv: name, "FUGARO_REGION": "us-east5", "FUGARO_GCP_PROJECT": "my-proj"}
 	got, err := c.FromEnv(get(env))
 	if err != nil || got != name {
 		t.Fatalf("FromEnv = %q, %v", got, err)
@@ -280,12 +281,17 @@ func TestBatchCodecFromEnv(t *testing.T) {
 		t.Fatalf("outside Batch = %q, %v", got, err)
 	}
 	// On Batch without the name the job definition must carry, or with one
-	// naming another region, the process cannot spell itself.
+	// naming another region or another project, the process cannot spell
+	// itself: the job's environment names the job the process is, so a
+	// FUGARO_GCP_PROJECT that disagrees with the name -- including an empty
+	// one -- is a job environment that was edited to name someone else's job.
 	for _, bad := range []map[string]string{
 		{"BATCH_TASK_INDEX": "0", "BATCH_TASK_COUNT": "1", "FUGARO_REGION": "us-east5"},
 		{"BATCH_TASK_INDEX": "0", "BATCH_TASK_COUNT": "1", BatchJobEnv: name},
-		{"BATCH_TASK_INDEX": "0", "BATCH_TASK_COUNT": "1", BatchJobEnv: name, "FUGARO_REGION": "europe-west1"},
-		{"BATCH_TASK_INDEX": "0", "BATCH_TASK_COUNT": "1", BatchJobEnv: "not-a-name", "FUGARO_REGION": "us-east5"},
+		{"BATCH_TASK_INDEX": "0", "BATCH_TASK_COUNT": "1", BatchJobEnv: name, "FUGARO_REGION": "europe-west1", "FUGARO_GCP_PROJECT": "my-proj"},
+		{"BATCH_TASK_INDEX": "0", "BATCH_TASK_COUNT": "1", BatchJobEnv: name, "FUGARO_REGION": "us-east5", "FUGARO_GCP_PROJECT": "other-proj"},
+		{"BATCH_TASK_INDEX": "0", "BATCH_TASK_COUNT": "1", BatchJobEnv: name, "FUGARO_REGION": "us-east5"},
+		{"BATCH_TASK_INDEX": "0", "BATCH_TASK_COUNT": "1", BatchJobEnv: "not-a-name", "FUGARO_REGION": "us-east5", "FUGARO_GCP_PROJECT": "my-proj"},
 	} {
 		if got, err := c.FromEnv(get(bad)); err == nil {
 			t.Errorf("%v named itself %q", bad, got)

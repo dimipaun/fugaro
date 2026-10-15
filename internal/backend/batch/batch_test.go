@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -833,6 +834,128 @@ func TestListFollowsPageTokens(t *testing.T) {
 	}
 	if len(got) != 3 {
 		t.Fatalf("List = %d runs, want 3", len(got))
+	}
+}
+
+// TestListSortsNewestFirstWhateverTheServersOrderIs: the API documents no
+// order for jobs.list (design §2.4), so the listing's order is the backend's
+// own decision rather than the server's. The fake answers in creation order,
+// oldest first, and the create times below are set so that creation order and
+// create-time order disagree: only the explicit sort can produce the answer
+// the callers want.
+func TestListSortsNewestFirstWhateverTheServersOrderIs(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, nil)
+	var names []string
+	for _, run := range []string{"20260927-100000-aaaa", "20260927-100001-bbbb", "20260927-100002-cccc"} {
+		s := spec()
+		s.RunID = run
+		ref, err := b.Launch(ctx, s)
+		if err != nil {
+			t.Fatalf("Launch: %v", err)
+		}
+		names = append(names, ref.Job)
+	}
+	// The job launched first is the newest, and the one launched last is the
+	// oldest: the server's order is not the answer.
+	now := time.Now()
+	bf.SetCreated(names[0], now)
+	bf.SetCreated(names[1], now.Add(-3*time.Hour))
+	bf.SetCreated(names[2], now.Add(-time.Hour))
+
+	got, err := b.List(ctx, backend.ListFilter{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var order []string
+	for _, x := range got {
+		order = append(order, x.Job)
+	}
+	want := []string{names[0], names[2], names[1]}
+	if strings.Join(order, " ") != strings.Join(want, " ") {
+		t.Fatalf("List = %v, want %v (newest first by createTime)", order, want)
+	}
+}
+
+// TestListDropsAJobTheFilterMatchedButTheLabelsDoNot: the filter's syntax
+// against the real API is not a verified fact (design §9), so List checks the
+// labels itself. The job below carries the marker in Job.labels alone -- the
+// field a server honouring the filter reads -- so it is exactly the answer
+// such a server gives, and it is still not a job this installation may adopt:
+// the marker has to be in both fields (design §2.4, C13).
+func TestListDropsAJobTheFilterMatchedButTheLabelsDoNot(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, nil)
+	ours, err := b.Launch(ctx, spec())
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	const impostor = "fugaro-acme-app-web-deadbeef0000"
+	postRawJob(t, bf, impostor, `{"labels":{"fugaro":"managed"}}`)
+
+	got, err := b.List(ctx, backend.ListFilter{})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != ours.Name {
+		t.Fatalf("List = %+v, want only %s", got, ours.Name)
+	}
+	// Asked for by id it is dropped too: naming a job is not what makes it
+	// ours, so a caller cannot reach one this way.
+	got, err = b.List(ctx, backend.ListFilter{Jobs: []string{impostor}})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("List(Jobs) = %+v, want nothing", got)
+	}
+}
+
+// postRawJob creates a job in the fake's region from a raw body, as a server
+// that ignored Fugaro's filter would still be listing.
+func postRawJob(t *testing.T, bf *gcpfake.Batch, id, body string) {
+	t.Helper()
+	u := bf.URL + "/v1/projects/" + testProject + "/locations/" + testRegion + "/jobs?jobId=" + id
+	resp, err := http.Post(u, "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("creating %s: status %d", id, resp.StatusCode)
+	}
+}
+
+// TestExecutionRewritesTheProjectNumber: Batch answers a created job's name
+// with the project *number*, so a name taken from it verbatim would stop
+// matching the name the backend launched with (design §2.3). The fake is set
+// to answer with the number, which is what makes the rewrite -- rather than
+// the fake agreeing -- the reason the names below match.
+func TestExecutionRewritesTheProjectNumber(t *testing.T) {
+	ctx := context.Background()
+	b, bf, _, _ := newTestBackend(t, nil)
+	bf.ProjectNumber = "999"
+	ref, err := b.Launch(ctx, spec())
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if creates := bf.Creates(); len(creates) != 1 || !strings.HasPrefix(creates[0].Name, "projects/999/") {
+		t.Fatalf("the create was answered with %+v, want the project number", creates)
+	}
+	want := "projects/" + testProject + "/locations/" + testRegion + "/jobs/" + ref.Job
+	if ref.Name != want {
+		t.Fatalf("Launch ref.Name = %q, want %q", ref.Name, want)
+	}
+	x, err := b.Execution(ctx, ref.Name)
+	if err != nil {
+		t.Fatalf("Execution: %v", err)
+	}
+	if x.Name != want || x.Job != ref.Job || x.State.Terminal() {
+		t.Fatalf("Execution = %+v, want %s", x, want)
+	}
+	// The number form is the same run, not a second one.
+	if x2, err := b.Execution(ctx, strings.Replace(want, "/projects/"+testProject+"/", "/projects/999/", 1)); err != nil || x2.Name != want {
+		t.Fatalf("Execution(by number) = %+v, %v", x2, err)
 	}
 }
 
