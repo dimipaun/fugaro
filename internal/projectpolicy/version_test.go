@@ -54,4 +54,14 @@ func TestTheCLISkewRemediesStayApart(t *testing.T) {
 	if strings.Contains(CLISkew, "init") {
 		t.Errorf("CLISkew = %q: this binary is the older side here, and this release's rules template must not be redeployed over a newer Fugaro's", CLISkew)
 	}
+	// Nor the delete, which is the other thing an operator reaches for when a
+	// node is in the way: `fugaro project policy publish --delete` refuses a
+	// node written by a newer Fugaro by the same check the publish does, before
+	// the branch that would remove it (refuseNewerPolicy, pinned by
+	// internal/cli's TestProjectPolicyPublishDeleteRefusesANewerNode). The
+	// upgrade is the whole remedy in this direction, because there is nothing
+	// this binary may do to the node.
+	if strings.Contains(CLISkew, "--delete") {
+		t.Errorf("CLISkew = %q: the delete refuses a newer node too, so it is not a remedy for one", CLISkew)
+	}
 }

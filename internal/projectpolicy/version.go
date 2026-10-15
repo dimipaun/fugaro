@@ -53,9 +53,19 @@ func (e *VersionError) Error() string { return fmt.Sprintf(Skew, e.Found, e.Unde
 // the CLI has two, one per direction of the skew, because the CLI is the side an
 // operator upgrades and the remedy is not the same in both:
 //
-//   - CLISkew: this Fugaro is older than the node, so publishing from it would
-//     write the policy backwards and nothing here can read the node — the
-//     upgrade is missing on this machine.
+//   - CLISkew: the node is newer than this Fugaro, so nothing here can read it
+//     and the upgrade is missing on this machine. `fugaro upgrade` is the whole
+//     remedy, and neither of the other two moves is one: `fugaro init
+//     --firebase` would redeploy this release's rules template over rules a
+//     newer Fugaro wrote (the reasoning requirePolicyRules and doctor's
+//     rules-newer-than-this-Fugaro warning both give), and there is nothing to
+//     delete either — `fugaro project policy publish` refuses a node written by
+//     a newer Fugaro and `--delete` goes through the same refusal
+//     (internal/cli's refuseNewerPolicy, which the publish path calls before
+//     the delete branch), and doctor reports the state as
+//     policy-newer-than-binary with the upgrade as its fix. The runner image
+//     older than the policy refuses the same node with RunnerSkew, its own
+//     remedy beside the shared sentence.
 //   - CLISkewNewer: the node is older than this Fugaro. Nothing is upgraded —
 //     this binary is the newer side — and the remedy is the deletion: this
 //     release's publish refuses to overwrite a node written in another version

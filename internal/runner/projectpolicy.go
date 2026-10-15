@@ -219,8 +219,16 @@ func (r *run) unreadablePolicy(err error) error {
 	}
 	var ve *projectpolicy.VersionError
 	if errors.As(err, &ve) {
-		// The node is newer than this image, which cannot be upgraded
-		// mid-run: the shared sentence plus the runner's own remedy (P8).
+		// A node this image does not read, in either direction: newer than it
+		// (a release ahead of this job's image), or older (a hand-written
+		// node, or one a release before this shape wrote — a node below
+		// Version is not the legacy path, that is the marker's job). Both
+		// stop the run the same way, because the ceiling a policy sets is not
+		// something a run may fall back from, and RunnerSkew is worded for
+		// both: refreshing the image is the remedy for the first, publishing
+		// a policy this runner understands for the second — the runner cannot
+		// do either mid-run, so the operator does, which is why the message
+		// is the shared sentence plus the runner's own remedy (P8).
 		return fmt.Errorf("%s: %s", fmt.Sprintf(projectpolicy.RunnerSkew, ve.Found, ve.Understood), projectpolicy.PathShared())
 	}
 	return fmt.Errorf("the project's policy at %s could not be read (%s, which marks the deployed rules at generation %d): the run does not start on a ceiling the policy did not set: %s",

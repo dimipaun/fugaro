@@ -236,6 +236,27 @@ func TestProjectPolicyPublishRefusesAVersionItCannotWrite(t *testing.T) {
 	}
 }
 
+// The delete is refused by the same check, before the branch that would
+// remove it: this command may neither overwrite nor delete a node a newer
+// Fugaro wrote, so the older binary's whole remedy for a node ahead of it is
+// the upgrade (projectpolicy.CLISkew). Pinned because the sentence there says
+// so — a reader who was told to try the delete and found this refusal would
+// have been sent in a circle, which is the fault the older-node direction had.
+func TestProjectPolicyPublishDeleteRefusesANewerNode(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version + 1, "allow_repos": []string{"github/acme/app"}})
+	_, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	if err == nil {
+		t.Fatal("deleting a policy written by a newer Fugaro was allowed")
+	}
+	if !strings.Contains(err.Error(), "version") {
+		t.Errorf("the refusal does not name the version skew: %v", err)
+	}
+	if v := f.db.Value(projectpolicy.PathShared()); v == nil {
+		t.Fatal("the newer node was removed")
+	}
+}
+
 // put writes p as the policy node, the way an earlier publish did.
 func put(t *testing.T, f *projectFixture, p *projectpolicy.Policy) {
 	t.Helper()

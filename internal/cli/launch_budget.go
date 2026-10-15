@@ -145,8 +145,10 @@ func policyReadErr(err error) error {
 	var me *projectpolicy.MarkerError
 	switch {
 	case errors.As(err, &ve):
-		// The remedy depends on the direction of the skew — an older node
-		// wants init re-run, an older binary wants upgrading — and
+		// The remedy depends on the direction of the skew — an older node is
+		// removed with `fugaro project policy publish --delete` before this
+		// release publishes again (never a re-run of init, which writes no
+		// policy node), an older binary wants upgrading — and
 		// cliSkewSentence is the one place that picks between the two
 		// sentences (run_allowlist.go, beside the launch gate's own refusal
 		// of the same error).
