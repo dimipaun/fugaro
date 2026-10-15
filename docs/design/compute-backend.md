@@ -377,15 +377,25 @@ view (internal/backend/gcp/logs.go filters on
    can read them — a worse outcome than the Cloud Run path. This is an
    installation-level Terraform change (§8).
 
-   **Built** (Task 4): the sink and the exclusion each carry both arms, as
-   one parenthesized group so the exclusion's `NOT` clauses hang off the pair
-   and not off the Batch arm alone (the query language binds `NOT` tighter
-   than `AND`, and `AND` tighter than `OR`). The Cloud Run arm
-   is unchanged byte-for-byte, and the arm is additive and inert on a project
-   with no Batch jobs. It reaches a project only when the installation's
-   Terraform is applied there; it widens no reader: the view has no filter of
-   its own and its IAM member still names exactly the launchers and
-   operators.
+   **Built** (Task 4): the sink and the exclusion each carry both arms, written
+   `((cloud-run arm) OR (batch arm))` — each arm's own `AND` clauses inside
+   their own parentheses, the pair inside one more. Every one of those
+   parentheses is load-bearing, because Cloud Logging's query language is not
+   the usual one: `NOT` has the highest precedence, "followed by `OR` and
+   `AND` in that order" (Logging query language, "Boolean operators", checked
+   2026-10-15) — `AND` binds *loosest*, where most languages bind it tightest.
+   An unparenthesized `A1 AND A2 OR B1 AND B2` therefore means
+   `A1 AND (A2 OR B1) AND B2`, which matches only the Cloud Run arm: the Batch
+   arm would route and exclude nothing, and a Batch run's task lines would sit
+   in `_Default` where every project viewer reads them — the outcome the arm
+   exists to prevent, silently undone by one missing pair of brackets. The
+   exclusion's `NOT` clauses then hang off the pair as a whole. `TestLogSinkRoutesBothPlatforms` pins both filters byte-for-byte
+   *and* structurally, failing on any unparenthesized mix of `AND` and `OR` in
+   one group. The Cloud Run arm is unchanged byte-for-byte, and the arm is
+   additive and inert on a project with no Batch jobs. It reaches a project
+   only when the installation's Terraform is applied there; it widens no
+   reader: the view has no filter of its own and its IAM member still names
+   exactly the launchers and operators.
 
 A plain instance has no such integration: a startup script would have to ship
 container output to Cloud Logging itself (the Ops Agent, or an explicit

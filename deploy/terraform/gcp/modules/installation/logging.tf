@@ -32,16 +32,21 @@ locals {
   # nothing.
   fugaro_batch_logs = "resource.type=\"batch.googleapis.com/Job\" AND labels.\"fugaro\"=\"managed\""
 
-  # Both arms, as one parenthesized group. The parentheses are load-bearing
-  # in the exclusion below: the query language binds NOT tighter than AND,
-  # and AND tighter than OR, so "${arms} AND NOT ..." without them would be
-  # "cloud_run_job arm OR (batch arm AND NOT ...)" -- the NOT clauses would
-  # apply to the Batch arm alone, and the check jobs' decision lines and the
-  # Cloud Run system log would start being excluded from _Default, which is
-  # where the log-based alerts read them. Parenthesized, both arms carry the
-  # NOT clauses, and the sink (which has none) routes the same lines either
-  # way.
-  fugaro_logs = "(${local.fugaro_cloud_run_logs} OR ${local.fugaro_batch_logs})"
+  # Both arms, as one group, with each arm's own AND clauses parenthesized
+  # inside it. Every parenthesis here is load-bearing, because Cloud
+  # Logging's query language is NOT the usual one: NOT has the highest
+  # precedence, "followed by OR and AND in that order" -- AND binds
+  # *loosest*, where most languages bind it tightest (Logging query
+  # language, "Boolean operators", checked 2026-10-15; the doc's own example
+  # makes `"a" OR NOT "b" AND NOT "c" OR "d"` mean
+  # `("a" OR (NOT "b")) AND ((NOT "c") OR "d")`). So an unparenthesized
+  # `A1 AND A2 OR B1 AND B2` would be read as `A1 AND (A2 OR B1) AND B2`,
+  # which matches only the Cloud Run arm -- the Batch arm would route and
+  # exclude nothing, leaving a Batch run's task lines in _Default where every
+  # project viewer reads them, which is the outcome this whole file exists to
+  # prevent. Written out, the filter means what it says whichever order the
+  # reader assumes. A test pins it.
+  fugaro_logs = "((${local.fugaro_cloud_run_logs}) OR (${local.fugaro_batch_logs}))"
 }
 
 resource "google_logging_project_bucket_config" "fugaro" {
