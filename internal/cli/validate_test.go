@@ -337,7 +337,7 @@ func TestBudgetProblemsSkipPinsWhenPricesAreUnreadable(t *testing.T) {
 		ModelPrices: map[string]localcfg.ModelPrice{"sonnet": {InputPerM: one(1), OutputPerM: one(5)}},
 	}
 	cfg := &config.Config{Project: "aurora", Agent: config.Agent{Auth: "api-key", Model: "claude-acme-1", Models: config.ModelRoles{Background: "claude-haiku-4-5"}}}
-	ps, _ := budgetProblems(cfg, lc)
+	ps, _ := budgetProblems(cfg, lc, lc.Providers)
 	if len(ps) != 1 || ps[0].Path != "model_prices" {
 		t.Fatalf("problems = %v, want only the model_prices one", ps)
 	}
@@ -347,11 +347,11 @@ func TestBudgetProblemsSkipPinsWhenPricesAreUnreadable(t *testing.T) {
 func TestBudgetProblemsSkipPinsForOAuth(t *testing.T) {
 	lc := &localcfg.Config{Name: "aurora", Budget: &localcfg.Budget{Mode: localcfg.BudgetObserve}}
 	cfg := &config.Config{Project: "aurora", Agent: config.Agent{Auth: "oauth"}}
-	if ps, _ := budgetProblems(cfg, lc); len(ps) != 0 {
+	if ps, _ := budgetProblems(cfg, lc, lc.Providers); len(ps) != 0 {
 		t.Fatalf("problems = %v", ps)
 	}
 	cfg.Agent.Auth = "api-key"
-	if ps, _ := budgetProblems(cfg, lc); len(ps) == 0 {
+	if ps, _ := budgetProblems(cfg, lc, lc.Providers); len(ps) == 0 {
 		t.Fatal("api-key with no models passed")
 	}
 }
@@ -629,7 +629,7 @@ func TestValidateWarnsPerDayIsClientEnforced(t *testing.T) {
 	}
 	// With no project config the warning stays.
 	cfg := &config.Config{Project: "aurora", Agent: config.Agent{Auth: "api-key"}, Budget: &config.Budget{PerDayUSD: 10}}
-	if _, ws := budgetProblems(cfg, nil); len(ws) != 1 || ws[0].Path != "budget.per_day_usd" {
+	if _, ws := budgetProblems(cfg, nil, nil); len(ws) != 1 || ws[0].Path != "budget.per_day_usd" {
 		t.Fatalf("warnings = %v", ws)
 	}
 	path = fileWithBudget(t, "budget: { mode: observe }\n", "budget: { per_run_usd: 1 }\n", pinnedAgent)
@@ -954,5 +954,404 @@ func TestValidateJSONNotesTheAnthropicKey(t *testing.T) {
 		if strings.Contains(p.Message, "Anthropic API key") {
 			t.Errorf("the key needs a note, not %v: %s", p.Path, p.Message)
 		}
+	}
+}
+
+// TestValidateJudgesProvidersOnlyWithAMatchingLocalConfig pins what the two
+// surfaces actually do (P5), because "an unclaimed anthropic/<id> is refused
+// at both" is true of the runner and **conditional** in the CLI. The runner's
+// call is unconditional (internal/runner/gateway.go), and that is the
+// enforcement surface; the CLI's provider half returns before it looks unless
+// the checkout has a local config whose name matches the file's project, and
+// its pins half returns early on the same condition. So a machine with no
+// local config, or one for another installation, prints nothing at all about
+// providers or pins -- and that is the truth about the pair, not a gap to
+// close. The two halves are also not one rule: under agent.auth: oauth the
+// pins half is skipped entirely (an oauth run has no gateway, so nothing is
+// priced or pinned) while the provider half still runs -- the last sub-case
+// is what pins that, with one config carrying both halves' subjects, an alias
+// pin and a coder the fixture provider serves. The unclaimed claimed-shape
+// pin in the first sub-case is refused by CheckProviderPolicy, the provider
+// half, which is why it does not move with the auth.
+func TestValidateJudgesProvidersOnlyWithAMatchingLocalConfig(t *testing.T) {
+	const budget = "budget: { mode: enforce, per_run_usd: 2 }\n" + validateProviderBlock
+	const agent = "  auth: api-key\n  models: { coder: deepseek/deepseek-v4-flash, reviewer: anthropic/claude-sonnet-5.5 }"
+	// A matching local config: the unclaimed pin is printed at its own path,
+	// with the fix the owner has to make.
+	path := budgetProject(t, budget, agent)
+	inCheckoutOf(t, "acme/sandbox")
+	out, _, err := execute(t, "validate", path)
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.models.reviewer") || !strings.Contains(out, "no provider serves it") {
+		t.Fatalf("a matching local config: exit %d, out %q", ExitCode(err), out)
+	}
+	for _, want := range []string{"is a Claude model", "go direct to Anthropic", "naming that exact ID in a route's models"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the refusal does not say %q: %q", want, out)
+		}
+	}
+	// No local config at all: neither half looks, so nothing is said -- not
+	// even the pin the runner would refuse on the next launch.
+	isolateProjects(t, t.TempDir())
+	fileOnly := writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:",
+		"agent:\n"+agent+"\nbudget: { mode: enforce, per_run_usd: 2 }\nworkflows:", 1))
+	out, errOut, err := execute(t, "validate", fileOnly)
+	if err != nil || !strings.Contains(out, "is valid") {
+		t.Fatalf("no local config: err %v, out %q, stderr %q", err, out, errOut)
+	}
+	for _, want := range []string{"agent.models.reviewer", "no provider serves it", "allow_data_to", "providers"} {
+		if strings.Contains(out+errOut, want) {
+			t.Errorf("validate said %q with no local config:\nout: %s\nstderr: %s", want, out, errOut)
+		}
+	}
+	// A local config whose name is another project's: the same silence, from
+	// the same two early returns. The control first: with a local config of
+	// the file's own project, the same pin is refused here, so the silence
+	// below is the name mismatch and not a selection that found nothing.
+	isolateProjects(t, t.TempDir())
+	lcPath := writeProject(t, "borealis", "proj-9999")
+	f, err := os.OpenFile(lcPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(budget); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FUGARO_PROJECT", "borealis")
+	body, err := os.ReadFile(fileOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	matching := writeConfig(t, strings.Replace(string(body), "project: aurora", "project: borealis", 1))
+	if out, _, err := execute(t, "validate", matching); ExitCode(err) != ExitUserError || !strings.Contains(out, "no provider serves it") {
+		t.Fatalf("control (a local config of the file's own project): exit %d, out %q", ExitCode(err), out)
+	}
+	if out, errOut, err = execute(t, "validate", fileOnly); err != nil || !strings.Contains(out, "is valid") {
+		t.Fatalf("another project's config: err %v, out %q, stderr %q", err, out, errOut)
+	}
+	if strings.Contains(out+errOut, "no provider serves it") {
+		t.Errorf("another project's config judged the pin:\nout: %s\nstderr: %s", out, errOut)
+	}
+	// One config carrying both halves' subjects: an alias pin, which the
+	// pins half refuses, and a coder the fixture provider serves, which the
+	// provider half refuses under oauth. Under api-key the alias is named
+	// (the provider half passes, its auth rule being api-key's own) and
+	// under oauth it is not -- the pins half never looked -- while the
+	// refusal at agent.models.coder is CheckProviderAuth's wording, which no
+	// other rule writes. Skipping the provider half for oauth too would fail
+	// both assertions below.
+	const both = "  auth: api-key\n  model: sonnet\n  models: { coder: deepseek/deepseek-v4-flash }"
+	path = budgetProject(t, budget, both)
+	inCheckoutOf(t, "acme/sandbox")
+	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "sonnet is an alias") {
+		t.Fatalf("api-key alias pin: exit %d, out %q", ExitCode(err), out)
+	}
+	path = budgetProject(t, budget, strings.Replace(both, "api-key", "oauth", 1))
+	inCheckoutOf(t, "acme/sandbox")
+	out, _, err = execute(t, "validate", path)
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.models.coder") {
+		t.Fatalf("oauth, a provider-served coder: exit %d, out %q", ExitCode(err), out)
+	}
+	if !strings.Contains(out, "an oauth token is a Claude subscription credential") {
+		t.Errorf("the refusal under oauth is not CheckProviderAuth's: %q", out)
+	}
+	if strings.Contains(out, "sonnet is an alias") {
+		t.Errorf("the pins half judged the alias under oauth: %q", out)
+	}
+}
+
+// The layer's claim reaches the checkout-resolving surfaces, not only the
+// run: `fugaro validate` judges the pins against the map the run will use,
+// so a pin the layer's claude_models claims passes here, and the very same
+// file without the claim is refused as it is today.
+func TestValidateSeesTheCheckoutLayer(t *testing.T) {
+	const id = "anthropic/claude-sonnet-5.5"
+	f := newCloudFixture(t)
+	isolateCache(t)
+	// The owner's route, and the claimed ID's price: the layer cannot carry
+	// a price (P11), so it is the operator's model_prices that has one.
+	f.appendConfig(t, "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n    allow_data_to: [\"acme/other\"]\n"+
+		"model_prices:\n  \""+id+"\": { input_per_m: 3, output_per_m: 15 }\n")
+	repo := "version: 1\nproject: aurora\ngcp_project: proj-1234\nbudget: { mode: enforce, per_run_usd: 2 }\n" +
+		"agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { reviewer: " + id + ", background: claude-haiku-4-5 }\n" +
+		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	layerCheckout(t, f, repo)
+	claim := "claude_models:\n  openrouter: [\"" + id + "\"]\n"
+	publishedLayer(t, f, testProjectLayer+claim)
+	if out, errOut, err := execute(t, "validate"); err != nil || !strings.Contains(out, "is valid") {
+		t.Fatalf("a layer-claimed pin was refused: %v\n%s%s", err, out, errOut)
+	}
+	// The same checkout, the claim dropped from the layer (the object
+	// republished without it): the refusal is back, before any run, naming
+	// the pin.
+	writeBucketFile(t, f, config.LayerKey, testProjectLayer)
+	out, _, err := execute(t, "validate")
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.models.reviewer") || !strings.Contains(out, "no provider serves it") {
+		t.Fatalf("without the claim: exit %d, out %q", ExitCode(err), out)
+	}
+	// A claim naming a route the project config does not define is the
+	// layer's own problem, reported as the key names it.
+	writeBucketFile(t, f, config.LayerKey, testProjectLayer+"claude_models:\n  nosuch: [\""+id+"\"]\n")
+	out, _, err = execute(t, "validate")
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "claude_models.nosuch") || !strings.Contains(out, "does not define") {
+		t.Fatalf("an unknown provider name: exit %d, out %q", ExitCode(err), out)
+	}
+}
+
+// A layer-claimed pin is judged by the credential and mode rules exactly as
+// any other provider model is (P10): the claim decides who may route the ID,
+// and nothing else. validate judges the pins against the merged map the run
+// will use, so a claimed pin under oauth is refused here with the auth rule's
+// own wording, and one under observe with the mode rule's.
+// Mutations that make this fail, one at a time: validate.go passing
+// lc.Providers to config.CheckProviderAuth (or CheckProviderGateway, or
+// CheckProviderPolicy) instead of the merged map.
+func TestValidateRefusesAClaimedPinTheAuthAndModeRulesRefuse(t *testing.T) {
+	const id = "anthropic/claude-sonnet-5.5"
+	// claimedCheckout is the fixture of TestValidateSeesTheCheckoutLayer with
+	// the credential and the budget mode a case chooses.
+	claimedCheckout := func(t *testing.T, auth, budget string) {
+		t.Helper()
+		f := newCloudFixture(t)
+		isolateCache(t)
+		f.appendConfig(t, "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n    allow_data_to: [\"acme/other\"]\n"+
+			"model_prices:\n  \""+id+"\": { input_per_m: 3, output_per_m: 15 }\n")
+		repo := "version: 1\nproject: aurora\ngcp_project: proj-1234\n" + budget +
+			"agent:\n  auth: " + auth + "\n  model: claude-sonnet-5-5\n  models: { reviewer: " + id + ", background: claude-haiku-4-5 }\n" +
+			"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+		layerCheckout(t, f, repo)
+		publishedLayer(t, f, testProjectLayer+"claude_models:\n  openrouter: [\""+id+"\"]\n")
+	}
+	t.Run("api-key and enforce: the claim is the pin's passage", func(t *testing.T) {
+		claimedCheckout(t, "api-key", "budget: { mode: enforce, per_run_usd: 2 }\n")
+		if out, errOut, err := execute(t, "validate"); err != nil || !strings.Contains(out, "is valid") {
+			t.Fatalf("a claimed pin under api-key and enforce was refused: %v\n%s%s", err, out, errOut)
+		}
+	})
+	t.Run("oauth", func(t *testing.T) {
+		claimedCheckout(t, "oauth", "budget: { mode: enforce, per_run_usd: 2 }\n")
+		out, errOut, err := execute(t, "validate")
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("a claimed pin under oauth: exit %d\n%s%s", ExitCode(err), out, errOut)
+		}
+		if !strings.Contains(out, "an oauth token is a Claude subscription credential") {
+			t.Errorf("the refusal is not config.CheckProviderAuth's:\n%s", out)
+		}
+		if !strings.Contains(out, "agent.models.reviewer") || !strings.Contains(out, "served by provider openrouter") {
+			t.Errorf("the refusal does not name the pin and the route:\n%s", out)
+		}
+	})
+	t.Run("observe", func(t *testing.T) {
+		claimedCheckout(t, "api-key", "budget: { mode: observe }\n")
+		out, errOut, err := execute(t, "validate")
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("a claimed pin under observe: exit %d\n%s%s", ExitCode(err), out, errOut)
+		}
+		if !strings.Contains(out, "is served by a provider, which needs budget.mode enforce") {
+			t.Errorf("the refusal is not config.CheckProviderGateway's:\n%s", out)
+		}
+	})
+}
+
+// A layer is judged against its own project's config, never against whichever
+// project config happens to be selected: with another project's config
+// selected, its routes are that installation's, and a claim naming a route of
+// the file's own installation would be refused here as "names provider X,
+// which the project config does not define" — while the run, which reads the
+// layer with its own FUGARO_MODEL_PROVIDERS, serves it. Mutation that makes
+// this fail: append layerRoutes' problems unconditionally in validate.go
+// (drop the `lc.Name == cfg.Project` guard around it).
+func TestValidateJudgesALayerOnlyAgainstItsOwnProjectConfig(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	// The selected config is another project's, with a route of its own and
+	// no openrouter at all.
+	other := writeProject(t, "other", "proj-9999")
+	f, err := os.OpenFile(other, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("providers:\n  vendorx:\n    kind: anthropic-compat\n    base_url: https://vendorx.example\n    auth: bearer\n    secret: vendorx-key\n    models: [\"qwen/*\"]\n    allow_data_to: [\"acme/app\"]\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FUGARO_CONFIG", other)
+
+	path := writeConfig(t, strings.Replace(cliMinimalYAML, "project: aurora\n", "project: aurora\ngcp_project: proj-1234\n", 1))
+	layer := filepath.Join(t.TempDir(), "layer.yaml")
+	if err := os.WriteFile(layer, []byte(minimalAnchored+"claude_models:\n  openrouter: [\"anthropic/claude-sonnet-5.5\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, err := execute(t, "validate", "--project-layer", layer, path)
+	if err != nil || !strings.Contains(out, "is valid") {
+		t.Fatalf("a valid layer with another project's config selected: exit %d\nout: %s\nerr: %s", ExitCode(err), out, errOut)
+	}
+}
+
+// The claim reaches the *routing* rules and never the price table (P4): the
+// run's table is built from the job's FUGARO_MODEL_PROVIDERS, which never
+// carries a claim, so a claimed ID has only the price the operator wrote under
+// model_prices — the built-in catalog cannot price one, because it materializes
+// a row only for a model some *route* matches (catalogRoutes) and the claim is
+// not in any route the environment carries. validate must judge with that same
+// pair, or it would accept a pin the run then refuses as unpriced: with the
+// merged providers in its table (what this test was written against) the
+// catalog row below would price the pin and validate would say the file is
+// valid. Mutation that makes this fail: build validate's table from the merged
+// map (`priceTableFor(claimed, ...)` in validate.go) — with the catalog row the
+// pin is priced and the file comes out valid.
+func TestValidateDoesNotPriceAClaimedIDFromTheCatalog(t *testing.T) {
+	const id = "anthropic/claude-sonnet-5.5"
+	cat := shippedCatalog(t)
+	// An `anthropic/<id>` row the way P11's catalog rows land: the shipped
+	// row of another model, under this ID.
+	row := cat.Models["deepseek/deepseek-v4.1-flash"]
+	cat.Models[id] = row
+	old := loadCatalog
+	loadCatalog = func() (*catalog.File, error) { return cat, nil }
+	t.Cleanup(func() { loadCatalog = old })
+
+	f := newCloudFixture(t)
+	isolateCache(t)
+	// No model_prices for the claimed ID: that is the whole point.
+	f.appendConfig(t, "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n    allow_data_to: [\"acme/other\"]\n")
+	repo := "version: 1\nproject: aurora\ngcp_project: proj-1234\nbudget: { mode: enforce, per_run_usd: 2 }\n" +
+		"agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { reviewer: " + id + ", background: claude-haiku-4-5 }\n" +
+		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	layerCheckout(t, f, repo)
+	publishedLayer(t, f, testProjectLayer+"claude_models:\n  openrouter: [\""+id+"\"]\n")
+	out, errOut, err := execute(t, "validate")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("a claimed ID the catalog alone could price: exit %d\n%s%s", ExitCode(err), out, errOut)
+	}
+	if !strings.Contains(out, "has no price") || !strings.Contains(out, "model_prices") {
+		t.Errorf("the refusal must send the operator to model_prices:\n%s", out)
+	}
+	// The run's own table, built from the environment the job gets, agrees:
+	// the claim is not in it, so the same catalog row does not price the ID.
+	p := cliRoute()["openrouter"]
+	p.AllowDataTo = []string{"acme/other"}
+	env, err := runner.ProvidersEnv(map[string]config.ModelProvider{"openrouter": p}, "acme/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(env, "anthropic/") {
+		t.Errorf("the job's environment carries the claim: %s", env)
+	}
+	s, err := runner.SpendFromEnv(func(k string) (string, bool) {
+		switch k {
+		case runner.BudgetModeEnv:
+			return "observe", true
+		case runner.ModelProvidersEnv:
+			return env, true
+		}
+		return "", false
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, ok := s.Prices.Lookup(id); ok {
+		t.Errorf("the run's table prices the claimed ID (%+v), so validate must have accepted it", m)
+	}
+}
+
+// The routes validate judges a pin by are the run's own (layerRoutes), and so
+// is everything the run derives from them: the *effective background* (the
+// coder's own model, when the file sets none and a route serves the coder) and
+// whether an Anthropic key is needed at all (config.AnthropicKeyNeeded, which
+// asks the same map about the same three pins). Judge either over lc.Providers
+// instead and a claim the layer holds is invisible here: the background reads
+// as unset, which CheckPins refuses ("is required with a budget"), and every
+// pin reads as a direct Anthropic call, which asks init for a key the run never
+// uses -- while the run itself, merging the layer, backgrounds those calls on
+// the claimed route and never takes that path.
+//
+// Mutations that make this fail, one at a time: in validate.go take
+// budgetProblems' agentPins background (:132), providerProblems' own agent
+// copy's background (:251) or its config.AnthropicKeyNeeded (:262) from
+// lc.Providers instead of the merged map.
+func TestValidateResolvesTheBackgroundAndTheKeyOverTheClaimedMap(t *testing.T) {
+	const id = "anthropic/claude-sonnet-5.5"
+	// checkout is a checkout whose coder and reviewer are the layer's claim (the
+	// layer below claims exactly that ID) and whose agent.models holds pins; it
+	// returns validate's two streams and its error.
+	checkout := func(t *testing.T, mode, pins string) (string, string, error) {
+		t.Helper()
+		f := newCloudFixture(t)
+		isolateCache(t)
+		f.appendConfig(t, "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n    allow_data_to: [\"acme/other\"]\n"+
+			"model_prices:\n  \""+id+"\": { input_per_m: 3, output_per_m: 15 }\n")
+		repo := "version: 1\nproject: aurora\ngcp_project: proj-1234\nbudget: { mode: " + mode + ", per_run_usd: 2 }\n" +
+			"agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { " + pins + " }\n" +
+			"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+		layerCheckout(t, f, repo)
+		publishedLayer(t, f, testProjectLayer+"claude_models:\n  openrouter: [\""+id+"\"]\n")
+		out, errOut, err := execute(t, "validate")
+		return out, errOut, err
+	}
+	t.Run("a claimed coder with no background of its own needs no key", func(t *testing.T) {
+		out, errOut, err := checkout(t, "enforce", "coder: "+id+", reviewer: "+id)
+		if err != nil || !strings.Contains(out, "is valid") {
+			t.Fatalf("the claimed coder's own background was not resolved over the claim: exit %d\n%s%s", ExitCode(err), out, errOut)
+		}
+		if strings.Contains(errOut, "note:") {
+			t.Errorf("every pin is served by the claimed route, so the run needs no Anthropic key:\n%s", errOut)
+		}
+	})
+	// The control: the assertion above is worth nothing if validate never notes
+	// anything at all. A background pinned to a Claude model is a call Anthropic
+	// serves, so the key is needed and the note is there.
+	t.Run("a direct background pin still needs the key", func(t *testing.T) {
+		out, errOut, err := checkout(t, "enforce", "coder: "+id+", reviewer: "+id+", background: claude-haiku-4-5")
+		if err != nil || !strings.Contains(out, "is valid") {
+			t.Fatalf("exit %d\n%s%s", ExitCode(err), out, errOut)
+		}
+		if !strings.Contains(errOut, "note: agent.auth") {
+			t.Errorf("an explicit Claude background goes to Anthropic, so the key is needed:\n%s", errOut)
+		}
+	})
+	// The background is one of the three pins the gateway rule walks, so it is
+	// the run's own resolved background that must appear there.
+	t.Run("the claimed coder's own background is a provider pin", func(t *testing.T) {
+		out, errOut, _ := checkout(t, "observe", "coder: "+id+", reviewer: "+id)
+		if !strings.Contains(out, "agent.models.background") || !strings.Contains(out, "is served by a provider") {
+			t.Errorf("the background the run resolves is the claimed coder's model, a provider model:\n%s%s", out, errOut)
+		}
+	})
+}
+
+// init asks for the Anthropic key from needsAnthropicKey, the one rule
+// validate notes and the runner's gateway applies, so a claim the checkout's
+// layer holds must turn that question off there too: with every pin on the
+// claimed route a run never calls Anthropic, and init has no reason to prompt
+// for a key it would not use (or to list it as still missing). The rule reads
+// the layer the file resolved over (cfg.Layer).
+//
+// Mutation that makes this fail: pass lc.Providers to config.AnthropicKeyNeeded
+// in needsAnthropicKey (the claim becomes invisible, so the pins read as direct
+// Anthropic calls and init asks for a key that gates nothing).
+func TestNeedsAnthropicKeySeesTheLayerClaim(t *testing.T) {
+	const id = "anthropic/claude-sonnet-5.5"
+	layer, ps := config.ParseProjectLayer([]byte(testProjectLayer+"claude_models:\n  openrouter: [\""+id+"\"]\n"),
+		config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"})
+	if len(ps) > 0 {
+		t.Fatalf("the fixture layer is invalid: %v", ps)
+	}
+	lc := &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", Providers: map[string]config.ModelProvider{
+		"openrouter": {Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+			Secret: "openrouter-api-key", Models: []string{"deepseek/*"}, AllowDataTo: []string{"acme/other"}},
+	}}
+	cfg := &config.Config{Project: "aurora", Budget: &config.Budget{Mode: "enforce", PerRunUSD: 2},
+		Agent: config.Agent{Auth: "api-key", Model: "claude-sonnet-5-5",
+			Models: config.ModelRoles{Coder: id, Reviewer: id}}}
+	if !needsAnthropicKey(lc, cfg, "acme/other") {
+		t.Error("no layer: the pins name Claude models no route claims, so the run calls Anthropic")
+	}
+	cfg.Layer = layer
+	if needsAnthropicKey(lc, cfg, "acme/other") {
+		t.Error("the layer claims every pin: the run never calls Anthropic, so init must not ask for a key")
 	}
 }

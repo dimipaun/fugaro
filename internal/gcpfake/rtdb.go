@@ -239,6 +239,16 @@ func (f *RTDB) Rules() []byte {
 	return append([]byte(nil), f.rules...)
 }
 
+// SetRules plants a deployed rules document without a PUT: the state an
+// older CLI's `fugaro init --firebase` leaves behind (rules that predate the
+// policy nodes, while config/limits/policyRules stays), which is what
+// doctor's policy-rules-skew check reads. It does not count as a deployment.
+func (f *RTDB) SetRules(rules []byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rules = append([]byte(nil), rules...)
+}
+
 // RulePuts is the number of rules deployments.
 func (f *RTDB) RulePuts() int {
 	f.mu.Lock()

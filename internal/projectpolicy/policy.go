@@ -58,13 +58,17 @@
 //     catalogue's two values beside them, and again by validPricePolicy below,
 //     because the node is read by a runner that never parses a config file.
 //     An unknown key *inside* an entry is refused, exactly as
-//     internal/config's own decoder refuses one in fugaro.yaml: a misspelt
-//     allow_data_to would otherwise leave the widest setting there is (a nil
-//     list means every repository) and a misspelt route_fee_pct would drop the
-//     owner's surcharge, silently, on a node an administrator can write by
-//     hand. The tolerance that stays is at the top level and in `routing`,
-//     whose unknown keys cannot fail open: routing's values are checked by
-//     validRouting, which refuses a block this Fugaro cannot act on.
+//     internal/config's own decoder refuses one in fugaro.yaml, and so is a
+//     member name that differs from the documented one only in case
+//     (validProviders): a misspelt allow_data_to would otherwise leave the
+//     widest setting there is (a nil list means every repository) and a
+//     misspelt route_fee_pct would drop the owner's surcharge, silently, on a
+//     node an administrator can write by hand — and encoding/json's own
+//     matching, which folds case, is one way to misspell a name that the
+//     strictness above does not catch by itself. The tolerance that stays is at
+//     the top level and in `routing`, whose unknown keys cannot fail open:
+//     routing's values are checked by validRouting, which refuses a block this
+//     Fugaro cannot act on.
 //
 // The readable node holds nothing personal and no secret values: every run
 // token can read it, and a prompt-injected agent can take the token through
@@ -78,6 +82,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -434,9 +439,9 @@ func decodeProviders(raw json.RawMessage) (map[string]Provider, error) {
 	return out, nil
 }
 
-// checkWrittenProfileFields applies the one profile rule that reads the
-// written document rather than the decoded value: an explicitly empty
-// allow_repos.
+// checkWrittenProfileFields applies the profile rules that read the written
+// document rather than the decoded value: the spelling of a profile's members,
+// and an explicitly empty allow_repos.
 //
 // A profile that names no list falls back to the project's allow_repos
 // (§4.1), and the carrier's `omitempty` means the node cannot carry an empty
@@ -446,10 +451,31 @@ func decodeProviders(raw json.RawMessage) (map[string]Provider, error) {
 // who wrote "[]" believing it admits nobody would get every repository the
 // project enrolls, with nothing in the node to show the difference. Leaving
 // the key out is how a profile says the project's list applies.
+//
+// The member spelling is checked first, and it is what makes the second check
+// hold: encoding/json matches a member to its field case-insensitively, so
+// `"Allow_Repos": []` decodes into AllowRepos while the `fields["allow_repos"]`
+// lookup below — which reads the name as written — never sees it, and the
+// empty list becomes the nil slice that means the project's list. It is the
+// same guard, and the same reason, as validProviders' member check: a name
+// that differs only in case is read by the decoder and by nothing else here.
 func checkWrittenProfileFields(name string, raw json.RawMessage) error {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return fmt.Errorf("%s: %w", name, err)
+	}
+	for _, member := range memberNames(fields) {
+		known := spelledMember(profileMembers, member)
+		if known == member {
+			continue
+		}
+		if known == "" {
+			// Unreachable through Decode: decodeProfileBlock decodes the entry
+			// with DisallowUnknownFields first, so a name no member answers to
+			// is refused there. Kept so this function holds on its own too.
+			return fmt.Errorf("projectpolicy: profiles.%s: unknown field %q", name, member)
+		}
+		return fmt.Errorf("projectpolicy: profiles.%s.%s: a profile's members are spelled as fugaro.yaml spells them — write %s. A name that differs only in case is read by the decoder and not by this document's own checks, so an \"%s\": [] would fall back to the project's allow_repos instead of being refused", name, member, known, member)
 	}
 	v, ok := fields["allow_repos"]
 	if !ok {
@@ -461,9 +487,87 @@ func checkWrittenProfileFields(name string, raw json.RawMessage) error {
 		empty = true
 	}
 	if empty {
-		return fmt.Errorf("%s.allow_repos: an explicit empty list is ambiguous: remove the key to fall back to the project's allow_repos, or write the repositories this profile admits (the project's allow_repos is still required, so a profile's list can only narrow it)", name)
+		return fmt.Errorf("projectpolicy: profiles.%s.allow_repos: an explicit empty list is ambiguous: remove the key to fall back to the project's allow_repos, or write the repositories this profile admits (the project's allow_repos is still required, so a profile's list can only narrow it)", name)
 	}
 	return nil
+}
+
+// carrierMembers are the member names an entry of that carrier is spelled
+// with, read from the struct's own json tags so a field internal/config adds is
+// picked up without a second list. It is the json twin of internal/config's
+// providerKeys, which holds a fugaro.yaml entry to the same names; a field with
+// a tag is known by its tag alone, exactly as encoding/json matches it. An
+// embedded struct contributes its own members, which is how a policy's Profile
+// is spelled with config.JobProfile's fields.
+func carrierMembers(t reflect.Type) []string {
+	var out []string
+	var walk func(reflect.Type)
+	walk = func(t reflect.Type) {
+		for i := range t.NumField() {
+			f := t.Field(i)
+			if f.Anonymous {
+				ft := f.Type
+				if ft.Kind() == reflect.Pointer {
+					ft = ft.Elem()
+				}
+				if ft.Kind() == reflect.Struct {
+					walk(ft)
+					continue
+				}
+			}
+			if !f.IsExported() {
+				continue
+			}
+			tag, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+			switch {
+			case tag == "-":
+			case tag != "":
+				out = append(out, tag)
+			default:
+				out = append(out, f.Name)
+			}
+		}
+	}
+	walk(t)
+	sort.Strings(out)
+	return out
+}
+
+// providerMembers, profileMembers are the two carriers whose member spelling
+// this package reads off the raw document. One guard serves both: a second
+// spelling rule for the profiles block would be a second thing to keep in step
+// with the first.
+var (
+	providerMembers = carrierMembers(reflect.TypeOf(Provider{}))
+	profileMembers  = carrierMembers(reflect.TypeOf(Profile{}))
+)
+
+// memberNames is a stable order for error messages (a map's range is random).
+func memberNames(fields map[string]json.RawMessage) []string {
+	names := make([]string, 0, len(fields))
+	for name := range fields {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// spelledMember is the member of that carrier name is a spelling of: name
+// itself when it is spelled as this Fugaro spells it, the documented spelling
+// when it differs only in case, and "" when no member is known by that name at
+// all.
+func spelledMember(members []string, name string) string {
+	for _, known := range members {
+		if known == name {
+			return name
+		}
+	}
+	for _, known := range members {
+		if strings.EqualFold(known, name) {
+			return known
+		}
+	}
+	return ""
 }
 
 // validProviders holds the providers block to the rules internal/config holds
@@ -491,6 +595,30 @@ func validProviders(raw json.RawMessage, providers map[string]Provider) error {
 		if entry := entries[name]; entry != nil {
 			var fields map[string]json.RawMessage
 			if err := json.Unmarshal(entry, &fields); err == nil {
+				for _, member := range memberNames(fields) {
+					known := spelledMember(providerMembers, member)
+					if known == member {
+						continue
+					}
+					if known == "" {
+						// Unreachable through Decode: decodeProviders decodes
+						// the entry with DisallowUnknownFields first, so a name
+						// no member answers to is refused there. Kept so this
+						// function holds on its own too.
+						return fmt.Errorf("projectpolicy: providers.%s: unknown field %q", name, member)
+					}
+					// A member name has to be the documented one, because the
+					// checks here read it off the raw document: encoding/json
+					// matches a member to its field case-insensitively, so
+					// "Allow_Data_To": null decoded into the field the tag
+					// names while the null check just below — which looks the
+					// name up as written — never saw it, and the nil slice a
+					// null leaves behind is "every repository". fugaro.yaml
+					// refuses the same spelling (ModelProvider.UnmarshalYAML
+					// compares names exactly), and the node is held to the
+					// config's rules.
+					return fmt.Errorf("projectpolicy: providers.%s.%s: a provider entry's members are spelled as fugaro.yaml spells them — write %s. A name that differs only in case is read by the decoder and not by this document's own checks, and the null spelling of allow_data_to would publish as every repository", name, member, known)
+				}
 				if data, ok := fields["allow_data_to"]; ok && isNull(data) {
 					return fmt.Errorf("projectpolicy: providers.%s.allow_data_to: an explicit empty list is ambiguous: write [\"*\"] for every repository, or remove the key entirely", name)
 				}

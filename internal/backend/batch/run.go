@@ -180,6 +180,15 @@ func (b *Backend) toExecution(j *batch.Job) (backend.Execution, error) {
 	// would become a wrong cost, and the billed window is Task 3's (§5.2),
 	// so nothing is inferred here: Billed is 0, which reads as "cost
 	// unknown", not as "free".
+	// The region is the backend's own answer, never a second reading of the
+	// name (backend.Execution.Region): a caller that prices this execution
+	// uses it rather than parsing a Batch name's fields.
+	x.Region = b.o.Region
+	// MachineType stays "": the job definition's machine type is Task 7's
+	// (§8.1), so this build has no verified source for it, and a guessed one
+	// would price a run at the wrong type's figures. Until it is set, a
+	// Batch execution prices at no machine type -- "compute not estimated",
+	// which is the truth -- rather than at Cloud Run's.
 	x.LogURL = b.logURL(id, j.Uid, x.Created)
 	x.Run = runEnv(j)
 	return x, nil

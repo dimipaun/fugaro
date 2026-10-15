@@ -385,7 +385,7 @@ func (r *run) warnReportedGap() {
 	var charged pricing.Micros
 	for name, v := range r.routeBy {
 		// The provider reports the model's price, not Fugaro's route fee.
-		charged += pricing.WithoutFee(v, r.d.Providers[name].RouteFeePct)
+		charged += pricing.WithoutFee(v, r.modelProviders()[name].RouteFeePct)
 	}
 	reported := r.reported
 	r.mu.Unlock()
@@ -417,8 +417,8 @@ func (r *run) checkProviderModels() error {
 			return fmt.Errorf("pricing the models: %w", err)
 		}
 	}
-	ps := config.CheckProviderPolicy(r.cfg.Agent, allowed, r.spec.Repo, r.d.Providers, prices)
-	ps = append(ps, config.CheckProviderAuth(r.cfg.Agent, r.d.Providers)...)
+	ps := config.CheckProviderPolicy(r.cfg.Agent, allowed, r.spec.Repo, r.modelProviders(), prices)
+	ps = append(ps, config.CheckProviderAuth(r.cfg.Agent, r.modelProviders())...)
 	if len(ps) > 0 {
 		msgs := make([]string, len(ps))
 		for i, p := range ps {
@@ -434,7 +434,7 @@ func (r *run) checkProviderModels() error {
 	if r.gatewayOn() {
 		mode = r.spend.Mode
 	}
-	if ps := config.CheckProviderGateway(r.cfg.Agent, bg, r.d.Providers, mode); len(ps) > 0 {
+	if ps := config.CheckProviderGateway(r.cfg.Agent, bg, r.modelProviders(), mode); len(ps) > 0 {
 		return errors.New(ps[0].Message)
 	}
 	r.cfg.Agent.Models.Background = bg
