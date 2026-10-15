@@ -143,3 +143,33 @@ func TestParseImageRef(t *testing.T) {
 		t.Error("no OCI index in Accept")
 	}
 }
+
+// TestParseImageRefAcceptsATagAndADigest is B2. A pin keeps its version tag
+// beside the digest (design registry-remote-repository.md §3.1), and the
+// grammar for that is name[:tag]@digest. Splitting on "@" first used to
+// leave ":0.7.5" on the repository name, which repoNameRE then refused, so
+// readBaseDigests logged "its base trigger is skipped" on every daily check,
+// forever, silently.
+// Mutation (run, restore): drop the tag-stripping block from parseImageRef
+// and the combined-form row fails.
+func TestParseImageRefAcceptsATagAndADigest(t *testing.T) {
+	for _, c := range []struct{ ref, host, name, tag string }{
+		// the form a pin has
+		{"us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-base:0.7.5@" + digestA,
+			"us-east5-docker.pkg.dev", "proj-1234/fugaro-ghcr/dimipaun/fugaro-base", digestA},
+		// the digest-only form, unchanged
+		{"ghcr.io/acme/base@" + digestA, "ghcr.io", "acme/base", digestA},
+		// the tag-only form, unchanged
+		{"ghcr.io/acme/base:1.2.3", "ghcr.io", "acme/base", "1.2.3"},
+	} {
+		host, name, tag, err := parseImageRef(c.ref)
+		if err != nil || host != c.host || name != c.name || tag != c.tag {
+			t.Errorf("%s: %s %s %s %v", c.ref, host, name, tag, err)
+		}
+	}
+	for _, bad := range []string{"ghcr.io/acme/base:na me@" + digestA, "ghcr.io/acme/base:@", "ghcr.io/acme/base:" + digestA} {
+		if _, _, _, err := parseImageRef(bad); err == nil {
+			t.Errorf("%q parsed", bad)
+		}
+	}
+}

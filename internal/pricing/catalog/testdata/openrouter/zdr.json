@@ -1,0 +1,272 @@
+{
+ "data": [
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "primeintellect"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "parasail/fast"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "crusoe/fp8"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-pro",
+   "tag": "reka"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "inference-net/fast"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "decart/fp4"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "wafer/us"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "fireworks/us"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "baseten/fast"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "decart/mxfp4"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "ionstream"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "akashml/fp4"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "inference-net/fp8"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-flash",
+   "tag": "relace/fp4"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "open-inference/fp4"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "coreweave/fp8"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "amazon-bedrock/us-east-2"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "sail-research/fp4"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "baseten/fp8/us"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "makora/fp8"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "digitalocean"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "phala"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "together"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "relace"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "inference-net/fp4"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "siliconflow/fp8"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-flash",
+   "tag": "wafer"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "modal"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "wafer"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "baseten/fp8"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "parasail/fp8"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "fireworks"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "morph/fp8"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "venice/fp8"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "novita/fp8"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4.1-flash",
+   "tag": "deepinfra/fp8"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-flash",
+   "tag": "open-inference/fp4"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "makora/fp4"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "fireworks/us"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-pro",
+   "tag": "azure/us"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-flash",
+   "tag": "azure/us"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "relace/fp4"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "phala"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "sail-research/fp4"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "wafer"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "parasail/fp4"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "fireworks/fast"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "modal/mxfp4"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "together"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "deepinfra/mxfp4"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "digitalocean"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "morph/fp8"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "fireworks"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "baseten/fp8"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-flash",
+   "tag": "mancer/fp8"
+  },
+  {
+   "model_id": "moonshotai/kimi-k3",
+   "tag": "moonshotai/mxfp4"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-flash",
+   "tag": "digitalocean"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-pro",
+   "tag": "digitalocean"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-flash",
+   "tag": "venice"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-pro",
+   "tag": "venice"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-pro",
+   "tag": "novita/fp8"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-pro",
+   "tag": "deepinfra/fp8"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-flash",
+   "tag": "deepinfra/fp8"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-pro",
+   "tag": "parasail/fp8"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-flash",
+   "tag": "parasail/fp8"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-flash",
+   "tag": "siliconflow/fp8"
+  },
+  {
+   "model_id": "deepseek/deepseek-v4-pro",
+   "tag": "siliconflow/fp8"
+  }
+ ]
+}

@@ -1,6 +1,7 @@
 package runner_test
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -26,10 +27,35 @@ func providerRun(t *testing.T, cfg, mode, capUSD string, script []anthropicfake.
 	g := newGW(t, cfg, mode, capUSD)
 	compat, up := anthropicfake.New(t, script...)
 	g.compat = compat
-	g.deps.Providers = map[string]config.ModelProvider{"openrouter": {
+	providers := map[string]config.ModelProvider{"openrouter": {
 		Kind: config.ModelProviderKind, BaseURL: up.URL, Auth: "bearer",
 		Secret: "openrouter-api-key", Models: []string{"deepseek/*"}, AllowDataTo: allow,
 	}}
+	g.deps.Providers = providers
+	// The job's environment carries the same routes (init --repo writes
+	// FUGARO_MODEL_PROVIDERS from the owner's local config) and the run's
+	// price table is built from them (P5): without a route no model is
+	// claimed, so the built-in catalog has no row for it. newGW built the
+	// spend before the routes existed, so rebuild it with them.
+	raw, err := json.Marshal(providers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{runner.BudgetModeEnv: mode, runner.MaxRunUSDEnv: capUSD, runner.ModelProvidersEnv: string(raw)}
+	spend, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
+	if err != nil {
+		t.Fatal(err)
+	}
+	// That table, read from the shipped catalog a day after its own
+	// checked_at rather than at the wall clock: the catalog's 30 days
+	// (catalog.StaleAfter) must not decide from today's date whether a test
+	// prices a route at the cheapest end of its tier or the dearest one.
+	// Anything a test wants to say about the clock it says by assigning
+	// g.deps.Spend.Prices itself (TestResultJSONCatalogStale).
+	if spend.Prices != nil {
+		spend.Prices = freshCatalogTable(t, providers, nil)
+	}
+	g.deps.Spend = spend
 	withProviderKey(g.harness)
 	return g
 }
@@ -100,7 +126,16 @@ func TestNoCallBeforeRefusal(t *testing.T) {
 	})
 	t.Run("the owner's allow-list does not carry it", func(t *testing.T) {
 		g := providerGW(t, providerPinned(t), "acme/app")
-		g.deps.Spend = ceilingOf(t, runner.BudgetModeEnv, "enforce", runner.MaxRunUSDEnv, "5", runner.AllowedModelsEnv, sonnet+","+haiku)
+		// The ceiling the job carries names the routes too (init --repo
+		// writes FUGARO_MODEL_PROVIDERS from the owner's local config): a
+		// ceiling built without them has no price for the route's model and
+		// refuses for that instead, which is not what this case is about.
+		raw, err := json.Marshal(g.deps.Providers)
+		if err != nil {
+			t.Fatal(err)
+		}
+		g.deps.Spend = ceilingOf(t, runner.BudgetModeEnv, "enforce", runner.MaxRunUSDEnv, "5",
+			runner.AllowedModelsEnv, sonnet+","+haiku, runner.ModelProvidersEnv, string(raw))
 		refusedBeforeAnyCall(t, g, "agent.models.coder", "allowed_models from ceiling")
 	})
 }
@@ -111,4 +146,18 @@ func TestProviderModelApprovedBootstraps(t *testing.T) {
 	if err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
+}
+
+// TestGatewayUnchangedWhenNoCatalogRow (price-catalog plan Task 4): a route
+// whose model the built-in catalog does not price leaves the run's table
+// exactly as it was before the catalog existed — the embedded table plus the
+// owner's overrides — so the run is refused at bootstrap with the same
+// message, before any call, rather than priced from a marketplace guess. The
+// route is a real one (deepseek/*, which the catalog's rows are keyed by
+// model ID, not by pattern), so the refusal is about the missing row and not
+// about the route.
+func TestGatewayUnchangedWhenNoCatalogRow(t *testing.T) {
+	const missing = "deepseek/deepseek-v9-not-in-the-catalog"
+	g := providerGW(t, strings.Replace(providerPinned(t), deepseek, missing, 1), "acme/app")
+	refusedBeforeAnyCall(t, g, "`"+missing+"` has no price", "model_prices")
 }

@@ -17,6 +17,7 @@ variables {
   names = {
     legacy_registry              = "fugaro"
     base_registry                = "fugaro-base"
+    ghcr_registry                = "fugaro-ghcr"
     scheduler_service_account_id = "fugaro-scheduler"
     role_ids = {
       launcher        = "fugaroLauncher"
@@ -57,7 +58,7 @@ run "root_passes_inputs" {
     error_message = "the root must pass fugaro_project to the module and output it as project_name"
   }
   assert {
-    condition     = output.base_registry == "fugaro-base" && output.legacy_registry == "fugaro"
+    condition     = output.base_registry == "fugaro-base" && output.legacy_registry == "fugaro" && output.ghcr_registry == "fugaro-ghcr"
     error_message = "the root must pass the registry names and adopt_legacy_registry to the module"
   }
   assert {
@@ -167,11 +168,15 @@ run "registries_are_marked" {
     error_message = "both registries are Docker registries"
   }
   assert {
+    condition     = google_artifact_registry_repository.ghcr.mode == "REMOTE_REPOSITORY" && google_artifact_registry_repository.ghcr.remote_repository_config[0].docker_repository[0].custom_repository[0].uri == "https://ghcr.io"
+    error_message = "the remote repository must proxy https://ghcr.io"
+  }
+  assert {
     condition     = length(google_artifact_registry_repository.legacy[0].cleanup_policies) == 0
     error_message = "the legacy registry holds the rollback's images and must have no cleanup policy"
   }
   assert {
-    condition     = output.legacy_registry == "fugaro" && output.base_registry == "fugaro-base"
+    condition     = output.legacy_registry == "fugaro" && output.base_registry == "fugaro-base" && output.ghcr_registry == "fugaro-ghcr"
     error_message = "the registry outputs must be the IDs"
   }
   assert {

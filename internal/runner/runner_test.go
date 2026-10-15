@@ -121,6 +121,11 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 			WorkDir: filepath.Join(tmp, "work"), Remote: remote, StateDir: filepath.Join(tmp, "state"),
 			Env:        []string{"PATH=" + os.Getenv("PATH"), "HOME=" + tmp, "ANTHROPIC_API_KEY=test-key", "FIXTURE_FAILS_FILE=" + failsFile},
 			CancelPoll: 20 * time.Millisecond, ManagedSettingsPath: filepath.Join(managed, "managed-settings.json"),
+			// The harness is a local run, as `fugaro exec --task-file` is:
+			// nothing here is a platform's signal. A test that wants the
+			// cloud sets Local false, which is also the field's zero value
+			// (design compute-backend.md §2.5).
+			Local: true,
 		},
 		store: store, bucket: bucket, provider: p, agent: a, remote: remote, failsFile: failsFile,
 	}
