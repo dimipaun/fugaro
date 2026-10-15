@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -68,14 +69,18 @@ func doctorChecksByID(t *testing.T) map[string]doctorCheck {
 	return m
 }
 
-// TestDoctorPolicyChecks is the five checks of plan task 1.6 step 4, each on
-// the state it exists for, with the severity it must carry: policy-published
-// (info), policy-newer-than-binary (warning, P8), policy-vs-jobs (warning),
-// allow-list-empty (warning) and policy-rules-skew (warning, on the fixture
-// an older CLI's init --firebase leaves: the marker at RulesVersion and the
-// deployed rules from before the policy nodes) — plus allow-list-uncovered,
-// the same question as allow-list-empty asked of the repositories this
-// machine's config names rather than of the list's length.
+// TestDoctorPolicyChecks is the checks of plan task 1.6 step 4, each on the
+// state it exists for, with the severity it must carry: policy-published
+// (info), policy-newer-than-binary and policy-older-than-binary (warnings,
+// P8's release skew in each direction: the remedies are opposite, so one
+// check carrying both would print the wrong one for half the states),
+// policy-vs-jobs (warning), allow-list-empty (warning) and policy-rules-skew
+// (warning, on both of the marker's wrong values: the fixture an older CLI's
+// init --firebase leaves — the marker at RulesVersion and the deployed rules
+// from before the policy nodes — and a marker present but below
+// RulesVersion) — plus allow-list-uncovered, the same question as
+// allow-list-empty asked of the repositories this machine's config names
+// rather than of the list's length.
 //
 // Mutation (verified, run and restored): make doctorPolicyChecks return nil:
 // every subtest fails, finding no policy check at all. Mutation for the skew
@@ -87,7 +92,19 @@ func doctorChecksByID(t *testing.T) map[string]doctorCheck {
 // no allow-list-uncovered check; and make its admission test unconditional
 // (`if true` for `!AdmitRepo(...)`) — the same subtest fails on the other
 // side, "allow-list-uncovered fired though github/acme/* admits
-// github/acme/app".
+// github/acme/app". Mutation for the version branch (verified, run and
+// restored): make the version branch unconditional (`if true` where it splits
+// ve.Found > ve.Understood) so an older node is met with the newer direction's
+// advice — "a policy older than the binary" fails, finding no
+// policy-older-than-binary check. Mutation for the marker-below state
+// (verified, run and restored): make doctorRulesSkew's `gen < RulesVersion`
+// branch return nil as it did — "a marker below the generation a policy is
+// read under" fails, finding no check. Mutation for the node no run reads
+// (verified, run and restored): read the node directly in the !found case, as
+// doctor did before it went through projectpolicy.Read, and report it as
+// published — "a node no run reads" fails on doctor printing the node as the
+// policy in force ("a policy is published at config/policy/shared (version 1,
+// 1 allow-list entries)") for a marker that is not there.
 func TestDoctorPolicyChecks(t *testing.T) {
 	t.Run("an installation with no budget backend publishes no policy", func(t *testing.T) {
 		newDoctorRig(t)
@@ -135,6 +152,49 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		}
 		if !strings.Contains(c.Problem, "upgrade Fugaro") {
 			t.Errorf("the check does not name the fix: %+v", c)
+		}
+	})
+
+	t.Run("a policy older than the binary", func(t *testing.T) {
+		// Decode refuses a version mismatch in either direction, and the two
+		// directions have opposite remedies: a newer node needs a newer Fugaro,
+		// and an older one needs the remedy the publisher itself words — remove
+		// it, then publish. Meeting the older direction with "upgrade Fugaro"
+		// sends the operator to install a release for a node this one is
+		// already newer than.
+		doctorPolicyRig(t, doctorPolicy(func(p *projectpolicy.Policy) { p.Version = projectpolicy.Version - 1 }), "")
+		c, ok := doctorChecksByID(t)["policy-older-than-binary"]
+		if !ok || c.Severity != "warning" {
+			t.Fatalf("policy-older-than-binary = %+v (present %v), want a warning", c, ok)
+		}
+		if strings.Contains(c.Problem, "upgrade Fugaro") || strings.Contains(c.Fix, "upgrade Fugaro") {
+			t.Errorf("the older direction is met with the newer direction's remedy: %+v", c)
+		}
+		if !strings.Contains(c.Fix, "fugaro project policy publish --delete") {
+			t.Errorf("the check does not name the remedy that works on an older node: %+v", c)
+		}
+		if _, ok := doctorChecksByID(t)["policy-newer-than-binary"]; ok {
+			t.Error("policy-newer-than-binary fired for a node older than this binary")
+		}
+	})
+
+	t.Run("a node no run reads", func(t *testing.T) {
+		// The marker decides whether a run reads the node at all, so a node
+		// left in a database whose rules predate the policy nodes governs
+		// nothing. doctor read the node directly and printed "a policy is
+		// published" as info while every run took the legacy path and the job
+		// environment's ceiling.
+		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+		db.Set(projectpolicy.PathRulesMarker(), nil)
+		c, ok := doctorChecksByID(t)["policy-published"]
+		if !ok || c.Severity != "info" {
+			t.Fatalf("policy-published = %+v (present %v), want an info line", c, ok)
+		}
+		if !strings.Contains(c.Problem, "governs nothing") {
+			t.Errorf("doctor reported a node no run reads as the policy in force: %+v", c)
+		}
+		if !strings.Contains(c.Fix, "fugaro init --firebase") {
+			t.Errorf("the line does not name what makes the node govern: %+v", c)
 		}
 	})
 
@@ -209,6 +269,26 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Problem, "the deployed rules are older than the marker "+projectpolicy.PathRulesMarker()) ||
 			!strings.Contains(c.Problem, "re-run 'fugaro init --firebase' with fugaro >= "+policySince) {
 			t.Errorf("the check does not print the halt's own sentence: %+v", c)
+		}
+		if !strings.Contains(c.Fix, "fugaro init --firebase") {
+			t.Errorf("the check does not name the owner's fix: %+v", c)
+		}
+	})
+
+	t.Run("a marker below the generation a policy is read under", func(t *testing.T) {
+		// A marker that is present and below this generation's is not an absent
+		// one: it records rules that predate the policy nodes while claiming a
+		// generation, so `fugaro project policy publish` refuses (P3) and no run
+		// reads a policy — the check returned nothing for it.
+		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+		db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion-1)
+		db.SetRules([]byte(`{"rules":{".read":false,".write":false}}`))
+		c, ok := doctorChecksByID(t)["policy-rules-skew"]
+		if !ok || c.Severity != "warning" {
+			t.Fatalf("policy-rules-skew = %+v (present %v), want a warning", c, ok)
+		}
+		if !strings.Contains(c.Problem, fmt.Sprintf("generation %d", projectpolicy.RulesVersion-1)) {
+			t.Errorf("the check does not name the generation the marker records: %+v", c)
 		}
 		if !strings.Contains(c.Fix, "fugaro init --firebase") {
 			t.Errorf("the check does not name the owner's fix: %+v", c)

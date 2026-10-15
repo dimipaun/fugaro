@@ -1646,13 +1646,13 @@ func admittedBy(allow []string, arg string) (bool, string) {
 	return false, ""
 }
 
-// coversRepo reports whether every repository pattern admits is admitted by
-// other too, when both are patterns: "*" admits everything, and otherwise the
-// two are compared segment against segment, where a "*" admits whatever the
-// other segment admits and any other segment must be equal to it. A segment
-// with a partial wildcard ("ac*") is only covered by itself or by "*", which is
-// conservative in the safe direction: it can miss a covering entry, and never
-// claims a repository keeps running when it does not.
+// coversRepo reports whether pattern admits every repository other admits —
+// whether other is a subset of pattern — when both are patterns: "*" admits
+// everything, and otherwise the two are compared segment against segment, where
+// a "*" admits whatever the other segment admits and any other segment must be
+// equal to it. A segment with a partial wildcard ("ac*") is only covered by
+// itself or by "*", which is conservative in the safe direction: it can miss a
+// covering entry, and never claims a repository keeps running when it does not.
 func coversRepo(pattern, other string) bool {
 	if pattern == "*" {
 		return true

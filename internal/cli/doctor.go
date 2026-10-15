@@ -1340,34 +1340,58 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck 
 			Fix:     "fix budget.rtdb_url in the project's config, then run doctor again"}}
 	}
 	checks := doctorRulesSkew(ctx, db)
-	var raw json.RawMessage
-	found, err := db.Get(ctx, shared, &raw)
-	if err != nil {
-		// A read that failed is not "no policy": doctor says which it is.
-		return append(checks, doctorCheck{ID: "policy-published", Severity: "info",
-			Problem: fmt.Sprintf("the project policy at %s could not be read (%v), so whether one is published is unknown", shared, err),
-			Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"})
-	}
-	if !found {
-		return append(checks, doctorCheck{ID: "policy-published", Severity: "info",
-			Problem: fmt.Sprintf("no policy is published at %s: runs take their ceiling from the job environment", shared),
-			Fix:     "fugaro project policy publish publishes the project's policy"})
-	}
-	p, _, err := projectpolicy.Decode(raw)
-	if err != nil {
-		var ve *projectpolicy.VersionError
-		if errors.As(err, &ve) {
-			// P8's release skew: the node was written by a newer Fugaro. It is
-			// not a refusal here (doctor changes nothing) but it does mean this
-			// binary cannot read what governs the project's runs.
+	// The node is read through projectpolicy.Read, the reader a run uses
+	// (design §5(3)), not with a plain Get: with no marker, or one below
+	// RulesVersion, no run reads the policy however the node is written, and a
+	// check that read the node directly printed "a policy is published" as info
+	// while every run took the legacy path and the job environment's ceiling.
+	p, found, err := projectpolicy.Read(ctx, db)
+	var me *projectpolicy.MarkerError
+	var ve *projectpolicy.VersionError
+	switch {
+	case errors.As(err, &me):
+		// The marker is not a generation at all. doctorRulesSkew has reported it,
+		// and Read cannot get past it — neither can a run — so there is nothing
+		// further doctor can honestly say about the node.
+		return checks
+	case errors.As(err, &ve):
+		// P8's release skew, both directions: Decode refuses a node of any other
+		// version, and the two remedies are opposite. A newer node needs a newer
+		// Fugaro. An older one — a hand-written node, or one a release before
+		// this shape wrote — is the version *this* binary writes, so "upgrade
+		// Fugaro" is backwards there and the remedy is the one the publisher
+		// itself words (publishedPolicyOf): remove it, then publish.
+		if ve.Found > ve.Understood {
 			return append(checks, doctorCheck{ID: "policy-newer-than-binary", Severity: "warning",
 				Problem: fmt.Sprintf("%s: %s", fmt.Sprintf(projectpolicy.CLISkew, ve.Found, ve.Understood), shared),
 				Fix:     fmt.Sprintf("upgrade Fugaro to a release that understands version %d", ve.Found)})
 		}
-		return append(checks, doctorCheck{ID: "policy-published", Severity: "warning",
-			Problem: fmt.Sprintf("%s holds a node this Fugaro cannot read: %v", shared, err),
-			Fix:     "read it yourself (fugaro project policy show prints what this binary can decode) and republish with 'fugaro project policy publish' if it is not the policy you meant"})
+		return append(checks, doctorCheck{ID: "policy-older-than-binary", Severity: "warning",
+			Problem: fmt.Sprintf("%s holds a policy of version %d, and this Fugaro writes version %d: no run applies it, and publishing over it is refused", shared, ve.Found, ve.Understood),
+			Fix:     fmt.Sprintf("fugaro project policy publish --delete removes it, then 'fugaro project policy publish' writes this Fugaro's version %d", ve.Understood)})
+	case err != nil:
+		// A read that failed is not "no policy": doctor says which it is.
+		return append(checks, doctorCheck{ID: "policy-published", Severity: "info",
+			Problem: fmt.Sprintf("the project policy could not be read (%v), so whether one is published, and whether the runs are bounded by it, is unknown", err),
+			Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"})
+	case err == nil && !found:
+		info := doctorCheck{ID: "policy-published", Severity: "info",
+			Problem: fmt.Sprintf("no policy is published at %s: runs take their ceiling from the job environment", shared),
+			Fix:     "fugaro project policy publish publishes the project's policy"}
+		// A node can be written and still govern nothing. "No policy is
+		// published" is true of every run and silent about the node; the
+		// operator looking at a database where one sits — written by hand, or
+		// left by a rules deploy an older CLI rolled back — needs both.
+		var raw json.RawMessage
+		if ok, gerr := db.Get(ctx, shared, &raw); gerr == nil && ok && !emptyPolicyNode(raw) {
+			info.Problem = fmt.Sprintf("a policy node is written at %s, but it governs nothing: %s does not record the rules generation this Fugaro reads a policy under, so no run reads it and every run takes its ceiling from the job environment",
+				shared, projectpolicy.PathRulesMarker())
+			info.Fix = "re-run 'fugaro init --firebase' with fugaro >= " + policySince + " in your own terminal to deploy the rules a policy is read under, then 'fugaro project policy publish'"
+		}
+		return append(checks, info)
 	}
+	// found, and Read returned no error: the node is in force, so the checks
+	// below can read it — Decode's error would have arrived as err above.
 	checks = append(checks, doctorCheck{ID: "policy-published", Severity: "info",
 		Problem: fmt.Sprintf("a policy is published at %s (version %d, %d allow-list entries)", shared, p.Version, len(p.AllowRepos)),
 		Fix:     "fugaro project policy show prints it"})
@@ -1471,6 +1495,12 @@ func doctorPolicyVsJobs(lc *localcfg.Config) *doctorCheck {
 //
 // A warning, not an error: the fix is the owner's `fugaro init --firebase`
 // and doctor cannot perform it.
+//
+// The same check reports the marker's other wrong value: present and *below*
+// this generation's (see the gen < RulesVersion branch). An absent marker is
+// not one of them — it is generation 0 without a claim, and there is nothing
+// for the rules to be older than; what an absent marker does to a node is
+// doctorPolicyChecks's line to draw.
 func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 	marker := projectpolicy.PathRulesMarker()
 	var raw json.RawMessage
@@ -1489,7 +1519,16 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 			Fix:     "re-run 'fugaro init --firebase' with fugaro >= " + policySince + " in your own terminal, which writes the marker this Fugaro reads"}}
 	}
 	if gen < projectpolicy.RulesVersion {
-		return nil
+		// Present and below this generation's is a state of its own, not an
+		// absent marker: it records rules that predate the policy nodes, so
+		// `fugaro project policy publish` refuses (requirePolicyRules) and no
+		// run reads a policy (Read gates on the marker alone). Reporting
+		// nothing here printed "a policy is published" as info while every run
+		// took the legacy path. The sentence is the one publish refuses with,
+		// so the state reads the same met as a refusal or as a report.
+		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
+			Problem: fmt.Sprintf("%s records generation %d, below the generation %d a project policy is read under: %s", marker, gen, projectpolicy.RulesVersion, rulesSkewText()),
+			Fix:     "re-run 'fugaro init --firebase' with fugaro >= " + policySince + " in your own terminal: it redeploys the rules the policy is read under and records this release's generation in the marker"}}
 	}
 	live, err := db.Rules(ctx)
 	if err != nil {
@@ -1502,6 +1541,15 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 	return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 		Problem: rulesSkewText(),
 		Fix:     "re-run 'fugaro init --firebase' with fugaro >= " + policySince + " in your own terminal: it redeploys the rules the policy is read under"}}
+}
+
+// emptyPolicyNode reports whether a node read back from the database is JSON
+// null or empty: both the fake and the real database report an absent node as
+// null, and projectpolicy.Read treats it as "installed, not adopted" — so
+// doctor's mention of a node no run reads must not call that one a node.
+func emptyPolicyNode(raw []byte) bool {
+	s := strings.TrimSpace(string(raw))
+	return s == "" || s == "null"
 }
 
 // policyDocEqual reports whether a and b are the same JSON document,

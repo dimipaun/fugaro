@@ -83,9 +83,11 @@ func TestDocsProjectLayerSaysWhatDoctorReports(t *testing.T) {
 	for _, want := range []string{
 		"It also reports the project's policy",
 		"a policy **newer than this Fugaro**",
+		"a policy **older than this Fugaro**",
 		"**empty `allow_repos`** in a published policy",
 		"**a repository this machine's config names that the allow-list does not admit**",
 		"**deployed rules older than the marker**",
+		"**a rules marker below the generation this Fugaro reads a policy under**",
 		"`model_prices` one line per model",
 	} {
 		if !strings.Contains(doc, want) {
