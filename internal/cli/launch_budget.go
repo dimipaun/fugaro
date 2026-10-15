@@ -110,8 +110,19 @@ func projectPolicyOf(ctx context.Context, lc *localcfg.Config) (*projectpolicy.P
 		return nil, false, userErr("%v", err)
 	case errors.Is(err, rtdb.ErrPermission):
 		return nil, false, userErr("%v: the deployed rules no longer let this project read its own policy; if they are older than %s, run fugaro init --firebase again with this Fugaro", err, projectpolicy.PathRulesMarker())
-	default:
+	case errors.Is(err, rtdb.ErrUnavailable):
 		return nil, false, remote(err)
+	default:
+		// What is left is a node the database handed over and this Fugaro
+		// could not read: not JSON, over MaxPolicyBytes, a version that is
+		// not an integer, a budget block the decoder refuses. That is the
+		// project's own published data, and the same class is the user's own
+		// error (exit 1) everywhere else in the CLI — dbErr and
+		// checkDBProject both call a bad node a user error. Only an outage is
+		// remote, and a run cannot fix either one. The node is named: a
+		// decoder message says what is wrong with the document, not which
+		// document it is.
+		return nil, false, userErr("%s: %w", projectpolicy.PathShared(), err)
 	}
 	if found && len(p.UnknownKeys) > 0 {
 		return nil, false, userErr("%s lists %s, which this Fugaro does not know: a key nobody reads is a policy that never takes effect; fix the policy, or upgrade Fugaro (fugaro upgrade)",

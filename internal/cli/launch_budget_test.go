@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -212,6 +213,14 @@ func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) 
 		if c := claimsOf(t, f, tok); c["fs"] != appSlug || c["fr"] != budgetRun || c["fp"] != "aurora" {
 			t.Fatalf("claims = %v", c)
 		}
+		// M2: the launch that minted marks this execution with the token, and
+		// the marker is the run request's, not the job's deployment (that
+		// environment is init --repo's, and internal/infra pins that it never
+		// carries the marker). It is what makes a missing token a refusal for
+		// this run instead of "this project has published no policy".
+		if env[runner.BudgetTokenEnv] != "1" {
+			t.Fatalf("a launch that minted a token set %s = %q in its request, want 1", runner.BudgetTokenEnv, env[runner.BudgetTokenEnv])
+		}
 		// The launch is not the deploy: the job's own environment is the one
 		// the mode was deployed with, and the launcher does not rewrite it to
 		// the policy's mode. What the policy decides is the runner's mode,
@@ -278,6 +287,60 @@ func TestLaunchRefusesAPolicyKeyThisFugaroDoesNotKnow(t *testing.T) {
 	}
 	if launchedAny(f) {
 		t.Fatal("the run was launched with a policy this Fugaro does not understand")
+	}
+}
+
+// The branch of projectPolicyOf no test reached (the review of PR #379): a
+// policy node the database handed over and this Fugaro could not read is the
+// project's own published data, so it is the user's error (exit 1) — the class
+// dbErr and checkDBProject use for a bad node in the same database. It used to
+// fall through to remote (exit 2), which sends the operator to the dashboard
+// for a policy he wrote himself.
+func TestLaunchClassifiesAMalformedPolicyAsTheUsersOwnError(t *testing.T) {
+	for name, node := range map[string]string{
+		"a budget the decoder refuses": `{"version":1,"budget":{"mode":"nonsense"}}`,
+		"a node with no version":       `{"budget":{"mode":"enforce"}}`,
+		"not a JSON object":            `["budget"]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newOffModeBudget(t, "")
+			f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+				", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
+			f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+			f.db.Set(projectpolicy.PathShared(), json.RawMessage(node))
+			_, _, err := runBudget(t)
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v (exit %d), want the user's own error (exit %d)", err, ExitCode(err), ExitUserError)
+			}
+			if !strings.Contains(err.Error(), projectpolicy.PathShared()) {
+				t.Errorf("the refusal does not name the node to fix: %v", err)
+			}
+			if launchedAny(f) || readToken(t, f.cloudFixture, budgetRun) != "" {
+				t.Fatal("a launch read a policy it cannot parse and minted the run an identity anyway")
+			}
+		})
+	}
+}
+
+// The other half of the same split: an outage is remote (exit 2) — the launch
+// cannot see whether the project has a policy at all, and nothing the operator
+// writes in the policy would help. It fails closed, like dbErr.
+func TestLaunchClassifiesAnUnreachablePolicyReadAsRemote(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	l.Close() // nothing answers on that port now
+	f := newOffModeBudget(t, "")
+	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: http://"+addr+", token_signer: "+testSigner+
+		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
+	_, _, err = runBudget(t)
+	if err == nil || ExitCode(err) != ExitRemoteError {
+		t.Fatalf("err = %v (exit %d), want a remote failure (exit %d)", err, ExitCode(err), ExitRemoteError)
+	}
+	if launchedAny(f) {
+		t.Fatal("the run was launched without seeing the project's policy")
 	}
 }
 
