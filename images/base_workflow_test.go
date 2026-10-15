@@ -262,8 +262,10 @@ type workflowStep struct {
 }
 
 type workflowJob struct {
-	Permissions map[string]string `yaml:"permissions"`
-	Steps       []workflowStep    `yaml:"steps"`
+	Permissions     map[string]string `yaml:"permissions"`
+	If              string            `yaml:"if"`
+	ContinueOnError any               `yaml:"continue-on-error"`
+	Steps           []workflowStep    `yaml:"steps"`
 }
 
 type imagesWorkflow struct {
@@ -289,7 +291,22 @@ const (
 	signIdentity   = "https://github.com/dimipaun/fugaro/.github/workflows/images.yml@refs/tags/v$VERSION"
 	signIssuer     = "https://token.actions.githubusercontent.com"
 	indexDigestRef = "${{ steps.index.outputs.digest }}" // the digest the sign step must use
+	// The identity above alone does not say the run was a TAG PUSH: a
+	// workflow_dispatch run started against a tag ref gets the same
+	// `...images.yml@refs/tags/vX.Y.Z` certificate subject. These two Fulcio
+	// extensions say it (1.3.6.1.4.1.57264.1.2 = event_name, .1.5 =
+	// repository), and cosign's verify reads them through these flags.
+	signTriggerFlag = `--certificate-github-workflow-trigger "push"`
+	signRepoFlag    = `--certificate-github-workflow-repository "dimipaun/fugaro"`
+	// publish-base's own gate: pinned so that widening it to always() — which
+	// would sign and publish on a pull request or a nightly — fails here.
+	publishBaseIf = "needs.version.outputs.publish == 'true' && contains(needs.version.outputs.kinds, ',base,')"
 )
+
+// swallowedFailure is how a shell turns a failed command into a green step:
+// `|| true`, `|| :`, `|| /bin/true`, `|| exit 0`. All of them are the same
+// mistake, so the check catches the class, not one spelling.
+var swallowedFailure = regexp.MustCompile(`\|\|\s*(true|:|/bin/true|exit 0)(\s|$)`)
 
 func stepName(s workflowStep) string {
 	if s.Name != "" {
@@ -328,6 +345,15 @@ func signingProblems(wf imagesWorkflow) []string {
 	if !ok {
 		return append(out, "no publish-base job")
 	}
+	// The job's own gate, pinned exactly: `always()` (or anything else that
+	// drops the publish/kinds conditions) would sign and publish the pinned
+	// tag on a pull request, a nightly, or a backport tree with no base.
+	if got := strings.TrimSpace(job.If); got != publishBaseIf {
+		bad("the publish-base job's if is %q, want exactly %q: signing must stay behind the publish/kinds gate", got, publishBaseIf)
+	}
+	if job.ContinueOnError != nil && job.ContinueOnError != false {
+		bad("publish-base sets continue-on-error: %v at JOB level, so a failed signature would leave the workflow green", job.ContinueOnError)
+	}
 	at, steps := map[string]int{}, map[string]workflowStep{}
 	for i, s := range job.Steps {
 		if s.ID != "" {
@@ -339,10 +365,11 @@ func signingProblems(wf imagesWorkflow) []string {
 		if strings.HasPrefix(s.Uses, "sigstore/cosign-installer@") && s.Uses != cosignPin {
 			bad("cosign-installer is pinned as %q, want the full commit SHA %q", s.Uses, cosignPin)
 		}
-		// A failure anywhere in the chain must fail the job: `|| true` and
-		// continue-on-error both turn a failed signature into a green run.
-		if strings.Contains(s.Run, "|| true") {
-			bad("step %q swallows a failure with `|| true`", stepName(s))
+		// A failure anywhere in the chain must fail the job: a shell `|| true`
+		// (or `|| :`, `|| /bin/true`, `|| exit 0`) and continue-on-error both
+		// turn a failed signature into a green run.
+		if swallowedFailure.MatchString(script(s.Run)) {
+			bad("step %q swallows a failure with `|| true` (or the same thing spelled `|| :`, `|| /bin/true`, `|| exit 0`)", stepName(s))
 		}
 		if s.ContinueOnError != nil && s.ContinueOnError != false {
 			bad("step %q sets continue-on-error: %v, so its failure would not fail the job", stepName(s), s.ContinueOnError)
@@ -423,9 +450,9 @@ func signingProblems(wf imagesWorkflow) []string {
 	if !strings.Contains(verifyRun, "cosign verify") || !strings.Contains(verifyRun, `"$repo@$DIGEST"`) {
 		bad("the verify step does not run `cosign verify` against the signed digest")
 	}
-	for _, want := range []string{signIdentity, signIssuer} {
+	for _, want := range []string{signIdentity, signIssuer, signTriggerFlag, signRepoFlag} {
 		if !strings.Contains(verifyRun, want) {
-			bad("the verify step does not require %q: a signature from another identity would pass", want)
+			bad("the verify step does not require %q: a signature from another identity, a workflow_dispatch run against the same tag ref, or another repository would pass", want)
 		}
 	}
 
@@ -547,6 +574,24 @@ func TestSigningProblemsFindEveryMutation(t *testing.T) {
 		{"the sign step swallows a failure with `|| true`", func(wf imagesWorkflow) imagesWorkflow {
 			return wf.withStep("sign", func(s *workflowStep) { s.Run += " || true" })
 		}, "swallows a failure"},
+		{"the sign step swallows a failure with `|| :` instead", func(wf imagesWorkflow) imagesWorkflow {
+			return wf.withStep("sign", func(s *workflowStep) { s.Run += ` || :` })
+		}, "swallows a failure"},
+		{"the verification step swallows a failure with `|| exit 0`", func(wf imagesWorkflow) imagesWorkflow {
+			return wf.withStep("verify", func(s *workflowStep) { s.Run += " || exit 0" })
+		}, "swallows a failure"},
+		{"publish-base is marked continue-on-error at job level", func(wf imagesWorkflow) imagesWorkflow {
+			job := wf.Jobs["publish-base"]
+			job.ContinueOnError = true
+			wf.Jobs["publish-base"] = job
+			return wf
+		}, "at JOB level"},
+		{"the publish-base job's gate is widened to always()", func(wf imagesWorkflow) imagesWorkflow {
+			job := wf.Jobs["publish-base"]
+			job.If = "always()"
+			wf.Jobs["publish-base"] = job
+			return wf
+		}, "the publish-base job's if is"},
 		{"the sign step sets continue-on-error: true", func(wf imagesWorkflow) imagesWorkflow {
 			return wf.withStep("sign", func(s *workflowStep) { s.ContinueOnError = true })
 		}, "sets continue-on-error"},
@@ -671,6 +716,24 @@ func TestSigningProblemsFindEveryMutation(t *testing.T) {
 				s.Run = strings.ReplaceAll(s.Run, signIssuer, "https://example.invalid/issuer")
 			})
 		}, `does not require "https://token.actions`},
+		// The identity says the workflow and the tag ref, not that the run was
+		// a tag PUSH: a workflow_dispatch run on that same ref passes the
+		// identity check alone, so the trigger extension is what closes it.
+		{"the verify step no longer requires the triggering event to be a push", func(wf imagesWorkflow) imagesWorkflow {
+			return wf.withStep("verify", func(s *workflowStep) {
+				s.Run = strings.ReplaceAll(s.Run, signTriggerFlag, "")
+			})
+		}, "--certificate-github-workflow-trigger"},
+		{"the verify step accepts a workflow_dispatch run against the tag ref", func(wf imagesWorkflow) imagesWorkflow {
+			return wf.withStep("verify", func(s *workflowStep) {
+				s.Run = strings.ReplaceAll(s.Run, signTriggerFlag, `--certificate-github-workflow-trigger "workflow_dispatch"`)
+			})
+		}, "--certificate-github-workflow-trigger"},
+		{"the verify step no longer requires this repository", func(wf imagesWorkflow) imagesWorkflow {
+			return wf.withStep("verify", func(s *workflowStep) {
+				s.Run = strings.ReplaceAll(s.Run, signRepoFlag, "")
+			})
+		}, "--certificate-github-workflow-repository"},
 		{"the -pinned tag is written unconditionally, with the guard only in a comment", func(wf imagesWorkflow) imagesWorkflow {
 			return wf.withStep("pinned", func(s *workflowStep) {
 				s.If = ""
@@ -714,6 +777,27 @@ func TestSigningProblemsFindEveryMutation(t *testing.T) {
 	}
 }
 
+// TestCloneWorkflowIsFaithful is the mutation test's own guard: a clone that
+// silently dropped a field (a new job-level `if:` or `continue-on-error`, a
+// step's env) would make every mutation of that field look identical to the
+// real workflow — the mutation would pass, or worse, the *real* file would
+// report a problem it does not have. Comparing the two marshalled forms
+// means any field added to these structs is copied or this fails.
+func TestCloneWorkflowIsFaithful(t *testing.T) {
+	base := parseImagesWorkflow(t, readImagesWorkflow(t))
+	want, err := yaml.Marshal(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := yaml.Marshal(cloneWorkflow(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("cloneWorkflow did not copy the workflow faithfully:\nclone:\n%s\nparsed:\n%s", got, want)
+	}
+}
+
 // slice copy of the parsed workflow, so a mutation cannot reach through the
 // shared backing arrays into the next mutation's base.
 func cloneWorkflow(wf imagesWorkflow) imagesWorkflow {
@@ -724,7 +808,12 @@ func cloneWorkflow(wf imagesWorkflow) imagesWorkflow {
 			s.Env = cloneMap(s.Env)
 			steps[i] = s
 		}
-		out.Jobs[name] = workflowJob{Permissions: cloneMap(job.Permissions), Steps: steps}
+		out.Jobs[name] = workflowJob{
+			Permissions:     cloneMap(job.Permissions),
+			If:              job.If,
+			ContinueOnError: job.ContinueOnError,
+			Steps:           steps,
+		}
 	}
 	return out
 }

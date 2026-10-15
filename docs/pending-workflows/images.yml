@@ -340,15 +340,26 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
           DIGEST: ${{ steps.index.outputs.digest }}
         run: |
+          # pipefail: this shell has no pipeline today, so it is inert; it
+          # keeps a later edit that adds one from silently swallowing a
+          # failure, which is what every set -eu in this chain is for.
           set -eu
+          set -o pipefail
           repo=ghcr.io/dimipaun/fugaro-base
           cosign sign --yes "$repo@$DIGEST"
       # An independent read-back of what was actually attached, before
       # anything points at the signed digest. The identity is THIS workflow
-      # on THIS tag push and nobody else's: cosign verify uses the
-      # transparency log and binds the artifact digest, so no
-      # --insecure-ignore-tlog and no "verify without an artifact" mode is
-      # used anywhere here or below.
+      # on THIS tag push and nobody else's — and the identity alone is not
+      # enough to say "tag push": a workflow_dispatch run started against a
+      # tag ref gets the very same `...images.yml@refs/tags/vX.Y.Z`
+      # certificate subject. The trigger and repository extensions are what
+      # distinguish them, so both are required too
+      # (--certificate-github-workflow-trigger/-repository, which check the
+      # Fulcio extensions 1.3.6.1.4.1.57264.1.2 "event_name" and
+      # 1.3.6.1.4.1.57264.1.5 "repository"; flag names confirmed against
+      # cosign's own v3 verify docs). cosign verify uses the transparency
+      # log and binds the artifact digest, so no --insecure-ignore-tlog and
+      # no "verify without an artifact" mode is used anywhere here or below.
       - name: Verify the signature just attached
         id: verify
         if: github.event_name == 'push'
@@ -357,10 +368,13 @@ jobs:
           DIGEST: ${{ steps.index.outputs.digest }}
         run: |
           set -eu
+          set -o pipefail
           repo=ghcr.io/dimipaun/fugaro-base
           cosign verify \
             --certificate-identity "https://github.com/dimipaun/fugaro/.github/workflows/images.yml@refs/tags/v$VERSION" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-github-workflow-trigger "push" \
+            --certificate-github-workflow-repository "dimipaun/fugaro" \
             "$repo@$DIGEST"
       # Only now, with the signature made and verified, does anything name
       # <version>-pinned: a copy-time resolve reads this tag, and this job
