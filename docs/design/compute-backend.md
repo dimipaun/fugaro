@@ -630,10 +630,10 @@ token for the VM's service account. Two facts follow:
 ### 3.4 Deleting the instance on every exit path
 
 A leaked VM is both a cost and a security problem (a live host holding a run's
-secrets and SA token). Batch does most of this for free — when a job reaches
-`SUCCEEDED`, `FAILED` or `DELETION_IN_PROGRESS`, Batch tears down its VMs —
-but the design does not rely on that alone, because "most exit paths" is not
-"every exit path":
+secrets and SA token). Batch is expected to do most of this for free — a
+finished or deleted job takes its VMs with it — but the design does not rely
+on that alone, because "most exit paths" is not "every exit path" and because
+the teardown is assumed rather than read:
 
 - **Success, failure, cancelled:** Batch job terminal states, with the VMs
   expected to be torn down by the service, and `jobs.delete` (cancel) moving
