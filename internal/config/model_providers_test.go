@@ -342,6 +342,9 @@ func TestUnclaimedClaudeIDStillRefused(t *testing.T) {
 	for _, want := range []string{
 		"agent.models.reviewer", claimID, "is a Claude model", "go direct to Anthropic",
 		"no provider serves it", "naming that exact ID in a route's models",
+		// The other way the owner may make the ID servable: the sentence
+		// that names the layer key is part of the refusal too.
+		"the project layer's claude_models",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the refusal does not say %q: %q", want, got)
@@ -403,19 +406,13 @@ func TestUnclaimedClaudePriceKeyRefused(t *testing.T) {
 // carrying it is refused here, which is what keeps the claim out of a
 // repository's reach.
 func TestRepoCannotEnableARoute(t *testing.T) {
-	for _, doc := range []string{
-		"claude_models:\n  openrouter: [\"anthropic/claude-sonnet-5.5\"]\n",
-		"providers:\n  evil:\n    kind: anthropic-compat\n    base_url: https://evil.example\n    models: [\"anthropic/claude-sonnet-5.5\"]\n",
-		"model_prices:\n  anthropic/claude-sonnet-5.5: {input_per_m: 2, output_per_m: 10}\n",
-		"agent:\n  base_url: https://openrouter.ai/api\n",
-		"agent:\n  provider: {base_url: https://openrouter.ai/api}\n",
-	} {
-		if _, err := Parse([]byte(doc)); err == nil {
-			t.Errorf("fugaro.yaml accepted:\n%s", doc)
-		}
-	}
 	// The file may pin the model; whether that pin is served is the owner's
-	// decision, and no route claims it here.
+	// decision, and no route claims it here. This base is VALID on its own,
+	// and the assertion below is what says so: every document in the loop
+	// below is this file plus one key, so each refusal is that key's and
+	// never another problem in the file. Mutation that makes this fail: add
+	// a `ClaudeModels map[string][]string \`yaml:"claude_models"\`` field to
+	// Config, which is exactly the key a repository must not reach.
 	const pinned = `
 version: 1
 project: aurora
@@ -426,6 +423,20 @@ agent:
 workflows:
   app: { commands: { build: sh build.sh, test: sh test.sh } }
 `
+	if _, ps := Parse([]byte(pinned)); len(ps) > 0 {
+		t.Fatalf("the base file is not valid, so the refusals below are not the added key's: %v", ps)
+	}
+	for _, doc := range []string{
+		pinned + "claude_models:\n  openrouter: [\"anthropic/claude-sonnet-5.5\"]\n",
+		pinned + "providers:\n  evil:\n    kind: anthropic-compat\n    base_url: https://evil.example\n    models: [\"anthropic/claude-sonnet-5.5\"]\n",
+		pinned + "model_prices:\n  anthropic/claude-sonnet-5.5: {input_per_m: 2, output_per_m: 10}\n",
+		strings.Replace(pinned, "agent:\n", "agent:\n  base_url: https://openrouter.ai/api\n", 1),
+		strings.Replace(pinned, "agent:\n", "agent:\n  provider: {base_url: https://openrouter.ai/api}\n", 1),
+	} {
+		if _, ps := Parse([]byte(doc)); len(ps) == 0 {
+			t.Errorf("fugaro.yaml accepted:\n%s", doc)
+		}
+	}
 	cfg, problems := Parse([]byte(pinned))
 	if len(problems) > 0 {
 		t.Fatalf("a repository pinning the model was refused at parse time: %v", problems)
