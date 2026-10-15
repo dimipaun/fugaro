@@ -293,7 +293,7 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 	//    keeps the two rules that matter -- nothing is removed from the state
 	//    that no later step can delete, and no job is left alive in GCP with
 	//    nothing managing it and nothing said.
-	if err := retireBlockers(spec, r.retireState, rets); err != nil {
+	if err := retireBlockers(spec, r.retireState, rets, wd.Root); err != nil {
 		return err
 	}
 	if opts.AllowJobDelete {
@@ -396,7 +396,7 @@ func retireUndone(action string, removed []string) string {
 // §3.1). Removing the address anyway would leave the job alive in GCP with
 // nothing managing it and nothing said, so the run refuses (exit 1), names
 // the address, and removes nothing (I3).
-func retireBlockers(spec infra.RepoSpec, stateAddrs []string, rets []infra.Retirement) error {
+func retireBlockers(spec infra.RepoSpec, stateAddrs []string, rets []infra.Retirement, workdir string) error {
 	inState := make(map[string]bool, len(stateAddrs))
 	for _, a := range stateAddrs {
 		inState[a] = true
@@ -423,10 +423,10 @@ func retireBlockers(spec infra.RepoSpec, stateAddrs []string, rets []infra.Retir
 		if region == "" {
 			region = spec.Region
 		}
-		fmt.Fprintf(&b, "\n  %s (%s): the state's own values carry no name for it, and fugaro never guesses one. Find it by its labels, then delete it by hand: %s",
-			ret.Address, region, gcloudJobList(spec.GCPProject, region, infra.OrphanLabels(spec)))
+		fmt.Fprintf(&b, "\n  %s (%s): the state's own values carry no name for it, and fugaro never guesses one. Find it by its labels, then delete it by hand: %s\n    the state still holds the address, so take it out too, or the rerun's state removal refuses it and the same refusal comes back: `terraform state rm '%s'` in %s destroys nothing.",
+			ret.Address, region, gcloudJobList(spec.GCPProject, region, infra.OrphanLabels(spec)), ret.Address, workdir)
 	}
-	b.WriteString("\nThen rerun " + retireNextCommand + ": with the job gone, the state removal, the plan and the apply can run.")
+	b.WriteString("\nThen rerun " + retireNextCommand + ": with the job gone, and its address out of Terraform's state, the state removal, the plan and the apply can run.")
 	return userErr("%s", b.String())
 }
 
@@ -611,10 +611,20 @@ func collapseSpace(s string) string { return strings.Join(strings.Fields(s), " "
 // this run read: for any other address the state removal would not touch it,
 // the same plan would abort in the same place, and pointing at --retire would
 // be advice that cannot work. The configuration is what holds that
-// prevent_destroy, so the two ways out are named instead: take the block out
-// of the module, or put back the configuration change that made Terraform
-// want to destroy the resource (M5).
-func retireAborted(rets []infra.Retirement, addr string) error {
+// prevent_destroy, so for most addresses the two ways out are named instead:
+// take the block out of the module, or put back the configuration change that
+// made Terraform want to destroy the resource (M5).
+//
+// Two addresses are not given the first of those (review round 2, I-B): the
+// secret container and the registry are the resources whose module
+// declaration carries prevent_destroy (modules/repo/secrets.tf:22,
+// registry.tf:59), the block IS fugaro's promise that it never deletes a
+// secret or a secret version, and the advice could not be followed anyway --
+// the modules are embedded in the binary, and PrepareWorkdir rewrites the
+// workdir on the next run. Their safe route is the state removal the docs
+// give for an older binary instead: the resource leaves Terraform's state,
+// which destroys nothing, and stays in GCP with its value.
+func retireAborted(rets []infra.Retirement, addr, workdir string) error {
 	where := ""
 	if addr != "" {
 		where = "\n  " + addr
@@ -622,7 +632,37 @@ func retireAborted(rets []infra.Retirement, addr string) error {
 	if slices.ContainsFunc(rets, func(r infra.Retirement) bool { return r.Address == addr }) && addr != "" {
 		return userErr("the plan was refused: %s carries lifecycle.prevent_destroy, so Terraform will not plan its destruction, and this change retires it.%s\nRerun with --retire: it removes the protected addresses from Terraform's state (destroys nothing), applies, and deletes the orphaned jobs through the Cloud Run API:\n  %s", addr, where, retireNextCommand)
 	}
+	if keeps, never := neverDestroyed(addr); never {
+		return userErr("the plan was refused: %s carries lifecycle.prevent_destroy, so Terraform will not plan its destruction.%s\nfugaro read no retirement for this address, so --retire would remove nothing here and the same plan would abort in the same place. Fugaro never destroys this resource -- the block is that promise, not a line to delete -- so only you can say which side is wrong:\n  - Terraform is holding a resource that should go: leave it in GCP and take it out of Terraform's state: `terraform state rm '%s'` in %s destroys nothing and keeps %s; then rerun `fugaro init --repo`.\n  - the resource should stay: revert the configuration change that asked for its destruction, then rerun.", nonEmpty(addr, "a resource"), where, addr, workdir, keeps)
+	}
 	return userErr("the plan was refused: %s carries lifecycle.prevent_destroy, so Terraform will not plan its destruction.%s\nfugaro read no retirement for this address, so --retire would remove nothing here and the same plan would abort in the same place. The block is in the configuration, and only you can say which side is wrong:\n  - Terraform is holding a resource that should go: take the lifecycle.prevent_destroy block out of the module for that address (or restore the configuration that used to produce it), then rerun.\n  - the resource should stay: revert the configuration change that asked for its destruction, then rerun.", nonEmpty(addr, "a resource"), where)
+}
+
+// neverDestroyedTypes are the resource types fugaro never destroys, each
+// with what its state removal leaves behind: the repository's secret
+// container (one container holds every version, so deleting it deletes the
+// secret and its value) and its Artifact Registry repository (every image in
+// it). Both are the types whose module declaration carries the
+// lifecycle.prevent_destroy that aborts the plan above
+// (deploy/terraform/gcp/modules/repo/secrets.tf, registry.tf).
+//
+// The match is on the type with its trailing dot, so
+// `google_secret_manager_secret.this` is one and
+// `google_secret_manager_secret_iam_member.operator` -- the grant, which
+// fugaro does delete -- is not.
+var neverDestroyedTypes = map[string]string{
+	"google_secret_manager_secret.":        "the secret and its value",
+	"google_artifact_registry_repository.": "the registry and the images in it",
+}
+
+// neverDestroyed is whether addr is one of those, and what stays behind.
+func neverDestroyed(addr string) (keeps string, ok bool) {
+	for typ, keeps := range neverDestroyedTypes {
+		if strings.Contains(addr, typ) {
+			return keeps, true
+		}
+	}
+	return "", false
 }
 
 // nonEmpty is s, or fallback for the empty string, in a message that has to

@@ -33,6 +33,10 @@ const (
 	retireJobAddr  = `module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0]`
 	retireSvcAddr  = `module.repo.module.workflow["app_bmb"].google_service_account.this`
 	retireKeptAddr = `module.repo.google_secret_manager_secret.this["claude-oauth-token-bmb"]`
+	// The repository's registry: the configuration still produces it, so it
+	// is never a retirement, and its module declaration carries the second
+	// lifecycle.prevent_destroy (modules/repo/registry.tf:59).
+	retireRegistryAddr = `module.repo.google_artifact_registry_repository.images`
 )
 
 // retireOpts are the rig's knobs.
@@ -109,7 +113,7 @@ func newRetireRig(t *testing.T, o retireOpts) *retireRig {
 	plan := []planChange{
 		retireChange(retireSvcAddr, "google_service_account", "delete"),
 		retireChange(`module.repo.module.workflow["app"].google_cloud_run_v2_job.this[0]`, "google_cloud_run_v2_job", "update"),
-		retireChange(`module.repo.google_artifact_registry_repository.images`, "google_artifact_registry_repository", "create"),
+		retireChange(retireRegistryAddr, "google_artifact_registry_repository", "create"),
 	}
 	if o.outside != "" {
 		plan = append(plan, retireChange(o.outside, "google_storage_bucket_iam_member", "delete"))
@@ -711,14 +715,33 @@ func TestPreventDestroyAbortMatchesWrappedTerraformText(t *testing.T) {
 	// For anything else the same plan would abort in the same place, so the
 	// refusal names the configuration and the block instead of advice that
 	// cannot work.
-	notRead := retireAborted(nil, retireKeptAddr)
+	// The address used here is the container's, so this is also I-B's unit
+	// form: no message of fugaro's tells the reader to drop a
+	// prevent_destroy block from a resource it never destroys.
+	notRead := retireAborted(nil, retireKeptAddr, "/wd")
 	if strings.Contains(notRead.Error(), retireNextCommand) {
 		t.Errorf("the abort points at --retire for an address it would not remove: %v", notRead)
 	}
 	if !strings.Contains(notRead.Error(), retireKeptAddr) || !strings.Contains(notRead.Error(), "prevent_destroy") {
 		t.Errorf("the abort does not name the address and the block: %v", notRead)
 	}
-	read := retireAborted([]infra.Retirement{{Address: retireKeptAddr, Kept: infra.KeptSecret}}, retireKeptAddr)
+	for _, want := range []string{"terraform state rm '" + retireKeptAddr + "'", "/wd", "keeps the secret and its value"} {
+		if !strings.Contains(notRead.Error(), want) {
+			t.Errorf("the abort for a resource fugaro never destroys does not say %q: %v", want, notRead)
+		}
+	}
+	// An ordinary address keeps the module advice: a service account, an IAM
+	// member, a bucket grant are all things an apply may destroy once the
+	// configuration stops producing them.
+	const plain = `module.repo.module.workflow["app"].google_service_account.this`
+	ordinary := retireAborted(nil, plain, "/wd")
+	if !strings.Contains(ordinary.Error(), "take the lifecycle.prevent_destroy block out of the module") {
+		t.Errorf("an ordinary address lost the module advice: %v", ordinary)
+	}
+	if strings.Contains(ordinary.Error(), "terraform state rm") {
+		t.Errorf("an ordinary address is given the never-destroyed advice: %v", ordinary)
+	}
+	read := retireAborted([]infra.Retirement{{Address: retireKeptAddr, Kept: infra.KeptSecret}}, retireKeptAddr, "/wd")
 	if !strings.Contains(read.Error(), retireNextCommand) {
 		t.Errorf("the abort does not name the next command for an address --retire removes: %v", read)
 	}
@@ -947,6 +970,54 @@ func TestInitRepoPreventDestroyReframed(t *testing.T) {
 	}
 }
 
+// The reframing never tells the reader to drop a lifecycle.prevent_destroy
+// block from a resource fugaro itself never destroys (review round 2, I-B):
+// the modules are embedded in the binary and PrepareWorkdir rewrites the
+// workdir, so the advice cannot be followed; and taking it would delete a
+// secret container with every version in it, or a registry with every image
+// -- the one thing fugaro promises never to do. The registry is the case
+// here: the configuration still produces it, so it is not a retirement at
+// all, which is what puts it on this branch. The fixture's own wrapped text
+// carries the address.
+func TestInitRepoPreventDestroyOnAResourceFugaroNeverDestroys(t *testing.T) {
+	aborted := strings.Replace(fixture(t, "prevent_destroy_wrapped.txt"), retireKeptAddr, retireRegistryAddr, 1)
+	r := newRetireRig(t, retireOpts{planAbort: aborted})
+	out, errOut, err := executeStdin(t, "", "init", "--repo", "--no-build", "--yes")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "the plan was refused: "+retireRegistryAddr) {
+		t.Errorf("the refusal does not name the address Terraform named: %v", err)
+	}
+	if strings.Contains(msg, "take the lifecycle.prevent_destroy block out of the module") {
+		t.Errorf("fugaro tells the reader to delete the block on a resource it never destroys: %v", err)
+	}
+	for _, want := range []string{
+		"terraform state rm '" + retireRegistryAddr + "'",
+		"keeps the registry and the images in it",
+		"revert the configuration change",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	// The workdir the state removal would run in is named, and it is the real
+	// one -- under the state directory this run uses -- rather than a
+	// placeholder: the reader has to run the command there.
+	state := os.Getenv("XDG_STATE_HOME")
+	if state == "" || !strings.Contains(msg, "`terraform state rm '"+retireRegistryAddr+"'` in "+filepath.Join(state, "fugaro", "terraform", initProject)) {
+		t.Errorf("the refusal does not name the workdir under %q: %v", state, err)
+	}
+	// Advice only: nothing left the state and nothing was applied.
+	if calls := r.ran(t, "state rm"); len(calls) != 0 {
+		t.Errorf("the refused run removed state: %v", calls)
+	}
+	if applies := r.applies(t); len(applies) != 0 {
+		t.Errorf("the refused run applied: %v", applies)
+	}
+}
+
 // The owner's own flow, end to end, across two runs of the CLI: the plan
 // aborts on prevent_destroy for the container the configuration stopped
 // producing, the refusal names --retire, and the rerun -- which removes that
@@ -1083,6 +1154,10 @@ func TestInitRepoRetireRefusesAJobTheStateCannotName(t *testing.T) {
 	for _, want := range []string{
 		retireJobAddr, "nothing was removed from Terraform's state and nothing was applied",
 		"the state's own values carry no name for it", "gcloud run jobs list",
+		// The hand delete alone is not enough: the state still holds the
+		// address, so the rerun refuses the same address again (review round
+		// 2, M-C). The step after it is named.
+		"`terraform state rm '" + retireJobAddr + "'` in " + filepath.Join(os.Getenv("XDG_STATE_HOME"), "fugaro", "terraform", initProject),
 		retireNextCommand,
 	} {
 		if !strings.Contains(msg, want) {

@@ -2484,7 +2484,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 		// summary was printed above, and Terraform's text stays in the
 		// workdir, so nothing is hidden, only re-framed.
 		if preventDestroyAbort(err) {
-			return infra.RepoSpec{}, nil, retireAborted(rets, preventDestroyAddress(err))
+			return infra.RepoSpec{}, nil, retireAborted(rets, preventDestroyAddress(err), wd.Root)
 		}
 		return infra.RepoSpec{}, nil, remote(err)
 	}
