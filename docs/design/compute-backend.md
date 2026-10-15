@@ -57,8 +57,9 @@ version — rather than a 3.8 GB pull on every run; **Check 57a measured all
 three paths on 2026-10-15 (145 s plain pull, 97 s streamed, 66 s preloaded)
 and the preload is the recommendation (§1.2, C4)**, because image streaming
 makes Batch ignore the container's `options` field that a Docker run needs,
-and only the preload meets the 120 s budget the original design allowed the VM
-tier (generic-tool §1, G2) on a run that has a socket. The cost is an
+and only the preload meets the budget the original design allowed the VM tier
+— **120 s above the Cloud Run baseline** (generic-tool §1, G2), about 133 s
+against the 13.0 s baseline 57a-1 measured — on a run that has a socket. The cost is an
 installation-level, one-time setup (`fugaro init` gains a
 Batch stage) and nothing per repository — so it composes with the
 project-centric goal of "no heavy per-repository setup" rather than fighting
@@ -119,8 +120,10 @@ which is the first addition to the env allowlist since M9 and must be reviewed
 as such (generic-tool §1 already flags this); and the container user must be
 able to open the socket, which is `root:docker` mode `0660` on COS. **Measured
 on 2026-10-15 (Check 57a steps 4 and 6, §7.2):** the container's uid is the
-image's own `fugaro` (**1000**) — `TaskGroup.runAsNonRoot` changes nothing about
-it — so the baseline container **cannot** open the socket (`permission
+image's own `fugaro` (**1000**) — with `TaskGroup.runAsNonRoot` **unset**, the
+state the check's job JSONs carry; `runAsNonRoot: true` was **not** run and is
+the one branch that could change this (§9) — so the baseline container
+**cannot** open the socket (`permission
 denied`); `options: "--group-add 412"` **works** (the socket's gid was 412 on
 that boot image) and runs a real container as uid 1000; `options: "--user 0"`
 **works** too, and is the fallback with the ownership consequence §2.2
@@ -208,7 +211,10 @@ What the numbers are:
      from that path. The second prerequisite is the
      `containerfilesystem.googleapis.com` API (`same page`; §1.9, the Batch
      provisioning task, 6). **Measured 2026-10-15: median 97 s** over the jobs
-     that produced a first-line time (98, 97, 96 — 2 of the 5 had none). **The
+     that produced a first-line time (98, 97, 96). **Two of the five produced
+     no first line at all, and the run's record does not say why** — refused,
+     failed, or simply not collected; that is the step's own "did streaming
+     accept the job at all" question, and it stays open (§7.2, §9). **The
      catch is twofold.** It switches the container runtime
      to **containerd, not Docker**, and with streaming "container runnables
      only support the following fields: `imageUri`, `commands`, `entrypoint`,
@@ -237,10 +243,13 @@ What the numbers are:
   minutes to the runner's first line". An agent run is interactive-ish but
   long (minutes to an hour), so two minutes of setup against a Docker daemon
   is acceptable; five is not. **Check 57a measured it on 2026-10-15: 145 s
-  plain, 97 s streamed, 66 s preloaded.** The budget is therefore **met by the
-  preloaded boot image and by nothing else a Docker run can use** — the plain
-  pull is 25 s over it, and streaming, which meets it, cannot carry the
-  socket (§1.1, C4).
+  plain, 97 s streamed, 66 s preloaded, against a baseline of 13.0 s.** The
+  budget is **120 s above that baseline** — an absolute ceiling of about
+  133 s, not 120 s — and it is therefore **met by the preloaded boot image
+  and by nothing else a Docker run can use**: the plain pull is **12 s over
+  it** (145 s against 133 s), streaming meets it with plenty of room (97 s)
+  but cannot carry the socket, which is the whole of this backend (§1.1,
+  C4).
 
 **Substrate verdict.** Batch's container runnables and image streaming are
 ready-made; a plain instance needs a startup script and either a baked image
@@ -646,7 +655,7 @@ itself.
 | **C1** | Substrate | **Cloud Batch**, one job with one task per run, Container-Optimized OS boot disk, `fugaro-base` as a container runnable | **Plain Compute Engine instances** (full control of the startup script and the socket, no Batch container-runnable quirks; but Fugaro implements instance lifecycle, timeouts, log shipping and a reaper). **MIG**: rejected — homogeneous fleets, not per-run ephemeral VMs; you either pay for idle capacity or re-implement Batch. |
 | **C2** | Where Docker comes from | **The VM's host daemon, via the bind-mounted socket**, made usable with **`options: "--group-add <socket gid>"`** (the gid read off the VM) — measured, 57a-6. `--user 0` works too and is the fallback; `--privileged` alone does not. **Image streaming disregards `options`** (measured), so a streamed run has only the group baked into the image (§2.2) — and the design therefore does not stream a Docker run | **Rootless/Podman inside the container** or **privileged DinD**: same host-level power, more moving parts, doubles storage, needs an unverified `--privileged`/user-namespace path in a Batch runnable. |
 | **C3** | Isolation unit | **One VM per run; a VM is never reused** | Reuse a pool of warm VMs: rejected — two runs on one VM can read each other's secrets and Docker state, and Docker makes each root on the host. |
-| **C4** | Cold start | **The preloaded boot image** (measured 66 s median, 2026-10-15), with **image streaming rejected for a Docker run** (97 s measured, but it disregards `options`, so the socket cannot be made usable) and a plain pull as the floor (145 s measured, over the 120 s budget) | Image streaming as the primary choice: no custom image to maintain, and it meets the budget at 97 s — but a Batch job with streaming on cannot pass `--group-add`, so a Docker run on it has only the group baked into the image. The preload's own costs stand: Batch does not officially support custom images and a Batch image's supported lifetime can end **60 days** after its starting date, so it is an image to rebuild on Google's schedule as well as Fugaro's. **Check 57a steps 2 and 3 measured all three; this recommendation is the measurement's.** |
+| **C4** | Cold start | **The preloaded boot image** (measured 66 s median, 2026-10-15), with **image streaming rejected for a Docker run** (97 s measured, but it disregards `options`, so the socket cannot be made usable) and a plain pull as the floor (145 s measured, 12 s over the 120 s-above-baseline budget) | Image streaming as the primary choice: no custom image to maintain, and it meets the budget at 97 s — but a Batch job with streaming on cannot pass `--group-add`, so a Docker run on it has only the group baked into the image. The preload's own costs stand: Batch does not officially support custom images and a Batch image's supported lifetime can end **60 days** after its starting date, so it is an image to rebuild on Google's schedule as well as Fugaro's. **Check 57a steps 2 and 3 measured all three; this recommendation is the measurement's.** |
 | **C5** | Spot | **Off by default**, opt-in per profile | Spot by default: up to 91% cheaper, but a preemption kills the stage mid-flight, the notice is **0 s by default** (120 s only if the job asks, and the shutdown after it is best effort, up to 30 s), so checkpointing has no room at all. |
 | **C6** | Service account | **One per run class (profile, account), reused from the project-centric model**; never the default Compute Engine SA | Default Compute Engine SA: project-wide and over-broad. |
 | **C7** | Egress | **No external IP; Cloud NAT** | Ephemeral external IP + deny-all ingress: simpler, cheaper per run, but "no inbound" then rests on a firewall list. |
@@ -734,11 +743,17 @@ Batch used is generated by OS Login." (Batch REST reference, `TaskGroup`,
 checked 2026-10-15 against the discovery document). That sentence is about the
 **runnables' execution user**; it does not say the container's uid is 0, it does
 not say the image's `USER` is read, and it does not say the field **overrides**
-one. **That was the design's hardest unverified input, and 57a measured it on
-2026-10-15: the container runs as the image's own user — `fugaro`, uid 1000 —
-so the image's `USER` survives and `runAsNonRoot` does not override it.** The
-documented sentence and the measured uid agree; the sentence is about the
-*runnable's* execution user and the container's uid is the image's.
+one. **That was the design's hardest unverified input. 57a measured the
+`runAsNonRoot`-unset branch on 2026-10-15 — no 57a-6 submission sets the field,
+and no job JSON in this document does either — and there the container runs as
+the image's own user, `fugaro`, uid 1000: the image's `USER` survives, and the
+documented sentence (about the *runnable's* execution user, not the container's
+uid) and the measured uid agree. The `true` branch is therefore still
+unmeasured, and it is the branch that could bite: Batch documents it as "a
+non-root user … generated by OS Login", and if it also changed the container's
+uid the `--group-add` socket recipe would stop working for the uid it added.
+Task 7 must leave the field unset (§8.1), which is what every measured path
+did.**
 
 The way to get the socket's group into the container without changing the uid
 is the runnable's `options`, documented only as a **string** of "arbitrary
@@ -1226,7 +1241,8 @@ the teardown is assumed rather than read:
   checked 2026-10-15) are a cheaper trigger than polling and are a plan
   option. **C14, amended by 57a-8's measurement**: keep a reaper, but as a
   **safety net** rather than as the thing that does the deleting — Batch's own
-  teardown was measured at about 30 s on every exit path tried, so the
+  teardown was measured at **25 s** after `SUCCEEDED`, **26 s** after `FAILED`,
+  **26 s** after a crashed runner and only **3 s** after `jobs.cancel`, so the
   reaper's job is the residual (a stuck `DELETION_IN_PROGRESS`, an orphan
   after a Batch-side fault), and a run's VM normally goes without it. The
   veto alternative is to rely on Batch teardown alone and accept a rare
@@ -1333,8 +1349,18 @@ recommendation takes it (measured 2026-10-15, Check 57a step 9):** a
 `resource.name.startsWith("projects/fugaro-dev/locations/us-east5/jobs/fugaro-")`
 was **accepted and read back as written** — so Task 6 should narrow the
 launcher's job-editing grant to Fugaro-shaped job names rather than leave it
-project-wide, which is exactly the "trusted to a greater degree than before"
-bullet above undone. The same shape is to be used for `serviceAccountUser`,
+project-wide. **What that does and does not buy, stated plainly, because
+`resource.name` is a resource-name condition and not a content one:** it
+removes the power to *create, read, cancel or delete a job whose name is not
+Fugaro-shaped*, which is the arbitrary-`gcloud`-caller case; it does **not**
+constrain what a Fugaro-shaped job may contain — the launcher can still create
+`fugaro-anything` with any image, command, `secretVariables` and
+`serviceAccount` it names — and it does **not** separate this repository's runs
+from another repository's or a teammate's, since those jobs are `fugaro-`named
+too. So the "trusted to a greater degree than before" bullet above stands
+mostly **undone**, and the account split C22 asks for (launcher, reaper and
+run-class accounts kept apart) is what carries the rest. The same shape is to
+be used for `serviceAccountUser`,
 scoped to the `fugaro-*` run-class accounts. Veto alternative: one
 account for everything, simpler to provision and much harder to reason about —
 rejected, because it makes the reaper's power ambient.
@@ -1744,18 +1770,23 @@ machine type or a boot image the rest of the check is not using.
 `IMG` is the installation's own base image, and the setup block **reads it out
 of the installation** (`fugaro doctor --json`'s `project.base_images.base`)
 rather than naming a tag by hand; its shape is
-`<region>-docker.pkg.dev/<project>/fugaro-base/fugaro-base:<version>` — the
-**base repository the installation creates**, named by
-`infra.BaseRegistry = "fugaro-base"` (`internal/infra/tfvars.go`:23).
-`infra.LegacyRegistry` (`:24`) is the older single repository, named `fugaro`,
-that a pre-0.7.5 installation has and discovery adopts
+`<region>-docker.pkg.dev/<project>/<repository>/<upstream path>:<version>` —
+which repository the middle segment names is the installation's answer, not a
+constant, so the check takes the **repository out of `IMG`'s own path** and
+never names one itself.
+`infra.BaseRegistry = "fugaro-base"` (`internal/infra/tfvars.go`:23) is the
+**base repository the installation creates**, and `infra.LegacyRegistry`
+(`:24`) is the older single repository, named `fugaro`, that a pre-0.7.5
+installation has and discovery adopts
 (`internal/infra/discover.go`:394-421) — a different repository name, and not a
-path this check pulls from. It is
-**not** the `fugaro-ghcr/dimipaun/fugaro-base` remote-repository path of
-`docs/design/registry-remote-repository.md`: that work is **PR #362, not
-merged**, and this check does not depend on it. Should #362 land, pointing the
-probe at the proxy is a change to `IMG` alone — which is what the placeholder
-is for — but the committed check uses the direct repository.
+path this check pulls from. The third shape is the
+`fugaro-ghcr/dimipaun/fugaro-base` **remote**-repository path of
+`docs/design/registry-remote-repository.md`: that work is **PR #362, merged**
+(commit `3f6099b`), so it is a path an installation's pin can name today, and
+on the 2026-10-15 run it is the one this installation's `IMG` named. Which
+one `IMG` carries decides nothing in the check beyond the reader grant, which
+is aimed at `IMG`'s own repository for exactly that reason (the comment in the
+setup block) — the probe pulls, and streams, whatever the installation pinned.
 
 `batch-cos` is one of the **three short names Batch documents for
 `Disk.image`** (`batch-cos`, `batch-debian`, `batch-hpc-rocky`), the URL forms
@@ -2680,7 +2711,7 @@ result, and nothing here makes `backend: cloud-batch` selectable.
 |---|---|---|
 | 57a-1 | Cloud Run baseline, 5 runs | **median 13.0 s** (an earlier attempt recorded 12.0 s). The endpoint is this check's own — the run's first log line — so 13.0 s anchors the VM numbers below and is **not** subtracted from Check 41's published 10.5 s. |
 | 57a-2 | Cold start, plain pull, `e2-standard-4` | 154, 145, 137, 152, 135 s → **median 145 s** |
-| 57a-3a | Cold start, `enableImageStreaming: true` | 98, 97, 96 s → **median 97 s**. Only **3 of the 5** jobs yielded a first-line time; 2 had none found. |
+| 57a-3a | Cold start, `enableImageStreaming: true` | 98, 97, 96 s → **median 97 s**. Only **3 of the 5** jobs yielded a first-line time; **2 produced none, and the record does not say whether Batch refused them, they failed, or the collection found nothing** — the step's own "did streaming accept the job at all" question, left open here and in §9. |
 | 57a-3b | Cold start, the preloaded boot image | 69, 67, 66, 65, 63 s → **median 66 s**. The image was built from `batch-cos` with the base image — `fugaro-base` **0.7.5**, by digest — already in the Docker data root; inside the VM the pull then took **9 s** and the container was ready **1 s** after it, so about 56 of the 66 s is **VM boot and Batch scheduling**, not the image. |
 | 57a-4, 57a-6 | The socket, the baseline and the variants | **No `options`: refused** (`permission denied`). **`--group-add 412`: reaches the daemon and runs a real container.** **`--user 0`: works.** **`--privileged` alone: does not work** — the container's user stays 1000, as §2.2 predicted. **`--group-add 412` with `enableImageStreaming`: the extra group is not applied** (the container shows `groups=1000` only) and it cannot connect — so streaming makes Batch **ignore the container's `options` field**, which §1.2 argued from the five-subfield list and this measures. |
 | 57a-5 | The cost of one plain run | a **143 s** window on `e2-standard-4` at **0.13402284 USD/h** is about **$0.0053**. The 50 GB boot disk and Cloud NAT are outside that figure, and the **billed amount was not read** — the export must be read by hand for 57b-5. |
@@ -2691,9 +2722,11 @@ result, and nothing here makes `backend: cloud-batch` selectable.
 
 **The deltas, arithmetic on the numbers above:** 145 − 13 = **132 s** over the
 Cloud Run baseline for the plain pull; 97 − 13 = **84 s** for streaming; 66 − 13
-= **53 s** for the preload. Against G2's **120 s** budget: the preload meets it
-with about 54 s of headroom; the plain pull **fails** it; streaming's 97 s meets
-it but is unavailable to a run that needs the socket (see below).
+= **53 s** for the preload. G2's budget is **120 s *above the baseline*** — an
+absolute ceiling of about **133 s** with 57a-1's 13.0 s — so, on the deltas:
+the preload meets it with about **67 s** of headroom (120 − 53), streaming
+meets it with about **36 s** (120 − 84) but is unavailable to a run that needs
+the socket (see below), and the plain pull **fails** it by **12 s** (132 − 120).
 
 **Setup findings the design did not know** (each is a Task 6 or Task 7 input,
 §8.1):
@@ -2744,12 +2777,16 @@ named):
    /var/run/docker.sock`, which read **412** on this boot image), never
    hard-coded. `--user 0` works as well and is the fallback, with the ownership
    consequence §2.2 already records; `--privileged` alone changes nothing.
-3. **The 120 s budget (G2) is met by the preloaded image and not by a plain
-   pull** (§1.2): 66 s against 145 s.
+3. **The 120 s-above-baseline budget (G2) is met by the preloaded image and
+   not by a plain pull** (§1.2): the ceiling is about 133 s against the
+   measured 13.0 s baseline, so the preload's 66 s clears it by about 67 s and
+   the plain pull's 145 s misses it by 12 s.
 4. **The job JSON must name `network` and `subnetwork` explicitly** (§1.7,
    Task 7), because Batch refuses the no-external-IP field without them.
 5. **Provisioning must wait for IAM propagation and retry** (§1.9, Task 6).
-6. **Teardown is verified at about 30 s on every path measured** (§3.4), so
+6. **Teardown is verified on every path measured** — 25 s after `SUCCEEDED`,
+   26 s after `FAILED`, 26 s after a crashed runner, 3 s after `jobs.cancel`
+   (§3.4) — so
    **C14's reaper is a safety net, not the main path**: Batch's own teardown is
    what deletes the VM, and the reaper exists for the residual — a stuck
    `DELETION_IN_PROGRESS` or an orphan after a Batch-side fault.
@@ -2759,13 +2796,24 @@ preemption — a separate script is being written), **step 11** (quota and how
 long a job sits in `QUEUED`), the **billed amount** (step 5's figure is a hand
 estimate; the export was not read, and 57b-5 is what compares it), and the
 **sink/exclusion arm** — **not applied, by decision**, so §1.5's arm stays
-unproven live while its Terraform and its test are in the tree. Also unmeasured
-here: streaming through an Artifact Registry **remote** repository (the probe
-pulled the direct repository), and whether the second place Batch documents
-environment (`taskEnvironments`) is as safe as the job-level one step 12 tried.
+unproven live while its Terraform and its test are in the tree, and
+**`TaskGroup.runAsNonRoot: true`** — no submission set it, so only the unset
+branch is measured (§2.2, §9), which is why Task 7 leaves the field alone.
+Also unmeasured here: whether the second place Batch documents environment
+(`taskEnvironments`) is as safe as the job-level one step 12 tried, and — the
+one open item about streaming itself — **what became of the two 57a-3a jobs
+that produced no first log line** (§1.2, §9): the run's record does not say
+whether Batch refused them, they failed, or they started and the collection
+simply found no first line, which is the step's own "did streaming accept the
+job at all" question and is not settled by it. Streaming's *path* is not open:
+this installation's pin (`IMG`) named the **remote** repository
+(`fugaro-ghcr`), as §1.2 and the setup comment record, and streaming served
+the image from it (§9, [ANSWERED, 57a-3a]); the **direct** repository's path
+is what no run has exercised.
 
 **§9 after this run.** The rows this section settles move to §9's measured
-list — the container's uid; whether `options` carries `--group-add` and whether
+list — the container's uid (with `runAsNonRoot` unset); whether `options`
+carries `--group-add` and whether
 `--privileged` is accepted; the COS image's socket gid; which permission path
 works; the boot/scheduling numbers with and without a preload; whether Batch
 accepts a custom boot image; teardown on the measured exit paths; the IAM
@@ -3135,8 +3183,10 @@ Fugaro change at all — committed job JSON and `gcloud` — and it is the
 go/no-go for the rest (G2's 120 s budget, the socket, the log filter, the
 teardown). **It has now run — 2026-10-15, §7.2's RESULTS — and it answers yes
 on the socket (`--group-add` works), on the budget (the preloaded image's 66 s
-is inside 120 s, which the plain pull's 145 s is not) and on teardown (about
-30 s, every path tried); the log filter's entry labels are confirmed. Only
+is inside the budget — 133 s absolute, 13.0 s baseline plus 120 s — while the
+plain pull's 145 s is not) and on teardown (25/26/26 s on the success, failure
+and crashed-runner paths, 3 s after `jobs.cancel`); the log filter's entry
+labels are confirmed. Only
 57a-7 (Spot) and 57a-11 (quota) were not run.** Tasks 5 to 9 below carry the
 rest of the measurement into their own text.
 
@@ -3171,8 +3221,9 @@ senior reviewer before merge, not just the normal one.
    job-first reaper, its dedicated project-wide account, and the queue deadline
    (§1.4, §3.4). Destructive: the review is on the permissions and on what it
    refuses to delete. **57a-8 measured the teardown this task is a fallback
-   for** (§3.4): the VM went about 30 s after every exit path tried (25 s
-   `SUCCEEDED`, 26 s `FAILED`, 3 s `CANCELLED`, 26 s a crashed runner), and
+   for** (§3.4): the VM went 25 s after `SUCCEEDED`, 26 s after `FAILED`, 3 s
+   after `CANCELLED`, and 26 s after a crashed runner — so the ordinary paths
+   cost about 26 s and a cancel is much faster — and
    `jobs.cancel` ends `CANCELLED` with the record intact — so the reaper is
    built as a **safety net** for the residual, not as the thing that deletes a
    run's VM, and the queue deadline is untouched by 57a (step 11 was not run).
@@ -3204,7 +3255,11 @@ senior reviewer before merge, not just the normal one.
    addition, and the SECURITY.md section (§1.1, §2.2–§2.4, §3.6). **The socket
    is `options: "--group-add <gid>"` with the gid read off the VM** (measured:
    it works and keeps the image's uid 1000; `--user 0` works too and is the
-   fallback; `--privileged` does not) — and because `options` needs streaming
+   fallback; `--privileged` does not). **The job JSON leaves
+   `TaskGroup.runAsNonRoot` unset**: only that branch was measured, and Batch's
+   own text says `true` runs the runnables as an OS Login non-root user, so
+   setting it could change the uid the `--group-add` recipe works for (§2.2,
+   §9). And because `options` needs streaming
    to be **off**, this task takes the preload of Task 6 and never
    `enableImageStreaming` on a Docker workflow. This is the
    task that makes root-on-a-VM real, hence the review.
@@ -3265,7 +3320,7 @@ reasoning lives; this table is the checklist.
 | C1 | Substrate | Cloud Batch, one job with one task per run | Plain Compute Engine instances (full control, but Fugaro owns lifecycle/timeouts/logs/reaper); MIG rejected |
 | C2 | Docker source | The host daemon via the socket | Rootless/DinD (same host power, more parts, needs an unverified `--privileged` path) |
 | C3 | Isolation unit | One VM per run, never reused | A warm pool (breaks run-to-run isolation) |
-| C4 | Cold start | **The preloaded boot image** (66 s measured, 2026-10-15); image streaming is **rejected for a Docker run** (97 s measured, but Batch ignores the container's `options` with streaming on, so `--group-add` cannot be passed); a plain pull is the floor (145 s) | Image streaming as the primary (no custom image to maintain — but no socket path either); a plain pull every run (simplest, over the 120 s budget and slowest). The preload's costs stand: a custom image Batch "might not support", with a Batch image's 60-day lifetime to rebuild against. **Check 57a steps 2 and 3 measured all three, and the recommendation is the measurement's** |
+| C4 | Cold start | **The preloaded boot image** (66 s measured, 2026-10-15); image streaming is **rejected for a Docker run** (97 s measured, but Batch ignores the container's `options` with streaming on, so `--group-add` cannot be passed); a plain pull is the floor (145 s) | Image streaming as the primary (no custom image to maintain — but no socket path either); a plain pull every run (simplest, 12 s over the 120 s-above-baseline budget and slowest). The preload's costs stand: a custom image Batch "might not support", with a Batch image's 60-day lifetime to rebuild against. **Check 57a steps 2 and 3 measured all three, and the recommendation is the measurement's** |
 | C5 | Spot | Off by default, opt-in per profile | Spot by default (up to 91% cheaper, kills a stage mid-flight) |
 | C6 | Service account | One per run class — the (`profile`, `account`) job account, never the default Compute Engine SA | The default SA (project-wide blast radius, and Google's own docs call it Editor and "not recommended for production"); a per-repository account is **C21**'s question, not this one |
 | C7 | Egress | No external IP; Cloud NAT | An ephemeral IP + deny-all ingress (simpler, cheaper per run, "no inbound" rests on a firewall list) |
@@ -3414,7 +3469,9 @@ the dropped gen-2 Docker probe the generic-tool plan numbered 31 — the reason
 
 **Verified by measurement — Check 57a, 2026-10-15** (installation `fugaro`,
 sandbox project only; every number is §7.2's RESULTS table): the container uid
-(1000) and that the image's `USER` survives; that `options: "--group-add <gid>"`
+(1000) with `runAsNonRoot` unset, and that the image's `USER` survives there —
+the field's `true` branch is **not** in this list (§2.2); that
+`options: "--group-add <gid>"`
 reaches the runtime and works, that `--user 0` works, and that `--privileged`
 alone does not; that the socket's gid on the boot image was 412; that a
 container with `--group-add` **and** `enableImageStreaming` on comes up with the
@@ -3435,14 +3492,19 @@ not the default Compute Engine account; and that a job-level
 RESULTS); the rows it did **not** run stay as they were, and the four it did
 not run at all are named together in §7.2 ("Still unmeasured after 57a"):
 
-- **[ANSWERED, 57a-6]** **What uid the container process actually gets**, and
-  whether the image's `USER` survives `TaskGroup.runAsNonRoot`: the REST text
-  documents the runnables' execution user and never the container's uid, so
-  none of "the container runs as root", "the image's `USER` is ignored" or
-  "Batch overrides `USER`" is documented. **Measured: the container runs as the
-  image's own `fugaro`, uid 1000** — the image's `USER` survives, and
-  `runAsNonRoot` changes nothing about it. That is why the baseline cannot open
-  the socket (§2.2).
+- **[PARTLY ANSWERED, 57a-6]** **What uid the container process actually
+  gets**, and whether the image's `USER` survives `TaskGroup.runAsNonRoot`: the
+  REST text documents the runnables' execution user and never the container's
+  uid, so none of "the container runs as root", "the image's `USER` is ignored"
+  or "Batch overrides `USER`" is documented. **Measured, with the field unset
+  (the state every 57a job JSON has): the container runs as the image's own
+  `fugaro`, uid 1000**, so the image's `USER` survives — which is why the
+  baseline cannot open the socket (§2.2). **`runAsNonRoot: true` was not run**,
+  and Batch's own text makes it the branch worth doubting: it says Batch then
+  runs the runnables as "a non-root user … generated by OS Login", and if that
+  also moves the *container's* uid, the `--group-add <socket gid>` recipe loses
+  the uid it works for. So Task 7 leaves the field unset, and a later check that
+  wants to set it measures this row first.
 - **[ANSWERED, 57a-6]** Whether `Container.options` (a **string**, not an
   array) reaches the runtime as `--group-add <gid>`, and whether `--privileged`
   is accepted there at all — and, if it is, whether it changes the outcome at
@@ -3474,11 +3536,14 @@ not run at all are named together in §7.2 ("Still unmeasured after 57a"):
   26 s after a crashed runner's job** — so Batch's teardown is the main path
   and the reaper is a safety net (§3.4). `DELETION_IN_PROGRESS` itself was not
   driven directly (it is the reaper's state), which is the one corner left.
-- **[ANSWERED, 57a-3a]** Whether image streaming works for a base image served
+- **[PARTLY ANSWERED, 57a-3a]** Whether image streaming works for a base image served
   through an Artifact Registry **remote** repository: on this installation the
   pin `IMG` named was the remote repository's path (`fugaro-ghcr`), and
   streaming served it — **median 97 s**. The **direct** repository's path was
-  not exercised by this run.
+  not exercised by this run. **Partly open on the same step: 2 of its 5 jobs
+  produced no first log line and the record does not say why** (refused,
+  failed, or not collected — §1.2, §7.2), which is the step's "did streaming
+  accept the job at all" question and is not answered here.
 - **[ANSWERED, 57a-3b]** Whether Batch accepts a **custom boot image** at all
   ("might not be supported" is Google's own hedge). **Measured: yes** — the
   image built from `batch-cos` with the base image pulled into its Docker store

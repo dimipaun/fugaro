@@ -287,7 +287,7 @@ what the design now recommends are in the design's §7.2, under "RESULTS of the
 |---|---|
 | 57a-1, Cloud Run baseline | **median 13.0 s** over 5 runs (an earlier attempt: 12.0 s) |
 | 57a-2, cold start, plain pull | 154, 145, 137, 152, 135 s → **median 145 s** |
-| 57a-3a, `enableImageStreaming` | 98, 97, 96 s → **median 97 s** (2 of the 5 jobs gave no first-line time) |
+| 57a-3a, `enableImageStreaming` | 98, 97, 96 s → **median 97 s**; **2 of the 5 jobs gave no first-line time and the record does not say whether they were refused, failed or simply not collected** — the step's "did streaming accept the job at all" question, left open |
 | 57a-3b, preloaded boot image | 69, 67, 66, 65, 63 s → **median 66 s**; inside the VM the pull was 9 s and the container ready 1 s later, so most of it is VM boot and Batch scheduling |
 | 57a-4/6, the socket | no `options`: **refused**; `--group-add 412`: **works**; `--user 0`: **works**; `--privileged`: **does not** (uid stays 1000); `--group-add` **with streaming**: the group is **not applied**, so streaming makes Batch ignore `options` |
 | 57a-5, the cost of one run | a 143 s `e2-standard-4` window at 0.13402284 USD/h ≈ **$0.0053** (disk and NAT outside it; the bill was not read) |
@@ -297,8 +297,9 @@ what the design now recommends are in the design's §7.2, under "RESULTS of the
 | 57a-12, the signal | the job-level submission **succeeded** and the container saw its own task index and count |
 
 **Not run: 57b (all six steps), 57a step 7 (Spot preemption — a separate
-script is being written), 57a step 11 (quota/queueing), the billed amount, and
-the log sink arm, which was not applied by decision.** The design's own
+script is being written), 57a step 11 (quota/queueing), the billed amount,
+`TaskGroup.runAsNonRoot: true` (only the unset branch is measured), and the
+log sink arm, which was not applied by decision.** The design's own
 recommendation changes that follow — the preloaded boot image over image
 streaming, `--group-add <socket gid>` as the socket recipe, the explicit
 network+subnetwork in the job JSON, the provisioning wait for IAM propagation,
