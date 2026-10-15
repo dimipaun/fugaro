@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -63,6 +64,12 @@ func layerClaimGW(t *testing.T, cfg, layer string, extra map[string]config.Model
 	for name, p := range extra {
 		providers[name] = p
 	}
+	// The job's own FUGARO_MODEL_PROVIDERS, round-tripped: it is written per
+	// repository, with only the providers that list that repository in
+	// allow_data_to, and the run reads its routes back from it (ProvidersEnv,
+	// ProvidersFromEnv — what exec.go does). The layer tests go through the
+	// cut so they see the table a real job has, not the installation's.
+	providers = cutRoutes(t, providers, "acme/app")
 	h.deps.Providers = providers
 	raw, err := json.Marshal(providers)
 	if err != nil {
@@ -84,6 +91,34 @@ func layerClaimGW(t *testing.T, cfg, layer string, extra map[string]config.Model
 	h.deps.Spend = spend
 	withProviderKey(h)
 	return &gw{harness: h, fake: anth, compat: compat, logs: &lockedBuf{}}
+}
+
+// mustLayer is layer text as config.ParseProjectLayer reads it.
+func mustLayer(t *testing.T, text string) *config.ProjectLayer {
+	t.Helper()
+	l, ps := config.ParseProjectLayer([]byte(text), config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"})
+	if len(ps) > 0 {
+		t.Fatalf("layer problems: %v", ps)
+	}
+	return l
+}
+
+// cutRoutes is a job's own route table: runner.ProvidersEnv for repo, read
+// back through runner.ProvidersFromEnv, so a test sees exactly the providers
+// (and the allow_data_to) the deployed job carries.
+func cutRoutes(t *testing.T, providers map[string]config.ModelProvider, repo string) map[string]config.ModelProvider {
+	t.Helper()
+	raw, err := runner.ProvidersEnv(providers, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := runner.ProvidersFromEnv(func(k string) (string, bool) {
+		return raw, k == runner.ModelProvidersEnv
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
 }
 
 // callOn makes one call on model through the gateway, as Claude Code would,
@@ -161,11 +196,14 @@ func TestLayerClaimEnablesTheRoute(t *testing.T) {
 	}
 }
 
-// The claim is never in the environment: Deps.Providers is what
-// FUGARO_MODEL_PROVIDERS decoded to — the local config's routes, written
-// once per repository by `fugaro init --repo` — and the claim, which only
-// the layer carries, is not in it. That is also why removing the claim from
-// the layer puts the refusal back on the next launch.
+// The environment the run routes by is the one written for the repository,
+// and the claim — which only the layer carries — is not in it: the run
+// merges the claim on top of that table, never into it. That is why removing
+// the claim from the layer puts the refusal back on the next launch, with no
+// stale environment to step around. (The other half — that `fugaro init
+// --repo` writes no claim, whatever the layer says — is
+// internal/infra's TestLayerClaimIsNotInTheJobEnvironment, where that table
+// is written; this asserts the input side, the run's own Deps.)
 func TestLayerClaimIsNeverInTheEnvironment(t *testing.T) {
 	use := pricing.Usage{Input: 1000, Output: 500}
 	g := layerClaimGW(t, claimCfg(t, claimedClaude), layerWithClaim("  openrouter: [\""+claimedClaude+"\"]\n"), nil,
@@ -174,16 +212,23 @@ func TestLayerClaimIsNeverInTheEnvironment(t *testing.T) {
 	if err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
-	raw, err := runner.ProvidersEnv(g.deps.Providers, "acme/app")
+	// The table the run started from — the toolchain's own environment,
+	// captured before the merge — has no claimed model in it.
+	raw, err := json.Marshal(g.deps.Providers)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(raw, "anthropic/") {
+	if strings.Contains(string(raw), "anthropic/") {
 		t.Fatalf("the environment carries the claim: %s", raw)
 	}
-	// The run itself routed the claimed model all the same.
-	if g.compat.Count() != 2 {
-		t.Fatalf("the provider saw %d calls", g.compat.Count())
+	// And the merge is what the run routed with, so the claimed model did
+	// reach the provider.
+	merged, ps := config.ApplyClaudeClaims(g.deps.Providers, config.ClaudeClaimsOf(mustLayer(t, layerWithClaim("  openrouter: [\""+claimedClaude+"\"]\n"))))
+	if len(ps) != 0 || len(merged["openrouter"].Models) != 2 {
+		t.Fatalf("the merged table = %v (problems %v)", merged["openrouter"].Models, ps)
+	}
+	if !slices.Contains(merged["openrouter"].Models, claimedClaude) {
+		t.Fatalf("the merged table does not carry the claim: %v", merged["openrouter"].Models)
 	}
 }
 
@@ -207,16 +252,46 @@ func TestLayerClaimNotAppliedChangesNothing(t *testing.T) {
 	}
 }
 
-// P8: a claim may only add to a route the owner defined; an unknown name
-// fails bootstrap, naming the key, before any call.
-func TestLayerClaimUnknownProviderRefused(t *testing.T) {
-	g := layerClaimGW(t, claimCfg(t, claimedClaude), layerWithClaim("  nosuch: [\""+claimedClaude+"\"]\n"), nil)
-	rec, err := g.run(t)
-	if err == nil || rec.Status != runstore.StatusInfraError ||
-		!strings.Contains(rec.Reason, "claude_models.nosuch") || !strings.Contains(rec.Reason, "does not define") ||
-		len(g.agent.calls) != 0 || g.fake.Count() != 0 || g.compat.Count() != 0 {
-		t.Fatalf("rec = %+v, err = %v, calls %d", rec, err, len(g.agent.calls))
+// A layer is installation-wide; a job's FUGARO_MODEL_PROVIDERS is written
+// per repository, with only the providers that list that repository in
+// allow_data_to. So a claim naming a provider this job does not carry is a
+// route *this* repository does not have — never a config error, which the
+// run cannot tell apart from a name nothing defines (both are simply absent
+// from its table). Refusing here would break every repository the owner did
+// not list for that provider, including the ones that never name the claimed
+// model, while `fugaro validate` — which judges the installation config's
+// whole route table — calls the same layer valid. The refusal for a name the
+// installation does not define lives there and in `fugaro config publish`,
+// where that whole table is known (TestPublishRefusesAClaimForAnUndefinedProvider).
+func TestLayerClaimForARouteThisRepositoryDoesNotHave(t *testing.T) {
+	use := pricing.Usage{Input: 1000, Output: 500}
+	// The owner's second route: qwen/*, allowed for acme/other only, so
+	// acme/app's job does not carry it at all.
+	other := config.ModelProvider{Kind: config.ModelProviderKind, BaseURL: "https://other.example/api",
+		Auth: "bearer", Secret: "other-api-key", Models: []string{"qwen/*"}, AllowDataTo: []string{"acme/other"}}
+	for _, name := range []string{"other", "nosuch"} {
+		g := layerClaimGW(t, claimCfg(t, deepseek), layerWithClaim("  "+name+": [\""+claimedClaude+"\"]\n"),
+			map[string]config.ModelProvider{"other": other},
+			anthropicfake.Compat{}.MessageOK(deepseek, use), anthropicfake.Compat{}.MessageOK(deepseek, use))
+		if _, ok := g.deps.Providers[name]; ok {
+			t.Fatalf("the fixture's job carries %s: the cut is not the one under test", name)
+		}
+		rec, err := g.run(t, callOn(deepseek, implement("feature")), callOn(deepseek, review("ship", 0)))
+		if err != nil || rec.Status != runstore.StatusSucceeded {
+			t.Fatalf("claiming %s: rec = %+v, err = %v", name, rec, err)
+		}
+		// The claim changed nothing: the run's routes are the job's own, and
+		// the claimed model was never named by any pin.
+		if g.compat.Count() != 2 || g.fake.Count() != 0 {
+			t.Fatalf("claiming %s: the provider saw %d calls, Anthropic %d", name, g.compat.Count(), g.fake.Count())
+		}
 	}
+	// A pin that names the claimed model is refused by the ordinary rule —
+	// the route that claims it is not one this repository has — and never
+	// with a message about the layer's key.
+	g := layerClaimGW(t, claimCfg(t, claimedClaude), layerWithClaim("  other: [\""+claimedClaude+"\"]\n"),
+		map[string]config.ModelProvider{"other": other})
+	refusedBeforeAnyCall(t, g, "no provider serves it", "agent.models.reviewer")
 }
 
 // Review Focus 3: the claim is judged by CheckClaudeClaim, the same rule a

@@ -59,6 +59,34 @@ func ApplyClaudeClaims(providers map[string]ModelProvider, claims map[string][]s
 	return out, nil
 }
 
+// ClaimsOnRoutes is claims cut down to the provider names providers has;
+// every other name is dropped, silently. It is what a *run* merges with: the
+// run's providers are the job's own FUGARO_MODEL_PROVIDERS, which is written
+// per repository with only the providers that list that repository in
+// allow_data_to (runner.ProvidersEnv), so a claim naming any other provider
+// is a route this repository does not have — a run cannot tell that apart
+// from a name nothing defines, and refusing it would break every repository
+// the owner did not list for that provider, including the ones that never
+// name the claimed model. The refusal for a name the installation config
+// does not define belongs to the surfaces that hold the whole table:
+// ApplyClaudeClaims as `fugaro validate` and `fugaro config publish` call it.
+func ClaimsOnRoutes(providers map[string]ModelProvider, claims map[string][]string) map[string][]string {
+	if len(claims) == 0 {
+		return nil
+	}
+	var out map[string][]string
+	for name, ids := range claims {
+		if _, ok := providers[name]; !ok {
+			continue
+		}
+		if out == nil {
+			out = make(map[string][]string, len(claims))
+		}
+		out[name] = ids
+	}
+	return out
+}
+
 // ClaudeClaimsOf is l's claude_models, nil when l is nil, so a caller that
 // has no layer asks for claims without asking about the layer twice.
 func ClaudeClaimsOf(l *ProjectLayer) map[string][]string {

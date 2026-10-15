@@ -1277,12 +1277,23 @@ func (r *run) resolveConfig(data []byte) (*config.Config, error) {
 	// about the reviewer (FirstLineOn) a moment later, well before
 	// checkBudget and the gateway's routes. A merge any later leaves a
 	// layer-only claimed senior looking unclaimed and the derived recipe
-	// keeps its cheap first line. An undefined provider name or an
-	// overlap fails bootstrap here, as a config error naming the key,
-	// before any call.
+	// keeps its cheap first line. An overlap — a claim colliding with a
+	// route this run has — fails bootstrap here, as a config error naming
+	// the key, before any call.
+	//
+	// ClaimsOnRoutes first, because the run's routes are the job's own
+	// FUGARO_MODEL_PROVIDERS: written per repository, holding only the
+	// providers that list that repository in allow_data_to. A claim naming
+	// any other provider is a route *this* repository does not have, and
+	// the run cannot tell that from a name nothing defines — refusing
+	// either would break every repository the owner did not list for that
+	// provider, including ones that never name the claimed model, while
+	// `fugaro validate` calls the same layer valid. The name nothing
+	// defines is refused there and by `fugaro config publish`, where the
+	// installation config's whole table is known.
 	r.providers = r.d.Providers
 	if out.Applied {
-		merged, ps := config.ApplyClaudeClaims(r.d.Providers, out.Layer.ClaudeModels)
+		merged, ps := config.ApplyClaudeClaims(r.d.Providers, config.ClaimsOnRoutes(r.d.Providers, out.Layer.ClaudeModels))
 		if len(ps) > 0 {
 			return nil, fmt.Errorf("the project layer's claude_models: %s", problemsText(ps))
 		}

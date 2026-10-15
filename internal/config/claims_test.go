@@ -116,6 +116,33 @@ func TestLayerClaimOverlapRefused(t *testing.T) {
 	}
 }
 
+// ClaimsOnRoutes is what a run merges with: a claim naming a provider the
+// run's own table does not carry is a route this repository does not have,
+// dropped silently — the run cannot tell it from a name nothing defines, and
+// the surfaces that hold the installation config's whole table report it
+// (ApplyClaudeClaims) instead.
+func TestClaimsOnRoutes(t *testing.T) {
+	claim := []string{"anthropic/claude-sonnet-5.5"}
+	providers := claimProviders()
+	got := ClaimsOnRoutes(providers, map[string][]string{"openrouter": claim, "elsewhere": {"anthropic/claude-opus-5.5"}})
+	if len(got) != 1 || !slicesEqual(got["openrouter"], claim) {
+		t.Fatalf("got = %v", got)
+	}
+	if ClaimsOnRoutes(providers, nil) != nil {
+		t.Fatal("no claims must stay nil")
+	}
+	none := map[string][]string{"nosuch": claim}
+	if len(ClaimsOnRoutes(providers, none)) != 0 {
+		t.Fatal("a claim for no route at all was kept")
+	}
+	// And the merge it feeds then changes nothing, with no problem at all.
+	merged, ps := ApplyClaudeClaims(providers, ClaimsOnRoutes(providers, none))
+	if len(ps) != 0 || !slicesEqual(merged["openrouter"].Models, []string{"deepseek/*"}) ||
+		!slicesEqual(merged["other"].Models, []string{"qwen/*"}) {
+		t.Fatalf("merged = %v, problems = %v", merged, ps)
+	}
+}
+
 // No claims: providers come back exactly as they were, so every path
 // without a layer is unchanged.
 func TestApplyClaudeClaimsWithoutClaims(t *testing.T) {
