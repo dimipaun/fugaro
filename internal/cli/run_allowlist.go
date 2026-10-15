@@ -31,7 +31,8 @@ import (
 // this side can see — which slug the launch was about to store the run under,
 // and which release this binary is.
 //
-// The read is the operator's own (projectPolicyRead), which is what makes the
+// The read is the operator's own (policyReadOnce, which this gate shares with
+// the launch's mint decision), which is what makes the
 // gate the launcher's and not the runner's (R2-8(a)): the runner on a
 // credential-less run has no way to read the node at all.
 
@@ -41,7 +42,7 @@ import (
 // the launch claim: a refused launch leaves nothing behind at all — no task,
 // no token, no claim and no execution.
 func launchPolicyGates(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) error {
-	p, found, err := projectPolicyRead(ctx, env.lc)
+	p, found, err := env.policy.read(ctx, env.lc)
 	var ve *projectpolicy.VersionError
 	if errors.As(err, &ve) {
 		// This is the one read whose version skew is worded here rather than

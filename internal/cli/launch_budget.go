@@ -71,34 +71,28 @@ func (e *cloudEnv) budgetMintOn(ctx context.Context) (bool, error) {
 	if e.lc.Budget == nil || e.lc.Budget.RTDBURL == "" {
 		return false, nil // no database: no policy this CLI could see either
 	}
-	p, found, err := projectPolicyOf(ctx, e.lc)
-	if err != nil || !found || p == nil {
-		return false, err
+	p, found, err := e.policy.read(ctx, e.lc)
+	if err != nil {
+		return false, policyReadErr(err)
+	}
+	if !found || p == nil {
+		return false, nil
 	}
 	// A policy exists: this run must be able to read it. That needs a signer,
 	// whatever the mode is.
 	return true, budgetSignerOn(e.lc)
 }
 
-// projectPolicyOf reads the project's policy with the operator's own
-// credentials: the one read the CLI itself makes of the node (Readiness's D11
-// gate, and in mintBudgetToken the decision whether a run needs a budget
-// identity at all). A project whose config carries no database URL has no
-// policy this CLI can see, and says so without a call.
+// projectPolicyRead is the CLI's read of the project's policy with the
+// operator's own credentials: the one read the CLI itself makes of the node
+// (Readiness's D11 gate, the launch gate, and in mintBudgetToken the decision
+// whether a run needs a budget identity at all). A project whose config
+// carries no database URL has no policy this CLI can see, and says so without
+// a call. policyReadOnce is what callers use, so one launch reads it once.
 //
-// The keys this Fugaro does not know are refused, not ignored. The runner
-// tolerates them (P8: a policy a newer Fugaro wrote must not brick an older
-// image, which cannot be upgraded mid-run), but the CLI is the operator's own
-// tool and can be upgraded, and a misspelt key that is silently dropped is a
-// policy the owner believes he set. Refusing names the keys and the way out.
-func projectPolicyOf(ctx context.Context, lc *localcfg.Config) (*projectpolicy.Policy, bool, error) {
-	p, found, err := projectPolicyRead(ctx, lc)
-	return p, found, policyReadErr(err)
-}
-
-// projectPolicyRead is projectPolicyOf without the wording: the same read,
-// with projectpolicy's typed errors intact, for the one caller that words the
-// version skew itself — the launch gate (internal/cli/run_allowlist.go, plan
+// It is the read with projectpolicy's typed errors intact, not the wording
+// (policyReadErr), for the one caller that words the version skew itself —
+// the launch gate (internal/cli/run_allowlist.go, plan
 // task 1.5 step 4), which names the release the policy model ships in beside
 // the policy's own version, because what it refuses is a *launch* and the fix
 // is on the operator's side. Every other caller wants policyReadErr.
@@ -165,19 +159,38 @@ func policyReadErr(err error) error {
 
 // policyReadOnce memoizes one CLI run's read of the policy: init --repo asks
 // twice (once before the first plan, once after the builds) and must not pay
-// for it twice, and the answer cannot change under it.
+// for it twice, and a launch asks twice on one path too — the gate before
+// anything of it exists, and the mint decision — where two reads could
+// disagree about the policy a single launch is admitted against. The answer
+// cannot change under either of them (and where it could, the run reads the
+// node itself and is the one that counts).
+//
+// What is memoized is the raw read, projectPolicyRead's result with
+// projectpolicy's typed errors intact, because two callers word the same error
+// differently: the launch gate names the release a policy's version is from
+// (policySkewRefusal), and every other caller wants policyReadErr.
 type policyReadOnce struct {
 	done  bool
+	p     *projectpolicy.Policy
 	found bool
 	err   error
 }
 
-func (p *policyReadOnce) exists(ctx context.Context, lc *localcfg.Config) (bool, error) {
+// read is the memoized projectPolicyRead: the policy, whether one was
+// published, and the read's own error.
+func (p *policyReadOnce) read(ctx context.Context, lc *localcfg.Config) (*projectpolicy.Policy, bool, error) {
 	if !p.done {
 		p.done = true
-		_, p.found, p.err = projectPolicyOf(ctx, lc)
+		p.p, p.found, p.err = projectPolicyRead(ctx, lc)
 	}
-	return p.found, p.err
+	return p.p, p.found, p.err
+}
+
+// exists is read in the CLI's wording, for the callers that only ask whether
+// the project has published a policy (Readiness's D11 gate).
+func (p *policyReadOnce) exists(ctx context.Context, lc *localcfg.Config) (bool, error) {
+	_, found, err := p.read(ctx, lc)
+	return found, policyReadErr(err)
 }
 
 // budgetPrecheck refuses a launch the budget would refuse anyway (see

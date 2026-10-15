@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -248,6 +249,37 @@ func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) 
 	})
 }
 
+// The launch reads the policy once. Two things read it on this path: the gate,
+// before anything of the launch exists, and the mint decision, because a
+// published policy is what makes a token necessary whatever the local mode is.
+// Two reads are two chances for an owner to change the node under one launch,
+// on the launch that mints a run its identity, so both go through the launch's
+// one memoized read (policyReadOnce) and the database sees a single GET of the
+// node. (The runner reads it again in its own process; that read is the one
+// that counts.)
+//
+// Mutation (run, restored): read it directly in launchPolicyGates again
+// (projectPolicyRead instead of env.policy.read) — the count below becomes 2
+// and this test fails.
+func TestLaunchReadsThePolicyOnce(t *testing.T) {
+	f := newOffModeBudget(t, "")
+	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+		", firebase_api_key: AIzaSyFakeFakeFakeFakeFake12345 }\n")
+	publishPolicy(t, f, `{"version":1,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["*"]}`)
+	if _, _, err := runBudget(t); err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	for _, r := range f.db.Requests() {
+		if r.Method == http.MethodGet && strings.Contains(r.Path, projectpolicy.PathShared()) {
+			reads++
+		}
+	}
+	if reads != 1 {
+		t.Fatalf("%d reads of %s in one launch, want 1: the gate and the mint decision must not be admitted against two different policies", reads, projectpolicy.PathShared())
+	}
+}
+
 // L2 of the PR #379 review, the first mutation no test caught: the CLI must
 // not read a denied read of a published policy as "no policy here". The
 // marker is deployed, so a policy may exist, and the database refuses the node
@@ -312,7 +344,7 @@ func TestLaunchRefusesAPolicyKeyThisFugaroDoesNotKnow(t *testing.T) {
 	}
 }
 
-// The branch of projectPolicyOf no test reached (the review of PR #379): a
+// The branch of the CLI's policy read no test reached (the review of PR #379): a
 // policy node the database handed over and this Fugaro could not read is the
 // project's own published data, so it is the user's error (exit 1) — the class
 // dbErr and checkDBProject use for a bad node in the same database. It used to
