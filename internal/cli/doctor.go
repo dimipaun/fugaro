@@ -1379,10 +1379,49 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck 
 			Problem: fmt.Sprintf("the policy published at %s admits no repository: every run's repository is refused before it mints a git token", shared),
 			Fix:     "fugaro project repos add owner/name enrolls one ('fugaro project repos add github/acme/app')"})
 	}
+	if c := doctorAllowListUncovered(lc, p); c != nil {
+		checks = append(checks, *c)
+	}
 	if c := doctorPolicyVsJobs(lc); c != nil {
 		checks = append(checks, *c)
 	}
 	return checks
+}
+
+// doctorAllowListUncovered is the other half of allow-list-empty, and the
+// state un-enrolling a repository (`fugaro project repos rm`) leaves behind:
+// the policy admits repositories, just not one this machine's config names,
+// so that repository's runs are refused at admission — before any git
+// credential exists — and the machine that launches them is where the
+// operator finds out first.
+//
+// The names come from the machine's own `repos:` map, the one `init --repo`
+// fills, converted with Canonical exactly as the publish seed converts them
+// (project_cmd.go's seedAllowRepos), so the two cannot spell a repository
+// differently. A repository with no provider recorded is skipped rather than
+// guessed: the checkout's fugaro.yaml decides it, and doctor does not read a
+// repository's file to answer a question about the project's policy.
+func doctorAllowListUncovered(lc *localcfg.Config, p *projectpolicy.Policy) *doctorCheck {
+	var refused []string
+	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
+		r := lc.Repos[name]
+		if r.Provider == "" {
+			continue
+		}
+		c, err := projectpolicy.Canonical(r.Provider, name)
+		if err != nil {
+			continue
+		}
+		if !projectpolicy.AdmitRepo(p.AllowRepos, c) {
+			refused = append(refused, c)
+		}
+	}
+	if len(refused) == 0 {
+		return nil
+	}
+	return &doctorCheck{ID: "allow-list-uncovered", Severity: "warning",
+		Problem: fmt.Sprintf("the policy published at %s does not admit %s, which this machine's config names (allow_repos is %q): a run of one of those repositories is refused before it mints a git token", projectpolicy.PathShared(), oneLine(strings.Join(refused, ", ")), p.AllowRepos),
+		Fix:     fmt.Sprintf("fugaro project repos add %s enrolls it; 'fugaro project policy show' prints the allow-list as it stands", refused[0])}
 }
 
 // doctorPolicyVsJobs is 12a item 6's trap: a policy is published, and the

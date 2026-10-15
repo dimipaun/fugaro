@@ -84,6 +84,7 @@ func TestDocsProjectLayerSaysWhatDoctorReports(t *testing.T) {
 		"It also reports the project's policy",
 		"a policy **newer than this Fugaro**",
 		"**empty `allow_repos`** in a published policy",
+		"**a repository this machine's config names that the allow-list does not admit**",
 		"**deployed rules older than the marker**",
 		"`model_prices` one line per model",
 	} {

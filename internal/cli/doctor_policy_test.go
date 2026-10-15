@@ -73,13 +73,21 @@ func doctorChecksByID(t *testing.T) map[string]doctorCheck {
 // (info), policy-newer-than-binary (warning, P8), policy-vs-jobs (warning),
 // allow-list-empty (warning) and policy-rules-skew (warning, on the fixture
 // an older CLI's init --firebase leaves: the marker at RulesVersion and the
-// deployed rules from before the policy nodes).
+// deployed rules from before the policy nodes) — plus allow-list-uncovered,
+// the same question as allow-list-empty asked of the repositories this
+// machine's config names rather than of the list's length.
 //
 // Mutation (verified, run and restored): make doctorPolicyChecks return nil:
 // every subtest fails, finding no policy check at all. Mutation for the skew
 // case alone: drop the `db.Rules` comparison in doctorRulesSkew so it always
 // returns nil: the "rules older than the marker" subtest fails, finding no
-// policy-rules-skew check.
+// policy-rules-skew check. Mutation for the coverage check (each run and
+// restored): make doctorAllowListUncovered return nil always — the
+// "does not admit the repositories this config names" subtest fails, finding
+// no allow-list-uncovered check; and make its admission test unconditional
+// (`if true` for `!AdmitRepo(...)`) — the same subtest fails on the other
+// side, "allow-list-uncovered fired though github/acme/* admits
+// github/acme/app".
 func TestDoctorPolicyChecks(t *testing.T) {
 	t.Run("an installation with no budget backend publishes no policy", func(t *testing.T) {
 		newDoctorRig(t)
@@ -139,6 +147,36 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Problem, "admits no repository") || !strings.Contains(c.Fix, "fugaro project repos add") {
 			t.Errorf("the check does not say what an empty list does and how to enroll one: %+v", c)
 		}
+	})
+
+	t.Run("a policy that does not admit the repositories this config names", func(t *testing.T) {
+		// The allow-list is not empty, so allow-list-empty is silent — but not
+		// one repository this machine's config names is on it, which is the
+		// state `project repos rm` leaves behind and every run of those
+		// repositories is refused at admission for it.
+		doctorPolicyRig(t, doctorPolicy(func(p *projectpolicy.Policy) {
+			p.AllowRepos = []string{"github/other/app"}
+		}), "repos: { acme/app: { provider: github } }\n")
+		c, ok := doctorChecksByID(t)["allow-list-uncovered"]
+		if !ok || c.Severity != "warning" {
+			t.Fatalf("allow-list-uncovered = %+v (present %v), want a warning", c, ok)
+		}
+		if !strings.Contains(c.Problem, "github/acme/app") {
+			t.Errorf("the check does not name the repository that is refused: %+v", c)
+		}
+		if !strings.Contains(c.Fix, "fugaro project repos add") {
+			t.Errorf("the check does not name how to enroll it: %+v", c)
+		}
+		// A pattern covers what it admits: github/acme/* admits the config's
+		// github/acme/app, so the same config with a pattern is not a warning.
+		doctorPolicyRig(t, doctorPolicy(func(p *projectpolicy.Policy) {
+			p.AllowRepos = []string{"github/acme/*"}
+		}), "repos: { acme/app: { provider: github } }\n")
+		if c, ok := doctorChecksByID(t)["allow-list-uncovered"]; ok {
+			t.Errorf("allow-list-uncovered fired though github/acme/* admits github/acme/app: %+v", c)
+		}
+		// The policy of every other subtest here is not checked against the
+		// config: a config that names no repository has none to refuse.
 	})
 
 	t.Run("the jobs still run an older runner image", func(t *testing.T) {
