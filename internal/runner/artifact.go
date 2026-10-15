@@ -153,7 +153,8 @@ func (r *run) runRender(ctx context.Context) (runstore.RenderRecord, error) {
 	}
 	r.rec.Stage = "render"
 	r.save(ctx)
-	stageCtx, cancel := r.budget.StepContext(ctx, r.wf.Timeouts.Render.Duration)
+	deadline, cutByReserve := r.budget.StepDeadline(r.wf.Timeouts.Render.Duration)
+	stageCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	// The render's output is a repository's own command's, so it goes
 	// through the same redactor the agent's streams do, whole lines at a
@@ -163,12 +164,26 @@ func (r *run) runRender(ctx context.Context) (runstore.RenderRecord, error) {
 	code, err := procgroup.Run(stageCtx, procgroup.Cmd{
 		Name: "sh", Args: []string{"-c", command}, Dir: r.d.WorkDir, Env: r.env, Stdout: out, Stderr: out,
 	})
+	// Flushed before the tail is read: the redactor holds a line until a
+	// newline arrives, so a render whose last line has none — a failure
+	// message, typically — would be missing from the tail exactly when it
+	// explains the failure.
+	out.Flush()
 	rec.DurationS = r.d.Now().Sub(started).Seconds()
 	rec.ExitCode = code
 	rec.TimedOut = errors.Is(stageCtx.Err(), context.DeadlineExceeded)
 	r.rec.Stages = append(r.rec.Stages, runstore.StageTiming{Name: "render", StartedAt: started, DurationS: rec.DurationS})
 	log := r.d.Log.With("stage", "render")
 	switch {
+	case rec.TimedOut && cutByReserve:
+		// The run's own reserve ended the render, not timeouts.render: the
+		// deadline above is whichever of the two comes first, and the
+		// reason says which one it was, so the record never blames a
+		// timeout that had time left to run (design §4.5).
+		log.Warn("commands.render cut at the finalize reserve", "reserve", r.budget.Reserve, "total", r.budget.Total, "exit_code", code)
+		r.noteRenderTail(tail)
+		return rec, fmt.Errorf("commands.render was cut at the run's finalize reserve, not at its timeouts.render (%s): the %s run budget keeps %s for finalize",
+			r.wf.Timeouts.Render.Duration, r.budget.Total, r.budget.Reserve)
 	case rec.TimedOut:
 		// procgroup.Run reports a command killed by ctx as ctx.Err().
 		log.Warn("commands.render timed out", "timeout", r.wf.Timeouts.Render.Duration, "exit_code", code)

@@ -971,6 +971,23 @@ func (r *run) bootstrap(ctx context.Context) error {
 	case !r.review && rcp.Mode == recipe.ModeReview:
 		return fmt.Errorf("recipe %s is mode: review, but the task names no pull request to review", rrec.Name)
 	}
+	// A follow-up continues a pull request: it inherits that PR's branch
+	// and base, pushes to the branch and reports on the PR. A mode:
+	// artifact recipe renders a deliverable into the run's bucket and opens
+	// no pull request at all (design artifact-runs.md §3), so there is no
+	// pull request for one to continue — and a follow-up does not ask for
+	// its recipe anyway: it INHERITS it (the previous task's embedded text,
+	// a repository recipe carried by name, or the one the runner chose for
+	// the previous run), so an artifact recipe can arrive here without
+	// anyone choosing it for this task. Refused before any stage, and keyed
+	// on the RESOLVED recipe rather than any mode the task carries, because
+	// a follow-up spec carries none and an empty one takes the recipe's
+	// (below). This is the backstop the launcher's own refusal cannot be:
+	// a repository recipe by name is read here, at this run's base, and not
+	// there (refuseFollowUpArtifactMode, internal/cli/recipes_resolve.go).
+	if r.follow != nil && rcp.Mode == recipe.ModeArtifact {
+		return fmt.Errorf("recipe %s is mode: artifact, which renders a deliverable into the run's bucket and opens no pull request; this task continues pull request #%d, so it cannot run that recipe", rrec.Name, spec.PR)
+	}
 	// The spec's mode and the resolved recipe's mode must agree, and an
 	// EMPTY spec.Mode takes the resolved recipe's mode rather than
 	// defaulting to implement: the launcher leaves the recipe to the runner

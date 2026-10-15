@@ -438,7 +438,7 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			// nothing attached just as much as for one launched with
 			// --attach.
 			if clone {
-				if err := checkCloneImageSince(env.lc, spec, artifactsSince, "artifact recipes", "mode: artifact", "", warn); err != nil {
+				if err := checkCloneImageSince(env.lc, spec, artifactsSince, "a mode: artifact recipe", "mode: artifact", "", warn); err != nil {
 					return launchResult{}, err
 				}
 			} else if err := checkImageSince(ctx, env, slug, spec, kind, artifactsSince, "a mode: artifact recipe", "mode: artifact", "", warn); err != nil {

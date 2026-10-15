@@ -79,12 +79,47 @@ func refuseFollowUpReviewMode(rcp *recipe.Recipe, name string) error {
 // inherits — and an artifact run has none of that to resolve, so the
 // refusal is at the launch rather than a refusal to carry the mode. The
 // runner refuses the same mismatch again, at bootstrap, for a recipe this
-// never sees.
+// never sees: it keys on the RESOLVED recipe (internal/runner/runner.go),
+// which is the backstop for a follow-up that inherits a repository recipe by
+// name — a task.Recipe with no text — since that file is read at the run's
+// own base. refuseFollowUpRepoRecipe reads the ones this checkout has, so
+// most of those are refused here too.
 func refuseFollowUpArtifactMode(rcp *recipe.Recipe, name string) error {
 	if rcp.Mode == recipe.ModeArtifact {
 		return userErr("recipe %s is mode: artifact, which renders a deliverable into the run's bucket and opens no pull request; it takes no --pr, and there is no pull request for it to continue", name)
 	}
 	return nil
+}
+
+// refuseFollowUpRepoRecipe refuses the same two mismatches for a follow-up
+// that INHERITS a repository recipe by name — the previous task's
+// task.Recipe{Name, Source: repo}, and the chosen recipe carryChosenRecipe
+// keeps the same way — which carries no text for either refusal above to
+// read. The file is read from the working directory's checkout when there is
+// one; a name that checkout does not have, or a file it cannot parse, is
+// left alone, because the runner reads the name at THIS task's base
+// (readRepoRecipe, internal/runner/recipe.go) and refuses a bad or artifact
+// one there itself. Nothing but the checkout is consulted: the previous run
+// ran a repository recipe, and a same-named project or catalog recipe is not
+// the one it ran.
+func refuseFollowUpRepoRecipe(ctx context.Context, repo, name string) error {
+	root := checkoutRoot(ctx, repo)
+	if root == "" {
+		return nil
+	}
+	data, found, err := recipe.ReadRepoFile(root, name)
+	if err != nil || !found {
+		return nil
+	}
+	where := filepath.Join(root, filepath.FromSlash(recipe.RepoPath(name)))
+	rcp, err := parseRecipeAt(data, name, where)
+	if err != nil {
+		return nil
+	}
+	if err := refuseFollowUpReviewMode(rcp, name); err != nil {
+		return err
+	}
+	return refuseFollowUpArtifactMode(rcp, name)
 }
 
 // projectRecipesNote is why lc's project recipes are not read, or "": as

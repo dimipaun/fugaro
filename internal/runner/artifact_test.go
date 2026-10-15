@@ -597,3 +597,140 @@ func TestHaltAdviceForAHaltedArtifactRunSaysStartAgain(t *testing.T) {
 		t.Fatalf("a halted artifact run is not told to start again:\n%s", got)
 	}
 }
+
+// TestFollowUpWhoseRecipeIsModeArtifactIsRefused is the mode-confusion hole
+// a follow-up left open (design artifact-runs.md §8.2): a follow-up does not
+// CHOOSE its recipe, it inherits the previous run's, so a mode: artifact
+// recipe reaches it without anyone asking for one — and its spec carries no
+// mode either (the launcher writes mode only for a run it resolved a recipe
+// for), so an empty spec.Mode used to take the artifact recipe's mode and run
+// the render, ending ARTIFACTS, NO PR for a task that continues PR #1.
+// Bootstrap therefore refuses the pair before any stage, keyed on the
+// RESOLVED recipe. Both arms are the two ways a follow-up inherits one: the
+// previous run's text embedded in task.json, and a repository recipe carried
+// by name, which the runner reads at this task's base (the launcher cannot:
+// it has the name alone).
+//
+// Mutations: delete the `r.follow != nil && rcp.Mode == recipe.ModeArtifact`
+// refusal in runner.go and both arms run the render instead: the record ends
+// succeeded/artifacts, the workdir holds out/sizzle.mp4 (asserted below), and
+// the run that was launched to continue PR #1 opened none. Narrow the refusal
+// to `spec.Mode == recipe.ModeArtifact` (key it on the spec rather than on
+// the RESOLVED recipe) and both arms are green again, which is the whole bug:
+// a follow-up's spec carries no mode.
+func TestFollowUpWhoseRecipeIsModeArtifactIsRefused(t *testing.T) {
+	cases := []struct {
+		name   string
+		recipe *task.Recipe
+		extra  map[string]string
+	}{
+		{"the previous run's recipe text", &task.Recipe{Name: "sizzle", Source: string(recipe.SourceProject),
+			YAML: sizzleRenderOnlyYAML, SHA256: recipe.Sum([]byte(sizzleRenderOnlyYAML))}, nil},
+		{"a repository recipe kept by name", &task.Recipe{Name: "sizzle", Source: string(recipe.SourceRepo)},
+			map[string]string{".fugaro/recipes/sizzle.yaml": sizzleRenderOnlyYAML}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			// The render is written into fugaro.yaml's commands.render rather
+			// than run from a script: with the refusal deleted it really runs,
+			// so the mutation shows as a delivered deliverable and not as a
+			// missing file standing in for one.
+			h := followUpHarness(t, renderCfg(t, "mkdir -p out && echo sizzle > out/sizzle.mp4", ""), nil)
+			if c.extra != nil {
+				// Committed to main, where a follow-up reads its repository
+				// recipe from (readRepoRecipe, origin/<ref>).
+				commitToRemote(t, h.harness, func(dir string) { testutil.WriteFiles(t, dir, c.extra) })
+			}
+			h.followUpRecipe(t, followID, runID, "Render the trailer.", c.recipe)
+			pushes := countPushes(t, h.harness)
+			rec, err := h.run(t)
+			if err == nil || rec.Status != runstore.StatusInfraError {
+				t.Fatalf("rec = %+v, err = %v; want an infra_error", rec, err)
+			}
+			if !strings.Contains(rec.Reason, "mode: artifact") || !strings.Contains(rec.Reason, "pull request #1") {
+				t.Fatalf("the reason does not name the mode and the rule: %q", rec.Reason)
+			}
+			if len(h.agent.calls) != 0 {
+				t.Fatalf("the agent ran %d times, want none", len(h.agent.calls))
+			}
+			if n := pushes(); n != 0 {
+				t.Fatalf("%d pushes, want none", n)
+			}
+			if rec.Outcome != runstore.OutcomeNone || rec.Render != nil {
+				t.Fatalf("the refused run claims artifacts: %+v", rec)
+			}
+			if _, err := os.Stat(filepath.Join(h.deps.WorkDir, "out", "sizzle.mp4")); err == nil {
+				t.Fatal("the render ran for a refused follow-up")
+			}
+		})
+	}
+}
+
+// TestRenderIsCutAtTheFinalizeReserve is Review Focus 7's other bound: the
+// render runs under timeouts.render AND under the run's finalize reserve
+// (design §4.5), and when the reserve comes first it is the reserve that
+// ends the render. The budget below leaves about two seconds between the
+// run's start and finalizeAt, with timeouts.render asking for 60s, so a
+// render that sleeps 20s can only be cut by the reserve — and the reason it
+// records says so, rather than quoting a timeouts.render that had 58s left.
+//
+// Mutations: drop the `f.Before(deadline)` arm of Budget.StepDeadline and the
+// render sleeps its full 20s and then EXITS 0, so the run ends
+// succeeded/artifacts and this test fails on the first assertion. Keep the
+// cap and revert the message to "timed out after 60s" and it fails on the
+// reason, which no longer names the bound that applied.
+func TestRenderIsCutAtTheFinalizeReserve(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", "{ total: 30s, stage: 10s, verify: 5s, render: 60s, finalize_reserve: 28s }"),
+		artifactSpec(sizzleRenderOnlyYAML), renderScript("#!/bin/sh\nsleep 20\n"))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v, want a failed run with no artifacts", rec)
+	}
+	if rec.Render == nil || !rec.Render.TimedOut {
+		t.Fatalf("render = %+v, want timed out", rec.Render)
+	}
+	if !strings.Contains(rec.Reason, "finalize reserve") {
+		t.Fatalf("the reason does not name the bound that ended the render: %q", rec.Reason)
+	}
+	if strings.Contains(rec.Reason, "timed out after 60s") {
+		t.Fatalf("the reason blames a timeout that never fired: %q", rec.Reason)
+	}
+	if strings.Contains(rec.Reason, "time budget exhausted") {
+		t.Fatalf("the reserve did not hold: %q", rec.Reason)
+	}
+	if d := time.Duration(rec.Render.DurationS * float64(time.Second)); d > 5*time.Second {
+		t.Fatalf("the render ran %s: it was not cut at the reserve", d)
+	}
+}
+
+// TestRenderTailKeepsAFinalLineWithoutANewline: the render's tail is the one
+// thing that explains a failed render to an owner, and the output goes
+// through the redactor a line at a time — the redactor holds a partial line
+// until a newline arrives, so runRender must flush it before reading the
+// tail. A render whose failing message ends without a newline (a `printf`
+// with no trailing \n is the ordinary shape of one) is in report.md with the
+// flush and gone without it.
+//
+// Mutation: drop out.Flush() from runRender and report.md's log tail stops
+// after the first line, so the assertion below fails.
+func TestRenderTailKeepsAFinalLineWithoutANewline(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""), artifactSpec(sizzleRenderOnlyYAML),
+		renderScript("#!/bin/sh\necho 'first line'\nprintf 'the render blew up without a newline'\nexit 3\n"))
+	rec, err := h.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Render == nil || rec.Render.ExitCode != 3 {
+		t.Fatalf("render = %+v, want exit 3", rec.Render)
+	}
+	report, err := h.store.ReadFile(context.Background(), "report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(report), "the render blew up without a newline") {
+		t.Fatalf("the render's last line, which has no trailing newline, is not in the report:\n%s", report)
+	}
+}
