@@ -64,6 +64,10 @@ type retireOpts struct {
 	// container is no longer in the state, and the label list is the only
 	// thing that still knows about it.
 	keptAsNote bool
+	// jobNoName is a job the state holds whose own `name` attribute could
+	// not be read: Protected keeps it in the removal set (the conservative
+	// direction) and the API delete has no name to call.
+	jobNoName bool
 }
 
 // retireRig is an onboarded repository ready to plan, with the retirement's
@@ -163,8 +167,12 @@ func retireStateDoc(t *testing.T, o retireOpts) string {
 			"values": map[string]any{"account_id": retireJobName}})
 	}
 	if !o.noJobInState && !o.stateEmpty {
+		values := map[string]any{"name": retireJobName, "location": "us-east5", "deletion_protection": o.protection}
+		if o.jobNoName {
+			delete(values, "name")
+		}
 		workflow = append(workflow, map[string]any{"address": retireJobAddr, "mode": "managed", "type": "google_cloud_run_v2_job", "name": "this",
-			"values": map[string]any{"name": retireJobName, "location": "us-east5", "deletion_protection": o.protection}})
+			"values": values})
 	}
 	root := []any{}
 	if !o.keptAsNote {
@@ -903,6 +911,37 @@ func TestInitRepoRetireReportsAnApplyThatSucceededAndADeleteThatFailed(t *testin
 		if !strings.Contains(text, want) {
 			t.Errorf("the failed delete does not say %q:\n%s", want, text)
 		}
+	}
+}
+
+// A state-held job whose values carry no readable `name` is state-removed and
+// then cannot be deleted through the API -- the name is the one thing the call
+// needs and guessing it is forbidden (design §3.1). The run must say so, name
+// the address, and exit non-zero: a silent success would leave a job alive in
+// GCP with nothing managing it and nothing said (Review Focus 6).
+func TestInitRepoRetireNamesAJobTheStateCannotName(t *testing.T) {
+	// noOrphanJob too: when the label list answers, it names the job and the
+	// delete goes ahead -- the empty-name path is what is left when the state
+	// cannot name it and the labels cannot either (a refused or degraded
+	// label call), and it is the one that must not pass silently.
+	r := newRetireRig(t, retireOpts{protection: true, jobNoName: true, noOrphanJob: true})
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
+	}
+	text := out + errOut
+	for _, want := range []string{
+		retireJobAddr, "alive in GCP with nothing managing it",
+		"its name could not be read from Terraform's state", "gcloud run jobs list",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the unnameable job does not say %q:\n%s", want, text)
+		}
+	}
+	// The address left the state, so nothing manages the job any more, and
+	// the run did not invent a name to delete it with.
+	if got := r.run.JobDeletes(); len(got) != 0 {
+		t.Errorf("JobDeletes = %v, want none: no name to call the API with", got)
 	}
 }
 
