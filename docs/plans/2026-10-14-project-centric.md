@@ -244,3 +244,106 @@ Each phase is its own PR (or its own small group of PRs where the table below sp
 | **P** | 5.1, 5.2, 5.3 | **SECURITY-SENSITIVE (OAuth pool)** — a person's token, its grants and its blast radius |
 | **Q** | 5.4, 5.5 | #363 rebased, Check 55 |
 | **R** | 6.1, 6.2, 6.3, 6.4 | **SECURITY-SENSITIVE (export)** — no value, no person by default |
+
+## Phase 0 — small fixes (three tasks, plus the owner's deploy)
+
+The design's phase 0 (§11). Nothing here shares a surface with anything else in the plan, and each of the three tasks is independently vetoable: the four flag names, the optional Anthropic key, and D6.
+
+### Task 0.1: the refusal messages name flags that exist
+
+**Files:** `internal/budget/evaluate.go` (+ `evaluate_test.go`), `internal/budget/session.go` (+ `session_test.go`), `internal/cli/budget_refusal_test.go` (new).
+
+**Files it touches, verified today:** `internal/budget/evaluate.go:190` and `:247`, `internal/budget/session.go:501` and `:511`. The four strings are `fugaro budget set --defaults --repo-daily` and `--defaults --repo-per-run`; the flags the command actually registers are `--global`, `--defaults`, `--repo`, `--daily`, `--per-run` (`internal/cli/budget.go:687-691`), so the two messages must become `fugaro budget set --defaults --daily` and `fugaro budget set --defaults --per-run`.
+
+**Interfaces.** Consumes: nothing new. Produces: no symbol — the four strings, and one test that keeps them honest.
+
+1. Fix `internal/budget/evaluate.go:190` (`no daily cap is set for this repository and there is no default (fugaro budget set --defaults --daily)`) and `:247` (`... there is no default (fugaro budget set --defaults --per-run)`).
+2. Fix the same two strings in `internal/budget/session.go:501` and `:511`. The second one (`:511`) also names `budget.per_run_usd`; keep that and the `--global --per-run` half, which is a real flag.
+3. `TestRefusalMessagesNameRealFlags` (new file, `package cli`): the strings live in `internal/budget`, but the *flags* live in this package, so the test is here. It builds the real command (`newBudgetCmd()`), walks its `--`-prefixed tokens out of every `ReasonNoCap` and `Mode`-refusal detail the package can produce (a table of the four strings plus the two the gateway emits, `internal/runner/gateway.go:429-433`), and fails on any token the command does not define — after normalizing `budget.per_run_usd` (a config key, not a flag) out. It fails on the four before step 1 and passes after.
+
+```go
+// internal/cli/budget_refusal_test.go
+func TestRefusalMessagesNameRealFlags(t *testing.T) {
+	defined := map[string]bool{}
+	newBudgetCmd().Flags().VisitAll(func(f *flag.Flag) { defined["--"+f.Name] = true })
+	// a nested subcommand's flags (`budget set --per-run`) are on the child
+	for _, c := range newBudgetCmd().Commands() {
+		c.Flags().VisitAll(func(f *flag.Flag) { defined["--"+f.Name] = true })
+	}
+	for _, msg := range refusalMessages() { // the table, one entry per site
+		for _, tok := range strings.Fields(msg) {
+			tok = strings.Trim(tok, "(),;")
+			if !strings.HasPrefix(tok, "--") || defined[tok] || configKey(tok) {
+				continue
+			}
+			t.Errorf("%q names %s, which budget does not define", msg, tok)
+		}
+	}
+}
+```
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/budget/... ./internal/cli/... -count=1`.
+
+**Commit:** one commit — "budget: the four refusal messages name flags that exist".
+
+### Task 0.2: `anthropic-api-key` is not mandatory
+
+**Files:** `internal/infra/spec.go` (+ `spec_test.go`, `secretmounts_test.go`), `internal/infra/readiness.go` (+ `readiness_test.go`), `internal/agent/env.go` (+ `env_test.go`), `internal/runner/gateway.go` (+ `gateway_test.go`), `internal/gateway/{gateway.go,route.go}` (+ tests), `docs/multi-model.md`.
+
+**The five sites, re-verified:** `internal/infra/spec.go:585-591` (the mount, in the `case "api-key"` branch of `SecretMounts`), the readiness gate `internal/infra/readiness.go:100-158` (the secret-version probe — the design's "deploy blocked without a version"), `internal/agent/env.go:91-104` (the ≥4-byte demand for redaction), `internal/runner/gateway.go:74-76` (`up.APIKey = envLookup(r.d.Env, "ANTHROPIC_API_KEY")`), `internal/gateway/gateway.go:255-259` (`the anthropic upstream has no API key`), `internal/gateway/route.go:92-96` (`routes need the anthropic upstream, not %q`).
+
+**Interfaces.** Consumes: the version probe `readiness.go` already runs (`hasVersion`, `internal/infra/readiness.go:100`, and the per-logical-name results it already collects). Produces: `Inputs.MountedSecrets map[string]bool` — logical name → "an enabled version exists", filled by `init` before the spec is built, and read by `SecretMounts`. Nothing else changes shape.
+
+1. `SecretMounts` (`internal/infra/spec.go:585`): mount `anthropic-api-key` **only when `Inputs.MountedSecrets["anthropic-api-key"]`**. The accidental coupling the design notes goes away: the mount is a fact about data at deploy time, not about the mode or the pins, so flipping the routing switch later never needs Terraform (design §6.1).
+2. The readiness gate (`internal/infra/readiness.go`): a missing `anthropic-api-key` is no longer a *blocking* finding when the run's pins name no direct Claude model. Keep the finding at `warning` severity with text naming the case it would break (`routing.claude` or a direct Claude pin), so an owner routing everything through OpenRouter is not nagged and one who pins Claude direct is told before the run.
+3. `internal/agent/env.go:91-104`: the ≥4-byte demand applies only when the gateway holds a key. With the gateway present and no key, the agent's environment is built without `ANTHROPIC_API_KEY` rather than failing — the runner still registers the placeholder for redaction if it exists, but its absence is not an error.
+4. `internal/gateway/gateway.go:255-259` and `internal/gateway/route.go:92-96`: the Anthropic upstream becomes optional; **a direct Claude call with no key is refused with a clear message naming the fix**, and the refusal is a *per-call* error, not a startup error. The route-level message (`routes need the anthropic upstream`) becomes "this route needs the anthropic upstream, which has no key: set `anthropic-api-key`, or route this model through a provider (`routing.claude`)". **The refusal must not become a silent route change**: a direct-Claude call with no key never falls through to a provider (that is phase 1b's opt-in and D1b's `direct` default).
+5. `docs/multi-model.md`: the placeholder-key paragraph goes, and the "a key is needed only for the models that use it" rule is stated once.
+
+**Tests:** `TestSecretMountsOmitsAbsentAnthropicKey` and `TestSecretMountsMountsPresentAnthropicKey` (`internal/infra`, table-driven over `MountedSecrets`); `TestApiKeyRunWithoutAnthropicKeyStarts` (`internal/agent`); `TestGatewayStartsWithoutAnthropicUpstream` and `TestDirectClaudeCallWithoutKeyIsRefusedByName` (`internal/gateway`); `TestReadinessWarnsInsteadOfBlocking` (`internal/infra`); `TestRunnerStartsWithNoAnthropicKeyWhenPinsAreRouted` (`internal/runner`). The last one is the end-to-end assertion: a run whose pins all name provider models reaches the agent, and one whose pins name `claude-*` fails at the first call with the message above.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/infra/... ./internal/agent/... ./internal/gateway/... ./internal/runner/... -count=1`.
+
+**Commit:** one commit — "keys: neither the Anthropic key nor a provider key is mandatory".
+
+### Task 0.3: the global per-run cap is the fallback (D6) — SECURITY-SENSITIVE, independent opus review
+
+**Files:** `internal/budget/model.go` (+ `model_test.go`), `internal/budget/rules/rules.go`, `internal/budget/rules/rules.json.tmpl`, `internal/budget/rules/testdata/rules.golden.json`, `internal/budget/rules/{parity_test.go,rules_test.go}`, `internal/budget/rules/emulator_test.go` (tag `firebase`), `docs/design/m9-budget-and-dashboard.md`.
+
+**Verified today:** `internal/budget/model.go:209-224` — `PerRun` returns `ok == false` when the repository and the defaults have no per-run cap, and its comment says *"ok is false when either side is unset, because the rules deny when either comparison reads null"*. `internal/budget/rules/rules.go:310-314` (`REPOPERRUN`, `GLOBALPERRUN` macros) and `:343-346` (`fallback(own, def)` returns null when both are absent). `internal/budget/rules/rules.json.tmpl:28` (the `reserved` validator comparing against both macros). `docs/design/m9-budget-and-dashboard.md:272` says the global cap *is* the default for every repository — which is what the code and rules do not do, and D6 makes it true.
+
+**Interfaces.** Consumes: nothing new. Produces: `Caps.PerRun()`'s new contract (the global cap substitutes for an absent repository/default cap) and the same substitution inside the rules' `fallback()`.
+
+1. `internal/budget/model.go`: `PerRun()` returns `(*c.Global.PerRunMicros, true)` when neither the repository's own cap nor the defaults set one, and keeps `min(repo, *c.Global.PerRunMicros)` when they do. Rewrite the comment: it now says the global cap is the fallback by owner decision D6 and that the rules mirror it. **A repository cap and the defaults still only tighten** — the global cap is a floor of *applicability*, never a loosening: an absent global cap stays `ok == false`.
+2. `internal/budget/rules/rules.go:343`: `fallback(own, def)` gains the global cap as its last resort, emitted as the literal path to `config/caps/global/perRunMicros` and **guarded by a `.val()`-style existence check the rules language supports** — a null read must not make the comparison false-by-default the way it does today. The macro must remain *one* expression per site so `REPOPERRUN`/`GLOBALPERRUN` cannot drift apart; if the rules language cannot express an existence-guarded fallback in one expression, the fallback is emitted per comparison (that is a design change and the task **stops and reports** rather than emitting a rule that swallows the case).
+3. `internal/budget/rules/rules.json.tmpl:28`: both macros keep their meaning (repository/default, then global); the `reserved` validator is otherwise unchanged. Regenerate `testdata/rules.golden.json` (`rules_test.go:15`) in this commit.
+4. `internal/budget/rules/parity_test.go` (`TestRulesParity`, `:175`): add the case that pins the new agreement — a project with a global per-run cap, no defaults cap and no repository node: `model.PerRun()` returns the global cap and the rules **allow** a reserve of exactly that size and **deny** one micro more.
+5. The emulator test (tag `firebase`, `internal/budget/rules/emulator_test.go`): a run token writes `reserved` for a slug with no `config/caps/repos/<slug>` and no defaults, and the write succeeds when `global/perRunMicros` is set — the fail-open direction, exercised against the real rules.
+6. `docs/design/m9-budget-and-dashboard.md:272` and its §6.4: the document now says what the code does. Add one sentence naming D6 and the date, so the change of direction is recorded in the document that was wrong.
+
+**Tests:** the three above, plus `TestPerRunNoGlobalCapStillUnset` (an absent global cap is still `ok == false`, so this cannot become "no cap at all"), and `TestPerRunRepoCapStillTightens` (a repository cap below the global one still wins).
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/budget/... -count=1`, then the emulator: `go test -tags firebase ./internal/budget/rules/... -count=1` (CONTRIBUTING.md:21; it *fails* rather than skips when the emulator is missing, so a task without Java/Node must run it in CI before merging — and this task does not merge without it).
+
+**Commit:** one commit — "budget: the global per-run cap is the fallback (D6), in the rules and the code". Nothing else rides along: the rules template, the golden file, the code and the m9 document are one reviewable change (P1).
+
+### Task 0.4: Check 48, and the rules deploy — OWNER-RUN, no agent performs any step
+
+**Files:** `docs/gcp-live-checklist.md`.
+
+The design's phase 0 ends with an owner-run rules deploy (§2.5, D6). **An agent never deploys rules**: the security rules of a live database are the owner's to publish, and the deploy here changes what a run token may write.
+
+Append `## Check 48: the global per-run cap as the fallback, and the rules deploy it needs (installation fugaro only, never belong; run by you; NOT RUN)` plus its row in the summary table, with exactly these steps in this order:
+
+1. **Setup, hard-coded and guarded.** The block that follows the shape of `docs/gcp-live-checklist.md:1158-1177`: `P=fugaro-dev` (hard-coded, not `gcloud config get-value project`), `L=<region>`, and a first line that stops unless `P` is non-empty and equals the installation `fugaro doctor` reports (`${P:?re-run the setup block}`). Save it to a file and run it with `bash`, not an interactive `zsh` (the checklist's own note, `:1190`). **Record the state to restore**: `fugaro budget show --json` (the caps, defaults and mode), and the deployed rules' byte count from `init --firebase`'s own report.
+2. **Owner-run deploy.** `fugaro init --firebase` on installation `fugaro` — the deploy of the generated rules (`internal/infra/firebasedb.go:206-219`, `PutRules`), the same step M9b's design names at `docs/design/m9-budget-and-dashboard.md:702`. **FACT:** the reported rules byte count, and that `init` read the deployed rules back (`internal/infra/firebasedb.go:215`).
+3. **The new fallback, live.** With a **sandbox repository slug** that has no `config/caps/repos/<slug>` node and no `config/caps/defaults`: `fugaro budget set --global --per-run 2` (a real write), then one small sandbox run. **FACT:** the run's `policy` log line and `result.json`'s effective per-run cap, and that the run reserves rather than halting with `ReasonNoCap`. This is the mutation `TestRulesParity` cannot see: the emulator is a fake database.
+4. **The refusal still refuses.** Remove the global per-run cap (`fugaro budget set --global --per-run 0`, or the value the restore records) and run the same sandbox task once more. **FACT:** the halt message verbatim — it must name `budget.per_run_usd` or `fugaro budget set --defaults --per-run`, and it must be a *refusal*, not a silent no-cap run. A run that succeeds here is the fail-open direction going too far and the deploy is rolled back (step 6).
+5. **The dashboard and `watch`.** `fugaro budget show` and `fugaro watch --json` on the same project. **FACT:** the per-run line for a repository that has only the global cap — it must show the global value as effective, not `—`.
+6. **Restore.** Put back the caps step 1 recorded (`fugaro budget set` with the recorded values), confirm `fugaro budget show --json` matches step 1's output, and run one ordinary sandbox task to confirm the sandbox still runs.
+
+End with: "**Paste back:** every FACT line above, never a secret value and never a key value. Never run this against `belong`." **If the rules cannot express the existence-guarded fallback (Task 0.3 step 2), this check is not written and phase 0 stops**: the owner is told, and D6 is re-decided rather than half-shipped.
+
+**Tests:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`.
+
+**Depends on:** Task 0.3 (its own change is what this check deploys). Nothing else in the plan reads it.
