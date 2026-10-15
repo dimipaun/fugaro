@@ -1145,16 +1145,20 @@ the teardown is assumed rather than read:
   extended to Batch jobs and Compute Engine instances.
 
   **Its order matters, and it is job-first.** The reaper deletes the *job*
-  (`jobs.delete`, which needs `batch.jobsEditor`/`batch.jobs.delete`, §3.7)
+  (`jobs.delete`, which needs `batch.jobs.delete` and nothing wider, §3.7)
   and only then looks for an instance with no live job behind it, because
   deleting a Batch-created instance underneath its own job races Batch's
   management: Batch is mid-teardown, sees an instance vanish, and reports the
   task as failed for a reason that has nothing to do with the run — or, worse,
-  leaves the job in a state Fugaro then misreads as a real failure. The
+  leaves the job in a state Fugaro then misreads as a real failure. (The
+  Built note below narrows "and only then" for a job the reaper itself
+  deleted: that job's VMs are left to the *pass after*, because deleting one
+  in the same pass races exactly this teardown.) The
   instance sweep is the *second* pass, for an instance whose job is already
   gone (a `fugaro=managed` VM with no `fugaro_run` job in `jobs.list`), and it
   deletes that instance directly with `compute.instances.delete`
-  (`compute.instanceAdmin.v1`). Age is the other filter: older than the
+  (`compute.instances.delete` alone, not the instance-admin role, §3.7). Age is
+  the other filter: older than the
   longest workflow timeout plus `backend.TaskTimeoutSlack` plus a margin — and
   on this backend also older than a plausible **queue** wait, or a job that is
   legitimately still waiting gets deleted by its own reaper.
@@ -1175,17 +1179,47 @@ the teardown is assumed rather than read:
   this section's prose: the job pass runs before the instance pass; a job
   `QUEUED` past the queue deadline is **cancelled** (`jobs.cancel` — never
   `jobs.delete`, because the record is what `ls`, `diagnose`, `watch` and the
-  sweeper read) and a job still `SCHEDULED`/`RUNNING`, or stuck in
-  `DELETION_IN_PROGRESS`, past the age floor is **deleted** (the delete *is*
-  its VMs' teardown); a **finished job's record is never deleted** — it is
+  sweeper read) and a job still `SCHEDULED`/`RUNNING`, or already in
+  `DELETION_IN_PROGRESS`, that has been in that state longer than the **run
+  budget** is **deleted** (the delete *is* its VMs' teardown). Stuckness is
+  measured from the **time the job has spent in the state it reports**, never
+  from its age since creation: a run may wait in the queue far longer than the
+  queue deadline — the deadline is the previous pass's, and a reaper that was
+  not running enforced nothing — and then start, and its age since creation
+  would call that live run stuck the second it began (the same at the other
+  end: Batch's own 60-day delete puts a 60-day-old job into
+  `DELETION_IN_PROGRESS` moments before a pass reads it). `QUEUED` is the one
+  state judged from the create time, because a job that has not started has
+  been waiting since it was created. The time in state is the job's latest
+  **job-level** status event (a task-level event dates a task, not the state),
+  with the `runDuration` a `RUNNING` job reports as the fallback; a job whose
+  time in state cannot be read is **refused**, with its VMs left alone, rather
+  than assumed stuck. A **finished job's record is never deleted** — it is
   history, and §3.4's ordering rule is about the jobs the reaper has decided
   must go, so a terminal job whose VM leaked is handled by the instance pass,
-  which deletes the VM and leaves the record. An instance is deleted only
-  when it carries **both** `fugaro=managed` and a `fugaro_run` label, **no job
-  the pass did not clear** carries that run label, and it is past the age
-  floor; the marker is checked client-side as well as in the server-side label
-  filter, the same shape `List` has for jobs. "Not cleared" is wider than
-  "live", and deliberately: a job the pass **refused to act on** — an unknown
+  which deletes the VM and leaves the record. A job this pass deletes **owns
+  its run for that pass**: Batch tears a deleted job's VMs down itself, and
+  deleting one in the same pass races that teardown — the same race the age
+  floor exists for, at the other end of a job's life — so the VM behind it is
+  left to the pass after, which reaps it if it really outlived its job (the
+  cost of the grace is one reaper interval on a leak, the cost of racing an
+  API error on the path that runs whenever the reaper does its job). An
+  instance is deleted only when it carries **both** `fugaro=managed` and a
+  `fugaro_run` label, **no job the pass did not clear** carries that run
+  label, it is in the **reaper's own region**, and it is past the age floor;
+  the marker is checked client-side as well as in the server-side label
+  filter, the same shape `List` has for jobs. The region is part of that
+  because the two listings disagree about scope: `jobs.list` is regional and
+  the aggregated instance listing is project-wide, so a VM of another region
+  answers to jobs this pass never read — a VM listing deciding, which is what
+  §3.4 forbids — and is refused, not deleted (a second Fugaro region in the
+  same project is a second reaper's business). A `jobs.list` that reports
+  **unreachable locations** (`ListJobsResponse.Unreachable`) is a *partial*
+  listing, and the pass fails before deleting anything rather than reading the
+  jobs it did get as all the jobs there are: absence is what frees a run, and
+  a job the API could not reach would look exactly like a run with no job
+  behind it. "Not cleared" is wider than "live", and deliberately: a job the
+  pass **refused to act on** — an unknown
   state, an unreadable create time, two label fields that disagree about the
   run — is still in the region and may still be `RUNNING`, so its VMs are not
   the reaper's either, and a refusal never hands the VM it just declined to
@@ -1195,19 +1229,29 @@ the teardown is assumed rather than read:
   classified as **finished**, and a run no job in the listing mentions at all,
   frees its run. It refuses, and names with its reason in the
   report, a VM with no `fugaro_run` label, a VM whose `fugaro` label is
-  another installation's, a VM whose job is still live, a VM young enough
-  that Batch may be mid-teardown, a job whose two label fields disagree about
-  the run label, a job whose state this build does not know (including
-  `STATE_UNSPECIFIED`), and a job or VM whose time cannot be read. It is
-  idempotent (a delete of something already gone is not an error), and
-  `DryRun` lists what a pass would delete and touches nothing, cancel
-  included. The age floor is the longest configured task timeout plus
+  another installation's, a VM in another region, a VM whose job is still
+  live, a VM young enough that Batch may be mid-teardown, a job whose two
+  label fields disagree about the run label, a job whose state this build does
+  not know (including `STATE_UNSPECIFIED`), and a job or VM whose time cannot
+  be read. It is idempotent (a delete of something already gone is not an
+  error), and `DryRun` lists what a pass would delete and touches nothing,
+  cancel included.
+
+  The age floor is the longest configured task timeout plus
   `backend.TaskTimeoutSlack`, plus the queue deadline, plus a 15-minute margin
   (`ReapMargin`: the 120 s boot budget of §1.2, Batch's own teardown, and a
   listing's settle window); the queue deadline defaults to the longest task
-  timeout plus its slack, "the launcher's own task timeout" above. Neither
-  deadline is a Google field, so both are the caller's, and the Task 8 config
-  plumbing is what fills them.
+  timeout plus its slack, "the launcher's own task timeout" above; the **run
+  budget** — how long a job may be in one state before it is stuck — is
+  everything in the age floor except the queue wait. Neither deadline is a
+  Google field, so both are the caller's, and the Task 8 config plumbing is
+  what fills them. `NewReaper` **validates** them rather than trusting or
+  clamping them: a negative deadline (a sign or unit error), one longer than
+  `MaxDeadline` (30 days — past it a deadline protects nothing, and the shape
+  is a unit error), and a `MaxAge` shorter than the queue deadline plus a run
+  it must contain (which would delete jobs the moment their queue wait alone
+  reached it) are all refused, because a reaper that deletes things must say
+  its configuration is wrong rather than invent a deadline.
 
 ### 3.5 What a Docker-capable agent can do to the host
 
@@ -1292,9 +1336,13 @@ What follows, plainly:
   different claim from project-centric D10's "launchers are trusted" — D10
   trusted them with their own repositories' runs, and this trusts them with
   everyone's plus arbitrary compute under a job account.
-- **The reaper's identity** needs project-wide `batch.jobs.delete` and
-  `compute.instances.delete` (`compute.instanceAdmin.v1`), i.e. the most
-  destructive grants in the whole design. It should be a **dedicated
+- **The reaper's identity** needs the six permissions of the Built note below
+  on the project — `batch.jobs.list`, `batch.jobs.get`, `batch.jobs.cancel`
+  and `batch.jobs.delete`, and `compute.instances.list` and
+  `compute.instances.delete` — carrying the most destructive grants in the
+  whole design, and **not** `roles/batch.jobsEditor` and not
+  `roles/compute.instanceAdmin.v1`, which are far wider than those six (the
+  Built note below says why). It should be a **dedicated
   service account** used only by the scheduled sweeper, not the launcher's and
   not the job's.
 
@@ -1305,15 +1353,31 @@ What follows, plainly:
   destructive one, for a stuck job and a stuck `DELETION_IN_PROGRESS` only),
   `compute.instances.list` (the project-wide aggregated list, the one call
   that finds a labelled VM in any of the region's zones) and
-  `compute.instances.delete`. `roles/batch.jobsEditor` on the project carries
-  the four Batch permissions (this section names it for create, cancel and
-  delete alike) and `roles/compute.instanceAdmin.v1` the two Compute ones; a
-  Condition narrowing them is Check 57a step 9's question, and it does not
-  change the list. The reaper reads no secret and needs no Secret Manager,
-  storage or logging grant: `internal/backend/batch/reap.go`'s header states
-  the same six, which is where a reviewer checks them against the code. Task
-  6 grants them; nothing selects the backend before the enable task (9), so
-  none of this is reachable in an installation today.
+  `compute.instances.delete`.
+  **The grant is a custom role carrying exactly those six — `fugaroReaper`,
+  the naming `fugaroLauncher`, `fugaroJobRunner` and `fugaroHistory` already
+  use (`internal/infra/tfvars.go`), pinned the way their permissions are
+  pinned in `internal/infra/tf/cover.go`'s `RolePermissions`** — and not
+  `roles/batch.jobsEditor` plus `roles/compute.instanceAdmin.v1`, which is
+  what Google's own pages name for the same calls (`batch.googleapis.com`
+  create/cancel/delete, `compute.instances.delete`). Those two built-in roles
+  are far wider than the six: `jobsEditor` also carries `batch.jobs.create`,
+  i.e. exactly the launcher-shaped power to run any container in the project
+  that the bullet above spends its length distinguishing, and
+  `instanceAdmin.v1` carries `compute.instances.create` and the rest of the
+  instance lifecycle — `compute.instances.setMetadata` among it, which is how
+  SSH keys reach a VM (the exact permission list of each built-in role is
+  Google's and was **NOT re-read for this task: UNVERIFIED**). A reaper
+  account that can create jobs and VMs is a second launcher, not a janitor.
+  An IAM Condition (Check 57a step 9) matches resource names and types, not
+  labels: **IAM cannot express "only `fugaro=managed`"**, so none of the six
+  confines the reaper to this installation's resources — the code does, and
+  only the code. `internal/backend/batch/reap.go`'s header states the same six
+  and the same caveat, which is where a reviewer checks them against the code.
+  The reaper reads no secret and needs no Secret Manager, storage or logging
+  grant. Task 6 creates the role and grants it; nothing selects the backend
+  before the enable task (9), so none of this is reachable in an installation
+  today.
 
 **Recommendation (C22): give the launcher `batch.jobsEditor`,
 `serviceAccountUser` scoped to the run-class accounts, and nothing else; if
