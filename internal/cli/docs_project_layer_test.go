@@ -9,10 +9,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// docsProjectLayerFuture lists the one command docs/project-layer.md
-// deliberately names as not yet built (section 10, "Not yet"): a reference
-// to real work that does not exist yet, not a typo to flag.
-var docsProjectLayerFuture = map[string]bool{"config extract": true}
+// docsProjectLayerFuture lists the commands docs/project-layer.md deliberately
+// names as not yet built (section 10, "Not yet"): a reference to real work that
+// does not exist yet, not a typo to flag. `project policy publish` is phase 1
+// task 1.6 of docs/plans/2026-10-14-project-centric.md, and the doc says so
+// where it names it (§5 is about what the publisher refuses, not about a
+// command anyone can run today).
+var docsProjectLayerFuture = map[string]bool{"config extract": true, "project policy publish": true}
 
 // cmdHasFlag reports whether c, or an ancestor of c (a persistent flag),
 // declares a flag named name.

@@ -279,7 +279,7 @@ func (c *Config) validateBudget(bad func(string, ...any)) {
 			bad("budget.unreachable_grace %v: it must be from %v to %v (leave it out for 3m)", b.Grace, budget.MinGrace, budget.MaxGrace)
 		}
 		if b.AllowedModels != nil && len(b.AllowedModels) == 0 {
-			bad("budget.allowed_models: it must list at least one model (an empty list, or one of only nulls, would forbid every model); leave it out for no restriction")
+			bad("budget.allowed_models: it must list at least one model (an empty list, or one of only nulls, would forbid every model); leave it out to keep the allow-list the ceiling already has")
 		}
 		for i, m := range b.AllowedModels {
 			if msg := config.CheckModelID(m); msg != "" {

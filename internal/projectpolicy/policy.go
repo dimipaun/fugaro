@@ -446,7 +446,11 @@ func validBudget(b Budget) error {
 		return fmt.Errorf("max_run_tokens %d must not be negative", b.MaxRunTokens)
 	}
 	if b.AllowedModels != nil && len(b.AllowedModels) == 0 {
-		return errors.New("allowed_models must list at least one model; leave it out for no restriction")
+		// An omitted key keeps the allow-list the job's environment was
+		// deployed with: the node replaces the ceiling key by key, so leaving
+		// the key out is how a policy says "the deployed list stands", not
+		// "no model is restricted" (H1, L-a).
+		return errors.New("allowed_models must list at least one model; leave it out to keep the allow-list the job's environment carries")
 	}
 	for i, m := range b.AllowedModels {
 		if msg := config.CheckModelID(m); msg != "" {
