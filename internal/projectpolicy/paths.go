@@ -12,9 +12,10 @@ import "fmt"
 // escaping is compared with budget.Key itself (TestPolicyPathsEscapeASlugLikeBudgetKey):
 // this package does not import internal/budget.
 const (
-	pathShared = "config/policy/shared"
-	pathRepos  = "config/policy/repos/"
-	pathAdmin  = "config/admin"
+	pathRulesMarker = "config/limits/policyRules"
+	pathShared      = "config/policy/shared"
+	pathRepos       = "config/policy/repos/"
+	pathAdmin       = "config/admin"
 )
 
 // PathShared is the node whose existence *is* project-centric mode (§5): the
@@ -27,6 +28,13 @@ func PathShared() string { return pathShared }
 // $slug may read it, the way config/caps/repos/$slug works.
 func PathRepo(slug string) string { return pathRepos + seg("slug", slug) }
 
+// PathRulesMarker is the node recording which generation of the security
+// rules is deployed (RulesVersion). It sits beside the largest lease under
+// config/limits, which every config/limits writer must leave alone: the node
+// is read-modify-written, never replaced, so a marker an older CLI does not
+// know survives (internal/cli's budget set, TestSetMaxReserveKeepsOtherLimitKeys).
+func PathRulesMarker() string { return pathRulesMarker }
+
 // PathAdmin is the admin-only node (§5): the rules deny client reads and
 // writes, but launchers hold roles/firebasedatabase.viewer and an IAM read
 // bypasses the rules (12a item 7), so nothing secret-adjacent may live there.
@@ -35,7 +43,8 @@ func PathAdmin() string { return pathAdmin }
 // seg escapes one slug for a path and panics on an empty one: an empty segment
 // would collapse the path onto a different node. Slugs are validated long
 // before a path is built, so an empty one is a programming error. The escaping
-// is budget.Key's (TestPathsEscapeASlug pins the table), so a slug is spelled
+// is budget.Key's (internal/budget/rules's
+// TestPolicyPathsEscapeASlugLikeBudgetKey compares the two), so a slug is spelled
 // the same way in config/caps/repos/$slug and here, and the rules'
 // auth.token.fs claim (budget.Key of the slug) compares equal.
 func seg(what, v string) string {

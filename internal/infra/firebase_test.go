@@ -9,15 +9,18 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	crm "google.golang.org/api/cloudresourcemanager/v1"
 
 	"github.com/dimipaun/fugaro/deploy/terraform"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -338,11 +341,23 @@ func TestDBDeploysAndThenChangesNothing(t *testing.T) {
 	for _, a := range acts {
 		paths = append(paths, a.Path)
 	}
-	if want := []string{"fugaro/mark", "fugaro/project", "config/mode", "config/limits", "rules"}; !slices.Equal(paths, want) {
-		t.Fatalf("actions = %v, want %v (the rules last)", paths, want)
+	// The rules are last of the database's own writes; the one action after
+	// them is the rules-generation marker, which must not be written unless
+	// the deploy succeeded (TestRulesMarkerOnlyAfterTheRulesDeploy in
+	// internal/cli drives the failing case through init).
+	wantPaths := []string{"fugaro/mark", "fugaro/project", "config/mode", "config/limits", "rules", projectpolicy.PathRulesMarker()}
+	if !slices.Equal(paths, wantPaths) {
+		t.Fatalf("actions = %v, want %v (the rules last, their marker after them)", paths, wantPaths)
 	}
 	if f.Value("fugaro/project") != "aurora" || f.Value("config/mode") != "observe" || f.RulePuts() != 1 {
 		t.Errorf("database = %v, rules %d", f.Value(""), f.RulePuts())
+	}
+	if got := f.Value(projectpolicy.PathRulesMarker()); got != json.Number(strconv.Itoa(projectpolicy.RulesVersion)) {
+		t.Errorf("%s = %#v, want %d (RulesVersion)", projectpolicy.PathRulesMarker(), got, projectpolicy.RulesVersion)
+	}
+	lim, _ := f.Value(budget.PathLimits).(map[string]any)
+	if len(lim) != 2 || lim["maxReserveMicros"] == nil {
+		t.Errorf("config/limits = %v, want the marker beside maxReserveMicros", lim)
 	}
 	want, _ := rules.Generate()
 	if !sameJSON(f.Rules(), want) {

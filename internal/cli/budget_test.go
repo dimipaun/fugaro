@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/watch"
 )
@@ -306,6 +307,37 @@ func TestSetLowerNoConfirmation(t *testing.T) {
 	// enforce to observe loosens every cap check: that one confirms.
 	if _, _, err := execute(t, "budget", "set", "--global", "--mode", "observe"); err == nil {
 		t.Fatal("loosening the mode needed no confirmation")
+	}
+}
+
+// TestSetMaxReserveKeepsOtherLimitKeys: config/limits is a read-modify-written
+// node that holds more than the largest lease — init writes the
+// rules-generation marker (projectpolicy.PathRulesMarker) beside it after a
+// rules deploy. budget set edits the keys it owns and must never replace the
+// node: a wipe would leave a database whose rules carry the policy nodes with a
+// missing marker, which halts every budget-on run once the runner reads it
+// (phase 1 task 1.3).
+func TestSetMaxReserveKeepsOtherLimitKeys(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedCaps(f, 100, 20)
+	markerKey := strings.TrimPrefix(projectpolicy.PathRulesMarker(), budget.PathLimits+"/")
+	if markerKey == projectpolicy.PathRulesMarker() {
+		t.Fatalf("PathRulesMarker %q does not sit under %q", projectpolicy.PathRulesMarker(), budget.PathLimits)
+	}
+	f.db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 2 * usd1, markerKey: projectpolicy.RulesVersion})
+	if _, _, err := execute(t, "budget", "set", "--global", "--max-reserve", "1"); err != nil {
+		t.Fatal(err)
+	}
+	lim, ok := f.db.Value(budget.PathLimits).(map[string]any)
+	if !ok {
+		t.Fatalf("config/limits = %#v, want an object", f.db.Value(budget.PathLimits))
+	}
+	got, ok := lim[markerKey].(json.Number)
+	if !ok || got.String() != "1" {
+		t.Errorf("config/limits = %v: budget set dropped or changed the rules marker (%s), which the runner reads", lim, projectpolicy.PathRulesMarker())
+	}
+	if lim["maxReserveMicros"] == nil {
+		t.Errorf("config/limits = %v: the largest lease was not written", lim)
 	}
 }
 

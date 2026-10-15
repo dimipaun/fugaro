@@ -10,6 +10,18 @@ import "fmt"
 // closed, §5(3)).
 const Version = 1
 
+// RulesVersion is the generation of the Realtime Database security rules that
+// understand this policy: the config/policy nodes of §5 and their per-child
+// read grants. It is recorded on the database as
+// config/limits/policyRules (PathRulesMarker), written by the owner-run rules
+// deploy and only after it succeeds (internal/infra's DB.Plan orders it after
+// the PutRules action), and read by the runner before it reads a policy (task
+// 1.3), which must not decode a policy its deployed rules do not protect.
+//
+// A rules generation that changes the policy nodes bumps this. It is not
+// Version: the policy schema and the rules that guard it move independently.
+const RulesVersion = 1
+
 // VersionError is the refusal of a node written in a version this Fugaro does
 // not understand. It carries both versions, so each side prints its own
 // remedy without matching on the message:

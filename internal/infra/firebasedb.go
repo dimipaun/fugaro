@@ -11,6 +11,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -218,6 +219,29 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 		d.acts = append(d.acts, DBAction{Path: "rules", Text: fmt.Sprintf("deploys the security rules (%d bytes, generated)", len(gen)), do: func(ctx context.Context) error {
 			return d.c.PutRules(ctx, d.rules)
 		}})
+	}
+
+	// The rules generation marker: which generation of the rules is deployed,
+	// so the runner (phase 1 task 1.3) can tell a database whose rules
+	// understand the policy from one whose rules do not, and refuse instead of
+	// reading a node its rules do not protect.
+	//
+	// It is written last, after the deploy above, and never beside the other
+	// node writes: Apply stops at the first failure, so a rules deploy that
+	// fails leaves no marker and the run is a halt with its cause, where a
+	// marker written first would claim rules that are not there once the
+	// runner starts reading it. When no deploy is planned the deployed rules
+	// are byte-for-byte the generated ones (sameJSON, above), so recording
+	// this generation is true in that case too — and it is what writes the
+	// marker on a database whose rules were deployed before this code existed.
+	var marker int
+	etag, found, err = d.c.GetETag(ctx, projectpolicy.PathRulesMarker(), &marker)
+	if err != nil {
+		return nil, nil, dbErr("reading "+projectpolicy.PathRulesMarker(), err)
+	}
+	if !found || marker != projectpolicy.RulesVersion {
+		d.put(projectpolicy.PathRulesMarker(), etag, projectpolicy.RulesVersion,
+			fmt.Sprintf("records the rules generation (%s = %d)", projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion))
 	}
 	return d.acts, warnings, nil
 }

@@ -25,17 +25,18 @@ import (
 type RTDB struct {
 	*Server
 
-	mu       sync.Mutex
-	root     any
-	denyNext int
-	deny     []string
-	denyKeys []string
-	clock    func() time.Time
-	creds    []string
-	streams  map[*rtdbStream]struct{}
-	rules    []byte
-	rulePuts int
-	holds    []*rtdbHold
+	mu        sync.Mutex
+	root      any
+	denyNext  int
+	denyRules int
+	deny      []string
+	denyKeys  []string
+	clock     func() time.Time
+	creds     []string
+	streams   map[*rtdbStream]struct{}
+	rules     []byte
+	rulePuts  int
+	holds     []*rtdbHold
 }
 
 type rtdbHold struct {
@@ -95,6 +96,16 @@ func (f *RTDB) DenyNext(n int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.denyNext = n
+}
+
+// DenyRules makes the next n deployments of the security rules
+// (PUT /.settings/rules) answer 401 and change nothing; every other call is
+// unaffected. It is how a test drives the one write that must not be allowed
+// to succeed silently.
+func (f *RTDB) DenyRules(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.denyRules = n
 }
 
 // Deny makes any write that touches path, or a node above or below it, answer
@@ -654,6 +665,11 @@ func (f *RTDB) settingsRules(w http.ResponseWriter, r *http.Request, body []byte
 		}
 		if f.denyNext > 0 {
 			f.denyNext--
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "Permission denied"})
+			return
+		}
+		if f.denyRules > 0 {
+			f.denyRules--
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "Permission denied"})
 			return
 		}
