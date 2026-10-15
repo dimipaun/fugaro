@@ -236,7 +236,10 @@ jobs:
       # The keyless signing step asks Fulcio for a certificate through
       # GitHub's OIDC issuer: that, and only that, is what this grants. The
       # -pinned tag push itself is an ordinary registry write and needs
-      # only the packages: write above.
+      # only the packages: write above. GitHub grants permissions per job,
+      # not per step, so this is the narrowest scope available: it is not
+      # on any other job in this workflow, and it is on the one job that
+      # already holds packages: write and already runs on a tag push only.
       id-token: write
     runs-on: ubuntu-latest
     timeout-minutes: 30
