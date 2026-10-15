@@ -3,6 +3,7 @@ package infra
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"slices"
 	"strings"
@@ -572,14 +573,15 @@ func TestFillFromStateReadsTheProvidersOwnAttributes(t *testing.T) {
 		t.Errorf("a bucket grant filled fields: %+v", g)
 	}
 
-	// A job whose values say deletion_protection = false is NOT protected:
-	// the apply deletes it, and state-removing it would leave it alive in
-	// GCP with nothing managing it. A job whose state carries no
-	// deletion_protection at all counts as protected, the conservative
-	// direction; so does a job the state does not hold at all.
+	// The three readings of a job's deletion_protection, which is what
+	// Removals keys on. false: the apply deletes it, and state-removing it
+	// would leave it alive in GCP with nothing managing it. true: no apply
+	// can delete it. No attribute at all, or no state at all: protected, the
+	// conservative direction, because the state does not say otherwise.
 	bare := []Retirement{
 		{Address: `module.repo.module.workflow["gone"].google_cloud_run_v2_job.this[0]`},
 		{Address: `module.repo.module.workflow["gone"].google_cloud_run_v2_job.this[1]`},
+		{Address: `module.repo.module.workflow["gone"].google_cloud_run_v2_job.this[2]`},
 		{Address: `module.repo.module.workflow["gone"].google_cloud_run_v2_job.this[9]`},
 		{Address: `module.repo.module.workflow["gone"].google_secret_manager_secret_iam_member.job["x"]`},
 		{Address: `module.repo.google_secret_manager_secret.this["x"]`},
@@ -592,21 +594,25 @@ func TestFillFromStateReadsTheProvidersOwnAttributes(t *testing.T) {
 		t.Errorf("the unprotected job filled %+v; want the state's own name and location", c)
 	}
 	if !bare[1].Protected {
+		t.Error("a job whose state says deletion_protection = true is protected")
+	}
+	if !bare[2].Protected {
 		t.Error("a job whose state has no deletion_protection attribute counts as protected")
 	}
-	if !bare[2].Protected || bare[2].Job != "" || bare[2].Region != "" {
-		t.Errorf("a job the state does not hold: %+v; want protected, with no guessed name", bare[2])
+	if !bare[3].Protected || bare[3].Job != "" || bare[3].Region != "" {
+		t.Errorf("a job the state does not hold: %+v; want protected, with no guessed name", bare[3])
 	}
-	if bare[3].Protected {
+	if bare[4].Protected {
 		t.Error("a grant is never protected")
 	}
-	if !bare[4].Protected || bare[4].Logical != "x" {
-		t.Errorf("a container not in the state: %+v; want protected with its logical name from the address", bare[4])
+	if !bare[5].Protected || bare[5].Logical != "x" {
+		t.Errorf("a container not in the state: %+v; want protected with its logical name from the address", bare[5])
 	}
 }
 
-// protectedState is a two-job state: one whose protection is already false
-// and one that carries no deletion_protection attribute at all (an older
+// protectedState is a three-job state: one whose protection is already
+// false, one whose state says true, and one that carries no
+// deletion_protection attribute at all (an older
 // provider, or a job the state lost the attribute for).
 func protectedState(t *testing.T) *tf.State {
 	t.Helper()
@@ -635,7 +641,15 @@ func protectedState(t *testing.T) *tf.State {
 	                  "type": "google_cloud_run_v2_job",
 	                  "name": "this",
 	                  "index": 1,
-	                  "values": {"name": "fugaro-acme-webapp-gone-2", "location": "us-east5"}
+	                  "values": {"name": "fugaro-acme-webapp-gone-2", "location": "us-east5", "deletion_protection": true}
+	                },
+	                {
+	                  "address": "module.repo.module.workflow[\"gone\"].google_cloud_run_v2_job.this[2]",
+	                  "mode": "managed",
+	                  "type": "google_cloud_run_v2_job",
+	                  "name": "this",
+	                  "index": 2,
+	                  "values": {"name": "fugaro-acme-webapp-gone-3", "location": "us-east5"}
 	                }
 	              ]
 	            }
@@ -824,5 +838,372 @@ func TestOriginStateFixtureShape(t *testing.T) {
 	// the fixture is the origin's real name rather than a placeholder.
 	if got := gcp.JobName("acme/webapp", "go_bmb"); !strings.Contains(string(raw), got) {
 		t.Errorf("no resource in the fixture state is named %s (the spec's own derived name)", got)
+	}
+}
+
+// --- Removals and RetireAllowDelete (plan Task 3)
+
+// originRetirements is the origin's retirement set, with the state's own
+// attribute values filled in: what Task 5 hands both functions.
+func originRetirements(t *testing.T) []Retirement {
+	t.Helper()
+	st := originState(t)
+	rets := Retirements(st.Addresses(), originSpec(t, `agent: { auth: api-key }`))
+	FillFromState(st, rets)
+	return rets
+}
+
+// removalsWant are the three addresses of the origin that leave the state
+// before the plan: the two prevent_destroy containers and the orphaned job.
+func removalsWant() []string {
+	return []string{
+		`module.repo.google_secret_manager_secret.this["claude-oauth-token"]`,
+		`module.repo.google_secret_manager_secret.this["claude-oauth-token-bmb"]`,
+		`module.repo.module.workflow["go_bmb"].google_cloud_run_v2_job.this[0]`,
+	}
+}
+
+// The origin's 14 retired addresses in, the protected 3 out. The other 11
+// stay in state so the plan deletes them: taking them out here would plan
+// zero deletes and leave a service account, its IAM members and a bucket
+// grant alive in GCP with nothing managing them (design §4.2a).
+func TestRemovalsKeepsTheAddressesTheApplyMustDelete(t *testing.T) {
+	st := originState(t)
+	rets := originRetirements(t)
+	got := Removals(st.Addresses(), rets)
+	want := removalsWant()
+	if !slices.Equal(got, want) {
+		t.Fatalf("Removals = %q\nwant %q", got, want)
+	}
+	// Named one by one, because the failure mode is silent: a too-wide
+	// Removals produces a clean plan and leftovers in GCP.
+	for _, a := range []string{
+		`module.repo.module.workflow["go_bmb"].google_service_account.job`,
+		`module.repo.module.workflow["go_bmb"].google_service_account_iam_member.operator["` + originMember + `"]`,
+		`module.repo.module.workflow["go_bmb"].google_cloud_run_v2_job_iam_member.launcher["` + originMember + `"]`,
+		`module.repo.module.workflow["go_bmb"].google_secret_manager_secret_iam_member.job["claude-oauth-token-bmb"]`,
+		`module.repo.module.workflow["go_bmb"].google_storage_bucket_iam_member.job`,
+		`module.repo.module.workflow["go"].google_secret_manager_secret_iam_member.job["claude-oauth-token"]`,
+		`module.repo.google_secret_manager_secret_iam_member.operator["claude-oauth-token ` + originMember + ` viewer"]`,
+	} {
+		if slices.Contains(got, a) {
+			t.Errorf("Removals returned %s; the apply must delete it", a)
+		}
+		if !slices.ContainsFunc(rets, func(r Retirement) bool { return r.Address == a }) {
+			t.Errorf("fixture bug: %s is not in the retirement set", a)
+		}
+	}
+	// And the arithmetic of the origin: 14 retired, 3 state-removed, 11 left
+	// for the apply.
+	if len(rets) != 14 || len(got) != 3 {
+		t.Errorf("the origin is 14 retired and 3 state-removed; got %d and %d", len(rets), len(got))
+	}
+	// The guard, over a plan that deletes exactly the retirement set, allows
+	// exactly the deletes the removal left behind -- and refuses anything
+	// else. This is the pair Task 5 wires together.
+	var p tf.Plan
+	for _, r := range rets {
+		if slices.Contains(got, r.Address) {
+			continue
+		}
+		p.ResourceChanges = append(p.ResourceChanges, change(r.Address, "delete"))
+	}
+	p.ResourceChanges = append(p.ResourceChanges, change("module.repo.google_service_account.build", "delete"))
+	allow := RetireAllowDelete(&p, rets)
+	if len(allow) != 11 {
+		t.Errorf("the guard's allow-list has %d addresses, want the 11 the apply deletes: %v", len(allow), allow)
+	}
+	if err := tf.Guard(&p, allow); err == nil || !strings.Contains(err.Error(), "google_service_account.build") {
+		t.Errorf("the guard allowed a delete outside the retirement set: %v", err)
+	}
+}
+
+// The resume mechanism (Review Focus 6): an address an earlier run already
+// removed is never passed to state rm again, because the filter is what
+// keeps the common path clean and the runner would fail on it.
+func TestRemovalsSkipsWhatIsAlreadyGone(t *testing.T) {
+	st := originState(t)
+	rets := originRetirements(t)
+
+	// A run that got as far as the first container and died: that address
+	// is out of the state, the other two are not.
+	gone := `module.repo.google_secret_manager_secret.this["claude-oauth-token"]`
+	var state []string
+	for _, a := range st.Addresses() {
+		if a != gone {
+			state = append(state, a)
+		}
+	}
+	got := Removals(state, rets)
+	want := []string{
+		`module.repo.google_secret_manager_secret.this["claude-oauth-token-bmb"]`,
+		`module.repo.module.workflow["go_bmb"].google_cloud_run_v2_job.this[0]`,
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("Removals = %q\nwant %q", got, want)
+	}
+	// Every one of them gone: a rerun of a run that finished the removals
+	// passes nothing at all.
+	if got := Removals(nil, rets); len(got) != 0 {
+		t.Errorf("an empty state: Removals = %q, want nothing", got)
+	}
+	all := append(slices.Clone(want), gone)
+	if got := Removals(slices.DeleteFunc(slices.Clone(st.Addresses()), func(a string) bool {
+		return slices.Contains(all, a)
+	}), rets); len(got) != 0 {
+		t.Errorf("every protected address already removed: Removals = %q, want nothing", got)
+	}
+}
+
+// The other direction: every retired container still in state is returned
+// (prevent_destroy), and so is every retired job whose state says
+// deletion_protection = true — because neither can be deleted by an apply.
+func TestRemovalsReturnsEveryProtectedAddressStillInState(t *testing.T) {
+	st := originState(t)
+	rets := originRetirements(t)
+	state := st.Addresses()
+	got := Removals(state, rets)
+	for _, r := range rets {
+		want := r.Protected && slices.Contains(state, r.Address)
+		if slices.Contains(got, r.Address) != want {
+			t.Errorf("%s: returned %v, want %v (protected %v, in state %v)",
+				r.Address, slices.Contains(got, r.Address), want, r.Protected, slices.Contains(state, r.Address))
+		}
+	}
+	// A protected address the state has already lost is not returned: there
+	// is nothing to remove, and state rm of it would fail.
+	if got := Removals(nil, []Retirement{{
+		Address:   `module.repo.google_secret_manager_secret.this["x"]`,
+		Protected: true,
+	}}); len(got) != 0 {
+		t.Errorf("a protected address the state lost: Removals = %q, want nothing", got)
+	}
+}
+
+// Review B4's invariant, and the reason the rule is per-address rather than
+// a property of the set: two retirements differing only in Protected must
+// give different answers. The unprotected one is the user who followed
+// gcp-setup.md and lowered the protection before editing fugaro.yaml; the
+// apply deletes that job, and state-removing it would leave it alive in GCP
+// with nothing managing it.
+func TestRemovalsKeepsAnUnprotectedJobForTheApply(t *testing.T) {
+	addr := `module.repo.module.workflow["go_bmb"].google_cloud_run_v2_job.this[0]`
+	state := []string{addr}
+	protected := []Retirement{{Address: addr, Kind: "workflow job", Protected: true}}
+	unprotected := []Retirement{{Address: addr, Kind: "workflow job", Protected: false}}
+	if got := Removals(state, protected); !slices.Equal(got, state) {
+		t.Errorf("a protected job: Removals = %q, want it removed from state", got)
+	}
+	if got := Removals(state, unprotected); len(got) != 0 {
+		t.Errorf("an unprotected job: Removals = %q, want it left for the apply", got)
+	}
+
+	// The same difference read from the state, so the two functions cannot
+	// disagree: only the job whose values say deletion_protection = true is
+	// returned.
+	pair := []Retirement{
+		{Address: `module.repo.module.workflow["gone"].google_cloud_run_v2_job.this[0]`},
+		{Address: `module.repo.module.workflow["gone"].google_cloud_run_v2_job.this[1]`},
+	}
+	FillFromState(protectedState(t), pair)
+	if pair[0].Protected || !pair[1].Protected {
+		t.Fatalf("fixture bug: %+v / %+v", pair[0], pair[1])
+	}
+	state = []string{pair[0].Address, pair[1].Address}
+	if got := Removals(state, pair); !slices.Equal(got, []string{pair[1].Address}) {
+		t.Errorf("Removals = %q, want only the protected job", got)
+	}
+}
+
+// Sorted, per-address, and never a string that could be read as a flag or
+// as "every address": StateRm refuses both, so Removals never hands it one.
+func TestRemovalsIsSortedAndNeverTakesAFlagLookingAddress(t *testing.T) {
+	state := []string{
+		`module.repo.module.workflow["go_bmb"].google_cloud_run_v2_job.this[0]`,
+		`module.repo.google_secret_manager_secret.this["a"]`,
+		`module.repo.google_secret_manager_secret.this["b"]`,
+	}
+	rets := []Retirement{
+		{Address: state[0], Protected: true},
+		{Address: state[1], Protected: true},
+		{Address: state[2], Protected: true},
+		{Address: "", Protected: true},
+		{Address: "-chdir=/tmp", Protected: true},
+		{Address: "-state=other.tfstate", Protected: true},
+	}
+	got := Removals(append(slices.Clone(state), "", "-chdir=/tmp", "-state=other.tfstate"), rets)
+	slices.Sort(state)
+	if !slices.Equal(got, state) {
+		t.Errorf("Removals = %q, want %q", got, state)
+	}
+	if !slices.IsSorted(got) {
+		t.Error("Removals must be sorted")
+	}
+	// Every address it returns is one it was given: it invents none.
+	for _, a := range got {
+		if !slices.Contains(state, a) {
+			t.Errorf("Removals returned %q, which was not in the state", a)
+		}
+	}
+	if got := Removals(nil, nil); len(got) != 0 {
+		t.Errorf("no state and no retirements: Removals = %q", got)
+	}
+}
+
+// Review D2's second line of defence: Removals filters, but a race (a
+// hand-run state rm in another terminal, a partial earlier failure) can
+// still make one address vanish between ShowState and the call. The runner
+// reports "No matching objects found"; the removal reports that address as
+// already gone and finishes the rest. The filter is the mechanism and this
+// is the tolerance, and neither replaces the other.
+func TestStateRmToleratesAnAddressThatWentAwayBetweenShowStateAndTheCall(t *testing.T) {
+	ctx := context.Background()
+	addrs := removalsWant()
+	var called []string
+	stateRm := func(_ context.Context, got ...string) error {
+		if len(got) != 1 {
+			t.Errorf("state rm called with %d addresses at once (%q); the removal is per-address", len(got), got)
+		}
+		called = append(called, got[0])
+		if got[0] == addrs[1] {
+			// Exactly what terraform prints for an address the state no
+			// longer holds (internal/e2e/init_test.go:1243 records the same
+			// text for the same case).
+			return &tf.ExitError{Command: "state rm", Code: 1,
+				Stderr: "Error: Invalid target address\n\nNo matching objects found. To view the available instances, use \"terraform state list\".\n"}
+		}
+		return nil
+	}
+	removed, gone, err := RemoveFromState(ctx, stateRm, addrs)
+	if err != nil {
+		t.Fatalf("a vanished address turned the removal into a failure: %v", err)
+	}
+	if !slices.Equal(removed, []string{addrs[0], addrs[2]}) {
+		t.Errorf("removed = %q, want the two that were still there", removed)
+	}
+	if !slices.Equal(gone, []string{addrs[1]}) {
+		t.Errorf("gone = %q, want the address the state had already lost", gone)
+	}
+	// It kept going: the address after the vanished one was still removed,
+	// in order.
+	if !slices.Equal(called, addrs) {
+		t.Errorf("state rm was called with %q, want every address in order", called)
+	}
+
+	// A real failure is not tolerated, and the caller still learns how far
+	// the removal got (design §6's half-failure).
+	called = nil
+	failed := func(_ context.Context, got ...string) error {
+		called = append(called, got[0])
+		if got[0] == addrs[1] {
+			return &tf.ExitError{Command: "state rm", Code: 1, Stderr: "Error: the state is locked"}
+		}
+		return nil
+	}
+	removed, gone, err = RemoveFromState(ctx, failed, addrs)
+	if err == nil {
+		t.Fatal("a state rm that really failed was tolerated")
+	}
+	if !slices.Equal(removed, []string{addrs[0]}) || len(gone) != 0 {
+		t.Errorf("removed = %q, gone = %q; want the first address removed and nothing tolerated", removed, gone)
+	}
+	if !slices.Equal(called, addrs[:2]) {
+		t.Errorf("the removal kept going after a real failure: %q", called)
+	}
+	// The text alone is not enough: only terraform's own state rm reports it.
+	if _, _, err := RemoveFromState(ctx, func(context.Context, ...string) error {
+		return &tf.ExitError{Command: "plan", Code: 1, Stderr: "No matching objects found"}
+	}, addrs[:1]); err == nil {
+		t.Error("an error from a command that is not state rm was tolerated")
+	}
+	if _, _, err := RemoveFromState(ctx, func(context.Context, ...string) error {
+		return errors.New("no matching objects found")
+	}, addrs[:1]); err == nil {
+		t.Error("an error that is not terraform's was tolerated")
+	}
+	// Nothing to do is not an error, and nothing is called.
+	removed, gone, err = RemoveFromState(ctx, func(context.Context, ...string) error {
+		t.Error("state rm called with no addresses")
+		return nil
+	}, nil)
+	if err != nil || len(removed) != 0 || len(gone) != 0 {
+		t.Errorf("an empty removal: %q %q %v", removed, gone, err)
+	}
+}
+
+// Review Focus 1: a retirement the summary did not name is allowed through.
+// The allow-list is the retirement set's own addresses, and nothing else --
+// so the guard still refuses a delete the retirement never predicted.
+func TestRetireAllowDeleteNeverAllowsAnUnnamedAddress(t *testing.T) {
+	rets := originRetirements(t)
+	extra := "module.repo.google_service_account.build"
+	p := &tf.Plan{ResourceChanges: []tf.ResourceChange{
+		change(`module.repo.google_secret_manager_secret.this["claude-oauth-token"]`, "delete"),
+		change(extra, "delete"),
+		change(`module.repo.google_secret_manager_secret.this["claude-oauth-token-bmb"]`, "delete"),
+		// Not deletes at all: an update, a create, a read, a no-op.
+		change(`module.repo.module.workflow["go"].google_cloud_run_v2_job.this[0]`, "update"),
+		change(`module.repo.google_secret_manager_secret.this["anthropic-api-key"]`, "create"),
+		change(`module.repo.google_artifact_registry_repository.images`, "read"),
+		change(`module.repo.google_service_account.build`, "no-op"),
+		// A delete of an address that merely looks like one in the set: the
+		// same resource with another key.
+		change(`module.repo.google_secret_manager_secret.this["claude-oauth-token-bmbx"]`, "delete"),
+	}}
+	allow := RetireAllowDelete(p, rets)
+	want := []string{
+		`module.repo.google_secret_manager_secret.this["claude-oauth-token"]`,
+		`module.repo.google_secret_manager_secret.this["claude-oauth-token-bmb"]`,
+	}
+	if !slices.Equal(allow, want) {
+		t.Fatalf("allow = %q\nwant %q", allow, want)
+	}
+	if err := tf.Guard(p, allow); err == nil || !strings.Contains(err.Error(), extra) {
+		t.Errorf("the guard with the retirement's allow-list: %v", err)
+	}
+	// A plan with nothing of the retirement's in it allows nothing at all,
+	// and a nil plan is not a panic.
+	if got := RetireAllowDelete(p, nil); len(got) != 0 {
+		t.Errorf("no retirements: allow = %q", got)
+	}
+	if got := RetireAllowDelete(nil, rets); len(got) != 0 {
+		t.Errorf("no plan: allow = %q", got)
+	}
+}
+
+// And the other half: the replaces a transition really needs are allowed.
+// A replace is ["delete","create"], so it is a delete of an address in the
+// set; anything else the plan does to a retired address is not a delete and
+// needs no permission.
+func TestRetireAllowDeleteAllowsTheReplacesTheTransitionNeeds(t *testing.T) {
+	rets := originRetirements(t)
+	accessor := `module.repo.module.workflow["go"].google_secret_manager_secret_iam_member.job["claude-oauth-token"]`
+	job := `module.repo.module.workflow["go_bmb"].google_cloud_run_v2_job.this[0]`
+	p := &tf.Plan{ResourceChanges: []tf.ResourceChange{
+		change(accessor, "delete", "create"),
+		change(job, "delete"),
+		change(`module.repo.module.workflow["go"].google_service_account.job`, "update"),
+		change(`module.repo.google_secret_manager_secret.this["claude-oauth-token"]`, "forget"),
+	}}
+	allow := RetireAllowDelete(p, rets)
+	want := []string{accessor, job}
+	slices.Sort(want)
+	if !slices.Equal(allow, want) {
+		t.Errorf("allow = %q\nwant %q", allow, want)
+	}
+	// The guard accepts it: the replaces and the deletes are the
+	// retirement's own, an update of a surviving resource is not a delete,
+	// and a forget action -- from a removed block, which destroys nothing --
+	// is allowed whatever the allow-list says. That last one is why the
+	// retirement's mechanic could be a removed block at all, and why it is
+	// not: state rm is the proven one (P3).
+	if err := tf.Guard(p, allow); err != nil {
+		t.Errorf("the guard refused the retirement's own plan: %v", err)
+	}
+	// The allow-list is the guard's, not the plan's: an address the plan
+	// deletes twice appears once.
+	p.ResourceChanges = append(p.ResourceChanges, change(job, "delete"))
+	if got := RetireAllowDelete(p, rets); !slices.Equal(got, want) {
+		t.Errorf("allow = %q, want %q with no repeats", got, want)
 	}
 }

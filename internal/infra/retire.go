@@ -1,7 +1,9 @@
 package infra
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -419,4 +421,124 @@ func workflowVariantOf(segs []string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// Removals is the addresses in rets that must leave Terraform's state BEFORE
+// the plan, sorted -- what a retirement passes to terraform state rm. It is
+// NOT the whole retirement set, and that is the point: only the addresses an
+// ordinary apply CANNOT delete qualify, and both halves of that test are
+// per-address facts (design §4.2a):
+//
+//   - still in stateAddrs, so a rerun never passes an address that is gone
+//     (terraform state rm of one fails with "No matching objects found");
+//   - Protected: a secret container carries prevent_destroy, which aborts
+//     the plan before it lists anything, and a Cloud Run job whose state says
+//     deletion_protection = true cannot be deleted by an apply once its
+//     resource has left the configuration.
+//
+// A retired job whose state says deletion_protection = false is NOT
+// returned: it is exactly the job an apply must delete (the user who
+// followed gcp-setup.md's order), and taking its address out here would
+// leave it alive in GCP with nothing managing it. The same goes for
+// everything else a retired variant owned -- its service account, its IAM
+// members, its bucket grant -- which stays in state so the plan deletes it.
+func Removals(stateAddrs []string, rets []Retirement) []string {
+	inState := make(map[string]bool, len(stateAddrs))
+	for _, a := range stateAddrs {
+		inState[a] = true
+	}
+	var out []string
+	for _, r := range rets {
+		// An address that is empty or could be read as a flag is never
+		// passed on, whatever produced it: terraform state rm would refuse
+		// it, and fugaro must not be the thing that hands it over.
+		if r.Address == "" || strings.HasPrefix(r.Address, "-") {
+			continue
+		}
+		if r.Protected && inState[r.Address] {
+			out = append(out, r.Address)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// RetireAllowDelete is the guard's allow-list for p: each delete or replace
+// of an address in rets (the retirement set of design §3.1a), and nothing
+// else. A replace is ["delete","create"], so it is a delete of an address in
+// the set; anything else the plan does to a retired address is not a delete
+// and needs no permission.
+//
+// An address the retirement set does not name is never allowed, however the
+// plan came by it: the guard still refuses it (Review Focus 1).
+func RetireAllowDelete(p *tf.Plan, rets []Retirement) []string {
+	if p == nil {
+		return nil
+	}
+	inSet := make(map[string]bool, len(rets))
+	for _, r := range rets {
+		inSet[r.Address] = true
+	}
+	var out []string
+	for _, rc := range p.ResourceChanges {
+		if inSet[rc.Address] && slices.Contains(rc.Change.Actions, "delete") {
+			out = append(out, rc.Address)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// StateRmFunc is (*tf.TF).StateRm: the one terraform call a retirement's
+// state removal makes. It is an interface here so that the removal's own
+// behaviour -- one call per address, in order, and a vanished address
+// tolerated -- is testable without a terraform binary.
+type StateRmFunc func(ctx context.Context, addrs ...string) error
+
+// noMatchingObjects is what terraform prints for `state rm` of an address
+// the state no longer holds. The tolerance keys on the command as well as
+// the text, so nothing else can be swallowed by it.
+const noMatchingObjects = "No matching objects found"
+
+// RemoveFromState removes addrs from Terraform's state, one call per
+// address and in order, and reports which of them the state had already
+// lost. Nothing is destroyed: state rm leaves the live resource exactly as
+// it was, which is what makes a state-removed secret re-adoptable by label
+// and a state-removed job deletable through the API.
+//
+// This is the second line of defence of the resume path, not the first:
+// Removals returns only protected addresses still in the state, so an
+// address an earlier run already removed is normally never passed here at
+// all. But one can still vanish between the state read and the call -- a
+// hand-run `terraform state rm` in another terminal, or a partial earlier
+// failure -- and terraform then fails the whole call. So the call is made
+// per address, and exactly terraform's own "No matching objects found"
+// from `state rm` is reported as already gone instead of as a failure.
+// Neither defence replaces the other.
+//
+// The two halves are returned as they are reached, so a real failure still
+// tells the caller which addresses were removed before it.
+func RemoveFromState(ctx context.Context, stateRm StateRmFunc, addrs []string) (removed, gone []string, err error) {
+	for _, a := range addrs {
+		if err := stateRm(ctx, a); err != nil {
+			if alreadyGone(err) {
+				gone = append(gone, a)
+				continue
+			}
+			return removed, gone, fmt.Errorf("removing %s from the state: %w", a, err)
+		}
+		removed = append(removed, a)
+	}
+	return removed, gone, nil
+}
+
+// alreadyGone is whether err is terraform's own report that `state rm`
+// found no object for an address. A message that merely contains the words,
+// from another command or from somewhere else entirely, is not.
+func alreadyGone(err error) bool {
+	var xe *tf.ExitError
+	if !errors.As(err, &xe) {
+		return false
+	}
+	return xe.Command == "state rm" && strings.Contains(xe.Stderr, noMatchingObjects)
 }
