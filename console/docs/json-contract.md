@@ -68,9 +68,10 @@ one sooner.
 
 The pipe is not a queue with a policy: it is a queue with a **stall**. A full
 pipe blocks `json.NewEncoder(d.Out).Encode`, `watchStream` stops draining
-`Supervisor.Updates()`, `Supervisor.emit`'s `out` channel — `make(chan Update,
-64)`, `watch.Start` — fills, and the per-stream goroutine that feeds
-`streamPhase`'s unbuffered `in` channel blocks in `Supervisor.emit`. Nothing is
+`Supervisor.Updates()`, and `Supervisor.emit`'s `out` channel — `make(chan
+Update, 64)`, `watch.Start` — fills; the supervisor's own loop then blocks in
+`Supervisor.emit`, and behind it the per-stream goroutines block feeding
+`streamPhase`'s unbuffered `in` channel. Nothing is
 discarded, and nothing grows without bound: the only queues are `watch.Start`'s
 64 slots, `rtdb.Client.Stream`'s 16 (`internal/rtdb/stream.go`), and the
 kernel's pipe buffer.
@@ -94,7 +95,8 @@ with status 141 (`128 + 13`). So the child does not linger when the console
 goes away and does not need to be killed — the console still reaps it, and must
 not report 141 as a CLI error. If the write instead returns an error (a stdout
 that is not a pipe), `watchStream` returns it, `main` prints `fugaro: …` to
-stderr and exits 1 through `ExitCode`.
+stderr and exits through `ExitCode` — `ExitRemoteError` (2) for a transport
+failure, `ExitUserError` (1) for a permission error.
 
 ### 1.5 A refused read is terminal, and it is announced exactly once
 
