@@ -2094,6 +2094,30 @@ func TestProjectPolicyPublishWritesTheSwitchAndKeepsTheRestOfRouting(t *testing.
 	}
 }
 
+// TestPolicyNodeBytesRefusesCaseFoldedRoutingMembers: the publish path's own gate
+// on the member names it is about to patch into. It is not reachable through the
+// command surface — Decode refuses such a node first (validRoutingMembers calls
+// the same check) — so it is exercised where it stands, and that is the point: a
+// writer must not depend on a reader having run, and a publish that patched an
+// exact `via` beside a `VIA` (jsonMember matches keys exactly) would leave a block
+// whose route encoding/json decides by the order the keys were written in.
+func TestPolicyNodeBytesRefusesCaseFoldedRoutingMembers(t *testing.T) {
+	pol := &projectpolicy.Policy{Version: projectpolicy.Version}
+	for name, old := range map[string]string{
+		"a case-folded via":    `{"version": 1, "routing": {"claude": {"via": "direct", "VIA": "openrouter"}}}`,
+		"models twice":         `{"version": 1, "routing": {"claude": {"via": "direct", "models": ["claude-sonnet-5-5"], "models": []}}}`,
+		"a case-folded claude": `{"version": 1, "routing": {"CLAUDE": {"via": "direct"}}}`,
+	} {
+		if _, err := policyNodeBytes(pol, []byte(old), true, true); err == nil || !strings.Contains(err.Error(), "routing block") {
+			t.Errorf("%s: policyNodeBytes = %v, want a refusal naming the block", name, err)
+		}
+	}
+	// The other side: a block this Fugaro reads as written is patched as before.
+	if _, err := policyNodeBytes(pol, []byte(`{"version": 1, "routing": {"claude": {"via": "direct"}}}`), true, true); err != nil {
+		t.Errorf("a well-spelled block: policyNodeBytes = %v, want it written", err)
+	}
+}
+
 // TestProjectPolicyPublishRefusesAnOlderNodeWithAWorkingRemedy: a node this
 // binary cannot read as its own shape — hand-written with no version, or with
 // an older one — is refused rather than replaced, but the refusal must name a

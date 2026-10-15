@@ -609,6 +609,16 @@ func policyNodeBytes(pol *projectpolicy.Policy, oldRaw []byte, exists, keepRouti
 	if !ok {
 		return node, nil
 	}
+	// The member names, before anything is written into the block. Decode refuses
+	// these nodes already (validRoutingMembers calls the same check), so this is
+	// the write path's own gate rather than the only one: a publish that reached
+	// here with a `Claude` beside a `claude`, or a `VIA` beside the `via` it is
+	// about to patch, would write a block whose route encoding/json decides by the
+	// order the keys happen to be in — and the patch matches keys exactly, so it
+	// would leave both.
+	if err := projectpolicy.CheckRoutingMemberNames(routing); err != nil {
+		return nil, userErr("%s carries a routing block this Fugaro cannot read the way it is written: %v; fix it by hand, or remove it with 'fugaro project policy publish --delete'", projectpolicy.PathShared(), err)
+	}
 	if keepRouting || pol.Routing == nil || pol.Routing.Claude == nil {
 		// The config says nothing about Claude (or --remove-routing: then
 		// pol.Routing is nil and the member is dropped). Kept whole, or gone on

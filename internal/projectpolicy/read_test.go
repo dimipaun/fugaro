@@ -230,6 +230,45 @@ func TestDecodeRefusesARoutingBlockThatNamesNoClaude(t *testing.T) {
 	}
 }
 
+// Member names inside `routing` that encoding/json reads as another name are
+// refused, at both levels of the block. `{"claude": {"via": "direct", "VIA":
+// "openrouter"}}` is not a switch with a misspelt key in it: the decoder matches
+// a member name case-insensitively and keeps the last of two that fold to one
+// name, so the route this Fugaro took would depend on the order the keys were
+// written in — the same for `"via"` twice. And `{"CLAUDE": {...}}` alone is read
+// as the switch by that same case-insensitive match, which is why the names are
+// checked before the block is judged to name no claude at all.
+func TestDecodeRefusesDuplicateOrCaseFoldedRoutingMembers(t *testing.T) {
+	for _, tc := range []struct{ name, raw, want, why string }{
+		{"a case-folded via beside the real one", `{"version": 1, "routing": {"claude": {"via": "direct", "VIA": "openrouter"}}}`, "routing.claude", "reads as one member"},
+		{"via written twice", `{"version": 1, "routing": {"claude": {"via": "openrouter", "via": "direct"}}}`, "routing.claude", "keeps the last one it reads"},
+		{"models spelled in another case", `{"version": 1, "routing": {"claude": {"via": "direct", "MODELS": ["claude-sonnet-5-5"]}}}`, "routing.claude", "spells models as \"MODELS\""},
+		{"claude spelled in another case", `{"version": 1, "routing": {"CLAUDE": {"via": "direct"}}}`, "routing", "spells claude as \"CLAUDE\""},
+		{"a case-folded claude beside the real one", `{"version": 1, "routing": {"claude": {"via": "direct"}, "Claude": {"via": "openrouter"}}}`, "routing", "reads as one member"},
+	} {
+		p, found, err := Decode([]byte(tc.raw))
+		if err == nil || p != nil || !found {
+			t.Errorf("%s: Decode = (%v, %v, %v), want a refusal", tc.name, p, found, err)
+			continue
+		}
+		// The refusal names the block it is in and says what encoding/json would
+		// have done with the name — which is the reason the spelling matters here
+		// and does not for a member this Fugaro does not read.
+		for _, want := range []string{tc.want, tc.why} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: err = %v, want it to contain %q", tc.name, err, want)
+			}
+		}
+	}
+
+	// The other side: a member this Fugaro does not model, spelled once, is not a
+	// name read two ways — it stays tolerated, exactly as it is in the tests
+	// above.
+	if _, found, err := Decode([]byte(`{"version": 1, "routing": {"claude": {"via": "direct", "future_route": "x"}, "gemini": {"via": "vertex"}}}`)); err != nil || !found {
+		t.Errorf("an unmodelled sibling = (found=%v, err=%v), want it read", found, err)
+	}
+}
+
 // routing.claude.via is read in phase 1b, and must not accept garbage now.
 func TestDecodeRefusesAnUnknownVia(t *testing.T) {
 	for _, via := range []string{"", "Direct", "openrouter-api", "none"} {

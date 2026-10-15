@@ -548,6 +548,112 @@ const (
 	RouteAuto = config.RouteAuto
 )
 
+// CheckRoutingMemberNames refuses a routing block whose member names encoding/json
+// does not read the way the document spells them: a name written twice, two names
+// that differ only in case, or a modelled name (`claude`, `via`, `models`) spelled
+// in another case. It is exported because the CLI's publish writes into the same
+// block and must not add an exact `claude` beside a `Claude` a hand-written node
+// already carries: the two fold to one field, and which one wins is the order the
+// keys were written in.
+//
+// The node is the one document a run is routed by, and it is hand-writable (an
+// administrator edits it through the RTDB console or the CLI, not through a config
+// loader that would have refused this). The values are checked by validRouting and
+// config.CheckRouting; this is the check that the *names* are the ones those checks
+// read, because a name they do not read is not a value they refuse — it is a value
+// nothing looked at. `routing.claude` is where it matters most: `{"via": "direct",
+// "VIA": "openrouter"}` and `{"via": "openrouter", "via": "direct"}` both decode to
+// a switch whose route is decided by document order, and the diff, the runner and
+// the operator's own reading would each see a different one.
+//
+// `routing: {}`, and a block whose members are all names this Fugaro does not
+// model (a sibling a newer release added), pass: there is no name here to read two
+// ways.
+func CheckRoutingMemberNames(raw json.RawMessage) error {
+	names, err := objectMemberNames(raw)
+	if err != nil {
+		return fmt.Errorf("projectpolicy: routing: %w", err)
+	}
+	if err := checkMemberNames("routing", names, []string{"claude"}); err != nil {
+		return err
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &members); err != nil {
+		return fmt.Errorf("projectpolicy: routing: %w", err)
+	}
+	claude, ok := members["claude"]
+	if !ok || isNull(claude) {
+		return nil
+	}
+	cnames, err := objectMemberNames(claude)
+	if err != nil {
+		return fmt.Errorf("projectpolicy: routing.claude: %w", err)
+	}
+	return checkMemberNames("routing.claude", cnames, []string{"via", "models"})
+}
+
+// checkMemberNames refuses, at one level of the block, a member name encoding/json
+// would read as another: the exact same name twice (the decoder keeps the last it
+// reads, so which value survives depends on the order the keys were written in),
+// two names differing only in case (the decoder matches a member name
+// case-insensitively, so they are one field), or a modelled name spelled in
+// another case (which is the same sentence one name at a time). A name this
+// Fugaro does not model passes: an unknown key here is a key this reader ignores,
+// and the refusal for a block that then names no switch is validRoutingMembers'.
+func checkMemberNames(prefix string, names, known []string) error {
+	seen := map[string]bool{}
+	folded := map[string]string{}
+	for _, n := range names {
+		if seen[n] {
+			return fmt.Errorf("projectpolicy: %s names %q twice: encoding/json keeps the last one it reads, so which value this Fugaro routes by would depend on the order the keys were written in — write the member once", prefix, n)
+		}
+		seen[n] = true
+		lower := strings.ToLower(n)
+		if first, dup := folded[lower]; dup {
+			return fmt.Errorf("projectpolicy: %s names both %q and %q, which encoding/json reads as one member (it matches a member name case-insensitively), so which value this Fugaro routes by would depend on the order the keys were written in — write the member once, spelled as the node spells it", prefix, first, n)
+		}
+		folded[lower] = n
+		for _, k := range known {
+			if lower == strings.ToLower(k) && n != k {
+				return fmt.Errorf("projectpolicy: %s spells %s as %q: encoding/json matches a member name case-insensitively, so this Fugaro reads it as %s — write the member as %s documents it, or remove it", prefix, k, n, k, k)
+			}
+		}
+	}
+	return nil
+}
+
+// objectMemberNames returns the member names of a JSON object in the order the
+// document writes them, duplicates included: decoding into a map keeps only the
+// last one of a repeated key, and seeing that there was more than one is the
+// whole point of this walk.
+func objectMemberNames(raw json.RawMessage) ([]string, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return nil, errors.New("the block is not an object")
+	}
+	var names []string
+	for dec.More() {
+		kt, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		name, ok := kt.(string)
+		if !ok {
+			return nil, errors.New("the block has a member without a name")
+		}
+		names = append(names, name)
+		var v json.RawMessage
+		if err := dec.Decode(&v); err != nil {
+			return nil, err
+		}
+	}
+	return names, nil
+}
+
 // validRoutingMembers refuses a written routing block that names no claude
 // switch this Fugaro can act on.
 //
@@ -571,7 +677,17 @@ const (
 //
 // `routing: {}` — a block with no members at all — is tolerated, exactly as an
 // absent one is: it names nothing, and a nil switch is what it says.
+//
+// The member *names* are checked first, by CheckRoutingMemberNames: encoding/json
+// matches a member case-insensitively and keeps the last of two that fold to one
+// name, so `{"claude": {"via": "direct", "VIA": "openrouter"}}` would otherwise
+// be a switch this Fugaro reads as one of two routes depending on the order the
+// keys were written in — and a `CLAUDE` alone would be read as the switch while
+// the name check below saw no `claude` at all.
 func validRoutingMembers(raw json.RawMessage, r *Routing) error {
+	if err := CheckRoutingMemberNames(raw); err != nil {
+		return err
+	}
 	if r != nil && r.Claude != nil {
 		return nil
 	}
