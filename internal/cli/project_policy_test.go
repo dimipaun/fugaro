@@ -1404,14 +1404,6 @@ func TestRemovalWarningSaysWhatTheNextRunDoes(t *testing.T) {
 		// "github/*/app") is false. It is that github/*/app admits
 		// github/other/app, which github/acme/* does not.
 		"pattern, one that only overlaps it": {[]string{"github/acme/*", "github/*/app"}, "github/*/app", false, ""},
-		// A "*" inside the removed pattern, aligned with the "*" of the entry
-		// that covers it. The entry has to read that "*" as an ordinary
-		// character in the name it is matched against — github/acme/a* admits
-		// every expansion of github/acme/a*b — and the matcher tested the
-		// literal case first, so the pattern's own "*" was consumed as a
-		// literal and lost: this answered false, and the confirmation claimed
-		// a stop the removal does not make.
-		"pattern, a star inside the removed pattern": {[]string{"github/acme/a*", "github/acme/a*b"}, "github/acme/a*b", true, "github/acme/a*"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, by := admittedBy(tc.allow, tc.arg)

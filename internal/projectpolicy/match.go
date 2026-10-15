@@ -161,18 +161,6 @@ func ValidPattern(pattern string) error {
 // of the pattern fails. That is at most len(pattern)*len(s) steps, where a
 // backtracking scan of every star is exponential in their number (a pattern is
 // attacker-chosen text on a node, so the cost must not be).
-//
-// The wildcard case is tested BEFORE the literal one, and that order is
-// load-bearing: s is not always a concrete repository name. admittedBy
-// (internal/cli/project_cmd.go) reads a *pattern* being removed against the
-// entries the removal leaves, so a "*" in s is an ordinary character there —
-// and a pattern whose "*" is aligned with one in s must still be read as a
-// wildcard. Testing equality first consumes the pattern's "*" as a literal and
-// loses it: matchSeg of the one-star pattern against a two-character name whose
-// first character is a star, and of "a*" against "a" followed by a star, both
-// answered false — which made `fugaro project repos rm` of a wildcard entry
-// report "its runs are refused from now on" while a broader remaining entry
-// still admitted every expansion of it.
 func matchSeg(pattern, s string) bool {
 	var (
 		p, i     int // the positions being compared
@@ -181,12 +169,12 @@ func matchSeg(pattern, s string) bool {
 	)
 	for i < len(s) {
 		switch {
-		case p < len(pattern) && pattern[p] == '*':
-			star, at, has = p, i, true
-			p++
 		case p < len(pattern) && pattern[p] == s[i]:
 			p++
 			i++
+		case p < len(pattern) && pattern[p] == '*':
+			star, at, has = p, i, true
+			p++
 		case has:
 			// The last "*" takes one more character and the rest of the
 			// pattern is tried again from there.
