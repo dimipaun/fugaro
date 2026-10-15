@@ -18,9 +18,13 @@ package cli
 
 import (
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/report"
+	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/watch"
 	"github.com/spf13/cobra"
 )
@@ -90,12 +94,13 @@ func TestDocsDesktopConsoleDesignCarriesTheDecisions(t *testing.T) {
 }
 
 // jsonTagNames collects every json key of the named types, recursing into the
-// structs, pointers and slices of the same package so a nested shape's fields
-// are covered too. Types outside internal/watch (time.Time and the like) are
-// leaves: their internals are not this contract.
-func jsonTagNames(t *testing.T, types ...reflect.Type) []string {
+// structs, pointers and slices that recurse() admits so a nested shape's
+// fields are covered too. Types recurse() refuses (time.Time and the like) are
+// leaves: their internals are not this contract. An anonymous field with no
+// json key of its own (secretEntry's embedded gcp.SecretInfo) contributes its
+// inner keys rather than a key of its own.
+func jsonTagNames(t *testing.T, recurse func(reflect.Type) bool, types ...reflect.Type) []string {
 	t.Helper()
-	const pkg = "github.com/dimipaun/fugaro/internal/watch"
 	seen := map[reflect.Type]bool{}
 	var out []string
 	var walk func(rt reflect.Type)
@@ -108,7 +113,7 @@ func jsonTagNames(t *testing.T, types ...reflect.Type) []string {
 		default:
 			return
 		}
-		if rt.PkgPath() != pkg || seen[rt] {
+		if !recurse(rt) || seen[rt] {
 			return
 		}
 		seen[rt] = true
@@ -119,6 +124,10 @@ func jsonTagNames(t *testing.T, types ...reflect.Type) []string {
 			}
 			name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
 			if name == "" || name == "-" {
+				if f.Anonymous {
+					walk(f.Type) // embedded: its keys are promoted into this shape
+					continue
+				}
 				t.Errorf("%s.%s carries no json key: the contract cannot name it", rt.Name(), f.Name)
 				continue
 			}
@@ -130,9 +139,26 @@ func jsonTagNames(t *testing.T, types ...reflect.Type) []string {
 		walk(rt)
 	}
 	if len(out) == 0 {
-		t.Fatal("no json keys collected; the walk lost the watch shapes")
+		t.Fatal("no json keys collected; the walk lost the shapes")
 	}
 	return out
+}
+
+// samePackage returns a recurse predicate admitting the structs of one
+// package, the shape the watch test wants (every nested watch shape).
+func samePackage(pkg string) func(reflect.Type) bool {
+	return func(rt reflect.Type) bool { return rt.PkgPath() == pkg }
+}
+
+// namedTypes returns a recurse predicate admitting exactly the given types, so
+// a walk over, say, doctorOutput stops at its own keys instead of demanding
+// that the document also name doctorProject's or pluginwire.Report's.
+func namedTypes(types ...reflect.Type) func(reflect.Type) bool {
+	allow := map[reflect.Type]bool{}
+	for _, rt := range types {
+		allow[rt] = true
+	}
+	return func(rt reflect.Type) bool { return allow[rt] }
 }
 
 // TestDocsDesktopConsoleContractNamesEveryWatchField: console/docs/json-contract.md
@@ -143,7 +169,7 @@ func jsonTagNames(t *testing.T, types ...reflect.Type) []string {
 func TestDocsDesktopConsoleContractNamesEveryWatchField(t *testing.T) {
 	const path = "console/docs/json-contract.md"
 	doc := readDoc(t, path)
-	for _, name := range jsonTagNames(t,
+	for _, name := range jsonTagNames(t, samePackage("github.com/dimipaun/fugaro/internal/watch"),
 		reflect.TypeOf(watch.JSONDoc{}),
 		reflect.TypeOf(watch.JSONConn{}),
 		reflect.TypeOf(watch.JSONTotal{}),
@@ -156,6 +182,112 @@ func TestDocsDesktopConsoleContractNamesEveryWatchField(t *testing.T) {
 		if !strings.Contains(doc, "`"+name+"`") {
 			t.Errorf("%s never names the watch --json field %q (internal/watch/json.go has it)", path, name)
 		}
+	}
+}
+
+// TestDocsDesktopConsoleContractNamesTheOtherShapesFields: the same
+// struct-derived check over the shapes the document describes in its own field
+// tables -- the run list behind `runs ls --json` and `diagnose`'s row, a log
+// line (whose keys the log reader is built against), the secrets inventory
+// whose names come from an embedded gcp.SecretInfo, the local accounts
+// document, the cancel result, and the budget documents. A key that exists in
+// Go and not in the document fails here, and the document's own tables are
+// what it is checked against, so a field listed there cannot be one the code
+// does not have without this test's sibling below catching the mismatch.
+func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	doc := readDoc(t, path)
+	shapes := []reflect.Type{
+		reflect.TypeOf(runview.Row{}),
+		reflect.TypeOf(runview.Totals{}),
+		reflect.TypeOf(logLine{}),
+		reflect.TypeOf(secretEntry{}),
+		reflect.TypeOf(gcp.SecretInfo{}),
+		reflect.TypeOf(accountsListDoc{}),
+		reflect.TypeOf(cancelResult{}),
+		reflect.TypeOf(budgetShowDoc{}),
+		reflect.TypeOf(showGlobal{}),
+		reflect.TypeOf(showDefaults{}),
+		reflect.TypeOf(showRepo{}),
+		reflect.TypeOf(showRun{}),
+		reflect.TypeOf(showKill{}),
+		reflect.TypeOf(doctorOutput{}),
+		reflect.TypeOf(doctorCheck{}),
+	}
+	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
+		if !strings.Contains(doc, "`"+name+"`") {
+			t.Errorf("%s never names the json field %q, which the shape it documents carries", path, name)
+		}
+	}
+}
+
+// TestDocsDesktopConsoleContractNamesNoInventedField is the other direction,
+// and it is the one a review found missing: every backticked name in the
+// document's own field tables must be a real json key of the shape that table
+// documents, so a field written from the design rather than read from the code
+// (the `columns` a first revision invented on the run list) fails here instead
+// of shipping a reader for a key no command emits.
+func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	doc := readDoc(t, path)
+	real := map[string]bool{}
+	for _, name := range jsonTagNames(t,
+		samePackage("github.com/dimipaun/fugaro/internal/watch"),
+		reflect.TypeOf(watch.JSONDoc{}), reflect.TypeOf(watch.JSONConn{}),
+		reflect.TypeOf(watch.JSONTotal{}), reflect.TypeOf(watch.JSONBurn{}),
+		reflect.TypeOf(watch.JSONKill{}), reflect.TypeOf(watch.JSONRepo{}),
+		reflect.TypeOf(watch.JSONRun{}), reflect.TypeOf(watch.JSONFinished{}),
+	) {
+		real[name] = true
+	}
+	shapes := []reflect.Type{
+		reflect.TypeOf(runview.Row{}), reflect.TypeOf(runview.Totals{}),
+		reflect.TypeOf(logLine{}), reflect.TypeOf(secretEntry{}),
+		reflect.TypeOf(gcp.SecretInfo{}), reflect.TypeOf(accountsListDoc{}),
+		reflect.TypeOf(cancelResult{}), reflect.TypeOf(budgetShowDoc{}),
+		reflect.TypeOf(showGlobal{}), reflect.TypeOf(showDefaults{}),
+		reflect.TypeOf(showRepo{}), reflect.TypeOf(showRun{}), reflect.TypeOf(showKill{}),
+		reflect.TypeOf(doctorOutput{}), reflect.TypeOf(doctorCheck{}),
+		reflect.TypeOf(report.JSONDoc{}), reflect.TypeOf(report.JSONLine{}),
+		reflect.TypeOf(report.JSONTokens{}), reflect.TypeOf(Diagnosis{}),
+	}
+	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
+		real[name] = true
+	}
+	// tableFieldRE finds every backticked token in a field-table row's first
+	// column: "| `key` | type | ... |", "| `a`, `b` | ... |" or
+	// "| `key` bool, `other` | ... |" alike. A token that looks like a json
+	// key -- lowercase, digits and underscores only, so a Go type
+	// (`runview.Row`), a package (`lsDoc`, `gcp.SecretInfo`) or a phrase
+	// ("budget show") is not one -- must be a real key of some shape this
+	// document describes.
+	tableFieldRE := regexp.MustCompile("^\\|[^|]*\\|")
+	keyTokenRE := regexp.MustCompile("^[a-z][a-z0-9_]*$")
+	backtickRE := regexp.MustCompile("`([^`]+)`")
+	// The rows whose first column is a command or a flag rather than a json
+	// key: docs/design/desktop-console.md's spawn table and the flag
+	// inventory, both of which name commands, not fields.
+	notAKey := map[string]bool{"watch": true, "report": true, "diagnose": true,
+		"logs": true, "doctor": true, "version": true}
+	checked := 0
+	for _, line := range strings.Split(doc, "\n") {
+		m := tableFieldRE.FindString(line)
+		if m == "" {
+			continue
+		}
+		for _, tok := range backtickRE.FindAllStringSubmatch(m, -1) {
+			name := tok[1]
+			if !keyTokenRE.MatchString(name) || notAKey[name] {
+				continue
+			}
+			checked++
+			if !real[name] {
+				t.Errorf("%s's field table names %q, which is not a json key of any shape it documents: a field invented rather than read", path, name)
+			}
+		}
+	}
+	if checked < 100 {
+		t.Errorf("%s: only %d field-table rows were checked; the table shape changed and this test stopped looking", path, checked)
 	}
 }
 
@@ -195,6 +327,32 @@ func TestDocsDesktopConsoleContractStatesTheThreeFeedFacts(t *testing.T) {
 				t.Errorf("%s does not state the feed fact %q: it never says %q", path, tc.fact, want)
 			}
 		}
+	}
+}
+
+// TestDocsDesktopConsoleContractStatesWhichDocumentsAreLineDelimited: exactly
+// two of the commands the console reads emit one JSON object per line, and
+// they do it through two different code paths -- the watch feed through
+// json.NewEncoder with no SetIndent, the log lines through json.Marshal in
+// printLogEntry. A document that claims only the feed is line-delimited, or
+// that calls the log form indented, builds the log reader on the wrong parser,
+// which is what a review of the first revision found here.
+func TestDocsDesktopConsoleContractStatesWhichDocumentsAreLineDelimited(t *testing.T) {
+	const path = "console/docs/json-contract.md"
+	doc := readDoc(t, path)
+	for _, want := range []string{
+		"one compact `logLine` object per line",
+		"printLogEntry",
+		"json.Marshal",
+		"Exactly two commands are line-delimited",
+		"`watch --json` and `logs RUN\n   --json`",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s does not state which documents are line-delimited: it never says %q", path, want)
+		}
+	}
+	if strings.Contains(doc, "one `logLine` object per entry, indented") {
+		t.Errorf("%s still calls logs --json indented, which printLogEntry is not", path)
 	}
 }
 

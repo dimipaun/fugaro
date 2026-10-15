@@ -55,7 +55,8 @@ The columns below say which field needs which state. The recurring shapes:
 
 Emitted **compact, one object per line** (`json.NewEncoder(d.Out).Encode(...)`,
 `WatchDeps.emit`, `internal/cli/watch.go`), which is what makes the feed
-line-delimited JSON — see §6.1.
+line-delimited JSON — one of exactly two line-delimited documents the console
+reads, the other being `logs RUN --json` (§6.2, §9).
 
 ### `JSONDoc` (`internal/watch/json.go:97`)
 
@@ -186,8 +187,8 @@ These are also asserted by name in `TestDocsDesktopConsoleContractStatesTheThree
 The first document waits for all four streams or `watchFirstFrame` (**5 s**,
 `internal/cli/watch.go:36`), and a `refused` connection emits immediately and
 then exits. The encoder is `json.NewEncoder(d.Out)` with **no `SetIndent`** —
-this is the only compact, one-line-per-document command in the console's set
-(§6.1).
+one of the two compact, one-line-per-document commands in the console's set
+(`logs RUN --json` is the other, §6.2).
 
 **(ii) `--repo` narrows the JSON too.** `WatchDeps.emit` calls
 `watch.FilterRepo(v, d.RepoKey)` **before** encoding (`internal/cli/watch.go:260`),
@@ -355,7 +356,9 @@ reads:
 | `started_at` | `*time.Time` | **yes** | null = not started |
 | `base_branch`, `previous_run` | string | **yes** | |
 | `follow_up` | bool | no | |
-| `columns` map | | yes | the human table's cells; the console reads the typed fields, not these |
+| `draft_fallback` | bool | **yes** | the host has no draft PRs, so the PR is an ordinary one with `[DRAFT]` in its title |
+| `pr_status_at` | `*time.Time` | **yes** | when the runner last wrote the PR's status section — **null = never** |
+| `stale_draft` | bool | **yes** | the record is not final but its draft's status section is old, or the execution is gone: the run probably died |
 
 `runview.Totals` (`runview.go:436`): `runs` int, `model_usd` float64,
 `model_notional_usd` float64 (**notional** — kept apart from `model_usd` by
@@ -373,16 +376,31 @@ allow-list excludes `--watch` (it is `watch` under another name).
 ### 6.1 `fugaro diagnose RUN --json`
 
 **Command:** `internal/cli/diagnose.go` `newDiagnoseCmd` (`Use: "diagnose RUN"`),
-indented (`diagnose.go:448`). **Document:** `Diagnosis` (`diagnose.go:39`):
-`project`, **`row`** (a `runview.Row`, §5 — this is where a live run's PR
-number and `pr_url` come from, design gap 6), `halt`°, `verify`°
-(`[]verify.Record`), `failed`° `[]string`, `flaky`° `[]string`, `findings`°
-(`[]runner.Finding`), `agent_message`° (capped at `agentMessageBytes` = 4 KiB),
-`log_tail`° (`[]string`, newest `diagnoseLogLines` = 30), `report_path`,
-`draft_note`°, `follow_up`° (`*runstore.FollowUp`). **Every string from the run
-is redacted** (`Diagnosis`'s own comment). It splits into `row` +
-`process`/`checks` in the `Diagnosis` JSON encoding — the console reads `row`
-and the named keys above.
+indented (`printDiagnosis`, `diagnose.go:445`). **Document:** `Diagnosis`
+(`diagnose.go:40`) — a **flat** struct with no `MarshalJSON`, so its keys are
+exactly its own tags and nothing is nested under a `process` or `checks` key:
+
+| Field | Type | omitempty | Note |
+|---|---|---|---|
+| `project` | string | no | the Fugaro project |
+| `row` | `runview.Row` | no | §5 — this is where a live run's PR number and `pr_url` come from (design gap 6) |
+| `halt` | `*runstore.Halt` | **yes** | why a halted run was halted |
+| `verify` | `[]verify.Record` | **yes** | `result.json`'s verify records |
+| `failed`, `flaky` | `[]string` | **yes** | the last test record's failed and flaky tests |
+| `findings` | `[]runner.Finding` | **yes** | the last review's findings |
+| `agent_message` | string | **yes** | capped at `agentMessageBytes` = 4 KiB |
+| `log_tail` | `[]string` | **yes** | the newest `diagnoseLogLines` = 30 lines |
+| `report_path` | string | no | |
+| `draft_note` | string | **yes** | a line about the run's draft PR, when it needs one |
+| `follow_up` | `*runstore.FollowUp` | **yes** | what a follow-up acted on; absent for a first run |
+| `comments_path` | string | **yes** | where the comments it was given are stored |
+| `route_by`, `model_by` | `map[string]float64` | **yes** | the run's spend by provider route and by model (a Claude call has no route) |
+| `reported_usd`, `charge_usd` | float64 | **yes** | what providers said the calls cost, beside what the table charged — **absent (0) when no provider reported one**, so the pair is read together |
+| `reported_warning` | string | **yes** | set when the two differ by more than `reportedGapPct` percent |
+| `pin_warnings` | `[]string` | **yes** | the model prices the run's cap counted on a guess |
+
+**Every string from the run is redacted** (`Diagnosis`'s own comment), and the
+console reads `row` and the keys above.
 
 Flags: `--json` plus the cloud flags.
 
@@ -392,14 +410,17 @@ Flags: `--json` plus the cloud flags.
 they cannot be combined**: `runLogs` refuses `--url` with `--json` or
 `--follow`.
 
-- `logs RUN --json` prints **one `logLine` object per entry, indented**
-  (`logLine`, `logs.go:33`): `time` (RFC 3339), `severity`, `stage`°, `stream`°,
-  `event`°, `message` (no `omitempty` on time/severity/message). Every field is
-  **redacted** (`redactEntry`, `logs.go:199`), and `message` is job-written
-  text: the display layer re-sanitizes it. **The console caps the window**: it
-  reads a bounded number of lines with a timeout and never passes `--follow`
-  (design §2.3, §5.1; Task 2.3 asserts the cap and that no spawn carries
-  `--follow`).
+- `logs RUN --json` prints **one compact `logLine` object per line** — not an
+  indented document: `printLogEntry` (`logs.go:210`) marshals each entry with
+  `json.Marshal` and writes it with a trailing newline, the same one-object-
+  per-line shape as the `watch` feed, and the other of the two line-delimited
+  documents the console reads. `logLine` (`logs.go:33`): `time` (RFC 3339),
+  `severity`, `stage`°, `stream`°, `event`°, `message` (no `omitempty` on
+  time/severity/message). Every field is **redacted** (`redactEntry`,
+  `logs.go:199`), and `message` is job-written text: the display layer
+  re-sanitizes it. **The console caps the window**: it reads a bounded number
+  of lines with a timeout and never passes `--follow` (design §2.3, §5.1;
+  Task 2.3 asserts the cap and that no spawn carries `--follow`).
 - `logs RUN --url` prints **one line of plain text** — the Cloud console link
   (`row.log_url` above). It is a value the CLI produced rather than a job, and
   it still goes through the `https:`-and-allow-list check before
@@ -458,11 +479,14 @@ accounts"** (the type's own doc comment is the authority). Flags: `--repo`
 `secretEntry` (`secrets.go:486`): `name`° (the logical name, from the
 `fugaro_secret` label), `scope`° (`repo` / `project` / a project secret with a
 repo override), `allowed`° (`[]string`, `--project-wide` only), and the
-embedded **`gcp.SecretInfo`** (`createTime`, `labels`, `versionCount` — names,
-labels and version counts **only**). **No value can appear**: the command "has
-no access call at all". Flags: `--repo` **or** `--project-wide` (always one of
-them, passed explicitly — with neither the command resolves the checkout's
-origin), `--json`, plus the cloud flags.
+embedded **`gcp.SecretInfo`** (`internal/backend/gcp/secrets.go:40`), whose own
+JSON keys are `id`, `created` (RFC 3339), `labels`°, `versions` (the count of
+versions not destroyed) and `latest`° (the newest enabled version, if any) —
+**names, labels and version counts only; `createTime` and `versionCount` are
+the upstream Secret Manager API's names, not keys this document emits**. **No
+value can appear**: the command "has no access call at all". Flags: `--repo`
+**or** `--project-wide` (always one of them, passed explicitly — with neither
+the command resolves the checkout's origin), `--json`, plus the cloud flags.
 
 ### 6.7 `fugaro version`
 
@@ -531,9 +555,11 @@ table against the live constructors.
 
 1. **Every document here is read-only**, and the allow-list is by exact argv
    (design §5.1 rule 6). Nothing in this file names a write.
-2. **Only `watch --json` is line-delimited.** Every other command here is
-   indented over several lines, so a line-based parser is correct for the feed
-   and wrong everywhere else.
+2. **Exactly two commands are line-delimited: `watch --json` and `logs RUN
+   --json`** (§2, §6.2 — the feed through `json.NewEncoder` with no
+   `SetIndent`, the log lines through `json.Marshal`). **Every other command
+   here is indented over several lines**, so a line-based parser is right for
+   those two and wrong everywhere else.
 3. **A null, an absent key and an empty array are three different things**, and
    each maps to a different availability state (§1). A `0` is never a
    substitute for any of them.
