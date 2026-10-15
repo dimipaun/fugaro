@@ -253,7 +253,7 @@ revocation (40j).
 | 35 | Named Claude accounts, U2: `claude setup-token` and multi-account switching | See "Check 35" below; **you** run it, on your own machine, no GCP project needed. | No cost. **NOT RUN.** |
 | 36 | Named Claude accounts, U3: per-project Cloud Run job count comfort at the installation's intended (workflow × account) scale | See "Check 36" below; **you** read the sandbox project's quota. | No cost. **NOT RUN.** |
 | 37 | Named Claude accounts, U4: the real Claude Code error text for an expired or revoked oauth token, and `fugaro diagnose`'s rendering of it | See "Check 37" below; **you** run it, on the sandbox repository only. | One minimal sandbox run (about the cost of check 13). **USER-RUN, NOT RUN.** |
-| 38 | Clone workflows (`checkout: clone`): the job runs the installation's base image with no build and no daily check, `provision` runs `mise install` at start-up, the image pull, the runner's prefetch for a follow-up and a review run on the private sandbox repository, and whether the provider honours `--filter=blob:none` (UNVERIFIED today) | See "Check 38" below; **you** run it at your own terminal, from the **sandbox checkout** only (installation `fugaro`, project `fugaro-dev`), on repository `edgeappinc/fugarosandbox` — never `belong`, EdgeWeb or EdgeServer. | A few small sandbox runs and one build of the flag's own branch. **USER-RUN, NOT RUN.** |
+| 38 | Clone workflows (`checkout: clone`): the base image, `provision`'s `mise install`, the image pull, the runner's prefetch for a follow-up and a review run on the private sandbox repository, and whether the provider honours `--filter=blob:none` (unverified) | **You** run it at your own terminal, from the **sandbox checkout** only (installation `fugaro`, project `fugaro-dev`, repository `edgeappinc/fugarosandbox`) — never `belong`. See "Check 38" below. | A few small sandbox runs, one build of the flag's branch. **USER-RUN, NOT RUN.** |
 | 40 | Project-level secrets (design `project-secrets.md` §8, §3a): a project-wide secret reaching an opted-in repository's job, an empty/absent name refused at store time and a narrowed list dropping a mount, a repo-level override's precedence and its fallback once removed, the data-policy gate still enforced for a provider's non-empty, listed case, no value anywhere in a log or a Terraform plan/state print, (§3a, the owner's **final** ruling) a provider with no `allow_data_to`/`["*"]` becoming available to every repository for BOTH mounting AND the data-policy gate, revocation never bricking the excluded repository's own apply, and the CLI's own build/check/doctor paths resolving the real secret ID (including the apply-time/live and base-image version skews they must account for) | See "Check 40" below; **you** run it, on installation `fugaro` (never `belong`), sandbox repository only. | A handful of small sandbox-sized plan/apply cycles. **USER-RUN, NOT RUN.** |
 | 41 | The one base image's cold start: time from `fugaro run` to the runner's first log line on the sandbox, on the old 0.6 `web-node` image and on `fugaro-base` 0.7.0 (base-image plan Task 22 step 1, design `base-image.md` §13) | See "Check 41" below; run on installation `fugaro`, sandbox repository only, with a no-change task. | **RUN 2026-10-14, PASSED** (no regression beyond the first pull). |
 | 42 | The config-transitions design's checks (reserved; `docs/design/config-transitions.md` §6 and `docs/plans/2026-10-14-config-transitions.md` Task 8, merged to `main` as PR #344 — on `main`, not in this branch's tree) | Not written yet | Reserved number. |
@@ -636,11 +636,14 @@ M9e (design §4.2a) opens a draft PR at a run's first checkpoint push (its first
 **Clean up.** Decline every sandbox PR this check opened, with the sandbox token (never your own), and delete its branch:
 
 ```bash
-# for each PR id: decline, then delete the branch fugaro/<run-id>
+# for each PR id: decline, then delete the branch fugaro/<run-id>.
+# The repository is spelled out (edgeappinc/fugarosandbox, the sandbox): a URL
+# built from a variable is one empty or edited value away from naming another
+# workspace, and these two calls are destructive.
 curl -fsS --config <(printf 'header = "Authorization: Bearer %s"\n' "$(cat <token-file>)") -X POST \
-  "https://api.bitbucket.org/2.0/repositories/<ws>/<repo>/pullrequests/<id>/decline"
+  "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/<id>/decline"
 curl -fsS --config <(printf 'header = "Authorization: Bearer %s"\n' "$(cat <token-file>)") -X DELETE \
-  "https://api.bitbucket.org/2.0/repositories/<ws>/<repo>/refs/branches/fugaro/<run-id>"
+  "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/refs/branches/fugaro/<run-id>"
 ```
 
 (`<token-file>` holds the sandbox token; `printf` is a builtin, so the token stays out of every process's command line. Declining a PR also works in the web UI.) Never merge a sandbox PR. List what is left with `fugaro runs ls --repo $SANDBOX --since 1d`.
@@ -1094,13 +1097,25 @@ The runner's stage-failure path is unchanged by named accounts (design §6f), bu
 ```bash
 # === Check 38: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
 # step below. It is idempotent, and nothing below the hard stops runs unless
-# every one of them passes. ===
-P=fugaro-dev                       # HARD-CODED, never read from gcloud: the owner's ambient default project is a production one
-R=us-east5                         # the installation's region
-REPO=edgeappinc/fugarosandbox      # HARD-CODED: the sandbox repository; NEVER EdgeWeb or EdgeServer
-SLUG=edgeappinc-fugarosandbox-27be4c45d773e3b9   # the sandbox repository's run-slug: task.Slug hashes the git provider with the repository, so it is not the repository string; this is the literal a real sandbox run recorded (docs/multi-model.md)
-KIND=web                           # the sandbox workflow switched to checkout: clone
-BASE=master                        # the sandbox's base branch
+# every one of them passes. Save it to a file and run it as a script (see
+# "Paste the block into a file, not into an interactive zsh" below): the
+# comments are on their own lines so that a shell which does not read them
+# still sets every variable before the guard. ===
+# HARD-CODED, never read from gcloud: the owner's ambient default project is a
+# production one
+P=fugaro-dev
+# the installation's region
+R=us-east5
+# HARD-CODED: the sandbox repository; NEVER EdgeWeb or EdgeServer
+REPO=edgeappinc/fugarosandbox
+# the sandbox repository's run-slug: task.Slug hashes the git provider with the
+# repository, so it is not the repository string; this is the literal a real
+# sandbox run recorded (docs/multi-model.md)
+SLUG=edgeappinc-fugarosandbox-27be4c45d773e3b9
+# the sandbox workflow switched to checkout: clone
+KIND=web
+# the sandbox's base branch
+BASE=master
 
 # ${VAR:?} everywhere: an empty variable is a hard error, never an empty
 # argument that gcloud would resolve from its ambient configuration.
@@ -1123,6 +1138,8 @@ git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
 
 **Why the guard is one block, and why it is re-run.** A fresh shell has none of these variables, so each step starts by re-running the block; a skipped, partially pasted or hand-edited block stops at the first hard stop instead of reaching `gcloud` with an empty argument. The project alone is not enough for the `fugaro` half, and this is the trap the earlier draft of this check walked into: **without `--project`, `fugaro` picks its installation from the working directory's `fugaro.yaml` `project:` (here, and only here, `fugaro`), else `$FUGARO_PROJECT`, else the only project config** (`internal/cli/cloud.go:53`). A shell sitting in a `belong` checkout, or one with `FUGARO_PROJECT=belong` exported, is a shell whose unpinned `fugaro` commands reach `belong` — and the `fugaro init --repo .` below is an **apply**. `--project fugaro` is what stops it: a `--project` that disagrees with the checkout's `project:` is **refused**, not silently resolved (`this checkout belongs to project <x>; --project says fugaro`, `internal/localcfg/select.go:163`); the second hard stop reads the checkout's project back through `doctor` — a read-only confirmation, but not an offline one: `doctor` reads the installation's billing and IAM policy, the shared config and the update check, so it can also stop the check by failing for its own reasons (expired credentials, no network). That is deliberate — the stop is fail-safe, and its message tells you to read `fugaro doctor`'s output yourself before going on. The third stop requires the checkout to be the sandbox. `fugaro` also ignores `CLOUDSDK_CONFIG` (Check 32's corrections, item 2), so `gcloud`'s own configuration is no protection for it. (In an interactive shell `exit 1` closes the window — the intended outcome, since nothing after it may run; run the block from a file or in a `bash` sub-shell to keep the window.)
 
+**Paste the block into a file, not straight into an interactive zsh.** Every block in this check carries `#` comments, and an *interactive* zsh honours them only after `setopt interactive_comments` is set first: a trailing comment (`P=fugaro-dev  # HARD-CODED`) then leaves `P` unset rather than documenting it. This block's comments are therefore **on their own lines** — a whole-line `#` comment errors with `command not found: #` and runs nothing, and the next line still executes — and every block below is written the same way. It still fails safe: the first hard stop catches an unset or wrong variable before any command reaches `gcloud` or `fugaro`. But do not rely on that: run `setopt interactive_comments` once, or (better, and what these blocks are written for) save the block to a file and run `bash check38.sh` or `zsh check38.sh`. A non-interactive shell of either kind reads comments, and `exit 1` then stops the script instead of closing your terminal window.
+
 **Which `fugaro` commands read the installation from the checkout.** With no `--project`, `fugaro init --repo .`, `fugaro image refresh`, `fugaro init --base`, `fugaro image build`, `fugaro run` and `fugaro logs` all resolve the installation that way, so **they must run only from the sandbox checkout** — and every one of them below carries `--project fugaro --gcp-project "$P"`. `--repo "$REPO"` names the **repository**, not the installation. `fugaro version` is the exception: it takes no flags and makes no cloud call.
 
 **Setup.** Record `fugaro version` (no flags) and the date. In the sandbox checkout, on a branch, set `checkout: clone` on a workflow that fits it — the sandbox's `web` (`$KIND`) unless its `fugaro.yaml` carries any key `fugaro validate --json` refuses under clone (`image.apt`, `image.setup`, `image.tools`, `image.skip_build_scripts`, `dockerfile:`; a service arrives through `image.apt` or `image.setup`); if no sandbox workflow fits, record that and stop, because this check needs one. Commit it, open a pull request and merge it to the sandbox's base branch (`$BASE`, the sandbox is the one repository where you may merge), and pull the base branch. Then, **in your own terminal, not through an agent, and in the sandbox checkout**, re-run the Setup block above and run `fugaro init --project fugaro --gcp-project "${P:?}" --repo .` (`--repo` takes a checkout path): it applies and init refuses a coding agent's session, so read the plan and type the project's name. Expect the `$KIND` workflow's job moved onto the installation's base image with `FUGARO_CHECKOUT=clone` in its environment, and **no** `image build` for it. Record the job's name (`fugaro init --project fugaro --gcp-project "${P:?}" --repo . --print-vars`, or `gcloud run jobs list --project "${P:?}" --region "${R:?}"`).
@@ -1138,22 +1155,36 @@ git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
 
    Expected: the execution starts, and the clone and `mise install` finish before the first stage. **FACT:** the execution's start (the run ID's timestamp); the `provision` stage's duration and the first stage's start (from `result.json`'s stage timings and `fugaro logs --project fugaro --gcp-project "${P:?}" <run>`, in the sandbox checkout); whether `mise install` ran at all (it runs only when the checkout has a root mise config, and the sandbox's `mise.toml` is one).
 2. **The job's image.** This one is a `gcloud` line, so it names its own project and region and is safe in any directory; the rest of the check runs in the sandbox checkout. Run: `gcloud run jobs describe <job> --project "${P:?}" --region "${R:?}" --format='value(spec.template.template.containers[0].image)'`. Expected: the installation's base image (`base_images.base`, `<region>-docker.pkg.dev/$P/fugaro-base/fugaro-base:<version>` in the sandbox's local config), not a per-repository image, and the job's env carrying `FUGARO_CHECKOUT=clone`. **FACT:** the image string and the env.
-3. **Whether the pull needed a grant.** From step 1's execution, did the container start (the image pulled), or did Cloud Run fail it before its first log line? If it failed with a pull authorization error (`Permission 'artifactregistry.repositories.downloadArtifacts' denied`, or a "failed to pull image" text), record the exact error, revert the sandbox workflow to `checkout: baked` (in the sandbox checkout: re-run the Setup block, then `fugaro init --project fugaro --gcp-project "${P:?}" --repo .`), and record what grant is missing: the job's service agent needs `roles/artifactregistry.reader` on the registry `base_images.base` lives in, which today only image builds and the check job pull from (`docs/design/generic-tool.md` §12: `bucket-iam.md` owns every IAM change, and `checkout: clone`'s pull is handed to it rather than added by the generic-tool work — note that the bucket-IAM work's own check is Check 32, the **runs bucket**, so an Artifact Registry grant is a new item there, not one of 32's steps). If you granted it by hand to continue, record the grant and remove it in the restore. **FACT:** started or failed; the exact error if any; the grant, if any, you had to add.
-4. **The prefetch, on a private repository (a follow-up and a review run).** The sandbox repository is private, and a first run's agent carries the run's git credentials, so a first run cannot exercise the credential boundary this step is about. Run a **follow-up** and a **review run** on one pull request that has **at least two commits** and whose **base branch (`$BASE`) has moved on since the merge base**: after step 1's PR exists, its branch is `fugaro/<run-id>`. In a scratch directory **outside** the sandbox checkout — a throwaway clone, so nothing below can push to your checkout — run, with the literal repository URL (no variable that an empty `$REPO` could redirect at another repository, and none of this from the sandbox checkout itself):
+3. **Whether the pull needed a grant.** From step 1's execution, did the container start (the image pulled), or did Cloud Run fail it before its first log line? If it failed with a pull authorization error (`Permission 'artifactregistry.repositories.downloadArtifacts' denied`, or a "failed to pull image" text), record the exact error, revert the sandbox workflow to `checkout: baked` (in the sandbox checkout: re-run the Setup block, then `fugaro init --project fugaro --gcp-project "${P:?}" --repo .`), and record what grant is missing: the job's service agent needs `roles/artifactregistry.reader` on the registry `base_images.base` lives in, which today only image builds and the check job pull from (`docs/design/generic-tool.md` §12, which reads: "`bucket-iam.md` owns every IAM change. Nothing here grants a role. `checkout: clone`'s image pull may need one (unverified, Check 38): if it does, that grant is handed to the IAM plan, not added here." — and that plan's Task 9 is Check 32 itself, the **runs bucket**'s launcher grants (`docs/plans/2026-10-08-bucket-iam.md:1960`), so an Artifact Registry grant is a new item in that plan, not one of 32's steps). If you granted it by hand to continue, record the grant and remove it in the restore. **FACT:** started or failed; the exact error if any; the grant, if any, you had to add.
+4. **The prefetch, on a private repository (a follow-up and a review run).** The sandbox repository is private, and a first run's agent carries the run's git credentials, so a first run cannot exercise the credential boundary this step is about. Run a **follow-up** and a **review run** on one pull request that has **at least two commits** and whose **base branch (`$BASE`) has moved on since the merge base**: after step 1's PR exists, its branch is `fugaro/$RUNID`. Re-run the Setup block in the sandbox checkout **in the shell you will use for this step** — its third hard stop is what proves that checkout is the sandbox, and `$BASE` is the base branch it just confirmed. The script below then makes its own throwaway clone **outside** the sandbox checkout (so nothing in it can push to your checkout), from the literal repository URL — no variable an empty `$REPO` could redirect at another repository — and it is **one `&&` chain from the clone to the last push**, with the clone's origin asserted against that literal URL before the first commit: a clone that fails (no HTTPS credentials for a private repository is the usual cause) stops the chain at the clone, instead of leaving the commits and pushes below to run in whatever repository the shell happens to be in.
 
    ```bash
-   cd "$(mktemp -d)" && git clone https://bitbucket.org/edgeappinc/fugarosandbox.git check38 && cd check38
-   git fetch origin "fugaro/<run-id>" && git checkout "fugaro/<run-id>"
-   git commit --allow-empty -m "check 38: a second commit" && git push origin "fugaro/<run-id>"
-   git checkout master && git commit --allow-empty -m "check 38: the base branch moves on" && git push origin master
+   # `fugaro runs ls` prints step 1's run as <slug>/<run-id>: set RUNID to the
+   # <run-id> part, and PR to the number of the pull request step 1 opened.
+   RUNID=
+   PR=
+   BRANCH="fugaro/${RUNID:?set RUNID above to step 1's run ID}"
+
+   cd "$(mktemp -d)" \
+     && git clone https://bitbucket.org/edgeappinc/fugarosandbox.git check38 \
+     && cd check38 \
+     && [ "$(git remote get-url origin)" = https://bitbucket.org/edgeappinc/fugarosandbox.git ] \
+     && git fetch origin "$BRANCH" \
+     && git checkout "$BRANCH" \
+     && git commit --allow-empty -m "check 38: a second commit" \
+     && git push origin "$BRANCH" \
+     && git checkout "${BASE:?re-run the Check 38 setup block in the sandbox checkout first}" \
+     && git commit --allow-empty -m "check 38: the base branch moves on" \
+     && git push origin "${BASE:?re-run the Check 38 setup block in the sandbox checkout first}" \
+     || { echo "Check 38 stopped: the scratch clone, its commits or its pushes failed, so nothing after this line ran (cwd $(pwd), origin $(git remote get-url origin 2>/dev/null || echo none)). If the clone itself failed — no HTTPS credentials for a private repository is the usual cause — nothing was pushed anywhere. Otherwise read 'git status' and 'git log --oneline -3' here before going on." >&2; exit 1; }
    ```
 
-   Then, **in the sandbox checkout** (re-run the Setup block first), on that PR:
+   The chain leaves you in the throwaway clone. Go back to the sandbox checkout, re-run the Setup block there, and launch, on that PR:
 
    ```bash
-   fugaro run --project fugaro --gcp-project "${P:?}" --repo "${REPO:?}" --pr <N> \
+   fugaro run --project fugaro --gcp-project "${P:?}" --repo "${REPO:?}" --pr "${PR:?}" \
      "Run exactly these and reply with each one's exit status: git diff origin/${BASE:?}...HEAD; git log -p origin/${BASE:?}..HEAD; git show HEAD; git diff origin/${BASE:?}"
-   fugaro run --project fugaro --gcp-project "${P:?}" --repo "${REPO:?}" --recipe review-only --pr <N> \
+   fugaro run --project fugaro --gcp-project "${P:?}" --repo "${REPO:?}" --recipe review-only --pr "${PR:?}" \
      "<the same commands, together with the review>"
    ```
 
@@ -1164,7 +1195,7 @@ git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
 
 **Paste back** (no token, no key): the version and the build, each numbered step's result (pass, fail, not run), and the exact text of every unexpected message.
 
-**Restore.** In the sandbox checkout, re-run the Setup block, then merge a `fugaro.yaml` with the `$KIND` workflow back on `checkout: baked` (or drop the key) to the sandbox's base branch (`$BASE`), and run `fugaro init --project fugaro --gcp-project "${P:?}" --repo .` again to move the job back onto its per-repository image. Then clean up step 1's run: decline its pull request and delete its `fugaro/<run-id>` branch (Check 24's clean-up commands), and remove the run's own stored objects — `gcloud storage rm --recursive --project "${P:?}" "gs://fugaro-runs-fugaro-dev/runs/${SLUG:?}/<run-id>/"`. `$SLUG` is the sandbox repository's run-slug from the setup block, and it is the directory's real name: `task.Slug` hashes the git provider with the repository, so the run's objects live under `runs/edgeappinc-fugarosandbox-27be4c45d773e3b9/<run-id>/`, never under `runs/edgeappinc-fugarosandbox/<run-id>/` — the latter matches nothing and `gcloud storage rm --recursive` errors on it instead of removing anything. `<run-id>` is step 1's; `fugaro runs ls` prints the pair as `<slug>/<run-id>`. This check writes no `fugaro-live-*` object (that prefix belongs to the live-batch and bucket-IAM checks, not this one), so there is none of those to sweep. If step 3 needed a hand-granted `artifactregistry.reader`, remove it too. The sandbox ends on `checkout: baked`, with its job image as it was.
+**Restore.** In the sandbox checkout, re-run the Setup block, then merge a `fugaro.yaml` with the `$KIND` workflow back on `checkout: baked` (or drop the key) to the sandbox's base branch (`$BASE`), and run `fugaro init --project fugaro --gcp-project "${P:?}" --repo .` again to move the job back onto its per-repository image. Then clean up step 1's run: decline its pull request and delete its `fugaro/${RUNID:?}` branch (Check 24's clean-up commands, where `$RUNID` replaces their `<run-id>`), and remove the run's own stored objects — `gcloud storage rm --recursive --project "${P:?}" "gs://fugaro-runs-fugaro-dev/runs/${SLUG:?}/${RUNID:?}/"`. `$RUNID` is step 1's run ID, the `<run-id>` part of the pair `fugaro runs ls` prints as `<slug>/<run-id>`; it is the same variable step 4 sets, so set it again if this is a new shell. It is not optional: `${RUNID:?}` stops the command on an unset variable, and an empty one there would make the path `runs/${SLUG}/` — the whole slug's directory, every run the sandbox ever stored — which `--recursive` would then remove. `$SLUG` is the sandbox repository's run-slug from the setup block, and it is the directory's real name: `task.Slug` hashes the git provider with the repository, so the run's objects live under `runs/edgeappinc-fugarosandbox-27be4c45d773e3b9/$RUNID/`, never under `runs/edgeappinc-fugarosandbox/$RUNID/` — the latter matches nothing and `gcloud storage rm --recursive` errors on it instead of removing anything. This check writes no `fugaro-live-*` object (that prefix belongs to the live-batch and bucket-IAM checks, not this one), so there is none of those to sweep. If step 3 needed a hand-granted `artifactregistry.reader`, remove it too. The sandbox ends on `checkout: baked`, with its job image as it was.
 
 ## Check 40: project-level secrets (installation fugaro (never `belong`), sandbox repository only; run by you; NOT RUN)
 
