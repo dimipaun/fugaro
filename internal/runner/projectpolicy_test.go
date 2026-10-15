@@ -515,6 +515,34 @@ func TestPolicySetsOnlyItsOwnKeys(t *testing.T) {
 			t.Errorf("%s source = %q, want ceiling", key, s)
 		}
 	}
+
+	// The allow-list is a ceiling key like the rest (L-a of the security
+	// review of PR #379: dropping the job's list whenever the node was silent
+	// about it passed every test). A node that does not mention allowed_models
+	// leaves the job's list in force: the coder is still off it.
+	b = policyRun(t, gwConfig(t, ""), "off", "", `{"version":1,"allow_repos":["github/acme/*"]}`, capScript(3)...)
+	b.deps.Spend = ceilingOf(t, runner.AllowedModelsEnv, haiku)
+	rec, err = b.run(t) // no agent step may run
+	if err == nil || rec.Status != runstore.StatusInfraError ||
+		!strings.Contains(rec.Reason, "agent.models.coder") || !strings.Contains(rec.Reason, "allowed_models from ceiling") {
+		t.Fatalf("rec = %+v, err = %v: the job's allow-list must survive a node that does not set it", rec, err)
+	}
+
+	// A node that names the list replaces the job's, in both directions: it
+	// may widen it as well as narrow it, which a merge that only tightens
+	// could not do (the node *is* the ceiling). Here the job allows haiku
+	// alone and the node allows haiku and sonnet, so the run the job's own
+	// list would have refused goes through.
+	b = policyRun(t, gwConfig(t, ""), "off", "",
+		`{"version":1,"budget":{"mode":"off","allowed_models":["`+sonnet+`","`+haiku+`"]}}`, capScript(3)...)
+	b.deps.Spend = ceilingOf(t, runner.AllowedModelsEnv, haiku)
+	rec, err = b.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v: the node's allow-list replaces the job's", rec, err)
+	}
+	if s := sourceOf(t, rec, "allowed_models"); s != "policy" {
+		t.Errorf("allowed_models source = %q, want policy", s)
+	}
 }
 
 // The keys the policy does set are the policy's: a node that names the mode
