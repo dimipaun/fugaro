@@ -336,6 +336,44 @@ func (b *Backend) JobFullEnv(ctx context.Context, job string) (map[string]string
 	return env, true, nil
 }
 
+// JobSecretRefs reads job (a job name in the backend's region) and returns
+// the secret ID each of its container's secret-backed env variables names,
+// and whether the job exists. A job with no such env gives an empty, non-nil
+// map, true.
+//
+// It is JobFullEnv's mirror: that one returns the plain-value entries, this
+// one the entries whose value comes from value_source.secret_key_ref (the
+// deployed job's mounted secrets, design docs/design/project-secrets.md §7),
+// and neither reads a secret's value. The ID is the reference's own name
+// with any projects/<p>/secrets/ prefix stripped, so a name written the same
+// project's way (deploy/terraform/gcp/modules/workflow/job.tf) and one
+// written fully qualified compare equal.
+func (b *Backend) JobSecretRefs(ctx context.Context, job string) (map[string]string, bool, error) {
+	if !nameRE.MatchString(job) {
+		return nil, false, fmt.Errorf("bad job name %q", job)
+	}
+	j, err := b.run.Projects.Locations.Jobs.Get(b.location() + "/jobs/" + job).Context(ctx).Do()
+	if err != nil {
+		err = apiError("reading job "+job, err)
+		if errors.Is(err, backend.ErrNotFound) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	refs := map[string]string{}
+	if j.Template != nil && j.Template.Template != nil {
+		for _, c := range j.Template.Template.Containers {
+			for _, e := range c.Env {
+				if e.ValueSource == nil || e.ValueSource.SecretKeyRef == nil {
+					continue
+				}
+				refs[e.Name] = lastSegment(e.ValueSource.SecretKeyRef.Secret)
+			}
+		}
+	}
+	return refs, true, nil
+}
+
 // Cancel asks Cloud Run to stop the execution. It does not wait.
 func (b *Backend) Cancel(ctx context.Context, name string) error {
 	id, err := b.canonical(name)

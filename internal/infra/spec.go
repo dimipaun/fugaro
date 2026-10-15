@@ -234,6 +234,13 @@ type CheckJobSpec struct {
 	// BaseImages are the base images of the checked workflows' base kinds
 	// (kind -> image): what a rebuild the check submits builds FROM.
 	BaseImages map[string]string `json:"base_images"`
+	// GitSecretID is the secret ID of the provider credential as Readiness
+	// resolved it for this repository (the repository's own copy, or the
+	// project-wide one; design docs/design/project-secrets.md §5, §7), so
+	// the rebuild the check job submits names the secret the job itself
+	// reads. Empty in a spec written before this field existed: the in-job
+	// rebuild falls back to the repository's own ID (imagecheck.go).
+	GitSecretID string `json:"git_secret_id,omitempty"`
 }
 
 // RepoInstallation are the installation values a repository root needs.
@@ -270,6 +277,18 @@ type RepoSpec struct {
 	BuildBucketCondition Condition               `json:"build_bucket_condition"`
 	Check                *CheckSpec              `json:"check"`
 	Workflows            map[string]WorkflowSpec `json:"workflows"`
+	// ProjectSecretCandidates are the logical names this repository may use
+	// project-wide, mapped to the secret ID they would resolve to
+	// (gcp.ProjectSecretID). Candidate data only: being here says nothing
+	// about whether anything actually resolves there yet -- Readiness
+	// decides that against live state, and produces ProjectSecrets.
+	// json:"-": this map never reaches tfvars.
+	ProjectSecretCandidates map[string]string `json:"-"`
+	// ProjectSecrets are the logical names Readiness resolved to the
+	// project copy for this repository (repo has no version, project does),
+	// mapped to the project secret ID. This is the field that reaches
+	// tfvars as repo.project_secrets.
+	ProjectSecrets map[string]string `json:"project_secrets,omitempty"`
 
 	// GCPProject is the GCP project ID. It is not in the tfvars under this
 	// name: the root's own variable is "project".
@@ -835,7 +854,72 @@ func Repo(in Inputs) (RepoSpec, error) {
 			return RepoSpec{}, err
 		}
 	}
+	rs.ProjectSecretCandidates = c.projectSecretCandidates(rs)
 	return rs, nil
+}
+
+// projectSecretCandidates are the logical names this repository is eligible
+// to use project-wide, mapped to the project secret ID each would resolve
+// to: every name its workflows (and the check job) mount that
+// ProjectSecretCandidate accepts. Being here says nothing about whether the
+// name actually resolves to the project copy -- Readiness decides that
+// against live state (design docs/design/project-secrets.md §5).
+func (c *repoCtx) projectSecretCandidates(rs RepoSpec) map[string]string {
+	out := map[string]string{}
+	add := func(logical string) {
+		if id, ok := ProjectSecretCandidate(c.lc, logical, c.in.Repo); ok {
+			out[logical] = id
+		}
+	}
+	for _, key := range slices.Sorted(maps.Keys(rs.Workflows)) {
+		for _, logical := range uniqueSecrets(rs.Workflows[key]) {
+			add(logical)
+		}
+	}
+	if rs.Check != nil {
+		for _, logical := range slices.Compact(slices.Sorted(maps.Values(rs.Check.SecretEnv))) {
+			add(logical)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// ProjectSecretCandidate is the one place that answers "may this repository
+// use logical project-wide, and what ID would that be": the name is an
+// entry of project_secrets that lists repo, or a named Claude account's own
+// derived secret whose account lists repo, or a model provider's own key
+// whose provider lists repo -- AllowsData uniformly across all three, so
+// §3a's no-list/["*"]-means-any-repository rule applies to a provider's key
+// exactly as it does everywhere else. ok is false, id "" otherwise. It is
+// exported because fugaro init --repo's secrets stage (before any RepoSpec
+// exists) needs the identical answer.
+func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id string, ok bool) {
+	if lc == nil || logical == "" {
+		return "", false
+	}
+	eligible := config.AllowedForProjectSecret(lc.ProjectSecrets, logical, repo)
+	if !eligible {
+		// ClaudeAccountBySecret always resolves the bare claude-oauth-token
+		// to DefaultClaudeAccount, which is never a key of the map
+		// (ValidateClaudeAccounts refuses it), so the default account's own
+		// secret is eligible only through project_secrets above -- the
+		// documented shape (design §3).
+		if name, found := config.ClaudeAccountBySecret(lc.ClaudeAccounts, logical); found {
+			eligible = lc.ClaudeAccounts[name].AllowsData(repo)
+		}
+	}
+	if !eligible {
+		if name, found := config.ProviderBySecret(lc.Providers, logical); found {
+			eligible = lc.Providers[name].AllowsData(repo)
+		}
+	}
+	if !eligible {
+		return "", false
+	}
+	return gcp.ProjectSecretID(lc.Name, logical), true
 }
 
 // UsesVertex reports whether any of the repository's workflows

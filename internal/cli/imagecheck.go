@@ -710,7 +710,21 @@ func submitRebuild(ctx context.Context, b *gcp.Builder, project string, rs infra
 				layeredSince, name, kind, base, release)
 		}
 	}
-	spec, err := cloudBuildSpec(rs, cfg, name, base, s.MachineType, recordBucket)
+	// The ID the deployed job's own spec resolved when it was applied
+	// (CheckJobSpec.GitSecretID), never recomputed here: the check job runs
+	// as the build account and reads the same repo-wide local.secrets
+	// Terraform local the workflow jobs do, so the ID it resolves is the ID
+	// its own grant was fixed for. A spec written before that field existed
+	// (a stale job, a newer fugaro running in it) has none: the repository's
+	// own ID is the fallback, which is what every build named before this
+	// feature, and infra.Repo computes it unconditionally (P2).
+	gitID := s.GitSecretID
+	if gitID == "" {
+		if logical, ok := infra.GitSecret(rs.Provider); ok {
+			gitID = rs.Secrets[logical]
+		}
+	}
+	spec, err := cloudBuildSpec(rs, cfg, name, base, s.MachineType, recordBucket, gitID)
 	if err != nil {
 		return "", "", err
 	}

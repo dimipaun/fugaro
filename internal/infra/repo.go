@@ -148,7 +148,7 @@ func ForgetRepoState(ctx context.Context, c *Clients, stateBucket, slug string) 
 func SecretVersions(ctx context.Context, c *Clients, spec RepoSpec) (map[string]bool, error) {
 	out := make(map[string]bool, len(spec.Secrets))
 	for _, logical := range slices.Sorted(maps.Keys(spec.Secrets)) {
-		ok, err := hasEnabledVersion(ctx, c, target{project: spec.GCPProject}, spec.Secrets[logical])
+		ok, err := hasEnabledVersion(ctx, c.Secrets, target{project: spec.GCPProject}, spec.Secrets[logical])
 		if err != nil {
 			return nil, err
 		}

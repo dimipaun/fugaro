@@ -228,3 +228,15 @@ func equalSorted(a, b []string) bool {
 	}
 	return true
 }
+
+// TestValidateClaudeAccountsRefusesWildcard pins that the literal "*" is
+// not a repository slug for a claude account: only providers: gets the
+// wildcard rule (design docs/design/project-secrets.md §3a), so a future
+// change to ValidateModelProviders's own acceptance is never accidentally
+// copied here by a careless shared-helper edit.
+func TestValidateClaudeAccountsRefusesWildcard(t *testing.T) {
+	ps := ValidateClaudeAccounts(map[string]ClaudeAccount{"acme-personal": {AllowDataTo: []string{"*"}}})
+	if len(ps) == 0 {
+		t.Fatal("the literal \"*\" was accepted as a repository slug for a claude account; only providers: gets the wildcard rule (design §3a)")
+	}
+}
