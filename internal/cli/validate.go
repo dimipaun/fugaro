@@ -365,9 +365,27 @@ func newValidateCmd() *cobra.Command {
 				// routes the run will have instead of refused here. A merge
 				// the rules refuse is a problem of the layer's own, and the
 				// owner's own routes are what the rules below see then.
+				//
+				// Only when the selected config is this file's own project.
+				// A layer belongs to the installation of the project the file
+				// being validated names, and it is judged against that
+				// installation's routes; another project's config holds other
+				// routes, so merging the claim into it would report a claim
+				// this file's own installation serves as "names provider X,
+				// which the project config does not define" — a false refusal
+				// of a valid file, from a config the rules below do not judge
+				// anything by either (budgetProblems and providerProblems
+				// return early for another project).
 				lc := selectedProjectConfig(cmd.Context())
-				claimed, lp := layerRoutes(lc, rf.Layer.Layer)
-				problems = append(problems, lp...)
+				var claimed map[string]config.ModelProvider
+				if lc != nil {
+					claimed = lc.Providers
+				}
+				if lc != nil && lc.Name == cfg.Project {
+					merged, lp := layerRoutes(lc, rf.Layer.Layer)
+					claimed = merged
+					problems = append(problems, lp...)
+				}
 				rp, rw := recipeDirProblems(filepath.Dir(path), cfg)
 				problems = append(problems, rp...)
 				problems = append(problems, gateCheckProblems(filepath.Dir(path), cfg)...)

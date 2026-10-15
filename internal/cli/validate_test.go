@@ -1100,6 +1100,42 @@ func TestValidateSeesTheCheckoutLayer(t *testing.T) {
 	}
 }
 
+// A layer is judged against its own project's config, never against whichever
+// project config happens to be selected: with another project's config
+// selected, its routes are that installation's, and a claim naming a route of
+// the file's own installation would be refused here as "names provider X,
+// which the project config does not define" — while the run, which reads the
+// layer with its own FUGARO_MODEL_PROVIDERS, serves it. Mutation that makes
+// this fail: append layerRoutes' problems unconditionally in validate.go
+// (drop the `lc.Name == cfg.Project` guard around it).
+func TestValidateJudgesALayerOnlyAgainstItsOwnProjectConfig(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	// The selected config is another project's, with a route of its own and
+	// no openrouter at all.
+	other := writeProject(t, "other", "proj-9999")
+	f, err := os.OpenFile(other, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("providers:\n  vendorx:\n    kind: anthropic-compat\n    base_url: https://vendorx.example\n    auth: bearer\n    secret: vendorx-key\n    models: [\"qwen/*\"]\n    allow_data_to: [\"acme/app\"]\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FUGARO_CONFIG", other)
+
+	path := writeConfig(t, strings.Replace(cliMinimalYAML, "project: aurora\n", "project: aurora\ngcp_project: proj-1234\n", 1))
+	layer := filepath.Join(t.TempDir(), "layer.yaml")
+	if err := os.WriteFile(layer, []byte(minimalAnchored+"claude_models:\n  openrouter: [\"anthropic/claude-sonnet-5.5\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, err := execute(t, "validate", "--project-layer", layer, path)
+	if err != nil || !strings.Contains(out, "is valid") {
+		t.Fatalf("a valid layer with another project's config selected: exit %d\nout: %s\nerr: %s", ExitCode(err), out, errOut)
+	}
+}
+
 // The claim reaches the *routing* rules and never the price table (P4): the
 // run's table is built from the job's FUGARO_MODEL_PROVIDERS, which never
 // carries a claim, so a claimed ID has only the price the operator wrote under
