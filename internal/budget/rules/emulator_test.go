@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -332,6 +333,27 @@ func TestAllowedPaths(t *testing.T) {
 			h.mustReadDenied(c, p)
 		}
 	})
+	t.Run("the policy is readable per child and config/admin by nobody", func(t *testing.T) {
+		h := newHarness(t)
+		w := leased(2 * usd)
+		h.seed(w)
+		h.patch(map[string]any{
+			projectpolicy.PathShared():       map[string]any{"version": 1, "budget": map[string]any{"mode": "enforce"}},
+			projectpolicy.PathRepo("aurora"): map[string]any{"allow_repos": []string{"github/acme/*"}},
+			projectpolicy.PathRepo("other"):  map[string]any{"allow_repos": []string{"*"}},
+			projectpolicy.PathAdmin():        map[string]any{"owners": []string{"alice@example.invalid"}},
+		})
+		c := w.client(h)
+		// The shared policy and the run's own child are readable.
+		h.mustRead(c, projectpolicy.PathShared())
+		h.mustRead(c, projectpolicy.PathRepo("aurora"))
+		// The parent is not: an RTDB read grant on config/policy itself would
+		// cascade to every child. Another repository's child is not, and
+		// config/admin is denied to a client token outright.
+		for _, p := range []string{"config/policy", "config/policy/repos", projectpolicy.PathRepo("other"), projectpolicy.PathAdmin()} {
+			h.mustReadDenied(c, p)
+		}
+	})
 }
 
 // denialRow is one row of the design's table (§6.4), a named test.
@@ -545,6 +567,45 @@ func TestDenialTable(t *testing.T) {
 		h.mustDeny(c, "the ledger replaced by an empty object", map[string]any{budget.PathRun("aurora", "r1"): map[string]any{}})
 		h.mustDeny(c, "the ledger replaced by a smaller one", map[string]any{budget.PathRun("aurora", "r1"): map[string]any{"reserved": 0}})
 		h.mustDeny(c, "the whole runs tree", map[string]any{"runs": nil})
+	})
+	t.Run("row13_write_the_project_policy_or_the_admin_node", func(t *testing.T) {
+		h := newHarness(t)
+		w := leased(2 * usd)
+		h.seed(w)
+		h.patch(map[string]any{
+			projectpolicy.PathShared():       map[string]any{"version": 1},
+			projectpolicy.PathRepo("aurora"): map[string]any{"version": 1},
+			projectpolicy.PathAdmin():        map[string]any{"owners": []string{"alice@example.invalid"}},
+		})
+		c := w.client(h)
+		for _, p := range []string{
+			projectpolicy.PathShared() + "/budget/mode",
+			projectpolicy.PathRepo("aurora") + "/allow_repos",
+			projectpolicy.PathAdmin() + "/owners",
+			projectpolicy.PathShared(),
+			projectpolicy.PathAdmin(),
+		} {
+			h.mustDeny(c, "a write to "+p, map[string]any{p: "x"})
+		}
+		h.mustDeny(c, "a whole policy replace", map[string]any{projectpolicy.PathShared(): map[string]any{"version": 1}})
+		h.mustDeny(c, "delete the shared policy", map[string]any{projectpolicy.PathShared(): nil})
+	})
+	t.Run("row14_read_a_policy_the_run_does_not_own", func(t *testing.T) {
+		h := newHarness(t)
+		w := leased(2 * usd)
+		h.seed(w)
+		h.patch(map[string]any{
+			projectpolicy.PathShared():      map[string]any{"version": 1},
+			projectpolicy.PathRepo("other"): map[string]any{"version": 1},
+			projectpolicy.PathAdmin():       map[string]any{"owners": []string{"alice@example.invalid"}},
+		})
+		c := w.client(h)
+		h.mustRead(c, projectpolicy.PathShared()) // the shared node is every token's
+		for _, p := range []string{"config/policy", "config/policy/repos", projectpolicy.PathRepo("other"), projectpolicy.PathAdmin()} {
+			h.mustReadDenied(c, p)
+		}
+		// The other repository's token cannot read aurora's child either.
+		h.mustReadDenied(h.as(claims{slug: "other", run: "r9"}), projectpolicy.PathRepo("aurora"))
 	})
 }
 

@@ -31,6 +31,17 @@
 // and no ancestor has one, so a write must name the field (a multi-path
 // update with keys like runs/<slug>/<run>/reserved). Writing a whole ledger,
 // or deleting a field, is denied: validation rules do not run on a delete.
+//
+// The project policy (docs/design/project-centric.md §5). config/policy is
+// readable *per child*, never on the parent, because an RTDB read grant
+// cascades to children: config/policy/shared is readable by any token of the
+// project, config/policy/repos/$slug only by the token whose fs claim is that
+// slug (as config/caps/repos/$slug is), and config/admin by nobody with a
+// client token. No location under config is writable by a run token: admin
+// writes are IAM-only (deploy/terraform/gcp/modules/firebase/iam.tf). The
+// rules are not what keeps config/admin private from a launcher, which holds
+// roles/firebasedatabase.viewer and bypasses them, so nothing
+// secret-adjacent may be stored there (design §12a item 7).
 package rules
 
 import (
@@ -41,7 +52,23 @@ import (
 	"regexp"
 	"strings"
 	"text/template"
+
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
+
+// slugForPath stands in for the template's $slug when a policy path is
+// compared with the generated rules (the template is JSON and holds the paths
+// as literals; the wildcard is the only difference).
+const slugForPath = "x"
+
+// PolicyPaths returns the policy's node paths as the template spells them, in
+// the Go the policy uses: the shared node, one repository's child (with
+// slugForPath in place of $slug) and the admin-only node. It imports
+// internal/projectpolicy so a rename there updates both or fails
+// TestTemplatePolicyPathsAgreeWithProjectpolicy (phase 1 task 1.2 step 3).
+func PolicyPaths() (shared, repo, admin string) {
+	return projectpolicy.PathShared(), projectpolicy.PathRepo(slugForPath), projectpolicy.PathAdmin()
+}
 
 //go:embed rules.json.tmpl
 var source string

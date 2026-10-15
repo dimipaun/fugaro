@@ -12,12 +12,17 @@
         "defaults": { ".read": "TOKEN" },
         "repos": { "$slug": { ".read": "TOKEN && auth.token.fs == $slug" } }
       },
+      "policy": {
+        "shared": { ".read": "TOKEN", ".write": false },
+        "repos": { "$slug": { ".read": "TOKEN && auth.token.fs == $slug", ".write": false } }
+      },
       "limits": { ".read": "TOKEN" },
       "mode": { ".read": "TOKEN" },
       "kill": {
         "global": { ".read": "TOKEN" },
         "repos": { "$slug": { ".read": "TOKEN && auth.token.fs == $slug" } }
-      }
+      },
+      "admin": { ".read": false, ".write": false }
     },
     "runs": {
       "$slug": {
