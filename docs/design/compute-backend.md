@@ -865,3 +865,169 @@ backend creates a fresh job per run, so it never needs to share, and it
 - **Retiring `fugaro-services`.** The no-Docker path (base-image §5,
   generic-tool §1's mitigation) stays the documented answer for services that
   do not need a daemon; the VM backend is for the ones that do.
+
+## 7. The measurement: Check 57 (OWNER-RUN, NOT RUN)
+
+One user-run live check settles the substrate's two risky claims — that a
+Fugaro run gets a working Docker daemon, and that the cold start is bearable —
+before any production code depends on them. It is the successor of the dropped
+Check 31, in the format of Checks 30 and 32.
+
+### 7.1 The number
+
+`docs/gcp-live-checklist.md` reserves a number once and never reuses it. On
+`main`, checks 1–44 are claimed and the checklist names 45 as "the next free
+number". This design is told that the numbers **42–47 and 48–56 are claimed by
+other plans in flight**, so it claims **Check 57** and its row in the table is
+additive. If, when this lands, those reservations turn out not to exist, the
+number is still valid — the ruling is "never reuse or renumber", not "always
+use the lowest".
+
+### 7.2 The check
+
+**Check 57: the compute-instance Docker backend (sandbox only, run by you;
+USER-RUN, NOT RUN).**
+
+Nothing below has been run; nothing here is a claim that it works. It measures
+what §7.3 lists. **Sandbox installation only** — the owner's `fugaro`
+installation and its sandbox repository, the same one Checks 40, 41, 43 and 44
+use. **NEVER the `belong` project.** **No agent runs any apply:** every
+`gcloud`/`fugaro` step is typed by the owner.
+
+**Guarded setup block (every step re-runs it; it hard-stops otherwise):**
+
+```sh
+P=fugaro-dev                 # HARD-CODED sandbox project id; never belong
+[ "$(gcloud config get-value project 2>/dev/null)" = "$P" ] || { echo "STOP: wrong project"; exit 1; }
+[ "$(basename "$PWD")" = "fugarosandbox" ] || { echo "STOP: not the sandbox checkout"; exit 1; }
+echo "FACT: project=$P pwd=$PWD"
+```
+
+(If the sandbox's real project id differs, the owner substitutes it in the
+one hard-coded line; the guard's job is to make `belong` unreachable by
+accident, not to be clever.)
+
+1. **Baseline (Cloud Run).** On the sandbox, `fugaro run` a no-change task and
+   time launch-to-first-log-line (`fugaro logs RUN`, the first `started`
+   line), five times. This is Check 41's measurement, reused. **FACT:** the
+   five times and their median.
+2. **Cold start without a preloaded image.** Create one Batch job in the
+   sandbox: a container runnable from the sandbox's `fugaro-base`, a
+   Container-Optimized OS boot disk, `logsPolicy.destination=CLOUD_LOGGING`,
+   the socket bind mount, a dedicated service account, the same env the Cloud
+   Run job sets, and `maxRetryCount: 0`. Run it five times and record
+   submission-to-first-line. **FACT:** the five times, the median, and the
+   delta over step 1.
+3. **Cold start with a preloaded image.** Rebuild the boot disk with
+   `fugaro-base` already in the Docker data root (or point the runnable at the
+   base served by image streaming from the in-region Artifact Registry), and
+   repeat step 2. **FACT:** the five times, the median, and the delta over
+   steps 1 and 2.
+4. **Docker inside a run.** In a run on the Batch job, `docker run --rm
+   docker.io/library/postgres:17 postgres --version`, then start a small
+   Postgres container and wait for `pg_isready`. **FACT:** whether the socket
+   was reachable; which permission path let the container open it (container
+   as root, a supplementary group via the runnable's `options`, or a socket
+   group baked into the boot image); the pull time; and the time to
+   `pg_isready`.
+5. **The cost of one run.** Read the billing export (or the console's cost
+   table) for one step-2 run and compare it with the `cost.compute_usd` the
+   run recorded. **FACT:** the actual billed vCPU/memory seconds, the disk,
+   NAT if used, the estimate, and how much the one-minute minimum added.
+6. **The socket's permission path, in detail.** Record whether a Batch
+   container runnable's `options` accepts `--group-add`, `--user` and
+   `--privileged`, and which of them the design needs. **FACT** for each.
+7. **(Optional) Preemption.** Run one job with a spot provisioning model and
+   preempt it (or let it happen). **FACT:** whether the runner received
+   SIGTERM, whether it reached `finalize`, and the time from the preemption
+   notice to the VM's death.
+8. **Teardown on every exit path.** For each of: success; failure (a runnable
+   that exits non-zero); cancel (`fugaro cancel`, which deletes the job); and
+   a crashed runner (kill `fugaro exec`'s process), list the surviving
+   resources (`gcloud compute instances list --filter='labels.fugaro=managed'`
+   and `gcloud batch jobs list`). **FACT** per path: the job's final state,
+   whether any VM survived, and (if a reaper is built) what it deleted and
+   when. This is the answer to "does the reaper delete the instance" for every
+   way a run can end.
+9. **Quotas.** Read the sandbox project's regional CPU quota, CPUs (All
+   Regions), VM instances and in-use IP quotas (cloud.google.com/compute/docs/
+   resource-quotas is the map; the numbers are the project's own). **FACT:**
+   the four numbers and the largest number of concurrent Fugaro VMs they
+   allow at the chosen machine type.
+10. **Logs.** `fugaro logs RUN` finds the run's lines through the Fugaro log
+    view (which needs the sink arm of §1.5, applied as an owner step), and the
+    same lines are absent from `_Default`. **FACT:** entries found, and the
+    `_Default` result.
+
+**FACT lines to record:** every `FACT:` above; the `fugaro version` and the
+date; the machine type and boot-image version; the median launch-to-first-line
+for steps 1, 2 and 3; whether Docker worked and by which permission path; the
+billed cost of one run and the estimate; the final state and the survivor list
+for each step-8 exit path; the four quota numbers; and whether `fugaro logs`
+found the Batch run's lines.
+
+**Paste back:** the FACT lines, verbatim, plus any correction the run found and
+the check's go/no-go: **build the VM backend only if step 2 or 3's median is at
+most 120 s above step 1's** (generic-tool §1, G2). If both are worse, the
+documented answer stays `fugaro-services` plus `image.apt`.
+
+**Restore.** Delete the check's Batch jobs, the preloaded boot image, the
+NAT/router/subnet, the service account and any VM the check left; if the log
+sink arm was applied, revert it (`fugaro init` from the sandbox's config, or
+the Terraform apply that reverses it). Nothing in `belong` is touched at any
+step.
+
+## 8. Task outline
+
+Not the full plan (that is written after the owner approves this design and
+Check 57 answers). Ordered so **each task merges alone** and the **first one
+delivers value**.
+
+1. **The seam's name codec (C12).** Move `ParseExecution`, `SameExecution`,
+   `ExecutionFromEnv`, `OnCloudRun`-as-cloud-detection and `CheckRunExecution`
+   behind a per-backend codec on `Backend`, with Cloud Run's behaviour
+   byte-for-byte unchanged. Merges alone; no new backend; every existing test
+   green. Value: the seam is honest about names before a second name shape
+   exists.
+2. **The Batch fake and the conformance suite, behind a flag.** Add a Batch
+   fake to `internal/gcpfake` and an `internal/backend/batch` that passes
+   `backendtest.Run` against it, with `backend: cloud-batch` still **refused**
+   by config validation until Check 57 passes. This is the first task a
+   contributor can do and the first that proves the seam fits; it needs no
+   cloud and no owner step.
+3. **The Batch provisioning stage in `fugaro init`** (owner-run live step): the
+   Batch API, the service account (reused), the boot image or image streaming,
+   the NAT/router or the firewall, and the log sink/exclusion arm (§1.5).
+4. **The secrets bootstrap**: the runner (or a base-image entrypoint shim)
+   resolves the named secrets from Secret Manager as the VM's service account
+   before `fugaro exec`.
+5. **The Docker socket, the env allowlist and SECURITY.md** (§1.1, §3.6).
+6. **Config**: `backend:` and `docker:`, `fugaro validate`, `fugaro doctor`,
+   `fugaro backends ls` (§4).
+7. **Cost**: the VM price table, the one-minute floor and the report/history
+   source line (§5.2).
+8. **Logs**: the Cloud Logging filter for `batch.googleapis.com/Job` and
+   `fugaro logs` (§1.5, §2.3).
+9. **The reaper and the teardown paths** (§3.4).
+10. **Check 57, the docs, the skills and the release bullet** — the last task,
+    as in every other group.
+
+### 8.4 Open decisions for the owner
+
+| # | Decision | Recommendation | The alternative, and its cost |
+|---|---|---|---|
+| C1 | Substrate | Cloud Batch, one job with one task per run | Plain Compute Engine instances (full control, but Fugaro owns lifecycle/timeouts/logs/reaper); MIG rejected |
+| C2 | Docker source | The host daemon via the socket | Rootless/DinD (same host power, more parts, needs an unverified `--privileged` path) |
+| C3 | Isolation unit | One VM per run, never reused | A warm pool (breaks run-to-run isolation) |
+| C4 | Cold start | Preloaded boot image; image streaming as the lighter option | Plain pull every run (simplest, slowest); settled by Check 57 |
+| C5 | Spot | Off by default, opt-in per profile | Spot by default (up to 91% cheaper, kills a stage mid-flight) |
+| C6 | Service account | One per run class, never the default Compute Engine SA | The default SA (project-wide blast radius) |
+| C7 | Egress | No external IP; Cloud NAT | An ephemeral IP + deny-all ingress (simpler, cheaper per run, "no inbound" rests on a firewall list) |
+| C12 | The name seam | Generalise `Backend` (§2.5) | Encode a Batch job as a synthetic Cloud Run execution (lies in stored data) |
+| C14 | The reaper | Keep it even though Batch self-cleans | Rely on Batch teardown alone (an occasional orphan VM bills) |
+| C15 | Where the backend is chosen | Per project (`backend:`), not per workflow | Per workflow (two platforms in one project); or per profile inside the policy (correct after phase 3) |
+| C16 | The Docker key | `docker: true` (generic-tool §1's name) | `runtime: docker` (a second name for the same thing); or no key (every workflow gets a socket) |
+| C17 | What `compute_usd` covers | The VM's vCPU/memory; disk and NAT named as excluded | Fold disk/NAT in (a bigger change to the report shape) |
+| C18 | When to build | After Check 57; the fake-conformance task (Task 2) may land before | Build before the measurement (risks building the wrong substrate) |
+| C19 | The preloaded image | A script in `fugaro init`'s Batch stage, one image per base version | Rely on image streaming alone (no image build, but depends on Artifact Registry + containerd) |
+| C20 | Phase order | Independent of the project-centric phases; profiles (§4.3) adopted when phase 3 lands | Wait for phase 3 (cleaner, but delays a capability the owner needs) |
