@@ -80,6 +80,13 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
+	// The routing switch is applied here, once, before anything reads the
+	// run's pins: the policy is where D1a delivers it, and the pins it
+	// rewrites are what the pins renderer renders, the gateway routes and
+	// prices, and the record names (Task 1b.2).
+	if err := r.applyRouting(pp, found); err != nil {
+		return err
+	}
 	var fromPolicy map[string]bool
 	if found {
 		if ceiling, c, fromPolicy, err = r.policyCeiling(pp, ceiling, c); err != nil {
