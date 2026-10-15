@@ -313,3 +313,49 @@ func TestAFollowUpLaunchRefusesAModeItInheritsByRepoName(t *testing.T) {
 			"run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "Have another look")
 	})
 }
+
+// TestAFollowUpLaunchRefusesAModeItInheritsByText is the other half of
+// TestAFollowUpLaunchRefusesAModeItInheritsByRepoName: the previous run's
+// recipe can also arrive as TEXT — an embedded project or catalog recipe in
+// the previous task.json (taskRecipe, recipes_resolve.go) — and that text is
+// parsed again at the launch (resolveFollowUp), so both follow-up refusals
+// judge it before any cloud work starts. Without the artifact refusal there,
+// the launch names no mode of its own (a follow-up's spec carries none), the
+// runner refuses the pair at bootstrap instead, and a job has already started
+// and cloned by then.
+//
+// Mutation (drop the `refuseFollowUpArtifactMode(inherited, rcp.Name)` call
+// from resolveFollowUp's `rcp.YAML != ""` branch): this test starts a job and
+// fails wantRefused on the execution count as well as on the missing refusal.
+func TestAFollowUpLaunchRefusesAModeItInheritsByText(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", release080)
+	root := firstRunSpec(rootID)
+	root.Recipe = &task.Recipe{Name: "sizzle", Source: string(recipe.SourceProject),
+		SHA256: recipe.Sum([]byte(projectSizzle)), YAML: projectSizzle}
+	seedSpec(t, f, root, false)
+	rec := prRecord(rootID, "", 7, 1)
+	rec.StartedAt = time.Now().Add(-72 * time.Hour)
+	writeRecord(t, f, rootID, rec)
+	wantRefused(t, f, "it takes no --pr", "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "Render the bundle")
+}
+
+// TestAFollowUpLaunchRefusesAModeItCarriedFromAChosenProjectRecipe: a
+// follow-up with no inherited recipe keeps the one the RUNNER chose for the
+// previous run (carryChosenRecipe) — a record, not a task recipe, naming a
+// recipe by name and source. When that is a project or catalog recipe the
+// launcher can resolve it here (unlike a repository recipe, whose text lives
+// at the ref), so the same two follow-up refusals judge it at the launch
+// rather than leaving the whole cost of the refusal to the runner.
+//
+// Mutation (drop the `refuseFollowUpArtifactMode(rr.Recipe, rr.Name)` call
+// from carryChosenRecipe): this test starts a job and fails wantRefused on
+// the execution count as well as on the missing refusal.
+func TestAFollowUpLaunchRefusesAModeItCarriedFromAChosenProjectRecipe(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	projectRecipesFixture(t, f, map[string]string{"sizzle": projectSizzle})
+	seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "sizzle", Source: string(recipe.SourceProject),
+		SHA256: recipe.Sum([]byte(projectSizzle))})
+	wantRefused(t, f, "it takes no --pr", "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "Render the bundle")
+}

@@ -61,9 +61,12 @@ func parseRecipeAt(data []byte, name, where string) (*recipe.Recipe, error) {
 // build): mode: review only ever reviews an existing pull request and
 // never pushes or opens one (design generic-tool.md §3.6, G12), so it
 // cannot continue one either. The runner refuses the same mismatch again,
-// at bootstrap, for a recipe this never sees (a bare agent.recipe name, or
-// a repository recipe whose text isn't read until the run itself); this is
-// the CLI's own chance to say so before any cloud work starts.
+// at bootstrap, for a recipe this never sees — a repository recipe whose
+// text isn't read until the run itself, or a follow-up that inherits no
+// recipe at all, which gets no agent.recipe: the runner applies that key to
+// first runs only (internal/runner/recipe.go) and falls back to the
+// default name, .fugaro/recipes/default.yaml at the run's base; this is the
+// CLI's own chance to say so before any cloud work starts.
 func refuseFollowUpReviewMode(rcp *recipe.Recipe, name string) error {
 	if rcp.Mode == recipe.ModeReview {
 		return userErr("recipe %s is mode: review, which only reviews an existing pull request and cannot continue one; launch it with --recipe %s --pr N instead (no other --pr)", name, name)
@@ -82,7 +85,9 @@ func refuseFollowUpReviewMode(rcp *recipe.Recipe, name string) error {
 // never sees: it keys on the RESOLVED recipe (internal/runner/runner.go),
 // which is the backstop for a follow-up that inherits a repository recipe by
 // name — a task.Recipe with no text — since that file is read at the run's
-// own base. refuseFollowUpRepoRecipe reads the ones this checkout has, so
+// own base, and for one that inherits no recipe at all, which resolves to
+// the repository's .fugaro/recipes/default.yaml (agent.recipe is a first-run
+// key only). refuseFollowUpRepoRecipe reads the ones this checkout has, so
 // most of those are refused here too.
 func refuseFollowUpArtifactMode(rcp *recipe.Recipe, name string) error {
 	if rcp.Mode == recipe.ModeArtifact {

@@ -26,6 +26,11 @@ import (
 const (
 	sizzlePlanRenderYAML = "version: 1\nname: sizzle\nmode: artifact\nsteps:\n  - plan: {}\n  - render: {}\noutputs: { globs: [out/*.mp4] }\n"
 	sizzleRenderOnlyYAML = "version: 1\nname: sizzle\nmode: artifact\nsteps:\n  - render: {}\noutputs: { globs: [out/*.mp4] }\n"
+	// sizzleDefaultYAML is the render-only shape under the DEFAULT recipe
+	// name: the file a run reads when its task names no recipe, which is
+	// what a follow-up that inherits none does (recipe.go's resolveRecipe
+	// falls back to recipe.DefaultName).
+	sizzleDefaultYAML = "version: 1\nname: default\nmode: artifact\nsteps:\n  - render: {}\noutputs: { globs: [out/*.mp4] }\n"
 )
 
 // artifactSpec is a task spec for a mode: artifact recipe, with the mode in
@@ -615,28 +620,43 @@ func TestHaltAdviceForAHaltedArtifactRunSaysStartAgain(t *testing.T) {
 // for), so an empty spec.Mode used to take the artifact recipe's mode and run
 // the render, ending ARTIFACTS, NO PR for a task that continues PR #1.
 // Bootstrap therefore refuses the pair before any stage, keyed on the
-// RESOLVED recipe. Both arms are the two ways a follow-up inherits one: the
-// previous run's text embedded in task.json, and a repository recipe carried
-// by name, which the runner reads at this task's base (the launcher cannot:
-// it has the name alone).
+// RESOLVED recipe. The arms are the three ways a follow-up reaches one: the
+// previous run's text embedded in task.json, a repository recipe carried by
+// name, which the runner reads at this task's base (the launcher cannot: it
+// has the name alone), and — naming no recipe at all — the repository's own
+// .fugaro/recipes/default.yaml, which is what the runner falls back to for a
+// follow-up. That last one is why the refusal cannot be keyed on the task's
+// recipe either: there is none.
 //
 // Mutations: delete the `r.follow != nil && rcp.Mode == recipe.ModeArtifact`
-// refusal in runner.go and both arms run the render instead: the record ends
+// refusal in runner.go and every arm runs the render instead: the record ends
 // succeeded/artifacts, the workdir holds out/sizzle.mp4 (asserted below), and
 // the run that was launched to continue PR #1 opened none. Narrow the refusal
 // to `spec.Mode == recipe.ModeArtifact` (key it on the spec rather than on
-// the RESOLVED recipe) and both arms are green again, which is the whole bug:
-// a follow-up's spec carries no mode.
+// the RESOLVED recipe) and every arm is green again, which is the whole bug:
+// a follow-up's spec carries no mode. For the default-recipe arm the runner's
+// name must also come from the DEFAULT and not agent.recipe: recipe.go reads
+// agent.recipe for a first run only, so a follow-up with no recipe of its own
+// reads .fugaro/recipes/default.yaml (mutate the switch to apply agent.recipe
+// to follow-ups too and this arm stops being refused).
 func TestFollowUpWhoseRecipeIsModeArtifactIsRefused(t *testing.T) {
 	cases := []struct {
-		name   string
+		name string
+		// recipe is what the task inherits; nil is a follow-up with no
+		// recipe at all.
 		recipe *task.Recipe
-		extra  map[string]string
+		// agentRecipe, when set, goes into the BASE's fugaro.yaml
+		// (agent.recipe), which the runner applies to first runs only: the
+		// default-recipe arm proves that by naming a different recipe there.
+		agentRecipe string
+		extra       map[string]string
 	}{
 		{"the previous run's recipe text", &task.Recipe{Name: "sizzle", Source: string(recipe.SourceProject),
-			YAML: sizzleRenderOnlyYAML, SHA256: recipe.Sum([]byte(sizzleRenderOnlyYAML))}, nil},
-		{"a repository recipe kept by name", &task.Recipe{Name: "sizzle", Source: string(recipe.SourceRepo)},
+			YAML: sizzleRenderOnlyYAML, SHA256: recipe.Sum([]byte(sizzleRenderOnlyYAML))}, "", nil},
+		{"a repository recipe kept by name", &task.Recipe{Name: "sizzle", Source: string(recipe.SourceRepo)}, "",
 			map[string]string{".fugaro/recipes/sizzle.yaml": sizzleRenderOnlyYAML}},
+		{"neither, so the repository's default", nil, "solo",
+			map[string]string{".fugaro/recipes/default.yaml": sizzleDefaultYAML}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -644,11 +664,24 @@ func TestFollowUpWhoseRecipeIsModeArtifactIsRefused(t *testing.T) {
 			// than run from a script: with the refusal deleted it really runs,
 			// so the mutation shows as a delivered deliverable and not as a
 			// missing file standing in for one.
-			h := followUpHarness(t, renderCfg(t, "mkdir -p out && echo sizzle > out/sizzle.mp4", ""), nil)
-			if c.extra != nil {
+			const render = "mkdir -p out && echo sizzle > out/sizzle.mp4"
+			h := followUpHarness(t, renderCfg(t, render, ""), nil)
+			extra := c.extra
+			if c.agentRecipe != "" {
+				// Written to the remote, not to the first run's checkout, so
+				// the first run (which WOULD apply agent.recipe) is
+				// unaffected: a follow-up reads this one from origin/<ref>
+				// (readBaseConfig).
+				base := strings.Replace(renderCfg(t, render, ""), "  auth: api-key\n", "  auth: api-key\n  recipe: "+c.agentRecipe+"\n", 1)
+				extra = map[string]string{"fugaro.yaml": base}
+				for k, v := range c.extra {
+					extra[k] = v
+				}
+			}
+			if extra != nil {
 				// Committed to main, where a follow-up reads its repository
 				// recipe from (readRepoRecipe, origin/<ref>).
-				commitToRemote(t, h.harness, func(dir string) { testutil.WriteFiles(t, dir, c.extra) })
+				commitToRemote(t, h.harness, func(dir string) { testutil.WriteFiles(t, dir, extra) })
 			}
 			h.followUpRecipe(t, followID, runID, "Render the trailer.", c.recipe)
 			pushes := countPushes(t, h.harness)
@@ -678,19 +711,22 @@ func TestFollowUpWhoseRecipeIsModeArtifactIsRefused(t *testing.T) {
 // TestRenderIsCutAtTheFinalizeReserve is Review Focus 7's other bound: the
 // render runs under timeouts.render AND under the run's finalize reserve
 // (design §4.5), and when the reserve comes first it is the reserve that
-// ends the render. The budget below leaves about two seconds between the
+// ends the render. The budget below leaves about eight seconds between the
 // run's start and finalizeAt, with timeouts.render asking for 60s, so a
-// render that sleeps 20s can only be cut by the reserve — and the reason it
+// render that sleeps 30s can only be cut by the reserve — and the reason it
 // records says so, rather than quoting a timeouts.render that had 58s left.
+// The window is wide enough that a slow box's startup cannot spend it before
+// the render begins, and the sleep long enough that even then the render
+// cannot finish on its own.
 //
 // Mutations: drop the `f.Before(deadline)` arm of Budget.StepDeadline and the
-// render sleeps its full 20s and then EXITS 0, so the run ends
+// render sleeps its full 30s and then EXITS 0, so the run ends
 // succeeded/artifacts and this test fails on the first assertion. Keep the
 // cap and revert the message to "timed out after 60s" and it fails on the
 // reason, which no longer names the bound that applied.
 func TestRenderIsCutAtTheFinalizeReserve(t *testing.T) {
-	h := newHarnessFiles(t, renderCfg(t, "", "{ total: 30s, stage: 10s, verify: 5s, render: 60s, finalize_reserve: 28s }"),
-		artifactSpec(sizzleRenderOnlyYAML), renderScript("#!/bin/sh\nsleep 20\n"))
+	h := newHarnessFiles(t, renderCfg(t, "", "{ total: 30s, stage: 10s, verify: 5s, render: 60s, finalize_reserve: 22s }"),
+		artifactSpec(sizzleRenderOnlyYAML), renderScript("#!/bin/sh\nsleep 30\n"))
 	rec, err := h.run(t)
 	if err != nil {
 		t.Fatal(err)
@@ -710,7 +746,7 @@ func TestRenderIsCutAtTheFinalizeReserve(t *testing.T) {
 	if strings.Contains(rec.Reason, "time budget exhausted") {
 		t.Fatalf("the reserve did not hold: %q", rec.Reason)
 	}
-	if d := time.Duration(rec.Render.DurationS * float64(time.Second)); d > 5*time.Second {
+	if d := time.Duration(rec.Render.DurationS * float64(time.Second)); d > 20*time.Second {
 		t.Fatalf("the render ran %s: it was not cut at the reserve", d)
 	}
 }
