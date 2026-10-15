@@ -548,7 +548,7 @@ itself.
 | **C1** | Substrate | **Cloud Batch**, one job with one task per run, Container-Optimized OS boot disk, `fugaro-base` as a container runnable | **Plain Compute Engine instances** (full control of the startup script and the socket, no Batch container-runnable quirks; but Fugaro implements instance lifecycle, timeouts, log shipping and a reaper). **MIG**: rejected — homogeneous fleets, not per-run ephemeral VMs; you either pay for idle capacity or re-implement Batch. |
 | **C2** | Where Docker comes from | **The VM's host daemon, via the bind-mounted socket** — noting that **image streaming disregards `options`** (§1.2), so with streaming (C4) the socket must be made usable by the image-baked group or by running the container as root, not by `--group-add` | **Rootless/Podman inside the container** or **privileged DinD**: same host-level power, more moving parts, doubles storage, needs an unverified `--privileged`/user-namespace path in a Batch runnable. |
 | **C3** | Isolation unit | **One VM per run; a VM is never reused** | Reuse a pool of warm VMs: rejected — two runs on one VM can read each other's secrets and Docker state, and Docker makes each root on the host. |
-| **C4** | Cold start | **Image streaming first** (Artifact Registry in-region, the `containerfilesystem` API, no custom image to maintain), **preloaded boot image as the fallback** | The preload as the primary choice was this design's first draft; it is demoted because Batch does not officially support custom images and a Batch image's supported lifetime can end **60 days** after its starting date, so it is an image to rebuild on Google's schedule as well as Fugaro's, and it costs the `options` field that one socket-permission path needs. Plain pull every run is the cheapest and slowest. **Check 57a steps 2 and 3 measure all three, and the recommendation follows the measurement.** |
+| **C4** | Cold start | **Image streaming first** (Artifact Registry in-region, the `containerfilesystem` API, no custom image to maintain), **preloaded boot image as the fallback** | The preload is not the primary choice because Batch does not officially support custom images and a Batch image's supported lifetime can end **60 days** after its starting date, so it is an image to rebuild on Google's schedule as well as Fugaro's, and it costs the `options` field that one socket-permission path needs. Plain pull every run is the cheapest and slowest. **Check 57a steps 2 and 3 measure all three, and the recommendation follows the measurement.** |
 | **C5** | Spot | **Off by default**, opt-in per profile | Spot by default: up to 91% cheaper, but a preemption kills the stage mid-flight, the notice is **0 s by default** (120 s only if the job asks, and the shutdown after it is best effort, up to 30 s), so checkpointing has no room at all. |
 | **C6** | Service account | **One per run class (profile, account), reused from the project-centric model**; never the default Compute Engine SA | Default Compute Engine SA: project-wide and over-broad. |
 | **C7** | Egress | **No external IP; Cloud NAT** | Ephemeral external IP + deny-all ingress: simpler, cheaper per run, but "no inbound" then rests on a firewall list. |
@@ -650,7 +650,7 @@ paragraph states: bake the gid and the membership into the image, so no
 `options` are needed. Check 57a step 6 records which of the three works, and Restore removes
 the VM the test left.
 
-**Running as root is not free, and the earlier draft waved at it.** The base
+**Running as root is not free.** The base
 image builds a `fugaro` user at **uid 1000** and runs as it
 (`images/base/Dockerfile`); on a VM whose container runs as root, every file
 the run creates in `/work/repo`, in the caches and in the mise store is owned
@@ -804,9 +804,8 @@ platform instead of open. That last part is the point: today the function's
 name invites "am I on Cloud Run?" while every caller reads it as "am I
 somewhere a launcher controls?", and the two are not the same question.
 
-**`FUGARO_BACKEND` is not that signal, and must not become it** — an earlier
-form of this recommendation had it as the trusted marker, and three things
-break. It is a Fugaro variable: `internal/infra/spec.go`:88 defines it and
+**`FUGARO_BACKEND` is not that signal, and must not become it.** Three things
+break if it is used as one. It is a Fugaro variable: `internal/infra/spec.go`:88 defines it and
 `platformEnv` writes it into the job definition, so a local `fugaro exec` run
 inherits whatever the owner's shell holds and would be told it is a
 launcher-controlled job — the exact confusion `refuseOldJobEnv`
@@ -830,8 +829,8 @@ Trade-off: it touches every caller (`cli/cancel.go`, `logs.go`, `diagnose.go`,
 change to the shared package, not a new sibling package — a bigger than
 average first task, and it must land **before** any Batch backend can run a
 container: Task 1 before the job-definition task (7) and the enable task (9),
-§8.1. Two corrections to the earlier draft
-of this section: `CheckRunExecution` lives in **`internal/backend/gcp`**
+§8.1. Two things the recommendation has to respect:
+`CheckRunExecution` lives in **`internal/backend/gcp`**
 (`run.go:92`), not in `internal/backend`, and it is called from
 `internal/cli/cloud.go`; and the runner holds the canonical name as a
 **string** (`runner.Deps.Execution`, set by the CLI from
@@ -871,8 +870,8 @@ project job, every run can read every secret the job mounts, and a run — an
 untrusted agent, unlike a launcher — could poison another repository's cache
 or locks, because the bucket condition narrows to one prefix.
 
-**A VM per run does not, by itself, undo that loss — and an earlier draft of
-this section wrongly said it did.** What a VM adds over a shared job is
+**A VM per run does not, by itself, undo that loss.** What a VM adds over a
+shared job is
 *kernel and Docker-state* isolation: separate VM, separate kernel, separate
 containers, separate Docker store, no neighbour to reach at the OS level. What
 it does **not** change is **IAM isolation**, and IAM is what D4 is about. With
@@ -1254,10 +1253,9 @@ precheck (`cli/launch_budget.go`) is likewise unchanged except that
 
 `cost.compute_usd` is an estimate of the compute the run consumed (v1 §10.1:
 billed duration × (vCPU × price per vCPU-second + GiB × price per GiB-second)).
-**The earlier draft described a single estimate computed from the workflow's
-requested resources; the code computes it in two places, a third site decides
-whether there are any prices to compute it with, and none of the three
-survives a VM unchanged:**
+**The estimate is computed in two places, a third site decides whether there
+are any prices to compute it with at all, and none of the three survives a VM
+unchanged:**
 
 1. **In the runner, live** (`internal/runner/cost.go:55-66`): with a gateway
    up, `r.d.Prices.ComputeUSD(r.wf.Resources.CPU, MemoryGiB(
@@ -1442,11 +1440,8 @@ installation and its sandbox repository, the same one Checks 40, 41, 43 and 44
 use. **NEVER the `belong` project.** **No agent runs any apply:** every
 `gcloud`/`fugaro` step is typed by the owner.
 
-**Two parts, and the first one gates the build.** An earlier draft of this
-section was one list of ten steps whose first two ran `fugaro logs`/`fugaro
-cancel` against the Batch backend and whose row nevertheless said it "gates the
-build" — a check that needs the thing it gates, written as the last task of the
-plan. It is split:
+**Two parts, and the first one gates the build.** A check whose own first steps
+need the thing it gates cannot gate it, so this one is split:
 
 - **57a — the pre-build probe.** Thirteen steps, **`gcloud` and a committed job
   JSON, no Fugaro change whatsoever**, runnable today against the sandbox
@@ -1548,8 +1543,7 @@ Step 6's three `options` variants (§2.2) are rendered the same way: each is
 this JSON with one field added, submitted under the same name with the same
 substitutions.
 
-**Two things about that JSON are deliberate, and an earlier draft got both
-wrong.** First, the runnable carries the **socket bind mount**
+**Two things about that JSON are deliberate.** First, the runnable carries the **socket bind mount**
 (`volumes: ["/var/run/docker.sock:/var/run/docker.sock"]`) — Batch documents
 `volumes` as a bind mount from the host, and §1.1 needs it — because the base
 image ships the Docker **CLI only, with no daemon** (`docs/base-image.md`:11:
@@ -1688,7 +1682,7 @@ leaked VM of *this check* is told from a real run's.
    --location="${L:?}" --config /tmp/check57.json`), and record
    submission-to-first-line for each. A Batch job is single-use once it reaches
    `SUCCEEDED` or `FAILED` (§2.3), so five samples are five jobs — not five
-   submissions of one, which is what an earlier draft of this check said.
+   submissions of one.
    **FACT:** the five times, the median, and the delta over step 1.
 3. **Cold start, the two alternatives.** (a) **Image streaming**: the same job
    with `enableImageStreaming: true` on the runnable, the `containerfilesystem`
@@ -1917,8 +1911,9 @@ failed, the design's C2 (§1.1, §1.10) is what reopens.
 
 **Restore.** ⚠ CONFIRM, sandbox project only. This deletes **only what the
 check created**, and its last step is an assertion that nothing of the check's
-is left — the earlier draft's restore deleted "the service account", which was
-the installation's own, and that is the failure this rewrite exists to prevent.
+is left. The account it deletes is the one this check created, never the
+installation's job account and never the default Compute Engine SA — deleting
+either would break the installation the check must leave untouched.
 
 **Re-run the setup block first** — this is a new shell, and the deletes below
 would otherwise interpolate an empty `$P`, `$L` or `$SA`, which is exactly how
@@ -2007,35 +2002,33 @@ and the account — and the check left nothing behind. A non-zero line names the
 resource still to delete, and **a surviving VM is the check's own finding**
 (§3.4): record it, do not quietly delete it and move on.
 
-#### Review notes on the round-1 findings
+#### What this check settles, and what stays open
 
-No finding in the round-1 review was rejected. Three corrections of our own,
-for the record, where the review's phrasing was looser than the code:
+Four questions this section's steps exist to answer, so a reader of the FACT
+lines knows which claim each one moves:
 
-- **B6, "add a queue deadline".** Batch exposes no queue-deadline field; the
-  recommendation in §1.4 and C8 is a Fugaro-side reaper action (cancel a job
-  that has sat in `QUEUED` past the deadline), and the only Google-side bound is
-  the documented 2-day `QUEUED` ceiling. The design says that, rather than
-  implying a knob that does not exist.
-- **B12, `resource.labels.job_id`.** We could not verify it either way, so it
-  stays **UNVERIFIED** and the shipped filter is the documented `labels.job_uid`
-  form; 57a-10 is written to settle name-vs-UID rather than to assume one.
-- **The later round's "the state enum also defines `SUCCEEDING` and
-  `FAILING`" is wrong, and the nine-value list stands.** Batch v1's
+- **The state enum is nine values, and nothing else.** Batch v1's
   `JobStatus.State` has `STATE_UNSPECIFIED`, `QUEUED`, `SCHEDULED`, `RUNNING`,
   `SUCCEEDED`, `FAILED`, `DELETION_IN_PROGRESS`, `CANCELLATION_IN_PROGRESS`
   and `CANCELLED` — the same list in the REST reference
   (`cloud.google.com/batch/docs/reference/rest/v1/projects.locations.jobs`),
   the discovery document (`batch.googleapis.com/$discovery/rest?version=v1`,
   and v1alpha) and `google/cloud/batch/v1/job.proto`'s `State` enum
-  (`googleapis/googleapis`), all read 2026-10-15. Neither `SUCCEEDING` nor
-  `FAILING` appears in any of them. §2.3 now names the full enum inline and
-  says so, so no implementer codes a mapping for a value the API cannot
-  return; the not-terminal fallback stays for anything Google adds later.
-- **B7's "billed but not counted" for boot and pull.** The observation is right
-  and is now in §5.2, but what the code can do about it before 57b-5's
-  billing-export comparison is state the window honestly, not invent a second
-  estimate; C17 keeps disk and NAT named as excluded rather than guessing them.
+  (`googleapis/googleapis`), all read 2026-10-15. §2.3 names the full enum
+  inline, so no implementer codes a mapping for a value the API cannot return;
+  the not-terminal fallback stays for anything Google adds later.
+- **`resource.labels.job_id` is UNVERIFIED.** Nothing public says whether it
+  holds the job's name or its UID, so the shipped filter is the documented
+  `labels.job_uid` form and 57a-10 settles name-vs-UID rather than assuming
+  one.
+- **Batch has no queue-deadline field.** The only Google-side bound is the
+  documented 2-day `QUEUED` ceiling, so §1.4's and C8's queue deadline is a
+  Fugaro-side reaper action (cancel a job that has sat in `QUEUED` past the
+  deadline), not a knob.
+- **Boot and pull are billed and not counted.** §5.2 states the window
+  honestly rather than inventing a second estimate; until 57b-5 compares the
+  estimate with the billing export, C17 keeps disk and NAT named as excluded
+  instead of guessing them.
 
 ## 8. Task outline
 
@@ -2134,7 +2127,7 @@ reasoning lives; this table is the checklist.
 | C15 | Where the backend is chosen | Per project (`backend:`), not per workflow | Per workflow (two platforms in one project); or per profile inside the policy (correct after phase 3) |
 | C16 | The Docker key | `docker: true` (generic-tool §1's name) | `runtime: docker` (a second name for the same thing); or no key (every workflow gets a socket) |
 | C17 | What `compute_usd` covers | The VM's vCPU/memory; disk and NAT named as excluded | Fold disk/NAT in (a bigger change to the report shape) |
-| C18 | When to build | After the pre-build probe, **Check 57a** (which needs no Fugaro change); the fake-conformance task (Task 2) and the cost and log tasks may land before it answers, but the enable task is last (§8.1) | Build before the measurement (risks building the wrong substrate); or build the backend before logs, cost and the reaper exist (a run whose output lands in `_Default`, uncharted and unbilled — the ordering the first draft had) |
+| C18 | When to build | After the pre-build probe, **Check 57a** (which needs no Fugaro change); the fake-conformance task (Task 2) and the cost and log tasks may land before it answers, but the enable task is last (§8.1) | Build before the measurement (risks building the wrong substrate); or build the backend before logs, cost and the reaper exist (a run whose output lands in `_Default`, uncharted and unbilled) |
 | C19 | The preloaded image | **Only if C4's measurement says so**: a script in `fugaro init`'s Batch stage, one image per base version | Rely on image streaming alone (no image build, but depends on Artifact Registry + containerd) — **C4's own recommendation, and the preload is what 57a-3b builds if streaming loses** |
 | C20 | Phase order | Independent of the project-centric phases; profiles (§4.3) adopted when phase 3 lands | Wait for phase 3 (cleaner, but delays a capability the owner needs) |
 | C21 | The service account's granularity | Keep the (`profile`, `account`) account and accept project-centric D4's cross-repository loss **unchanged** on the VM backend too (§3.1) | A per-repository account, expressible on Batch because every job names its own `allocationPolicy.serviceAccount`: it buys back 0.7.0's bucket and secret boundary for the repositories that opt in, at the per-repository weight project-centric removed, and it makes "which backend" a decision with a security consequence |
@@ -2192,6 +2185,29 @@ above where used):
 - Batch secrets: `Environment.secretVariables` is "a map of environment
   variable names to Secret Manager secret names", so the **values** never
   enter the job definition (Batch REST reference).
+- Batch's boot disk: `Disk.image` takes one of the three short names
+  `batch-debian`, `batch-cos`, `batch-hpc-rocky`, or a full image
+  (`projects/{project}/global/images/family/{family}`,
+  `projects/{project}/global/images/{version}`) — there is no
+  `batch-cos-stable`, and the short names carry no version (Batch REST
+  reference, `Disk`, checked 2026-10-15).
+- Batch's no-external-IP and SSH postures:
+  `NetworkInterface.noExternalIpAddress` **defaults to false**, so a job with
+  no `network` block gets an external IP; `InstancePolicyOrTemplate`'s
+  `blockProjectSshKeys` is what closes project-wide SSH keys (Batch REST
+  reference, checked 2026-10-15).
+- `TaskGroup.runAsNonRoot` is a uid choice, not a hint: unset or false runs the
+  container as **root**, and true runs it as "a non-root user generated by OS
+  Login" — never the image's own `USER` (Batch REST reference, `TaskGroup` and
+  `Runnable.Container`, checked 2026-10-15).
+- Batch injects `BATCH_TASK_INDEX` and `BATCH_TASK_COUNT` into every task, in
+  addition to the job's own environment (`TaskGroup.taskEnvironments`, Batch
+  REST reference, checked 2026-10-15), which is the platform signal C12's
+  detection uses (§2.5).
+- Batch v1's job methods are `create`, `get`, `list`, `cancel` and `delete` —
+  there is **no `patch`/`update`**, so a job's labels and environment are fixed
+  at creation (`batch.googleapis.com/$discovery/rest?version=v1`, checked
+  2026-10-15).
 - Batch finishes a job's life 60 days after it completes by deleting the job
   and its metadata, and `InstancePolicyOrTemplate`'s `blockProjectSshKeys`
   blocks project-wide SSH keys on the VMs (Batch REST reference and
@@ -2223,8 +2239,12 @@ monitored-resource label kind; the log sink filter
 (`deploy/terraform/gcp/modules/installation/logging.tf`); the runner's
 backend-agnosticism (`internal/runner`); the launch path
 (`internal/cli/run.go`, `launch_budget.go`); the naming/labels
-(`internal/backend/gcp/names.go`); the base image's CLI-only Docker and its
-3812 MB size (`images/base/Dockerfile`, base-image.md §9, §13). The live
+(`internal/backend/gcp/names.go`); the base registry's id
+(`internal/infra/tfvars.go`:23, `BaseRegistry = "fugaro-base"`); the job
+environment's own names and who writes them (`internal/infra/spec.go`:88 and
+`platformEnv`); the compute-price gate and its `cloud-run`-only comparison
+(`internal/cli/exec.go`:369-371, §5.2's third site); the base image's CLI-only
+Docker and its 3812 MB size (`images/base/Dockerfile`, base-image.md §9, §13). The live
 checklist's own numbering is verified the same way: check 31 there is
 `fugaro upgrade` with the real `claude` CLI (`docs/gcp-live-checklist.md`), not
 the dropped gen-2 Docker probe the generic-tool plan numbered 31 — the reason
@@ -2251,6 +2271,10 @@ the dropped gen-2 Docker probe the generic-tool plan numbered 31 — the reason
   Check 57a step 11.
 - Whether an IAM Condition narrowing `batch.jobsEditor` to Fugaro-shaped job
   names is accepted — Check 57a step 9.
+- Whether a job's own environment can **override** the injected
+  `BATCH_TASK_INDEX`/`BATCH_TASK_COUNT` (a signal the job can set is only as
+  good as the launch path), and whether the metadata server answers from a VM
+  with no external IP — Check 57a step 12.
 - Whether `resource.labels.job_id` on a `batch.googleapis.com/Job` entry is the
   job's **name** or its **UID** (the resource list says only "The identifier of
   the Job"), which is why the shipped filter uses the documented
