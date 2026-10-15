@@ -90,12 +90,22 @@ type Config struct {
 	// (design m10-multi-model.md §3), by name. Only the owner sets them.
 	Providers map[string]config.ModelProvider `yaml:"providers,omitempty"`
 	// Routing is the routing switch: which route the Claude IDs it names take
-	// (design docs/design/project-centric.md §6.2, D1a/D1b). Only the owner
-	// sets it, here or in the project layer, and it is never settable from a
-	// repository's fugaro.yaml; an absent block means direct, today's
-	// behaviour. It reaches a run only through the published policy:
-	// `fugaro project policy publish` copies it into config/policy/shared,
-	// which is where an edit takes effect.
+	// (design docs/design/project-centric.md §6.2, D1a/D1b). Only the owner sets
+	// it, and this file is its only definition site in this release: a
+	// repository's fugaro.yaml has no routing key, and D1a's second site, the
+	// project layer, does not take it yet (the layer's decode is strict, so a
+	// layer that writes routing: fails closed) — the layer's part in routing
+	// today is the claim key claude_models.
+	// An absent block means direct, today's behaviour. It reaches a run only
+	// through the published policy: `fugaro project policy publish` copies it
+	// into config/policy/shared, which is where an edit takes effect.
+	//
+	// A block written with no Claude entry (`routing: {}`, `routing: {claude:}`)
+	// is not refused here — it names nothing, and this loader reads it as it
+	// reads an absent block — but it is *not* a statement that the switch is
+	// off, and `policy publish` refuses to read it as one: a publish would drop
+	// the active route the node carries, and only --remove-routing says that on
+	// purpose (the review of PR #414).
 	Routing *config.Routing `yaml:"routing,omitempty"`
 	// ClaudeAccounts are named Claude OAuth credentials a repository may
 	// choose among by name (design docs/design/named-oauth-tokens.md).

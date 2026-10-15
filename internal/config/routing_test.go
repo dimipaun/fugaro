@@ -1,6 +1,10 @@
 package config
 
 import (
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -153,17 +157,110 @@ func TestRoutingResolvesOnlyTheClaimedModel(t *testing.T) {
 	}
 }
 
-// TestRepoCannotWriteRouting: the switch lives in the operator's config and the
-// project layer, and nowhere else — a repository's fugaro.yaml cannot carry it,
-// exactly as it cannot carry providers (TestRepoCannotAddProvider).
+// TestRepoCannotWriteRouting: the switch is written in the operator's config
+// and nowhere else — a repository's fugaro.yaml cannot carry it, exactly as it
+// cannot carry providers (TestRepoCannotAddProvider).
+//
+// Every document here is minimalYAML — the fixture the rest of this package
+// parses as valid — with the routing key appended, so the *routing key* is the
+// only reason Parse refuses it. (The first version of this test used bare
+// documents that failed Parse for missing version/project/workflows anyway,
+// which is no test at all: the review of PR #414. Hand mutation to see it red:
+// give config.Config a `Routing *Routing` field with `yaml:"routing"`, and every
+// case below parses cleanly and this test fails.)
 func TestRepoCannotWriteRouting(t *testing.T) {
+	if _, ps := Parse([]byte(minimalYAML)); len(ps) != 0 {
+		t.Fatalf("the fixture is not valid, so a refusal below would prove nothing: %v", ps)
+	}
 	for _, doc := range []string{
-		"routing:\n  claude: {via: openrouter, models: [claude-sonnet-5-5]}\n",
-		"routing:\n  claude: {via: direct}\n",
-		"agent:\n  routing: {claude: {via: direct}}\n",
+		minimalYAML + "routing:\n  claude: {via: openrouter, models: [claude-sonnet-5-5]}\n",
+		minimalYAML + "routing:\n  claude: {via: direct}\n",
+		minimalYAML + "routing: {}\n",
+		minimalYAML + "agent:\n  routing: {claude: {via: direct}}\n",
 	} {
-		if _, err := Parse([]byte(doc)); err == nil {
+		_, ps := Parse([]byte(doc))
+		if len(ps) == 0 {
 			t.Errorf("fugaro.yaml accepted:\n%s", doc)
+			continue
 		}
+		// And refused *for the routing key*, not for something else: the
+		// strict decoder names the field it does not know.
+		if got := problemsText(ps); !strings.Contains(got, "routing") {
+			t.Errorf("refused without naming the key:\n%s\nproblems = %q", doc, got)
+		}
+	}
+	// The project layer is the other site D1a names, and it is not open in this
+	// release either: the layer's own decode is strict, so a layer that writes
+	// routing fails closed instead of half-applying.
+	if _, ps := ParseProjectLayer([]byte("version: 1\nproject: aurora\nrouting: {claude: {via: openrouter, models: [claude-sonnet-5-5]}}\n"), LayerAnchor{}); len(ps) == 0 {
+		t.Error("a project layer carrying routing: was accepted")
+	}
+}
+
+// TestRoutingRefusesAModelTwoRoutesClaim: two provider entries can claim one
+// Claude model under different spellings (anthropic/claude-sonnet-5.5 and
+// anthropic/claude-sonnet-5-5 are the same model), and a resolver that took the
+// first would route by provider name — whichever sorts first — so validation
+// passed or failed by an alphabetical accident. Both spellings are refused,
+// naming both entries, and the resolver fails closed rather than picking one.
+func TestRoutingRefusesAModelTwoRoutesClaim(t *testing.T) {
+	claims := map[string]ModelProvider{
+		"aaa-openrouter": {Kind: ModelProviderKind, BaseURL: "https://a.example/api", Auth: "bearer", Secret: "a-key", Models: []string{"anthropic/claude-sonnet-5.5"}, AllowDataTo: []string{"*"}},
+		"zzz-openrouter": {Kind: ModelProviderKind, BaseURL: "https://z.example/api", Auth: "bearer", Secret: "z-key", Models: []string{"anthropic/claude-sonnet-5-5"}, AllowDataTo: []string{"*"}},
+	}
+	switchOn := &Routing{Claude: &RoutingClaude{Via: RouteOpenRouter, Models: []string{canonicalClaude}}}
+	got := problemsText(CheckRouting(switchOn, claims, "routing"))
+	for _, want := range []string{"routing.claude.models", "two provider entries", "aaa-openrouter", "zzz-openrouter", "anthropic/claude-sonnet-5.5", "anthropic/claude-sonnet-5-5"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("problems = %q, want %q", got, want)
+		}
+	}
+	if route, sent, ok := RoutingClaudeFor(switchOn.Claude, canonicalClaude, claims); ok || route != "" || sent != "" {
+		t.Errorf("RoutingClaudeFor = (%q, %q, %v), want no resolution: an ambiguous claim must not resolve", route, sent, ok)
+	}
+	// One entry claiming it twice (the two spellings on one route) is one
+	// entry, and resolves: the ambiguity is between *routes*, and there is one.
+	both := map[string]ModelProvider{"openrouter": {Kind: ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer", Secret: "openrouter-api-key", Models: []string{"anthropic/claude-sonnet-5.5", "anthropic/claude-sonnet-5-5"}, AllowDataTo: []string{"*"}}}
+	if ps := CheckRouting(switchOn, both, "routing"); len(ps) != 0 {
+		t.Errorf("one entry claiming the model twice: problems = %s, want none", problemsText(ps))
+	}
+	if route, sent, ok := RoutingClaudeFor(switchOn.Claude, canonicalClaude, both); !ok || route != "openrouter" || sent != "anthropic/claude-sonnet-5.5" {
+		t.Errorf("one entry claiming the model twice: RoutingClaudeFor = (%q, %q, %v), want the entry's first spelling", route, sent, ok)
+	}
+}
+
+// TestRoutingHasOneResolver: the canonical ID and a route's own spelling of it
+// are compared in exactly one file. That comparison *is* the answer to where a
+// Claude call goes, so a second one is a second answer — the pins renderer, the
+// price lookup and validate are all supposed to ask RoutingClaudeFor, not to
+// re-derive the route (Task 1b.2/1b.3 say the same in the plan). The marker is
+// the pair the comparison needs: the vendor prefix stripped off a claim to get
+// the route's spelling (a CutPrefix with the "anthropic/" literal — not
+// pricing.IsAlias's HasPrefix predicate, which only judges the spelling).
+func TestRoutingHasOneResolver(t *testing.T) {
+	const resolver = "routing.go"
+	marker := regexp.MustCompile(`CutPrefix\([^)]*"anthropic/"`)
+	var found []string
+	err := filepath.WalkDir("../../internal", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if marker.Match(src) {
+			found = append(found, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking internal/: %v", err)
+	}
+	if len(found) != 1 || filepath.Base(found[0]) != resolver {
+		t.Errorf("the canonical-to-route comparison lives in %v, want exactly internal/config/%s: the route is resolved in one place (RoutingClaudeFor), and a second site is a second answer to where a Claude call goes", found, resolver)
 	}
 }

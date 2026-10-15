@@ -1069,6 +1069,26 @@ func TestRoutingInTheLocalConfig(t *testing.T) {
 	if c.Routing == nil || c.Routing.Claude.ViaValue() != config.RouteDirect || len(c.Routing.Claude.Models) != 0 {
 		t.Fatalf("via: direct: routing = %+v", c.Routing)
 	}
+	// A block with no Claude entry loads and means nothing here — it names no
+	// route, so this loader reads it as it reads an absent block — but it is not
+	// a statement that the switch is off: the surface that would act on it is
+	// `project policy publish`, which refuses to turn an active node route off
+	// unless the operator says so (the review of PR #414, and
+	// TestProjectPolicyPublishRefusesARoutingBlockThatSaysNothing is where that
+	// half lives: this package holds no policy node).
+	for _, tc := range []struct{ name, block string }{
+		{"an empty block", "routing: {}\n"},
+		{"a claude with no value", "routing:\n  claude:\n"},
+	} {
+		c, err := Parse([]byte(sample + tc.block))
+		if err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+			continue
+		}
+		if c.Routing == nil || c.Routing.Claude != nil {
+			t.Errorf("%s: routing = %+v, want a block that names no Claude switch", tc.name, c.Routing)
+		}
+	}
 	for _, tc := range []struct{ name, block, msg string }{
 		{"a glob", "routing:\n  claude:\n    via: openrouter\n    models: [claude-*]\n", "explicit list"},
 		{"an unknown via", "routing:\n  claude:\n    via: somewhere-else\n    models: [claude-sonnet-5-5]\n", "routing.claude.via"},

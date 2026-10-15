@@ -25,10 +25,20 @@ const (
 )
 
 // Routing is the routing switch of the operator's config and of the policy
-// (docs/design/project-centric.md §6.2). It is written by the operator — in
-// the local config, or in the project layer — and only *delivered* to a run
-// through the policy: a repository's fugaro.yaml has no routing key, exactly as
-// it has no providers key.
+// (docs/design/project-centric.md §6.2). Its definition site in this release is
+// the operator's local config alone — written there, and only *delivered* to a
+// run through the policy: a repository's fugaro.yaml has no routing key, exactly
+// as it has no providers key.
+//
+// D1a names a *second* definition site, the project layer, and it is not open
+// in this release: the layer's own decode is strict, so a layer carrying
+// `routing:` fails closed rather than half-applying, and the layer's part in
+// routing today is the claim path (`claude_models`: one explicit
+// `anthropic/<id>` per route entry, merged into the owner's routes on every
+// launch). A claim can therefore be the entry a switch resolves to — but only
+// for a route the operator's config defines, and the config-load validation
+// judges the switch against the config's own routes, so an operator who wants
+// the switch to resolve should keep the claim in the config too.
 type Routing struct {
 	Claude *RoutingClaude `yaml:"claude,omitempty" json:"claude,omitempty"`
 }
@@ -90,27 +100,41 @@ func CheckRouting(r *Routing, providers map[string]ModelProvider, path string) [
 	if len(ps) > 0 || r == nil || r.Claude == nil || r.Claude.ViaValue() == RouteDirect {
 		return ps
 	}
-	// D1b's safeguard, per ID the switch names: the route must exist (a
-	// provider entry claims it) and that provider's allow_data_to must be
+	// D1b's safeguard, per ID the switch names: the route must exist (exactly
+	// one provider entry claims it) and that provider's allow_data_to must be
 	// *written*.
 	for i, m := range r.Claude.Models {
 		at := fmt.Sprintf("%s.claude.models[%d]", path, i)
-		name, _, p, claimed := claudeRouteFor(providers, m)
+		claims := claudeClaimsFor(providers, m)
 		switch {
-		case !claimed:
-			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s is named by the switch but no provider entry claims it: a route entry lists the models it serves, and only the owner can add one, in the project config or the project layer — never in a repository's fugaro.yaml", m)})
-		case !p.AllowDataToWritten():
-			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s resolves to provider %s, whose allow_data_to is not written: name the repositories whose code may be sent there, or write [\"*\"] to mean every one of them on purpose (D1b; an absent allow_data_to already means every repository, which is why this one path requires it to be written)", m, name)})
+		case len(claims) == 0:
+			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s is named by the switch but no provider entry claims it: a route entry lists the models it serves, and only the owner can add one, in the project config (or through the layer's claude_models claim, which only adds to a route the config defines) — never in a repository's fugaro.yaml", m)})
+		case len(claims) > 1:
+			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s is claimed by two provider entries, %s: two spellings of one model are one model, and a switch that resolved to whichever name sorts first would route by provider name. Leave the claim on one entry and remove it from the other", m, claimNames(claims))})
+		case !claims[0].p.AllowDataToWritten():
+			ps = append(ps, Problem{Path: at, Message: fmt.Sprintf("%s resolves to provider %s, whose allow_data_to is not written: name the repositories whose code may be sent there, or write [\"*\"] to mean every one of them on purpose (D1b; an absent allow_data_to already means every repository, which is why this one path requires it to be written)", m, claims[0].name)})
 		}
 	}
 	return ps
 }
 
+// claimNames spells the entries claiming one model for a problem message:
+// "a (anthropic/claude-sonnet-5.5) and b (anthropic/claude-sonnet-5-5)", each
+// with the spelling it claims, because the two spellings being the same model
+// is the whole reason the entry is refused.
+func claimNames(claims []routeClaim) string {
+	parts := make([]string, 0, len(claims))
+	for _, c := range claims {
+		parts = append(parts, fmt.Sprintf("%s (%s)", c.name, c.claim))
+	}
+	return strings.Join(parts, " and ")
+}
+
 // CheckRoutingShape is the rule the routing object is held to wherever it is
 // written or read: the via, and an explicit list of Claude IDs, never a
 // pattern (D1a). It needs no providers, so a reader that does not hold them —
-// the project layer, or a policy node being decoded — applies exactly the rule
-// the operator's own config loader applies, and the three cannot drift.
+// a policy node being decoded, say — applies exactly the
+// rule the operator's own config loader applies, and the three cannot drift.
 //
 // An absent block, and via: direct, are valid and route nothing (D1b). A list
 // under via: direct is inert rather than refused: it names nothing that is
@@ -150,8 +174,15 @@ func CheckRoutingShape(r *Routing, path string) []Problem {
 
 // RoutingClaudeFor resolves one Claude model's route: the route its calls take
 // and the model ID that is sent on it. It is the one resolver of the switch,
-// used by the pins renderer, the price lookup and validate (Task 1b.1's
-// interface), so the three cannot disagree about where a call goes.
+// and phase 1b's later tasks are its consumers: the pins renderer and the price
+// lookup (Task 1b.2: stagePins renders the route's ID, and serving_model /
+// priced_as are recorded with the same resolved ID) and validate (Task 1b.3,
+// which prints the resolution or says it cannot resolve it offline). None of
+// them ships in this slice, which is why nothing in this release calls it in
+// production — and why TestRoutingHasOneResolver fails if any other file starts
+// comparing the canonical ID with a route's spelling: two derivations of the
+// route are two answers to where a call goes, and the channel's whole point is
+// that there is one.
 //
 //	route is RouteDirect, or the name of the provider entry the call is sent
 //	      to.
@@ -159,10 +190,13 @@ func CheckRoutingShape(r *Routing, path string) []Problem {
 //	      on a provider route the ID that provider claims — the route's own
 //	      spelling of the same model.
 //	ok    is false when the switch asks for a route and there is none to
-//	      take: the ID is named but no provider entry claims it, or the one
-//	      that does has no allow_data_to written. A caller must not print or
-//	      use a resolution it did not resolve, and must not quietly fall back
-//	      to the direct route — the fall-through D1b exists to prevent.
+//	      take: the ID is named but no provider entry claims it, the one that
+//	      does has no allow_data_to written, or more than one claims it (in
+//	      which case CheckRouting refuses the switch at load anyway, and the
+//	      resolver still fails closed rather than routing by provider name). A
+//	      caller must not print or use a resolution it did not resolve, and
+//	      must not quietly fall back to the direct route — the fall-through D1b
+//	      exists to prevent.
 //
 // A model the switch does not name goes direct whatever via says: the list is
 // the opt-in (D1a), so a Claude ID the operator did not write is untouched.
@@ -173,16 +207,24 @@ func RoutingClaudeFor(c *RoutingClaude, model string, providers map[string]Model
 	case !c.Names(model):
 		return RouteDirect, model, true
 	}
-	name, claim, p, claimed := claudeRouteFor(providers, model)
-	if !claimed || !p.AllowDataToWritten() {
+	claims := claudeClaimsFor(providers, model)
+	if len(claims) != 1 || !claims[0].p.AllowDataToWritten() {
 		return "", "", false
 	}
-	return name, claim, true
+	return claims[0].name, claims[0].claim, true
 }
 
-// claudeRouteFor is the provider entry that claims model's route ID: the entry
-// whose models name an explicit anthropic/<id> for this model, and the claim
-// itself (the ID to send).
+// routeClaim is one provider entry claiming a model's route ID: the entry's
+// name, the claim it wrote (the ID to send), and the entry itself.
+type routeClaim struct {
+	name  string
+	claim string
+	p     ModelProvider
+}
+
+// claudeClaimsFor returns every provider entry that claims model's route ID,
+// in provider-name order: the entries whose models name an explicit
+// anthropic/<id> for this model, and the claim itself (the ID to send).
 //
 // The two spellings are the same model on two routes — the canonical
 // claude-sonnet-5-5 of the price table and a pin, and OpenRouter's
@@ -193,16 +235,23 @@ func RoutingClaudeFor(c *RoutingClaude, model string, providers map[string]Model
 // claim, and it can only ever *find* a claim the operator wrote: nothing here
 // invents an ID, and a claim it does not recognise resolves to nothing, which
 // is the fail-closed direction.
-func claudeRouteFor(providers map[string]ModelProvider, model string) (name, claim string, p ModelProvider, ok bool) {
+//
+// The whole list, not the first: two entries claiming the same model under
+// different spellings are an ambiguity the caller has to refuse (CheckRouting
+// does, naming both), and picking one by sort order would answer a routing
+// question with an alphabetical accident (the review of PR #414).
+func claudeClaimsFor(providers map[string]ModelProvider, model string) []routeClaim {
+	var out []routeClaim
 	for _, n := range sortedKeys(providers) {
 		pv := providers[n]
 		for _, pat := range pv.Models {
 			if tail := claudeRouteID(pat); tail != "" && sameClaudeID(tail, model) {
-				return n, pat, pv, true
+				out = append(out, routeClaim{name: n, claim: pat, p: pv})
+				break
 			}
 		}
 	}
-	return "", "", ModelProvider{}, false
+	return out
 }
 
 // claudeRouteID reports whether id is an explicit Claude claim — the
