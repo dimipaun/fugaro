@@ -436,3 +436,73 @@ workflows:
 		t.Errorf("the pin was not refused: %q", got)
 	}
 }
+
+// TestClaimedClaudeRouteKeepsEveryOtherRefusal pins the carried review item
+// the claim must not erode: a route that names a Claude ID grants passage
+// through the *claim* rule and nothing else. The three refusals that guard a
+// provider model -- the repository's allow_data_to, the credential
+// (agent.auth api-key only) and the budget mode (enforce only) -- are asked
+// of a claimed Claude pin exactly as they are of any other provider model, so
+// a claim-shaped carve-out in any of them fails here. The coder stays a plain
+// provider model, so each row asserts both paths and a carve-out in either
+// direction is caught.
+func TestClaimedClaudeRouteKeepsEveryOtherRefusal(t *testing.T) {
+	const repo, blocked = "dimipaun/fugaro", "edgeappinc/edgeweb"
+	claiming := Agent{Auth: "api-key", Models: ModelRoles{Coder: "deepseek/deepseek-v4-flash", Reviewer: claimID}}
+	ps := providers(func(p *ModelProvider) { p.Models = []string{"deepseek/*", claimID} })
+	prices := claimPrices(t, ps)
+
+	for _, tc := range []struct {
+		name  string
+		got   string
+		paths []string
+		want  string
+	}{
+		{
+			// The claim decides who may route the ID; it never decides
+			// whose code may be sent there.
+			name:  "allow_data_to",
+			got:   problemsText(CheckProviderPolicy(claiming, nil, blocked, ps, prices)),
+			paths: []string{"agent.models.coder", "agent.models.reviewer"},
+			want:  "allow_data_to",
+		},
+		{
+			// An oauth token is a Claude subscription credential; it cannot
+			// carry a provider key however Claude the pin looks.
+			name:  "oauth",
+			got:   problemsText(CheckProviderAuth(Agent{Auth: "oauth", Models: claiming.Models}, ps)),
+			paths: []string{"agent.models.coder", "agent.models.reviewer"},
+			want:  "oauth",
+		},
+		{
+			// observe never refuses a call and a provider's calls are real
+			// dollars, so the mode must be enforce whatever is pinned.
+			name:  "observe",
+			got:   problemsText(CheckProviderGateway(claiming, "", ps, "observe")),
+			paths: []string{"agent.models.coder", "agent.models.reviewer"},
+			want:  "enforce",
+		},
+	} {
+		for _, p := range tc.paths {
+			if !strings.Contains(tc.got, p) {
+				t.Errorf("%s: %s was not refused: %q", tc.name, p, tc.got)
+			}
+		}
+		if !strings.Contains(tc.got, tc.want) {
+			t.Errorf("%s: the refusal does not say %q: %q", tc.name, tc.want, tc.got)
+		}
+	}
+
+	// All three conditions holding is the only shape that passes: the claim
+	// buys the pin a route and the repository is inside allow_data_to, the
+	// credential is api-key and the budget enforces.
+	if got := CheckProviderPolicy(claiming, nil, repo, ps, prices); len(got) != 0 {
+		t.Errorf("a claimed Claude route inside allow_data_to was refused: %s", problemsText(got))
+	}
+	if got := CheckProviderAuth(claiming, ps); len(got) != 0 {
+		t.Errorf("a claimed Claude route under api-key was refused: %s", problemsText(got))
+	}
+	if got := CheckProviderGateway(claiming, "", ps, "enforce"); len(got) != 0 {
+		t.Errorf("a claimed Claude route under enforce was refused: %s", problemsText(got))
+	}
+}
