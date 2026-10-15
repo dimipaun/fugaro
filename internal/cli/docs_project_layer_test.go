@@ -69,3 +69,56 @@ func TestDocsProjectLayerCommandsExist(t *testing.T) {
 		}
 	}
 }
+
+// TestDocsProjectLayerSaysWhatDoctorReports: doctor reports the policy's
+// state (phase 1 task 1.6 part B), and §10's "Not yet" must stop claiming it
+// does not — a doc that still lists shipped work as missing sends an
+// operator looking for a command they already have.
+//
+// Mutation (verified, run and restored): remove the "It also reports the
+// project's policy" paragraph from §7 and put back the "doctor does not yet
+// report the policy's state" clause in §10: this test fails, both ways.
+func TestDocsProjectLayerSaysWhatDoctorReports(t *testing.T) {
+	doc := readDoc(t, "docs/project-layer.md")
+	for _, want := range []string{
+		"It also reports the project's policy",
+		"a policy **newer than this Fugaro**",
+		"**empty `allow_repos`** in a published policy",
+		"**deployed rules older than the marker**",
+		"`model_prices` one line per model",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/project-layer.md lacks %q", want)
+		}
+	}
+	for _, notWant := range []string{
+		"`fugaro doctor` does not yet report the policy's state",
+		"`upgrade` does not yet say that a job's environment copy of the ceiling is inert",
+	} {
+		if strings.Contains(doc, notWant) {
+			t.Errorf("docs/project-layer.md still says %q, which shipped", notWant)
+		}
+	}
+}
+
+// TestDocsMultiModelSaysThePolicyGovernsPrices: the prices a run uses come
+// from the published policy when there is one (phase 1 task 1.6), which is
+// the half of docs/multi-model.md's price section that a reader changing a
+// price has to know before they edit the local config and re-run init --repo
+// for every repository.
+//
+// Mutation (verified, run and restored): remove the "In a project that
+// publishes a policy, the prices, the providers and the ceiling come from
+// the policy" paragraph: this test fails.
+func TestDocsMultiModelSaysThePolicyGovernsPrices(t *testing.T) {
+	doc := readDoc(t, "docs/multi-model.md")
+	for _, want := range []string{
+		"the prices, the providers and the ceiling come from the policy",
+		"fugaro project policy publish",
+		"rules older than the marker `config/limits/policyRules`",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/multi-model.md lacks %q", want)
+		}
+	}
+}
