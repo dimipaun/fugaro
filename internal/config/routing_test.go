@@ -248,6 +248,15 @@ func TestRoutingRefusesAModelTwoRoutesClaim(t *testing.T) {
 // the pair the comparison needs: the vendor prefix stripped off a claim to get
 // the route's spelling (a CutPrefix with the "anthropic/" literal — not
 // pricing.IsAlias's HasPrefix predicate, which only judges the spelling).
+//
+// This is a text search, and it is weaker than what Task 1b.2 must write: it says
+// that no *other* file derives a route today, not that the resolver answers. 1b.2
+// is where RoutingClaudeFor gets its real callers (stagePins, the price lookup,
+// the recorded serving_model/priced_as) and its real tests — the resolved route
+// asserted for an opted-in ID, an ID the switch does not name, a provider with no
+// allow_data_to written, and the fail-closed cases — and where this test's job
+// becomes the second half of that: that those callers all ask the one resolver
+// instead of comparing IDs themselves. Until then it is a tripwire, not a proof.
 func TestRoutingHasOneResolver(t *testing.T) {
 	const resolver = "routing.go"
 	marker := regexp.MustCompile(`CutPrefix\([^)]*"anthropic/"`)
