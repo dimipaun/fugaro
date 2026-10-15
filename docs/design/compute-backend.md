@@ -3116,13 +3116,16 @@ recipe — the one route it leaves, the gid baked into the image, is untested
 - **A newly created service account is not visible to IAM binding calls for a
   while.** Poll the account, then retry the bindings on "does not exist" —
   provisioning that binds once and gives up is a provisioning that fails on a
-  fresh project (§1.9, Task 6). **Built** (Task 6): the IAM bindings are
-  Terraform's own `google_project_iam_member` resources, so their retry is
-  Terraform's; what Task 6 retries itself is the call that follows the apply —
-  starting the preload rebuild, whose scheduler agent's binding on the preload
-  account is seconds old (`infra.RunSchedulerJob`: a 403 is retried for about
-  a minute, a 404 is not retried at all, and a refusal that outlasts the
-  retries is reported with the one `gcloud scheduler jobs run` line that
+  fresh project (§1.9, Task 6). **Built** (Task 6): the module's bindings are
+  `google_project_iam_member` resources that name the accounts it creates, so
+  Terraform orders the account before the binding — the shape the
+  installation module already uses for its own scheduler account, and the
+  one a live run (57b) would have to confirm rather than a fake. What Task 6
+  retries itself is the call that follows the apply: starting the preload
+  rebuild, whose scheduler agent's binding on the preload account is seconds
+  old (`infra.RunSchedulerJob`: a 403 is retried for about a minute, a 404 —
+  the job is not there — is not retried at all, and a refusal that outlasts
+  the retries is reported with the one `gcloud scheduler jobs run` line that
   starts the job by hand).
 - **Disabling Compute and re-enabling it fails with "currently being
   deactivated"** until the deactivation completes. Retry for minutes; it is not
