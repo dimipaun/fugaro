@@ -337,7 +337,7 @@ func TestBudgetProblemsSkipPinsWhenPricesAreUnreadable(t *testing.T) {
 		ModelPrices: map[string]localcfg.ModelPrice{"sonnet": {InputPerM: one(1), OutputPerM: one(5)}},
 	}
 	cfg := &config.Config{Project: "aurora", Agent: config.Agent{Auth: "api-key", Model: "claude-acme-1", Models: config.ModelRoles{Background: "claude-haiku-4-5"}}}
-	ps, _ := budgetProblems(cfg, lc)
+	ps, _ := budgetProblems(cfg, lc, lc.Providers)
 	if len(ps) != 1 || ps[0].Path != "model_prices" {
 		t.Fatalf("problems = %v, want only the model_prices one", ps)
 	}
@@ -347,11 +347,11 @@ func TestBudgetProblemsSkipPinsWhenPricesAreUnreadable(t *testing.T) {
 func TestBudgetProblemsSkipPinsForOAuth(t *testing.T) {
 	lc := &localcfg.Config{Name: "aurora", Budget: &localcfg.Budget{Mode: localcfg.BudgetObserve}}
 	cfg := &config.Config{Project: "aurora", Agent: config.Agent{Auth: "oauth"}}
-	if ps, _ := budgetProblems(cfg, lc); len(ps) != 0 {
+	if ps, _ := budgetProblems(cfg, lc, lc.Providers); len(ps) != 0 {
 		t.Fatalf("problems = %v", ps)
 	}
 	cfg.Agent.Auth = "api-key"
-	if ps, _ := budgetProblems(cfg, lc); len(ps) == 0 {
+	if ps, _ := budgetProblems(cfg, lc, lc.Providers); len(ps) == 0 {
 		t.Fatal("api-key with no models passed")
 	}
 }
@@ -629,7 +629,7 @@ func TestValidateWarnsPerDayIsClientEnforced(t *testing.T) {
 	}
 	// With no project config the warning stays.
 	cfg := &config.Config{Project: "aurora", Agent: config.Agent{Auth: "api-key"}, Budget: &config.Budget{PerDayUSD: 10}}
-	if _, ws := budgetProblems(cfg, nil); len(ws) != 1 || ws[0].Path != "budget.per_day_usd" {
+	if _, ws := budgetProblems(cfg, nil, nil); len(ws) != 1 || ws[0].Path != "budget.per_day_usd" {
 		t.Fatalf("warnings = %v", ws)
 	}
 	path = fileWithBudget(t, "budget: { mode: observe }\n", "budget: { per_run_usd: 1 }\n", pinnedAgent)
@@ -1097,5 +1097,72 @@ func TestValidateSeesTheCheckoutLayer(t *testing.T) {
 	out, _, err = execute(t, "validate")
 	if ExitCode(err) != ExitUserError || !strings.Contains(out, "claude_models.nosuch") || !strings.Contains(out, "does not define") {
 		t.Fatalf("an unknown provider name: exit %d, out %q", ExitCode(err), out)
+	}
+}
+
+// The claim reaches the *routing* rules and never the price table (P4): the
+// run's table is built from the job's FUGARO_MODEL_PROVIDERS, which never
+// carries a claim, so a claimed ID has only the price the operator wrote under
+// model_prices — the built-in catalog cannot price one, because it materializes
+// a row only for a model some *route* matches (catalogRoutes) and the claim is
+// not in any route the environment carries. validate must judge with that same
+// pair, or it would accept a pin the run then refuses as unpriced: with the
+// merged providers in its table (what this test was written against) the
+// catalog row below would price the pin and validate would say the file is
+// valid. Mutation that makes this fail: build validate's table from the merged
+// map (`priceTableFor(claimed, ...)` in validate.go) — with the catalog row the
+// pin is priced and the file comes out valid.
+func TestValidateDoesNotPriceAClaimedIDFromTheCatalog(t *testing.T) {
+	const id = "anthropic/claude-sonnet-5.5"
+	cat := shippedCatalog(t)
+	// An `anthropic/<id>` row the way P11's catalog rows land: the shipped
+	// row of another model, under this ID.
+	row := cat.Models["deepseek/deepseek-v4.1-flash"]
+	cat.Models[id] = row
+	old := loadCatalog
+	loadCatalog = func() (*catalog.File, error) { return cat, nil }
+	t.Cleanup(func() { loadCatalog = old })
+
+	f := newCloudFixture(t)
+	isolateCache(t)
+	// No model_prices for the claimed ID: that is the whole point.
+	f.appendConfig(t, "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n    allow_data_to: [\"acme/other\"]\n")
+	repo := "version: 1\nproject: aurora\ngcp_project: proj-1234\nbudget: { mode: enforce, per_run_usd: 2 }\n" +
+		"agent:\n  auth: api-key\n  model: claude-sonnet-5-5\n  models: { reviewer: " + id + ", background: claude-haiku-4-5 }\n" +
+		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	layerCheckout(t, f, repo)
+	publishedLayer(t, f, testProjectLayer+"claude_models:\n  openrouter: [\""+id+"\"]\n")
+	out, errOut, err := execute(t, "validate")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("a claimed ID the catalog alone could price: exit %d\n%s%s", ExitCode(err), out, errOut)
+	}
+	if !strings.Contains(out, "has no price") || !strings.Contains(out, "model_prices") {
+		t.Errorf("the refusal must send the operator to model_prices:\n%s", out)
+	}
+	// The run's own table, built from the environment the job gets, agrees:
+	// the claim is not in it, so the same catalog row does not price the ID.
+	p := cliRoute()["openrouter"]
+	p.AllowDataTo = []string{"acme/other"}
+	env, err := runner.ProvidersEnv(map[string]config.ModelProvider{"openrouter": p}, "acme/other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(env, "anthropic/") {
+		t.Errorf("the job's environment carries the claim: %s", env)
+	}
+	s, err := runner.SpendFromEnv(func(k string) (string, bool) {
+		switch k {
+		case runner.BudgetModeEnv:
+			return "observe", true
+		case runner.ModelProvidersEnv:
+			return env, true
+		}
+		return "", false
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, ok := s.Prices.Lookup(id); ok {
+		t.Errorf("the run's table prices the claimed ID (%+v), so validate must have accepted it", m)
 	}
 }

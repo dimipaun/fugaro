@@ -107,7 +107,11 @@ func ceilingText(l policy.Layer) string {
 // loosen is a warning, as is an enforce with no cap anywhere (the run would
 // halt no_cap). With no project config, or one for another project, only the
 // file's shape (checked by config.Check) applies.
-func budgetProblems(cfg *config.Config, lc *localcfg.Config) (problems, warnings []config.Problem) {
+// claimed is the route table the run will have (layerRoutes): lc.Providers
+// with the checkout layer's claims merged in. The *prices* stay lc.Providers'
+// — the claim-blind table the run's environment builds — so a claimed ID is
+// priced by the owner's model_prices and never by the catalog here either.
+func budgetProblems(cfg *config.Config, lc *localcfg.Config, claimed map[string]config.ModelProvider) (problems, warnings []config.Problem) {
 	// The day cap is the runner's to enforce; the database never sees it.
 	if cfg.Budget != nil && cfg.Budget.PerDayUSD > 0 {
 		warnings = append(warnings, config.Problem{Path: "budget.per_day_usd",
@@ -125,7 +129,7 @@ func budgetProblems(cfg *config.Config, lc *localcfg.Config) (problems, warnings
 	// The runner's default background model (a provider coder's own) is the
 	// run's, so the pin rules judge it, not an unset one.
 	agentPins := cfg.Agent
-	agentPins.Models.Background = config.EffectiveBackground(agentPins, lc.Providers)
+	agentPins.Models.Background = config.EffectiveBackground(agentPins, claimed)
 	e := policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg))
 	for _, ig := range e.Ignored {
 		warnings = append(warnings, clampWarning(ig))
@@ -190,7 +194,10 @@ func budgetProblems(cfg *config.Config, lc *localcfg.Config) (problems, warnings
 // the warnings of the pins' prices (unverified placeholders, defaulted cache
 // rates). The repository is the checkout's origin; without one the
 // allow_data_to rule can't be checked, and a warning says so.
-func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config) (problems, warnings, notes []config.Problem) {
+// claimed is the route table the run will have (layerRoutes); the price table
+// is lc.Providers' own, exactly as budgetProblems builds it and as the run's
+// environment does.
+func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config, claimed map[string]config.ModelProvider) (problems, warnings, notes []config.Problem) {
 	if lc == nil || lc.Name != cfg.Project {
 		return nil, nil, nil
 	}
@@ -217,16 +224,16 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 	}
 	repo, rerr := originRepo(ctx)
 	if rerr == nil {
-		problems = append(problems, config.CheckProviderPolicy(cfg.Agent, allowed, repo, lc.Providers, prices)...)
+		problems = append(problems, config.CheckProviderPolicy(cfg.Agent, allowed, repo, claimed, prices)...)
 	} else {
 		repo = "" // an unknown repository: no provider may serve it
-		for _, p := range config.CheckProviderPolicy(cfg.Agent, allowed, "", lc.Providers, prices) {
+		for _, p := range config.CheckProviderPolicy(cfg.Agent, allowed, "", claimed, prices) {
 			// Without the repository only the rules that don't name it hold.
 			if !strings.Contains(p.Message, "allow_data_to") {
 				problems = append(problems, p)
 			}
 		}
-		if len(lc.Providers) > 0 {
+		if len(claimed) > 0 {
 			warnings = append(warnings, config.Problem{Path: "providers", Message: "the repository is unknown here (no origin remote), so allow_data_to was not checked"})
 		}
 	}
@@ -236,14 +243,14 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 	// every repository's job and opens the data policy to all of them. A
 	// warning, never a problem: the owner's ruling makes it valid, and
 	// ["*"] is the way to keep it on purpose.
-	for _, name := range config.OpenProviders(lc.Providers) {
-		warnings = append(warnings, config.Problem{Path: "providers." + name, Message: lc.Providers[name].OpenToEveryRepoReason()})
+	for _, name := range config.OpenProviders(claimed) {
+		warnings = append(warnings, config.Problem{Path: "providers." + name, Message: claimed[name].OpenToEveryRepoReason()})
 	}
-	problems = append(problems, config.CheckProviderAuth(cfg.Agent, lc.Providers)...)
+	problems = append(problems, config.CheckProviderAuth(cfg.Agent, claimed)...)
 	agent := cfg.Agent
-	agent.Models.Background = config.EffectiveBackground(agent, lc.Providers)
+	agent.Models.Background = config.EffectiveBackground(agent, claimed)
 	mode := policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg)).Mode
-	problems = append(problems, config.CheckProviderGateway(agent, agent.Models.Background, lc.Providers, mode)...)
+	problems = append(problems, config.CheckProviderGateway(agent, agent.Models.Background, claimed, mode)...)
 	// The run needs the Anthropic API key when a call goes to Anthropic:
 	// config.AnthropicKeyNeeded, the rule init asks too, over the same
 	// effective mode -- so a mode that isn't enforcing says so here as well,
@@ -252,7 +259,7 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 	// stored is another, so this is a note, never a warning or a refusal:
 	// the gateway refuses such a call by name when no key is stored (design
 	// docs/design/project-centric.md §6.1).
-	if config.AnthropicKeyNeeded(cfg.Agent, lc.Providers, repo, mode) {
+	if config.AnthropicKeyNeeded(cfg.Agent, claimed, repo, mode) {
 		msg := anthropicKeyNeeded
 		if mode != policy.ModeEnforce {
 			// The sharper reason, and the sharper fix: with no route to a
@@ -352,13 +359,14 @@ func newValidateCmd() *cobra.Command {
 			var warnings, notes []config.Problem
 			if cfg != nil {
 				problems = append(config.Check(cfg, filepath.Dir(path)), computeProblems(cfg)...)
-				// The project config the runner would use: the owner's, with
-				// the checkout layer's claude_models merged into its routes
-				// (withLayerClaims), so a layer-claimed pin is judged by the
-				// table the run will have, not refused here. A merge the
-				// rules refuse is a problem of the layer's own, and the
-				// unmerged map is what the rules below see.
-				lc, lp := withLayerClaims(selectedProjectConfig(cmd.Context()), rf.Layer.Layer)
+				// The project config, and the routes the run will have: the
+				// owner's own with the checkout layer's claude_models merged
+				// in (layerRoutes), so a layer-claimed pin is judged by the
+				// routes the run will have instead of refused here. A merge
+				// the rules refuse is a problem of the layer's own, and the
+				// owner's own routes are what the rules below see then.
+				lc := selectedProjectConfig(cmd.Context())
+				claimed, lp := layerRoutes(lc, rf.Layer.Layer)
 				problems = append(problems, lp...)
 				rp, rw := recipeDirProblems(filepath.Dir(path), cfg)
 				problems = append(problems, rp...)
@@ -366,11 +374,11 @@ func newValidateCmd() *cobra.Command {
 				// The model checks judge the roles as the effective recipe
 				// leaves them.
 				ecfg := withRecipeRoles(filepath.Dir(path), cfg)
-				bp, bw := budgetProblems(ecfg, lc)
+				bp, bw := budgetProblems(ecfg, lc, claimed)
 				problems, warnings = append(problems, bp...), append(bw, rw...)
 				warnings = append(warnings, config.CheckWarnings(cfg, filepath.Dir(path))...)
 				warnings = append(warnings, cloneWorkflowWarnings(cfg)...)
-				pp, pw, pn := providerProblems(cmd.Context(), ecfg, lc)
+				pp, pw, pn := providerProblems(cmd.Context(), ecfg, lc, claimed)
 				problems, warnings, notes = append(problems, pp...), append(warnings, pw...), append(notes, pn...)
 				annotateProjectRecipe(filepath.Dir(path), cfg, problems)
 				if lc != nil && lc.Name == cfg.Project && setsPolicy(cfg) {
