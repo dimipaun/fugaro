@@ -20,12 +20,16 @@ func TestCloudCheckReadsOnlyLocalFiles(t *testing.T) {
 		state        cloudState
 		has, lacks   string
 	}{
-		{"nothing recorded", "", cloudStale, "base: none recorded, this release's is " + managedRef("base", "0.5.1"), ""},
+		{"nothing recorded", "", cloudStale, "base: none recorded; this release pins it by digest through " + initProject + "/fugaro-ghcr", ""},
+		// The copy an earlier release made is stale: the version alone is
+		// no longer what this release's base image is (B3).
 		{"behind", "base_images: {base: " + managedRef("base", "0.4.0") + "}\n",
-			cloudStale, "base: " + managedRef("base", "0.4.0") + ", this release's is " + managedRef("base", "0.5.1"), ""},
-		{"current", "base_images: {base: " + managedRef("base", "0.5.1") + "}\n",
+			cloudStale, "base: " + managedRef("base", "0.4.0") + "; this release pins it by digest through " + initProject + "/fugaro-ghcr", ""},
+		{"the same version in the old shape is stale too", "base_images: {base: " + managedRef("base", "0.5.1") + "}\n",
+			cloudStale, "base: " + managedRef("base", "0.5.1") + "; this release pins it by digest through " + initProject + "/fugaro-ghcr", ""},
+		{"current", "image_source: ghcr.io/" + refreshOwner + "\nbase_images: {base: " + pinnedRef("base", "0.5.1") + "}\n",
 			cloudCurrent, "reads no build record", ""},
-		{"a newer copy is kept", "base_images: {base: " + managedRef("base", "0.6.0") + "}\n",
+		{"a newer pin is kept", "image_source: ghcr.io/" + refreshOwner + "\nbase_images: {base: " + pinnedRef("base", "0.6.0") + "}\n",
 			cloudCurrent, "", ""},
 		{"a custom base blocks", "base_images: {base: " + refreshHost + "/fugaro-base/fugaro-base:dev-abc}\n",
 			cloudBlocked, "base_images.base is " + refreshHost + "/fugaro-base/fugaro-base:dev-abc", ""},
@@ -67,12 +71,12 @@ func TestCloudCheckOnTheBaseKind(t *testing.T) {
 	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n" +
 		"  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 	r := newAnchorModeRig(t, yaml, true)
-	r.appendConfig(t, "base_images: {base: "+managedRef("base", "0.5.1")+"}\n")
+	r.appendConfig(t, "image_source: ghcr.io/"+refreshOwner+"\nbase_images: {base: "+pinnedRef("base", "0.5.1")+"}\n")
 	noRecordReads(t)
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", filepath.Join(t.TempDir(), "none.json"))
 	v := cloudCheck(t.Context(), r.root, cloudOptions{}, "")
 	if v.state != cloudCurrent {
-		t.Fatalf("%+v, want current: base_images.base already matches this release", v)
+		t.Fatalf("%+v, want current: base_images.base is already this release's pin", v)
 	}
 }
 

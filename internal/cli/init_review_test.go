@@ -516,8 +516,13 @@ func TestFirebaseRunTakesOnePromptPlusTheLocation(t *testing.T) {
 	if got := strings.Join(r.applies(t), ","); got != "installation,firebase,installation" {
 		t.Errorf("applies %s", got)
 	}
-	if r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] == "" || r.dst.tags[initProject+"/fugaro-base/history:latest"] == "" {
-		t.Errorf("images not copied: %v", r.dst.tags)
+	// The base kind is pinned, not copied: only the history image lands in
+	// the registry, and the base's entry is the remote path at a digest.
+	if r.dst.tags[initProject+"/fugaro-base/history:latest"] == "" {
+		t.Errorf("the history image was not copied: %v", r.dst.tags)
+	}
+	if r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] != "" {
+		t.Errorf("a base kind was copied into the base registry: %v", r.dst.tags)
 	}
 	runP, stepP := prompts(out)
 	if runP != 1 || stepP != 0 || strings.Count(out, "Type "+infra.FirestoreLocation+" to create it there") != 1 {
@@ -526,7 +531,9 @@ func TestFirebaseRunTakesOnePromptPlusTheLocation(t *testing.T) {
 	if n := strings.Count(out, "covered by the run confirmation"); n < 5 {
 		t.Errorf("%d covered steps:\n%s", n, out)
 	}
-	if !strings.Contains(out, "images:         copy history latest, base 1.2.3") || !strings.Contains(out, "NOT pinned with --expect-digest: history, base") {
+	if !strings.Contains(out, "images:         base (pinned by digest through the remote repository), history latest") ||
+		!strings.Contains(out, "NOT pinned with --expect-digest: history") ||
+		strings.Contains(out, "NOT pinned with --expect-digest: history, base") {
 		t.Errorf("the review does not name the images and their pinning before the typed name:\n%s", out)
 	}
 	if i, j := strings.Index(out, "NOT pinned"), strings.Index(out, "Type aurora to apply all of the above"); i < 0 || j < i {

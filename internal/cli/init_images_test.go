@@ -429,15 +429,20 @@ func TestPointedBaseImageIsNotMirrored(t *testing.T) {
 	}
 }
 
-// A mirrored release image of an older CLI is the project's own to move on.
+// The copy an earlier CLI made is the project's own to move on: the same
+// version in the old shape is stale (B3), and it is re-pinned through the
+// remote repository with nothing copied.
 func TestMirroredBaseMovesWithTheCLI(t *testing.T) {
 	r := newImagesRig(t, "1.2.3")
-	r.appendConfig(t, "base_images: { base: \"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.0.0\" }\n")
+	r.appendConfig(t, "base_images: { base: \"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3\" }\n")
 	if _, _, err := executeStdin(t, "", "init", "--yes", "--base", "base"); err != nil {
 		t.Fatal(err)
 	}
-	if got := r.localConfig(t).BaseImages["base"]; !strings.HasSuffix(got, "fugaro-base:1.2.3") {
-		t.Errorf("base_images.base = %s", got)
+	if got, want := r.localConfig(t).BaseImages["base"], r.pinnedBase("base", "1.2.3"); got != want {
+		t.Errorf("base_images.base = %s, want %s", got, want)
+	}
+	if r.dst.puts != 0 {
+		t.Errorf("%d writes: a base kind is pinned, never copied", r.dst.puts)
 	}
 }
 
