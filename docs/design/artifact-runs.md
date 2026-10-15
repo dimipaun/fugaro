@@ -734,29 +734,58 @@ upload's reader. **And staging is a *copy* (§8.4, P5), so the peak holds two
 sets and not one**: the render's outputs where it wrote them in the checkout,
 and the runner's copies in `<StateDir>/artifacts/` — both on the same
 memory-backed filesystem, and both alive from the staging pass until the last
-upload finishes. **The check's arithmetic is therefore `2 × max_total_bytes`
-against `resources.memory` and not `max_total_bytes`**, because the total is the
-bound that actually holds the set: a copied-too-big set does not degrade into a
-clean refusal, it kills the container, which writes no `result.json` at all. The
-defaults stay boring — 2 GiB of set is 4 GiB of peak against a 32 GiB ceiling —
-and an owner who raises the caps is told to raise `resources.memory` past
-whatever the render itself needs, because the render's own working set is the
-part this arithmetic cannot see and Check 58's step 7 is where it is
-*observed* rather than assumed.
+upload finishes. **And an attached input set is a third tenant of the same
+filesystem**: `downloadInputs` writes each input into the checkout's `inputs/`
+(§4 step 4), where it stays — the render reads it — while the render's outputs
+and the staged copies are there too, so the input set is charged once and belongs
+in the same count. **The check's arithmetic is therefore
+`2 × outputs.max_total_bytes + inputs.max_total_bytes` against
+`resources.memory`**, because the totals are the bounds that actually hold each
+set: a set that cannot fit does not degrade into a clean refusal, it kills the
+container, which writes no `result.json` at all. The defaults stay boring —
+2 GiB of outputs is a 4 GiB doubled peak, 1 GiB of inputs is 1 GiB more, 5 GiB
+against a 32 GiB ceiling — and an owner who raises the caps is told to raise
+`resources.memory` past whatever the render itself needs, because the render's
+own working set is the part this arithmetic cannot see and Check 58's step 7 is
+where it is *observed* rather than assumed. **Two smaller terms are deliberately
+outside it, each for the same reason — bounded by a cap that is already checked,
+and observed rather than asserted:** the render's own temp files (no cap at all,
+hence the observation) and the momentary one-file doubling `GetFile` causes while
+downloading an input (its temp copy beside the destination before the rename,
+bounded by `inputs.max_bytes`). **Leaving the *input set* out would have been
+the wrong exclusion**, which is why it is in: unlike those two it is a whole
+declared cap's worth of bytes, and a 1 GiB attachment set against a small
+`resources.memory` fails in exactly the way this section says must not happen —
+a killed container with no `result.json`.
 
-**Where the refusal happens, named.** It is not a new gate and not a new
-mechanism: it is a `config.Problem` added to the two places workflow resources
-are already judged. `fugaro validate` gets it from `computeProblems`
-(`internal/cli/validate.go:354`, beside `gcp.CheckResources`, which is where
-`workflows.<name>.resources` limits are checked today) and the launch path gets
-it from the same problem list in `finishLaunch`'s pre-write block — the block
-that runs after the image gates and `checkMaxParallel`
-(`internal/cli/run.go:430`) and around `budgetPrecheck` (`:434-438`), **before
-`createTask` writes anything** (`:440`). So an over-memory artifact workflow is
-refused by `fugaro validate` and refused again at launch, with the set size, the
-doubled peak and the workflow's `resources.memory` in the message — the same
-shape and the same two sites the budget precheck already uses (the plan's Check
-12, Task 1).
+**Where the refusal happens, named — and it is the recipe/workflow pairing site,
+not the config-limits one.** `computeProblems` (`internal/cli/compute.go:14`)
+cannot be it: it takes `*config.Config` alone, and the caps live on the
+**recipe's** `outputs` block, which the config never sees. The functions that
+pair a recipe with a workflow are `runner.RecipeGateProblems` — the shared list
+`fugaro validate` reports through `gateCheckProblems`
+(`internal/cli/validate_recipes.go:112-126`) and the runner re-checks at
+bootstrap through `checkGateCommands` (`internal/runner/gate.go:93`) — so the
+memory rule goes **there**, and `RecipeGateProblems` takes the whole
+`config.Workflow` instead of its `Commands` alone, because the arithmetic needs
+`Resources.Memory` as well as the caps. Three arms, one rule:
+
+- **`fugaro validate`** reports it for every workflow the recipe could run on,
+  through the same `gateCheckProblems` loop that already reports the
+  render/probe refusals, with a `Path` of `workflows.<name>.resources.memory`;
+- **the launch** refuses it in `finishLaunch`'s pre-write block, beside the
+  recipe-image gate where the launcher already holds both the resolved recipe and
+  the workflow from `checkoutConfig` (after the image gates and
+  `checkMaxParallel` at `internal/cli/run.go:430`, around `budgetPrecheck` at
+  `:434-438`, **before `createTask` writes anything** at `:440`);
+- **the runner's bootstrap** refuses it through `checkGateCommands` when the
+  launcher could not resolve the recipe at all (the `runnerChooses` launch), so
+  that case fails closed before any stage runs rather than only in `validate`.
+
+The message names the set size, the doubled peak and the workflow's
+`resources.memory`. **Nothing here touches `internal/backend/**`** and no new
+gate is invented: `RecipeGateProblems` is the list two existing call sites
+already share (the plan's Review Focus 12, Task 1).
 
 ### 5.3 Which substrate: Cloud Run now, the VM backend when it hurts
 
@@ -1039,11 +1068,13 @@ produced (out), and files an operator handed to a model-driven job (in).
    copy, so the peak is two sets, not one** — the render's outputs in the
    checkout and the runner's staged copies, both on the memory-backed
    filesystem and both alive until the uploads finish — which is why the
-   refusal is on **`2 × max_total_bytes`** against `resources.memory`
-   (§5.2, the plan's P5 and Check 12) and why the caps' defaults are
-   conservative to the point of boring (8 files × 256 MiB each, 2 GiB in
-   total, a 4 GiB peak against a 32 GiB ceiling), why the docs tell an owner who raises them to raise
-   `resources.memory` past twice the set, and why Check 58's step 7 has a
+   refusal is on **`2 × outputs.max_total_bytes + inputs.max_total_bytes`**
+   against `resources.memory` (§5.2, the plan's P5 and Review Focus 12) and why
+   the caps' defaults are conservative to the point of boring (8 files × 256 MiB
+   each, 2 GiB of outputs, a 4 GiB doubled peak, 1 GiB of inputs at their
+   default, 5 GiB in all against a 32 GiB ceiling), why the docs tell an owner
+   who raises them to raise `resources.memory` past twice the output set plus the
+   input set, and why Check 58's step 7 has a
    third half that deliberately drives the container over its memory rather
    than over a cap — the design says the OOM direction is *observed, then
    written down*, not assumed away. **The two ways to avoid the doubling were
@@ -1192,8 +1223,12 @@ produced (out), and files an operator handed to a model-driven job (in).
 > **every run on the profile**. Because that blast radius has not been reviewed,
 > **an artifact-producing run stays on the plain per-repository Cloud Run
 > backend until a per-run prefix condition or a per-run account exists**
-> (`docs/design/artifact-runs.md` §8.5, D11) — and the launcher refuses to move
-> it there rather than warning.
+> (`docs/design/artifact-runs.md` §8.5, D11). **No code in this slice enforces
+> that, and this document does not claim it does**: it is a decision about when
+> artifact runs may be *enabled* on those backends, and the plan that does so
+> must bring the per-run boundary with it. Until then an artifact run is only
+> ever launched on the per-repository Cloud Run backend this installation uses
+> today.
 
    And in **"Known limits"**, one bullet:
 
@@ -1266,9 +1301,15 @@ produced (out), and files an operator handed to a model-driven job (in).
   render's wall clock. **The outcome switch has to be taught the new value**:
   `internal/runner/report.go`'s three cases end in `default: "**Outcome:** draft — {reason}"` (`:72-79`), so `OutcomeArtifacts` would otherwise render a
   successful artifact run as a draft pull request with an empty reason. The same
-  value is read at `internal/cli/cancel.go:468` (`NoPR = Outcome == OutcomeNone`)
-  and `internal/runner/halt.go:177` (the continuation advice), and both need the
-  arm as well.
+  value is read at `internal/cli/cancel.go:468` (`NoPR = Outcome == OutcomeNone`),
+  which needs the arm as well: without it `fugaro cancel <run>` describes a
+  **succeeded** artifact run as though it had opened a pull request. **The halt
+  path does not**, and the first draft of this design said it did:
+  `internal/runner/halt.go:177`'s continuation advice is `"start the run again"`
+  exactly when `rec.Outcome == OutcomeNone`, and a halted artifact run *is*
+  `OutcomeNone` — `OutcomeArtifacts` is the success value, so a halted run never
+  carries it and the existing arm is already the right advice (a case the plan's
+  Review Focus 11 records).
 - **`fugaro watch` reads the same value, and it is where an owner actually sees
   a run end.** Two display switches read a *row's* outcome straight out of
   `result.json`, and **neither has a `default:` arm**: `internal/watch/plain.go:99`
@@ -1285,9 +1326,10 @@ produced (out), and files an operator handed to a model-driven job (in).
   `r.Outcome == "ready"`) is deliberately unchanged** — an artifact run is not
   ready for review and must not be listed under that heading — and the enum's own
   documentation, `internal/watch/finished.go:17`'s `// ready, draft, none,
-  reviewed`, is updated with it. That is **five** call sites in all (the three
-  record-reading ones above and these two row-reading ones), all in the plan's
-  Task 2.
+  reviewed`, is updated with it. That is **four** call sites in all (the two
+  record-reading ones above — the report's and `cancel`'s — and these two
+  row-reading ones; `halt.go` reads the value but never sees the new one), all in
+  the plan's Task 2.
 - **A signed URL is not offered** (§8.7): the operator's own credentials are
   what the retrieval path uses.
 
@@ -1314,10 +1356,12 @@ cross-reference here and one there name the same task:
    `runstore` types (`RenderRecord`, `OutcomeArtifacts`, `Record.Render`) and
    the `outcome` enum's new value**, because a task that records something must
    own the type it records — **and every place that reads the value**, which is
-   five sites and not one (§9): the report's `default:` arm, `cancel`'s `NoPR`,
-   `halt`'s continuation advice, and the two `fugaro watch` display switches
-   that would otherwise draw an artifact run as a bare stage word. Proven with
-   an in-memory bucket and no cloud.
+   **four sites** and not one (§9): the report's `default:` arm, `cancel`'s
+   `NoPR`, and the two `fugaro watch` display switches that would otherwise draw
+   an artifact run as a bare stage word. **`halt.go` is not one of them**, and
+   the first draft of this design wrongly said it was: a halted artifact run
+   ends `OutcomeNone` (§9), for which the existing advice is already correct.
+   Proven with an in-memory bucket and no cloud.
 3. **Two streaming `blobx` methods**: `PutFile` and `GetFile` — the byte
    layer the rest needs, since every write today is a `[]byte` and every read
    is capped at 1 MiB (§3, V23). `PutFile` aborts (cancels) the write before
@@ -1469,7 +1513,7 @@ line read for it — the plan's Review Focus repeats the important ones):
 | V25 | An artifact run would checkpoint like an implement run unless it is stopped: the gate is `checkpointsOn()`, not the checkout arm | `internal/runner/checkpoint.go:65` (`r.follow == nil && r.baseSHA != "" && r.startSHA != "" && cfg.Git.PR.CheckpointsOn()`), `runner.go:1684` (`startCheckpoints` inside the stage runner) |
 | V26 | The agent's git credentials enter its environment at **two** sites inside `bootstrap` (the repo env and the stage env map), and the workflow's secrets at a third (`!r.review`) | `internal/runner/runner.go:635`, `:1135`, `:1091-1099` |
 | V27 | `verify.Settings` is written at bootstrap, before any stage, from the workflow's commands — and it is a **0644 file re-read per invocation** by `verify.LoadSettings`, so it is not a place a fixed command can live | `verify.WriteSettings` call, `internal/runner/runner.go:1073-1081`; `internal/verify/verify.go:26,60,85` |
-| V28 | The runner's workflow config is read **once** and kept in memory; nothing re-reads `fugaro.yaml` afterwards, and nothing else in the runner switches on `runstore`'s outcome value | `r.cfg, r.wf` at `internal/runner/runner.go:962`; the outcome sites `internal/runner/report.go:72-79`, `internal/runner/halt.go:177`, `internal/cli/cancel.go:468` |
+| V28 | The runner's workflow config is read **once** and kept in memory; nothing re-reads `fugaro.yaml` afterwards, and the sites that switch on `runstore`'s outcome value are four: the report's, `cancel`'s, and the two `watch` displays. `internal/runner/halt.go:177` **reads** it but never sees the new value — a halted artifact run ends `OutcomeNone` — so it is not a fifth | `r.cfg, r.wf` at `internal/runner/runner.go:962`; the outcome sites `internal/runner/report.go:72-79`, `internal/cli/cancel.go:468`, `internal/watch/plain.go:99`, `internal/watch/render.go:653`; `internal/runner/halt.go:177` reads `OutcomeNone` only |
 | V22 | The three PNGs the check generates are real PNGs: the generator the plan commits to (a `python3` one-liner over `zlib`/`struct`, in Check 58's section) was run in this session and produced three valid 320×240 8-bit RGB PNGs, 865 bytes each | run in this session; the command is in the plan, Check 58's step 2 |
 | V23 | `blobx` has no streaming write and no read above 1 MiB (`MaxReadBytes`), and no `Put`/`Create` variant that takes a path | `internal/blobx/blobx.go:51-54,109-138,148-198,314` |
 
@@ -1504,7 +1548,7 @@ tasks the answer touches rather than being worked around, exactly as before.
 |---|---|---|---|---|
 | **D1** | **Repo-bound or repository-less?** An artifact run needs a checkout for its recipe, its scripts and its `mise.toml`. | **Repo-bound: an "assets" repository** (the owner's existing one) holds the recipe and the render script. It keeps the format's safety rule (*a recipe names no command*, and nothing from the bucket is executed, V7), it versions and reviews the script, and it makes "the run proposes a PR for a script change" a *later* slice rather than a redesign. | **Repository-less runs under a profile.** They do not exist: they need project-centric phase 3's project jobs (V20), and a `checkout: none`; and their render script would have to come from the **bucket** — project recipes are bucket text, which the format deliberately refuses to execute (V7). Cost: the whole of phase 3, plus a new exception to the safety rule, for a case ("I have no repository at all") the owner does not have. | **Repo-bound first — and repository-less is the recorded end state.** Slice 1 uses the owner's **assets repository** for the recipe and the render script, on the per-repository Cloud Run job. The owner first answered repository-less, then resolved the conflict with D11 as repo-bound first; the end state and what it needs are §13.1. |
 | **D2** | **Retention.** | **Under the run prefix, expiring with the record at `runs_days` (90 by default)** (V3), with `fugaro artifacts get` and `gcloud storage cp` documented as the way to keep one. | **An `artifacts/<slug>/…` prefix with its own `artifacts_days`.** Right for a deliverable that must outlive its run; costs a new lifecycle rule, a new variable, **a change to every job's IAM condition** (`JobBucketPrefixes` is compiled into each grant, V4) — a plan and apply per repository — and an unanswered question about which account writes there. Recommended as its own design **once artifacts are in use**, never a separate bucket. | **Yes — with the run record, `runs_days`, 90 by default.** No new prefix, no new lifecycle rule. |
-| **D3** | **Where heavy renders run, and GPUs.** | **The Cloud Run job, as it is** (V8, V9): 8 vCPU / 32 GiB / a 24h-class task timeout, the existing `compute_usd` estimate (`backend.Prices.ComputeUSD`, priced by `quantities` — the machine type's on a VM, the workflow's here), per-workflow `resources` and `timeouts` already there. **GPUs are promised by nothing** (§5.4, U1, V19). **The memory ceiling doubles as the staging ceiling** (§5.2): the container's filesystem is memory, staging is a copy, so **`2 × outputs.max_total_bytes`** must fit inside `resources.memory` with room left for the render. | **The VM backend** (Docker-capable VMs, no 8-vCPU ceiling). Its price table is merged (V18, #389), so `compute_usd` survives the switch; what it costs is the backend's *enable* work (the reaper, the log routing, the installation-level Batch stage, and the deployment's account binding — **one job account per repository today; the VM design has no per-run account**, `docs/design/compute-backend.md:1007-1030`) and, per D11, a wider read/overwrite blast radius. Worth it the day a render hits the ceiling or needs a container the derived image cannot carry — that is the trigger. A **GPU** answer needs U1 first, in either substrate. | **Yes — the Cloud Run job now; no GPUs promised.** The memory ceiling stays the staging ceiling. |
+| **D3** | **Where heavy renders run, and GPUs.** | **The Cloud Run job, as it is** (V8, V9): 8 vCPU / 32 GiB / a 24h-class task timeout, the existing `compute_usd` estimate (`backend.Prices.ComputeUSD`, priced by `quantities` — the machine type's on a VM, the workflow's here), per-workflow `resources` and `timeouts` already there. **GPUs are promised by nothing** (§5.4, U1, V19). **The memory ceiling doubles as the staging ceiling** (§5.2): the container's filesystem is memory, staging is a copy, so **`2 × outputs.max_total_bytes + inputs.max_total_bytes`** must fit inside `resources.memory` with room left for the render. | **The VM backend** (Docker-capable VMs, no 8-vCPU ceiling). Its price table is merged (V18, #389), so `compute_usd` survives the switch; what it costs is the backend's *enable* work (the reaper, the log routing, the installation-level Batch stage, and the deployment's account binding — **one job account per repository today; the VM design has no per-run account**, `docs/design/compute-backend.md:1007-1030`) and, per D11, a wider read/overwrite blast radius. Worth it the day a render hits the ceiling or needs a container the derived image cannot carry — that is the trigger. A **GPU** answer needs U1 first, in either substrate. | **Yes — the Cloud Run job now; no GPUs promised.** The memory ceiling stays the staging ceiling. |
 | **D4** | **The budget model: is the timeout the cap?** | **Yes, in the first slice**: compute is reported (`compute_usd`) and capped only by `timeouts.total`/`timeouts.render`/Cloud Run's task timeout (V10), and the docs, the report and `budget preview` all say **"not capped"** out loud. | **Compute inside the cap**: the spec sketches a 60-second heartbeat reserving vCPU/GiB-second cost through the lease flow (`docs/design/m9-spec-source-v3.md:493`). Costs a new halt reason, a decision about which caps count compute (all three?), and — the price tables themselves being merged now (V18, #389) — a decision about **which quantities a row bills**, which `backend.Prices.Quantities` currently answers from the table rather than from the cap, plus an interaction with the sweep. A separate design, recommended next. | **Yes — the timeout is the compute cap, said out loud** in the docs, the report and `budget preview`. |
 | **D5** | **`mode: artifact`, or a general `outputs:` on any recipe?** | **`mode: artifact` with `outputs:` legal only there.** `mode: review` is the precedent for a run whose shape changes (V5), the mode is where "no PR, no git token, no implement" already lives, and the restriction keeps a new key off every existing recipe. | **`outputs:` on any recipe** (so an implement run could ship a PR *and* a file). It is the better end state and the natural second slice; it costs a decision this design does not need yet — what a run that is both a PR and an artifact means for readiness, the PR's draft state and the report — and it widens the surface of every recipe in the catalog. | **Yes — `mode: artifact`, with `outputs:` legal only there.** |
 | **D6** | **Attachments in the first slice, or a second one?** | **The same release, as its own commit (the plan's Task 6).** The owner's use case *needs* files in: artifacts out with nothing in is a demo, not the sizzle video. | **Outputs first.** A smaller review surface, and the same two schema changes (task spec + result) are needed either way — so it buys one commit's worth of review and costs the owner a whole release before their own use case works. | **Yes — attachments in the same release, as their own commit** (the plan's Task 6). |
