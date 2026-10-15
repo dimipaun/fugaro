@@ -50,6 +50,53 @@ func TestRunFakeAcceptsEveryNameForm(t *testing.T) {
 	}
 }
 
+// TestRunFakeRefusesAnotherBackendsNames: this build knows two name codecs, a
+// Cloud Run execution (eight fields) and a Batch job (six), and this fake
+// speaks Cloud Run only. A six-field name reaching it -- a Batch job, or a
+// Cloud Run execution path with its /executions/<e> missing -- must fail the
+// test, not be parsed as an execution with an empty name and answered with a
+// 404 that reads like "the execution is gone".
+func TestRunFakeRefusesAnotherBackendsNames(t *testing.T) {
+	f := NewRun(t)
+	var failed int
+	f.failf = func(string, ...any) { failed++ }
+	// A legitimate execution still cancels by its own eight-field name: the
+	// strictness above must not have cost the Cloud Run arm anything.
+	f.AddJob("fugaro-x-web", "1", "512Mi")
+	full := f.Start("fugaro-x-web")
+	if code := runCall(t, f, "POST", "/v2/"+full+":cancel"); code != http.StatusOK {
+		t.Errorf("cancel of a Cloud Run execution: status %d, want 200", code)
+	}
+	for _, c := range []struct{ method, path string }{
+		// A Batch job's name, and a Cloud Run path missing its execution.
+		{"POST", "/v2/projects/p/locations/r/jobs/fugaro-x-web-0123456789ab:cancel"},
+		{"GET", "/v2/projects/p/locations/r/jobs/-"},
+	} {
+		if code := runCall(t, f, c.method, c.path); code != http.StatusBadRequest {
+			t.Errorf("%s %s: status %d, want 400 (the fake fails the test)", c.method, c.path, code)
+		}
+	}
+	if failed != 2 {
+		t.Fatalf("the fake failed the test %d times, want 2", failed)
+	}
+}
+
+// runCall sends one request to a Run fake and returns the status.
+func runCall(t *testing.T, f *Run, method, path string) int {
+	t.Helper()
+	req, err := http.NewRequest(method, f.URL+path, strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	return resp.StatusCode
+}
+
 func TestLoggingFakeRefusesUnknownFilters(t *testing.T) {
 	l := NewLogging(t)
 	var failed string

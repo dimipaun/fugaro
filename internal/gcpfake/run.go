@@ -370,8 +370,15 @@ func (x *runExec) set(s backend.State) {
 
 // lookup finds an execution by full name, or by short name within job (any
 // job when job is empty); f.mu is held.
+//
+// A full name is parsed with CloudRunCodec, never with backend.ParseExecution:
+// this fake speaks Cloud Run only, and the build knows a second backend whose
+// names are six fields (a Batch job) against Cloud Run's eight. Parsing with
+// every codec made a six-field name -- a Batch job, or a Cloud Run request
+// missing its /executions/<e> -- read as an execution of the empty name,
+// which answered 404 where the fake must fail the test instead.
 func (f *Run) lookup(name, job string) *runExec {
-	if id, ok := backend.ParseExecution(name); ok {
+	if id, ok := backend.CloudRunCodec().Parse(name); ok {
 		return f.execs[execKey{id.Job, id.Name}]
 	}
 	if strings.Contains(name, "/") {
@@ -486,7 +493,7 @@ func (f *Run) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	case r.Method == http.MethodPost && strings.HasSuffix(p, ":run"):
 		f.run(w, r, strings.TrimSuffix(p, ":run"), body)
 	case r.Method == http.MethodPost && strings.HasSuffix(p, ":cancel"):
-		id, ok := backend.ParseExecution(strings.TrimSuffix(p, ":cancel"))
+		id, ok := backend.CloudRunCodec().Parse(strings.TrimSuffix(p, ":cancel"))
 		if !ok {
 			f.unhandled(w, r)
 			return
@@ -519,7 +526,7 @@ func (f *Run) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	case r.Method == http.MethodGet && strings.Contains(p, "/operations/"):
 		f.getOp(w, p)
 	case r.Method == http.MethodGet:
-		id, ok := backend.ParseExecution(p)
+		id, ok := backend.CloudRunCodec().Parse(p)
 		if !ok {
 			f.unhandled(w, r)
 			return

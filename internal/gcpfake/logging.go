@@ -118,8 +118,14 @@ type logExec struct {
 
 // logKey keys an execution named in full or by its short name. A short name
 // is <job>-<suffix>, so the job is everything before the last dash.
+//
+// A full name is parsed with CloudRunCodec, not with backend.ParseExecution:
+// these entries are Cloud Run entries, keyed by the Cloud Run resource's
+// labels, and a second backend's names (a Batch job is six fields against
+// Cloud Run's eight) must not key one. Batch entries are keyed by the job's
+// UID instead (AddUID).
 func logKey(execution string) logExec {
-	if id, ok := backend.ParseExecution(execution); ok {
+	if id, ok := backend.CloudRunCodec().Parse(execution); ok {
 		return logExec{id.Region, execKey{id.Job, id.Name}}
 	}
 	job := execution
