@@ -68,3 +68,24 @@ func TestBilledWindowIsBilledForCloudRun(t *testing.T) {
 		t.Errorf("BilledWindow of an unstarted execution = %v, %v; want 0, true", got, ok)
 	}
 }
+
+// Quantities: a price table that bills a machine type carries that type's
+// quantities and they win; one that does not (Cloud Run's jobs list price,
+// the local config's override, the runner's FUGARO_COMPUTE_PRICES) leaves the
+// execution's own CPU/MemoryGiB deciding, so no Cloud Run estimate moves
+// (design compute-backend.md §5.2).
+func TestQuantitiesAreTheMachineTypesWhenTheTableCarriesThem(t *testing.T) {
+	vm := Prices{VCPUSecondUSD: 1e-5, GiBSecondUSD: 2e-6, VCPU: 4, MemoryGiB: 16}
+	if cpu, mem := vm.Quantities(2, 8); cpu != 4 || mem != 16 {
+		t.Errorf("Quantities = %v vCPU / %v GiB, want the table's 4/16", cpu, mem)
+	}
+	cloud := Prices{VCPUSecondUSD: 1e-5, GiBSecondUSD: 2e-6}
+	if cpu, mem := cloud.Quantities(2, 8); cpu != 2 || mem != 8 {
+		t.Errorf("Quantities = %v vCPU / %v GiB, want the execution's own 2/8", cpu, mem)
+	}
+	// A half-filled table is not a machine type's: both quantities or neither.
+	half := Prices{VCPU: 4}
+	if cpu, mem := half.Quantities(2, 8); cpu != 2 || mem != 8 {
+		t.Errorf("Quantities of a half-filled table = %v vCPU / %v GiB, want the execution's own 2/8", cpu, mem)
+	}
+}

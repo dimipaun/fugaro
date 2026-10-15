@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -382,12 +383,14 @@ func reportDegraded(ctx context.Context, cmd *cobra.Command, o *reportOptions, l
 	if dim == report.ByModel {
 		m.Warnings = append(m.Warnings, "run records do not carry a per-model split: --by model shows nothing here")
 	}
+	// Only the runs the report shows: a source line for a day outside --since
+	// and --until would name a table no figure in this report came from.
+	rows = slices.DeleteFunc(rows, func(r runview.Row) bool {
+		day := budget.Day(r.Created.UTC())
+		return day < from || day > to
+	})
 	var recs []report.Rec
 	for _, r := range rows {
-		day := budget.Day(r.Created.UTC())
-		if day < from || day > to {
-			continue
-		}
 		recs = append(recs, report.Rec{DayRecord: recordOfRun(r)})
 	}
 	// The compute figures above are estimates, and these rows carry the

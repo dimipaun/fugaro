@@ -230,7 +230,7 @@ func TestCloudPricesFollowTheRegion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := env.prices()(nil), gcp.ListPrices(region); got != want {
+		if got, want := env.prices(nil)(nil), gcp.ListPrices(region); got != want {
 			t.Errorf("--region %q: prices = %+v, want %s's %+v", flag, got, region, want)
 		}
 		env.Close()
@@ -248,7 +248,8 @@ func TestCloudPricesUseTheVMsTableForAVMRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer env.Close()
-	prices := env.prices()
+	var warned []string
+	prices := env.prices(func(s string) { warned = append(warned, s) })
 	vm := &backend.Execution{Name: "projects/p/locations/us-central1/jobs/fugaro-j-1", Region: "us-central1", MachineType: "e2-standard-4", CPU: 4, MemoryGiB: 16}
 	got := prices(vm)
 	want, err := batch.PricesFor("us-central1", "e2-standard-4")
@@ -271,6 +272,21 @@ func TestCloudPricesUseTheVMsTableForAVMRun(t *testing.T) {
 	unknown.MachineType = "n2-standard-4"
 	if got := prices(&unknown); got != (backend.Prices{}) {
 		t.Errorf("a VM of an unknown machine type = %+v, want no prices (compute not estimated)", got)
+	}
+	// Neither refusal is silent, and neither is said twice: a listing of
+	// rows that all read "compute not estimated" has to say why (design
+	// compute-backend.md §5.2). The second refusal of the same reason is
+	// quiet, so a hundred unpriced runs are not a hundred lines.
+	if len(warned) != 2 {
+		t.Fatalf("warnings = %q, want one per refusal (two)", warned)
+	}
+	for i, want := range []string{"europe-west2", "n2-standard-4"} {
+		if !strings.Contains(warned[i], want) {
+			t.Errorf("warning %d = %q, want it to name %q", i, warned[i], want)
+		}
+	}
+	if got := prices(&other); got != (backend.Prices{}) || len(warned) != 2 {
+		t.Errorf("a repeated refusal warned again: %q", warned)
 	}
 }
 

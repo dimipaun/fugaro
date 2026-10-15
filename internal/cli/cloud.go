@@ -120,7 +120,30 @@ func recordReadURL(lc *localcfg.Config) string {
 // estimated" rather than being priced with another platform's figures or
 // with $0.00. A nil execution (a run with no execution at all) prices in the
 // installation's own region.
-func (e *cloudEnv) prices() runview.PriceBook {
+//
+// warn is how a refusal is said out loud, once per distinct reason: a listing
+// whose rows all read "compute not estimated" would otherwise leave the
+// operator with nothing to read, which is the quiet failure §5.2 warns about.
+// The rows are still listed — a price table's gap is not a reason to fail a
+// listing — and nil warn says nothing.
+func (e *cloudEnv) prices(warn func(string)) runview.PriceBook {
+	var (
+		mu   sync.Mutex
+		said = map[string]bool{}
+	)
+	refused := func(err error) {
+		if warn == nil {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		msg := err.Error()
+		if said[msg] {
+			return
+		}
+		said[msg] = true
+		warn("warning: compute is not estimated: " + oneLine(msg) + "\n")
+	}
 	return func(x *backend.Execution) backend.Prices {
 		region := e.lc.Region
 		if x != nil && x.Region != "" {
@@ -132,9 +155,7 @@ func (e *cloudEnv) prices() runview.PriceBook {
 		if x != nil && x.MachineType != "" {
 			p, err := batch.PricesFor(region, x.MachineType)
 			if err != nil {
-				// The row says "compute not estimated"; the reason is the
-				// operator's to read from `fugaro diagnose`, not from a
-				// listing that would otherwise fail as a whole.
+				refused(err)
 				return backend.Prices{}
 			}
 			return p

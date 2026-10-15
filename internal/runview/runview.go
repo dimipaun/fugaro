@@ -382,7 +382,12 @@ func cost(r *runstore.Record, e *backend.Execution, prices PriceBook, now time.T
 		case !known || p == (backend.Prices{}):
 			c = runstore.ModelOnlyCost(model, basis)
 		default:
-			c = runstore.NewCost(model, p.ComputeUSD(e.CPU, e.MemoryGiB, d), basis)
+			// A price table that bills a machine type carries that type's
+			// quantities, and they decide the figure: a VM is billed for its
+			// machine type whatever the workflow's resources asked for
+			// (Prices.Quantities, design compute-backend.md §5.2).
+			cpu, mem := p.Quantities(e.CPU, e.MemoryGiB)
+			c = runstore.NewCost(model, p.ComputeUSD(cpu, mem, d), basis)
 			// Only an estimate priced from a table that names itself
 			// records a source line; Cloud Run's list price is what it
 			// always was, and its rows are unchanged.

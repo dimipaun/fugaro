@@ -122,11 +122,15 @@ func TestVMCostIsTheMachineTypesQuantitiesOverTheFlooredWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mt, err := MachineTypeOf("e2-standard-4")
-	if err != nil {
-		t.Fatal(err)
+	// The prices carry the machine type's quantities, which is what the
+	// estimate bills: Compute Engine bills the VM, not what the workflow's
+	// resources asked for (design §5.2).
+	if p.VCPU != 4 || p.MemoryGiB != 16 {
+		t.Fatalf("prices carry %v vCPU / %v GiB, want the e2-standard-4's 4/16", p.VCPU, p.MemoryGiB)
 	}
-	short := backend.Execution{MachineType: mt.Name, CPU: mt.VCPU, MemoryGiB: mt.MemoryGiB,
+	// The execution's own limits are a 2 vCPU / 8 GiB workflow's: the
+	// machine type's quantities decide the figure anyway.
+	short := backend.Execution{MachineType: "e2-standard-4", CPU: 2, MemoryGiB: 8,
 		Created: time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)}
 	now := short.Created.Add(40 * time.Second)
 	d, ok := short.BilledWindow(now)
@@ -136,10 +140,11 @@ func TestVMCostIsTheMachineTypesQuantitiesOverTheFlooredWindow(t *testing.T) {
 	if d != backend.VMMinimumBilled {
 		t.Fatalf("a 40 s VM is billed for %v, want the %v minimum", d, backend.VMMinimumBilled)
 	}
-	if got, want := p.ComputeUSD(mt.VCPU, mt.MemoryGiB, d), p.ComputeUSD(mt.VCPU, mt.MemoryGiB, time.Minute); got != want {
-		t.Errorf("compute = %v, want %v", got, want)
+	cpu, mem := p.Quantities(short.CPU, short.MemoryGiB)
+	if cpu != 4 || mem != 16 {
+		t.Fatalf("the estimate bills %v vCPU / %v GiB, want the machine type's 4/16", cpu, mem)
 	}
-	if got, want := p.ComputeUSD(mt.VCPU, mt.MemoryGiB, d), 60*(4*p.VCPUSecondUSD+16*p.GiBSecondUSD); got != want {
+	if got, want := p.ComputeUSD(cpu, mem, d), 60*(4*p.VCPUSecondUSD+16*p.GiBSecondUSD); got != want {
 		t.Errorf("compute = %v, want %v", got, want)
 	}
 }

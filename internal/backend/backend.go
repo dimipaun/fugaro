@@ -219,7 +219,29 @@ var ErrRejected = errors.New("rejected")
 type Prices struct {
 	VCPUSecondUSD float64
 	GiBSecondUSD  float64
-	Source        string // where the figures come from, for reports
+	// VCPU and MemoryGiB are the quantities these prices bill, for a
+	// platform whose unit is a machine type rather than the job's own
+	// limits: Compute Engine bills an e2-standard-4 as 4 vCPU / 16 GiB
+	// whatever the workflow asked for, so the machine type decides the
+	// figure and not the workflow (design compute-backend.md §5.2). Both
+	// zero means the platform bills whatever the execution's own
+	// CPU/MemoryGiB are -- Cloud Run's jobs, and every price table that is
+	// not a machine type's -- which is what Quantities then answers.
+	VCPU      float64
+	MemoryGiB float64
+	Source    string // where the figures come from, for reports
+}
+
+// Quantities are the vCPU and GiB these prices bill: the machine type's when
+// the table carries them (a VM backend), else the caller's own cpu and
+// memGiB. It is what keeps "the quantities are the machine type's, not the
+// workflow's" true by construction rather than by a backend remembering to
+// copy them onto the execution.
+func (p Prices) Quantities(cpu, memGiB float64) (float64, float64) {
+	if p.VCPU > 0 && p.MemoryGiB > 0 {
+		return p.VCPU, p.MemoryGiB
+	}
+	return cpu, memGiB
 }
 
 // ComputeUSD is the cost of cpu vCPUs and memGiB GiB for d.

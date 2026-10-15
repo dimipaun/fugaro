@@ -693,3 +693,34 @@ func TestDiagnoseReportedWarningNamesPricePolicy(t *testing.T) {
 		t.Errorf("a report inside the margin warned: %q", d.ReportedWarning)
 	}
 }
+
+// A compute estimate priced from a table that names itself renders that
+// source line under the cost, on a line of its own: diagnose is where an
+// operator reads which table the figure came from and what it leaves out
+// (design compute-backend.md §5.2, C17). It is not folded into the cost line
+// by oneLine, which would turn the break into a "?".
+func TestDiagnosePutsTheComputeSourceOnItsOwnLine(t *testing.T) {
+	source := "Compute Engine VM list price, e2-standard family, us-central1 (2026-10-15, UNVERIFIED); boot disk and Cloud NAT are not in this figure (design C17)"
+	cost := runstore.NewCost(4.12, 0.38, runstore.BasisAPIList)
+	cost.ComputeSource = source
+	var b strings.Builder
+	if err := printDiagnosis(&b, &Diagnosis{Row: runview.Row{Cost: cost}}, false); err != nil {
+		t.Fatal(err)
+	}
+	got := b.String()
+	if want := "\nCompute source: " + source + "\n"; !strings.Contains(got, want) {
+		t.Errorf("diagnose lacks %q:\n%s", want, got)
+	}
+	if strings.Contains(got, "?") {
+		t.Errorf("the source line is folded into the cost line:\n%s", got)
+	}
+	// A Cloud Run cost carries no source line, so nothing is added.
+	cost.ComputeSource = ""
+	b.Reset()
+	if err := printDiagnosis(&b, &Diagnosis{Row: runview.Row{Cost: cost}}, false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(b.String(), "Compute source") {
+		t.Errorf("a cost with no source line rendered one:\n%s", b.String())
+	}
+}

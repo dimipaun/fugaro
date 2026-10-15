@@ -451,3 +451,49 @@ func TestInitHelpMentionsFirestoreStep(t *testing.T) {
 		}
 	}
 }
+
+// The report's compute source line is about the runs the report shows: a
+// VM-priced run outside --until is not a figure in this report, so nothing
+// warns about the table it came from (design compute-backend.md §5.2, C17).
+func TestDegradedReportComputeSourceFollowsTheRange(t *testing.T) {
+	f := newCloudFixture(t) // no budget block: the run-record fallback
+	old := budgetNow
+	budgetNow = func() time.Time { return time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { budgetNow = old })
+	vm := runstore.NewCost(1.5, 0.25, runstore.BasisAPIList)
+	vm.ComputeSource = "Compute Engine VM list price, e2-standard family, us-central1 (2026-10-15, UNVERIFIED); boot disk and Cloud NAT are not in this figure (design C17)"
+	seedCostRun(t, f, "20261020-100000-aaaa", "a@x.io", vm)
+	seedCostRun(t, f, "20261019-100000-bbbb", "b@x.io", runstore.NewCost(2, 0.1, runstore.BasisAPIList))
+
+	// --until the day before the VM run: the report has no VM figure, so it
+	// says nothing about the VM table.
+	out, _, err := execute(t, "report", "--json", "--since", "2026-10-01", "--until", "2026-10-19")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var o repOut
+	if err := json.Unmarshal([]byte(out), &o); err != nil {
+		t.Fatal(err)
+	}
+	if len(o.Rows) != 1 || o.Rows[0].Key != "2026-10-19" {
+		t.Fatalf("rows = %+v, want only 2026-10-19", o.Rows)
+	}
+	for _, w := range o.Warnings {
+		if strings.Contains(w, "Compute Engine VM list price") {
+			t.Errorf("a report without the VM run warned about its table: %q", w)
+		}
+	}
+
+	// The whole range: the VM run is in the report, and the table is named.
+	out, _, err = execute(t, "report", "--json", "--since", "2026-10-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	o = repOut{}
+	if err := json.Unmarshal([]byte(out), &o); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(o.Warnings, "\n"), "compute_usd is an estimate priced from "+vm.ComputeSource) {
+		t.Errorf("warnings = %q, want the VM table's source line", o.Warnings)
+	}
+}

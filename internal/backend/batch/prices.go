@@ -215,7 +215,12 @@ func PricesFor(region, machineType string) (backend.Prices, error) {
 	return backend.Prices{
 		VCPUSecondUSD: vcpu / secondsPerHour,
 		GiBSecondUSD:  gib / secondsPerHour,
-		Source:        SourceLine(fam, region),
+		// The machine type's own quantities travel with its prices: Compute
+		// Engine bills the VM, so the estimate's vCPU and GiB are the type's
+		// and never the workflow's resources (design §5.2).
+		VCPU:      mt.VCPU,
+		MemoryGiB: mt.MemoryGiB,
+		Source:    SourceLine(fam, region),
 	}, nil
 }
 

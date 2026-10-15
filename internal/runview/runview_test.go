@@ -208,7 +208,7 @@ func TestJoinPricesWithTheExecutionsOwnRegion(t *testing.T) {
 // with Compute Engine's one-minute minimum, and its estimate records the
 // table it came from (design compute-backend.md §5.2, C17).
 func TestJoinPricesAVMRunFromItsBootWindow(t *testing.T) {
-	vm := backend.Prices{VCPUSecondUSD: 1e-5, GiBSecondUSD: 2e-6,
+	vm := backend.Prices{VCPUSecondUSD: 1e-5, GiBSecondUSD: 2e-6, VCPU: 4, MemoryGiB: 16,
 		Source: "Compute Engine VM list price, e2-standard family, us-central1 (2026-10-15, UNVERIFIED); boot disk and Cloud NAT are not in this figure (design C17)"}
 	book := func(x *backend.Execution) backend.Prices {
 		if x == nil || x.MachineType != "e2-standard-4" || x.Region != "us-central1" {
@@ -216,13 +216,17 @@ func TestJoinPricesAVMRunFromItsBootWindow(t *testing.T) {
 		}
 		return vm
 	}
+	// The execution's own limits are the workflow's resources, which are not
+	// what Compute Engine bills: the machine type's quantities are, and they
+	// travel with its prices.
 	e := &backend.Execution{Name: "projects/p/locations/us-central1/jobs/fugaro-j-1", State: backend.StateSucceeded,
-		Region: "us-central1", MachineType: "e2-standard-4", CPU: 4, MemoryGiB: 16,
+		Region: "us-central1", MachineType: "e2-standard-4", CPU: 2, MemoryGiB: 8,
 		Created: now.Add(-40 * time.Second), Started: now.Add(-10 * time.Second), Completed: now.Add(-5 * time.Second)}
 	row := Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusSucceeded, nil), Exec: e}, book, now)
-	// 35 s from the boot window, floored to the 60 s Compute Engine bills.
+	// 35 s from the boot window, floored to the 60 s Compute Engine bills,
+	// over the e2-standard-4's 4 vCPU / 16 GiB and not the workflow's 2/8.
 	if want := 60 * (4*1e-5 + 16*2e-6); row.Cost.ComputeUSD != want {
-		t.Errorf("compute = %v, want %v (a one-minute floor over the boot window)", row.Cost.ComputeUSD, want)
+		t.Errorf("compute = %v, want %v (a one-minute floor over the boot window, at the machine type's quantities)", row.Cost.ComputeUSD, want)
 	}
 	if !row.Cost.ComputeEstimated {
 		t.Error("compute is not estimated")
