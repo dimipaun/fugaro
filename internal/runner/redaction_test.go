@@ -2,6 +2,8 @@ package runner_test
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -67,5 +69,61 @@ func TestMountedSecretsAreRedactedFromTheStart(t *testing.T) {
 	}
 	if keys := objectsContaining(t, h, mounted); len(keys) > 0 {
 		t.Fatalf("the mounted secret is stored unredacted in %v", keys)
+	}
+}
+
+// TestGitsOwnCloneFailureIsRedacted: FUGARO_REMOTE is a launcher's to set and
+// a remote URL may carry a credential in a query parameter (?access_token=,
+// Bitbucket's forge shape), and git's own message about a remote it could not
+// reach quotes the URL it was given, secret and all ("fatal: unable to access
+// 'http://host/repo.git?access_token=…/'"). That text is not one this package
+// words: redact() strips it only because bootstrap's addRemoteSecrets calls
+// registered the credential first, before the run's record is claimed and long
+// before the clone.
+//
+// The named tests of the redaction stop before git ever runs — the admission
+// refusals (TestRunnerRefusesARemoteWithoutQuotingItsCredential) never open the
+// provider, and remoteDisplay is this package's own wording — so this is the
+// end-to-end case: the clone really is attempted against a local server that
+// hangs up on it, git really does fail, and the failure is carried into the
+// run's record and the result.json beside it.
+func TestGitsOwnCloneFailureIsRedacted(t *testing.T) {
+	h := newHarness(t, "", nil)
+	const secret = "ATBBsecret"
+	// A server that hangs up on every request: git reports the URL it was
+	// given, and nothing here leaves the machine.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hj, ok := w.(http.Hijacker); ok {
+			if c, _, err := hj.Hijack(); err == nil {
+				_ = c.Close()
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+	h.deps.ProviderKind = "github"
+	h.deps.Remote = srv.URL + "/remote.git?access_token=" + secret
+	rec, err := h.run(t, implement("feature"))
+	if err == nil {
+		t.Fatalf("the clone must fail: rec = %+v", rec)
+	}
+	if rec == nil {
+		t.Fatal("the run wrote no record")
+	}
+	// Git's own words, with the URL redacted: this is what makes the
+	// assertions below about the clone and not about some earlier refusal.
+	if !strings.Contains(rec.Reason, "unable to access") {
+		t.Fatalf("the record does not carry git's own failure, so nothing here saw it: %q", rec.Reason)
+	}
+	if strings.Contains(rec.Reason, secret) {
+		t.Errorf("the run's record quotes the remote's credential: %q", rec.Reason)
+	}
+	// Every object the run wrote, result.json among them.
+	if keys := objectsContaining(t, h, secret); len(keys) > 0 {
+		t.Errorf("the remote's credential is stored unredacted in %v", keys)
+	}
+	if data, err := h.bucket.ReadAll(context.Background(), "runs/"+repoSlug+"/"+runID+"/result.json"); err != nil {
+		t.Errorf("reading result.json: %v", err)
+	} else if !strings.Contains(string(data), "[REDACTED]") {
+		t.Errorf("result.json does not carry the redacted failure: %s", data)
 	}
 }
