@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -1013,6 +1014,69 @@ func TestLogsReadsOneJobsTaskLogsByUID(t *testing.T) {
 	}
 }
 
+// TestLogsTimeBounds pins the cut every read carries: without a Since it
+// starts createdMargin before the job was created, and with one it uses the
+// caller's own instant. It is what keeps a run's read from paging through
+// every entry the project's batch_task_logs has ever held -- and what makes
+// `fugaro logs --since` mean something.
+func TestLogsTimeBounds(t *testing.T) {
+	ctx := context.Background()
+	b, bf, lf, _ := newTestBackend(t, nil)
+	ref, err := b.Launch(ctx, spec())
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	x, err := b.Execution(ctx, ref.Name)
+	if err != nil {
+		t.Fatalf("Execution: %v", err)
+	}
+	uid, _ := bf.JobJSON(testProject, testRegion, ref.Job)["uid"].(string)
+	// One entry an hour before the job was created, one a second after it.
+	lf.AddUID(uid, gcpfake.LogEntry{Time: x.Created.Add(-time.Hour), Text: "before"})
+	lf.AddUID(uid, gcpfake.LogEntry{Time: x.Created.Add(time.Second), Text: "after"})
+
+	read := func(q backend.LogQuery) []string {
+		t.Helper()
+		var got []string
+		if err := b.Logs(ctx, q, func(e backend.LogEntry) error { got = append(got, e.Message); return nil }); err != nil {
+			t.Fatalf("Logs: %v", err)
+		}
+		return got
+	}
+	if got := read(backend.LogQuery{Execution: ref.Name}); len(got) != 1 || got[0] != "after" {
+		t.Fatalf("Logs = %q, want only the entry after the job was created", got)
+	}
+	want := ` AND timestamp>="` + x.Created.Add(-createdMargin).UTC().Format(time.RFC3339Nano) + `"`
+	if last := lastLogFilter(t, lf); !strings.HasSuffix(last, want) {
+		t.Fatalf("filter = %q, want it to end with %s", last, want)
+	}
+	// An explicit Since is the caller's own cut, not the job's creation time:
+	// the entry after the create is still before it, so nothing comes back.
+	since := x.Created.Add(30 * time.Second)
+	if got := read(backend.LogQuery{Execution: ref.Name, Since: since}); len(got) != 0 {
+		t.Fatalf("Logs(Since) = %q, want nothing", got)
+	}
+	want = ` AND timestamp>="` + since.UTC().Format(time.RFC3339Nano) + `"`
+	if last := lastLogFilter(t, lf); !strings.HasSuffix(last, want) {
+		t.Fatalf("filter = %q, want it to end with %s", last, want)
+	}
+}
+
+// lastLogFilter is the filter of the last entries.list request the fake
+// answered.
+func lastLogFilter(t *testing.T, lf *gcpfake.Logging) string {
+	t.Helper()
+	reqs := lf.Requests()
+	if len(reqs) == 0 {
+		t.Fatal("no entries.list request was sent")
+	}
+	var req struct{ Filter string }
+	if err := json.Unmarshal(reqs[len(reqs)-1].Body, &req); err != nil {
+		t.Fatalf("entries.list body: %v", err)
+	}
+	return req.Filter
+}
+
 // TestLogsStopWhenTheCallbackStops: a caller that has seen enough (a --tail,
 // a closed pipe) must not have the rest of the logs read for it.
 func TestLogsStopWhenTheCallbackStops(t *testing.T) {
@@ -1076,21 +1140,31 @@ func TestLogsFollowIsNotSilentlyIgnored(t *testing.T) {
 }
 
 // TestLogURL pins the link a run carries: a Logs Explorer query scoped to the
-// installation's log view. A run whose UID is unknown cannot be selected at
-// all, so it answers "" rather than a link that opens the whole project's
-// logs.
+// installation's log view, and the time window the job's own createTime
+// gives it. A run whose UID is unknown cannot be selected at all, so it
+// answers "" rather than a link that opens the whole project's logs.
 func TestLogURL(t *testing.T) {
 	b, _, _, _ := newTestBackend(t, func(o *Options) {
 		o.LogView = "projects/" + testProject + "/locations/global/buckets/fugaro/views/runs"
 	})
 	id := backend.ExecID{GCPProject: testProject, Region: testRegion, Job: "fugaro-acme-app-web-0123456789ab"}
-	u := b.logURL(id, "uid-1", time.Now())
-	for _, want := range []string{"logs/query", "batch_task_logs", "storageScope=storage", "project=" + testProject} {
-		if !strings.Contains(u, want) {
-			t.Errorf("logURL = %q, want it to contain %q", u, want)
-		}
+	created := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
+	// The window starts createdMargin before the createTime, for clock skew
+	// between Batch and the VM, and runs logMaxSpan from there.
+	want := "https://console.cloud.google.com/logs/query;query=" +
+		url.PathEscape(`labels.job_uid="uid-1" AND logName="projects/`+testProject+`/logs/batch_task_logs"`) +
+		";storageScope=storage," + url.PathEscape("projects/"+testProject+"/locations/global/buckets/fugaro/views/runs") +
+		";timeRange=2026-09-27T09:59:00Z/2026-09-28T09:59:00Z?project=" + testProject
+	if got := b.logURL(id, "uid-1", created); got != want {
+		t.Fatalf("logURL = %q\nwant      %q", got, want)
 	}
-	if got := b.logURL(id, "", time.Now()); got != "" {
+	// A job whose createTime is unreadable has no window to open: the query
+	// alone, never a range starting at the zero time.
+	got := b.logURL(id, "uid-1", time.Time{})
+	if strings.Contains(got, "timeRange=") || !strings.Contains(got, "batch_task_logs") {
+		t.Fatalf("logURL without a createTime = %q", got)
+	}
+	if got := b.logURL(id, "", created); got != "" {
 		t.Fatalf("logURL without a UID = %q, want empty", got)
 	}
 }
