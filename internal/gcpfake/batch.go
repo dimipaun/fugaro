@@ -75,6 +75,13 @@ type Batch struct {
 	// compute fake has the same knob, for the same reason). Unset, the fake
 	// applies the filter, as the API documents it.
 	IgnoreFilter bool
+	// CancelGone, keyed by job id, makes :cancel answer 404 as if the job had
+	// been removed between the listing that decided to cancel it and the call
+	// itself -- someone else's delete, or Batch's own 60-day one (§9). The job
+	// stays in the listing (which is read before it vanishes), so the same
+	// knob is the only way a test reaches a cancel whose job is gone: a
+	// listing and a cancel read the same stored map otherwise.
+	CancelGone map[string]bool
 	// CancelRace, keyed by job id, moves the job to that raw state as its
 	// :cancel arrives, before the cancel is answered: a job that started or
 	// finished between the listing that decided to cancel it and the call
@@ -505,7 +512,7 @@ func (f *Batch) cancel(w http.ResponseWriter, r *http.Request, p string) {
 		return
 	}
 	j := f.jobs[jobKey{project, region, id}]
-	if j == nil {
+	if j == nil || f.CancelGone[id] {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "job "+id+" not found")
 		return
 	}

@@ -211,6 +211,14 @@ type ReaperOptions struct {
 	// deadline cancels it (design §1.4, C8). Zero means the longest
 	// configured task timeout plus backend.TaskTimeoutSlack -- "the
 	// launcher's own task timeout", the design's natural default.
+	//
+	// It is also the bound under which a job's latest status event is read as
+	// the transition into the state the job reports (Reaper.reapJob's SCHEDULED
+	// and DELETION_IN_PROGRESS branches): an event older than the creation time
+	// plus this deadline may date the queue wait instead. A value longer than a
+	// whole run budget is refused by NewReaper for that reason -- the state
+	// deadlines would then only ever be read against jobs that had queued for
+	// longer than a run.
 	QueueDeadline time.Duration
 	// MaxAge is the age floor for an INSTANCE: how old an instance must be
 	// before the reaper will delete it. Zero means the queue deadline, plus
@@ -317,11 +325,19 @@ func NewReaper(ctx context.Context, o ReaperOptions) (*Reaper, error) {
 	// A caller's deadlines are validated rather than clamped. MaxAge shorter
 	// than the queue wait it must contain would delete a job that had just
 	// started (or a VM behind it) the moment its queue wait alone reached it;
-	// one past MaxDeadline is a unit error. Both are the caller's bug, and a
-	// reaper that deletes things must say so rather than invent a deadline.
-	switch floor := queueDeadline + base + backend.TaskTimeoutSlack; {
+	// one past MaxDeadline is a unit error. A queue deadline longer than a
+	// whole run budget is the third shape of the same bug: a state deadline
+	// reads a job's time in state from its status event only when that event
+	// postdates the creation time plus the queue deadline
+	// (stateEventPostdatesQueueDeadline), so a queue deadline that long means
+	// no job can be judged stuck unless its queue wait alone exceeded a whole
+	// run. All three are the caller's bug, and a reaper that deletes things
+	// must say so rather than invent a deadline.
+	switch floor := queueDeadline + runBudget; {
 	case queueDeadline > MaxDeadline:
 		return nil, fmt.Errorf("a queue deadline of %v is longer than any deadline the reaper will act on (%v)", queueDeadline, MaxDeadline)
+	case queueDeadline > runBudget:
+		return nil, fmt.Errorf("a queue deadline of %v is longer than a run budget (%v): a job would have to queue longer than a whole run before the reaper could ever act on its state", queueDeadline, runBudget)
 	case maxAge > MaxDeadline:
 		return nil, fmt.Errorf("a maximum age of %v is longer than any deadline the reaper will act on (%v)", maxAge, MaxDeadline)
 	case maxAge < floor:
@@ -500,6 +516,21 @@ func (r *Reaper) reapJob(ctx context.Context, j *batch.Job, owned owners, rep *R
 		if !ok {
 			return r.refuseUnknownStateTime(j, state, run, owned, rep)
 		}
+		if state == "SCHEDULED" && !stateEventPostdatesQueueDeadline(j, created, r.queueDeadline) {
+			// SCHEDULED has no second measurement (unlike RUNNING, whose
+			// runDuration corrects the event), and the state before it is the
+			// queue wait -- whose event sits at the creation time. The event
+			// list is not a per-state log (UNVERIFIED, §3.4), so the latest
+			// event a SCHEDULED job carries may be its QUEUED transition, and a
+			// job that has just been scheduled after a long queue wait would
+			// then read as that whole wait's length into SCHEDULED and be
+			// deleted: a live run deleted, by the very uncertainty this build
+			// refuses to act on elsewhere. So the event is trusted only when it
+			// postdates the creation time plus the queue deadline -- the moment
+			// after which the queue wait, if it happened at all, was over-long
+			// -- and the job is refused, not deleted, when it does not.
+			return r.refuseStaleStateEvent(j, state, run, owned, rep)
+		}
 		if spent <= r.runBudget {
 			// A live run: Batch owns its VM, and the instance pass must leave
 			// it alone.
@@ -519,6 +550,14 @@ func (r *Reaper) reapJob(ctx context.Context, j *batch.Job, owned owners, rep *R
 		spent, ok := stateSince(j, r.now())
 		if !ok {
 			return r.refuseUnknownStateTime(j, state, run, owned, rep)
+		}
+		if !stateEventPostdatesQueueDeadline(j, created, r.queueDeadline) {
+			// The same uncertainty as SCHEDULED's, and this branch deletes too:
+			// the latest event may date the queue wait rather than the deletion,
+			// and a job whose deletion just started on a long-queued job would
+			// read as stuck and be deleted again. Refused, never deleted on a
+			// measurement that may not be the state's.
+			return r.refuseStaleStateEvent(j, state, run, owned, rep)
 		}
 		if spent <= r.runBudget {
 			// Someone is already deleting this job, and Batch is deleting its
@@ -587,6 +626,42 @@ func (r *Reaper) refuseUnknownStateTime(j *batch.Job, state, run string, owned o
 	return nil
 }
 
+// refuseStaleStateEvent is what a job whose only measurement of its time in
+// state may date an earlier state gets, in the two branches that have no
+// second measurement: nothing is done to it (no delete, no cancel), it is
+// owned so the instance pass leaves its VMs alone, and the refusal says why. It
+// is the same posture as an unreadable time in state -- fail closed, and name
+// it in the report -- because "this measurement may not be about the state it
+// is read as" is exactly an unknown time in state.
+func (r *Reaper) refuseStaleStateEvent(j *batch.Job, state, run string, owned owners, rep *Report) error {
+	r.o.Warn(fmt.Sprintf("reaper: job %s: its latest job-level status event predates its queue deadline, so it may date the queue wait rather than the %s state: refusing to act on it", j.Name, state))
+	owned.own(run, fmt.Sprintf("its job's latest status event predates its queue deadline, so it may date the queue wait rather than the %s state, and the reaper refused to act on the job", state))
+	rep.refuse(j.Name, fmt.Sprintf("its latest job-level status event predates its queue deadline, so it may date the queue wait rather than the %s state it reports: how long it has been in that state is unknown and no deadline can clear it", state))
+	return nil
+}
+
+// stateEventPostdatesQueueDeadline reports whether the latest job-level status
+// event can be read as the transition INTO the state the job reports, rather
+// than as the job's queue wait.
+//
+// It is the one thing that can be checked about an event whose state is not
+// named: a job is created (the queue entry, and its event, at the creation
+// time), so an event that postdates the creation time plus the queue deadline
+// cannot be the queue entry -- the queue wait, if it was that long, was over
+// by then. An event that does NOT postdate it may be the queue entry or may be
+// the real transition, and no field distinguishes the two, so the caller
+// refuses rather than act on a measurement that may be about another state.
+// Nothing here says a job-level event is emitted on every transition: that is
+// still UNVERIFIED (design §3.4), which is why the check is a refusal and not
+// a guess.
+//
+// RUNNING does not need it: its runDuration is a second measurement of the same
+// quantity, and stateSince takes the shorter (and refuses when it is absent).
+func stateEventPostdatesQueueDeadline(j *batch.Job, created time.Time, queueDeadline time.Duration) bool {
+	ev := latestJobEvent(j)
+	return !ev.IsZero() && ev.After(created.Add(queueDeadline))
+}
+
 // cancelQueued is the queue deadline: a job that has not reached SCHEDULED or
 // RUNNING within the deadline is cancelled with jobs.cancel -- never deleted,
 // because its record is what the run's ls, diagnose and watch read (§1.4,
@@ -598,10 +673,20 @@ func (r *Reaper) cancelQueued(ctx context.Context, j *batch.Job, run string, age
 		return nil
 	}
 	if _, err := r.batch.Projects.Locations.Jobs.Cancel(j.Name, &batch.CancelJobRequest{}).Context(ctx).Do(); err != nil {
-		// The job may have started, or finished, between the listing and this
-		// call. Read it back: a terminal job needed no cancel, which is the
-		// same tolerance Cancel has (§2.3, live check 5). Anything else is a
-		// real failure and ends the pass.
+		// A job that is already gone needed no cancel: someone else's delete
+		// (or Batch's own 60-day one) removed it between the listing and this
+		// call. Reading that 404 as a failure would end the whole pass -- one
+		// vanished job stopping the reaper from doing anything else it had
+		// decided to do, which is the opposite of the idempotence the deletes
+		// below have (deleteJob's isNotFound). Nothing is recorded, exactly as
+		// a delete of something already gone records nothing.
+		if isNotFound(err) {
+			return nil
+		}
+		// The job may also have started, or finished, between the listing and
+		// this call. Read it back: a terminal job needed no cancel, which is
+		// the same tolerance Cancel has (§2.3, live check 5). Anything else is
+		// a real failure and ends the pass.
 		if got, rerr := r.batch.Projects.Locations.Jobs.Get(j.Name).Context(ctx).Do(); rerr == nil && jobIsTerminal(got) {
 			return nil
 		}
@@ -932,13 +1017,14 @@ func jobRunLabels(j *batch.Job) []string {
 // unknown and the caller refuses it (refuseUnknownStateTime), exactly as if
 // there were no event either. A guard that only applied "when a RUNNING job
 // happens to report a runDuration" would leave the stale-event case it exists
-// for unfixed in the one shape where acting on it deletes a live run. For the
-// states with no second measurement at all there is nothing to fall back to,
-// and a stale event can only make a job look LONGER in its state than it is:
-// that errs towards deleting a job that is already being deleted
-// (DELETION_IN_PROGRESS) or one Batch has not yet started running, and the
-// caller sees it in the report. Being wrong the other way -- deleting a live
-// run -- is the failure this whole function exists to prevent.
+// for unfixed in the one shape where acting on it deletes a live run. SCHEDULED
+// and DELETION_IN_PROGRESS, the other two states a delete decision rests on,
+// have no second measurement either: there a stale event can only make a job
+// look LONGER in its state than it is, and the caller's answer is not to guess
+// but to check the one thing an event's own state field cannot tell it
+// (stateEventPostdatesQueueDeadline) and refuse the job when the event may date
+// its queue wait (refuseStaleStateEvent). Being wrong the other way --
+// deleting a live run -- is the failure this whole function exists to prevent.
 //
 // A job with no readable time in state is not stuck: the caller refuses it and
 // owns its VMs (refuseUnknownStateTime), because an unknown time never clears a
@@ -954,19 +1040,7 @@ func stateSince(j *batch.Job, now time.Time) (time.Duration, bool) {
 			run, haveRun = d, true
 		}
 	}
-	latest := time.Time{}
-	for _, ev := range j.Status.StatusEvents {
-		if ev == nil || ev.TaskState != "" {
-			continue
-		}
-		t, err := parseTime(ev.EventTime)
-		if err != nil || t.IsZero() {
-			continue
-		}
-		if t.After(latest) {
-			latest = t
-		}
-	}
+	latest := latestJobEvent(j)
 	if j.Status.State == "RUNNING" && !haveRun {
 		// The event, if any, may belong to the queue wait: a RUNNING job with
 		// no runDuration has no measurement a delete may rest on.
@@ -985,6 +1059,32 @@ func stateSince(j *batch.Job, now time.Time) (time.Duration, bool) {
 		return run, true
 	}
 	return spent, true
+}
+
+// latestJobEvent is the time of the job's latest job-level status event, or the
+// zero time when it has none that can be read. Task-level events are skipped: a
+// task-level event dates a task, not the job's state (batch/v1.StatusEvent's
+// TaskState is set for those). It is the event measurement both stateSince and
+// stateEventPostdatesQueueDeadline read, so the two can never disagree about
+// which event they are talking about.
+func latestJobEvent(j *batch.Job) time.Time {
+	if j.Status == nil {
+		return time.Time{}
+	}
+	latest := time.Time{}
+	for _, ev := range j.Status.StatusEvents {
+		if ev == nil || ev.TaskState != "" {
+			continue
+		}
+		t, err := parseTime(ev.EventTime)
+		if err != nil || t.IsZero() {
+			continue
+		}
+		if t.After(latest) {
+			latest = t
+		}
+	}
+	return latest
 }
 
 // jobIsTerminal reports whether a job has finished, by the same mapping the

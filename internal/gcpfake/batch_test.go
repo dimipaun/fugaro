@@ -287,6 +287,35 @@ func TestBatchFakeCancelOfATerminalJob(t *testing.T) {
 	}
 }
 
+// TestBatchFakeCancelGone: CancelGone is how a test says "the job was deleted
+// between the listing that decided to cancel it and the call itself". The job
+// stays in the listing -- the two read the same stored map otherwise -- and only
+// the cancel answers 404, which is the shape a caller's tolerance of that race
+// has to meet.
+func TestBatchFakeCancelGone(t *testing.T) {
+	f := NewBatch(t)
+	base := f.URL + "/v1/projects/p/locations/r1"
+	if code, _ := batchCall(t, "POST", base+"/jobs?jobId=fugaro-x-web-1", batchJobBody); code != http.StatusOK {
+		t.Fatal("create failed")
+	}
+	f.CancelGone = map[string]bool{"fugaro-x-web-1": true}
+	if code, body := batchCall(t, "POST", base+"/jobs/fugaro-x-web-1:cancel", "{}"); code != http.StatusNotFound || body["error"] == nil {
+		t.Fatalf("cancel of a job that is gone: status %d: %v", code, body)
+	}
+	if got := f.Cancels(); len(got) != 0 {
+		t.Fatalf("a 404'd cancel was recorded: %v", got)
+	}
+	if got := f.State("fugaro-x-web-1"); got != "QUEUED" {
+		t.Fatalf("a 404'd cancel changed the state to %q", got)
+	}
+	// The listing is untouched by the knob: the job is still read back, which
+	// is what makes it the "gone between the listing and the cancel" shape
+	// rather than a job that was never there.
+	if code, _ := batchCall(t, "GET", base+"/jobs/fugaro-x-web-1", ""); code != http.StatusOK {
+		t.Fatalf("get after a 404'd cancel: status %d", code)
+	}
+}
+
 // TestBatchFakeListFiltersAndPages: the listing is what a sweeper reads, so
 // its filter and its paging are the fake's, not the client's, business.
 func TestBatchFakeListFiltersAndPages(t *testing.T) {

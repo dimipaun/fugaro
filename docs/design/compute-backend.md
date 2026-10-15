@@ -1330,7 +1330,24 @@ the teardown is assumed rather than read:
   in state is not a number a delete may rest on — it is unable to be read, and
   the guard is not conditional on the API happening to supply one. A job whose
   time in state cannot be read is **refused**, with its VMs left alone, rather
-  than assumed stuck. A **finished job's record is never deleted** — it is
+  than assumed stuck.
+  `SCHEDULED` and `DELETION_IN_PROGRESS` — the other two states a delete
+  decision rests on — have **no second measurement**, so there the build checks
+  the one thing an event's own state field cannot tell it: the event is read as
+  the transition into the state only when it **postdates the creation time plus
+  the queue deadline**. A job's event can be its queue entry, and that entry
+  sits at the creation time, so an event newer than the deadline cannot be it
+  (the queue wait, if it was that long, was over); an event that does not
+  postdate it may be either, and no field distinguishes them, so the job is
+  **refused** — `refuseStaleStateEvent`, VMs owned, the reason in the report —
+  rather than deleted on a measurement that may be about a state the job has
+  left. A stale event can otherwise only make such a job look *longer* in its
+  state than it is, which is exactly the wrong direction here: a job that has
+  just been scheduled, or just had a deletion started, after a long queue wait
+  would read as hours into the state and be deleted. That is also why
+  `QueueDeadline` is bounded by the run budget (the validation above): a longer
+  deadline would leave the guard admitting only jobs that had queued longer
+  than a whole run, i.e. a state deadline that can never be reached. A **finished job's record is never deleted** — it is
   history, and §3.4's ordering rule is about the jobs the reaper has decided
   must go, so a terminal job whose VM leaked is handled by the instance pass,
   which deletes the VM and leaves the record. A job this pass deletes **owns
@@ -1377,10 +1394,14 @@ the teardown is assumed rather than read:
   another installation's, a VM in another region, a VM whose job is still
   live, a VM young enough that Batch may be mid-teardown, a job whose two
   label fields disagree about the run label, a job whose state this build does
-  not know (including `STATE_UNSPECIFIED`), and a job or VM whose time cannot
-  be read. It is idempotent (a delete of something already gone is not an
-  error), and `DryRun` lists what a pass would delete and touches nothing,
-  cancel included.
+  not know (including `STATE_UNSPECIFIED`), a job or VM whose time cannot be
+  read, and a `SCHEDULED` or `DELETION_IN_PROGRESS` job whose latest status
+  event may date its queue wait rather than the state it reports. It is
+  idempotent — a delete of something already gone is not an error, and neither
+  is a **cancel** of something already gone (a 404 there is the job someone
+  else's delete removed between the listing and the call, not a failure that
+  ends the pass) — and `DryRun` lists what a pass would delete and touches
+  nothing, cancel included.
 
   The age floor is an **instance's** floor — it bounds no job, a job's
   deadlines being its queue deadline and its time in state: the longest
@@ -1395,10 +1416,15 @@ the teardown is assumed rather than read:
   what fills them. `NewReaper` **validates** them rather than trusting or
   clamping them: a negative deadline (a sign or unit error), one longer than
   `MaxDeadline` (30 days — past it a deadline protects nothing, and the shape
-  is a unit error), and a `MaxAge` shorter than the queue deadline plus a run
-  it must contain (which would delete jobs the moment their queue wait alone
-  reached it) are all refused, because a reaper that deletes things must say
-  its configuration is wrong rather than invent a deadline.
+  is a unit error), a `MaxAge` shorter than the queue deadline plus a run it
+  must contain — and that floor is the queue deadline plus the **whole run
+  budget**, boot and teardown included, not the run's task timeout alone: an
+  age at which a VM of a just-finished run could still be there is not a floor
+  — and a **queue deadline longer than a whole run budget** (the staleness
+  bound below: with it, the state deadlines could only ever be read against
+  jobs that had queued longer than a run) are all refused, because a reaper
+  that deletes things must say its configuration is wrong rather than invent a
+  deadline.
 
 ### 3.5 What a Docker-capable agent can do to the host
 
@@ -1503,8 +1529,10 @@ What follows, plainly:
   `compute.instances.delete`.
   **The grant is a custom role carrying exactly those six — `fugaroReaper`,
   the naming `fugaroLauncher`, `fugaroJobRunner` and `fugaroHistory` already
-  use (`internal/infra/tfvars.go`), pinned the way their permissions are
-  pinned in `internal/infra/tf/cover.go`'s `RolePermissions`** — and not
+  use, which is `internal/infra/tf/cover.go`'s `FugaroRoles` list and the
+  `RolePermissions` table beside it (the two launcher-shaped names are also
+  constants in `internal/infra/tfvars.go`; `fugaroHistory` and
+  `fugaroTokenMinter` are not — they exist only in that table)** — and not
   `roles/batch.jobsEditor` plus `roles/compute.instanceAdmin.v1`, which is
   what Google's own pages name for the same calls (`batch.googleapis.com`
   create/cancel/delete, `compute.instances.delete`). Those two built-in roles
@@ -1907,7 +1935,7 @@ need the thing it gates cannot gate it, so this one is split:
   project (step 1 alone uses the *existing* Cloud Run backend, for the
   baseline the 120 s budget is measured against). It is the design's **go/no-go**, and the plan
   makes it Task 0 (§8.1): if it fails, nothing below it is built.
-- **57b — the post-build acceptance run.** Six steps that only make sense once
+- **57b — the post-build acceptance run.** Seven steps that only make sense once
   `backend: cloud-batch` can be enabled, i.e. after the last task of §8.1. They
   are the check's *acceptance* half, and the design's §4.4 `doctor` gate is what
   stops anyone running them early.
@@ -2154,7 +2182,7 @@ resources**.
 
 ```bash
 # === Check 57: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
-# step (57a-0, 0b, 0c, 1..12, 57b-1..6, Restore). It is idempotent, and nothing
+# step (57a-0, 0b, 0c, 1..12, 57b-1..7, Restore). It is idempotent, and nothing
 # below the three hard stops runs unless all three pass. ===
 P=fugaro-dev                 # HARD-CODED sandbox project id; never belong, and never read from gcloud
 L=us-east5                   # the sandbox installation's region
@@ -3133,7 +3161,7 @@ named individually.
 
 ### 57b. The post-build acceptance run (after the enable task)
 
-These six need `backend: cloud-batch` selectable, so they run **last**
+These seven need `backend: cloud-batch` selectable, so they run **last**
 (§8.1's task 9 is the enable task and task 10 is this section's second half).
 They are the design's acceptance criteria, not its go/no-go.
 
@@ -3199,6 +3227,30 @@ restore cannot find.
    `OnCloudRun` and treat "not Cloud Run" as "not in the cloud". **FACT:**
    whether all four checks were closed without the marker, and which of them the
    run visibly hit.
+7. **The two status measurements the reaper decides by.** This is the step that
+   answers what §3.4's Built note has to mark **UNVERIFIED** today, and it needs
+   no Fugaro change: describe a job while it is running
+   (`gcloud batch jobs describe RUN --format=json`) and read two fields.
+   **(a) `status.runDuration`** — does a `RUNNING` job report it, is it
+   parseable as a duration, and how does it compare with the wall clock since
+   the job reached `RUNNING`? The reaper **requires** it for a `RUNNING` job
+   (stateSince: a running job that reports none is refused, because its only
+   other measurement may date the queue wait), so a job that reports none is a
+   reaper that refuses every running job on this API version.
+   **(b) The job-level status events** — for each of `QUEUED`, `SCHEDULED`,
+   `RUNNING` and `DELETION_IN_PROGRESS` the job passed through, is there a
+   `statusEvents` entry with **no `taskState`** (a job-level event, not a
+   task-level one), and what time does each carry? **Whether such an event is
+   emitted on every state transition is the premise the reaper's state
+   deadlines rest on**, and it is UNVERIFIED: the build assumes it is *not*, and
+   refuses a `SCHEDULED` or `DELETION_IN_PROGRESS` job whose latest event does
+   not postdate its creation time plus the queue deadline (a stale event may be
+   the queue entry). If the measurement shows a job-level event **is** emitted
+   per transition, that refusal is more conservative than it needs to be and
+   the built note may be relaxed; if it is not, the refusal is what keeps a
+   just-scheduled job from being deleted for its queue wait. **FACT:** per
+   state, whether a job-level event exists, the time it carries, and the
+   `runDuration` read against the clock.
 
 **FACT lines to record:** every `FACT:` above; the `fugaro version` and the
 date; the machine type and boot-image version; the median launch-to-first-line
