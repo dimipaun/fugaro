@@ -1157,9 +1157,9 @@ func TestBudgetPreviewPrintsTheComputeCeiling(t *testing.T) {
 }
 
 // TestBudgetPreviewSaysTheCeilingIsNotCapped: the line says out loud that no
-// cap covers compute and points at the paragraph that says why (D4), and the
-// model ceiling above it does not move -- the compute figure is never folded
-// into the rough worst case, which stays model dollars.
+// cap covers compute (D4), and the model ceiling above it does not move -- the
+// compute figure is never folded into the rough worst case, which stays model
+// dollars.
 func TestBudgetPreviewSaysTheCeilingIsNotCapped(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.NoPerRunCap(t)
@@ -1170,9 +1170,25 @@ func TestBudgetPreviewSaysTheCeilingIsNotCapped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"— NOT CAPPED", "bounded by timeouts.total, not by any budget cap", "SECURITY.md"} {
+	for _, want := range []string{"— NOT CAPPED", "bounded by timeouts.total, not by any budget cap"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("preview never says %q:\n%s", want, out)
+		}
+	}
+	// The ruling is stated and not cited: SECURITY.md carries no such
+	// paragraph until the plan's Task 9 writes one, and a pointer to a
+	// document that does not make the claim reads to the reader as a
+	// document that says the opposite. The pointer returns with the
+	// paragraph, and this line fails until both are true together.
+	if strings.Contains(out, "SECURITY.md") {
+		t.Errorf("the line cites a document that does not carry the ruling:\n%s", out)
+	}
+	// The line the CLI prints is documented where its other lines are: the
+	// help names the compute ceiling and the NOT CAPPED that makes it the
+	// one figure sitting outside the model ceiling above it.
+	for _, want := range []string{"compute ceiling", "NOT CAPPED", "timeouts.total"} {
+		if !strings.Contains(newBudgetPreviewCmd().Long, want) {
+			t.Errorf("budget preview --help never says %q", want)
 		}
 	}
 	// 11 stages × $0.50 = $5.50 a run, $33.00 for six, and the compute ceiling
@@ -1265,5 +1281,94 @@ func TestBudgetPreviewArtifactRecipeDoesNotInflateTheModelCeiling(t *testing.T) 
 	// The render is priced as compute, beside it, and not as a model stage.
 	if !strings.Contains(out, "compute ceiling (workflow web): 4 vCPU x 8 GiB x 1h30m0s = $0.48") {
 		t.Errorf("the artifact run's compute ceiling is missing:\n%s", out)
+	}
+}
+
+// TestBudgetPreviewComputeCeilingJSON: the ceiling the text prints rides in
+// --json too, priced and unpriced alike, and a preview with no checkout to
+// take workflows from carries an empty list and not a null -- a consumer that
+// ranges over the field and one that checks it for absence read those two
+// differently.
+func TestBudgetPreviewComputeCeilingJSON(t *testing.T) {
+	type ceiling struct {
+		Workflow string   `json:"workflow"`
+		VCPU     int      `json:"vcpu"`
+		Memory   string   `json:"memory"`
+		GiB      float64  `json:"memory_gib"`
+		TotalS   float64  `json:"total_s"`
+		USD      *float64 `json:"usd"`
+		Source   string   `json:"price_source"`
+		Unpriced string   `json:"unpriced"`
+	}
+	var doc struct {
+		ComputeCeiling []ceiling `json:"compute_ceiling"`
+	}
+
+	// Priced: web at the checkout's defaults, 5400 s × (4×0.000018 +
+	// 8×0.000002) = $0.4752 at the fixture's region (us-east5, tier 1).
+	f := newBudgetFixture(t, "")
+	f.Checkout(t, "  max_budget_usd: 0.5\n")
+	out, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if len(doc.ComputeCeiling) != 1 {
+		t.Fatalf("compute_ceiling = %+v", doc.ComputeCeiling)
+	}
+	c := doc.ComputeCeiling[0]
+	if c.Workflow != "web" || c.VCPU != 4 || c.Memory != "8Gi" || c.GiB != 8 || c.TotalS != 5400 {
+		t.Errorf("ceiling = %+v", c)
+	}
+	if c.USD == nil || *c.USD < 0.4752-1e-9 || *c.USD > 0.4752+1e-9 {
+		t.Errorf("usd = %v, want 0.4752", c.USD)
+	}
+	if c.Source != "Cloud Run jobs list price, tier 1 (2026-09)" || c.Unpriced != "" {
+		t.Errorf("source = %q, unpriced = %q", c.Source, c.Unpriced)
+	}
+
+	// Unpriced: usd is null -- present and not omitted -- and unpriced says
+	// why, with no price_source beside it. This shape cannot come through the
+	// command (config validation refuses a resources.memory that is not a
+	// memory size, the defaults fill timeouts.total, and every region has a
+	// list price), so it is pinned on the document the command encodes, which
+	// is what a consumer reads either way.
+	raw, err := json.Marshal(previewDoc{ComputeCeiling: previewComputeCeilings(
+		&config.Config{Workflows: map[string]config.Workflow{
+			"web": {Resources: config.Resources{CPU: 8, Memory: "32Gi"},
+				Timeouts: config.Timeouts{Total: config.Duration{Duration: 2 * time.Hour}}},
+		}}, backend.Prices{}, "us-east5")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc.ComputeCeiling = nil
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("%v\n%s", err, raw)
+	}
+	if len(doc.ComputeCeiling) != 1 {
+		t.Fatalf("compute_ceiling = %+v", doc.ComputeCeiling)
+	}
+	u := doc.ComputeCeiling[0]
+	if u.USD != nil || !strings.Contains(u.Unpriced, "us-east5") || u.Source != "" {
+		t.Errorf("an unpriced ceiling = %+v", u)
+	}
+	if !strings.Contains(string(raw), `"usd":null`) {
+		t.Errorf("usd is omitted rather than null:\n%s", raw)
+	}
+
+	// No checkout: an empty list, not a null.
+	newBudgetFixture(t, "")
+	t.Chdir(t.TempDir())
+	out, _, err = execute(t, "budget", "preview", "--repo", "acme/app", "--recipe", "standard", "--runs", "2", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The spaces are the encoder's indentation, not the shape: what matters
+	// is that the list is there and empty, since a nil slice would encode as
+	// null and read to a consumer as "this build does not have the field".
+	if !strings.Contains(strings.ReplaceAll(out, " ", ""), `"compute_ceiling":[]`) {
+		t.Errorf("a preview with no checkout does not carry an empty ceiling list:\n%s", out)
 	}
 }

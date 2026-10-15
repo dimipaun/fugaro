@@ -73,6 +73,17 @@ func newBudgetPreviewCmd() *cobra.Command {
 			"with today's remaining daily caps. It is a ceiling, not a forecast: a run\n" +
 			"is bounded by the smaller of budget.per_run_usd and the recipe's most\n" +
 			"stages times the repository's agent.max_budget_usd.\n\n" +
+			"That figure is the model ceiling and nothing else: a run also bills for\n" +
+			"the machine it asked for, and no budget key bounds compute at all (D4).\n" +
+			"So for every workflow the checkout defines the preview also prints a\n" +
+			"compute ceiling -- the workflow's own resources over its own\n" +
+			"timeouts.total, at this installation's compute prices -- and says out\n" +
+			"loud that it is NOT CAPPED, because for a run whose expensive half is a\n" +
+			"render on a big machine the model ceiling is not the worst case. The\n" +
+			"basis is timeouts.total and not a render step's own timeout: a render\n" +
+			"that overruns still burns the run's clock to the deadline. Without a\n" +
+			"price table for the installation's region the line names what is\n" +
+			"missing and prints no dollar figure, rather than $0.00.\n\n" +
 			"When the repository's recorded runs of the last 30 days are at least 5,\n" +
 			"the preview also prints, clearly labelled typical:, what one run of the\n" +
 			"recipe usually costs: the mean recorded cost of each stage kind (on the\n" +
@@ -819,10 +830,16 @@ func printPreview(cmd *cobra.Command, d *previewDoc) {
 }
 
 // printComputeCeiling prints one workflow's compute ceiling: the figure, and
-// the two things that bound it. The words NOT CAPPED and the pointer to
-// SECURITY.md are the line's point and not decoration -- they are D4 said out
-// loud, because the model ceiling above it is the one an owner reads as "the
-// worst case", and for a run whose expensive half is a render it is not.
+// the two things that bound it. The words NOT CAPPED are the line's point and
+// not decoration -- they are D4 said out loud, because the model ceiling above
+// it is the one an owner reads as "the worst case", and for a run whose
+// expensive half is a render it is not.
+//
+// The line states the ruling but cites nothing for it. SECURITY.md does not
+// carry the paragraph yet -- artifact-runs.md Task 9 writes it -- and a
+// pointer to a document that does not make the claim sends a reader to a
+// page that contradicts them by silence. The pointer can come back with the
+// paragraph.
 func printComputeCeiling(w io.Writer, c previewCompute) {
 	mem := c.Memory
 	if c.GiB > 0 {
@@ -838,7 +855,7 @@ func printComputeCeiling(w io.Writer, c previewCompute) {
 	// per-run, repository-daily and project-daily, and compute is outside all
 	// three. Naming one of them here would also read, to a test that greps a
 	// command's whole output, as though that key were the one binding.
-	fmt.Fprintln(w, "  bounded by timeouts.total, not by any budget cap; compute is never capped (SECURITY.md)")
+	fmt.Fprintln(w, "  bounded by timeouts.total, not by any budget cap; compute is never capped")
 }
 
 // stageUSD is what the recipe's stage bound costs at the checkout's
