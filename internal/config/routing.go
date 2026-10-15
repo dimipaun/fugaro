@@ -206,13 +206,14 @@ func CheckRoutingShape(r *Routing, path string) []Problem {
 }
 
 // RoutingClaudeFor resolves one Claude model's route: the route its calls take
-// and the model ID that is sent on it. It is the one resolver of the switch,
-// and phase 1b's later tasks are its consumers: the pins renderer and the price
-// lookup (Task 1b.2: stagePins renders the route's ID, and serving_model /
-// priced_as are recorded with the same resolved ID) and validate (Task 1b.3,
-// which prints the resolution or says it cannot resolve it offline). None of
-// them ships in this slice, which is why nothing in this release calls it in
-// production — and why TestRoutingHasOneResolver fails if any other file starts
+// and the model ID that is sent on it. It is the one resolver of the switch, and
+// phase 1b's later tasks are its consumers: validate (Task 1b.3, which prints
+// the resolution or says it cannot resolve it offline), and the pins renderer
+// and the price lookup, which are served by the run applying this resolver once
+// to its own configuration (internal/runner/routing.go, Task 1b.2): every pin
+// the agent is given, every route the gateway registers and every row a call is
+// priced from then names the route's own ID, so serving_model and priced_as are
+// the ID this returned. TestRoutingHasOneResolver fails if any other file starts
 // comparing the canonical ID with a route's spelling: two derivations of the
 // route are two answers to where a call goes, and the channel's whole point is
 // that there is one.
@@ -269,12 +270,11 @@ type routeClaim struct {
 // The two spellings are the same model on two routes — the canonical
 // claude-sonnet-5-5 of the price table and a pin, and OpenRouter's
 // anthropic/claude-sonnet-5.5 — and the comparison is by the only difference
-// between them: case, and "." where the canonical ID has "-". The catalogue's
-// own map (phase 1b.2's canonical_id column, pricing.RouteIDFor) is the
-// authority on the pair; until it lands this comparison is what locates the
-// claim, and it can only ever *find* a claim the operator wrote: nothing here
-// invents an ID, and a claim it does not recognise resolves to nothing, which
-// is the fail-closed direction.
+// between them: case, and "." where the canonical ID has "-". It only *locates*
+// a claim: whether the claim it found is the route's own ID for this model is
+// the map's answer (pricing.RouteIDFor), and a claim the map does not pair with
+// the model resolves to nothing — the fold must not decide a route, which is
+// what phase 1b.2 removed.
 //
 // The whole list, not the first: two entries claiming the same model under
 // different spellings are an ambiguity the caller has to refuse (CheckRouting

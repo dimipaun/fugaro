@@ -134,6 +134,27 @@ func TestLoadRejectsMalformedFile(t *testing.T) {
 		{"a zdr tier with no zdr endpoints", func(t *testing.T) []byte {
 			return []byte(strings.Replace(string(marshal(t, valid(t))), `"zdr_endpoints":1`, `"zdr_endpoints":0`, 1))
 		}, "zdr_endpoints"},
+		// canonical_id is one model's direct spelling beside the route's key
+		// (plan Task 1b.2 step 1): a row that claims its own key, or a second
+		// row claiming a canonical ID the first already has, is a file whose
+		// price for one pin would depend on which row was read.
+		{"a canonical_id that is the row's own key", func(t *testing.T) []byte {
+			d := valid(t)
+			d["models"].(map[string]any)["vendor/model"].(map[string]any)["canonical_id"] = "vendor/model"
+			return marshal(t, d)
+		}, "its own key"},
+		{"two rows claiming one canonical ID", func(t *testing.T) []byte {
+			d := valid(t)
+			models := d["models"].(map[string]any)
+			row := models["vendor/model"].(map[string]any)
+			clone := map[string]any{"canonical_id": "claude-sonnet-5-5"}
+			for k, v := range row {
+				clone[k] = v
+			}
+			row["canonical_id"] = "claude-sonnet-5-5"
+			models["anthropic/claude-sonnet-5.5"] = clone
+			return marshal(t, d)
+		}, "both claim canonical_id"},
 		{"trailing data", func(t *testing.T) []byte {
 			return append(marshal(t, valid(t)), []byte("{}")...)
 		}, "trailing data"},

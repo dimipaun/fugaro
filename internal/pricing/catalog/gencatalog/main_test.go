@@ -724,6 +724,81 @@ func TestGeneratorRefusesAFileTheLoaderWouldRefuse(t *testing.T) {
 	}
 }
 
+// TestGeneratorRefusesDuplicateCanonicalID (plan Task 1b.2): a Claude row
+// carries the canonical ID of the same model beside its own key, and two rows
+// carrying one canonical ID are a hard error — the map would hold one model
+// twice, at two routes' prices, and which of them a pin was charged would
+// depend on which row was read.
+//
+// Hand mutation this fails on: keeping the first row and dropping the second,
+// or writing both out and leaving it to catalog.Load (which refuses it too,
+// but only when the file is loaded, after something else has been charged).
+func TestGeneratorRefusesDuplicateCanonicalID(t *testing.T) {
+	s := newSnapshots(t, "anthropic/claude-sonnet-5.5", "anthropic/claude-sonnet-5-5")
+	path := filepath.Join(s.dir, "allow.txt")
+	if err := os.WriteFile(path, []byte("anthropic/claude-sonnet-5.5 claude-sonnet-5-5\nanthropic/claude-sonnet-5-5 claude-sonnet-5-5\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(s.dir, "out.json")
+	_, err := generate(options{from: s.dir, allow: path, date: s.date, out: out})
+	if err == nil {
+		t.Fatal("two rows claiming one canonical ID were written out")
+	}
+	for _, want := range []string{"claude-sonnet-5-5", "anthropic/claude-sonnet-5.5", "anthropic/claude-sonnet-5-5"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error does not name %s: %v", want, err)
+		}
+	}
+	if _, serr := os.Stat(out); serr == nil {
+		t.Error("the file was written anyway")
+	}
+}
+
+// TestGeneratorRefusesAClaudeRowWithNoCanonicalID: a key under the anthropic/
+// prefix is the one shape a route may claim a Claude model by, and it must
+// carry the direct spelling of the same model. Nothing derives one from the
+// other — the case/separator fold that used to is what phase 1b removed — so a
+// row without its pair is refused rather than guessed at.
+func TestGeneratorRefusesAClaudeRowWithNoCanonicalID(t *testing.T) {
+	s := newSnapshots(t, "anthropic/claude-sonnet-5.5")
+	_, err := generate(options{from: s.dir, allow: s.allow("anthropic/claude-sonnet-5.5"), date: s.date, out: filepath.Join(s.dir, "o.json")})
+	if err == nil {
+		t.Fatal("a Claude row with no canonical ID was written out")
+	}
+	if !strings.Contains(err.Error(), "canonical ID") || !strings.Contains(err.Error(), "anthropic/claude-sonnet-5.5") {
+		t.Errorf("the error does not say which row needs a canonical ID: %v", err)
+	}
+}
+
+// TestGeneratorWritesTheCanonicalPair: the pair the allowlist writes reaches
+// the file and loads, and the key is the route's own ID while canonical_id is
+// the direct spelling a pin carries. The inverse mutation — writing the pair
+// swapped, or dropping canonical_id — is what the loader's rule above and the
+// canonical-to-route map's exhaustiveness test both read.
+func TestGeneratorWritesTheCanonicalPair(t *testing.T) {
+	const key, canonical = "anthropic/claude-sonnet-5.5", "claude-sonnet-5-5"
+	s := newSnapshots(t, key)
+	path := filepath.Join(s.dir, "allow.txt")
+	if err := os.WriteFile(path, []byte(key+" "+canonical+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := generate(options{from: s.dir, allow: path, date: s.date, out: filepath.Join(s.dir, "o.json")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := catalog.Parse(b)
+	if err != nil {
+		t.Fatalf("the generator wrote a file the loader refuses: %v", err)
+	}
+	e, ok := f.Models[key]
+	if !ok {
+		t.Fatalf("the file has no row for %s: %v", key, f.Models)
+	}
+	if e.CanonicalID != canonical {
+		t.Errorf("the row's canonical_id = %q, want %q", e.CanonicalID, canonical)
+	}
+}
+
 // TestGeneratorRefusesEmptyAllowlist pins that an empty list is an error,
 // not an empty file.
 func TestGeneratorRefusesEmptyAllowlist(t *testing.T) {

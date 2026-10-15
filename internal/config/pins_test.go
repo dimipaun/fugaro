@@ -216,6 +216,37 @@ func TestCheckAllowed(t *testing.T) {
 	}
 }
 
+// TestCheckAllowedAdmitsARoutedPin (plan Task 1b.2): a pin the routing switch
+// routed names the route's own ID, and the allow-list the owner wrote names the
+// model — one model, one entry. The list admits the routed call, and it admits
+// nothing else: a model it does not name is still refused whether or not it
+// carries a route's spelling.
+//
+// Hand mutation this fails on: comparing the pin literally, which refuses every
+// routed call under the allow-list an enforcing installation always has — the
+// switch would be unusable exactly where the policy is strictest.
+func TestCheckAllowedAdmitsARoutedPin(t *testing.T) {
+	const routed = "anthropic/claude-sonnet-5.5"
+	a := Agent{Models: ModelRoles{Coder: routed, Reviewer: "anthropic/claude-opus-5.5", Background: routed}}
+	// The list names the coder's model, not the reviewer's: the routed coder is
+	// admitted and the routed reviewer is refused.
+	e := policy.Merge(policy.Layer{AllowedModels: []string{"claude-sonnet-5-5"}})
+	if ps := CheckAllowed(a, e, nil); paths(ps) != "agent.models.reviewer" {
+		t.Fatalf("problems: %v", ps)
+	}
+	// A list that names neither model, and a route whose model the list does
+	// not name: the map admits the canonical ID of a route's row and nothing
+	// else, so neither the spelling nor the route is a way onto the list.
+	e = policy.Merge(policy.Layer{AllowedModels: []string{"claude-haiku-4-5"}})
+	if ps := CheckAllowed(a, e, nil); paths(ps) != "agent.models.coder,agent.models.reviewer,agent.models.background" {
+		t.Fatalf("problems: %v", ps)
+	}
+	a.Models.Coder = "deepseek/deepseek-v4-flash"
+	if ps := CheckAllowed(a, policy.Merge(policy.Layer{AllowedModels: []string{"claude-sonnet-5-5"}}), nil); paths(ps) != "agent.models.coder,agent.models.reviewer" {
+		t.Fatalf("a provider model the map does not carry: %v", ps)
+	}
+}
+
 func TestCheckAllowedQuotesModelNames(t *testing.T) {
 	a := pinnedAgent()
 	a.Models.Coder = "[x](http://evil)`@me\n"

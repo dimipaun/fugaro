@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -61,22 +62,37 @@ func TestRoutingRefusesAClaimThatIsNotTheMapsPair(t *testing.T) {
 }
 
 // TestRoutingResolutionHasOneSite is the real half of 1b.1's
-// TestRoutingHasOneResolver: the map (pricing.RouteIDFor, CanonicalFor,
-// UnmappedReason) may be read only from internal/pricing's own file and from
-// internal/config's resolver. Every consumer — the pins renderer, the price
-// lookup, the run's own config — asks RoutingClaudeFor, so a second site is a
-// second answer to where a Claude call goes and what it costs.
+// TestRoutingHasOneResolver: the route a Claude call takes is answered in one
+// place — internal/config's resolver, over internal/pricing's checked-in map —
+// and every consumer asks it. The pins renderer, the price lookup and the run's
+// own config do not read the map: the run rewrites its pins through the
+// resolver once (internal/runner/routing.go), so a second site is a second
+// answer to where a call goes and what it costs.
+//
+// The map's *inverse* is the one other reading, and it is narrower: an
+// allow-list admits a pin the switch routed by the canonical ID of the same
+// model (config.CheckAllowed, through the `allowed` helper). That question can
+// only name a model the list already names — it cannot produce an ID to send —
+// so it is allowed from pins.go alone, while the question "which route?" stays
+// where it is.
 //
 // Hand mutation this fails on: reading the map from a second package (the
-// runner's own stagePins, say) because it already knows the pins.
+// runner's own stagePins, say) because it already knows the pins; or answering
+// "which route" from pins.go as well.
 func TestRoutingResolutionHasOneSite(t *testing.T) {
-	callers := regexp.MustCompile(`pricing\.(RouteIDFor|CanonicalFor|UnmappedReason)\(`)
-	// Relative to this package's directory (internal/config): the map's own
-	// file, and the resolver's.
-	allowed := map[string]bool{
-		filepath.Join("..", "pricing", "canonical.go"): true,
-		filepath.Join("..", "config", "routing.go"):    true,
+	mapFile := filepath.Join("..", "pricing", "canonical.go")
+	resolver := filepath.Join("..", "config", "routing.go")
+	allowList := filepath.Join("..", "config", "pins.go")
+	// Which files may call each function, relative to this package's directory
+	// (internal/config). The route-answering pair is read by the map's own file
+	// and the resolver; CanonicalFor, which cannot answer one, is also read
+	// where the allow-list is judged.
+	allowed := map[string]map[string]bool{
+		"RouteIDFor":     {mapFile: true, resolver: true},
+		"UnmappedReason": {mapFile: true, resolver: true},
+		"CanonicalFor":   {mapFile: true, resolver: true, allowList: true},
 	}
+	callers := regexp.MustCompile(`pricing\.(RouteIDFor|CanonicalFor|UnmappedReason)\(`)
 	var found []string
 	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -89,19 +105,18 @@ func TestRoutingResolutionHasOneSite(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if !callers.Match(src) {
-			return nil
+		clean := filepath.Clean(path)
+		for _, m := range callers.FindAllSubmatch(src, -1) {
+			if !allowed[string(m[1])][clean] {
+				found = append(found, fmt.Sprintf("%s calls pricing.%s", clean, m[1]))
+			}
 		}
-		if allowed[filepath.Clean(path)] {
-			return nil
-		}
-		found = append(found, path)
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("walking the tree: %v", err)
 	}
 	if len(found) != 0 {
-		t.Errorf("the canonical-to-route map is read in %v, want only internal/pricing/canonical.go (the data) and internal/config/routing.go (the resolver): a second site is a second answer to where a Claude call goes", found)
+		t.Errorf("the canonical-to-route map is read where it should not be: %v — want internal/pricing/canonical.go (the data), internal/config/routing.go (the resolver), and the allow-list's inverse question in internal/config/pins.go", found)
 	}
 }

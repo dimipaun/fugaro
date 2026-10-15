@@ -80,9 +80,12 @@ func RouteIDFor(canonical, route string) (string, bool) {
 }
 
 // CanonicalFor is RouteIDFor's inverse: the canonical Claude ID a route's own
-// ID belongs to, for the surfaces that hold the route's ID alone (a price row
-// keyed anthropic/claude-sonnet-5.5, a log line's serving_model) and must name
-// the model a person pinned.
+// ID belongs to, for a surface that holds the route's ID alone and must name the
+// model a person pinned. It answers a name, never a route — no caller can send
+// or charge what it returns — so it is the one reading of this map that a
+// consumer other than the resolver may make, and it makes exactly one: an
+// allow-list admits a pin the switch routed by the canonical ID of the same
+// model (config.CheckAllowed).
 func CanonicalFor(route string) (string, bool) {
 	if route == "" {
 		return "", false

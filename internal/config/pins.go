@@ -159,11 +159,27 @@ func CheckAllowed(a Agent, e policy.Effective, ceiling []string) []Problem {
 		switch {
 		case r.model == "":
 			ps = append(ps, Problem{Path: r.path, Message: "names no model, but the run has an allow-list (" + where + "): set it, or agent.model, to a model on the list"})
-		case !e.Allows(r.model):
+		case !allowed(e, r.model):
 			ps = append(ps, Problem{Path: r.path, Message: CodeSpan(r.model) + " is not an allowed model (" + where + ")"})
 		}
 	}
 	return ps
+}
+
+// allowed reports whether an allow-list admits model: by its own name, or — for
+// a pin the routing switch routed — by the canonical ID of the same model. A
+// routed pin names the route's own ID (anthropic/claude-sonnet-5.5) and the
+// list the owner wrote names the model (claude-sonnet-5-5): one model, one
+// entry, and the list is about which models may run rather than which route
+// serves them (plan Task 1b.2). The second answer is the checked-in map's
+// (pricing.CanonicalFor), so it can only ever admit the model the list already
+// names — and it admits nothing at all for the models that map does not carry.
+func allowed(e policy.Effective, model string) bool {
+	if e.Allows(model) {
+		return true
+	}
+	canonical, ok := pricing.CanonicalFor(model)
+	return ok && e.Allows(canonical)
 }
 
 // CodeSpan quotes s as a markdown code span with the characters that could
