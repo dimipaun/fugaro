@@ -283,7 +283,7 @@ func (e *cloudEnv) checkExecution(name, slug string, spec *task.Spec) error {
 		return fmt.Errorf("its task.json names workflow %q, which is not a workflow name, so execution %s can't be tied to the run's job", oneLineCLI(spec.Workflow), name)
 	}
 	err := gcp.CheckRunExecution(name, e.lc.Region, slug, variant)
-	var wr *gcp.WrongRegionError
+	var wr *backend.WrongRegionError
 	if errors.As(err, &wr) {
 		return fmt.Errorf("the run's execution is in region %s, not %s; pass --region %s to follow it", wr.Region, wr.Want, wr.Region)
 	}

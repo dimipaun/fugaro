@@ -13,7 +13,6 @@ import (
 	"golang.org/x/oauth2/google"
 
 	"github.com/dimipaun/fugaro/internal/agent"
-	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -280,12 +279,16 @@ func (r *run) closeGateway() {
 }
 
 // routingKnob reports whether the live test's knob skips the
-// routing refusal. On Cloud Run, or against a test upstream, it never does.
+// routing refusal. In the cloud, or against a test upstream, it never
+// does: Deps.Local is the CLI's answer and its zero value is the cloud
+// (design compute-backend.md §2.5), so a platform no backend claims
+// refuses the knob too. The warning still says Cloud Run, the only cloud
+// platform that can reach it today.
 func (r *run) routingKnob() bool {
 	if envLookup(r.d.Env, allowRoutingSettingsEnv) != "1" {
 		return false
 	}
-	if backend.OnCloudRun(func(k string) string { return envLookup(r.d.Env, k) }) {
+	if !r.d.Local {
 		if !r.warnedKnob {
 			r.warnedKnob = true
 			r.d.Log.Warn(allowRoutingSettingsEnv + " is ignored on Cloud Run")

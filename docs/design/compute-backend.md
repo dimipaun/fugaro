@@ -817,7 +817,8 @@ which is fragile for a VM that outlives its job.
 `CheckRunExecution` all assume Cloud Run's
 `projects/<p>/locations/<r>/jobs/<j>/executions/<e>` shape, and `OnCloudRun`
 is literally "`CLOUD_RUN_EXECUTION` is set"
-(`internal/backend/backend.go:86`). A Batch job's resource name is
+(`internal/backend/backend.go:86` as this was written; Task 1 moved it to
+`Codec.On`, `internal/backend/codec.go`). A Batch job's resource name is
 `projects/<p>/locations/<r>/jobs/<j>` — six fields, not eight — so the two
 cannot share a parser, and on a Batch VM `CLOUD_RUN_EXECUTION` is absent, so
 `OnCloudRun` is false and the runner would treat itself as a local run.
@@ -842,9 +843,10 @@ closed.** Move the name codec into each backend — a small interface
 slug, workflow)`) carried by the `Backend`, used by every caller instead of
 the package-level functions — and replace `OnCloudRun` with a question each
 backend answers from a **signal the platform injects, never one Fugaro sets**.
-`backend.go`:82-85 states the rule this follows, in `OnCloudRun`'s own doc: it
-is "the one signal for 'in the cloud'; callers use it, not the job name or a
-Fugaro variable". The Batch backend's signal is therefore
+`backend.go`:82-85 (as this was written; Task 1 moved the doc to
+`Codec.On`/`Codec.FromEnv`, `internal/backend/codec.go`) states the rule this
+follows: it is "the one signal for 'in the cloud'; callers use it, not the
+job name or a Fugaro variable". The Batch backend's signal is therefore
 **`BATCH_TASK_INDEX`/`BATCH_TASK_COUNT`**, which Batch injects into every task
 (Batch REST reference, `TaskGroup`, checked 2026-10-15), with a
 metadata-server probe (`http://metadata.google.internal/…` answering with

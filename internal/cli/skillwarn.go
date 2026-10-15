@@ -40,7 +40,7 @@ func warnStaleSkills(cmd *cobra.Command) {
 	if v := os.Getenv(noSkillWarningEnv); v != "" && v != "0" && v != "false" {
 		return
 	}
-	if backend.OnCloudRun(os.Getenv) || !skillWarned.CompareAndSwap(false, true) {
+	if backend.OnPlatform(os.Getenv) || !skillWarned.CompareAndSwap(false, true) {
 		return
 	}
 	wd, err := os.Getwd()
