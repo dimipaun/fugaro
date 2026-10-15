@@ -168,7 +168,16 @@ type run struct {
 	// fugaro.yaml during the run changes neither.
 	spend        Spend
 	policy       policy.Effective
-	defFile      defaultBranchData
+	// ceiling is the layer the merge started from: the job environment's
+	// budget, or — when the project has published a policy — the policy node
+	// (resolvePolicy). Error messages name the right one.
+	ceiling policy.Layer
+	// projPolicy and ident memoize the run's read of the project's policy and
+	// the Firebase identity it is read with, so the node is read once, decoded
+	// once and its token taken once (projectpolicy.go).
+	projPolicy policyRead
+	ident      budgetIdentity
+	defFile    defaultBranchData
 	instructions string
 	reviewFile   string
 	stageN       map[string]int

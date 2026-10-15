@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -427,12 +428,20 @@ func (r *run) checkProviderModels() error {
 // repository's fugaro.yaml escalated the mode, either place will do.
 func (r *run) noCapDetail() string {
 	const base = "budget.mode is enforce but no per-run cap is set: set budget.per_run_usd in the project config and run fugaro init --repo"
-	if r.policy.Sources[policy.KeyMode] == policy.SourceCeiling {
+	switch r.policy.Sources[policy.KeyMode] {
+	case policy.SourceCeiling:
 		return base
+	case policy.SourcePolicy:
+		// The ceiling is the project's published policy: init --repo copies
+		// the local config's value into the jobs, and would not change what
+		// this run read.
+		return "budget.mode is enforce but no per-run cap is set: set budget.per_run_usd in the project's policy (" + projectpolicy.PathShared() + "), which is what the run enforces"
 	}
 	return "budget.mode is enforce (set in fugaro.yaml) but no per-run cap is set: set budget.per_run_usd in fugaro.yaml on the default branch, or in the project config and run fugaro init --repo"
 }
 
-// ceilingAllowed is the owner's allow-list from the job environment, nil when
-// none was set: error messages name it next to the merged one.
-func (r *run) ceilingAllowed() []string { return r.d.Spend.AllowedModels }
+// ceilingAllowed is the owner's allow-list from the run's ceiling, nil when
+// none was set: error messages name it next to the merged one. The ceiling is
+// the job environment's copy of the config, or the project's published policy
+// when it has one (resolvePolicy).
+func (r *run) ceilingAllowed() []string { return r.ceiling.AllowedModels }

@@ -164,56 +164,33 @@ func (r *run) startBudgetBackend(ctx context.Context) error {
 	if !r.spend.On() {
 		return nil
 	}
-	if r.d.BackendErr != nil {
-		return fmt.Errorf("the budget backend in the job's environment: %w", r.d.BackendErr)
+	// The run's identity, taken out of the runs bucket exactly once and shared
+	// with the project policy's read (projectpolicy.go): a second take would
+	// find nothing, because TakeObject deletes the object as it reads it
+	// (finding 2). Its refusals are this function's own, shipped ones: a job
+	// whose backend is damaged, or whose budget is on with no token in the
+	// bucket, stops here (B1).
+	if _, err := r.budgetClient(ctx); err != nil {
+		return err
 	}
-	if !r.backendOn() {
+	ident := &r.ident
+	if ident.db == nil {
 		return r.refuseStrayToken(ctx)
 	}
-	b := r.d.Backend
-	if b.APIKey == "" {
-		return fmt.Errorf("the budget backend is configured (%s) but %s is not set", RTDBURLEnv, FirebaseAPIKeyEnv)
-	}
-	if r.d.Bucket == nil {
-		return errors.New("the budget token is delivered through the runs bucket, and this run has none")
-	}
-	slug, runID := r.d.Store.Slug(), r.d.Store.RunID()
-	if budget.Key(slug) != slug || budget.Key(runID) != runID || slug == "" || runID == "" {
-		return fmt.Errorf("the repository slug %q or run id %q cannot be used as keys of the budget database", slug, runID)
-	}
-	custom, err := token.TakeObject(ctx, r.d.Bucket, slug, runID)
-	switch {
-	case errors.Is(err, token.ErrNoToken):
-		return errors.New("the run's budget token is not in the runs bucket (already taken, or the run was not launched with one): launch the run again")
-	case err != nil:
-		return fmt.Errorf("taking the run's budget token: %s", r.redact(err.Error()))
-	}
-	// Registered before anything can print it.
-	r.addSecret(custom)
 
 	mode := r.spend.Mode
-	cfg := budget.Config{
-		RTDBURL: b.RTDBURL, APIKey: b.APIKey, HTTP: b.HTTP,
-		Slug: slug, Run: runID, Grace: b.Grace,
-		PolicyCap: r.spend.Cap, CommittedDaily: r.committedDaily(), LocalEnforce: mode == policyEnforce,
-		Now: r.d.Now, Register: r.addSecret, Log: slog.New(redactHandler{h: r.d.Log.Handler(), redact: r.redact}),
-		OnHalt: r.onBudgetHalt,
-	}
+	// The configuration the policy read already built and Tuned; only the
+	// fields that depend on the merged policy are set here.
+	cfg := ident.cfg
+	cfg.PolicyCap, cfg.CommittedDaily, cfg.LocalEnforce = r.spend.Cap, r.committedDaily(), mode == policyEnforce
 	if r.rec.Deadline != nil {
 		cfg.Deadline = *r.rec.Deadline
 	}
-	if b.Tune != nil {
-		b.Tune(&cfg)
-	}
-	sess, err := budget.Open(ctx, cfg, custom)
-	switch {
-	case errors.Is(err, token.ErrTokenExpired):
-		return r.bootstrapHalt(runstore.HaltBudgetTokenExpired, "run",
-			"the run's budget token was minted more than an hour ago, usually because the run queued for that long: launch it again")
-	case errors.Is(err, budget.ErrGraceExpired):
-		return r.bootstrapHalt(runstore.HaltBudgetUnavailable, "run", "the budget backend could not be reached before the run began: "+r.redact(err.Error()))
-	case err != nil:
-		return fmt.Errorf("the budget backend refused the run's identity: %s", r.redact(err.Error()))
+	sess, err := budget.Open(ctx, cfg, ident.custom)
+	if err != nil {
+		// The policy read classified the same failures; this is the one place
+		// the two classifications are written, so they cannot drift (R2-3).
+		return r.budgetIdentityError(err)
 	}
 	r.mu.Lock()
 	r.sess = sess

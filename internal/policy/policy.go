@@ -32,6 +32,12 @@ const (
 	SourceCeiling       = "ceiling"
 	SourceDefaultBranch = "default-branch"
 	SourceBranch        = "branch"
+	// SourcePolicy is the ceiling of a run whose project has published a
+	// policy: the first layer is then the RTDB node (config/policy/shared),
+	// not the copy of the owner's config the job was deployed with, and a
+	// refusal that tells the owner where to raise a limit must not name the
+	// other one (plan task 1.3 step 6).
+	SourcePolicy = "policy"
 )
 
 // Budget modes, loosest to strictest.

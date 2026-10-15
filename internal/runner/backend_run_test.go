@@ -37,8 +37,13 @@ func TestBootstrapExchangesAndDeletesToken(t *testing.T) {
 	if !b.tokenObjectGone() {
 		t.Fatal("the token object is still in the bucket")
 	}
-	if b.itk.Exchanges() != 1 {
-		t.Fatalf("exchanges = %d, want 1", b.itk.Exchanges())
+	// Two: the run's own read of the project's policy (projectpolicy.go)
+	// exchanges the custom token the launcher left it, and budget.Open
+	// exchanges the same token again for the session. Both answers are the
+	// same identity — the same claims, the same hour — and the object is
+	// taken from the bucket once (TestTokenIsTakenOnce).
+	if b.itk.Exchanges() != 2 {
+		t.Fatalf("exchanges = %d, want 2", b.itk.Exchanges())
 	}
 	creds := b.db.Credentials()
 	if len(creds) == 0 {
@@ -468,6 +473,16 @@ func wrapTune(first, second func(*budget.Config)) func(*budget.Config) {
 
 func TestOffNeverTouchesBackend(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "off", "")
+	// The bucket holds no token, which is what the launcher leaves for a
+	// repository with no published policy and the mode off (internal/cli's
+	// mint decision: a token is minted when the mode is on, or when a policy
+	// exists). A mode-off job that *does* carry a token is a project that has
+	// published a policy, and its run reads that policy
+	// (TestRunnerReadsPolicyWhenTheNodeExists); the launcher's answer for the
+	// repository this test describes is this empty bucket.
+	if err := token.DeleteObject(context.Background(), b.bucket, bkSlug, runID); err != nil {
+		t.Fatal(err)
+	}
 	b.db.Refuse(503, "UNAVAILABLE", "", "down")
 	rec, err := b.run(t, implement("feature"), review("ship", 0))
 	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Budget != nil {
@@ -476,8 +491,11 @@ func TestOffNeverTouchesBackend(t *testing.T) {
 	if n := len(b.db.Credentials()); n != 0 {
 		t.Fatalf("a run with its budget off made %d database requests", n)
 	}
-	if b.itk.Exchanges() != 0 || b.tokenObjectGone() {
-		t.Fatal("a run with its budget off took its budget token")
+	if b.itk.Exchanges() != 0 {
+		t.Fatal("a run with its budget off exchanged a budget token")
+	}
+	if !b.tokenObjectGone() {
+		t.Fatal("a run with its budget off left a budget token behind")
 	}
 	if len(b.agent.calls) != 2 {
 		t.Fatalf("%d stages ran", len(b.agent.calls))
