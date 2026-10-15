@@ -970,13 +970,16 @@ func (s *imagesStage) reviewLine(ctx context.Context) string {
 func (s *imagesStage) sourceLine(ctx context.Context) string {
 	items, _, err := s.items(ctx)
 	expect, _ := parseExpectDigests(s.e.r.o.expectDigests)
-	var unpinned, verified []string
+	var copied, unpinned, verified []string
 	for _, it := range items {
 		switch {
 		case it.kind != "":
 			verified = append(verified, it.kind)
-		case expect[it.key()] == "":
-			unpinned = append(unpinned, it.key())
+		default:
+			copied = append(copied, it.key())
+			if expect[it.key()] == "" {
+				unpinned = append(unpinned, it.key())
+			}
 		}
 	}
 	src := pluginwire.Printable(s.allow()[0])
@@ -984,10 +987,17 @@ func (s *imagesStage) sourceLine(ctx context.Context) string {
 	if len(verified) > 0 {
 		parts = append(parts, fmt.Sprintf("the base image(s) %s are signature-verified at %s's -pinned tag and pinned by digest through the remote repository", strings.Join(verified, ", "), src))
 	}
-	if err == nil && len(unpinned) == 0 {
-		parts = append(parts, "every image copied is pinned with --expect-digest")
-	} else {
-		parts = append(parts, "the release tag as it resolves now is the trust anchor for what is copied; NOT pinned with --expect-digest: "+pluginwire.Printable(unpinnedText(unpinned)))
+	// The copy clause belongs to a run that copies, exactly as applyDetail's
+	// does: a base-only run (fugaro init --base base, no --firebase) pins a
+	// base and copies nothing, so "every image copied is pinned with
+	// --expect-digest" would claim a copy that did not happen — and a copy
+	// is the only thing --expect-digest has anything to do with.
+	if len(copied) > 0 {
+		if err == nil && len(unpinned) == 0 {
+			parts = append(parts, "every image copied is pinned with --expect-digest")
+		} else {
+			parts = append(parts, "the release tag as it resolves now is the trust anchor for what is copied; NOT pinned with --expect-digest: "+pluginwire.Printable(unpinnedText(unpinned)))
+		}
 	}
 	return "image source: " + src + "; " + strings.Join(parts, "; ")
 }

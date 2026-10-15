@@ -6,7 +6,7 @@ Status: design approved by the user (2026-10-07); details settled from the code,
 
 ## Purpose
 
-Moving a repository onto a new release's base image takes four commands today, in an order that is easy to get wrong: `fugaro init --base <kind>` from outside the checkout, `fugaro init --repo` in the checkout (only so the daily image check job follows the new base), `fugaro image build --repo <owner/name> --workflow <name>` for each workflow, then `fugaro init --anchor`. A build started before the copy bakes in the old `fugaro` binary. A check job left on the old base refuses `fugaro.yaml` once `gcp_project:` is merged. The `init --anchor` refusal, the recipe image check, `docs/release.md` and the `/new-release` operator list all repeat this sequence. `fugaro image refresh` replaces it with one command that resumes where it stopped.
+Moving a repository onto a new release's base image takes four commands today, in an order that is easy to get wrong: `fugaro init --base <kind>` from outside the checkout, `fugaro init --repo` in the checkout (only so the daily image check job follows the new base), `fugaro image build --repo <owner/name> --workflow <name>` for each workflow, then `fugaro init --anchor`. A build started before the base image is pinned bakes in the old `fugaro` binary. A check job left on the old base refuses `fugaro.yaml` once `gcp_project:` is merged. The `init --anchor` refusal, the recipe image check, `docs/release.md` and the `/new-release` operator list all repeat this sequence. `fugaro image refresh` replaces it with one command that resumes where it stopped.
 
 ## Behaviour
 
@@ -16,8 +16,8 @@ fugaro image refresh [--repo <owner/name>] [--workflow <name>]... [--project <na
 
 You run it in a checkout of one repository, in your own terminal. Every confirmation that exists today stays, and no step runs Terraform. It runs these steps in order:
 
-1. **Preflight** (read only). The command needs a real terminal unless `--yes` is given (it still refuses inside a coding agent's session), refuses inside a coding agent's session, and refuses a development build. It then checks the checkout's `fugaro.yaml` and origin (with `--repo`, the origin must be that repository), the local config, and that the project lists the repository. It works out which workflows are selected and their base kinds. Any `base_images.<kind>` that is not a release image `fugaro init` copied (a `dev-<sha>` or hand-pushed image) **stops the command**. The error names the entry and the one fix: remove it from the local config, keeping a backup, then rerun. It never offers to replace the image. It reads each workflow's build record and prints the whole plan before anything changes: the kinds and the base each one moves to, the check-job update, and the workflows to rebuild (N of M) with the reason for each.
-2. **Base.** This is `init --base <kind>`'s image stage alone, run once per kind of the selected workflows (and only those kinds). It copies this release's base image into `fugaro-base` if the registry lacks it, showing the digest and asking for its own confirmation. It records `base_images.<kind>` and republishes the shared config, as `init --base` does. If the image is already there, it reports "No changes".
+1. **Preflight** (read only). The command needs a real terminal unless `--yes` is given (it still refuses inside a coding agent's session), refuses inside a coding agent's session, and refuses a development build. It then checks the checkout's `fugaro.yaml` and origin (with `--repo`, the origin must be that repository), the local config, and that the project lists the repository. It works out which workflows are selected and their base kinds. Any `base_images.<kind>` that is neither this release's pin through the remote repository nor a release image an earlier `fugaro init` copied (a `dev-<sha>` or hand-pushed image) **stops the command**. The error names the entry and the one fix: remove it from the local config, keeping a backup, then rerun. It never offers to replace the image. It reads each workflow's build record and prints the whole plan before anything changes: the kinds and the base each one moves to, the check-job update, and the workflows to rebuild (N of M) with the reason for each.
+2. **Base.** This is `init --base <kind>`'s image stage alone, run once per kind of the selected workflows (and only those kinds). It resolves this release's base image at the release's `-pinned` tag, verifies its cosign signature and reads the digest back through the installation's remote repository, showing the digest and asking for its own confirmation, then records that path at that digest in `base_images.<kind>`; nothing is copied and nothing is pushed. It republishes the shared config, as `init --base` does. If the local config already records this release's pin (or a newer one), it reports "No changes".
 3. **The daily image check job.** No Terraform runs here. This step reads the repository's check job (`fugarochk-…`) through the Cloud Run Admin API and plans two changes from the updated local config:
    - the container image;
    - `base_images` inside the `FUGARO_CHECK_SPEC` env var. This spec is what a rebuild started by the check builds FROM. A real `init --repo` plan for a base change touches exactly these two attributes.
@@ -25,7 +25,7 @@ You run it in a checkout of one repository, in your own terminal. Every confirma
    The step shows the old and new image and spec, asks for its own confirmation (the project's name, as for a Terraform apply), and writes both in one update. The update uses the job as it was read, so every other field and env entry is unchanged. The job's etag goes with the update, so a change made to the job since it was read is refused. The new spec is the same Go struct, marshalled by the same code that `init --repo` uses to render the variable. A later `init --repo` from this local config therefore plans no change for the job. If the job is already current, the step reports "No changes". If the repository has no check job, the step says so and moves on.
 4. **Builds.** For each selected workflow, the step reads the build record's `base_ref`:
    - **skip** if the record's `base_ref` is the base the next build would start from;
-   - **skip** if it is a newer release copy of the same kind (no downgrade);
+   - **skip** if it is a newer release image of the same kind (no downgrade);
    - otherwise **rebuild** with today's Cloud Build. Each rebuild asks for the project's name and waits for the build to finish.
 5. **End.** If the checkout's `fugaro.yaml` lacks `gcp_project:` (default runs bucket, a listed repository), the command prints `fugaro init --anchor` as the next step. It never writes that line itself.
 
@@ -35,9 +35,9 @@ You run it in a checkout of one repository, in your own terminal. Every confirma
 
 ## Safety
 
-- It applies cloud changes (a registry copy, a Cloud Run job update, billable builds), so it refuses inside a coding agent's session with `initflow.AgentRefusal`, `--yes` included. This check comes before any credential, file or network use. Without `--yes` the command needs a real terminal: each step, each billable build included, is a typed confirmation. With `--yes` (2026-10-08 owner decision, see above) every step is confirmed without a terminal instead, with no cap on the builds; `--json` and `--non-interactive` are still not offered.
+- It applies cloud changes (a base pin through the remote repository, a Cloud Run job update, billable builds), so it refuses inside a coding agent's session with `initflow.AgentRefusal`, `--yes` included. This check comes before any credential, file or network use. Without `--yes` the command needs a real terminal: each step, each billable build included, is a typed confirmation. With `--yes` (2026-10-08 owner decision, see above) every step is confirmed without a terminal instead, with no cap on the builds; `--json` and `--non-interactive` are still not offered.
 - It never replaces a custom base image, never writes `fugaro.yaml`, never onboards a repository and never runs Terraform.
-- A hand-pushed image in the project's own registry under a release-looking tag (for example `fugaro-go:9.9.9`, or a leading-zero tag such as `0.06.0`) counts as a release copy. This is inherited from `init`'s rule; writing there already needs registry write access, so it is not a new exposure.
+- A hand-pushed image in the project's own registry under a release-looking tag (for example `fugaro-go:9.9.9`, or a leading-zero tag such as `0.06.0`) counts as a release image of that kind. This is inherited from `init`'s rule; writing there already needs registry write access, so it is not a new exposure.
 - The check-job update writes only the image and the spec's base images, from the local config the operator just updated, with the operator's own credentials. An operator who applies `init --repo` already holds the `run.jobs.update` and `actAs` permissions on the build account that this needs.
 - Tests use fakes only: `gcpfake.Run` (with jobs patch), fake registries, `file://` and `mem://` buckets, and a fake Cloud Build. No test applies anything live, and nothing touches EdgeWeb or EdgeServer. The command handles no secrets.
 
@@ -77,7 +77,7 @@ The plan lists them as D1 to D14:
 - A real terminal is required, unless `--yes` is given (2026-10-08 owner decision, see the update at the top of this document: `--yes` is the one exception, and it still refuses in a coding agent's session).
 - A development build is refused.
 - What counts as a custom base.
-- Only the selected kinds are copied.
+- Only the selected kinds are pinned.
 - The base step is the images stage alone.
 - The check job is updated directly, with no lifecycle change.
 - The "current" rule for builds.

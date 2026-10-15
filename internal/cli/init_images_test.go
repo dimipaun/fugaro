@@ -1016,6 +1016,24 @@ func TestImagesPreviewDoesNotListBaseAsUnpinned(t *testing.T) {
 	if !strings.Contains(line, "NOT pinned with --expect-digest: history") {
 		t.Errorf("the preview does not list the history copy as unpinned: %q", line)
 	}
+
+	// A base-only run copies nothing, so the preview must not claim a copy
+	// either — the same rule applyDetail states for the outcome line
+	// (TestImagesOutcomeSaysOnlyWhatItDid). Without this case the clause was
+	// reached with an empty unpinned list and printed "every image copied is
+	// pinned with --expect-digest" over a run that copies nothing.
+	//
+	// Mutation (run, restore): drop the `len(copied) > 0` guard in
+	// sourceLine and this fails, with "--expect-digest" in a base-only line.
+	e = rigEngine(t, r, &initOptions{baseKinds: []string{"base"}})
+	e.spec.History = nil
+	line = newImagesStage(e).sourceLine(context.Background())
+	if !strings.Contains(line, "signature-verified") || !strings.Contains(line, "base") {
+		t.Fatalf("the base-only preview does not say the base image is signature-verified: %q", line)
+	}
+	if strings.Contains(line, "copied") || strings.Contains(line, "--expect-digest") {
+		t.Errorf("a base-only run's preview claims a copy: %q", line)
+	}
 }
 
 // No user-facing text offers a command that no longer works for a base
