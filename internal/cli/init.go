@@ -51,7 +51,7 @@ type initOptions struct {
 	baseKinds                           []string // --base: base kinds to mirror now
 	imageSource                         string   // --image-source: a fork's own release registry/owner
 	expectDigests                       []string // --expect-digest KIND=sha256:...: the digest a release tag must resolve to
-	replaceImages                       []string // --replace-image KIND: kinds (history, or a base kind) whose tag in your registry may be replaced, each still behind a typed confirmation
+	replaceImages                       []string // --replace-image KIND: kinds (history) whose tag in your registry may be replaced, each still behind a typed confirmation; a base kind is refused there, since nothing is copied for it any more
 	launchers, operators                []string
 	budget                              int64
 	budgetCurrency, billingAccount      string
@@ -168,13 +168,14 @@ FROM (the record's base_ref, whose fugaro binary the image holds) is such a
 release too: a missing record, a record that does not say its base, an older
 or development CLI, or an older, development or hand-pushed base fails. It
 also checks that each base image the local config sets for those workflows is
-a release image init copied, at or after that release, since the next build
-starts from it (a development or hand-pushed one is never replaced by fugaro
-init --base or fugaro image refresh: remove its base_images entry first). The
-fix it names is: that removal when needed, fugaro image refresh --repo
-<owner/name> --workflow <name> in the checkout (it copies the base image,
-points the daily image check job at it and rebuilds the image), then fugaro
-init --anchor. The image checks trust the build records (written by
+this release's pin through the remote repository, or a release image an
+earlier fugaro copied, at or after that release, since the next build starts
+from it (a development or hand-pushed one is never replaced by fugaro init
+--base or fugaro image refresh: remove its base_images entry first). The fix
+it names is: that removal when needed, fugaro image refresh --repo
+<owner/name> --workflow <name> in the checkout (it verifies the release's
+base image and pins it by digest, points the daily image check job at it and
+rebuilds the image), then fugaro init --anchor. The image checks trust the build records (written by
 the builds, unsigned: the same trust as the shared config), and a hand-pushed
 image under a release-looking tag passes them. Then the diff; --yes writes, a terminal asks, and otherwise it
 prints the line and writes nothing. Exit codes: 0 written or already present
@@ -228,7 +229,8 @@ named fugaro-runs-<gcp project> that belongs to that project; read-only check:
 a custom runs bucket never qualifies). There, at a terminal, the ordinary steps (the Terraform applies of the
 installation, the Firebase root, the history job and the repository, the state
 bucket, the Cloud Resource Manager API, the Viewer-read removal, image copies
-that only add tags, the Firestore marks and rules, the local config) share one
+and base-image pins that only add tags, the Firestore marks and rules, the
+local config) share one
 review screen and ONE typed project name, asked when the first of them has
 something to change (so a rerun with nothing to do asks nothing). Each step
 still prints its own exact plan. It never covers creating a project, linking
@@ -343,9 +345,9 @@ secrets stage is behind the same gate.`,
 	f.StringVar(&o.stateBucket, "state-bucket", "", "the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>)")
 	f.StringArrayVar(&o.baseImages, "base-image", nil, "a base image the image checks run and builds start from, recorded in the local config under its base kind (repeatable; KIND=IMAGE, or just IMAGE when its repository is named fugaro-<kind>; the kinds you don't name keep theirs)")
 	f.StringSliceVar(&o.baseKinds, "base", nil, "copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated)")
-	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release images are copied from (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme)")
-	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "pin the digest of a release image copied by init, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. Without it init trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag")
-	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history or base; repeatable): let init replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). It names the intent only: replacing is confirmed by typing the project's name at a real terminal, never by --yes, --non-interactive or --json")
+	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release images come from: a base kind is resolved and signature-verified there and pinned through the installation's remote repository, a history image is copied from it (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme)")
+	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it init trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag")
+	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history; repeatable): let init replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is confirmed by typing the project's name at a real terminal, never by --yes, --non-interactive or --json")
 	f.StringArrayVar(&o.launchers, "launcher", nil, "an IAM member who launches and watches runs (repeatable; default: the local config's, and for a new config you, the authenticated user)")
 	f.StringArrayVar(&o.operators, "operator", nil, "an IAM member who onboards repositories (repeatable; default: the local config's, and for a new config you, the authenticated user)")
 	f.Int64Var(&o.budget, "budget", 0, "a monthly budget on the project, in whole units of --budget-currency")

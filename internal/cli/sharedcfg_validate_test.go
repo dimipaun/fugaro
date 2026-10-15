@@ -7,6 +7,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/mirror"
 )
 
 // validShared is a published shared config of the belong installation, as
@@ -199,6 +200,119 @@ func TestParseSharedRefusals(t *testing.T) {
 				t.Errorf("the refusal does not say to run fugaro init again: %v", err)
 			}
 			if strings.ContainsAny(err.Error(), "\n\x1b\a") {
+				t.Errorf("the refusal is not one clean line: %q", err.Error())
+			}
+		})
+	}
+}
+
+// A published image_source other than the default is accepted only on a
+// machine whose own local config records the same one (design §10.7,
+// DECIDED as option (i)): the pin's shape is checked against the owner that
+// record names, so a publisher able to write this document must not be able
+// to choose the owner its readers trust.
+func TestSharedConfigRefusesAForeignPublishedOwner(t *testing.T) {
+	const fork = "ghcr.io/acme"
+	pin := "us-east5-docker.pkg.dev/fugaro-belong/fugaro-ghcr/acme/fugaro-base:0.7.5@sha256:" + strings.Repeat("a", 64)
+	published := strings.Replace(validShared(), "base_images:\n", "image_source: "+fork+"\nbase_images:\n", 1)
+	published = strings.Replace(published, "base: us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-base:0.3.1", "base: "+pin, 1)
+
+	// A machine that records nothing: refused, naming the owner and how to
+	// record it.
+	_, err := ParseShared([]byte(published), sharedAnchor)
+	if err == nil || !strings.Contains(err.Error(), "image_source") || !strings.Contains(err.Error(), fork) || !strings.Contains(err.Error(), "--image-source") {
+		t.Fatalf("err = %v, want a refusal naming image_source, the owner and the flag", err)
+	}
+	if strings.ContainsAny(err.Error(), "\n\x1b\a") {
+		t.Errorf("the refusal is not one clean line: %q", err.Error())
+	}
+
+	// The machine that records the same owner: the pin and its owner come
+	// through together.
+	a := sharedAnchor
+	a.ImageSource = fork
+	c, err := ParseShared([]byte(published), a)
+	if err != nil {
+		t.Fatalf("a machine recording %s: %v", fork, err)
+	}
+	if c.ImageSource != fork || c.BaseImages["base"] != pin {
+		t.Errorf("image_source %q, base_images %v", c.ImageSource, c.BaseImages)
+	}
+
+	// The default owner is what an unset one means, and needs no record:
+	// the machine that recorded no owner still reads it.
+	def := strings.Replace(validShared(), "base_images:\n", "image_source: "+mirror.DefaultSources[0]+"\nbase_images:\n", 1)
+	if c, err := ParseShared([]byte(def), sharedAnchor); err != nil {
+		t.Errorf("the default owner: %v", err)
+	} else if c.ImageSource != mirror.DefaultSources[0] {
+		t.Errorf("image_source = %q, want the published default", c.ImageSource)
+	}
+
+	// A pin is checked against the owner the record names, never the one
+	// the reference names itself: with no record at all it is refused even
+	// though the reference spells an owner out.
+	none := strings.Replace(validShared(), "base: us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-base:0.3.1",
+		"base: us-east5-docker.pkg.dev/fugaro-belong/fugaro-ghcr/dimipaun/fugaro-base:0.7.5@sha256:"+strings.Repeat("a", 64), 1)
+	if _, err := ParseShared([]byte(none), sharedAnchor); err == nil || !strings.Contains(err.Error(), "records none") {
+		t.Fatalf("a pin with no recorded owner: %v", err)
+	}
+}
+
+// The owner half of §10.7 is checked on the ENTRY, not only on
+// image_source: a publisher who leaves image_source at the default and
+// publishes a remote-repository path under another owner must not get away
+// with it. Such an entry is not "not managed" — it is not a base image the
+// reader may use at all (§3.6), and both `fugaro image build` and the
+// images stage would otherwise take it as the operator's own.
+func TestSharedConfigRefusesAForeignOwnerInAPin(t *testing.T) {
+	// published builds a shared config naming owner's entry, with the
+	// published image_source beside it when one is given (a config that
+	// records none cannot carry a pin at all, which the test above covers).
+	published := func(source, owner, tag, digest string) string {
+		ref := "us-east5-docker.pkg.dev/fugaro-belong/fugaro-ghcr/" + owner + "/fugaro-base:" + tag
+		if digest != "" {
+			ref += "@sha256:" + strings.Repeat("a", 64)
+		}
+		s := strings.Replace(validShared(), "base: us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-base:0.3.1", "base: "+ref, 1)
+		if source != "" {
+			s = strings.Replace(s, "base_images:\n", "image_source: "+source+"\nbase_images:\n", 1)
+		}
+		return s
+	}
+	fork := func() SharedAnchor { a := sharedAnchor; a.ImageSource = "ghcr.io/acme"; return a }
+	for _, tc := range []struct {
+		name   string
+		shared string
+		anchor SharedAnchor
+		want   string // the refusal must name this; "" means it is accepted
+	}{
+		{"a foreign owner under the default", published("", "evil", "9.9.9", "yes"), sharedAnchor, "evil"},
+		{"a foreign owner on a fork's machine", published("ghcr.io/acme", "evil", "9.9.9", "yes"), fork(), "evil"},
+		// The owner the config records is the one its entries must name,
+		// the default included.
+		{"the default owner", published("ghcr.io/dimipaun", "dimipaun", "0.7.5", "yes"), sharedAnchor, ""},
+		{"a fork's own entry", published("ghcr.io/acme", "acme", "0.7.5", "yes"), fork(), ""},
+		// The digest is required, and the tag is a release version: both
+		// are what makes the entry a pin rather than a path to whatever
+		// the tag points at now.
+		{"no digest", published("ghcr.io/dimipaun", "dimipaun", "0.7.5", ""), sharedAnchor, "0.7.5"},
+		{"a tag that is not a release version", published("ghcr.io/dimipaun", "dimipaun", "latest", "yes"), sharedAnchor, "latest"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := ParseShared([]byte(tc.shared), tc.anchor)
+			switch {
+			case tc.want == "":
+				if err != nil {
+					t.Fatalf("%v, want it accepted", err)
+				}
+				if c.BaseImages["base"] == "" || c.ImageSource == "" {
+					t.Errorf("image_source %q, base_images %v", c.ImageSource, c.BaseImages)
+				}
+			case err == nil:
+				t.Fatalf("base_images.base = %q, want a refusal naming %q", c.BaseImages["base"], tc.want)
+			case !strings.Contains(err.Error(), tc.want):
+				t.Errorf("err = %v, want it to name %q", err, tc.want)
+			case strings.ContainsAny(err.Error(), "\n\x1b\a"):
 				t.Errorf("the refusal is not one clean line: %q", err.Error())
 			}
 		})

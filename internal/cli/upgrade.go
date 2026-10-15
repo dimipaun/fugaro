@@ -138,8 +138,8 @@ checkout's steps and, for one that stopped, the line to rerun.`,
 	f.BoolVar(&o.allowFork, "allow-fork", false, "move the ref of a marketplace repository other than dimipaun/fugaro (a fork you host) to this release's tag, and add it to Claude Code")
 	f.StringVar(&o.refresh.repo, "repo", "", "owner/name of the repository; it must be the checkout's origin (one PATH only)")
 	f.StringArrayVar(&o.refresh.workflows, "workflow", nil, "a workflow to refresh (repeatable; default: every workflow in fugaro.yaml; one PATH only)")
-	f.StringVar(&o.refresh.imageSource, "image-source", "", "the registry and owner the release base images are copied from (default ghcr.io/dimipaun)")
-	f.StringArrayVar(&o.refresh.expectDigests, "expect-digest", nil, "pin the digest of a base image copied, KIND=sha256:<hex> (repeatable; one PATH only)")
+	f.StringVar(&o.refresh.imageSource, "image-source", "", "the registry and owner the release base images come from: a base kind is resolved and signature-verified there and pinned through the installation's remote repository (default ghcr.io/dimipaun)")
+	f.StringArrayVar(&o.refresh.expectDigests, "expect-digest", nil, "cross-check the digest of a base image's release signature, KIND=sha256:<hex> (repeatable; one PATH only)")
 	addCloudFlags(cmd, &o.refresh.cloud)
 	return cmd
 }
