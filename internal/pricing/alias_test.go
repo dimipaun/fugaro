@@ -31,7 +31,8 @@ func TestIsAlias(t *testing.T) {
 		"deepseek/" + strings.Repeat("a", 119), // 128 characters: the longest ID
 		// A claimed Claude ID is a real model ID, so the price table keys it
 		// (P4: the table is not the gate for who may pin what).
-		"anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5", "anthropic/claude-3.5-sonnet",
+		"anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5", "anthropic/claude-opus-5-5",
+		"anthropic/claude-3.5-sonnet", // a dot and a dash
 	} {
 		if IsAlias(s) {
 			t.Errorf("IsAlias(%q) = true, want false", s)
