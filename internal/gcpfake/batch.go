@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,10 +18,19 @@ import (
 // labels and environment are fixed at creation, which is why the Batch
 // backend creates one job per run.
 //
+// A job is stored under the project, region and id its create named, because
+// that is what the API scopes one to: a get, cancel, delete or list naming
+// another project or region is NOT_FOUND (or empty), never the job. A fake
+// that keyed jobs by id alone would be more permissive than the API, and a
+// backend that lost the project or region on the way to a request would pass
+// every test.
+//
 // A created job starts QUEUED, which is what the real API reports for a job
 // that has not been scheduled yet, and moves only through SetState and
 // :cancel. Names it returns use ProjectNumber when set, else the project in
-// the request path.
+// the request path; ProjectNumber is a rendering knob only -- the fake still
+// stores the job under the project the request named, so a name it rendered
+// with a number is not a name it can be read back by.
 //
 // Known differences from real Batch: a cancelled job jumps straight to
 // CANCELLED, where the real API passes through CANCELLATION_IN_PROGRESS
@@ -30,8 +38,13 @@ import (
 // how long it sits in each, is UNVERIFIED — design §9, Check 57a step 7);
 // cancelling a job that is already terminal answers 400
 // FAILED_PRECONDITION, which is the fake's own choice and not documented
-// (Check 57a step 7 settles it); and a job is never garbage-collected 60
-// days after it finishes.
+// (Check 57a step 7 settles it); a job is never garbage-collected 60
+// days after it finishes; cancel and delete answer an Operation that is
+// already done, where the real API's may take time (Check 57a steps 7 and
+// 8); and jobs.list answers in creation order, oldest first, where the
+// reference documents no default order at all -- deliberately not the
+// newest-first order a caller might assume, so that a caller which needs an
+// order sorts for itself (internal/backend/batch.List does).
 type Batch struct {
 	*Server
 
@@ -52,14 +65,18 @@ type Batch struct {
 	AllowCancelOfTerminal bool
 
 	mu      sync.Mutex
-	jobs    map[string]*batchJob // by job id
-	order   []string             // job ids, oldest first
+	jobs    map[jobKey]*batchJob // by project, region and id
+	order   []jobKey             // oldest first
 	creates []BatchCall
 	cancels []string
 	deletes []string
 	seq     int
 	ops     int
 }
+
+// jobKey is what a job is stored by: the API scopes a job to its project and
+// region, so a name that differs in either is another job, or none.
+type jobKey struct{ project, region, id string }
 
 // BatchCall is one jobs.create request.
 type BatchCall struct {
@@ -79,7 +96,7 @@ type batchJob struct {
 // NewBatch starts a Cloud Batch fake that lives until the test ends.
 func NewBatch(t *testing.T) *Batch {
 	t.Helper()
-	f := &Batch{jobs: map[string]*batchJob{}}
+	f := &Batch{jobs: map[jobKey]*batchJob{}}
 	f.Server = newServer(t, f.handle)
 	return f
 }
@@ -87,7 +104,36 @@ func NewBatch(t *testing.T) *Batch {
 // jobNameRE is Batch's own job id rule: "at most 63 characters, must start
 // with lowercase characters, only lowercase characters, numbers and - are
 // accepted, and - cannot be the first or the last character" (design §2.4).
-var jobNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$`)
+// The first character is a letter, not a digit ("must start with lowercase
+// characters"), and the last is a letter or a digit; one character is a valid
+// id, so the middle part is optional. A fake that accepted a leading digit,
+// or refused a one-character id, would disagree with the API in both
+// directions.
+var jobNameRE = regexp.MustCompile(`^[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// requestIDRE is the form jobs.create's requestId must have: "A unique
+// identifier for this request. Must be a valid UUID." (Batch REST reference).
+// Nothing Fugaro sends sets one -- the backend sends no requestId -- so this
+// only refuses a caller that invents a different form.
+var requestIDRE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// find is the job with this id, in whichever project and region holds it;
+// f.mu is held. The accessors below take an id alone because a test knows the
+// job it created, and they fail the test rather than pick one when two
+// projects hold the same id.
+func (f *Batch) find(id string) *batchJob {
+	var found *batchJob
+	for k, j := range f.jobs {
+		if k.id != id {
+			continue
+		}
+		if found != nil {
+			f.t.Fatalf("gcpfake: job id %q is not unique: it exists in more than one project or region", id)
+		}
+		found = j
+	}
+	return found
+}
 
 func (f *Batch) project(p string) string {
 	if f.ProjectNumber != "" {
@@ -156,14 +202,18 @@ func (f *Batch) Deletes() []string {
 func (f *Batch) IDs() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]string(nil), f.order...)
+	out := make([]string, 0, len(f.order))
+	for _, k := range f.order {
+		out = append(out, k.id)
+	}
+	return out
 }
 
 // State reports a job's raw Batch state ("QUEUED", "RUNNING", ...).
 func (f *Batch) State(id string) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	j := f.jobs[id]
+	j := f.find(id)
 	if j == nil {
 		f.t.Fatalf("gcpfake: State(%q): no such job", id)
 	}
@@ -177,7 +227,7 @@ func (f *Batch) State(id string) string {
 func (f *Batch) SetState(id, s string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	j := f.jobs[id]
+	j := f.find(id)
 	if j == nil {
 		f.t.Fatalf("gcpfake: SetState(%q): no such job", id)
 	}
@@ -192,7 +242,7 @@ func (f *Batch) SetState(id, s string) {
 func (f *Batch) SetCreated(id string, t time.Time) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	j := f.jobs[id]
+	j := f.find(id)
 	if j == nil {
 		f.t.Fatalf("gcpfake: SetCreated(%q): no such job", id)
 	}
@@ -206,7 +256,7 @@ func (f *Batch) SetCreated(id string, t time.Time) {
 func (f *Batch) SetUID(id, uid string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	j := f.jobs[id]
+	j := f.find(id)
 	if j == nil {
 		f.t.Fatalf("gcpfake: SetUID(%q): no such job", id)
 	}
@@ -217,7 +267,7 @@ func (f *Batch) SetUID(id, uid string) {
 func (f *Batch) JobJSON(project, region, id string) map[string]any {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	j := f.jobs[id]
+	j := f.find(id)
 	if j == nil {
 		f.t.Fatalf("gcpfake: JobJSON(%q): no such job", id)
 	}
@@ -283,8 +333,10 @@ func (f *Batch) create(w http.ResponseWriter, r *http.Request, parent string, bo
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", fmt.Sprintf("jobId %q is not a Batch job id", want))
 		return
 	}
-	if n, _ := strconv.Atoi(r.URL.Query().Get("requestId")); n < 0 {
-		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "bad requestId")
+	// requestId is documented as a UUID; a caller that sends another form is
+	// refused, as the API refuses it.
+	if rid := r.URL.Query().Get("requestId"); rid != "" && !requestIDRE.MatchString(rid) {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", fmt.Sprintf("requestId %q is not a UUID", rid))
 		return
 	}
 	call := BatchCall{JobID: want, Job: job}
@@ -293,19 +345,24 @@ func (f *Batch) create(w http.ResponseWriter, r *http.Request, parent string, bo
 		writeError(w, f.FailCreateWith, http.StatusText(f.FailCreateWith), "injected failure")
 		return
 	}
-	if _, dup := f.jobs[want]; dup {
+	k := jobKey{project, region, want}
+	if _, dup := f.jobs[k]; dup {
 		f.creates = append(f.creates, call)
 		writeError(w, http.StatusConflict, "ALREADY_EXISTS", "job "+want+" already exists")
 		return
 	}
+	// Job.name is output-only, so the real API ignores one in the body
+	// rather than refusing it: this refusal is the fake's own choice, and it
+	// errs strict (a client that passes here passes live). No Check 57a step
+	// covers it -- it is a create-time field, not a job's behaviour.
 	if name, _ := job["name"].(string); name != "" && name != "projects/"+project+"/locations/"+region+"/jobs/"+want {
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "the body names "+name+", not the job in the URL")
 		return
 	}
 	f.seq++
 	j := &batchJob{id: want, uid: fmt.Sprintf("uid-%d", f.seq), state: "QUEUED", created: time.Now(), body: job}
-	f.jobs[want] = j
-	f.order = append(f.order, want)
+	f.jobs[k] = j
+	f.order = append(f.order, k)
 	call.Name = "projects/" + f.project(project) + "/locations/" + region + "/jobs/" + want
 	f.creates = append(f.creates, call)
 	writeJSON(w, http.StatusOK, f.render(project, region, j))
@@ -317,7 +374,7 @@ func (f *Batch) get(w http.ResponseWriter, r *http.Request, p string) {
 		f.unhandled(w, r)
 		return
 	}
-	j := f.jobs[id]
+	j := f.jobs[jobKey{project, region, id}]
 	if j == nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "job "+id+" not found")
 		return
@@ -331,13 +388,14 @@ func (f *Batch) delete(w http.ResponseWriter, r *http.Request, p string) {
 		f.unhandled(w, r)
 		return
 	}
-	if f.jobs[id] == nil {
+	k := jobKey{project, region, id}
+	if f.jobs[k] == nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "job "+id+" not found")
 		return
 	}
 	f.deletes = append(f.deletes, id)
-	delete(f.jobs, id)
-	f.order = slices.DeleteFunc(f.order, func(x string) bool { return x == id })
+	delete(f.jobs, k)
+	f.order = slices.DeleteFunc(f.order, func(x jobKey) bool { return x == k })
 	f.ops++
 	writeJSON(w, http.StatusOK, f.op(project, region, "projects/"+f.project(project)+"/locations/"+region+"/jobs/"+id))
 }
@@ -346,13 +404,19 @@ func (f *Batch) delete(w http.ResponseWriter, r *http.Request, p string) {
 // already finished is UNVERIFIED (design §9, Check 57a step 7): the fake
 // refuses it unless AllowCancelOfTerminal says otherwise, which is what
 // makes the backend's tolerance of that race a tested requirement.
+//
+// The Operation it answers is already done, where the real one may take time
+// to reach DELETION_IN_PROGRESS and tear the job's VMs down (Check 57a steps
+// 7 and 8 settle what it really answers and how long it takes). The backend
+// reads the job back rather than the operation, so the difference is not
+// visible to it.
 func (f *Batch) cancel(w http.ResponseWriter, r *http.Request, p string) {
 	project, region, id, ok := batchJobPath(p)
 	if !ok || id == "" {
 		f.unhandled(w, r)
 		return
 	}
-	j := f.jobs[id]
+	j := f.jobs[jobKey{project, region, id}]
 	if j == nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "job "+id+" not found")
 		return
@@ -421,8 +485,14 @@ func (f *Batch) list(w http.ResponseWriter, r *http.Request, parent string) {
 		wantKey, wantVal = m[1], m[2]
 	}
 	var all []*batchJob
-	for _, x := range f.order {
-		j := f.jobs[x]
+	for _, k := range f.order {
+		// The listing is per region and per project: a job created under
+		// another one is not in this answer, as the API's own parent scopes
+		// it.
+		if k.project != project || k.region != region {
+			continue
+		}
+		j := f.jobs[k]
 		if j == nil {
 			continue
 		}
@@ -434,8 +504,14 @@ func (f *Batch) list(w http.ResponseWriter, r *http.Request, parent string) {
 		}
 		all = append(all, j)
 	}
-	// Newest first, as the API orders jobs.list.
-	sort.SliceStable(all, func(i, j int) bool { return all[i].created.After(all[j].created) })
+	// Creation order, oldest first. The reference documents no default order
+	// for jobs.list (unlike the resource's own create time, which it does
+	// document), so this is the fake's choice and not a fact: a caller that
+	// needs an order must sort for itself, which is what
+	// internal/backend/batch.List does. Returning the oldest first, rather
+	// than the newest first a caller might assume, is what makes an
+	// unsorted caller fail here instead of in production. No Check 57a step
+	// measures it.
 	size, _ := strconv.Atoi(q.Get("pageSize"))
 	if size <= 0 {
 		size = 100

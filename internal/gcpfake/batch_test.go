@@ -116,6 +116,86 @@ func TestBatchFakeRefusesWhatItDoesNotImplement(t *testing.T) {
 	}
 }
 
+// TestBatchFakeScopesJobsToProjectAndRegion: the API scopes a job to the
+// project and the region in its name, so a request naming another one is
+// NOT_FOUND (or, for a listing, empty) -- never the job. A fake that keyed
+// jobs by id alone would be more permissive than the API, and a backend that
+// dropped the project or the region from a request would pass every test.
+func TestBatchFakeScopesJobsToProjectAndRegion(t *testing.T) {
+	f := NewBatch(t)
+	base := f.URL + "/v1/projects/p/locations/r1"
+	if code, _ := batchCall(t, "POST", base+"/jobs?jobId=fugaro-x-web-1", batchJobBody); code != http.StatusOK {
+		t.Fatal("create failed")
+	}
+	// A get, a cancel or a delete naming another project or region: NOT_FOUND,
+	// and nothing recorded -- neither call may reach the job it names.
+	for _, c := range []struct{ method, url string }{
+		{"GET", f.URL + "/v1/projects/q/locations/r1/jobs/fugaro-x-web-1"},
+		{"GET", f.URL + "/v1/projects/p/locations/r2/jobs/fugaro-x-web-1"},
+		{"POST", f.URL + "/v1/projects/q/locations/r1/jobs/fugaro-x-web-1:cancel"},
+		{"POST", f.URL + "/v1/projects/p/locations/r2/jobs/fugaro-x-web-1:cancel"},
+		{"DELETE", f.URL + "/v1/projects/p/locations/r2/jobs/fugaro-x-web-1"},
+		{"DELETE", f.URL + "/v1/projects/q/locations/r1/jobs/fugaro-x-web-1"},
+	} {
+		if code, body := batchCall(t, c.method, c.url, "{}"); code != http.StatusNotFound {
+			t.Errorf("%s %s: status %d, want 404: %v", c.method, c.url, code, body)
+		}
+	}
+	if got := f.Cancels(); len(got) != 0 {
+		t.Errorf("a cancel of another project's job was recorded: %v", got)
+	}
+	if got := f.Deletes(); len(got) != 0 {
+		t.Errorf("a delete of another project's job was recorded: %v", got)
+	}
+	// The job those requests named is untouched, and still the only one.
+	if code, body := batchCall(t, "GET", base+"/jobs/fugaro-x-web-1", ""); code != http.StatusOK {
+		t.Fatalf("the job the requests named: status %d: %v", code, body)
+	} else if st, _ := body["status"].(map[string]any); st["state"] != "QUEUED" {
+		t.Errorf("state = %v, want QUEUED", st["state"])
+	}
+	// A listing is scoped to its parent too: another region's listing, and
+	// another project's, are empty rather than this job's.
+	for _, parent := range []string{f.URL + "/v1/projects/p/locations/r2", f.URL + "/v1/projects/q/locations/r1"} {
+		code, body := batchCall(t, "GET", parent+"/jobs?filter="+`labels.fugaro%20%3D%20%22managed%22`, "")
+		if code != http.StatusOK {
+			t.Fatalf("list %s: status %d: %v", parent, code, body)
+		}
+		if got := batchNames(body); len(got) != 0 {
+			t.Errorf("list %s answered %v, want nothing", parent, got)
+		}
+	}
+	// The same id in another region, and in another project, is a different
+	// job: both creates succeed, and all three are readable at their own
+	// names.
+	for _, u := range []string{
+		f.URL + "/v1/projects/p/locations/r2/jobs?jobId=fugaro-x-web-1",
+		f.URL + "/v1/projects/q/locations/r1/jobs?jobId=fugaro-x-web-1",
+	} {
+		if code, body := batchCall(t, "POST", u, batchJobBody); code != http.StatusOK {
+			t.Fatalf("create at %s: status %d: %v", u, code, body)
+		}
+	}
+	if got := f.IDs(); len(got) != 3 {
+		t.Fatalf("IDs = %v, want the three jobs", got)
+	}
+	for _, u := range []string{
+		base + "/jobs/fugaro-x-web-1",
+		f.URL + "/v1/projects/p/locations/r2/jobs/fugaro-x-web-1",
+		f.URL + "/v1/projects/q/locations/r1/jobs/fugaro-x-web-1",
+	} {
+		if code, body := batchCall(t, "GET", u, ""); code != http.StatusOK {
+			t.Errorf("get %s: status %d: %v", u, code, body)
+		}
+	}
+	code, body := batchCall(t, "GET", base+"/jobs?filter="+`labels.fugaro%20%3D%20%22managed%22`, "")
+	if code != http.StatusOK {
+		t.Fatalf("list: status %d: %v", code, body)
+	}
+	if got := batchNames(body); len(got) != 1 || got[0] != "projects/p/locations/r1/jobs/fugaro-x-web-1" {
+		t.Fatalf("list answered %v, want only r1's job", got)
+	}
+}
+
 // TestBatchFakeRefusesABadCreate: a job id is what the caller chooses and the
 // API validates, so the fake validates it too -- a fake that accepted one the
 // real API refuses would let a naming bug through.
@@ -125,14 +205,29 @@ func TestBatchFakeRefusesABadCreate(t *testing.T) {
 	// test failure; this test sends one on purpose.
 	f.failf = func(string, ...any) {}
 	base := f.URL + "/v1/projects/p/locations/r1"
-	for _, id := range []string{"", "-leading", "trailing-", "Upper", "under_score", strings.Repeat("a", 64)} {
+	// A job id starts with a lowercase letter ("must start with lowercase
+	// characters", design §2.4), so a leading digit is refused; "-" cannot be
+	// first or last; 63 characters is the limit; and one character is a
+	// valid id, not too short.
+	for _, id := range []string{"", "-leading", "trailing-", "Upper", "under_score", "1leading", "9", strings.Repeat("a", 64)} {
 		code, body := batchCall(t, "POST", base+"/jobs?jobId="+id, batchJobBody)
 		if code != http.StatusBadRequest {
 			t.Errorf("create with jobId %q: status %d, want 400: %v", id, code, body)
 		}
 	}
-	if got := f.IDs(); len(got) != 0 {
+	if code, _ := batchCall(t, "POST", base+"/jobs?jobId=a", batchJobBody); code != http.StatusOK {
+		t.Errorf("create with the one-character id %q: status %d, want 200", "a", code)
+	}
+	if got := f.IDs(); len(got) != 1 {
 		t.Fatalf("a refused create created something: %v", got)
+	}
+	// requestId is documented as a UUID, so another form is refused, and a
+	// UUID is accepted.
+	if code, _ := batchCall(t, "POST", base+"/jobs?jobId=fugaro-x-web-2&requestId=1", batchJobBody); code != http.StatusBadRequest {
+		t.Errorf("create with requestId=1: status %d, want 400", code)
+	}
+	if code, _ := batchCall(t, "POST", base+"/jobs?jobId=fugaro-x-web-3&requestId=9f1b1c2e-4a5d-4e6f-8a9b-0c1d2e3f4a5b", batchJobBody); code != http.StatusOK {
+		t.Errorf("create with a UUID requestId: status %d, want 200", code)
 	}
 	// The body's own name must be the job in the URL, as the API requires.
 	code, _ := batchCall(t, "POST", base+"/jobs?jobId=fugaro-x-web-1", `{"name":"projects/p/locations/r1/jobs/other"}`)
@@ -226,7 +321,9 @@ func TestBatchFakeListFiltersAndPages(t *testing.T) {
 		t.Fatal("an unsupported filter did not fail the test")
 	}
 
-	// Paging: newest first, one per page.
+	// Paging: one per page, in the fake's own order (creation order, oldest
+	// first -- the reference documents no default order, so no caller may
+	// assume one).
 	code, page := batchCall(t, "GET", base+"/jobs?filter="+`labels.fugaro%20%3D%20%22managed%22`+"&pageSize=1", "")
 	if code != http.StatusOK || len(batchNames(page)) != 1 {
 		t.Fatalf("page 1: status %d: %v", code, page)
