@@ -216,6 +216,116 @@ func TestExecUnclaimedProcessIsInTheCloud(t *testing.T) {
 	}
 }
 
+// cloudExec runs `exec --run` on a process no platform claims -- no marker
+// at all -- whose job carries the names every job has carried since M9a, so
+// the run gets past the CLI's checks and the test sees what the runner does
+// with the platform the CLI resolved (design compute-backend.md §2.5). The
+// run's task is in the bucket, as a launcher would have left it.
+func cloudExec(t *testing.T, files map[string]string, edit func(string) string, env map[string]string, flags ...string) (string, string, error, *runstore.Store) {
+	t.Helper()
+	const runID = "20260926-221530-abcd"
+	testutil.IsolateGit(t)
+	for _, k := range []string{"FUGARO_RUN", "FUGARO_GIT_PROVIDER", "FUGARO_BUDGET_MODE", "FUGARO_MAX_RUN_USD", "FUGARO_MODEL_PRICES", "FUGARO_MANAGED_SETTINGS", "CLOUD_RUN_EXECUTION", "FUGARO_TEST_ALLOW_ROUTING_SETTINGS"} {
+		t.Setenv(k, "")
+	}
+	// The backend's variables must be absent, not empty (an empty one is a
+	// malformed setting).
+	for _, k := range []string{"FUGARO_RTDB_URL", "FUGARO_FIREBASE_API_KEY", "FUGARO_BUDGET_GRACE", "FUGARO_MODEL_PROVIDERS"} {
+		t.Setenv(k, "")
+		os.Unsetenv(k)
+	}
+	t.Setenv("FUGARO_GCP_PROJECT", "proj-1234")
+	t.Setenv("FUGARO_PROJECT", "aurora")
+	for k, v := range env {
+		t.Setenv(k, v)
+	}
+	fixture := testutil.FixtureFiles(t)
+	if edit != nil {
+		fixture["fugaro.yaml"] = edit(fixture["fugaro.yaml"])
+	}
+	for k, v := range files {
+		fixture[k] = v
+	}
+	remote := testutil.NewRemote(t, fixture)
+	dir := t.TempDir()
+	b, err := fileblob.OpenBucket(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { b.Close() })
+	store := runstore.Open(b, "acme-app", runID)
+	if err := store.WriteTask(context.Background(), &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Workflow: "app", Ref: "main", Task: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	args := append([]string{"exec", "--bucket", "file://" + dir, "--run", "acme-app/" + runID, "--remote", remote,
+		"--provider", "fake", "--provider-state", filepath.Join(t.TempDir(), "provider.json"),
+		"--workdir", filepath.Join(t.TempDir(), "work"), "--state-dir", filepath.Join(t.TempDir(), "state")}, flags...)
+	out, errOut, err := execute(t, args...)
+	return out, errOut, err, store
+}
+
+// A budget database on loopback is a local run's, and an unclaimed process
+// is not local: the runner refuses it at bootstrap. This is the gate the
+// CLI passes `platform.Local()` to, and nothing else in the exec tests
+// reaches it (design compute-backend.md §2.5).
+func TestExecUnclaimedRefusesLoopbackBudget(t *testing.T) {
+	_, _, err, store := cloudExec(t, nil, nil, map[string]string{
+		"FUGARO_BUDGET_MODE": "observe",
+		"FUGARO_RTDB_URL":    "http://127.0.0.1:9000",
+	})
+	// Not "FUGARO_RTDB_URL is not set": the refusal is the loopback one, so
+	// the message is the backend error the CLI passed to the runner.
+	if ExitCode(err) != ExitRemoteError || err == nil || !strings.Contains(err.Error(), "the budget backend in the job's environment") {
+		t.Fatalf("err = %v (exit %d)", err, ExitCode(err))
+	}
+	rec, rerr := store.ReadRecord(context.Background())
+	if rerr != nil || rec.Status != runstore.StatusInfraError || rec.Stage != "bootstrap" ||
+		!strings.Contains(rec.Reason, "the budget backend in the job's environment") || !strings.Contains(rec.Reason, "FUGARO_RTDB_URL") {
+		t.Fatalf("record = %+v, %v", rec, rerr)
+	}
+}
+
+// The live test's routing knob is a local run's, and an unclaimed process is
+// not local: a run whose checkout would send Claude Code around the gateway
+// is refused at bootstrap even with the knob set. This is the routing
+// refusal the CLI resolves from platform.InCloud() (design
+// compute-backend.md §2.5).
+//
+// The knob's own refusal is not the whole difference: the knob only ever
+// works on a local run against the real API, so a run pointed at a test
+// upstream is refused with or without it. What the platform decides is
+// whether the operator is told the knob is ignored, which is the line
+// asserted below -- without it this test would pass on a `Deps.InCloud`
+// that had lost the unclaimed case.
+func TestExecUnclaimedRefusesRoutingSettings(t *testing.T) {
+	// The fixture's models, pinned and priced, so the run reaches the
+	// settings check rather than the pin check before it.
+	edit := func(cfg string) string {
+		return strings.Replace(cfg, "  review_rounds: 2\n", `  review_rounds: 2
+  model: claude-sonnet-5-5
+  models: { coder: claude-sonnet-5-5, reviewer: claude-sonnet-5-5, background: claude-haiku-4-5 }
+  max_output_tokens: { coder: 4096, reviewer: 4096 }
+`, 1)
+	}
+	_, errOut, err, store := cloudExec(t,
+		map[string]string{".claude/settings.json": `{"env": {"ANTHROPIC_BASE_URL": "https://elsewhere.invalid"}}`},
+		edit,
+		map[string]string{"FUGARO_BUDGET_MODE": "observe", "FUGARO_TEST_ALLOW_ROUTING_SETTINGS": "1", "ANTHROPIC_API_KEY": "sk-ant-test"},
+		// The budget is on, so the managed settings need a loopback
+		// upstream; the refusal fires before anything calls it.
+		"--managed-settings", filepath.Join(t.TempDir(), "managed-settings.json"), "--gateway-upstream", "http://127.0.0.1:1")
+	if ExitCode(err) != ExitRemoteError || err == nil || !strings.Contains(err.Error(), "ANTHROPIC_BASE_URL") {
+		t.Fatalf("err = %v (exit %d)", err, ExitCode(err))
+	}
+	if n := strings.Count(errOut, "is ignored on Cloud Run"); n != 1 {
+		t.Fatalf("%d 'ignored on Cloud Run' warnings:\n%s", n, errOut)
+	}
+	rec, rerr := store.ReadRecord(context.Background())
+	if rerr != nil || rec.Status != runstore.StatusInfraError || rec.Stage != "bootstrap" || !strings.Contains(rec.Reason, "ANTHROPIC_BASE_URL") {
+		t.Fatalf("record = %+v, %v", rec, rerr)
+	}
+}
+
 // On Cloud Run the runner prices compute with FUGARO_COMPUTE_PRICES when it
 // is set, so its PR report agrees with ls; a malformed value is a warning
 // and the list price.
