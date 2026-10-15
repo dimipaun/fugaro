@@ -130,7 +130,7 @@ func TestProfileRefusesAnInvalidResourceForm(t *testing.T) {
 		{"cpu 0", base(0, "4Gi", "6h")},
 		{"memory over 32Gi", base(8, "64Gi", "6h")},
 		{"memory below 512Mi", base(1, "128Mi", "6h")},
-		{"4Gi needs 2 CPUs", base(1, "4Gi", "6h")},
+		{"9Gi needs 4 CPUs", base(1, "9Gi", "6h")},
 		{"a memory string that is not a quantity", base(2, "lots", "6h")},
 		{"a timeout that is not a duration", base(2, "4Gi", "soon")},
 		{"a zero timeout", base(2, "4Gi", "0s")},
