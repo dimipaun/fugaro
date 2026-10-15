@@ -887,22 +887,17 @@ func deleteProjectPolicy(cmd *cobra.Command, lc *localcfg.Config, db *rtdb.Clien
 			continue
 		}
 		if err := db.PutIfMatch(ctx, path, childEtag, nil); err != nil {
-			// A child written between the GetETag above and this write: the
-			// same race the shared node is guarded against below, and the same
-			// refusal. What it leaves behind is the other way round — the
-			// children deleted before it stay deleted and the shared node is
-			// still there, so the policy still governs — which is what the
-			// sentence names, rather than a "nothing was written" that would
-			// be false here.
-			return deleteWriteErr(lc, err, path, fmt.Sprintf("the child nodes deleted before it stay deleted, and %s keeps the policy in force; read what %s now holds with 'fugaro project policy show', then run 'fugaro project policy publish --delete' again",
-				projectpolicy.PathShared(), path))
+			return dbErr(lc, err, true)
 		}
 		fmt.Fprintf(out, "removed %s\n", path)
 	}
 	if exists {
 		if err := db.PutIfMatch(ctx, projectpolicy.PathShared(), etag, nil); err != nil {
-			return deleteWriteErr(lc, err, projectpolicy.PathShared(), fmt.Sprintf("the child nodes under %s are deleted first and are gone; read what the node now holds with 'fugaro project policy show', then run 'fugaro project policy publish --delete' again",
-				projectpolicy.PathRepos()))
+			if errors.Is(err, rtdb.ErrPrecondition) {
+				return userErr("the policy node at %s changed while this deletion was being confirmed (another publish landed meanwhile), so it was not removed: the child nodes under %s are deleted first and are gone; read what the node now holds with 'fugaro project policy show', then run 'fugaro project policy publish --delete' again",
+					projectpolicy.PathShared(), projectpolicy.PathRepos())
+			}
+			return dbErr(lc, err, true)
 		}
 		fmt.Fprintf(out, "removed %s\n", projectpolicy.PathShared())
 	}
@@ -910,25 +905,6 @@ func deleteProjectPolicy(cmd *cobra.Command, lc *localcfg.Config, db *rtdb.Clien
 		fmt.Fprintln(out, "no policy is published: runs fall back to the ceiling their job's environment carries")
 	}
 	return nil
-}
-
-// deleteWriteErr classifies the failure of one of --delete's writes. A lost
-// precondition is a user error, not a remote one: another writer — a publish,
-// a repos add or remove — wrote that node between this command's read of it
-// (the ETag the write carries) and the write itself, so what the operator has
-// to do is read what is there now and run the deletion again. dbErr would send
-// it to remote() and report an outage (exit 2), the code that means "the remote
-// failed, retry" for an event that is this operator racing another writer, and
-// which invites retrying a deletion behind their back (the review of PR #390,
-// which asked for the shared node; the review of PR #415 found the child write
-// left behind). left is what the lost write leaves in place, which differs per
-// node and must not be spelled as "nothing was written": the children deleted
-// before the node that lost the race are already gone.
-func deleteWriteErr(lc *localcfg.Config, err error, path, left string) error {
-	if errors.Is(err, rtdb.ErrPrecondition) {
-		return userErr("the node at %s changed while this deletion ran (another publish or repos change landed meanwhile), so it was not removed: %s", path, left)
-	}
-	return dbErr(lc, err, true)
 }
 
 // policyRepoChildren is the keys under config/policy/repos, as stored (the
