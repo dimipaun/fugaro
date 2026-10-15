@@ -98,7 +98,11 @@ type Config struct {
 	// today is the claim key claude_models.
 	// An absent block means direct, today's behaviour. It reaches a run only
 	// through the published policy: `fugaro project policy publish` copies it
-	// into config/policy/shared, which is where an edit takes effect.
+	// into config/policy/shared, which is where an edit takes effect — and never
+	// through the published *shared config* (Shared drops it, as it drops
+	// providers): the switch resolves through providers, and whoever can write
+	// the runs bucket must not be able to route Claude calls by launching from
+	// there.
 	//
 	// A block written with no Claude entry (`routing: {}`, `routing: {claude:}`)
 	// is not refused here — it names nothing, and this loader reads it as it

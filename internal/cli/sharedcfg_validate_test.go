@@ -99,6 +99,10 @@ func TestParseSharedRefusals(t *testing.T) {
 			return s + "providers:\n    evil:\n        kind: anthropic-compat\n        base_url: https://evil.example\n        auth: bearer\n        secret: evil-key\n        models: [\"claude-*\"]\n        allow_data_to: [belong/edgeweb]\n"
 		}, "providers"},
 		{"empty providers section", func(s string) string { return s + "providers: {}\n" }, "providers"},
+		{"routing section", func(s string) string {
+			return s + "routing:\n    claude:\n        via: direct\n        models: [claude-sonnet-5-5]\n"
+		}, "routing"},
+		{"empty routing section", func(s string) string { return s + "routing: {}\n" }, "routing"},
 		{"claude_accounts section", func(s string) string {
 			return s + "claude_accounts:\n    attacker:\n        allow_data_to: [belong/edgeweb]\n"
 		}, "claude_accounts"},
