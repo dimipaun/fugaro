@@ -178,14 +178,63 @@ func TestEffectiveCaps(t *testing.T) {
 		t.Errorf("PerRun = min(repo 30, global 20): %d", v)
 	}
 	c.Global.PerRunMicros = nil
+	if v, ok := c.PerRun(); !ok || v != 30 {
+		t.Errorf("PerRun falls back to the repository's own cap when the global one is unset: %d %v", v, ok)
+	}
+	c.Repo.PerRunMicros = nil
+	if v, ok := c.PerRun(); !ok || v != 10 {
+		t.Errorf("PerRun falls back to the default when the repository's own cap is unset too: %d %v", v, ok)
+	}
+	c.Defaults.RepoPerRunMicros = nil
 	if _, ok := c.PerRun(); ok {
-		t.Error("PerRun with no global per-run cap must be unset (the rules read null and deny)")
+		t.Error("PerRun with no per-run cap anywhere must be unset (the rules read null and deny)")
 	}
 	if _, ok := (Caps{}).RepoDaily(); ok {
 		t.Error("no caps at all is no cap")
 	}
 	if _, ok := (Caps{}).GlobalDaily(); ok {
 		t.Error("no global cap is no cap")
+	}
+}
+
+// TestPerRunGlobalFallback pins the per-run fallback of design D6: the
+// repository's own cap, else the default, else the project's global cap; a
+// side that is set bounds the run, both sides set means the smaller wins, and
+// with nothing set anywhere the cap is unset, which the rules deny (fail
+// closed: N <= null is false).
+func TestPerRunGlobalFallback(t *testing.T) {
+	m := func(v int64) *pricing.Micros { x := pricing.Micros(v); return &x }
+	for _, tc := range []struct {
+		name   string
+		caps   Caps
+		want   Micros
+		wantOK bool
+	}{
+		{"repository only", Caps{Repo: &RepoCaps{PerRunMicros: m(30)}}, 30, true},
+		{"default only", Caps{Defaults: &DefaultCaps{RepoPerRunMicros: m(10)}}, 10, true},
+		{"global only", Caps{Global: &GlobalCaps{PerRunMicros: m(20)}}, 20, true},
+		{"global under the repository's own", Caps{Repo: &RepoCaps{PerRunMicros: m(30)}, Global: &GlobalCaps{PerRunMicros: m(20)}}, 20, true},
+		{"repository's own under the global", Caps{Repo: &RepoCaps{PerRunMicros: m(30)}, Global: &GlobalCaps{PerRunMicros: m(50)}}, 30, true},
+		{"global under the default", Caps{Defaults: &DefaultCaps{RepoPerRunMicros: m(30)}, Global: &GlobalCaps{PerRunMicros: m(20)}}, 20, true},
+		{"a zero global cap still binds", Caps{Repo: &RepoCaps{PerRunMicros: m(30)}, Global: &GlobalCaps{PerRunMicros: m(0)}}, 0, true},
+		{"the repository's own beats the default", Caps{Repo: &RepoCaps{PerRunMicros: m(30)}, Defaults: &DefaultCaps{RepoPerRunMicros: m(10)}}, 30, true},
+		{"a node without the field is unset", Caps{Repo: &RepoCaps{DailyMicros: m(40)}, Global: &GlobalCaps{DailyMicros: m(150)}}, 0, false},
+		{"nothing set anywhere", Caps{}, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := tc.caps.PerRun()
+			if ok != tc.wantOK || (ok && got != tc.want) {
+				t.Fatalf("PerRun = %d %v, want %d %v", got, ok, tc.want, tc.wantOK)
+			}
+			repo, repoOK := tc.caps.RepoPerRun()
+			global, globalOK := tc.caps.GlobalPerRun()
+			if !ok && (repoOK || globalOK) {
+				t.Fatalf("PerRun is unset although a side is set: repo %d %v, global %d %v", repo, repoOK, global, globalOK)
+			}
+			if ok && !repoOK && !globalOK {
+				t.Fatal("PerRun is set although neither side is")
+			}
+		})
 	}
 }
 

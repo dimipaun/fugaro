@@ -48,8 +48,9 @@ func atNoTerminal(e *initEngine) *syncBuf {
 	return out
 }
 
-// Step 2 copies only the kinds it is given, after its own confirmation (the
-// digest shown), and a rerun copies nothing. No step here touches Terraform.
+// Step 2 pins only the kinds it is given, after its own confirmation (the
+// reference and its digest shown), and a rerun changes nothing. Nothing is
+// copied and no step here touches Terraform.
 func TestRefreshBaseStep(t *testing.T) {
 	r := newImagesRig(t, "1.2.3")
 	t.Chdir(repoCheckout(t, githubOrigin, refreshYAML)) // names base
@@ -58,11 +59,17 @@ func TestRefreshBaseStep(t *testing.T) {
 	if err := e.r.refreshBase(t.Context(), e, []string{"base"}); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
-	if r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] == "" {
-		t.Fatalf("copied %v", r.dst.tags)
+	if r.dst.puts != 0 {
+		t.Fatalf("the base kind was copied into the registry: %d write(s)", r.dst.puts)
 	}
-	if got := r.localConfig(t).BaseImages["base"]; got != "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3" {
-		t.Fatalf("base_images.base = %s", got)
+	if r.resolveCalls == 0 || r.arCalls == 0 {
+		t.Fatalf("the pin was recorded without resolving and reading it back (%d resolve(s), %d read-back(s))", r.resolveCalls, r.arCalls)
+	}
+	if got, want := r.localConfig(t).BaseImages["base"], r.pinnedBase("base", "1.2.3"); got != want {
+		t.Fatalf("base_images.base = %s, want %s", got, want)
+	}
+	if got := r.localConfig(t).ImageSource; got != "ghcr.io/dimipaun" {
+		t.Errorf("image_source = %q, want the recorded owner ghcr.io/dimipaun", got)
 	}
 	for _, want := range []string{"⚠ CONFIRM", "sha256:"} {
 		if !strings.Contains(out.String(), want) {
@@ -72,10 +79,10 @@ func TestRefreshBaseStep(t *testing.T) {
 	if calls := r.calls(t); len(calls) != 0 {
 		t.Errorf("the base step ran terraform: %q", calls)
 	}
-	puts := r.dst.puts
+	resolves := r.resolveCalls
 	out = atTerminal(t, e, "")
-	if err := e.r.refreshBase(t.Context(), e, []string{"base"}); err != nil || r.dst.puts != puts || !strings.Contains(out.String(), "No changes") {
-		t.Fatalf("rerun: %v, %d writes\n%s", err, r.dst.puts-puts, out.String())
+	if err := e.r.refreshBase(t.Context(), e, []string{"base"}); err != nil || r.resolveCalls != resolves || !strings.Contains(out.String(), "No changes") {
+		t.Fatalf("rerun: %v, %d resolve(s)\n%s", err, r.resolveCalls-resolves, out.String())
 	}
 }
 
@@ -90,8 +97,8 @@ func TestRefreshBaseStepYesNoTerminal(t *testing.T) {
 	if err := e.r.refreshBase(t.Context(), e, []string{"base"}); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
-	if r.dst.tags[initProject+"/fugaro-base/fugaro-base:1.2.3"] == "" {
-		t.Fatalf("not copied: %v", r.dst.tags)
+	if got, want := r.localConfig(t).BaseImages["base"], r.pinnedBase("base", "1.2.3"); got != want {
+		t.Fatalf("base_images.base = %s, want %s", got, want)
 	}
 	for _, want := range []string{"⚠ CONFIRM", "sha256:", "confirmed by --yes"} {
 		if !strings.Contains(out.String(), want) {
@@ -142,22 +149,22 @@ func TestRefreshBaseStepNeverReplacesCustomBase(t *testing.T) {
 const implicitBaseRefreshYAML = "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n" +
 	"  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 
-// Today's installations have no fugaro-base image published yet (the base
-// image's own release and publish pipeline is a later task): fugaro image
-// refresh's base step (step 2) on a checkout whose workflow has no base:
-// must refuse with a clear error naming the missing image and saying it has
-// no published image, write nothing to the local config or the registry,
-// and never reach the builds step: runImageRefresh returns at
-// refreshStopped(2, ...) when step 2 fails, before s.builds (step 4) is
-// ever called, so the fake builder sees no submission.
+// Today's installations have no signed "-pinned" image published yet (the
+// release side that publishes one is #318's, and it is not shipped): fugaro
+// image refresh's base step (step 2) on a checkout whose workflow has no
+// base: must refuse with a clear error naming the missing tag, write nothing
+// to the local config or the registry, and never reach the builds step:
+// runImageRefresh returns at refreshStopped(2, ...) when step 2 fails,
+// before s.builds (step 4) is ever called, so the fake builder sees no
+// submission.
 //
-// Mutation (run, restore): publish "fugaro-base" on the fake source
-// registry (letting the copy proceed, as it would once the base image is
-// actually published), and this test's assertions fail: the base step
-// succeeds, base_images.base is recorded, and the image is copied.
+// Mutation (run, restore): publish the "-pinned" tag on the fake source
+// registry (letting the resolve-and-verify step proceed, as it would once
+// such a release exists), and this test's assertions fail: the base step
+// succeeds and base_images.base is pinned.
 func TestRefreshBaseStepRefusesWhenFugaroBaseIsNotPublished(t *testing.T) {
 	r := newImagesRig(t, "1.2.3")
-	delete(r.src.tags, "dimipaun/fugaro-base:1.2.3")
+	delete(r.src.tags, "dimipaun/fugaro-base:1.2.3-pinned")
 	t.Chdir(repoCheckout(t, githubOrigin, implicitBaseRefreshYAML))
 	fb := useFakeBuilder(t)
 	e := rigEngine(t, r.initRig, &initOptions{})
@@ -166,8 +173,8 @@ func TestRefreshBaseStepRefusesWhenFugaroBaseIsNotPublished(t *testing.T) {
 	if ExitCode(err) != ExitRemoteError {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out.String())
 	}
-	if !strings.Contains(err.Error(), "fugaro-base") || !strings.Contains(err.Error(), "no published image") {
-		t.Fatalf("err = %v, want it to name the missing image and say it has no published image", err)
+	if !strings.Contains(err.Error(), "fugaro-base") || !strings.Contains(err.Error(), "-pinned") {
+		t.Fatalf("err = %v, want it to name the missing image and the -pinned tag it looked for", err)
 	}
 	if r.dst.puts != 0 {
 		t.Errorf("the registry was written to: %d puts", r.dst.puts)
@@ -602,6 +609,76 @@ func TestRefreshBuildsStartFromTheNewBase(t *testing.T) {
 	}
 	if calls := r.calls(t); len(calls) != 0 {
 		t.Errorf("the builds step ran terraform: %q", calls)
+	}
+}
+
+// The never-downgrade rule compares a build record against the TARGET's
+// version, not against the running CLI's (review finding, medium). Here the
+// local config already pins 0.9.0 while this CLI is 0.7.5, and app's record
+// says 0.8.0 — OLDER than the pin the check job runs from. Comparing
+// against the CLI's own 0.7.5 kept it and the step then printed "No
+// changes: every selected image is built from its current base" over an
+// image the check job has moved past. api's record is at the pin, so it is
+// the control: it is still kept, and only app is built.
+//
+// Mutation (run, restore): compare against ver instead of the target in
+// refreshVerdict, and this test fails: no build is submitted and the output
+// carries the "No changes" line.
+func TestRefreshBuildsRebuildsAnImageOlderThanTheConfigsNewerPin(t *testing.T) {
+	useVersion(t, "0.7.5")
+	r := newAnchorModeRig(t, refreshYAML, true)
+	fb := useFakeBuilder(t)
+	e, tg := buildTarget(t, r)
+	pin := pinnedRef("base", "0.9.0")
+	tg.lc.BaseImages = map[string]string{"base": pin}
+	tg.lc.ImageSource = "ghcr.io/" + refreshOwner
+	p := &refreshPlan{workflows: []string{"app", "api"}, ver: "0.7.5"}
+	putWorkflowRecordFrom("app", "0.7.5", managedRef("base", "0.8.0"))
+	putWorkflowRecordFrom("api", "0.7.5", pin)
+	out := atTerminal(t, e, initProjectName+"\n")
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(fb.specs) != 1 || fb.specs[0].Workflow != "app" || fb.specs[0].Base != pin {
+		t.Fatalf("builds %+v, want app alone from %s", fb.specs, pin)
+	}
+	if !strings.Contains(out.String(), "app: built from "+managedRef("base", "0.8.0")+": rebuilt from "+pin) {
+		t.Errorf("output:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "api: current: built from "+pin) {
+		t.Errorf("api is at the pin and must be left alone:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "No changes") {
+		t.Errorf("printed \"No changes\" with an image older than the pin:\n%s", out.String())
+	}
+}
+
+// The other direction, so the fix cannot pass by rebuilding everything: with
+// every record at or above the config's newer pin, the step still reports
+// "No changes" and submits nothing.
+func TestRefreshBuildsSaysNoChangesWhenEveryImageIsAtTheNewerPin(t *testing.T) {
+	useVersion(t, "0.7.5")
+	r := newAnchorModeRig(t, refreshYAML, true)
+	fb := useFakeBuilder(t)
+	e, tg := buildTarget(t, r)
+	pin := pinnedRef("base", "0.9.0")
+	tg.lc.BaseImages = map[string]string{"base": pin}
+	// The owner the pin is checked against is the local config's recorded
+	// image_source (design §3.6); this rig's config has none until the base
+	// step writes it, so the test records it as that step would.
+	tg.lc.ImageSource = "ghcr.io/" + refreshOwner
+	p := &refreshPlan{workflows: []string{"app", "api"}, ver: "0.7.5"}
+	putWorkflowRecordFrom("app", "0.7.5", pin)
+	putWorkflowRecordFrom("api", "0.7.5", managedRef("base", "0.10.0"))
+	out := atTerminal(t, e, initProjectName+"\n")
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(fb.specs) != 0 {
+		t.Fatalf("builds %+v, want none", fb.specs)
+	}
+	if !strings.Contains(out.String(), "No changes: every selected image is built from its current base") {
+		t.Errorf("output:\n%s", out.String())
 	}
 }
 

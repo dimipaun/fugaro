@@ -157,10 +157,12 @@ func (f *cloud) m5(t *testing.T, spec RepoSpec) {
 
 // m5Installation adds what an earlier M5 installation apply made, which
 // the rollback's state rm leaves in place: the runs bucket, the base
-// registry, the custom roles, the scheduler account and the log bucket.
+// registry, the remote repository, the custom roles, the scheduler
+// account and the log bucket.
 func (f *cloud) m5Installation(inst InstallationSpec) {
 	f.gcs.AddBucket(inst.RunsBucket, testProjectNumber, managed)
 	f.ar.AddRepository(inst.Project, inst.Region, BaseRegistry, managed)
+	f.ar.AddRepository(inst.Project, inst.Region, GhcrRegistry, managed)
 	f.iam.AddRole(inst.Project, RoleLauncher, "Fugaro launcher", false)
 	f.iam.AddRole(inst.Project, RoleJobRunner, "Fugaro job runner", false)
 	f.iam.AddRole(inst.Project, RoleBuildSubmitter, "Fugaro build submitter", false)
@@ -419,6 +421,47 @@ func TestDiscoverInstallation(t *testing.T) {
 	}
 }
 
+// TestDiscoverInstallationAdoptsTheGhcrRegistry: the remote repository is
+// an installation singleton like the base registry (design §5.3). Check
+// 43a creates fugaro-ghcr by hand before the implementation exists, so the
+// first init after it must adopt a repository that carries fugaro=managed
+// and refuse, by name, one that does not — never the bare Terraform
+// "already exists" an ordinary create would give (design §5.4).
+func TestDiscoverInstallationAdoptsTheGhcrRegistry(t *testing.T) {
+	ctx := context.Background()
+	inst := installationSpec(t)
+	const address = "module.installation.google_artifact_registry_repository.ghcr"
+
+	f := newCloud(t)
+	f.gcs.AddBucket(inst.RunsBucket, testProjectNumber, managed)
+	f.ar.AddRepository("proj-1234", "us-east5", GhcrRegistry, managed)
+	im, err := DiscoverInstallation(ctx, f.c, inst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := importMap(im)[address]; got != "projects/proj-1234/locations/us-east5/repositories/"+GhcrRegistry {
+		t.Errorf("imports %v, want the remote repository adopted", importMap(im))
+	}
+
+	// Unmarked: refused by name, at discovery time, and nothing is adopted.
+	f = newCloud(t)
+	f.gcs.AddBucket(inst.RunsBucket, testProjectNumber, managed)
+	f.ar.AddRepository("proj-1234", "us-east5", GhcrRegistry, nil)
+	_, err = DiscoverInstallation(ctx, f.c, inst)
+	foreign(t, err, GhcrRegistry, "fugaro=none")
+
+	// Absent: nothing planned and nothing noted, the ordinary create.
+	f = newCloud(t)
+	f.gcs.AddBucket(inst.RunsBucket, testProjectNumber, managed)
+	im, err = DiscoverInstallation(ctx, f.c, inst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := importMap(im)[address]; ok || len(im.Notes) != 0 {
+		t.Errorf("a project without the remote repository: %+v", im)
+	}
+}
+
 // After a rollback (state rm), every installation resource is still
 // there; a retried fugaro init imports the custom roles, the scheduler
 // account and the log bucket too, since a create of any of them fails.
@@ -434,6 +477,7 @@ func TestDiscoverInstallationAfterForget(t *testing.T) {
 	want := map[string]string{
 		"module.installation.google_storage_bucket.runs":                     "proj-1234/" + inst.RunsBucket,
 		"module.installation.google_artifact_registry_repository.base":       p + "locations/us-east5/repositories/fugaro-base",
+		"module.installation.google_artifact_registry_repository.ghcr":       p + "locations/us-east5/repositories/" + GhcrRegistry,
 		"module.installation.google_project_iam_custom_role.launcher":        p + "roles/" + RoleLauncher,
 		"module.installation.google_project_iam_custom_role.job_runner":      p + "roles/" + RoleJobRunner,
 		"module.installation.google_project_iam_custom_role.build_submitter": p + "roles/" + RoleBuildSubmitter,

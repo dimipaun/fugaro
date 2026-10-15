@@ -1,0 +1,44 @@
+{
+ "data": [
+  {
+   "id": "deepseek/deepseek-v4.1-flash",
+   "pricing": {
+    "completion": "0.000000891",
+    "input_cache_read": "0.0000000054",
+    "prompt": "0.00000001584"
+   }
+  },
+  {
+   "id": "qwen/qwen3.8-flash",
+   "pricing": {
+    "completion": "0.00000047",
+    "input_cache_read": "0.000000016",
+    "prompt": "0.00000015"
+   }
+  },
+  {
+   "id": "moonshotai/kimi-k3",
+   "pricing": {
+    "completion": "0.000015",
+    "input_cache_read": "0.00000028",
+    "prompt": "0.00000058"
+   }
+  },
+  {
+   "id": "deepseek/deepseek-v4-pro",
+   "pricing": {
+    "completion": "0.00000070296",
+    "input_cache_read": "0.00000002929",
+    "prompt": "0.00000035148"
+   }
+  },
+  {
+   "id": "deepseek/deepseek-v4-flash",
+   "pricing": {
+    "completion": "0.000000182",
+    "input_cache_read": "0.0000000182",
+    "prompt": "0.000000091"
+   }
+  }
+ ]
+}

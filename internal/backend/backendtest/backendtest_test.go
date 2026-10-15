@@ -19,6 +19,8 @@ type brokenBackend struct {
 	n     int
 }
 
+func (b *brokenBackend) Codec() backend.Codec { return backend.CloudRunCodec() }
+
 func (b *brokenBackend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.ExecutionRef, error) {
 	b.n++
 	name := fmt.Sprintf("exec-%d", b.n)

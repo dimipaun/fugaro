@@ -155,25 +155,213 @@ func TestExecRefusesHTTP2Debug(t *testing.T) {
 	}
 }
 
+// execPlatform is the one resolved answer every check in runExec reads
+// (design compute-backend.md §2.5, C12): the invocation names local, the
+// platform's own signal names the backend, and everything else is in the
+// cloud.
+func TestExecPlatformResolution(t *testing.T) {
+	get := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	run := map[string]string{"CLOUD_RUN_EXECUTION": "fugaro-acme-app-app-aaaaa", "CLOUD_RUN_JOB": "fugaro-acme-app-app", "FUGARO_GCP_PROJECT": "proj-1234", "FUGARO_REGION": "us-east5"}
+	for name, tc := range map[string]struct {
+		o       execOptions
+		env     map[string]string
+		local   bool
+		backend string
+	}{
+		"a local task file": {execOptions{taskFile: "/tmp/task.json"}, nil, true, backend.Local},
+		"a local run is not a cloud run whatever the shell holds": {execOptions{taskFile: "/tmp/task.json"}, map[string]string{"FUGARO_BACKEND": backend.CloudRun, "FUGARO_RUN": "acme-app/20260926-221530-abcd"}, true, backend.Local},
+		"a task file on a Cloud Run execution stays a cloud run":  {execOptions{taskFile: "/tmp/task.json"}, run, false, backend.CloudRun},
+		// The local case is a platform that claims nothing, not the flag
+		// alone: a Batch task's own markers are a platform, so the same
+		// --task-file is a cloud run here (design §2.5, C12).
+		"a task file on a Batch task stays a Batch task": {execOptions{taskFile: "/tmp/task.json"}, map[string]string{"BATCH_TASK_INDEX": "0", "BATCH_TASK_COUNT": "1"}, false, backend.CloudBatch},
+		"a Cloud Run execution":                          {execOptions{run: "acme-app/20260926-221530-abcd"}, run, false, backend.CloudRun},
+		// No marker at all, or only Fugaro's own variables: in the cloud,
+		// and no backend claims it -- the fail-closed default.
+		"no marker": {execOptions{run: "acme-app/20260926-221530-abcd"}, nil, false, ""},
+		"a Fugaro variable is not a signal": {execOptions{run: "acme-app/20260926-221530-abcd"},
+			map[string]string{"FUGARO_BACKEND": backend.CloudRun, "FUGARO_GCP_PROJECT": "proj-1234", "FUGARO_REGION": "us-east5", "FUGARO_RUN": "acme-app/20260926-221530-abcd"}, false, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := execPlatform(tc.o, get(tc.env))
+			if p.Local() != tc.local || p.Backend() != tc.backend || p.InCloud() == tc.local {
+				t.Fatalf("platform = local %v, backend %q, in cloud %v; want local %v, backend %q", p.Local(), p.Backend(), p.InCloud(), tc.local, tc.backend)
+			}
+		})
+	}
+}
+
+// A process no platform claims is in the cloud, not local: `exec --run`
+// with no marker is refused for the missing job environment rather than
+// running as a local run with the cloud checks switched off (design
+// compute-backend.md §2.5, C12).
+func TestExecUnclaimedProcessIsInTheCloud(t *testing.T) {
+	t.Setenv("FUGARO_RUN", "")
+	t.Setenv("FUGARO_GIT_PROVIDER", "")
+	t.Setenv("FUGARO_PROJECT", "")
+	t.Setenv("FUGARO_GCP_PROJECT", "")
+	t.Setenv("CLOUD_RUN_EXECUTION", "")
+	dir := t.TempDir()
+	_, _, err := execute(t, "exec", "--bucket", "file://"+dir, "--run", "acme-app/20260926-221530-abcd",
+		"--workdir", filepath.Join(t.TempDir(), "work"), "--state-dir", filepath.Join(t.TempDir(), "state"))
+	if ExitCode(err) != ExitRemoteError || err == nil || !strings.Contains(err.Error(), "FUGARO_GCP_PROJECT") {
+		t.Fatalf("err = %v (exit %d)", err, ExitCode(err))
+	}
+	// The refusal is the cloud one, recorded as the run's infra_error the
+	// way a Cloud Run job without the variables is.
+	b, err := fileblob.OpenBucket(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	rec, rerr := runstore.Open(b, "acme-app", "20260926-221530-abcd").ReadRecord(context.Background())
+	if rerr != nil || rec.Status != runstore.StatusInfraError || rec.Stage != "bootstrap" || !strings.Contains(rec.Reason, "FUGARO_GCP_PROJECT") {
+		t.Fatalf("record = %+v, %v", rec, rerr)
+	}
+}
+
+// cloudExec runs `exec --run` on a process no platform claims -- no marker
+// at all -- whose job carries the names every job has carried since M9a, so
+// the run gets past the CLI's checks and the test sees what the runner does
+// with the platform the CLI resolved (design compute-backend.md §2.5). The
+// run's task is in the bucket, as a launcher would have left it.
+func cloudExec(t *testing.T, files map[string]string, edit func(string) string, env map[string]string, flags ...string) (string, string, error, *runstore.Store) {
+	t.Helper()
+	const runID = "20260926-221530-abcd"
+	testutil.IsolateGit(t)
+	for _, k := range []string{"FUGARO_RUN", "FUGARO_GIT_PROVIDER", "FUGARO_BUDGET_MODE", "FUGARO_MAX_RUN_USD", "FUGARO_MODEL_PRICES", "FUGARO_MANAGED_SETTINGS", "CLOUD_RUN_EXECUTION", "FUGARO_TEST_ALLOW_ROUTING_SETTINGS"} {
+		t.Setenv(k, "")
+	}
+	// The backend's variables must be absent, not empty (an empty one is a
+	// malformed setting).
+	for _, k := range []string{"FUGARO_RTDB_URL", "FUGARO_FIREBASE_API_KEY", "FUGARO_BUDGET_GRACE", "FUGARO_MODEL_PROVIDERS"} {
+		t.Setenv(k, "")
+		os.Unsetenv(k)
+	}
+	t.Setenv("FUGARO_GCP_PROJECT", "proj-1234")
+	t.Setenv("FUGARO_PROJECT", "aurora")
+	for k, v := range env {
+		t.Setenv(k, v)
+	}
+	fixture := testutil.FixtureFiles(t)
+	if edit != nil {
+		fixture["fugaro.yaml"] = edit(fixture["fugaro.yaml"])
+	}
+	for k, v := range files {
+		fixture[k] = v
+	}
+	remote := testutil.NewRemote(t, fixture)
+	dir := t.TempDir()
+	b, err := fileblob.OpenBucket(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { b.Close() })
+	store := runstore.Open(b, "acme-app", runID)
+	if err := store.WriteTask(context.Background(), &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Workflow: "app", Ref: "main", Task: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	args := append([]string{"exec", "--bucket", "file://" + dir, "--run", "acme-app/" + runID, "--remote", remote,
+		"--provider", "fake", "--provider-state", filepath.Join(t.TempDir(), "provider.json"),
+		"--workdir", filepath.Join(t.TempDir(), "work"), "--state-dir", filepath.Join(t.TempDir(), "state")}, flags...)
+	out, errOut, err := execute(t, args...)
+	return out, errOut, err, store
+}
+
+// A budget database on loopback is a local run's, and an unclaimed process
+// is not local: the runner refuses it at bootstrap. This is the gate the
+// CLI passes `platform.Local()` to, and nothing else in the exec tests
+// reaches it (design compute-backend.md §2.5).
+func TestExecUnclaimedRefusesLoopbackBudget(t *testing.T) {
+	_, _, err, store := cloudExec(t, nil, nil, map[string]string{
+		"FUGARO_BUDGET_MODE": "observe",
+		"FUGARO_RTDB_URL":    "http://127.0.0.1:9000",
+	})
+	// Not "FUGARO_RTDB_URL is not set": the refusal is the loopback one, so
+	// the message is the backend error the CLI passed to the runner.
+	if ExitCode(err) != ExitRemoteError || err == nil || !strings.Contains(err.Error(), "the budget backend in the job's environment") {
+		t.Fatalf("err = %v (exit %d)", err, ExitCode(err))
+	}
+	rec, rerr := store.ReadRecord(context.Background())
+	if rerr != nil || rec.Status != runstore.StatusInfraError || rec.Stage != "bootstrap" ||
+		!strings.Contains(rec.Reason, "the budget backend in the job's environment") || !strings.Contains(rec.Reason, "FUGARO_RTDB_URL") {
+		t.Fatalf("record = %+v, %v", rec, rerr)
+	}
+}
+
+// The live test's routing knob is a local run's, and an unclaimed process is
+// not local: a run whose checkout would send Claude Code around the gateway
+// is refused at bootstrap even with the knob set. This is the routing
+// refusal the CLI resolves from platform.InCloud() (design
+// compute-backend.md §2.5).
+//
+// The knob's own refusal is not the whole difference: the knob only ever
+// works on a local run against the real API, so a run pointed at a test
+// upstream is refused with or without it. What the platform decides is
+// whether the operator is told the knob is ignored, which is the line
+// asserted below -- without it this test would pass on a `Deps.InCloud`
+// that had lost the unclaimed case.
+func TestExecUnclaimedRefusesRoutingSettings(t *testing.T) {
+	// The fixture's models, pinned and priced, so the run reaches the
+	// settings check rather than the pin check before it.
+	edit := func(cfg string) string {
+		return strings.Replace(cfg, "  review_rounds: 2\n", `  review_rounds: 2
+  model: claude-sonnet-5-5
+  models: { coder: claude-sonnet-5-5, reviewer: claude-sonnet-5-5, background: claude-haiku-4-5 }
+  max_output_tokens: { coder: 4096, reviewer: 4096 }
+`, 1)
+	}
+	_, errOut, err, store := cloudExec(t,
+		map[string]string{".claude/settings.json": `{"env": {"ANTHROPIC_BASE_URL": "https://elsewhere.invalid"}}`},
+		edit,
+		map[string]string{"FUGARO_BUDGET_MODE": "observe", "FUGARO_TEST_ALLOW_ROUTING_SETTINGS": "1", "ANTHROPIC_API_KEY": "sk-ant-test"},
+		// The budget is on, so the managed settings need a loopback
+		// upstream; the refusal fires before anything calls it.
+		"--managed-settings", filepath.Join(t.TempDir(), "managed-settings.json"), "--gateway-upstream", "http://127.0.0.1:1")
+	if ExitCode(err) != ExitRemoteError || err == nil || !strings.Contains(err.Error(), "ANTHROPIC_BASE_URL") {
+		t.Fatalf("err = %v (exit %d)", err, ExitCode(err))
+	}
+	if n := strings.Count(errOut, "is ignored on Cloud Run"); n != 1 {
+		t.Fatalf("%d 'ignored on Cloud Run' warnings:\n%s", n, errOut)
+	}
+	rec, rerr := store.ReadRecord(context.Background())
+	if rerr != nil || rec.Status != runstore.StatusInfraError || rec.Stage != "bootstrap" || !strings.Contains(rec.Reason, "ANTHROPIC_BASE_URL") {
+		t.Fatalf("record = %+v, %v", rec, rerr)
+	}
+}
+
 // On Cloud Run the runner prices compute with FUGARO_COMPUTE_PRICES when it
 // is set, so its PR report agrees with ls; a malformed value is a warning
-// and the list price. Local runs estimate no compute.
-func TestExecUsesPriceEnv(t *testing.T) {
+// and the list price.
+//
+// execPrices asks the platform, not FUGARO_BACKEND (design
+// compute-backend.md §5.2, site 3): the variable is the launcher's record
+// of the backend it chose, so a local run whose shell exports it acquires
+// no prices, and no other value can take a cloud run's away.
+func TestExecPricesAsksThePlatform(t *testing.T) {
 	list := gcp.ListPrices("us-east5")
+	cloud := backend.DetectPlatform(func(k string) string {
+		return map[string]string{"CLOUD_RUN_EXECUTION": "x"}[k]
+	})
 	for name, tc := range map[string]struct {
-		env  map[string]string
-		want *backend.Prices
-		warn bool
+		platform backend.Platform
+		env      map[string]string
+		want     *backend.Prices
+		warn     bool
 	}{
-		"override": {map[string]string{"FUGARO_BACKEND": backend.CloudRun, "FUGARO_REGION": "us-east5", "FUGARO_COMPUTE_PRICES": "0.00001,0.000001"},
+		"override": {cloud, map[string]string{"FUGARO_REGION": "us-east5", "FUGARO_COMPUTE_PRICES": "0.00001,0.000001"},
 			&backend.Prices{VCPUSecondUSD: 0.00001, GiBSecondUSD: 0.000001, Source: "local override"}, false},
-		"unset":     {map[string]string{"FUGARO_BACKEND": backend.CloudRun, "FUGARO_REGION": "us-east5"}, &list, false},
-		"malformed": {map[string]string{"FUGARO_BACKEND": backend.CloudRun, "FUGARO_REGION": "us-east5", "FUGARO_COMPUTE_PRICES": "cheap"}, &list, true},
-		"local":     {map[string]string{"FUGARO_COMPUTE_PRICES": "0.00001,0.000001"}, nil, false},
+		"unset":     {cloud, map[string]string{"FUGARO_REGION": "us-east5"}, &list, false},
+		"malformed": {cloud, map[string]string{"FUGARO_REGION": "us-east5", "FUGARO_COMPUTE_PRICES": "cheap"}, &list, true},
+		// A local invocation has no compute to estimate, whatever the
+		// owner's shell holds; a platform no backend claims has no price
+		// table either.
+		"local":     {backend.LocalPlatform(), map[string]string{"FUGARO_BACKEND": backend.CloudRun, "FUGARO_REGION": "us-east5", "FUGARO_COMPUTE_PRICES": "0.00001,0.000001"}, nil, false},
+		"unclaimed": {backend.DetectPlatform(func(string) string { return "" }), map[string]string{"FUGARO_BACKEND": backend.CloudRun, "FUGARO_REGION": "us-east5"}, nil, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var warned []string
-			got := execPrices(func(k string) string { return tc.env[k] }, func(m string) { warned = append(warned, m) })
+			got := execPrices(tc.platform, func(k string) string { return tc.env[k] }, func(m string) { warned = append(warned, m) })
 			if (got == nil) != (tc.want == nil) || got != nil && *got != *tc.want {
 				t.Fatalf("prices = %+v, want %+v", got, tc.want)
 			}
@@ -363,11 +551,22 @@ func localExecCfg(t *testing.T, edit func(string) string, env map[string]string,
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { b.Close() })
-	store := runstore.Open(b, "acme-app", runID)
-	if err := store.WriteTask(context.Background(), &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "x"}); err != nil {
+	// The provider kind is part of the slug, and `--task-file` derives it
+	// from --provider, as the CLI does for the task it writes.
+	slug, err := task.Slug("fake", "acme/app")
+	if err != nil {
 		t.Fatal(err)
 	}
-	args := append([]string{"exec", "--bucket", "file://" + dir, "--run", "acme-app/" + runID, "--remote", remote,
+	store := runstore.Open(b, slug, runID)
+	// `--task-file` is the CLI's one local invocation (design
+	// compute-backend.md §2.5): a local run is named by the invocation, so
+	// this is what makes the checks below treat the process as local.
+	taskFile := filepath.Join(t.TempDir(), "task.json")
+	spec := `{"version": 1, "run_id": "` + runID + `", "repo": "acme/app", "ref": "main", "task": "x"}`
+	if err := os.WriteFile(taskFile, []byte(spec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args := append([]string{"exec", "--bucket", "file://" + dir, "--task-file", taskFile, "--remote", remote,
 		"--provider", "fake", "--provider-state", filepath.Join(t.TempDir(), "provider.json"),
 		"--workdir", filepath.Join(t.TempDir(), "work"), "--state-dir", filepath.Join(t.TempDir(), "state")}, flags...)
 	out, _, err := execute(t, args...)

@@ -335,6 +335,56 @@ func TestImageBuildCloudRefusesOtherProjectRegistry(t *testing.T) {
 	}
 }
 
+// A base reference that lives under the installation's remote
+// (pull-through) repository without being a pin this tool wrote is refused
+// before anything is submitted, in every kind's entry and in --base alike:
+// the reference reaches the build's FROM line as it stands, the proxy
+// serves all of ghcr.io, and such a path is whatever its owner publishes —
+// not "a custom base image" of the operator's (design §3.6, §10.7).
+//
+// The entries of base_images are checked one by one (runImageBuildCloud's
+// loop over lc.BaseImages), not only the one the build uses: an entry the
+// build does not use still goes into the repository's spec, and the check
+// job builds FROM it. Only "base" is a valid key — localcfg refuses any
+// other base_images key, as an unknown or 0.7.0-removed kind, before this
+// command runs at all — so the loop's reachable case is the built kind's
+// own entry sitting beside a --base that is clean. That case is the last
+// one below, and it is the one only the loop catches: the other three are
+// refused by the --base check as well.
+func TestImageBuildCloudRefusesAForeignProxyBase(t *testing.T) {
+	host := "us-east5-docker.pkg.dev/proj-1234/" + infra.GhcrRegistry + "/"
+	for _, tc := range []struct {
+		name, config, flag, want string
+	}{
+		{"another owner in the config", "base_images: {base: " + host + "evil/fugaro-base:9.9.9@sha256:" + strings.Repeat("a", 64) + "}\n", "", "evil"},
+		{"a tag that is not a release version", "image_source: ghcr.io/dimipaun\nbase_images: {base: " + host + "dimipaun/fugaro-base:latest@sha256:" + strings.Repeat("a", 64) + "}\n", "", "latest"},
+		{"no digest at all", "image_source: ghcr.io/dimipaun\nbase_images: {base: " + host + "dimipaun/fugaro-base:0.7.5}\n", "", "0.7.5"},
+		{"the flag, pasted in", "", host + "evil/fugaro-base:9.9.9@sha256:" + strings.Repeat("a", 64), "evil"},
+		// The entry survives into the spec beside the clean --base
+		// (cmp.Or keeps a non-empty entry), so a build that submitted would
+		// put the proxy path in the repository's own base_images.
+		{"the config's entry beside a clean --base", "image_source: ghcr.io/dimipaun\nbase_images: {base: " + host + "evil/fugaro-base:9.9.9@sha256:" + strings.Repeat("a", 64) + "}\n", "b:1", "evil"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fb, f := cloudBuildCheckout(t, false)
+			if tc.config != "" {
+				f.appendConfig(t, tc.config)
+			}
+			args := []string{"image", "build"}
+			if tc.flag != "" {
+				args = append(args, "--base", tc.flag)
+			}
+			_, _, err := executeBuild(t, args...)
+			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("exit %d, err %v, want a refusal naming %q", ExitCode(err), err, tc.want)
+			}
+			if n := len(fb.Requests()); n != 0 {
+				t.Errorf("the build reached Cloud Build %d time(s)", n)
+			}
+		})
+	}
+}
+
 // TestImageBuildCloudRegistryForbidden: an operator may submit builds but
 // not read the repository's registry. A 403 on the check is not a missing
 // registry: the build is submitted, with a warning.

@@ -10,13 +10,18 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
-	"strings"
 	"time"
 )
 
 // CloudRun is the Cloud Run backend's name: launch.json's backend field
 // and the job's FUGARO_BACKEND.
 const CloudRun = "cloud-run"
+
+// CloudBatch is Cloud Batch's backend name. internal/backend/batch speaks
+// it, but nothing selects it yet: config validation refuses it everywhere
+// until the owner's Check 57a measurement says the platform behaves as
+// docs/design/compute-backend.md describes (design §9).
+const CloudBatch = "cloud-batch"
 
 // TaskTimeoutSlack is what the job's task timeout adds to the workflow's
 // timeouts.total (design §4.5): internal/infra hands it to Terraform, and
@@ -59,23 +64,10 @@ type LaunchSpec struct {
 	Env []string
 }
 
-// ExecID is an execution's identity, parsed from its resource name.
+// ExecID is a run's identity, parsed from its resource name by the
+// backend's codec (codec.go): Cloud Run's fields today, and the same four
+// slots for a backend whose name has fewer.
 type ExecID struct{ GCPProject, Region, Job, Name string }
-
-// ParseExecution parses projects/<p>/locations/<r>/jobs/<j>/executions/<e>.
-// <p> may be a project ID or number.
-func ParseExecution(name string) (ExecID, bool) {
-	f := strings.Split(name, "/")
-	if len(f) != 8 || f[0] != "projects" || f[2] != "locations" || f[4] != "jobs" || f[6] != "executions" {
-		return ExecID{}, false
-	}
-	for _, v := range []string{f[1], f[3], f[5], f[7]} {
-		if v == "" {
-			return ExecID{}, false
-		}
-	}
-	return ExecID{GCPProject: f[1], Region: f[3], Job: f[5], Name: f[7]}, true
-}
 
 // Key identifies the execution regardless of how the project is written.
 // Compare executions by Key, never by raw name.
@@ -84,37 +76,6 @@ func (id ExecID) Key() string { return id.Region + "/" + id.Job + "/" + id.Name 
 // String is the canonical full resource name.
 func (id ExecID) String() string {
 	return "projects/" + id.GCPProject + "/locations/" + id.Region + "/jobs/" + id.Job + "/executions/" + id.Name
-}
-
-// OnCloudRun reports whether this process runs as a Cloud Run job
-// execution: Cloud Run sets CLOUD_RUN_EXECUTION there and nowhere else.
-// It is the one signal for "in the cloud"; callers use it, not the job name
-// or a Fugaro variable.
-func OnCloudRun(getenv func(string) string) bool {
-	return getenv("CLOUD_RUN_EXECUTION") != ""
-}
-
-// ExecutionFromEnv is the canonical name of the Cloud Run execution this
-// process is, or "" outside Cloud Run. Cloud Run sets CLOUD_RUN_EXECUTION
-// (the short name) and CLOUD_RUN_JOB; the job sets FUGARO_GCP_PROJECT (the
-// GCP project ID; FUGARO_PROJECT is the Fugaro project's name) and
-// FUGARO_REGION.
-func ExecutionFromEnv(getenv func(string) string) (string, error) {
-	if !OnCloudRun(getenv) {
-		return "", nil
-	}
-	id := ExecID{GCPProject: getenv("FUGARO_GCP_PROJECT"), Region: getenv("FUGARO_REGION"), Job: getenv("CLOUD_RUN_JOB"), Name: getenv("CLOUD_RUN_EXECUTION")}
-	if id.GCPProject == "" || id.Region == "" || id.Job == "" {
-		return "", errors.New("on Cloud Run the job must set FUGARO_GCP_PROJECT and FUGARO_REGION (and Cloud Run sets CLOUD_RUN_JOB)")
-	}
-	return id.String(), nil
-}
-
-// SameExecution reports whether a and b name the same execution.
-func SameExecution(a, b string) bool {
-	x, ok1 := ParseExecution(a)
-	y, ok2 := ParseExecution(b)
-	return ok1 && ok2 && x.Key() == y.Key()
 }
 
 // ExecutionRef identifies a started execution.
@@ -178,6 +139,10 @@ type LogEntry struct {
 
 // Backend launches and inspects executions.
 type Backend interface {
+	// Codec is this backend's name codec: how it spells a run's identity,
+	// and the platform signal that says a process is one of its runs
+	// (design compute-backend.md §2.5).
+	Codec() Codec
 	Launch(ctx context.Context, spec LaunchSpec) (ExecutionRef, error)
 	Execution(ctx context.Context, name string) (Execution, error)
 	List(ctx context.Context, f ListFilter) ([]Execution, error)

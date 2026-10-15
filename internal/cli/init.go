@@ -51,7 +51,7 @@ type initOptions struct {
 	baseKinds                           []string // --base: base kinds to mirror now
 	imageSource                         string   // --image-source: a fork's own release registry/owner
 	expectDigests                       []string // --expect-digest KIND=sha256:...: the digest a release tag must resolve to
-	replaceImages                       []string // --replace-image KIND: kinds (history, or a base kind) whose tag in your registry may be replaced, each still behind a typed confirmation
+	replaceImages                       []string // --replace-image KIND: kinds (history) whose tag in your registry may be replaced, each still behind a typed confirmation; a base kind is refused there, since nothing is copied for it any more
 	launchers, operators                []string
 	budget                              int64
 	budgetCurrency, billingAccount      string
@@ -90,8 +90,11 @@ type initOptions struct {
 
 	// --repo: onboard the repository of a checkout.
 	repo, noBuild, allowJobDelete bool
-	githubAppID                   string
-	checkApp                      bool // --check-github-app
+	// retire is --retire: run the retirement a config change needs, behind
+	// two typed confirmations --yes cannot cover (init_retire.go).
+	retire      bool
+	githubAppID string
+	checkApp    bool // --check-github-app
 }
 
 func newInitCmd() *cobra.Command {
@@ -168,13 +171,14 @@ FROM (the record's base_ref, whose fugaro binary the image holds) is such a
 release too: a missing record, a record that does not say its base, an older
 or development CLI, or an older, development or hand-pushed base fails. It
 also checks that each base image the local config sets for those workflows is
-a release image init copied, at or after that release, since the next build
-starts from it (a development or hand-pushed one is never replaced by fugaro
-init --base or fugaro image refresh: remove its base_images entry first). The
-fix it names is: that removal when needed, fugaro image refresh --repo
-<owner/name> --workflow <name> in the checkout (it copies the base image,
-points the daily image check job at it and rebuilds the image), then fugaro
-init --anchor. The image checks trust the build records (written by
+this release's pin through the remote repository, or a release image an
+earlier fugaro copied, at or after that release, since the next build starts
+from it (a development or hand-pushed one is never replaced by fugaro init
+--base or fugaro image refresh: remove its base_images entry first). The fix
+it names is: that removal when needed, fugaro image refresh --repo
+<owner/name> --workflow <name> in the checkout (it verifies the release's
+base image and pins it by digest, points the daily image check job at it and
+rebuilds the image), then fugaro init --anchor. The image checks trust the build records (written by
 the builds, unsigned: the same trust as the shared config), and a hand-pushed
 image under a release-looking tag passes them. Then the diff; --yes writes, a terminal asks, and otherwise it
 prints the line and writes nothing. Exit codes: 0 written or already present
@@ -228,7 +232,8 @@ named fugaro-runs-<gcp project> that belongs to that project; read-only check:
 a custom runs bucket never qualifies). There, at a terminal, the ordinary steps (the Terraform applies of the
 installation, the Firebase root, the history job and the repository, the state
 bucket, the Cloud Resource Manager API, the Viewer-read removal, image copies
-that only add tags, the Firestore marks and rules, the local config) share one
+and base-image pins that only add tags, the Firestore marks and rules, the
+local config) share one
 review screen and ONE typed project name, asked when the first of them has
 something to change (so a rerun with nothing to do asks nothing). Each step
 still prints its own exact plan. It never covers creating a project, linking
@@ -343,9 +348,9 @@ secrets stage is behind the same gate.`,
 	f.StringVar(&o.stateBucket, "state-bucket", "", "the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>)")
 	f.StringArrayVar(&o.baseImages, "base-image", nil, "a base image the image checks run and builds start from, recorded in the local config under its base kind (repeatable; KIND=IMAGE, or just IMAGE when its repository is named fugaro-<kind>; the kinds you don't name keep theirs)")
 	f.StringSliceVar(&o.baseKinds, "base", nil, "copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated)")
-	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release images are copied from (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme)")
-	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "pin the digest of a release image copied by init, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. Without it init trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag")
-	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history or base; repeatable): let init replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). It names the intent only: replacing is confirmed by typing the project's name at a real terminal, never by --yes, --non-interactive or --json")
+	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release images come from: a base kind is resolved and signature-verified there and pinned through the installation's remote repository, a history image is copied from it (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme)")
+	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it init trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag")
+	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history; repeatable): let init replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is confirmed by typing the project's name at a real terminal, never by --yes, --non-interactive or --json")
 	f.StringArrayVar(&o.launchers, "launcher", nil, "an IAM member who launches and watches runs (repeatable; default: the local config's, and for a new config you, the authenticated user)")
 	f.StringArrayVar(&o.operators, "operator", nil, "an IAM member who onboards repositories (repeatable; default: the local config's, and for a new config you, the authenticated user)")
 	f.Int64Var(&o.budget, "budget", 0, "a monthly budget on the project, in whole units of --budget-currency")
@@ -378,6 +383,7 @@ secrets stage is behind the same gate.`,
 	f.StringVar(&o.githubAppID, "github-app-id", "", "the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; init asks once at a terminal, and --non-interactive needs it)")
 	f.BoolVar(&o.noBuild, "no-build", false, "with --repo: don't offer the first image builds")
 	f.BoolVar(&o.allowJobDelete, "allow-job-delete", false, "with --repo: lower the jobs' deletion protection, for offboarding")
+	f.BoolVar(&o.retire, "retire", false, "with --repo: run the retirement this config change needs (a workflow or a named account removed, a secret no longer mounted): remove the protected addresses from Terraform's state (destroying nothing), apply, then delete the orphaned Cloud Run jobs through the API. The project's name is typed twice at a real terminal, and --yes, --non-interactive, --json, a pipe and a coding agent cover neither. Excludes --plan-only, --print-vars and --forget, which read or forget rather than apply")
 	return cmd
 }
 
@@ -427,6 +433,17 @@ type initRun struct {
 	// through the operator's own credentials (policyReadOnce.read). Readiness's
 	// D11 gate turns on whether one exists.
 	policy policyReadOnce
+	// The retirement (init_retire.go): what the run read before its first
+	// plan -- the state's addresses, the retirement set of design §3.1a and
+	// the notes Orphans returned -- and whether its flow ran and applied, so
+	// the API delete is attempted once, after the last apply.
+	retireState   []string
+	retireSet     []infra.Retirement
+	retireNotes   []infra.Retirement
+	retired       bool     // the flow was entered (a later plan must not re-enter it)
+	retireApplied bool     // it applied: the jobs it removed from state still need deleting
+	retireRemoved []string // what the state removal took out: what a stop before the API delete owes (M-B)
+	retireClean   bool     // the resume's plan changed nothing: no apply is left, only the API delete
 }
 
 // initResult is what --json prints.
@@ -448,6 +465,11 @@ type initResult struct {
 	Builds     []string                   `json:"builds,omitempty"`
 	Missing    []string                   `json:"missing,omitempty"`
 	Warnings   []string                   `json:"warnings,omitempty"`
+	// Retire is the retirement set the run predicted -- the summary's own
+	// rows, with the state's and the labels' fields filled in -- so --json
+	// carries the same thing the run printed (design §3.2). It is set by
+	// every run that reads the state, --plan-only and --retire alike.
+	Retire []infra.Retirement `json:"retire,omitempty"`
 	// Stages and LeftForYou are the converge's account (initflow): each
 	// stage's state, and what only the user can do.
 	Stages     []initflow.StageResult `json:"stages,omitempty"`
@@ -692,8 +714,8 @@ func (o *initOptions) checkOnboardRepo() error {
 
 // check refuses flag combinations that mean nothing.
 func (o *initOptions) check() error {
-	if o.noBuild || o.allowJobDelete {
-		return userErr("--no-build and --allow-job-delete are for fugaro init --repo")
+	if o.noBuild || o.allowJobDelete || o.retire {
+		return userErr("--no-build, --allow-job-delete and --retire are for fugaro init --repo")
 	}
 	if err := o.checkAppID(); err != nil {
 		return err
@@ -1820,16 +1842,27 @@ func (o *initOptions) checkRepo() error {
 		return err
 	}
 	n := 0
-	for _, b := range []bool{o.planOnly, o.printVars, o.forget} {
+	if o.retire && o.planOnly {
+		// terraform state rm is a change to the state, and --plan-only's
+		// contract is that it creates and changes nothing (design §3.3).
+		return userErr("--retire and --plan-only exclude one another: retiring removes addresses from Terraform's state, and --plan-only changes nothing. Run --plan-only first to read the predicted retirement, then --retire to run it")
+	}
+	if o.retire && o.printVars {
+		// --print-vars writes the tfvars and returns before the first cloud
+		// call -- no discovery, no state, no plan -- so a --retire that came
+		// with it would print the file and drop the retirement silently.
+		return userErr("--retire and --print-vars exclude one another: --print-vars writes the tfvars and stops before the state is read, so the retirement would be dropped. Run --print-vars on its own, then --retire")
+	}
+	for _, b := range []bool{o.planOnly, o.printVars, o.forget, o.retire} {
 		if b {
 			n++
 		}
 	}
 	if n > 1 {
-		return userErr("--plan-only, --print-vars and --forget exclude one another")
+		return userErr("--plan-only, --print-vars, --forget and --retire exclude one another")
 	}
-	if o.forget && (len(o.allowDelete) > 0 || o.allowJobDelete || o.noBuild) {
-		return userErr("--forget only removes the repository from Terraform's state; it takes no --allow-delete, --allow-job-delete or --no-build")
+	if o.forget && (len(o.allowDelete) > 0 || o.allowJobDelete || o.noBuild || o.retire) {
+		return userErr("--forget only removes the repository from Terraform's state; it takes no --allow-delete, --allow-job-delete, --no-build or --retire")
 	}
 	if set := o.installationFlags(); len(set) > 0 {
 		return userErr("%s set(s) up the installation, not a repository: run fugaro init with it, then fugaro init --repo", strings.Join(set, ", "))
@@ -1927,6 +1960,13 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		if err := checkVertexBudget(lc, cfg); err != nil {
 			return err
 		}
+	}
+	// A route that sets require_zdr or price_policy lands in the job's
+	// FUGARO_MODEL_PROVIDERS, and an older runner refuses an unknown key
+	// there at bootstrap: refuse before any cloud effect (Task 4 step 2 of
+	// the price-catalog plan).
+	if err := r.gateCatalogSwitches(o, repo, lc); err != nil {
+		return err
 	}
 	if !o.forget {
 		w := r.w
@@ -2042,13 +2082,13 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	}
 	versions, err := infra.SecretVersions(ctx, c, spec)
 	if err != nil {
-		return initErr(err)
+		return r.retireLeftover(spec, initErr(err))
 	}
 	if !o.planOnly && !o.noBuild {
 		// 6. The first image builds, then the plan that deploys them.
 		names, err := infra.NeedsBuild(ctx, c, spec, versions)
 		if err != nil {
-			return initErr(err)
+			return r.retireLeftover(spec, initErr(err))
 		}
 		// Only re-resolved (a strict, bucket-reading read: resolveForBuild's
 		// own doc comment) when a build is actually about to happen: the
@@ -2059,7 +2099,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		var buildCfg *config.Config
 		if len(names) > 0 {
 			if buildCfg, err = resolveForBuild(ctx, root, lc); err != nil {
-				return err
+				return r.retireLeftover(spec, err)
 			}
 		}
 		built, err := r.offerBuilds(ctx, lc, buildCfg, ready, names)
@@ -2071,11 +2111,11 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 			if cerr := r.writeRepoConfig(ctx, lc, spec, cfg, path, old); cerr != nil {
 				r.warn(fmt.Sprintf("the local config was not updated: %v", cerr))
 			}
-			return err
+			return r.retireLeftover(spec, err)
 		}
 		if built > 0 {
 			if _, missing, err = r.planRepo(ctx, c, t, wd, spec, lc, rootOpts, false); err != nil {
-				return err
+				return r.retireLeftover(spec, err)
 			}
 		}
 	}
@@ -2086,9 +2126,27 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		return finish()
 	}
 
+	// 7b. The retirement's last step: the jobs the state removal left
+	// unmanaged, deleted through the Cloud Run API after every apply, so the
+	// re-plan that deploys freshly built images cannot race the delete.
+	// A failed delete does not cost the run its local config (M4): the plan
+	// did apply, the state did change, and the config file is the record of
+	// what the deployment now is. The error is returned after step 8, so the
+	// run still exits nonzero and still says what was left behind.
+	var deleteErr error
+	if r.retireApplied {
+		deleteErr = r.retireDelete(ctx, c, spec)
+	}
+
 	// 8. The local config.
 	if err := r.writeRepoConfig(ctx, lc, spec, cfg, path, old); err != nil {
+		if deleteErr != nil {
+			return remote(errors.Join(deleteErr, err))
+		}
 		return err
+	}
+	if deleteErr != nil {
+		return deleteErr
 	}
 	if !embedded {
 		// The converge's repository stage writes the line itself.
@@ -2096,6 +2154,8 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	}
 	if len(r.buildsLeft) > 0 {
 		// Everything else is done; the billable build is the user's to type.
+		// (Step 7b already ran: the API delete is attempted before this, so
+		// there is no residue left to name here.)
 		left := promptLeft(initflow.Repository, "type the project's name at the first image build's prompt (it is billable)", "init", "--repo")
 		if r.buildHold != "" {
 			// Not offered: the GitHub App is not ready (appPreCheck), which no
@@ -2215,6 +2275,24 @@ func (o *initOptions) requireCheckoutProject(ctx context.Context, dir string) er
 // vertexBudgetRefusal is the refusal of a Vertex workflow under a budget
 // that enforces: the gateway can't yet be relied on to cap Vertex spend.
 const vertexBudgetRefusal = runner.VertexBudgetRefusal
+
+// gateCatalogSwitches is repoEngine's route-switch version gate (price-catalog
+// plan Task 4 step 2): refuseCatalogSwitches, unless there is nothing to
+// refuse it for — --forget tears the repository down, and --plan-only shows
+// the plan without applying it (the same escape planRepo's clone refusal
+// leaves). --print-vars is judged like a deploy would be, since the values it
+// prints are the ones a deploy would use, and its warnings go to stderr so
+// stdout stays the Terraform variables alone.
+func (r *initRun) gateCatalogSwitches(o *initOptions, repo string, lc *localcfg.Config) error {
+	if o.forget || o.planOnly {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseCatalogSwitches(repo, lc, w)
+}
 
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates
 // the agent through Vertex AI (agent.auth: vertex) under a project budget
@@ -2407,8 +2485,48 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	if err := infra.WriteImports(wd.Root, im); err != nil {
 		return infra.RepoSpec{}, nil, userErr("writing the imports: %v", err)
 	}
+	// The retirement, read once, from the run's first plan (design §3.1a,
+	// §4.2): the state, the labels, the union, the summary -- and, with
+	// --retire, the whole guarded flow in place of the ordinary plan below.
+	// It has to be here, before t.Plan: in the case that matters no plan
+	// exists until the protected addresses have left the state.
+	// rets outlives the block: a plan that aborts on prevent_destroy is
+	// told whether the aborting address is one of them (retireAborted).
+	var rets []infra.Retirement
+	if first && !r.retired {
+		var err error
+		rets, err = r.readRetirements(ctx, c, t, ready)
+		if err != nil {
+			return infra.RepoSpec{}, nil, err
+		}
+		if len(rets) > 0 {
+			r.retired = true
+			if r.o.retire {
+				if err := r.retirePlan(ctx, c, t, wd, ready, rets, opts, im); err != nil {
+					return infra.RepoSpec{}, nil, err
+				}
+				return ready, missing, nil
+			}
+			// The gate, and it is the two cases the design names and no
+			// more: a job the state still holds whose own values say
+			// deletion_protection = true, after its variant left the
+			// configuration, cannot be finished by any apply. --plan-only
+			// removes nothing and refuses nothing here: it prints the
+			// summary and carries on to the read-only plan.
+			if blocked := blockingJobs(r.retireState, rets); len(blocked) > 0 && !r.o.planOnly {
+				return infra.RepoSpec{}, nil, retireRefusal(blocked)
+			}
+		}
+	}
 	changed, err := t.Plan(ctx, infra.PlanFile)
 	if err != nil {
+		// A plan Terraform refuses on a prevent_destroy resource is the one
+		// failure a retirement gets its own words for (design §3.3): the
+		// summary was printed above, and Terraform's text stays in the
+		// workdir, so nothing is hidden, only re-framed.
+		if preventDestroyAbort(err) {
+			return infra.RepoSpec{}, nil, retireAborted(rets, preventDestroyAddress(err), wd.Root)
+		}
 		return infra.RepoSpec{}, nil, remote(err)
 	}
 	if !changed {

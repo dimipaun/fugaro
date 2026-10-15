@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -212,6 +213,26 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 		if base, err = image.BaseRef(Version); err != nil {
 			return userErr("%v", err)
 		}
+	}
+	// The base image reaches the build's FROM line as it stands, so a
+	// reference under the installation's remote (pull-through) repository
+	// that is not a pin this tool wrote is refused here, not taken as the
+	// operator's own image: the proxy serves all of ghcr.io, and every job
+	// of this repository would pull whatever that path's owner publishes.
+	// The same goes for every other kind's entry, which goes into the
+	// repository's spec beside it (design §3.6, §10.7).
+	host, err := infra.RegistryHost(lc)
+	if err != nil {
+		return userErr("%v", err)
+	}
+	kind := cfg.Workflows[name].BaseKind()
+	for _, k := range slices.Sorted(maps.Keys(lc.BaseImages)) {
+		if foreignProxyRef(lc.BaseImages[k], host, k, baseOwner(lc)) {
+			return foreignProxyRefusal("the base image for "+k, lc.BaseImages[k], host, k, baseOwner(lc))
+		}
+	}
+	if foreignProxyRef(base, host, kind, baseOwner(lc)) {
+		return foreignProxyRefusal("the base image for "+kind, base, host, kind, baseOwner(lc))
 	}
 	// Every name comes from the repository's spec, as fugaro init --repo
 	// creates them: the build account, the registry (refused when its host

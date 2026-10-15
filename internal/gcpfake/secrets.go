@@ -6,6 +6,7 @@ import (
 	"maps"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,10 +17,15 @@ import (
 
 // Secrets is a stateful fake of the Secret Manager v1 calls Fugaro makes:
 // secrets get, create, list (with a filter of labels.k=v terms joined by
-// " AND "), delete, getIamPolicy, addVersion and versions list. It has no
-// access call unless a test allows it (AllowAccess): Fugaro never reads a
-// value back, but for the GitHub App pre-check's one read of the App's key,
-// so any other client that tries fails the test.
+// " AND "), delete, getIamPolicy, addVersion and versions list, delete and
+// destroy. It has no access call unless a test allows it (AllowAccess):
+// Fugaro never reads a value back, but for the GitHub App pre-check's one
+// read of the App's key, so any other client that tries fails the test.
+//
+// Deleted and Destroyed record the two destructive calls, so a test can
+// assert that a run never made one: a retirement leaves a secret and its
+// values in Secret Manager, and only the labels ever take its container
+// away.
 //
 // Known differences from real Secret Manager: the list filter supports only
 // the one shape Fugaro sends, and pages are never split.
@@ -33,11 +39,24 @@ type Secrets struct {
 	// handled (without the fake's lock), so a test can make the secret
 	// appear between the client's get and its create.
 	OnCreate func(id string)
+	// FailListWith, when non-zero, makes secrets.list answer that HTTP
+	// status: what pins the degradation of a refused label read.
+	FailListWith int
+	// FailVersionsAfter makes every version list after the first n answer
+	// 403 PERMISSION_DENIED: the read a step past the label calls makes,
+	// which a test cannot name by ID because the same secrets are read
+	// earlier in the run. Pair it with VersionsListCalls, so a test can fail
+	// the last read of a successful run without hard-coding how many there
+	// are.
+	FailVersionsAfter int
 
 	mu          sync.Mutex
 	secrets     map[string]*fakeSecret // by ID
 	allowAccess bool
 	accessed    []string // the secret IDs whose latest version was read
+	deletes     []string // the secret IDs a delete removed, in order
+	destroys    []string // the version names a destroy or a version delete took
+	versionList int      // the version lists served, successful or failed
 }
 
 type fakeSecret struct {
@@ -54,6 +73,8 @@ var (
 	versionsPathRE = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions$`)
 	accessRE       = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/latest:access$`)
 	secretPolicyRE = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+):getIamPolicy$`)
+	versionRE      = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+)$`)
+	destroyRE      = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+):destroy$`)
 	labelTermRE    = regexp.MustCompile(`^labels\.([a-z0-9_-]+)=([a-z0-9_-]*)$`)
 )
 
@@ -77,6 +98,15 @@ func (f *Secrets) Latest(id string) []byte {
 	return append([]byte(nil), s.versions[len(s.versions)-1]...)
 }
 
+// VersionsListCalls is how many version lists the fake has served, successful
+// or failed: a test reads it from one run to arm FailVersionsAfter for the
+// last read of the next.
+func (f *Secrets) VersionsListCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.versionList
+}
+
 // AllowAccess lets the fake answer the access call (the latest version's
 // value); without it a client that reads a value fails the test.
 func (f *Secrets) AllowAccess() {
@@ -90,6 +120,22 @@ func (f *Secrets) Accessed() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.accessed...)
+}
+
+// Deleted lists the IDs of the secret containers a delete removed, in order:
+// Fugaro never deletes one, so a retirement's test asserts this is empty.
+func (f *Secrets) Deleted() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.deletes...)
+}
+
+// Destroyed lists the versions a destroy or a version delete took, in order
+// (their full names). It is empty for every Fugaro run.
+func (f *Secrets) Destroyed() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.destroys...)
 }
 
 // Seed creates secret id with labels and one version holding value, as
@@ -160,7 +206,27 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "not found")
 			return
 		}
+		f.deletes = append(f.deletes, m[2])
 		delete(f.secrets, m[2])
+		writeJSON(w, http.StatusOK, map[string]any{})
+	case r.Method == http.MethodPost && destroyRE.MatchString(p):
+		m := destroyRE.FindStringSubmatch(p)
+		s := f.secrets[m[2]]
+		if s == nil || version(s, m[3]) == nil {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "not found")
+			return
+		}
+		f.destroys = append(f.destroys, "projects/"+m[1]+"/secrets/"+m[2]+"/versions/"+m[3])
+		writeJSON(w, http.StatusOK, versionJSON(m[1], m[2], atoi(m[3]), s.created))
+	case r.Method == http.MethodDelete && versionRE.MatchString(p):
+		m := versionRE.FindStringSubmatch(p)
+		s := f.secrets[m[2]]
+		if s == nil || version(s, m[3]) == nil {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "not found")
+			return
+		}
+		f.destroys = append(f.destroys, "projects/"+m[1]+"/secrets/"+m[2]+"/versions/"+m[3])
+		s.versions = slices.Delete(s.versions, atoi(m[3])-1, atoi(m[3]))
 		writeJSON(w, http.StatusOK, map[string]any{})
 	case r.Method == http.MethodPost && secretsPathRE.MatchString(p):
 		m := secretsPathRE.FindStringSubmatch(p)
@@ -183,6 +249,10 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		f.secrets[id] = s
 		writeJSON(w, http.StatusOK, s.json(m[1], id))
 	case r.Method == http.MethodGet && secretsPathRE.MatchString(p):
+		if f.FailListWith != 0 {
+			writeError(w, f.FailListWith, http.StatusText(f.FailListWith), "injected failure")
+			return
+		}
 		m := secretsPathRE.FindStringSubmatch(p)
 		want, ok := parseLabelFilter(r.URL.Query().Get("filter"))
 		if !ok {
@@ -231,6 +301,15 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeJSON(w, http.StatusOK, versionJSON(m[1], m[2], n, s.created))
 	case r.Method == http.MethodGet && versionsPathRE.MatchString(p):
 		m := versionsPathRE.FindStringSubmatch(p)
+		// handle holds f.mu for the whole switch, so the counter is touched
+		// directly here.
+		f.versionList++
+		if f.FailVersionsAfter > 0 && f.versionList > f.FailVersionsAfter {
+			// 403, not 5xx: the client retries a 500 on its own, so the
+			// caller would never see it.
+			writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "injected failure")
+			return
+		}
 		s := f.secrets[m[2]]
 		if s == nil {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "not found")
@@ -253,6 +332,21 @@ func (s *fakeSecret) json(project, id string) map[string]any {
 		"labels":      s.labels,
 		"replication": map[string]any{"automatic": map[string]any{}},
 	}
+}
+
+// version is version n of s, or nil when the secret has no such version.
+func version(s *fakeSecret, n string) []byte {
+	i := atoi(n)
+	if i < 1 || i > len(s.versions) {
+		return nil
+	}
+	return s.versions[i-1]
+}
+
+// atoi is a version number the regexps already restricted to digits.
+func atoi(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
 }
 
 func versionJSON(project, id string, n int, created time.Time) map[string]any {

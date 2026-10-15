@@ -168,6 +168,80 @@ func genCase(r *rand.Rand) parityCase {
 	return parityCase{w: w, op: op, amt: amt}
 }
 
+// checkParity writes one case against the seeded world and returns whether
+// the rules accepted it, together with Evaluate's decision. It fails when
+// the two disagree.
+func checkParity(t *testing.T, h *harness, name string, c parityCase) (rulesAllow bool, d budget.Decision) {
+	t.Helper()
+	h.seed(c.w)
+	d = budget.Evaluate(c.w.st, budget.Write{Op: c.op, Day: c.w.day, Amount: c.amt}, c.w.caps, c.w.kills, time.Now())
+	var updates map[string]any
+	if c.op == budget.OpLease {
+		updates = leaseUpdates(c.w, c.amt)
+	} else {
+		updates = releaseUpdates(c.w, c.amt)
+	}
+	err := c.w.client(h).Patch(context.Background(), "", updates)
+	switch {
+	case err == nil:
+		rulesAllow = true
+	case errors.Is(err, rtdb.ErrPermission):
+	default:
+		t.Fatalf("%s: %v", name, err)
+	}
+	if rulesAllow != d.Allow {
+		t.Fatalf("%s: the rules allow=%v but Evaluate allow=%v (%s: %s)\n%s", name, rulesAllow, d.Allow, d.Reason, d.Detail, c)
+	}
+	return rulesAllow, d
+}
+
+// directedCase is one hand-built parity case and the outcome the design
+// says it must have.
+type directedCase struct {
+	name      string
+	c         parityCase
+	wantAllow bool
+}
+
+// directedCases are the per-run fallback shapes of D6: a repository with no
+// per-run cap of its own, bounded by the default or, failing that, by the
+// project's global cap, and the fail-closed shape with no per-run cap set
+// anywhere. The random generator reaches them only by chance, so they run
+// at every FUGARO_PARITY_CASES.
+func directedCases() []directedCase {
+	// A world holding a $9 lease already, with the caps of the case.
+	w := func(caps budget.Caps, reserved budget.Micros) world {
+		caps.Limits = &budget.Limits{MaxReserveMicros: mp(5 * usd)}
+		caps.Mode = budget.ModeEnforce
+		return world{slug: "aurora", run: "r1", day: today(), caps: caps,
+			st: budget.State{
+				Run:    budget.RunLedger{Reserved: reserved},
+				DayRun: budget.RunLedger{Reserved: reserved},
+				Repo:   budget.Counters{Counted: reserved},
+				Global: budget.Counters{Counted: reserved},
+			}}
+	}
+	lease := func(w world, amt budget.Micros) parityCase {
+		return parityCase{w: w, op: budget.OpLease, amt: amt}
+	}
+	// The project's $150 daily cap is always set: these cases are about the
+	// per-run side only.
+	dayCaps := func(def *budget.DefaultCaps) budget.Caps {
+		return budget.Caps{Global: &budget.GlobalCaps{DailyMicros: mp(150 * usd), PerRunMicros: mp(20 * usd)}, Defaults: def}
+	}
+	return []directedCase{
+		// No repository node and no default per-run cap: the global $20
+		// holds 9 + 1 and refuses 19 + 1.
+		{"the global per-run cap alone bounds the run", lease(w(dayCaps(&budget.DefaultCaps{RepoDailyMicros: mp(60 * usd)}), 9*usd), usd), true},
+		{"... and refuses past it", lease(w(dayCaps(&budget.DefaultCaps{RepoDailyMicros: mp(60 * usd)}), 20*usd), usd), false},
+		// The default below the global one binds first.
+		{"the default per-run cap is the smaller side", lease(w(dayCaps(&budget.DefaultCaps{RepoDailyMicros: mp(60 * usd), RepoPerRunMicros: mp(10 * usd)}), 9*usd), usd), true},
+		{"... and refuses where the global cap would allow", lease(w(dayCaps(&budget.DefaultCaps{RepoDailyMicros: mp(60 * usd), RepoPerRunMicros: mp(10 * usd)}), 10*usd), usd), false},
+		// Nothing set anywhere: still denied (fail closed).
+		{"no per-run cap anywhere", lease(w(budget.Caps{Global: &budget.GlobalCaps{DailyMicros: mp(150 * usd)}, Defaults: &budget.DefaultCaps{RepoDailyMicros: mp(60 * usd)}}, 0), usd), false},
+	}
+}
+
 // TestRulesParity: for random databases and writes the rules accept the
 // write if and only if budget.Evaluate does (the lease client relies on this
 // to tell a stale read from a refusal). The delta equations and the token
@@ -186,32 +260,30 @@ func TestRulesParity(t *testing.T) {
 	if n := os.Getenv("FUGARO_PARITY_CASES"); n != "" {
 		fmt.Sscan(n, &cases)
 	}
+	// The generator reaches the fallback shapes of D6 only by chance (a
+	// repository with no per-run cap of its own needs three independent
+	// draws), and FUGARO_PARITY_CASES can be set to a handful of cases: run
+	// them directed, at every case count.
+	for _, dc := range directedCases() {
+		_, d := checkParity(t, h, dc.name, dc.c)
+		if d.Allow != dc.wantAllow {
+			t.Errorf("directed %s: allow=%v (%s), want %v", dc.name, d.Allow, d.Reason, dc.wantAllow)
+		}
+		t.Logf("directed %s: allow=%v (%s)", dc.name, d.Allow, d.Reason)
+	}
 	for i := 0; i < cases; i++ {
 		c := genCase(r)
-		h.seed(c.w)
-		d := budget.Evaluate(c.w.st, budget.Write{Op: c.op, Day: c.w.day, Amount: c.amt}, c.w.caps, c.w.kills, time.Now())
-		var updates map[string]any
-		if c.op == budget.OpLease {
-			updates = leaseUpdates(c.w, c.amt)
-		} else {
-			updates = releaseUpdates(c.w, c.amt)
-		}
-		err := c.w.client(h).Patch(context.Background(), "", updates)
+		rulesAllow, d := checkParity(t, h, fmt.Sprintf("case %d (seed %d)", i, seed), c)
 		if !d.Allow {
 			reasons[d.Reason]++
 		} else if d.Advisory != nil {
 			advisory++
 		}
 		switch {
-		case err == nil:
+		case rulesAllow:
 			allowed++
-		case errors.Is(err, rtdb.ErrPermission):
-			denied++
 		default:
-			t.Fatalf("case %d: %v", i, err)
-		}
-		if rulesAllow := err == nil; rulesAllow != d.Allow {
-			t.Fatalf("case %d: the rules allow=%v but Evaluate allow=%v (%s: %s)\nseed %d\n%s", i, rulesAllow, d.Allow, d.Reason, d.Detail, seed, c)
+			denied++
 		}
 	}
 	t.Logf("%d cases:", cases)

@@ -281,6 +281,33 @@ func TestSharedDropsBaseBranchAndBuildAccount(t *testing.T) {
 	}
 }
 
+// The recorded owner travels with the entry it validates: a teammate
+// adopting the published config must check the pin against the same owner
+// the publisher did (design §3.6, §10.7), so MergeShared keeps it — and the
+// local machine's own record, when it has one, is the one that wins.
+func TestMergeSharedKeepsTheOwnerInStep(t *testing.T) {
+	existing := sharedBase(t, "image_source: ghcr.io/acme\nbase_images: {base: us-east5-docker.pkg.dev/p/fugaro-ghcr/acme/fugaro-base:0.7.5@sha256:"+strings.Repeat("a", 64)+"}\n")
+	local := sharedBase(t, "")
+	got := MergeShared(existing, local)
+	if got.ImageSource != "ghcr.io/acme" {
+		t.Errorf("image_source = %q, want the published owner kept", got.ImageSource)
+	}
+	if _, err := got.Marshal(); err != nil {
+		t.Fatalf("the merged config does not marshal: %v", err)
+	}
+	// A local record wins, both halves together: the adopter who recorded
+	// their own owner never inherits the published one.
+	local = sharedBase(t, "image_source: ghcr.io/other\n")
+	if got := MergeShared(existing, local); got.ImageSource != "ghcr.io/other" {
+		t.Errorf("image_source = %q, want the local owner", got.ImageSource)
+	}
+	// Shared() does not drop it either: what is published is what the
+	// readers get.
+	if s := existing.Shared(); s.ImageSource != "ghcr.io/acme" {
+		t.Errorf("the shared config's image_source = %q", s.ImageSource)
+	}
+}
+
 // TestMergeSharedNeverCarriesProjectSecrets: project_secrets is
 // operator-only local config (design docs/design/project-secrets.md §7),
 // never published -- neither the local nor a published config's block
