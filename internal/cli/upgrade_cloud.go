@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
 
@@ -276,8 +277,39 @@ func jobConfigCopyNote(ctx context.Context, root string, co cloudOptions) string
 	if len(diffs) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("the deployed job's copy of the local project config is STALE (%s): a version upgrade never refreshes it; runs on %s use the old copy until you run fugaro init --repo . in your own terminal (never run automatically)",
-		strings.Join(diffs, "; "), pluginwire.Printable(repo))
+	stale := fmt.Sprintf("the deployed job's copy of the local project config is STALE (%s): a version upgrade never refreshes it",
+		strings.Join(diffs, "; "))
+	// The policy half (plan task 1.6 step 5): with a policy published, the
+	// keys it governs are read from the node at run time, so drift in them is
+	// no longer a reason to re-run init --repo — and saying which keys still
+	// are is the difference between a note the operator acts on and one they
+	// learn to ignore.
+	if p := jobConfigCopyPolicyNote(cctx, lc); p != "" {
+		return stale + p
+	}
+	return fmt.Sprintf("%s; runs on %s use the old copy until you run fugaro init --repo . in your own terminal (never run automatically)",
+		stale, pluginwire.Printable(repo))
+}
+
+// jobConfigCopyPolicyNote is the drift note's policy clause: what a
+// published policy now governs, and what a job's environment still has to be
+// refreshed for. "" when there is nothing to say — no policy published, no
+// database to read one from, or a read that failed: the note is advisory,
+// and the STALE sentence it would qualify stands on its own.
+//
+// The keys named as still needing init --repo are the ones the policy does
+// not carry and a run cannot do without: the pointer that makes the policy
+// reachable at all (RTDBURLEnv, FirebaseAPIKeyEnv — task 1.4), the mounts
+// (a workflow's committed secrets and agent.auth, which come from the
+// repository's own fugaro.yaml), and the platform-side settings
+// (infra.PlatformEnv: the region's compute price, the GitHub App ID).
+func jobConfigCopyPolicyNote(ctx context.Context, lc *localcfg.Config) string {
+	_, found, err := projectPolicyRead(ctx, lc)
+	if err != nil || !found {
+		return ""
+	}
+	return fmt.Sprintf("; the policy published at %s now governs providers, model_prices, the budget mode, the per-run ceiling, the allowed models, the token limit and the allow-list, and runs read those from the node: drift in them is not a reason to re-run fugaro init --repo, while the keys the policy does not carry still are (%s and %s, without which a run never finds the policy; the repository's mounted secrets and agent.auth; the region's compute price and the GitHub App ID)",
+		projectpolicy.PathShared(), infra.RTDBURLEnv, infra.FirebaseAPIKeyEnv)
 }
 
 // couldNotCheckJobConfigCopy is jobConfigCopyNote's note when a real error

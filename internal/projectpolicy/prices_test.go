@@ -66,7 +66,7 @@ func TestModelPricesKeysAreEscapedOnTheNode(t *testing.T) {
 
 // TestModelPricesKeysAreEscapedOnTheNodeChangesNothingElse is the other half:
 // the catalogue's own parser reads the decoded block, and it is what
-// internal/runner prices a run with (policyPrices), so the decoded map must be
+// internal/runner prices a run with (policyOverrides), so the decoded map must be
 // the document the operator wrote. CatalogJSON is that document.
 func TestModelPricesCatalogJSON(t *testing.T) {
 	const id = "deepseek/deepseek-v4-flash"
@@ -84,6 +84,39 @@ func TestModelPricesCatalogJSON(t *testing.T) {
 	}
 	if _, ok := o[id]; !ok {
 		t.Errorf("ParseOverrides = %v, want an entry for %q", o, id)
+	}
+}
+
+// TestModelPricesCatalogJSONOfAnEmptyBlock: a block with no model in it is an
+// empty object, as the doc says and as the node's own encoding (MarshalJSON)
+// writes it. json.Marshal of a nil map is the literal `null`, and the
+// catalogue's own parser refuses that with "it must be a JSON object keyed by
+// model ID" — so the two spellings of one block have to agree, or the first
+// caller that does not guard the call (both of today's callers do: Decode's
+// isNull check and policyOverrides' len == 0) is handed a document the reader
+// it is written for cannot read.
+//
+// Mutation (verified, run and restored): make CatalogJSON return
+// json.Marshal(map[string]Price(ps)) again — the nil case fails on "null".
+func TestModelPricesCatalogJSONOfAnEmptyBlock(t *testing.T) {
+	for name, ps := range map[string]Prices{"nil": nil, "empty": {}} {
+		raw, err := ps.CatalogJSON()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(raw) != "{}" {
+			t.Errorf("%s: CatalogJSON = %s, want {}", name, raw)
+		}
+		if _, err := pricing.ParseOverrides(string(raw)); err != nil {
+			t.Errorf("%s: the catalogue's own parser refused the block: %v", name, err)
+		}
+		node, err := json.Marshal(ps)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(node) != string(raw) {
+			t.Errorf("%s: the node's own encoding is %s and CatalogJSON is %s, want the same document", name, node, raw)
+		}
 	}
 }
 

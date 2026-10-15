@@ -369,7 +369,6 @@ func TestStartRejectsBadRoutes(t *testing.T) {
 	}
 	for name, rs := range map[string][]Route{
 		"claims anthropic/*": with(func(r *Route) { r.Models = []string{"anthropic/*"} }),
-		"claims anthropic/x": with(func(r *Route) { r.Models = []string{"anthropic/claude-sonnet-4"} }),
 		"upper-case name":    with(func(r *Route) { r.Name = "OpenRouter" }),
 		"name with a space":  with(func(r *Route) { r.Name = "open router" }),
 		"empty name":         with(func(r *Route) { r.Name = "" }),
@@ -378,6 +377,19 @@ func TestStartRejectsBadRoutes(t *testing.T) {
 		if err := ok(rs, anth); err == nil {
 			t.Errorf("%s: Start accepted the route", name)
 		}
+	}
+	// "claims anthropic/x" flipped on purpose: a route naming one explicit
+	// "anthropic/<id>" is the owner's opt-in, so Start accepts it (the rule
+	// is config.CheckModelPattern's, which the gateway calls -- a copy of it
+	// here is the bug this pins). The wildcard beside it stays refused,
+	// above.
+	if err := ok(with(func(r *Route) { r.Models = []string{"anthropic/claude-sonnet-4"} }), anth); err != nil {
+		t.Errorf("a route claiming one explicit anthropic/<id> was refused: %v", err)
+	}
+	// And a claim in the runner's own environment spelling, next to a model
+	// the same route also serves.
+	if err := ok(with(func(r *Route) { r.Models = []string{"deepseek/*", "anthropic/claude-sonnet-4"} }), anth); err != nil {
+		t.Errorf("a route mixing a claim with its own models was refused: %v", err)
 	}
 	if err := ok([]Route{good}, Upstream{Kind: "vertex", Token: staticToken("t"), VertexProject: "proj-1234", VertexLocations: []string{"us-east5"}}); err == nil {
 		t.Error("routes with the vertex upstream were accepted")
@@ -777,16 +789,37 @@ func TestRouteAndConfigAgreeOnBaseURLsAndPatterns(t *testing.T) {
 			t.Errorf("base URL %q: gateway refuses=%v (%v), config refuses=%v", u, gerr != nil, gerr, cerr)
 		}
 	}
-	for _, m := range []string{
-		"deepseek/*", "deepseek/deepseek-v4-flash", "x/y", "claude-*", "claude-sonnet-5-5", "cl*", "anthropic/*", "anthropic/claude-sonnet-4", "anth*",
-		"*", "a*b", "a*", "", "has space/*", "-lead/*", strings.Repeat("a", 101), "d**",
-	} {
+	// The accepted and the refused model lists must be the same set: what
+	// the config accepts, Start accepts, and what the config refuses, Start
+	// refuses. Both verdicts are asserted, side by side, so a rule that
+	// moves on one side only fails here rather than passing by agreement on
+	// the other.
+	gatewayTakes := func(m string) error {
 		_, gerr := Start(context.Background(), Options{Upstream: anth, Prices: pricing.Embedded(), Mode: Observe,
 			Routes: []Route{{Name: "p", Models: []string{m}, BaseURL: "https://openrouter.ai/api", Auth: "bearer", Credential: cred}}})
+		return gerr
+	}
+	configTakes := func(m string) bool {
 		p := config.ModelProvider{Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer", Secret: "p-key", Models: []string{m}}
-		cerr := len(config.ValidateModelProviders(map[string]config.ModelProvider{"p": p})) > 0
-		if (gerr != nil) != cerr {
-			t.Errorf("model %q: gateway refuses=%v (%v), config refuses=%v", m, gerr != nil, gerr, cerr)
+		return len(config.ValidateModelProviders(map[string]config.ModelProvider{"p": p})) == 0
+	}
+	for _, m := range []string{
+		"deepseek/*", "deepseek/deepseek-v4-flash", "x/y",
+		// The claim (Phase 2): one explicit anthropic/<id> is a real model ID
+		// a route may name, on both sides.
+		"anthropic/claude-sonnet-4", "anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5",
+	} {
+		if gerr := gatewayTakes(m); gerr != nil || !configTakes(m) {
+			t.Errorf("model %q: gateway refuses=%v (%v), config accepts=%v; want both to accept", m, gerr != nil, gerr, configTakes(m))
+		}
+	}
+	for _, m := range []string{
+		"claude-*", "claude-sonnet-5-5", "cl*", "anthropic/*", "anthropic/claude-*", "anthropic/",
+		"anthropic/claude-sonnet-5.5:free", "anthropic/Claude-Opus", "anth*",
+		"*", "a*b", "a*", "", "has space/*", "-lead/*", strings.Repeat("a", 101), "d**",
+	} {
+		if gerr := gatewayTakes(m); gerr == nil || configTakes(m) {
+			t.Errorf("model %q: gateway accepts=%v, config accepts=%v; want both to refuse", m, gerr == nil, configTakes(m))
 		}
 	}
 	// Match and overlap are one function; pin a table anyway.

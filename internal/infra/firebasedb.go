@@ -218,7 +218,7 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 	if err != nil {
 		return nil, nil, dbErr("reading the deployed rules", err)
 	}
-	if !sameJSON(live, gen) {
+	if !SameJSON(live, gen) {
 		d.acts = append(d.acts, DBAction{Path: "rules", Text: fmt.Sprintf("deploys the security rules (%d bytes, generated)", len(gen)), do: func(ctx context.Context) error {
 			return d.c.PutRules(ctx, d.rules)
 		}})
@@ -234,7 +234,7 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 	// fails leaves no marker and the run is a halt with its cause, where a
 	// marker written first would claim rules that are not there once the
 	// runner starts reading it. When no deploy is planned the deployed rules
-	// are byte-for-byte the generated ones (sameJSON, above), so recording
+	// are byte-for-byte the generated ones (SameJSON, above), so recording
 	// this generation is true in that case too — and it is what writes the
 	// marker on a database whose rules were deployed before this code existed.
 	var marker int
@@ -281,9 +281,13 @@ func (d *DB) Apply(ctx context.Context) error {
 	return nil
 }
 
-// sameJSON reports whether a and b are the same JSON document, ignoring
-// formatting.
-func sameJSON(a, b []byte) bool {
+// SameJSON reports whether a and b are the same JSON document, ignoring
+// formatting. It is what this package's rules deploy compares the deployed
+// document with before deciding to write (Plan, below), and it is exported
+// because `fugaro doctor`'s policy-rules-skew check asks the same question of
+// the same two documents: a check that compared them differently would report
+// a skew on an installation the deploy itself considers current.
+func SameJSON(a, b []byte) bool {
 	var x, y any
 	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
 		return bytes.Equal(bytes.TrimSpace(a), bytes.TrimSpace(b))

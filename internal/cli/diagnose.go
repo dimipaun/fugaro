@@ -483,7 +483,9 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		}
 		fmt.Fprintf(&b, "%s\n", oneLine(line))
 	}
-	fmt.Fprintf(&b, "%s\n", oneLine(strings.ReplaceAll(runner.CostLine(r.Cost), "**", "")))
+	for _, ln := range costLines(r.Cost) {
+		fmt.Fprintf(&b, "%s\n", ln)
+	}
 	if r.Cost.CatalogStale {
 		// The run charged, and over-counted on purpose: the catalog it
 		// priced from was past its own 30 days (design §7, P7).

@@ -76,6 +76,42 @@ func TestReadWithTheMarker(t *testing.T) {
 	}
 }
 
+// A marker ABOVE this generation's reads the node: the deployed rules are a
+// newer release's, which carry the policy nodes, and whether this binary
+// understands the policy it finds there is Decode's question (Version), not the
+// marker's. The gate is asymmetric on purpose — below is "the policy nodes do
+// not exist here yet", above is "they do" — and a read that treated the two
+// alike would answer "no policy" for an installation that has one, which every
+// caller takes as an empty ceiling.
+//
+// Mutation (verified, run and restored): make the gate `gen != RulesVersion`
+// instead of `gen < RulesVersion` — the policy case fails, Read answering
+// (nil, false, nil) for a published node.
+func TestReadWithAMarkerAboveThisGeneration(t *testing.T) {
+	f, db := readDB(t)
+	f.Set(PathRulesMarker(), RulesVersion+1)
+	f.Set(PathShared(), json.RawMessage(readPolicy))
+	p, found, err := Read(context.Background(), db)
+	if err != nil || !found || p == nil {
+		t.Fatalf("Read = (%v, %v, %v), want the policy: newer rules still carry the node", p, found, err)
+	}
+	if p.Budget.Mode != "observe" || p.Budget.PerRunUSD != 5 {
+		t.Errorf("policy = %+v, want the published one", p)
+	}
+
+	// The node still decides the other two states: absent is "installed, not
+	// adopted", and one this binary cannot read is an error rather than a
+	// policy-less answer.
+	f.Set(PathShared(), nil)
+	if p, found, err = Read(context.Background(), db); p != nil || found || err != nil {
+		t.Errorf("an absent node under a newer marker = (%v, %v, %v), want (nil, false, nil)", p, found, err)
+	}
+	f.Set(PathShared(), json.RawMessage(`{"version": 99}`))
+	if p, found, err = Read(context.Background(), db); err == nil || p != nil || !found {
+		t.Errorf("an unreadable policy under a newer marker = (%v, %v, %v), want a refusal", p, found, err)
+	}
+}
+
 // A denial with the marker deployed is the case that must not fall back to a
 // wider ceiling: the rules were changed out from under a published policy.
 func TestReadRefusesADeniedNode(t *testing.T) {

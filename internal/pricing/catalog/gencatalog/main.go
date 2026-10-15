@@ -342,7 +342,8 @@ type zdrDoc struct {
 
 // checkModels reads the model-level pricing of every allowlisted model and
 // refuses an ID the API no longer serves, an ID a pin could not name
-// (pricing.IsAlias: an alias, a ":" variant, the anthropic/ prefix), and a
+// (pricing.IsAlias: an alias, a ":" variant, or an anthropic/ prefix that is
+// not the one explicit ID a route may claim), and a
 // model whose pricing carries a dimension the file does not express. It is
 // the whole reason the models response is read: the prices themselves come
 // from the endpoints.
@@ -357,7 +358,7 @@ func checkModels(raw []byte, ids []string) error {
 	}
 	for _, id := range ids {
 		if pricing.IsAlias(id) {
-			return fmt.Errorf("%s is not a model ID a route can claim and a pin can name (an alias, a \":\" variant or the anthropic/ prefix): the file must not carry a key nothing can be charged for", id)
+			return fmt.Errorf("%s is not a model ID a route can claim and a pin can name (an alias, a \":\" variant or an anthropic/ prefix that is no single explicit ID): the file must not carry a key nothing can be charged for", id)
 		}
 		p, ok := byID[id]
 		if !ok {

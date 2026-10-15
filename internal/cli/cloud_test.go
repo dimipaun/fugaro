@@ -10,6 +10,8 @@ import (
 
 	"gocloud.dev/blob/memblob"
 
+	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/batch"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -216,7 +218,8 @@ func TestRemoteKeepsAnExistingCode(t *testing.T) {
 	}
 }
 
-// The cost estimate's prices are the region the jobs run in, after --region.
+// The cost estimate's prices are the region the jobs run in, after --region:
+// a run with no execution at all is priced in the installation's own region.
 func TestCloudPricesFollowTheRegion(t *testing.T) {
 	newCloudFixture(t) // region us-east5
 	if gcp.ListPrices("us-east5") == gcp.ListPrices("europe-west2") {
@@ -227,10 +230,106 @@ func TestCloudPricesFollowTheRegion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := env.prices()(""), gcp.ListPrices(region); got != want {
+		if got, want := env.prices(nil)(nil), gcp.ListPrices(region); got != want {
 			t.Errorf("--region %q: prices = %+v, want %s's %+v", flag, got, region, want)
 		}
 		env.Close()
+	}
+}
+
+// A VM-backed execution is priced with Compute Engine's table for its own
+// machine type and region, not with Cloud Run's jobs list price -- and one
+// the table does not carry is left unestimated rather than priced with
+// either (design compute-backend.md §5.2).
+func TestCloudPricesUseTheVMsTableForAVMRun(t *testing.T) {
+	newCloudFixture(t)
+	env, err := openCloud(context.Background(), cloudOptions{stderr: discard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer env.Close()
+	var warned []string
+	prices := env.prices(func(s string) { warned = append(warned, s) })
+	vm := &backend.Execution{Name: "projects/p/locations/us-central1/jobs/fugaro-j-1", Region: "us-central1", MachineType: "e2-standard-4", CPU: 4, MemoryGiB: 16}
+	got := prices(vm)
+	want, err := batch.PricesFor("us-central1", "e2-standard-4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("a VM run prices = %+v, want the VM table's %+v", got, want)
+	}
+	if got == gcp.ListPrices("us-central1") {
+		t.Error("a VM run is priced with Cloud Run's table")
+	}
+	// The execution's own region decides, not the installation's.
+	other := *vm
+	other.Region = "europe-west2"
+	if got := prices(&other); got != (backend.Prices{}) {
+		t.Errorf("a VM in an unpriced region = %+v, want no prices (compute not estimated)", got)
+	}
+	unknown := *vm
+	unknown.MachineType = "n2-standard-4"
+	if got := prices(&unknown); got != (backend.Prices{}) {
+		t.Errorf("a VM of an unknown machine type = %+v, want no prices (compute not estimated)", got)
+	}
+	// Neither refusal is silent, and neither is said twice: a listing of
+	// rows that all read "compute not estimated" has to say why (design
+	// compute-backend.md §5.2). The second refusal of the same reason is
+	// quiet, so a hundred unpriced runs are not a hundred lines.
+	if len(warned) != 2 {
+		t.Fatalf("warnings = %q, want one per refusal (two)", warned)
+	}
+	for i, want := range []string{"europe-west2", "n2-standard-4"} {
+		if !strings.Contains(warned[i], want) {
+			t.Errorf("warning %d = %q, want it to name %q", i, warned[i], want)
+		}
+	}
+	if got := prices(&other); got != (backend.Prices{}) || len(warned) != 2 {
+		t.Errorf("a repeated refusal warned again: %q", warned)
+	}
+}
+
+// A local compute_prices override wins on a VM run too, but it does not turn
+// the run into a Cloud Run job: the machine type's quantities still decide
+// the figure and the line still names the disk and NAT the figure leaves out
+// (design §5.2, C17). Without this, an overridden price on a VM run would
+// bill the workflow's resources -- which Batch reports as nothing at all --
+// and its source line would stop naming what the figure excludes.
+func TestCloudPricesOverrideOnAVMRunKeepsTheMachineTypesQuantities(t *testing.T) {
+	newCloudFixture(t)
+	env, err := openCloud(context.Background(), cloudOptions{stderr: discard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer env.Close()
+	env.lc.ComputePrices = map[string]localcfg.Price{"us-central1": {VCPUSecondUSD: 1e-5, GiBSecondUSD: 2e-6}}
+	vm := &backend.Execution{Name: "projects/p/locations/us-central1/jobs/fugaro-j-1", Region: "us-central1", MachineType: "e2-standard-4"}
+	got := env.prices(nil)(vm)
+	// The operator's rates win over the VM table's.
+	if got.VCPUSecondUSD != 1e-5 || got.GiBSecondUSD != 2e-6 {
+		t.Errorf("an overridden VM run prices = %+v, want the local override's rates", got)
+	}
+	// The machine type's quantities do not, and the note survives.
+	if got.VCPU != 4 || got.MemoryGiB != 16 {
+		t.Errorf("an overridden VM run carries %v vCPU / %v GiB, want the e2-standard-4's 4/16", got.VCPU, got.MemoryGiB)
+	}
+	for _, want := range []string{localcfg.PriceSource, "boot disk", "Cloud NAT"} {
+		if !strings.Contains(got.Source, want) {
+			t.Errorf("an overridden VM run's source %q does not name %q", got.Source, want)
+		}
+	}
+	// A VM of a machine type the table does not carry is refused, override or
+	// not: the quantities are unknown, so there is nothing to bill.
+	unknown := &backend.Execution{Name: vm.Name, Region: "us-central1", MachineType: "n2-standard-4"}
+	if got := env.prices(nil)(unknown); got != (backend.Prices{}) {
+		t.Errorf("an overridden VM of an unknown machine type = %+v, want no prices", got)
+	}
+	// Cloud Run's override is the local override, unchanged: no machine
+	// type's quantities, its own source line.
+	cloud := &backend.Execution{Name: "exec-1", Region: "us-central1", CPU: 2, MemoryGiB: 4}
+	if got := env.prices(nil)(cloud); got.VCPU != 0 || got.MemoryGiB != 0 || got.Source != localcfg.PriceSource {
+		t.Errorf("Cloud Run's overridden prices = %+v, want the override as it was", got)
 	}
 }
 
