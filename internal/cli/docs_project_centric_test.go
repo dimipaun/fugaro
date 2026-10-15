@@ -7,13 +7,19 @@ import (
 	"testing"
 )
 
-// TestChecklistHasCheck52: docs/gcp-live-checklist.md must carry phase 3's
-// four UNVERIFIED probes (design project-centric.md §13 and §4.5; plan
+// TestChecklistHasCheck52: docs/gcp-live-checklist.md must carry the UNVERIFIED
+// questions phase 3 depends on (design project-centric.md §13 and §4.5; plan
 // 2026-10-14-project-centric.md Task 3.0) as one owner-run, not-yet-run,
 // sandbox-only check numbered 52 — with its row in the check list and Check
 // 43's guard block (the three hard stops and the project pinning) inside its
 // section, so a reader cannot mistake it for something CI covers and no step
 // of it can run against a project other than fugaro-dev.
+//
+// U1 is not a probe any more: the owner ruled it on 2026-10-15 (a Bitbucket
+// credential cannot be scoped to one project's repositories), so the step is a
+// record of that ruling with no commands, and the assertions below fail if the
+// dead probe — its token, its scratch workspace, its projects and repositories
+// — comes back.
 //
 // The owner runs this document against real accounts, so the assertions below
 // are deliberately per-line: each is a fact the section must state (a stop it
@@ -40,7 +46,7 @@ func TestChecklistHasCheck52(t *testing.T) {
 	if i := strings.Index(body, "\n"); i != -1 {
 		body = body[i+1:]
 	}
-	mustContain(t, body, "body", []string{
+	chk52MustContain(t, body, "body", []string{
 		"no agent creates a credential, no agent runs a live step",
 		"no step of this check creates a token for the `edgeappinc` workspace or probes any repository that is not a scratch repository created for the probe",
 		"you run every command",
@@ -59,19 +65,28 @@ func TestChecklistHasCheck52(t *testing.T) {
 	if row == "" {
 		t.Fatal("the check list has no Check 52 row")
 	}
-	mustContain(t, row, "row", []string{
-		"two override executions",
+	chk52MustContain(t, row, "row", []string{
+		// Up to four override executions can run: the reference call, the
+		// literal comparison, and the length-only run when the container's
+		// command is a shell. "Two" undercounted them.
+		"up to four override executions",
 		"fugaro-chk52-probe",
 		"fugaro-probe-in",
 		"fugaro-other-probe",
-		// Both projects are created for the check and both go in Restore: the
-		// out-of-scope one holds fugaro-probe-3.
-		"two scratch Bitbucket projects",
+		// U1 is answered by ruling: the row must say so, and must not promise a
+		// Bitbucket credential, project or scratch repository.
+		"no longer a probe",
+		"nothing on the Bitbucket side",
 	})
+	for _, dead := range []string{"scratch Bitbucket", "project access token", "fugaro-probe-1"} {
+		if strings.Contains(row, dead) {
+			t.Errorf("the Check 52 row still describes U1 as a running probe (%q)", dead)
+		}
+	}
 
 	// Check 43's guard block inside the section — the three hard stops and
 	// the project pinning, not merely a ${P:?...}.
-	mustContain(t, section, "section", []string{
+	chk52MustContain(t, section, "section", []string{
 		"P=fugaro-dev",
 		`[ "$P" = fugaro-dev ] && [ -n "$L" ] \`,
 		`|| { echo "Check 52 stopped: re-run the whole setup block`,
@@ -81,38 +96,61 @@ func TestChecklistHasCheck52(t *testing.T) {
 		`|| { echo "Check 52 stopped: this checkout's origin is not the sandbox" >&2; exit 1; }`,
 	})
 
-	// The two stops this check adds on top of those three: the scratch
-	// Bitbucket workspaces must not be edgeappinc's (case-insensitively: a
-	// hand-typed EdgeAppInc must not slip past), and the out-of-scope project
-	// must be in the same workspace as the in-scope one. Removing either stop
-	// is removing the only thing that keeps U1 off production.
-	mustContain(t, section, "section", []string{
-		`[ -n "${PROBE_WS:?}" ] && [ "${PROBE_WS,,}" != edgeappinc ] && [ -n "${OUT_WS:?}" ] && [ "${OUT_WS,,}" != edgeappinc ] && [ -n "${OUT_PROJECT:?}" ] \`,
-		`|| { echo "Check 52 stopped: PROBE_WS and OUT_WS must be non-empty scratch workspaces, never edgeappinc (compared case-insensitively)" >&2; exit 1; }`,
-		`[ "${OUT_WS,,}" = "${PROBE_WS,,}" ] \`,
-		`|| { echo "Check 52 stopped: OUT_WS must be the same workspace as PROBE_WS`,
+	// U1 is dead as a step: the section must record the owner's ruling, must
+	// carry no command that creates or reads a credential, and must name no
+	// Bitbucket repository at all. Every one of these fails if the probe comes
+	// back.
+	chk52MustContain(t, section, "section", []string{
+		"### 2. U1 — answered by the owner's ruling; no probe",
+		"**OWNER RULING, 2026-10-15 — \"probe U1: cannot be scoped\".**",
+		"Bitbucket stays on the per-repository path",
+		"**D5 stays exactly as the design already has it**",
+		"**This step has no commands, and it creates and probes nothing.**",
+		"**FACT:** the ruling in the owner's own words, with its date",
+		"no credential, project or repository was created for U1",
 	})
-
-	// K1: a credential helper runs before GIT_ASKPASS, and this machine already
-	// stores a bitbucket.org credential. Every probe must disable the helper —
-	// in the scratch repo's own config and on every git command — and the check
-	// must prove, without printing anything, that no helper can answer.
-	mustContain(t, section, "section", []string{
-		`git config --local --unset-all credential.helper`,
-		`git config --local credential.helper ''`,
-		`git credential fill`,
-		`| grep -q '^password='`,
-		`security find-internet-password -s bitbucket.org`,
-	})
-	if n := strings.Count(section, `-c credential.helper= -c credential.useHttpPath=true`); n < 5 {
-		t.Errorf("the Check 52 section issues %d git probe commands with the credential helper disabled, want 5 (both repositories read and pushed, and the out-of-scope read)", n)
+	var u1 string
+	if i := strings.Index(section, "### 2. U1 —"); i != -1 {
+		j := strings.Index(section[i:], "### 3. U2 —")
+		u1 = section[i : i+j]
+	} else {
+		t.Fatal("the Check 52 section has no U1 step")
+	}
+	for _, dead := range []string{
+		"PROBE_WS", "OUT_WS", "PROBE_PROJECT", "OUT_PROJECT", // the scratch scope's variables
+		"PROBE_TOKEN", "GIT_ASKPASS", "credential.helper", // the credential path
+		"bitbucket.org", "git remote", "ls-remote", "security find-internet-password",
+	} {
+		if strings.Contains(u1, dead) {
+			t.Errorf("the Check 52 U1 step still carries the dead probe (%q): it is a record of the ruling, with no commands", dead)
+		}
+	}
+	// And no command anywhere in the section is a git command: the check reads
+	// and writes no repository, so the whole credential-helper machinery
+	// (K1) is gone with the probe it protected.
+	for _, line := range chk52ProbeCommands(section) {
+		// The guard's own origin assertion is the one git command left, and it
+		// is one of the three hard stops: it reads the sandbox checkout's
+		// remote, not a repository this check would touch.
+		if strings.HasPrefix(line, "git ") && !strings.HasPrefix(line, "git remote get-url origin") {
+			t.Errorf("the Check 52 section still runs a git command, and no step touches a repository any more: %q", line)
+		}
+	}
+	for _, dead := range []string{
+		"credential.helper", "git credential fill", "ASKPASS", "PROBE_TOKEN", "bitbucket.org",
+		"scratch workspace", "project access token",
+	} {
+		if strings.Contains(section, dead) {
+			t.Errorf("the Check 52 section still carries the dead U1 credential machinery (%q)", dead)
+		}
 	}
 
-	// I-b: the prompts work in bash and zsh alike; `read -p` is bash-only.
-	mustContain(t, section, "section", []string{
-		`read -rs PROBE_TOKEN`,
+	// I-b: the prompt works in bash and zsh alike; `read -p` is bash-only. The
+	// token prompt is gone with U1 — the throwaway secret value is the only
+	// thing this check ever types, and it is never echoed.
+	chk52MustContain(t, section, "section", []string{
 		`read -rs THROWAWAY`,
-		`: "${PROBE_TOKEN:?the probe project access token you typed}"`,
+		`: "${THROWAWAY:?a throwaway value you typed}"`,
 	})
 	if strings.Contains(section, "read -p ") {
 		t.Error("the Check 52 section prompts with read -p, which is bash-only (zsh: no coprocess)")
@@ -120,20 +158,13 @@ func TestChecklistHasCheck52(t *testing.T) {
 
 	// I-a: the baseline is recorded once and never overwritten, or Restore's
 	// diff compares the job with itself.
-	mustContain(t, section, "section", []string{
+	chk52MustContain(t, section, "section", []string{
 		"already recorded, not overwriting",
 		`[ -e "${CHK52_TMP:?}/job-before.json" ]`,
 	})
 
-	// I-c: a fresh shell may still be standing in the sandbox checkout, so the
-	// probe block proves where it is and that the repo is the scratch one.
-	mustContain(t, section, "section", []string{
-		`[ "$(pwd -P)" = "$(cd "${SCRATCH:?}" && pwd -P)" ] && ! git remote get-url origin >/dev/null 2>&1`,
-		`this block must run inside the scratch checkout, which has no origin`,
-	})
-
 	// I-d: IAM propagation, and the API the impersonated reads need.
-	mustContain(t, section, "section", []string{
+	chk52MustContain(t, section, "section", []string{
 		`gcloud services enable iamcredentials.googleapis.com --project="${P:?}"`,
 		`for i in $(seq 1 12); do`,
 		`sleep 10`,
@@ -141,11 +172,13 @@ func TestChecklistHasCheck52(t *testing.T) {
 	})
 
 	// I-e: one FACT line per step, each pinned by its own sentence.
-	mustContain(t, section, "section", []string{
+	chk52MustContain(t, section, "section", []string{
 		"**FACT:** the recorded job env (names, never values)",
-		"**FACT:** whether the token reads and pushes to exactly the project's repositories",
+		"**FACT:** the ruling in the owner's own words, with its date",
 		"**FACT:** whether the execution-level override is accepted and whether the referenced value arrives (the length, never the value)",
+		"If (a) is refused, the API's own error (its status, code and message) is the FACT",
 		"**FACT:** the two exit statuses (`inside` after the poll window, `outside` only once `inside` was `ok`)",
+		"**which condition was in place when the inside read succeeded** — `with-type` or `no-type`",
 		"**FACT:** the sandbox project's current service-account count and the quota it is counted against **as the API reports it**",
 	})
 
@@ -153,7 +186,7 @@ func TestChecklistHasCheck52(t *testing.T) {
 	// that removes it. A Restore that stops after the first command leaves the
 	// conditional grant, the probe account, a probe secret or a mode-700
 	// directory of the job's plain env values behind.
-	mustContain(t, section, "section", []string{
+	chk52MustContain(t, section, "section", []string{
 		`gcloud run jobs describe "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --format=json > "${CHK52_TMP:?}/job-after.json"`,
 		`diff <(jq -S '.spec.template' "${CHK52_TMP:?}/job-before.json") <(jq -S '.spec.template' "${CHK52_TMP:?}/job-after.json")`,
 		`gcloud run jobs update "${SANDBOX_JOB:?}" --project="${P:?}" --region="${L:?}" --remove-secrets=PROBE_REF`,
@@ -164,15 +197,17 @@ func TestChecklistHasCheck52(t *testing.T) {
 		`gcloud secrets delete "${PROBE_IN:?}" --project="${P:?}" --quiet`,
 		`gcloud secrets delete "${PROBE_OUT:?}" --project="${P:?}" --quiet`,
 		`gcloud iam service-accounts delete "${PROBE_SA:?}" --project="${P:?}" --quiet`,
-		`rm -rf "$SCRATCH"`,
 		`rm -rf "${CHK52_TMP:?}"`,
-		`unset PROBE_TOKEN; rm -f "${ASKPASS:-/nonexistent}"`,
-		"the **three scratch repositories**",
-		"**project access token revoked**",
-		// Restore deletes BOTH projects, not only the in-scope one: the
-		// out-of-scope project holding fugaro-probe-3 was created for U1 too.
-		"**both probe projects**",
-		"`PROBE_PROJECT` (holding `fugaro-probe-1` and `fugaro-probe-2`) and `OUT_PROJECT` (holding `fugaro-probe-3`",
+		// The conditional grant is removed with whichever condition is bound:
+		// step 4's fallback may have replaced the type term's.
+		`--condition="${PROBE_COND_NOTYPE:?}"`,
+		// Nothing to restore on the Bitbucket side, and the section must say so
+		// rather than list a cleanup that never happens.
+		"**And there is nothing to restore on the Bitbucket side.**",
+		"there is no scratch repository to delete, no project to remove and no token to revoke",
+		// The evidence is the plan-only run, not the template diff alone.
+		`fugaro init --repo . --plan-only --project fugaro`,
+		"**FACT:** that the second diff is empty **and** that the plan-only run reports nothing to change",
 	})
 	// The Restore's job check happens twice: once against the drift U2(b)
 	// added, once after --remove-secrets. With only the first pair the job is
@@ -191,9 +226,9 @@ func TestChecklistHasCheck52(t *testing.T) {
 	// L: the step's variables block is what defines SANDBOX_JOB, PROBE_SA,
 	// PROBE_IN, PROBE_OUT, PROBE_COND and CHK52_TMP. Without re-running it the
 	// first command aborts on ${SANDBOX_JOB:?} and nothing is restored.
-	mustContain(t, section, "section", []string{
+	chk52MustContain(t, section, "section", []string{
 		"**Then re-run the guard block and the step's variables block, in that order**",
-		"the step's variables block defines `SANDBOX_JOB`, `SANDBOX_JOB_SA`, `SANDBOX_BUCKET`, `NUMBER`, `PROBE_SA`, `PROBE_IN`, `PROBE_OUT`, `PROBE_COND` and `CHK52_TMP`",
+		"the step's variables block defines `SANDBOX_JOB`, `SANDBOX_JOB_SA`, `SANDBOX_BUCKET`, `NUMBER`, `PROBE_SA`, `PROBE_IN`, `PROBE_OUT`, `PROBE_COND`, `PROBE_COND_NOTYPE` and `CHK52_TMP`",
 	})
 	// Restore runs from a fresh shell: OWNER is set in step 4's block only, so
 	// the removal of the token-creator grant must default it here too.
@@ -206,7 +241,7 @@ func TestChecklistHasCheck52(t *testing.T) {
 	// never a racy --limit=1 listing; and the container override carries args
 	// or clearArgs, never both. The checks are over the section's command
 	// lines, since the prose says why those spellings are wrong.
-	for _, line := range probeCommands(section) {
+	for _, line := range chk52ProbeCommands(section) {
 		switch {
 		case strings.Contains(line, "--overrides"):
 			t.Errorf("the Check 52 section has a command using `gcloud run jobs execute --overrides`, which does not exist: %q", line)
@@ -219,13 +254,22 @@ func TestChecklistHasCheck52(t *testing.T) {
 	if strings.Contains(section, `"clearArgs"`) {
 		t.Error("the Check 52 section's JSON override body sets clearArgs alongside args")
 	}
-	mustContain(t, section, "section", []string{
+	chk52MustContain(t, section, "section", []string{
 		`jobs/${SANDBOX_JOB:?}:run`,
 		`OPERATION=$(jq -r '.name // empty' "${CHK52_TMP:?}/run-a.json")`,
 		`jq -r '.metadata.name // empty'`,
 		`internal/backend/gcp/run.go:103-107`,
 		`"value":"plain-literal"`,
+		// A refusal is an answer, not a stop: (a) branches on the API's error
+		// so (b), (c), U3 and U4 still run, and nothing aborts on a missing
+		// execution name.
+		`if jq -e '.error' "${CHK52_TMP:?}/run-a.json" >/dev/null 2>&1; then`,
+		`echo "U2(a): the API REFUSED the secret-reference override. Record this error as the FACT and go on:"`,
+		`if [ -n "${EXEC:-}" ]; then`,
 	})
+	if strings.Contains(section, `: "${EXEC:?`) {
+		t.Error("the Check 52 section aborts when (a)'s operation reports no execution name: a refused override is the likely answer, and its error is the FACT, not a stop")
+	}
 
 	// U3: the condition names the project NUMBER (a project ID never matches),
 	// never the ID; the reads are impersonated and send the payload to
@@ -233,12 +277,21 @@ func TestChecklistHasCheck52(t *testing.T) {
 	if strings.Contains(section, "projects/${P:?}/secrets/") {
 		t.Error("the Check 52 section writes the IAM condition with the project ID; Secret Manager resources are named by project NUMBER")
 	}
-	mustContain(t, section, "section", []string{
+	chk52MustContain(t, section, "section", []string{
 		`PROBE_COND="expression=resource.name.startsWith('projects/${NUMBER:?}/secrets/fugaro-probe')`,
-		`resource.type == 'secretmanager.googleapis.com/Secret'`,
+		// versions.access is evaluated on a SecretVersion, so a type term that
+		// accepted only .../Secret would deny the inside read and record a
+		// false "not honoured".
+		`(resource.type == 'secretmanager.googleapis.com/Secret' || resource.type == 'secretmanager.googleapis.com/SecretVersion')`,
+		`PROBE_COND_NOTYPE="expression=resource.name.startsWith('projects/${NUMBER:?}/secrets/fugaro-probe'),title=chk52-probe-prefix-notype"`,
+		`COND_USED=with-type`,
+		`--condition="${PROBE_COND_NOTYPE:?}"`,
 		`gcloud secrets add-iam-policy-binding "${PROBE_IN:?}" --project="${P:?}"`,
 		`--role="roles/secretmanager.secretAccessor"`,
 	})
+	if strings.Contains(section, `resource.type == 'secretmanager.googleapis.com/Secret',title`) {
+		t.Error("the Check 52 section's condition accepts only Secret, not SecretVersion: versions.access is evaluated on a SecretVersion, so the inside read would be denied")
+	}
 	if n := strings.Count(section, `--impersonate-service-account="${PROBE_SA:?}"`); n < 2 {
 		t.Errorf("the Check 52 section has %d impersonated secret reads, want at least 2 (inside and outside)", n)
 	}
@@ -246,27 +299,15 @@ func TestChecklistHasCheck52(t *testing.T) {
 		t.Errorf("the Check 52 section sends %d secret payloads to /dev/null, want at least 2", n)
 	}
 
-	// A Bitbucket Cloud clone URL is https://bitbucket.org/<workspace>/<slug>.git:
-	// the project is metadata, never a path segment.
-	mustContain(t, section, "section", []string{
-		`git remote add probe1 "https://bitbucket.org/${PROBE_WS:?}/fugaro-probe-1.git"`,
-		`git remote add probe2 "https://bitbucket.org/${PROBE_WS:?}/fugaro-probe-2.git"`,
-		`git -c credential.helper= -c credential.useHttpPath=true ls-remote "https://bitbucket.org/${OUT_WS:?}/fugaro-probe-3.git"`,
-	})
-	if strings.Contains(section, "bitbucket.org/${PROBE_WS:?}/${PROBE_PROJECT:?}") ||
-		strings.Contains(section, "bitbucket.org/${OUT_WS:?}/${OUT_PROJECT:?}") {
-		t.Error("the Check 52 section builds a Bitbucket clone URL with the project as a path segment")
-	}
-	// The second repository of the in-scope project is read AND pushed: a
-	// removed probe-2 push would leave the project-scoping claim half-tested.
-	for _, cmd := range []string{"ls-remote probe2", "push probe2 HEAD:probe-check"} {
-		if !strings.Contains(section, cmd) {
-			t.Errorf("the Check 52 section is missing the probe-2 command %q", cmd)
-		}
+	// U3's fallback is only run when the inside read was denied, and it says
+	// which condition was in place: a denial under the type term must never be
+	// recorded as the name prefix's.
+	if !strings.Contains(section, `if [ "$INSIDE" != ok ]; then`) {
+		t.Error("the Check 52 section has no fallback for a denied inside read, so a type term that does not match a SecretVersion would be recorded as the prefix term failing")
 	}
 
 	// The closing paragraph, which is what the owner reads last.
-	mustContain(t, section, "section", []string{
+	chk52MustContain(t, section, "section", []string{
 		"**Paste back:** every FACT line above, never a token, key or secret value.",
 		"never point a probe at edgeserver or edgeweb**",
 	})
@@ -275,7 +316,7 @@ func TestChecklistHasCheck52(t *testing.T) {
 	// command interpolates an unguarded `${VAR}`: an empty variable there is
 	// an empty argument gcloud resolves from its ambient configuration.
 	unguarded := regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*\}`)
-	for _, line := range probeCommands(section) {
+	for _, line := range chk52ProbeCommands(section) {
 		if strings.HasPrefix(line, "gcloud ") &&
 			!strings.Contains(line, `--project="${P:?}"`) &&
 			!strings.Contains(line, `"${P:?}"`) &&
@@ -291,7 +332,7 @@ func TestChecklistHasCheck52(t *testing.T) {
 	// must be scanned like any other command: a collector that looked only at a
 	// line's first word would let that one drop its --project unnoticed.
 	var sawKeywordCommand bool
-	for _, line := range probeCommands(section) {
+	for _, line := range chk52ProbeCommands(section) {
 		if strings.HasPrefix(line, "gcloud secrets versions access") {
 			sawKeywordCommand = true
 		}
@@ -307,10 +348,10 @@ func TestChecklistHasCheck52(t *testing.T) {
 	}
 }
 
-// mustContain fails the test for each want that is not in got, naming the part
+// chk52MustContain fails the test for each want that is not in got, naming the part
 // of the section (its body, its table row, the whole section) that should hold
 // it.
-func mustContain(t *testing.T, got, part string, want []string) {
+func chk52MustContain(t *testing.T, got, part string, want []string) {
 	t.Helper()
 	for _, w := range want {
 		if !strings.Contains(got, w) {
@@ -319,12 +360,12 @@ func mustContain(t *testing.T, got, part string, want []string) {
 	}
 }
 
-// stripCommandPrefix removes the shell keywords and operators a command can be
+// chk52StripCommandPrefix removes the shell keywords and operators a command can be
 // introduced by, so that `if gcloud …; then` and `… && gcloud …` are read as
 // gcloud commands: U3's inside read is an `if gcloud secrets versions access
 // …`, and a check that only looked at a line's first word would let that one
 // drop its --project or interpolate an unguarded variable unnoticed.
-func stripCommandPrefix(line string) string {
+func chk52StripCommandPrefix(line string) string {
 	for {
 		trimmed := line
 		for _, p := range []string{"if ", "elif ", "then ", "else ", "do ", "! ", "&& ", "|| ", "; ", "| "} {
@@ -340,12 +381,12 @@ func stripCommandPrefix(line string) string {
 	}
 }
 
-// probeCommands returns the section's `gcloud`, `curl` and `git` invocations
+// chk52ProbeCommands returns the section's `gcloud`, `curl` and `git` invocations
 // as logical lines: backslash continuations are joined, leading shell keywords
 // are stripped, and only lines that then start with one of those verbs count
 // (so a command inside prose, a comment or a `$(…)` is not read as a command of
 // its own).
-func probeCommands(section string) []string {
+func chk52ProbeCommands(section string) []string {
 	var joined []string
 	var buf string
 	for _, raw := range strings.Split(section, "\n") {
@@ -360,7 +401,7 @@ func probeCommands(section string) []string {
 	joined = append(joined, buf)
 	var out []string
 	for _, line := range joined {
-		line = stripCommandPrefix(strings.TrimSpace(line))
+		line = chk52StripCommandPrefix(strings.TrimSpace(line))
 		for _, verb := range []string{"gcloud ", "curl ", "git "} {
 			if strings.HasPrefix(line, verb) {
 				out = append(out, line)

@@ -433,7 +433,6 @@ type initRun struct {
 	// through the operator's own credentials (policyReadOnce.read). Readiness's
 	// D11 gate turns on whether one exists.
 	policy policyReadOnce
-
 	// The retirement (init_retire.go): what the run read before its first
 	// plan -- the state's addresses, the retirement set of design §3.1a and
 	// the notes Orphans returned -- and whether its flow ran and applied, so
