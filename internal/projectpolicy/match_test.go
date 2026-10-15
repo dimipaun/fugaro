@@ -196,3 +196,56 @@ func TestValidPatternCapsWildcards(t *testing.T) {
 		}
 	}
 }
+
+// TestAdmitsAll: the superset question, and the one `fugaro project repos rm`
+// asks before it tells an operator their runs are refused from now on. The
+// false case is the dangerous direction for that sentence (the operator reads
+// that runs stop when they do not), so the table is written from the matcher's
+// own side — a narrow pattern, a concrete name and a bare "*" — rather than
+// from the spellings the CLI happens to produce.
+func TestAdmitsAll(t *testing.T) {
+	for name, tc := range map[string]struct {
+		wide, sub string
+		want      bool
+	}{
+		"the wildcard admits everything":          {"*", "github/acme/*", true},
+		"the wildcard admits a concrete name":     {"*", "github/acme/app", true},
+		"a wider pattern admits a narrower one":   {"github/*/*", "github/acme/*", true},
+		"a provider wildcard":                     {"*/acme/*", "github/acme/*", true},
+		"a wider repository segment":              {"github/acme/*", "github/acme/app-*", true},
+		"a pattern admits the concrete it names":  {"github/acme/*", "github/acme/app", true},
+		"a concrete entry admits its own name":    {"github/acme/app", "github/acme/app", true},
+		"a narrower pattern admits nothing wider": {"github/acme/*", "github/*/*", false},
+		"a concrete entry admits only itself":     {"github/acme/app", "github/acme/*", false},
+		"a different owner":                       {"github/other/*", "github/acme/*", false},
+		"a different depth":                       {"github/*", "github/acme/*", false},
+		"a prefix pattern is not a superset":      {"github/acme/app*", "github/acme/*", false},
+		"nothing but the wildcard admits *":       {"github/acme/*", "*", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := AdmitsAll(tc.wide, tc.sub)
+			if got != tc.want {
+				t.Fatalf("AdmitsAll(%q, %q) = %v, want %v", tc.wide, tc.sub, got, tc.want)
+			}
+			// A "true" is checked against the matcher itself rather than
+			// trusted: it is the answer that silences the warning, so a single
+			// repository `sub` admits and `wide` does not makes it the wrong
+			// sentence — an operator told their runs continue when they stop.
+			// (A "false" is the other sentence and is only wrong if some
+			// witness exists; the table's own rows are that witness, since each
+			// false row below is a shape the matcher is known to separate.)
+			if !got {
+				return
+			}
+			for _, repo := range []string{
+				"github/acme/app", "github/acme/app-web", "github/acme/service-web",
+				"github/other/app", "github/acme/a/b", "bitbucket/acme/app",
+			} {
+				if MatchRepo(tc.sub, repo) && !MatchRepo(tc.wide, repo) {
+					t.Errorf("AdmitsAll(%q, %q) = true, but the matcher says %q admits %q and the wide entry does not",
+						tc.wide, tc.sub, tc.sub, repo)
+				}
+			}
+		})
+	}
+}

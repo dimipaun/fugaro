@@ -62,9 +62,15 @@
 //     allow_data_to would otherwise leave the widest setting there is (a nil
 //     list means every repository) and a misspelt route_fee_pct would drop the
 //     owner's surcharge, silently, on a node an administrator can write by
-//     hand. The tolerance that stays is at the top level and in `routing`,
-//     whose unknown keys cannot fail open: routing's values are checked by
-//     validRouting, which refuses a block this Fugaro cannot act on.
+//     hand. The tolerance that stays is at the top level and in `routing`:
+//     routing's values are checked by validRouting, which refuses a block this
+//     Fugaro cannot act on, and the keys under it that this Fugaro does not
+//     know are listed in Policy.UnknownRoutingKeys rather than dropped. Both
+//     lists are a *reader's* tolerance: the runner warns and carries on (it can
+//     only enforce what it understands, and refusing the node is what P8
+//     forbids), while the CLI refuses the ones it would otherwise write back —
+//     a publish keeps the routing block, and a kept key that is dropped on the
+//     way out is a quiet loosening.
 //
 // The readable node holds nothing personal and no secret values: every run
 // token can read it, and a prompt-injected agent can take the token through
@@ -100,6 +106,18 @@ type Policy struct {
 	Providers  map[string]Provider `json:"providers,omitempty"`
 	Prices     Prices              `json:"model_prices,omitempty"` // the owner's price overrides, keyed by model ID (Prices documents the node's own spelling)
 	Routing    *Routing            `json:"routing,omitempty"`      // phase 1b writes it; nil = direct (D1b)
+
+	// UnknownRoutingKeys lists the keys *under* `routing` that this Fugaro does
+	// not know, as dotted paths ("routing.claude.pin_region"), sorted. Decode
+	// fills it in and never writes it back (json:"-"), for the same reason as
+	// UnknownKeys — and it is a field of its own because `routing` is the one
+	// block a *publisher* keeps rather than rebuilds: buildProjectPolicy copies
+	// the decoded Routing into the node it writes, so a key under it that this
+	// Fugaro cannot list is dropped by the write, in a command whose diff then
+	// says "routing kept". Nothing here can be strict instead: an older reader
+	// must not refuse a node a newer Fugaro wrote (P8), so the tolerance stays
+	// and the one command that would drop the key refuses it.
+	UnknownRoutingKeys []string `json:"-"`
 
 	// UnknownKeys lists the top-level keys of the node this Fugaro does not
 	// know, sorted. Decode fills it in and never writes it back (json:"-"):
@@ -234,6 +252,56 @@ const MaxPolicyBytes = 64 << 10
 //
 // Unknown JSON keys are ignored; version is not (see VersionError), and the
 // budget block is strict (see the package comment).
+//
+// A key under `routing` that this Fugaro does not know is a fourth case, and
+// the third of the tolerated ones: it is listed in Policy.UnknownRoutingKeys,
+// which is what lets the one writer that would drop it refuse the edit.
+
+// routingKnownKeys are the keys Decode reads under `routing`, by path. A key
+// that is not on this map is tolerated and listed in Policy.UnknownRoutingKeys.
+//
+// It is a path map rather than a set of key names because routing nests: the
+// concrete failure is a newer Fugaro's key *inside* routing.claude (the
+// example the review of PR #405 gave is `routing.claude.pin_region`), which a
+// check of routing's own member names alone would not see. The walk descends
+// only into the paths on this map, so the outermost unknown key is what the
+// operator is told to look at rather than every key beneath it.
+var routingKnownKeys = map[string]map[string]bool{
+	"routing":        {"claude": true},
+	"routing.claude": {"via": true, "models": true},
+}
+
+// unknownRoutingKeys lists the dotted paths of the keys under `routing` that this
+// Fugaro does not know, sorted. A value that is not an object where the map
+// expects one is left to Decode's own read of the block: this function only
+// lists names, and never turns a shape it cannot walk into a refusal of its
+// own.
+func unknownRoutingKeys(raw json.RawMessage) []string {
+	var out []string
+	var walk func(raw json.RawMessage, path string)
+	walk = func(raw json.RawMessage, path string) {
+		known, ok := routingKnownKeys[path]
+		if !ok {
+			return
+		}
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &obj); err != nil {
+			return
+		}
+		for k, v := range obj {
+			child := path + "." + k
+			if !known[k] {
+				out = append(out, child)
+				continue
+			}
+			walk(v, child)
+		}
+	}
+	walk(raw, "routing")
+	sort.Strings(out)
+	return out
+}
+
 func Decode(raw []byte) (*Policy, bool, error) {
 	if isNull(raw) {
 		return nil, false, nil
@@ -321,6 +389,7 @@ func Decode(raw []byte) (*Policy, bool, error) {
 		if err := json.Unmarshal(rraw, &p.Routing); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: routing: %w", err)
 		}
+		p.UnknownRoutingKeys = unknownRoutingKeys(rraw)
 		if err := validRouting(p.Routing); err != nil {
 			return nil, true, err
 		}

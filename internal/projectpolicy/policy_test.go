@@ -36,9 +36,13 @@ func TestDecodeIgnoresUnknownKeys(t *testing.T) {
 	// not know (P8): unknown keys at the TOP LEVEL are ignored. Version gates
 	// a newer policy; the budget block is strict
 	// (TestDecodeRefusesABudgetWhoseKeysAllMiss), and so is a providers entry
-	// and routing (TestDecodeRefusesAMisspeltProviderKey,
-	// TestDecodeValidatesRouting) — see the package doc for why the shape of
-	// a known block is not the same case as a key this binary cannot name.
+	// (TestDecodeRefusesAMisspeltProviderKey) — see the package doc for why the
+	// shape of a known block is not the same case as a key this binary cannot
+	// name. Routing's *values* are strict too (TestDecodeValidatesRouting),
+	// but a key under routing that this binary cannot name is the third case:
+	// Decode keeps the block, so it must say which keys it could not vouch for
+	// and let the reader decide (TestDecodeListsKeysUnderRoutingItCannotName —
+	// the runner warns, and the CLI refuses to publish).
 	p, found, err := Decode([]byte(`{
 		"version": 1,
 		"budget": {"mode": "observe"},
@@ -56,6 +60,75 @@ func TestDecodeIgnoresUnknownKeys(t *testing.T) {
 	}
 	if p.Providers["openrouter"].Secret != "openrouter-key" {
 		t.Errorf("Providers = %v, want the openrouter entry", p.Providers)
+	}
+}
+
+// TestDecodeListsKeysUnderRoutingItCannotName: a key under `routing` that this
+// binary cannot name is neither refused (the block is kept as it was read, so a
+// node stays readable by an older runner and a newer one alike) nor silently
+// forgotten — Decode lists it, as dotted paths, in Policy.UnknownRoutingKeys,
+// and each reader decides: the runner warns, and the CLI refuses to publish,
+// because a publish re-marshals the typed Policy and would write the node back
+// WITHOUT those keys (the PR #405 review's `routing.claude.pin_region`, dropped
+// while the diff still printed "routing kept"). A refused routing *value*
+// (TestDecodeValidatesRouting) leaves no policy to list keys on, which is why
+// this is tested from the tolerant side.
+func TestDecodeListsKeysUnderRoutingItCannotName(t *testing.T) {
+	for name, tc := range map[string]struct {
+		routing string
+		want    []string
+	}{
+		"a key inside a provider entry": {
+			`{"claude": {"via": "auto", "pin_region": "eu"}}`,
+			[]string{"routing.claude.pin_region"},
+		},
+		"a provider this Fugaro does not know": {
+			`{"claude": {"via": "auto"}, "gemini": {"via": "auto"}}`,
+			[]string{"routing.gemini"},
+		},
+		"a key under an unknown provider stays one path": {
+			`{"gemini": {"pin_region": "eu"}}`,
+			[]string{"routing.gemini"},
+		},
+		"several, in one order": {
+			`{"zeta": {"via": "auto"}, "claude": {"via": "auto", "pin_region": "eu", "at": 2}}`,
+			[]string{"routing.claude.at", "routing.claude.pin_region", "routing.zeta"},
+		},
+		"nothing unknown": {
+			`{"claude": {"via": "auto", "models": ["deepseek/*"]}}`,
+			nil,
+		},
+		"the block is absent": {``, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			body := `{"version": 1}`
+			if tc.routing != "" {
+				body = `{"version": 1, "routing": ` + tc.routing + `}`
+			}
+			p, found, err := Decode([]byte(body))
+			if err != nil || !found || p == nil {
+				t.Fatalf("Decode(%s) = (%v, %v, %v), want a policy", body, p, found, err)
+			}
+			if !reflect.DeepEqual(p.UnknownRoutingKeys, tc.want) {
+				t.Fatalf("UnknownRoutingKeys = %v, want %v", p.UnknownRoutingKeys, tc.want)
+			}
+			// The routing block itself must survive the decode: a node read by
+			// an older runner keeps the keys it cannot name, which is the whole
+			// reason Decode is tolerant here.
+			if tc.routing != "" && p.Routing == nil {
+				t.Errorf("the routing block was dropped: %s", body)
+			}
+			// And the list is JSON-invisible: it is derived from the raw bytes,
+			// so a re-marshal must not write it back into the node as a field
+			// (which would make the next Decode see it as an unknown key).
+			out, err := json.Marshal(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(out), "UnknownRoutingKeys") {
+				t.Errorf("the list was marshalled into the policy: %s", out)
+			}
+		})
 	}
 }
 

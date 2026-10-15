@@ -1289,6 +1289,15 @@ func TestRemovalWarningSaysWhatTheNextRunDoes(t *testing.T) {
 		"pattern, the wildcard remains": {[]string{"*", "github/acme/*"}, "github/acme/*", true, "*"},
 		"pattern, nothing remains":      {[]string{"github/acme/*"}, "github/acme/*", false, ""},
 		"pattern, a narrower one only":  {[]string{"github/acme/*", "github/acme/app"}, "github/acme/*", false, ""},
+		// A wider *pattern* is the case the earlier version missed (the review
+		// of PR #405): github/*/* admits everything github/acme/* admits, so
+		// the removal is moot and the sentence must say so. A bare "*" is not
+		// the only entry that can be a superset.
+		"pattern, a wider pattern remains, after it":  {[]string{"github/acme/*", "github/*/*"}, "github/acme/*", true, "github/*/*"},
+		"pattern, a wider pattern remains, before it": {[]string{"github/*/*", "github/acme/*"}, "github/acme/*", true, "github/*/*"},
+		"pattern, a sibling pattern only":             {[]string{"github/acme/*", "github/other/*"}, "github/acme/*", false, ""},
+		"pattern, a deeper pattern only":              {[]string{"github/acme/*", "github/acme/team/*"}, "github/acme/*", false, ""},
+		"pattern, a wider segment in one position":    {[]string{"github/acme/*", "*/acme/*"}, "github/acme/*", true, "*/acme/*"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, by := admittedBy(tc.allow, tc.arg)
@@ -1344,6 +1353,38 @@ func TestProjectReposRmWithAPatternStillOnTheListSaysSo(t *testing.T) {
 	}
 	if !projectpolicy.AdmitRepo(publishedPolicy(t, f).AllowRepos, "github/acme/app") {
 		t.Error("the policy no longer admits the repository the confirmation said it still admits")
+	}
+}
+
+// TestProjectReposRmWithAWiderPatternStillOnTheListSaysSo: the review of PR
+// #405's own list, end to end. Both entries are patterns, so the question the
+// command asks is containment rather than a second wildcard: github/*/* admits
+// every repository github/acme/* does, so removing the narrow one stops no run
+// and the operator has to read that.
+func TestProjectReposRmWithAWiderPatternStillOnTheListSaysSo(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range []string{"github/acme/*", "github/*/*"} {
+		if _, _, err := execute(t, "project", "repos", "add", entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+	typed(t)
+	out, _, err := executeStdin(t, "aurora\n", "project", "repos", "rm", "github/acme/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "github/*/* still admits it") {
+		t.Errorf("the confirmation does not name the pattern that still admits it:\n%s", out)
+	}
+	if strings.Contains(out, "refused from now on") {
+		t.Errorf("the confirmation says the runs are refused though github/*/* is on the list:\n%s", out)
+	}
+	allow := publishedPolicy(t, f).AllowRepos
+	if !projectpolicy.AdmitRepo(allow, "github/acme/app") {
+		t.Errorf("the policy no longer admits github/acme/app, which the confirmation said it still admits: %v", allow)
 	}
 }
 
@@ -1471,6 +1512,61 @@ func TestProjectPolicyPublishKeepsAnExistingRoutingBlock(t *testing.T) {
 	}
 	if !strings.Contains(shown, "routing: claude via openrouter") {
 		t.Errorf("policy show does not print the routing block:\n%s", shown)
+	}
+}
+
+// TestProjectPolicyPublishRefusesAKeyUnderRoutingItDoesNotKnow: the publish
+// keeps a routing block it did not write (the test above), and "keeps" has to
+// be true of every byte of it. It is not, on its own: the node is re-marshalled
+// from this binary's own Policy, so a key *under* routing that this Fugaro
+// cannot name is dropped by the publish while the diff goes on printing
+// "routing kept" — a quiet loosening of a key the operator cannot see in this
+// binary, in the one command whose diff exists to say what changed (the review
+// of PR #405: routing.claude.pin_region). Decode lists those keys
+// (Policy.UnknownRoutingKeys), and the publish refuses rather than writing the
+// node back without them, exactly as it already refuses a top-level key or a
+// providers-entry key it does not know.
+//
+// The refusal has to name a remedy that works, which is the property the review
+// asks for of the older-node refusal too: "publish again" cannot be it (the
+// publish is what is refused), so it names the operations that do not
+// re-marshal the block — `repos add|rm` patches the node's bytes and keeps the
+// key, and an upgrade is what makes the key known.
+func TestProjectPolicyPublishRefusesAKeyUnderRoutingItDoesNotKnow(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), someFuturePolicy())
+	before := nodeJSON(t, f, projectpolicy.PathShared())
+
+	_, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatal("the publish wrote the node back and dropped a key under routing it does not know")
+	}
+	for _, want := range []string{"routing.claude.future_route", "repos add", "upgrade"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	// Refused is refused: the node is exactly what it was, key and all.
+	if after := nodeJSON(t, f, projectpolicy.PathShared()); after != before {
+		t.Errorf("a refused publish changed the node:\nbefore: %s\nafter:  %s", before, after)
+	}
+	if _, ok := nodeAt(f.db.Value(projectpolicy.PathShared()), "routing", "claude", "future_route"); !ok {
+		t.Fatalf("the key is gone: %s", nodeJSON(t, f, projectpolicy.PathShared()))
+	}
+
+	// The remedy the refusal names works, and it keeps the key: `repos add`
+	// edits the document's bytes rather than rebuilding it from the typed
+	// policy (TestProjectReposEditKeepsTheKeysItDoesNotKnow).
+	if _, _, err := execute(t, "project", "repos", "add", "github/acme/new"); err != nil {
+		t.Fatalf("the remedy the refusal names does not work: %v", err)
+	}
+	for _, path := range [][]string{{"routing", "claude", "future_route"}, {"routing", "claude", "via"}} {
+		if _, ok := nodeAt(f.db.Value(projectpolicy.PathShared()), path...); !ok {
+			t.Errorf("the remedy dropped %s: %s", strings.Join(path, "."), nodeJSON(t, f, projectpolicy.PathShared()))
+		}
+	}
+	if got := publishedPolicy(t, f).AllowRepos; len(got) != 2 || got[1] != "github/acme/new" {
+		t.Errorf("allow_repos = %v, want the new entry", got)
 	}
 }
 

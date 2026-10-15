@@ -170,6 +170,9 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		if err != nil {
 			return err
 		}
+		if err := refuseUnknownRoutingKeys(old); err != nil {
+			return err
+		}
 		allow, sources, err := publishAllowRepos(ctx, lc, old, o.seedRepos)
 		if err != nil {
 			return err
@@ -286,6 +289,27 @@ func publishedPolicyOf(raw []byte, exists bool) (*projectpolicy.Policy, error) {
 	return p, nil
 }
 
+// refuseUnknownRoutingKeys is the publish's own refusal, kept out of
+// publishedPolicyOf because the node it is about is one the *other* writer of
+// this document can still handle. A publish keeps the routing block rather than
+// rebuilding it (this Fugaro does not write routing; phase 1b does), and the
+// keep is a decode-and-re-encode: a key under routing that Decode cannot name
+// is dropped by that write, while printPolicyDiff goes on printing "routing
+// kept" over a node that lost one — the operator reading that the route they
+// set survived when it did not (the review of PR #405: routing.claude.
+// pin_region). `repos add|rm` has the same hazard and answers it the other way,
+// by patching the raw bytes (patchPolicyJSON) and keeping every key; a publish
+// cannot, because it rebuilds the rest of the node from the operator's config.
+// So the refusal is here, on the one command that drops the keys, and the
+// remedy it names is the command that does not.
+func refuseUnknownRoutingKeys(p *projectpolicy.Policy) error {
+	if p == nil || len(p.UnknownRoutingKeys) == 0 {
+		return nil
+	}
+	return userErr("%s carries %s under routing, which this Fugaro does not know: a publish keeps the routing block, so it would write the node back without them; upgrade Fugaro (fugaro upgrade), remove them by hand, or change the allow-list instead, which patches the node and keeps them ('fugaro project repos add|rm')",
+		projectpolicy.PathShared(), strings.Join(p.UnknownRoutingKeys, ", "))
+}
+
 // publishAllowRepos is the allow-list a publish writes: the node's own list,
 // unless the node is absent or the operator passed --seed-repos (P4). A
 // publish never silently re-adds a name an operator removed — removing one is
@@ -382,6 +406,11 @@ func sharedRepos(ctx context.Context, lc *localcfg.Config) (map[string]localcfg.
 // `repos add|rm` refuses to make by rewriting the node from this binary's type
 // (patchPolicyJSON). A publish cannot choose a route; it can only refuse to
 // lose the one the node already carries, and printPolicyDiff says it is kept.
+// "Kept" is therefore a claim that has to be true of every byte of the block,
+// and the copy below is where it could stop being true: `old.Routing` is the
+// *decoded* block, so a member this Fugaro cannot name is not in it. That is
+// why publishedPolicyOf refuses such a node before the publish starts
+// (Policy.UnknownRoutingKeys) rather than this function copying what it can.
 // A node that never had routing stays without one, which is direct (D1b).
 func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.Policy) (*projectpolicy.Policy, error) {
 	if lc.Budget == nil || lc.Budget.Mode == "" {
@@ -592,7 +621,10 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	// The routing block is not this binary's to write (phase 1b's): a publish
 	// keeps whatever the node carries, and saying so is the difference between
 	// an operator reading "the route I set is still there" and wondering
-	// whether this publish just turned it off.
+	// whether this publish just turned it off. The line is a claim about
+	// *every* byte of the block, which is why publishedPolicyOf refuses a node
+	// carrying a key under routing that this Fugaro cannot list: the keep is a
+	// decode and a re-encode, and that is the one thing it would drop.
 	if new.Routing != nil {
 		fmt.Fprintf(out, "  routing kept: %s\n", routingText(new.Routing))
 	}
@@ -1214,7 +1246,10 @@ func allowSources(ctx context.Context, lc *localcfg.Config) (map[string]string, 
 // enforces every value it understands and warns about the rest, P8). One
 // function for the readers, so `policy show`, `project show` and `repos ls`
 // cannot disagree on the posture; the writers word their own refusal, because
-// theirs is about dropping the keys (publishedPolicyOf).
+// theirs is about dropping the keys — the top-level ones (publishedPolicyOf)
+// and the ones under routing a publish would re-encode
+// (refuseUnknownRoutingKeys, which `repos add|rm` does not need: it patches the
+// raw bytes and keeps them).
 func refuseUnknownPolicyKeys(p *projectpolicy.Policy) error {
 	if p == nil || len(p.UnknownKeys) == 0 {
 		return nil
@@ -1483,15 +1518,25 @@ func removalWarning(allow []string, canonical string) string {
 // A concrete repository is admitted by any remaining entry that matches it: the
 // wildcard, or a pattern such as github/acme/*. A *pattern* being removed is a
 // different question — removing it is moot only if some remaining entry admits
-// everything it admitted — and the only entry that does is the bare wildcard
-// (two identical entries cannot both be on the list).
+// everything it admitted — and that is a superset test over patterns, not a
+// search for the bare wildcard. The earlier version of this function looked for
+// "*" and nothing else, which made the sentence wrong in the other direction
+// (the review of PR #405): with allow_repos = ["github/acme/*", "github/*/*"],
+// removing github/acme/* warned that its runs are refused from now on, while
+// github/*/* admits github/acme/app — so the confirmation claimed a stop that
+// the very next run does not make, in the one command whose warning exists to
+// be accurate about exactly that. Asking the matcher (AdmitsAll, which is
+// MatchRepo for a concrete entry and the segment-wise containment for a
+// pattern) keeps the sentence and the next run in step.
 //
 // An entry is a pattern when it carries a wildcard, not when ValidPattern
 // accepts it: ValidPattern accepts a concrete name too (a pattern with no "*"
 // matches exactly itself), so asking it would send every concrete removal down
 // the pattern branch — and github/acme/app removed while github/acme/* is on
 // the list would read "its runs are refused from now on", which is the one
-// thing the removal does not do.
+// thing the removal does not do. AdmitsAll makes the same distinction, so the
+// two branches below are one question asked of the right matcher, not two
+// implementations of one rule.
 func admittedBy(allow []string, arg string) (bool, string) {
 	rest := make([]string, 0, len(allow))
 	for _, p := range allow {
@@ -1501,7 +1546,7 @@ func admittedBy(allow []string, arg string) (bool, string) {
 	}
 	if strings.Contains(arg, "*") {
 		for _, p := range rest {
-			if p == "*" {
+			if projectpolicy.AdmitsAll(p, arg) {
 				return true, p
 			}
 		}

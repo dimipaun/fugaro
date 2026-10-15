@@ -53,6 +53,52 @@ func MatchRepo(pattern, canonical string) bool {
 	return true
 }
 
+// AdmitsAll reports whether every canonical repository `sub` admits is also
+// admitted by `wide` — the superset question, and the one a *pattern* removal
+// asks: `fugaro project repos rm github/acme/*` stops the runs it stops only if
+// nothing left on the list admits everything that pattern admitted, and
+// "github/*/*" does while a concrete entry does not.
+//
+// A concrete `sub` (no "*") is exactly MatchRepo: a name is a one-repository
+// set, and MatchRepo is the matcher the runner and the launcher use, so the
+// answer cannot drift from what a run does.
+//
+// A pattern is a set of repositories rather than one, and the two-set question
+// has its own answer: with "*" as the only wildcard (never a "?" or a class)
+// and a wildcard that never crosses a "/", the language of `wide` contains the
+// language of `sub` exactly when each of `wide`'s segments matches the
+// corresponding segment of `sub` *as text*, which is what matchSeg computes.
+// The segment count is checked first because a pattern of a different depth
+// admits a disjoint set — "github/*" admits nothing a three-segment pattern
+// does — and the bare "*", which admits everything, is handled before either.
+// Both arguments are entries of a published node and have passed ValidPattern;
+// a string that has not is answered by these same rules rather than by an
+// error, and where the answer is wrong it is a wrong *sentence* (this decides
+// what `repos rm` asks the operator to confirm), never a wrong admission —
+// admission is MatchRepo's and nothing else's.
+func AdmitsAll(wide, sub string) bool {
+	if wide == "*" {
+		return true
+	}
+	if !strings.Contains(sub, "*") {
+		return MatchRepo(wide, sub)
+	}
+	if sub == "*" {
+		// Admits everything, so only wide's own "*" above is a superset.
+		return false
+	}
+	ws, ss := strings.Split(wide, "/"), strings.Split(sub, "/")
+	if len(ws) != len(ss) {
+		return false
+	}
+	for i := range ws {
+		if !matchSeg(ws[i], ss[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 // AdmitRepo reports whether any entry of an allow_repos list admits a
 // canonical "<provider>/<owner>/<name>". An empty list admits nothing: a
 // policy that is published with an empty allow_repos is deny-all, which is a
