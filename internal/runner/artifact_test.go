@@ -513,3 +513,87 @@ func TestReportShowsTheRenderAndTheComputeEstimate(t *testing.T) {
 		t.Fatalf("report = %s", rep)
 	}
 }
+
+// TestArtifactRunOutcomeIsArtifacts: a render that exits zero ends the run
+// succeeded with outcome artifacts — the value the report, cancel and watch
+// all switch on — and the record carries the render.
+//
+// Mutation (set the outcome to OutcomeDraft, the implement loop's ending): the
+// assertion fails, and the run reads as a draft pull request it never opened.
+func TestArtifactRunOutcomeIsArtifacts(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""), artifactSpec(sizzlePlanRenderYAML), renderScript(sizzleScript))
+	rec, err := h.run(t, planStage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("status = %q, want succeeded (%s)", rec.Status, rec.Reason)
+	}
+	if rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("outcome = %q, want %q", rec.Outcome, runstore.OutcomeArtifacts)
+	}
+	if rec.Render == nil || rec.Render.ExitCode != 0 {
+		t.Fatalf("render = %+v, want the successful render", rec.Render)
+	}
+	if rec.Reason != "" {
+		t.Fatalf("reason = %q, want empty for a succeeded run", rec.Reason)
+	}
+}
+
+// TestArtifactRunRecordsNoBranchAndNoPR: an artifact run takes the implement
+// checkout arm (an artifact recipe has no pull request whose fugaro.yaml
+// could be untrusted, so there is nothing to read from a base branch), so
+// r.rec.Branch is the branch lock's key — and it stays a key: nothing is
+// pushed to it, no pull request is opened on it, and the record says so.
+//
+// Mutation (let finalize's PR path run, or drop `&& !r.artifact` from
+// checkpointsOn): a push or a PR appears and this test fails.
+func TestArtifactRunRecordsNoBranchAndNoPR(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""), artifactSpec(sizzlePlanRenderYAML), renderScript(sizzleScript))
+	pushes := countPushes(t, h)
+	rec, err := h.run(t, planStage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Branch == "" {
+		t.Fatal("the branch lock's key is missing from the record")
+	}
+	if rec.PushedHead != "" || rec.PR != nil {
+		t.Fatalf("record claims a push or a pull request: pushed_head %q, pr %+v", rec.PushedHead, rec.PR)
+	}
+	if n := pushes(); n != 0 {
+		t.Fatalf("%d pushes, want none", n)
+	}
+	if prs := h.provider.Snapshot().PRs; len(prs) != 0 {
+		t.Fatalf("the provider was asked for a pull request: %+v", prs)
+	}
+	if tip := remoteTip(t, h); tip != "" {
+		t.Fatalf("the remote has a branch %q", tip)
+	}
+}
+
+// TestHaltAdviceForAHaltedArtifactRunSaysStartAgain is the deliberate
+// NON-change (plan Task 2, halt.go:177): a halted artifact run is
+// OutcomeNone — OutcomeArtifacts is the success value the run writes when it
+// finishes — so haltLines already prints "start the run again" rather than
+// "fugaro run --pr N", and an added `|| rec.Outcome == OutcomeArtifacts` arm
+// would be dead code. Pinned so a later "fix" cannot add one.
+//
+// Mutation: none can fail this test from halt.go, and that is the finding.
+// Adding the `|| rec.Outcome == runstore.OutcomeArtifacts` arm to haltLines
+// was done and left this test green — the arm is unreachable, because a
+// halted run's record never carries OutcomeArtifacts. What does fail it is
+// removing the `rec.Outcome == runstore.OutcomeNone` arm, which is what
+// routes an artifact run to "start the run again" instead of the
+// "--pr N" default.
+func TestHaltAdviceForAHaltedArtifactRunSaysStartAgain(t *testing.T) {
+	rec := &runstore.Record{RunID: runID, Status: runstore.StatusHalted, Outcome: runstore.OutcomeNone,
+		Reason: "halted", Halt: &runstore.Halt{Reason: runstore.HaltNoCap, Scope: "run", At: time.Now().UTC(), Detail: "no cap"}}
+	got := runner.Report(rec, "runs/acme-app/"+runID, nil)
+	if strings.Contains(got, "--pr") {
+		t.Fatalf("a halted artifact run is told to continue on a pull request:\n%s", got)
+	}
+	if !strings.Contains(got, "start the run again") {
+		t.Fatalf("a halted artifact run is not told to start again:\n%s", got)
+	}
+}
