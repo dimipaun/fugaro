@@ -62,12 +62,40 @@ func PinWarnings(a Agent, prices *pricing.Table) []Problem {
 		if w := m.CacheWarning(); w != "" {
 			ps = append(ps, Problem{Path: r.path, Code: pricing.CodeCacheRateDefaulted, Message: w})
 		}
+		if w := catalogWarning(r.model, m.Catalog); w != "" {
+			ps = append(ps, Problem{Path: r.path, Code: CodeCatalogPrice, Message: w})
+		}
 	}
 	return ps
 }
 
 // CodeUnverifiedPrice marks a PinWarnings problem.
 const CodeUnverifiedPrice = "unverified_price"
+
+// CodeCatalogPrice marks the PinWarnings problem for a row the built-in
+// provider price catalog priced.
+const CodeCatalogPrice = "catalog_price"
+
+// catalogWarning is the pin warning for a catalog-priced row: which tier and
+// how many endpoints it covers, which end of that tier's range is charged,
+// and the one switch that would charge the other end. One place, so
+// `validate`, `diagnose` and the runner's pin-warning log line say the same
+// thing. c is nil on every other row, and "" then.
+func catalogWarning(model string, c *pricing.CatalogPrice) string {
+	if c == nil {
+		return ""
+	}
+	n := c.Endpoints
+	if c.Tier == "zdr" {
+		n = c.ZdrEndpoints
+	}
+	where := fmt.Sprintf("the %s tier of %d endpoint(s), checked %s, charged at the %s of its range", c.Tier, n, c.CheckedAt, c.Bound)
+	if c.Stale {
+		where = fmt.Sprintf("the %s tier of %d endpoint(s), and the catalog is stale (checked %s), so the dearest end is charged", c.Tier, n, c.CheckedAt)
+	}
+	return fmt.Sprintf("%s is priced from the built-in provider price catalog: %s. require_zdr selects the tier and price_policy the end of its range: price_policy: highest charges the top of the range (an owner's model_prices replaces this row whole)",
+		model, where)
+}
 
 // CheckAllowed is the rule for a run under an allow-list of models: the
 // coder, the reviewer and the background model must each be on it. Without a

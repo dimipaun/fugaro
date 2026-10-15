@@ -17,7 +17,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/policy"
-	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
 
@@ -130,15 +129,17 @@ func budgetProblems(cfg *config.Config, lc *localcfg.Config) (problems, warnings
 	if e.Mode == "" || e.Mode == policy.ModeOff {
 		return problems, warnings
 	}
-	prices := pricing.Embedded()
 	o, err := lc.Overrides()
-	if err == nil {
-		prices, err = prices.With(o)
-	}
 	if err != nil {
 		// The prices are unreadable, so a model "without a price" would be
 		// the table's fault, not the file's: say only what is wrong.
 		problems = append(problems, config.Problem{Path: "model_prices", Message: err.Error() + " (in the project config)"})
+	} else if prices, err := priceTableFor(lc.Providers, o); err != nil {
+		// The routes cannot be priced — a malformed catalog, or a
+		// require_zdr route on a model with no ZDR-eligible endpoint. The
+		// message is the fix path, and no rule below may judge a table
+		// that was refused (the run would not start).
+		problems = append(problems, config.Problem{Path: "providers", Message: err.Error() + " (in the project config)"})
 	} else if cfg.Agent.Auth != "oauth" {
 		// An oauth run has no gateway: nothing is priced or pinned.
 		for _, p := range config.CheckPins(agentPins, prices) {
@@ -165,13 +166,22 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 	if lc == nil || lc.Name != cfg.Project {
 		return nil, nil
 	}
-	prices := pricing.Embedded()
 	o, err := lc.Overrides()
-	if err == nil {
-		prices, err = prices.With(o)
-	}
 	if err != nil {
 		return nil, nil // budgetProblems says so
+	}
+	prices, err := priceTableFor(lc.Providers, o)
+	if err != nil {
+		// A refused table (a malformed catalog, or a route the switches
+		// cannot price) is reported by budgetProblems when the budget is
+		// on; with the mode off it never builds one, so report it here.
+		if m := policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg)).Mode; m == "" || m == policy.ModeOff {
+			problems = append(problems, config.Problem{Path: "providers", Message: err.Error() + " (in the project config)"})
+		}
+		// Without a table the price rule is skipped rather than judged on
+		// another table: a model with "no price" would be this refusal's
+		// fault, not the file's.
+		prices = nil
 	}
 	var allowed []string
 	if cfg.Budget != nil {

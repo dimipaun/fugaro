@@ -106,7 +106,7 @@ func TestProvidersFromEnvAcceptsOldAndNewShapes(t *testing.T) {
 // run charges from carries a catalog row for the route's model, so a surface
 // left on a bare pricing.Embedded() fails here rather than pricing a
 // different number than the gateway.
-func TestRunnerSeesCatalogRow(t *testing.T) {
+func TestSurfaceSeesCatalogRow(t *testing.T) {
 	v, err := runner.ProvidersEnv(map[string]config.ModelProvider{"openrouter": envProvider()}, "acme/app")
 	if err != nil {
 		t.Fatal(err)

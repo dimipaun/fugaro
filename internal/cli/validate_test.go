@@ -9,8 +9,12 @@ import (
 	"strings"
 	"testing"
 
+	"strconv"
+
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pricing/catalog"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -629,15 +633,69 @@ func inCheckoutOf(t *testing.T, repo string) {
 	t.Chdir(dir)
 }
 
+// TestValidateDoesNotRefuseWhatTheRunnerPrices pins the failure this design
+// exists to prevent (Review Focus 10): for one fixture route and model,
+// `validate` has no problem while the run's own table charges the catalog's
+// rate — the same row, from the same builder.
+func TestValidateDoesNotRefuseWhatTheRunnerPrices(t *testing.T) {
+	const id = "deepseek/deepseek-v4.1-flash"
+	const budget = "budget: { mode: enforce, per_run_usd: 2 }\n" + validateProviderBlock
+	const coder = "  auth: api-key\n  models: { coder: " + id + ", reviewer: claude-sonnet-5-5 }"
+	path := budgetProject(t, budget, coder)
+	inCheckoutOf(t, "acme/sandbox")
+	if out, _, err := execute(t, "validate", path); err != nil || !strings.Contains(out, "is valid") {
+		t.Fatalf("validate refused a pin the run prices: %v\n%s", err, out)
+	}
+	// The run's table, built from the job's environment.
+	p := cliRoute()["openrouter"]
+	p.AllowDataTo = []string{"acme/sandbox"}
+	env, err := runner.ProvidersEnv(map[string]config.ModelProvider{"openrouter": p}, "acme/sandbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := runner.SpendFromEnv(func(k string) (string, bool) {
+		switch k {
+		case runner.BudgetModeEnv:
+			return "observe", true
+		case runner.ModelProvidersEnv:
+			return env, true
+		}
+		return "", false
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, ok := s.Prices.Lookup(id)
+	if !ok {
+		t.Fatal("the run's table does not price the model validate accepted")
+	}
+	cat, err := catalog.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := strconv.ParseFloat(cat.Models[id].ZDR["input_per_m"].Min, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Rates.InputPerM != want {
+		t.Errorf("the run charges %v per million input tokens, want the catalog's %v", m.Rates.InputPerM, want)
+	}
+	if m.Catalog == nil {
+		t.Error("the run's row is not catalog-priced")
+	}
+}
+
 func TestValidateProviderModels(t *testing.T) {
 	const budget = "budget: { mode: enforce, per_run_usd: 2 }\n" + validateProviderBlock
 	const coder = "  auth: api-key\n  models: { coder: deepseek/deepseek-v4-flash, reviewer: claude-sonnet-5-5 }"
 	// An approved repository: valid, the background model defaults to the
-	// coder's, and the placeholder price is a warning.
+	// coder's, and the coder's price comes from the built-in price catalog,
+	// which is a warning (the tier and the end of the range charged).
 	path := budgetProject(t, budget, coder)
 	inCheckoutOf(t, "acme/sandbox")
 	out, errOut, err := execute(t, "validate", path)
-	if err != nil || !strings.Contains(out, "is valid") || !strings.Contains(errOut, "warning: agent.models.coder: deepseek/deepseek-v4-flash has an unverified placeholder price") {
+	if err != nil || !strings.Contains(out, "is valid") ||
+		!strings.Contains(errOut, "warning: agent.models.coder: deepseek/deepseek-v4-flash is priced from the built-in provider price catalog: the zdr tier") {
 		t.Fatalf("%v\nout: %s\nerr: %s", err, out, errOut)
 	}
 	// Another repository is refused, naming the rule.

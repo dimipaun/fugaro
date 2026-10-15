@@ -274,13 +274,13 @@ func routeOf(d *Diagnosis, rec *runstore.Record, lc *localcfg.Config, red func(s
 				d.Reported, reportedGapPct, bare)
 		}
 	}
-	prices := pricing.Embedded()
-	if lc != nil {
-		if ov, err := lc.Overrides(); err == nil {
-			if t, err := prices.With(ov); err == nil {
-				prices = t
-			}
-		}
+	// The table the run charges from, built the same way (the catalog's rows
+	// included). A table that cannot be built leaves the pin warnings out
+	// (a nil table looks nothing up): they would be about a table no run
+	// would use.
+	prices, _, err := priceTable(lc)
+	if err != nil {
+		prices = nil
 	}
 	for _, id := range slices.Sorted(maps.Keys(c.ModelBy)) {
 		for _, w := range config.PinWarnings(config.Agent{Model: id}, prices) {

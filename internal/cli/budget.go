@@ -1190,25 +1190,21 @@ type pricesDoc struct {
 
 func runBudgetPrices(cmd *cobra.Command, o *budgetPricesOptions) error {
 	errw := cmd.ErrOrStderr()
-	table := pricing.Embedded()
-	local := map[string]bool{}
-	// A project config, when one is selected, contributes its overrides. No
-	// config is fine (prices needs no cloud); a config that is selected and
-	// wrong is an error.
-	if lc, err := pricesConfig(cmd, o.cloud); err != nil {
+	// A project config, when one is selected, contributes its routes and its
+	// overrides. No config is fine (prices needs no cloud); a config that is
+	// selected and wrong is an error.
+	lc, err := pricesConfig(cmd, o.cloud)
+	if err != nil {
 		return err
-	} else if lc != nil {
-		ov, err := lc.Overrides()
-		if err != nil {
-			return userErr("%v", err)
-		}
-		if table, err = table.With(ov); err != nil {
-			return userErr("%v", err)
-		}
-		for k := range ov {
-			if m, ok := table.Lookup(k); ok {
-				local[m.ID] = true
-			}
+	}
+	table, ov, err := priceTable(lc)
+	if err != nil {
+		return userErr("%v", err)
+	}
+	local := map[string]bool{}
+	for k := range ov {
+		if m, ok := table.Lookup(k); ok {
+			local[m.ID] = true
 		}
 	}
 
