@@ -137,15 +137,25 @@ Project rules (carried over from this repository's existing plans):
 
 **Tests:** the two above.
 
-**Command:** `GOFLAGS=-p=2 go test ./internal/gateway/... ./internal/runner/... -count=1`.
+**Command:** the task's own tests first, targeted, so a failure is read without the rest of the packages' noise — `GOFLAGS=-p=2 go test ./internal/gateway/... -run 'TestRouteRecordedPerCall|TestMixedStageChargesEachModelAtItsOwnRate' -count=1` and `GOFLAGS=-p=2 go test ./internal/runner/... -run 'TestProviderReviewerSkipsTheFirstLine' -count=1` — then the two packages whole: `GOFLAGS=-p=2 go test ./internal/gateway/... ./internal/runner/... -count=1`.
 
 ### Task 3: Check 45 (owner-run; sandbox only)
 
 **Files:** `docs/gcp-live-checklist.md`.
 
-Check 45 is **already written** in that file (this PR's own edit). This task is the maintenance rule for it, and its whole content is three obligations: (a) the section keeps its **seven** steps and the file stays the single source of the wording — the plan deliberately does **not** quote them back, because a plan that repeats a check's steps is how the two drift (that drift was a review finding, and dropping the quote is the fix); (b) any edit that changes what the check expects changes it **there** and in the design's §8 list of open questions, never only here; (c) the numbering ruling's sentence names 45 as this plan's Phase 1 and 46 as Phase 2, and records that #363 **merged** with 47 — not an open plan that will renumber, which is what an earlier revision of this sentence said after the number was still in flight; PR #363 landed as `ba03ab5`. What the check must keep asserting, in whatever wording the file has: the placeholder `anthropic-api-key` (step 2); the derived recipe's **absent** cheap first line and a **named non-default** recipe's **present** one (P9) — which means step 4 run with the catalog `default` **by name** and step 6 run with the catalog `standard` (or a repository recipe), because `first_line_review: on` is the **setting** path and does not witness the recipe rule at all; the pins and `serving_model`/`priced_as` of the reviewer's calls, the cost against the bill, and the by-hand comparison that supplies the evidence for the design's §8 question 1 (`docs/design/mixed-credentials.md:118`: whether a non-Claude senior is acceptable as the first step, before any Claude senior). Sandbox project, sandbox repository, never `belong`, every step the owner's, no agent-run step.
+Check 45 is **already written** in that file (this PR's own edit). This task is the maintenance rule for it, and its whole content is three obligations: (a) the section keeps its **seven** steps and the file stays the single source of the wording — the plan deliberately does **not** quote them back, because a plan that repeats a check's steps is how the two drift (that drift was a review finding, and dropping the quote is the fix); (b) any edit that changes what the check expects changes it **there** and in the design's §8 list of open questions, never only here; (c) the numbering ruling's sentence names 45 as this plan's Phase 1 and 46 as Phase 2, and records that #363 **merged** with 47 — not an open plan that will renumber, which is what an earlier revision of this sentence said after the number was still in flight; PR #363 landed as `ba03ab5` (d) the paragraph also carries the collision rule itself, because a reservation is not a fact about the tree: it names the numbers this plan holds (45 and 46), the one #363 holds (47), the next number free (48), and the rule that whichever of two open claims merges **second** renumbers **itself** and updates that paragraph in the same commit — PR #375 states its own next-free claim, so this is the sentence that keeps the two from clashing whichever order they land in.. What the check must keep asserting, in whatever wording the file has: the placeholder `anthropic-api-key` (step 2); the derived recipe's **absent** cheap first line and a **named non-default** recipe's **present** one (P9) — which means step 4 run with the catalog `default` **by name** and step 6 run with the catalog `standard` (or a repository recipe), because `first_line_review: on` is the **setting** path and does not witness the recipe rule at all; the pins and `serving_model`/`priced_as` of the reviewer's calls, the cost against the bill, and the by-hand comparison that supplies the evidence for the design's §8 question 1 (`docs/design/mixed-credentials.md:118`: whether a non-Claude senior is acceptable as the first step, before any Claude senior). Sandbox project, sandbox repository, never `belong`, every step the owner's, no agent-run step.
 
 **Tests:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`. Two tests do read `docs/gcp-live-checklist.md` — `TestChecklistHasCheck33` (`internal/cli/docs_providers_test.go:91`, which asserts the Check 33 section says `USER-RUN, NOT RUN` and `sandbox`) and `TestCheckpointDocsMatchTheCode` (`internal/runner/docs_checkpoint_internal_test.go:17,47`, which reads the file only to assert it no longer says "first verified push") — but **neither is selected by `-run 'Docs|Lint'`**, so nothing in CI would catch a broken edit to Check 45's own text: it is reviewed by eye.
+
+**Command:** nothing in CI selects Check 45's own text (see the Tests line above), so this task's command is a set of greps that go red when the section is lost, plus the doc guards — run all four from the repository root:
+```bash
+grep -c '^## Check 45:' docs/gcp-live-checklist.md        # 1: the section exists
+grep -c '^| 45 |' docs/gcp-live-checklist.md               # 1: its row is still in the summary table
+sed -n '/^## Check 45:/,/^## Check 46:/p' docs/gcp-live-checklist.md | grep -cE '^[0-9]+\. \*\*'   # 7: the seven steps
+sed -n '/^## Check 45:/,/^## Check 46:/p' docs/gcp-live-checklist.md | grep -c 'fugaro-dev'          # >= 1: the guard's hard stop is still in the section
+GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1
+```
+A doc test would hold the first three better than a grep does, and it is **not** proposed here on purpose: the two tests that read this file are about other checks (`TestChecklistHasCheck33`, `TestCheckpointDocsMatchTheCode`), and a third written for Check 45 alone would make this plan's number the special case. If the owner wants one, it belongs with whatever change gives *every* check number the same guarantee — record that in the results rather than inventing it in this task.
 
 ### Task 4: what an alias is (the pricing half)
 
@@ -159,7 +169,7 @@ Check 45 is **already written** in that file (this PR's own edit). This task is 
 
 **Tests:** the alias table (step 3), plus one table over `IsProviderModelID` asserting it accepts `anthropic/claude-sonnet-5.5`, `deepseek/deepseek-v4-flash` and `x/y.z-w` and rejects `anthropic/x[1m]`, `anthropic/x:free`, `anthropic/`, `Anthropic/x`, `anthropic/*` and a 129-character ID.
 
-**Command:** `GOFLAGS=-p=2 go test ./internal/pricing/... -count=1`.
+**Command:** `GOFLAGS=-p=2 go test ./internal/pricing/... -run 'TestIsAlias|TestIsProviderModelID|TestEmbedded|TestTable' -count=1` for this task's own tables, then `GOFLAGS=-p=2 go test ./internal/pricing/... -count=1` for the package.
 
 ### Task 5: the claim and the refusals (the config half)
 
@@ -174,7 +184,7 @@ Check 45 is **already written** in that file (this PR's own edit). This task is 
 
 **Tests:** the four above plus `TestUnclaimedClaudePriceKeyRefused` (a `model_prices` key of `anthropic/claude-sonnet-5.5` is **accepted** now, P4 — the point of the test is the contrast: the key is inert without a claim, and the pin is what is refused), plus step 2's `TestValidateJudgesProvidersOnlyWithAMatchingLocalConfig` (the CLI's half of the "both surfaces" claim, asserted in both directions rather than assumed).
 
-**Command:** `GOFLAGS=-p=2 go test ./internal/config/... ./internal/gateway/... ./internal/cli/... -count=1`.
+**Command:** this task's tests first, by name: `GOFLAGS=-p=2 go test ./internal/config/... -run 'TestClaimMustBeExplicit|TestUnclaimedClaude|TestAllowedModelClaimNeedsARoute|TestRepoCannot|TestRepoCannotEnableARoute' -count=1`, `GOFLAGS=-p=2 go test ./internal/gateway/... -run 'TestRoute' -count=1`, `GOFLAGS=-p=2 go test ./internal/cli/... -run 'TestValidateJudgesProvidersOnlyWithAMatchingLocalConfig' -count=1` — then the three packages whole: `GOFLAGS=-p=2 go test ./internal/config/... ./internal/gateway/... ./internal/cli/... -count=1`.
 
 ### Task 6: a claimed Claude senior, end to end
 
@@ -191,7 +201,7 @@ Check 45 is **already written** in that file (this PR's own edit). This task is 
 
 **Tests:** the four groups above, all hermetic against `anthropicfake`.
 
-**Command:** `GOFLAGS=-p=2 go test ./internal/runner/... -count=1`.
+**Command:** the `providerRun` family first — `GOFLAGS=-p=2 go test ./internal/runner/... -run 'TestProviderRun|TestClaimedClaude|TestUnclaimedClaude' -count=1` — then the package: `GOFLAGS=-p=2 go test ./internal/runner/... -count=1`.
 
 ### Task 7: the claim in the shared project layer (its own slice, P7)
 
@@ -210,7 +220,7 @@ This task is a slice of its own because the layer is not the operator config, an
 
 **Tests:** `TestLayerClaimEnablesTheRoute` and `TestLayerClaimUnknownProviderRefused` (runner, end to end enough that the routes carry the claimed model); **`TestLayerClaimUnderAutoSkipsTheFirstLine`** — the derived recipe, `first_line_review` unset, a claimed-Claude senior whose claim is **only** in the layer: the stage list must be `implement, review` with no `review_first` and no entry whose `Tier` is `TierFirst` — note that `Tier` is `""`, not `TierSenior`, on a run that never had a first line (`internal/runner/runner.go:1402-1406`; `internal/runstore/runstore.go:95-97`), so the assertion is `Tier != runstore.TierFirst` and never `Tier == runstore.TierSenior`, which is the assertion that fails if the merge lands after `planOf` (Review Focus 9); `TestLayerClaimMustBeExplicit` (`anthropic/*` or a bare `claude-*` in `claude_models` refused, same rule as Task 5); `TestLayerClaimOverlapRefused` (a claim colliding with another provider's pattern is a config problem); `TestLayerClaimIsNeverInTheEnvironment`; `TestLayerClaimNotAppliedChangesNothing` (a layer for another project leaves `r.providers` equal to `r.d.Providers`); `TestLayerClaimRemovedPutsTheRefusalBack`; `TestValidateSeesTheCheckoutLayer` (a layer-claimed pin passes `fugaro validate` in the checkout that carries the layer); `TestRepoCannotEnableARoute`'s `claude_models:` cases (a repository file carrying the key is refused as unknown; Task 5 asserts the rejection and this task adds the layer-side twin).
 
-**Command:** `GOFLAGS=-p=2 go test ./internal/config/... ./internal/runner/... ./internal/cli/... -count=1`.
+**Command:** the layer's tests first — `GOFLAGS=-p=2 go test ./internal/config/... -run 'TestLayerClaim|TestProjectLayer' -count=1`, `GOFLAGS=-p=2 go test ./internal/runner/... -run 'TestLayerClaim' -count=1`, `GOFLAGS=-p=2 go test ./internal/cli/... -run 'TestValidateSeesTheCheckoutLayer' -count=1` — then the three packages whole: `GOFLAGS=-p=2 go test ./internal/config/... ./internal/runner/... ./internal/cli/... -count=1`.
 
 ### Task 8: the Phase 2 docs
 
@@ -233,3 +243,14 @@ This task is a slice of its own because the layer is not the operator config, an
 **Files:** `docs/gcp-live-checklist.md`.
 
 Check 46 is **already written** in that file, with the same maintenance rule as Task 3: the file owns the wording, this plan does not quote it back, and a change to what the check expects is made there and in the design's open-question list. What it must keep asserting: the unclaimed refusal at every surface it can reach (the pin problem, the provider problem, and the `model_prices` key, which under P4 is **accepted** and therefore is *not* a refusal any more — the check says so and moves the expectation to the pin and the bootstrap); the claim from the operator config and, once Task 7 ships, from the project layer via `fugaro config publish` (never `init --repo`, which does not read the layer) — **and that the layer half is not vacuous**: step 4 reads the deployed job's `FUGARO_MODEL_PROVIDERS` in three states (after removing the local entry and re-running `init --repo`, after publishing the layer, and after removing it from the layer) so the run can only be succeeding through the layer, not through a stale environment written when the claim lived in the local config; that a repository's own `fugaro.yaml` cannot enable a route; and the `cache_read`/`cache_write_5m` comparison against the same task run direct. **Step 4's layer half is run only after Task 7 has shipped**; until then the check says the layer is not in that slice. Sandbox project, sandbox repository, never `belong`, every step the owner's, no agent-run step.
+
+**Command:** Check 46's text is selected by nothing in CI either, so the same four greps plus the doc guards, with `46` in place of `45` and `47` as the range's end — run all five from the repository root:
+```bash
+grep -c '^## Check 46:' docs/gcp-live-checklist.md        # 1: the section exists
+grep -c '^| 46 |' docs/gcp-live-checklist.md               # 1: its row is still in the summary table
+sed -n '/^## Check 46:/,/^## Check 47:/p' docs/gcp-live-checklist.md | grep -cE '^[0-9]+\. \*\*'   # 7: the seven steps
+sed -n '/^## Check 46:/,/^## Check 47:/p' docs/gcp-live-checklist.md | grep -c 'fugaro-dev'          # >= 1: the guard's hard stop is still in the section
+GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1
+```
+Task 3's note about a doc test applies unchanged, and so does the reason for the greps here specifically: Check 46's range ends at Check 47, so a step-count that stops reading 7 is the signal that the section's boundary moved under it.
+
