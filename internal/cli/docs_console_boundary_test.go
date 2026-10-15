@@ -46,10 +46,11 @@ package cli
 // sits next to a "docs" segment or is written as a directory, including inside
 // a filepath.Join/path.Join argument list -- so Join("..", "..", "console",
 // "docs", "json-contract.md") is a mention and Join(tmp, "consolekit", "x") is
-// not. The detector does not follow a
-// path assembled from variables, and it cannot prove that a "console" segment
-// is THIS repository's console; both limits err toward the floor, which is the
-// plan's rule and stays in force.
+// not -- and a RELATIVE path that ends at the directory, "../../console", which
+// is the bare reference to console/ itself and holds no "console/" for the
+// floor. The detector does not follow a path assembled from variables, and it
+// cannot prove that a "console" segment is THIS repository's console; both
+// limits err toward the floor, which is the plan's rule and stays in force.
 //
 // This file is the scanner, so the mention half of (a3) exempts it by name: it
 // necessarily holds the literal "console/" itself (in the checks, in their
@@ -58,17 +59,25 @@ package cli
 // the module including this one, so this file's own imports and its own embed
 // directives are checked like any other file's.
 //
-// The walk reads every .go file of the module except the directories the go
-// command itself ignores -- .git/, node_modules/, and any directory whose name
-// begins with "." or "_". That last one is not tidiness: a nested checkout
-// under .worktrees/ or .claude/worktrees/ is a second copy of this module (and
-// of the console work in flight), and checking it against THIS module's
-// boundary would fail the test for reasons that have nothing to do with this
-// repository's own files. Two directories are deliberately still walked:
-// console/ itself (a Go file there is exactly what (a3) forbids) and testdata/
-// (a reference in a file the build ignores is still a reference this contract
-// forbids). A read error is returned rather than skipped, so a file that
-// disappears mid-scan fails the test instead of quietly shortening the scan.
+// The walk reads every .go file of the module except two kinds of directory,
+// and it is worth being exact about which is which. A name beginning with "."
+// or "_" is ignored by the go tool in every version, so those are stepped out
+// of -- that is what keeps a nested checkout under .worktrees/ or
+// .claude/worktrees/, a second copy of this module and of the console work in
+// flight, from failing THIS module's boundary. A directory go.mod's `ignore`
+// directive names is stepped out of as well, because the module itself says so.
+//
+// node_modules is neither, unless go.mod says so: it is not magic to the go
+// tool, and in this repository `go list ./...` prints its packages as this
+// module's. Skipping it anyway was a real hole -- a planted
+// console/node_modules/y/y.go failed no test at all, while console/README.md
+// promised it would -- so it is read like any other directory, through the walk
+// and through the console-subtree check. Two directories are deliberately
+// walked in every case: console/ itself (a Go file there is exactly what (a3)
+// forbids) and testdata/ (a reference in a file the build ignores is still a
+// reference this contract forbids). A read error is returned rather than
+// skipped, so a file that disappears mid-scan fails the test instead of quietly
+// shortening the scan.
 
 import (
 	"go/ast"
@@ -216,27 +225,46 @@ func consoleBoundaryRoot(t *testing.T) string {
 	return root
 }
 
-// consoleBoundaryDoc reads a repository-root-relative path. It is readDoc's
-// convention (docs_base_test.go) applied to console/README.md, which is a
-// document like any other even though it lives outside docs/.
-func consoleBoundaryDoc(t *testing.T, rel string) string {
+// consoleBoundaryIgnoredDirs returns the module-root-relative directories
+// go.mod's `ignore` directives exclude from the module (a Go 1.24 directive),
+// slash-separated and with any "./" prefix removed.
+//
+// It is read from the module rather than assumed, because node_modules is NOT
+// ignored by the go command on its own: it is an ordinary directory unless
+// go.mod says otherwise, and in this repository it says nothing of the kind --
+// `go list ./...` prints github.com/dimipaun/fugaro/console/node_modules/... as
+// a package of this module. Treating node_modules as invisible "because the go
+// command ignores it" would leave a real hole in the walk, and did: a planted
+// console/node_modules/y/y.go failed no test at all, while console/README.md
+// promised it would. Only a name beginning with "." or "_" is ignored by the go
+// tool in every version and needs no directive.
+func consoleBoundaryIgnoredDirs(t *testing.T) []string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(rel)))
-	if err != nil {
-		t.Fatal(err)
+	var out []string
+	for _, line := range strings.Split(readDoc(t, "go.mod"), "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "ignore ")
+		if !ok {
+			continue
+		}
+		if p := strings.TrimPrefix(strings.TrimSpace(rest), "./"); p != "" && p != "." {
+			out = append(out, p)
+		}
 	}
-	return string(data)
+	return out
 }
 
 // consoleBoundarySkipDir reports whether the walk steps out of a directory
-// rather than into it: the ones the go command ignores everywhere -- .git/,
-// node_modules/, and any name beginning with "." or "_". A nested checkout
-// under .worktrees/ or .claude/worktrees/ is a second module and not this one,
-// so its files are not this boundary's business (see this file's doc comment).
-// testdata/ is NOT skipped: a reference in a file the build ignores is still a
-// reference this contract forbids.
-func consoleBoundarySkipDir(name string) bool {
-	return name == "node_modules" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")
+// rather than into it: a name beginning with "." or "_" (ignored by the go tool
+// everywhere -- .git/ and a nested checkout under .worktrees/ or
+// .claude/worktrees/ are both that), or a root-relative path go.mod's `ignore`
+// directive excludes from the module. node_modules is in neither list unless
+// this module's go.mod declares it, so today its .go files are read like any
+// other directory's. testdata/ is read on purpose: a reference in a file the
+// build ignores is still a reference this contract forbids.
+func consoleBoundarySkipDir(name, rel string, ignored []string) bool {
+	return strings.HasPrefix(name, ".") ||
+		strings.HasPrefix(name, "_") ||
+		slices.Contains(ignored, rel)
 }
 
 // consoleBoundaryGoFiles is every .go file in the module, relative to the root,
@@ -244,7 +272,7 @@ func consoleBoundarySkipDir(name string) bool {
 // below can pass by looking at nothing.
 func consoleBoundaryGoFiles(t *testing.T, root string) []string {
 	t.Helper()
-	files, err := consoleBoundaryWalk(root)
+	files, err := consoleBoundaryWalk(root, consoleBoundaryIgnoredDirs(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,17 +286,25 @@ func consoleBoundaryGoFiles(t *testing.T, root string) []string {
 }
 
 // consoleBoundaryWalk is consoleBoundaryGoFiles without the "did it find the
-// module" guard, so a test can point it at a small tree it built itself. An
-// error is returned, never swallowed: a file that cannot be read fails the
+// module" guard, so a test can point it at a small tree it built itself, and
+// with the directories to step out of passed in rather than read from go.mod.
+// An error is returned, never swallowed: a file that cannot be read fails the
 // test rather than leaving the scan short.
-func consoleBoundaryWalk(root string) ([]string, error) {
+func consoleBoundaryWalk(root string, ignored []string) ([]string, error) {
 	var files []string
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
-			if p != root && consoleBoundarySkipDir(d.Name()) {
+			if p == root {
+				return nil
+			}
+			rel, err := filepath.Rel(root, p)
+			if err != nil {
+				return err
+			}
+			if consoleBoundarySkipDir(d.Name(), filepath.ToSlash(rel), ignored) {
 				return fs.SkipDir
 			}
 			return nil
@@ -293,7 +329,7 @@ func consoleBoundaryWalk(root string) ([]string, error) {
 // import path checkable: "under console/" means "<module>/console" or below.
 func consoleBoundaryModulePath(t *testing.T, root string) string {
 	t.Helper()
-	gomod := consoleBoundaryDoc(t, "go.mod")
+	gomod := readDoc(t, "go.mod")
 	for _, line := range strings.Split(gomod, "\n") {
 		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "module ")
 		if ok {
@@ -382,9 +418,16 @@ func consoleBoundaryMention(file, src string) bool {
 	}
 	f, err := parser.ParseFile(token.NewFileSet(), file, src, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
-		// No AST to read, so the run of comma-separated literals is read as
-		// the list of path segments it is in the Join spelling, and the joined
-		// result is asked the same question the parsed path asks.
+		// No AST to read, so the quoted literals are read as they are written:
+		// each one on its own, and each comma-separated run as the list of path
+		// segments it is in the Join spelling. Both are asked the same question
+		// the parsed path asks.
+		literals := consoleStringLitRE.FindAllString(src, -1)
+		for _, q := range literals {
+			if s, err := strconv.Unquote(q); err == nil && consoleBoundaryPathMentionsConsole(s) {
+				return true
+			}
+		}
 		for _, run := range consoleStringRunRE.FindAllString(src, -1) {
 			var parts []string
 			for _, q := range consoleStringLitRE.FindAllString(run, -1) {
@@ -420,20 +463,34 @@ func consoleBoundaryMention(file, src string) bool {
 // consoleBoundaryPathMentionsConsole reports whether a path-shaped string names
 // the module's console directory. What counts is a "console" SEGMENT -- the
 // word between separators, so "consolekit" and "console.md" are other names --
-// that is either followed by a "docs" segment, which is how the console's own
-// paths are written, or followed by a separator, which is a reference to the
-// directory itself (".." + ".." + "console" + separator, as a relative read
-// would build it). It answers "does this string look like a console path", not
+// that either sits in a relative path ("." or ".." first, which can only mean a
+// path built from this module), or is followed by a "docs" segment, which is
+// how the console's own paths are written, or is followed by a separator, which
+// is a reference to the directory itself. It answers "does this string look
+// like a console path", not
 // "is this string the path of THIS repository's console": a string from another
 // tree with the same shape counts, and the literal floor above counts more
 // still, which is the direction the plan's rule asks for.
 func consoleBoundaryPathMentionsConsole(s string) bool {
 	segs := strings.Split(s, "/")
+	// Relative to where the file sits: "." and ".." can only mean a path built
+	// from this module, so a "console" segment anywhere in one is this
+	// boundary. It is what catches the bare directory reference "../../console"
+	// -- no trailing separator for the first case below, no "docs" beside it,
+	// and nothing else in this file sees it: it is not an import, not an embed
+	// pattern, and the literal floor looks for "console/", which it does not
+	// hold. A module path ending in "/console" (github.com/x/console) is
+	// somebody else's directory and is deliberately not this case.
+	relative := len(segs) > 1 && (segs[0] == "." || segs[0] == "..")
 	for i, seg := range segs {
 		if seg != consoleDirName {
 			continue
 		}
+		// console/ itself: followed by "docs", or by the separator alone.
 		if i+1 < len(segs) && (segs[i+1] == "docs" || segs[i+1] == "") {
+			return true
+		}
+		if relative {
 			return true
 		}
 	}
@@ -575,7 +632,7 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 
 	t.Run("no_go_file_imports_a_console_path", func(t *testing.T) {
 		for _, rel := range files {
-			src := consoleBoundaryDoc(t, rel)
+			src := readDoc(t, rel)
 			imports, parsed := consoleBoundaryImports(t, rel, src)
 			if !parsed {
 				// A file the parser refuses is not compiled either, so it
@@ -606,15 +663,18 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 		if _, err := os.Stat(dir); err != nil {
 			t.Fatalf("no %s/ at %s: the console lives there (design D3) and Task 0.3 creates it: %v", consoleDirName, root, err)
 		}
+		// Every file below console/ is read, node_modules included. Nothing is
+		// stepped over here: this check is about what console/ HOLDS, and a
+		// .go file dropped into console/node_modules/ is a .go file in the
+		// console directory. (The module-wide walk follows go.mod's `ignore`
+		// directives instead, because that one is about what the go command
+		// builds; the two questions have different answers and both are asked.)
 		var offenders []string
 		err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
 			if d.IsDir() {
-				if p != dir && d.Name() == "node_modules" {
-					return fs.SkipDir
-				}
 				return nil
 			}
 			switch name := d.Name(); {
@@ -644,7 +704,7 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 	t.Run("only_the_allow_list_may_mention_a_console_path", func(t *testing.T) {
 		var mentioning []string
 		for _, rel := range files {
-			if consoleBoundaryMention(rel, consoleBoundaryDoc(t, rel)) {
+			if consoleBoundaryMention(rel, readDoc(t, rel)) {
 				mentioning = append(mentioning, rel)
 			}
 		}
@@ -673,7 +733,7 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 				t.Errorf("consoleBoundaryAllowList names %q, which is not a .go file of this module: the walk did not see it", rel)
 				continue
 			}
-			src := consoleBoundaryDoc(t, rel)
+			src := readDoc(t, rel)
 			imports, _ := consoleBoundaryImports(t, rel, src)
 			for _, imp := range imports {
 				if consoleBoundaryImportReachesConsole(rel, imp, consolePkg) {
@@ -689,7 +749,7 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 	})
 
 	t.Run("the_readme_states_the_module_rule", func(t *testing.T) {
-		readme := consoleBoundaryDoc(t, consoleDirName+"/README.md")
+		readme := readDoc(t, consoleDirName+"/README.md")
 		for _, want := range []string{
 			"importable by, or imports, the Go module",
 			consoleBoundarySelf,
@@ -707,7 +767,7 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 func TestGoModHasNoConsoleDependency(t *testing.T) {
 	root := consoleBoundaryRoot(t)
 	consolePkg := consoleBoundaryModulePath(t, root) + "/" + consoleDirName
-	require := consoleRequireLines(consoleBoundaryDoc(t, "go.mod"))
+	require := consoleRequireLines(readDoc(t, "go.mod"))
 	want := slices.Clone(consoleGoModRequireBaseline)
 	slices.Sort(want)
 
@@ -734,7 +794,7 @@ func TestGoModHasNoConsoleDependency(t *testing.T) {
 	})
 
 	t.Run("go_sum_names_no_console_module", func(t *testing.T) {
-		gosum := consoleBoundaryDoc(t, "go.sum")
+		gosum := readDoc(t, "go.sum")
 		lines := strings.Split(gosum, "\n")
 		for i, line := range lines {
 			if strings.TrimSpace(line) == "" {
@@ -759,33 +819,48 @@ func TestGoModHasNoConsoleDependency(t *testing.T) {
 // package to succeed.
 func TestNoGoFileEmbedsFromConsole(t *testing.T) {
 	root := consoleBoundaryRoot(t)
-	directives := 0
+	// The proof that this check can see anything is the extractor's own, not a
+	// count of what the module happens to hold today. A module with no go:embed
+	// directive at all is a legitimate state -- the last one can be deleted on
+	// purpose -- and a check that failed on it would be asking the author to
+	// break the test to make it pass. So the extractor is shown a directive it
+	// must find, and the scan below is free to find none.
+	const probe = "package probe\n\nimport _ \"embed\"\n\n//go:embed testdata/zzz/known.md\nvar zzz string\n"
+	if got := consoleBoundaryEmbedPatterns("probe.go", probe); !slices.Equal(got, []string{"testdata/zzz/known.md"}) {
+		t.Fatalf("the go:embed extractor read %q out of a known source, so a scan finding nothing proves nothing: fix the directive regexp before trusting this test", got)
+	}
 	for _, rel := range consoleBoundaryGoFiles(t, root) {
-		for _, pattern := range consoleBoundaryEmbedPatterns(rel, consoleBoundaryDoc(t, rel)) {
-			directives++
+		for _, pattern := range consoleBoundaryEmbedPatterns(rel, readDoc(t, rel)) {
 			if consoleBoundaryEmbedPatternReachesConsole(rel, pattern) {
 				t.Errorf("%s embeds %q with a go:embed directive: no file, test or otherwise, embeds from %s/ (design section 8.1 item 4, plan Task 0.3 a2)", rel, pattern, consoleDirName)
 			}
 		}
 	}
-	if directives == 0 {
-		t.Errorf("no go:embed directive was found anywhere in the module, so this check proved nothing: the directive regexp or the walk is wrong")
-	}
 }
 
-// TestConsoleBoundaryWalkSkipsHiddenDirectories holds the walk's rule: it reads
-// this module's .go files and steps out of the directories the go command
-// ignores, so a nested checkout under .worktrees/ or .claude/worktrees/ -- a
-// whole second copy of this module -- cannot fail the boundary test for reasons
-// that have nothing to do with this repository's own files. A visible copy of
-// the very same file still counts, which is what keeps the skip from turning
-// into a hole: the file below says "console/docs/json-contract.md" and only its
-// directory decides whether that is this module's business.
+// TestConsoleBoundaryWalkSkipsWhatTheGoToolSkips holds the walk's rule, both
+// halves of it.
+//
+// First: a name beginning with "." or "_" is stepped out of. A nested checkout
+// under .worktrees/ or .claude/worktrees/ is a whole second copy of this
+// module, and it must not fail this one's boundary for reasons that have
+// nothing to do with this repository's own files.
+//
+// Second: node_modules is NOT stepped out of, unless go.mod's `ignore`
+// directive names it, because the go tool descends into it otherwise -- in this
+// repository `go list ./...` prints its packages as this module's. That half
+// was learned the hard way: a planted console/node_modules/y/y.go failed no
+// test at all, while console/README.md promised it would.
+//
+// A visible copy of the very same file still counts, which is what keeps the
+// skips from turning into a hole: the file below says
+// "console/docs/json-contract.md" and only its directory decides whether that
+// is this module's business.
 //
 // The tree is built under t.TempDir() and passed to consoleBoundaryWalk
 // directly, so the module's own walk is the only thing exercised and the
 // repository is never written to.
-func TestConsoleBoundaryWalkSkipsHiddenDirectories(t *testing.T) {
+func TestConsoleBoundaryWalkSkipsWhatTheGoToolSkips(t *testing.T) {
 	root := t.TempDir()
 	const body = "package probe\n\nvar zzzConsoleDoc = \"console/docs/json-contract.md\"\n"
 	if !consoleBoundaryMention("probe.go", body) {
@@ -801,31 +876,53 @@ func TestConsoleBoundaryWalkSkipsHiddenDirectories(t *testing.T) {
 		}
 	}
 	const visible = "internal/visible/probe.go"
+	const modules = "internal/node_modules/dep/probe.go"
 	plant(visible)
-	hidden := []string{
+	plant(modules)
+	ignored := []string{
 		".worktrees/wt/internal/cli/probe.go",
 		".claude/worktrees/wt/internal/cli/probe.go",
 		"_scratch/internal/cli/probe.go",
-		"internal/node_modules/dep/probe.go",
 	}
-	for _, rel := range hidden {
+	for _, rel := range ignored {
 		plant(rel)
 	}
-	files, err := consoleBoundaryWalk(root)
+
+	// With no `ignore` directive, node_modules is read like any other
+	// directory: the go tool treats its packages as this module's.
+	files, err := consoleBoundaryWalk(root, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Contains(files, visible) {
 		t.Errorf("the walk did not read %s, a visible .go file mentioning a %s/ path: the skip is too wide and the boundary would have a hole in it (%v)", visible, consoleDirName, files)
 	}
-	for _, rel := range hidden {
+	if !slices.Contains(files, modules) {
+		t.Errorf("the walk did not read %s: node_modules is only ignored when go.mod says `ignore ./node_modules`, and this walk was told nothing was ignored (%v)", modules, files)
+	}
+	for _, rel := range ignored {
 		if slices.Contains(files, rel) {
-			t.Errorf("the walk read %s: a directory the go command ignores is not this module, and a nested checkout of it must not fail this boundary (plan Task 0.3 a3)", rel)
+			t.Errorf("the walk read %s: a name beginning with \".\" or \"_\" is ignored by the go tool everywhere, and a nested checkout of this module must not fail this boundary's checks (plan Task 0.3 a3)", rel)
 		}
 	}
+
+	// With `ignore ./internal/node_modules` declared, the walk follows the
+	// module and steps out of it -- the same file, the opposite answer, which
+	// is the whole of the difference between the two halves.
+	files, err = consoleBoundaryWalk(root, []string{"internal/node_modules"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(files, modules) {
+		t.Errorf("the walk read %s although it was told go.mod ignores that directory (%v)", modules, files)
+	}
+	if !slices.Contains(files, visible) {
+		t.Errorf("an `ignore` directive took the walk past %s as well: ignoring one directory must not stop the scan (%v)", visible, files)
+	}
+
 	// A walk that cannot read what it was pointed at returns the error: a
 	// silent empty result is how a scan passes by looking at nothing.
-	if _, err := consoleBoundaryWalk(filepath.Join(root, "no-such-directory")); err == nil {
+	if _, err := consoleBoundaryWalk(filepath.Join(root, "no-such-directory"), nil); err == nil {
 		t.Error("consoleBoundaryWalk on a path that does not exist returned no error: a read failure must fail loudly, not shorten the scan")
 	}
 }
@@ -849,6 +946,14 @@ var zzz = "../../console/docs/json-contract.md"`, true},
 		{"a console directory reference", `package p
 
 var zzz = "../../console/"`, true},
+		{"the same reference with no trailing separator", `package p
+
+var zzz = "../../console"`, true},
+		{"a Join into the directory, no docs segment anywhere", `package p
+
+import "path/filepath"
+
+func zzz() ([]byte, error) { return os.ReadFile(filepath.Join("..", "..", "console", "README.md")) }`, true},
 		{"filepath.Join spelled in pieces", `package p
 
 import "path/filepath"
@@ -870,6 +975,9 @@ var zzz = "github.com/x/consolekit/y"`, false},
 		{"console as part of another file name", `package p
 
 var zzz = "docs/console.md"`, false},
+		{"another module's console directory", `package p
+
+var zzz = "github.com/x/console"`, false},
 		{"a Join list with no console segment", `package p
 
 import "path/filepath"
@@ -889,9 +997,17 @@ var zzz = strings.Join([]string{"console", "docs"}, "/")`, false},
 	}
 
 	// A file the parser refuses is read as quoted strings, so a broken fixture
-	// cannot carry a Join spelling past the scan.
-	const broken = "package p\n\nvar zzz = filepath.Join(\"..\", \"..\", \"console\", \"docs\"\n"
-	if !consoleBoundaryMention("broken.go", broken) {
-		t.Errorf("a file that does not parse, but holds the %s/ path in pieces, was not seen as a mention", consoleDirName)
+	// cannot carry a spelling past the scan -- in pieces, or as one literal.
+	for _, tc := range []struct {
+		name, src string
+	}{
+		{"in pieces", "package p\n\nvar zzz = filepath.Join(\"..\", \"..\", \"console\", \"docs\"\n"},
+		{"as a bare relative path", "package p\n\nvar zzz = \"../../console\"\n"},
+	} {
+		t.Run("a file that does not parse, "+tc.name, func(t *testing.T) {
+			if !consoleBoundaryMention("broken.go", tc.src) {
+				t.Errorf("a file that does not parse, and holds the %s path %s, was not seen as a mention", consoleDirName, tc.name)
+			}
+		})
 	}
 }

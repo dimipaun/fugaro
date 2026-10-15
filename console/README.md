@@ -31,17 +31,25 @@ is a mention, wherever that string appears — so a string like
 `"github.com/x/console/y"` counts too, and the answer is an allow-list entry or a
 reworded string, decided on purpose. Above the floor, the file is parsed and read
 as paths, which catches the spellings no single literal holds: a `console` *path
-segment* next to `docs`, or written as a directory, including inside a
-`filepath.Join("..", "..", "console", "docs", "x")` argument list. What it does
+segment* next to `docs`, written as a directory, inside a
+`filepath.Join("..", "..", "console", "docs", "x")` argument list, or written
+out as the bare relative path `"../../console"` — that last one holds no
+`console/` for the floor to find and is neither an import nor a `go:embed`
+pattern, so the detector is the only thing that sees it. What the detector does
 not do: follow a path assembled from variables, or prove that a `console` segment
-is *this* repository's console. Both limits are on the safe side — a missed
-spelling in a live file would be caught by the import and `go:embed` checks if it
-did anything, and an over-reported one costs an entry in the list, said out loud.
+is *this* repository's console. The limits are on the safe side — a missed
+spelling costs nothing until the file does something with the path, and both the
+import check and the `go:embed` check see a path that is actually used — and an
+over-reported one costs an entry in the list, said out loud.
 
-The scan reads every `.go` file of the module except the directories the go
-command ignores (`.git/`, `node_modules/`, and any name beginning with `.` or
-`_`, so a nested checkout under `.worktrees/` cannot fail it), and it reads
-`testdata/` deliberately.
+The scan reads every `.go` file of the module except two kinds of directory: a
+name beginning with `.` or `_` (ignored by the go tool everywhere, so a nested
+checkout under `.worktrees/` or `.claude/worktrees/` cannot fail it) and one
+`go.mod`'s `ignore` directive names. `node_modules` is neither unless `go.mod`
+says so — the go tool descends into it otherwise, `go list ./...` prints its
+packages as this module's, and so a `.go` file put under
+`console/node_modules/` is a `.go` file in this directory and fails a test by
+name. `testdata/` is read deliberately.
 
 What is here today: this file, and the contract the console reads
 (`docs/json-contract.md`, pinned by plan Task 0.1). The Node toolchain (plan
