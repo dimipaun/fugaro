@@ -595,6 +595,101 @@ func TestProjectPolicyPublishRefusesAPastedKeyWithoutEchoingIt(t *testing.T) {
 	}
 }
 
+// TestReadOnlyCommandsSurviveARepoWithNoProvider: a `repos:` entry does not
+// have to name a provider — localcfg documents that the checkout's fugaro.yaml
+// decides it, and this file's own repoBySlug and shared-config branch skip such
+// an entry — so the commands that only *read* must not abort on one. The seed
+// the publisher computes is strict for a reason that belongs to the writer
+// alone: a canonical allow-list entry needs the provider, and seeding without a
+// repository that runs today un-enrolls it. `project show` (both output forms)
+// and `project repos ls` only label the allow-list's sources, so an entry they
+// cannot spell costs that label and nothing else.
+//
+// Mutation (verified, run and restored): make allowSources call the strict
+// seed again (seedAllowRepos, as before): all three commands fail with the
+// publish's refusal.
+func TestReadOnlyCommandsSurviveARepoWithNoProvider(t *testing.T) {
+	f := newProjectFixture(t, "  acme/noprov: { workflows: [web] }\n")
+	// Published by hand: with this config the publisher refuses (asserted
+	// below), and the readers only need a node to read.
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+	})
+	for _, args := range [][]string{
+		{"project", "show"},
+		{"project", "show", "--json"},
+		{"project", "repos", "ls"},
+	} {
+		if _, _, err := execute(t, args...); err != nil {
+			t.Errorf("%v failed on a config whose repos entry names no provider: %v", args, err)
+		}
+	}
+	// The writer keeps its refusal, at the one point it seeds: --seed-repos is
+	// where the allow-list is rebuilt from this config, and an entry the seed
+	// cannot spell is a repository that would silently drop out of it.
+	if _, _, err := execute(t, "project", "policy", "publish", "--seed-repos"); err == nil || !strings.Contains(err.Error(), "names no git provider") {
+		t.Errorf("the publish must keep refusing a repos entry with no provider, got %v", err)
+	}
+}
+
+// policyChangedDuringDelete plants another publish's node while a --delete is
+// being confirmed: the window between the node this command read and validated
+// (its ETag, the version refuseNewerPolicy checked) and the write that removes
+// it. It fires on the read of the child nodes, the first request after the
+// shared node was read.
+type policyChangedDuringDelete struct {
+	rt   http.RoundTripper
+	db   *gcpfake.RTDB
+	val  any
+	done bool
+}
+
+func (c *policyChangedDuringDelete) RoundTrip(r *http.Request) (*http.Response, error) {
+	if !c.done && r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/config/policy/repos.json") {
+		c.done = true
+		c.db.Set(projectpolicy.PathShared(), c.val)
+	}
+	return c.rt.RoundTrip(r)
+}
+
+// TestProjectPolicyDeleteDeletesUnderTheETagItValidated: --delete removes the
+// node it read, under the ETag it read it with — never "whatever is there when
+// the write happens". The in-flight check and the typed confirmation were made
+// about the node that was read, and a node rewritten to a version
+// refuseNewerPolicy refuses (P8) is exactly the one this binary must not delete
+// at all; reading the node again here would delete a publish nobody confirmed.
+//
+// Mutation (verified, run and restored): in deleteProjectPolicy, read the
+// shared node again with a fresh db.GetETag and delete under that one (the
+// shipped behaviour): this test fails, the node the other publish wrote is
+// gone.
+func TestProjectPolicyDeleteDeletesUnderTheETagItValidated(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	other := map[string]any{
+		"version":     projectpolicy.Version + 1,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 1},
+		"allow_repos": []string{"github/other/*"},
+	}
+	budgetTransport = &policyChangedDuringDelete{rt: http.DefaultTransport, db: f.db, val: other}
+	t.Cleanup(func() { budgetTransport = nil })
+
+	out, _, err := execute(t, "project", "policy", "publish", "--delete", "--yes")
+	if err == nil {
+		t.Fatalf("a publish that landed while the deletion was being confirmed was deleted unconfirmed:\n%s", out)
+	}
+	if f.db.Value(projectpolicy.PathShared()) == nil {
+		t.Fatalf("the node another publish wrote was deleted, and its deletion was never confirmed:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), projectpolicy.PathShared()) {
+		t.Errorf("the refusal does not name the node: %v", err)
+	}
+}
+
 // TestProjectPolicyDeleteRefusesWithoutTheRulesMarker: --delete goes through
 // the same rules-marker gate as a publish (it cannot remove a policy of a
 // shape it does not know, and an absent marker is an installation that never
@@ -1479,6 +1574,49 @@ func TestProjectPolicyPublishKeepsAnExistingRoutingBlock(t *testing.T) {
 	}
 	if !strings.Contains(shown, "routing: claude via openrouter") {
 		t.Errorf("policy show does not print the routing block:\n%s", shown)
+	}
+}
+
+// TestProjectPolicyPublishKeepsTheRoutingKeysThisFugaroDoesNotModel: the
+// routing block is shared with releases that know keys this one does not
+// (phase 1b writes it, and a later one will write more of it), and a publish
+// that rebuilt the node from this Fugaro's own type would drop them — the
+// quiet loosening `repos add|rm` refuses to make by patching the document
+// (patchPolicyJSON) and buildProjectPolicy's comment promises cannot happen.
+// The diff tells the operator the routing block is kept, so it is kept whole,
+// including the members this binary cannot name.
+//
+// Mutation (verified, run and restored): in runProjectPolicyPublish, write the
+// marshalled typed policy (`json.Marshal(pol)`) instead of
+// keepOldRouting's bytes: this test fails, both unmodelled keys gone and
+// routing reduced to the one this Fugaro models.
+func TestProjectPolicyPublishKeepsTheRoutingKeysThisFugaroDoesNotModel(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	// A routing block written the way a release that knows more of it would:
+	// one unmodelled key beside a modelled one, and one unmodelled block.
+	node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
+	node["routing"] = map[string]any{
+		"claude": map[string]any{"via": "openrouter", "tier": "gold"},
+		"gemini": map[string]any{"via": "vertex"},
+	}
+	f.db.Set(projectpolicy.PathShared(), node)
+
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	got := f.db.Value(projectpolicy.PathShared())
+	for _, path := range [][]string{
+		{"routing", "claude", "via"},
+		{"routing", "claude", "tier"},
+		{"routing", "gemini", "via"},
+	} {
+		if _, ok := nodeAt(got, path...); !ok {
+			t.Errorf("the publish dropped %s, a member of the routing block it says it keeps:\n%s",
+				strings.Join(path, "."), nodeJSON(t, f, projectpolicy.PathShared()))
+		}
 	}
 }
 

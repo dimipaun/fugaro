@@ -86,13 +86,18 @@ func (r *run) projectPolicy(ctx context.Context) (*projectpolicy.Policy, bool, e
 		return p.policy, p.found, p.err
 	}
 	p.done = true
-	if !r.d.Backend.On() && !r.d.Backend.MalformedEnv {
+	if !r.d.Backend.On() && !r.d.Backend.MalformedEnv && !r.d.Backend.TokenMarked {
 		// No database in the job's environment: no client, no marker, no node.
 		// This is the absence the readiness gate refuses (init --repo) once
 		// the project has published a policy; a run cannot invent the
 		// credential it would need to notice one. An environment that named a
-		// backend it could not parse is not that absence (L-b): it goes
-		// through budgetClient, which refuses it whatever the run's mode.
+		// backend it could not parse is not that absence (L-b), and neither is
+		// one whose launcher minted a token (M2): both name something that only
+		// exists when a policy or a shared budget does, so both go through
+		// budgetClient, which refuses them whatever the run's mode. Answering
+		// "no policy" here for a marked job is the fail-open M2 closed one step
+		// too late: admissionCheck would never see the allow-list, and the
+		// clone would be made before startBudgetBackend refused.
 		return nil, false, nil
 	}
 	db, err := r.budgetClient(ctx)
@@ -263,6 +268,17 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 		return nil, c.err
 	}
 	if !r.d.Backend.On() {
+		// A job with no database in its environment, and no launcher's marker
+		// either, has nothing to read (projectPolicy's early return does not
+		// send it here). A marked one is M2's state met at the policy read
+		// rather than at startBudgetBackend: the launcher minted a token, which
+		// it does only when the project has a shared budget or a published
+		// policy, so this run has a ceiling it cannot read and must stop before
+		// admission and before any git credential exists — not after the clone.
+		if r.d.Backend.TokenMarked {
+			c.err = strayTokenNoBackend()
+			return nil, c.err
+		}
 		return nil, nil
 	}
 	if r.d.Backend.APIKey == "" && !r.d.Spend.On() && !r.d.Backend.TokenMarked {
