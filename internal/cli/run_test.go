@@ -815,7 +815,7 @@ func TestAnArtifactLaunchRefusesACapSetThatCannotFitMemory(t *testing.T) {
 		".fugaro/recipes/sizzle.yaml": "version: 1\nname: sizzle\nmode: artifact\noutputs: { globs: [out/*.mp4] }\nsteps:\n  - render: {}\n",
 	})
 	t.Chdir(dir)
-	_, _, err := execute(t, "run", "--recipe", "sizzle", "--run-id", "20261015-100000-art1", "Render the sizzle reel")
+	_, _, err := execute(t, "run", "--recipe", "sizzle", "--run-id", "20261015-100000-a1b2", "Render the sizzle reel")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "resources.memory 2Gi") ||
 		!strings.Contains(err.Error(), "5 GiB") {
 		t.Fatalf("err = %v", err)
@@ -824,7 +824,7 @@ func TestAnArtifactLaunchRefusesACapSetThatCannotFitMemory(t *testing.T) {
 	// exists neither as a task nor as an execution.
 	b, _ := blob.OpenBucket(context.Background(), f.bucket)
 	defer b.Close()
-	if _, err := runstore.Open(b, mustSlug("github", "acme/other"), "20261015-100000-art1").ReadTask(context.Background()); err == nil {
+	if _, err := runstore.Open(b, mustSlug("github", "acme/other"), "20261015-100000-a1b2").ReadTask(context.Background()); err == nil {
 		t.Fatal("the task was written before the caps were checked")
 	}
 	if n := len(f.run.Executions()); n != 0 {
@@ -833,7 +833,7 @@ func TestAnArtifactLaunchRefusesACapSetThatCannotFitMemory(t *testing.T) {
 	// A workflow whose memory holds the set launches (the same checkout, one
 	// key changed): the refusal is the arithmetic, not artifact recipes.
 	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": strings.Replace(yaml, "memory: 2Gi", "memory: 8Gi", 1)})
-	if _, _, err := execute(t, "run", "--recipe", "sizzle", "--run-id", "20261015-100000-art2", "Render the sizzle reel"); err != nil {
+	if _, _, err := execute(t, "run", "--recipe", "sizzle", "--run-id", "20261015-100000-a1b2", "Render the sizzle reel"); err != nil {
 		t.Fatalf("a workflow with room for the set: %v", err)
 	}
 }
