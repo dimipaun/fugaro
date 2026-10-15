@@ -1393,29 +1393,34 @@ Only step 6 is read-only-and-hand-written and can be skipped; every other step b
    gcloud run jobs create "${RETIRED:?}" --project="${P:?}" --region="${L:?}" --image="${IMG:?}" \
      --labels="fugaro=managed,fugaro_repo=<sandbox>,fugaro_workflow=<a variant still in fugaro.yaml>" --quiet
    ```
-   Run each one, then `fugaro init --repo . --retire` (after its `--plan-only`, above): the state removal and the apply run as before and the **delete refuses** — (a) names `fugaro=managed`, (b) names `fugaro_workflow` — exiting **1**, saying the job is out of the state, alive and still protected, and printing the `gcloud run jobs delete` line; the planted job is **not** deleted. Paste both. Then step 7's restore clears them (`gcloud run jobs delete "${RETIRED:?}"`). This is the only way these two are reached: a job with other labels is by definition not in the label list, so no ordinary run finds it.
+   Run each one, then `fugaro init --repo . --retire` (after its `--plan-only`, above): the state removal and the apply run as before and the **delete refuses** — (a) names `fugaro=managed`, (b) names `fugaro_workflow` — exiting **1**, saying the job is out of the state, alive and still protected, and printing the `gcloud run jobs delete` line; the planted job is **not** deleted. Paste both. Step 7's first item deletes them (`gcloud run jobs delete "${RETIRED:?}"`) before the restore's own apply, which would otherwise try to create a job of that name and fail. This is the only way these two are reached: a job with other labels is by definition not in the label list, so no ordinary run finds it.
 5. **The reverse transition — previewed, then run.** Change `agent.auth` back to `oauth` and run `fugaro init --repo . --plan-only --project fugaro` first: expect **no retirement summary** (this change retires nothing), a plan of creates and updates only, **zero deletes of any `google_secret_manager_secret.*`**, the named variant's job created again, and the `--plan-only: nothing applied` line. Then run `fugaro init --repo .` for the apply. **FACT:** the plan is **creates and updates only, with zero deletes of any `google_secret_manager_secret.*`**; the containers are the label list's to vouch for, so paste which of the two it was — under the union shape they were never released and the plan simply mounts them again (no import), and only for a container step 2 found `KEPT` does the plan import it at its live ID (the import is what keeps the apply from trying to create a container that already exists); the named variant's job is re-created; and the previously stored value still works (one sandbox run, or `fugaro doctor`).
 6. **The `removed`-block alternative, proved or dropped — the hard precondition for ever adopting it (§4.2a).** In the sandbox workdir, hand-write a `removed` block naming an instance-key address of a resource and of a module instance that are **still declared** in the configuration — `removed { from = module.repo.google_secret_manager_secret.this["claude-oauth-token"] lifecycle { destroy = false } }` and the same for a `module.workflow["<variant>"]` child — and run `terraform plan` against the same state. **FACT:** whether Terraform accepts an instance-key `from` for a still-declared resource or module and emits `forget`, with the exact error text if it refuses. **If it refuses, the `removed`-block variant is dropped from design §4.2(a) and `StateRm` stands as the only mechanic; if it accepts, §4.2(a) gains the FACT and a follow-up task may generate the block.** No other outcome changes the plan's tasks.
 7. **Restore the sandbox to the state step 1 noted.** Re-run the guard block first (it is the first thing the restore needs, and this is a later shell). Every command below takes `--project="${P:?}"` or `--project fugaro` like the rest.
-   1. **`fugaro.yaml` back to what step 1 noted**, from the sandbox checkout:
+   1. **Delete the job step 4 planted, first.** It occupies the retired variant's job name, and the apply in item 4 creates a job of that name: leaving it would fail the restore with an already-exists error rather than showing you the plan.
+      ```bash
+      gcloud run jobs delete "${RETIRED:?}" --project="${P:?}" --region="${L:?}" --quiet
+      gcloud run jobs list --project="${P:?}" --region="${L:?}" --filter labels.fugaro_repo=<sandbox>   # nothing planted is left
+      ```
+   2. **`fugaro.yaml` back to what step 1 noted**, from the sandbox checkout:
       ```bash
       git checkout -- fugaro.yaml          # the only file this check edits; `git status --short` must be empty afterwards
       ```
-   2. **The preview**: `fugaro init --repo . --plan-only --project fugaro`. Expect no retirement summary (nothing is retired by a restore), the plan's own counts, **zero deletes of any `google_secret_manager_secret.*`**, and `--plan-only: nothing applied`.
-   3. **The apply**: `fugaro init --repo .` (your own terminal, the project's name typed).
-   4. **The variant's job is back** — the job the check's own transition retired, and the ones step 4's plants replaced:
+   3. **The preview**: `fugaro init --repo . --plan-only --project fugaro`. Expect no retirement summary (nothing is retired by a restore), the plan's own counts, **zero deletes of any `google_secret_manager_secret.*`**, and `--plan-only: nothing applied`.
+   4. **The apply**: `fugaro init --repo .` (your own terminal, the project's name typed).
+   5. **The variant's job is back** — the job the check's own transition retired, and the ones step 4's plants replaced:
       ```bash
       gcloud run jobs list --project="${P:?}" --region="${L:?}" --filter labels.fugaro_repo=<sandbox>
       gcloud run jobs describe <the variant's job> --project="${P:?}" --region="${L:?}"
       ```
-      **FACT:** every variant in the restored `fugaro.yaml` has its job, the retired one included; each carries `fugaro=managed`, `fugaro_repo` and its own `fugaro_workflow`; and no planted job from step 4 is left (`gcloud run jobs delete "${RETIRED:?}" --project="${P:?}" --region="${L:?}"` if one is).
-   5. **Both OAuth containers are present, with no secret deletes** — read-only, and never a value:
+      **FACT:** every variant in the restored `fugaro.yaml` has its job, the retired one included; each carries `fugaro=managed`, `fugaro_repo` and its own `fugaro_workflow`; and the planted job is gone (item 1 deleted it, and the list above shows it absent).
+   6. **Both OAuth containers are present, with no secret deletes** — read-only, and never a value:
       ```bash
       gcloud secrets list --project="${P:?}" --filter labels.fugaro_repo=<sandbox>
       gcloud secrets describe <id> --project="${P:?}"      # for claude-oauth-token and claude-oauth-token-bmb, the two step 1 noted
-      gcloud secrets versions list <id> --project="${P:?}" --filter state=ENABLED --format='value(name)'
+      gcloud secrets versions list <id> --project="${P:?}" --format='value(name,state)'
       ```
-      **FACT:** both containers are listed, each still carrying `fugaro=managed`, `fugaro_repo` and `fugaro_secret`; each has an **enabled version** (the number only); and the restore's own apply printed **no `google_secret_manager_secret` delete** — the count `0 to destroy` on that resource, pasted from its plan. A container missing here, or a destroyed one, is the failure this whole check exists to catch.
+      **FACT:** both containers are listed, each still carrying `fugaro=managed`, `fugaro_repo` and `fugaro_secret`; each has a version whose state is `ENABLED` (the version number only, never the value); and the restore's own apply printed **no `google_secret_manager_secret` delete** — the count `0 to destroy` on that resource, pasted from its plan. A container missing here, or a destroyed one, is the failure this whole check exists to catch.
 
 **Paste back:** every `FACT` line above, never a secret value.
 
