@@ -1955,6 +1955,7 @@ the flip is not the release commit's edit).
 - [ ] **Step 3: Write**
 
 Check 38, "clone workflows (sandbox only, run by you; USER-RUN, NOT RUN)", in the format of Checks 29 and 30:
+- **step 0:** the two builds the check cannot start without — the CLI binary (from a scratch checkout of the flag branch, with `cloneShipped` flipped to `true` by hand, never committed) and a base image built and pushed from that same checkout — and pointing the installation's `base_images.base` at the dev image, because the sandbox's release base image predates `cloneSince` and no released base image carries Task 17's runner;
 - **the setup:** a sandbox workflow switched to `checkout: clone` on a branch, merged in the sandbox repository, `fugaro init --repo` in your terminal;
 - **step 1:** one run, which records the execution start, the `provision` stage's duration and the first stage's start;
 - **step 2:** the job's image as `gcloud run jobs describe` shows it;
