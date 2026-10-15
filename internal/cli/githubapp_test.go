@@ -222,11 +222,18 @@ func TestFirstBuildWaitsForTheGitHubApp(t *testing.T) {
 	run := func(t *testing.T, g *githubRig) (*initRun, string, int) {
 		t.Helper()
 		fb := gcpfake.NewBuild(t)
+		// The pre-check resolves the git credential live before it asks
+		// GitHub (a project-wide copy may be the one a build reads, design
+		// project-secrets.md §6 step 4a): this rig stores the repository's
+		// own, so the ID it resolves is the one spec names and the check
+		// below is the App's own, as before.
+		sm := gcpfake.NewSecrets(t)
+		sm.Seed("app-key-secret", map[string]string{gcp.LabelManaged: gcp.ManagedValue}, []byte("stored-already-0001"))
 		r, _, out := conditions()[6].run(t, "") // no terminal: an offered build is left, never typed
 		r.o.checkApp = true
 		lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5",
 			BaseImages: map[string]string{"base": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"},
-			Endpoints:  localcfg.Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}
+			Endpoints:  localcfg.Endpoints{CloudBuild: fb.URL + "/", SecretManager: sm.URL + "/", NoAuth: true}}
 		built, err := r.offerBuilds(t.Context(), lc, cfg, spec, []string{"app"})
 		if err != nil || built != 0 {
 			t.Fatalf("built %d, %v", built, err)
@@ -387,5 +394,38 @@ func TestGitHubAppCheckRefusesOddRepoNames(t *testing.T) {
 	}
 	if g.reads != 0 || len(g.auth) != 0 {
 		t.Errorf("reads %d, GitHub asked %d", g.reads, len(g.auth))
+	}
+}
+
+// Small item 5, second half: both of the check's "store the App's .pem
+// again" fixes name the repository-scoped command, and a --repo copy wins
+// over a project-wide one forever. When this repository may read the
+// project-wide github-app-key, the fix therefore has to say so and name
+// --project-wide as the alternative, or the person following it silently
+// moves this repository off the project-wide key for good.
+func TestCheckGitHubAppFixWarnsOnProjectCoveredName(t *testing.T) {
+	covered := func(t *testing.T) *localcfg.Config {
+		t.Helper()
+		return &localcfg.Config{Name: "aurora", GCPProject: initProject,
+			ProjectSecrets: map[string]config.ProjectSecret{"github-app-key": {AllowDataTo: []string{"acme/app"}}}}
+	}
+	for name, tc := range map[string]struct {
+		lc   func(*testing.T) *localcfg.Config
+		warn bool
+	}{
+		"covered by the project copy": {covered, true},
+		"not covered":                 {func(t *testing.T) *localcfg.Config { return &localcfg.Config{Name: "aurora", GCPProject: initProject} }, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := newGitHubRig(t)
+			g.key = []byte("not a PEM private key") // the parse-error Fix
+			c := checkGitHubApp(t.Context(), tc.lc(t), "acme/app", "12345", appKeySource{Read: true, SecretID: "app-key-secret"})
+			if c.Verdict != appFailed || !strings.Contains(c.Fix, "secrets set github-app-key --repo acme/app") {
+				t.Fatalf("%+v", c)
+			}
+			if got := strings.Contains(c.Fix, "--project-wide"); got != tc.warn {
+				t.Errorf("the fix warns of the project-wide copy: %v, want %v: %s", got, tc.warn, c.Fix)
+			}
+		})
 	}
 }

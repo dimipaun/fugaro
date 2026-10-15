@@ -191,6 +191,15 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 			warnings = append(warnings, config.Problem{Path: "providers", Message: "the repository is unknown here (no origin remote), so allow_data_to was not checked"})
 		}
 	}
+	// Every provider that is open to every repository is named, whatever
+	// the repository: before this design an absent allow_data_to meant
+	// nobody, and a config carried over from then now mounts the key into
+	// every repository's job and opens the data policy to all of them. A
+	// warning, never a problem: the owner's ruling makes it valid, and
+	// ["*"] is the way to keep it on purpose.
+	for _, name := range config.OpenProviders(lc.Providers) {
+		warnings = append(warnings, config.Problem{Path: "providers." + name, Message: lc.Providers[name].OpenToEveryRepoReason()})
+	}
 	problems = append(problems, config.CheckProviderAuth(cfg.Agent, lc.Providers)...)
 	agent := cfg.Agent
 	agent.Models.Background = config.EffectiveBackground(agent, lc.Providers)
@@ -375,9 +384,10 @@ func usesProfiles(c *config.Config) bool {
 // cloneWorkflowWarnings warns, one per workflow, that checkout: clone is
 // valid config but runs nothing yet: cloneSince's launch gate
 // (recipes_skew.go) refuses every checkout: clone launch until fugaro
-// cloneSince ships, since plan Task 17 (the runner's own FUGARO_CHECKOUT
-// support) has not landed. The config stays valid — this is for later,
-// when Task 17 ships — so it is a warning, not a Problem from Check.
+// cloneSince ships, since plan Task 17's runner side (the runner's own
+// FUGARO_CHECKOUT support) is in no tagged release yet. The config stays
+// valid — this is for later, once it ships — so it is a warning, not a
+// Problem from Check.
 func cloneWorkflowWarnings(c *config.Config) []config.Problem {
 	var ps []config.Problem
 	for _, name := range slices.Sorted(maps.Keys(c.Workflows)) {

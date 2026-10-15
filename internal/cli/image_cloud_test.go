@@ -86,7 +86,9 @@ func TestImageBuildCloudNeedsRegistry(t *testing.T) {
 // build.
 func TestImageBuildCloudDeclinedConfirmationWritesNoLayerCopy(t *testing.T) {
 	fb := gcpfake.NewBuild(t)
-	f := newCloudFixture(t, "cloud_build: "+fb.URL+"/")
+	sm := gcpfake.NewSecrets(t)
+	f := newCloudFixture(t, "cloud_build: "+fb.URL+"/", "secret_manager: "+sm.URL+"/")
+	f.sm = sm
 	publishedLayer(t, f, testProjectLayer)
 	path := os.Getenv("FUGARO_CONFIG")
 	data, err := os.ReadFile(path)
@@ -192,6 +194,7 @@ func TestImageBuildCloudUsesTheSelectedProjectsLayer(t *testing.T) {
 	run := gcpfake.NewRun(t)
 	run.Project, run.Region = "proj-1234", "us-east5"
 	logging := gcpfake.NewLogging(t)
+	sm := gcpfake.NewSecrets(t)
 	fb := gcpfake.NewBuild(t)
 	fb.AddRegistry("proj-1234", "us-east5", gcp.RegistryRepoID(mustSlug("bitbucket", "acme/app")))
 
@@ -215,7 +218,7 @@ func TestImageBuildCloudUsesTheSelectedProjectsLayer(t *testing.T) {
 	cfgPath := filepath.Join(dir, "selected.yaml")
 	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: fugaro-runs-proj-1234\nbucket_url: file://" + runs +
 		"\nuser: someone@example.com\nmax_parallel: 2\n" +
-		"endpoints: { run: " + run.URL + "/, logging: " + logging.URL + "/, cloud_build: " + fb.URL + "/, no_auth: true }\n"
+		"endpoints: { run: " + run.URL + "/, logging: " + logging.URL + "/, cloud_build: " + fb.URL + "/, secret_manager: " + sm.URL + "/, no_auth: true }\n"
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +235,9 @@ func TestImageBuildCloudGitHub(t *testing.T) {
 	checkoutWith(t, npmFiles())
 	testutil.Git(t, ".", "remote", "set-url", "origin", "https://github.com/acme/app.git")
 	fb := gcpfake.NewBuild(t)
-	newCloudFixture(t, "cloud_build: "+fb.URL+"/")
+	smsrv := gcpfake.NewSecrets(t)
+	f := newCloudFixture(t, "cloud_build: "+fb.URL+"/", "secret_manager: "+smsrv.URL+"/")
+	f.sm = smsrv
 	path := os.Getenv("FUGARO_CONFIG")
 	data, err := os.ReadFile(path)
 	if err != nil {

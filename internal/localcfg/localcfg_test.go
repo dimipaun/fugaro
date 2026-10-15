@@ -760,6 +760,58 @@ func TestProviderDecodeStrict(t *testing.T) {
 	}
 }
 
+// TestProviderAllowDataToWrittenEmpty: through the operator's own door
+// (`fugaro validate`, `fugaro init`): a provider whose allow_data_to was
+// written with nothing under it -- an emptied block, a bare key, a `~`, or
+// an explicit [] -- is refused at config-load time, because a null key
+// decodes to the same nil slice as an absent one, which means every
+// repository. Absent and ["*"] stay accepted (design §3a).
+func TestProviderAllowDataToWrittenEmpty(t *testing.T) {
+	base := "name: belong\ngcp_project: edge-devel-dimi\nregion: us-east5\nruns_bucket: belong-runs\nrepos: {}\n"
+	head := base + `providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["deepseek/*"]
+`
+	for name, tc := range map[string]struct {
+		tail    string
+		anyRepo bool
+		refused bool
+	}{
+		"absent":              {"", true, false},
+		"wildcard":            {"    allow_data_to: [\"*\"]\n", true, false},
+		"listed":              {"    allow_data_to: [acme/app]\n", false, false},
+		"explicit empty list": {"    allow_data_to: []\n", false, true},
+		"null":                {"    allow_data_to:\n", false, true},
+		"tilde":               {"    allow_data_to: ~\n", false, true},
+		"only comments":       {"    allow_data_to:\n      # - acme/app\n", false, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, err := Parse([]byte(head + tc.tail))
+			if tc.refused {
+				if err == nil {
+					t.Fatalf("a written-but-empty allow_data_to was accepted (anyRepo %v)", c.Providers["openrouter"].AllowsData("acme/anything"))
+				}
+				for _, want := range []string{"providers.openrouter.allow_data_to", "ambiguous", "[\"*\"]"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("err = %v, want it to mention %q", err, want)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := c.Providers["openrouter"].AllowsData("acme/anything"); got != tc.anyRepo {
+				t.Errorf("AllowsData(acme/anything) = %v, want %v", got, tc.anyRepo)
+			}
+		})
+	}
+}
+
 func TestClaudeAccountsDecodeStrict(t *testing.T) {
 	base := "name: belong\ngcp_project: edge-devel-dimi\nregion: us-east5\nruns_bucket: belong-runs\nrepos: {}\n"
 	good := base + `claude_accounts:
