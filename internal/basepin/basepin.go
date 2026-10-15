@@ -1,10 +1,13 @@
 // Package basepin resolves what a release's fugaro-base -pinned tag
 // currently names in the registry and verifies that specific digest's
 // OCI-attached cosign signature, from images.yml's own tag-push identity
-// (design retire-image-mirror.md §2). It is called at copy time only
-// (fugaro init --base / image refresh, internal/cli/init_images.go) —
-// never at a Cloud Build submission — and nothing records its result
-// anywhere beyond the pin it feeds.
+// (design retire-image-mirror.md §2). It is called when a base pin is
+// formed and only then (fugaro init --base / image refresh,
+// internal/cli/init_images.go) — never at a Cloud Build submission — and
+// nothing records its result anywhere beyond the pin it feeds: since the
+// registry-remote-repository change the base image is not copied, so the
+// verified digest IS the result, and the pin is where it lands (design
+// registry-remote-repository.md §3.2).
 //
 // It exists because the trust anchor of the image path used to be "the
 // tag as the registry resolves it now": whoever can write

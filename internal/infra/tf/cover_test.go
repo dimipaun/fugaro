@@ -634,6 +634,13 @@ func TestCoverRefusesAJobImageFromAProxyPathThatIsNotThePin(t *testing.T) {
 		"the pin without a digest":          {testCover, pin("base:1.2.3"), false},
 		"the pin without a version tag":     {testCover, pin("base@sha256:") + d, false},
 		"the pin with an empty version tag": {testCover, pin("base:@sha256:") + d, false},
+		// The tag is the version marker every reader of a pin works from,
+		// so a tag that is not a release version is not a pin this tool
+		// wrote (managedVersion and baseIsCurrent would read "" or a dev
+		// sha out of it).
+		"the pin with a latest tag":         {testCover, pin("base:latest@sha256:") + d, false},
+		"the pin with a dev tag":            {testCover, pin("base:dev-abc1234@sha256:") + d, false},
+		"the pin with a two-part version":   {testCover, pin("base:1.2@sha256:") + d, false},
 		"not a fugaro image":                {testCover, reg + "fugaro-ghcr/dimipaun/nginx:1.2.3@sha256:" + d, false},
 		"not a sha256 digest":               {testCover, pin("base:1.2.3@sha256:") + strings.Repeat("a", 63), false},
 		"a bare path under the proxy":       {testCover, reg + "fugaro-ghcr/anything", false},

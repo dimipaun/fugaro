@@ -193,7 +193,7 @@ func (s *imagesStage) Name() string                 { return initflow.Images }
 func (s *imagesStage) SelfConfirming()              {}
 func (s *imagesStage) Verify(context.Context) error { return nil }
 func (s *imagesStage) Left() initflow.Left {
-	return promptLeft(initflow.Images, "type the project's name to copy the images", "init")
+	return promptLeft(initflow.Images, "type the project's name to pin this release's base images and copy the release images", "init")
 }
 
 // baseSourceHost is the only host a base kind's source may be on: the

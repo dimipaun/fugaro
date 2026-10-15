@@ -209,7 +209,13 @@ func TestManagedVersionReadsTheRemotePathAndItsDigest(t *testing.T) {
 		"the pin with no digest":           {host + "/fugaro-ghcr/dimipaun/fugaro-base:0.7.5", "dimipaun", "", false},
 		"no recorded image_source":         {pin("dimipaun", "0.7.5"), "", "", false},
 		"a dev tag through the proxy":      {pin("dimipaun", "dev-abc1234"), "dimipaun", "", false},
-		"a hand-pushed image":              {host + "/fugaro-base/nginx:1.2.3", "dimipaun", "", false},
+		"a 'latest' tag through the proxy": {pin("dimipaun", "latest"), "dimipaun", "", false},
+		// The digest is a sha256 of 64 hex digits and nothing else: a
+		// truncated, upper-case or algoless one is not a pin.
+		"a truncated digest":         {host + "/fugaro-ghcr/dimipaun/fugaro-base:0.7.5@sha256:" + strings.Repeat("a", 63), "dimipaun", "", false},
+		"an upper-case digest":       {host + "/fugaro-ghcr/dimipaun/fugaro-base:0.7.5@sha256:" + strings.Repeat("A", 64), "dimipaun", "", false},
+		"a digest with no algorithm": {host + "/fugaro-ghcr/dimipaun/fugaro-base:0.7.5@" + strings.Repeat("a", 64), "dimipaun", "", false},
+		"a hand-pushed image":        {host + "/fugaro-base/nginx:1.2.3", "dimipaun", "", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			v, ok := managedVersion(tc.ref, host, "base", tc.owner)

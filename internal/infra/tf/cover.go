@@ -744,9 +744,15 @@ var refChars = regexp.MustCompile(`^[A-Za-z0-9._:/@-]+$`)
 // pinNameRE, pinVersionRE and pinDigestRE are the pin's own parts, as
 // baseImageOK reads them: the image (fugaro-<kind>), the version tag it
 // keeps as the release marker, and the digest it must carry (design §3.6).
+//
+// pinVersionRE is a RELEASE version, not any tag: every reader of a pin
+// works the version marker out of the tag (managedVersion, baseIsCurrent,
+// refreshVerdict's never-downgrade rule), so a path tagged "latest" or a
+// dev sha is not a pin this tool wrote and must not be covered here — the
+// same shape releaseRE and baseImageRE enforce on the CLI's side.
 var (
 	pinNameRE    = regexp.MustCompile(`^fugaro-[a-z0-9]+(?:-[a-z0-9]+)*$`)
-	pinVersionRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
+	pinVersionRE = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 	pinDigestRE  = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 )
 

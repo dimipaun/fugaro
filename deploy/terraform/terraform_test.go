@@ -245,34 +245,41 @@ func TestRemoteRepositoryIsARemotePullThroughProxyOfGhcr(t *testing.T) {
 // TestMirrorRunsAsUserNotBuildAccount's own substring test for "on the
 // base registry" — that test reads a grant as being on fugaro-base when
 // its body contains "base_registry" or "repository.base.".
+// The count is the whole point, so it is taken over EVERY iam_member whose
+// body names ghcr rather than over the two blocks by name: a third grant
+// added anywhere — a writer, a second reader, a grant on another resource
+// that happens to name the repository — is a failure here.
 func TestRemoteRepositoryReaderGrants(t *testing.T) {
-	for _, w := range []struct{ path, name, member string }{
-		{"gcp/modules/installation/iam.tf", "google_artifact_registry_repository_iam_member.ghcr_reader", "toset(var.operators)"},
-		{"gcp/modules/repo/build.tf", "google_artifact_registry_repository_iam_member.build_ghcr", "google_service_account.build.member"},
-	} {
-		var body string
-		walk(t, func(path string, b []byte) {
-			if path != w.path {
-				return
+	want := map[string]string{ // "path|resource" -> the member it must grant
+		"gcp/modules/installation/iam.tf|google_artifact_registry_repository_iam_member.ghcr_reader": "toset(var.operators)",
+		"gcp/modules/repo/build.tf|google_artifact_registry_repository_iam_member.build_ghcr":        "google_service_account.build.member",
+	}
+	seen := map[string]bool{}
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_artifact_registry_repository_iam_member") {
+			if !strings.Contains(blk.body, "ghcr") {
+				continue
 			}
-			for _, blk := range resourceBlocks(t, path, b, "google_artifact_registry_repository_iam_member") {
-				if blk.name == w.name {
-					body = blk.body
-				}
+			id := path + "|" + blk.name
+			member, known := want[id]
+			if !known {
+				t.Errorf("%s: %s grants on the remote repository and is not one of the two known grants: the remote repository is read-only (design §5.2)", path, blk.name)
+				continue
 			}
-		})
-		switch {
-		case body == "":
-			t.Errorf("%s: no %s", w.path, w.name)
-			continue
-		case !hasAttr(body, "role", `"roles/artifactregistry.reader"`):
-			t.Errorf("%s: %s must be a reader grant: neither the operator's read-back nor the build account writes the remote repository (design §5.2)", w.path, w.name)
-		case !strings.Contains(body, w.member):
-			t.Errorf("%s: %s must grant %s", w.path, w.name, w.member)
-		case !strings.Contains(body, "ghcr"):
-			t.Errorf("%s: %s must name the remote repository", w.path, w.name)
-		case strings.Contains(body, "base_registry") || strings.Contains(body, "repository.base.") || strings.Contains(body, `"fugaro-base"`):
-			t.Errorf("%s: %s names the base registry: the remote repository's grant must name ghcr_registry and nothing else", w.path, w.name)
+			seen[id] = true
+			switch {
+			case !hasAttr(blk.body, "role", `"roles/artifactregistry.reader"`):
+				t.Errorf("%s: %s must be a reader grant: neither the operator's read-back nor the build account writes the remote repository (design §5.2)", path, blk.name)
+			case !strings.Contains(blk.body, member):
+				t.Errorf("%s: %s must grant %s", path, blk.name, member)
+			case strings.Contains(blk.body, "base_registry") || strings.Contains(blk.body, "repository.base.") || strings.Contains(blk.body, `"fugaro-base"`):
+				t.Errorf("%s: %s names the base registry: the remote repository's grant must name ghcr_registry and nothing else", path, blk.name)
+			}
+		}
+	})
+	for id := range want {
+		if !seen[id] {
+			t.Errorf("%s: no such grant", id)
 		}
 	}
 }
