@@ -25,25 +25,33 @@ var allowedTypes = map[string]bool{
 	"google_cloud_run_v2_job":                        true,
 	"google_cloud_run_v2_job_iam_member":             true,
 	"google_cloud_scheduler_job":                     true,
-	"google_firebase_database_instance":              true,
-	"google_firebase_project":                        true,
-	"google_logging_log_view":                        true,
-	"google_logging_log_view_iam_member":             true,
-	"google_logging_project_bucket_config":           true,
-	"google_logging_project_exclusion":               true,
-	"google_logging_project_sink":                    true,
-	"google_monitoring_alert_policy":                 true,
-	"google_monitoring_notification_channel":         true,
-	"google_project_iam_custom_role":                 true,
-	"google_project_iam_member":                      true,
-	"google_project_service":                         true,
-	"google_secret_manager_secret":                   true,
-	"google_secret_manager_secret_iam_member":        true,
-	"google_service_account":                         true,
-	"google_service_account_iam_member":              true,
-	"google_storage_bucket":                          true,
-	"google_storage_bucket_iam_member":               true,
-	"google_storage_bucket_object":                   true,
+	// The Batch backend's own root (design compute-backend §8.1 task 6) is a
+	// root of its own, applied by its own stage behind --provision-batch and
+	// its own typed confirmation: these two types are the NAT and its router,
+	// and they are listed here because every module the tree embeds has to be
+	// decided on. The installation root does not include that module, so no
+	// plan this one confirmation covers can carry them.
+	"google_compute_router":                   true,
+	"google_compute_router_nat":               true,
+	"google_firebase_database_instance":       true,
+	"google_firebase_project":                 true,
+	"google_logging_log_view":                 true,
+	"google_logging_log_view_iam_member":      true,
+	"google_logging_project_bucket_config":    true,
+	"google_logging_project_exclusion":        true,
+	"google_logging_project_sink":             true,
+	"google_monitoring_alert_policy":          true,
+	"google_monitoring_notification_channel":  true,
+	"google_project_iam_custom_role":          true,
+	"google_project_iam_member":               true,
+	"google_project_service":                  true,
+	"google_secret_manager_secret":            true,
+	"google_secret_manager_secret_iam_member": true,
+	"google_service_account":                  true,
+	"google_service_account_iam_member":       true,
+	"google_storage_bucket":                   true,
+	"google_storage_bucket_iam_member":        true,
+	"google_storage_bucket_object":            true,
 }
 
 // who says what kind of principal a module grants a role to: People are the
@@ -75,6 +83,8 @@ var grantRules = map[string]map[string]who{
 		customKey + "fugaroBuildSubmitter":        toPeople | toAccounts,
 		customKey + "fugaroHistory":               toAccounts,
 		"roles/aiplatform.user":                   toAccounts,
+		"roles/batch.agentReporter":               toAccounts,
+		"roles/batch.jobsEditor":                  toPeople, // under the Fugaro-job-name condition (the compute module's local.job_name_prefix)
 		"roles/datastore.user":                    toAccounts,
 		"roles/datastore.viewer":                  toPeople,
 		"roles/firebaseauth.admin":                toAccounts,
@@ -156,8 +166,8 @@ type Cover struct {
 // FugaroRoles are the custom role IDs the modules create; FugaroAccounts the
 // fixed service account IDs. Job and build accounts are fugaro-<readable>-<8 hex>.
 var (
-	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory"}
-	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer"}
+	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder"}
+	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
 )
 
 var (
@@ -179,6 +189,16 @@ var RolePermissions = map[string][]string{
 	"fugaroTagMover":       {"artifactregistry.tags.delete"},
 	"fugaroTokenMinter":    {"iam.serviceAccounts.signJwt"},
 	"fugaroHistory":        {"run.executions.list", "run.executions.get", "run.jobs.get", "run.jobs.list", "run.operations.get"},
+	// The reaper's six, and no others (design compute-backend §3.7): it is
+	// never roles/batch.jobsEditor and never roles/compute.instanceAdmin.v1,
+	// both of which carry the create permissions a reaper must not have.
+	"fugaroReaper": {"batch.jobs.list", "batch.jobs.get", "batch.jobs.cancel", "batch.jobs.delete", "compute.instances.list", "compute.instances.delete"},
+	// The preloaded boot image's build: boot one COS VM, read its serial
+	// output, stop it, image its disk, delete it — and nothing else, setMetadata
+	// (how SSH keys reach a VM) among the nothing else.
+	"fugaroPreloadBuilder": {"compute.instances.create", "compute.instances.get", "compute.instances.list", "compute.instances.getSerialPortOutput",
+		"compute.instances.stop", "compute.instances.delete", "compute.images.create", "compute.images.get", "compute.images.getFromFamily",
+		"compute.images.delete", "compute.zoneOperations.get"},
 }
 
 // knownCommands are the container command and args the modules set: none for
