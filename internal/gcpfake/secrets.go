@@ -64,6 +64,10 @@ type fakeSecret struct {
 	created  time.Time
 	versions [][]byte
 	policy   []Binding
+	// disabled says every version of this secret is DISABLED, the state an
+	// operator's disable leaves: the container exists, no enabled version
+	// does. Set by DisableVersions.
+	disabled bool
 }
 
 var (
@@ -105,6 +109,18 @@ func (f *Secrets) VersionsListCalls() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.versionList
+}
+
+// DisableVersions marks every version of secret id DISABLED, as
+// secretmanager.versions.disable does. It is the state a readiness gate
+// must still read as "no version": the container is there and resolves to
+// nothing.
+func (f *Secrets) DisableVersions(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if s := f.secrets[id]; s != nil {
+		s.disabled = true
+	}
 }
 
 // AllowAccess lets the fake answer the access call (the latest version's
@@ -217,7 +233,7 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		f.destroys = append(f.destroys, "projects/"+m[1]+"/secrets/"+m[2]+"/versions/"+m[3])
-		writeJSON(w, http.StatusOK, versionJSON(m[1], m[2], atoi(m[3]), s.created))
+		writeJSON(w, http.StatusOK, versionJSON(m[1], m[2], atoi(m[3]), s.created, s.disabled))
 	case r.Method == http.MethodDelete && versionRE.MatchString(p):
 		m := versionRE.FindStringSubmatch(p)
 		s := f.secrets[m[2]]
@@ -298,7 +314,7 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		s.versions = append(s.versions, data)
 		n := len(s.versions)
-		writeJSON(w, http.StatusOK, versionJSON(m[1], m[2], n, s.created))
+		writeJSON(w, http.StatusOK, versionJSON(m[1], m[2], n, s.created, s.disabled))
 	case r.Method == http.MethodGet && versionsPathRE.MatchString(p):
 		m := versionsPathRE.FindStringSubmatch(p)
 		// handle holds f.mu for the whole switch, so the counter is touched
@@ -317,7 +333,7 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		var list []any
 		for n := len(s.versions); n >= 1; n-- { // newest first, as the real API lists them
-			list = append(list, versionJSON(m[1], m[2], n, s.created))
+			list = append(list, versionJSON(m[1], m[2], n, s.created, s.disabled))
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"versions": list, "totalSize": len(list)})
 	default:
@@ -349,11 +365,15 @@ func atoi(s string) int {
 	return n
 }
 
-func versionJSON(project, id string, n int, created time.Time) map[string]any {
+func versionJSON(project, id string, n int, created time.Time, disabled bool) map[string]any {
+	state := "ENABLED"
+	if disabled {
+		state = "DISABLED"
+	}
 	return map[string]any{
 		"name":       "projects/" + project + "/secrets/" + id + "/versions/" + strconv.Itoa(n),
 		"createTime": created.UTC().Format(time.RFC3339Nano),
-		"state":      "ENABLED",
+		"state":      state,
 	}
 }
 
