@@ -148,7 +148,10 @@ func artifactsSection(rec *runstore.Record) string {
 		fmt.Fprintf(&b, "- **Render:** `%s` in the %s tree, %s, %s\n", r.Command, r.Tree, exit, secsText(r.DurationS))
 		fmt.Fprintf(&b, "- **Command sha256:** `%s`\n", r.CommandSHA256)
 		if c := rec.Cost; c != nil && c.ComputeEstimated {
-			fmt.Fprintf(&b, "- **Compute:** $%.4f estimated for %s\n", c.ComputeUSD, secsText(r.DurationS))
+			// The figure is priced from the run's wall clock (updateCost), so
+			// it is never attributed to the render's seconds: a short render
+			// on a long run would otherwise read as its own price.
+			fmt.Fprintf(&b, "- **Compute:** $%.4f estimated from the run's wall clock, of which the render is %s\n", c.ComputeUSD, secsText(r.DurationS))
 		}
 		b.WriteString("\nThe render's files are uploaded by the run's own step; this record carries the render alone.\n\n")
 		return b.String()

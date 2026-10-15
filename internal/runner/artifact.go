@@ -87,7 +87,8 @@ func (r *run) artifactMode(ctx context.Context) {
 		}
 	}
 	rec, err := r.runRender(ctx)
-	r.renderRec, r.rec.Render = &rec, &rec
+	r.renderRec = renderRecordFor(r.wf.Commands.Render, rec)
+	r.rec.Render = r.renderRec
 	r.updateCost()
 	switch {
 	case err == nil:
@@ -114,6 +115,22 @@ func (r *run) artifactMode(ctx context.Context) {
 	}
 	r.skipPR = true
 	r.storeArtifactEnded(ctx)
+}
+
+// renderRecordFor is the Record.Render to store for what runRender returned,
+// or nil when no render ran. runRender's blank-command arm returns before it
+// executed anything, and its record describes no render: a blank command,
+// the sha256 of the empty string, exit code -1. runstore.Record.Render
+// documents a blank command as none, and schemas/result.schema.json's render
+// description says the same ("absent ... for an artifact run refused before
+// its render step"), so that record is dropped here rather than stored as an
+// artifact run's render. bootstrap's checkGateCommands refuses such a recipe
+// first, so this is the fail-closed arm behind it, not a reachable launch.
+func renderRecordFor(command string, rec runstore.RenderRecord) *runstore.RenderRecord {
+	if strings.TrimSpace(command) == "" {
+		return nil
+	}
+	return &rec
 }
 
 // runRender runs commands.render once, in the checkout, under
@@ -258,9 +275,17 @@ func fmtBytes(n int64) string {
 // storeArtifactEnded stores an artifact run's report.md — the ordinary run
 // report, whose outcome arm and Artifacts section are this task's (report.go)
 // — under every terminal state below.
+//
+// The write is detached from ctx's cancellation and bounded, as save's is:
+// this is the only write of report.md for this mode (r.skipPR means finalize
+// stores none), and one of the states below IS the cancelled run, whose ctx
+// is already cancelled by the time it is reached — so a write on the live ctx
+// would refuse exactly the report that explains the cancel.
 func (r *run) storeArtifactEnded(ctx context.Context) {
 	report := agent.Redact(followUpReport(r.rec, r.d.Store.Prefix(), r.tail, nil, nil), r.secretList())
-	r.storeReport(ctx, report, nil)
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
+	defer cancel()
+	r.storeReport(wctx, report, nil)
 }
 
 // endArtifactCancelled ends an artifact run that was cancelled: status

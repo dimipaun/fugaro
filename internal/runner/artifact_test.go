@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -491,7 +493,14 @@ func TestReportSaysArtifactsNotDraft(t *testing.T) {
 // types are its own), so a record without one says so rather than printing a
 // header over nothing.
 //
-// Mutation (drop the Artifacts section): this test fails.
+// The compute line names the run's wall clock as the basis, and the render's
+// duration only as a part of it: the figure is priced from the run's own
+// elapsed time (updateCost), so a short render inside a long run must not
+// read as its price.
+//
+// Mutation (drop the Artifacts section): this test fails; mutation (put the
+// "for %s" wording back, the render's own duration as the priced span): this
+// test fails on the compute line.
 func TestReportShowsTheRenderAndTheComputeEstimate(t *testing.T) {
 	rec := &runstore.Record{RunID: runID, Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeArtifacts,
 		Cost: &runstore.Cost{ComputeUSD: 0.0312, ComputeEstimated: true},
@@ -499,7 +508,7 @@ func TestReportShowsTheRenderAndTheComputeEstimate(t *testing.T) {
 			Tree: "working", ExitCode: 0, DurationS: 305, StartedAt: "2026-10-15T10:00:00Z"}}
 	rep := runner.Report(rec, "gs://bucket/runs/acme-app/"+runID, nil)
 	for _, want := range []string{"#### Artifacts", "**Render:** `sh render.sh` in the working tree, exit 0, 5m5s",
-		"**Command sha256:**", "**Compute:** $0.0312 estimated for 5m5s", strings.Repeat("b", 64)} {
+		"**Command sha256:**", "**Compute:** $0.0312 estimated from the run's wall clock, of which the render is 5m5s", strings.Repeat("b", 64)} {
 		if !strings.Contains(rep, want) {
 			t.Errorf("report lacks %q:\n%s", want, rep)
 		}
@@ -732,5 +741,168 @@ func TestRenderTailKeepsAFinalLineWithoutANewline(t *testing.T) {
 	}
 	if !strings.Contains(string(report), "the render blew up without a newline") {
 		t.Fatalf("the render's last line, which has no trailing newline, is not in the report:\n%s", report)
+	}
+}
+
+// TestPlanStageFailureEndsTheRunFailed: the plan stage is the artifact run's
+// only agent stage, and a plan the model never delivered ends the run
+// failed/none with the stage's own reason — no pull request to fall back to
+// and no artifacts to claim. The render never ran, so the record carries no
+// render at all, and the report shows no Artifacts section.
+//
+// Mutation (drop the `if !ok` branch of artifactMode, running the render
+// anyway): the run ends succeeded/artifacts, rendering a deliverable the plan
+// stage never planned, and this test fails; mutation (set the outcome to
+// draft in endArtifactFailed): the record's outcome is draft and it fails
+// too.
+func TestPlanStageFailureEndsTheRunFailed(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""), artifactSpec(sizzlePlanRenderYAML), renderScript(sizzleScript))
+	boom := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		return agent.Result{}, errors.New("boom")
+	}
+	pushes := countPushes(t, h)
+	rec, err := h.run(t, boom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	if !strings.Contains(rec.Reason, "stage plan failed: boom") {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+	if rec.Render != nil {
+		t.Fatalf("a render that never ran is recorded: %+v", rec.Render)
+	}
+	if rec.PR != nil {
+		t.Fatal("a failed artifact run opened a pull request")
+	}
+	if n := pushes(); n != 0 {
+		t.Fatalf("%d pushes, want none", n)
+	}
+	report, err := h.store.ReadFile(context.Background(), "report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(report), "**Outcome:** stopped — stage plan failed: boom") {
+		t.Fatalf("the report does not carry the failure that ended the run:\n%s", report)
+	}
+	// No Artifacts section: the section is the outcome-arm artifact run's
+	// (report.go), and a run that never rendered has no render to report.
+	if strings.Contains(string(report), "#### Artifacts") {
+		t.Fatalf("the report shows an artifacts section for a run that rendered nothing:\n%s", report)
+	}
+}
+
+// TestArtifactPanicEndsTheRunInfraError is runArtifactMode's own recover():
+// a panic anywhere in the artifact run — here the plan stage — must still end
+// it with a record and a report, as infra_error/none, rather than escaping to
+// the top-level recover with no report at all. The stage the run was in is
+// named, so the reason says where it panicked.
+//
+// Mutation (drop the recover from runArtifactMode): the panic reaches Run's
+// own recover, which returns the error without an artifact end — the report,
+// which only storeArtifactEnded writes for this mode, is absent and this test
+// fails.
+func TestArtifactPanicEndsTheRunInfraError(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""), artifactSpec(sizzlePlanRenderYAML), renderScript(sizzleScript))
+	panicky := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		panic("boom")
+	}
+	pushes := countPushes(t, h)
+	rec, err := h.run(t, panicky)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	if !strings.Contains(rec.Reason, "stage plan panicked: boom") {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+	if rec.Render != nil {
+		t.Fatalf("a render that never ran is recorded: %+v", rec.Render)
+	}
+	if rec.PR != nil {
+		t.Fatal("a panicking artifact run opened a pull request")
+	}
+	if n := pushes(); n != 0 {
+		t.Fatalf("%d pushes, want none", n)
+	}
+	report, err := h.store.ReadFile(context.Background(), "report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(report), "**Outcome:** stopped — stage plan panicked: boom") {
+		t.Fatalf("the report does not carry the panic that ended the run:\n%s", report)
+	}
+}
+
+// TestCancelDuringTheRenderEndsTheRunCancelled: an artifact run cancelled
+// while its render runs ends cancelled/none — never failed, and never
+// artifacts — and still stores its report. The render did run, so its record
+// stays: the entry the cancel ended is what the record describes.
+//
+// The cancel is requested only once the render's own first act, a marker file
+// in the checkout, is on disk, so it lands while the render is running rather
+// than during bootstrap (which ends a run "cancelled during bootstrap", a
+// different branch).
+//
+// Mutation (drop the isCancelled arm of artifactMode's render switch): the
+// killed render's error falls to the default arm and the run ends failed with
+// "running commands.render: ... context canceled"; mutation (drop
+// storeArtifactEnded from endArtifactCancelled): report.md is not stored.
+func TestCancelDuringTheRenderEndsTheRunCancelled(t *testing.T) {
+	h := newHarnessFiles(t, renderCfg(t, "", ""), artifactSpec(sizzleRenderOnlyYAML),
+		renderScript("#!/bin/sh\ntouch render-started\nsleep 30\n"))
+	// The watcher stops when the run returns, and is waited for before the
+	// test ends: the store it writes to is closed by the harness's cleanup.
+	stop := make(chan struct{})
+	var done sync.WaitGroup
+	done.Add(1)
+	go func() {
+		defer done.Done()
+		marker := filepath.Join(h.deps.WorkDir, "render-started")
+		for i := 0; i < 1000; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if _, err := os.Stat(marker); err == nil {
+				_ = h.store.RequestCancel(context.Background())
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	pushes := countPushes(t, h)
+	rec, err := h.run(t)
+	close(stop)
+	done.Wait()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusCancelled || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v", rec)
+	}
+	if rec.Reason != "cancelled during render" {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+	if rec.Render == nil {
+		t.Fatal("the render that ran is not recorded")
+	}
+	if rec.PR != nil {
+		t.Fatal("a cancelled artifact run opened a pull request")
+	}
+	if n := pushes(); n != 0 {
+		t.Fatalf("%d pushes, want none", n)
+	}
+	report, err := h.store.ReadFile(context.Background(), "report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(report), "**Outcome:** stopped — cancelled during render") {
+		t.Fatalf("the report does not carry the cancel that ended the run:\n%s", report)
 	}
 }
