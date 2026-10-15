@@ -115,7 +115,7 @@ which is the first addition to the env allowlist since M9 and must be reviewed
 as such (generic-tool §1 already flags this); and the container user must be
 able to open the socket, which is `root:docker` mode `0660` on COS. Whether
 Batch can pass `--group-add` (or `--user root`) in a container runnable's
-`options` is UNVERIFIED — Check 57 step 6 records the FACT. The fallbacks, in
+`options` is UNVERIFIED — Check 57a step 6 records the FACT. The fallbacks, in
 order, are: run the container as root (`runAsNonRoot` unset; Batch's default,
 per the REST reference), a systemd drop-in on the boot image that relaxes the
 socket's group, or a tiny socket-proxy sidecar.
@@ -135,31 +135,50 @@ What the numbers are:
 
 - **VM boot**: a Compute Engine VM starts in tens of seconds; Batch adds
   scheduling and agent setup before the first runnable starts. Exact figures
-  are UNVERIFIED — Check 57 measures launch-to-first-log-line directly.
+  are UNVERIFIED — Check 57a measures launch-to-first-log-line directly.
 - **The image pull**: a 3.8 GB pull over the VM's network is the thing to
-  avoid repeating. Three mitigations, in order of how much they help:
-  1. **A preloaded boot image.** Build a custom Compute Engine image once per
+  avoid repeating. Three mitigations, in order of how much they are expected to
+  help — each with a caveat that undercuts it, and **the measurement decides,
+  not this document** (Check 57a steps 2 and 3):
+  1. **A preloaded boot image.** Build a Compute Engine image once per
      `fugaro-base` version whose Docker data root already contains the base
-     image (`docker pull` into `/var/lib/docker`, snapshot the disk), and
-     point Batch's `InstancePolicyOrTemplate` at it as the boot disk. The
-     container runnable then starts with a local image and no pull. This is
-     the strongest mitigation; it is also the heaviest operationally (one
-     image build and one stored image per base version, per project).
+     image, and point Batch's `InstancePolicyOrTemplate` at it as the boot
+     disk. The container runnable then starts with a local image and no pull.
+     Expected to be the strongest mitigation, and the **least supported**:
+     Batch documents that "Custom images can be used with Batch but might not
+     be supported", recommends "building your custom image on top of a public
+     image that Batch supports" (`batch-cos` is the default for container-only
+     jobs), and notes that a Batch image's "minimum supported lifetime ... is
+     60 days after the image's starting date" or the base OS version's
+     deprecation date, whichever is earlier
+     (cloud.google.com/batch/docs/vm-os-environment-overview, checked
+     2026-10-15). So a per-base-version image built on `batch-cos` goes stale
+     on Google's schedule as well as Fugaro's, and the fleet's oldest VM is a
+     base image that may be past its supported lifetime. How a Docker data
+     root is baked into a COS-derived image at all is **UNVERIFIED** here:
+     COS has no package manager, and this design cites no supported procedure
+     for it (Check 57a step 3 is where that is settled or abandoned).
   2. **Image streaming.** Batch container runnables support it: "the runnable
      can initialize without waiting for the entire container image to
      download, which can significantly reduce startup time for large
      container images" (cloud.google.com/batch/docs/use-image-streaming,
-     checked 2026-10-15). It requires the image to live in **Artifact
-     Registry** and the VMs to be in the same location as the image — which
-     the registry work provides, since `fugaro-base` is served from an
-     in-region Artifact Registry remote repository
-     ([registry-remote-repository.md](registry-remote-repository.md)). The
-     catch: it switches the container runtime to **containerd, not Docker**,
-     and accepts only `imageUri`, `commands[]`, `entrypoint` and `volumes[]`
-     (same page). It therefore cannot itself give the agent the host daemon;
-     it only speeds the *runner* image. That is compatible with the socket
-     design: the runner image is pulled by containerd, the host Docker daemon
-     is what the agent uses.
+     checked 2026-10-15). It requires the image in **Artifact Registry** in the
+     job's own location — which the registry work provides, since `fugaro-base`
+     is served from an in-region Artifact Registry remote repository
+     ([registry-remote-repository.md](registry-remote-repository.md)) — and it
+     requires the `containerfilesystem.googleapis.com` API enabled (same page;
+     §1.9, Task 3). **The catch is twofold.** It switches the container runtime
+     to **containerd, not Docker**, and with streaming "container runnables
+     only support the following fields: `imageUri`, `commands`, `entrypoint`,
+     `volumes`, `enableImageStreaming`" — every other option is disregarded
+     (same page). `options` is disregarded too, which is the field §1.1's
+     `--group-add`/`--user` socket-permission path needs: **streaming and that
+     path are mutually exclusive**, so a streamed run must make the socket
+     usable another way (the group baked into the image, or the container
+     running as root). Streaming still suits the socket design in principle —
+     the runner image is pulled by containerd while the host Docker daemon is
+     what the agent uses — but that combination is unproven and Check 57a
+     steps 3 and 4 are what prove it.
   3. **The regional registry.** Serving the base from an in-region Artifact
      Registry (the registry-remote-repository work) removes the long haul from
      ghcr.io even when a plain pull happens. This is the cheapest mitigation
@@ -171,7 +190,7 @@ What the numbers are:
   `fugaro-base` — so the VM tier's budget is roughly "under about two
   minutes to the runner's first line". An agent run is interactive-ish but
   long (minutes to an hour), so two minutes of setup against a Docker daemon
-  is acceptable; five is not. Check 57 measures it with and without a
+  is acceptable; five is not. Check 57a measures it with and without a
   preloaded image so the owner can decide before any code depends on it.
 
 **Substrate verdict.** Batch's container runnables and image streaming are
@@ -191,26 +210,38 @@ for estimates:
   jobs billing has no such floor. `cost.compute_usd` must model the floor
   (§5).
 - **Spot / preemptible.** Spot VMs are up to 91% off but Compute Engine "can
-  preempt Spot VMs at any time to reclaim the resources"; on preemption it
-  either stops (the default) or deletes the VM, after a preemption notice
-  whose default is 30 seconds and which can be extended to 120
-  (cloud.google.com/compute/docs/instances/spot, checked 2026-10-15, and
-  cloud.google.com/compute/pricing). For a Fugaro run a preemption is a hard
-  kill mid-stage: the model spend for that stage is gone, the run does not
-  reach `finalize`, and recovery is a follow-up run. Recommendation: **spot
-  off by default**, opt-in per profile for workloads that tolerate it (a
-  nightly batch, a test-only workflow); the runner's SIGTERM path
+  preempt Spot VMs at any time to reclaim the resources". Preemption is
+  documented as a metadata signal (the VM's `preempted` metadata value becomes
+  `TRUE`), then a **preemption notice duration** — "0 seconds (default)" or
+  120 s, the only two values — then an ACPI soft-off that starts a shutdown
+  period that "is best effort and up to 30 seconds" before the VM is stopped
+  or deleted (cloud.google.com/compute/docs/instances/spot, checked
+  2026-10-15, and cloud.google.com/compute/pricing). **The default notice is
+  zero, not thirty seconds**: with no interval configured, the soft-off follows
+  the metadata signal immediately and the workload's only warning is the
+  30 s shutdown period. For a Fugaro run a preemption is a hard kill
+  mid-stage: the model spend for that stage is gone, the run does not reach
+  `finalize`, and recovery is a follow-up run. Recommendation: **spot off by
+  default**, opt-in per profile for workloads that tolerate it (a nightly
+  batch, a test-only workflow). If it is ever turned on, the run wants the
+  120 s notice set explicitly, because the runner's SIGTERM path
   (`cmd/fugaro/main.go` cancels the context so the task still finalizes) has
-  30 s to checkpoint on a spot preemption, which the 30 s default notice makes
-  marginal — Check 57 step 7 records what actually happens.
+  only the shutdown period to checkpoint otherwise. Whether Batch's
+  `provisioningModel: SPOT` even exposes the notice duration is UNVERIFIED —
+  Check 57a step 7 records what actually happens.
 - **Batch itself.** Batch jobs "run on Compute Engine resources, so Batch is
   subject to Compute Engine quotas and limits"
-  (cloud.google.com/batch/quotas, checked 2026-10-15); no separate Batch
-  charge is documented. Whether the Batch service agent adds any billable
-  line beyond the VMs is UNVERIFIED; Check 57 step 5 reads the billing
-  export for one run.
-- **Extras.** A boot disk (per GB-month, prorated), a static or in-use
-  external IP if used, Cloud NAT if used, and the preloaded boot image's
+  (cloud.google.com/batch/quotas, checked 2026-10-15), and the charge is
+  documented and settled: "There is no additional cost for using Batch. You
+  are only charged for the cost of the underlying resources required to
+  execute your jobs" (cloud.google.com/batch/docs/get-started, checked
+  2026-10-15). So there is no separate Batch line to model, and the compute
+  estimate is the VMs' alone (§5.2). Check 57a step 5 still reads the billing
+  export, because what *is* unverifiable from the docs is which of the
+  underlying lines (vCPU, memory, disk, egress) the export actually shows for
+  one short run.
+- **Extras.** A boot disk (per GB-month, prorated), an in-use external IP if
+  used (**charged**, §1.7), Cloud NAT if used, and the preloaded boot image's
   storage. All are small per run but nonzero; §1.7 decides NAT vs external IP.
 - **The machine type.** Batch container jobs use a machine type with enough
   vCPUs/memory for the task's `computeResource`; a Fugaro run's needs come
@@ -224,24 +255,57 @@ does not add a charge.
 
 ### 1.4 Cancel and timeouts
 
-- **Batch** gives a job `maxRunDuration` per task and `timeout` per runnable
-  (cloud.google.com/batch/docs/reference/rest/v1/projects.locations.jobs,
-  checked 2026-10-15), and cancels by deleting the job (`jobs.delete`); the
-  job leaves `RUNNING` for `DELETION_IN_PROGRESS`. That the VMs are torn down
-  at that point is what Batch is documented to do and what the reaper assumes;
-  it is not spelled out on the pages read here, so Check 57 step 8 verifies it
-  rather than this document asserting it.
-  Batch's own ceiling is generous: a job may wait 2 days in `QUEUED` and run
-  14 days in `RUNNING` before automatic failure
-  (cloud.google.com/batch/quotas, checked 2026-10-15), so Fugaro's own
-  timeouts (a workflow's `timeouts.total` plus `backend.TaskTimeoutSlack`)
-  bind long before Google's.
+- **Batch cancels with `jobs.cancel`, not `jobs.delete`.** The API has both,
+  and they are not the same operation:
+  - `jobs.cancel` is `POST /v1/{name=projects/*/locations/*/jobs/*}:cancel`,
+    "Cancel a Job" (cloud.google.com/batch/docs/reference/rest/v1/projects.locations.jobs/cancel;
+    cloud.google.com/batch/docs/cancel-job, both checked 2026-10-15). A job
+    being cancelled passes through **`CANCELLATION_IN_PROGRESS`** and ends in
+    **`CANCELLED`** — the two states that exist for exactly this call — and
+    "like succeeded and failed jobs, a cancelled job remains in your project
+    for up to 60 days" (cloud.google.com/batch/docs/cancel-job, checked
+    2026-10-15). Its record survives, which is what `fugaro ls`, `diagnose`,
+    `watch` and the sweeper read.
+  - `jobs.delete` is a different method, and "when a job is deleted, the
+    job's details and history that appear when you view a job and its tasks
+    are removed from Batch"; Google then "automatically deletes a job 60 days
+    after it is cancelled, succeeds, or fails"
+    (cloud.google.com/batch/docs/delete-job, checked 2026-10-15). Deleting is
+    therefore **destructive**: after it completes, `jobs.get` answers
+    `NOT_FOUND`, and a `Cancel` implemented as a delete would make
+    `backendtest`'s cancel case fail, because that suite reads the execution
+    back and requires a terminal state with no error
+    (`internal/backend/backendtest/backendtest.go`).
+
+  **So `Cancel` is `jobs.cancel`**, and `jobs.delete` belongs only to the
+  reaper and to cleanup of a job whose 60-day window should not be waited out
+  (§3.4). C8 changes with it (§8.2).
+- **Timeouts.** Batch gives a job `maxRunDuration` per task and `timeout` per
+  runnable (Batch REST reference, checked 2026-10-15), and `maxRunDuration`
+  bounds a task **once it is running**. Its ceiling is generous — 14 days in
+  `RUNNING` before automatic failure — so Fugaro's own timeouts (a workflow's
+  `timeouts.total` plus `backend.TaskTimeoutSlack`) bind long before it.
+- **But nothing bounds the queue.** A job may sit in **`QUEUED` for 2 days**
+  before Batch fails it (cloud.google.com/batch/quotas, checked 2026-10-15),
+  and §1.8 names the likely cause: the project's regional CPU quota is what
+  refuses the next concurrent run. Such a run is *pending*, not running: it
+  counts against `max_parallel`, it shows as pending in `watch`, and it can
+  start hours after the launcher's budget precheck and after the person who
+  asked for it has stopped expecting it. `maxRunDuration` does not touch it.
+  **Recommendation: a queue deadline**, checked in the same place the reaper
+  and `fugaro watch` already look — a job that has not reached `SCHEDULED` or
+  `RUNNING` within N minutes (a plan value; the natural default is the
+  launcher's own task timeout) is cancelled with `jobs.cancel`, and the run
+  record shows a `queue-timeout` outcome naming the wait, the quota-derived
+  reason in the job's status message, and what to raise. Without it, "Fugaro's
+  timeouts bind long before Google's" is false for the one state a user is
+  most likely to be staring at.
 - **A plain instance** cancels by `instances.delete`; the timeout is ours to
   enforce (a watchdog or the startup script's `timeout`), which is another
   small piece of machinery Batch already has.
 - **Cancel semantics** must survive the race Cloud Run already has: a run can
-  finish between the read and the cancel (live check 5), and deleting an
-  already-finished Batch job must be tolerated as a terminal state, not an
+  finish between the read and the cancel (live check 5), and cancelling an
+  already-terminal Batch job must be tolerated as a terminal state, not an
   error.
 
 **Substrate verdict.** Batch wins: timeouts and cancel are declarative.
@@ -253,26 +317,50 @@ Cloud Logging and `fugaro logs` reads them through the installation's log
 view (internal/backend/gcp/logs.go filters on
 `labels."run.googleapis.com/execution_name"`). Two things must hold on a VM:
 
-1. **The lines reach Cloud Logging.** Batch writes task logs to Cloud
-   Logging when a job's `logsPolicy.destination` is `CLOUD_LOGGING`; when a
-   job is created through the API it "is disabled by default" and must be set
-   explicitly (cloud.google.com/batch/docs/analyze-job-using-logs, checked
-   2026-10-15). Batch emits them under the monitored resource
-   `batch.googleapis.com/Job` with labels `resource_container`, `location`
-   and `job_id` (cloud.google.com/logging/docs/api/v2/resource-list, checked
-   2026-10-15), and "custom labels apply to the job and any Cloud Logging
-   LogEntry that it generates" (the Batch REST reference, checked 2026-10-15),
-   so the Fugaro labels travel with the lines.
-2. **They land in the installation's bucket, not `_Default`.** The
+1. **The lines reach Cloud Logging.** Batch writes logs to Cloud Logging
+   when a job's `logsPolicy.destination` is `CLOUD_LOGGING`; it is
+   `DESTINATION_UNSPECIFIED` — "(Default) Logs are not preserved" — and must
+   be set explicitly on an API-created job (Batch REST reference and
+   cloud.google.com/batch/docs/analyze-job-using-logs, both checked
+   2026-10-15). A job has **two log streams** under Cloud Logging:
+   `batch_task_logs` ("logs for any data that you've configured a job's
+   runnables to write to the standard output (`stdout`) stream or standard
+   error (`stderr`) stream") and `batch_agent_logs` ("logs for activities from
+   the Batch service agent", which "Batch automatically writes ... for every
+   job that has enabled logging") (cloud.google.com/batch/docs/analyze-job-using-logs,
+   checked 2026-10-15). Fugaro's lines — the runner's stdout/stderr — are
+   `batch_task_logs`; `batch_agent_logs` is Batch's own account of scheduling
+   and teardown and is **not** the run's log. Which of the two the Fugaro view
+   should keep, and whether the agent stream is useful for `diagnose`, is a
+   plan question; the default is to keep task logs only.
+2. **The filter.** Google documents exactly one way to select one job's
+   entries: **`labels.job_uid=JOB_UID`** (a *user label on the entry*, set to
+   the job's **UID** — not its name — which means a `jobs.get` to learn it),
+   optionally with `logName="projects/<project>/logs/batch_task_logs"` to
+   select the stream
+   (cloud.google.com/batch/docs/analyze-job-using-logs, checked 2026-10-15).
+   The monitored resource `batch.googleapis.com/Job` also has a `job_id`
+   label, documented only as "The identifier of the Job"
+   (cloud.google.com/logging/docs/api/v2/resource-list, checked 2026-10-15) —
+   **whether that is the job's name or its UID is UNVERIFIED**, so this
+   design does not build `fugaro logs` on it; Check 57a step 10 reads a raw
+   entry and settles it, after which the resource-based filter may be the
+   cheaper one (no `jobs.get` first). The filter Fugaro ships is
+   `labels.job_uid="<uid>" AND logName="projects/<p>/logs/batch_task_logs"`,
+   pinned further by the Fugaro label where the entry carries it.
+3. **They land in the installation's bucket, not `_Default`.** The
    installation's log sink filters on
    `resource.type="cloud_run_job" AND labels."fugaro"="managed"`
    (`deploy/terraform/gcp/modules/installation/logging.tf`); a Batch line's
    `resource.type` is `batch.googleapis.com/Job`, so the filter must gain a
    second arm (`resource.type="batch.googleapis.com/Job" AND
    labels."fugaro"="managed"`), and the matching exclusion from `_Default`
-   too. Without it, `fugaro logs` (which reads the Fugaro view) finds
-   nothing and the lines sit in `_Default` where every project viewer can
-   read them — a worse outcome than the Cloud Run path. This is an
+   too. The Fugaro labels do reach the entry — "custom labels to apply to the
+   job and any Cloud Logging LogEntry that it generates" (`Job.labels`, Batch
+   REST reference, checked 2026-10-15) — so the arm works, unlike the VM-label
+   case of §2.4. Without it, `fugaro logs` (which reads the Fugaro view)
+   finds nothing and the lines sit in `_Default` where every project viewer
+   can read them — a worse outcome than the Cloud Run path. This is an
    installation-level Terraform change (§8).
 
 A plain instance has no such integration: a startup script would have to ship
@@ -284,11 +372,30 @@ container output to Cloud Logging itself (the Ops Agent, or an explicit
 ### 1.6 Secrets
 
 Cloud Run mounts a secret as an env var from a `secret_key_ref` in the job
-definition (modules/workflow/job.tf). **Batch has no equivalent** for arbitrary
-secrets: its container runnable's `username`/`password` fields take Secret
-Manager references, but only for private-registry auth (Batch REST reference,
-checked 2026-10-15). So on a VM the runner must obtain the workflow's secrets
-itself, from the VM's service account:
+definition (`modules/workflow/job.tf`). **Batch has the same idea, and the
+design uses it.** A task's `Environment` has three fields, and one of them is
+exactly Cloud Run's:
+
+- **`secretVariables`** — "A map of environment variable names to Secret
+  Manager secret names. The VM will access the named secrets to set the value
+  of each environment variable" (Batch REST reference, `Environment`, checked
+  2026-10-15). The job therefore stores **names, not values**, with the
+  resolution done by the VM as the job's service account — so a reader of the
+  job object (`batch.jobs.get`) learns which secrets a run uses but not their
+  contents.
+- `variables` — plain values, for the non-secret env of §2.1.
+- `encryptedVariables` — an encrypted JSON blob, an alternative this design
+  does not use.
+
+So the **secrets bootstrap is not a component**: the VM backend writes the
+workflow's secret names into `secretVariables` and the platform mounts them,
+the way the Cloud Run job's `secret_key_ref` mount does. What remains is IAM:
+the job's service account needs `secretAccessor` on **exactly** those secrets
+(§3.2), and the launcher needs to be able to name them (§3.7). A runner-side
+fetch from Secret Manager survives only as a fallback, for the cases the
+declarative path cannot express — a secret whose name is only known at
+run time, or a second secret materialised after `jobs.create` — and if a plan
+task finds no such case, that task is dropped rather than built (Task 4).
 
 - The VM (Batch-created) runs as a service account; omit the field and it is
   the default Compute Engine service account, set it and it is the one named
@@ -296,17 +403,13 @@ itself, from the VM's service account:
   2026-10-15). Recommendation: **one service account per run class**, reusing
   the project-centric model — the job service account of
   (`profile`, `account`) (project-centric §4.1) — never the default Compute
-  Engine service account, which is project-wide and broad.
-- The runner (or a thin entrypoint shim in the base image) reads the named
-  secrets from Secret Manager at start, as that service account, through the
-  metadata server, and exports them before `fugaro exec` runs. Today the
-  platform does this mount; on a VM the runner does. This is new code (a
-  bootstrap step), and it is the single largest piece the VM backend adds that
-  Cloud Run does not need.
+  Engine service account, which is project-wide and broad. Whether that
+  granularity is right is **C21** (§3.1), because it is what decides whether
+  project-centric's D4 loss applies on this backend.
 
-**Substrate verdict.** Identical: both use the VM's service account. Batch at
-least names it declaratively; a plain instance does too (the instance's
-service account).
+**Substrate verdict.** Batch wins on this axis: `secretVariables` is a
+declarative mount, where a plain instance would need the runner-side bootstrap
+this design has just deleted.
 
 ### 1.7 Networking
 
@@ -314,29 +417,47 @@ Requirements: **egress** to Cloud Logging, Secret Manager, the runs bucket,
 Artifact Registry/ghcr.io, the git provider, the model providers (Anthropic,
 Vertex, an OpenRouter-style endpoint) and package registries; **no inbound**.
 
-- **External IP.** An ephemeral external IP costs nothing while attached (a
-  static one does) and lets the VM reach the internet directly. It also puts
-  the VM on the public internet, but with no ingress firewall rule (the
+- **External IP.** An external IPv4 address **is charged while it is in
+  use** — $0.005/h on a standard VM and $0.0025/h on a spot VM
+  (cloud.google.com/vpc/pricing-announce-external-ips, checked 2026-10-15; a
+  static address costs more). It lets the VM reach the internet directly, and
+  it puts the VM on the public internet: with no ingress firewall rule (the
   default VPC's `default-allow-ssh` is the thing to remove or avoid) nothing
-  can reach it. Simple, but "no inbound" then rests on firewall configuration
-  rather than on the absence of a route.
+  can reach it, but "no inbound" then rests on a firewall rule list rather
+  than on the absence of a route. A Fugaro agent is untrusted code with a
+  Docker daemon, so a mis-set rule is a reachable host, not a paper risk.
 - **Cloud NAT.** No external IP on the VM; egress goes through a Cloud NAT
   gateway on its subnet (cloud.google.com/nat/docs/overview, checked
   2026-10-15). Nothing is reachable from outside at the network layer; the
   cost is a NAT gateway (hourly + per-GB processed) that exists for the
   installation, not per run, plus a router and subnet.
+- **Private Google Access is not a substitute.** Batch documents that a job
+  whose VMs have external access blocked "must use Cloud NAT or Private
+  Google Access to allow access to the domains for the APIs and services that
+  your job uses" — and Private Google Access reaches only Google's own APIs
+  (Batch, Compute Engine, Logging), not GitHub or the model providers
+  (cloud.google.com/batch/docs/job-without-external-access, checked
+  2026-10-15). It can cheaply serve the Google half, but the egress Fugaro's
+  runs actually need (git hosts, model providers, package registries)
+  requires NAT, so NAT is what the design provisions and Private Google
+  Access is at most an optimisation on top.
 - **Batch's own fields.** `NetworkPolicy` and `InstancePolicyOrTemplate`
   accept a network interface and, with an instance template, the network
   settings can be pinned in the template (Batch REST reference, checked
-  2026-10-15).
+  2026-10-15). The boot-image choice interacts here too: when a job's VMs have
+  no external access and no NAT or Private Google Access, "only Batch images"
+  are supported (cloud.google.com/batch/docs/vm-os-environment-overview,
+  checked 2026-10-15) — one more reason the design keeps NAT rather than
+  omitting egress entirely.
 
 Recommendation: **no external IP, Cloud NAT for egress**, because it makes
 "no inbound" a property of the network rather than of a firewall rule list,
 and because the NAT is an installation-level one-time setup, matching the
-"nothing per repository" goal. Trade-off: it is more setup than an ephemeral
-IP and adds a per-GB egress charge; a single-person installation that prefers
-simplicity can take the external IP and a deny-all ingress firewall instead
-(**C7**, §8.2).
+"nothing per repository" goal. Trade-off: it is more setup than an external
+IP and adds a per-GB egress charge (while the IP itself is not free either, so
+the saving is smaller than it looks); a single-person installation that
+prefers simplicity can take the external IP and a deny-all ingress firewall
+instead (**C7**, §8.2).
 
 **Substrate verdict.** Identical.
 
@@ -350,20 +471,25 @@ Verified from Google's public documentation (checked 2026-10-15):
   definition; 2 days `QUEUED` before automatic failure; 14 days `RUNNING`
   before automatic failure (7 days under `FLEX_START`).
 - **Compute Engine allocation quotas**
-  (cloud.google.com/compute/docs/resource-quotas): VM quotas are
-  **regional**; the **VM instances** quota is
-  regional and is automatically set to **ten times your regular CPU quota**;
-  **CPU quota** is regional (with per-family pools such as `CPUS`/`E2`), and
-  there is additionally a global **CPUs (All Regions)** quota; in-use and
-  static IP addresses consume **global** quotas; disks are regional. The
-  *default numeric values* per project are not on that page and depend on the
-  project's history — **UNVERIFIED here**; the owner reads the project's own
-  quota page (Check 57 step 9 records the FACT).
+  (cloud.google.com/compute/docs/resource-quotas, checked 2026-10-15): VM
+  quotas are **regional**; the **VM instances** quota is regional and is
+  automatically set to **ten times your regular CPU quota** ("You don't need
+  to request this quota. If you need quota for more VM instances, request more
+  CPUs"); **CPU quota** is regional (with per-family pools such as
+  `CPUS`/`E2`), and there is additionally a global **CPUs (All Regions)**
+  quota. Addresses split both ways: **"In-use IP addresses"** is the number of
+  "static and ephemeral **regional** external IP addresses that you can use in
+  your project simultaneously" — a VM's external IP is a regional address and
+  counts there — while the *global* in-use-IP quota is for global addresses
+  such as load balancers' (same page). Disks are regional. The *default
+  numeric values* per project are not on that page and depend on the project's
+  history — **UNVERIFIED here**; the owner reads the project's own quota page
+  (Check 57a step 9 records the FACT).
 
 What one run consumes: one VM, its vCPUs against the regional (and global)
 CPU quota and one instance against the instances quota, one boot disk, and —
 with NAT — no IP quota but NAT egress; with an external IP, one in-use IP
-against a global quota. A team running N concurrent Fugaro runs therefore
+against the **regional** in-use-IP quota. A team running N concurrent Fugaro runs therefore
 needs CPU quota for N × (vCPU per profile), which is a **new** quota
 conversation Fugaro does not have today (Cloud Run has its own, unrelated
 quota). This is the practical limit the owner should watch: on a default
@@ -378,12 +504,17 @@ A MIG additionally consumes instance-group manager quota.
 What `fugaro init` would create for the VM backend, and how heavy that is:
 
 - **Cloud Batch:** enable the Batch API; the Batch service agent's IAM (Batch
-  creates it on first use); optionally a Cloud NAT + router + subnet; a
-  preloaded boot image per `fugaro-base` version (or reliance on image
-  streaming); the log sink/exclusion change (§1.5); and — with
-  project-centric — a `profile` naming the VM class. There is **no
-  per-run and no per-repository resource**: it is one-time, installation
-  level.
+  creates it on first use); **`containerfilesystem.googleapis.com` if image
+  streaming is used** (cloud.google.com/batch/docs/use-image-streaming,
+  checked 2026-10-15); a Cloud NAT + router + subnet (§1.7); a preloaded boot
+  image per `fugaro-base` version **or** reliance on image streaming — with
+  the caveats §1.2 lists, i.e. a custom image Batch does not officially
+  support and an image whose supported lifetime Google may end at 60 days from
+  its starting date, which makes the preload a thing to **rebuild on a
+  schedule**, not build once; the log sink/exclusion change (§1.5); and — with
+  project-centric — a `profile` naming the VM class. There is **no per-run and
+  no per-repository resource**: it is one-time, installation level, *except*
+  the boot image, which recurs.
 - **Plain instances:** everything above **plus** an instance template (or a
   generated `instances.insert`), a startup script, a status/timeout watchdog
   and a **reaper** (§3) — because nothing else deletes a leaked VM.
@@ -410,15 +541,15 @@ itself.
 | # | Decision | Recommendation | Veto alternative / trade-off |
 |---|---|---|---|
 | **C1** | Substrate | **Cloud Batch**, one job with one task per run, Container-Optimized OS boot disk, `fugaro-base` as a container runnable | **Plain Compute Engine instances** (full control of the startup script and the socket, no Batch container-runnable quirks; but Fugaro implements instance lifecycle, timeouts, log shipping and a reaper). **MIG**: rejected — homogeneous fleets, not per-run ephemeral VMs; you either pay for idle capacity or re-implement Batch. |
-| **C2** | Where Docker comes from | **The VM's host daemon, via the bind-mounted socket** | **Rootless/Podman inside the container** or **privileged DinD**: same host-level power, more moving parts, doubles storage, needs an unverified `--privileged`/user-namespace path in a Batch runnable. |
+| **C2** | Where Docker comes from | **The VM's host daemon, via the bind-mounted socket** — noting that **image streaming disregards `options`** (§1.2), so with streaming (C4) the socket must be made usable by the image-baked group or by running the container as root, not by `--group-add` | **Rootless/Podman inside the container** or **privileged DinD**: same host-level power, more moving parts, doubles storage, needs an unverified `--privileged`/user-namespace path in a Batch runnable. |
 | **C3** | Isolation unit | **One VM per run; a VM is never reused** | Reuse a pool of warm VMs: rejected — two runs on one VM can read each other's secrets and Docker state, and Docker makes each root on the host. |
-| **C4** | Cold start | **Preloaded boot image per base version, with image streaming as the lighter alternative** | Plain pull every run (simplest, slowest); Check 57 measures both before the choice is fixed. |
+| **C4** | Cold start | **Image streaming first** (Artifact Registry in-region, the `containerfilesystem` API, no custom image to maintain), **preloaded boot image as the fallback** | The preload as the primary choice was this design's first draft; it is demoted because Batch does not officially support custom images and a Batch image's supported lifetime can end **60 days** after its starting date, so it is an image to rebuild on Google's schedule as well as Fugaro's, and it costs the `options` field that one socket-permission path needs. Plain pull every run is the cheapest and slowest. **Check 57a steps 2 and 3 measure all three, and the recommendation follows the measurement.** |
 | **C5** | Spot | **Off by default**, opt-in per profile | Spot by default: up to 91% cheaper, but a preemption kills the stage mid-flight and the 30 s notice makes checkpointing marginal. |
 | **C6** | Service account | **One per run class (profile, account), reused from the project-centric model**; never the default Compute Engine SA | Default Compute Engine SA: project-wide and over-broad. |
 | **C7** | Egress | **No external IP; Cloud NAT** | Ephemeral external IP + deny-all ingress: simpler, cheaper per run, but "no inbound" then rests on a firewall list. |
-| **C8** | Timeouts and cancel | **Batch `maxRunDuration` + `jobs.delete`**, tolerating a cancel that races a finished job | Fugaro's own watchdog (needed only on plain instances). |
+| **C8** | Timeouts and cancel | **`jobs.cancel` for cancel** (the job ends `CANCELLED` and its record survives), **`maxRunDuration` for the running timeout**, and **a queue deadline** for a job stuck in `QUEUED` behind the CPU quota | `jobs.delete` as cancel: destructive, erases the history `ls`/`diagnose`/`watch` read, and fails the conformance suite's cancel case. Fugaro's own watchdog (needed only on plain instances). |
 | **C9** | Logs | **`logsPolicy.destination=CLOUD_LOGGING`**, and extend the installation's sink/exclusion to `batch.googleapis.com/Job` | Leave logs in `_Default`: `fugaro logs` finds nothing and every viewer reads them. |
-| **C10** | Secrets | **The runner resolves named secrets from Secret Manager at start, as the VM's service account** | Bake values into the job definition: rejected — secret values would sit in a job object anyone with `batch.jobs.get` can read. |
+| **C10** | Secrets | **The job's `secretVariables`**: names in the job definition, values resolved by the VM as the job's service account | A runner-side Secret Manager fetch as the primary path: more code for the same result, kept only as a fallback for a name known only at run time. Baking values in: rejected — anyone with `batch.jobs.get` could read them. |
 | **C11** | `fugaro init` weight | **One installation-level Batch stage; no per-repository resource** | Per-repository VM setup: rejected — reintroduces exactly the weight project-centric removes. |
 
 ## 2. How a run executes there
@@ -452,8 +583,11 @@ unchanged.
   instead of Cloud Run's `env`; the names and values are unchanged.
 
 What is genuinely new, and is the bulk of the work: the **Docker socket**
-(§2.2), the **secrets bootstrap** (§1.6), the **name/parse seam**
-(§2.5) and the **provisioning stage** (§4).
+(§2.2), the **name/parse and cloud-detection seam** (§2.5), the
+**provisioning stage** (§4), the **cancel, queue-deadline and reaper
+machinery** (§1.4, §3.4), and the **compute estimate** (§5.2). The secrets
+bootstrap is *not* on this list any more: `secretVariables` does what Cloud
+Run's `secret_key_ref` mount does (§1.6).
 
 ### 2.2 Where Docker comes from, concretely
 
@@ -478,7 +612,7 @@ checked 2026-10-15 — but that changes the runner's effective user from
 pass a supplementary group through the runnable's `options`
 (**UNVERIFIED**, documented only as "arbitrary additional options", e.g.
 `--network host`); or adjust the socket's group in the preloaded boot image.
-Check 57 step 6 records which works.
+Check 57a step 6 records which works.
 
 Security consequence, repeated because it is the whole of §3: **a run that has
 this socket is root on the VM.** The mount is not a privilege boundary and is
@@ -491,10 +625,10 @@ Every method of `internal/backend.Backend` maps onto Batch:
 | Seam method | Batch | Notes |
 |---|---|---|
 | `Launch(LaunchSpec)` | `projects.locations.jobs.create` | One Batch job, one task group, one task. Name derived per run (§2.4). The `FUGARO_RUN` env and the timeout are set in the job definition, not in an override — Batch has no execution-override concept like Cloud Run's `Overrides`. Returns `ExecutionRef{Name, Job, LogURL}`. |
-| `Execution(name)` | `jobs.get` | Maps Batch's nine-value state enum to `backend.State`: `STATE_UNSPECIFIED`/`QUEUED`/`SCHEDULED` → `StatePending`, `RUNNING` → `StateRunning`, `SUCCEEDED` → `StateSucceeded`, `FAILED` → `StateFailed`, `CANCELLATION_IN_PROGRESS`/`CANCELLED` → `StateCancelled`, and `DELETION_IN_PROGRESS` → `StateCancelled` too (a job Fugaro cancelled is deleted, so its last observable state is the deletion, §1.4). An unrecognised value is treated as **not terminal** and logged — the same defensive shape as `stateOf` in `internal/backend/gcp/run.go`, which reads Cloud Run's counts rather than trusting one field. `Created`/`Started`/`Completed` from the job's and its task's status times; `CPU`/`MemoryGiB` from the machine type; `Run` from the `FUGARO_RUN` the job was created with (Batch reports the job's `environmentVariables`, so unlike Cloud Run this one is always readable — still a hint, never evidence). |
+| `Execution(name)` | `jobs.get` | Maps Batch's nine-value state enum to `backend.State`: `STATE_UNSPECIFIED`/`QUEUED`/`SCHEDULED` → `StatePending`, `RUNNING` → `StateRunning`, `SUCCEEDED` → `StateSucceeded`, `FAILED` → `StateFailed`, and `CANCELLATION_IN_PROGRESS`/`CANCELLED` → `StateCancelled`. `DELETION_IN_PROGRESS` → `StateCancelled` too, but it should only ever be seen for a job the **reaper** is deleting (§3.4) — a user cancel is `jobs.cancel`, which ends `CANCELLED` (§1.4). An unrecognised value is treated as **not terminal** and logged — the same defensive shape as `stateOf` in `internal/backend/gcp/run.go`, which reads Cloud Run's counts rather than trusting one field. `Created`/`Started`/`Completed` from the job's and its task's status times; `CPU`/`MemoryGiB` from the machine type; `Run` from the `FUGARO_RUN` the job was created with (Batch reports the job's `environmentVariables`, so unlike Cloud Run this one is always readable — still a hint, never evidence). |
 | `List(filter)` | `jobs.list` | Filter by the Fugaro labels and `CreateTime`; the `fugaro-` name prefix is replaced by the label predicate. |
-| `Logs(query, fn)` | Cloud Logging, through the same installation log view | Filter `resource.type="batch.googleapis.com/Job" AND resource.labels.location="<region>" AND resource.labels.job_id="<job id>"`, pinning the region and the job the way the Cloud Run filter pins `resource.labels.location` and `resource.labels.job_name` (`internal/backend/gcp/logs.go`). `job_id` is a **monitored-resource** label of `batch.googleapis.com/Job` — with `resource_container` and `location` — not an entry label, so it is `resource.labels.job_id` and not `labels."batch.googleapis.com/job_id"` (cloud.google.com/logging/docs/api/v2/resource-list, checked 2026-10-15; §1.5). The `fugaro=managed` marker is the other kind — a **user label on the entry**, which Batch copies from the job (§2.4) — so a second term may pin it as `labels."fugaro"`; the entry is found by resource label either way. |
-| `Cancel(name)` | `jobs.delete` | Tolerate `NOT_FOUND` and a job already terminal (the same race live check 5 already documents for Cloud Run). |
+| `Logs(query, fn)` | Cloud Logging, through the same installation log view | Filter `labels.job_uid="<uid>" AND logName="projects/<p>/logs/batch_task_logs"`, the form Google documents for one job's task logs (cloud.google.com/batch/docs/analyze-job-using-logs, checked 2026-10-15; §1.5). It needs the job's **UID**, so `Logs` does a `jobs.get` first — one extra read per call, cached for the follow loop. The alternative `resource.labels.job_id` is **UNVERIFIED** (the resource list says only "The identifier of the Job", which may be the name or the UID), which is why it is not the shipped filter; Check 57a step 10 settles it and may allow the cheaper form later. The `fugaro=managed` marker does reach the entry (`Job.labels` applies to the job "and any Cloud Logging LogEntry that it generates") and pins the installation's arm of the sink (§1.5). |
+| `Cancel(name)` | `jobs.cancel` | The job passes through `CANCELLATION_IN_PROGRESS` to `CANCELLED`; `Execution` keeps working afterwards, which is what `backendtest`'s cancel case requires. Tolerate a job already terminal (the same race live check 5 already documents for Cloud Run). `jobs.delete` is **not** `Cancel` — it is the reaper's and the restore's (§3.4). |
 | `LongestTaskTimeout()` | The longest configured workflow timeout | See §2.5: on Batch there is no deployed job to read it from. |
 | `TaskTimeout(slug, workflow)` | The workflow's configured timeout | Same: a config/policy read, `ErrNotFound` for an unknown workflow. |
 
@@ -506,28 +640,59 @@ run" exactly. `maxRetryCount` stays **0** ("The default, 0, which means never
 retry", Batch REST reference, checked 2026-10-15): a Fugaro run is not
 idempotent, the same reason Cloud Run's job sets `max_retries = 0`.
 
+Two things the mapping adds that Cloud Run needed nothing for: **the job name
+is not an execution name** (§2.5), and a job that never gets resources stays
+`QUEUED` until the queue deadline cancels it (§1.4) — `StatePending` with a
+reason, not a hang.
+
 ### 2.4 Naming, labels and adoption
 
 The naming and marking conventions are the same as every other Fugaro
 resource (`internal/backend/gcp/names.go`), so discovery and the guard keep
 working:
 
-- **Job id**: `fugaro-<slug>-<workflow>-<12 hex of the run id>`, built with
-  the existing `derive`/`JobName` scheme. It must be unique per
-  project+region, which the run id guarantees, and it is the identity the run
-  stores in `launch.json`/`result.json` and that `fugaro logs`, `cancel` and
-  `diagnose` follow.
-- **Labels** on the job (Batch applies job labels to its VMs and to the log
-  entries it generates, Batch REST reference, checked 2026-10-15):
-  `fugaro=managed`, `fugaro_repo=<slug>`, `fugaro_workflow=<variant>`, plus a
-  per-run label `fugaro_run=<slug>-<run id>` (sanitized to the label charset,
-  ≤63 chars). The per-run label is what lets the reaper and a human find a
-  leaked VM without reading every job. The Task-28 outline in the generic-tool
-  plan already names "the labels used for adoption"; these are them.
+- **Job id**: `fugaro-<slug>-<workflow>-<12 hex of the run id>`. The existing
+  `JobName(slug, workflow)` (`internal/backend/gcp/names.go`) takes no run id,
+  so this needs a **new deriving function** in the Batch backend, not a reuse
+  of that one; the run id in it is what makes the name unique per
+  project+region. Batch's own constraint on the id is documented and easy to
+  satisfy: "at most 63 characters, must start with lowercase characters, only
+  lowercase characters, numbers and `-` are accepted, and `-` cannot be the
+  first or the last character" (Batch REST reference, `jobs.create`'s `jobId`,
+  checked 2026-10-15) — the slug/workflow pair the existing scheme already
+  sanitizes, plus 12 hex. The name is the identity the run stores in
+  `launch.json`/`result.json` and that `fugaro logs`, `cancel` and `diagnose`
+  follow.
+- **Labels, in two places, because they do different things.** Batch's
+  `Job.labels` are "custom labels to apply to the job and any Cloud Logging
+  LogEntry that it generates", and **they do not reach the VMs**;
+  `AllocationPolicy.labels` are "custom labels to apply to the job and all the
+  Compute Engine resources that both are created by this allocation policy and
+  support labels" (Batch REST reference, checked 2026-10-15). A design that
+  sets only `Job.labels` leaves every VM unlabelled — and then the reaper and
+  Check 57's `gcloud compute instances list --filter='labels.fugaro=managed'`
+  find nothing, which reads as "no survivors" precisely when a VM *has*
+  leaked. So the Fugaro set goes in **both**: `fugaro=managed`,
+  `fugaro_repo=<slug>`, `fugaro_workflow=<variant>`, plus the per-run
+  `fugaro_run=<slug>-<run id>`, sanitized to the label charset and truncated
+  to 63 characters with a short hash of the run id when the slug and id
+  together are too long (a plain truncation could collide two runs of a long
+  slug, and the reaper's whole job is telling one run's VM from another's).
+  That per-run label is what lets the reaper and a human find a leaked VM
+  without reading every job. The Task-28 outline in the generic-tool plan
+  already names "the labels used for adoption"; these are them.
 - **Adoption** (`internal/infra/discover.go`, `ForeignError`) refuses to adopt
   a resource whose labels do not match exactly; a VM backend brings the same
-  rule to Batch jobs and to any preloaded boot image (labelled
+  rule to Batch jobs, to Batch VMs and to any preloaded boot image (labelled
   `fugaro=managed`, like the base-image registry resources).
+- **Finished jobs linger for 60 days.** Google deletes a job automatically
+  "60 days after it is cancelled, succeeds, or fails"
+  (cloud.google.com/batch/docs/delete-job, checked 2026-10-15), so
+  `jobs.list` keeps returning finished jobs long after their VMs are gone.
+  `List` therefore filters on the job's state and `CreateTime` rather than
+  assuming the listing is all live work, and the reaper must not mistake a
+  retained record for a live job (it deletes the job and, only for a job with
+  no live record, an orphaned instance — §3.4).
 
 **C13 (naming)**: reuse the Fugaro label set verbatim, and add the per-run
 label. Veto alternative: mark only the job and rely on the job id's prefix,
@@ -1085,7 +1250,7 @@ above where used):
   and that labels apply to the job, its VMs and the log entries it generates
   (Batch REST reference). Which of those states a cancelled or a preempted job
   actually passes through, and how long it sits in each, is **UNVERIFIED** —
-  Check 57 steps 7 and 8.
+  Check 57a steps 7 and 8.
 - Batch logs reach Cloud Logging only when the destination is set, and the
   monitored resource is `batch.googleapis.com/Job` with labels
   `resource_container`/`location`/`job_id`
@@ -1126,17 +1291,17 @@ the dropped gen-2 Docker probe the generic-tool plan numbered 31 — the reason
 **Unverified, each with what settles it:**
 
 - Batch container runnables accepting `--privileged`, `--user` or
-  `--group-add` in `options` — Check 57 step 6.
+  `--group-add` in `options` — Check 57a step 6.
 - Whether the base image's container user can open the COS docker socket, and
-  which permission path works — Check 57 step 6.
+  which permission path works — Check 57a step 6.
 - VM boot and Batch scheduling times, with and without a preloaded image —
-  Check 57 steps 2 and 3.
-- Whether Batch adds any billable line beyond the VMs — Check 57 step 5.
+  Check 57a steps 2 and 3.
+- Whether Batch adds any billable line beyond the VMs — Check 57a step 5.
 - Whether Batch truly tears down every VM on `DELETION_IN_PROGRESS` and on a
-  crashed runnable — Check 57 step 8.
+  crashed runnable — Check 57a step 8.
 - Whether image streaming works for a base image served through an Artifact
-  Registry **remote** repository — Check 57 step 3 (pairs with Check 43).
-- The project's own default quota numbers — Check 57 step 9.
+  Registry **remote** repository — Check 57a step 3 (pairs with Check 43).
+- The project's own default quota numbers — Check 57a step 9.
 - Whether a workflow's Cloud Run `resources` values map cleanly onto a
   Compute Engine machine type — a plan task (§4.4 item 3).
 - Cloud Run gen-2's inability to run Docker is the **owner's measurement**
