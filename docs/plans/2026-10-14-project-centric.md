@@ -238,9 +238,9 @@ Each phase is its own PR (or its own small group of PRs where the table below sp
 | **J** | 3.0 | **the go/no-go probes** — nothing in phase 3 starts before these are answered |
 | **K** | 3.1, 3.2 | **SECURITY-SENSITIVE (IAM, bucket conditions)** — profiles, the project module, the golden plans |
 | **L** | 3.3, 3.4 | **SECURITY-SENSITIVE (binding, admission, fail-closed)** — the runner and every caller |
-| **M** | 3.6, 3.7 | `cloneShipped` after Check 38; Check 53 |
+| **M** | 3.5, 3.6, 3.7 | the launcher/operator grants and the dashboard; `cloneShipped` after Check 38; Check 53 |
 | **N** | 4.1, 4.2, 4.3, 4.4 | the retirement of a repository root, and that nothing retires a resource another repository needs |
-| **O** | 4.5 | **OWNER-RUN** — the owner's migration, Check 54 |
+| **O** | 4.5, 4.6 | **OWNER-RUN (Check 54)** — the owner's migration; then the phase's docs and checks sweep |
 | **P** | 5.1, 5.2, 5.3 | **SECURITY-SENSITIVE (OAuth pool)** — a person's token, its grants and its blast radius |
 | **Q** | 5.4, 5.5 | #363 rebased, Check 55 |
 | **R** | 6.1, 6.2, 6.3, 6.4 | **SECURITY-SENSITIVE (export)** — no value, no person by default |
@@ -803,7 +803,7 @@ The design's §4.3, §4.4 and D3. **This phase is where the owner's own installa
 
 **Files:** `internal/cli/init_repo_stage.go`, `internal/cli/init.go` (+ tests), `internal/infra/forget.go`, `internal/infra/{repo.go,workdir.go}`, the config-transitions retirement engine (`internal/infra/retire*.go`, per #365's core), `docs/design/config-transitions.md` (a pointer), `docs/checkout.md`, `docs/bucket-iam.md`.
 
-**Verified today:** the repository root's state is `fugaro/repos/<slug>` (`internal/infra/workdir.go:19-23`, `internal/infra/repo.go:38-40`); what it owns is a secret container per logical secret with `prevent_destroy` and two operator grants (`deploy/terraform/gcp/modules/repo/secrets.tf:4-42`), an Artifact Registry repository (`.../repo/registry.tf:10-72`), a build service account (`.../repo/build.tf:5-91`), optionally a check job and scheduler (`.../repo/check.tf:16-142`), and per workflow variant a job service account, the Cloud Run job and its grants (`.../modules/workflow/{sa.tf,job.tf}`).
+**Verified today:** the repository root's state is `fugaro/repos/<slug>` (`internal/infra/workdir.go:19-23`, `internal/infra/repo.go:38-40`); what it owns is a secret container per logical secret with `prevent_destroy` and two operator grants (`deploy/terraform/gcp/modules/repo/secrets.tf:4-42`), an Artifact Registry repository (`.../repo/registry.tf:10-72`), a build service account (`.../repo/build.tf:5-93`), optionally a check job and scheduler (`.../repo/check.tf:16-142`), and per workflow variant a job service account, the Cloud Run job and its grants (`.../modules/workflow/{sa.tf,job.tf}`).
 
 1. A new command (`fugaro init --repo --retire`, following config-transitions' own Task 5 spelling) retires a repository **root**: it computes the retirement set from the state and the labels Fugaro writes (`gcp.LabelManaged`, `gcp.LabelRepo`), removes the module from the root's state, then deletes the labelled jobs, service accounts, IAM bindings and registries **through the API, not through a `destroy`** — because `prevent_destroy` on the secret containers means a destroy cannot run, and the design says plainly that **secret values cannot be carried over**: no person can read them (`.../repo/secrets.tf:31-42`), so a project-scope secret is re-entered (Task 4.5 step 3).
 2. **A safety property the plan adds**: the command refuses to retire a repository whose slugs another repository's resources still reference (a shared profile job, a launcher grant, an operator grant), and it prints the allow-list entry it would remove — **retiring a root never un-enrolls the repository by itself** (that is `remove-repo`, an explicit act). The ordering it enforces: un-enroll → retire the root → the repository's runs stop (design §4.4's "re-run init under the new model": deploy the project jobs, switch launches, then retire each repository's root).
