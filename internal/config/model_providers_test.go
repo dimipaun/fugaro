@@ -3,8 +3,10 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 )
 
 func okProvider() ModelProvider {
@@ -172,9 +174,32 @@ func TestAllowsDataIgnoresCase(t *testing.T) {
 	}
 }
 
+// providerPrices is the table the program builds for okProvider's route: the
+// embedded rows, the built-in catalog's rows for the models the route claims,
+// then the owner's overrides last — PriceTable, the one builder every surface
+// prices from. A bare pricing.Embedded() prices no provider model any more:
+// the placeholder row is gone (P6), so a test that pins one needs the
+// catalog's row, exactly as a run would.
 func providerPrices(t *testing.T) *pricing.Table {
 	t.Helper()
-	return pricing.Embedded()
+	cat, err := catalog.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The clock is the catalog's own date, a day on, not today's: which end
+	// of a tier a row is charged turns on the catalog's age, so a test that
+	// read the wall clock would assert the cheapest end today and the dearest
+	// one from the day the shipped file passes its 30 days
+	// (catalog.StaleAfter).
+	checked, err := time.Parse("2006-01-02", cat.CheckedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tbl, err := PriceTable(map[string]ModelProvider{"openrouter": okProvider()}, nil, cat, checked.Add(24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tbl
 }
 
 // A repository's fugaro.yaml cannot carry a provider, a base URL, a key or a
@@ -237,6 +262,34 @@ func TestProviderPolicyUnclaimedAndUnpriced(t *testing.T) {
 	// Claude IDs and aliases are not this rule's business.
 	if got := CheckProviderPolicy(Agent{Model: "sonnet"}, nil, "x/y", ps, prices); len(got) != 0 {
 		t.Errorf("alias refused: %v", got)
+	}
+}
+
+// TestProviderPolicySaysWhyTheCatalogRefused pins that a model a provider
+// route claims and the built-in provider price catalog cannot price is
+// reported with the catalog's own reason — the switch to flip and both ways
+// out — and not only with "add it under model_prices": the owner reading
+// validate is looking at the route's switches, which is what the refusal is
+// about (design D9, P8). The shipped file gives qwen/qwen3.8-flash no ZDR
+// tier, so a require_zdr route claims it and cannot price it.
+func TestProviderPolicySaysWhyTheCatalogRefused(t *testing.T) {
+	cat, err := catalog.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps := providers(func(p *ModelProvider) { p.Models = []string{"qwen/*"} })
+	tbl := mustTable(t, ps, nil, cat)
+	got := problemsText(CheckProviderPolicy(Agent{Auth: "api-key", Model: "qwen/qwen3.8-flash"}, nil, "dimipaun/fugaro", ps, tbl))
+	for _, want := range []string{"require_zdr: false", "model_prices"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the refusal does not name %q: %q", want, got)
+		}
+	}
+	// A model no catalog row exists for at all has no recorded reason, and
+	// keeps the generic answer: the refusal is not the only path.
+	got = problemsText(CheckProviderPolicy(Agent{Auth: "api-key", Model: "qwen/qwen-nothing"}, nil, "dimipaun/fugaro", ps, tbl))
+	if !strings.Contains(got, "no price") || !strings.Contains(got, "model_prices") {
+		t.Errorf("an unpriced model without a recorded refusal: %q", got)
 	}
 }
 

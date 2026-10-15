@@ -60,15 +60,78 @@ type Model struct {
 	// warn until the owner sets the real price under model_prices (which
 	// replaces the row and clears this). PriceSource and PriceCheckedAt say
 	// where the row came from and when; empty on a row the table's own
-	// Source and CheckedAt cover.
+	// Source and CheckedAt cover. No row of Embedded() sets it any more —
+	// the built-in provider price catalog prices a provider model, and a
+	// model with no price is refused rather than guessed at (P6) — but the
+	// flag, its warning and the fields beside it are what a future
+	// placeholder would use, and what an owner's override still clears.
 	Unverified     bool
 	PriceSource    string
 	PriceCheckedAt string
+	// Catalog is where a row the built-in provider price catalog priced
+	// came from: the tier and bound the route's switches selected, how many
+	// endpoints that tier covers, and the catalog's own source, date and
+	// staleness. It is nil on every other row, and With clears it exactly
+	// as it clears the three fields above: an owner's model_prices replaces
+	// the row whole, provenance included.
+	Catalog *CatalogPrice
 	// CacheDefaulted names the cache multipliers an owner's override left
 	// at 0 on a provider row and With raised to 1 (the input rate), so
 	// cache tokens are never free there: a provider that reports cache
 	// tokens bills them, and 0 is almost always a field left out.
 	CacheDefaulted []string
+}
+
+// CatalogPrice is the provenance of a catalog-priced row (see Model.Catalog).
+type CatalogPrice struct {
+	Tier         string // "zdr" or "all": which endpoint set the price is over
+	Bound        string // "min" or "max": which end of that set's range is charged
+	Endpoints    int    // how many endpoints the tier covers
+	ZdrEndpoints int    // how many endpoints the model has that are ZDR-eligible
+	Source       string // the catalog's own source URL
+	CheckedAt    string // the catalog's own YYYY-MM-DD
+	Stale        bool   // checked_at is past catalog.StaleAfter: the bound is forced to max
+	// TierInputMax and TierOutputMax are the dearest input and output price
+	// per million tokens the charged tier prices: what a call the provider
+	// serves from the dearest endpoint of that tier can be billed at, and so
+	// the size of the undercharge a cheapest bound leaves (design D6, P11).
+	// 0 on a tier that prices neither, which no valid file has.
+	TierInputMax  float64
+	TierOutputMax float64
+}
+
+// CatalogRange is the tier's own span in numbers, for the surfaces that show
+// a catalog-priced row: what the dearest endpoint of the tier prices, and how
+// many times the price charged that is. It is "" on every other row, and on a
+// row already charged at the dearest end — the cheapest bound is the one that
+// leaves an undercharge to size (design D6, P11).
+//
+// The multiple is the size of the undercharge, so it is stated only where
+// there is one: a dimension whose dearest endpoint prices what is already
+// charged gets no "1x" clause, which would read as a warning with no number
+// behind it. Each multiple is rounded to one decimal, the precision the docs
+// quote (37.9x on input, 13.3x on output), so the surface and the documents
+// cannot disagree about the figure.
+func (m Model) CatalogRange() string {
+	c := m.Catalog
+	if c == nil || c.Bound != "min" || c.TierInputMax <= 0 || m.Rates.InputPerM <= 0 {
+		return ""
+	}
+	s := fmt.Sprintf("a call served by the dearest endpoint of the tier can be billed $%g/M in and $%g/M out", c.TierInputMax, c.TierOutputMax)
+	in := c.TierInputMax / m.Rates.InputPerM
+	out := 0.0
+	if m.Rates.OutputPerM > 0 {
+		out = c.TierOutputMax / m.Rates.OutputPerM
+	}
+	switch {
+	case in > 1 && out > 1:
+		s += fmt.Sprintf(", %.1fx the input price charged and %.1fx the output price charged", in, out)
+	case in > 1:
+		s += fmt.Sprintf(", %.1fx the input price charged", in)
+	case out > 1:
+		s += fmt.Sprintf(", %.1fx the output price charged", out)
+	}
+	return s
 }
 
 // CodeCacheRateDefaulted marks the warning CacheWarning returns, for callers
@@ -149,6 +212,28 @@ type Table struct {
 	Source    string // the pricing page's URL
 	CheckedAt string // YYYY-MM-DD
 	Models    map[string]Model
+	// Refused is why a model the built-in provider price catalog cannot
+	// price has no row, keyed by model ID: the message that says what to do
+	// about it (the switch to flip, or model_prices). A model is refused
+	// where it is named — a pin, a call — never by failing the table for
+	// every model a route's pattern happens to claim, and it has no row at
+	// all, so Lookup fails and nothing can be priced free. With drops an
+	// entry for any model it prices: the owner's own number is the way out.
+	Refused map[string]string
+}
+
+// Refusal is why the table has no row for a model, or "" when it has one (or
+// when nothing recorded a reason). The surfaces that judge a pin or refuse a
+// call show this instead of their own "has no price" text, so the owner sees
+// the fix path the catalog recorded.
+func (t *Table) Refusal(model string) string {
+	if t == nil || model == "" {
+		return ""
+	}
+	if _, ok := t.Lookup(model); ok {
+		return ""
+	}
+	return t.Refused[model]
 }
 
 // Lookup finds a model by its exact ID or one of its aliases; it never
@@ -237,14 +322,19 @@ func (t *Table) With(o Overrides) (*Table, error) {
 		r := o[key].clone()
 		if m, ok := out.Lookup(key); ok {
 			m.Rates = r
-			m.Unverified, m.PriceSource, m.PriceCheckedAt = false, "", ""
+			m.Unverified, m.PriceSource, m.PriceCheckedAt, m.Catalog = false, "", "", nil
 			m.CacheDefaulted = defaultCacheRates(m.ID, &m.Rates)
 			out.Models[m.ID] = m
+			delete(out.Refused, m.ID)
 			continue
 		}
 		m := Model{ID: key, Rates: r}
 		m.CacheDefaulted = defaultCacheRates(key, &m.Rates)
 		out.Models[key] = m
+		// An owner who prices a model the catalog refused has answered
+		// what the route's switches ask: the row is the way out, so the
+		// refusal goes with it.
+		delete(out.Refused, key)
 	}
 	return out, nil
 }
@@ -276,9 +366,19 @@ func (t *Table) clone() *Table {
 		return out
 	}
 	out.Source, out.CheckedAt = t.Source, t.CheckedAt
+	if len(t.Refused) > 0 {
+		out.Refused = make(map[string]string, len(t.Refused))
+		for id, why := range t.Refused {
+			out.Refused[id] = why
+		}
+	}
 	for id, m := range t.Models {
 		m.Aliases = append([]string(nil), m.Aliases...)
 		m.CacheDefaulted = append([]string(nil), m.CacheDefaulted...)
+		if m.Catalog != nil {
+			c := *m.Catalog
+			m.Catalog = &c
+		}
 		m.Rates = m.Rates.clone()
 		out.Models[id] = m
 	}

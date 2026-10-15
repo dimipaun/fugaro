@@ -2,15 +2,21 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"strconv"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pricing/catalog"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -655,16 +661,96 @@ func inCheckoutOf(t *testing.T, repo string) {
 	t.Chdir(dir)
 }
 
+// TestValidateDoesNotRefuseWhatTheRunnerPrices pins the failure this design
+// exists to prevent (Review Focus 10): for one fixture route and model,
+// `validate` has no problem while the run's own table charges the catalog's
+// rate — the same row, from the same builder.
+func TestValidateDoesNotRefuseWhatTheRunnerPrices(t *testing.T) {
+	const id = "deepseek/deepseek-v4.1-flash"
+	const budget = "budget: { mode: enforce, per_run_usd: 2 }\n" + validateProviderBlock
+	const coder = "  auth: api-key\n  models: { coder: " + id + ", reviewer: claude-sonnet-5-5 }"
+	path := budgetProject(t, budget, coder)
+	inCheckoutOf(t, "acme/sandbox")
+	if out, _, err := execute(t, "validate", path); err != nil || !strings.Contains(out, "is valid") {
+		t.Fatalf("validate refused a pin the run prices: %v\n%s", err, out)
+	}
+	// The run's table, built from the job's environment.
+	p := cliRoute()["openrouter"]
+	p.AllowDataTo = []string{"acme/sandbox"}
+	env, err := runner.ProvidersEnv(map[string]config.ModelProvider{"openrouter": p}, "acme/sandbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := runner.SpendFromEnv(func(k string) (string, bool) {
+		switch k {
+		case runner.BudgetModeEnv:
+			return "observe", true
+		case runner.ModelProvidersEnv:
+			return env, true
+		}
+		return "", false
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, ok := s.Prices.Lookup(id)
+	if !ok {
+		t.Fatal("the run's table does not price the model validate accepted")
+	}
+	cat := shippedCatalog(t)
+	// The end of the tier's range the run charges is the one its own row
+	// says it is on (min, or max once the catalog is past its 30 days), so
+	// this reads it from the row under test: the catalog's age is a date,
+	// and a test written against one end only would expire with the file
+	// (catalog.StaleAfter).
+	bound := cat.Models[id].ZDR["input_per_m"].Min
+	if m.Catalog != nil && m.Catalog.Bound == "max" {
+		bound = cat.Models[id].ZDR["input_per_m"].Max
+	}
+	want, err := strconv.ParseFloat(bound, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Rates.InputPerM != want {
+		t.Errorf("the run charges %v per million input tokens, want the catalog's %v", m.Rates.InputPerM, want)
+	}
+	if m.Catalog == nil {
+		t.Error("the run's row is not catalog-priced")
+	}
+}
+
 func TestValidateProviderModels(t *testing.T) {
 	const budget = "budget: { mode: enforce, per_run_usd: 2 }\n" + validateProviderBlock
 	const coder = "  auth: api-key\n  models: { coder: deepseek/deepseek-v4-flash, reviewer: claude-sonnet-5-5 }"
 	// An approved repository: valid, the background model defaults to the
-	// coder's, and the placeholder price is a warning.
+	// coder's, and the coder's price comes from the built-in price catalog,
+	// which is a warning (the tier and the end of the range charged). The
+	// clock is pinned inside the catalog's own window, because the note
+	// below names the end of the range this test expects (the cheapest, by
+	// the default price_policy) and a stale catalog names the other one.
+	cat := shippedCatalog(t)
+	pinCatalogClock(t, cat, 24*time.Hour)
 	path := budgetProject(t, budget, coder)
 	inCheckoutOf(t, "acme/sandbox")
 	out, errOut, err := execute(t, "validate", path)
-	if err != nil || !strings.Contains(out, "is valid") || !strings.Contains(errOut, "warning: agent.models.coder: deepseek/deepseek-v4-flash has an unverified placeholder price") {
+	if err != nil || !strings.Contains(out, "is valid") {
 		t.Fatalf("%v\nout: %s\nerr: %s", err, out, errOut)
+	}
+	// The note says which tier and which end of its range is charged, and
+	// for the default (cheapest) row that the charge is the cheapest of the
+	// tier's endpoints, with the switch that would charge the top (P11,
+	// Task 5 step 2). The endpoint count is the row's own: the note names
+	// the zdr tier's endpoints, and regenerating the catalog is a release
+	// step (design §7), so a test written against today's number would
+	// break on a regeneration that changed no rule.
+	endpoints := strconv.Itoa(cat.Models["deepseek/deepseek-v4-flash"].ZDREndpoints) + " endpoint(s)"
+	for _, want := range []string{
+		"warning: agent.models.coder: deepseek/deepseek-v4-flash is priced from the built-in provider price catalog: the zdr tier",
+		endpoints, "the cheapest of those endpoints", "price_policy: highest", "model_prices",
+	} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("validate's catalog note lacks %q:\n%s", want, errOut)
+		}
 	}
 	// Another repository is refused, naming the rule.
 	inCheckoutOf(t, "acme/other")
@@ -693,6 +779,67 @@ func TestValidateProviderModels(t *testing.T) {
 	path = budgetProject(t, "budget: { mode: observe }\n", coder)
 	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "no provider serves it") {
 		t.Fatalf("exit %d: %s", ExitCode(err), out)
+	}
+}
+
+// TestValidateReportsACatalogItCannotPrice pins the CLI half of the one
+// builder's contract: a catalog row the compile refuses is reported where the
+// model is pinned, naming what is missing, rather than the model quietly
+// having no price. The row is reachable — the loader checks that a tier prices
+// *something*, not that it prices input and output — and the shipped file is
+// valid, so the seam stands in for a regenerated one whose row lost a
+// dimension.
+func TestValidateReportsACatalogItCannotPrice(t *testing.T) {
+	const id = "deepseek/deepseek-v4.1-flash"
+	const budget = "budget: { mode: enforce, per_run_usd: 2 }\n" + validateProviderBlock
+	const coder = "  auth: api-key\n  models: { coder: " + id + ", reviewer: claude-sonnet-5-5 }"
+	cat := shippedCatalog(t)
+	// The shipped row with its input price taken out of both tiers: the
+	// route prices the zdr tier (require_zdr is on unless it is set false),
+	// and a tier the file prices nothing but a cache dimension for is what
+	// Load accepts and the compile refuses.
+	e := cat.Models[id]
+	delete(e.All, "input_per_m")
+	delete(e.ZDR, "input_per_m")
+	cat.Models[id] = e
+	old := loadCatalog
+	loadCatalog = func() (*catalog.File, error) { return cat, nil }
+	t.Cleanup(func() { loadCatalog = old })
+
+	path := budgetProject(t, budget, coder)
+	inCheckoutOf(t, "acme/sandbox")
+	out, errOut, err := execute(t, "validate", path)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d: %s%s", ExitCode(err), out, errOut)
+	}
+	for _, want := range []string{id, "prices no input_per_m"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("validate does not report %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestValidateReportsACatalogThatWillNotLoad is the other half: a file the
+// loader refuses is reported by the surface, never read as "no catalog" —
+// which would price every model from the embedded table alone and let the
+// run go unpriced.
+func TestValidateReportsACatalogThatWillNotLoad(t *testing.T) {
+	const budget = "budget: { mode: enforce, per_run_usd: 2 }\n" + validateProviderBlock
+	const coder = "  auth: api-key\n  models: { coder: deepseek/deepseek-v4-flash, reviewer: claude-sonnet-5-5 }"
+	old := loadCatalog
+	loadCatalog = func() (*catalog.File, error) {
+		return nil, errors.New("the built-in price catalog is malformed: version is 2: this build reads version 1")
+	}
+	t.Cleanup(func() { loadCatalog = old })
+
+	path := budgetProject(t, budget, coder)
+	inCheckoutOf(t, "acme/sandbox")
+	out, errOut, err := execute(t, "validate", path)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d: %s%s", ExitCode(err), out, errOut)
+	}
+	if !strings.Contains(out, "malformed") || !strings.Contains(out, "version is 2") {
+		t.Errorf("validate does not report the file it could not load:\n%s", out)
 	}
 }
 

@@ -353,6 +353,15 @@ func (r *run) checkBudget() error {
 	for _, w := range config.PinWarnings(r.cfg.Agent, s.Prices) {
 		r.d.Log.Warn("model pin: "+w.String(), "code", w.Code)
 	}
+	if catalogStale(s.Prices, r.cfg.Agent.PinnedModels()) {
+		// One line per run, whatever the mode: the models this run is pinned
+		// to are charged the dearest end of their tier's range, and
+		// result.json says what was charged once the run is over (design §7,
+		// P7). A stale row no pin names is not this run's business: the routes
+		// may have materialized one, and a run that never calls it, or prices
+		// it by hand, over-charges nothing.
+		r.d.Log.Warn("budget: price catalog stale", "code", "catalog_stale")
+	}
 	if err := r.checkManagedDirWritable(); err != nil {
 		return err
 	}
@@ -396,7 +405,13 @@ func (r *run) checkProviderModels() error {
 	}
 	prices := r.spend.Prices
 	if prices == nil {
-		prices = pricing.Embedded()
+		// The budget is off, so the ceiling loaded no table; the checks
+		// below still judge the prices the run would charge, built the
+		// same way.
+		var err error
+		if prices, err = r.priceTable(nil); err != nil {
+			return fmt.Errorf("pricing the models: %w", err)
+		}
 	}
 	ps := config.CheckProviderPolicy(r.cfg.Agent, allowed, r.spec.Repo, r.d.Providers, prices)
 	ps = append(ps, config.CheckProviderAuth(r.cfg.Agent, r.d.Providers)...)
