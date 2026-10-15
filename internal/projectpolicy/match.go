@@ -53,6 +53,17 @@ func MatchRepo(pattern, canonical string) bool {
 	return true
 }
 
+const (
+	// maxPatternStars is the most wildcards one allow_repos entry may carry.
+	// The matcher is linear, so this is not about its cost: a pattern with a
+	// dozen "*" is a typo rather than an intent, and the allow-list is what
+	// decides which repositories a run may touch.
+	maxPatternStars = 4
+	// maxPatternLen bounds an allow_repos entry, so a pattern cannot be used to
+	// grow the policy node without limit.
+	maxPatternLen = 255
+)
+
 // ValidPattern checks one allow_repos entry: "*", or a provider-qualified path
 // whose segments each look like a repository segment with "*" wildcards. A
 // pattern that cannot match a canonical repository is refused, so a typo fails
@@ -65,14 +76,19 @@ func ValidPattern(pattern string) error {
 	if pattern == "" {
 		return fmt.Errorf("the pattern is empty (use \"*\" to allow every repository)")
 	}
+	if len(pattern) > maxPatternLen {
+		return fmt.Errorf("the pattern is %d characters; at most %d are allowed", len(pattern), maxPatternLen)
+	}
 	segs := strings.Split(pattern, "/")
 	if len(segs) < 3 {
 		return fmt.Errorf("pattern %q must name a provider, an owner and a repository (as in \"github/acme/app\" or \"github/acme/*\")", pattern)
 	}
+	stars := 0
 	for i, s := range segs {
 		if s == "" {
 			return fmt.Errorf("pattern %q has an empty segment", pattern)
 		}
+		stars += strings.Count(s, "*")
 		// A "." or ".." cannot match: task.CanonicalRepo refuses such a
 		// repository, so a pattern carrying one would silently enroll
 		// nothing (the failure this function exists to prevent).
@@ -90,6 +106,9 @@ func ValidPattern(pattern string) error {
 			return fmt.Errorf("pattern %q: %q is not a provider kind", pattern, s)
 		}
 	}
+	if stars > maxPatternStars {
+		return fmt.Errorf("pattern %q has %d wildcards; at most %d are allowed (a pattern with more is a typo, not an intent)", pattern, stars, maxPatternStars)
+	}
 	if strings.HasSuffix(segs[len(segs)-1], ".git") {
 		return fmt.Errorf("pattern %q ends in .git: a canonical repository never does (task.CanonicalRepo trims it)", pattern)
 	}
@@ -97,29 +116,41 @@ func ValidPattern(pattern string) error {
 }
 
 // matchSeg matches one pattern segment against one canonical segment. "*"
-// matches any run of characters within the segment (a greedy scan with
-// backtracking, so "service-*" and "a*b*c" both work); everything else is
-// literal.
+// matches any run of characters within the segment, so "service-*" and "a*b*c"
+// both work; everything else is literal.
+//
+// It is the classic two-pointer star match: the last "*" seen consumes as
+// little as it can and is stretched one character at a time only when the rest
+// of the pattern fails. That is at most len(pattern)*len(s) steps, where a
+// backtracking scan of every star is exponential in their number (a pattern is
+// attacker-chosen text on a node, so the cost must not be).
 func matchSeg(pattern, s string) bool {
-	for {
-		i := strings.IndexByte(pattern, '*')
-		if i < 0 {
-			return pattern == s
-		}
-		if !strings.HasPrefix(s, pattern[:i]) {
+	var (
+		p, i     int // the positions being compared
+		star, at int // the last "*" and how much of s it consumes
+		has      bool
+	)
+	for i < len(s) {
+		switch {
+		case p < len(pattern) && pattern[p] == s[i]:
+			p++
+			i++
+		case p < len(pattern) && pattern[p] == '*':
+			star, at, has = p, i, true
+			p++
+		case has:
+			// The last "*" takes one more character and the rest of the
+			// pattern is tried again from there.
+			at++
+			i = at
+			p = star + 1
+		default:
 			return false
 		}
-		s = s[i:]
-		pattern = pattern[i+1:]
-		if pattern == "" {
-			return true
-		}
-		// Try each position for the rest of the pattern.
-		for k := 0; k <= len(s); k++ {
-			if matchSeg(pattern, s[k:]) {
-				return true
-			}
-		}
-		return false
 	}
+	// Whatever is left of the pattern may only be trailing stars.
+	for p < len(pattern) && pattern[p] == '*' {
+		p++
+	}
+	return p == len(pattern)
 }

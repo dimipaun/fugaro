@@ -194,6 +194,12 @@ func TestDecodeRefusesBadAllowRepoPattern(t *testing.T) {
 	if _, _, err := Decode([]byte(`{"version": 1, "allow_repos": "github/acme/*"}`)); err == nil {
 		t.Error("allow_repos that is not a list of strings must be refused")
 	}
+	// A pattern carrying an unreasonable number of wildcards reaches the same
+	// check through Decode: the node is what the runner reads, so the refusal
+	// must be there too (ValidPattern caps them; TestValidPatternCapsWildcards).
+	if _, _, err := Decode([]byte(`{"version": 1, "allow_repos": ["github/acme/*****"]}`)); err == nil {
+		t.Error("allow_repos with more wildcards than ValidPattern allows must be refused")
+	}
 	// A single "*" is the design's explicit choice: every repository.
 	p, _, err := Decode([]byte(`{"version": 1, "allow_repos": ["*"]}`))
 	if err != nil || len(p.AllowRepos) != 1 || p.AllowRepos[0] != "*" {

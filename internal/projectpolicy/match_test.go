@@ -1,7 +1,9 @@
 package projectpolicy
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -125,5 +127,72 @@ func TestCanonicalAgreesWithTaskSlug(t *testing.T) {
 	}
 	if MatchRepo("github/other/*", canonical) {
 		t.Errorf("MatchRepo(%q, %q) must not admit the repository with slug %q", "github/other/*", canonical, slug)
+	}
+}
+
+// TestMatchSegmentIsLinear: the matcher used to backtrack over each "*", so a
+// pattern with n stars against a name that does not match took about 2^n steps
+// (six stars and a sixty-character name took four seconds; eight did not finish
+// in two minutes). The allow-list is a security boundary: a pattern nobody
+// meant to write must not be able to wedge the runner or the CLI, so the
+// matcher is linear and the wildcard count is capped as well.
+func TestMatchSegmentIsLinear(t *testing.T) {
+	pattern := strings.Repeat("*a", 20) + "*b" // 21 stars
+	name := strings.Repeat("a", 60)
+	start := time.Now()
+	done := make(chan bool, 1)
+	go func() { done <- matchSeg(pattern, name) }()
+	select {
+	case got := <-done:
+		if got {
+			t.Errorf("matchSeg(%q, %q) = true, want false: the pattern ends in a literal the name does not have", pattern, name)
+		}
+		if d := time.Since(start); d > 100*time.Millisecond {
+			t.Errorf("matchSeg took %v for 21 stars against %d characters, want well under 100ms: the matcher must not backtrack", d, len(name))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("matchSeg did not finish in 5s for 21 stars against %d characters: it is exponential again", len(name))
+	}
+	// Every one of these must still be answered correctly by a linear matcher.
+	for _, tc := range []struct {
+		pattern, name string
+		want          bool
+	}{
+		{"*a*b*c", "aabbbc", true},  // stars that must backtrack to match
+		{"*a*b*c", "aabbbx", false}, // and to refuse
+		{"**", "anything", true},    // adjacent stars are one wildcard
+		{"", "x", false},            // no pattern, no match
+		{"a*", "a", true},           // a star matching the empty run
+		{"*", "", true},             // and against an empty name
+		{"*b", "ab", true},          // a star that must consume the prefix
+		{"*b", "ba", false},
+	} {
+		if got := matchSeg(tc.pattern, tc.name); got != tc.want {
+			t.Errorf("matchSeg(%q, %q) = %v, want %v", tc.pattern, tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestValidPatternCapsWildcards: the matcher is linear now, so this is not
+// about its cost; it is that a pattern with a dozen wildcards is a typo, not an
+// intent, and refusing it at publish time is the check this function exists for.
+func TestValidPatternCapsWildcards(t *testing.T) {
+	ok := "github/acme/" + strings.Repeat("a*", maxPatternStars)
+	if err := ValidPattern(ok); err != nil {
+		t.Errorf("ValidPattern(%q) = %v, want nil: the cap itself is allowed", ok, err)
+	}
+	for _, bad := range []string{
+		"github/acme/" + strings.Repeat("*", maxPatternStars+1),
+		"github/acme/" + strings.Repeat("*a", maxPatternStars) + "a*",
+		"*/" + strings.Repeat("*", maxPatternStars+1) + "/*",
+	} {
+		if err := ValidPattern(bad); err == nil {
+			t.Errorf("ValidPattern(%q) = nil, want an error: more than %d wildcards", bad, maxPatternStars)
+		}
+	}
+	for _, bad := range []string{"github/acme/" + strings.Repeat("a", maxPatternLen), "*" + strings.Repeat("a", maxPatternLen)} {
+		if err := ValidPattern(bad); err == nil {
+			t.Errorf("ValidPattern(%d characters) = nil, want an error: the pattern is too long", len(bad))
+		}
 	}
 }
