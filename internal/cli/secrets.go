@@ -283,13 +283,33 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 	}
 	defer env.Close()
 	// D2 (plan Task 2.1 step 1): with neither flag the project copy is the
-	// default -- but only for a name that has a project-wide meaning at all.
-	// A repository's own application secret has none, so it keeps today's
-	// repository scope rather than being swept into a container no job would
-	// mount it from: the default is "project where project exists", never
-	// "project always" (finding 13).
-	if o.projectWide || (!cmd.Flags().Changed("repo") && projectScopeName(env.lc, name)) {
+	// default -- but only for a name *this repository* may mount project-wide.
+	// A repository's own application secret has no project-wide meaning, so it
+	// keeps today's repository scope rather than being swept into a container
+	// no job would mount it from, and neither has an entry of project_secrets
+	// that does not list this checkout's repository: the default is "project
+	// where project exists", never "project always" (finding 13).
+	//
+	// The repository is the checkout's own, and it is read only when no --repo
+	// was given (code review, low): an entry that lists another repository
+	// must not turn the bare command from a checkout it excludes into a write
+	// over the shared copy -- the copy other repositories mount and this one
+	// may not.
+	repo := ""
+	if !cmd.Flags().Changed("repo") {
+		repo = checkoutRepoOrEmpty(ctx)
+	}
+	if o.projectWide || (!cmd.Flags().Changed("repo") && projectScopeName(env.lc, name, repo)) {
 		return secretsSetProjectWide(cmd, env, o, name)
+	}
+	if repo != "" && projectScopeName(env.lc, name, "") {
+		// The name has a project-wide meaning that does not reach this
+		// repository, and the person typed no flag: the copy they are about to
+		// store is this repository's own, and saying which entry left them out
+		// is what tells them --project-wide is the other intent.
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"note: %s is stored project-wide in this project, but not for %s: this value goes to %s's own copy, which overrides the project copy for it. `fugaro secrets set <name> --project-wide` stores it for the project instead\n",
+			pluginwire.Printable(name), pluginwire.Printable(repo), pluginwire.Printable(repo))
 	}
 	r, err := resolveSecretRepo(cmd, env, o.repo)
 	if err != nil {
@@ -343,9 +363,9 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 	return storeSecret(cmd, env, o, gcp.SecretID(r.slug, name), labels, name)
 }
 
-// projectScopeName reports whether name has a project-wide meaning in this
-// installation, and so stores project-wide when neither --repo nor
-// --project-wide is passed (D2, plan Task 2.1 steps 1 and 3b):
+// projectScopeName reports whether a no-flag `secrets set name` stores
+// project-wide in this installation, so that neither --repo nor
+// --project-wide is needed (D2, plan Task 2.1 steps 1 and 3b):
 //
 //   - a name the owner already allow-listed in project_secrets -- their
 //     explicit opt-in under #343, which the new default now reaches without
@@ -355,10 +375,26 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 //   - a model provider's own key (accepted project-wide with no list, §3a);
 //   - a named Claude account's token whose account lists a repository.
 //
+// repo is the checkout's repository, "" when the command runs outside one. It
+// is the argument that matters (code review, low): "project_secrets lists
+// someone, so the name has a project-wide meaning" answered for the list
+// rather than for the repository in hand, and the bare command then wrote the
+// shared copy from a checkout the entry excludes -- over the value the
+// repositories it does list mount, from a checkout that may not mount it. With
+// a repository in hand the answer is infra.ProjectSecretCandidate's, the one
+// function that answers eligibility and the same answer init's secrets stage
+// stores by (initsecrets.go projectScope); outside a checkout there is no
+// repository whose own copy the person could have meant, and the repo-unaware
+// answer stands.
+//
 // The bare claude-oauth-token is none of these: it is the default account's
 // own, and it keeps the refusal and the repository scope it has on main. A
 // workflow's own secret is none of these either, and keeps repository scope.
-func projectScopeName(lc *localcfg.Config, name string) bool {
+func projectScopeName(lc *localcfg.Config, name, repo string) bool {
+	if repo != "" {
+		_, ok := infra.ProjectSecretCandidate(lc, name, repo)
+		return ok
+	}
 	if ps, ok := lc.ProjectSecrets[name]; ok && len(ps.AllowDataTo) > 0 {
 		return true
 	}
@@ -374,12 +410,31 @@ func projectScopeName(lc *localcfg.Config, name string) bool {
 	return false
 }
 
+// checkoutRepoOrEmpty is the checkout's repository for a decision that must
+// not fail outside one: checkoutRepo's answer, or "" when there is no
+// checkout, or when its origin does not name owner/name. It is the repository
+// argument the scope decision is made with, best effort: a command with a
+// repository in hand must decide with it, and one without must not fail here --
+// resolveSecretRepo is what reports a missing repository, and only on the path
+// that needs one.
+func checkoutRepoOrEmpty(ctx context.Context) string {
+	repo, err := checkoutRepo(ctx, ".")
+	if err != nil {
+		return ""
+	}
+	return repo
+}
+
 // projectSecretRefusal is the one message every --project-wide eligibility
 // refusal uses. path is the config field the owner would have to fill in
 // (project_secrets.<name>.allow_data_to, or a named account's own), stated
-// with Printable since a name reaching here is config-sourced.
+// with Printable since a name reaching here is config-sourced. It names the
+// other intent as well: an entry that allows nobody (D2's sweep plus an
+// explicit empty list, or an empty account list) is exactly the case where the
+// person typing the bare command meant one repository's own copy, and the
+// refusal is the only thing they see (code review, low).
 func projectSecretRefusal(name, path string) error {
-	return userErr("%s is not stored project-wide: %s must list at least one repository in allow_data_to",
+	return userErr("%s is not stored project-wide: %s must list at least one repository in allow_data_to, or store it for one repository instead (fugaro secrets set <name> --repo <repository>)",
 		pluginwire.Printable(name), path)
 }
 
@@ -449,16 +504,39 @@ func secretsSetProjectWide(cmd *cobra.Command, env *cloudEnv, o secretsOptions, 
 	// Plan Task 2.1 step 3: the reach is stated where the person storing the
 	// value reads it, in one sentence, because D2 is a default that shares a
 	// value with repositories the operator did not name on this command line.
-	// "Every enrolled repository" is spelled out for both states of the
-	// installation (finding 13): a published policy admits a set of
-	// repositories, and with nothing published the local config is what
-	// enrollment means today. The profile is named as the boundary, since
-	// inside a shared job no IAM boundary separates repositories. On stderr,
-	// so --json's stdout stays the document alone.
+	// The reach is projectReach's answer, never a fixed "every enrolled
+	// repository" (code review, low): an entry that lists repositories is
+	// reachable by those and no others, and the sentence is what a person uses
+	// to decide whether storing the shared copy is safe. The profile is named
+	// as the boundary, since inside a shared job no IAM boundary separates
+	// repositories. On stderr, so --json's stdout stays the document alone.
 	fmt.Fprintf(cmd.ErrOrStderr(),
-		"note: %s is stored project-wide for %s, where every enrolled repository can mount it -- every repository a published policy admits, or, with no policy published, every repository this local config knows. Inside a shared job there is no IAM boundary between repositories: the profile is the boundary. A workflow's own secret (workflows.<n>.secrets) cannot be shared this way and stays a repository copy.\n",
-		pluginwire.Printable(name), pluginwire.Printable(env.lc.Name))
+		"note: %s is stored project-wide for %s, where %s. Inside a shared job there is no IAM boundary between repositories: the profile is the boundary. A workflow's own secret (workflows.<n>.secrets) cannot be shared this way and stays a repository copy.\n",
+		pluginwire.Printable(name), pluginwire.Printable(env.lc.Name), projectReach(env.lc, name))
 	return nil
+}
+
+// projectReach words who may mount a project copy of logical, for the note
+// above: the repositories an allow_data_to that names them lists, or the whole
+// project's enrolled set. "Every enrolled repository can mount it -- every
+// repository a published policy admits, or, with no policy published, every
+// repository this local config knows" is the default, and it is false of an
+// entry that restricts the reach: project_secrets and claude_accounts read as
+// "absent or empty means nobody", and a provider's key is any repository only
+// when its allow_data_to is absent (design §3a) -- the same readings
+// projectSecretAllowed gives the --project-wide listing, so the two surfaces
+// cannot disagree.
+func projectReach(lc *localcfg.Config, logical string) string {
+	repos := projectSecretAllowed(lc, logical)
+	switch {
+	case slices.Contains(repos, "any repository") || slices.Contains(repos, "*"):
+		return "every enrolled repository can mount it -- every repository a published policy admits, or, with no policy published, every repository this local config knows"
+	case len(repos) == 0:
+		return "no repository can mount it: its allow_data_to lists none, and absent or empty means nobody"
+	default:
+		return fmt.Sprintf("only the repositories its allow_data_to lists can mount it (%s), whatever a published policy admits",
+			pluginwire.Printable(strings.Join(repos, ", ")))
+	}
 }
 
 // repoCopiesWithVersions are the local config's repositories whose own copy

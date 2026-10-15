@@ -619,8 +619,8 @@ func TestSecretsSetProjectWideRefusesEmptyAllowList(t *testing.T) {
 	cmd.SetErr(&errOut)
 	cmd.SetArgs([]string{"secrets", "set", "bitbucket-token", "--project-wide"})
 	err := cmd.Execute()
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "project_secrets") {
-		t.Fatalf("err = %v", err)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "project_secrets") || !strings.Contains(err.Error(), "--repo") {
+		t.Fatalf("err = %v, want the refusal to name the field and the --repo way out", err)
 	}
 	if spy.read {
 		t.Fatal("the value was read before the refusal")
@@ -1120,6 +1120,71 @@ func TestSecretsSetRepoFlagStoresTheRepoCopy(t *testing.T) {
 	}
 	if sm.Latest(gcp.ProjectSecretID("aurora", "anthropic-api-key")) != nil {
 		t.Error("--repo stored the project copy too")
+	}
+}
+
+// The bare command decides its scope with the repository in hand (code
+// review, low): an entry of project_secrets that lists another repository
+// does not make the name project-scope for this checkout. Storing the shared
+// copy from here would overwrite the value the repositories the entry does
+// list mount, from a repository that may not mount it -- and it is not what
+// the person meant: with no flag, the copy being stored is this repository's
+// own, the same place init's secrets stage stores it (initsecrets.go
+// projectScope). The note names the other intent.
+func TestSecretsSetFromACheckoutTheEntryExcludesStoresTheRepoCopy(t *testing.T) {
+	sm := secretsFixture(t)
+	// The shared copy the repositories the entry lists mount.
+	shared := gcp.ProjectSecretID("aurora", "bitbucket-token")
+	sm.Seed(shared, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: "aurora", gcp.LabelSecret: "bitbucket-token"}, []byte("shared-token-EXAMPLE"))
+	projectSecretFixture(t, "project_secrets:\n  bitbucket-token: { allow_data_to: [acme/other] }\n")
+	appCheckout(t)
+	out, errOut, err := executeStdin(t, tokenValue, "secrets", "set", "bitbucket-token")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, errOut)
+	}
+	if got := string(sm.Latest(gcp.SecretID(appSlug, "bitbucket-token"))); got != tokenValue {
+		t.Errorf("acme/app's own copy = %q, want the value just stored", got)
+	}
+	if got := string(sm.Latest(shared)); got != "shared-token-EXAMPLE" {
+		t.Errorf("the shared copy = %q: a checkout the entry excludes overwrote it", got)
+	}
+	if !strings.Contains(errOut, "acme/app") || !strings.Contains(errOut, "--project-wide") {
+		t.Errorf("stderr does not say where the value went, or what the other intent is: %q", errOut)
+	}
+	if strings.Contains(out+errOut, tokenValue) || strings.Contains(errOut, "shared-token-EXAMPLE") {
+		t.Fatalf("a value leaked: %q %q", out, errOut)
+	}
+}
+
+// A D2-swept name whose project_secrets entry allows nobody is the case the
+// bare command has an answer for (code review, low): from a checkout it
+// stores this repository's own copy -- an entry that lists no repository
+// leaves no shared copy it could mean -- and --project-wide, the explicit ask,
+// refuses in a message that names that way out instead of leaving the person
+// with a config list to edit and no --repo.
+func TestSecretsSetEmptyAllowListNamesTheRepoWayOut(t *testing.T) {
+	sm := secretsFixture(t)
+	projectSecretFixture(t, "project_secrets:\n  bitbucket-token: { allow_data_to: [] }\n")
+	appCheckout(t)
+	out, errOut, err := executeStdin(t, tokenValue, "secrets", "set", "bitbucket-token")
+	if err != nil {
+		t.Fatalf("the no-flag form from a checkout: %v (%s)", err, errOut)
+	}
+	if got := string(sm.Latest(gcp.SecretID(appSlug, "bitbucket-token"))); got != tokenValue {
+		t.Errorf("acme/app's own copy = %q", got)
+	}
+	if sm.Latest(gcp.ProjectSecretID("aurora", "bitbucket-token")) != nil {
+		t.Error("the no-flag form stored a project copy the entry allows nobody to mount")
+	}
+	if !strings.Contains(errOut, "--project-wide") {
+		t.Errorf("stderr does not name the other intent: %q", errOut)
+	}
+	if strings.Contains(out+errOut, tokenValue) {
+		t.Fatalf("a value leaked: %q %q", out, errOut)
+	}
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", "bitbucket-token", "--project-wide"); ExitCode(err) != ExitUserError ||
+		!strings.Contains(err.Error(), "--repo") {
+		t.Fatalf("--project-wide err = %v, want the refusal to name --repo", err)
 	}
 }
 
