@@ -13,7 +13,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -93,9 +92,11 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 			"policy published before the rules are deployed is one the runs it bounds\n" +
 			"cannot read, so run fugaro init --firebase with a Fugaro that deploys them\n" +
 			"first. It also refuses a node written by a newer Fugaro.\n\n" +
-			"allow_repos is seeded from this machine's repos: and from the shared config's\n" +
-			"repository list, and only when the node is absent or --seed-repos is passed:\n" +
-			"a later publish never re-adds a name an operator removed.\n\n" +
+			"allow_repos is seeded from this machine's repos: map and from the shared\n" +
+			"config's repository list, and only when the node is absent or --seed-repos is\n" +
+			"passed: a later publish never re-adds a name an operator removed. It is never\n" +
+			"seeded from the bucket's runs/<slug>/ prefixes, which every run of a profile\n" +
+			"can write.\n\n" +
 			"--delete removes the policy (the children first, then the shared node) and\n" +
 			"puts the project back on the ceiling its jobs' environments carry. It refuses\n" +
 			"without --yes while runs are in flight, and asks you to type the project's\n" +
@@ -114,27 +115,29 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 // openProjectBudget is openBudget that keeps the selection: the publisher
 // reads the operator's own config file (its providers block), and the
 // selection is what names that file.
-func openProjectBudget(ctx context.Context, o cloudOptions) (localcfg.Selection, *localcfg.Config, *rtdb.Client, error) {
+func openProjectBudget(ctx context.Context, o cloudOptions) (*localcfg.Config, *rtdb.Client, error) {
 	sel, lc, err := selectProject(ctx, o)
 	if err != nil {
-		return localcfg.Selection{}, nil, nil, err
+		return nil, nil, err
 	}
+	// The shared config has no file, so it carries no providers: a publish
+	// from it would write a policy with none.
 	if err := refuseSharedWrite(sel); err != nil {
-		return sel, nil, nil, err
+		return nil, nil, err
 	}
 	lc, db, err := budgetDBFor(ctx, lc)
 	if err != nil {
-		return sel, nil, nil, err
+		return nil, nil, err
 	}
 	if err := checkDBProject(ctx, db, lc); err != nil {
-		return sel, nil, nil, err
+		return nil, nil, err
 	}
-	return sel, lc, db, nil
+	return lc, db, nil
 }
 
 func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions) error {
 	ctx := cmd.Context()
-	_, lc, db, err := openProjectBudget(ctx, o.cloud)
+	lc, db, err := openProjectBudget(ctx, o.cloud)
 	if err != nil {
 		return err
 	}
@@ -322,15 +325,20 @@ func seedAllowRepos(ctx context.Context, lc *localcfg.Config) ([]string, map[str
 // keeps a repository that runs today enrolled, and a seed that silently
 // leaves one out would un-enroll it.
 func sharedRepos(ctx context.Context, lc *localcfg.Config) (map[string]localcfg.Repo, error) {
-	if lc.BucketURL() == "" {
+	url := lc.BucketURL()
+	if url == "" || url == "gs://" || fakeEndpointsOnGS(lc, url) {
+		// No runs bucket to read a shared config from (a config with neither
+		// runs_bucket nor bucket_url), or a fake installation whose gs://
+		// bucket is not the one it stands for: there is no second seed source
+		// here, and opening a real bucket would reach the network.
 		return nil, nil
 	}
-	b, err := blobx.Open(ctx, lc.BucketURL())
+	b, err := sharedBucketOpener(ctx, url)
 	if err != nil {
-		return nil, remote(err)
+		return nil, bucketErr(url, "opening the bucket", err)
 	}
 	defer func() { _ = b.Close() }()
-	sc, refused, err := readShared(ctx, b, SharedAnchor{Name: lc.Name, GCPProject: lc.GCPProject, Bucket: lc.RunsBucket})
+	sc, refused, err := readShared(ctx, b, SharedAnchor{Name: lc.Name, GCPProject: lc.GCPProject, Bucket: lc.RunsBucketName()})
 	switch {
 	case err != nil:
 		return nil, err
@@ -364,15 +372,12 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string) (*projectpolicy.Pol
 // policyProviders is the policy's providers block, built from the operator's
 // config.
 //
-// Every field is copied BY NAME, and the two price-catalogue switches with
-// them. What this must never do is decode a projectpolicy.Provider out of
-// YAML or JSON *through a decoder that would take the embedded carrier's
-// method*: Provider embeds config.ModelProvider, whose UnmarshalYAML is
-// promoted onto *Provider, so a YAML decode of a Provider runs the carrier's
-// decoder, decodes the mapping into the carrier and leaves Provider's own
-// require_zdr and price_policy at zero — the switches would be silently
-// dropped from the published policy, which is the one direction this node
-// must not fail in. Building the struct field by field cannot drop a field.
+// Each entry is the operator's own carrier, copied whole. That is the one
+// shape that cannot drop a switch: require_zdr and price_policy are declared
+// on config.ModelProvider and nowhere else, so a copy by name is exhaustive
+// by construction, and the embedded carrier's UnmarshalYAML — which is what a
+// decode of a projectpolicy.Provider would run — cannot fill a second,
+// respelled declaration and leave the first at zero.
 func policyProviders(lc *localcfg.Config) map[string]projectpolicy.Provider {
 	if len(lc.Providers) == 0 {
 		return nil
@@ -424,8 +429,12 @@ func checkPolicyWeWouldWrite(p *projectpolicy.Policy) error {
 	if err != nil {
 		return userErr("building the policy: %v", err)
 	}
-	if _, found, err := projectpolicy.Decode(raw); err != nil || !found {
+	p, found, err := projectpolicy.Decode(raw)
+	switch {
+	case err != nil:
 		return userErr("the policy this Fugaro would publish is one it cannot read back, so nothing was written (%v): check the values it is built from — the budget block, the providers' models, model_prices and the allow-list — with 'fugaro validate'", err)
+	case !found || p == nil:
+		return userErr("the policy this Fugaro would publish is one it cannot read back, so nothing was written: check the values it is built from with 'fugaro validate'")
 	}
 	return nil
 }
@@ -565,7 +574,7 @@ func policyRepoChildren(ctx context.Context, db *rtdb.Client, lc *localcfg.Confi
 // written when it starts and removed when it ends, which is the same source
 // `fugaro budget show` lists as running.
 func runsInFlight(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) (int, error) {
-	var agents map[string]map[string]json.RawMessage
+	var agents map[string]map[string]budget.AgentEntry
 	if _, err := db.Get(ctx, "agents", &agents); err != nil {
 		return 0, dbErr(lc, err, false)
 	}
