@@ -436,6 +436,7 @@ type initRun struct {
 	retireNotes   []infra.Retirement
 	retired       bool // the flow was entered (a later plan must not re-enter it)
 	retireApplied bool // it applied: the jobs it removed from state still need deleting
+	retireRemoved []string // what the state removal took out: what a stop before the API delete owes (M-B)
 }
 
 // initResult is what --json prints.
@@ -2067,13 +2068,13 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	}
 	versions, err := infra.SecretVersions(ctx, c, spec)
 	if err != nil {
-		return initErr(err)
+		return r.retireLeftover(spec, initErr(err))
 	}
 	if !o.planOnly && !o.noBuild {
 		// 6. The first image builds, then the plan that deploys them.
 		names, err := infra.NeedsBuild(ctx, c, spec, versions)
 		if err != nil {
-			return initErr(err)
+			return r.retireLeftover(spec, initErr(err))
 		}
 		// Only re-resolved (a strict, bucket-reading read: resolveForBuild's
 		// own doc comment) when a build is actually about to happen: the
@@ -2084,7 +2085,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		var buildCfg *config.Config
 		if len(names) > 0 {
 			if buildCfg, err = resolveForBuild(ctx, root, lc); err != nil {
-				return err
+				return r.retireLeftover(spec, err)
 			}
 		}
 		built, err := r.offerBuilds(ctx, lc, buildCfg, ready, names)
@@ -2096,11 +2097,11 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 			if cerr := r.writeRepoConfig(ctx, lc, spec, cfg, path, old); cerr != nil {
 				r.warn(fmt.Sprintf("the local config was not updated: %v", cerr))
 			}
-			return err
+			return r.retireLeftover(spec, err)
 		}
 		if built > 0 {
 			if _, missing, err = r.planRepo(ctx, c, t, wd, spec, rootOpts, false); err != nil {
-				return err
+				return r.retireLeftover(spec, err)
 			}
 		}
 	}
@@ -2139,6 +2140,9 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	}
 	if len(r.buildsLeft) > 0 {
 		// Everything else is done; the billable build is the user's to type.
+		// The run ends before step 7b, so the jobs the state removal took out
+		// are named as left over, the same as on an error path (M-B).
+		r.retireNameLeftovers(spec)
 		left := promptLeft(initflow.Repository, "type the project's name at the first image build's prompt (it is billable)", "init", "--repo")
 		if r.buildHold != "" {
 			// Not offered: the GitHub App is not ready (appPreCheck), which no

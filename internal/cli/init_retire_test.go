@@ -74,6 +74,9 @@ type retireOpts struct {
 	// not be read: Protected keeps it in the removal set (the conservative
 	// direction) and the API delete has no name to call.
 	jobNoName bool
+	// stateRmFails makes the state removal succeed for its first address and
+	// fail for its second: the midway failure M-D's naming rule is about.
+	stateRmFails bool
 }
 
 // retireRig is an onboarded repository ready to plan, with the retirement's
@@ -126,6 +129,12 @@ func newRetireRig(t *testing.T, o retireOpts) *retireRig {
 	r.script["plan"] = map[string]any{"exit": 2} // the plan changes something
 	if o.planAbort != "" {
 		r.script["plan"] = map[string]any{"exit": 1, "stderr": o.planAbort}
+	}
+	if o.stateRmFails {
+		r.script["state rm"] = []map[string]any{
+			{"exit": 0},
+			{"exit": 1, "stderr": "Error: Cannot remove object from state: the backend refused the write"},
+		}
 	}
 	r.save(t)
 	if o.deleteFails != 0 {
@@ -632,6 +641,120 @@ func TestRetireSplitIsWhatHappensToEachRow(t *testing.T) {
 	}
 	if want := []string{retireKeptAddr}; !slices.Equal(got(kept), want) {
 		t.Errorf("kept = %v, want %v", got(kept), want)
+	}
+}
+
+// A protected job of a workflow variant that is still deployed is the row
+// nothing deletes: the state removal takes it out (its protection is on),
+// the plan then cannot see it at all, and the API delete refuses that kind
+// by rule -- the job of a deployed variant must never be a candidate for it
+// (M3). The summary used to list it under "Going away ... the plan will
+// delete", which is false the moment it leaves the state; it belongs to the
+// removal list alone (review round 2, M-D).
+func TestPrintRetirementsCountsALiveVariantsJobAsRemoved(t *testing.T) {
+	const liveJob = `module.repo.module.workflow["app"].google_cloud_run_v2_job.this[0]`
+	spec := infra.RepoSpec{
+		Name: "acme-sandbox", GCPProject: initProject, Region: "us-east5",
+		Workflows: map[string]infra.WorkflowSpec{"app": {}},
+	}
+	rets := []infra.Retirement{
+		{Address: liveJob, Kind: "job", Job: "fugaro-acme-sandbox-app", Protected: true,
+			Cause: "the configuration no longer produces this job, though the workflow variant app is still deployed"},
+		{Address: retireJobAddr, Kind: "workflow job", Job: retireJobName, Protected: true},
+	}
+	var out strings.Builder
+	r := &initRun{w: &out, projectName: "aurora", gcpProject: initProject,
+		retireState: []string{liveJob, retireJobAddr}, retireSet: rets}
+	if err := r.printRetirements(spec, rets); err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	// The variant's job is the API's; the live variant's is nobody's, so the
+	// "going away" count is one and the plan deletes none of them.
+	if !strings.Contains(text, "1 go away.") {
+		t.Errorf("the summary does not count the live variant's job as going away by a delete:\n%s", text)
+	}
+	if !strings.Contains(text, "Going away (1, predicted from the state and the labels) — 0 the plan will delete, 1 deleted through the Cloud Run API after it:") {
+		t.Errorf("the summary still promises the plan will delete it:\n%s", text)
+	}
+	if !strings.Contains(text, "Removed from Terraform's state, and never deleted (1):\n  "+liveJob+"\n") {
+		t.Errorf("the summary does not list it under the removal:\n%s", text)
+	}
+	// The API job is not in the removal list: it goes away by its own delete.
+	if strings.Contains(text, "and never deleted (1):\n  "+retireJobAddr) {
+		t.Errorf("the API-deleted job is listed as never deleted:\n%s", text)
+	}
+}
+
+// A run that applied its retirement and then ended before the API delete --
+// a failure in the secret versions, the build resolution, the builds or the
+// re-plan -- owes the user the addresses the state removal took out: they
+// are alive in GCP with nothing managing them, and the delete is the step
+// that never ran. Saying nothing there is what design §6 forbids (review
+// round 2, M-B). A run that never applied prints nothing at all.
+func TestRetireLeftoverNamesWhatAStopBeforeTheAPIDeleteOwes(t *testing.T) {
+	spec := infra.RepoSpec{Name: "acme-sandbox", GCPProject: initProject, Region: "us-east5"}
+	boom := errors.New("the secret versions could not be read")
+	var out strings.Builder
+	r := &initRun{w: &out, retireApplied: true, retireRemoved: []string{retireJobAddr},
+		retireSet: []infra.Retirement{{Address: retireJobAddr, Kind: "workflow job", Job: retireJobName, Region: "us-east5"}}}
+	if err := r.retireLeftover(spec, boom); err != boom {
+		t.Fatalf("retireLeftover = %v, want the failure it was given", err)
+	}
+	text := out.String()
+	for _, want := range []string{
+		retireJobAddr, "this address is alive in GCP with nothing managing it",
+		"gcloud run jobs delete " + retireJobName, retireNextCommand,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the stop before the API delete does not say %q:\n%s", want, text)
+		}
+	}
+	// The billable-build exit is the same stop without an error, and it says
+	// the same thing.
+	out.Reset()
+	r.retireNameLeftovers(spec)
+	if !strings.Contains(out.String(), retireJobAddr) || !strings.Contains(out.String(), retireNextCommand) {
+		t.Errorf("the build-left exit does not name the jobs still to delete:\n%s", out.String())
+	}
+	// Nothing applied: nothing is alive and unmanaged, so nothing is said.
+	var quiet strings.Builder
+	if err := (&initRun{w: &quiet}).retireLeftover(spec, boom); err != boom {
+		t.Errorf("retireLeftover = %v, want the failure it was given", err)
+	}
+	if quiet.Len() != 0 {
+		t.Errorf("a run that never applied named a residue: %s", quiet.String())
+	}
+}
+
+// The state removal is one terraform call per address, so it can fail
+// midway. The addresses removed before the failure are out of the state --
+// alive in GCP with nothing managing them -- and design §6's rule is that
+// they are named, not swallowed with the failure (review round 2, M-D). The
+// rig's state holds two protected addresses (the container and the job), and
+// the script fails the second call.
+func TestInitRepoRetireNamesWhatAPartialStateRemovalTook(t *testing.T) {
+	r := newRetireRig(t, retireOpts{protection: true, stateRmFails: true})
+	out, errOut, err := executeStdin(t, "aurora\naurora\n", "init", "--repo", "--retire", "--no-build")
+	if err == nil {
+		t.Fatalf("the partial state removal did not fail the run\n%s%s", out, errOut)
+	}
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, err %v\n%s%s", ExitCode(err), err, out, errOut)
+	}
+	text := out + errOut
+	// Removals sorts, so the container's address is the call that succeeded
+	// and the job's is the one that failed.
+	for _, want := range []string{
+		retireKeptAddr, "this address is alive in GCP with nothing managing it",
+		"Rerun " + retireNextCommand,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the midway failure does not say %q:\n%s", want, text)
+		}
+	}
+	if applies := r.applies(t); len(applies) != 0 {
+		t.Errorf("applies = %v, want none: the removal did not finish", applies)
 	}
 }
 

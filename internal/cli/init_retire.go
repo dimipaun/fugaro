@@ -140,6 +140,18 @@ func (r *initRun) retireAPI(spec infra.RepoSpec, rets []infra.Retirement) []infr
 // those are the second confirmation's (retirePlan).
 func (r *initRun) printRetirements(spec infra.RepoSpec, rets []infra.Retirement) error {
 	api, apply, kept := r.retireGoingAway(spec, rets)
+	// A row the state removal takes out and nothing then deletes -- a job
+	// whose workflow variant is still deployed, so the API delete refuses it
+	// by rule, with the state's deletion_protection still on -- is not one
+	// "the plan will delete": after the state removal there is nothing in the
+	// state for the plan to delete. Such a row belongs to the removal list
+	// alone, which is where the summary must count it (review round 2, M-D).
+	removed := r.retireRemovals(spec, rets)
+	inRemoved := make(map[string]bool, len(removed))
+	for _, a := range removed {
+		inRemoved[a] = true
+	}
+	apply = slices.DeleteFunc(apply, func(ret infra.Retirement) bool { return inRemoved[ret.Address] })
 	gone := len(api) + len(apply)
 	fmt.Fprintf(r.w, "⚠ This change retires %d %s (project %s, GCP project %s, repository %s).\n",
 		len(rets), plural(len(rets), "address", "addresses"), r.projectName, r.gcpProject, spec.Name)
@@ -155,7 +167,7 @@ func (r *initRun) printRetirements(spec infra.RepoSpec, rets []infra.Retirement)
 	for _, ret := range slices.Concat(apply, api) {
 		fmt.Fprintf(r.w, "  %-72s %s: %s\n", ret.Address, ret.Kind, ret.Cause)
 	}
-	if removed := r.retireRemovals(spec, rets); len(removed) > 0 {
+	if len(removed) > 0 {
 		fmt.Fprintf(r.w, "\nRemoved from Terraform's state, and never deleted (%d):\n", len(removed))
 		for _, a := range removed {
 			fmt.Fprintf(r.w, "  %s\n", a)
@@ -313,8 +325,17 @@ func (r *initRun) retirePlan(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 	addrs := infra.Removals(r.retireState, rets)
 	removed, gone, err := infra.RemoveFromState(ctx, t.StateRm, addrs)
 	if err != nil {
+		// The addresses removed before the failure are already out of the
+		// state -- alive in GCP with nothing managing them -- so they are
+		// named before the error is returned, not swallowed with it (§6,
+		// review round 2, M-D).
+		r.retireRemoved = removed
+		r.retireResidue(spec, rets, removed)
 		return remote(err)
 	}
+	// What a later failure owes: a run that applied its retirement and then
+	// stopped before the API delete still has these alive and unmanaged.
+	r.retireRemoved = removed
 	fmt.Fprintf(r.w, "removed %d %s from Terraform's state; nothing was destroyed\n", len(removed), plural(len(removed), "address", "addresses"))
 	for _, a := range gone {
 		r.warn(a + " was already out of Terraform's state")
@@ -458,6 +479,29 @@ func (r *initRun) retireResidue(spec infra.RepoSpec, rets []infra.Retirement, re
 	}
 	fmt.Fprintf(r.w, "Rerun %s: %s plans and applies what is left, then deletes the orphaned jobs. It is safe to rerun (%s).\n",
 		retireNextCommand, retireNextCommand, "the addresses already out of the state are not removed twice")
+}
+
+// retireLeftover is what a run that applied its retirement owes when a later
+// step ends it before the API delete: the addresses the state removal took
+// out are alive in GCP with nothing managing them, and the delete is the
+// step that has not happened. It names them, then returns err unchanged, so
+// the failure keeps its own words and the residue is not silent (§6, review
+// round 2, M-B). Every path between the apply and step 7b goes through it --
+// the secret versions, the build resolution, the builds themselves, the
+// re-plan -- because each of them is a way for the run to end with the jobs
+// still there.
+func (r *initRun) retireLeftover(spec infra.RepoSpec, err error) error {
+	r.retireNameLeftovers(spec)
+	return err
+}
+
+// retireNameLeftovers is retireLeftover's words alone, for the one path that
+// ends the run without an error: a billable build left for the user, which
+// stops the run before the API delete the same way.
+func (r *initRun) retireNameLeftovers(spec infra.RepoSpec) {
+	if r.retireApplied {
+		r.retireResidue(spec, r.retireSet, r.retireRemoved)
+	}
 }
 
 // retireConfirm is one of the retirement's two typed confirmations. It is
