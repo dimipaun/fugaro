@@ -1346,93 +1346,356 @@ installation and its sandbox repository, the same one Checks 40, 41, 43 and 44
 use. **NEVER the `belong` project.** **No agent runs any apply:** every
 `gcloud`/`fugaro` step is typed by the owner.
 
-**Guarded setup block (every step re-runs it; it hard-stops otherwise):**
+**Two parts, and the first one gates the build.** An earlier draft of this
+section was one list of ten steps whose first two ran `fugaro logs`/`fugaro
+cancel` against the Batch backend and whose row nevertheless said it "gates the
+build" — a check that needs the thing it gates, written as the last task of the
+plan. It is split:
 
-```sh
-P=fugaro-dev                 # HARD-CODED sandbox project id; never belong
-[ "$(gcloud config get-value project 2>/dev/null)" = "$P" ] || { echo "STOP: wrong project"; exit 1; }
-[ "$(basename "$PWD")" = "fugarosandbox" ] || { echo "STOP: not the sandbox checkout"; exit 1; }
-echo "FACT: project=$P pwd=$PWD"
+- **57a — the pre-build probe.** Eleven steps, **`gcloud` and a committed job
+  JSON, no Fugaro change whatsoever**, runnable today against the sandbox
+  project (steps 1, 5 and 8 use the *existing* Cloud Run backend for their
+  baseline and their comparison). It is the design's **go/no-go**, and the plan
+  makes it Task 0 (§8.1): if it fails, nothing below it is built.
+- **57b — the post-build acceptance run.** Six steps that only make sense once
+  `backend: cloud-batch` can be enabled, i.e. after the last task of §8.1. They
+  are the check's *acceptance* half, and the design's §4.4 `doctor` gate is what
+  stops anyone running them early.
+
+The job JSON the probe submits is **committed with this design**, so 57a is
+reproducible and reviewable rather than improvised at the terminal (the
+design's own text is the source; the plan task writes it to
+`check57/job.json` in the sandbox checkout):
+
+```json
+{
+  "taskGroups": [{
+    "taskCount": "1",
+    "parallelism": "1",
+    "taskSpec": {
+      "runnables": [{
+        "container": {
+          "imageUri": "us-east5-docker.pkg.dev/fugaro-dev/fugaro/fugaro-base:0.7.0",
+          "commands": ["bash", "-lc", "docker run --rm docker.io/library/postgres:17 postgres --version && id && echo first-line"]
+        }
+      }],
+      "computeResource": {"cpuMilli": "2000", "memoryMib": "4096"},
+      "maxRetryCount": 0,
+      "maxRunDuration": "1200s"
+    }
+  }],
+  "allocationPolicy": {
+    "instances": [{
+      "policy": {"machineType": "e2-standard-4", "bootDisk": {"image": "batch-cos-stable", "sizeGb": "50"}},
+      "installGpuDrivers": false
+    }],
+    "labels": {"fugaro": "managed", "fugaro_chk": "57"}
+  },
+  "labels": {"fugaro": "managed", "fugaro_chk": "57"},
+  "logsPolicy": {"destination": "CLOUD_LOGGING"}
+}
 ```
 
-(If the sandbox's real project id differs, the owner substitutes it in the
-one hard-coded line; the guard's job is to make `belong` unreachable by
-accident, not to be clever.)
+(The `imageUri` is the sandbox's own base image; steps 2 and 3 vary the boot
+disk and the `imageUri` and nothing else. `machineType`, the regions and the
+account are the check's variables, named in the setup block below.)
 
-1. **Baseline (Cloud Run).** On the sandbox, `fugaro run` a no-change task and
-   time launch-to-first-log-line (`fugaro logs RUN`, the first `started`
-   line), five times. This is Check 41's measurement, reused. **FACT:** the
-   five times and their median.
-2. **Cold start without a preloaded image.** Define one Batch job in the
-   sandbox: a container runnable from the sandbox's `fugaro-base`, a
-   Container-Optimized OS boot disk, `logsPolicy.destination=CLOUD_LOGGING`,
-   the socket bind mount, a dedicated service account, the same env the Cloud
-   Run job sets, and `maxRetryCount: 0`. Then **submit five of them** — a Batch
-   job is single-use once it reaches `SUCCEEDED` or `FAILED` (§2.3), so five
-   samples are five jobs, each getting its own run id in its name and its
-   per-run label (§2.4) — and record submission-to-first-line for each.
+**Guarded setup block (every step re-runs it; it hard-stops otherwise).** The
+shape is Check 43's, because the traps are Check 43's: an empty `$P` makes
+`gcloud` fall back to its ambient `core/project` — for the owner a `*-prod`
+project — while `fugaro` falls back to the checkout's `fugaro.yaml`
+(`internal/cli/cloud.go:53`), and this check **creates and deletes cloud
+resources**.
+
+```bash
+# === Check 57: setup + guard. RE-RUN THIS WHOLE BLOCK at the start of every
+# step (57a-1..57a-10, 57b-1..57b-5, Restore). It is idempotent, and nothing
+# below the three hard stops runs unless all three pass. ===
+P=fugaro-dev                 # HARD-CODED sandbox project id; never belong, and never read from gcloud
+L=us-east5                   # the sandbox installation's region
+SA=fugaro-chk57              # the account THIS CHECK creates; NOT the installation's job account
+J=fugaro-chk57               # the job-name prefix THIS CHECK uses; not the `fugaro-<slug>-<workflow>` shape
+IMG=${L}-docker.pkg.dev/${P}/fugaro/fugaro-base:0.7.0   # the sandbox's base image, for 57a's job JSON
+
+# ${VAR:?} everywhere: an empty variable is a hard error, never an empty
+# argument gcloud would resolve from its ambient configuration.
+[ "$P" = fugaro-dev ] && [ -n "$L" ] && [ -n "$SA" ] && [ -n "$J" ] && [ -n "$IMG" ] \
+  || { echo "Check 57 stopped: re-run the whole setup block (P=$P must be fugaro-dev; L=$L SA=$SA J=$J IMG=$IMG must not be empty)" >&2; exit 1; }
+fugaro doctor --project fugaro --gcp-project "${P:?}" | grep -q '^project: .*(GCP fugaro-dev,' \
+  || { echo "Check 57 stopped: this is not the fugaro-dev installation (fugaro doctor's project: line is not fugaro-dev, or doctor refused the checkout: --project disagreeing with the checkout's project: is refused)" >&2; exit 1; }
+git remote get-url origin | grep -Eq '[:/]edgeappinc/fugarosandbox(\.git)?$' \
+  || { echo "Check 57 stopped: this checkout's origin is not the sandbox (edgeappinc/fugarosandbox)" >&2; exit 1; }
+```
+
+**Every `gcloud` command gets `--project="${P:?}"`** (and `${L:?}` where it
+takes a location). **Every `fugaro` command that takes them gets both
+`--project fugaro` and `--gcp-project "${P:?}"`** — the first is the
+installation's *name*, the second the project ID, and `--gcp-project` must be
+the selected config's own `gcp_project` (`internal/cli/cloud.go:54`), so the
+pair pins the command to this installation and refuses a foreign checkout with
+`this checkout belongs to project <x>; --project says fugaro`
+(`internal/localcfg/select.go:163`). `fugaro version` is the one exception: it
+takes no flags (`internal/cli/root.go:82-88`).
+
+**Paste the block into a file, not straight into an interactive zsh.** As in
+Check 43: an interactive zsh does not honour `#` comments without
+`setopt interactive_comments`, and a block whose comments become arguments is a
+block whose `P=fugaro-dev # …` line leaves `P` unset — which the first hard
+stop catches before anything reaches `gcloud`, but the run is over. Save it and
+run `bash check57.sh`.
+
+**Why the account is the check's own.** `SA` is created by this check and
+deleted by its Restore. It must **not** be the installation's job account
+(`fugaro-<profile>-<account>`, §3.2) or the default Compute Engine SA: the
+restore below deletes `$SA`, and deleting an account the installation uses
+would break the installation this check is meant to leave untouched. The
+`fugaro_chk=57` label is on the job and on `allocationPolicy.labels` for the
+same reason (§2.4): it is what the Restore's assertions list, and it is how a
+leaked VM of *this check* is told from a real run's.
+
+### 57a. The pre-build probe (no Fugaro change; the go/no-go)
+
+1. **Baseline (Cloud Run).** On the sandbox, `fugaro run --project fugaro
+   --gcp-project "${P:?}"` a no-change task and time launch-to-first-log-line
+   (`fugaro logs RUN`, the first `started` line), five times. This is Check 41's
+   measurement, reused. **FACT:** the five times and their median.
+2. **Cold start, plain pull.** Submit five fresh `$J` jobs from the committed
+   JSON, each with its own per-run label (§2.4) and its own run id in the name
+   (`gcloud batch jobs submit "${J:?}-$(date +%s)-$i" --project="${P:?}"
+   --location="${L:?}" --config check57/job.json`), and record
+   submission-to-first-line for each. A Batch job is single-use once it reaches
+   `SUCCEEDED` or `FAILED` (§2.3), so five samples are five jobs — not five
+   submissions of one, which is what an earlier draft of this check said.
    **FACT:** the five times, the median, and the delta over step 1.
-3. **Cold start with a preloaded image.** Rebuild the boot disk with
-   `fugaro-base` already in the Docker data root (or point the runnable at the
-   base served by image streaming from the in-region Artifact Registry), and
-   repeat step 2 — five more fresh jobs, not five more submissions of one.
-   **FACT:** the five times, the median, and the delta over steps 1 and 2.
-4. **Docker inside a run.** In a run on the Batch job, `docker run --rm
+3. **Cold start, the two alternatives.** (a) **Image streaming**: the same job
+   with `enableImageStreaming: true` on the runnable, the `containerfilesystem`
+   API enabled and the image in the job's own region (both prerequisites are on
+   the design's list, §1.2). (b) **The preloaded boot disk**: a boot image with
+   `fugaro-base` already in the Docker data root, built by the check as
+   `${SA:?}-preload` and deleted by the Restore. Five fresh jobs each, as in
+   step 2. **FACT:** the five times, the median and the delta over steps 1 and 2
+   for **each**, whether streaming accepted the job at all (it is documented as
+   ignoring `options`, §1.2, so this also says whether it is compatible with the
+   socket path of step 6), and whether the custom boot image was accepted — an
+   image Batch "might not be supported" is exactly the question. **The
+   recommendation for C4 follows these two numbers, not this document** (§1.2,
+   §1.9).
+4. **Docker inside a run.** In a `$J` job, `docker run --rm
    docker.io/library/postgres:17 postgres --version`, then start a small
    Postgres container and wait for `pg_isready`. **FACT:** whether the socket
-   was reachable; which permission path let the container open it (container
-   as root, a supplementary group via the runnable's `options`, or a socket
-   group baked into the boot image); the pull time; and the time to
-   `pg_isready`.
+   was reachable; which permission path let the container open it (container as
+   root, a supplementary group via the runnable's `options`, or a socket group
+   baked into the boot image); the pull time; and the time to `pg_isready`.
 5. **The cost of one run.** Read the billing export (or the console's cost
-   table) for one step-2 run and compare it with the `cost.compute_usd` the
-   run recorded. **FACT:** the actual billed vCPU/memory seconds, the disk,
-   NAT if used, the estimate, and how much the one-minute minimum added.
+   table) for one step-2 job and compare it with what the run's own record says
+   (`cost.compute_usd` on a real run, 57b-5; on the probe, compute the estimate
+   by hand from the machine type and the elapsed time). **FACT:** the actual
+   billed vCPU/memory seconds, the disk, the in-use external IP if the job has
+   one, NAT if used, the estimate, and how much the **one-minute minimum** added
+   (a Compute Engine instance bills a one-minute minimum and then per second,
+   §5.2).
 6. **The socket's permission path, in detail.** Record whether a Batch
    container runnable's `options` accepts `--group-add`, `--user` and
-   `--privileged`, and which of them the design needs. **FACT** for each.
-7. **(Optional) Preemption.** Run one job with a spot provisioning model and
-   preempt it (or let it happen). **FACT:** whether the runner received
-   SIGTERM, whether it reached `finalize`, and the time from the preemption
-   notice to the VM's death.
+   `--privileged`, and which of them the design needs. **FACT** for each. This
+   is the step that decides between §2.2's three orderings, and it is why
+   streaming (which discards `options`) may not be combinable with the
+   `--group-add` path.
+7. **(Optional) Preemption.** Run one `$J` job with a spot provisioning model
+   and preempt it (or let it happen). The notice period is 0 seconds by default,
+   or 120 seconds if the job asks for it, and the shutdown afterwards is best
+   effort and can take up to 30 seconds (MIG/spot docs, §1.3). **FACT:** whether
+   the job asked for the 120-second notice, whether the runner received SIGTERM,
+   whether it reached `finalize`, and the time from the preemption notice to the
+   VM's death.
 8. **Teardown on every exit path.** For each of: success; failure (a runnable
-   that exits non-zero); cancel (`fugaro cancel`, which deletes the job); and
-   a crashed runner (kill `fugaro exec`'s process) — **a fresh job each, since
-   one job runs once** — list the surviving resources
-   (`gcloud compute instances list --filter='labels.fugaro=managed'`
-   and `gcloud batch jobs list`). **FACT** per path: the job's final state,
-   whether any VM survived, and (if a reaper is built) what it deleted and
-   when. This is the answer to "does the reaper delete the instance" for every
-   way a run can end.
-9. **Quotas.** Read the sandbox project's four numbers — regional CPU quota,
-   CPUs (All Regions), VM instances and in-use IP addresses — from the quota
-   page cloud.google.com/compute/docs/resource-quotas maps. They are the
-   project's own, not fixed values. **FACT:** the four numbers and the largest
-   number of concurrent Fugaro VMs they allow at the chosen machine type.
-10. **Logs.** `fugaro logs RUN` finds the run's lines through the Fugaro log
-    view (which needs the sink arm of §1.5, applied as an owner step), and the
-    same lines are absent from `_Default`. **FACT:** entries found, and the
-    `_Default` result.
+   that exits non-zero); **cancel** (`gcloud batch jobs cancel "${NAME:?}"
+   --project="${P:?}" --location="${L:?}"` — `jobs.cancel`, **not**
+   `jobs.delete`: delete erases the job and its history, which is why §1.4 makes
+   cancel a `cancel` and the reaper a `delete`); and a crashed runner (kill the
+   container's process) — **a fresh job each, since one job runs once** — list
+   the surviving resources:
+
+   ```bash
+   gcloud compute instances list --project="${P:?}" --filter='labels.fugaro_chk=57'
+   gcloud batch jobs list --project="${P:?}" --location="${L:?}" --filter='labels.fugaro_chk=57'
+   ```
+
+   The instance filter is `labels.fugaro_chk=57`, **not** `labels.fugaro=managed`
+   and not `job_id`: `Job.labels` never reach a VM, only
+   `allocationPolicy.labels` do (§2.4, Batch REST reference, checked
+   2026-10-15), so a design or a check that sets only `Job.labels` lists
+   nothing and reads it as "no survivors" precisely when a VM has leaked.
+   **FACT** per path: the job's final state (and, for cancel, whether
+   `Execution` after the cancel returned a terminal state rather than
+   not-found — §1.4), whether any VM survived, and for how long after the job
+   reached its terminal state. This is the answer to "does the reaper delete
+   the instance" for every way a run can end, and it is also what tells whether
+   the job's own teardown is enough (§3.4, C14).
+9. **IAM, read raw.** Read the sandbox's IAM and answer, with the actual
+   bindings: what a **launcher** needs to create a `$J` job (the design says
+   `roles/batch.jobsEditor` on the project plus `roles/iam.serviceAccountUser`
+   on the job's account, §3.7); what the **job's account** needs to run and to
+   report (the design says `roles/batch.agentReporter` plus
+   `roles/logging.logWriter`, §3.2); what the **reaper** needs to delete a job
+   and an instance; and whether an IAM Condition narrowing `batch.jobsEditor`
+   to `fugaro-*` job names is **accepted at all** — that is UNVERIFIED and this
+   step settles it. **FACT:** each binding, verbatim, and whether the Condition
+   was accepted.
+
+   ```bash
+   gcloud projects get-iam-policy "${P:?}" --format=json | \
+     python3 -c 'import json,sys; [print(b["role"], b["members"]) for b in json.load(sys.stdin)["bindings"]]'
+   ```
+10. **The log filter, read raw.** Read one raw entry of a `$J` job and record
+    which label identifies the job:
+
+    ```bash
+    gcloud logging read 'resource.type="batch.googleapis.com/Job"' --project="${P:?}" --limit=1 --format=json
+    ```
+
+    **FACT:** whether `labels.job_uid` is present and equals the job's UID
+    (`gcloud batch jobs describe … --format='value(uid)'`), whether
+    `resource.labels.job_id` is present, and — the part that is **UNVERIFIED** —
+    whether that value is the job's *name* or its *UID*; the resource list says
+    only "The identifier of the Job" (checked 2026-10-15). The shipped filter is
+    the documented `labels.job_uid=… AND
+    logName="projects/<p>/logs/batch_task_logs"` (§1.5); this step is what would
+    allow the cheaper `resource.labels.job_id` form later. Also record whether
+    the job's own `labels.fugaro_chk=57` reaches the `LogEntry` (it should:
+    `Job.labels` apply to the job "and any Cloud Logging LogEntry that it
+    generates"), and whether the **sink/exclusion arm** of §1.5 catches the
+    entry — apply it if the owner wants the answer now, and revert it in the
+    Restore if so.
+11. **(Optional, quota.) Queueing, and what a queued job does.** Submit one
+    `$J` job that asks for more vCPUs than the sandbox region's quota leaves
+    (or fill the quota with step-2 jobs) and watch it: the state should be
+    `QUEUED`, and Batch holds a job in `QUEUED` for at most **2 days** before
+    failing it (`cloud.google.com/batch/quotas`, §1.4). **FACT:** the state
+    observed, how long it sat there, and what the API said. Batch has no
+    queue-deadline *field* — the design's queue deadline (§1.4, C8) is a
+    Fugaro-side reaper action, so this step measures the state it acts on, not
+    a Google knob. Cancel it and continue.
+
+### 57b. The post-build acceptance run (after the enable task)
+
+These six need `backend: cloud-batch` selectable, so they run **last**
+(§8.1's task 9 is the enable task and task 10 is this section's second half).
+They are the design's acceptance criteria, not its go/no-go.
+
+1. **A real run with Docker.** `fugaro run` on the sandbox with the backend
+   set to `cloud-batch` and the workflow's `docker: true` (§4.2, C16), where the
+   task's script runs a container. **FACT:** the run reached a terminal state,
+   the container ran, and the runner's own uid and group (a root container
+   changes them, §2.2).
+2. **`fugaro logs`.** The run's lines come back through the Fugaro log view
+   (the sink arm of step 10 applied), and the same lines are **absent** from
+   `_Default`. **FACT:** entries found, and the `_Default` result.
+3. **`fugaro cancel` on a live run.** `fugaro cancel RUN` leaves the job
+   **cancelled, not deleted** — so `fugaro diagnose RUN` and `runs ls` still
+   find the run's execution and report a terminal state, which is the behaviour
+   the conformance suite's cancel case requires (§1.4). **FACT:** the job's
+   state after the cancel, and what `diagnose` reported.
+4. **The reaper, on all four exit paths** (success, failure, cancel, a crashed
+   runner): a VM survives none of them for longer than the reaper's interval.
+   **FACT:** per path, the VM's survival time and what the reaper deleted, and —
+   the ordering rule of §3.4 — that the reaper deletes the **job first** and
+   then only an instance with no live job.
+5. **The cost.** One real run's `cost.compute_usd`, compared with the billing
+   export for the same window (step 5's method, now against the estimate the
+   code actually wrote). **FACT:** the estimate, the bill, and the difference —
+   including whether the boot-and-pull window and the one-minute minimum were
+   counted (§5.2, C17).
+6. **The fail-closed marker.** On a VM, an unmarked environment (no
+   `FUGARO_BACKEND`-style marker) must make the binary refuse rather than fall
+   open: the design's §2.5 fix exists because four call sites today read
+   `OnCloudRun` and treat "not Cloud Run" as "not in the cloud". **FACT:**
+   whether the run without the marker refused.
 
 **FACT lines to record:** every `FACT:` above; the `fugaro version` and the
 date; the machine type and boot-image version; the median launch-to-first-line
-for steps 1, 2 and 3; whether Docker worked and by which permission path; the
+for 57a-1, -2 and -3; whether Docker worked and by which permission path; the
 billed cost of one run and the estimate; the final state and the survivor list
-for each step-8 exit path; the four quota numbers; and whether `fugaro logs`
-found the Batch run's lines.
+for each 57a-8 and 57b-4 path; the IAM bindings of 57a-9; the raw log entry of
+57a-10; and whether `fugaro logs` found the Batch run's lines.
 
 **Paste back:** the FACT lines, verbatim, plus any correction the run found and
-the check's go/no-go: **build the VM backend only if step 2 or 3's median is at
-most 120 s above step 1's** (generic-tool §1, G2). If both are worse, the
-documented answer stays `fugaro-services` plus `image.apt`.
+**57a's go/no-go: build the VM backend only if 57a-2 or 57a-3's median is at
+most 120 s above 57a-1's** (generic-tool §1, G2), *and* the socket path of
+57a-4/57a-6 worked. If the cold-start budget is missed on every variant the
+documented answer stays `fugaro-services` plus `image.apt`; if the socket path
+failed, the design's C2 (§1.1, §1.10) is what reopens.
 
-**Restore.** Delete the check's Batch jobs — the five of step 2, the five of
-step 3, the four of step 8, and step 7's if it ran (about fifteen, one per
-sample and per exit path, because a job runs once) — plus the preloaded boot
-image, the NAT/router/subnet, the service account and any VM the check left;
-if the log sink arm was applied, revert it (`fugaro init` from the sandbox's
-config, or the Terraform apply that reverses it). Nothing in `belong` is
-touched at any step.
+**Restore.** ⚠ CONFIRM, sandbox project only. This deletes **only what the
+check created**, and its last step is an assertion that nothing of the check's
+is left — the earlier draft's restore deleted "the service account", which was
+the installation's own, and that is the failure this rewrite exists to prevent.
+
+**Re-run the setup block first** — this is a new shell, and the deletes below
+would otherwise interpolate an empty `$P`, `$L` or `$SA`, which is exactly how
+`gcloud` falls back to its ambient `*-prod` configuration.
+
+```bash
+# 1. Every job the check submitted (57a-2, -3, -4, -7, -8, -11; 57b-1, -3, -4).
+#    jobs.delete -- not cancel: the check is finished with them. Filtered by the
+#    check's own label, never by name prefix alone.
+gcloud batch jobs list --project="${P:?}" --location="${L:?}" \
+  --filter='labels.fugaro_chk=57' --format='value(name)' | \
+  xargs -r -n1 gcloud batch jobs delete --project="${P:?}" --location="${L:?}" --quiet
+
+# 2. Any VM still running. Delete only instances carrying THIS check's label --
+#    and only after step 1, so a job that is still live cannot lose its VM.
+gcloud compute instances list --project="${P:?}" --filter='labels.fugaro_chk=57' \
+  --format='value(name)' | \
+  xargs -r -n1 gcloud compute instances delete --project="${P:?}" --zone="${L:?}-b" --quiet
+
+# 3. The account THIS CHECK created. Never the installation's job account, and
+#    never the default Compute Engine SA.
+gcloud iam service-accounts delete "${SA:?}@${P:?}.iam.gserviceaccount.com" --project="${P:?}" --quiet
+
+# 4. The preloaded boot image, if 57a-3b built one (named after $SA).
+gcloud compute images list --project="${P:?}" --filter="name~^${SA}-preload" --format='value(name)' | \
+  xargs -r -n1 gcloud compute images delete --project="${P:?}" --quiet
+```
+
+The NAT/router/subnet, if the check had to create egress of its own (the
+design puts NAT at the installation level, §1.7, so the check should **borrow**
+the installation's where one exists and name anything it creates
+`${SA}-*`), is deleted the same way, by that name — **not** by
+`fugaro=managed`, which is the installation's label and reaches resources this
+check never touched. The log sink arm, if 57a-10 applied it, is reverted with
+the Terraform apply that reverses it (`fugaro init` from the sandbox's config),
+and nothing else. Nothing in `belong` is touched at any step.
+
+**The restore's assertion — run it and paste the output; it must be empty:**
+
+```bash
+echo "jobs:      $(gcloud batch jobs list --project="${P:?}" --location="${L:?}" --filter='labels.fugaro_chk=57' --format='value(name)' | wc -l)"
+echo "vms:       $(gcloud compute instances list --project="${P:?}" --filter='labels.fugaro_chk=57' --format='value(name)' | wc -l)"
+echo "image:     $(gcloud compute images list --project="${P:?}" --filter="name~^${SA}-preload" --format='value(name)' | wc -l)"
+echo "account:   $(gcloud iam service-accounts list --project="${P:?}" --filter="email~^${SA}@" --format='value(email)' | wc -l)"
+```
+
+Four zeroes and the check left nothing behind. A non-zero line names the
+resource still to delete, and **a surviving VM is the check's own finding**
+(§3.4): record it, do not quietly delete it and move on.
+
+#### Review notes on the round-1 findings
+
+No finding in the round-1 review was rejected. Three corrections of our own,
+for the record, where the review's phrasing was looser than the code:
+
+- **B6, "add a queue deadline".** Batch exposes no queue-deadline field; the
+  recommendation in §1.4 and C8 is a Fugaro-side reaper action (cancel a job
+  that has sat in `QUEUED` past the deadline), and the only Google-side bound is
+  the documented 2-day `QUEUED` ceiling. The design says that, rather than
+  implying a knob that does not exist.
+- **B12, `resource.labels.job_id`.** We could not verify it either way, so it
+  stays **UNVERIFIED** and the shipped filter is the documented `labels.job_uid`
+  form; 57a-10 is written to settle name-vs-UID rather than to assume one.
+- **B7's "billed but not counted" for boot and pull.** The observation is right
+  and is now in §5.2, but what the code can do about it before 57b-5's
+  billing-export comparison is state the window honestly, not invent a second
+  estimate; C17 keeps disk and NAT named as excluded rather than guessing them.
 
 ## 8. Task outline
 
