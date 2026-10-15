@@ -58,8 +58,9 @@ Batch stage) and nothing per repository — so it composes with the
 project-centric goal of "no heavy per-repository setup" rather than fighting
 it.
 
-The decisions are C1 to C11 in §1.10 and C12 to C20 in §8.4; each carries a
-recommendation and the trade-off the owner can weigh instead.
+The decisions are C1 to C11 in §1.10 and C12 to C20 inline in §2 to §5; §8.2
+collects every one the owner should weigh, each with its recommendation and
+the trade-off of the alternative.
 
 ## 1. Choice of substrate
 
@@ -223,7 +224,10 @@ does not add a charge.
 - **Batch** gives a job `maxRunDuration` per task and `timeout` per runnable
   (cloud.google.com/batch/docs/reference/rest/v1/projects.locations.jobs,
   checked 2026-10-15), and cancels by deleting the job (`jobs.delete`); the
-  job leaves `RUNNING` for `DELETION_IN_PROGRESS` and its VMs are torn down.
+  job leaves `RUNNING` for `DELETION_IN_PROGRESS`. That the VMs are torn down
+  at that point is what Batch is documented to do and what the reaper assumes;
+  it is not spelled out on the pages read here, so Check 57 step 8 verifies it
+  rather than this document asserting it.
   Batch's own ceiling is generous: a job may wait 2 days in `QUEUED` and run
   14 days in `RUNNING` before automatic failure (cloud.google.com/batch/
   quotas, checked 2026-10-15), so Fugaro's own timeouts (a workflow's
@@ -328,7 +332,7 @@ and because the NAT is an installation-level one-time setup, matching the
 "nothing per repository" goal. Trade-off: it is more setup than an ephemeral
 IP and adds a per-GB egress charge; a single-person installation that prefers
 simplicity can take the external IP and a deny-all ingress firewall instead
-(**C7**, §8.4).
+(**C7**, §8.2).
 
 **Substrate verdict.** Identical.
 
@@ -628,9 +632,11 @@ secrets and SA token). Batch does most of this for free — when a job reaches
 but the design does not rely on that alone, because "most exit paths" is not
 "every exit path":
 
-- **Success, failure, cancelled:** Batch job terminal states, VMs torn down by
-  the service, and `jobs.delete` (cancel) moves the job to
-  `DELETION_IN_PROGRESS` (Batch REST reference, checked 2026-10-15).
+- **Success, failure, cancelled:** Batch job terminal states, with the VMs
+  expected to be torn down by the service, and `jobs.delete` (cancel) moving
+  the job to `DELETION_IN_PROGRESS` (Batch REST reference, checked 2026-10-15).
+  The teardown is assumed, not documented on the pages read, and Check 57
+  step 8 measures it.
 - **A crashed runner:** if `fugaro exec` exits non-zero or panics, the task
   fails, the job fails, the VMs go — provided `maxRetryCount` stays 0 (§2.3),
   since a retry would start a second run of a non-idempotent task.
@@ -846,7 +852,7 @@ backend creates a fresh job per run, so it never needs to share, and it
   end state.
 - The **seam generalisation (C12)** is independent of both and can land first.
 - Recommendation: the plan's **first task is the conformance suite against a
-  fake** (§8.1), which needs neither phase 3 nor any cloud, and the live
+  fake** (§8.1, task 2), which needs neither phase 3 nor any cloud, and the live
   measurement (Check 57) gates the rest.
 
 ### 6.3 Out of scope
@@ -979,6 +985,8 @@ step.
 
 ## 8. Task outline
 
+### 8.1 The tasks
+
 Not the full plan (that is written after the owner approves this design and
 Check 57 answers). Ordered so **each task merges alone** and the **first one
 delivers value**.
@@ -1012,7 +1020,7 @@ delivers value**.
 10. **Check 57, the docs, the skills and the release bullet** — the last task,
     as in every other group.
 
-### 8.4 Open decisions for the owner
+### 8.2 Open decisions for the owner
 
 | # | Decision | Recommendation | The alternative, and its cost |
 |---|---|---|---|
