@@ -71,7 +71,8 @@ const cloneShipped = false
 
 // policySince is the first fugaro release whose launcher and runner read the
 // project's policy (the release phase 1 of the project-centric model ships
-// in, R4), and the release named by the launch gate checkPolicySkew below: a
+// in, R4), and the release named by the launch gate launchPolicyGates
+// (run_allowlist.go), which refuses a policy newer than this binary: a
 // policy whose version is above what this binary understands is a policy
 // written by a newer Fugaro, and this release is what the message quotes
 // beside it. Like cloneSince and unlike the policy's own integer `version`
