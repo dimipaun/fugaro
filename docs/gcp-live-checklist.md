@@ -289,7 +289,7 @@ what the design now recommends are in the design's §7.2, under "RESULTS of the
 | 57a-2, cold start, plain pull | 154, 145, 137, 152, 135 s → **median 145 s** |
 | 57a-3a, `enableImageStreaming` | 98, 97, 96 s → **median 97 s**; **2 of the 5 jobs gave no first-line time and the record does not say whether they were refused, failed or simply not collected** — the step's "did streaming accept the job at all" question, left open |
 | 57a-3b, preloaded boot image | 69, 67, 66, 65, 63 s → **median 66 s**, submit-to-first-log-line; Batch accepted the custom boot image and ran it. **The split of the 66 s is not measured** — the 9 s pull / 1 s to `pg_isready` recorded in the same run belong to 57a-6's timed submission, a small `postgres:17` container on a plain `batch-cos` VM, not the preloaded image |
-| 57a-4/6, the socket | no `options`: **refused**; `--group-add 412`: **works**; `--user 0`: **works**; `--privileged`: **does not** (uid stays 1000); `--group-add` **with streaming**: the group is **not applied**, so streaming makes Batch ignore `options` |
+| 57a-4/6, the socket | no `options`: **refused**; `--group-add 412`: **works**; `--user 0`: **works**; `--privileged`: **does not** (uid stays 1000); `--group-add` **with streaming**: the group is **not applied**, so streaming makes Batch ignore `options` — **one variant, one job**, so it is the one 57a result to re-confirm (the design's §9) |
 | 57a-5, the cost of one run | a 143 s `e2-standard-4` window at 0.13402284 USD/h ≈ **$0.0053** (disk and NAT outside it; the bill was not read) |
 | 57a-8, teardown | VM gone 25 s after `SUCCEEDED`, 26 s after `FAILED`, 3 s after `jobs.cancel`, 26 s after a crashed runner |
 | 57a-9, the IAM Condition | a conditional `roles/batch.jobsEditor` with `resource.name.startsWith("projects/fugaro-dev/locations/us-east5/jobs/fugaro-")` was **accepted and read back as written** |
@@ -298,23 +298,34 @@ what the design now recommends are in the design's §7.2, under "RESULTS of the
 
 **Restore status — NOT FINISHED (owner note, 2026-10-15; the owner updates
 this).** The run's Restore did not complete: `gcloud` reauthentication failed
-part-way through the cleanup, so **a VM survived** and the
-`containerfilesystem.googleapis.com` API 57a-0c enabled is still on (Restore
-step 7, which disables it, never ran). The **Compute and Batch** APIs are not
-in the Restore block at all — nothing in the check enables or disables them,
-and its closing assertion counts resources, not APIs — so they are switched
-back off **by hand**, outside that assertion (`gcloud services list --enabled
---project=fugaro-dev`). 57a is closed only when the restore has been re-run on
-its own and its assertion reads `0` on every line **and** those APIs are off
-(the design's §7.2, "Restore status").
+part-way through the cleanup, so **a VM survived** — the 57a-12 signal job's
+VM, `fugaro-chk57-signa-…-hwt4`, still there when the cleanup stopped (not a
+teardown finding: what left it behind is the reauthentication failure, and
+57a-8's times stand). The run started with
+**`compute.googleapis.com` and `batch.googleapis.com` off** and the check
+**enabled them** (`57a-0a`, and the same for Batch — the design's §1.7 setup
+finding), and 57a-0c enabled `containerfilesystem.googleapis.com` under its
+marker file; at cleanup the Restore logged it **could not disable
+compute/batch/containerfilesystem (left on)**, the same reauth failure. The
+committed Restore block disables **only** `containerfilesystem.googleapis.com`
+(step 7) and has **no step for the Compute or Batch APIs** — an item for the
+next revision of the check script (the setup block must record which APIs it
+turned on, as step 7's marker file does, and the Restore must read that record)
+— so closing 57a takes: the restore re-run on its own until its assertion reads
+`0` on every line, the survived VM deleted, and those APIs switched back off
+**by hand**, outside that assertion (`gcloud services list --enabled
+--project=fugaro-dev`, the only way to see them). The design's §7.2, "Restore
+status", carries the full note.
 
 **Not run: 57b (all six steps), 57a step 7 (Spot preemption — a separate
 script is being written), 57a step 11 (quota/queueing), the billed amount,
 `TaskGroup.runAsNonRoot: true` (only the unset branch is measured), 57a step
 12's metadata half (the signal submission's recorded result covers the
 environment variables only, so whether a job can read its own VM's identity
-from the metadata server is still open — the design's §9), and the log sink
-arm, which was not applied by decision.** The design's own
+from the metadata server is still open — the design's §9), the log sink
+arm, which was not applied by decision, and **the re-confirmation of
+streaming's disregard for `options`** — that result is from one variant and
+one job (57a-4/6), and the design's §9 holds it open for a repeat.** The design's own
 recommendation changes that follow — the preloaded boot image over image
 streaming, `--group-add <socket gid>` as the socket recipe, the explicit
 network+subnetwork in the job JSON, the provisioning wait for IAM propagation,

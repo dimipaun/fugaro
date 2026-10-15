@@ -238,7 +238,9 @@ What the numbers are:
      measurement, not an inference**: with `--group-add 412` *and* streaming on,
      the container came up with `groups=1000` only and could not open the
      socket (Check 57a step 6, §7.2) — Batch ignored the `options` field
-     entirely. So streaming is **not** the design's fast-start path: it cannot
+     entirely. **That is one submission — one variant, one job — and
+     re-confirming it is on §9's list of what to check again.** So streaming is
+     **not** the design's fast-start path: it cannot
      serve the Docker case, which is the whole of this backend (C4). It stays
      the right shape for a run that needs no socket, and the design does not
      build that case.
@@ -664,9 +666,9 @@ itself.
 | # | Decision | Recommendation | Veto alternative / trade-off |
 |---|---|---|---|
 | **C1** | Substrate | **Cloud Batch**, one job with one task per run, Container-Optimized OS boot disk, `fugaro-base` as a container runnable | **Plain Compute Engine instances** (full control of the startup script and the socket, no Batch container-runnable quirks; but Fugaro implements instance lifecycle, timeouts, log shipping and a reaper). **MIG**: rejected — homogeneous fleets, not per-run ephemeral VMs; you either pay for idle capacity or re-implement Batch. |
-| **C2** | Where Docker comes from | **The VM's host daemon, via the bind-mounted socket**, made usable with **`options: "--group-add <socket gid>"`** (the gid read off the VM) — measured, 57a-6. `--user 0` works too and is the fallback; `--privileged` alone does not. **Image streaming disregards `options`** (measured), so a streamed run has only the group baked into the image (§2.2) — and the design therefore does not stream a Docker run | **Rootless/Podman inside the container** or **privileged DinD**: same host-level power, more moving parts, doubles storage, needs an unverified `--privileged`/user-namespace path in a Batch runnable. |
+| **C2** | Where Docker comes from | **The VM's host daemon, via the bind-mounted socket**, made usable with **`options: "--group-add <socket gid>"`** (the gid read off the VM) — measured, 57a-6. `--user 0` works too and is the fallback; `--privileged` alone does not. **Image streaming disregards `options`** (measured once — one variant, one job, §7.2/§9), so a streamed run has only the group baked into the image (§2.2) — and the design therefore does not stream a Docker run | **Rootless/Podman inside the container** or **privileged DinD**: same host-level power, more moving parts, doubles storage, needs an unverified `--privileged`/user-namespace path in a Batch runnable. |
 | **C3** | Isolation unit | **One VM per run; a VM is never reused** | Reuse a pool of warm VMs: rejected — two runs on one VM can read each other's secrets and Docker state, and Docker makes each root on the host. |
-| **C4** | Cold start | **The preloaded boot image** (measured 66 s median, 2026-10-15), with **image streaming rejected for a Docker run** (97 s measured, but it disregards `options`, so the socket cannot be made usable) and a plain pull as the floor (145 s measured, 12 s over the 120 s-above-baseline budget) | Image streaming as the primary choice: no custom image to maintain, and it meets the budget at 97 s — but a Batch job with streaming on cannot pass `--group-add`, so a Docker run on it has only the group baked into the image. The preload's own costs stand: Batch does not officially support custom images and a Batch image's supported lifetime can end **60 days** after its starting date, so it is an image to rebuild on Google's schedule as well as Fugaro's. **Check 57a steps 2 and 3 measured all three; this recommendation is the measurement's.** |
+| **C4** | Cold start | **The preloaded boot image** (measured 66 s median, 2026-10-15), with **image streaming rejected for a Docker run** (97 s measured, but it disregards `options` — one submission, §9 — so the socket cannot be made usable) and a plain pull as the floor (145 s measured, 12 s over the 120 s-above-baseline budget) | Image streaming as the primary choice: no custom image to maintain, and it meets the budget at 97 s — but a Batch job with streaming on cannot pass `--group-add` (measured on one submission; §9 has it for re-confirmation), so a Docker run on it has only the group baked into the image. The preload's own costs stand: Batch does not officially support custom images and a Batch image's supported lifetime can end **60 days** after its starting date, so it is an image to rebuild on Google's schedule as well as Fugaro's. **Check 57a steps 2 and 3 measured all three; this recommendation is the measurement's.** |
 | **C5** | Spot | **Off by default**, opt-in per profile | Spot by default: up to 91% cheaper, but a preemption kills the stage mid-flight, the notice is **0 s by default** (120 s only if the job asks, and the shutdown after it is best effort, up to 30 s), so checkpointing has no room at all. |
 | **C6** | Service account | **One per run class (profile, account), reused from the project-centric model**; never the default Compute Engine SA | Default Compute Engine SA: project-wide and over-broad. |
 | **C7** | Egress | **No external IP; Cloud NAT** | Ephemeral external IP + deny-all ingress: simpler, cheaper per run, but "no inbound" then rests on a firewall list. |
@@ -1765,7 +1767,7 @@ design's own text is the source; the plan task writes it to
       "blockProjectSshKeys": true
     }],
     "serviceAccount": {"email": "__SA_EMAIL__"},
-    "network": {"networkInterfaces": [{"network": "global/networks/default", "subnetwork": "regions/us-east5/subnetworks/default", "noExternalIpAddress": true}]},
+    "network": {"networkInterfaces": [{"network": "projects/fugaro-dev/global/networks/default", "subnetwork": "projects/fugaro-dev/regions/us-east5/subnetworks/default", "noExternalIpAddress": true}]},
     "labels": {"fugaro": "managed", "fugaro_chk": "57"}
   },
   "labels": {"fugaro": "managed", "fugaro_chk": "57"},
@@ -1823,11 +1825,13 @@ and each would otherwise take a default that contradicts the design.
   Step **57a-0** therefore creates `$SA` and grants it before the first job is
   submitted, and Restore deletes it; nothing below may run without it.
 - `network.networkInterfaces[0].noExternalIpAddress: true`, **with the
-  interface naming *both* a `network` and a `subnetwork`** — `global/networks/
-  default` and `regions/us-east5/subnetworks/default` in the committed
-  template, which the setup block's `render` rewrites from `NET` and `SUBNET`
-  so an installation with its own network and subnet uses those instead. Both
-  fields are there because 57a found Batch **refuses the job** when only
+  interface naming *both* a `network` and a `subnetwork`** — the **full**
+  `projects/fugaro-dev/global/networks/default` and
+  `projects/fugaro-dev/regions/us-east5/subnetworks/default` in the committed
+  template, which is the form the 2026-10-15 run submitted, and which the
+  setup block's `render` rewrites from `P`, `NET`, `L` and `SUBNET` so an
+  installation with its own project, network and subnet uses those instead.
+  Both fields are there because 57a found Batch **refuses the job** when only
   `network` is set: "no external IP" is not expressible with the field alone
   (§1.7's setup finding, §7.2). The documented default of
   `noExternalIpAddress` is **false** (Batch REST reference, `NetworkInterface`),
@@ -2053,8 +2057,8 @@ render() { sed -e "s|__IMG__|${IMG:?}|g" \
               -e "s|__DOCKER_GID__|${DOCKER_GID}|g" \
               -e "s|__QUOTA_MT__|${QUOTA_MT:?}|g" \
               -e "s|__PRELOAD_IMG__|${PRELOAD_IMG:?}|g" \
-              -e "s|global/networks/default|global/networks/${NET:?}|g" \
-              -e "s|regions/us-east5/subnetworks/default|regions/${L:?}/subnetworks/${SUBNET:?}|g" "$1"; }
+              -e "s|projects/fugaro-dev/global/networks/default|projects/${P:?}/global/networks/${NET:?}|g" \
+              -e "s|projects/fugaro-dev/regions/us-east5/subnetworks/default|projects/${P:?}/regions/${L:?}/subnetworks/${SUBNET:?}|g" "$1"; }
 render check57/job.json > /tmp/check57.json          # the probe's own template
 for F in docker streaming preload socket-none socket-user0 socket-priv \
          teardown-fail teardown-cancel teardown-crash signal-job signal-task quota; do
@@ -2387,7 +2391,8 @@ leaked VM of *this check* is told from a real run's.
    measures it, and **57a-6's combination ran on 2026-10-15 and answered it:
    with `--group-add` set *and* streaming on, the container came up with
    `groups=1000` only and could not connect**, so streaming does ignore
-   `options` (§2.2). **The recommendation for C4 follows these two numbers, not
+   `options` (§2.2) — on **one submission (one variant, one job)**, which §9
+   lists for re-confirmation. **The recommendation for C4 follows these numbers, not
    this document** (§1.2,
    §1.9).
 4. **Docker inside a run.** Submit `check57/job-docker.json` — the committed
@@ -2494,7 +2499,9 @@ leaked VM of *this check* is told from a real run's.
    carry `--group-add`". And for the two built-here submissions: whether the
    streaming combination ran a container — **the answer to §2.2's streaming
    claim, measured on 2026-10-15: the combination came up with `groups=1000`
-   only and could not connect, so streaming discards `options`** — and the pull
+   only and could not connect, so streaming discards `options`. That is one
+   submission — one variant, one job — and re-confirming it is an open item
+   (§9)** — and the pull
    and `pg_isready` times from the timing run, which are **that timed
    submission's own numbers: a small `postgres:17` container on a plain
    `batch-cos` VM (9 s to pull, 1 s to `pg_isready`), not the preloaded base
@@ -2757,21 +2764,44 @@ result, and nothing here makes `backend: cloud-batch` selectable.
 **Restore status — NOT FINISHED (owner note, 2026-10-15; the owner updates
 this).** The run's Restore **did not complete**: `gcloud` reauthentication
 failed part-way through the cleanup, so the sandbox is not back to its
-pre-check state — **a VM survived**, and **`containerfilesystem.googleapis.com`**
-(which 57a-0c enabled) is still on, because Restore step 7, the step that
-disables it, never ran. **The Compute and Batch APIs are a different case and
-are not in the Restore block at all**: nothing in this check enables or
-disables `compute.googleapis.com` or `batch.googleapis.com` — it assumes both,
-as 57a-0's setup finding records — and the closing assertion counts
-*resources*, deliberately excluding APIs. So closing 57a takes **two** things:
-the Restore block re-run on its own (the owner's `--restore-only` invocation,
-with the setup block first as its own text requires) until **its assertion
-reads `0` on every line**, **and, by hand outside that assertion,
-`compute.googleapis.com`, `batch.googleapis.com` and any other API the run
-turned on switched back off** — `gcloud services list --enabled
---project=fugaro-dev` is how those leftovers are read, since no line of the
-assertion can see them. Nothing else in this section changes when that
-happens: it is a cleanup fact, not a measurement.
+pre-check state. What is left behind is the interrupted cleanup's, not a
+finding about the check:
+
+- **A VM survived** — the **57a-12 signal job's** VM, `fugaro-chk57-signa-…-hwt4`,
+  still there when the cleanup stopped. It is **not a teardown finding**:
+  57a-8's VM lifetimes on the four exit paths it timed stand, and what left
+  this one behind is the interrupted cleanup — the reauthentication failure —
+  not Batch's teardown.
+- **Three APIs are still on.** The run started with
+  **`compute.googleapis.com` and `batch.googleapis.com` off** and the check
+  **enabled them** — the run's own setup output says so (`57a-0a:
+  compute.googleapis.com enabled by this check`, and the same for Batch; it is
+  §1.7's setup finding, and it is why enabling Compute also created the default
+  network and the default Compute Engine account) — and 57a-0c enabled
+  **`containerfilesystem.googleapis.com`** under its marker file. At cleanup
+  the Restore logged that it **could not disable compute/batch/containerfilesystem
+  (left on)** — the same reauthentication failure.
+
+**The committed Restore block is short of what this run turned on.** It
+disables **only** `containerfilesystem.googleapis.com` (step 7, gated on the
+marker file `57a-0c` writes); it has **no step that disables the Compute or
+Batch APIs**, so those two stay on when the block runs. That is an item for
+the **next revision of the check script**: the Restore has to disable the APIs
+the check enabled, which means the setup block must record *which* it turned on
+(the marker-file pattern step 7 already uses — the setup block as committed here
+has no step that enables them at all, only 0b's egress and 0c's streaming API)
+and the Restore has to read that record instead of assuming. The closing
+assertion cannot stand in for it: it counts **resources** — jobs, VMs, an
+image, an account, its bindings — deliberately excluding APIs. So closing 57a
+takes **three** things: the Restore block re-run on its own (the owner's
+`--restore-only` invocation, with the setup block first as its own text
+requires) until **its assertion reads `0` on every line**; **the survived VM
+deleted**; and, **by hand outside that assertion, the APIs the check turned on
+switched back off** — `compute.googleapis.com`, `batch.googleapis.com`,
+`containerfilesystem.googleapis.com` and anything else the run enabled — read
+with `gcloud services list --enabled --project=fugaro-dev`, which is the only
+way to see them, since no line of the assertion can. Nothing else in this
+section changes when that happens: it is a cleanup fact, not a measurement.
 
 | Step | What it measured | Result |
 |---|---|---|
@@ -2779,7 +2809,7 @@ happens: it is a cleanup fact, not a measurement.
 | 57a-2 | Cold start, plain pull, `e2-standard-4` | 154, 145, 137, 152, 135 s → **median 145 s** |
 | 57a-3a | Cold start, `enableImageStreaming: true` | 98, 97, 96 s → **median 97 s**. Only **3 of the 5** jobs yielded a first-line time; **2 produced none, and the record does not say whether Batch refused them, they failed, or the collection found nothing** — the step's own "did streaming accept the job at all" question, left open here and in §9. |
 | 57a-3b | Cold start, the preloaded boot image | 69, 67, 66, 65, 63 s → **median 66 s**, submit to first log line. The image was built from `batch-cos` with the base image — `fugaro-base` **0.7.5**, by digest — already in the Docker data root, and Batch accepted it and ran it. **How the 66 s splits is not measured**: the run took no timing inside a preloaded VM, and the 9 s pull / 1 s to `pg_isready` it did record belong to 57a-6's timed submission — a small `postgres:17` container on a **plain `batch-cos`** VM (§2.2's 57a-4/6 row, 57a-6's FACT list). |
-| 57a-4, 57a-6 | The socket, the baseline and the variants | **No `options`: refused** (`permission denied`). **`--group-add 412`: reaches the daemon and runs a real container.** **`--user 0`: works.** **`--privileged` alone: does not work** — the container's user stays 1000, as §2.2 predicted. **`--group-add 412` with `enableImageStreaming`: the extra group is not applied** (the container shows `groups=1000` only) and it cannot connect — so streaming makes Batch **ignore the container's `options` field**, which §1.2 argued from the five-subfield list and this measures. |
+| 57a-4, 57a-6 | The socket, the baseline and the variants | **No `options`: refused** (`permission denied`). **`--group-add 412`: reaches the daemon and runs a real container.** **`--user 0`: works.** **`--privileged` alone: does not work** — the container's user stays 1000, as §2.2 predicted. **`--group-add 412` with `enableImageStreaming`: the extra group is not applied** (the container shows `groups=1000` only) and it cannot connect — so streaming makes Batch **ignore the container's `options` field**, which §1.2 argued from the five-subfield list and this measures. **That conclusion rests on one submission — one variant, one job** (the streaming-plus-`--group-add` combination; 57a-3a's five jobs ran with *no* `options` at all, so they cannot speak to it), and it is **to be re-confirmed** before C2 and C4 rest their weight on it (§9). |
 | 57a-5 | The cost of one plain run | a **143 s** window on `e2-standard-4` at **0.13402284 USD/h** is about **$0.0053**. The 50 GB boot disk and Cloud NAT are outside that figure, and the **billed amount was not read** — the export must be read by hand for 57b-5. |
 | 57a-8 | Teardown, per exit path | the VM was gone **25 s** after `SUCCEEDED`, **26 s** after `FAILED`, **3 s** after `jobs.cancel` (`CANCELLED`), and **26 s** after the crashed runner's job failed. |
 | 57a-9 | IAM, read raw | a conditional `roles/batch.jobsEditor` binding, condition `resource.name.startsWith("projects/fugaro-dev/locations/us-east5/jobs/fugaro-")`, was **accepted and read back as written**. |
@@ -2799,7 +2829,11 @@ the socket (see below), and the plain pull **fails** it by **12 s** (132 − 120
 
 - **The Compute and Batch APIs are off by default** on the installation, and
   enabling Compute also **creates the default network and the default Compute
-  Engine service account** — Task 6's stage has to expect both.
+  Engine service account** — Task 6's stage has to expect both. The run itself
+  was no exception: it started with **both APIs off** and this check **enabled
+  them** (`57a-0a`), which is why the Restore note above has to carry three
+  leftovers. Provisioning that assumes the APIs are on, and a Restore that
+  assumes nothing enabled them, are both wrong on a fresh project.
 - **Batch refuses `noExternalIpAddress: true` unless *both* `network` and
   `subnetwork` are named explicitly** (`projects/<p>/global/networks/default`
   and `projects/<p>/regions/<r>/subnetworks/default`). The job JSON must carry
@@ -2876,7 +2910,10 @@ Streaming's *path* is not open:
 this installation's pin (`IMG`) named the **remote** repository
 (`fugaro-ghcr`), as §1.2 and the setup comment record, and streaming served
 the image from it (§9, [ANSWERED, 57a-3a]); the **direct** repository's path
-is what no run has exercised.
+is what no run has exercised. And one result 57a *did* produce is left for a
+repeat: **streaming's disregard for `options`** rests on **one variant, one
+job** (§9's re-confirm row), which a later run repeating the combination
+settles.
 
 **§9 after this run.** The rows this section settles move to §9's measured
 list — the container's uid (with `runAsNonRoot` unset); whether `options`
@@ -3373,6 +3410,14 @@ senior reviewer before merge, not just the normal one.
     section to hold it to (§7.2). Until this task lands, the body lives in the
     design and the row says so; nothing else in the outline may run 57b's steps
     before it.
+    **The next revision of the check script belongs here too**: the setup block
+    must record which APIs it enables — Compute and Batch, which start **off**
+    on a fresh project (§1.7), using the marker-file pattern 0c already applies
+    to `containerfilesystem.googleapis.com` — and the Restore must disable
+    those, because the block committed here disables only the
+    containerfilesystem one (§7.2, "Restore status"). Without that a 57b pass
+    leaves the sandbox's APIs on, and the closing assertion cannot see them: it
+    counts resources.
 11. **The secrets fallback (only if needed).** The runner-side Secret Manager
     fetch for a secret whose name is known only at run time (§1.6). It is a
     task only if Task 7 finds such a case; otherwise it is dropped, not built.
@@ -3389,7 +3434,7 @@ reasoning lives; this table is the checklist.
 | C1 | Substrate | Cloud Batch, one job with one task per run | Plain Compute Engine instances (full control, but Fugaro owns lifecycle/timeouts/logs/reaper); MIG rejected |
 | C2 | Docker source | The host daemon via the socket | Rootless/DinD (same host power, more parts, needs an unverified `--privileged` path) |
 | C3 | Isolation unit | One VM per run, never reused | A warm pool (breaks run-to-run isolation) |
-| C4 | Cold start | **The preloaded boot image** (66 s measured, 2026-10-15); image streaming is **rejected for a Docker run** (97 s measured, but Batch ignores the container's `options` with streaming on, so `--group-add` cannot be passed); a plain pull is the floor (145 s) | Image streaming as the primary (no custom image to maintain — but no socket path either); a plain pull every run (simplest, 12 s over the 120 s-above-baseline budget and slowest). The preload's costs stand: a custom image Batch "might not support", with a Batch image's 60-day lifetime to rebuild against. **Check 57a steps 2 and 3 measured all three, and the recommendation is the measurement's** |
+| C4 | Cold start | **The preloaded boot image** (66 s measured, 2026-10-15); image streaming is **rejected for a Docker run** (97 s measured, but Batch ignores the container's `options` with streaming on — one submission, §9 — so `--group-add` cannot be passed); a plain pull is the floor (145 s) | Image streaming as the primary (no custom image to maintain — but no socket path either); a plain pull every run (simplest, 12 s over the 120 s-above-baseline budget and slowest). The preload's costs stand: a custom image Batch "might not support", with a Batch image's 60-day lifetime to rebuild against. **Check 57a steps 2 and 3 measured all three, and the recommendation is the measurement's** |
 | C5 | Spot | Off by default, opt-in per profile | Spot by default (up to 91% cheaper, kills a stage mid-flight) |
 | C6 | Service account | One per run class — the (`profile`, `account`) job account, never the default Compute Engine SA | The default SA (project-wide blast radius, and Google's own docs call it Editor and "not recommended for production"); a per-repository account is **C21**'s question, not this one |
 | C7 | Egress | No external IP; Cloud NAT | An ephemeral IP + deny-all ingress (simpler, cheaper per run, "no inbound" rests on a firewall list) |
@@ -3547,7 +3592,9 @@ the field's `true` branch is **not** in this list (§2.2); that
 reaches the runtime and works, that `--user 0` works, and that `--privileged`
 alone does not; that the socket's gid on the boot image was 412; that a
 container with `--group-add` **and** `enableImageStreaming` on comes up with the
-group missing, so streaming makes Batch ignore `options`; the cold-start medians, submit to first log line
+group missing, so streaming makes Batch ignore `options` — **one submission
+only (one variant, one job), listed for re-confirmation in this section**; the
+cold-start medians, submit to first log line
 (145 s plain, 97 s streamed, 66 s preloaded; the split of the 66 s is **not**
 in this list); that Batch accepts a custom boot image; the
 teardown times (25/26/3/26 s) on `SUCCEEDED`, `FAILED`, `CANCELLED` and a
@@ -3614,6 +3661,15 @@ not run at all are named together in §7.2 ("Still unmeasured after 57a"):
   26 s after a crashed runner's job** — so Batch's teardown is the main path
   and the reaper is a safety net (§3.4). `DELETION_IN_PROGRESS` itself was not
   driven directly (it is the reaper's state), which is the one corner left.
+- **[MEASURED ONCE — RE-CONFIRM, 57a-6]** Whether `enableImageStreaming` really
+  makes Batch ignore the runnable's `options` field — the fact **C2 and C4 now
+  rest on**. **One submission measured it**: the streaming-plus-`--group-add`
+  combination came up with `groups=1000` only and could not open the socket
+  (§2.2, §7.2). 57a-3a's five jobs ran with **no** `options` at all, so they
+  cannot speak to it, and the whole conclusion is one variant's, from one job.
+  Repeating that combination in a later run is what re-confirms it before the
+  backend depends on it; it is the one measurement in this list whose
+  *repetition*, not its first result, is outstanding.
 - **[PARTLY ANSWERED, 57a-3a]** Whether image streaming works for a base image served
   through an Artifact Registry **remote** repository: on this installation the
   pin `IMG` named was the remote repository's path (`fugaro-ghcr`), and
