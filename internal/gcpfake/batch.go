@@ -63,6 +63,14 @@ type Batch struct {
 	// FAILED_PRECONDITION, so the backend's tolerance of the race between a
 	// read and a cancel is exercised rather than assumed.
 	AllowCancelOfTerminal bool
+	// CancelRace, keyed by job id, moves the job to that raw state as its
+	// :cancel arrives, before the cancel is answered: a job that started or
+	// finished between the listing that decided to cancel it and the call
+	// itself, which the real API refuses. It is the only way a test reaches
+	// that race -- a listing and a cancel read the same stored state -- and it
+	// is what makes the reaper's read-back tolerance a tested requirement
+	// rather than an assumption (design §2.3).
+	CancelRace map[string]string
 
 	mu      sync.Mutex
 	jobs    map[jobKey]*batchJob // by project, region and id
@@ -409,7 +417,9 @@ func (f *Batch) delete(w http.ResponseWriter, r *http.Request, p string) {
 // to reach DELETION_IN_PROGRESS and tear the job's VMs down (Check 57a steps
 // 7 and 8 settle what it really answers and how long it takes). The backend
 // reads the job back rather than the operation, so the difference is not
-// visible to it.
+// visible to it. CancelRace moves the job before the answer, which is the one
+// thing a test cannot otherwise arrange: the listing that decided to cancel
+// the job read the state this request is about to change.
 func (f *Batch) cancel(w http.ResponseWriter, r *http.Request, p string) {
 	project, region, id, ok := batchJobPath(p)
 	if !ok || id == "" {
@@ -420,6 +430,12 @@ func (f *Batch) cancel(w http.ResponseWriter, r *http.Request, p string) {
 	if j == nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "job "+id+" not found")
 		return
+	}
+	if raced := f.CancelRace[id]; raced != "" {
+		j.state = raced
+		if st, ok := j.body["status"].(map[string]any); ok {
+			st["state"] = raced
+		}
 	}
 	if batchTerminal(j.state) {
 		if !f.AllowCancelOfTerminal {

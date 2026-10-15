@@ -96,6 +96,33 @@ func (rt *reapTest) addJobLabels(t *testing.T, runID, state string, age time.Dur
 	return id
 }
 
+// addJobDisagreeingRunLabels is addJob with the two label fields naming
+// different runs: not a job this build's launcher could create (Labels writes
+// one value into both fields, names.go), and the ambiguity reapJob refuses
+// rather than pick a run from.
+func (rt *reapTest) addJobDisagreeingRunLabels(t *testing.T, runID, state string, age time.Duration) string {
+	t.Helper()
+	id := JobID(backendtest.Slug, backendtest.Workflow, runID)
+	labels, err := Labels(backendtest.Slug, backendtest.Workflow, runID)
+	if err != nil {
+		t.Fatalf("Labels: %v", err)
+	}
+	jobLabels, allocLabels := map[string]string{}, map[string]string{}
+	for k, v := range labels {
+		jobLabels[k], allocLabels[k] = v, v
+	}
+	allocLabels[RunLabel] = "acme-app-20260927-100009-abcd"
+	body := map[string]any{
+		"labels":           jobLabels,
+		"allocationPolicy": map[string]any{"labels": allocLabels},
+		"status":           map[string]any{"state": "QUEUED"},
+	}
+	rt.create(t, id, body)
+	rt.bf.SetState(id, state)
+	rt.bf.SetCreated(id, rt.now.Add(-age))
+	return id
+}
+
 // create posts a job to the fake's own jobs.create, rather than through
 // Launch: the reaper's decisions are about jobs that already exist in a given
 // state, and Launch mints a name and a state of its own. The POST is the real
@@ -293,6 +320,11 @@ func TestReaperQueueDeadline(t *testing.T) {
 	old := rt.addJob(t, "20260927-100000-abcd", "QUEUED", 40*time.Minute)
 	// 10 minutes: still within it.
 	young := rt.addJob(t, "20260927-100001-abcd", "QUEUED", 10*time.Minute)
+	// Both jobs' VMs, old enough that only the job behind each stands between
+	// it and the reaper: one job is still waiting for capacity, the other is
+	// being cancelled, and neither frees its VM in this pass.
+	rt.vm("vm-young", runLabels(t, "20260927-100001-abcd"), 10*time.Hour)
+	rt.vm("vm-cancelled", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
 	rep := rt.reap(t)
 	if got := rt.bf.Cancels(); len(got) != 1 || got[0] != old {
 		t.Fatalf("jobs.cancel = %v, want [%s]", got, old)
@@ -305,6 +337,39 @@ func TestReaperQueueDeadline(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(rep.Lines(), "\n"), young) {
 		t.Fatalf("a job still within the queue deadline was reported: %v", rep.Lines())
+	}
+	// Neither job's VM was the reaper's in that pass: the young one is still
+	// Batch's, and the cancelled one is being torn down from
+	// CANCELLATION_IN_PROGRESS.
+	if got := rt.cf.Deletes(); len(got) != 0 {
+		t.Fatalf("a queued job's VM was deleted: %v", got)
+	}
+	if !refusedBecause(rep, "fake-region-a/vm-young", "still within the queue deadline") {
+		t.Fatalf("report = %v, want the queued job's VM refused", rep.Lines())
+	}
+	if !refusedBecause(rep, "fake-region-a/vm-cancelled", "cancelled") {
+		t.Fatalf("report = %v, want the cancelled job's VM refused", rep.Lines())
+	}
+}
+
+// TestReaperKeepsTheVMsOfAJobBeingDeleted: a job already in
+// DELETION_IN_PROGRESS and within every deadline is being deleted by someone,
+// and Batch is taking its VMs down with it. The reaper must not race that --
+// only once the deletion itself is stuck past the age floor does it act, and
+// then the job goes first.
+func TestReaperKeepsTheVMsOfAJobBeingDeleted(t *testing.T) {
+	rt := newReaperTest(t, nil)
+	rt.addJob(t, "20260927-100000-abcd", "DELETION_IN_PROGRESS", 10*time.Minute)
+	rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
+	rep := rt.reap(t)
+	if len(rt.bf.Deletes()) != 0 {
+		t.Fatalf("a job whose deletion is under way was deleted again: %v", rt.bf.Deletes())
+	}
+	if got := rt.cf.Deletes(); len(got) != 0 {
+		t.Fatalf("the reaper deleted a VM out from under a deletion in progress: %v", got)
+	}
+	if !refusedBecause(rep, "fake-region-a/vm-1", "DELETION_IN_PROGRESS") {
+		t.Fatalf("report = %v, want the VM refused and named as the deleting job's", rep.Lines())
 	}
 }
 
@@ -342,8 +407,71 @@ func TestReaperKeepsALiveJobAndItsVM(t *testing.T) {
 	if len(rep.Actions) != 0 {
 		t.Fatalf("actions = %v, want none", rep.Lines())
 	}
-	if !refusedBecause(rep, "fake-region-a/vm-1", "the job behind it is RUNNING") {
+	if !refusedBecause(rep, "fake-region-a/vm-1", "its job is RUNNING: Batch owns its teardown") {
 		t.Fatalf("report = %v, want the live job's VM refused and named as the live job's", rep.Lines())
+	}
+}
+
+// TestReaperRefusesTheVMsOfAJobItRefused is the other half of every refusal
+// in reapJob: a job the pass declines to act on is still in the region and may
+// still be RUNNING, so its VMs are not the reaper's either. Each subtest puts
+// an old VM (past the age floor, so nothing else saves it) behind a job the
+// pass refuses, and the VM must survive the pass.
+func TestReaperRefusesTheVMsOfAJobItRefused(t *testing.T) {
+	const run = "20260927-100000-abcd"
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, rt *reapTest)
+		why   string
+	}{
+		{
+			name: "unknown Batch state",
+			setup: func(t *testing.T, rt *reapTest) {
+				rt.addJob(t, run, "SUCCEEDING", 10*time.Hour)
+			},
+			why: "does not know",
+		},
+		{
+			name: "STATE_UNSPECIFIED",
+			setup: func(t *testing.T, rt *reapTest) {
+				rt.addJob(t, run, "STATE_UNSPECIFIED", 10*time.Hour)
+			},
+			why: "does not know",
+		},
+		{
+			name: "unreadable create time",
+			setup: func(t *testing.T, rt *reapTest) {
+				id := rt.addJob(t, run, "RUNNING", 10*time.Hour)
+				rt.bf.SetCreated(id, time.Time{})
+			},
+			why: "create time is unreadable",
+		},
+		{
+			name: "label fields that disagree",
+			setup: func(t *testing.T, rt *reapTest) {
+				// The same run label in both fields would be attributable; a
+				// job whose two fields name different runs is the ambiguity
+				// reapJob refuses, and the VM carries one of the two.
+				rt.addJobDisagreeingRunLabels(t, run, "RUNNING", 10*time.Hour)
+			},
+			why: "disagree",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := newReaperTest(t, nil)
+			tc.setup(t, rt)
+			rt.vm("vm-1", runLabels(t, run), 10*time.Hour)
+			rep := rt.reap(t)
+			if got := rt.cf.Deletes(); len(got) != 0 {
+				t.Fatalf("the VM of a job this pass refused was deleted: %v", got)
+			}
+			if len(rt.cf.Instances()) != 1 {
+				t.Fatalf("instances = %v, want the VM left alone", rt.cf.Instances())
+			}
+			if !refusedBecause(rep, "fake-region-a/vm-1", tc.why) {
+				t.Fatalf("report = %v, want the VM refused because of the job behind it (%q)", rep.Lines(), tc.why)
+			}
+		})
 	}
 }
 
@@ -597,22 +725,70 @@ func TestReaperCancelKeepsTheRecordAndDeleteDoesNot(t *testing.T) {
 	}
 }
 
-// TestReaperToleratesACancelThatRacesTheJobsOwnEnd: the job started (or
-// finished) between the listing and the cancel, which the API refuses. The
-// pass reads it back and is content, exactly as Cancel is (design §2.3).
+// TestReaperToleratesACancelThatRacesTheJobsOwnEnd: the job was QUEUED in the
+// listing the pass decided from and had finished by the time the cancel
+// arrived -- the API refuses a cancel of a terminal job, FAILED_PRECONDITION
+// in the fake, UNDOCUMENTED in the real one (design §9, Check 57a step 7). The
+// pass must read the job back rather than fail on it, exactly as Cancel does
+// (§2.3, live check 5), and must leave its record alone.
 func TestReaperToleratesACancelThatRacesTheJobsOwnEnd(t *testing.T) {
 	rt := newReaperTest(t, nil)
 	id := rt.addJob(t, "20260927-100000-abcd", "QUEUED", 40*time.Minute)
-	rt.bf.SetState(id, "RUNNING")
+	// The race: the job reaches a terminal state as the cancel arrives, which
+	// is the only way this branch is reachable at all (a listing and a cancel
+	// read the same stored state otherwise).
+	rt.bf.CancelRace = map[string]string{id: "SUCCEEDED"}
+	// An old VM of the run, so the age floor cannot be what saves it.
+	rt.vm("vm-1", runLabels(t, "20260927-100000-abcd"), 10*time.Hour)
 	rep := rt.reap(t)
 	if len(rt.bf.Cancels()) != 0 {
-		t.Fatalf("a cancel that raced the job's start was recorded: %v", rt.bf.Cancels())
+		t.Fatalf("a cancel that raced the job's own end was recorded: %v", rt.bf.Cancels())
 	}
 	if len(rep.Actions) != 0 {
-		t.Fatalf("actions = %v, want none (the job had started)", rep.Lines())
+		t.Fatalf("actions = %v, want none (the job had finished by itself)", rep.Lines())
 	}
 	if len(rt.bf.Deletes()) != 0 {
-		t.Fatalf("the reaper deleted a freshly running job: %v", rt.bf.Deletes())
+		t.Fatalf("the reaper deleted a job that finished on its own: %v", rt.bf.Deletes())
+	}
+	if got := rt.bf.IDs(); len(got) != 1 || got[0] != id {
+		t.Fatalf("jobs = %v, want the record of %s left behind", got, id)
+	}
+	if st := rt.bf.State(id); st != "SUCCEEDED" {
+		t.Fatalf("the raced job's state = %q, want the state it reached on its own", st)
+	}
+	// Its VM is left alone by this pass: the run was cancelled, and a cancel
+	// does not clear a run (the next pass reads the job as finished and reaps
+	// the VM then). Deleting it here would race Batch's own teardown.
+	if got := rt.cf.Deletes(); len(got) != 0 {
+		t.Fatalf("a cancelled run's VM was deleted in the same pass: %v", got)
+	}
+	if !refusedBecause(rep, "fake-region-a/vm-1", "cancelled") {
+		t.Fatalf("report = %v, want the cancelled run's VM refused", rep.Lines())
+	}
+}
+
+// TestReaperCancelOfAQueuedJobThatFails: a cancel the API refuses for a reason
+// that is not the race -- a missing permission, say -- is a real failure. The
+// pass must say so rather than read a refused cancel as a cancel, and the job
+// must be left where it was.
+func TestReaperCancelOfAQueuedJobThatFails(t *testing.T) {
+	rt := newReaperTest(t, nil)
+	id := rt.addJob(t, "20260927-100000-abcd", "QUEUED", 40*time.Minute)
+	// Only the cancel is refused: the listing and the read-back it falls back
+	// on still answer, so the failure is the cancel's and not the listing's.
+	rt.bf.RefusePath(id+":cancel", http.StatusForbidden, "PERMISSION_DENIED", "IAM_PERMISSION_DENIED", "no batch.jobs.cancel")
+	rep, err := rt.r.Reap(context.Background())
+	if err == nil {
+		t.Fatal("Reap with a cancel the API refused: want an error")
+	}
+	if !strings.Contains(err.Error(), "batch.jobs.cancel") {
+		t.Fatalf("error = %v, want it to name the permission the pass needed", err)
+	}
+	if len(rep.Actions) != 0 {
+		t.Fatalf("actions = %v, want none: nothing was cancelled", rep.Lines())
+	}
+	if st := rt.bf.State(id); st != "QUEUED" {
+		t.Fatalf("the job's state = %q, want it untouched", st)
 	}
 }
 

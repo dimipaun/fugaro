@@ -322,7 +322,10 @@ does not add a charge.
   has reached `SCHEDULED` or `RUNNING` has a VM and is Batch's, not the
   deadline's. The `queue-timeout` outcome in the run record is the caller's
   (Task 8's plumbing), not the reaper's: the reaper's report names the job
-  and the wait.
+  and the wait. A cancelled job keeps its VMs out of the instance pass as well:
+  the cancel moves it to `CANCELLATION_IN_PROGRESS`, and Batch tears its VMs
+  down from there, so deleting them in the same pass would race that — the
+  next pass reads the job as finished and reaps a VM that did leak.
 - **A plain instance** cancels by `instances.delete`; the timeout is ours to
   enforce (a watchdog or the startup script's `timeout`), which is another
   small piece of machinery Batch already has.
@@ -1178,10 +1181,19 @@ the teardown is assumed rather than read:
   history, and §3.4's ordering rule is about the jobs the reaper has decided
   must go, so a terminal job whose VM leaked is handled by the instance pass,
   which deletes the VM and leaves the record. An instance is deleted only
-  when it carries **both** `fugaro=managed` and a `fugaro_run` label, **no
-  live job** carries that run label, and it is past the age floor; the marker
-  is checked client-side as well as in the server-side label filter, the same
-  shape `List` has for jobs. It refuses, and names with its reason in the
+  when it carries **both** `fugaro=managed` and a `fugaro_run` label, **no job
+  the pass did not clear** carries that run label, and it is past the age
+  floor; the marker is checked client-side as well as in the server-side label
+  filter, the same shape `List` has for jobs. "Not cleared" is wider than
+  "live", and deliberately: a job the pass **refused to act on** — an unknown
+  state, an unreadable create time, two label fields that disagree about the
+  run — is still in the region and may still be `RUNNING`, so its VMs are not
+  the reaper's either, and a refusal never hands the VM it just declined to
+  explain to the instance pass. A cancelled queue-deadline job owns its VMs
+  too (Batch tears them down from `CANCELLATION_IN_PROGRESS`), as does a job
+  whose deletion someone else already started; only a job this pass positively
+  classified as **finished**, and a run no job in the listing mentions at all,
+  frees its run. It refuses, and names with its reason in the
   report, a VM with no `fugaro_run` label, a VM whose `fugaro` label is
   another installation's, a VM whose job is still live, a VM young enough
   that Batch may be mid-teardown, a job whose two label fields disagree about

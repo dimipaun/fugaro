@@ -84,7 +84,7 @@ import (
 // narrows them with an IAM Condition is Check 57a step 9's question
 // (UNVERIFIED, design §9), and it does not change this list. Nothing here
 // reads a secret, and nothing here needs Secret Manager, storage or logging:
-// the reaper's whole surface is the five permissions above.
+// the reaper's whole surface is the six permissions above.
 
 // ReapMargin is the margin the reaper's age filter adds on top of the
 // longest task timeout, its slack and the queue deadline: the VM boot and
@@ -219,7 +219,7 @@ type Reaper struct {
 // NewReaper connects to Cloud Batch and the Compute Engine API with
 // Application Default Credentials unless NoAuth. The account it runs as is
 // the dedicated project-wide reaper account (design §3.7, C22): see this
-// file's header for the exact five permissions it needs and nothing else.
+// file's header for the exact six permissions it needs and nothing else.
 func NewReaper(ctx context.Context, o ReaperOptions) (*Reaper, error) {
 	switch {
 	case o.GCPProject == "" || o.Region == "":
@@ -294,36 +294,74 @@ func (r *Reaper) Reap(ctx context.Context) (Report, error) {
 	if err != nil {
 		return rep, err
 	}
-	// live maps a run label -- the per-run label the VMs carry -- to the raw
-	// state of a job that is still answerable for its VMs. The instance pass
-	// reads it and nothing else: a VM is deleted only when its run label is
-	// not in here (§3.4, "never from a VM listing alone").
-	live := map[string]string{}
+	// owned is what the job pass hands the instance pass, and the instance pass
+	// reads nothing else: a VM is deleted only when its run label is not in
+	// here (§3.4, "never from a VM listing alone").
+	owned := owners{}
 	for _, j := range jobs {
-		if err := r.reapJob(ctx, j, live, &rep); err != nil {
+		if err := r.reapJob(ctx, j, owned, &rep); err != nil {
 			return rep, err
 		}
 	}
-	if err := r.reapInstances(ctx, live, &rep); err != nil {
+	if err := r.reapInstances(ctx, owned, &rep); err != nil {
 		return rep, err
 	}
 	return rep, nil
 }
 
-// reapJob decides one job from its own state, and acts on it.
-func (r *Reaper) reapJob(ctx context.Context, j *batch.Job, live map[string]string, rep *Report) error {
+// owners is the job pass's answer to the instance pass's one question -- "may
+// I delete this run's VMs?" -- keyed by the per-run label the VMs carry, with
+// the clause the instance pass reports.
+//
+// "Did not positively clear" is deliberately wider than "is live". A job the
+// pass refused to act on -- an unknown Batch state, a create time it cannot
+// read, two label fields that disagree -- is still in the region, may still be
+// RUNNING, and owns its VMs exactly as a live job does: a refusal must never
+// hand the VM it just declined to explain to the instance pass. Only a run
+// whose job this pass positively classified as finished, and a run that no job
+// in the listing mentions at all, is reapable: §3.4's "an instance whose job is
+// already gone".
+type owners map[string]string
+
+// own records that run's VMs are not the reaper's, with the clause the
+// instance pass reports for them. The first clause wins: a run named twice was
+// decided once, and that decision is the one the report must carry.
+func (o owners) own(run, why string) {
+	if run == "" {
+		return
+	}
+	if _, taken := o[run]; !taken {
+		o[run] = why
+	}
+}
+
+// reapJob decides one job from its own state, and acts on it. Every branch
+// that does not positively clear the job also puts its run -- or every run the
+// job claims -- into owned, so the instance pass cannot delete the VMs of a job
+// this pass refused to explain.
+func (r *Reaper) reapJob(ctx context.Context, j *batch.Job, owned owners, rep *Report) error {
 	run, ok := jobRunLabel(j)
 	if !ok {
-		// Not attributable as one of this installation's runs: the marker is
-		// missing from a label field, or the per-run label the VMs are joined
-		// by is missing or the two fields disagree. Nothing is done to it --
-		// an unattributable job is not ours to delete.
+		// Not attributable as one of this installation's runs: the per-run
+		// label the VMs are joined by is missing or malformed, or the two
+		// label fields disagree about it. (The marker in both fields was
+		// checked before the job was listed at all.) Nothing is done to it --
+		// an unattributable job is not ours to delete -- and its VMs are not
+		// ours either: every run label it claims is owned, so a VM carrying
+		// one is refused rather than deleted under a job that is still here.
+		why := "its job's two label fields disagree about " + RunLabel + ", so the reaper could not attribute the job to a run and refused to act on it"
+		for _, claimed := range jobRunLabels(j) {
+			owned.own(claimed, why)
+		}
 		rep.refuse(j.Name, "the job does not carry this installation's fugaro=managed marker and one matching fugaro_run label in both label fields")
 		return nil
 	}
 	created, err := parseTime(j.CreateTime)
 	if err != nil || created.IsZero() {
 		r.o.Warn(fmt.Sprintf("reaper: job %s: createTime: %v", j.Name, err))
+		// Its age is unknown, so no age filter cleared it and its state is
+		// whatever the API said: it is not cleared, so its VMs are not either.
+		owned.own(run, "its job's create time is unreadable, so the reaper refused to act on the job")
 		rep.refuse(j.Name, "its create time is unreadable, so its age is unknown and no age filter can clear it")
 		return nil
 	}
@@ -338,15 +376,22 @@ func (r *Reaper) reapJob(ctx context.Context, j *batch.Job, live map[string]stri
 			// Still waiting for capacity, within the deadline the design
 			// gives a queue wait. It owns its VM if it has somehow been given
 			// one; Batch is still managing it.
-			live[run] = state
+			owned.own(run, "its job is QUEUED, still within the queue deadline: Batch is still managing it")
 			return nil
 		}
+		// Cancelled, never deleted (§1.4). A cancel does not free its VMs for
+		// the instance pass either: a cancelled job goes to
+		// CANCELLATION_IN_PROGRESS and Batch tears its VMs down from there, so
+		// the VM is owned. That includes a cancel the API refused because the
+		// job had finished on its own in the meantime: the job is left to the
+		// next pass, which will read it as finished and reap its VM then.
+		owned.own(run, "its job was QUEUED past the queue deadline and was cancelled, not deleted: Batch tears its VMs down from CANCELLATION_IN_PROGRESS")
 		return r.cancelQueued(ctx, j, run, age, rep)
 	case "SCHEDULED", "RUNNING":
 		if age <= r.maxAge {
 			// A live run: Batch owns its VM, and the instance pass must leave
 			// it alone.
-			live[run] = state
+			owned.own(run, "its job is "+state+": Batch owns its teardown")
 			return nil
 		}
 		// Past every deadline a Fugaro run could legitimately have: Batch's
@@ -356,6 +401,9 @@ func (r *Reaper) reapJob(ctx context.Context, j *batch.Job, live map[string]stri
 		return r.deleteJob(ctx, j, fmt.Sprintf("still %s %.0f minutes past every deadline this installation configures", state, age.Minutes()), rep)
 	case "DELETION_IN_PROGRESS":
 		if age <= r.maxAge {
+			// Someone is already deleting this job, and Batch is deleting its
+			// VMs with it: the instance pass must not race that.
+			owned.own(run, "its job is DELETION_IN_PROGRESS: its deletion is already under way")
 			return nil
 		}
 		// A stuck deletion: the residual §3.4 names. Deleting it again is
@@ -364,12 +412,16 @@ func (r *Reaper) reapJob(ctx context.Context, j *batch.Job, live map[string]stri
 		return r.deleteJob(ctx, j, "a deletion that has not finished within every deadline", rep)
 	case "SUCCEEDED", "FAILED", "CANCELLED", "CANCELLATION_IN_PROGRESS":
 		// A finished job: its record is history -- fugaro ls, diagnose and
-		// watch read it -- and Batch's own teardown owns its VMs. If a VM of
-		// it did survive, the instance pass below finds it, because this job
-		// is not in live.
+		// watch read it -- and Batch's own teardown owns its VMs. The one
+		// branch that clears the run: if a VM of it did survive, the instance
+		// pass below finds it, because this job is not in owned. That is the
+		// case the reaper exists for.
 		return nil
 	default:
 		r.o.Warn(fmt.Sprintf("reaper: job %s: Batch state %q is not one this build knows: refusing to act on it", j.Name, state))
+		// An unknown state may be a run in progress -- the API added a state
+		// this build has never heard of -- so its VMs are owned, not reaped.
+		owned.own(run, fmt.Sprintf("its job is in the Batch state %q, which this build does not know, and the reaper refused to act on the job", state))
 		rep.refuse(j.Name, fmt.Sprintf("its Batch state %q is not one this build knows", state))
 		return nil
 	}
@@ -420,10 +472,23 @@ func (r *Reaper) deleteJob(ctx context.Context, j *batch.Job, why string, rep *R
 	return nil
 }
 
-// reapInstances is the second pass: an instance whose job is not live and
+// reapInstances is the second pass: an instance whose job the job pass
+// positively cleared -- finished, or no longer in the listing at all -- and
 // which carries both of the run's labels, deleted with
 // compute.instances.delete (§3.4).
-func (r *Reaper) reapInstances(ctx context.Context, live map[string]string, rep *Report) error {
+//
+// Everything else is refused with a reason, and a job the job pass refused to
+// act on is in "everything else": owned carries those runs too, so this pass
+// never deletes a VM out from under a job the same pass declined to explain.
+//
+// The one VM this cannot protect is one whose job the listing never returned
+// at all: Fugaro's launcher writes the marker into both label fields (Labels,
+// names.go), so a job the installation's own marker filter does not return was
+// not one this build launched, and there is nothing here to attribute its VMs
+// to. Such a VM is a leak by the only definition left -- it carries the
+// installation's marker and a run label, and no job of this installation
+// answers for it.
+func (r *Reaper) reapInstances(ctx context.Context, owned owners, rep *Report) error {
 	instances, err := r.listInstances(ctx)
 	if err != nil {
 		return err
@@ -446,8 +511,11 @@ func (r *Reaper) reapInstances(ctx context.Context, live map[string]string, rep 
 			rep.refuse(target, "it carries no "+RunLabel+" label, so it cannot be attributed to a run")
 			continue
 		}
-		if state, ok := live[run]; ok {
-			rep.refuse(target, fmt.Sprintf("the job behind it is %s: Batch owns its teardown", state))
+		if why, ok := owned[run]; ok {
+			// The job pass did not clear this run: either Batch is still
+			// managing it or the pass refused to act on it. Both are a reason
+			// to leave the VM where it is, and the clause says which.
+			rep.refuse(target, why)
 			continue
 		}
 		created, err := parseTime(in.created)
@@ -465,7 +533,7 @@ func (r *Reaper) reapInstances(ctx context.Context, live map[string]string, rep 
 			rep.refuse(target, fmt.Sprintf("created %.0f minutes ago, within the %.0f-minute age floor: Batch may still be tearing it down", age.Minutes(), r.maxAge.Minutes()))
 			continue
 		}
-		reason := fmt.Sprintf("no live job carries %s=%s and it is %.0f minutes old", RunLabel, run, age.Minutes())
+		reason := fmt.Sprintf("%s=%s answers to no job that is still running, and the VM is %.0f minutes old", RunLabel, run, age.Minutes())
 		if r.o.DryRun {
 			rep.Actions = append(rep.Actions, Action{Kind: ActionDeleteVM, Target: target, Reason: reason})
 			continue
@@ -603,6 +671,30 @@ func jobRunLabel(j *batch.Job) (string, bool) {
 		return "", false
 	}
 	return run, true
+}
+
+// jobRunLabels is every well-formed per-run label the job claims, from either
+// label field. It is what a job the reaper refused to attribute still tells it:
+// whatever the two fields disagree about, the VMs of that job carry one of
+// these values, and none of them is the reaper's to reap (see owners). A job
+// whose fields agree returns the one value twice over, which the caller
+// dedupes.
+func jobRunLabels(j *batch.Job) []string {
+	var out []string
+	seen := map[string]bool{}
+	fields := []map[string]string{j.Labels}
+	if j.AllocationPolicy != nil {
+		fields = append(fields, j.AllocationPolicy.Labels)
+	}
+	for _, l := range fields {
+		v := l[RunLabel]
+		if v == "" || !labelValueRE.MatchString(v) || seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	return out
 }
 
 // jobIsTerminal reports whether a job has finished, by the same mapping the
