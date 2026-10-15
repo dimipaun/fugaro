@@ -78,7 +78,7 @@ const cloneShipped = false
 // Once the release that ships them is tagged, this constant's job becomes
 // the same as recipesSince's above: docs/release.md's ("Before you tag")
 // checklist verifies it equals the release that ships them.
-const catalogSince = "0.8.0"
+const catalogSince = "0.7.5"
 
 // catalogShipped is false until the release named by catalogSince is
 // actually tagged: no fugaro release reads a route's require_zdr or
