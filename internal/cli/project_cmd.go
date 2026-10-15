@@ -1401,12 +1401,13 @@ func newProjectReposLsCmd() *cobra.Command {
 func newProjectReposAddCmd() *cobra.Command {
 	var o projectReposOptions
 	cmd := &cobra.Command{
-		Use:   "add <provider/owner/name | owner/name>",
+		Use:   "add <provider/owner/name | owner/name | *>",
 		Short: "Enroll a repository: add it to the policy's allow-list",
 		Long: "Add a canonical repository (github/acme/app, bitbucket/acme/*) to the\n" +
 			"published policy's allow_repos, through the same ETag-guarded write the\n" +
 			"publisher uses, and print the change. A bare owner/name takes its provider\n" +
-			"from this machine's project config. Only allow_repos changes.",
+			"from this machine's project config, and * is the list's own entry for every\n" +
+			"repository: it is written as it is. Only allow_repos changes.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runProjectReposEdit(cmd, &o, args[0], false) },
 	}
@@ -1417,13 +1418,14 @@ func newProjectReposAddCmd() *cobra.Command {
 func newProjectReposRmCmd() *cobra.Command {
 	var o projectReposOptions
 	cmd := &cobra.Command{
-		Use:   "rm <provider/owner/name | owner/name>",
+		Use:   "rm <provider/owner/name | owner/name | *>",
 		Short: "Un-enroll a repository: remove it from the allow-list",
 		Long: "Remove an entry from the published policy's allow_repos. Removing an allowed\n" +
 			"repository stops its runs — a run of a repository the list does not admit is\n" +
 			"refused before it mints a git token — unless another entry on the list still\n" +
 			"admits it, which is the case a pattern makes (github/acme/app stays admitted\n" +
 			"while github/acme/* is there); the confirmation says which of the two it is.\n" +
+			"Removing * refuses every repository the rest of the list does not admit.\n" +
 			"So it asks you to type the project's name, and while a run is in flight --yes\n" +
 			"alone is not enough.",
 		Args: cobra.ExactArgs(1),
@@ -1650,6 +1652,19 @@ func admittedBy(allow []string, arg string) (bool, string) {
 // only, and a concrete name goes through projectpolicy.Canonical — so the
 // entry written is one the runner's own canonical form could have produced.
 func canonicalRepoArg(lc *localcfg.Config, arg string) (string, error) {
+	if arg == "*" {
+		// The allow-list's own entry for every repository — the design's
+		// explicit choice (docs/design/project-centric.md §4.3), which
+		// MatchRepo reads as admitting anything. It is not a repository, so
+		// neither the config lookup below (there is no owner/name to resolve a
+		// provider from) nor projectpolicy.Canonical applies to it: it is
+		// taken as it is — projectpolicy.ValidPattern has a branch of its own
+		// for it, so there is nothing left to check here.
+		// Without this branch it fell through the split to "write it as
+		// provider/owner/name", so the widest list could not be written and a
+		// list holding it could not be narrowed without a full republish.
+		return arg, nil
+	}
 	parts := strings.Split(arg, "/")
 	if len(parts) == 2 {
 		r, ok := lc.Repos[arg]

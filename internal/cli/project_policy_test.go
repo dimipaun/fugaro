@@ -1531,6 +1531,70 @@ func TestProjectReposRmWithoutAnythingElseAdmittingSaysItStopsRuns(t *testing.T)
 	}
 }
 
+// TestProjectReposEditTheWildcard: "*" is an allow-list entry like any other —
+// the design's explicit every-repository choice (§4.3), which MatchRepo reads
+// as admitting anything, which ValidPattern accepts, and which the rules
+// template's own testdata writes — so both commands have to know it.
+// canonicalRepoArg split its argument on "/" and knew only the owner/name and
+// provider/owner/name forms, so "*" fell through to "write it as
+// provider/owner/name": an operator could not write the widest list with
+// `repos add`, and a list holding it could not be narrowed with `repos rm`
+// (it refused the argument before it looked it up), leaving a full republish as
+// the only way to take it off.
+//
+// Mutation (verified, run and restored): remove the "*" branch from
+// canonicalRepoArg — add fails with "not a repository: write it as
+// provider/owner/name" and rm with the same, nothing is written, and the list
+// still admits the repository the removal was meant to refuse.
+func TestProjectReposEditTheWildcard(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	// The list the fixture publishes names two repositories and not the
+	// wildcard: what the assertions below read is this command's own write.
+	if allow := publishedPolicy(t, f).AllowRepos; slices.Contains(allow, "*") {
+		t.Fatalf("the fixture's published list already holds the wildcard: %v", allow)
+	}
+	out, _, err := execute(t, "project", "repos", "add", "*")
+	if err != nil {
+		t.Fatalf("repos add '*' = %v", err)
+	}
+	if !strings.Contains(out, "allow_repos: ") || !strings.Contains(out, "*") {
+		t.Errorf("the diff does not print the entry it wrote:\n%s", out)
+	}
+	allow := publishedPolicy(t, f).AllowRepos
+	if !slices.Contains(allow, "*") {
+		t.Fatalf("the node holds %v, want the wildcard among them", allow)
+	}
+	// The entry admits what no other entry on the list does — which is what
+	// makes removing it the widening refusal `repos rm` asks about.
+	if !projectpolicy.AdmitRepo(allow, "github/anything/else") {
+		t.Error("the list does not admit a repository through the wildcard it holds")
+	}
+
+	// And it comes off the same way: with the project's name typed, since
+	// removing it refuses every repository the list does not otherwise admit.
+	typed(t)
+	out, _, err = executeStdin(t, "aurora\n", "project", "repos", "rm", "*")
+	if err != nil {
+		t.Fatalf("repos rm '*' = %v", err)
+	}
+	if !strings.Contains(out, `removes * from the allow-list`) || !strings.Contains(out, "refused from now on") {
+		t.Errorf("the confirmation does not say what removing the wildcard does:\n%s", out)
+	}
+	allow = publishedPolicy(t, f).AllowRepos
+	if slices.Contains(allow, "*") {
+		t.Errorf("the node still holds the wildcard: %v", allow)
+	}
+	if projectpolicy.AdmitRepo(allow, "github/anything/else") {
+		t.Error("the list still admits a repository only the wildcard admitted")
+	}
+	if !projectpolicy.AdmitRepo(allow, "github/acme/app") {
+		t.Error("removing the wildcard also dropped an entry that was on the list: the command must remove one entry and nothing else")
+	}
+}
+
 // TestProjectPolicyPublishDiffNamesProvidersAndRates: the diff is the only
 // place an operator reads what a publish replaces, so it prints every value
 // about money and data sharing field by field — a changed base_url, a widened
