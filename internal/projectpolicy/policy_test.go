@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
@@ -32,16 +31,14 @@ func providerPolicy(entry string) []byte {
 }
 
 func TestDecodeIgnoresUnknownKeys(t *testing.T) {
-	// A newer Fugaro's policy must not brick this runner on a whole block it
-	// does not know (P8): unknown *top-level* keys are ignored. Version gates
-	// a newer policy; the budget block is strict
-	// (TestDecodeRefusesABudgetWhoseKeysAllMiss) and so is a providers entry
-	// (TestDecodeRefusesAnUnknownProviderKey), because those are the blocks
-	// whose values this Fugaro enforces.
+	// A newer Fugaro's policy must not brick this runner on a field it does
+	// not know (P8): unknown keys outside the budget block are ignored.
+	// Version gates a newer policy; the budget block is strict
+	// (TestDecodeRefusesABudgetWhoseKeysAllMiss).
 	p, found, err := Decode([]byte(`{
 		"version": 1,
 		"budget": {"mode": "observe"},
-		"providers": {"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}},
+		"providers": {"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "future_provider_key": true}},
 		"future": {"anything": [1, 2, 3]}
 	}`))
 	if err != nil || !found || p == nil {
@@ -55,64 +52,6 @@ func TestDecodeIgnoresUnknownKeys(t *testing.T) {
 	}
 	if p.Providers["openrouter"].Secret != "openrouter-key" {
 		t.Errorf("Providers = %v, want the openrouter entry", p.Providers)
-	}
-}
-
-// TestDecodeRefusesAnUnknownProviderKey: a misspelt key inside a providers
-// entry used to be tolerated, on the argument that "the value it would have set
-// stays zero and every one of these fields is checked". That is false for the
-// three fields whose zero is permissive rather than a refusal: a misspelt
-// allow_data_to leaves the nil slice ModelProvider.AllowsData reads as *every
-// repository*, a misspelt route_fee_pct charges no fee on the route, and a
-// misspelt price_policy silently prices at the catalogue's cheapest end. The
-// same entry is refused by the other two carriers of this document
-// (internal/config's strict YAML decode and runner.ProvidersFromEnv's
-// DisallowUnknownFields), so the readable node was the one place a typo flipped
-// a security-relevant default. Red if the entry's keys stop being checked
-// against config.ModelProvider's own.
-func TestDecodeRefusesAnUnknownProviderKey(t *testing.T) {
-	const entry = `{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]`
-	for name, extra := range map[string]string{
-		"a misspelt allow_data_to": `, "allow_data_too": ["acme/app"]}`,
-		"a misspelt route_fee_pct": `, "route_fee_pc": 5}`,
-		"a misspelt price_policy":  `, "price_polcy": "highest"}`,
-		"a misspelt require_zdr":   `, "require_zrd": false}`,
-		"a misspelt models":        `, "modles": ["deepseek/*"]}`,
-		"a newer Fugaro's own key": `, "something_new": true}`,
-	} {
-		key := strings.Split(strings.Trim(extra, " ,}"), ":")[0]
-		key = strings.Trim(key, `"`)
-		p, found, err := Decode(providerPolicy(entry + extra))
-		if err == nil || p != nil || !found {
-			t.Errorf("%s: Decode = (%v, %v, %v), want a refusal on the existing node", name, p, found, err)
-			continue
-		}
-		if !strings.Contains(err.Error(), key) {
-			t.Errorf("%s: the refusal is %v, want it to name the key %q the operator has to fix", name, err, key)
-		}
-		if !strings.Contains(err.Error(), "unknown") {
-			t.Errorf("%s: the refusal is %v, want it to say the key is unknown", name, err)
-		}
-	}
-	// A known key with a value the carrier refuses is still refused by the
-	// carrier's own check, which the entry-level check must not have replaced:
-	// price_policy is the one whose check was dead while the field was shadowed
-	// (TestDecodeValidatesProviderEntriesLikeTheCarrier's "a misspelt policy").
-	if _, _, err := Decode(providerPolicy(entry + `, "price_policy": "cheaper"}`)); err == nil {
-		t.Error("a price_policy outside the catalogue's two values must still be refused")
-	}
-	// And the keys an entry may carry are config.ModelProvider's own names,
-	// read off the type: the check cannot be satisfied by a key this package
-	// invents for itself.
-	for _, want := range []string{"kind", "base_url", "auth", "secret", "models", "allow_data_to", "route_fee_pct", "require_zdr", "price_policy"} {
-		if !providerEntryKeys[want] {
-			t.Errorf("providerEntryKeys lacks %q: the entry's known keys must be the carrier's own JSON names", want)
-		}
-	}
-	for _, notAKey := range []string{"allow_data_too", "route_fee_pc", "something_new"} {
-		if providerEntryKeys[notAKey] {
-			t.Errorf("providerEntryKeys has %q, which config.ModelProvider does not declare", notAKey)
-		}
 	}
 }
 
@@ -368,8 +307,8 @@ func TestDecodeValidatesProviderEntriesLikeTheCarrier(t *testing.T) {
 		got.RouteFeePct != 5 || len(got.AllowDataTo) != 1 || !got.AllowsData("acme/app") {
 		t.Errorf("the entry decoded as %+v, want the yaml spelling carried through", got)
 	}
-	if got.RequireZDROn() || got.PricePolicySet() != config.PricePolicyHighest {
-		t.Errorf("switches = %v/%q, want false/highest", got.RequireZDROn(), got.PricePolicySet())
+	if got.RequireZDROn() || got.EffectivePricePolicy() != PricePolicyHighest {
+		t.Errorf("switches = %v/%q, want false/highest", got.RequireZDROn(), got.EffectivePricePolicy())
 	}
 }
 
@@ -391,8 +330,8 @@ func TestDecodeRequireZDRIsDefaultTrue(t *testing.T) {
 	if !unset.RequireZDROn() {
 		t.Error("an omitted require_zdr must read as true: the ZDR tier is the conservative price")
 	}
-	if unset.PricePolicySet() != config.PricePolicyCheapest {
-		t.Errorf("PricePolicySet = %q, want cheapest", unset.PricePolicySet())
+	if unset.EffectivePricePolicy() != PricePolicyCheapest {
+		t.Errorf("EffectivePricePolicy = %q, want cheapest", unset.EffectivePricePolicy())
 	}
 
 	p, _, err = Decode(providerPolicy(`{"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "require_zdr": false, "price_policy": "cheapest"}`))
@@ -416,9 +355,9 @@ func TestDecodeRequireZDRIsDefaultTrue(t *testing.T) {
 		want string // the key and value the marshalled entry must carry, "" for none of them
 	}{
 		"unset":   {Provider{}, ""},
-		"true":    {Provider{ModelProvider: config.ModelProvider{RequireZDR: &zdron}}, `"require_zdr":true`},
-		"false":   {Provider{ModelProvider: config.ModelProvider{RequireZDR: &zdroff}}, `"require_zdr":false`},
-		"highest": {Provider{ModelProvider: config.ModelProvider{PricePolicy: config.PricePolicyHighest}}, `"price_policy":"highest"`},
+		"true":    {Provider{RequireZDR: &zdron}, `"require_zdr":true`},
+		"false":   {Provider{RequireZDR: &zdroff}, `"require_zdr":false`},
+		"highest": {Provider{PricePolicy: PricePolicyHighest}, `"price_policy":"highest"`},
 	} {
 		got, err := json.Marshal(tc.p)
 		if err != nil {

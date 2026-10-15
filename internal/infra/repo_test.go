@@ -390,7 +390,7 @@ func TestMissingKinds(t *testing.T) {
 	spec := sandboxSpec(t)
 	f.gcs.AddBucket(spec.Installation.RunsBucket, testProjectNumber, managed)
 	f.seedVersions(spec, "bitbucket-token")
-	_, missing, err := Readiness(ctx, f.c, spec, Existing{}, false)
+	_, missing, err := Readiness(ctx, f.c, spec, Existing{})
 	if err != nil {
 		t.Fatal(err)
 	}

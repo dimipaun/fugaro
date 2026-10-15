@@ -343,7 +343,7 @@ func TestDiscoverAcceptsLegacySADisplayName(t *testing.T) {
 	if ex.DisplayNames["web"] != legacy {
 		t.Errorf("kept display name = %q, want %q", ex.DisplayNames["web"], legacy)
 	}
-	got, _, err := Readiness(context.Background(), f.c, spec, ex, false)
+	got, _, err := Readiness(context.Background(), f.c, spec, ex)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -799,7 +799,7 @@ func TestReadinessKeepsExistingJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, missing, err := Readiness(ctx, f.c, spec, ex, false)
+	got, missing, err := Readiness(ctx, f.c, spec, ex)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -829,7 +829,7 @@ func TestReadinessKeepsImageUntilBuilt(t *testing.T) {
 		t.Fatal(err)
 	}
 	web := spec.Workflows["web"]
-	got, _, err := Readiness(ctx, f.c, spec, ex, false)
+	got, _, err := Readiness(ctx, f.c, spec, ex)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -841,7 +841,7 @@ func TestReadinessKeepsImageUntilBuilt(t *testing.T) {
 	}
 	f.ar.AddRepository("proj-1234", "us-east5", spec.Registry.RepositoryID, with(managed, gcp.LabelRepo, spec.Label))
 	f.ar.SetTag("proj-1234", "us-east5", spec.Registry.RepositoryID, strings.TrimSuffix(strings.TrimPrefix(web.Image, spec.RegistryPath+"/"), ":latest"), "latest")
-	got, missing, err := Readiness(ctx, f.c, spec, ex, false)
+	got, missing, err := Readiness(ctx, f.c, spec, ex)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -867,7 +867,7 @@ func TestReadinessWaitsForImageAndSecrets(t *testing.T) {
 	}
 	ready := func() (bool, []string) {
 		t.Helper()
-		got, missing, err := Readiness(ctx, f.c, spec, ex, false)
+		got, missing, err := Readiness(ctx, f.c, spec, ex)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -928,7 +928,7 @@ func TestReadinessCloneDeploysWithoutAnImageBuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, missing, err := Readiness(ctx, f.c, rs, ex, false)
+	got, missing, err := Readiness(ctx, f.c, rs, ex)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -951,7 +951,7 @@ func TestReadinessCloneDeploysWithoutAnImageBuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, missing, err = Readiness(ctx, f.c, rs, ex, false)
+	_, missing, err = Readiness(ctx, f.c, rs, ex)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -978,7 +978,7 @@ func TestReadinessImageHintNamesTheLogicalWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, missing, err := Readiness(ctx, f.c, spec, ex, false)
+	_, missing, err := Readiness(ctx, f.c, spec, ex)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1017,7 +1017,7 @@ func TestReadinessGatesCheckJob(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, missing, err := Readiness(ctx, f.c, spec, ex, false)
+		got, missing, err := Readiness(ctx, f.c, spec, ex)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1074,7 +1074,7 @@ func TestScheduleOnlyWithRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, _, err := Readiness(ctx, f.c, spec, ex, false)
+	got, _, err := Readiness(ctx, f.c, spec, ex)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1085,7 +1085,7 @@ func TestScheduleOnlyWithRecord(t *testing.T) {
 	if err := b.WriteAll(ctx, imagecheck.RecordKey(spec.Slug, "web"), []byte("{}"), nil); err != nil {
 		t.Fatal(err)
 	}
-	got, _, err = Readiness(ctx, f.c, spec, ex, false)
+	got, _, err = Readiness(ctx, f.c, spec, ex)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1174,7 +1174,7 @@ func TestLookupsFailClosed(t *testing.T) {
 					t.Fatal(err)
 				}
 				ft.match, ft.code = tc.match, code
-				_, _, err = Readiness(ctx, c, spec, ex, false)
+				_, _, err = Readiness(ctx, c, spec, ex)
 				check(err)
 			})
 		}
@@ -1193,7 +1193,7 @@ func TestReadinessRefusesJobWithoutImage(t *testing.T) {
 	}
 	// The spec's image isn't built, and the job has none to keep: switching
 	// to the spec's would point the job at a missing image.
-	got, _, err := Readiness(ctx, f.c, spec, ex, false)
+	got, _, err := Readiness(ctx, f.c, spec, ex)
 	if err == nil {
 		t.Fatalf("readiness pointed a job with no image at %q", got.Workflows["web"].Image)
 	}
@@ -1243,7 +1243,7 @@ func TestReadinessCloneJobWithoutImageNamesTheConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = Readiness(ctx, f.c, rs, ex, false)
+	_, _, err = Readiness(ctx, f.c, rs, ex)
 	var ue *UserError
 	if !errors.As(err, &ue) {
 		t.Fatalf("err = %v, want a user error", err)
@@ -1267,7 +1267,7 @@ func TestReadinessOutputSharesNoMaps(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := mustJSON(t, spec)
-	got, _, err := Readiness(ctx, f.c, spec, ex, false)
+	got, _, err := Readiness(ctx, f.c, spec, ex)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1297,7 +1297,7 @@ func TestScheduleStaysPausedWithoutWorkflows(t *testing.T) {
 	check := *spec.Check
 	check.Workflows = nil
 	spec.Check = &check
-	got, _, err := Readiness(ctx, f.c, spec, ex, false)
+	got, _, err := Readiness(ctx, f.c, spec, ex)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1350,7 +1350,7 @@ func readinessOf(t *testing.T, f *cloud, spec RepoSpec) (RepoSpec, []Missing, Ex
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, missing, err := Readiness(context.Background(), f.c, spec, ex, false)
+	got, missing, err := Readiness(context.Background(), f.c, spec, ex)
 	if err != nil {
 		t.Fatal(err)
 	}

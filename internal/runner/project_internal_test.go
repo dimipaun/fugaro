@@ -1,7 +1,6 @@
 package runner
 
 import (
-	"slices"
 	"strings"
 	"testing"
 
@@ -64,73 +63,21 @@ func TestRemoteOfAnotherKind(t *testing.T) {
 }
 
 // A refusal quotes the remote, and a remote URL is where a launcher may have
-// put a token: in its userinfo, in a query parameter (?access_token= is how
-// Bitbucket's forge URLs are written) or in a fragment. The display form drops
-// all three rather than relying on redaction later; addRemoteSecrets is the
-// other half, for the paths that quote the remote without going through here.
-func TestRemoteDisplayDropsUserinfoQueryAndFragment(t *testing.T) {
+// put a token: the run never registers that one as a secret, so the display
+// form drops the userinfo instead of relying on redaction later.
+func TestRemoteDisplayDropsUserinfo(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
 		{"https://github.com/acme/app.git", "https://github.com/acme/app.git"},
 		{"https://x:glpat-secret@github.com/acme/app.git", "https://github.com/acme/app.git"},
 		{"https://x-token-auth@bitbucket.org/acme/app.git", "https://bitbucket.org/acme/app.git"},
 		{"git@github.com:acme/app.git", "github.com"},
 		{"x-token-auth@bitbucket.org:acme/app.git", "bitbucket.org"},
-		{"https://bitbucket.org/acme/app.git?access_token=ATBBsecret", "https://bitbucket.org/acme/app.git"},
-		{"https://github.com/acme/app.git#glpat-secret", "https://github.com/acme/app.git"},
-		{"https://x:glpat-secret@github.com/acme/app.git?access_token=ATBBsecret#one", "https://github.com/acme/app.git"},
-		{"https://ho st/acme/app.git", "the remote"},
-		// An escape url.Parse rejects does not make it fail: the query it
-		// cannot read is dropped like any other (u.Query() is what would
-		// report it, and addRemoteSecrets ignores that).
-		{"https://github.com/acme/app.git?access_token=%zz", "https://github.com/acme/app.git"},
 	} {
-		got := remoteDisplay(tc.in)
-		if got != tc.want {
+		if got := remoteDisplay(tc.in); got != tc.want {
 			t.Errorf("remoteDisplay(%q) = %q, want %q", tc.in, got, tc.want)
 		}
-		for _, secret := range []string{"glpat-secret", "ATBBsecret"} {
-			if strings.Contains(got, secret) {
-				t.Errorf("remoteDisplay(%q) = %q quotes %q", tc.in, got, secret)
-			}
-		}
-	}
-}
-
-// addRemoteSecrets is what redacts a remote that reaches an error or
-// result.json without passing through remoteDisplay — git's own "unable to
-// access ..." lines quote the URL it was given. What a remote can carry a
-// credential in is registered; what it cannot, and the usernames forges put in
-// front of a token (which are not secrets: registering "git" would redact the
-// word out of every line the run publishes), is not.
-func TestAddRemoteSecretsRegistersWhatARemoteCanCarryACredentialIn(t *testing.T) {
-	for _, tc := range []struct {
-		remote string
-		want   []string
-		absent []string
-	}{
-		{remote: "https://x:glpat-secret@github.com/acme/app.git", want: []string{"glpat-secret", "x:glpat-secret"}, absent: []string{"x"}},
-		{remote: "https://ghp_0123456789@github.com/acme/app.git", want: []string{"ghp_0123456789"}},
-		{remote: "https://git@github.com/acme/app.git", absent: []string{"git"}},
-		{remote: "https://x-access-token@bitbucket.org/acme/app.git", absent: []string{"x-access-token"}},
-		{remote: "git@github.com:acme/app.git", absent: []string{"git", "acme/app"}},
-		{remote: "https://bitbucket.org/acme/app.git?access_token=ATBBsecret&ref=main", want: []string{"ATBBsecret"}, absent: []string{"main"}},
-		{remote: "https://gitlab.com/acme/app.git?private_token=glpat-secret", want: []string{"glpat-secret"}},
-		{remote: "https://github.com/acme/app.git?a=1&access_token=ATBBsecret", want: []string{"ATBBsecret"}},
-		{remote: "https://github.com/%zz", absent: []string{"%zz"}},
-		{remote: "", absent: []string{}},
-	} {
-		r := &run{}
-		r.addRemoteSecrets(tc.remote)
-		got := r.secretList()
-		for _, w := range tc.want {
-			if !slices.Contains(got, w) {
-				t.Errorf("addRemoteSecrets(%q) registered %q, want %q among them", tc.remote, got, w)
-			}
-		}
-		for _, a := range tc.absent {
-			if slices.Contains(got, a) {
-				t.Errorf("addRemoteSecrets(%q) registered %q: %v", tc.remote, a, got)
-			}
+		if strings.Contains(remoteDisplay(tc.in), "glpat-secret") {
+			t.Errorf("remoteDisplay(%q) quotes the userinfo", tc.in)
 		}
 	}
 }

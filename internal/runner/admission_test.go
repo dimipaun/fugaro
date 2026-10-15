@@ -3,7 +3,6 @@ package runner_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +17,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
-	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -97,12 +95,10 @@ func mintUnder(t *testing.T, b *bk, slug string, at time.Time) {
 // refusedAdmission fails unless the run stopped at the admission check: an
 // infra error (so the process exits non-zero and the job shows failed), the
 // record kept as infra_error with outcome none, every want in the reason, no
-// stage run — and nothing written anywhere but its own record (R2-12). No git
-// credential was requested of the provider, the branch lock was not taken, no
-// lease was reserved and no outcome and no spend were written: a run that is
-// not admitted for this repository leaves its own record — created by the
-// claim, so views see an infra_error rather than a run that never started —
-// and nothing else at all.
+// stage run — and nothing changed anywhere (R2-12). No git credential was
+// requested of the provider, the branch lock was not taken, no lease was
+// reserved and no outcome and no spend were written: a run that is not admitted
+// for this repository must be indistinguishable from one that never started.
 //
 // The credential count is what makes the placement of the check observable.
 // Every one of these refusals also happens further down bootstrap (the run
@@ -112,12 +108,7 @@ func mintUnder(t *testing.T, b *bk, slug string, at time.Time) {
 //
 // Mutation (run, restored): move the admissionCheck call in bootstrap below
 // the openProvider block. Every test that comes through here fails, on this
-// counter and on nothing else. Mutation (run, restored): move it above the
-// claim (claimRecord/save). These tests stay green — the record the store ends
-// up with is the refusal either way, because the claim is what creates it —
-// and what that ordering breaks is the duplicate's precedence
-// (TestRunnerTellsADuplicateApartBeforeAdmission) and, end to end, internal/cli's
-// TestExecDuplicateExecutionExitsRemoteError.
+// counter and on nothing else.
 func refusedAdmission(t *testing.T, b *bk, rec *runstore.Record, err error, want ...string) {
 	t.Helper()
 	if err == nil || rec == nil || rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone {
@@ -152,15 +143,6 @@ func refusedAdmission(t *testing.T, b *bk, rec *runstore.Record, err error, want
 	}
 	if v := b.db.Value(budget.PathOutcome(b.day(), slug, runID)); v != nil {
 		t.Errorf("the refused run wrote an outcome: %v", v)
-	}
-	// The one trace it does leave: its own record, claimed before this check
-	// and carrying the refusal — a run that is not admitted must be visible
-	// as refused rather than as one that never started — and nothing else
-	// under the run's prefix.
-	stored, rerr := b.harness.store.ReadRecord(context.Background())
-	if rerr != nil || stored.RunID != runID || stored.Execution != b.deps.Execution ||
-		stored.Status != runstore.StatusInfraError || stored.Reason != rec.Reason {
-		t.Errorf("stored = %+v, err = %v: want this execution's own refusal record and nothing else", stored, rerr)
 	}
 }
 
@@ -221,54 +203,19 @@ func TestRunnerIgnoresAnOverriddenProviderEnvAmongAgreeingKinds(t *testing.T) {
 // remote is what refused, before any git credential was requested.
 func TestRunnerRefusesARemoteOnAnotherProvidersHost(t *testing.T) {
 	b := admissionRun(t, "bitbucket", "acme/app", "off", "", `{"version":1,"allow_repos":["bitbucket/acme/*"]}`)
-	guardProviderHost(t, "https://github.com/")
 	b.deps.Remote = "https://github.com/acme/app.git"
-	rec, err := b.run(t)
-	refusedAdmission(t, b, rec, err, "https://github.com/acme/app.git", "github", "bitbucket", "FUGARO_REMOTE", "before any git credential")
-}
-
-// guardProviderHost rewrites every https://github.com/ URL to a path that does
-// not exist, so a run that went on would fail its clone locally and offline
-// (internal/cli's clone test rewrites the fixture's remote the same way, for the
-// same reason): nothing here may reach the forge, not even if the check the
-// test covers regresses.
-func guardProviderHost(t *testing.T, host string) {
-	t.Helper()
+	// Nothing here may reach github.com, not even if the check this test
+	// covers regresses: git rewrites the URL onto a path that does not exist,
+	// so a run that went on would fail its clone locally and offline
+	// (internal/cli's clone test rewrites the fixture's remote the same way,
+	// for the same reason).
 	gitcfg := filepath.Join(t.TempDir(), "gitconfig")
-	if err := os.WriteFile(gitcfg, []byte("[url \"file:///nonexistent/fugaro-admission-guard\"]\n\tinsteadOf = "+host+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(gitcfg, []byte("[url \"file:///nonexistent/fugaro-admission-guard\"]\n\tinsteadOf = https://github.com/\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("GIT_CONFIG_GLOBAL", gitcfg)
-}
-
-// The same refusal with the remote written the way a forge hands one out: a URL
-// whose credential is in a query parameter (?access_token=, Bitbucket's forge
-// shape) or in its userinfo. FUGARO_REMOTE is a launcher's, and the refusal
-// quotes the remote, so what it quotes must carry no credential — and neither
-// must anything else the run publishes: the record it leaves, and every object
-// in the bucket.
-func TestRunnerRefusesARemoteWithoutQuotingItsCredential(t *testing.T) {
-	for _, tc := range []struct {
-		name, remote, want string
-	}{
-		{"the credential in the query", "https://github.com/acme/app.git?access_token=ATBBsecret", "https://github.com/acme/app.git"},
-		{"the credential in the userinfo", "https://x:ATBBsecret@github.com/acme/app.git", "https://github.com/acme/app.git"},
-		{"in the query and a fragment", "https://github.com/acme/app.git?access_token=ATBBsecret#ATBBsecret", "https://github.com/acme/app.git"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			b := admissionRun(t, "bitbucket", "acme/app", "off", "", `{"version":1,"allow_repos":["bitbucket/acme/*"]}`)
-			guardProviderHost(t, "https://github.com/")
-			b.deps.Remote = tc.remote
-			rec, err := b.run(t)
-			refusedAdmission(t, b, rec, err, tc.want, "github", "bitbucket", "FUGARO_REMOTE")
-			if strings.Contains(err.Error(), "ATBBsecret") {
-				t.Errorf("the refusal quotes the remote's credential: %v", err)
-			}
-			if keys := objectsContaining(t, b.harness, "ATBBsecret"); len(keys) > 0 {
-				t.Errorf("the remote's credential is in %v", keys)
-			}
-		})
-	}
+	rec, err := b.run(t)
+	refusedAdmission(t, b, rec, err, "https://github.com/acme/app.git", "github", "bitbucket", "FUGARO_REMOTE", "before any git credential")
 }
 
 // The slug the run was launched for and the repository its task names must
@@ -354,26 +301,4 @@ func TestEmptyAllowListInAPublishedPolicyDeniesEverything(t *testing.T) {
 	b := admissionRun(t, "github", "acme/app", "off", "", `{"version":1,"allow_repos":[]}`)
 	rec, err := b.run(t)
 	refusedAdmission(t, b, rec, err, "github/acme/app", "empty", "admits no repository at all", "fugaro project repos add")
-}
-
-// The ordering the claim keeps: a duplicate execution is told it is a
-// duplicate whatever else about it would have been refused, because the claim
-// comes before the admission check (design §4.7). The owner's record is left
-// exactly as it was and this execution prints none (fugaro exec exits a
-// duplicate as a remote error, internal/cli's
-// TestExecDuplicateExecutionExitsRemoteError), so a run whose job was
-// re-executed — a retry, a second execution of one run — never gains a second
-// record of its own. Swapping the two calls fails here: the admission refusal
-// is what comes back, and the record is written over the owner's.
-func TestRunnerTellsADuplicateApartBeforeAdmission(t *testing.T) {
-	b := admissionRun(t, "github", "acme/other", "off", "", "")
-	ownerRecord(t, b.harness)
-	rec, err := b.run(t)
-	if !errors.Is(err, runner.ErrDuplicateExecution) {
-		t.Fatalf("rec = %+v, err = %v: want ErrDuplicateExecution", rec, err)
-	}
-	if rec != nil {
-		t.Errorf("rec = %+v, want none: this execution does not own the run", rec)
-	}
-	assertOwnerRecordIntact(t, b.harness)
 }

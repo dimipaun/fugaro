@@ -512,7 +512,7 @@ repos:
 		ExtraSecrets:  map[string]string{logical: id},
 		ProjectNumber: testProjectNumber,
 	}
-	got, _, err := Readiness(ctx, f.c, spec, ex, false)
+	got, _, err := Readiness(ctx, f.c, spec, ex)
 	if err != nil {
 		t.Fatal(err)
 	}

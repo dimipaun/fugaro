@@ -38,7 +38,7 @@ func readinessPolicy(t *testing.T, f *cloud, spec RepoSpec, policy bool) (RepoSp
 		t.Fatal(err)
 	}
 	ex.PolicyExists = policy
-	got, missing, err := Readiness(context.Background(), f.c, spec, ex, false)
+	got, missing, err := Readiness(context.Background(), f.c, spec, ex)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,19 +54,7 @@ func readinessPolicyErr(t *testing.T, f *cloud, spec RepoSpec, policy bool) (Rep
 		t.Fatal(err)
 	}
 	ex.PolicyExists = policy
-	return Readiness(context.Background(), f.c, spec, ex, false)
-}
-
-// readinessPolicyPlanErr is readinessPolicyErr under --plan-only: Readiness is
-// read-only there, so a refusal that exists to stop a change is skipped.
-func readinessPolicyPlanErr(t *testing.T, f *cloud, spec RepoSpec, policy bool) (RepoSpec, []Missing, error) {
-	t.Helper()
-	_, ex, err := DiscoverRepo(context.Background(), f.c, spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ex.PolicyExists = policy
-	return Readiness(context.Background(), f.c, spec, ex, true)
+	return Readiness(context.Background(), f.c, spec, ex)
 }
 
 // The other half of D11's gate, which nothing pinned before (the review of
@@ -144,47 +132,6 @@ func TestReadinessRefusesAnApplyThatWouldStrandAnExistingJobsPolicy(t *testing.T
 		t.Errorf("err = %v, want the apply to go ahead and warn before a policy exists", err)
 	} else if !slices.ContainsFunc(missing, func(m Missing) bool { return m.Kind == MissingNote }) {
 		t.Errorf("missing = %v, want the L3 note", missing)
-	}
-}
-
-// The refusal above exists to stop a *change*, so --plan-only skips it, as
-// init.go's planRepo skips refuseClonesNotShipped and the retirement gate: a
-// plan creates and changes nothing, and an operator who cannot see the plan
-// cannot fix what the refusal is about. What is skipped is only the refusal —
-// the plan still reports the Firebase gate for the very job, so it prints as
-// one that cannot be deployed until the backend is configured.
-func TestReadinessSkipsTheStrandingRefusalUnderPlanOnly(t *testing.T) {
-	f := newCloud(t)
-	spec, err := Repo(budgetInputs(t, ""))
-	if err != nil {
-		t.Fatal(err)
-	}
-	readyJob(t, f, spec)
-	for _, ws := range spec.Workflows {
-		f.run.SetJob(ws.Job, ws.Labels, ws.Image)
-		f.run.SetJobEnv(ws.Job, map[string]string{
-			RTDBURLEnv:        "https://aurora-fp-default-rtdb.firebaseio.com",
-			FirebaseAPIKeyEnv: "AIzaSyFakeWebApiKeyForTests000000000",
-		})
-	}
-	got, missing, err := readinessPolicyPlanErr(t, f, spec, true)
-	if err != nil {
-		t.Fatalf("err = %v, want --plan-only to show the plan rather than refuse it: the plan changes nothing", err)
-	}
-	if len(got.Workflows) == 0 {
-		t.Fatal("the plan carries no workflow")
-	}
-	// The problem the refusal is about is not hidden with it.
-	gated := map[string]bool{}
-	for _, m := range missing {
-		if m.Kind == MissingFirebase {
-			gated[m.Workflow] = true
-		}
-	}
-	for name := range got.Workflows {
-		if !gated[name] {
-			t.Errorf("workflow %s's plan does not report the Firebase gate: %v", name, missing)
-		}
 	}
 }
 

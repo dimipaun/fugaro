@@ -257,7 +257,7 @@ func TestDisabledAPIsReadAsMissing(t *testing.T) {
 				t.Fatalf("repo: %v", err)
 			}
 			check("repo", rim, wantRepo)
-			if _, _, err := Readiness(ctx, f.c, spec, ex, false); err != nil {
+			if _, _, err := Readiness(ctx, f.c, spec, ex); err != nil {
 				t.Fatalf("readiness: %v", err)
 			}
 			if len(servers[service].Requests()) == 0 {
@@ -283,7 +283,7 @@ func TestReadinessDisabledAPIsMissing(t *testing.T) {
 			}
 			s := map[string]*gcpfake.Server{"secretmanager.googleapis.com": f.sm.Server, "artifactregistry.googleapis.com": f.ar.Server}[service]
 			f.su.Disable(service, s)
-			_, missing, err := Readiness(ctx, f.c, spec, ex, false)
+			_, missing, err := Readiness(ctx, f.c, spec, ex)
 			if err != nil {
 				t.Fatal(err)
 			}

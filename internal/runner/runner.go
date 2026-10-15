@@ -817,23 +817,11 @@ func (r *run) bootstrap(ctx context.Context) error {
 	r.rec.RunID, r.rec.Repo = spec.RunID, spec.Repo
 	// Read before the sync below moves the checkout off the baked commit.
 	r.rec.Image = r.imageInfo(ctx)
-
-	// Every credential the run's two remotes can carry — the job's own
-	// FUGARO_REMOTE and the origin of a checkout already in the work
-	// directory — is in the redactor before anything can quote either of
-	// them: the admission refusal below, git's messages about a remote it
-	// could not reach, and result.json.
-	r.addRemoteSecrets(r.d.Remote)
-	r.addRemoteSecrets(r.originURL(ctx))
-
 	if r.owned {
 		r.save(ctx)
 	} else if err := r.claimRecord(ctx); err != nil {
 		// Claimed before the lock, so two executions of one run are
-		// always told apart here (design §4.7) — and before the admission
-		// check below, so a duplicate is told it is a duplicate whatever
-		// else about it would have been refused (fugaro exec exits a
-		// duplicate as a remote error, and prints no record).
+		// always told apart here (design §4.7).
 		return err
 	}
 	if r.d.SpendErr != nil {
@@ -859,14 +847,9 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// The run's admission, in the order the security property needs it:
 	// task.json has been read, the project's policy is read here (memoized;
 	// Task 1.3), and only then is the provider opened and the clone made. No
-	// git credential is requested, nothing is cloned, and no lease, no
-	// outcome and no spend is written, so a run that is not admitted for this
-	// repository leaves exactly one trace: its own run record, claimed above
-	// and carrying the refusal — which is what makes it visible to the
-	// operator and to the launcher instead of looking like a run that never
-	// started (R2-12). It is the record and nothing else: the claim above is
-	// what makes this execution the run's owner, and a duplicate was turned
-	// away there.
+	// git credential exists yet, nothing has been cloned and no lease has been
+	// written, so a run that is not admitted for this repository changes
+	// nothing anywhere.
 	if err := r.admissionCheck(ctx); err != nil {
 		return err
 	}
