@@ -151,6 +151,84 @@ func TestRetryMintsFresh(t *testing.T) {
 	}
 }
 
+// The fail-open this closes: a config that names a budget mode but no
+// database. budgetBackendOn said "no backend" and the launch went ahead with
+// no token, which is right for a mode-off installation and wrong for every
+// other one — the project's policy is the node the *allow-list* lives in
+// (allow_repos), the launcher reads it through budget.rtdb_url, and with no
+// URL there is nothing to read, so the launch admitted every repository the
+// policy refuses. The condition the launcher can evaluate is the mode, and it
+// is the mode that decides: off is the operator saying "no policy bounds this
+// installation", anything else claims one does.
+//
+// Both orders are pinned because they are different code: without
+// --no-budget-check the budget pre-check runs first (and skips, having no
+// database to check either), with it the policy gate is the only thing left.
+// The refusals must be the same one and it must name the setting, because the
+// operator's fix is a config line.
+func TestModeOnWithoutADatabaseIsRefused(t *testing.T) {
+	for _, mode := range []string{"observe", "enforce"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newCloudFixture(t)
+			f.appendConfig(t, "budget: { mode: "+mode+", per_run_usd: 5 }\n")
+			for _, tc := range []struct {
+				name string
+				args []string
+			}{
+				{"as launched", nil},
+				{"--no-budget-check", []string{"--no-budget-check"}},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					args := append([]string{"run", "--repo", "acme/app", "--run-id", budgetRun}, tc.args...)
+					_, _, err := execute(t, append(args, "Add a feature")...)
+					if err == nil || ExitCode(err) != ExitUserError {
+						t.Fatalf("err = %v (exit %d), want a user error: a launch that cannot read the policy must not go ahead", err, ExitCode(err))
+					}
+					for _, want := range []string{"budget.rtdb_url", mode, "allow_repos", "aurora"} {
+						if !strings.Contains(err.Error(), want) {
+							t.Errorf("the refusal does not say %q: %v", want, err)
+						}
+					}
+					if n := len(f.run.Executions()); n != 0 {
+						t.Errorf("%d executions were created for a refused launch", n)
+					}
+					if storedTask(t, f) {
+						t.Error("the refused launch stored a task")
+					}
+					if tok := readToken(t, f, budgetRun); tok != "" {
+						t.Error("the refused launch left a budget token in the bucket")
+					}
+				})
+			}
+		})
+	}
+}
+
+// The same hole at the line the finding cites (budgetMintOn's early return):
+// the mint decision must refuse rather than answer "no token needed" when the
+// mode is on and there is no database to read a policy from. A launch cannot
+// reach it any more (the policy gate refuses first, and refuses before
+// anything exists), so this is the belt-and-braces half — the day another
+// caller mints for a launch the gate did not see. What must not change is the
+// mode-off half: a config with no budget block, or one that is off, still
+// skips the mint entirely (TestBudgetOffSkipsEverything).
+func TestMintIsRefusedWithoutADatabaseWhenTheModeIsOn(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, "budget: { mode: observe, per_run_usd: 5 }\n")
+	env := memEnv(t, f)
+	if on, err := env.budgetMintOn(context.Background()); on || err == nil || !strings.Contains(err.Error(), "budget.rtdb_url") {
+		t.Fatalf("budgetMintOn = (%v, %v), want a refusal naming budget.rtdb_url", on, err)
+	}
+	for _, cfg := range []string{"budget: { mode: off }\n", ""} {
+		off := newCloudFixture(t)
+		off.appendConfig(t, cfg)
+		envOff := memEnv(t, off)
+		if on, err := envOff.budgetMintOn(context.Background()); on || err != nil {
+			t.Fatalf("budgetMintOn with %q = (%v, %v), want a skip", cfg, on, err)
+		}
+	}
+}
+
 // newOffModeBudget is the launch fixture with the budget mode off in the
 // operator's config and the budget block spelled as given, so that what makes
 // a launch mint (or refuse to) is the only thing that varies.
@@ -646,8 +724,13 @@ func TestBudgetOffSkipsEverything(t *testing.T) {
 	for name, cfg := range map[string]string{
 		"off, backend configured": "budget: { mode: off, rtdb_url: URL, token_signer: " + testSigner + " }\n",
 		"no budget block":         "",
-		"observe, no backend":     "budget: { mode: observe, per_run_usd: 5 }\n",
 	} {
+		// The row that used to be here — "observe, no backend", a mode that is
+		// not off with no rtdb_url — is no longer a skip: that is the config
+		// TestModeOnWithoutADatabaseIsRefused pins a refusal for, because a
+		// mode that is not off is the operator saying the project's policy
+		// bounds this installation, and with no database the launcher cannot
+		// read the policy it would then be launching under.
 		t.Run(name, func(t *testing.T) {
 			iam := gcpfake.NewIAMCredentials(t)
 			iam.AddSigner(testSigner)

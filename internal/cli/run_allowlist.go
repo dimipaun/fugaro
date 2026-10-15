@@ -42,6 +42,16 @@ import (
 // the launch claim: a refused launch leaves nothing behind at all — no task,
 // no token, no claim and no execution.
 func launchPolicyGates(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) error {
+	// A launch that cannot read the policy at all refuses here, before the
+	// read below answers "not found" for a node it never looked for
+	// (missingDatabaseRefusal, launch_budget.go). It is this gate's business
+	// and not the budget pre-check's: the pre-check is the operator's to skip
+	// (--no-budget-check) and skips itself when there is no backend, while the
+	// allow-list is not his to skip — the run is held to it whatever the mode
+	// is.
+	if err := missingDatabaseRefusal(env.lc); err != nil {
+		return err
+	}
 	p, found, err := env.policy.read(ctx, env.lc)
 	var ve *projectpolicy.VersionError
 	if errors.As(err, &ve) {
