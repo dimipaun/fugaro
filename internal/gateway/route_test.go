@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -965,5 +966,91 @@ func TestClaudeKeepsUnlistedTopLevelFields(t *testing.T) {
 	}
 	if string(r.fake.Body(0)) != body {
 		t.Errorf("claude body changed: %q", r.fake.Body(0))
+	}
+}
+
+// TestNoAnthropicKey: with no Anthropic key stored the run still serves the
+// models its providers claim, and a call that needs the Anthropic upstream is
+// refused by name with the fix (design project-centric §6.1).
+func TestNoAnthropicKey(t *testing.T) {
+	u := pricing.Usage{Input: 10, Output: 20}
+	prov, psrv := anthropicfake.New(t, anthropicfake.MessageOK(dsModel, u))
+	h := newHarnessWith(t, func(o *Options) {
+		o.Upstream.APIKey = "" // no key stored
+		o.Routes = []Route{{
+			Name: "openrouter", Models: []string{"deepseek/*"}, BaseURL: psrv.URL + "/api", Auth: "bearer",
+			Credential: func() (string, error) { return providerKey, nil },
+		}}
+	})
+	h.gw.BeginStage(routedStage)
+
+	// The model the provider claims never touches the Anthropic key.
+	if resp, b := h.post(msg(dsModel, 100)); resp.StatusCode != 200 {
+		t.Fatalf("a routed model without an Anthropic key: %d %s", resp.StatusCode, b)
+	}
+	if prov.Count() != 1 || h.fake.Count() != 0 {
+		t.Fatalf("provider saw %d, Anthropic saw %d", prov.Count(), h.fake.Count())
+	}
+
+	// A Claude model has no route: the gateway refuses it and says what to do.
+	resp, b := h.post(msg(sonnet, 100))
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("a Claude model without a key: %d %s", resp.StatusCode, b)
+	}
+	for _, want := range []string{"no Anthropic API key is stored", "fugaro secrets set anthropic-api-key", "route the model through a provider"} {
+		if !strings.Contains(b, want) {
+			t.Errorf("the refusal does not say %q: %s", want, b)
+		}
+	}
+	if h.fake.Count() != 0 {
+		t.Error("the refused call reached the Anthropic upstream")
+	}
+
+	// A streamed Claude call is refused the same way: the check runs before
+	// the streaming branch, so nothing reaches the upstream either.
+	resp, b = h.post(msg(sonnet, 100, `"stream":true`))
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(b, "fugaro secrets set anthropic-api-key") {
+		t.Errorf("a streamed Claude model without a key: %d %s", resp.StatusCode, b)
+	}
+	if h.fake.Count() != 0 {
+		t.Error("the refused streamed call reached the Anthropic upstream")
+	}
+
+	// A token count for it cannot be served either: counting is Anthropic's.
+	// The same status and error type as the messages refusal, so one missing
+	// key reads the same on both paths.
+	resp, b = h.post2("/v1/messages/count_tokens", msg(sonnet, 100))
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(b, "anthropic-api-key") || !strings.Contains(b, "invalid_request_error") {
+		t.Errorf("count_tokens without a key: %d %s", resp.StatusCode, b)
+	}
+	if h.fake.Count() != 0 {
+		t.Error("the refused token count reached the Anthropic upstream")
+	}
+
+	// The refusal is a violation the stage report carries, like the others,
+	// from either path.
+	if rep := h.gw.EndStage(); !slices.Contains(rep.Violations, missingAnthropicKey) {
+		t.Errorf("stage report violations = %v, want the missing-key refusal", rep.Violations)
+	}
+}
+
+// TestUpstreamRequestNeverSendsAnEmptyKey (defense in depth, design
+// project-centric §8.2-ish hardening): the two callers refuse a keyless
+// Anthropic call with the actionable message before the request is built, but
+// the builder itself must never put an empty x-api-key on the wire. It
+// returns an error instead, so a future caller cannot send an unauthenticated
+// call under this run's own headers.
+func TestUpstreamRequestNeverSendsAnEmptyKey(t *testing.T) {
+	h := newHarnessWith(t, func(o *Options) { o.Upstream.APIKey = "" })
+	r := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(msg(sonnet, 10)))
+	up, sent, err := h.gw.upstreamRequest(t.Context(), r, route{upstream: h.up.URL + "/v1/messages"}, []byte(msg(sonnet, 10)))
+	if err == nil || !strings.Contains(err.Error(), "fugaro secrets set anthropic-api-key") {
+		t.Fatalf("upstreamRequest with no key: %v, want the actionable refusal", err)
+	}
+	if up != nil {
+		t.Errorf("a refused request was built: %v", up)
+	}
+	if sent != nil && sent.Load() {
+		t.Error("the refused request was marked as sent")
 	}
 }

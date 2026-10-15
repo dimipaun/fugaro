@@ -421,14 +421,17 @@ func TestValidateWarnsOnLooserThanCeiling(t *testing.T) {
 	if !got.Valid || len(got.Problems) != 0 || len(got.Warnings) != 4 {
 		t.Fatalf("json = %+v", got)
 	}
-	// A tighter file says nothing about the ceilings. The no-language-runtime
-	// warning still fires (cliMinimalYAML's workflow has no mise config
-	// either way): stripped out by its own exact text before asserting no
-	// warning at all remains, so a ceiling-unrelated warning this test does
-	// not expect (a clamp, say) would still be caught.
+	// A tighter file says nothing about the ceilings. Two ceiling-unrelated
+	// lines still fire — the pinned Claude model needs a stored Anthropic key
+	// (the file's enforce is the effective mode), which is a note, not a
+	// warning, and cliMinimalYAML's workflow installs no language runtime
+	// either way — and both are stripped out by their own exact text before
+	// asserting no warning at all remains, so a ceiling-unrelated warning this
+	// test does not expect (a clamp, say) would still be caught.
 	path = fileWithBudget(t, "budget: { mode: observe, per_run_usd: 5 }\n", "budget: { mode: enforce, per_run_usd: 2 }\n", pinnedAgent)
 	_, errOut, err = execute(t, "validate", path)
-	stripped := strings.Replace(errOut, "warning: workflows.app: no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)\n", "", 1)
+	stripped := strings.Replace(errOut, "note: agent.auth: "+anthropicKeyNeeded+"\n", "", 1)
+	stripped = strings.Replace(stripped, "warning: workflows.app: no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)\n", "", 1)
 	if err != nil || strings.Contains(stripped, "warning") {
 		t.Fatalf("tightening warned: %v %q", err, stripped)
 	}
@@ -731,6 +734,78 @@ func TestValidateNotesProvidersOpenToEveryRepository(t *testing.T) {
 		}
 		if !strings.Contains(errOut, "warning: "+tc.want) {
 			t.Fatalf("%s: no note naming the provider: %s", name, errOut)
+		}
+	}
+}
+
+// TestValidateNotesAnthropicKeyNeededOffline (design
+// docs/design/project-centric.md §6.1): a pin that goes direct to Anthropic
+// needs the Anthropic key, and validate says so offline -- whether the secret
+// has a version is a fact only the cloud knows -- naming the fix. A run whose
+// pins a provider may all serve gets no such note.
+func TestValidateNotesAnthropicKeyNeededOffline(t *testing.T) {
+	const enforce = "budget: { mode: enforce, per_run_usd: 2 }\n"
+	const observe = "budget: { mode: observe, per_run_usd: 2 }\n"
+	const allProvider = "  auth: api-key\n  models: { coder: deepseek/deepseek-v4-flash, reviewer: deepseek/deepseek-v4-flash, background: deepseek/deepseek-v4-flash }"
+	const claudePins = "  auth: api-key\n  models: { coder: claude-sonnet-5-5, reviewer: claude-sonnet-5-5 }"
+	for _, tc := range []struct {
+		name   string
+		budget string
+		agent  string
+		repo   string
+		want   string
+	}{
+		{"a Claude pin", enforce, claudePins, "acme/sandbox", anthropicKeyNeeded},
+		{"every pin served by a provider", enforce, allProvider, "acme/sandbox", ""},
+		{"a provider pin this repository may not be sent to", enforce, allProvider, "acme/other", anthropicKeyNeeded},
+		// Without a gateway the key is needed whatever the pins are: every
+		// call goes direct to Anthropic (config.AnthropicKeyNeeded). The
+		// same rule init asks, so the two can't disagree.
+		{"a Claude pin, budget observe", observe, claudePins, "acme/sandbox", anthropicKeyNoEnforce},
+		{"a Claude pin, budget off", "budget: { mode: off }\n", claudePins, "acme/sandbox", anthropicKeyNoEnforce},
+		{"every pin served by a provider, budget observe", observe, allProvider, "acme/sandbox", anthropicKeyNoEnforce},
+		// oauth brings its own token: no key, no note, whatever the mode.
+		{"oauth, budget observe", observe, "  auth: oauth\n  model: claude-sonnet-5-5", "acme/sandbox", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inCheckoutOf(t, tc.repo)
+			path := budgetProject(t, tc.budget+validateProviderBlock, tc.agent)
+			_, errOut, _ := execute(t, "validate", path)
+			got := ""
+			for _, line := range strings.Split(errOut, "\n") {
+				if rest, ok := strings.CutPrefix(line, "note: agent.auth: "); ok {
+					got = rest
+				}
+			}
+			if got != tc.want {
+				t.Fatalf("note = %q, want %q:\n%s", got, tc.want, errOut)
+			}
+		})
+	}
+}
+
+// TestValidateJSONNotesTheAnthropicKey: the note is machine-readable too, in
+// its own channel: never a problem, never a warning.
+func TestValidateJSONNotesTheAnthropicKey(t *testing.T) {
+	inCheckoutOf(t, "acme/sandbox")
+	path := budgetProject(t, "budget: { mode: off }\n", "  auth: api-key\n  model: claude-sonnet-5-5")
+	out, _, _ := execute(t, "validate", "--json", path)
+	var got validateOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	var note bool
+	for _, n := range got.Notes {
+		if n.Path == "agent.auth" && n.Message == anthropicKeyNoEnforce {
+			note = true
+		}
+	}
+	if !note {
+		t.Fatalf("notes = %+v, want the Anthropic key note", got.Notes)
+	}
+	for _, p := range append(append([]config.Problem{}, got.Problems...), got.Warnings...) {
+		if strings.Contains(p.Message, "Anthropic API key") {
+			t.Errorf("the key needs a note, not %v: %s", p.Path, p.Message)
 		}
 	}
 }

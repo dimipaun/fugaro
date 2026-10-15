@@ -288,6 +288,38 @@ func TestBudgetPreviewTypicalSkipsOldRecords(t *testing.T) {
 	}
 }
 
+// TestBudgetPreviewTypicalWindowIsThirtyDays: the typical line is the
+// repository's last 30 days (previewHistoryWindow, the design's window), not
+// everything the runs bucket still holds, and a run older than the window
+// must not reach the figure or the counts beside it — an old run is not a
+// run of the window that cost nothing.
+//
+// Mutation (run, restore): previewHistoryWindow to 60*24*time.Hour — the
+// 31-day run is read, and both assertions here fail: the figure is taken
+// from 6 runs, and the 40-day record is reported as a run of the window.
+func TestBudgetPreviewTypicalWindowIsThirtyDays(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.SetCaps(100, 3, 20, 3)
+	f.SetSpentToday(0)
+	f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
+	f.SeedRuns(t, 0, 5, previewRunStages(0.60, 0.10, 0.20, 1.00))
+	// One priced run outside the window (31 days), and one plain record
+	// outside it too (40 days), which the notes would count as unpriced if
+	// the window reached it.
+	f.SeedRuns(t, 31*24, 1, previewRunStages(9.00, 9.00, 9.00, 9.00))
+	f.SeedRuns(t, 40*24, 1, []previewStage{{kind: "implement"}, {kind: "review"}})
+	out, errOut, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "typical: $2.40 a run (7 stages, from 5 runs of the last 30 days)") {
+		t.Errorf("a run older than the window reached the figure:\n%s", out)
+	}
+	if strings.Contains(errOut, "recorded no cost for any stage") {
+		t.Errorf("a run older than the window was counted among the runs of the window:\n%s", errOut)
+	}
+}
+
 // TestBudgetPreviewTypicalSkipsUnreadableRecords: a run whose result.json is
 // missing or damaged is not an old record, and the note must not call it one:
 // each group of runs the figure cannot use is named for what it is.

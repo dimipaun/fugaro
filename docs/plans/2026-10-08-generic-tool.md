@@ -1875,7 +1875,7 @@ are inert or unreachable while the `cloneShipped` gate is off, none of them
 changes a `baked` workflow, and each is now recorded in the user-facing doc
 (`docs/checkout.md`, "Known gaps") as an open gap rather than described as
 working. (a) — `fugaro run --repo` deciding from the local `fugaro.yaml` rather
-than from the deployed job — reopens when `cloneShipped` flips in Task 18 and is
+than from the deployed job — reopens when `cloneShipped` flips (its own tiny PR, after Check 38) and is
 the first thing that round should pick up: the doc now says to run `fugaro run`
 in the repository's checkout until then. Closing (d) is a
 `deploy/terraform/gcp/modules/repo` change, and (c) needs the deployed job's
@@ -1920,6 +1920,29 @@ numbering-ruling note). No existing check is renumbered.
 
 **Depends on:** Tasks 16 and 17, and base-image Task 16 (the setup skill's 0.7.0 rewrite).
 
+**Deviation from the plan's Step 5 (owner's ruling, 2026-10-14): this task does
+NOT flip `cloneShipped` or change `cloneSince` in
+`internal/cli/recipes_skew.go`.** The owner wants that in a separate, tiny PR,
+opened only **after Check 38 has passed**: until a build with the gate open has
+been through the live check there is nothing to justify the flip, and the
+release it names (`cloneSince`) cannot be named before that. Check 38's own
+setup says so and names the build it needs. Nothing else in this task changes;
+the deferred gap (a) above reopens with that separate PR, not with this one.
+That PR also bumps `cloneSince` if Check 38 found the runner side needs a fix:
+the release that fix ships in is the release `cloneSince` then has to name (the
+check's own finding decides it). If the check needed no runner fix, `cloneSince`
+already names the release that shipped Task 17 and stays as it is. That PR owns
+the edits the flip makes stale as well as the constant:
+`docs/checkout.md`'s "not shipped yet" notes (which
+`internal/cli/docs_checkout_test.go` holds to `cloneShipped`), this skill's
+topic 12 in `plugin/skills/setup/reference/decisions.md` and its one line in
+`plugin/skills/setup/SKILL.md`, `plugin/setup_skill_test.go`'s
+`TestSetupSkillOffersClone` (which asserts "not shipped", "leave the key out",
+`cloneShipped` and the gate's refusal in both files: rewriting topic 12 to say
+clone ships turns it red, so the flip PR rewrites those assertions with the
+text), and `docs/release.md`'s "Verify `cloneSince`" bullet (which now says
+the flip is not the release commit's edit).
+
 **Files:** `docs/gcp-live-checklist.md` (Check 38), `plugin/skills/setup/reference/decisions.md`, `plugin/skills/setup/SKILL.md` (one line), `plugin/setup_skill_test.go`.
 
 - [ ] **Step 1: Write the failing test.** `TestSetupSkillOffersClone`:
@@ -1932,6 +1955,7 @@ numbering-ruling note). No existing check is renumbered.
 - [ ] **Step 3: Write**
 
 Check 38, "clone workflows (sandbox only, run by you; USER-RUN, NOT RUN)", in the format of Checks 29 and 30:
+- **step 0:** the two builds the check cannot start without — the CLI binary (from a scratch checkout of the flag branch, with `cloneShipped` flipped to `true` by hand, never committed) and a base image built and pushed from that same checkout — and pointing the installation's `base_images.base` at the dev image, because the sandbox's release base image predates `cloneSince` and no released base image carries Task 17's runner;
 - **the setup:** a sandbox workflow switched to `checkout: clone` on a branch, merged in the sandbox repository, `fugaro init --repo` in your terminal;
 - **step 1:** one run, which records the execution start, the `provision` stage's duration and the first stage's start;
 - **step 2:** the job's image as `gcloud run jobs describe` shows it;
@@ -2211,7 +2235,7 @@ Add to the operator steps, after the base-image upgrade order:
 
 Starts right after 0.7.0 is released. **No task below is in any 0.7.0 group or in the 0.7.0 release notes.**
 
-**Owner ruling, 2026-10-14: Tasks 26, 27 and 28 are dropped.** Cloud Run gen-2 does not support Docker, so the Check 31 measurement and the Docker-on-gen-2 backend are pointless, and Task 28 (a Cloud Batch backend) was conditional on Check 31, so it is not scheduled either (a Docker-capable backend can be designed again if real demand appears). Tasks 24, 25 and 29 may ship in 0.7.5.
+**Owner ruling, 2026-10-14: Tasks 26 and 27 are dropped, and Task 28 is RESTORED.** Cloud Run gen-2 does not support Docker, so the Check 31 gen-2 measurement (Task 26) and Docker on gen-2 (Task 27) are pointless. The Docker-capable backend itself is **not** dropped: the design (generic-tool section 1) was gen-2 first and a VM backend as the fallback, gen-2 failed, so **the compute-instance backend (Task 28) is now the way to run Docker workloads**. It is no longer conditional on Check 31. A correction: an earlier edit of this section wrongly dropped Task 28 together with Tasks 26 and 27. Task 28 starts with a design (`docs/design/compute-backend.md`) that compares Cloud Batch and plain Compute Engine instances; no task below is written in detail until the design is approved. Tasks 24, 25 and 29 may ship in 0.7.5.
 
 ## Group F: cost preview (branch `gt-cost`)
 
@@ -2305,9 +2329,9 @@ Outline only; the full tasks are written after the FACT lines:
 - the selftest checks the socket is user-owned;
 - SECURITY.md is updated.
 
-### Task 28 (DROPPED with Task 26: it was conditional on Check 31): a Cloud Batch backend, if only C passes
+### Task 28 (RESTORED, owner ruling 2026-10-14: the Docker-capable backend on compute instances; design first): a compute-instance backend
 
-Outline only, about 12 tasks:
+Outline only, about 12 tasks. The outline below assumes Cloud Batch (managed Compute Engine VMs); the design compares it with plain Compute Engine instances and may change it:
 - `internal/backend/batch` passes `backendtest.Run` on a new Batch fake in `internal/gcpfake`;
 - `backend: cloud-batch` in the project config;
 - `fugaro init`'s Batch stage (job template, service account reuse, log routing into the existing log bucket);

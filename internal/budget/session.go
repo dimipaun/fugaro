@@ -500,17 +500,18 @@ func (s *Session) Admit(ctx context.Context, o AdmitOptions) (*Halt, error) {
 			return &Halt{Reason: ReasonNoCap, Scope: d.Scope, Detail: d.Detail}, nil
 		}
 		if _, ok := sn.Caps.RepoDaily(); !ok {
-			return &Halt{Reason: ReasonNoCap, Scope: ScopeRepo, Detail: "no daily cap is set for this repository and there is no default (fugaro budget set --defaults --repo-daily)"}, nil
+			d := noRepoDailyCap()
+			return &Halt{Reason: ReasonNoCap, Scope: d.Scope, Detail: d.Detail}, nil
 		}
 		if _, ok := sn.Caps.GlobalDaily(); !ok {
-			return &Halt{Reason: ReasonNoCap, Scope: ScopeGlobal, Detail: "no global daily cap is set (fugaro budget set --global --daily)"}, nil
+			return &Halt{Reason: ReasonNoCap, Scope: ScopeGlobal, Detail: "no global daily cap is set (" + globalDailyHint + ")"}, nil
 		}
 	} else if o.LocalEnforce {
 		// The database's caps are advisory, but this run enforces: it needs
 		// a per-run cap from somewhere.
 		if _, ok := sn.Caps.PerRun(); !ok && o.PolicyCap <= 0 {
 			return &Halt{Reason: ReasonNoCap, Scope: ScopeRun,
-				Detail: "budget.mode is enforce but no per-run cap is set (budget.per_run_usd, or fugaro budget set --global --per-run for the whole project, or --defaults --per-run)"}, nil
+				Detail: "budget.mode is enforce but no per-run cap is set (budget.per_run_usd, or " + defaultsPerRunHint + " and " + globalPerRunHint + ")"}, nil
 		}
 	}
 	return nil, nil

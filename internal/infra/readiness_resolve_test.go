@@ -2,6 +2,7 @@ package infra
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -111,5 +112,43 @@ func TestCheckJobSpecCarriesResolvedGitSecretID(t *testing.T) {
 	// existing env var, not a spec regenerated from scratch.
 	if !strings.Contains(raw2, `"repo":"`+before.Repo+`"`) || len(after.Workflows) != len(before.Workflows) {
 		t.Errorf("the re-marshaled spec lost what it had: %q", raw2)
+	}
+}
+
+// TestReadinessProjectSecretGateNeedsDiscoveryConfirmation: the project copy
+// of a candidate resolves only when discovery confirmed a live,
+// correctly-labelled secret at its ID (readiness.go's ex.ProjectSecretsOK
+// gate). The gate is what keeps Readiness from resolving a project-wide
+// copy it never saw: discovery is the one place the labels are checked, and
+// a candidate the config computes but discovery did not vouch for — the
+// secret is absent, or was never read — must not be mounted into a job.
+//
+// Handing Readiness an Existing that discovery did not fill in is exactly
+// the state the gate exists for, and no live cloud is needed for the
+// resolution itself: the secret at the candidate ID is live and correctly
+// labelled, so without the gate it resolves.
+//
+// Mutation (run, restore): drop the `if !ex.ProjectSecretsOK[logical]`
+// check from readiness.go's resolveProject — ProjectSecrets names the
+// project copy, which discovery never confirmed, and this test fails.
+func TestReadinessProjectSecretGateNeedsDiscoveryConfirmation(t *testing.T) {
+	f := newCloud(t)
+	spec := projectSpec(t, projectSecretLC)
+	// The repository copy has no enabled version, so resolution falls to
+	// the project copy; the project copy is live and correctly labelled, so
+	// discovery *would* have confirmed it.
+	f.sm.Seed(spec.Secrets["bitbucket-token"], with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, "bitbucket-token"), nil)
+	want := f.seedProjectSecret(spec, "bitbucket-token")
+	got, missing, err := Readiness(t.Context(), f.c, spec, Existing{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id := got.ProjectSecrets["bitbucket-token"]; id != "" {
+		t.Errorf("ProjectSecrets[bitbucket-token] = %q, want none: discovery never confirmed the project copy (it is %s)", id, want)
+	}
+	if !slices.ContainsFunc(missing, func(m Missing) bool {
+		return m.Kind == MissingSecret && strings.Contains(m.Reason, "bitbucket-token")
+	}) {
+		t.Errorf("missing = %v, want an unresolved bitbucket-token", missing)
 	}
 }

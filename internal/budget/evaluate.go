@@ -189,7 +189,7 @@ func Evaluate(st State, w Write, caps Caps, kills Kills, now time.Time) Decision
 	// committed one.
 	switch cap, ok := caps.RepoDaily(); {
 	case !ok:
-		check(Decision{Reason: ReasonNoCap, Scope: ScopeRepo, Detail: "no daily cap is set for this repository and there is no default (fugaro budget set --defaults --repo-daily)"}, enforcing)
+		check(noRepoDailyCap(), enforcing)
 	case add(st.Repo.Counted, w.Amount) > cap:
 		check(deny(ReasonRepoDailyCap, ScopeRepo, "this repository's daily cap %s reached (%s counted, %s needed)", dollars(cap), dollars(st.Repo.Counted), dollars(w.Amount)), enforcing)
 	}
@@ -198,7 +198,7 @@ func Evaluate(st State, w Write, caps Caps, kills Kills, now time.Time) Decision
 	}
 	switch cap, ok := caps.GlobalDaily(); {
 	case !ok:
-		check(Decision{Reason: ReasonNoCap, Scope: ScopeGlobal, Detail: "no global daily cap is set (fugaro budget set --global --daily)"}, enforcing)
+		check(Decision{Reason: ReasonNoCap, Scope: ScopeGlobal, Detail: "no global daily cap is set (" + globalDailyHint + ")"}, enforcing)
 	case add(st.Global.Counted, w.Amount) > cap:
 		check(deny(ReasonGlobalDailyCap, ScopeGlobal, "the project's daily cap %s reached (%s counted, %s needed)", dollars(cap), dollars(st.Global.Counted), dollars(w.Amount)), enforcing)
 	}
@@ -242,14 +242,34 @@ func negativeState(st State) (Decision, bool) {
 	return Decision{}, false
 }
 
+// The hints a no_cap refusal prints, naming the flags `fugaro budget set`
+// really has: the repository defaults take --defaults with --daily or
+// --per-run, the project's own caps --global with the same two (cli/budget.go).
+// TestCapHintsNameRealFlags checks every flag these messages name against the
+// command itself.
+const (
+	defaultsDailyHint  = "fugaro budget set --defaults --daily <usd>"
+	defaultsPerRunHint = "fugaro budget set --defaults --per-run <usd>"
+	globalDailyHint    = "fugaro budget set --global --daily <usd>"
+	globalPerRunHint   = "fugaro budget set --global --per-run <usd>"
+)
+
+// noRepoDailyCap is the refusal when neither the repository nor the defaults
+// carry a daily cap.
+func noRepoDailyCap() Decision {
+	return Decision{Reason: ReasonNoCap, Scope: ScopeRepo,
+		Detail: "no daily cap is set for this repository and there is no default (" + defaultsDailyHint + ")"}
+}
+
 // noCap is the refusal for a run that no per-run cap bounds: neither the
 // repository's own cap, nor the default for repositories without one, nor the
 // project's global cap is set, so the rules read null on every side and deny
 // the lease (fail closed). The scope is the project's: the global cap is the
-// one that would bound every repository.
+// one that would bound every repository. It is the only per-run no_cap left:
+// a cap on any of the three sides bounds the run (D6).
 func noCap(what string) Decision {
 	return Decision{Reason: ReasonNoCap, Scope: ScopeGlobal,
-		Detail: "no " + what + " cap is set: not for this repository, no default for repositories without one, and none for the project (fugaro budget set --global --per-run, or --defaults --per-run)"}
+		Detail: "no " + what + " cap is set: not for this repository, no default for repositories without one, and none for the project (" + globalPerRunHint + ", or " + defaultsPerRunHint + ")"}
 }
 
 func deny(r Reason, s Scope, format string, args ...any) Decision {
