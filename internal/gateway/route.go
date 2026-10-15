@@ -153,7 +153,7 @@ func checkRouteBaseURL(s string) error {
 }
 
 // routeFor is the route that claims model, or nil: any model no route claims
-// goes to Options.Upstream, a claimed Claude ID included.
+// goes to Options.Upstream (the direct Anthropic route); a CLAIMED Claude ID is not one of them: it matches its provider route first.
 func (s *Server) routeFor(model string) *Route {
 	for i := range s.o.Routes {
 		if s.o.Routes[i].matches(model) {

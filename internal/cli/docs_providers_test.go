@@ -178,13 +178,21 @@ func TestReadmeOpenRouterSetup(t *testing.T) {
 		}
 	}
 
-	// Claude goes direct, never through a provider: the section must say so,
-	// and the rule must still be the code's.
-	if !strings.Contains(section, "Claude models never go through a provider") {
-		t.Error("the README OpenRouter section does not say Claude models never go through a provider")
+	// Claude goes direct by default and a provider route for it is an explicit
+	// opt-in (one exact anthropic/<id> in a provider's models): the section
+	// must say both, and the rule must still be the code's (CheckClaudeClaim
+	// accepts that one shape and refuses a wildcard).
+	if !strings.Contains(section, "Claude models go direct to Anthropic by default") {
+		t.Error("the README OpenRouter section does not say Claude models go direct by default")
 	}
-	if why := config.CheckModelPattern("anthropic/claude-sonnet-5-5"); why == "" {
-		t.Error("a provider may claim an anthropic/ model, so the README section is wrong")
+	if !strings.Contains(section, "explicit opt-in") || !strings.Contains(section, "`anthropic/<id>`") {
+		t.Error("the README OpenRouter section does not describe the explicit anthropic/<id> opt-in")
+	}
+	if why := config.CheckClaudeClaim("anthropic/claude-sonnet-5.5"); why != "" {
+		t.Errorf("an exact anthropic/<id> is the one claim a provider may make, but the code says %q, so the README section is wrong", why)
+	}
+	if why := config.CheckClaudeClaim("anthropic/*"); why == "" {
+		t.Error("a wildcard claim must be refused, but the code accepts it, so the README section is wrong")
 	}
 
 	// The section's "ship at <release>" sentence is catalogSince, and the
