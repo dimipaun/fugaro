@@ -119,13 +119,50 @@ workflows:
     timeouts: { total: 90m, stage: 40m, verify: 30m, finalize_reserve: 5m }
 ```
 
-`agent.models` pins a model per role (coder, reviewer, background), and an optional `budget:` block can only tighten the owner's caps ([docs/gcp-setup.md](docs/gcp-setup.md#turning-the-model-budget-on)). **Other models (experimental):** the coder can be a non-Anthropic model through OpenRouter, while Claude Code stays the harness and Claude the reviewer; the project owner opts each repository in. See [docs/multi-model.md](docs/multi-model.md).
+`agent.models` pins a model per role (coder, reviewer, background), and an optional `budget:` block can only tighten the owner's caps ([docs/gcp-setup.md](docs/gcp-setup.md#turning-the-model-budget-on)). **Other models (experimental):** the coder can be a non-Anthropic model through OpenRouter, while Claude Code stays the harness and Claude the reviewer; the project owner opts each repository in. Setup: [Other models through OpenRouter](#other-models-through-openrouter); the full guide is [docs/multi-model.md](docs/multi-model.md).
 
 **Recipes:** pick the review loop per run (`fugaro run --recipe solo`) or per repository (`agent.recipe`); see [docs/recipes.md](docs/recipes.md).
 
 **Project layer:** a project can publish shared defaults and named workflow profiles that every anchored repository's minimal `fugaro.yaml` inherits; see [docs/project-layer.md](docs/project-layer.md).
 
 **Checkout:** by default a workflow runs a per-repository image with a clone baked into it (`checkout: baked`); a workflow can instead run the installation's base image and clone blobless at start (`checkout: clone`), for repositories that need no build; see [docs/checkout.md](docs/checkout.md).
+
+## Other models through OpenRouter
+
+A run's coder (and reviewer) can be a non-Anthropic model served by OpenRouter — one key for models Claude Code cannot reach, with the gateway pricing every call — while Claude Code stays the harness. **Claude models never go through a provider**: `claude-*` and `anthropic/*` go direct to Anthropic. The **owner** sets this up in the project config, not a repository; the long guide is [docs/multi-model.md](docs/multi-model.md).
+
+1. **Decide whose code may leave.** A provider is available to a repository only if the operator's project config lists that repository in the provider's `allow_data_to`; an absent list (or the explicit `["*"]`) means every repository, on purpose, and a list written with no repositories in it (`[]`) is refused as ambiguous. So the owner, never the repository, decides which repositories may send code to OpenRouter.
+2. **Declare the provider** in the operator's project config, `~/.config/fugaro/projects/<project>.yaml` — a repository's `fugaro.yaml` cannot add a provider, a URL or a price:
+
+   ```yaml
+   providers:
+     openrouter:
+       kind: anthropic-compat          # the only kind
+       base_url: https://openrouter.ai/api
+       auth: bearer                    # bearer | x-api-key
+       secret: openrouter-api-key      # the secret's NAME, never the key
+       route_fee_pct: 5.5              # what your account pays on top, 0 to 50 (default 0)
+       models: ["deepseek/*"]          # exact IDs, or a prefix ending in *
+       allow_data_to: [<owner>/<repo>] # absent or ["*"] = every repository
+   budget:
+     mode: enforce                     # a provider model needs the gateway enforcing
+     per_run_usd: 2                    # enforce needs a per-run cap
+   ```
+
+3. **Store the key in your own terminal**: `fugaro secrets set openrouter-api-key`, run from a checkout of one of the listed repositories, then type `<your key>` at the hidden prompt. The value is read only from stdin or that prompt: **never put a key in a file, on a command line or in a chat**, and it is never printed. `fugaro secrets set openrouter-api-key --project-wide` stores it once for the whole project instead of per repository, needs no checkout, and reaches the same repositories `allow_data_to` already allows.
+4. **Pin the models in the repository's `fugaro.yaml`** — the repository can only name a model the owner has already opened to it:
+
+   ```yaml
+   agent:
+     auth: api-key                     # oauth and vertex are refused with a provider model
+     models:
+       coder: deepseek/deepseek-v4.1-flash
+       reviewer: deepseek/deepseek-v4.1-flash
+   ```
+
+   `fugaro validate` checks each pin against the local config. A model no provider claims, or one whose provider's `allow_data_to` does not name this repository, is refused: *"… is served by provider openrouter, whose allow_data_to does not name `<owner>/<repo>`: the owner must list the repository in the project config before its code may be sent there"*.
+5. **Costs.** Provider calls are real dollars, priced from Fugaro's built-in price catalog plus the route fee, and capped like Claude's: the per-run cap (`budget.per_run_usd` in the project config, and a repository's own tightening `budget.per_day_usd`) and, with the shared budget on, the project's and repository's daily caps. `fugaro budget preview --recipe standard --runs N` is the ceiling for a batch, and `fugaro budget prices` prints the catalog's prices offline. A `model_prices` entry in the project config replaces the catalog's row for that model — the escape hatch for a model it mis-prices or does not list. The two catalog switches, `require_zdr` (default true: a price, not an enforcement, and something only your OpenRouter account can decide) and `price_policy`, ship at 0.7.5; `fugaro init --repo` refuses a route that sets either until then, so leave both out of the block above.
+6. **Deploy and check.** `fugaro init --repo` in each listed repository carries the provider list into its jobs and mounts the key's secret; rerun it after any change to the project config's providers, prices or budget, since a version upgrade does not refresh deployed jobs. `fugaro doctor` reports providers left open to every repository, the price catalog's age, and that `require_zdr` prices a tier rather than enforcing zero-data-retention.
 
 ## Requirements
 
