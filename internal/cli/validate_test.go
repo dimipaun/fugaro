@@ -968,9 +968,11 @@ func TestValidateJSONNotesTheAnthropicKey(t *testing.T) {
 // providers or pins -- and that is the truth about the pair, not a gap to
 // close. The two halves are also not one rule: under agent.auth: oauth the
 // pins half is skipped entirely (an oauth run has no gateway, so nothing is
-// priced or pinned) while the provider half still runs. The unclaimed
-// claimed-shape pin in this test is refused under either auth, by the
-// provider half.
+// priced or pinned) while the provider half still runs -- the last sub-case
+// is what pins that, with one config carrying both halves' subjects, an alias
+// pin and a coder the fixture provider serves. The unclaimed claimed-shape
+// pin in the first sub-case is refused by CheckProviderPolicy, the provider
+// half, which is why it does not move with the auth.
 func TestValidateJudgesProvidersOnlyWithAMatchingLocalConfig(t *testing.T) {
 	const budget = "budget: { mode: enforce, per_run_usd: 2 }\n" + validateProviderBlock
 	const agent = "  auth: api-key\n  models: { coder: deepseek/deepseek-v4-flash, reviewer: anthropic/claude-sonnet-5.5 }"
@@ -1032,17 +1034,30 @@ func TestValidateJudgesProvidersOnlyWithAMatchingLocalConfig(t *testing.T) {
 	if strings.Contains(out+errOut, "no provider serves it") {
 		t.Errorf("another project's config judged the pin:\nout: %s\nstderr: %s", out, errOut)
 	}
-	// The halves are not one rule. An alias pin under api-key is the pins
-	// half's refusal; under oauth that half does not run at all, while the
-	// provider half above still does.
-	const alias = "  auth: api-key\n  model: sonnet"
-	path = budgetProject(t, budget, alias)
+	// One config carrying both halves' subjects: an alias pin, which the
+	// pins half refuses, and a coder the fixture provider serves, which the
+	// provider half refuses under oauth. Under api-key the alias is named
+	// (the provider half passes, its auth rule being api-key's own) and
+	// under oauth it is not -- the pins half never looked -- while the
+	// refusal at agent.models.coder is CheckProviderAuth's wording, which no
+	// other rule writes. Skipping the provider half for oauth too would fail
+	// both assertions below.
+	const both = "  auth: api-key\n  model: sonnet\n  models: { coder: deepseek/deepseek-v4-flash }"
+	path = budgetProject(t, budget, both)
 	inCheckoutOf(t, "acme/sandbox")
-	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.models.coder") {
+	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "sonnet is an alias") {
 		t.Fatalf("api-key alias pin: exit %d, out %q", ExitCode(err), out)
 	}
-	path = budgetProject(t, budget, strings.Replace(alias, "api-key", "oauth", 1))
-	if out, _, err = execute(t, "validate", path); err != nil || !strings.Contains(out, "is valid") {
-		t.Fatalf("under oauth the pins half still ran: err %v, out %q", err, out)
+	path = budgetProject(t, budget, strings.Replace(both, "api-key", "oauth", 1))
+	inCheckoutOf(t, "acme/sandbox")
+	out, _, err = execute(t, "validate", path)
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.models.coder") {
+		t.Fatalf("oauth, a provider-served coder: exit %d, out %q", ExitCode(err), out)
+	}
+	if !strings.Contains(out, "an oauth token is a Claude subscription credential") {
+		t.Errorf("the refusal under oauth is not CheckProviderAuth's: %q", out)
+	}
+	if strings.Contains(out, "sonnet is an alias") {
+		t.Errorf("the pins half judged the alias under oauth: %q", out)
 	}
 }
