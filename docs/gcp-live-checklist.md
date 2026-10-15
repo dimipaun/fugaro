@@ -2123,17 +2123,56 @@ gcloud iam service-accounts describe "${PROBE_SA:?}" --project="${P:?}" >/dev/nu
 
 ### 2. U1 — can a Bitbucket credential be scoped to one project (design §4.5)?
 
-The owner creates, **in Bitbucket's UI — no agent creates a credential** — a **project access token on a dedicated Bitbucket project** that holds **two scratch repositories created for this probe** (`fugaro-probe-1`, `fugaro-probe-2`; empty, no production code), plus **a third scratch repository in a different Bitbucket project/workspace** as the out-of-scope target — a scratch repository too, **never** a production one, and never anything under `edgeappinc`. Then, in a scratch checkout (nothing of the sandbox's, and never the `belong` checkout):
+The owner creates, **in Bitbucket's UI — no agent creates a credential** — a **project access token on a dedicated Bitbucket project** that holds **two scratch repositories created for this probe** (`fugaro-probe-1`, `fugaro-probe-2`; empty, no production code), plus **a third scratch repository in a *second* Bitbucket project of the SAME workspace** as the out-of-scope target — a scratch repository too, **never** a production one, and never anything under `edgeappinc`. **The second project must be in the same workspace** (review I2): a repository in another *workspace* proves nothing about project scoping, which is the only question here, and it would be reached by a workspace-level credential whatever the project scoping were.
+
+**Two owner decisions come before the token exists.** First, **Bitbucket project access tokens are a Premium feature** (Atlassian's own documentation says so, for project and workspace tokens alike), so a free scratch workspace answers "cannot be scoped" for a billing reason and nothing else: either the owner makes the scratch workspace Premium and runs the probe, or the owner answers **U1 "cannot be scoped"**, leaves Bitbucket on the per-repository path and re-decides D5 — the safe answer is available without any token. This check does **not** decide that for the owner. Second, and only if the workspace is Premium: the token is created in the project's own settings, and its scopes are whatever Bitbucket offers there (project access tokens are not scope-selectable in the way repository tokens are — record what Bitbucket's UI shows).
+
+**The scratch checkout is its own throwaway repository** (review I3), created here, never the sandbox's and never `belong`'s; it copies none of the sandbox's history and pushes only its own commit. Run the guard block first (it asserts the sandbox checkout), then leave it:
 
 ```bash
-PROBE_WS=${PROBE_WS:?the probe workspace that holds fugaro-probe-1 and fugaro-probe-2}
-OUT_WS=${OUT_WS:?the other scratch workspace/project holding the out-of-scope probe repository}
-git ls-remote "https://x-token-auth:${PROBE_TOKEN:?the probe project access token, typed by you}@bitbucket.org/${PROBE_WS}/fugaro-probe-1.git"
-git push "https://x-token-auth:${PROBE_TOKEN:?}@bitbucket.org/${PROBE_WS}/fugaro-probe-1.git" HEAD:probe-check   # one push to a scratch branch
-git ls-remote "https://x-token-auth:${PROBE_TOKEN:?}@bitbucket.org/${OUT_WS}/fugaro-probe-3.git"             # the out-of-scope target: must be refused
+SCRATCH=$(mktemp -d); cd "$SCRATCH"
+git init -q
+git config user.email chk52@example.invalid; git config user.name "Check 52 probe"
+printf 'Check 52 probe scratch\n' > README.md
+git add README.md; git commit -qm "Check 52 probe: throwaway commit"
+PROBE_WS=${PROBE_WS:?the scratch Bitbucket workspace that holds the probe projects}
+PROBE_PROJECT=${PROBE_PROJECT:?the project holding fugaro-probe-1 and fugaro-probe-2, in PROBE_WS}
+OUT_WS=${OUT_WS:?the workspace holding the out-of-scope project; must equal PROBE_WS}
+OUT_PROJECT=${OUT_PROJECT:?the second project in PROBE_WS, holding fugaro-probe-3}
 ```
 
-**FACT:** whether the token reads and pushes to exactly the project's repositories, whether it is refused by the other project's probe repository, and the token's own scopes as Bitbucket reports them. **If the scope cannot be a Bitbucket project's repositories, Bitbucket projects stay on the per-repository path** (design §4.5) — **the owner is told before phase 3 starts**, D5 is re-decided, and plan Tasks 3.1 to 3.7 proceed for GitHub only. The fallback the design names — a runtime fetch by secret-name prefix with an IAM condition — is itself probe U3 below and **reintroduces the shared-service-account exposure of §4.1**, so it is a decision, not a default.
+**Two hard stops, on top of the three above** (review I2): the workspace must be a scratch workspace, and the out-of-scope project must be in that *same* workspace — a production workspace, `edgeappinc` in particular, stops the check before any token is used:
+
+```bash
+[ -n "${PROBE_WS:?}" ] && [ "$PROBE_WS" != edgeappinc ] && [ -n "${OUT_WS:?}" ] && [ "$OUT_WS" != edgeappinc ] && [ -n "${OUT_PROJECT:?}" ] \
+  || { echo "Check 52 stopped: PROBE_WS and OUT_WS must be non-empty scratch workspaces, never edgeappinc" >&2; exit 1; }
+[ "$OUT_WS" = "$PROBE_WS" ] \
+  || { echo "Check 52 stopped: OUT_WS must be the same workspace as PROBE_WS — another workspace proves nothing about project scoping" >&2; exit 1; }
+```
+
+**The token never touches the command line, a file, a URL or the shell history** (review I1): it is read with `read -rs` (no echo), exported only into the environment of a per-command `GIT_ASKPASS` helper script the check writes and removes, and the git URLs carry no credentials at all:
+
+```bash
+read -rs -p 'Bitbucket probe project access token (not echoed): ' PROBE_TOKEN; echo
+ASKPASS=$(mktemp)
+cat > "$ASKPASS" <<'SH'
+#!/bin/sh
+case "$1" in *sername*) printf '%s\n' x-token-auth ;; *) printf '%s\n' "$PROBE_TOKEN" ;; esac
+SH
+chmod 700 "$ASKPASS"
+export PROBE_TOKEN GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0
+
+git remote add probe1 "https://bitbucket.org/${PROBE_WS:?}/${PROBE_PROJECT:?}/fugaro-probe-1.git"
+git remote add probe2 "https://bitbucket.org/${PROBE_WS:?}/${PROBE_PROJECT:?}/fugaro-probe-2.git"
+git ls-remote probe1                                  # in the token's project: must succeed
+git push probe1 HEAD:probe-check                      # one push to a scratch branch: must succeed
+git ls-remote probe2                                  # the second repository of the same project: must succeed
+git push probe2 HEAD:probe-check                      # and a push to it (review I2): must succeed
+git ls-remote "https://bitbucket.org/${OUT_WS:?}/${OUT_PROJECT:?}/fugaro-probe-3.git"   # the out-of-scope project: must be REFUSED
+unset PROBE_TOKEN; rm -f "$ASKPASS"
+```
+
+**FACT:** whether the token reads and pushes to exactly the project's repositories (both of them), whether it is refused by the *other project of the same workspace*, and the token's own scopes as Bitbucket reports them. **If the scope cannot be a Bitbucket project's repositories, Bitbucket projects stay on the per-repository path** (design §4.5) — **the owner is told before phase 3 starts**, D5 is re-decided, and plan Tasks 3.1 to 3.7 proceed for GitHub only. The fallback the design names — a runtime fetch by secret-name prefix with an IAM condition — is itself probe U3 below and **reintroduces the shared-service-account exposure of §4.1**, so it is a decision, not a default.
 
 ### 3. U2 — does a Cloud Run **secret reference** work inside a container env override?
 
