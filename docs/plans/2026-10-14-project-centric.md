@@ -531,3 +531,129 @@ End with: "**Paste back:** every FACT line above, never a secret value and never
 **Tests:** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`.
 
 **Depends on:** Tasks 1.2 (the rules it deploys), 1.3, 1.4, 1.5, 1.6. **Owns the phase's one owner-run step.**
+
+## Phase 1b — the routing switch (four tasks; gated on two other PRs)
+
+The design's §6.2. **The gate is real and is not this phase's to control**: #359's phase 2 (the `anthropic/<id>` claim and `IsAlias(model, claimed)`) and the price catalog (#361) must be merged. **If they are not merged when phase 1 ends, this phase waits and phases 2 to 6 proceed** — nothing in them reads the routing switch (P7). The switch is *delivered* by the policy (Task 1.1's `Routing` field) but *written* only by the operator, in the local operator config or the project layer, and a repository can never write it (D1a).
+
+### Task 1b.1: `routing.claude` — the object, its validation and its delivery
+
+**Files:** `internal/config/config.go` (+ the operator's section), `internal/localcfg/localcfg.go` (+ tests), `internal/config/{providers.go,validate.go}` (+ tests), `internal/projectpolicy/policy.go` (+ test), `internal/cli/project.go` (publish).
+
+**Verified today:** `ClaudePatterns` forces Claude direct and `CheckModelPattern` refuses a provider pattern overlapping it (`internal/config/providers.go:331-344`, `:205-220`); `pricing.IsAlias` refuses the `anthropic/` prefix and `~` (`internal/pricing/alias.go:30-44`), and `CheckPins` refuses the pin (`internal/config/pins.go:27-32`); the provider's `openness` is `AllowDataTo` (`internal/config/providers.go:164` `OpenToEveryRepoReason` — an absent `allow_data_to` means every repository, which is exactly why D1b's safeguard must require it to be **written**).
+
+**Interfaces.** Consumes: Task 1.1's `projectpolicy.Policy.Routing`; #359's claim mechanism. Produces: `config.RoutingClaude{Via string; Models []string}` and `localcfg.Config.Routing`, plus `RoutingClaudeFor(pins, providers) (route string, model string, ok bool)` — one resolver used by the pins renderer, the price lookup and `validate`.
+
+1. `config.RoutingClaude` with `Via` in `direct|openrouter|auto` (empty ⇒ `direct`, D1b) and an **explicit list of canonical Claude IDs** in `Models` — never a pattern: a glob, a bare prefix or an empty list with `via: openrouter` is refused by validation with the message naming D1a and the merged ruling it comes from.
+2. Validation: `openrouter` and `auto` resolve to a provider **only when that provider's `allow_data_to` is written**, as a list or the explicit `["*"]` (design §6.2). An absent `allow_data_to` with `via: openrouter` is refused at config load, naming `allow_data_to` and the provider.
+3. Definition sites: the operator's local config and the project layer, and **nowhere else** — a repository's `fugaro.yaml` has no `routing` key, which the existing `TestRepoCannotAddProvider`-style test asserts for this key too.
+4. `policy publish` copies `Routing` into `config/policy/shared`; `project show` prints the objects and the IDs.
+
+**Tests:** `TestRoutingAbsentIsDirect`; `TestRoutingRefusesAGlob`; `TestRoutingRefusesOpenrouterWithoutAllowDataTo`; `TestRepoCannotWriteRouting`; `TestPolicyCarriesRouting`.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/config/... ./internal/localcfg/... ./internal/projectpolicy/... -count=1`. **Commit:** "config: routing.claude, an explicit ID list, absent means direct".
+
+### Task 1b.2: the canonical-to-route ID map
+
+**Files:** `internal/pricing/catalog/gencatalog/main.go` (+ `main_test.go`), `internal/pricing/catalog/catalog.json` (regenerated), `internal/pricing/{catalog_apply.go,pricing.go}` (+ tests), `internal/config/pricetable.go`, `internal/runner/{agentenv.go,spend.go,gateway.go}` (+ tests), `scripts/gen-price-catalog.sh`.
+
+**Verified today:** the gateway never rewrites a body, so a Claude model has a different ID per route (`claude-sonnet-5-5` versus `anthropic/claude-sonnet-5.5`) and nothing translates between them (design §2.4); `stagePins` returns nil when the gateway is off (`internal/runner/agentenv.go:54-57`) and renders the pins at `:54-77`; the price catalog's rows are keyed by the provider's model ID (`internal/pricing/catalog`).
+
+**Interfaces.** Consumes: the catalog's rows and the switch (1b.1). Produces: a `canonical` field on a catalog row and one resolver, `pricing.RouteIDFor(canonical string, route string) (string, bool)`, used by the pin renderer, the price lookup and the recorded `serving_model`/`priced_as`.
+
+1. The generator: the allowlist gains the Claude rows **only under the opt-in the catalog plan's D8 defers to this phase**, and each Claude row carries `canonical_id` (the direct ID, `claude-sonnet-5-5`) beside its own key (the route's ID, `anthropic/claude-sonnet-5.5`). A row whose canonical ID is missing, or two rows claiming one canonical ID on one route, is a hard error — the same class of refusal the catalog's Task 1 already has.
+2. `RouteIDFor` and its inverse: given a canonical ID and a resolved route, the ID to send and the ID to price. **The same function is what `serving_model`/`priced_as` are recorded with**, so a bill, a charge and a record name the same model — the design's requirement (§6.2) and Review Focus 11's mutation.
+3. `stagePins` (`internal/runner/agentenv.go:54-77`): with the gateway on and `routing.claude.via` naming this Claude ID, the pin renders the route's ID; otherwise the canonical ID, exactly as today. **With the gateway off nothing changes**: `stagePins` still returns nil (routing exists only with the gateway, D11 makes that the project-centric mode).
+4. The price lookup and the gateway's route resolution use the same resolved ID, so a Claude pin routed through OpenRouter is priced from the catalog's row for that route (the catalog plan's P5 builder) and never from the Anthropic table.
+
+**Tests:** `TestCanonicalMapRoundTrip` (Review Focus 11), `TestGeneratorRefusesDuplicateCanonicalID`, `TestStagePinsUseTheRouteIDOnlyWhenOptedIn`, `TestClaudePinWithoutOptInIsUnchanged`, `TestRoutedClaudeIsPricedFromTheCatalogRow`.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/pricing/... ./internal/config/... ./internal/runner/... -count=1`. **Depends on:** 1b.1 and the merged catalog. **Commit:** "pricing: the canonical-to-route ID map, one resolver for pins, prices and records".
+
+### Task 1b.3: what the owner sees, offline included
+
+**Files:** `internal/cli/{validate.go,doctor.go,diagnose.go}` (+ tests), `docs/multi-model.md`, `docs/design/mixed-credentials.md` (a pointer only).
+
+1. `validate`: prints the routing resolution **when it can read the policy** (an operator's config and credentials), and **"unresolved offline"** when it cannot — this is a requirement, not a wording choice (design §11): `fugaro validate` is offline, and a resolution it cannot see must not be printed as if it had been. A project with **no Anthropic key and a Claude pin** fails validation with a message naming `routing.claude: openrouter` (design §6.2's safeguard).
+2. `doctor`: a `routing-resolution` check (info) printing the same resolution, or that it is unresolved, and a `routing-cache-markers` info naming that the cost of a routed Claude senior is unmeasured until Check 50 runs.
+3. `docs/multi-model.md`: the owner-facing paragraph — the object, the explicit list, the absent-means-direct default, the `allow_data_to` requirement, and the one sentence about cache markers being a live question with a number attached (Check 50).
+
+**Tests:** `TestValidatePrintsUnresolvedOffline` and `TestValidateRefusesAClaudePinWithNoKeyAndNoSwitch` are the two that matter; plus `TestDoctorRoutingCheckNamesTheLiveQuestion`.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/cli/... -count=1` and `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`. **Commit:** "cli: the routing resolution, printed when readable and said unresolved when not".
+
+### Task 1b.4: Check 50 — OWNER-RUN
+
+Append `## Check 50: a Claude senior through a provider route, and whether its cache markers survive (installation fugaro only, never belong; run by you; NOT RUN)` and its row. Steps, guarded and hard-coded like Check 48, with the restore:
+
+1. Setup, guard, and the recorded state (the sandbox's pins, `routing.claude`, the job env's prices, the key's credit).
+2. The refusal, unclaimed: with no `routing.claude`, a `anthropic/<id>` pin is refused at every surface. **FACT:** the refusal text.
+3. The claim: `routing.claude: {via: openrouter, models: [claude-sonnet-5-5]}`, published. **FACT:** `fugaro validate`'s resolution line, and that a repository cannot write it (an attempt to add `routing:` to the sandbox's `fugaro.yaml` is refused).
+4. Two runs of the same small task, one direct (no switch) and one routed. **FACT:** the reviewer's own `model call` lines — `serving_model`, `priced_as`, `cache_read`/`cache_write_5m` token counts and `charged_micros` — plus `cost.model_usd` and `cost.reported_usd` for both, and the bill for the day.
+5. **The conclusion that is the point of the check:** whether the routed run reports cache **reads** at all. A routed Claude senior that never reports one is charged at the full input rate, which is the difference between list price and several times list price (design §6.2). **FACT:** both token counts, and one sentence on the cost difference.
+6. The `auto` case: `via: auto` with and without an Anthropic key version. **FACT:** which route each run took, and that with no key the run does not fall through silently.
+7. Restore: the switch removed (`policy publish` without it), the pins put back, one ordinary sandbox task confirming the sandbox still runs.
+
+**Paste back:** every FACT line, never a key or a token. **If step 5 shows the markers do not survive, the design's conclusion does not change but the docs do** — Task 1b.3's paragraph gains the measured number, and the switch's help text says what it costs. **Depends on:** 1b.1 to 1b.3.
+
+## Phase 2 — project-scope keys by default (four tasks)
+
+The design's §6.3 and D2. **This phase changes a security default** and says so: #343's rule was "nothing shared until the owner says so" (`docs/design/project-secrets.md` §3(b), and its *Veto alternatives* (b) at `:57`); D2 makes storing at project scope *be* the opt-in. What it does **not** change is the data-policy gate: a provider's `allow_data_to` still decides which repositories' code the gateway may route to that provider, at runtime, and it still does **not** keep the key out of a shared job's environment (design §6.3).
+
+### Task 2.1: `secrets set` stores at project scope — SECURITY-SENSITIVE, independent opus review
+
+**Files:** `internal/cli/secrets.go` (+ `secrets_test.go`), `internal/cli/initsecrets.go` (+ tests), `internal/infra/readiness.go` (messages), `SECURITY.md`.
+
+**Verified today:** `secrets set` resolves a repository by default (`resolveSecretRepo`) and stores `gcp.SecretID(r.slug, name)` (`internal/cli/secrets.go:214-286`); `--project-wide` is the opt-in (`:76`, `checkScope` at `:80-92`) and its eligibility runs through `projectSecretRefusal` (`:289-296`: `allow_data_to` must list at least one repository) and `repoMayUseProject` (`:497`). `gcp.ProjectSecretID(fugaroProject, logical)` is `internal/backend/gcp/names.go:154`.
+
+**Interfaces.** Consumes: #343's machinery unchanged (the containers, the precedence, `ResolvedSecretID`). Produces: a new default in `secretsOptions` (`scope` derived from the flags), and the same store/read paths.
+
+1. **Scope resolution becomes explicit and defaults to project.** `fugaro secrets set <name>` with neither flag stores the **project** copy; `--repo` (or `--repo <slug>`) stores the repository copy and is kept until phase 3, where a repository copy loses its job to mount it. `--project-wide` stays as an accepted synonym of the default so existing scripts and the skills do not break, and `--repo` + `--project-wide` stay mutually exclusive (`:87`).
+2. **The reserved names are swept in, the OAuth tokens are not** (D2): `anthropic-api-key`, the git credentials (`config.ReservedSecrets`' names except the Claude OAuth namespace) and provider keys are eligible project-wide **without the per-name `allow_data_to` list** — `projectSecretRefusal` no longer fires for them. `claude-oauth-token-*` keeps its refusal: it is person-owned and phase 5 replaces it (`claudeOAuthAccountRefusal`, `:200-204`).
+3. What "reaches every enrolled repository" means is written in the code's message and in SECURITY.md, in one sentence: **inside a shared job a project secret has no IAM boundary between repositories — the profile is the boundary** (design §4.1, §6.3), and `workflows.<n>.secrets` cannot be shared across a job's mounts (they become named project secrets on a profile, or stay on the per-repository path).
+4. `init --repo`'s secrets stage (`internal/cli/initsecrets.go`): a name the project already covers stops being asked for, which extends #343's 40i to the new default. **The prompt text says the value will be stored project-wide** unless `--repo` is passed, because the prompt is where a person learns the blast radius.
+5. `SECURITY.md`: the D2 paragraph — the default, what it reverses, the profile as the boundary, and the data-policy gate's unchanged role.
+
+**Tests:** `TestSecretsSetDefaultsToProjectScope`; `TestSecretsSetRepoFlagStoresTheRepoCopy`; `TestProjectWideIsStillAccepted`; `TestAnthropicKeyNeedsNoAllowDataToList`; `TestOAuthTokenStillRefusesProjectScope`; `TestInitRepoDoesNotAskForAProjectCoveredSecret`; `TestAllowDataToStillGatesProviderRoutes` (Review Focus 8, in `internal/gateway`).
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/cli/... ./internal/gateway/... -count=1`. **Commit:** "secrets: project scope is the default (D2)".
+
+### Task 2.2: a project-scope key mounts on the repository's job until phase 3
+
+**Files:** `internal/infra/spec.go` (+ `secretmounts_test.go`), `internal/infra/readiness.go` (+ tests).
+
+**Verified today:** `SecretMounts` (`internal/infra/spec.go:585-600`) takes the logical name and resolves the secret ID elsewhere (`Inputs.Secrets`, `:273`, and `ProjectSecrets`/`ProjectSecretCandidates` from #343, `:287-291`); `SecretID`/`ProjectSecretID` are `internal/backend/gcp/names.go:143-154`.
+
+1. A name that resolves to the **project** copy mounts the project's secret ID on the repository's job (`gcp.ProjectSecretID`), which #343 already supports; this task makes it the *default* resolution rather than the opted-in one, and pins it with a test that the mounted ID is the project's when no repository copy exists.
+2. Readiness: a project-covered name is never reported missing (`internal/infra/readiness.go`'s `resolveProject`, `:100-158`), and the fix line names `fugaro secrets set <name>` (now project scope) rather than `--repo`.
+3. The phase-3 hand-off, stated in the file's comment: when the repository stops having its own job (phase 3), the same resolution feeds a **profile's** mount list instead, and the repository copy's precedence survives only on the per-repository path.
+
+**Tests:** `TestProjectSecretMountsOnTheRepoJobWithoutARepoCopy`, `TestRepoCopyStillWins`, `TestReadinessNamesTheProjectScopeFix`.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/infra/... -count=1`. **Depends on:** 2.1. **Commit:** "spec: a project-scope key mounts on the repository's job".
+
+### Task 2.3: docs, doctor and the drift note
+
+**Files:** `internal/cli/doctor.go` (+ tests), `internal/cli/upgrade_cloud.go` (+ tests), `docs/project-layer.md`, `docs/multi-model.md`, `docs/dogfooding.md` (the review list already names secrets), `plugin/skills/setup/**`.
+
+1. `doctor`: a `secret-scope` check (info) listing which names are project-scope and which are repository copies, and a `warning` when a repository copy shadows a project name (the footgun `secrets.go:275-286` already warns about at set time). This is the "launcher grants"-adjacent surface the cross-cutting list asks for: what a job mounts, and from where.
+2. `upgrade`'s drift note (`internal/cli/upgrade_cloud.go:162-177`): after D2, a name stored at project scope changes what a job **mounts** when the project secret is created or deleted — so the note says when a re-run of `init --repo` is still needed for a mount (phase 3 removes this) and when it is not.
+3. Docs and skills as in Task 1.6 step 6, extended with the D2 paragraph and, in the setup skill, the changed prompt wording.
+
+**Tests:** `TestDoctorSecretScopeCheck`, `TestDoctorWarnsOnAShadowedProjectName`, `TestUpgradeNoteNamesTheMountCase`, plus the docs tests for the edited text.
+
+**Command:** `GOFLAGS=-p=2 go test ./internal/cli/... -count=1` and `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`. **Commit:** "doctor, upgrade and the docs: what project scope changes".
+
+### Task 2.4: Check 51 — OWNER-RUN
+
+Append `## Check 51: project scope by default, and what it reaches (installation fugaro only, never belong; run by you; NOT RUN)` and its row. **Check 40 stays as it is** — it verifies #343's opted-in path, which is still reachable through `--project-wide` and through a repository copy; this check verifies the new default. Steps, guarded and hard-coded, with the restore:
+
+1. Setup and guard; record `fugaro secrets ls --json`, the sandbox job's mounts and the sandbox key's scope.
+2. The default: `fugaro secrets set anthropic-api-key` in the sandbox checkout **with no flag**, and paste the scope line alone. **FACT:** the scope, and that the sandbox's job mounts the **project** secret ID after the next `init --repo` (the mount is the phase's remaining Terraform step, D2's 12a item 10).
+3. The reach, and the boundary: a second sandbox repository (or the same one with a repository copy removed) runs with the project key. **FACT:** the run starts, and one sentence on what the profile boundary is until phase 3 (each repository still has its own job).
+4. The gate is unchanged: a provider route whose `allow_data_to` does not list the sandbox repository is still refused at runtime even though the key is project-scope. **FACT:** the gateway's refusal verbatim.
+5. A repository copy still wins: `secrets set --repo <name>` then run. **FACT:** which secret version the job mounted (the IDs visible in `fugaro secrets ls --json`), and that removing the copy falls back to the project's.
+6. Nothing leaks: `fugaro secrets ls`, `fugaro diagnose`, the run's logs and a `terraform plan` of the sandbox root printed to a file. **FACT:** the absence of any value (bytes count, never the value).
+7. Restore: put back the scope and copies step 1 recorded, one ordinary sandbox task.
+
+**Paste back:** every FACT line, never a secret value. **Depends on:** 2.1 to 2.3.
