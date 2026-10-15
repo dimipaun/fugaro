@@ -35,6 +35,12 @@ type doctorRig struct {
 func newDoctorRig(t *testing.T) *doctorRig {
 	t.Helper()
 	dir := t.TempDir()
+	// The rig runs the whole command, catalog check included, on a clock
+	// inside the shipped catalog's own window: a check that turns into a
+	// warning as the file ages (the catalog's 30 days, catalog.StaleAfter)
+	// must not decide whether these tests pass, and --strict fails on a
+	// warning.
+	pinCatalogClock(t, shippedCatalog(t), 24*time.Hour)
 	r := &doctorRig{dir: dir, crm: gcpfake.NewCRM(t), billing: gcpfake.NewBilling(t), sm: gcpfake.NewSecrets(t)}
 	r.crm.AddProject("proj-1234", 123456789012)
 	r.crm.SetPolicy("proj-1234", gcpfake.Binding{Role: "roles/owner", Members: []string{"user:owner@example.com"}})

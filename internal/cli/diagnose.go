@@ -281,7 +281,7 @@ func routeOf(d *Diagnosis, rec *runstore.Record, lc *localcfg.Config, red func(s
 	// included). A table that cannot be built leaves the pin warnings out
 	// (a nil table looks nothing up): they would be about a table no run
 	// would use.
-	prices, _, err := priceTable(lc, time.Now())
+	prices, _, err := priceTable(lc, budgetNow())
 	if err != nil {
 		prices = nil
 	}

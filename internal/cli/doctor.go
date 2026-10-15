@@ -258,7 +258,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		return failed(err)
 	}
 	o.Checks = append(o.Checks, sharedConfigChecks(ctx, sel, lc, time.Now())...)
-	o.Checks = append(o.Checks, doctorPriceCatalog(time.Now()))
+	o.Checks = append(o.Checks, doctorPriceCatalog(budgetNow()))
 	if c := doctorProviderZDR(lc); c != nil {
 		o.Checks = append(o.Checks, *c)
 	}

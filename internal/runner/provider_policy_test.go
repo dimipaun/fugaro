@@ -46,6 +46,15 @@ func providerRun(t *testing.T, cfg, mode, capUSD string, script []anthropicfake.
 	if err != nil {
 		t.Fatal(err)
 	}
+	// That table, read from the shipped catalog a day after its own
+	// checked_at rather than at the wall clock: the catalog's 30 days
+	// (catalog.StaleAfter) must not decide from today's date whether a test
+	// prices a route at the cheapest end of its tier or the dearest one.
+	// Anything a test wants to say about the clock it says by assigning
+	// g.deps.Spend.Prices itself (TestResultJSONCatalogStale).
+	if spend.Prices != nil {
+		spend.Prices = freshCatalogTable(t, providers, nil)
+	}
 	g.deps.Spend = spend
 	withProviderKey(g.harness)
 	return g

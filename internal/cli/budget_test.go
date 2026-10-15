@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/watch"
 )
@@ -760,12 +762,43 @@ const catalogRouteYAML = `providers:
     allow_data_to: ["acme/app"]
 `
 
+// shippedCatalog is the price catalog this repository ships, embedded in the
+// binary under test.
+func shippedCatalog(t *testing.T) *catalog.File {
+	t.Helper()
+	cat, err := catalog.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cat
+}
+
+// pinCatalogClock pins the CLI's clock to the shipped catalog's own
+// checked_at plus d, and puts it back when the test ends. A test about the
+// catalog measures from the file's own date and never from today's: the
+// catalog's 30 days (catalog.StaleAfter) decide which end of a tier it
+// charges, so a test that read the wall clock would assert the cheapest end
+// today and start failing on a date no code change marked.
+func pinCatalogClock(t *testing.T, cat *catalog.File, d time.Duration) {
+	t.Helper()
+	checked, err := time.Parse("2006-01-02", cat.CheckedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := budgetNow
+	budgetNow = func() time.Time { return checked.Add(d) }
+	t.Cleanup(func() { budgetNow = old })
+}
+
 // TestBudgetPricesCatalogColumn: a row the built-in provider price catalog
 // priced says so in its own column — the tier and the end of that tier's
 // range charged — and its note carries the endpoint count and the catalog's
 // own date, so the two sources in one table are never read as one (design
 // §7, Task 5 step 1).
 func TestBudgetPricesCatalogColumn(t *testing.T) {
+	cat := shippedCatalog(t)
+	pinCatalogClock(t, cat, 24*time.Hour)
+	entry := cat.Models["deepseek/deepseek-v4.1-flash"]
 	newBudgetFixture(t, "budget: { mode: observe, per_run_usd: 5, rtdb_url: http://127.0.0.1:9 }\n"+catalogRouteYAML)
 	out, _, err := execute(t, "budget", "prices")
 	if err != nil {
@@ -783,7 +816,11 @@ func TestBudgetPricesCatalogColumn(t *testing.T) {
 	if row == "" {
 		t.Fatalf("the route's model has no row:\n%s", out)
 	}
-	for _, want := range []string{"zdr/cheapest", "26/33", "2026-10-14"} {
+	// The counts and the date are the catalog file's own, read here rather
+	// than written down: regenerating it is a documented release step
+	// (docs/release.md), and this test is about the column, not about
+	// which models the last fetch found.
+	for _, want := range []string{"zdr/cheapest", fmt.Sprintf("%d/%d", entry.ZDREndpoints, entry.Endpoints), cat.CheckedAt} {
 		if !strings.Contains(row, want) {
 			t.Errorf("the catalog row lacks %q:\n%s", want, row)
 		}
@@ -817,7 +854,7 @@ func TestBudgetPricesCatalogColumn(t *testing.T) {
 	if err := json.Unmarshal([]byte(js), &doc); err != nil {
 		t.Fatal(err)
 	}
-	if doc.CatalogCheckedAt != "2026-10-14" || doc.CatalogStale || !strings.Contains(doc.CatalogSource, "openrouter.ai") {
+	if doc.CatalogCheckedAt != cat.CheckedAt || doc.CatalogStale || !strings.Contains(doc.CatalogSource, "openrouter.ai") {
 		t.Fatalf("the catalog summary is %+v", doc)
 	}
 	found := false
@@ -827,7 +864,7 @@ func TestBudgetPricesCatalogColumn(t *testing.T) {
 		}
 		if m.ID == "deepseek/deepseek-v4.1-flash" {
 			found = true
-			if m.Catalog.Tier != "zdr" || m.Catalog.Bound != "min" || m.Catalog.Endpoints != 33 || m.Catalog.ZdrEndpoints != 26 || m.Catalog.Stale {
+			if m.Catalog.Tier != "zdr" || m.Catalog.Bound != "min" || m.Catalog.Endpoints != entry.Endpoints || m.Catalog.ZdrEndpoints != entry.ZDREndpoints || m.Catalog.Stale {
 				t.Errorf("%s's catalog row is %+v", m.ID, m.Catalog)
 			}
 		}
@@ -843,10 +880,10 @@ func TestBudgetPricesCatalogColumn(t *testing.T) {
 // regenerates it (design §7, P7).
 func TestBudgetPricesStaleCatalogWarns(t *testing.T) {
 	newBudgetFixture(t, "budget: { mode: observe, per_run_usd: 5, rtdb_url: http://127.0.0.1:9 }\n"+catalogRouteYAML)
-	old := budgetNow
-	t.Cleanup(func() { budgetNow = old })
+	cat := shippedCatalog(t)
 
-	budgetNow = func() time.Time { return time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC) }
+	// Six days after the catalog was checked, well inside its window.
+	pinCatalogClock(t, cat, 6*24*time.Hour)
 	out, errOut, err := execute(t, "budget", "prices")
 	if err != nil {
 		t.Fatal(err)
@@ -858,8 +895,8 @@ func TestBudgetPricesStaleCatalogWarns(t *testing.T) {
 		t.Fatalf("the fresh row is not at the cheapest end:\n%s", out)
 	}
 
-	// 2026-10-14 + 30 days is 2026-11-13; a day past it is stale.
-	budgetNow = func() time.Time { return time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC) }
+	// The window is 30 days (catalog.StaleAfter): a day past it is stale.
+	pinCatalogClock(t, cat, 31*24*time.Hour)
 	out, errOut, err = execute(t, "budget", "prices")
 	if err != nil {
 		t.Fatal(err)

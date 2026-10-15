@@ -8,12 +8,12 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"strconv"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
-	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -669,11 +669,17 @@ func TestValidateDoesNotRefuseWhatTheRunnerPrices(t *testing.T) {
 	if !ok {
 		t.Fatal("the run's table does not price the model validate accepted")
 	}
-	cat, err := catalog.Load()
-	if err != nil {
-		t.Fatal(err)
+	cat := shippedCatalog(t)
+	// The end of the tier's range the run charges is the one its own row
+	// says it is on (min, or max once the catalog is past its 30 days), so
+	// this reads it from the row under test: the catalog's age is a date,
+	// and a test written against one end only would expire with the file
+	// (catalog.StaleAfter).
+	bound := cat.Models[id].ZDR["input_per_m"].Min
+	if m.Catalog != nil && m.Catalog.Bound == "max" {
+		bound = cat.Models[id].ZDR["input_per_m"].Max
 	}
-	want, err := strconv.ParseFloat(cat.Models[id].ZDR["input_per_m"].Min, 64)
+	want, err := strconv.ParseFloat(bound, 64)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -690,7 +696,11 @@ func TestValidateProviderModels(t *testing.T) {
 	const coder = "  auth: api-key\n  models: { coder: deepseek/deepseek-v4-flash, reviewer: claude-sonnet-5-5 }"
 	// An approved repository: valid, the background model defaults to the
 	// coder's, and the coder's price comes from the built-in price catalog,
-	// which is a warning (the tier and the end of the range charged).
+	// which is a warning (the tier and the end of the range charged). The
+	// clock is pinned inside the catalog's own window, because the note
+	// below names the end of the range this test expects (the cheapest, by
+	// the default price_policy) and a stale catalog names the other one.
+	pinCatalogClock(t, shippedCatalog(t), 24*time.Hour)
 	path := budgetProject(t, budget, coder)
 	inCheckoutOf(t, "acme/sandbox")
 	out, errOut, err := execute(t, "validate", path)

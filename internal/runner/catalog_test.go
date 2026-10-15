@@ -28,6 +28,41 @@ func staleCatalog(t *testing.T) *catalog.File {
 	return &old
 }
 
+// shippedCatalogChecked is the checked_at of the catalog this repository
+// ships, as a time. Tests that read a rate out of the shipped catalog measure
+// from here rather than from the wall clock: the catalog has its own 30-day
+// freshness window (catalog.StaleAfter), and past it every row it prices is
+// charged at the dearest end of its tier, so a test written against the
+// cheapest end would start failing on a date no code change marked.
+func shippedCatalogChecked(t *testing.T) time.Time {
+	t.Helper()
+	f, err := catalog.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := time.Parse("2006-01-02", f.CheckedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+// freshCatalogTable is the run's own price table for routes, read from the
+// shipped catalog the day after its own checked_at: inside the window, so
+// each tier's cheapest end is what it charges, whatever today's date is.
+func freshCatalogTable(t *testing.T, providers map[string]config.ModelProvider, ov pricing.Overrides) *pricing.Table {
+	t.Helper()
+	f, err := catalog.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tbl, err := config.PriceTable(providers, ov, f, shippedCatalogChecked(t).Add(24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tbl
+}
+
 // TestResultJSONCatalogStale: a stale catalog charges the dearest end of
 // every tier it prices and says so in both places the owner looks — one WARN
 // per run and cost.catalog_stale in result.json (design §7, P7, Task 5

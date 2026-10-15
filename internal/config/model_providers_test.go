@@ -186,7 +186,16 @@ func providerPrices(t *testing.T) *pricing.Table {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tbl, err := PriceTable(map[string]ModelProvider{"openrouter": okProvider()}, nil, cat, time.Now())
+	// The clock is the catalog's own date, a day on, not today's: which end
+	// of a tier a row is charged turns on the catalog's age, so a test that
+	// read the wall clock would assert the cheapest end today and the dearest
+	// one from the day the shipped file passes its 30 days
+	// (catalog.StaleAfter).
+	checked, err := time.Parse("2006-01-02", cat.CheckedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tbl, err := PriceTable(map[string]ModelProvider{"openrouter": okProvider()}, nil, cat, checked.Add(24*time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}

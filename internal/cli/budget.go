@@ -49,7 +49,10 @@ const (
 )
 
 var (
-	// budgetNow is the clock of the budget commands; tests replace it.
+	// budgetNow is the clock of the budget commands and of every surface
+	// that prices a model from the catalog (validate, diagnose): tests
+	// replace it so a catalog's 30-day staleness is decided by the fixture
+	// and not by the day the test runs.
 	budgetNow = time.Now
 	// budgetTransport, when set, carries the database requests; tests wrap
 	// the fake's transport with it.

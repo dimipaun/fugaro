@@ -134,7 +134,7 @@ func budgetProblems(cfg *config.Config, lc *localcfg.Config) (problems, warnings
 		// The prices are unreadable, so a model "without a price" would be
 		// the table's fault, not the file's: say only what is wrong.
 		problems = append(problems, config.Problem{Path: "model_prices", Message: err.Error() + " (in the project config)"})
-	} else if prices, err := priceTableFor(lc.Providers, o, time.Now()); err != nil {
+	} else if prices, err := priceTableFor(lc.Providers, o, budgetNow()); err != nil {
 		// The routes cannot be priced — a malformed catalog, or a
 		// require_zdr route on a model with no ZDR-eligible endpoint. The
 		// message is the fix path, and no rule below may judge a table
@@ -170,7 +170,7 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 	if err != nil {
 		return nil, nil // budgetProblems says so
 	}
-	prices, err := priceTableFor(lc.Providers, o, time.Now())
+	prices, err := priceTableFor(lc.Providers, o, budgetNow())
 	if err != nil {
 		// A refused table (a malformed catalog, or a route the switches
 		// cannot price) is reported by budgetProblems when the budget is
