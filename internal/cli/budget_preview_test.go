@@ -12,7 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/recipe"
@@ -1111,5 +1113,157 @@ func TestBudgetPreviewRecipeNote(t *testing.T) {
 	}
 	if len(doc.Notes) == 0 || !strings.Contains(strings.Join(doc.Notes, " "), want) {
 		t.Errorf("notes = %q", doc.Notes)
+	}
+}
+
+// checkoutWorkflows makes the working directory a checkout of acme/app whose
+// fugaro.yaml declares the given workflows block, as Checkout does with its
+// own one: the compute ceiling is the workflow's own machine and clock, so a
+// case that needs two of them writes its own file.
+func checkoutWorkflows(t *testing.T, agentYAML, workflows string) {
+	t.Helper()
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "https://github.com/acme/app.git")
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\n" +
+		"agent:\n  auth: api-key\n" + agentYAML + "workflows:\n" + workflows
+	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+}
+
+// TestBudgetPreviewPrintsTheComputeCeiling: the ceiling's second half is the
+// machine, not the model. An artifact run's render is a runner command with
+// its own timeout, so it is outside every model stage and every model cap
+// (design artifact-runs.md §6, D4), and the preview says what a run of the
+// workflow can bill for the resources it asked for over timeouts.total.
+func TestBudgetPreviewPrintsTheComputeCeiling(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.Checkout(t, "  max_budget_usd: 0.5\n")
+	out, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// web is the checkout's one workflow, at the defaults: 4 vCPU, 8Gi and
+	// timeouts.total 90m. The fixture's region is us-east5, Cloud Run's tier 1
+	// ($0.000018 a vCPU-second, $0.000002 a GiB-second), so the ceiling is
+	// 5400 s × (4×0.000018 + 8×0.000002) = $0.4752.
+	const want = "compute ceiling (workflow web): 4 vCPU x 8 GiB x 1h30m0s = $0.48 at this installation's compute prices — NOT CAPPED"
+	if !strings.Contains(out, want) {
+		t.Errorf("preview never says %q:\n%s", want, out)
+	}
+}
+
+// TestBudgetPreviewSaysTheCeilingIsNotCapped: the line says out loud that no
+// cap covers compute and points at the paragraph that says why (D4), and the
+// model ceiling above it does not move -- the compute figure is never folded
+// into the rough worst case, which stays model dollars.
+func TestBudgetPreviewSaysTheCeilingIsNotCapped(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.NoPerRunCap(t)
+	f.SetCaps(100, 50, 100, 50)
+	f.SetSpentToday(0)
+	f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
+	out, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"— NOT CAPPED", "bounded by timeouts.total, not by any budget cap", "SECURITY.md"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("preview never says %q:\n%s", want, out)
+		}
+	}
+	// 11 stages × $0.50 = $5.50 a run, $33.00 for six, and the compute ceiling
+	// is not added to it.
+	if !strings.Contains(out, "rough worst case: $33.00") {
+		t.Errorf("the model ceiling moved:\n%s", out)
+	}
+}
+
+// TestBudgetPreviewComputeCeilingFollowsTheWorkflowsResources: the figure is
+// the workflow's own requested machine over its own timeouts.total, so a
+// heavier workflow costs more and the preview prints one line for each.
+func TestBudgetPreviewComputeCeilingFollowsTheWorkflowsResources(t *testing.T) {
+	newBudgetFixture(t, "")
+	checkoutWorkflows(t, "  max_budget_usd: 0.5\n",
+		"  web: { commands: { build: sh build.sh, test: sh test.sh } }\n"+
+			"  render: { commands: { build: sh build.sh, test: sh test.sh }, resources: { cpu: 8, memory: 32Gi }, timeouts: { total: 2h } }\n")
+	out, _, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// web: 5400 s × (4×0.000018 + 8×0.000002) = $0.4752.
+	// render: 7200 s × (8×0.000018 + 32×0.000002) = $1.4976.
+	for _, want := range []string{
+		"compute ceiling (workflow web): 4 vCPU x 8 GiB x 1h30m0s = $0.48",
+		"compute ceiling (workflow render): 8 vCPU x 32 GiB x 2h0m0s = $1.50",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("preview never says %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestBudgetPreviewWithoutPricesNamesTheSourceInsteadOfGuessing: a price book
+// with no table for the region (the zero Prices; cloudEnv.prices answers that
+// way for an execution no table prices) leaves the ceiling without a dollar
+// figure and names what is missing, rather than printing $0.00 as though
+// compute were free.
+func TestBudgetPreviewWithoutPricesNamesTheSourceInsteadOfGuessing(t *testing.T) {
+	cfg := &config.Config{Workflows: map[string]config.Workflow{
+		"web": {Resources: config.Resources{CPU: 8, Memory: "32Gi"},
+			Timeouts: config.Timeouts{Total: config.Duration{Duration: 2 * time.Hour}}},
+	}}
+	got := previewComputeCeilings(cfg, backend.Prices{}, "us-east5")
+	if len(got) != 1 {
+		t.Fatalf("ceilings = %+v", got)
+	}
+	c := got[0]
+	if c.USD != nil || !strings.Contains(c.Unpriced, "us-east5") {
+		t.Fatalf("a ceiling with no price table = %+v", c)
+	}
+	var buf bytes.Buffer
+	printComputeCeiling(&buf, c)
+	line := buf.String()
+	if strings.Contains(line, "$") {
+		t.Errorf("a dollar figure with no price table:\n%s", line)
+	}
+	if !strings.Contains(line, "8 vCPU x 32 GiB x 2h0m0s") || !strings.Contains(line, "NOT CAPPED") {
+		t.Errorf("the unpriced ceiling does not say what it could not price:\n%s", line)
+	}
+}
+
+// TestBudgetPreviewArtifactRecipeDoesNotInflateTheModelCeiling: a mode:
+// artifact recipe has no implement loop and no review loop, so it can start
+// one model stage (the plan) and not 1 + 2*rounds. Without the artifact arm
+// in StageBound, an artifact run's model ceiling is five stages at this
+// repository's defaults while its render -- the expensive half -- is the
+// compute ceiling beside it (design §6, D4).
+func TestBudgetPreviewArtifactRecipeDoesNotInflateTheModelCeiling(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.Checkout(t, "  max_budget_usd: 0.5\n  first_line_rounds: 1\n  review_rounds: 2\n")
+	testutil.WriteFiles(t, ".", map[string]string{
+		".fugaro/recipes/sizzle.yaml": "version: 1\nname: sizzle\nmode: artifact\n" +
+			"steps:\n  - plan: {}\n  - render: {}\noutputs: { globs: [out/*.mp4] }\n"})
+	out, _, err := execute(t, "budget", "preview", "--recipe", "sizzle", "--runs", "6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "at most 1 stages") {
+		t.Errorf("an artifact recipe is not one model stage:\n%s", out)
+	}
+	if strings.Contains(out, "at most 5 stages") {
+		t.Errorf("the artifact recipe took the implement arithmetic:\n%s", out)
+	}
+	// One stage × the $0.50 per-stage cap is what a run is bounded by, and
+	// six of them are the ceiling: the render is not a fifth of it.
+	if !strings.Contains(out, "6 runs × $0.50 (1 stages × $0.50 (agent.max_budget_usd))") {
+		t.Errorf("one stage × $0.50 is not the model ceiling:\n%s", out)
+	}
+	// The render is priced as compute, beside it, and not as a model stage.
+	if !strings.Contains(out, "compute ceiling (workflow web): 4 vCPU x 8 GiB x 1h30m0s = $0.48") {
+		t.Errorf("the artifact run's compute ceiling is missing:\n%s", out)
 	}
 }
