@@ -702,17 +702,19 @@ func doctorProjectSecrets(ctx context.Context, lc *localcfg.Config) (sm *gcp.Sec
 		// reads behind doctor use.
 		return nil, nil, false
 	}
-	sm, err := gcp.NewSecrets(ctx, gcp.Options{GCPProject: lc.GCPProject, Region: lc.Region,
+	// client, not sm: sm is this function's named result, and a local of the
+	// same name would shadow it (the review of PR #402).
+	client, err := gcp.NewSecrets(ctx, gcp.Options{GCPProject: lc.GCPProject, Region: lc.Region,
 		Endpoints: gcp.Endpoints{SecretManager: lc.Endpoints.SecretManager, NoAuth: lc.Endpoints.NoAuth}})
 	if err != nil {
 		return nil, nil, false
 	}
-	list, err := sm.List(ctx, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: lc.Name})
+	list, err := client.List(ctx, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: lc.Name})
 	if err != nil {
-		return sm, nil, false
+		return client, nil, false
 	}
 	slices.SortFunc(list, func(a, b gcp.SecretInfo) int { return strings.Compare(a.ID, b.ID) })
-	return sm, list, true
+	return client, list, true
 }
 
 // projectSecretEnabled is the logical names holding an enabled version, from
@@ -1488,10 +1490,10 @@ func doctorPolicyVsJobs(lc *localcfg.Config) *doctorCheck {
 //
 // The marker alone cannot tell this state apart from a healthy one: it is
 // the marker *and* the deployed document. The document is compared against
-// what this generation generates, which is exactly what the rules deploy
-// itself compares before it decides to write (internal/infra's DB.Plan,
-// sameJSON), so an installation whose rules were deployed by a CLI of this
-// generation never reports a skew.
+// what this generation generates, with internal/infra's own comparison
+// (infra.SameJSON, which DB.Plan uses before it decides to write), so an
+// installation whose rules were deployed by a CLI of this generation never
+// reports a skew.
 //
 // A warning, not an error: the fix is the owner's `fugaro init --firebase`
 // and doctor cannot perform it.
@@ -1518,29 +1520,41 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client) []doctorCheck {
 			Problem: "the deployed rules cannot be told apart: " + (&projectpolicy.MarkerError{Value: oneLine(string(raw))}).Error(),
 			Fix:     "re-run 'fugaro init --firebase' with fugaro >= " + policySince + " in your own terminal, which writes the marker this Fugaro reads"}}
 	}
+	if gen > projectpolicy.RulesVersion {
+		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
+			Problem: fmt.Sprintf("%s records generation %d, and this Fugaro's rules are generation %d: the deployed rules are newer than this Fugaro, which cannot read a project policy written under them",
+				marker, gen, projectpolicy.RulesVersion),
+			Fix: fmt.Sprintf("upgrade Fugaro first: re-running 'fugaro init --firebase' with this binary would redeploy generation %d over the deployed rules",
+				projectpolicy.RulesVersion)}}
+	}
 	if gen < projectpolicy.RulesVersion {
 		// Present and below this generation's is a state of its own, not an
 		// absent marker: it records rules that predate the policy nodes, so
 		// `fugaro project policy publish` refuses (requirePolicyRules) and no
 		// run reads a policy (Read gates on the marker alone). Reporting
 		// nothing here printed "a policy is published" as info while every run
-		// took the legacy path. The sentence is the one publish refuses with,
-		// so the state reads the same met as a refusal or as a report.
+		// took the legacy path.
+		//
+		// The body cannot be rulesSkewText, which is the *other* state's
+		// sentence: it says the deployed rules are older than the marker, and
+		// here it is the marker that is below (the review of PR #402).
 		return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
-			Problem: fmt.Sprintf("%s records generation %d, below the generation %d a project policy is read under: %s", marker, gen, projectpolicy.RulesVersion, rulesSkewText()),
-			Fix:     "re-run 'fugaro init --firebase' with fugaro >= " + policySince + " in your own terminal: it redeploys the rules the policy is read under and records this release's generation in the marker"}}
+			Problem: fmt.Sprintf("%s records generation %d, below the generation %d this Fugaro reads a project policy under: this installation's rules are the pre-policy ones, so no run reads a published policy and 'fugaro project policy publish' refuses until the marker is brought up",
+				marker, gen, projectpolicy.RulesVersion),
+			Fix: fmt.Sprintf("re-run 'fugaro init --firebase' with fugaro >= %s in your own terminal: it deploys the rules a policy is read under and records generation %d in the marker (if the rules deployed here came from a newer Fugaro than this one, upgrade instead — this release's template would replace them)",
+				policySince, projectpolicy.RulesVersion)}}
 	}
 	live, err := db.Rules(ctx)
 	if err != nil {
 		return nil
 	}
 	want, err := rules.Generate()
-	if err != nil || policyDocEqual(live, want) {
+	if err != nil || infra.SameJSON(live, want) {
 		return nil
 	}
 	return []doctorCheck{{ID: "policy-rules-skew", Severity: "warning",
 		Problem: rulesSkewText(),
-		Fix:     "re-run 'fugaro init --firebase' with fugaro >= " + policySince + " in your own terminal: it redeploys the rules the policy is read under"}}
+		Fix:     fmt.Sprintf("re-run 'fugaro init --firebase' with fugaro >= %s in your own terminal: it redeploys the rules the policy is read under (if these rules came from a newer Fugaro than this one, upgrade instead — this template would replace them)", policySince)}}
 }
 
 // emptyPolicyNode reports whether a node read back from the database is JSON

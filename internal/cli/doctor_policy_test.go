@@ -75,10 +75,12 @@ func doctorChecksByID(t *testing.T) map[string]doctorCheck {
 // P8's release skew in each direction: the remedies are opposite, so one
 // check carrying both would print the wrong one for half the states),
 // policy-vs-jobs (warning), allow-list-empty (warning) and policy-rules-skew
-// (warning, on both of the marker's wrong values: the fixture an older CLI's
-// init --firebase leaves — the marker at RulesVersion and the deployed rules
-// from before the policy nodes — and a marker present but below
-// RulesVersion) — plus allow-list-uncovered, the same question as
+// (warning, in all three of the states it exists for: the fixture an older
+// CLI's init --firebase leaves — the marker at RulesVersion and the deployed
+// rules from before the policy nodes — a marker present but below
+// RulesVersion, and a marker above it, which means the deployed rules come
+// from a *newer* Fugaro and this binary must not redeploy its own template
+// over them) — plus allow-list-uncovered, the same question as
 // allow-list-empty asked of the repositories this machine's config names
 // rather than of the list's length.
 //
@@ -104,7 +106,17 @@ func doctorChecksByID(t *testing.T) map[string]doctorCheck {
 // doctor did before it went through projectpolicy.Read, and report it as
 // published — "a node no run reads" fails on doctor printing the node as the
 // policy in force ("a policy is published at config/policy/shared (version 1,
-// 1 allow-list entries)") for a marker that is not there.
+// 1 allow-list entries)") for a marker that is not there. Mutations for the
+// two skew-body fixes of the review of PR #402 (each verified, run and
+// restored): drop the `gen > RulesVersion` branch so a newer marker falls
+// through to the document comparison — "rules newer than this Fugaro" fails on
+// the older-state body, whose Fix tells this binary to redeploy its template;
+// and put rulesSkewText back in the marker-below body — "a marker below the
+// generation a policy is read under" fails, the body claiming the deployed
+// rules are older than the marker that is itself the wrong value. The "rules
+// older than the marker" subtest also holds the newer-release caveat in that
+// body's Fix: without it, a document that came from a newer Fugaro would be
+// replaced by this release's template.
 func TestDoctorPolicyChecks(t *testing.T) {
 	t.Run("an installation with no budget backend publishes no policy", func(t *testing.T) {
 		newDoctorRig(t)
@@ -273,6 +285,38 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !strings.Contains(c.Fix, "fugaro init --firebase") {
 			t.Errorf("the check does not name the owner's fix: %+v", c)
 		}
+		if !strings.Contains(c.Fix, "newer Fugaro") {
+			t.Errorf("the fix does not warn that the rules may be a newer release's, which this template would replace: %+v", c)
+		}
+	})
+
+	t.Run("rules newer than this Fugaro", func(t *testing.T) {
+		// The other direction, and the review of PR #402's point: a marker above
+		// this binary's RulesVersion was written by a *newer* Fugaro, so the
+		// deployed rules are a generation this binary does not know. Meeting that
+		// state with "rules older than the marker: re-run init --firebase" sends
+		// the operator to redeploy this release's template over newer rules — a
+		// downgrade of the rules the policy nodes are protected by.
+		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+		db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion+1)
+		db.SetRules([]byte(`{"rules":{".read":true,".write":false}}`))
+		c, ok := doctorChecksByID(t)["policy-rules-skew"]
+		if !ok || c.Severity != "warning" {
+			t.Fatalf("policy-rules-skew = %+v (present %v), want a warning", c, ok)
+		}
+		if !strings.Contains(c.Problem, fmt.Sprintf("generation %d", projectpolicy.RulesVersion+1)) ||
+			!strings.Contains(c.Problem, "newer than this Fugaro") {
+			t.Errorf("the check does not say the deployed rules are newer than this binary: %+v", c)
+		}
+		if !strings.Contains(c.Fix, "upgrade Fugaro") {
+			t.Errorf("the check does not name the fix that does not downgrade: %+v", c)
+		}
+		if strings.Contains(c.Fix, "re-run 'fugaro init --firebase' with fugaro") {
+			t.Errorf("the fix tells this binary to redeploy its own template over newer rules: %+v", c)
+		}
+		if !strings.Contains(c.Fix, "would redeploy generation") {
+			t.Errorf("the fix does not say what running init --firebase here would do: %+v", c)
+		}
 	})
 
 	t.Run("a marker below the generation a policy is read under", func(t *testing.T) {
@@ -292,6 +336,14 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		}
 		if !strings.Contains(c.Fix, "fugaro init --firebase") {
 			t.Errorf("the check does not name the owner's fix: %+v", c)
+		}
+		// The sentence must not be the other state's. "the deployed rules are
+		// older than the marker" is a claim about a *document* that disagrees
+		// with a marker; here the marker itself is the wrong value, and a body
+		// that says the marker is what the rules are older than reads as its own
+		// contradiction (the review of PR #402).
+		if strings.Contains(c.Problem, "the deployed rules are older than the marker") {
+			t.Errorf("the marker-below body reuses the marker-current state's sentence: %+v", c)
 		}
 	})
 }
