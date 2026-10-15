@@ -10,10 +10,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/basepin"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -927,6 +929,38 @@ func TestImagesStageConfirmationSaysTheBaseIsNotCopied(t *testing.T) {
 		if strings.Contains(out, bad) {
 			t.Errorf("a base-only run still says %q:\n%s", bad, out)
 		}
+	}
+}
+
+// The confirmation names the verifier that actually ran: which binary
+// checked the signature is part of what the pin rests on, and the path is
+// resolved once (basepin.CosignPath). With cosign absent the clause is
+// simply not there — read() has already refused, so a confirmation is
+// never reached without a verifier, and the confirmation must not claim
+// one it did not use.
+func TestImagesConfirmationNamesTheVerifierThatRan(t *testing.T) {
+	old := basepin.CosignBin
+	t.Cleanup(func() { basepin.CosignBin = old })
+	bin := filepath.Join(t.TempDir(), "cosign")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	basepin.CosignBin = bin
+	newImagesRig(t, "1.2.3")
+	out, _, err := executeStdin(t, "us-east5\n", "init", "--yes", "--base", "base")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "(verified by "+bin+")") {
+		t.Errorf("the confirmation does not name the verifier %s:\n%s", bin, out)
+	}
+
+	basepin.CosignBin = filepath.Join(t.TempDir(), "not-here")
+	newImagesRig(t, "1.2.3")
+	out, _, _ = executeStdin(t, "us-east5\n", "init", "--yes", "--base", "base")
+	if strings.Contains(out, "verified by") {
+		t.Errorf("the confirmation claims a verifier with none on PATH:\n%s", out)
 	}
 }
 

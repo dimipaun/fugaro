@@ -805,8 +805,16 @@ func (s *imagesStage) confirmText(pl []planned, n int, bytes int64, unpinned []s
 		for _, p := range base {
 			refs = append(refs, fmt.Sprintf("base_images.%s = %s", p.item.kind, p.pin))
 		}
-		parts = append(parts, fmt.Sprintf("pins %d base image(s) to this release's image at the digest its cosign signature was verified for, read back through the remote repository %s/%s (nothing is copied, and nothing is pushed into %s): %s",
-			len(base), r.gcpProject, infra.GhcrRegistry, mirror.BaseRepository, strings.Join(refs, "; ")))
+		// Which verifier ran is part of what the pin rests on, so the
+		// confirmation names it when it resolves; the verification itself
+		// has already happened by now (read() runs before this), and a
+		// missing binary refuses there rather than here.
+		verifier := ""
+		if p := basepin.CosignPath(); p != "" {
+			verifier = fmt.Sprintf(" (verified by %s)", p)
+		}
+		parts = append(parts, fmt.Sprintf("pins %d base image(s) to this release's image at the digest its cosign signature was verified for%s, read back through the remote repository %s/%s (nothing is copied, and nothing is pushed into %s): %s",
+			len(base), verifier, r.gcpProject, infra.GhcrRegistry, mirror.BaseRepository, strings.Join(refs, "; ")))
 	}
 	return strings.Join(parts, " — and it ") + " (as you, with your own credentials)"
 }

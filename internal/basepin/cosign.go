@@ -14,6 +14,19 @@ import (
 // test can point it at a stub and assert the arguments.
 var CosignBin = "cosign"
 
+// CosignPath is where the verifier's program resolves to, "" when it is not
+// on PATH. It is the one place the path is resolved: the confirmation
+// prints it (which verifier ran is part of what a pin's trust rests on) and
+// `fugaro doctor` checks it. CosignBin may be a path already, in which case
+// LookPath's answer is the file itself when it is executable.
+func CosignPath() string {
+	p, err := exec.LookPath(CosignBin)
+	if err != nil {
+		return ""
+	}
+	return p
+}
+
 // CosignVerifier is the real OCIVerifier: it runs `cosign verify` against
 // the digest-pinned reference. Shelling out is deliberate (design §9
 // Decision 1's "either sigstore-go's verify package or the real cosign
